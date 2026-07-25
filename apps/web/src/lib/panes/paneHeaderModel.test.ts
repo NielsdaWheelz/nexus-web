@@ -71,6 +71,7 @@ const EXPECTED_ROUTE_DEFAULTS = {
   notes: none("Notes"),
   page: paneLabel("Notes"),
   note: paneLabel("Notes"),
+  stats: none("Stats"),
   settings: none("Settings"),
   settingsAccount: none("Settings"),
   settingsBilling: none("Settings"),

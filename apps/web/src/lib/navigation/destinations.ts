@@ -43,6 +43,11 @@ export const DESTINATION_REGISTRY = {
     href: "/notes",
     keywords: ["pages", "outline", "knowledge"],
   },
+  stats: {
+    label: "Stats",
+    href: "/stats",
+    keywords: ["reading", "listening", "activity", "sessions", "year"],
+  },
   atlas: {
     label: "Atlas",
     href: "/atlas",

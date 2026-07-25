@@ -41,6 +41,7 @@ export const APP_NAVIGATION = {
     { id: "podcasts" },
     { id: "chats" },
     { id: "notes" },
+    { id: "stats" },
     { id: "atlas" },
     { id: "oracle", presentation: "accent" },
   ],

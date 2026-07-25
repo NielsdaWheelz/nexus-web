@@ -5,9 +5,11 @@ listening heartbeat. Terminal state is observed by re-placing a finished media
 and reading its projected consumption state.
 """
 
+import threading
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import text
 
 from nexus.db.models import (
     Media,
@@ -16,6 +18,8 @@ from nexus.db.models import (
     PodcastEpisode,
     ProcessingStatus,
 )
+from nexus.schemas.consumption import EnsureMediaFinishedCommand
+from nexus.services.consumption import service as consumption_service
 from tests.factories import add_media_to_library
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -32,6 +36,8 @@ def _bootstrap(auth_client, user_id: UUID) -> UUID:
 def _register_media_cleanup(direct_db: DirectSessionManager, media_id: UUID) -> None:
     for table in (
         "podcast_episodes",
+        "consumption_completion_facts",
+        "consumption_activity_spans",
         "consumption_queue_items",
         "consumption_overrides",
         "podcast_listening_states",
@@ -160,6 +166,21 @@ def _item_by_media(items, media_id) -> dict:
     return next(item for item in items if item["mediaId"] == str(media_id))
 
 
+def _completion_rows(direct_db: DirectSessionManager, *, user_id: UUID, media_id: UUID):
+    with direct_db.session() as session:
+        return session.execute(
+            text(
+                """
+                SELECT id, created_at
+                FROM consumption_completion_facts
+                WHERE user_id = :user_id AND media_id = :media_id
+                ORDER BY id
+                """
+            ),
+            {"user_id": user_id, "media_id": media_id},
+        ).fetchall()
+
+
 class TestFinishLecternItem:
     def test_suffix_next_selection_by_capability(
         self, auth_client, direct_db: DirectSessionManager
@@ -195,6 +216,8 @@ class TestFinishLecternItem:
         assert data["nextItem"]["kind"] == "Present"
         assert data["nextItem"]["value"]["mediaId"] == str(ep2)
         assert [i["mediaId"] for i in data["lectern"]["items"]] == [str(article), str(ep2)]
+        assert data["completionHandle"]["kind"] == "Present"
+        assert len(_completion_rows(direct_db, user_id=user_id, media_id=ep1)) == 1
 
     def test_readable_capability_selects_article(
         self, auth_client, direct_db: DirectSessionManager
@@ -509,6 +532,151 @@ class TestEnsureMediaFinished:
         )
         assert result.status_code == 200, result.text
         assert result.json()["data"]["outcome"] == {"kind": "StateOnly"}
+        assert result.json()["data"]["completionHandle"]["kind"] == "Present"
+        assert len(_completion_rows(direct_db, user_id=user_id, media_id=ep)) == 1
         # State-only: placing the media afterwards shows Finished, no Lectern row added by finish.
         placed = _place(auth_client, user_id, [ep])
         assert _item_by_media(placed, ep)["consumption"]["state"] == "Finished"
+
+    def test_already_finished_pre_cutover_state_never_backfills_a_fact(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        ep = _create_podcast_episode(direct_db, title="Pre-cutover")
+        _add_to_library(direct_db, library_id, ep)
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    INSERT INTO consumption_overrides (user_id, media_id, status)
+                    VALUES (:user_id, :media_id, 'finished')
+                    """
+                ),
+                {"user_id": user_id, "media_id": ep},
+            )
+            session.commit()
+
+        for _ in range(2):
+            finished = _consumption(
+                auth_client,
+                user_id,
+                {
+                    "kind": "EnsureMediaFinished",
+                    "clientMutationId": str(uuid4()),
+                    "mediaId": str(ep),
+                },
+            )
+            assert finished.status_code == 200, finished.text
+            assert finished.json()["data"]["completionHandle"] == {"kind": "Absent"}
+        assert _completion_rows(direct_db, user_id=user_id, media_id=ep) == []
+
+    def test_completion_handle_undo_retracts_only_the_new_fact(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        ep = _create_podcast_episode(direct_db, title="Ep")
+        _add_to_library(direct_db, library_id, ep)
+
+        finished = _consumption(
+            auth_client,
+            user_id,
+            {"kind": "EnsureMediaFinished", "clientMutationId": str(uuid4()), "mediaId": str(ep)},
+        )
+        assert finished.status_code == 200, finished.text
+        handle = finished.json()["data"]["completionHandle"]
+        assert handle["kind"] == "Present"
+        original_id, original_created_at = _completion_rows(
+            direct_db, user_id=user_id, media_id=ep
+        )[0]
+
+        ordinary_unread = _consumption(
+            auth_client,
+            user_id,
+            {"kind": "SetUnread", "clientMutationId": str(uuid4()), "mediaId": str(ep)},
+        )
+        assert ordinary_unread.status_code == 200, ordinary_unread.text
+        assert _completion_rows(direct_db, user_id=user_id, media_id=ep) == [
+            (original_id, original_created_at)
+        ]
+
+        re_finished = _consumption(
+            auth_client,
+            user_id,
+            {"kind": "EnsureMediaFinished", "clientMutationId": str(uuid4()), "mediaId": str(ep)},
+        )
+        assert re_finished.status_code == 200, re_finished.text
+        assert re_finished.json()["data"]["completionHandle"] == {"kind": "Absent"}
+        assert _completion_rows(direct_db, user_id=user_id, media_id=ep) == [
+            (original_id, original_created_at)
+        ]
+
+        undone = _consumption(
+            auth_client,
+            user_id,
+            {
+                "kind": "UndoCompletion",
+                "clientMutationId": str(uuid4()),
+                "completionHandle": handle["value"],
+            },
+        )
+        assert undone.status_code == 200, undone.text
+        assert undone.json()["data"]["completionHandle"] == {"kind": "Absent"}
+        assert _completion_rows(direct_db, user_id=user_id, media_id=ep) == []
+
+        placed = _place(auth_client, user_id, [ep])
+        assert _item_by_media(placed, ep)["consumption"]["state"] == "Unread"
+
+        finished_again = _consumption(
+            auth_client,
+            user_id,
+            {"kind": "EnsureMediaFinished", "clientMutationId": str(uuid4()), "mediaId": str(ep)},
+        )
+        assert finished_again.status_code == 200, finished_again.text
+        assert finished_again.json()["data"]["completionHandle"]["kind"] == "Present"
+        replacement_id, _ = _completion_rows(direct_db, user_id=user_id, media_id=ep)[0]
+        assert replacement_id != original_id
+
+
+class TestConcurrentCompletionTransitions:
+    def test_concurrent_finished_commands_create_one_fact_and_one_handle(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        ep = _create_podcast_episode(direct_db, title="Raced completion")
+        _add_to_library(direct_db, library_id, ep)
+
+        barrier = threading.Barrier(2)
+        results = []
+        errors: list[BaseException] = []
+        result_lock = threading.Lock()
+
+        def finish_once() -> None:
+            try:
+                barrier.wait(timeout=10)
+                result = consumption_service.run_consumption_command(
+                    user_id,
+                    EnsureMediaFinishedCommand(
+                        kind="EnsureMediaFinished",
+                        clientMutationId=uuid4(),
+                        mediaId=ep,
+                    ),
+                )
+                with result_lock:
+                    results.append(result)
+            except BaseException as exc:  # pragma: no cover - re-raised below
+                with result_lock:
+                    errors.append(exc)
+
+        workers = [threading.Thread(target=finish_once) for _ in range(2)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=30)
+        assert all(not worker.is_alive() for worker in workers)
+        assert errors == [], f"concurrent completion workers raised: {errors!r}"
+        assert len(results) == 2
+        assert sum(result.completion_handle.kind == "Present" for result in results) == 1
+        assert len(_completion_rows(direct_db, user_id=user_id, media_id=ep)) == 1

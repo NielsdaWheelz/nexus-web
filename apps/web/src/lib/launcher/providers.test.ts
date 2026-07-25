@@ -430,6 +430,11 @@ describe("buildLauncherItems — command items", () => {
     // /settings itself is NOT a "/settings/" subpage → stays in `go`.
     expect(items.find((i) => i.id === "settings")!.sectionId).toBe("go");
 
+    expect(items.find((i) => i.id === "stats")).toMatchObject({
+      sectionId: "go",
+      target: { kind: "href", href: "/stats", externalShell: false },
+    });
+
     // A /settings/* subpage → `settings` section.
     const appearance = items.find((i) => i.id === "appearance")!;
     expect(appearance.sectionId).toBe("settings");

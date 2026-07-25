@@ -13,6 +13,7 @@ from nexus.api.routes.billing import router as billing_router
 from nexus.api.routes.browse import router as browse_router
 from nexus.api.routes.chat_reader_selections import router as chat_reader_selections_router
 from nexus.api.routes.chat_runs import router as chat_runs_router
+from nexus.api.routes.consumption_activity import router as consumption_activity_router
 from nexus.api.routes.contributors import router as contributors_router
 from nexus.api.routes.conversation_branches import router as conversation_branches_router
 from nexus.api.routes.conversation_context import router as conversation_context_router
@@ -107,6 +108,7 @@ def create_api_router() -> APIRouter:
     # POST /consumption/commands). The listening heartbeat keeps its
     # /media/{id}/listening-state paths on listening_state_router above.
     api_router.include_router(lectern_router)
+    api_router.include_router(consumption_activity_router)
     settings = get_settings()
     if settings.podcasts_enabled:
         api_router.include_router(podcasts_router)

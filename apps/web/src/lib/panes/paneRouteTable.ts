@@ -2,6 +2,7 @@
 
 import {
   BookOpen,
+  ChartColumn,
   CreditCard,
   FileText,
   FolderOpen,
@@ -102,6 +103,9 @@ const PANE_ROUTE_META: Record<PaneRouteId, PaneRouteMeta> = {
   },
   note: {
     icon: FileText,
+  },
+  stats: {
+    icon: ChartColumn,
   },
   settings: {
     icon: Settings,

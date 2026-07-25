@@ -2,15 +2,17 @@
 
 The app navigation is a small, fixed projection of Nexus's highest-frequency
 destinations. It is not a directory of every feature and it is not a second
-Launcher. Its job is to keep the daily loop—resume, find, listen, and chat—one
-gesture away on desktop and mobile.
+Launcher. Its job is to keep the daily loop—resume, find, listen, think, and
+reflect—one gesture away on desktop and mobile.
 
 ## Product contract
 
 - **Lectern is home.** `/lectern` is the canonical authenticated home, the brand
   destination, and the first visible navigation item.
 - **The order is exact and flat:** Lectern, Libraries, Podcasts, Chats, Notes,
-  Atlas, Oracle. There are no “Library” or “Tools” headings.
+  Stats, Atlas, Oracle. There are no “Library” or “Tools” headings. Stats
+  follows Notes because it is the feedback leg of the daily consume → think →
+  reflect loop, not a feature-directory entry.
 - **Podcasts and Chats remain primary.** Atlas and Oracle are present but do not
   displace the frequent listening and conversation tasks.
 - **Desktop and mobile share one model.** The rail and sheet differ only where

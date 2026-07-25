@@ -399,6 +399,8 @@ class TestGetMediaFragments:
         assert "canonical_text" in fragment
         assert fragment["html_sanitized"] == FIXTURE_HTML_SANITIZED
         assert fragment["canonical_text"] == FIXTURE_CANONICAL_TEXT
+        assert fragment["word_count"] >= 0
+        assert fragment["document_word_start"] == 0
 
     def test_get_media_and_fragments_include_document_embeds(
         self, auth_client, direct_db: DirectSessionManager
@@ -560,6 +562,8 @@ class TestGetMediaFragments:
         # Verify ordering by idx ASC
         for i, fragment in enumerate(data):
             assert fragment["idx"] == i
+            assert fragment["word_count"] == 2
+            assert fragment["document_word_start"] == i * 2
 
     def test_get_fragments_empty(self, auth_client, direct_db: DirectSessionManager):
         """Media with no fragments returns empty list."""
@@ -3503,6 +3507,7 @@ class TestGetEpubSectionReturnsPayloadAndNavigation:
         assert "html_sanitized" in section0
         assert "canonical_text" in section0
         assert section0["word_count"] == 8
+        assert section0["document_word_start"] == 0
         assert "source_version" not in section0
         assert "created_at" in section0
 
@@ -3513,6 +3518,7 @@ class TestGetEpubSectionReturnsPayloadAndNavigation:
         section1 = resp1.json()["data"]
         assert section1["prev_section_id"] == "ch0.xhtml"
         assert section1["next_section_id"] == "ch2.xhtml"
+        assert section1["document_word_start"] == 8
 
         resp2 = auth_client.get(
             f"/media/{media_id}/sections/ch2.xhtml", headers=auth_headers(user_id)
@@ -3521,6 +3527,7 @@ class TestGetEpubSectionReturnsPayloadAndNavigation:
         section2 = resp2.json()["data"]
         assert section2["prev_section_id"] == "ch1.xhtml"
         assert section2["next_section_id"] is None
+        assert section2["document_word_start"] == 16
 
     def test_section_returns_single_fragment_not_concatenated(
         self, auth_client, direct_db: DirectSessionManager

@@ -24541,3 +24541,143 @@ class TestMigration0193MediaPipelineReliability:
             reset_test_schema()
             run_alembic_command("upgrade head")
             engine.dispose()
+
+
+class TestMigration0194ConsumptionActivityFacts:
+    """0194 creates only the two empty, non-cascading Consumption fact tables."""
+
+    def test_0194_storage_shape_and_hard_cutover_downgrade(self):
+        reset_test_schema()
+        assert run_alembic_command("upgrade 0193").returncode == 0
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0194")
+            assert result.returncode == 0, result.stderr
+            with engine.connect() as connection:
+                tables = set(
+                    connection.execute(
+                        text(
+                            """
+                            SELECT table_name
+                            FROM information_schema.tables
+                            WHERE table_schema = 'public'
+                              AND (
+                                table_name LIKE 'consumption_activity_%'
+                                OR table_name LIKE 'consumption_completion_%'
+                              )
+                            """
+                        )
+                    ).scalars()
+                )
+                assert tables == {
+                    "consumption_activity_spans",
+                    "consumption_completion_facts",
+                }
+                span_columns = set(
+                    connection.execute(
+                        text(
+                            """
+                            SELECT column_name
+                            FROM information_schema.columns
+                            WHERE table_schema = 'public'
+                              AND table_name = 'consumption_activity_spans'
+                            """
+                        )
+                    ).scalars()
+                )
+                assert span_columns == {
+                    "id",
+                    "user_id",
+                    "media_id",
+                    "modality",
+                    "device_id",
+                    "device_class",
+                    "occurred_at",
+                    "duration_ms",
+                    "progress_start",
+                    "progress_end",
+                    "word_start",
+                    "word_end",
+                    "media_position_start_ms",
+                    "media_position_end_ms",
+                    "created_at",
+                }
+                completion_columns = set(
+                    connection.execute(
+                        text(
+                            """
+                            SELECT column_name
+                            FROM information_schema.columns
+                            WHERE table_schema = 'public'
+                              AND table_name = 'consumption_completion_facts'
+                            """
+                        )
+                    ).scalars()
+                )
+                assert completion_columns == {
+                    "id",
+                    "user_id",
+                    "media_id",
+                    "modality",
+                    "created_at",
+                }
+                assert (
+                    connection.scalar(
+                        text(
+                            """
+                        SELECT count(*)
+                        FROM consumption_activity_spans
+                        CROSS JOIN consumption_completion_facts
+                        """
+                        )
+                    )
+                    == 0
+                )
+                foreign_delete_actions = set(
+                    connection.execute(
+                        text(
+                            """
+                            SELECT confdeltype
+                            FROM pg_constraint
+                            WHERE conname = ANY(CAST(:names AS text[]))
+                            """
+                        ),
+                        {
+                            "names": [
+                                "fk_consumption_activity_spans_user",
+                                "fk_consumption_activity_spans_media",
+                                "fk_consumption_completion_facts_user",
+                                "fk_consumption_completion_facts_media",
+                            ]
+                        },
+                    ).scalars()
+                )
+                assert foreign_delete_actions == {"a"}
+                assert (
+                    connection.scalar(
+                        text(
+                            """
+                        SELECT count(*)
+                        FROM pg_constraint
+                        WHERE conname = 'uq_consumption_completion_facts_user_media'
+                          AND contype = 'u'
+                        """
+                        )
+                    )
+                    == 1
+                )
+
+            result = run_alembic_command("downgrade 0193")
+            assert result.returncode != 0
+            with engine.connect() as connection:
+                assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0194"
+                assert (
+                    connection.scalar(
+                        text("SELECT to_regclass('public.consumption_activity_spans')")
+                    )
+                    == "consumption_activity_spans"
+                )
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()

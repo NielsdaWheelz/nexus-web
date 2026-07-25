@@ -770,13 +770,16 @@ interface GlobalPlayerCapability {
   with no forward entry it selects the first `FooterAudio` after an exact origin
   or from the head for Direct, excluding current media, with no wrap. Natural end
   never consumes forward history.
-- Explicit exact completion offers a ten-second Undo toast: serialize `SetUnread`,
-  then `PlaceItems` after the nearest surviving pre-completion predecessor, else
-  `First`. The restored membership gets a new `itemId` and never reattaches the
-  active Direct session. If SetUnread commits but PlaceItems fails, retain the
-  canonical unread state and show **Marked unread; could not restore to
-  Lectern**. Unknown placement outcome retries the same ID; a definitive lost
-  anchor offers a new Restore action with freshly resolved placement. No new API.
+- Explicit exact completion offers a ten-second Undo toast. The later
+  Consumption Activity cutover returns a sealed completion handle: use
+  `UndoCompletion` when it is Present and ordinary `SetUnread` when it is
+  Absent, then `PlaceItems` after the nearest surviving pre-completion
+  predecessor, else `First`. The restored membership gets a new `itemId` and
+  never reattaches the active Direct session. If the unread transition commits
+  but PlaceItems fails, retain the canonical unread state and show **Marked
+  unread; could not restore to Lectern**. Unknown placement outcome retries the
+  same ID; a definitive lost anchor offers a new Restore action with freshly
+  resolved placement.
 - Footer primary transport includes Previous/Next and one presentation-only
   preview of the actual manual-Next target: **Forward: _title_** for history or
   **Next on the Lectern: _title_** for Lectern selection. Add scoped

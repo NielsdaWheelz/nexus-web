@@ -72,6 +72,15 @@ describe("pane route identity", () => {
     expect(hasSamePaneResource("/libraries", "/libraries?filter=recent")).toBe(false);
   });
 
+  it("keeps Stats URL state in pane identity", () => {
+    expect(resolvePaneRouteIdentity("/stats?period=day").routeKey).toBe(
+      "stats:/stats?period=day",
+    );
+    expect(
+      hasSamePaneRoute("/stats?period=day", "/stats?period=month"),
+    ).toBe(false);
+  });
+
   it("represents author aliases as contributor locators", () => {
     expect(resolvePaneRouteIdentity("/authors/ursula-k-le-guin").resourceLocator).toEqual({
       kind: "contributor_handle",

@@ -15,6 +15,41 @@ _MAX_POSTGRES_BIGINT = 2**63 - 1
 _DOCUMENT_KINDS = frozenset(("web_article", "epub", "pdf"))
 
 
+def _is_canonical_word_separator(character: str) -> bool:
+    """Match PostgreSQL ``[[:space:]]`` under Nexus' UTF-8 database locale.
+
+    This intentionally excludes non-breaking spaces, narrow non-breaking
+    spaces, figure spaces, NEL, and BOM. The browser helper and the stored
+    generated-column expression are locked to this policy by one golden corpus.
+    """
+    codepoint = ord(character)
+    return (
+        0x09 <= codepoint <= 0x0D
+        or codepoint == 0x20
+        or codepoint == 0x1680
+        or 0x2000 <= codepoint <= 0x2006
+        or 0x2008 <= codepoint <= 0x200A
+        or codepoint in (0x2028, 0x2029, 0x205F, 0x3000)
+    )
+
+
+def canonical_word_boundary_ordinal(canonical_text: str, offset: int) -> int:
+    """Count canonical token starts before a Unicode-code-point boundary."""
+    if isinstance(offset, bool) or not isinstance(offset, int) or not 0 <= offset <= len(
+        canonical_text
+    ):
+        raise ValueError(f"offset must be an integer in 0..{len(canonical_text)}")
+    ordinal = 0
+    in_word = False
+    for character in canonical_text[:offset]:
+        if _is_canonical_word_separator(character):
+            in_word = False
+        elif not in_word:
+            ordinal += 1
+            in_word = True
+    return ordinal
+
+
 @dataclass(frozen=True)
 class MediaSummaryMetrics:
     word_count: int

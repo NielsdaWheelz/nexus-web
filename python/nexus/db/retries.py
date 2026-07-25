@@ -40,6 +40,7 @@ RETRYABLE_UNIQUE_CONSTRAINTS = frozenset(
         "uix_resource_mutations_client_id",
         "reader_profiles_pkey",
         "uq_consumption_queue_items_user_media",
+        "uq_consumption_completion_facts_user_media",
         "uq_passage_anchors_identity",
         "uq_resource_edges_user_context_link_pair",
         "uq_resource_edges_user_stance_directed_pair",

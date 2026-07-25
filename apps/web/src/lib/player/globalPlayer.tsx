@@ -90,6 +90,9 @@ import {
 } from "@/lib/player/playerSession";
 import { usePlayerKeyboardShortcuts } from "@/lib/player/usePlayerKeyboardShortcuts";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
+import { activityRecorder } from "@/lib/consumption/activityRecorder";
+import { parseMediaRef } from "@/lib/consumption/activityContract";
+import { useViewportState } from "@/lib/renderEnvironment/provider";
 
 export const PLAYER_SKIP_BACK_SECONDS = 15;
 export const PLAYER_SKIP_FORWARD_SECONDS = 30;
@@ -201,6 +204,7 @@ function sessionOfState(state: PlayerSessionState): AudioSession | undefined {
 
 export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   const lectern = useLectern();
+  const viewport = useViewportState();
   const lecternResource = lectern.resource;
   const lecternMutation = lectern.mutation;
 
@@ -220,6 +224,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   const [isSilenceTrimming, setIsSilenceTrimming] = useState(false);
   const [silenceTimeSavedSeconds, setSilenceTimeSavedSeconds] = useState(0);
   const [startEpoch, setStartEpoch] = useState(0);
+  const [activityAudioPlaying, setActivityAudioPlaying] = useState(false);
 
   // Latest-value refs read by async callbacks (audio events, heartbeat, RAF).
   const sessionStateRef = useRef<PlayerSessionState>(sessionState);
@@ -727,6 +732,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   );
 
   const handleEnded = useCallback(() => {
+    setActivityAudioPlaying(false);
     stopSilenceTrimming();
     const state = sessionStateRef.current;
     if (state.kind !== "Active") return;
@@ -871,6 +877,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       if (previousNode && previousNode !== node) {
         stopSilenceTrimming();
         resetAudioGraphNodes();
+        setActivityAudioPlaying(false);
       }
       audioElementRef.current = node;
       setAudioElement(node);
@@ -900,6 +907,65 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   );
   const isPlaying = sessionState.kind === "Active" && sessionState.phase === "Playing";
   isPlayingRef.current = isPlaying;
+  const activityMediaId = currentSession?.descriptor.mediaId;
+  const listeningActivityObservation = useCallback(
+    (eligible: boolean) => {
+      if (!activityMediaId || !audioElement) return null;
+      return {
+        mediaRef: parseMediaRef(`media:${activityMediaId}`),
+        modality: "Listening" as const,
+        deviceClass:
+          viewport.kind === "mobile"
+            ? ("Mobile" as const)
+            : ("Desktop" as const),
+        eligible,
+        measurement: {
+          progress:
+            Number.isFinite(audioElement.duration) && audioElement.duration > 0
+              ? Math.max(
+                  0,
+                  Math.min(1, audioElement.currentTime / audioElement.duration),
+                )
+              : undefined,
+          mediaPositionMs: Math.max(
+            0,
+            Math.round(audioElement.currentTime * 1000),
+          ),
+        },
+      };
+    },
+    [activityMediaId, audioElement, viewport.kind],
+  );
+
+  useEffect(() => {
+    if (!viewport.hydrated || !activityMediaId) return;
+    const key = `audio:${activityMediaId}`;
+    const recorder = activityRecorder();
+    const initial = listeningActivityObservation(false);
+    if (!initial) return;
+    const unregister = recorder.registerObserver(key, initial);
+    return () => {
+      const closing = listeningActivityObservation(false);
+      if (closing) recorder.observe(key, closing);
+      unregister();
+    };
+  }, [
+    activityMediaId,
+    listeningActivityObservation,
+    viewport.hydrated,
+  ]);
+
+  useEffect(() => {
+    if (!viewport.hydrated || !activityMediaId) return;
+    const observation = listeningActivityObservation(activityAudioPlaying);
+    if (!observation) return;
+    activityRecorder().observe(`audio:${activityMediaId}`, observation);
+  }, [
+    activityAudioPlaying,
+    activityMediaId,
+    listeningActivityObservation,
+    viewport.hydrated,
+  ]);
 
   const { updatePositionState: updateMediaSessionPositionState } = useMediaSessionAdapter({
     track: mediaSessionTrack,
@@ -1007,11 +1073,13 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       }
     };
     const handlePause = () => {
+      setActivityAudioPlaying(false);
       if (sessionStateRef.current.kind === "Active") setPhase("Paused");
       stopSilenceTrimming();
       heartbeatRef.current?.tick();
     };
     const handlePlaying = () => {
+      setActivityAudioPlaying(true);
       setPhase("Playing");
       updateMediaSessionPositionState(true);
     };
@@ -1062,9 +1130,16 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
         // Ignore storage failures.
       }
     };
-    const handleWaiting = () => setPhase("Buffering");
-    const handleStalled = () => setPhase("Buffering");
+    const handleWaiting = () => {
+      setActivityAudioPlaying(false);
+      setPhase("Buffering");
+    };
+    const handleStalled = () => {
+      setActivityAudioPlaying(false);
+      setPhase("Buffering");
+    };
     const handleError = () => {
+      setActivityAudioPlaying(false);
       const errorCode = audioElement.error?.code ?? 0;
       const state = sessionStateRef.current;
       stopSilenceTrimming();
@@ -1080,6 +1155,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       }
     };
     const handleEmptied = () => {
+      setActivityAudioPlaying(false);
       setCurrentTimeSeconds(0);
       setDurationSeconds(0);
       setBufferedSeconds(0);

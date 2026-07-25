@@ -5,12 +5,12 @@
  * §6 "Explicit exact completion offers a ten-second Undo toast").
  *
  * A USER-invoked exact completion (Done / Mark finished — NOT a natural end)
- * offers a 10-second Undo. Undo serializes `SetUnread(mediaId)` then
- * `PlaceItems` after the nearest surviving pre-completion predecessor (else
- * `First`). It reuses the FIFO capability, whose promise contract makes the two
- * awaited commands exact: partial failure (unread committed, place definitively
- * failed) truthfully retains Unread and exposes only the remaining restore step;
- * a definitive lost anchor offers a fresh `Restore` action. No new API.
+ * offers a 10-second Undo. When that action created the first-completion fact,
+ * Undo consumes its sealed handle through `UndoCompletion`; otherwise it uses
+ * ordinary `SetUnread`. It then restores the Lectern row after the nearest
+ * surviving pre-completion predecessor (else `First`). The FIFO promise contract
+ * makes the awaited commands exact: partial failure truthfully retains Unread
+ * and exposes only the remaining restore step.
  */
 
 import { useCallback } from "react";
@@ -21,7 +21,9 @@ import type {
   LecternSnapshot,
   MediaId,
   Placement,
+  CompletionHandle,
 } from "@/lib/lectern/contract";
+import type { Presence } from "@/lib/api/presence";
 
 const UNDO_DURATION_MS = 10_000;
 
@@ -53,10 +55,11 @@ export interface CompletionUndoInput {
   preCompletionSnapshot: LecternSnapshot;
   /** The exact item that was completed, or null when the media had no Lectern row. */
   completedItemId: LecternItemId | null;
+  completionHandle: Presence<CompletionHandle>;
 }
 
 export function useCompletionUndo(): (input: CompletionUndoInput) => void {
-  const { setUnread, placeItems, getCanonicalSnapshot } = useLectern();
+  const { setUnread, undoCompletion, placeItems, getCanonicalSnapshot } = useLectern();
   const { show } = useFeedback();
 
   // Read the freshest canonical snapshot at Undo/Restore time, not at offer time —
@@ -99,7 +102,11 @@ export function useCompletionUndo(): (input: CompletionUndoInput) => void {
   const runUndo = useCallback(
     async (input: CompletionUndoInput) => {
       try {
-        await setUnread(input.mediaId);
+        if (input.completionHandle.kind === "Present") {
+          await undoCompletion(input.completionHandle.value);
+        } else {
+          await setUnread(input.mediaId);
+        }
       } catch {
         show({ severity: "error", title: "Could not mark unread" });
         return;
@@ -111,7 +118,7 @@ export function useCompletionUndo(): (input: CompletionUndoInput) => void {
       );
       await runRestore(input, placement);
     },
-    [currentSnapshot, runRestore, setUnread, show],
+    [currentSnapshot, runRestore, setUnread, show, undoCompletion],
   );
 
   return useCallback(

@@ -38,6 +38,7 @@ import {
 import type {
   ConsumptionCommand,
   ConsumptionResult,
+  CompletionHandle,
   LecternCommand,
   LecternItem,
   LecternItemId,
@@ -98,6 +99,7 @@ export interface LecternCapability {
     clientMutationId?: string;
   }): Promise<ConsumptionResult>;
   setUnread(mediaId: MediaId): Promise<ConsumptionResult>;
+  undoCompletion(completionHandle: CompletionHandle): Promise<ConsumptionResult>;
   setBatchState(input: {
     mediaIds: MediaId[];
     state: "Finished" | "Unread";
@@ -183,6 +185,7 @@ type LecternEngineMethods = Pick<
   | "ensureMediaFinished"
   | "finishLecternItem"
   | "setUnread"
+  | "undoCompletion"
   | "setBatchState"
   | "onCanonicalInstall"
   | "registerBeforeSetUnread"
@@ -604,6 +607,16 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
     });
   }
 
+  function undoCompletion(completionHandle: CompletionHandle): Promise<ConsumptionResult> {
+    const snapshot = requireReadySnapshot();
+    const command: ConsumptionCommand = {
+      kind: "UndoCompletion",
+      clientMutationId: crypto.randomUUID(),
+      completionHandle,
+    };
+    return enqueueConsumptionMutation(generation, command, snapshot);
+  }
+
   function setBatchState(input: {
     mediaIds: MediaId[];
     state: "Finished" | "Unread";
@@ -678,6 +691,7 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
     ensureMediaFinished,
     finishLecternItem,
     setUnread,
+    undoCompletion,
     setBatchState,
     onCanonicalInstall,
     registerBeforeSetUnread,
@@ -719,6 +733,7 @@ export function LecternProvider({ children }: { children: ReactNode }) {
       ensureMediaFinished: engine.ensureMediaFinished,
       finishLecternItem: engine.finishLecternItem,
       setUnread: engine.setUnread,
+      undoCompletion: engine.undoCompletion,
       setBatchState: engine.setBatchState,
       onCanonicalInstall: engine.onCanonicalInstall,
       registerBeforeSetUnread: engine.registerBeforeSetUnread,

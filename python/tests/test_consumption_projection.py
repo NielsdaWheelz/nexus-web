@@ -36,6 +36,7 @@ from nexus.schemas.reader import (
     WebReaderResumeState,
 )
 from nexus.services.consumption import _reader_engagement_store
+from nexus.services.consumption import service as consumption_service
 from tests.factories import add_media_to_library
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -53,6 +54,8 @@ def _register_media_cleanup(direct_db: DirectSessionManager, media_id: UUID) -> 
     for table in (
         "podcast_episodes",
         "podcast_episode_chapters",
+        "consumption_completion_facts",
+        "consumption_activity_spans",
         "consumption_queue_items",
         "consumption_overrides",
         "podcast_listening_states",
@@ -266,6 +269,17 @@ class TestConsumptionStateDerivationMatrix:
         assert item["consumption"]["progress"] == {"kind": "Present", "value": 0.95}
         # The 95% signal is projection-only: it never flips is_completed.
         assert _is_completed(direct_db, user_id=user_id, media_id=episode) is False
+        with direct_db.session() as session:
+            assert (
+                session.execute(
+                    text(
+                        "SELECT count(*) FROM consumption_completion_facts"
+                        " WHERE user_id = :user_id AND media_id = :media_id"
+                    ),
+                    {"user_id": user_id, "media_id": episode},
+                ).scalar_one()
+                == 1
+            )
 
     def test_audio_is_completed_derives_finished_independent_of_override(
         self, auth_client, direct_db: DirectSessionManager
@@ -381,6 +395,53 @@ class TestConsumptionStateDerivationMatrix:
 
         item = _get_lectern_item(auth_client, user_id, article)
         assert item["consumption"]["state"] == "InProgress", item
+
+    def test_reader_engagement_crossing_ninety_five_percent_records_one_completion_fact(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        article = _create_web_article(direct_db, title="Reader threshold")
+        _add_to_library(direct_db, library_id, article)
+
+        def locator(total_progression: float) -> WebReaderResumeState:
+            return WebReaderResumeState(
+                kind="web",
+                target=ReaderFragmentTarget(fragment_id="frag-1"),
+                locations=ReaderTextLocations(
+                    text_offset=0,
+                    progression=total_progression,
+                    total_progression=total_progression,
+                    position=1,
+                ),
+                text=ReaderQuoteContext(quote=None, quote_prefix=None, quote_suffix=None),
+            )
+
+        consumption_service.record_reader_engagement(user_id, article, locator(0.94))
+        with direct_db.session() as session:
+            assert (
+                session.execute(
+                    text(
+                        "SELECT count(*) FROM consumption_completion_facts"
+                        " WHERE user_id = :user_id AND media_id = :media_id"
+                    ),
+                    {"user_id": user_id, "media_id": article},
+                ).scalar_one()
+                == 0
+            )
+
+        consumption_service.record_reader_engagement(user_id, article, locator(0.95))
+        with direct_db.session() as session:
+            assert (
+                session.execute(
+                    text(
+                        "SELECT count(*) FROM consumption_completion_facts"
+                        " WHERE user_id = :user_id AND media_id = :media_id"
+                    ),
+                    {"user_id": user_id, "media_id": article},
+                ).scalar_one()
+                == 1
+            )
 
     def test_readable_override_finished_beats_derived_unread(
         self, auth_client, direct_db: DirectSessionManager

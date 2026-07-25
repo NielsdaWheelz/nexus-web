@@ -331,6 +331,8 @@ class FragmentOut(BaseModel):
     idx: int
     html_sanitized: str
     canonical_text: str
+    word_count: int
+    document_word_start: int
     t_start_ms: int | None = None
     t_end_ms: int | None = None
     speaker_label: str | None = None
@@ -725,4 +727,5 @@ class EpubSectionOut(BaseModel):
     canonical_text: str
     char_count: int
     word_count: int
+    document_word_start: int
     created_at: datetime

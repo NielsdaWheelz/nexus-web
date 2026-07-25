@@ -17,6 +17,7 @@ import { ReaderProvider } from "@/lib/reader/ReaderContext";
 import { ReaderProfileSaveFeedback } from "@/lib/reader/ReaderProfileSaveFeedback";
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { RenderEnvironmentProvider } from "@/lib/renderEnvironment/provider";
+import ActivityCaptureLifecycle from "@/lib/consumption/ActivityCaptureLifecycle";
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
 import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
 import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
@@ -48,6 +49,7 @@ export default function AuthenticatedShell({
   return (
     <RenderEnvironmentProvider value={renderEnvironment}>
       <UnauthenticatedApiBoundary>
+        <ActivityCaptureLifecycle />
         <SessionRefresher />
         <LocalVaultAutoSync />
         <WebVitalsReporter />

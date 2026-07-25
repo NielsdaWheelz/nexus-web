@@ -2729,6 +2729,85 @@ class PodcastListeningState(Base):
     user: Mapped["User"] = relationship("User", back_populates="podcast_listening_states")
 
 
+class ConsumptionActivitySpan(Base):
+    """One bounded observed Consumption activity interval."""
+
+    __tablename__ = "consumption_activity_spans"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", name="fk_consumption_activity_spans_user"),
+        nullable=False,
+    )
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", name="fk_consumption_activity_spans_media"),
+        nullable=False,
+    )
+    modality: Mapped[str] = mapped_column(Text, nullable=False)
+    device_id: Mapped[str] = mapped_column(Text, nullable=False)
+    device_class: Mapped[str] = mapped_column(Text, nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    duration_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    progress_start: Mapped[float | None] = mapped_column(Float, nullable=True)
+    progress_end: Mapped[float | None] = mapped_column(Float, nullable=True)
+    word_start: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    word_end: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    media_position_start_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    media_position_end_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_consumption_activity_spans_user_occurred_id", "user_id", "occurred_at", "id"),
+        Index(
+            "ix_consumption_activity_spans_user_media_occurred_id",
+            "user_id",
+            "media_id",
+            "occurred_at",
+            "id",
+        ),
+        Index(
+            "ix_consumption_activity_spans_user_device_occurred_id",
+            "user_id",
+            "device_id",
+            "occurred_at",
+            "id",
+        ),
+        Index("ix_consumption_activity_spans_media_id", "media_id", "id"),
+    )
+
+
+class ConsumptionCompletionFact(Base):
+    """The first observed post-cutover Finished transition for one viewer/media."""
+
+    __tablename__ = "consumption_completion_facts"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", name="fk_consumption_completion_facts_user"),
+        nullable=False,
+    )
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", name="fk_consumption_completion_facts_media"),
+        nullable=False,
+    )
+    modality: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "media_id", name="uq_consumption_completion_facts_user_media"),
+        Index("ix_consumption_completion_facts_user_created_id", "user_id", "created_at", "id"),
+        Index("ix_consumption_completion_facts_media_id", "media_id", "id"),
+    )
+
+
 class ConsumptionQueueItem(Base):
     """Per-user ordered consumption queue item (any media kind)."""
 

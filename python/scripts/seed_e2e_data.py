@@ -46,12 +46,20 @@ for key in (
 ):
     os.environ.pop(key, None)
 
-from nexus.db.models import FailureStage, Fragment, Media, ProcessingStatus
+from nexus.db.models import (
+    FailureStage,
+    Fragment,
+    Media,
+    Podcast,
+    PodcastEpisode,
+    ProcessingStatus,
+)
 from nexus.db.retries import retry_serializable
 from nexus.db.session import create_session_factory
 from nexus.jobs.queue import supersede_unclaimed_job
 from nexus.jobs.worker import JobWorker
 from nexus.schemas.highlights import CreateHighlightRequest
+from nexus.services import library_entries
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.content_indexing import request_media_content_reindex
@@ -76,10 +84,14 @@ EPUB_SEED_FILE_RELATIVE = Path("e2e/.seed/epub-media.json")
 YOUTUBE_SEED_FILE_RELATIVE = Path("e2e/.seed/youtube-media.json")
 READER_RESUME_SEED_FILE_RELATIVE = Path("e2e/.seed/reader-resume-media.json")
 READER_DOCUMENT_MAP_SEED_FILE_RELATIVE = Path("e2e/.seed/reader-document-map-media.json")
+AUDIO_ACTIVITY_SEED_FILE_RELATIVE = Path("e2e/.seed/activity-audio-media.json")
 UPLOAD_FIXTURE_RELATIVE = Path("e2e/.seed/upload-source.pdf")
 NON_PDF_SOURCE_URL = "https://example.com/e2e-linked-items-seed"
 READER_RESUME_WEB_SOURCE_URL = "https://example.com/e2e-reader-resume-web-seed"
 READER_DOCUMENT_MAP_SOURCE_URL = "https://example.com/e2e-reader-document-map-seed"
+ACTIVITY_AUDIO_SOURCE_URL = "https://example.com/e2e-activity-audio-seed"
+ACTIVITY_AUDIO_STREAM_PATH = "/e2e-activity-audio.wav"
+ACTIVITY_AUDIO_DURATION_SECONDS = 30
 YOUTUBE_VIDEO_ID = "s8E2Evid001"
 YOUTUBE_PLAYBACK_ONLY_VIDEO_ID = "s8E2Evid002"
 YOUTUBE_WATCH_URL = f"https://www.youtube.com/watch?v={YOUTUBE_VIDEO_ID}"
@@ -573,6 +585,23 @@ def _write_reader_document_map_seed_file(
     }
     seed_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     print(f"Wrote E2E reader Document Map seed metadata: {seed_path}")
+
+
+def _write_activity_audio_seed_file(*, media_id: UUID, title: str) -> None:
+    """Persist the deterministic audio identity used by activity E2E."""
+    repo_root = Path(__file__).resolve().parents[2]
+    seed_path = repo_root / AUDIO_ACTIVITY_SEED_FILE_RELATIVE
+    seed_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "media_fixture_kind": "synthetic",
+        "media_id": str(media_id),
+        "title": title,
+        "stream_path": ACTIVITY_AUDIO_STREAM_PATH,
+        "duration_seconds": ACTIVITY_AUDIO_DURATION_SECONDS,
+        "seeded_at": datetime.now(UTC).isoformat(),
+    }
+    seed_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    print(f"Wrote E2E activity-audio seed metadata: {seed_path}")
 
 
 def _clear_fragment_artifacts(db, media_id: UUID) -> None:
@@ -1397,6 +1426,93 @@ def _seed_reader_document_map_media(session_factory, user_id: UUID) -> None:
     print(f"Seeded reader Document Map media for E2E: {media_id}")
 
 
+def _seed_activity_audio_media(session_factory, user_id: UUID) -> None:
+    """Seed one playable podcast episode for the real background-audio path.
+
+    The application receives an ordinary short stream URL. The focused
+    Playwright spec fulfills that external-media request with deterministic WAV
+    bytes; all Nexus API, Lectern, player, and activity traffic stays real.
+    """
+    podcast_id = uuid5(NAMESPACE_URL, "nexus:e2e:activity-audio:podcast")
+    media_id = uuid5(NAMESPACE_URL, "nexus:e2e:activity-audio:episode")
+    title = "E2E background listening seed"
+    now = datetime.now(UTC)
+
+    with session_factory() as db:
+        default_library_id = ensure_user_and_default_library(db, user_id)
+        podcast = db.get(Podcast, podcast_id)
+        if podcast is None:
+            podcast = Podcast(
+                id=podcast_id,
+                provider="e2e",
+                provider_podcast_id="activity-audio",
+                title="E2E Activity Audio",
+                feed_url="https://example.com/e2e-activity-audio-feed.xml",
+                description="Deterministic audio fixture for activity capture.",
+            )
+            db.add(podcast)
+        else:
+            podcast.title = "E2E Activity Audio"
+            podcast.updated_at = now
+
+        media = db.get(Media, media_id)
+        if media is None:
+            media = Media(
+                id=media_id,
+                kind="podcast_episode",
+                title=title,
+                canonical_source_url=ACTIVITY_AUDIO_SOURCE_URL,
+                external_playback_url=ACTIVITY_AUDIO_STREAM_PATH,
+                provider="e2e",
+                provider_id="activity-audio-episode",
+                created_by_user_id=user_id,
+                processing_status=ProcessingStatus.ready_for_reading,
+                processing_started_at=now,
+                processing_completed_at=now,
+            )
+            db.add(media)
+        else:
+            media.title = title
+            media.canonical_source_url = ACTIVITY_AUDIO_SOURCE_URL
+            media.external_playback_url = ACTIVITY_AUDIO_STREAM_PATH
+            media.provider = "e2e"
+            media.provider_id = "activity-audio-episode"
+            media.processing_status = ProcessingStatus.ready_for_reading
+            media.failure_stage = None
+            media.last_error_code = None
+            media.last_error_message = None
+            media.failed_at = None
+            media.processing_completed_at = now
+            media.updated_at = now
+        db.flush()
+
+        episode = db.get(PodcastEpisode, media_id)
+        if episode is None:
+            db.add(
+                PodcastEpisode(
+                    media_id=media_id,
+                    podcast_id=podcast_id,
+                    provider_episode_id="activity-audio-episode",
+                    guid="nexus-e2e-activity-audio",
+                    fallback_identity="activity-audio-episode",
+                    published_at=datetime(2026, 1, 1, tzinfo=UTC),
+                    duration_seconds=ACTIVITY_AUDIO_DURATION_SECONDS,
+                    description_text="Deterministic background-listening fixture.",
+                )
+            )
+        else:
+            episode.duration_seconds = ACTIVITY_AUDIO_DURATION_SECONDS
+        library_entries.ensure_entry(
+            db,
+            default_library_id,
+            library_entries.media_target(media_id),
+        )
+        db.commit()
+
+    _write_activity_audio_seed_file(media_id=media_id, title=title)
+    print(f"Seeded activity-audio podcast episode for E2E: {media_id}")
+
+
 def main() -> None:
     nexus_env = os.getenv("NEXUS_ENV", "local")
     if nexus_env not in ("local", "test"):
@@ -1514,6 +1630,7 @@ def main() -> None:
     _seed_epub_media(session_factory, user_id)
     _seed_reader_resume_media(session_factory, user_id)
     _seed_reader_document_map_media(session_factory, user_id)
+    _seed_activity_audio_media(session_factory, user_id)
 
 
 if __name__ == "__main__":

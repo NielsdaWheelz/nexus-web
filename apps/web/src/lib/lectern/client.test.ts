@@ -266,6 +266,7 @@ describe("decodeConsumptionResult", () => {
       outcome: { kind: "Removed", itemId: ITEM_ID, nextItemId: { kind: "Present", value: NEXT_ITEM_ID } },
       lectern: { items: [item({ itemId: NEXT_ITEM_ID })] },
       nextItem: { kind: "Present", value: item({ itemId: NEXT_ITEM_ID }) },
+      completionHandle: { kind: "Absent" },
       listeningStates: [
         {
           mediaId: MEDIA_ID,
@@ -291,6 +292,7 @@ describe("decodeConsumptionResult", () => {
       lectern: { items: [] },
       nextItem: { kind: "Absent" },
       listeningStates: [],
+      completionHandle: { kind: "Absent" },
     });
     expect(result.outcome).toEqual({ kind: "StateOnly" });
     expect(result.nextItem).toEqual({ kind: "Absent" });

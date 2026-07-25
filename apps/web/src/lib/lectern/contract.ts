@@ -43,6 +43,7 @@ const CANONICAL_UUID_RE =
 
 export type MediaId = string & { readonly __mediaId: unique symbol };
 export type LecternItemId = string & { readonly __lecternItemId: unique symbol };
+export type CompletionHandle = string & { readonly __completionHandle: unique symbol };
 
 /** Server-produced in-app path (leading "/"), branded so leaves cannot pass a raw string. */
 export type AppHref = string & { readonly __appHref: unique symbol };
@@ -73,6 +74,13 @@ export function assumeLecternItemId(value: string): LecternItemId {
     throw new Error(`Non-canonical LecternItemId: ${JSON.stringify(value)}`);
   }
   return value as LecternItemId;
+}
+
+export function parseCompletionHandle(value: string): CompletionHandle {
+  if (!/^ncc1\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{22}$/.test(value)) {
+    throw new Error(`Invalid CompletionHandle: ${JSON.stringify(value)}`);
+  }
+  return value as CompletionHandle;
 }
 
 export function assumeAppHref(value: string): AppHref {
@@ -235,6 +243,11 @@ export type ConsumptionCommand =
     }
   | { kind: "SetUnread"; clientMutationId: string; mediaId: MediaId }
   | {
+      kind: "UndoCompletion";
+      clientMutationId: string;
+      completionHandle: CompletionHandle;
+    }
+  | {
       kind: "SetBatchState";
       clientMutationId: string;
       mediaIds: MediaId[];
@@ -260,6 +273,7 @@ export interface ConsumptionResult {
   lectern: LecternSnapshot;
   nextItem: Presence<LecternItem>;
   listeningStates: MediaListeningState[];
+  completionHandle: Presence<CompletionHandle>;
 }
 
 // --- Bounds ------------------------------------------------------------------
@@ -350,6 +364,10 @@ function decodeMediaId(raw: unknown): MediaId {
 
 function decodeLecternItemId(raw: unknown): LecternItemId {
   return parseLecternItemId(asString(raw, "LecternItemId"));
+}
+
+function decodeCompletionHandle(raw: unknown): CompletionHandle {
+  return parseCompletionHandle(asString(raw, "CompletionHandle"));
 }
 
 function decodeAppHref(raw: unknown): AppHref {
@@ -597,7 +615,11 @@ function decodeConsumptionOutcome(raw: unknown): ConsumptionOutcome {
 
 export function decodeConsumptionResult(raw: unknown): ConsumptionResult {
   const rec = asRecord(raw, "ConsumptionResult");
-  exactKeys(rec, ["outcome", "lectern", "nextItem", "listeningStates"], "ConsumptionResult");
+  exactKeys(
+    rec,
+    ["outcome", "lectern", "nextItem", "listeningStates", "completionHandle"],
+    "ConsumptionResult",
+  );
   return {
     outcome: decodeConsumptionOutcome(rec.outcome),
     lectern: decodeLecternSnapshot(rec.lectern),
@@ -605,6 +627,7 @@ export function decodeConsumptionResult(raw: unknown): ConsumptionResult {
     listeningStates: asArray(rec.listeningStates, "ConsumptionResult.listeningStates").map(
       decodeMediaListeningState,
     ),
+    completionHandle: decodePresence(rec.completionHandle, decodeCompletionHandle),
   };
 }
 

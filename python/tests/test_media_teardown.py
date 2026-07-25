@@ -196,6 +196,32 @@ def test_teardown_lifecycle_deletes_media_and_sweeps_storage(
     user_id = create_test_user_id()
     media_id, storage_path = _seed_media_with_file(direct_db, user_id=user_id)
     storage.put_object(storage_path, b"%PDF-1.4", "application/pdf")
+    with direct_db.session() as session:
+        session.execute(
+            text(
+                """
+                INSERT INTO consumption_activity_spans (
+                    id, user_id, media_id, modality, device_id, device_class,
+                    occurred_at, duration_ms
+                )
+                VALUES (:span_id, :user_id, :media_id, 'Reading', 'teardown-test',
+                        'Desktop', now(), 1000)
+                """
+            ),
+            {"span_id": uuid4(), "user_id": user_id, "media_id": media_id},
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO consumption_completion_facts (
+                    id, user_id, media_id, modality
+                )
+                VALUES (:completion_id, :user_id, :media_id, 'Reading')
+                """
+            ),
+            {"completion_id": uuid4(), "user_id": user_id, "media_id": media_id},
+        )
+        session.commit()
 
     _claim(direct_db, media_id)
     assert _checkpoint(direct_db, media_id) == "Unprepared"
@@ -204,6 +230,22 @@ def test_teardown_lifecycle_deletes_media_and_sweeps_storage(
     assert not _media_exists(direct_db, media_id)
     assert _intent_id(direct_db, media_id) is None
     assert storage.get_object(storage_path) is None
+    with direct_db.session() as session:
+        assert (
+            session.scalar(
+                text(
+                    """
+                    SELECT
+                        (SELECT count(*) FROM consumption_activity_spans
+                         WHERE media_id = :media_id)
+                      + (SELECT count(*) FROM consumption_completion_facts
+                         WHERE media_id = :media_id)
+                    """
+                ),
+                {"media_id": media_id},
+            )
+            == 0
+        )
 
 
 def test_teardown_checkpoints_advance_one_step_per_run_and_recover(

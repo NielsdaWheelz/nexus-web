@@ -9,7 +9,8 @@ It is an **overview**, not a rulebook. The normative engineering rules live in
 [`rules/`](rules/index.md); the reader behavior contract lives in
 [`modules/reader-implementation.md`](modules/reader-implementation.md) and
 [`modules/reader-design-rationale.md`](modules/reader-design-rationale.md). This
-doc links to those rather than restating them.
+doc links to those rather than restating them. Consumption-history ownership is
+defined in [`modules/consumption-activity.md`](modules/consumption-activity.md).
 
 ---
 
@@ -457,11 +458,12 @@ viewer, membership/order only — completion is never stored on the row),
 `consumption_overrides` (explicit `Unread`/
 `Finished` state), `reader_engagement_states` (one current-state row per
 viewer/media: `last_engaged_at` recency and, for non-PDF locators, a
-monotonic `max_total_progression` — no session/device/span/dwell history),
-and `media_teardown_intents` (media-deletion claim; see §8.8 and
-[`modules/storage.md`](modules/storage.md)). See
-[`modules/player.md`](modules/player.md) for the owning
-`services/consumption/` package.
+monotonic `max_total_progression`), `consumption_activity_spans` (bounded
+observed Reading/Listening/Viewing intervals), `consumption_completion_facts`
+(the first observed post-cutover canonical completion per viewer/media), and
+`media_teardown_intents` (media-deletion claim; see §8.8 and
+[`modules/storage.md`](modules/storage.md)). Current state and historical facts
+are separate; see [`modules/consumption-activity.md`](modules/consumption-activity.md).
 
 **Jobs** — `background_jobs` (raw-SQL-only durable queue), plus rate-limiter
 tables (`rate_limit_request_log`, `rate_limit_inflight`, `token_budget_*`) and
@@ -1177,12 +1179,13 @@ explicit `Unread`/`Finished`), `_listening_store.py` (`podcast_listening_states`
 position/duration/speed + heartbeat fencing tokens `write_revision`/
 `reset_epoch`), `_reader_engagement_store.py` (`reader_engagement_states`,
 the sole DML owner of current-state reader recency — `last_engaged_at` plus,
-for non-PDF locators, a monotonic `max_total_progression`; no session,
-device, span, or dwell history), and `_projection.py` (the combined
-explicit-override + reader-engagement read model, plus batched
+for non-PDF locators, a monotonic `max_total_progression`), `_activity_store.py`
+(`consumption_activity_spans` and `consumption_completion_facts` DML),
+`_activity_stats.py` (read-time aggregation/sessionization), and `_projection.py`
+(the combined explicit-override + reader-engagement read model, plus batched
 `PlayerDescriptor`s reusing `derive_playback_source`). Consumption exposes
-policy-neutral engagement and complete queue-membership reads to Resonance;
-it does not own a second public Recent product. `GET /lectern/slate` builds the
+policy-neutral engagement and complete queue-membership reads to Resonance; it
+does not own a second public Recent product. `GET /lectern/slate` builds the
 on-demand **At hand** projection from Continuity, Arrival, and factual graph,
 author, and calibrated semantic evidence. It returns at most ten placeable
 media outside the complete queue and excludes `Finished` targets. Two bounded
@@ -1210,13 +1213,25 @@ across pane navigation and is never an editor. A single app-wide `<audio>`
 element lives in `lib/player/globalPlayer.tsx` with a Web Audio effects graph,
 OS media-session integration, and a single-flight, generation-keyed
 15s-cadence listening heartbeat (`lib/player/listeningHeartbeat.ts`). See
-[`modules/player.md`](modules/player.md) for the full file map. The shared
+[`modules/player.md`](modules/player.md) and
+[`modules/consumption-activity.md`](modules/consumption-activity.md) for the
+full file map. The shared
 `ReadingSlateSection` consumes an optional Lectern first-paint seed and
 otherwise queries only while its pane is active. It delegates Add to the
 existing Lectern or library mutation owner and owns deterministic stable
 refill, not destination state.
 
-### 8.9 Search surfaces & Launcher
+### 8.9 Consumption Activity & Stats
+
+`services/consumption/` stores two historical fact families only: bounded
+observed spans and first post-cutover completion facts. The browser's one
+tab-local recorder is fed by the reader, the owned global audio element, and
+the visible embedded-video pane; it never exposes the raw `nx_device` value.
+`/stats` renders URL-owned factual time buckets, current visibility-scoped
+breakdowns, derived sessions, and a deterministic Year in Reading view. The
+full contract is [`modules/consumption-activity.md`](modules/consumption-activity.md).
+
+### 8.10 Search surfaces & Launcher
 
 The same `search()` backs the `/search` results page (`SearchPaneBody`), inline
 Launcher results, and the chat `app_search` tool — the page and the Launcher `@` lane

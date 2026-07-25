@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import MediaImage from "@/components/ui/MediaImage";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import Button from "@/components/ui/Button";
@@ -8,6 +8,9 @@ import { YOUTUBE_EMBED_HOSTS } from "@/lib/security/youtube";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { useLectern } from "@/lib/lectern/LecternProvider";
 import { parseMediaId, type PlayerDescriptor } from "@/lib/lectern/contract";
+import { activityRecorder } from "@/lib/consumption/activityRecorder";
+import { parseMediaRef } from "@/lib/consumption/activityContract";
+import { useViewportState } from "@/lib/renderEnvironment/provider";
 import {
   normalizeTrackChapters,
   type GlobalPlayerChapter,
@@ -241,6 +244,8 @@ interface TranscriptPlaybackPanelProps {
   descriptionHtml?: string | null;
   descriptionText?: string | null;
   videoSeekTargetMs: number | null;
+  paneActive?: boolean;
+  paneInstance?: string;
   onSeek: (timestampMs: number | null | undefined) => void;
 }
 
@@ -254,11 +259,30 @@ export default function TranscriptPlaybackPanel({
   descriptionHtml,
   descriptionText,
   videoSeekTargetMs,
+  paneActive = true,
+  paneInstance = mediaId,
   onSeek,
 }: TranscriptPlaybackPanelProps) {
   const { playAudio, presentation, state } = useGlobalPlayer();
   const { placeItems, resource } = useLectern();
   const [playbackError, setPlaybackError] = useState(false);
+  const [iframeLoaded, setIframeLoaded] = useState(false);
+  const [iframeVisible, setIframeVisible] = useState(false);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const updateVideoActivityRef = useRef<() => void>(() => {});
+  const viewport = useViewportState();
+  const videoEligibilityRef = useRef({
+    iframeLoaded,
+    iframeVisible,
+    paneActive,
+    playbackError,
+  });
+  videoEligibilityRef.current = {
+    iframeLoaded,
+    iframeVisible,
+    paneActive,
+    playbackError,
+  };
   const currentTimeSeconds = presentation.positionMs / 1000;
 
   // Play and Lectern mutations wait for the canonical snapshot to be Ready (spec
@@ -348,12 +372,72 @@ export default function TranscriptPlaybackPanel({
 
   useEffect(() => {
     setPlaybackError(false);
+    setIframeLoaded(false);
   }, [
     mediaKind,
     playbackSource?.embed_url,
     playbackSource?.kind,
     playbackSource?.source_url,
   ]);
+
+  useEffect(() => {
+    const iframe = iframeRef.current;
+    if (!viewport.hydrated || !iframe || mediaKind !== "video" || !iframeSrc) {
+      return;
+    }
+    const recorder = activityRecorder();
+    const key = `video:${paneInstance}:${mediaId}`;
+    const update = () => {
+      const eligibility = videoEligibilityRef.current;
+      recorder.observe(key, {
+        mediaRef: parseMediaRef(`media:${mediaId}`),
+        modality: "Viewing",
+        deviceClass: viewport.kind === "mobile" ? "Mobile" : "Desktop",
+        eligible:
+          eligibility.iframeLoaded &&
+          eligibility.iframeVisible &&
+          eligibility.paneActive &&
+          !eligibility.playbackError &&
+          document.visibilityState === "visible" &&
+          (document.hasFocus() || document.activeElement === iframe),
+      });
+    };
+    const unregister = recorder.registerObserver(key, {
+      mediaRef: parseMediaRef(`media:${mediaId}`),
+      modality: "Viewing",
+      deviceClass: viewport.kind === "mobile" ? "Mobile" : "Desktop",
+      eligible: false,
+    });
+    updateVideoActivityRef.current = update;
+    const observer = new IntersectionObserver(
+      ([entry]) => setIframeVisible(entry?.intersectionRatio >= 0.5),
+      { threshold: [0, 0.5] },
+    );
+    observer.observe(iframe);
+    document.addEventListener("visibilitychange", update);
+    window.addEventListener("focus", update);
+    window.addEventListener("blur", update);
+    update();
+    return () => {
+      observer.disconnect();
+      document.removeEventListener("visibilitychange", update);
+      window.removeEventListener("focus", update);
+      window.removeEventListener("blur", update);
+      updateVideoActivityRef.current = () => {};
+      unregister();
+    };
+  }, [
+    iframeSrc,
+    mediaId,
+    mediaKind,
+    paneInstance,
+    viewport.hydrated,
+    viewport.kind,
+  ]);
+
+  useEffect(() => {
+    updateVideoActivityRef.current();
+  }, [iframeLoaded, iframeVisible, paneActive, playbackError]);
 
   const handleShowNotesClick = (event: MouseEvent<HTMLDivElement>) => {
     const target = event.target;
@@ -422,14 +506,21 @@ export default function TranscriptPlaybackPanel({
           </div>
         ) : mediaKind === "video" && iframeSrc ? (
           <iframe
+            ref={iframeRef}
             title="YouTube video player"
             src={iframeSrc}
             className={styles.playerFrame}
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
             referrerPolicy="strict-origin-when-cross-origin"
             allowFullScreen
-            onError={() => setPlaybackError(true)}
-            onLoad={() => setPlaybackError(false)}
+            onError={() => {
+              setPlaybackError(true);
+              setIframeLoaded(false);
+            }}
+            onLoad={() => {
+              setPlaybackError(false);
+              setIframeLoaded(true);
+            }}
           />
         ) : (
           <div className={styles.notReady}>

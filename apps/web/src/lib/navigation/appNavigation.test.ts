@@ -25,6 +25,7 @@ describe("app navigation model", () => {
       "podcasts",
       "chats",
       "notes",
+      "stats",
       "atlas",
       "oracle",
     ]);

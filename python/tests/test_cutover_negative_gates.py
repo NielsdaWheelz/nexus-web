@@ -2053,6 +2053,106 @@ def test_attention_dissolved_consumption_owns_reader_engagement():
 
 
 # =============================================================================
+# Consumption Activity and Stats hard cutover: exactly two history fact tables,
+# one DML owner, one browser recorder, no telemetry or raw device escape.
+# (consumption-activity-stats-hard-cutover.md §Hard-cut cleanup / AC15)
+# =============================================================================
+
+
+_CONSUMPTION_ACTIVITY_FACT_TABLES = {
+    "consumption_activity_spans",
+    "consumption_completion_facts",
+}
+_ACTIVITY_BROWSER_SOURCES = (
+    _WEB_ROOT / "lib" / "consumption" / "activityContract.ts",
+    _WEB_ROOT / "lib" / "consumption" / "activityRecorder.ts",
+    _WEB_ROOT / "lib" / "consumption" / "ActivityCaptureLifecycle.tsx",
+    _WEB_ROOT / "lib" / "consumption" / "statsContract.ts",
+    _WEB_ROOT / "app" / "(authenticated)" / "stats" / "StatsPaneBody.tsx",
+    _WEB_ROOT / "app" / "(authenticated)" / "media" / "[id]" / "MediaPaneBody.tsx",
+    _WEB_ROOT / "app" / "(authenticated)" / "media" / "[id]" / "ReaderActivityAdapter.ts",
+    _WEB_ROOT / "app" / "(authenticated)" / "media" / "[id]" / "TranscriptPlaybackPanel.tsx",
+    _WEB_ROOT / "lib" / "player" / "globalPlayer.tsx",
+)
+
+
+def test_consumption_activity_has_exactly_two_history_fact_tables():
+    # Queue/override tables are separate established Consumption state. This
+    # narrow prefix admits only the new historical fact family and makes a
+    # session/rollup/third-fact table a deliberate new contract decision.
+    models = (_PY_ROOT / "db" / "models.py").read_text(encoding="utf-8")
+    tables = set(
+        re.findall(
+            r'__tablename__\s*=\s*["\']((?:consumption_activity|consumption_completion)_[a-z_]+)["\']',
+            models,
+        )
+    )
+    assert tables == _CONSUMPTION_ACTIVITY_FACT_TABLES, (
+        "Consumption Activity must retain exactly its span and first-completion "
+        f"fact tables, found: {sorted(tables)}"
+    )
+
+
+def test_consumption_activity_fact_dml_is_confined_to_activity_store():
+    pattern = (
+        _CONSUMPTION_TABLE_WRITE + r"(?:consumption_activity_spans|consumption_completion_facts)\b"
+    )
+    hits = _excluding(
+        _grep(pattern, _PY_ROOT),
+        "services/consumption/_activity_store.py",
+    )
+    assert not hits, f"Consumption Activity fact DML escaped _activity_store.py:\n{_fmt(hits)}"
+
+
+def test_consumption_activity_routes_do_not_write_operational_telemetry():
+    # Capture diagnostics are local and sanitized; HTTP ingress/reads are
+    # transport-only and must not establish a second telemetry write path.
+    routes = (
+        _PY_ROOT / "api" / "routes" / "consumption_activity.py",
+        _WEB_ROOT / "app" / "api" / "consumption" / "activity" / "route.ts",
+        _WEB_ROOT / "app" / "api" / "consumption" / "stats" / "route.ts",
+        _WEB_ROOT / "app" / "api" / "consumption" / "sessions" / "route.ts",
+    )
+    hits = _grep(r"\b(?:telemetry|analytics|metrics)\b", *routes)
+    assert not hits, f"Consumption Activity route writes operational telemetry:\n{_fmt(hits)}"
+
+
+def test_consumption_activity_has_one_browser_recorder_and_no_raw_device_value():
+    recorder_files = [
+        path.relative_to(_WEB_ROOT).as_posix()
+        for path in _iter_scan_files(_WEB_ROOT)
+        if not _FRONTEND_TEST.search(path.as_posix())
+        and re.search(
+            r"(?:activity|consumption).*(?:recorder|tracker)|"
+            r"(?:recorder|tracker).*(?:activity|consumption)",
+            path.name,
+            flags=re.IGNORECASE,
+        )
+    ]
+    assert recorder_files == ["lib/consumption/activityRecorder.ts"], (
+        f"Consumption Activity has a second browser recorder: {recorder_files}"
+    )
+
+    raw_device_hits = _grep(
+        r"\bnx_device\b|\b(?:currentDeviceId|deviceId|device_id)\b",
+        *_ACTIVITY_BROWSER_SOURCES,
+    )
+    assert not raw_device_hits, (
+        f"raw device identity escaped into Consumption browser code:\n{_fmt(raw_device_hits)}"
+    )
+
+
+def test_browser_has_no_finished_threshold_literal():
+    browser_sources = [
+        path
+        for path in _iter_scan_files(_WEB_ROOT)
+        if path.suffix in {".ts", ".tsx"} and not _FRONTEND_TEST.search(path.as_posix())
+    ]
+    hits = _grep(r"\b0\.95\b", *browser_sources)
+    assert not hits, f"finished threshold literal survives in browser code:\n{_fmt(hits)}"
+
+
+# =============================================================================
 # Grand atlas hard cutover: media_atlas_positions has exactly one writer
 # (services/atlas_projection.py); no numpy in the projection service
 # (grand-atlas-hard-cutover.md §13 G1/G2).

@@ -32,7 +32,7 @@ def _record_selection(auth_client, user_id, **overrides):
 
 
 class TestPaletteSelections:
-    @pytest.mark.parametrize("target_href", ["/lectern", "/atlas"])
+    @pytest.mark.parametrize("target_href", ["/lectern", "/stats", "/atlas"])
     def test_post_accepts_static_navigation_targets(
         self,
         auth_client,

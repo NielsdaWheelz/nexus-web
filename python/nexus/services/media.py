@@ -926,6 +926,15 @@ def list_fragments_for_viewer(
                 f.idx,
                 f.html_sanitized,
                 f.canonical_text,
+                f.canonical_text_word_count,
+                COALESCE(
+                    SUM(f.canonical_text_word_count) OVER (
+                        PARTITION BY f.media_id
+                        ORDER BY f.idx
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                    ),
+                    0
+                ) AS document_word_start,
                 f.t_start_ms,
                 f.t_end_ms,
                 f.speaker_label,
@@ -944,10 +953,12 @@ def list_fragments_for_viewer(
             idx=row[2],
             html_sanitized=row[3],
             canonical_text=row[4],
-            t_start_ms=row[5],
-            t_end_ms=row[6],
-            speaker_label=row[7],
-            created_at=row[8],
+            word_count=int(row[5]),
+            document_word_start=int(row[6]),
+            t_start_ms=row[7],
+            t_end_ms=row[8],
+            speaker_label=row[9],
+            created_at=row[10],
         )
         for row in result.fetchall()
     ]

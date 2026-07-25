@@ -1,20 +1,26 @@
 """Database-backed contracts for stored canonical media metrics."""
 
+import json
 import re
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import event
+from sqlalchemy import event, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import Fragment, Media, MediaKind, PdfPageTextSpan, ProcessingStatus
 from nexus.schemas.presence import Absent, Present
 from nexus.services.media_document_metrics import (
+    canonical_word_boundary_ordinal,
     load_media_summary_metrics,
     load_media_word_counts,
 )
 
 pytestmark = pytest.mark.integration
+_WORD_POLICY_CASES = (
+    Path(__file__).parents[2] / "testdata/consumption/canonical_word_policy.json"
+)
 
 
 def _add_media(
@@ -47,6 +53,21 @@ def _add_fragment(db: Session, media: Media, idx: int, canonical_text: str) -> N
             html_sanitized="",
         )
     )
+
+
+def test_canonical_word_policy_matches_stored_postgres_expression(db_session: Session):
+    cases = json.loads(_WORD_POLICY_CASES.read_text(encoding="utf-8"))
+
+    for case in cases:
+        stored_count = db_session.scalar(
+            text("SELECT regexp_count(:canonical_text, '[^[:space:]]+')"),
+            {"canonical_text": case["text"]},
+        )
+        assert stored_count == case["wordCount"], case["name"]
+        for offset, expected in case["boundaries"]:
+            assert (
+                canonical_word_boundary_ordinal(case["text"], offset) == expected
+            ), case["name"]
 
 
 def test_word_count_batch_deduplicates_and_reads_mixed_document_counts_once(

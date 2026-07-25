@@ -88,6 +88,9 @@ In order:
   → spec `cutovers/dawn-write-hard-cutover.md`
 - **Vespers**: a once-a-day, summoned-only composed reading of what settled
   since the last visit. No badges, no counts, ever.
+- **Stats** is the separate factual lane: observed time, sessions, progress,
+  and deterministic Year in Reading. It does not become a ritual, feed, or
+  badge system.
 - **Temporal Echo**: a highlight from this date in a prior year, verbatim, no
   prompt attached. **Drift Protocol**: the old highlight nothing ever connected
   to, given one more chance. Both ~SQL-only weekends.
@@ -134,7 +137,8 @@ In order:
 - **Marginalia heresy** (edges demoted to an index over prose) — the flat edge
   table stays sovereign; but steal the half-idea: Synapse rationales deserve to
   be read as prose, not compressed into "↳ 3".
-- Streaks/badges anywhere. Ritual, not gamification.
+- Badges, leaderboards, and gamified streak rewards. The factual Stats streak
+  is history, not a reward loop; ritual remains separate.
 
 ## If only one thing
 

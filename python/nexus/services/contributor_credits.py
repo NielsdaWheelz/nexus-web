@@ -33,6 +33,45 @@ def visible_credit_rows_sql() -> str:
     return visible_content_credit_rows_sql()
 
 
+def current_contributor_rows_for_media_sql() -> str:
+    """Current direct-plus-parent-podcast credits for supplied media ids.
+
+    Binds ``:media_ids`` and returns one role fact per contributor/media; the
+    Consumption stats owner aggregates roles and fully co-credits activity.
+    """
+    return """
+        SELECT DISTINCT media_ids.media_id, c.handle, c.display_name, cc.role
+        FROM unnest(CAST(:media_ids AS uuid[])) AS media_ids(media_id)
+        LEFT JOIN podcast_episodes pe ON pe.media_id = media_ids.media_id
+        JOIN contributor_credits cc
+          ON cc.media_id = media_ids.media_id OR cc.podcast_id = pe.podcast_id
+        JOIN contributors c ON c.id = cc.contributor_id
+    """
+
+
+def current_media_contributor_rows_sql() -> str:
+    """All direct-plus-parent-podcast media credit facts.
+
+    Returns one row per ``(media_id, contributor, role)``. Consumers must join
+    this relation to an already viewer-visible media relation; this owner
+    intentionally supplies attribution rather than a second visibility rule.
+    """
+    return """
+        SELECT DISTINCT targets.media_id, c.handle, c.display_name, cc.role
+        FROM (
+            SELECT cc.media_id, cc.contributor_id, cc.role
+            FROM contributor_credits cc
+            WHERE cc.media_id IS NOT NULL
+            UNION ALL
+            SELECT pe.media_id, cc.contributor_id, cc.role
+            FROM contributor_credits cc
+            JOIN podcast_episodes pe ON pe.podcast_id = cc.podcast_id
+            WHERE cc.podcast_id IS NOT NULL
+        ) targets
+        JOIN contributors c ON c.id = targets.contributor_id
+    """
+
+
 def visible_author_credit_rows_sql() -> str:
     """Visible canonical author-credit facts. Binds ``:viewer_id``.
 

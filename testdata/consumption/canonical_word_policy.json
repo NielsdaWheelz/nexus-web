@@ -1,0 +1,38 @@
+[
+  {
+    "name": "empty",
+    "text": "",
+    "wordCount": 0,
+    "boundaries": [[0, 0]]
+  },
+  {
+    "name": "ascii-and-greek",
+    "text": "alpha  beta\nγamma",
+    "wordCount": 3,
+    "boundaries": [[0, 0], [1, 1], [5, 1], [7, 1], [8, 2], [12, 2], [13, 3], [14, 3]]
+  },
+  {
+    "name": "astral-and-nonbreaking-space",
+    "text": "😀 two",
+    "wordCount": 1,
+    "boundaries": [[0, 0], [1, 1], [2, 1], [3, 1]]
+  },
+  {
+    "name": "postgres-unicode-separators",
+    "text": "one two three four　five",
+    "wordCount": 5,
+    "boundaries": [[0, 0], [4, 1], [8, 2], [14, 3], [19, 4], [20, 5], [23, 5]]
+  },
+  {
+    "name": "postgres-nonseparating-space-codepoints",
+    "text": "ab c d e﻿f",
+    "wordCount": 1,
+    "boundaries": [[0, 0], [1, 1], [3, 1], [5, 1], [7, 1], [9, 1], [11, 1]]
+  },
+  {
+    "name": "ascii-control-separators",
+    "text": "a\tb\nc\u000bd\fe\rf",
+    "wordCount": 6,
+    "boundaries": [[0, 0], [2, 1], [4, 2], [6, 3], [8, 4], [10, 5], [11, 6]]
+  }
+]

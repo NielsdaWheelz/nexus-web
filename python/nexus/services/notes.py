@@ -67,6 +67,34 @@ class RecentNoteAnchorFact:
     activity_at: datetime
 
 
+def count_retained_note_blocks(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    start: datetime | None,
+    end: datetime,
+) -> int:
+    """Count surviving viewer-owned NoteBlock rows by database creation time."""
+    return int(
+        db.scalar(
+            text(
+                """
+                SELECT count(*)
+                FROM note_blocks
+                WHERE user_id = :viewer_id
+                  AND (
+                    CAST(:start AS timestamptz) IS NULL
+                    OR created_at >= CAST(:start AS timestamptz)
+                  )
+                  AND created_at < :end
+                """
+            ),
+            {"viewer_id": viewer_id, "start": start, "end": end},
+        )
+        or 0
+    )
+
+
 def recent_note_anchor_facts(
     db: Session, *, viewer_id: UUID, limit: int
 ) -> tuple[RecentNoteAnchorFact, ...]:

@@ -394,7 +394,9 @@ const PaneContent = memo(function PaneContent({
   }, [href, routeKey]);
 
   const contentMountKey =
-    route.definition?.returnMemento.kind === "ShellScroll"
+    route.definition?.queryNavigation === "in-place"
+      ? `${route.id}:${route.pathname}`
+      : route.definition?.returnMemento.kind === "ShellScroll"
       ? `${visitId}:${routeKey}`
       : routeMountKey;
 

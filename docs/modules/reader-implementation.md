@@ -511,6 +511,28 @@ pure black/white to reduce halation under long sessions.
   locally dirty reader shows the handoff (`Go to most recent position` /
   `Stay at this position`) instead of teleporting.
 
+### consumption activity
+
+Reader progress is current-state resume data. It remains independent from
+Consumption Activity's bounded historical facts.
+
+- `MediaPaneBody` registers the active reader with the one tab-local
+  `activityRecorder`. Reading accrues only while the media pane is active, the
+  document is visible and focused, and recent genuine reader input keeps the
+  reader eligible.
+- The adapter reports cursor/progress measurements to the recorder but never
+  writes spans itself, sends a raw device id, or derives completion from dwell.
+  Canonical Consumption state remains the completion owner.
+- PDF contributes observed time/progress but not exact word traversal. The
+  canonical text/document-metrics owners provide word positions for supported
+  reflowable content.
+- The recorder flushes bounded best-effort batches through the activity BFF;
+  it has no durable browser queue. Its facts power `/stats`, not cursor restore
+  or reader navigation.
+
+See [consumption-activity.md](consumption-activity.md) for the history
+contract and [player.md](player.md) for audio capture ownership.
+
 ### progress precedence and URL repair
 
 - the stable entry is `/media/:id`; it never redirects to progress

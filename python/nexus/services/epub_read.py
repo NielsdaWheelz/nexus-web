@@ -316,6 +316,15 @@ def get_epub_section_for_viewer(
                        f.html_sanitized,
                        f.canonical_text,
                        f.canonical_text_word_count,
+                       COALESCE(
+                           (
+                               SELECT SUM(prior.canonical_text_word_count)
+                               FROM fragments prior
+                               WHERE prior.media_id = f.media_id
+                                 AND prior.idx < f.idx
+                           ),
+                           0
+                       ) AS document_word_start,
                        f.created_at
                 FROM epub_nav_locations n
                 JOIN fragments f
@@ -327,7 +336,7 @@ def get_epub_section_for_viewer(
                    href_fragment, source_node_id, source, ordinal,
                    prev_section_id, next_section_id,
                    html_sanitized, canonical_text,
-                   canonical_text_word_count, created_at
+                   canonical_text_word_count, document_word_start, created_at
             FROM ordered_sections
             WHERE location_id = :section_id
         """),
@@ -356,5 +365,6 @@ def get_epub_section_for_viewer(
         canonical_text=canonical_text,
         char_count=len(canonical_text),
         word_count=int(row[13]),
-        created_at=row[14],
+        document_word_start=int(row[14]),
+        created_at=row[15],
     )

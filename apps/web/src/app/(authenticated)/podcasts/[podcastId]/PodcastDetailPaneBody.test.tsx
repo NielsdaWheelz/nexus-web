@@ -115,7 +115,7 @@ import {
   RETURN_JOURNEY_VISIT_ID,
 } from "@/__tests__/helpers/paneReturnJourney";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
-import { LecternProvider } from "@/lib/lectern/LecternProvider";
+import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
@@ -126,6 +126,12 @@ import {
 import { assumePaneVisitId } from "@/lib/workspace/schema";
 
 const TEST_VISIT_ID = assumePaneVisitId("00000000-0000-4000-8000-000000000001");
+
+function LecternStatus() {
+  return (
+    <output aria-label="lectern status">{useLectern().resource.status}</output>
+  );
+}
 
 // Render the pane under the real Lectern + global-player providers (the pane
 // reads both via useLectern()/useGlobalPlayer()). The fetch boundary below
@@ -155,6 +161,7 @@ function Wrapped() {
         >
           <LecternProvider>
             <GlobalPlayerProvider>
+              <LecternStatus />
               <PodcastDetailPaneBody />
             </GlobalPlayerProvider>
           </LecternProvider>
@@ -704,6 +711,99 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
         ),
       ),
     ).toHaveLength(1);
+  });
+
+  it("uses the returned completion handle for exact Mark as played Undo", async () => {
+    const completionHandle =
+      "ncc1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB";
+    const commandBodies: Array<Record<string, unknown>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      if (
+        url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011"
+      ) {
+        return jsonResponse(podcastDetailResponse());
+      }
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
+      ) {
+        return jsonResponse({ data: [episodeMedia()] });
+      }
+      if (url.pathname === "/api/libraries/writable-destinations") {
+        return jsonResponse({
+          data: [],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      if (url.pathname === "/api/lectern") {
+        return jsonResponse({ data: { items: [] } });
+      }
+      if (
+        url.pathname === "/api/consumption/commands" &&
+        init?.method === "POST"
+      ) {
+        const command = JSON.parse(String(init.body)) as Record<
+          string,
+          unknown
+        >;
+        commandBodies.push(command);
+        return jsonResponse({
+          data: {
+            outcome: { kind: "StateOnly" },
+            lectern: { items: [] },
+            nextItem: { kind: "Absent" },
+            listeningStates: [],
+            completionHandle:
+              command.kind === "EnsureMediaFinished"
+                ? { kind: "Present", value: completionHandle }
+                : { kind: "Absent" },
+          },
+        });
+      }
+      if (url.pathname === "/api/lectern/commands" && init?.method === "POST") {
+        commandBodies.push(
+          JSON.parse(String(init.body)) as Record<string, unknown>,
+        );
+        return jsonResponse({
+          data: {
+            outcome: {
+              kind: "Placed",
+              itemIds: ["aaaaaaaa-0000-4000-8000-000000000001"],
+            },
+            lectern: { items: [] },
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(<Wrapped />);
+
+    await screen.findByText("ready", {
+      selector: '[aria-label="lectern status"]',
+    });
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "More actions for Episode 1",
+      }),
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Mark as played" }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+
+    await waitFor(() => {
+      expect(commandBodies.map((command) => command.kind)).toEqual([
+        "EnsureMediaFinished",
+        "UndoCompletion",
+        "PlaceItems",
+      ]);
+    });
+    expect(commandBodies[1]).toMatchObject({
+      kind: "UndoCompletion",
+      completionHandle,
+    });
   });
 
   it("re-enriches metadata from a capable episode row without consuming the server capability", async () => {

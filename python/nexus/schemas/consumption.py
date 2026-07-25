@@ -18,6 +18,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
+from nexus.schemas.consumption_activity import CompletionHandle
 from nexus.schemas.presence import Presence
 
 # The signed 32-bit ceiling every non-negative integer wire field shares.
@@ -236,6 +237,13 @@ class SetUnreadCommand(BaseModel):
     media_id: UUID
 
 
+class UndoCompletionCommand(BaseModel):
+    model_config = _IN_CONFIG
+    kind: Literal["UndoCompletion"]
+    client_mutation_id: UUID
+    completion_handle: CompletionHandle
+
+
 class SetBatchStateCommand(BaseModel):
     model_config = _IN_CONFIG
     kind: Literal["SetBatchState"]
@@ -245,7 +253,11 @@ class SetBatchStateCommand(BaseModel):
 
 
 ConsumptionCommand = Annotated[
-    EnsureMediaFinishedCommand | FinishLecternItemCommand | SetUnreadCommand | SetBatchStateCommand,
+    EnsureMediaFinishedCommand
+    | FinishLecternItemCommand
+    | SetUnreadCommand
+    | UndoCompletionCommand
+    | SetBatchStateCommand,
     Field(discriminator="kind"),
 ]
 
@@ -294,6 +306,7 @@ class ConsumptionResult(BaseModel):
     lectern: LecternSnapshot
     next_item: Presence[LecternItemOut]
     listening_states: list[ListeningStateEntry]
+    completion_handle: Presence[CompletionHandle]
 
 
 # ---------------------------------------------------------------------------

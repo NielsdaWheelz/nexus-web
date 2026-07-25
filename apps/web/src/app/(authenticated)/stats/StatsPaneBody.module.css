@@ -1,0 +1,480 @@
+.pane {
+  container-type: inline-size;
+  min-width: 0;
+  padding: clamp(1rem, 3vw, 2.5rem);
+  color: var(--ink);
+}
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid var(--edge-subtle);
+  padding-bottom: 1rem;
+}
+.header h1,
+.yearHero h1 {
+  margin: 0.15rem 0;
+  font-size: clamp(1.7rem, 4vw, 2.7rem);
+  letter-spacing: -0.04em;
+}
+.eyebrow,
+.timeZone,
+.sectionHead p,
+.muted {
+  color: var(--ink-muted);
+  font-size: 0.875rem;
+}
+.eyebrow {
+  margin: 0;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.timeZone {
+  margin: 0.35rem 0 0;
+}
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 0.55rem;
+}
+.controls label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+.controls button,
+.controls select,
+.controls input,
+.state button,
+.busy button {
+  border: 1px solid var(--edge-strong);
+  border-radius: 0.4rem;
+  background: var(--surface-1);
+  color: inherit;
+  min-height: 2.2rem;
+  padding: 0.35rem 0.6rem;
+  font: inherit;
+}
+.controls button[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--surface-1);
+}
+.filterChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  max-width: 13rem;
+  min-height: 2.2rem;
+  padding: 0.25rem 0.4rem 0.25rem 0.6rem;
+  overflow: hidden;
+  border: 1px solid var(--edge-strong);
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: 0.8rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.filterChip button {
+  min-height: 1.4rem;
+  padding: 0 0.35rem;
+  border: 0;
+  background: transparent;
+  font-size: 1rem;
+  line-height: 1;
+}
+.summary {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(7rem, 1fr));
+  gap: 0.6rem;
+  margin: 1rem 0;
+}
+.summary > div,
+.section,
+.yearFacts > div {
+  border: 1px solid var(--edge-subtle);
+  border-radius: 0.65rem;
+  background: var(--surface-1);
+}
+.summary > div {
+  padding: 0.8rem;
+}
+.summary span,
+.yearFacts span {
+  display: block;
+  color: var(--ink-muted);
+  font-size: 0.75rem;
+}
+.summary strong {
+  display: block;
+  margin-top: 0.3rem;
+  font-size: 1.1rem;
+}
+.summary small {
+  display: block;
+  color: var(--ink-muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+.section {
+  margin-top: 1rem;
+  overflow: auto;
+  padding: 1rem;
+}
+.section h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+.sectionHead {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+.sectionHead p {
+  margin: 0.2rem 0 0;
+}
+.scope {
+  margin: 0.8rem 0 0;
+  color: var(--ink-muted);
+  font-size: 0.75rem;
+}
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin: 0.5rem 0;
+  font-size: 0.8rem;
+}
+.legend span::before {
+  content: "";
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  margin-right: 0.35rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+.legendReading {
+  color: var(--accent);
+}
+.legendListening {
+  color: var(--info);
+}
+.legendViewing {
+  color: var(--warning);
+}
+.lineChart {
+  display: block;
+  width: 100%;
+  height: 7rem;
+  margin: 0.5rem 0;
+  overflow: visible;
+}
+.lineChart polyline {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+.pane table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.pane th,
+.pane td {
+  padding: 0.55rem 0.35rem;
+  border-top: 1px solid var(--edge-subtle);
+  text-align: left;
+  vertical-align: top;
+}
+.pane thead th {
+  color: var(--ink-muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+.grid .section {
+  margin-top: 1rem;
+}
+.heatmap {
+  display: grid;
+  grid-template-columns: repeat(14, 1fr);
+  gap: 0.25rem;
+  min-width: 14rem;
+  margin: 0.7rem 0;
+}
+.heatmap span {
+  aspect-ratio: 1;
+  border-radius: 0.15rem;
+  background: var(--accent);
+}
+.hourChart {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.18rem;
+  height: 5rem;
+  margin: 0.7rem 0;
+}
+.hourChart span {
+  flex: 1;
+  min-width: 0.2rem;
+  border-radius: 0.15rem 0.15rem 0 0;
+  background: var(--warning);
+}
+.rowLink {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+.muted {
+  display: block;
+  margin-top: 0.15rem;
+  font-weight: 400;
+}
+.filterAction {
+  min-height: 1.9rem;
+  padding: 0.2rem 0.45rem;
+  border: 1px solid var(--edge-strong);
+  border-radius: 0.35rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.78rem;
+}
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.loadMore {
+  margin-top: 0.75rem;
+  min-height: 2.25rem;
+  padding: 0.4rem 0.7rem;
+  border: 1px solid var(--edge-strong);
+  border-radius: 0.4rem;
+  background: var(--surface-1);
+  color: inherit;
+  font: inherit;
+}
+.artifacts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.75rem;
+  margin: 0;
+}
+.artifacts div {
+  padding: 0.5rem;
+  background: var(--surface-2);
+  border-radius: 0.4rem;
+}
+.artifacts dt {
+  color: var(--ink-muted);
+  font-size: 0.8rem;
+}
+.artifacts dd {
+  margin: 0.2rem 0 0;
+  font-weight: 700;
+  font-size: 1.25rem;
+}
+.completionTotal {
+  margin: 0 0 0.75rem;
+}
+.completionTotal strong {
+  font-size: 1.8rem;
+}
+.busy {
+  margin: 0.75rem 0;
+  color: var(--ink-muted);
+  font-size: 0.85rem;
+}
+.busy button {
+  min-height: auto;
+  margin-left: 0.4rem;
+  padding: 0.15rem 0.4rem;
+}
+.loading {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+  margin-top: 1rem;
+}
+.loading span {
+  height: 8rem;
+  border-radius: 0.65rem;
+  background: linear-gradient(
+    90deg,
+    var(--surface-2),
+    var(--surface-3),
+    var(--surface-2)
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.2s linear infinite;
+}
+.state {
+  margin-top: 1rem;
+  padding: 1.5rem;
+  border: 1px dashed var(--edge-strong);
+  border-radius: 0.65rem;
+}
+.state h2 {
+  margin-top: 0;
+}
+.state p {
+  color: var(--ink-muted);
+}
+.yearMode {
+  color: var(--brand-bg-light);
+}
+.yearMode .section,
+.yearMode .yearFacts > div {
+  border-color: color-mix(
+    in srgb,
+    var(--brand-fg-on-dark) 28%,
+    var(--brand-bg-dark)
+  );
+  background: color-mix(in srgb, var(--brand-bg-dark) 92%, var(--surface-1));
+}
+.yearMode .sectionHead p,
+.yearMode .muted,
+.yearMode th,
+.yearMode .summary span {
+  color: color-mix(in srgb, var(--brand-fg-on-dark) 72%, var(--brand-bg-light));
+}
+.yearMode .rowLink {
+  color: inherit;
+}
+.yearHero {
+  position: relative;
+  margin-top: 1rem;
+  padding: clamp(1.5rem, 5vw, 4rem);
+  border-radius: 0.8rem;
+  background: radial-gradient(
+    circle at 70% 10%,
+    color-mix(in srgb, var(--brand-fg-on-light) 56%, var(--brand-bg-dark)),
+    var(--brand-bg-dark) 56%
+  );
+  overflow: hidden;
+}
+.yearHero p,
+.yearHero span {
+  margin: 0;
+  color: var(--brand-fg-on-dark);
+}
+.yearHero h1 {
+  font-size: clamp(3.5rem, 13vw, 8rem);
+}
+.yearHero strong {
+  display: block;
+  font-size: clamp(1.5rem, 4vw, 2.5rem);
+}
+.cover {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  display: grid;
+  place-items: center;
+  width: 5rem;
+  aspect-ratio: 0.68;
+  border: 1px solid var(--brand-fg-on-dark);
+  border-radius: 0.25rem;
+  background: linear-gradient(
+    135deg,
+    var(--surface-3),
+    var(--brand-fg-on-light)
+  );
+  color: var(--brand-bg-light);
+  font-family: Georgia, serif;
+  font-size: 2.25rem;
+}
+.yearFacts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+.yearFacts > div {
+  padding: 1rem;
+}
+.yearFacts strong {
+  display: block;
+  margin-top: 0.35rem;
+}
+.longest {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0;
+}
+.longest span {
+  color: var(--ink-muted);
+}
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+@container (max-width: 720px) {
+  .header {
+    display: block;
+  }
+  .controls {
+    justify-content: start;
+    margin-top: 1rem;
+  }
+  .summary {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .grid {
+    grid-template-columns: 1fr;
+  }
+  .yearFacts {
+    grid-template-columns: 1fr;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loading span {
+    animation: none;
+  }
+}
+@media (forced-colors: active) {
+  .summary > div,
+  .section,
+  .yearFacts > div,
+  .yearHero {
+    border: 1px solid CanvasText;
+    background: Canvas;
+    color: CanvasText;
+  }
+  .lineChart polyline,
+  .heatmap span,
+  .hourChart span {
+    stroke: CanvasText;
+    background: CanvasText;
+  }
+  .controls button[aria-pressed="true"] {
+    background: Highlight;
+    color: HighlightText;
+  }
+}

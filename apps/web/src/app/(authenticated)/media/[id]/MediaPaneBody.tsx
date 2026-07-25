@@ -132,6 +132,7 @@ import { createRandomId } from "@/lib/createRandomId";
 import { isEditableTarget } from "@/lib/ui/isEditableTarget";
 import { useMediaReaderViewTransition } from "@/lib/ui/viewTransitions";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { useViewportState } from "@/lib/renderEnvironment/provider";
 import {
   hasActiveInteractionOwner,
   isTopmostInteractionOwner,
@@ -233,6 +234,7 @@ import TextDocumentReader, {
   type DocumentScrollSnapshot,
 } from "./TextDocumentReader";
 import TranscriptPlaybackPanel from "./TranscriptPlaybackPanel";
+import { useReaderActivityAdapter } from "./ReaderActivityAdapter";
 import TranscriptContentPanel from "./TranscriptContentPanel";
 import TranscriptStatePanel from "./TranscriptStatePanel";
 import {
@@ -295,10 +297,9 @@ import styles from "./page.module.css";
 
 // Author administration is lazy: resource identity does not pay for the editor
 // until the user invokes its capability-gated Options command.
-const MediaAuthorsEditor = lazy(() =>
-  import(
-    /* @vite-ignore */ "@/components/contributors/MediaAuthorsEditor"
-  ),
+const MediaAuthorsEditor = lazy(
+  () =>
+    import(/* @vite-ignore */ "@/components/contributors/MediaAuthorsEditor"),
 );
 
 // =============================================================================
@@ -400,6 +401,8 @@ interface ActiveContent {
   fragmentId: string;
   htmlSanitized: string;
   canonicalText: string;
+  wordCount?: number;
+  documentWordStart?: number;
   documentEmbeds: DocumentEmbed[];
 }
 
@@ -419,6 +422,7 @@ interface EpubSectionContent {
   canonical_text: string;
   char_count: number;
   word_count: number;
+  document_word_start?: number;
   created_at: string;
 }
 
@@ -448,8 +452,6 @@ interface EvidenceResolutionResponse {
 
 const MOBILE_SELECTION_STABILIZATION_DELAY_MS = 180;
 const READER_POSITION_BUCKET_CP = 1024;
-// Matches _FINISHED_PROGRESSION in services/consumption/_projection.py.
-const LECTERN_PROMPT_THRESHOLD = 0.95;
 const METADATA_REENRICHMENT_POLL_INTERVAL_MS = 3000;
 const METADATA_REENRICHMENT_MAX_POLLS = 40;
 const READER_APPARATUS_FOCUS_CLASS = "reader-apparatus-focused";
@@ -646,6 +648,7 @@ export default function MediaPaneBody() {
     [id, paneRouter],
   );
   const paneMobileChrome = usePaneMobileChromeController();
+  const viewport = useViewportState();
   const {
     target,
     status: targetStatus,
@@ -683,8 +686,8 @@ export default function MediaPaneBody() {
   const suppressNextTextCaptureRef = useRef(false);
   const [textRestoreSettled, setTextRestoreSettled] = useState(false);
   const [readerLayoutReady, setReaderLayoutReady] = useState(false);
-  // End-of-document Lectern prompt (§7.7): mirror committed total_progression into
-  // React so a threshold derivation can offer the next Readable Lectern entry.
+  // Reader position remains useful activity evidence; canonical Consumption state
+  // alone decides whether the next-item prompt is available.
   const [currentTotalProgression, setCurrentTotalProgression] = useState<
     number | null
   >(null);
@@ -723,15 +726,15 @@ export default function MediaPaneBody() {
     setCurrentTotalProgression(null);
   }, [id]);
 
-  // At end-of-document, offer the first Readable item after this media's row on
-  // the Lectern (§7.7). Explicit tap only — never auto-advance (N-2). Below the
-  // threshold, or when this media has no Lectern row, the prompt is absent.
+  // Canonical projected Finished state, not a browser threshold, enables the
+  // explicit next-item prompt.
   const nextReadableItem = useMemo(() => {
-    if ((currentTotalProgression ?? 0) < LECTERN_PROMPT_THRESHOLD) return null;
     const index = lecternSnapshot.items.findIndex(
       (item) => item.mediaId === id,
     );
     if (index < 0) return null;
+    if (lecternSnapshot.items[index]?.consumption.state !== "Finished")
+      return null;
     for (
       let candidate = index + 1;
       candidate < lecternSnapshot.items.length;
@@ -742,7 +745,7 @@ export default function MediaPaneBody() {
       }
     }
     return null;
-  }, [currentTotalProgression, id, lecternSnapshot]);
+  }, [id, lecternSnapshot]);
 
   const handleAddMediaToLectern = useCallback(async () => {
     try {
@@ -767,19 +770,26 @@ export default function MediaPaneBody() {
     const row = snapshot.items.find((item) => item.mediaId === id);
     try {
       if (row) {
-        await lectern.finishLecternItem({
+        const result = await lectern.finishLecternItem({
           mediaId: parseMediaId(id),
           itemId: row.itemId,
           nextCapability: "Stop",
         });
+        offerCompletionUndo({
+          mediaId: parseMediaId(id),
+          preCompletionSnapshot: snapshot,
+          completedItemId: row.itemId,
+          completionHandle: result.completionHandle,
+        });
       } else {
-        await lectern.ensureMediaFinished(parseMediaId(id));
+        const result = await lectern.ensureMediaFinished(parseMediaId(id));
+        offerCompletionUndo({
+          mediaId: parseMediaId(id),
+          preCompletionSnapshot: snapshot,
+          completedItemId: null,
+          completionHandle: result.completionHandle,
+        });
       }
-      offerCompletionUndo({
-        mediaId: parseMediaId(id),
-        preCompletionSnapshot: snapshot,
-        completedItemId: row?.itemId ?? null,
-      });
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
       if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
@@ -802,8 +812,17 @@ export default function MediaPaneBody() {
   }, [feedback, id, lectern]);
 
   const handleMarkEpisodePlayed = useCallback(async () => {
+    const snapshot = lecternSnapshotRef.current;
+    const row = snapshot.items.find((item) => item.mediaId === id);
     try {
-      await lectern.ensureMediaFinished(parseMediaId(id));
+      const mediaId = parseMediaId(id);
+      const result = await lectern.ensureMediaFinished(mediaId);
+      offerCompletionUndo({
+        mediaId,
+        preCompletionSnapshot: snapshot,
+        completedItemId: row?.itemId ?? null,
+        completionHandle: result.completionHandle,
+      });
     } catch (error: unknown) {
       if (handleUnauthenticatedApiError(error)) return;
       if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
@@ -811,7 +830,7 @@ export default function MediaPaneBody() {
         toFeedback(error, { fallback: "Failed to mark episode as played" }),
       );
     }
-  }, [feedback, id, lectern]);
+  }, [feedback, id, lectern, offerCompletionUndo]);
 
   const handleMarkEpisodeUnplayed = useCallback(async () => {
     try {
@@ -841,6 +860,7 @@ export default function MediaPaneBody() {
           mediaId: parseMediaId(id),
           preCompletionSnapshot: snapshot,
           completedItemId: row.itemId,
+          completionHandle: result.completionHandle,
         });
         if (result.nextItem.kind === "Present") {
           openInNewPane?.(
@@ -849,11 +869,12 @@ export default function MediaPaneBody() {
           );
         }
       } else {
-        await lectern.ensureMediaFinished(parseMediaId(id));
+        const result = await lectern.ensureMediaFinished(parseMediaId(id));
         offerCompletionUndo({
           mediaId: parseMediaId(id),
           preCompletionSnapshot: snapshot,
           completedItemId: null,
+          completionHandle: result.completionHandle,
         });
       }
     } catch (err) {
@@ -882,11 +903,14 @@ export default function MediaPaneBody() {
   const [creditsOverlayMounted, setCreditsOverlayMounted] = useState(false);
   const [creditsOverlayTrigger, setCreditsOverlayTrigger] =
     useState<HTMLButtonElement | null>(null);
-  const openCreditsOverlay = useCallback(({ triggerEl }: ActionSelectDetail) => {
-    setCreditsOverlayTrigger(triggerEl);
-    setCreditsOverlayMounted(true);
-    setCreditsOverlayOpen(true);
-  }, []);
+  const openCreditsOverlay = useCallback(
+    ({ triggerEl }: ActionSelectDetail) => {
+      setCreditsOverlayTrigger(triggerEl);
+      setCreditsOverlayMounted(true);
+      setCreditsOverlayOpen(true);
+    },
+    [],
+  );
   const handleAuthorsSaved = useCallback((result: MediaAuthors) => {
     setMedia((prev) => {
       if (!prev) return prev;
@@ -916,7 +940,7 @@ export default function MediaPaneBody() {
   const [metadataRetryPollsRemaining, setMetadataRetryPollsRemaining] =
     useState(0);
   const [, setMetadataRetryPollExhausted] = useState(false);
-  useSetPaneLabel(loading ? null : (media?.title.trim() || "Media"));
+  useSetPaneLabel(loading ? null : media?.title.trim() || "Media");
 
   // ---- Non-EPUB fragment state ----
   const [fragments, setFragments] = useState<Fragment[]>([]);
@@ -1591,9 +1615,7 @@ export default function MediaPaneBody() {
             feedback: {
               severity: "error",
               title: presentation?.title ?? "Import failed.",
-              ...(presentation
-                ? { message: presentation.explanation }
-                : {}),
+              ...(presentation ? { message: presentation.explanation } : {}),
             },
           };
         }
@@ -1660,6 +1682,8 @@ export default function MediaPaneBody() {
         fragmentId: activeEpubSection.fragment_id,
         htmlSanitized: activeEpubSection.html_sanitized,
         canonicalText: activeEpubSection.canonical_text,
+        wordCount: activeEpubSection.word_count,
+        documentWordStart: activeEpubSection.document_word_start,
         documentEmbeds: [],
       };
     }
@@ -1675,6 +1699,8 @@ export default function MediaPaneBody() {
         fragmentId: frag.id,
         htmlSanitized: frag.html_sanitized,
         canonicalText: frag.canonical_text,
+        wordCount: frag.word_count,
+        documentWordStart: frag.document_word_start,
         documentEmbeds:
           media?.capabilities?.can_read_embeds === true
             ? frag.document_embeds
@@ -1947,9 +1973,7 @@ export default function MediaPaneBody() {
         setInitialFragmentsFailure(null);
       } else {
         setFragments([]);
-        setInitialFragmentsFailure(
-          initialMediaResource.data.fragments.error,
-        );
+        setInitialFragmentsFailure(initialMediaResource.data.fragments.error);
       }
       setActiveTranscriptFragmentId(null);
       setError(null);
@@ -4361,9 +4385,8 @@ export default function MediaPaneBody() {
   const defaultInspectorSurface: "resource-contents" | "resource-evidence" =
     contentsAvailable ? "resource-contents" : "resource-evidence";
   const inspectorSurfaceActive =
-    (activeReaderSecondarySurface === "resource-evidence" ||
-      (activeReaderSecondarySurface === "resource-contents" &&
-        contentsAvailable));
+    activeReaderSecondarySurface === "resource-evidence" ||
+    (activeReaderSecondarySurface === "resource-contents" && contentsAvailable);
   const inspectorRegionId = paneRuntime?.paneId
     ? paneSecondaryRegionId(paneRuntime.paneId, "resource-inspector")
     : null;
@@ -4374,6 +4397,27 @@ export default function MediaPaneBody() {
     : 0;
 
   const readerRootRef = useRef<HTMLDivElement | null>(null);
+  const readerActivityObserverKey = useMemo(
+    () => `reader:${paneRuntime?.paneId ?? id}`,
+    [id, paneRuntime?.paneId],
+  );
+
+  useReaderActivityAdapter({
+    mediaId: id,
+    observerKey: readerActivityObserverKey,
+    canRead,
+    isPdf,
+    paneActive: paneRuntime?.isActive !== false,
+    viewport,
+    readerRootRef,
+    pdfContentRef,
+    contentRef,
+    cursorRef,
+    activeContent,
+    pdfControls: pdfControlsState,
+    totalProgression: currentTotalProgression,
+    isUserScrollKey,
+  });
   const focusModeForRoot = readerProfile.focus_mode;
   const hyphenationForRoot = readerProfile.hyphenation;
   const { chromeRevealed } = useFocusModeTracking(
@@ -4783,8 +4827,8 @@ export default function MediaPaneBody() {
     return media?.read_state ?? "unread";
   })();
 
-  const mediaResourceHeader = useMemo<PaneResourceHeaderPublication | null>(
-    () => {
+  const mediaResourceHeader =
+    useMemo<PaneResourceHeaderPublication | null>(() => {
       if (media) return buildMediaResourceHeader(media);
       if (initialHeaderFailure === "unavailable") {
         return { status: "unavailable", title: "Media unavailable" };
@@ -4793,9 +4837,7 @@ export default function MediaPaneBody() {
         return { status: "failed", title: "Media failed to load" };
       }
       return null;
-    },
-    [initialHeaderFailure, media],
-  );
+    }, [initialHeaderFailure, media]);
 
   const mediaHeaderGroups = useMemo(() => {
     if (!media) {
@@ -4822,26 +4864,25 @@ export default function MediaPaneBody() {
     const lecternItem = lecternSnapshot.items.find(
       (item) => item.mediaId === id,
     );
-    const retryProcessing: ExecutableResourceAction =
-      media.capabilities?.can_retry
-        ? { kind: "Available", execute: handleRetryProcessing }
-        : { kind: "Unavailable" };
-    const refreshSource: ExecutableResourceAction =
-      media.capabilities?.can_refresh_source
-        ? { kind: "Available", execute: handleRefreshSource }
-        : { kind: "Unavailable" };
-    const retryMetadata: ExecutableResourceAction =
-      media.capabilities?.can_retry_metadata
-        ? { kind: "Available", execute: handleRetryMetadata }
-        : { kind: "Unavailable" };
-    const removeMedia: ExecutableResourceAction =
-      media.capabilities?.can_delete
-        ? { kind: "Available", execute: handleRemoveMedia }
-        : { kind: "Unavailable" };
-    const editAuthors: ExecutableResourceAction =
-      media.capabilities?.can_edit_authors
-        ? { kind: "Available", execute: openAuthorsEditor }
-        : { kind: "Unavailable" };
+    const retryProcessing: ExecutableResourceAction = media.capabilities
+      ?.can_retry
+      ? { kind: "Available", execute: handleRetryProcessing }
+      : { kind: "Unavailable" };
+    const refreshSource: ExecutableResourceAction = media.capabilities
+      ?.can_refresh_source
+      ? { kind: "Available", execute: handleRefreshSource }
+      : { kind: "Unavailable" };
+    const retryMetadata: ExecutableResourceAction = media.capabilities
+      ?.can_retry_metadata
+      ? { kind: "Available", execute: handleRetryMetadata }
+      : { kind: "Unavailable" };
+    const removeMedia: ExecutableResourceAction = media.capabilities?.can_delete
+      ? { kind: "Available", execute: handleRemoveMedia }
+      : { kind: "Unavailable" };
+    const editAuthors: ExecutableResourceAction = media.capabilities
+      ?.can_edit_authors
+      ? { kind: "Available", execute: openAuthorsEditor }
+      : { kind: "Unavailable" };
     const lecternMembership: LecternMembershipAction =
       lectern.resource.status !== "ready"
         ? { kind: "Unavailable" }
@@ -4857,10 +4898,7 @@ export default function MediaPaneBody() {
                       await lectern.removeItem(lecternItem.itemId);
                     } catch (error: unknown) {
                       if (handleUnauthenticatedApiError(error)) return;
-                      if (
-                        !isApiError(error) ||
-                        isSameSystemApiDefect(error)
-                      ) {
+                      if (!isApiError(error) || isSameSystemApiDefect(error)) {
                         throw error;
                       }
                       feedback.show(
@@ -4945,17 +4983,15 @@ export default function MediaPaneBody() {
         onSelect: openCreditsOverlay,
       });
     }
-    view.push(
-      {
-        kind: "command",
-        id: "ViewAction.Reader.Settings",
-        label: "Reader settings",
-        restoreFocusOnClose: false,
-        onSelect: () => {
-          openInNewPane?.("/settings/reader", "Reader settings");
-        },
+    view.push({
+      kind: "command",
+      id: "ViewAction.Reader.Settings",
+      label: "Reader settings",
+      restoreFocusOnClose: false,
+      onSelect: () => {
+        openInNewPane?.("/settings/reader", "Reader settings");
       },
-    );
+    });
 
     // Terminal Forbidden disables the quick-switch alongside Settings (spec §8).
     const readerPersistenceForbidden = readerPersistence.state === "Forbidden";
@@ -5084,20 +5120,23 @@ export default function MediaPaneBody() {
     ],
   );
 
-  const toggleInspector = useCallback((detail: ActionSelectDetail) => {
-    if (inspectorSurfaceActive) {
-      closeSecondaryPane?.();
-      return;
-    }
-    requestSecondarySurface?.(defaultInspectorSurface, {
-      returnFocusTo: detail.triggerEl,
-    });
-  }, [
-    closeSecondaryPane,
-    defaultInspectorSurface,
-    inspectorSurfaceActive,
-    requestSecondarySurface,
-  ]);
+  const toggleInspector = useCallback(
+    (detail: ActionSelectDetail) => {
+      if (inspectorSurfaceActive) {
+        closeSecondaryPane?.();
+        return;
+      }
+      requestSecondarySurface?.(defaultInspectorSurface, {
+        returnFocusTo: detail.triggerEl,
+      });
+    },
+    [
+      closeSecondaryPane,
+      defaultInspectorSurface,
+      inspectorSurfaceActive,
+      requestSecondarySurface,
+    ],
+  );
 
   // G-chord keyboard verbs:
   //   G (bare)  → toggle Companion (defaultInspectorSurface)
@@ -5479,7 +5518,10 @@ export default function MediaPaneBody() {
     (target: HighlightActionTarget) => {
       if (target.kind === "existing") {
         const ref = `highlight:${target.highlight.id}`;
-        linkComposer.openLink({ source: { kind: "resource", ref }, sourceRef: ref });
+        linkComposer.openLink({
+          source: { kind: "resource", ref },
+          sourceRef: ref,
+        });
         return;
       }
       if (!selection) return;
@@ -5953,7 +5995,8 @@ export default function MediaPaneBody() {
         return;
       }
       const activated = activateResource(target.activation, {
-        labelHint: target.label.kind === "Present" ? target.label.value : "Source",
+        labelHint:
+          target.label.kind === "Present" ? target.label.value : "Source",
         openInNewPane,
         navigate: paneRouter.push,
         newPane: options.newPane,
@@ -6141,9 +6184,7 @@ export default function MediaPaneBody() {
 
   if (error || !media) {
     return (
-      <div
-        className={`${styles.errorContainer} ${styles.mobileDocumentState}`}
-      >
+      <div className={`${styles.errorContainer} ${styles.mobileDocumentState}`}>
         <FeedbackNotice
           feedback={error ?? { severity: "error", title: "Media not found" }}
         />
@@ -6195,10 +6236,7 @@ export default function MediaPaneBody() {
         </div>
       ) : null}
       {sourceError && canRead ? (
-        <div
-          className={styles.retrievalBanner}
-          data-testid="source-readiness"
-        >
+        <div className={styles.retrievalBanner} data-testid="source-readiness">
           <Pill tone={sourceError.severity === "error" ? "danger" : "warning"}>
             {sourceError.title}
           </Pill>
@@ -6224,7 +6262,10 @@ export default function MediaPaneBody() {
   const readerProgressLoadFailed = (
     <div className={styles.mobileDocumentState}>
       {readerBanners}
-      <div className={styles.notReady} data-testid="reader-progress-load-failed">
+      <div
+        className={styles.notReady}
+        data-testid="reader-progress-load-failed"
+      >
         <p>Couldn&apos;t load your reading position.</p>
         <Button variant="primary" size="md" onClick={readerProgress.retryLoad}>
           Retry
@@ -6367,6 +6408,8 @@ export default function MediaPaneBody() {
                         ? (videoSeekTargetMs ?? activeRequestedStartMs)
                         : null
                     }
+                    paneActive={paneRuntime?.isActive ?? true}
+                    paneInstance={paneRuntime?.paneId ?? id}
                     onSeek={handleTranscriptSeek}
                   />
                   {transcriptPaneBody}
@@ -6449,7 +6492,8 @@ export default function MediaPaneBody() {
                   }
                   onQuoteToExistingChat={
                     media?.capabilities?.can_quote
-                      ? (highlightId) => quoteHighlightToExistingChat(highlightId)
+                      ? (highlightId) =>
+                          quoteHighlightToExistingChat(highlightId)
                       : undefined
                   }
                   onAddNote={({ quote, anchorRect, creation }) =>
@@ -6589,12 +6633,13 @@ export default function MediaPaneBody() {
       <LinkTargetDialog
         open={linkComposer.open}
         sourceRef={linkComposer.sourceRef}
-        excludeRefs={linkComposer.sourceRef ? [linkComposer.sourceRef] : undefined}
+        excludeRefs={
+          linkComposer.sourceRef ? [linkComposer.sourceRef] : undefined
+        }
         busy={linkComposer.committing}
         onPick={(target, label) => void linkComposer.confirm(target, label)}
         onClose={linkComposer.close}
       />
-
 
       {readerApparatusPreview ? (
         <HoverPreview
@@ -6636,7 +6681,9 @@ export default function MediaPaneBody() {
                 : undefined
             }
             onAddNote={handleAddNoteToSelection}
-            onLink={() => handleLink({ kind: "selection", color: DEFAULT_COLOR })}
+            onLink={() =>
+              handleLink({ kind: "selection", color: DEFAULT_COLOR })
+            }
             onDismiss={handleDismissPopover}
             isCreating={isCreating}
           />

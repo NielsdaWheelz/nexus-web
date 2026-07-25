@@ -67,6 +67,38 @@ class RecentHighlightAnchorFact:
     activity_at: datetime
 
 
+def count_retained_highlights(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    start: datetime | None,
+    end: datetime,
+) -> int:
+    """Count surviving viewer-authored highlights over currently visible media."""
+    return int(
+        db.scalar(
+            text(
+                f"""
+                WITH visible_media AS (
+                    {visible_media_ids_cte_sql()}
+                )
+                SELECT count(*)
+                FROM highlights h
+                JOIN visible_media vm ON vm.media_id = h.anchor_media_id
+                WHERE h.user_id = :viewer_id
+                  AND (
+                    CAST(:start AS timestamptz) IS NULL
+                    OR h.created_at >= CAST(:start AS timestamptz)
+                  )
+                  AND h.created_at < :end
+                """
+            ),
+            {"viewer_id": viewer_id, "start": start, "end": end},
+        )
+        or 0
+    )
+
+
 def recent_highlight_anchor_facts(
     db: Session, *, viewer_id: UUID, limit: int
 ) -> tuple[RecentHighlightAnchorFact, ...]:

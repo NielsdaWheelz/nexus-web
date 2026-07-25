@@ -80,9 +80,11 @@ from nexus.services.llm_profiles import validate_profiles
 
 logger = get_logger(__name__)
 
-# Exact private-reader paths: /media/{id}/reader-state or /me/reader-profile,
-# and nothing else.
-READER_PRIVATE_NO_STORE_PATH_RE = re.compile(r"/media/[^/]+/reader-state|/me/reader-profile")
+# Exact private-history paths. These responses carry per-viewer state and must
+# never be retained by a browser or intermediary.
+PRIVATE_NO_STORE_PATH_RE = re.compile(
+    r"/media/[^/]+/reader-state|/me/reader-profile|/consumption/(activity|stats|sessions)"
+)
 
 
 async def validate_json_request_body(request: Request) -> JSONResponse | None:
@@ -402,8 +404,8 @@ def create_app(
     # canonical exception handler instead of letting the exception propagate
     # to the outer ServerErrorMiddleware unstamped.
     @app.middleware("http")
-    async def private_reader_no_store(request: Request, call_next):
-        if not READER_PRIVATE_NO_STORE_PATH_RE.fullmatch(request.url.path):
+    async def private_history_no_store(request: Request, call_next):
+        if not PRIVATE_NO_STORE_PATH_RE.fullmatch(request.url.path):
             return await call_next(request)
         try:
             response = await call_next(request)

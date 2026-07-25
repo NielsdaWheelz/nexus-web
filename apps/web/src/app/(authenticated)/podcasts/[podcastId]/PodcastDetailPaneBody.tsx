@@ -41,6 +41,7 @@ import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryMode
 import { useBillingAccount } from "@/lib/billing/useBillingAccount";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { useLectern } from "@/lib/lectern/LecternProvider";
+import { useCompletionUndo } from "@/lib/lectern/useCompletionUndo";
 import {
   assumeMediaId,
   type LecternItemId,
@@ -133,6 +134,7 @@ export default function PodcastDetailPaneBody() {
   const { account: billingAccount } = useBillingAccount();
   const player = useGlobalPlayer();
   const lectern = useLectern();
+  const offerCompletionUndo = useCompletionUndo();
   const committedSnapshotRef = useRef<PodcastDetailSnapshot | null>(null);
   const reconciliationPendingRef = useRef(false);
   const captureCommitted = useCallback(() => committedSnapshotRef.current, []);
@@ -857,7 +859,21 @@ export default function PodcastDetailPaneBody() {
         // The heartbeat engine owns the listening-state route now; played/unplayed
         // toggles flow through the Lectern consumption FIFO (spec §5.2).
         if (isCompleted) {
-          await lectern.ensureMediaFinished(assumeMediaId(mediaId));
+          const parsedMediaId = assumeMediaId(mediaId);
+          const preCompletionSnapshot = lectern.getCanonicalSnapshot() ?? {
+            items: [],
+          };
+          const completedItem =
+            preCompletionSnapshot.items.find(
+              (item) => item.mediaId === mediaId,
+            ) ?? null;
+          const result = await lectern.ensureMediaFinished(parsedMediaId);
+          offerCompletionUndo({
+            mediaId: parsedMediaId,
+            preCompletionSnapshot,
+            completedItemId: completedItem?.itemId ?? null,
+            completionHandle: result.completionHandle,
+          });
         } else {
           await lectern.setUnread(assumeMediaId(mediaId));
         }
@@ -886,6 +902,7 @@ export default function PodcastDetailPaneBody() {
       episodes,
       lectern,
       markingEpisodeIds,
+      offerCompletionUndo,
       setEpisodes,
     ],
   );

@@ -334,6 +334,8 @@ def _canonicalize_target_href(href: str) -> str:
             return "/settings"
         if segments[0] == "notes":
             return "/notes"
+        if segments[0] == "stats":
+            return "/stats"
         if segments[0] == "atlas":
             return "/atlas"
         if segments[0] == "oracle":

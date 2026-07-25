@@ -12,6 +12,7 @@ describe("KeybindingsPaneBody", () => {
     );
     expect(screen.getByText("Open launcher")).toBeInTheDocument();
     expect(screen.getByText("Go to Lectern")).toBeInTheDocument();
+    expect(screen.getByText("Go to Stats")).toBeInTheDocument();
     expect(screen.getByText("Go to Atlas")).toBeInTheDocument();
     expect(screen.getByText("Go to Today")).toBeInTheDocument();
   });

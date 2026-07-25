@@ -15,11 +15,13 @@ hands episodes to the Lectern via auto-subscription.
 Full behavioral contracts, wire shapes, and acceptance criteria:
 `docs/cutovers/lectern-player-lifecycle-hard-cutover.md` and
 `docs/cutovers/resonance-reading-slate-hard-cutover.md`.
+Observed activity and Stats are a separate Consumption capability; see
+[consumption-activity.md](consumption-activity.md).
 
 ## Backend Owners
 
 `python/nexus/services/consumption/` is the sole backend consumption owner,
-split one table per store:
+split by storage and query concern:
 
 - `service.py` — the public boundary. Two command facades
   (`run_lectern_command` / `run_consumption_command`) each open a fresh
@@ -51,11 +53,15 @@ split one table per store:
 - `_reader_engagement_store.py` — sole DML owner of `reader_engagement_states`:
   one current-state row per (viewer, media) carrying `last_engaged_at`
   recency and, for non-PDF locators, a monotonic `max_total_progression`
-  (`GREATEST(existing, new)` on every save). No session, device, span, dwell,
-  or event-history rows exist — a save is a plain idempotent
+  (`GREATEST(existing, new)` on every save). It is current resume/engagement
+  state, not activity history — a save is a plain idempotent
   `INSERT ... ON CONFLICT (user_id, media_id) DO UPDATE`, with no fencing
   token, composed by the reader-state route after a successful/idempotent
   cursor write (see [reader-implementation.md](reader-implementation.md)).
+- `_activity_store.py` — sole DML owner of `consumption_activity_spans` and
+  `consumption_completion_facts`; `_activity_stats.py` owns their factual
+  aggregation and derived sessions. Neither changes the reader cursor or the
+  listening heartbeat.
 - `_projection.py` — the combined explicit-override + reader-engagement read
   model (`Unread`/`InProgress`/`Finished` + progress fraction), plus batched
   `PlayerDescriptor`s for podcast-episode media, reusing
@@ -79,9 +85,9 @@ database snapshot.
 Media teardown (`docs/cutovers/lectern-player-lifecycle-hard-cutover.md` §3.1;
 see also [storage.md](storage.md)) composes one consumption call,
 `consumption_service.delete_media_consumption_state_in_txn` (all users'
-Lectern/override/listening/reader-engagement rows), inside the deletion
-transaction — `services/media_deletion.py` never writes those tables
-directly.
+Lectern/override/listening/reader-engagement/activity/completion rows), inside
+the deletion transaction — `services/media_deletion.py` never writes those
+tables directly.
 
 `python/nexus/services/playback_source.py` resolves the playable source for a
 media item (`derive_playback_source`); it is shared by the projection, the
@@ -157,6 +163,9 @@ GET) above `GlobalPlayerProvider` (one `PlayerSession`), which wraps
   effects graph, OS media-session integration), plus `audioEffects.ts`,
   `chapters.ts`, `mediaSession.ts`, `subscriptionPlaybackSpeed.ts`, and
   `usePlayerKeyboardShortcuts.ts`.
+- `globalPlayer.tsx` publishes owned `<audio>` playing/pause/buffering/end
+  observations to the single Consumption recorder. The heartbeat persists
+  current position; it never carries elapsed-time activity or a raw device id.
 - `apps/web/src/components/GlobalPlayerFooter.tsx` — transport, Walknotes
   entry points, and the read-only "Next on the Lectern" / "Forward: _title_"
   preview. The dock is not an editor; all "Open Lectern" affordances navigate

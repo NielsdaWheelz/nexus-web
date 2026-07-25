@@ -17,6 +17,15 @@ kind from `library_entries:resonance:v1` to `library_entries:resonance:v2`.
 The default live personal-All and consumption-owner recency facts remain
 canonical.
 
+**Consumption Activity supersession (2026-07-24):**
+[`consumption-activity-stats-hard-cutover.md`](consumption-activity-stats-hard-cutover.md)
+replaces this document's final-state claim that Consumption retains no
+session/device/span/dwell history. `reader_engagement_states` and
+`podcast_listening_states` remain current-state owners; the new
+`consumption_activity_spans` and `consumption_completion_facts` are the two
+separate historical fact tables. This does not revive `reading_sessions`,
+`services/attention.py`, attention payloads, or any historical migration path.
+
 ## 0. Sequencing — mandatory
 
 This cutover lands **after** merged Lectern (`604dbed6`) and Alembic `0182_lectern_player_lifecycle`.

@@ -200,6 +200,21 @@ function routeForHostTest(href: string) {
           returnMemento: { kind: "ShellScroll" } as const,
         },
       };
+    case "/stats":
+      return {
+        ...route,
+        id: "stats",
+        defaultLabel: "Stats",
+        labelMode: "static",
+        header: { kind: "section" } as const,
+        definition: {
+          ...route.definition,
+          id: "stats",
+          bodyMode: "standard",
+          queryNavigation: "in-place" as const,
+          returnMemento: { kind: "ShellScroll" } as const,
+        },
+      };
     case "/atlas":
       return {
         ...route,
@@ -306,6 +321,7 @@ function TestPaneBody() {
       data-testid="route-body"
       data-instance-id={instanceId.current}
       data-runtime-pane-id={paneRuntime?.paneId ?? "none"}
+      data-runtime-href={paneRuntime?.href ?? "none"}
       data-runtime-secondary-id={paneRuntime?.secondaryPane?.id ?? "none"}
       data-runtime-resource-ref={paneRuntime?.resourceRef ?? "none"}
       data-runtime-resource-status={paneRuntime?.resourceStatus ?? "none"}
@@ -322,6 +338,14 @@ function TestPaneBody() {
       <a href="/authors/body-author" data-pane-label-hint="Body Author">
         Body Author
       </a>
+      <input aria-label="Pane body control" />
+      <div
+        data-testid="route-body-scrollport"
+        tabIndex={-1}
+        style={{ height: 20, overflow: "auto" }}
+      >
+        <div style={{ height: 500 }}>Scrollable body fixture</div>
+      </div>
       <button
         type="button"
         onClick={(event) =>
@@ -575,6 +599,23 @@ function setPaneHref(
   };
 }
 
+function replaceCurrentPaneHref(href: string) {
+  const pane = hostMocks.store.state.primaryPanesById["pane-1"];
+  if (!pane) {
+    throw new Error("Expected pane-1 to exist");
+  }
+  hostMocks.store.state = {
+    ...hostMocks.store.state,
+    primaryPanesById: {
+      ...hostMocks.store.state.primaryPanesById,
+      "pane-1": {
+        ...pane,
+        currentVisit: { ...pane.currentVisit, href },
+      },
+    },
+  };
+}
+
 function setTwoPaneHrefs(firstHref: string, secondHref: string) {
   hostMocks.store.state = {
     primaryPaneOrder: ["pane-1", "pane-2"],
@@ -657,6 +698,39 @@ describe("WorkspaceHost pane route lifecycle", () => {
       "data-instance-id",
       firstInstance,
     );
+    expect(hostMocks.mountedBodyIds).toHaveLength(1);
+    expect(hostMocks.unmountedBodyIds).toEqual([]);
+  });
+
+  it("keeps Stats query replacements mounted while its canonical pane identity changes", () => {
+    setPaneHref("/stats?view=stats&period=day&anchor=2026-07-24");
+    const { rerender } = render(<WorkspaceHost />);
+    const firstInstance = screen.getByTestId("route-body").dataset.instanceId;
+    const control = screen.getByRole("textbox", { name: "Pane body control" });
+    const scrollport = screen.getByTestId("route-body-scrollport");
+    scrollport.scrollTop = 180;
+    control.focus();
+
+    replaceCurrentPaneHref("/stats?view=year&year=2026");
+    rerender(<WorkspaceHost />);
+
+    expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+      "data-route-key",
+      "stats:/stats?view=year&year=2026",
+    );
+    expect(screen.getByTestId("route-body")).toHaveAttribute(
+      "data-runtime-href",
+      "/stats?view=year&year=2026",
+    );
+    expect(screen.getByTestId("route-body")).toHaveAttribute(
+      "data-instance-id",
+      firstInstance,
+    );
+    expect(screen.getByRole("textbox", { name: "Pane body control" })).toHaveFocus();
+    expect(screen.getByTestId("route-body-scrollport").scrollTop).toBe(180);
+    expect(
+      screen.queryByText(/This route is not yet supported in side-by-side pane mode/),
+    ).not.toBeInTheDocument();
     expect(hostMocks.mountedBodyIds).toHaveLength(1);
     expect(hostMocks.unmountedBodyIds).toEqual([]);
   });

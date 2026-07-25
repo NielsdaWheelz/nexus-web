@@ -122,6 +122,7 @@ describe("AppNav (desktop rail)", () => {
       "Podcasts",
       "Chats",
       "Notes",
+      "Stats",
       "Atlas",
       "Oracle",
     ]);
@@ -383,6 +384,7 @@ describe("AppNav (mobile sheet)", () => {
       "Podcasts",
       "Chats",
       "Notes",
+      "Stats",
       "Atlas",
       "Oracle",
       "Settings",

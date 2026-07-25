@@ -97,6 +97,17 @@ describe("pane route model", () => {
     expect(resolvePaneRouteModel("/atlas")).toMatchObject({ id: "atlas" });
   });
 
+  it("resolves Stats as a standard section pane", () => {
+    expect(resolvePaneRouteModel("/stats?view=year&year=2026")).toMatchObject({
+      id: "stats",
+      definition: {
+        bodyMode: "standard",
+        returnMemento: { kind: "ShellScroll" },
+        queryNavigation: "in-place",
+      },
+    });
+  });
+
   it("projects detail routes to their owning navigation section", () => {
     expect(sectionDestinationIdForHref(`/media/${MEDIA_ID}`)).toBe("libraries");
     expect(sectionDestinationIdForHref(`/libraries/${LIBRARY_ID}`)).toBe("libraries");
@@ -134,6 +145,7 @@ describe("pane route model", () => {
       "notes",
       "page",
       "note",
+      "stats",
       "settings",
       "settingsAccount",
       "settingsBilling",

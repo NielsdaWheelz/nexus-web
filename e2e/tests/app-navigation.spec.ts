@@ -16,6 +16,7 @@ const FIXED_DESTINATION_LABELS = [
   "Podcasts",
   "Chats",
   "Notes",
+  "Stats",
   "Atlas",
   "Oracle",
 ] as const;
@@ -26,7 +27,10 @@ interface SeededMedia {
 
 function readSeededMedia(): SeededMedia {
   return JSON.parse(
-    readFileSync(path.join(__dirname, "..", ".seed", "epub-media.json"), "utf-8"),
+    readFileSync(
+      path.join(__dirname, "..", ".seed", "epub-media.json"),
+      "utf-8",
+    ),
   ) as SeededMedia;
 }
 
@@ -34,7 +38,10 @@ function primaryNavigation(page: Page): Locator {
   return page.getByRole("navigation", { name: "Primary" });
 }
 
-async function expectSeparateHitTargets(left: Locator, right: Locator): Promise<void> {
+async function expectSeparateHitTargets(
+  left: Locator,
+  right: Locator,
+): Promise<void> {
   const leftBox = await left.boundingBox();
   const rightBox = await right.boundingBox();
   expect(leftBox, "Home must have a rendered hit target").not.toBeNull();
@@ -67,17 +74,20 @@ test.describe("app navigation", () => {
 
     const navigation = primaryNavigation(page);
     await expect(navigation).toBeVisible();
-    await expect(navigation.getByRole("link")).toHaveCount(8);
+    await expect(navigation.getByRole("link")).toHaveCount(9);
     expect(
-      await navigation.getByRole("link").evaluateAll((links) =>
-        links.map((link) => link.getAttribute("aria-label")),
-      ),
+      await navigation
+        .getByRole("link")
+        .evaluateAll((links) =>
+          links.map((link) => link.getAttribute("aria-label")),
+        ),
     ).toEqual(["Nexus — Home", ...FIXED_DESTINATION_LABELS]);
-    await expect(navigation.getByRole("link", { name: "Libraries" })).toHaveAttribute(
-      "aria-current",
-      "page",
+    await expect(
+      navigation.getByRole("link", { name: "Libraries" }),
+    ).toHaveAttribute("aria-current", "page");
+    await expect(navigation.getByText("Library", { exact: true })).toHaveCount(
+      0,
     );
-    await expect(navigation.getByText("Library", { exact: true })).toHaveCount(0);
     await expect(navigation.getByText("Tools", { exact: true })).toHaveCount(0);
   });
 
@@ -102,7 +112,9 @@ test.describe("app navigation", () => {
     const navigation = primaryNavigation(page);
     const paneWraps = page.locator("[data-pane-id]");
     await expect(paneWraps).toHaveCount(2);
-    await expect(workspacePaneButton(page, /^Podcasts\b.*Minimized\. Restore\./)).toBeVisible();
+    await expect(
+      workspacePaneButton(page, /^Podcasts\b.*Minimized\. Restore\./),
+    ).toBeVisible();
 
     await navigation.getByRole("link", { name: "Podcasts" }).click();
     await expect(page).toHaveURL(/\/podcasts$/);
@@ -118,7 +130,9 @@ test.describe("app navigation", () => {
 
     const [nativePage] = await Promise.all([
       page.context().waitForEvent("page"),
-      navigation.getByRole("link", { name: "Notes" }).click({ modifiers: ["Control"] }),
+      navigation
+        .getByRole("link", { name: "Notes" })
+        .click({ modifiers: ["Control"] }),
     ]);
     await nativePage.waitForLoadState("domcontentloaded");
     await expect(nativePage).toHaveURL(/\/notes$/);
@@ -135,7 +149,9 @@ test.describe("app navigation", () => {
     await expect(page).toHaveURL(/\/lectern$/);
     await expect(paneWraps).toHaveCount(3);
     await expand.click();
-    await expect(page.getByRole("button", { name: "Collapse navigation" })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Collapse navigation" }),
+    ).toBeVisible();
   });
 });
 
@@ -155,14 +171,13 @@ test.describe("mobile app navigation", () => {
     const sheet = page.getByRole("dialog", { name: "Navigation" });
     await expect(sheet).toBeVisible();
     expect(
-      await sheet.getByRole("link").evaluateAll((links) =>
-        links.map((link) => link.textContent?.trim()),
-      ),
+      await sheet
+        .getByRole("link")
+        .evaluateAll((links) => links.map((link) => link.textContent?.trim())),
     ).toEqual(["Nexus", ...FIXED_DESTINATION_LABELS, "Settings"]);
-    await expect(sheet.getByRole("link", { name: "Libraries" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
+    await expect(
+      sheet.getByRole("link", { name: "Libraries" }),
+    ).toHaveAttribute("aria-current", "page");
 
     await sheet.getByRole("link", { name: "Chats" }).click();
     await expect(sheet).toBeHidden();

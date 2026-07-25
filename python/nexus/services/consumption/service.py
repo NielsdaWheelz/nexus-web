@@ -12,9 +12,10 @@ lifecycle cleanup and the trusted ensure path.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from functools import partial
-from typing import Literal, cast
+from time import perf_counter
+from typing import Any, Literal, cast
 from uuid import UUID
 
 from pydantic import TypeAdapter
@@ -31,6 +32,7 @@ from nexus.errors import (
     InvalidRequestError,
     NotFoundError,
 )
+from nexus.logging import get_logger
 from nexus.schemas.consumption import (
     ConsumptionCommand,
     ConsumptionRemovedOutcome,
@@ -56,12 +58,42 @@ from nexus.schemas.consumption import (
     SetBatchStateCommand,
     SetUnreadCommand,
     StateOnlyOutcome,
+    UndoCompletionCommand,
+)
+from nexus.schemas.consumption_activity import (
+    ActivityBatchIn,
+    ActivityDeviceClass,
+    ActivityMetricsOut,
+    ActivitySessionOut,
+    ActivitySessionPageOut,
+    ActivitySessionsOut,
+    ActivityStatsSectionOut,
+    ActivityTimelineRowOut,
+    ActivityTotalsOut,
+    CompletionDateOut,
+    CompletionStatsSectionOut,
+    CompletionTimelineRowOut,
+    ConsumptionStatsOut,
+    ContributorActivityBreakdownOut,
+    ContributorActivityOut,
+    ContributorCompletionOut,
+    DeviceActivityOut,
+    DeviceSummaryOut,
+    LocalDayOut,
+    LocalHourOut,
+    MediaActivityBreakdownOut,
+    MediaActivityOut,
+    MediaCompletionOut,
+    RetainedArtifactsOut,
 )
 from nexus.schemas.presence import Absent, Present, absent, nullable_from_presence, present
 from nexus.schemas.reader import ReaderResumeState
 from nexus.services.consumption import (
+    _activity_stats,
+    _activity_store,
     _lectern_store,
     _listening_store,
+    _policy,
     _projection,
     _reader_engagement_store,
     _state_store,
@@ -71,6 +103,12 @@ from nexus.services.consumption._lectern_store import (
     LecternRow,
     LecternSource,
 )
+from nexus.services.consumption.handles import (
+    CompletionHandle,
+    seal_completion,
+    seal_device,
+    unseal_completion,
+)
 from nexus.services.resource_mutation_replay import (
     canonical_json_bytes,
     lookup_replay,
@@ -79,8 +117,14 @@ from nexus.services.resource_mutation_replay import (
 
 LECTERN_SCOPE = "Lectern.Commands"
 CONSUMPTION_SCOPE = "Consumption.Commands"
+CONSUMPTION_ACTIVITY_SCOPE = "Consumption.Activity"
+CONSUMPTION_STATS_LATENCY_BUDGET_MS = 500
+_ACTIVITY_MAX_AGE = timedelta(days=1)
+_ACTIVITY_MAX_FUTURE_SKEW = timedelta(minutes=5)
+_ACTIVITY_BATCH_MAX_BYTES = 48_000
 
 _LECTERN_OUTCOME_ADAPTER: TypeAdapter[LecternOutcome] = TypeAdapter(LecternOutcome)
+logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +136,355 @@ def get_lectern(db: Session, viewer_id: UUID) -> LecternSnapshot:
     """Canonical Lectern snapshot for a viewer (visible rows only)."""
     rows = _lectern_store.load_rows(db, viewer_id=viewer_id)
     return _projection.build_snapshot(db, viewer_id=viewer_id, rows=rows)
+
+
+def get_activity_sessions(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    query: _activity_stats.ActivityQuery,
+    cursor: str | None,
+    limit: int,
+    current_device_id: str,
+) -> ActivitySessionPageOut:
+    """One repeatable-read page of derived Consumption sessions."""
+    as_of, after = (
+        (_activity_stats.as_of_created_at(db), None)
+        if cursor is None
+        else _activity_stats.decode_session_cursor(cursor, query=query, db=db, viewer_id=viewer_id)
+    )
+    rows = _activity_stats.session_rows(
+        db, viewer_id=viewer_id, query=query, as_of=as_of, limit=limit, after=after
+    )
+    page = rows[:limit]
+    next_cursor = (
+        _activity_stats.encode_session_cursor(as_of=as_of, query=query, row=page[-1])
+        if len(rows) > limit and page
+        else None
+    )
+    device_rows = _activity_stats.device_breakdown_rows(
+        db, viewer_id=viewer_id, query=query, as_of=as_of
+    )
+    _devices, device_summaries = _device_projections(
+        device_rows,
+        current_device_id=current_device_id,
+        time_zone=query.time_zone,
+    )
+    return ActivitySessionPageOut(
+        sessions=[_session_out(row, devices=device_summaries) for row in page],
+        next_cursor=present(next_cursor) if next_cursor else absent(),
+    )
+
+
+def _active_filter_names(query: _activity_stats.ActivityQuery) -> list[str]:
+    return [
+        name
+        for name, value in (
+            ("modality", query.modality),
+            ("media", query.media_id),
+            ("contributor", query.contributor_handle),
+            ("device", query.device_id),
+        )
+        if value is not None
+    ]
+
+
+def _device_projections(
+    rows: list[dict[str, Any]],
+    *,
+    current_device_id: str,
+    time_zone: str,
+) -> tuple[list[DeviceActivityOut], dict[str, DeviceSummaryOut]]:
+    """Seal private device identities and derive stable, non-identifying labels."""
+    from zoneinfo import ZoneInfo
+
+    zone = ZoneInfo(time_zone)
+    prepared: list[dict[str, Any]] = []
+    for row in rows:
+        device_id = str(row["device_id"])
+        handle = seal_device(device_id)
+        classes = cast(
+            list[ActivityDeviceClass],
+            sorted(str(value) for value in row["device_classes"]),
+        )
+        first_seen = row["first_seen_at"]
+        if not isinstance(first_seen, datetime):
+            raise TypeError("first_seen_at must be a datetime")
+        class_label = " + ".join(classes)
+        base_label = (
+            "This device"
+            if device_id == current_device_id
+            else f"{class_label} · first seen {first_seen.astimezone(zone).date().isoformat()}"
+        )
+        prepared.append(
+            {
+                **row,
+                "device_id": device_id,
+                "handle": handle,
+                "classes": classes,
+                "base_label": base_label,
+            }
+        )
+    collisions: dict[str, list[dict[str, Any]]] = {}
+    for row in prepared:
+        if row["base_label"] != "This device":
+            collisions.setdefault(str(row["base_label"]), []).append(row)
+    for same_label in collisions.values():
+        if len(same_label) <= 1:
+            continue
+        same_label.sort(key=lambda row: (row["first_seen_at"], str(row["handle"])))
+        for ordinal, row in enumerate(same_label, start=1):
+            row["base_label"] = f"{row['base_label']} · {ordinal}"
+
+    outputs: list[DeviceActivityOut] = []
+    summaries: dict[str, DeviceSummaryOut] = {}
+    for row in prepared:
+        first_observed = row["first_observed_at"]
+        last_observed = row["last_observed_at"]
+        if not isinstance(first_observed, datetime) or not isinstance(last_observed, datetime):
+            raise TypeError("device observation timestamps must be datetimes")
+        summary = DeviceSummaryOut(
+            device_handle=row["handle"],
+            label=str(row["base_label"]),
+        )
+        summaries[str(row["device_id"])] = summary
+        outputs.append(
+            DeviceActivityOut(
+                device_handle=row["handle"],
+                label=summary.label,
+                first_observed_at=first_observed,
+                last_observed_at=last_observed,
+                device_classes=row["classes"],
+                is_current=row["device_id"] == current_device_id,
+                active_ms=int(row["active_ms"]),
+            )
+        )
+    return outputs, summaries
+
+
+def _session_out(
+    row: dict[str, Any], *, devices: dict[str, DeviceSummaryOut]
+) -> ActivitySessionOut:
+    started_at = row["session_start"]
+    ended_at = row["session_end"]
+    if not isinstance(started_at, datetime) or not isinstance(ended_at, datetime):
+        raise TypeError("session timestamps must be datetimes")
+    device_id = str(row["device_id"])
+    device = devices.get(device_id)
+    if device is None:
+        raise RuntimeError("session device projection is missing")
+    first_progress = row.get("first_progress")
+    last_progress = row.get("last_progress")
+    return ActivitySessionOut(
+        media_ref=f"media:{row['media_id']}",
+        title=str(row["title"]),
+        modality=cast(Literal["Reading", "Listening", "Viewing"], row["modality"]),
+        device=device,
+        started_at=started_at,
+        ended_at=ended_at,
+        active_ms=int(row["active_ms"]),
+        forward_word_position=int(row["forward_word_position"]),
+        forward_media_position_ms=int(row["forward_media_position_ms"]),
+        first_progress=(present(float(first_progress)) if first_progress is not None else absent()),
+        last_progress=(present(float(last_progress)) if last_progress is not None else absent()),
+        continues_before_range=bool(row["continues_before_range"]),
+        continues_after_range=bool(row["continues_after_range"]),
+    )
+
+
+def get_activity_stats(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    query: _activity_stats.ActivityQuery,
+    bucket: str,
+    current_device_id: str,
+) -> ConsumptionStatsOut:
+    """Materialize one deterministic personal-history snapshot."""
+    # Lazy owner imports preserve the existing search/library import graph while
+    # keeping these reads behind their canonical capability modules.
+    from nexus.services.highlights import count_retained_highlights
+    from nexus.services.notes import count_retained_note_blocks
+    from nexus.services.resource_graph.user_relations import count_retained_neutral_links
+
+    started = perf_counter()
+    as_of = _activity_stats.as_of_created_at(db)
+    totals_rows = _activity_stats.activity_totals_rows(
+        db, viewer_id=viewer_id, query=query, as_of=as_of
+    )
+    totals = ActivityMetricsOut(
+        active_ms=sum(int(row["active_ms"]) for row in totals_rows),
+        forward_word_position=sum(int(row["forward_word_position"]) for row in totals_rows),
+        forward_media_position_ms=sum(int(row["forward_media_position_ms"]) for row in totals_rows),
+    )
+    local_days = _activity_stats.local_day_rows(db, viewer_id=viewer_id, query=query, as_of=as_of)
+    streak = _activity_stats.streak_row(db, viewer_id=viewer_id, query=query, as_of=as_of)
+    session_total = _activity_stats.session_count(db, viewer_id=viewer_id, query=query, as_of=as_of)
+    session_rows = _activity_stats.session_rows(
+        db, viewer_id=viewer_id, query=query, as_of=as_of, limit=50
+    )
+    session_page = session_rows[:50]
+    next_cursor = (
+        _activity_stats.encode_session_cursor(as_of=as_of, query=query, row=session_page[-1])
+        if len(session_rows) > 50 and session_page
+        else None
+    )
+    device_rows = _activity_stats.device_breakdown_rows(
+        db, viewer_id=viewer_id, query=query, as_of=as_of
+    )
+    devices, device_summaries = _device_projections(
+        device_rows,
+        current_device_id=current_device_id,
+        time_zone=query.time_zone,
+    )
+    sessions = [_session_out(row, devices=device_summaries) for row in session_page]
+    longest_row = _activity_stats.longest_session_row(
+        db, viewer_id=viewer_id, query=query, as_of=as_of
+    )
+    media_rows, media_other = _activity_stats.top_media_rows(
+        db, viewer_id=viewer_id, query=query, as_of=as_of
+    )
+    contributor_rows, contributor_other = _activity_stats.top_contributor_rows(
+        db, viewer_id=viewer_id, query=query, as_of=as_of
+    )
+    timeline = _activity_stats.timeline_rows(
+        db,
+        viewer_id=viewer_id,
+        query=query,
+        as_of=as_of,
+        bucket=bucket,
+    )
+    completion = _activity_stats.completion_stats_rows(
+        db,
+        viewer_id=viewer_id,
+        query=query,
+        as_of=as_of,
+        bucket=bucket,
+    )
+    active_filters = _active_filter_names(query)
+    completion_filters = [name for name in active_filters if name != "device"]
+    response = ConsumptionStatsOut(
+        activity=ActivityStatsSectionOut(
+            applied_filters=["time", *active_filters],
+            inapplicable_filters=[],
+            totals=ActivityTotalsOut(
+                **totals.model_dump(),
+                active_days=sum(int(row["active_ms"]) >= 300_000 for row in local_days),
+                streak=streak["streak"],
+                longest_streak=streak["longest_streak"],
+                session_count=session_total,
+            ),
+            timeline=[ActivityTimelineRowOut(**row) for row in timeline],
+            local_days=[
+                LocalDayOut(date=row["local_date"], active_ms=int(row["active_ms"]))
+                for row in local_days
+            ],
+            local_hours=[
+                LocalHourOut(hour=int(row["hour"]), active_ms=int(row["active_ms"]))
+                for row in _activity_stats.local_hour_rows(
+                    db, viewer_id=viewer_id, query=query, as_of=as_of
+                )
+            ],
+            media=MediaActivityBreakdownOut(
+                rows=[
+                    MediaActivityOut(
+                        media_ref=f"media:{row['media_id']}",
+                        title=str(row["title"]),
+                        active_ms=int(row["active_ms"]),
+                        forward_word_position=int(row["forward_word_position"]),
+                        forward_media_position_ms=int(row["forward_media_position_ms"]),
+                    )
+                    for row in media_rows
+                ],
+                other_active_ms=media_other,
+            ),
+            contributors=ContributorActivityBreakdownOut(
+                rows=[
+                    ContributorActivityOut(
+                        contributor_handle=str(row["contributor_handle"]),
+                        display_name=str(row["display_name"]),
+                        roles=[str(role) for role in row["roles"]],
+                        active_ms=int(row["active_ms"]),
+                        forward_word_position=int(row["forward_word_position"]),
+                        forward_media_position_ms=int(row["forward_media_position_ms"]),
+                    )
+                    for row in contributor_rows
+                ],
+                other_active_ms=contributor_other,
+            ),
+            devices=devices,
+            sessions=ActivitySessionsOut(
+                rows=sessions,
+                next_cursor=present(next_cursor) if next_cursor else absent(),
+            ),
+            longest_session=(
+                present(_session_out(longest_row, devices=device_summaries))
+                if longest_row is not None
+                else absent()
+            ),
+        ),
+        completion=CompletionStatsSectionOut(
+            applied_filters=["time", *completion_filters],
+            inapplicable_filters=["device"] if query.device_id is not None else [],
+            total=int(completion["total"]),
+            dates=[
+                CompletionDateOut(date=row["date"], total=int(row["total"]))
+                for row in completion["dates"]
+            ],
+            timeline=[CompletionTimelineRowOut(**row) for row in completion["timeline"]],
+            media=[
+                MediaCompletionOut(
+                    media_ref=f"media:{row['media_id']}",
+                    title=str(row["title"]),
+                    total=int(row["total"]),
+                )
+                for row in completion["media"]
+            ],
+            contributors=[
+                ContributorCompletionOut(
+                    contributor_handle=str(row["contributor_handle"]),
+                    display_name=str(row["display_name"]),
+                    roles=[str(role) for role in row["roles"]],
+                    total=int(row["total"]),
+                )
+                for row in completion["contributors"]
+            ],
+            by_modality=completion["by_modality"],
+        ),
+        retained_artifacts=RetainedArtifactsOut(
+            applied_filters=["time"],
+            inapplicable_filters=active_filters,
+            highlights=count_retained_highlights(
+                db,
+                viewer_id=viewer_id,
+                start=query.start,
+                end=query.end,
+            ),
+            note_blocks=count_retained_note_blocks(
+                db,
+                viewer_id=viewer_id,
+                start=query.start,
+                end=query.end,
+            ),
+            neutral_links=count_retained_neutral_links(
+                db,
+                viewer_id=viewer_id,
+                start=query.start,
+                end=query.end,
+            ),
+        ),
+    )
+    duration_ms = max(0, int((perf_counter() - started) * 1000))
+    logger.info(
+        "consumption_stats_read",
+        duration_ms=duration_ms,
+        latency_budget_ms=CONSUMPTION_STATS_LATENCY_BUDGET_MS,
+        over_budget=duration_ms > CONSUMPTION_STATS_LATENCY_BUDGET_MS,
+        bucket=bucket,
+        bucket_count=len(response.activity.timeline),
+        session_count=response.activity.totals.session_count,
+    )
+    return response
 
 
 def engagement_fact_rows_sql() -> str:
@@ -303,6 +696,7 @@ class _ConsumptionEffect:
     removed_item_id: UUID | None = None
     next_item_id: UUID | None = None
     reset_media_ids: list[UUID] = field(default_factory=list)
+    completion_handle: CompletionHandle | None = None
 
 
 def run_consumption_command(viewer_id: UUID, command: ConsumptionCommand) -> ConsumptionResult:
@@ -341,6 +735,11 @@ def _run_consumption_command_op(
             reset_media_ids=[
                 UUID(str(value)) for value in cast("list[object]", stored["resetMediaIds"])
             ],
+            completion_handle=(
+                CompletionHandle(str(stored["completionHandle"]))
+                if stored.get("completionHandle") is not None
+                else None
+            ),
         )
         db.rollback()
         return result
@@ -356,6 +755,7 @@ def _run_consumption_command_op(
         outcome_memo=outcome_memo,
         next_item_id=effect.next_item_id,
         reset_media_ids=effect.reset_media_ids,
+        completion_handle=effect.completion_handle,
     )
     record_replay(
         db,
@@ -367,6 +767,9 @@ def _run_consumption_command_op(
             "outcome": outcome_memo,
             "nextItemId": str(effect.next_item_id) if effect.next_item_id is not None else None,
             "resetMediaIds": [str(media_id) for media_id in effect.reset_media_ids],
+            "completionHandle": str(effect.completion_handle)
+            if effect.completion_handle is not None
+            else None,
         },
         changed_lanes={},
     )
@@ -379,8 +782,11 @@ def _apply_consumption_command(
 ) -> _ConsumptionEffect:
     if isinstance(command, EnsureMediaFinishedCommand):
         _require_readable(db, viewer_id, command.media_id)
-        _write_finished_state(db, viewer_id, command.media_id)
-        return _ConsumptionEffect(kind="StateOnly")
+        completion_id = _write_finished_state(db, viewer_id, command.media_id)
+        return _ConsumptionEffect(
+            kind="StateOnly",
+            completion_handle=seal_completion(completion_id) if completion_id is not None else None,
+        )
     if isinstance(command, FinishLecternItemCommand):
         return _apply_finish_lectern_item(db, viewer_id, command)
     if isinstance(command, SetUnreadCommand):
@@ -389,6 +795,17 @@ def _apply_consumption_command(
         return _ConsumptionEffect(
             kind="StateOnly", reset_media_ids=[command.media_id] if reset else []
         )
+    if isinstance(command, UndoCompletionCommand):
+        completion_id = unseal_completion(command.completion_handle)
+        media_id = _activity_store.delete_completion_fact_in_txn(
+            db, viewer_id=viewer_id, completion_id=completion_id
+        )
+        if media_id is None:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "Completion is no longer undoable"
+            )
+        reset = _write_unread_state(db, viewer_id, media_id)
+        return _ConsumptionEffect(kind="StateOnly", reset_media_ids=[media_id] if reset else [])
     return _apply_set_batch_state(db, viewer_id, command)
 
 
@@ -401,10 +818,13 @@ def _apply_finish_lectern_item(
         # Exact viewer/item/media agreement (spec §5.2).
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Lectern item not found")
     next_item_id = _select_next(rows, target.position, command.next_capability)
-    _write_finished_state(db, viewer_id, command.media_id)
+    completion_id = _write_finished_state(db, viewer_id, command.media_id)
     _lectern_store.remove_item_in_txn(db, viewer_id=viewer_id, item_id=command.item_id)
     return _ConsumptionEffect(
-        kind="Removed", removed_item_id=command.item_id, next_item_id=next_item_id
+        kind="Removed",
+        removed_item_id=command.item_id,
+        next_item_id=next_item_id,
+        completion_handle=seal_completion(completion_id) if completion_id is not None else None,
     )
 
 
@@ -434,14 +854,27 @@ def _apply_set_batch_state(
 
 def _write_finished_state(
     db: Session, viewer_id: UUID, media_id: UUID, *, kind: str | None = None
-) -> None:
+) -> UUID | None:
     """``kind`` lets an already-batch-known media kind (SetBatchState) skip the
     single-media kind lookup below; single-media callers omit it and pay one
     query, unchanged from before."""
-    _state_store.set_override_in_txn(db, viewer_id=viewer_id, media_id=media_id, state="Finished")
     resolved_kind = kind if kind is not None else _media_kinds(db, [media_id]).get(media_id)
+    if resolved_kind is None:
+        raise AssertionError(f"missing media kind for Consumption transition: {media_id}")
+    was_finished = _effective_state_is_finished(db, viewer_id=viewer_id, media_id=media_id)
+    _state_store.set_override_in_txn(db, viewer_id=viewer_id, media_id=media_id, state="Finished")
     if resolved_kind == MediaKind.podcast_episode.value:
         _listening_store.mark_completed_in_txn(db, viewer_id=viewer_id, media_id=media_id)
+    if was_finished:
+        return None
+    if not _effective_state_is_finished(db, viewer_id=viewer_id, media_id=media_id):
+        raise AssertionError("Finished write did not establish canonical Finished state")
+    return _activity_store.insert_completion_fact_in_txn(
+        db,
+        viewer_id=viewer_id,
+        media_id=media_id,
+        modality=_policy.completion_modality_for_kind(resolved_kind),
+    )
 
 
 def _write_unread_state(
@@ -468,6 +901,7 @@ def _build_consumption_result(
     outcome_memo: dict[str, object],
     next_item_id: UUID | None,
     reset_media_ids: list[UUID],
+    completion_handle: CompletionHandle | None,
 ) -> ConsumptionResult:
     rows = _lectern_store.load_rows(db, viewer_id=viewer_id)
     snapshot = _projection.build_snapshot(db, viewer_id=viewer_id, rows=rows)
@@ -495,6 +929,7 @@ def _build_consumption_result(
         lectern=snapshot,
         next_item=next_item,
         listening_states=listening_states,
+        completion_handle=present(completion_handle) if completion_handle is not None else absent(),
     )
 
 
@@ -527,6 +962,133 @@ def _capability_matches(activation_kind: str, capability: NextCapability) -> boo
 
 
 # ---------------------------------------------------------------------------
+# Activity capture (replayable browser batches)
+# ---------------------------------------------------------------------------
+
+
+def record_activity_batch(
+    viewer_id: UUID,
+    *,
+    client_mutation_id: UUID,
+    media_id: UUID,
+    device_id: str,
+    device_class: ActivityDeviceClass,
+    batch: ActivityBatchIn,
+) -> None:
+    """Persist one replayable, server-validated observation batch."""
+    fresh = _fresh_session()
+    try:
+        retry_serializable(
+            fresh,
+            "record_activity_batch",
+            partial(
+                _record_activity_batch_op,
+                fresh,
+                viewer_id,
+                client_mutation_id,
+                media_id,
+                device_id,
+                device_class,
+                batch,
+            ),
+        )
+    finally:
+        fresh.close()
+
+
+def _record_activity_batch_op(
+    db: Session,
+    viewer_id: UUID,
+    client_mutation_id: UUID,
+    media_id: UUID,
+    device_id: str,
+    device_class: ActivityDeviceClass,
+    batch: ActivityBatchIn,
+) -> None:
+    _lock_viewer(db, viewer_id)
+    request = {
+        "clientMutationId": str(client_mutation_id),
+        "mediaId": str(media_id),
+        "deviceId": device_id,
+        "deviceClass": device_class,
+        "batch": batch.model_dump(mode="json", by_alias=True),
+    }
+    request_bytes = canonical_json_bytes(request)
+    try:
+        stored = lookup_replay(
+            db,
+            viewer_id=viewer_id,
+            scope=CONSUMPTION_ACTIVITY_SCOPE,
+            client_mutation_id=str(client_mutation_id),
+            request_bytes=request_bytes,
+        )
+    except ConflictError:
+        logger.info(
+            "consumption_activity_write",
+            outcome="conflict",
+            span_count=len(batch.spans),
+        )
+        raise
+    if stored is not None:
+        logger.info(
+            "consumption_activity_write",
+            outcome="replay",
+            span_count=len(batch.spans),
+        )
+        db.rollback()
+        return
+    _validate_activity_batch(batch)
+    _require_readable(db, viewer_id, media_id)
+    _activity_store.insert_activity_batch_in_txn(
+        db,
+        viewer_id=viewer_id,
+        media_id=media_id,
+        device_id=device_id,
+        device_class=device_class,
+        batch=batch,
+    )
+    record_replay(
+        db,
+        viewer_id=viewer_id,
+        scope=CONSUMPTION_ACTIVITY_SCOPE,
+        client_mutation_id=str(client_mutation_id),
+        request_bytes=request_bytes,
+        response_json={},
+        changed_lanes={},
+    )
+    db.commit()
+    logger.info(
+        "consumption_activity_write",
+        outcome="accepted",
+        span_count=len(batch.spans),
+    )
+
+
+def _validate_activity_batch(batch: ActivityBatchIn) -> None:
+    encoded = canonical_json_bytes(batch.model_dump(mode="json", by_alias=True))
+    if len(encoded) > _ACTIVITY_BATCH_MAX_BYTES:
+        raise InvalidRequestError(ApiErrorCode.E_CAPTURE_TOO_LARGE, "Activity batch is too large")
+    now = datetime.now(UTC)
+    previous_end: datetime | None = None
+    for span in batch.spans:
+        if span.occurred_at.tzinfo is None:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "occurredAt must include a timezone"
+            )
+        if span.occurred_at < now - _ACTIVITY_MAX_AGE:
+            raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Activity span is too old")
+        if span.occurred_at > now + _ACTIVITY_MAX_FUTURE_SKEW:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "Activity span is in the future"
+            )
+        if previous_end is not None and span.occurred_at < previous_end:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "Activity spans must be ordered and non-overlapping"
+            )
+        previous_end = span.occurred_at + timedelta(milliseconds=span.duration_ms)
+
+
+# ---------------------------------------------------------------------------
 # Listening heartbeat (unreplayable CAS)
 # ---------------------------------------------------------------------------
 
@@ -552,6 +1114,7 @@ def _record_heartbeat_op(
     _lock_viewer(db, viewer_id)
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    was_finished = _effective_state_is_finished(db, viewer_id=viewer_id, media_id=media_id)
     duration_ms = nullable_from_presence(heartbeat.duration_ms)
     row = _listening_store.record_heartbeat_in_txn(
         db,
@@ -566,6 +1129,13 @@ def _record_heartbeat_op(
     if row is None:
         db.rollback()
         raise ConflictError(ApiErrorCode.E_STALE_LISTENING_REVISION, "Listening revision is stale")
+    _record_completion_if_transitioned(
+        db,
+        viewer_id=viewer_id,
+        media_id=media_id,
+        was_finished=was_finished,
+        kind=MediaKind.podcast_episode.value,
+    )
     db.commit()
     return ListeningHeartbeatResult(
         listening_state=_projection.to_listening_state_out(row),
@@ -598,8 +1168,21 @@ def record_reader_engagement(viewer_id: UUID, media_id: UUID, locator: ReaderRes
 def _record_reader_engagement_op(
     db: Session, viewer_id: UUID, media_id: UUID, locator: ReaderResumeState
 ) -> None:
+    _lock_viewer(db, viewer_id)
+    _require_readable(db, viewer_id, media_id)
+    was_finished = _effective_state_is_finished(db, viewer_id=viewer_id, media_id=media_id)
     _reader_engagement_store.record_engagement_in_txn(
         db, viewer_id=viewer_id, media_id=media_id, locator=locator
+    )
+    kind = _media_kinds(db, [media_id]).get(media_id)
+    if kind is None:
+        raise AssertionError(f"missing media kind for reader engagement: {media_id}")
+    _record_completion_if_transitioned(
+        db,
+        viewer_id=viewer_id,
+        media_id=media_id,
+        was_finished=was_finished,
+        kind=kind,
     )
     db.commit()
 
@@ -677,6 +1260,7 @@ def delete_media_consumption_state_in_txn(db: Session, *, media_id: UUID) -> Non
     _state_store.delete_all_users_in_txn(db, media_id=media_id)
     _listening_store.delete_all_users_in_txn(db, media_id=media_id)
     _reader_engagement_store.delete_all_users_in_txn(db, media_id=media_id)
+    _activity_store.delete_all_for_media_in_txn(db, media_id=media_id)
 
 
 # ---------------------------------------------------------------------------
@@ -701,6 +1285,31 @@ def _lock_viewer(db: Session, viewer_id: UUID) -> None:
 def _require_readable(db: Session, viewer_id: UUID, media_id: UUID) -> None:
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Media not found")
+
+
+def _effective_state_is_finished(db: Session, *, viewer_id: UUID, media_id: UUID) -> bool:
+    state = _projection.media_read_states(db, viewer_id=viewer_id, media_ids=[media_id]).get(
+        media_id
+    )
+    return state is not None and state.state == "finished"
+
+
+def _record_completion_if_transitioned(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_id: UUID,
+    was_finished: bool,
+    kind: str,
+) -> None:
+    if was_finished or not _effective_state_is_finished(db, viewer_id=viewer_id, media_id=media_id):
+        return
+    _activity_store.insert_completion_fact_in_txn(
+        db,
+        viewer_id=viewer_id,
+        media_id=media_id,
+        modality=_policy.completion_modality_for_kind(kind),
+    )
 
 
 def _validate_add_targets(db: Session, viewer_id: UUID, media_ids: list[UUID]) -> None:

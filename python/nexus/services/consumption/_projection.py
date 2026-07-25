@@ -33,13 +33,17 @@ from nexus.schemas.consumption import (
 )
 from nexus.schemas.media import MediaReadState
 from nexus.schemas.presence import Absent, Present, absent, presence_from_nullable, present
-from nexus.services.consumption import _listening_store, _reader_engagement_store, _state_store
+from nexus.services.consumption import (
+    _listening_store,
+    _policy,
+    _reader_engagement_store,
+    _state_store,
+)
 from nexus.services.consumption._lectern_store import LecternRow
 from nexus.services.consumption._listening_store import ListeningRow
 from nexus.services.consumption._reader_engagement_store import ReaderEngagementRow
 from nexus.services.playback_source import derive_playback_source
 
-_FINISHED_PROGRESSION = 0.95
 _MAX_CHAPTERS = 100
 _MAX_TITLE_CHARS = 300
 _READABLE_KINDS = frozenset(
@@ -219,7 +223,7 @@ def _audio_state(
         fraction = min(1.0, position / duration_ms)
     progress: Absent | Present[float] = present(fraction) if fraction is not None else absent()
 
-    if is_completed or (fraction is not None and fraction >= _FINISHED_PROGRESSION):
+    if is_completed or (fraction is not None and fraction >= _policy.FINISHED_PROGRESSION):
         return "Finished", progress
     if position > 0:
         return "InProgress", progress
@@ -241,7 +245,7 @@ def _doc_state(
     )
     if (
         engagement.max_total_progression is not None
-        and engagement.max_total_progression >= _FINISHED_PROGRESSION
+        and engagement.max_total_progression >= _policy.FINISHED_PROGRESSION
     ):
         return "Finished", progress
     return "InProgress", progress
@@ -310,14 +314,14 @@ def engagement_fact_rows_sql() -> str:
                         WHEN pls.is_completed IS TRUE THEN 'Finished'
                         WHEN {duration_ms} > 0
                              AND pls.position_ms::float8 / {duration_ms}
-                                 >= {_FINISHED_PROGRESSION}
+                                 >= {_policy.FINISHED_PROGRESSION}
                             THEN 'Finished'
                         WHEN COALESCE(pls.position_ms, 0) > 0 THEN 'InProgress'
                         ELSE 'Unread'
                     END
                 WHEN res.media_id IS NOT NULL THEN
                     CASE
-                        WHEN res.max_total_progression >= {_FINISHED_PROGRESSION}
+                        WHEN res.max_total_progression >= {_policy.FINISHED_PROGRESSION}
                             THEN 'Finished'
                         ELSE 'InProgress'
                     END
@@ -644,7 +648,7 @@ def episode_state_case_sql(*, listening_alias: str, override_alias: str, episode
             WHEN {listening_alias}.is_completed IS TRUE THEN 'played'
             WHEN {duration_ms} > 0
                  AND {listening_alias}.position_ms::float8 / {duration_ms}
-                     >= {_FINISHED_PROGRESSION}
+                     >= {_policy.FINISHED_PROGRESSION}
                 THEN 'played'
             WHEN COALESCE({listening_alias}.position_ms, 0) > 0 THEN 'in_progress'
             ELSE 'unplayed'

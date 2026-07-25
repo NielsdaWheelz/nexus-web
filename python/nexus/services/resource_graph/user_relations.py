@@ -16,6 +16,7 @@ unordered pair is enforced by selecting both orientations under SERIALIZABLE.
 
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import and_, or_, select
@@ -43,8 +44,12 @@ from nexus.schemas.resource_graph import (
 from nexus.services import highlights, notes, passage_anchors, pdf_highlights
 from nexus.services.note_indexing import enqueue_note_reindex
 from nexus.services.resource_graph import cleanup, connections, edges
-from nexus.services.resource_graph.refs import ResourceRef, parse_resource_ref
-from nexus.services.resource_graph.resolve import assert_ref_visible
+from nexus.services.resource_graph.refs import (
+    ResourceRef,
+    assert_resource_ref,
+    parse_resource_ref,
+)
+from nexus.services.resource_graph.resolve import assert_ref_visible, resolve_refs
 from nexus.services.resource_graph.schemas import (
     Connection,
     ConnectionFilters,
@@ -66,6 +71,53 @@ from nexus.services.resource_mutation_replay import (
 )
 
 _LINK_SCOPE = "resource_graph:link"
+
+
+def count_retained_neutral_links(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    start: datetime | None,
+    end: datetime,
+) -> int:
+    """Count surviving user Links whose two current endpoints remain visible."""
+    predicates = [
+        ResourceEdge.user_id == viewer_id,
+        ResourceEdge.created_at < end,
+    ]
+    if start is not None:
+        predicates.append(ResourceEdge.created_at >= start)
+    candidates = db.scalars(select(ResourceEdge).where(*predicates).order_by(ResourceEdge.id)).all()
+    links = [
+        edge
+        for edge in candidates
+        if is_neutral_link_shape(
+            origin=edge.origin,
+            kind=edge.kind,
+            ordinal=edge.ordinal,
+            snapshot=edge.snapshot,
+            source_order_key=edge.source_order_key,
+            target_order_key=edge.target_order_key,
+        )
+    ]
+    refs = [
+        assert_resource_ref(f"{scheme}:{resource_id}")
+        for edge in links
+        for scheme, resource_id in (
+            (edge.source_scheme, edge.source_id),
+            (edge.target_scheme, edge.target_id),
+        )
+    ]
+    resolved = resolve_refs(
+        db,
+        viewer_id=viewer_id,
+        refs=refs,
+        include_media_document_summary=False,
+    )
+    return sum(
+        not resolved[index].missing and not resolved[index + 1].missing
+        for index in range(0, len(resolved), 2)
+    )
 
 
 # =============================================================================

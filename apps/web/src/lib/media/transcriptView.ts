@@ -46,6 +46,10 @@ export interface Fragment {
   idx: number;
   html_sanitized: string;
   canonical_text: string;
+  /** Server-owned non-whitespace-token count for this canonical fragment. */
+  word_count?: number;
+  /** Zero-based document-global word-boundary ordinal for this fragment. */
+  document_word_start?: number;
   document_embeds: DocumentEmbed[];
   t_start_ms?: number | null;
   t_end_ms?: number | null;

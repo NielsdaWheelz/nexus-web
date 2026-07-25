@@ -145,6 +145,7 @@ describe("pane route table", () => {
       "/notes",
       "/notes/block-1",
       "/pages/page-1",
+      "/stats?period=month",
       "/settings",
       "/settings/reader",
       "/settings/billing",
