@@ -190,12 +190,32 @@ class ChatRunEventEmitter:
         append_run_event(self._db, self._run, "context_ref_added", payload)
 
 
-def mark_running(db: Session, run_id: UUID) -> None:
+def mark_running(
+    db: Session,
+    run_id: UUID,
+    *,
+    provider: str,
+    model_name: str,
+    reasoning_effort: str,
+) -> None:
+    """Enter ``running`` and atomically snapshot the resolved execution facts."""
     run = db.execute(select(ChatRun).where(ChatRun.id == run_id).with_for_update()).scalars().one()
     if run.status == "queued":
         run.status = "running"
+        run.provider = provider
+        run.model_name = model_name
+        run.reasoning_effort = reasoning_effort
         run.started_at = run.started_at or func.now()
         run.updated_at = func.now()
+    elif run.status == "running" and (
+        run.provider != provider
+        or run.model_name != model_name
+        or run.reasoning_effort != reasoning_effort
+    ):
+        # justify-service-invariant-check: queue retries can re-enter a running
+        # run, while the immutable profile resolution is stored in nullable DB
+        # columns and cannot encode cross-column equality in the type system.
+        raise AssertionError("running chat run facts do not match resolved execution facts")
     db.commit()
 
 

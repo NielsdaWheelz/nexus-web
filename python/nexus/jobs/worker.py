@@ -227,10 +227,11 @@ class JobWorker:
                 db.commit()
             if completed:
                 logger.info(
-                    "worker_job_succeeded",
+                    "worker_job_completed",
                     worker_id=self.worker_id,
                     job_id=str(claimed.id),
                     kind=claimed.kind,
+                    result_kind=result_payload.get("kind"),
                 )
             else:
                 logger.warning(

@@ -10,10 +10,12 @@
  */
 
 import { isRecord } from "@/lib/validation";
+import { decodePresence, type Presence } from "@/lib/api/presence";
 import {
   isCitationOut,
   type CitationOut,
 } from "@/lib/conversations/citationOut";
+import type { ChatPublicationWarning } from "@/lib/conversations/types";
 import {
   decodeContextRef,
   type ContextRefOut,
@@ -79,11 +81,13 @@ interface SSEDoneEvent {
   type: "done";
   data: {
     status: "complete" | "error" | "cancelled";
-    usage?: Record<string, unknown> | null;
-    error_code: string | null;
-    final_chars?: number | null;
-    last_provider_event_seq?: number | null;
-    cancelled?: boolean | null;
+    error_code: Presence<string>;
+    support_id: Presence<string>;
+    publication_warning: Presence<ChatPublicationWarning>;
+    usage: Record<string, unknown> | null;
+    final_chars: number | null;
+    last_provider_event_seq: number | null;
+    cancelled: boolean;
   };
 }
 
@@ -292,36 +296,66 @@ function parseAssistantTextDeltaData(data: unknown): SSEAssistantTextDeltaEvent[
 }
 
 function parseDoneData(data: unknown): SSEDoneEvent["data"] {
+  const keys = [
+    "status",
+    "error_code",
+    "support_id",
+    "publication_warning",
+    "usage",
+    "final_chars",
+    "last_provider_event_seq",
+    "cancelled",
+  ];
   if (
     !isRecord(data) ||
-    !hasOnlyKeys(data, [
-      "status",
-      "usage",
-      "error_code",
-      "final_chars",
-      "last_provider_event_seq",
-      "cancelled",
-    ]) ||
+    !hasOnlyKeys(data, keys) ||
+    !keys.every((key) => key in data) ||
     (data.status !== "complete" &&
       data.status !== "error" &&
       data.status !== "cancelled") ||
-    (data.usage !== undefined && data.usage !== null && !isRecord(data.usage)) ||
-    !(typeof data.error_code === "string" || data.error_code === null) ||
-    (data.final_chars !== undefined &&
-      data.final_chars !== null &&
+    (data.usage !== null && !isRecord(data.usage)) ||
+    (data.final_chars !== null &&
       (typeof data.final_chars !== "number" ||
         !Number.isInteger(data.final_chars) ||
         data.final_chars < 0)) ||
-    !isOptionalNonNegativeInteger(data.last_provider_event_seq) ||
-    (data.cancelled !== undefined &&
-      data.cancelled !== null &&
-      typeof data.cancelled !== "boolean")
+    (data.last_provider_event_seq !== null &&
+      (typeof data.last_provider_event_seq !== "number" ||
+        !Number.isInteger(data.last_provider_event_seq) ||
+        data.last_provider_event_seq < 0)) ||
+    typeof data.cancelled !== "boolean"
   ) {
     throw new Error("Invalid SSE payload for done");
   }
-  // justify-type-assertion: the guard above exhaustively validated every
-  // field of the done payload.
-  return data as SSEDoneEvent["data"];
+  return {
+    status: data.status,
+    error_code: decodePresence(data.error_code, (value) => {
+      if (typeof value !== "string") {
+        throw new Error("Invalid SSE payload for done");
+      }
+      return value;
+    }),
+    support_id: decodePresence(data.support_id, (value) => {
+      if (typeof value !== "string") {
+        throw new Error("Invalid SSE payload for done");
+      }
+      return value;
+    }),
+    publication_warning: decodePresence(data.publication_warning, (value) => {
+      if (
+        !isRecord(value) ||
+        !hasOnlyKeys(value, ["code"]) ||
+        Object.keys(value).length !== 1 ||
+        value.code !== "CitationsUnavailable"
+      ) {
+        throw new Error("Invalid SSE payload for done");
+      }
+      return { code: value.code };
+    }),
+    usage: data.usage,
+    final_chars: data.final_chars,
+    last_provider_event_seq: data.last_provider_event_seq,
+    cancelled: data.cancelled,
+  };
 }
 
 function parseToolCallStartData(data: unknown): SSEToolCallEvent["data"] {

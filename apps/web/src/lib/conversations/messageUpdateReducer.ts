@@ -24,6 +24,7 @@ import {
   type SearchCitationEventData,
   type WebCitationEventData,
 } from "@/lib/api/sse/citations";
+import { absent } from "@/lib/api/presence";
 import type {
   ChatToolStatus,
   SSECitationIndexEvent,
@@ -168,6 +169,7 @@ function retrievalFromSearchCitation(
     exact_snippet: citation.snippet,
     retrieval_status: citation.selected ? "selected" : "retrieved",
     included_in_prompt: false,
+    citation_candidate_ordinal: absent(),
   };
 }
 
@@ -198,6 +200,7 @@ function retrievalFromWebCitation(
     exact_snippet: citation.snippet,
     retrieval_status: "web_result",
     included_in_prompt: false,
+    citation_candidate_ordinal: absent(),
   };
 }
 

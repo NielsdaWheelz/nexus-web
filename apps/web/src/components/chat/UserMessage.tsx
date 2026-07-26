@@ -73,7 +73,9 @@ export default function UserMessage({
         ) : null}
         <span className={styles.userPromptBody}>{content}</span>
       </div>
-      {isTerminalFailure ? <ChatFailureCard failure={null} /> : null}
+      {isTerminalFailure ? (
+        <ChatFailureCard failure={null} supportId={{ kind: "Absent" }} />
+      ) : null}
       <span className={styles.timestamp}>{timestampLabel}</span>
     </div>
   );

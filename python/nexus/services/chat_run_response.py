@@ -16,7 +16,10 @@ from nexus.schemas.conversation import (
     ChatRunStreamActivityOut,
     ChatRunStreamStateOut,
     ChatRunStreamToolCallOut,
+    chat_publication_warning_from_nullable,
 )
+from nexus.schemas.llm import ExpectedChatFailure
+from nexus.schemas.presence import presence_from_nullable
 from nexus.services.chat_failure import (
     chat_failure_projection,
     compute_has_write_tool_attempt,
@@ -64,7 +67,7 @@ def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatR
         has_write_tool_attempt=compute_has_write_tool_attempt(db, run),
         attempts=compute_terminal_attempts(db, run),
     )
-    run_out = ChatRunOut.model_validate(run).model_copy(update={"failure": failure})
+    run_out = _run_out(run, failure)
     return ChatRunResponse(
         run=run_out,
         conversation=conversation_to_out(
@@ -76,6 +79,32 @@ def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatR
         user_message=user_message_out,
         assistant_message=assistant_message_out,
         stream_state=_stream_state(db, run, assistant_message.content or ""),
+    )
+
+
+def _run_out(run: ChatRun, failure: ExpectedChatFailure | None) -> ChatRunOut:
+    """Project nullable row facts once into the owned chat-run wire contract."""
+    return ChatRunOut(
+        id=run.id,
+        status=cast(Any, run.status),
+        conversation_id=run.conversation_id,
+        user_message_id=run.user_message_id,
+        assistant_message_id=run.assistant_message_id,
+        profile_id=run.profile_id,
+        reasoning_option_id=run.reasoning_option_id,
+        provider=run.provider,
+        model_name=run.model_name,
+        reasoning_effort=run.reasoning_effort,
+        error_origin=run.error_origin,
+        support_id=presence_from_nullable(run.support_id),
+        publication_warning=chat_publication_warning_from_nullable(run.publication_warning_code),
+        failure=failure,
+        cancel_requested_at=run.cancel_requested_at,
+        started_at=run.started_at,
+        completed_at=run.completed_at,
+        error_code=run.error_code,
+        created_at=run.created_at,
+        updated_at=run.updated_at,
     )
 
 

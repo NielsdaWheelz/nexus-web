@@ -4,6 +4,7 @@ import { useCallback, useMemo } from "react";
 import { GitBranch, Search } from "lucide-react";
 import Button from "@/components/ui/Button";
 import MachineText, { type MachineSignatureTime } from "@/components/ui/MachineText";
+import { absent } from "@/lib/api/presence";
 import { formatDisplayDate } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type {
@@ -21,6 +22,7 @@ import AssistantSelectionPopover from "./AssistantSelectionPopover";
 import AssistantEvidenceDisclosure from "./AssistantEvidenceDisclosure";
 import AssistantTrustInspector, { AssistantWriteTrail } from "./AssistantTrustInspector";
 import ChatFailureCard from "./ChatFailureCard";
+import ChatPublicationNotice from "./ChatPublicationNotice";
 import Colophon from "./Colophon";
 import MessageFootnotes from "./MessageFootnotes";
 import ForkStrip from "./ForkStrip";
@@ -77,7 +79,9 @@ export default function AssistantMessage({
   // is what shows the card; a Fable `refused` failure SUPPRESSES all partial text
   // (the card is the only projection). Any rehydrated terminal status replaces the
   // client-only ConnectionLostStatusUnknown card.
-  const failure = message.trust_trail?.run?.failure ?? null;
+  const trustRun = message.trust_trail?.run;
+  const failure = trustRun?.failure ?? null;
+  const supportId = trustRun?.support_id ?? absent();
   const isRefused = failure?.code === "refused";
   const isTerminalFailure =
     message.status === "error" || message.status === "cancelled";
@@ -176,6 +180,12 @@ export default function AssistantMessage({
             onCitationActivate={onCitationActivate}
           />
         ) : null}
+        {trustRun?.publication_warning.kind === "Present" ? (
+          <ChatPublicationNotice
+            warning={trustRun.publication_warning.value}
+            supportId={supportId}
+          />
+        ) : null}
         <MessageFootnotes
           citations={citations}
           onCitationActivate={onCitationActivate}
@@ -220,6 +230,7 @@ export default function AssistantMessage({
       {showFailureCard ? (
         <ChatFailureCard
           failure={failure}
+          supportId={supportId}
           canRerun={message.can_rerun}
           rerunning={rerunning}
           onRerun={

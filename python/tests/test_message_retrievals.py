@@ -15,6 +15,7 @@ from nexus.db.models import (
     ResourceEdge,
 )
 from nexus.errors import ApiErrorCode, NotFoundError
+from nexus.schemas.presence import Absent, Present
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.message_trust_trails import build_assistant_trust_trail
 from tests.factories import (
@@ -94,6 +95,9 @@ def _seed_cited_run(
         idempotency_key=f"trust-{uuid4()}",
         payload_hash="hash",
         status="complete",
+        provider="openai",
+        model_name="gpt-5.6-terra",
+        reasoning_effort="medium",
         reasoning_option_id="medium",
         started_at=now,
         completed_at=now,
@@ -132,6 +136,7 @@ def _seed_cited_run(
         exact_snippet="Quoted evidence",
         retrieval_status="selected",
         included_in_prompt=True,
+        citation_candidate_ordinal=3,
     )
     db_session.add(retrieval)
     db_session.flush()
@@ -178,7 +183,16 @@ def _seed_cited_run(
             run_id=run.id,
             seq=1,
             event_type="done",
-            payload={"status": "complete", "usage": None, "error_code": None, "final_chars": 12},
+            payload={
+                "status": "complete",
+                "error_code": {"kind": "Absent"},
+                "support_id": {"kind": "Absent"},
+                "publication_warning": {"kind": "Absent"},
+                "usage": None,
+                "final_chars": 12,
+                "last_provider_event_seq": None,
+                "cancelled": False,
+            },
         )
     )
     db_session.add(
@@ -250,6 +264,9 @@ def test_trust_trail_links_run_prompt_retrieval_citation_and_reference(
     assert trail.chat_run_id == run_id
     assert trail.run is not None
     assert trail.run.reasoning_option_id == "medium"
+    assert trail.run.reasoning_effort == Present[str](value="medium")
+    assert trail.run.support_id == Absent()
+    assert trail.run.publication_warning == Absent()
     assert trail.run.status == "complete"
     assert trail.prompt is not None
     assert trail.prompt.included_retrieval_ids == [str(retrieval_id)]
@@ -259,6 +276,7 @@ def test_trust_trail_links_run_prompt_retrieval_citation_and_reference(
     assert len(tool.retrievals) == 1
     retrieval = tool.retrievals[0]
     assert retrieval.id == retrieval_id
+    assert retrieval.citation_candidate_ordinal == Present[int](value=3)
     assert retrieval.cited_edge_id == edge_id
     assert retrieval.citation_number == 1
     assert retrieval.included_in_prompt is True
@@ -301,6 +319,44 @@ def test_shared_reader_reads_owner_owned_citation_edges(
     assert trail.citations[0].citation_edge_id == edge_id
     assert trail.citations[0].retrieval_id == retrieval_id
     assert trail.tool_calls[0].retrievals[0].cited_edge_id == edge_id
+
+
+def test_trust_run_projects_degraded_publication_and_run_owned_support(
+    db_session: Session,
+    bootstrapped_user: UUID,
+) -> None:
+    conversation_id, user_message_id, assistant_message_id = _owned_assistant_message(
+        db_session,
+        bootstrapped_user,
+    )
+    db_session.add(
+        ChatRun(
+            owner_user_id=bootstrapped_user,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            idempotency_key=f"trust-{uuid4()}",
+            payload_hash="hash",
+            status="complete",
+            provider="openai",
+            model_name="gpt-5.6-terra",
+            reasoning_effort="medium",
+            support_id="abc123def456",
+            publication_warning_code="CitationsUnavailable",
+        )
+    )
+    db_session.commit()
+
+    trail = build_assistant_trust_trail(
+        db_session,
+        viewer_id=bootstrapped_user,
+        assistant_message_id=assistant_message_id,
+    )
+
+    assert trail.run is not None
+    assert trail.run.support_id == Present[str](value="abc123def456")
+    assert isinstance(trail.run.publication_warning, Present)
+    assert trail.run.publication_warning.value.code == "CitationsUnavailable"
 
 
 def test_integrity_notices_are_deterministic(
@@ -414,7 +470,6 @@ def test_integrity_notices_are_deterministic(
     )
 
     assert [notice.code.split(":")[0] for notice in trail.integrity_notices] == [
-        "selected_retrieval_missing_citation",
         "prompt_retrieval_missing",
         "context_ref_missing_citation",
     ]

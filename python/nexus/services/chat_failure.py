@@ -47,7 +47,6 @@ from nexus.schemas.llm import (
     StreamInterruptedChatFailure,
     TimeoutChatFailure,
 )
-from nexus.schemas.presence import Absent, Present, presence_from_nullable
 from nexus.services.llm_profiles import profile as lookup_profile
 from nexus.services.llm_profiles import reasoning_level as lookup_reasoning_level
 
@@ -157,7 +156,6 @@ def _project_failure(
     has_write_tool_attempt: bool,
     attempts: int | None,
 ) -> ExpectedChatFailure | None:
-    support_id = presence_from_nullable(run.support_id)
     profile_active = profile_selection_active(run)
 
     code = "cancelled" if run.status == "cancelled" else run.error_code
@@ -178,35 +176,30 @@ def _project_failure(
     )
 
     if code == "cancelled":
-        return CancelledChatFailure(support_id=support_id, can_rerun=can_rerun)
+        return CancelledChatFailure(can_rerun=can_rerun)
     if code == "refused":
         return RefusedChatFailure(
             origin=_origin(run, code, _REFUSED_ORIGINS),
-            support_id=support_id,
             can_rerun=can_rerun,
         )
     if code == "incomplete":
         return IncompleteChatFailure(
             origin=_origin(run, code, _INCOMPLETE_ORIGINS),
-            support_id=support_id,
             can_rerun=can_rerun,
         )
     if code == "context_too_large":
         return ContextTooLargeChatFailure(
             origin=_origin(run, code, _CONTEXT_TOO_LARGE_ORIGINS),
-            support_id=support_id,
             can_rerun=can_rerun,
         )
     if code == "invalid_tool_arguments":
         return InvalidToolArgumentsChatFailure(
             origin=_origin(run, code, _INVALID_TOOL_ARGUMENTS_ORIGINS),
-            support_id=support_id,
             can_rerun=can_rerun,
         )
     if code == "budget_exceeded":
         return BudgetExceededChatFailure(
             origin=_origin(run, code, _BUDGET_EXCEEDED_ORIGINS),
-            support_id=support_id,
             can_rerun=can_rerun,
         )
     if code in TRANSIENT_CODES:
@@ -219,7 +212,7 @@ def _project_failure(
             raise _UnrepresentableTerminal(
                 f"attempts is required to project ChatRun.error_code {code!r}"
             )
-        return _transient_variant(run, code, attempts, support_id, can_rerun)
+        return _transient_variant(run, code, attempts, can_rerun)
 
     # Unreachable given the up-front guard; kept as a total-match backstop.
     raise _UnrepresentableTerminal(f"unrecognized ChatRun.error_code {code!r}")
@@ -229,34 +222,29 @@ def _transient_variant(
     run: ChatRun,
     code: str,
     attempts: int,
-    support_id: Absent | Present[str],
     can_rerun: bool,
 ) -> ExpectedChatFailure:
     if code == "rate_limited":
         return RateLimitedChatFailure(
             origin=_origin(run, code, _RATE_LIMITED_ORIGINS),
             attempts=attempts,
-            support_id=support_id,
             can_rerun=can_rerun,
         )
     if code == "timeout":
         return TimeoutChatFailure(
             origin=_origin(run, code, _TIMEOUT_ORIGINS),
             attempts=attempts,
-            support_id=support_id,
             can_rerun=can_rerun,
         )
     if code == "provider_unavailable":
         return ProviderUnavailableChatFailure(
             origin=_origin(run, code, _PROVIDER_UNAVAILABLE_ORIGINS),
             attempts=attempts,
-            support_id=support_id,
             can_rerun=can_rerun,
         )
     return StreamInterruptedChatFailure(
         origin=_origin(run, code, _STREAM_INTERRUPTED_ORIGINS),
         attempts=attempts,
-        support_id=support_id,
         can_rerun=can_rerun,
     )
 

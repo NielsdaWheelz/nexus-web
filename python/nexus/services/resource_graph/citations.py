@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import cast
 from uuid import UUID
 
@@ -43,8 +44,15 @@ from nexus.services.resource_graph.schemas import (
 )
 from nexus.services.resource_items.routing import resource_activation_for_ref
 
-_MARKDOWN_CITATION_MARKER_RE = re.compile(r"\[(\d+)\](?!\()")
-_MARKDOWN_LINKED_CITATION_MARKER_RE = re.compile(r"\[(\d+)\]\(")
+_MARKDOWN_CITATION_MARKER_RE = re.compile(r"\[(\d+)\](?:\(([^)\n]*)\))?")
+
+
+@dataclass(frozen=True, slots=True)
+class GeneratedMarkdownCitationMarker:
+    ordinal: int
+    start: int
+    end: int
+    linked: bool
 
 
 def record_citation(
@@ -142,17 +150,29 @@ def validate_generated_markdown_citations(
 
 def generated_markdown_citation_ordinals(content_md: str) -> list[int]:
     """Return plain generated citation markers; reject linked marker syntax."""
-    linked_marker_ordinals = sorted(
-        {int(match.group(1)) for match in _MARKDOWN_LINKED_CITATION_MARKER_RE.finditer(content_md)}
-    )
+    markers = parse_generated_markdown_citation_markers(content_md)
+    linked_marker_ordinals = sorted({marker.ordinal for marker in markers if marker.linked})
     if linked_marker_ordinals:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
             "Generated markdown citation markers must be plain [N] markers, not links; "
             f"linked_markers={linked_marker_ordinals}",
         )
-    return sorted(
-        {int(match.group(1)) for match in _MARKDOWN_CITATION_MARKER_RE.finditer(content_md)}
+    return sorted({marker.ordinal for marker in markers})
+
+
+def parse_generated_markdown_citation_markers(
+    content_md: str,
+) -> tuple[GeneratedMarkdownCitationMarker, ...]:
+    """Parse generated ``[N]`` and ``[N](...)`` citation marker occurrences."""
+    return tuple(
+        GeneratedMarkdownCitationMarker(
+            ordinal=int(match.group(1)),
+            start=match.start(),
+            end=match.end(),
+            linked=match.group(2) is not None,
+        )
+        for match in _MARKDOWN_CITATION_MARKER_RE.finditer(content_md)
     )
 
 

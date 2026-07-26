@@ -189,7 +189,9 @@ export default function AssistantTrustInspector({
               <div>
                 <dt>Model</dt>
                 <dd>
-                  {trustTrail.run.provider}/{trustTrail.run.model_name}
+                  {[trustTrail.run.provider, trustTrail.run.model_name]
+                    .filter(Boolean)
+                    .join("/") || "—"}
                 </dd>
               </div>
               <div>
@@ -205,8 +207,24 @@ export default function AssistantTrustInspector({
               </div>
               <div>
                 <dt>Reasoning</dt>
-                <dd>{trustTrail.run.reasoning_option_id ?? "—"}</dd>
+                <dd>
+                  {trustTrail.run.reasoning_effort.kind === "Present"
+                    ? trustTrail.run.reasoning_effort.value
+                    : "—"}
+                </dd>
               </div>
+              {trustTrail.run.publication_warning.kind === "Present" ? (
+                <div>
+                  <dt>Publication</dt>
+                  <dd>{trustTrail.run.publication_warning.value.code}</dd>
+                </div>
+              ) : null}
+              {trustTrail.run.support_id.kind === "Present" ? (
+                <div>
+                  <dt>Support ID</dt>
+                  <dd>{trustTrail.run.support_id.value}</dd>
+                </div>
+              ) : null}
               {trustTrail.run.failure ? (
                 <div>
                   <dt>Failure</dt>
@@ -399,6 +417,10 @@ function RetrievalRow({ retrieval }: { retrieval: MessageRetrieval }) {
         <span className={styles.trustFlags}>
           {retrieval.selected ? "selected" : "retrieved"} /{" "}
           {retrieval.included_in_prompt ? "included" : "not included"} /{" "}
+          {retrieval.citation_candidate_ordinal.kind === "Present"
+            ? `candidate [${retrieval.citation_candidate_ordinal.value}]`
+            : "not a candidate"}{" "}
+          /{" "}
           {retrieval.cited_edge_id ? "cited" : "uncited"}
         </span>
       </div>

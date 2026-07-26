@@ -20,7 +20,9 @@ export default function SystemMessage({
       <span className={styles.systemBody}>
         {conversationMessageText(message) || (message.status === "pending" ? "..." : "")}
       </span>
-      {isTerminalFailure ? <ChatFailureCard failure={null} /> : null}
+      {isTerminalFailure ? (
+        <ChatFailureCard failure={null} supportId={{ kind: "Absent" }} />
+      ) : null}
       <span className={styles.timestamp}>{timestampLabel}</span>
     </div>
   );

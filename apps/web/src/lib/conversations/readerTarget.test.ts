@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { absent } from "@/lib/api/presence";
 import { readerTargetFromRetrieval } from "./readerTarget";
 import type { MessageRetrieval } from "./types";
 
@@ -24,6 +25,7 @@ const mediaRetrieval = {
   selected: true,
   exact_snippet: "matched source text",
   retrieval_status: "retrieved",
+  citation_candidate_ordinal: absent(),
 } satisfies MessageRetrieval;
 
 const noteRetrieval = {
@@ -47,6 +49,7 @@ const noteRetrieval = {
   source_title: "My note",
   exact_snippet: "a cited note span",
   retrieval_status: "retrieved",
+  citation_candidate_ordinal: absent(),
 } satisfies MessageRetrieval;
 
 describe("readerTargetFromRetrieval", () => {

@@ -24,22 +24,30 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun
-from nexus.services.chat_run_citations import prune_tool_call_retrievals
+from nexus.services.chat_run_citations import (
+    CitationCandidateNumbering,
+    prune_tool_call_retrievals,
+)
 
 
-def app_search_tool_output(run_result: Any, start_ordinal: int) -> str:
-    next_ordinal = start_ordinal
+def app_search_tool_output(
+    run_result: Any,
+    numbering: CitationCandidateNumbering,
+) -> str:
     results = []
-    for citation in run_result.selected_citations:
+    for citation, numbered in zip(
+        run_result.selected_citations,
+        numbering.rows,
+        strict=True,
+    ):
         item: dict[str, object] = {
             "title": citation.title,
             "snippet": citation.snippet,
             "kind": citation.result_type,
             "source_label": citation.source_label,
         }
-        if citation.citation_target is not None:
-            item["n"] = next_ordinal
-            next_ordinal += 1
+        if numbered.candidate_ordinal is not None:
+            item["n"] = numbered.candidate_ordinal
         results.append(item)
     return json.dumps(
         {
@@ -52,18 +60,26 @@ def app_search_tool_output(run_result: Any, start_ordinal: int) -> str:
     )
 
 
-def web_search_tool_output(run_result: Any, start_ordinal: int) -> str:
-    results = [
-        {
-            "n": start_ordinal + i,
+def web_search_tool_output(
+    run_result: Any,
+    numbering: CitationCandidateNumbering,
+) -> str:
+    results = []
+    for citation, numbered in zip(
+        run_result.selected_citations,
+        numbering.rows,
+        strict=True,
+    ):
+        item = {
             "title": citation.title,
             "url": citation.url,
             "snippet": citation.snippet,
             "source": citation.source_name,
             "published_at": citation.published_at,
         }
-        for i, citation in enumerate(run_result.selected_citations)
-    ]
+        if numbered.candidate_ordinal is not None:
+            item["n"] = numbered.candidate_ordinal
+        results.append(item)
     return json.dumps(
         {
             "results": results,

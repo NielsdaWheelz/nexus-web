@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any, assert_never
 from uuid import UUID
 
 import httpx
@@ -16,7 +17,15 @@ from nexus.jobs.queue import JobRow
 from nexus.logging import get_logger
 from nexus.services.chat_run_event_store import TERMINAL_RUN_STATUSES
 from nexus.services.chat_run_finalize import finalize_defect
-from nexus.services.chat_runs import execute_chat_run
+from nexus.services.chat_runs import (
+    CancelledChatExecution,
+    ChatExecutionOutcome,
+    DegradedChatExecution,
+    FailedChatExecution,
+    PublishedChatExecution,
+    SkippedChatExecution,
+    execute_chat_run,
+)
 from nexus.services.llm_execution import ExecutionRuntime
 from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 
@@ -25,11 +34,13 @@ logger = get_logger(__name__)
 _CHAT_RUN_SPEC = LlmTaskSpec(label="chat_run", http_timeout_s=60.0, http_limits=(100, 20))
 
 
-def chat_run(run_id: str) -> dict:
+def chat_run(run_id: str) -> dict[str, Any]:
     run_uuid = UUID(run_id)
     settings = get_settings()
 
-    async def _handler(db: Session, runtime: ExecutionRuntime, client: httpx.AsyncClient) -> dict:
+    async def _handler(
+        db: Session, runtime: ExecutionRuntime, client: httpx.AsyncClient
+    ) -> ChatExecutionOutcome:
         web_search_provider: WebSearchProvider | None = (
             BraveSearchProvider(client, api_key=settings.brave_search_api_key)
             if settings.brave_search_api_key
@@ -49,9 +60,40 @@ def chat_run(run_id: str) -> dict:
     # propagate to the queue's retry policy and, at exhaustion, the dead-letter
     # finalizer below.
     logger.info("chat_run_started", run_id=run_id)
-    result = run_llm_task(_CHAT_RUN_SPEC, _handler)
+    result = _serialize_chat_execution(run_llm_task(_CHAT_RUN_SPEC, _handler))
     logger.info("chat_run_completed", run_id=run_id, result=result)
     return result
+
+
+def _serialize_chat_execution(outcome: ChatExecutionOutcome) -> dict[str, Any]:
+    """The sole chat-owned outcome to generic queue-payload adapter."""
+    if isinstance(outcome, PublishedChatExecution):
+        return {
+            "kind": outcome.kind,
+            "run_id": str(outcome.run_id),
+            "message_id": str(outcome.message_id),
+            "citation_count": outcome.citation_count,
+        }
+    if isinstance(outcome, DegradedChatExecution):
+        return {
+            "kind": outcome.kind,
+            "run_id": str(outcome.run_id),
+            "message_id": str(outcome.message_id),
+            "warning_code": outcome.warning_code,
+            "support_id": outcome.support_id,
+        }
+    if isinstance(outcome, FailedChatExecution):
+        return {
+            "kind": outcome.kind,
+            "run_id": str(outcome.run_id),
+            "error_code": outcome.error_code.model_dump(mode="json"),
+            "support_id": outcome.support_id.model_dump(mode="json"),
+        }
+    if isinstance(outcome, CancelledChatExecution):
+        return {"kind": outcome.kind, "run_id": str(outcome.run_id)}
+    if isinstance(outcome, SkippedChatExecution):
+        return {"kind": outcome.kind, "reason": outcome.reason}
+    assert_never(outcome)
 
 
 def finalize_dead_lettered_chat_run(db: Session, job: JobRow) -> None:

@@ -429,13 +429,14 @@ branch pointers), `conversation_branches`, `conversation_active_paths`
 (per-viewer), `conversation_shares`; plus the **chat-run** machinery: `chat_runs`
 (carries product selection snapshots `profile_id`/`reasoning_option_id` and
 resolved trust-trail snapshots `provider`/`model_name`/`reasoning_effort`,
-`error_origin`, `support_id` — no `models`/`user_api_keys` FK, both tables are
-gone),
+`error_origin`, `support_id`, `publication_warning_code` — no
+`models`/`user_api_keys` FK, both tables are gone),
 `chat_run_events` (append-only SSE log), `chat_prompt_assemblies`; and the
 **retrieval/citation** ledger: `message_tool_calls`, `message_retrievals` — the
-sole durable per-result record (telemetry; carries `cited_edge_id` pointing
-back at the citation edge). Candidate generation and rerank/selection are
-transient, in-memory passes over a tool call's results; only the
+sole durable per-result record (telemetry; carries the model-facing
+`citation_candidate_ordinal` and, only after final publication, `cited_edge_id`
+pointing back at the citation edge). Candidate generation and rerank/selection
+are transient, in-memory passes over a tool call's results; only the
 selected/included outcome is ever written. Conversation
 context refs are `resource_edges` with `source_scheme='conversation'`. Assistant
 message API responses include a
@@ -704,8 +705,9 @@ filtered page rather than under-filling it.
   selected under a context-char budget; candidate/rerank/selection is a transient in-memory
   pass and `message_retrievals` is the sole durable per-result record. Selected rows become
   `message_retrievals` telemetry rows via the single validated writer
-  `retrieval_citation.insert_retrieval_row` (the cited ones link back to their
-  citation edge through `cited_edge_id`, §7.7).
+  `retrieval_citation.insert_retrieval_row`. Citable rows exposed to chat receive
+  a candidate ordinal; cited rows link back to their final citation edge through
+  `cited_edge_id` (§7.7).
 - **The `ResourceRef` grammar** (`services/resource_graph/refs.py`): a
   `<scheme>:<uuid>` ref over a closed scheme set (`media`, `library`,
   `evidence_span`, `content_chunk`, `highlight`, `page`, `note_block`, `fragment`,
@@ -746,16 +748,25 @@ The chat/oracle LLM can call four tools (`services/agent_tools/`):
 - **`inspect_resource`** — returns a navigable document map of a `media:` ref;
   navigation only, never cited.
 
-Citation `[N]` is a **dense, turn-global ordinal** assigned across the whole turn
-(attached context refs first, then each tool's selected results). A citation **is an
-edge**: `[N]` is the `ordinal` on an `origin='citation'` `resource_edge` whose
-source is the assistant message and whose target is the cited resource. The
-backend builds the `CitationOut` read-model from those edges via
+Chat candidate `[N]` is a **dense, turn-global model-facing ordinal** assigned
+across citable evidence exposed during the whole turn (attached context first,
+then tool results). It lives on `message_retrievals`; it is not yet a citation.
+After generation, the backend canonicalizes only the markers actually used to
+dense final ordinals by first appearance. A final citation **is an edge**: its
+reader-facing `[N]` is the `ordinal` on an `origin='citation'` `resource_edge`
+whose source is the assistant message and whose target is the cited resource.
+No marker is valid and produces no edges. Invalid linked or unknown marker
+syntax publishes usable prose without markers as a complete degraded run with
+`CitationsUnavailable`; graph and database defects fail.
+
+The backend builds the `CitationOut` read-model from final edges via
 `resource_graph.citations.build_citation_outs` (uniformly for chat, Oracle, and
 Universal Dossiers), reconstructing the in-reader jump from the target's own
 anchoring. `message_retrievals` stays chat-owned **telemetry**, pointing back at
-the edge through `cited_edge_id`; the frontend maps `[N]` → a `CitationOut` →
-resource activation plus an optional reader-internal focus target.
+the final edge through `cited_edge_id`. Final markdown, edges, back-pointers,
+context refs, warning state, and terminal `done` commit atomically. The frontend
+maps final `[N]` → a `CitationOut` → resource activation plus an optional
+reader-internal focus target.
 
 ### 7.8 Resource Inspector, Universal Dossiers & Media Intelligence
 
@@ -1523,10 +1534,11 @@ The things most likely to bite you, distilled:
 7. **One send = one durable `ChatRun`**; HTTP never calls the provider; the worker
    does; the client only tails SSE and reconciles.
 8. **Active conversation path is per-viewer**; only path messages enter context.
-9. **Citation `[N]` is a dense, turn-global ordinal carried on an
-   `origin='citation'` `resource_edge`**, not a per-tool index and not a column on
-   `message_retrievals` (which is telemetry pointing back via `cited_edge_id`); the
-   attached-reference citation regression came from breaking this density.
+9. **Chat candidate `[N]` and final citation `[N]` are different facts.**
+   Candidate ordinals are dense and turn-global on `message_retrievals`; only
+   markers used in the answer become dense, first-use-ordered
+   `origin='citation'` edges. `cited_edge_id` is null until that final
+   publication transaction.
 10. **Assistant trust trails are read models, not new truth.** They are assembled
     when assistant messages are read from chat runs, prompt assemblies, tool calls,
     retrieval ledgers, citation edges, and context-ref-added events. Message

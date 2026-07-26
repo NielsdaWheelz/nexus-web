@@ -52,7 +52,7 @@ def _fetch_job_row(db: Session, job_id: UUID) -> dict[str, object]:
     return dict(row)
 
 
-def test_worker_run_once_executes_handler_and_marks_job_succeeded(db_session: Session):
+def test_worker_run_once_executes_handler_and_marks_job_completed(db_session: Session):
     observed_payloads: list[dict[str, object]] = []
 
     def handler(*, payload: dict[str, object], context: JobExecutionContext) -> dict[str, object]:
@@ -348,11 +348,13 @@ def test_chat_run_dead_letter_finalizes_run_in_worker_transaction(
     ).scalar_one()
     assert done_payload == {
         "status": "error",
+        "error_code": {"kind": "Absent"},
+        "support_id": {"kind": "Present", "value": run.support_id},
+        "publication_warning": {"kind": "Absent"},
         "usage": None,
-        "error_code": None,
         "final_chars": None,
         "last_provider_event_seq": None,
-        "cancelled": None,
+        "cancelled": False,
     }
 
 

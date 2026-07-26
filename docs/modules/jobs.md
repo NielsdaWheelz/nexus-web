@@ -3,8 +3,8 @@
 ## Scope
 
 This module owns the durable background-job substrate: the Postgres-backed queue,
-the single-process worker's claim/lease/heartbeat envelope, the registry of job
-kinds and their policies, dead-lettering, and the production lane topology. The queue
+each worker process's claim/lease/heartbeat envelope, the registry of job kinds
+and their policies, dead-lettering, and the production lane topology. The queue
 mechanics and channel wiring are described in
 [architecture.md §7.3](../architecture.md#73-background-jobs--the-worker); this
 doc owns the registry contract, the lane invariant, and how the LLM
@@ -80,6 +80,14 @@ stale reconciler plus manual API retry, not queue-level retries. This is
 deliberate: a handler that completed its work and recorded a domain failure has
 not crashed, so re-running it would be wasteful.
 
+Chat hard-cuts this generic convention at its task boundary:
+`execute_chat_run` returns a closed `Published | Degraded | Failed | Cancelled |
+Skipped` outcome, and `tasks/chat_run.py` is its sole plain-object serializer.
+A handled `Failed` outcome completes the queue job because the domain run is
+already terminal. Queue retry is reserved for an exception escaping that
+boundary. The worker logs `worker_job_completed` with the serialized result
+kind; queue completion is not a claim that the answer published.
+
 ## Worker lanes
 
 `config.py` declares one complete topology:
@@ -96,6 +104,8 @@ The two production lanes are non-empty, disjoint, and together equal the
 17-kind `PRODUCTION_ENABLED_JOB_KINDS`. Production plus the four maintenance
 kinds equals the complete registry. The worker entrypoint defects on drift.
 Only the background lane can claim or schedule production periodic work.
+Production deploys exactly `worker-interactive` and `worker-background`; there
+is no undifferentiated `worker` service.
 
 Normal workers require `WORKER_LANE=interactive|background`; they never accept
 a raw allowlist. A bounded maintenance process requires

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
+import { absent, present, type Presence } from "@/lib/api/presence";
 import type {
   AssistantTrustTrail,
   ConversationMessage,
@@ -12,23 +13,38 @@ import AssistantMessage from "./AssistantMessage";
 
 type TrustRun = NonNullable<AssistantTrustTrail["run"]>;
 
-function failureRun(failure: ExpectedChatFailure): TrustRun {
+function trustRun(overrides: Partial<TrustRun> = {}): TrustRun {
   return {
     run_id: "run-1",
     profile_id: "balanced",
     reasoning_option_id: "default",
-    provider: null,
-    model_name: null,
-    status: failure.code === "cancelled" ? "cancelled" : "error",
+    provider: "openai",
+    model_name: "gpt-test",
+    status: "complete",
     usage: null,
     error_code: null,
     error_origin: null,
-    failure,
+    failure: null,
+    reasoning_effort: present("medium"),
+    support_id: absent(),
+    publication_warning: absent(),
     final_chars: 0,
     started_at: null,
     completed_at: null,
     total_cost_usd_micros: null,
+    ...overrides,
   };
+}
+
+function failureRun(
+  failure: ExpectedChatFailure,
+  supportId: Presence<string> = absent(),
+): TrustRun {
+  return trustRun({
+    status: failure.code === "cancelled" ? "cancelled" : "error",
+    failure,
+    support_id: supportId,
+  });
 }
 
 function writeToolCall(
@@ -107,11 +123,17 @@ describe("AssistantMessage", () => {
     vi.unstubAllGlobals();
   });
 
-  function failedMessage(
-    failure: ExpectedChatFailure,
+  function failedMessage({
+    failure,
     text = "",
     canRerun = true,
-  ): ConversationMessage {
+    supportId = absent(),
+  }: {
+    failure: ExpectedChatFailure;
+    text?: string;
+    canRerun?: boolean;
+    supportId?: Presence<string>;
+  }): ConversationMessage {
     const message: ConversationMessage = {
       ...assistantMessage(text),
       status: "error",
@@ -120,7 +142,7 @@ describe("AssistantMessage", () => {
     message.trust_trail = {
       ...message.trust_trail!,
       status: "error",
-      run: failureRun(failure),
+      run: failureRun(failure, supportId),
     };
     return message;
   }
@@ -128,10 +150,12 @@ describe("AssistantMessage", () => {
   it("renders a Run again action on a rerunnable failure and fires the rerun", () => {
     const onRerunAssistantResponse = vi.fn();
     const message = failedMessage({
-      code: "incomplete",
-      origin: "provider_response",
-      support_id: { kind: "Present", value: "sup-1" },
-      can_rerun: true,
+      failure: {
+        code: "incomplete",
+        origin: "provider_response",
+        can_rerun: true,
+      },
+      supportId: present("sup-1"),
     });
 
     render(
@@ -154,24 +178,53 @@ describe("AssistantMessage", () => {
       status: "error",
       can_rerun: false,
     };
-    message.trust_trail = { ...message.trust_trail!, status: "error", run: null };
+    message.trust_trail = {
+      ...message.trust_trail!,
+      status: "error",
+      run: trustRun({
+        status: "error",
+        error_code: "assistant_message_defect",
+        support_id: present("sup-defect"),
+      }),
+    };
 
     render(<AssistantMessage message={message} forkOptions={[]} />);
 
     expect(screen.getByText("Something went wrong")).toBeInTheDocument();
+    expect(screen.getByText("Support ID: sup-defect")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Run again" })).toBeNull();
   });
 
+  it("preserves a degraded answer and presents its reference warning quietly", () => {
+    const message = assistantMessage("The usable answer remains.");
+    message.trust_trail = {
+      ...message.trust_trail!,
+      run: trustRun({
+        support_id: present("sup-citations"),
+        publication_warning: present({ code: "CitationsUnavailable" }),
+        final_chars: 26,
+      }),
+    };
+
+    render(<AssistantMessage message={message} forkOptions={[]} />);
+
+    expect(screen.getByText("The usable answer remains.")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "References unavailable — the answer completed, but its references could not be attached reliably.",
+    );
+    expect(screen.getByText("Support ID: sup-citations")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("renders valid partial text ABOVE the card for a non-refusal failure", () => {
-    const message = failedMessage(
-      {
+    const message = failedMessage({
+      failure: {
         code: "incomplete",
         origin: "provider_response",
-        support_id: { kind: "Absent" },
         can_rerun: true,
       },
-      "Here is a partial answer",
-    );
+      text: "Here is a partial answer",
+    });
 
     render(<AssistantMessage message={message} forkOptions={[]} />);
 
@@ -180,16 +233,15 @@ describe("AssistantMessage", () => {
   });
 
   it("suppresses all partial text for a Fable refusal (card is the only projection)", () => {
-    const message = failedMessage(
-      {
+    const message = failedMessage({
+      failure: {
         code: "refused",
         origin: "provider_stream",
-        support_id: { kind: "Absent" },
         can_rerun: false,
       },
-      "leaked refusal preamble",
-      false,
-    );
+      text: "leaked refusal preamble",
+      canRerun: false,
+    });
 
     render(<AssistantMessage message={message} forkOptions={[]} />);
 
@@ -200,9 +252,10 @@ describe("AssistantMessage", () => {
 
   it("renders the cancelled terminal projection without a support id", () => {
     const message = failedMessage({
-      code: "cancelled",
-      support_id: { kind: "Absent" },
-      can_rerun: true,
+      failure: {
+        code: "cancelled",
+        can_rerun: true,
+      },
     });
     message.status = "cancelled";
     message.trust_trail = {
@@ -322,7 +375,7 @@ describe("AssistantMessage", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders trust-trail tool, retrieval, citation, context-ref, and integrity-notice details", () => {
+  it("renders independent retrieval facts without treating an uncited candidate as a notice", () => {
     const message = assistantMessage("Answer [1].");
     const citation = {
       ordinal: 1,
@@ -355,22 +408,10 @@ describe("AssistantMessage", () => {
     };
     message.trust_trail = {
       ...message.trust_trail!,
-      run: {
-        run_id: "run-1",
-        profile_id: "balanced",
+      run: trustRun({
         reasoning_option_id: "medium",
-        provider: "openai",
-        model_name: "gpt-test",
-        status: "complete",
-        usage: null,
-        error_code: null,
-        error_origin: null,
-        failure: null,
         final_chars: 11,
-        started_at: null,
-        completed_at: null,
-        total_cost_usd_micros: null,
-      },
+      }),
       prompt: {
         id: "prompt-1",
         cacheable_input_tokens_estimate: 20,
@@ -438,9 +479,10 @@ describe("AssistantMessage", () => {
               locator: null,
               retrieval_status: "selected",
               included_in_prompt: true,
-              cited_edge_id: "edge-1",
-              citation_number: 1,
-              citation_role: "context",
+              citation_candidate_ordinal: present(1),
+              cited_edge_id: null,
+              citation_number: null,
+              citation_role: null,
               included_in_prompt_source: "retrieval",
               created_at: "2026-06-03T00:00:00Z",
             },
@@ -455,7 +497,7 @@ describe("AssistantMessage", () => {
           ordinal: 1,
           role: "context",
           target_ref: citation.target_ref,
-          retrieval_id: "retrieval-1",
+          retrieval_id: null,
           tool_call_id: "tool-1",
           citation,
         },
@@ -479,12 +521,7 @@ describe("AssistantMessage", () => {
           citation_edge_id: "edge-1",
         },
       ],
-      integrity_notices: [
-        {
-          code: "selected_retrieval_missing_citation",
-          message: "Selected retrieval retrieval-1 has no citation edge.",
-        },
-      ],
+      integrity_notices: [],
     };
     const onCitationActivate = vi.fn();
 
@@ -514,9 +551,9 @@ describe("AssistantMessage", () => {
     );
     expect(screen.getAllByText("Source title").length).toBeGreaterThan(0);
     expect(
-      screen.getByText("Selected retrieval retrieval-1 has no citation edge."),
+      screen.getByText("selected / included / candidate [1] / uncited"),
     ).toBeInTheDocument();
-    expect(screen.getByText("selected_retrieval_missing_citation")).toBeInTheDocument();
+    expect(screen.queryByText(/notices/)).toBeNull();
   });
 
   it("labels active future tools by tool name", () => {
@@ -728,22 +765,14 @@ describe("AssistantMessage", () => {
     message.citations = [citationFixture()];
     message.trust_trail = {
       ...message.trust_trail!,
-      run: {
-        run_id: "run-1",
-        profile_id: "balanced",
+      run: trustRun({
         reasoning_option_id: "medium",
         provider: "anthropic",
         model_name: "claude-sonnet-4-6",
-        status: "complete",
         usage: { input_tokens: 3200, output_tokens: 1100 },
-        error_code: null,
-        error_origin: null,
-        failure: null,
         final_chars: 15,
-        started_at: null,
-        completed_at: null,
         total_cost_usd_micros: 14_123,
-      },
+      }),
     };
     return message;
   }

@@ -7,13 +7,11 @@ Covers attached-resource citation behavior (resource provenance graph §5.2):
   retrieval row via ``search.get_search_result``; un-anchored highlights stay in
   the prompt but are never numbered.
 - The dense ordinal (``n``) has no holes: only citable resources consume an ``n``.
-- ``chat_run_citations.persist_attached_citations`` writes ONE synthetic
+- ``chat_run_citations.persist_attached_citations`` writes one synthetic
   ``attached_resources`` parent tool-call plus one ``message_retrievals`` row per
-  citation (``selected=true``, ``retrieval_status='attached_context'``), AND
-  records one ``origin='citation'`` resource edge per row (ordinal 1..k,
-  ``source = message:<assistant_message_id>``) with ``cited_edge_id`` pointing
-  back from the telemetry row.
-- ``chat_run_citations.persist_read_evidence_citation`` writes no row (returns None) when
+  citation and assigns its model-facing candidate ordinal without writing a
+  final citation edge.
+- ``chat_run_citations.persist_read_evidence_candidate`` writes no row (returns None) when
   the read result has no materializable retrieval.
 
 Assertions go through the public service surface plus raw SQL reads of the
@@ -36,7 +34,7 @@ import pytest
 from sqlalchemy import text as sql_text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import ChatRun, Fragment, Message, ResourceEdge
+from nexus.db.models import ChatRun, Fragment, ResourceEdge
 from nexus.errors import NotFoundError
 from nexus.services import chat_run_citations, context_assembler, search
 from nexus.services.agent_tools.read_resource import execute_read_resource
@@ -201,7 +199,7 @@ def _retrievals_under(db: Session, tool_call_id: UUID) -> list:
         db.execute(
             sql_text(
                 "SELECT cited_edge_id, selected, retrieval_status, result_ref, "
-                "media_id, locator, result_type "
+                "media_id, locator, result_type, citation_candidate_ordinal "
                 "FROM message_retrievals WHERE tool_call_id = :tcid ORDER BY ordinal"
             ),
             {"tcid": tool_call_id},
@@ -296,32 +294,9 @@ def test_anchored_highlight_is_numbered_and_persists_valid_row(direct_db: Direct
         assert row["media_id"] is not None
         assert row["locator"] is not None
 
-        # The attached set is recorded as citation edges (dense 1..k) and the
-        # telemetry row points back at its edge.
-        edges = _citation_edges(session, run.assistant_message_id)
-        assert len(edges) == 1, f"Expected one citation edge; got {len(edges)}"
-        edge = edges[0]
-        assert edge.ordinal == 1
-        assert row["cited_edge_id"] == edge.id, (
-            f"Telemetry row must point at its citation edge; {row['cited_edge_id']} != {edge.id}"
-        )
-        assert (edge.target_scheme, edge.target_id) == ("highlight", highlight_id), (
-            "A media-anchored highlight citation targets the highlight; got "
-            f"{edge.target_scheme}:{edge.target_id}"
-        )
-        assert edge.snapshot is not None and edge.snapshot.get("result_type") == "highlight"
-
-        # The assistant message read-path rehydrates citations from edges (§5.2):
-        # a cold reload of the conversation shows the same [N] chips.
-        from nexus.services.conversation_branches import _message_outs_by_id
-
-        assistant = session.get(Message, run.assistant_message_id)
-        assert assistant is not None
-        rehydrated = _message_outs_by_id(session, user_id, [assistant])[run.assistant_message_id]
-        assert [c.ordinal for c in rehydrated.citations] == [1], (
-            f"assistant message GET must rehydrate its citation; got {rehydrated.citations}"
-        )
-        assert rehydrated.citations[0].target_ref.type == "highlight"
+        assert row["citation_candidate_ordinal"] == 1
+        assert row["cited_edge_id"] is None
+        assert _citation_edges(session, run.assistant_message_id) == []
 
         chat_run_citations.persist_attached_citations(session, run, ())
         assert _tool_calls(session, run.assistant_message_id) == []
@@ -395,18 +370,9 @@ def test_attached_content_chunk_citation_activates_primary_evidence(
         assert len(rows) == 1
         assert rows[0]["result_type"] == "content_chunk"
         assert rows[0]["result_ref"]["citation_target"] == f"content_chunk:{chunk_id}"
-        assert rows[0]["cited_edge_id"] is not None
-
-        from nexus.services.conversation_branches import _message_outs_by_id
-
-        assistant = session.get(Message, run.assistant_message_id)
-        assert assistant is not None
-        rehydrated = _message_outs_by_id(session, user_id, [assistant])[run.assistant_message_id]
-        assert len(rehydrated.citations) == 1
-        citation = rehydrated.citations[0]
-        assert citation.target_ref.type == "content_chunk"
-        assert str(citation.target_ref.id) == str(chunk_id)
-        assert citation.activation.href == f"/media/{media_id}#evidence-{evidence_span_id}"
+        assert rows[0]["citation_candidate_ordinal"] == 1
+        assert rows[0]["cited_edge_id"] is None
+        assert _citation_edges(session, run.assistant_message_id) == []
 
     _register_user_cleanup(direct_db, user_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)
@@ -519,11 +485,9 @@ def test_dense_ordinals_skip_uncitable_resources(direct_db: DirectSessionManager
 # =============================================================================
 
 
-def test_reexecution_with_fewer_citations_prunes_phantom_edges(direct_db: DirectSessionManager):
-    """A second ``_persist_attached_citations`` with fewer citations must trim the
-    over-count telemetry rows AND the citation edges they cited; a pruned row's
-    edge would otherwise survive as a phantom ``[N]`` chip (resource provenance
-    graph: telemetry pruning and edge cleanup are one owner)."""
+def test_reexecution_with_fewer_citations_prunes_candidate_rows(
+    direct_db: DirectSessionManager,
+):
     with direct_db.session() as session:
         user_id = _bootstrap_user(session)
         conversation_id = create_test_conversation(session, user_id)
@@ -539,29 +503,19 @@ def test_reexecution_with_fewer_citations_prunes_phantom_edges(direct_db: Direct
 
         run = _make_chat_run(session, conversation_id, user_id)
         chat_run_citations.persist_attached_citations(session, run, both)
-        edges = _citation_edges(session, run.assistant_message_id)
-        assert [edge.ordinal for edge in edges] == [1, 2], (
-            f"Both attached highlights cite their media; got {[e.ordinal for e in edges]}"
-        )
         tool_call_id, _name, _idx = _tool_calls(session, run.assistant_message_id)[0]
         rows = _retrievals_under(session, tool_call_id)
-        assert all(row["cited_edge_id"] is not None for row in rows)
+        assert [row["citation_candidate_ordinal"] for row in rows] == [1, 2]
+        assert all(row["cited_edge_id"] is None for row in rows)
+        assert _citation_edges(session, run.assistant_message_id) == []
 
-        # Re-execute with only the FIRST citation. The second row (ordinal 1,
-        # 0-based) is pruned; its cited_edge_id still points at edge ordinal 2.
         chat_run_citations.persist_attached_citations(session, run, (both[0],))
 
-        surviving = _citation_edges(session, run.assistant_message_id)
-        assert [edge.ordinal for edge in surviving] == [1], (
-            f"The pruned row's phantom citation edge must be deleted; got "
-            f"{[(e.ordinal, e.target_scheme, e.target_id) for e in surviving]}"
-        )
-        assert (surviving[0].target_scheme, surviving[0].target_id) == ("highlight", first_id)
         remaining_rows = _retrievals_under(session, tool_call_id)
-        assert len(remaining_rows) == 1, (
-            f"Only one telemetry row should survive; got {remaining_rows}"
-        )
-        assert remaining_rows[0]["cited_edge_id"] == surviving[0].id
+        assert len(remaining_rows) == 1
+        assert remaining_rows[0]["citation_candidate_ordinal"] == 1
+        assert remaining_rows[0]["cited_edge_id"] is None
+        assert _citation_edges(session, run.assistant_message_id) == []
 
     _register_user_cleanup(direct_db, user_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)
@@ -608,27 +562,23 @@ def test_read_evidence_with_materializable_retrieval_persists_next_ordinal(
         )
         session.commit()
 
-        n = chat_run_citations.persist_read_evidence_citation(
+        numbering = chat_run_citations.persist_read_evidence_candidate(
             session,
             run=run,
             tool_call_id=tool_call_id,
             result=result,
             start_ordinal=5,
         )
-        assert n == 5
+        assert numbering is not None
+        assert numbering.next_ordinal == 6
+        assert numbering.rows[0].candidate_ordinal == 5
         rows = _retrievals_under(session, tool_call_id)
         assert len(rows) == 1, f"Expected one read retrieval row; got {rows}"
         assert rows[0]["result_type"] == "highlight"
         assert rows[0]["locator"] is not None
-        edges = _citation_edges(session, run.assistant_message_id)
-        assert len(edges) == 1, f"Read evidence must record one citation edge; got {len(edges)}"
-        assert edges[0].ordinal == 5, (
-            f"The edge ordinal is the read's turn-global n; got {edges[0].ordinal}"
-        )
-        assert rows[0]["cited_edge_id"] == edges[0].id
-        assert (edges[0].target_scheme, edges[0].target_id) == ("highlight", highlight_id), (
-            f"Highlight evidence cites its highlight; got {edges[0].target_scheme}"
-        )
+        assert rows[0]["citation_candidate_ordinal"] == 5
+        assert rows[0]["cited_edge_id"] is None
+        assert _citation_edges(session, run.assistant_message_id) == []
 
     _register_user_cleanup(direct_db, user_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)
@@ -694,31 +644,24 @@ def test_read_evidence_section_full_and_page_range_persist_citations(
                 tool_call_index=offset + 1,
             )
             tool_call_ids.append(tool_call_id)
-            n = chat_run_citations.persist_read_evidence_citation(
+            numbering = chat_run_citations.persist_read_evidence_candidate(
                 session,
                 run=run,
                 tool_call_id=tool_call_id,
                 result=read,
                 start_ordinal=10 + offset,
             )
-            assert n == 10 + offset
+            assert numbering is not None
+            assert numbering.next_ordinal == 11 + offset
+            assert numbering.rows[0].candidate_ordinal == 10 + offset
             rows = _retrievals_under(session, tool_call_id)
             assert len(rows) == 1
             assert rows[0]["result_type"] == read.citation_result_type
             assert rows[0]["locator"] is not None or read.citation_result_type == "media"
-            assert rows[0]["cited_edge_id"] is not None, (
-                f"Read evidence rows must point at their citation edge; got {rows[0]}"
-            )
+            assert rows[0]["citation_candidate_ordinal"] == 10 + offset
+            assert rows[0]["cited_edge_id"] is None
 
-        edges = _citation_edges(session, run.assistant_message_id)
-        assert [edge.ordinal for edge in edges] == [10, 11, 12], (
-            f"Each read consumes its own turn-global n; got {[edge.ordinal for edge in edges]}"
-        )
-        assert [(edge.target_scheme, edge.target_id) for edge in edges] == [
-            ("fragment", fragment_id),
-            ("media", media_id),
-            ("media", pdf_media_id),
-        ], "Section/full/page_range evidence cites the exact citable target"
+        assert _citation_edges(session, run.assistant_message_id) == []
 
     _register_user_cleanup(direct_db, user_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)
@@ -768,14 +711,14 @@ def test_read_evidence_without_materializable_retrieval_persists_nothing(
         )
         session.commit()
 
-        n = chat_run_citations.persist_read_evidence_citation(
+        numbering = chat_run_citations.persist_read_evidence_candidate(
             session,
             run=run,
             tool_call_id=tool_call_id,
             result=result,
             start_ordinal=5,
         )
-        assert n is None, "An un-materializable read evidence must not be assigned an ordinal"
+        assert numbering is None, "Un-materializable read evidence must not be numbered"
 
         rows = _retrievals_under(session, tool_call_id)
         assert rows == [], f"No retrieval row should be written for an un-anchored read; got {rows}"

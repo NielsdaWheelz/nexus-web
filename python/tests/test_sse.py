@@ -115,6 +115,42 @@ async def test_cursor_closes_cleanly_when_read_returns_terminal():
 
 
 @pytest.mark.asyncio
+async def test_cursor_classifies_generator_close_as_client_detachment():
+    listener = _FakeListener(ticks=1)
+    stream = tail_cursor_stream(
+        request=_FakeRequest(),
+        listener=listener,
+        after=0,
+        read_after=lambda _cursor: (
+            [SimpleNamespace(seq=1, event_type="delta", payload={"d": "hi"})],
+            False,
+        ),
+    )
+
+    assert await anext(stream) == 'id: 1\nevent: delta\ndata: {"d":"hi"}\n\n'
+    await stream.aclose()
+
+    assert listener.closed_reason == "client_detached"
+
+
+@pytest.mark.asyncio
+async def test_cursor_classifies_request_disconnect_as_client_detachment():
+    listener = _FakeListener(ticks=1)
+    chunks = [
+        chunk
+        async for chunk in tail_cursor_stream(
+            request=_FakeRequest(disconnected=True),
+            listener=listener,
+            after=0,
+            read_after=lambda _cursor: ([], False),
+        )
+    ]
+
+    assert chunks == []
+    assert listener.closed_reason == "client_detached"
+
+
+@pytest.mark.asyncio
 async def test_cursor_reauthorizes_before_terminal_delivery(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -242,3 +278,18 @@ async def test_snapshot_closes_cleanly_when_read_raises_gone_code():
     ]
     assert chunks == []
     assert listener.closed_reason == "gone"
+
+
+@pytest.mark.asyncio
+async def test_snapshot_classifies_generator_close_as_client_detachment():
+    listener = _FakeListener(ticks=1)
+    stream = tail_snapshot_stream(
+        request=_FakeRequest(),
+        listener=listener,
+        read_snapshot=lambda: ({"processing_status": "pending"}, False),
+    )
+
+    assert await anext(stream) == 'event: state\ndata: {"processing_status":"pending"}\n\n'
+    await stream.aclose()
+
+    assert listener.closed_reason == "client_detached"

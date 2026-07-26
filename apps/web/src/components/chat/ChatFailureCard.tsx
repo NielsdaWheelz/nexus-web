@@ -3,12 +3,14 @@
 /**
  * ChatFailureCard — the ONE chat-failure renderer.
  *
- * Two shapes share one quiet, red-bordered card:
+ * Two operational cards share one compact structure:
  *   - `failure` mode: an `ExpectedChatFailure | null` folded onto the run (null
  *     is the generic DEFECT card). Copy comes exclusively from
- *     `chatFailureMessage`; it shows an optional support id and AT MOST one
- *     action — `Run again`, only when `canRerun`.
- *   - `reconnect` mode: the CLIENT-ONLY `ConnectionLostStatusUnknown` state owned
+ *     `chatFailureMessage`; the run-owned support occurrence is supplied
+ *     independently, and the card shows AT MOST one action — `Run again`, only
+ *     when `canRerun`.
+ *   - `reconnect` mode: the neutral CLIENT-ONLY
+ *     `ConnectionLostStatusUnknown` state owned
  *     by useChatRunTail.ts. It never calls /rerun; its single action is
  *     `Reconnect`, which resumes the live tail from the last cursor.
  *
@@ -16,6 +18,7 @@
  */
 
 import Button from "@/components/ui/Button";
+import type { Presence } from "@/lib/api/presence";
 import { chatFailureMessage } from "@/lib/llm/failure";
 import type { ExpectedChatFailure } from "@/lib/conversations/types";
 import styles from "./ChatFailureCard.module.css";
@@ -23,6 +26,7 @@ import styles from "./ChatFailureCard.module.css";
 interface FailureCardProps {
   mode?: "failure";
   failure: ExpectedChatFailure | null;
+  supportId: Presence<string>;
   canRerun?: boolean;
   onRerun?: () => void;
   rerunning?: boolean;
@@ -43,7 +47,7 @@ const RECONNECT_COPY = {
 export default function ChatFailureCard(props: ChatFailureCardProps) {
   if (props.mode === "reconnect") {
     return (
-      <div className={styles.card} role="alert">
+      <div className={`${styles.card} ${styles.reconnect}`} role="alert">
         <p className={styles.title}>{RECONNECT_COPY.title}</p>
         <p className={styles.body}>{RECONNECT_COPY.body}</p>
         <div className={styles.actions}>
@@ -55,18 +59,16 @@ export default function ChatFailureCard(props: ChatFailureCardProps) {
     );
   }
 
-  const { failure, canRerun, onRerun, rerunning } = props;
+  const { failure, supportId, canRerun, onRerun, rerunning } = props;
   const { title, body } = chatFailureMessage(failure);
-  const supportId =
-    failure?.support_id.kind === "Present" ? failure.support_id.value : null;
   const showRerun = Boolean(canRerun && onRerun);
 
   return (
     <div className={styles.card} role="alert">
       <p className={styles.title}>{title}</p>
       <p className={styles.body}>{body}</p>
-      {supportId ? (
-        <p className={styles.supportId}>Support ID: {supportId}</p>
+      {supportId.kind === "Present" ? (
+        <p className={styles.supportId}>Support ID: {supportId.value}</p>
       ) : null}
       {showRerun ? (
         <div className={styles.actions}>

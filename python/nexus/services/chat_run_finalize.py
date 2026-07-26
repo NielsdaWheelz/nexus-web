@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.db.models import ChatRun, Message
-from nexus.schemas.conversation import chat_run_event_payload_json
+from nexus.schemas.conversation import (
+    chat_publication_warning_from_nullable,
+    chat_run_event_payload_json,
+)
+from nexus.schemas.presence import presence_from_nullable
 from nexus.services import run_kit
 from nexus.services.chat_run_event_store import TERMINAL_RUN_STATUSES
 from nexus.services.chat_run_message_blocks import message_document
@@ -122,10 +126,11 @@ def finalize_run(
     error_code: str | None,
     error_origin: str | None = None,
     support_id: str | None = None,
+    publication_warning_code: Literal["CitationsUnavailable"] | None = None,
     error_detail: str | None = None,
     usage: dict[str, Any] | None = None,
     last_provider_event_seq: int | None = None,
-    cancelled: bool | None = None,
+    cancelled: bool = False,
     commit: bool = True,
 ) -> None:
     """Finalize a run's terminal status.
@@ -142,6 +147,24 @@ def finalize_run(
             db.commit()
         return
 
+    # justify-service-invariant-check: finalize_run is the shared terminal fold
+    # for several distinct call sites, so the warning/run/support correlation
+    # cannot be represented by one parameter type without introducing a second
+    # terminal state machine.
+    if publication_warning_code is not None and (
+        publication_warning_code != "CitationsUnavailable"
+        or assistant_status != "complete"
+        or run_status != "complete"
+        or done_status != "complete"
+        or error_code is not None
+        or support_id is None
+    ):
+        raise AssertionError(
+            "publication warning requires a complete degraded run, no error code, and a support id"
+        )
+    if publication_warning_code is None and run_status == "complete" and support_id is not None:
+        raise AssertionError("an ordinary published run cannot carry a support id")
+
     assistant_message = db.get(Message, run.assistant_message_id)
     if assistant_message is not None:
         content = assistant_content
@@ -154,15 +177,22 @@ def finalize_run(
 
     run.error_origin = error_origin
     run.support_id = support_id
+    run.publication_warning_code = publication_warning_code
 
-    done_payload: dict[str, Any] = {"status": done_status}
-    if error_code is not None:
-        done_payload["error_code"] = error_code
-    if assistant_message is not None and done_status == "complete":
-        done_payload["final_chars"] = len(assistant_message.content)
-    done_payload["usage"] = usage
-    done_payload["last_provider_event_seq"] = last_provider_event_seq
-    done_payload["cancelled"] = cancelled
+    done_payload: dict[str, Any] = {
+        "status": done_status,
+        "error_code": presence_from_nullable(error_code),
+        "support_id": presence_from_nullable(support_id),
+        "publication_warning": chat_publication_warning_from_nullable(publication_warning_code),
+        "usage": usage,
+        "final_chars": (
+            len(assistant_message.content)
+            if assistant_message is not None and done_status == "complete"
+            else None
+        ),
+        "last_provider_event_seq": last_provider_event_seq,
+        "cancelled": cancelled,
+    }
     run_kit.mark_terminal(
         db,
         stream=run_kit.chat_run_stream(run),

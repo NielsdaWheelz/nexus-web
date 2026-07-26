@@ -16,6 +16,10 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 from nexus.services import chat_run_tools
+from nexus.services.chat_run_citations import (
+    CitationCandidateNumbering,
+    NumberedCitationCandidate,
+)
 
 
 def test_public_api_surface() -> None:
@@ -56,7 +60,18 @@ def test_app_search_tool_output_numbers_only_citable_rows() -> None:
         status="complete",
         error_code=None,
     )
-    payload = json.loads(chat_run_tools.app_search_tool_output(run_result, 2))
+    payload = json.loads(
+        chat_run_tools.app_search_tool_output(
+            run_result,
+            CitationCandidateNumbering(
+                rows=(
+                    NumberedCitationCandidate(uuid4(), 0, 2),
+                    NumberedCitationCandidate(uuid4(), 1, None),
+                ),
+                next_ordinal=3,
+            ),
+        )
+    )
     assert payload["results"] == [
         {
             "title": "Citable",
@@ -100,7 +115,18 @@ def test_web_search_tool_output_dense_ordinals_from_start() -> None:
         status="complete",
         error_code=None,
     )
-    payload = json.loads(chat_run_tools.web_search_tool_output(run_result, 5))
+    payload = json.loads(
+        chat_run_tools.web_search_tool_output(
+            run_result,
+            CitationCandidateNumbering(
+                rows=(
+                    NumberedCitationCandidate(uuid4(), 0, 5),
+                    NumberedCitationCandidate(uuid4(), 1, 6),
+                ),
+                next_ordinal=7,
+            ),
+        )
+    )
     assert [r["n"] for r in payload["results"]] == [5, 6]
     assert payload["results"][0] == {
         "n": 5,

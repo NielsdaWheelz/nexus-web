@@ -14,7 +14,7 @@ import time
 from collections.abc import AsyncGenerator, Mapping
 from contextlib import suppress
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
 from provider_runtime import (
@@ -63,12 +63,12 @@ from nexus.db.models import (
 from nexus.errors import (
     ApiError,
     ApiErrorCode,
-    InvalidRequestError,
     NotFoundError,
     exception_error_detail,
 )
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger, set_flow_id
+from nexus.schemas import presence as owned_presence
 from nexus.schemas.chat_reader_selection import ReaderSelectionInput
 from nexus.schemas.conversation import (
     CHAT_RUN_STATUS_FILTER,
@@ -113,11 +113,12 @@ from nexus.services.chat_reader_selection import (
 )
 from nexus.services.chat_run_access import get_run_for_owner
 from nexus.services.chat_run_citations import (
-    clear_message_citations,
-    emit_citation_index,
+    DegradedCitations,
+    PublishedCitations,
+    number_tool_citation_candidates,
     persist_attached_citations,
-    persist_read_evidence_citation,
-    record_tool_citations,
+    persist_read_evidence_candidate,
+    publish_chat_citations,
 )
 from nexus.services.chat_run_event_store import (
     TERMINAL_RUN_STATUSES,
@@ -188,6 +189,116 @@ CHAT_TEXT_FLUSH_INTERVAL_MS = 33
 CHAT_TEXT_FLUSH_MAX_CHARS = 512
 CHAT_TEXT_FLUSH_MAX_BYTES = 2048
 CHAT_CANCEL_POLL_INTERVAL_SECONDS = 0.25
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class PublishedChatExecution:
+    run_id: UUID
+    message_id: UUID
+    citation_count: int
+    kind: Literal["Published"] = "Published"
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class DegradedChatExecution:
+    run_id: UUID
+    message_id: UUID
+    warning_code: Literal["CitationsUnavailable"]
+    support_id: str
+    kind: Literal["Degraded"] = "Degraded"
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class FailedChatExecution:
+    run_id: UUID
+    error_code: owned_presence.Presence[str]
+    support_id: owned_presence.Presence[str]
+    kind: Literal["Failed"] = "Failed"
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class CancelledChatExecution:
+    run_id: UUID
+    kind: Literal["Cancelled"] = "Cancelled"
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class SkippedChatExecution:
+    reason: Literal["MissingRun", "Terminal"]
+    kind: Literal["Skipped"] = "Skipped"
+
+
+type ChatExecutionOutcome = (
+    PublishedChatExecution
+    | DegradedChatExecution
+    | FailedChatExecution
+    | CancelledChatExecution
+    | SkippedChatExecution
+)
+
+
+def _presence(value: str | None) -> owned_presence.Presence[str]:
+    return (
+        owned_presence.Present[str](value=value) if value is not None else owned_presence.Absent()
+    )
+
+
+def _failed_chat_execution(
+    db: Session,
+    *,
+    run_id: UUID,
+    error_code: str | None,
+) -> FailedChatExecution:
+    support_id = db.execute(
+        select(ChatRun.support_id).where(ChatRun.id == run_id)
+    ).scalar_one_or_none()
+    return FailedChatExecution(
+        run_id=run_id,
+        error_code=_presence(error_code),
+        support_id=_presence(support_id),
+    )
+
+
+def _log_chat_run_finished(
+    db: Session,
+    *,
+    run_id: UUID,
+    outcome: Literal["Published", "Degraded", "Failed", "Cancelled"],
+    citation_finalize_ms: int | None = None,
+    first_visible_text_ms: int | None = None,
+    provider_event_count: int = 0,
+) -> None:
+    run = db.get(ChatRun, run_id)
+    assert run is not None, f"terminal chat run {run_id} disappeared"
+    queue_wait_ms = (
+        max(0, int((run.started_at - run.created_at).total_seconds() * 1000))
+        if run.started_at is not None
+        else None
+    )
+    execution_ms = (
+        max(0, int((run.completed_at - run.started_at).total_seconds() * 1000))
+        if run.started_at is not None and run.completed_at is not None
+        else None
+    )
+    logger.info(
+        "ChatRun.Finished",
+        **{
+            "nexus.chat_run.id": str(run.id),
+            "nexus.conversation.id": str(run.conversation_id),
+            "nexus.chat_run.outcome": outcome,
+            "nexus.chat_run.error_code": run.error_code,
+            "nexus.chat_run.warning_code": run.publication_warning_code,
+            "nexus.chat_run.support_id": run.support_id,
+            "nexus.llm.provider": run.provider,
+            "nexus.llm.model": run.model_name,
+            "nexus.llm.reasoning": run.reasoning_effort,
+            "nexus.chat_run.queue_wait_ms": queue_wait_ms,
+            "nexus.chat_run.execution_ms": execution_ms,
+            "nexus.chat_run.citation_finalize_ms": citation_finalize_ms,
+            "nexus.chat_run.first_visible_text_ms": first_visible_text_ms,
+            "nexus.chat_run.provider_event_count": provider_event_count,
+        },
+    )
 
 
 def _chat_tool_specs() -> tuple[CanonicalTool, ...]:
@@ -484,9 +595,9 @@ def _resolve_destination(
         if conversation is None or conversation.owner_user_id != viewer_id:
             raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
         message_count = db.scalar(
-            select(func.count()).select_from(Message).where(
-                Message.conversation_id == conversation_id
-            )
+            select(func.count())
+            .select_from(Message)
+            .where(Message.conversation_id == conversation_id)
         )
         if message_count:
             active_leaf = db.scalar(
@@ -608,7 +719,7 @@ async def execute_chat_run(
     runtime: ExecutionRuntime,
     settings: Settings,
     web_search_provider: WebSearchProvider | None = None,
-) -> dict[str, str]:
+) -> ChatExecutionOutcome:
     flow_id = str(run_id)
     set_flow_id(flow_id)
     try:
@@ -624,7 +735,8 @@ async def execute_chat_run(
         logger.exception("chat_run.unhandled_error", run_id=str(run_id), error=str(exc))
         try:
             finalize_defect(db, run_id=run_id, error_detail=exception_error_detail(exc))
-            return {"status": "error", "error_code": "defect"}
+            _log_chat_run_finished(db, run_id=run_id, outcome="Failed")
+            return _failed_chat_execution(db, run_id=run_id, error_code=None)
         except Exception:
             db.rollback()
             raise
@@ -640,23 +752,25 @@ async def _execute_chat_run(
     runtime: ExecutionRuntime,
     settings: Settings,
     web_search_provider: WebSearchProvider | None = None,
-) -> dict[str, str]:
+) -> ChatExecutionOutcome:
     run = db.get(ChatRun, run_id)
     if run is None:
-        return {"status": "skipped", "reason": "run_not_found"}
+        return SkippedChatExecution(reason="MissingRun")
     if run.status in TERMINAL_RUN_STATUSES:
-        return {"status": "skipped", "reason": "terminal"}
+        return SkippedChatExecution(reason="Terminal")
 
     if has_provider_output_without_terminal(db, run.id):
         finalize_interrupted(db, run, session_factory=session_factory)
-        return {"status": "error", "error_code": "stream_interrupted"}
+        _log_chat_run_finished(db, run_id=run.id, outcome="Failed")
+        return _failed_chat_execution(db, run_id=run.id, error_code="stream_interrupted")
 
     profile: LlmProfile | None = (
         lookup_profile(run.profile_id) if run.profile_id is not None else None
     )
     if profile is None:
         finalize_defect(db, run_id=run.id, error_detail="run profile_id is missing or unknown")
-        return {"status": "error", "error_code": "defect"}
+        _log_chat_run_finished(db, run_id=run.id, outcome="Failed")
+        return _failed_chat_execution(db, run_id=run.id, error_code=None)
     reasoning = (
         lookup_reasoning_level(profile, run.reasoning_option_id)
         if run.reasoning_option_id is not None
@@ -666,18 +780,26 @@ async def _execute_chat_run(
         finalize_defect(
             db, run_id=run.id, error_detail="run reasoning_option_id is missing or unsupported"
         )
-        return {"status": "error", "error_code": "defect"}
+        _log_chat_run_finished(db, run_id=run.id, outcome="Failed")
+        return _failed_chat_execution(db, run_id=run.id, error_code=None)
 
     contract = CATALOG.chat_contract(profile.target)
     max_output_tokens = _max_output_tokens_for_reasoning(contract, reasoning)
 
-    mark_running(db, run.id)
+    mark_running(
+        db,
+        run.id,
+        provider=profile.target.provider,
+        model_name=profile.target.model,
+        reasoning_effort=reasoning,
+    )
     run = db.get(ChatRun, run.id)
     if run is None or run.status in TERMINAL_RUN_STATUSES:
-        return {"status": "skipped", "reason": "terminal"}
+        return SkippedChatExecution(reason="Terminal")
     if run.cancel_requested_at is not None:
         finalize_cancelled(db, run)
-        return {"status": "cancelled"}
+        _log_chat_run_finished(db, run_id=run.id, outcome="Cancelled")
+        return CancelledChatExecution(run_id=run.id)
 
     emitter = ChatRunEventEmitter(db, run)
     rate_limiter = get_rate_limiter()
@@ -688,38 +810,23 @@ async def _execute_chat_run(
     full_content = ""
     last_provider_event_seq: int | None = None
     stream_started_at = time.monotonic()
-    first_provider_event_ms: int | None = None
     first_visible_text_ms: int | None = None
     provider_event_count = 0
-    durable_flush_count = 0
-    stream_observed_logged = False
+    citation_finalize_ms: int | None = None
+    run_finished_logged = False
 
-    def log_stream_observed(*, status: str, error_code: str | None, terminal_cause: str) -> None:
-        nonlocal stream_observed_logged
-        if stream_observed_logged:
+    def log_run_finished(outcome: Literal["Published", "Degraded", "Failed", "Cancelled"]) -> None:
+        nonlocal run_finished_logged
+        if run_finished_logged:
             return
-        stream_observed_logged = True
-        cancel_requested_at = db.execute(
-            select(ChatRun.cancel_requested_at).where(ChatRun.id == run.id)
-        ).scalar_one_or_none()
-        cancel_latency_ms = (
-            max(0, int((datetime.now(UTC) - cancel_requested_at).total_seconds() * 1000))
-            if cancel_requested_at is not None
-            else None
-        )
-        logger.info(
-            "chat_run.stream.finished",
-            **safe_kv(
-                chat_run_id=str(run.id),
-                status=status,
-                error_code=error_code,
-                terminal_cause=terminal_cause,
-                first_provider_event_ms=first_provider_event_ms,
-                first_visible_text_ms=first_visible_text_ms,
-                provider_event_count=provider_event_count,
-                durable_flush_count=durable_flush_count,
-                cancel_latency_ms=cancel_latency_ms,
-            ),
+        run_finished_logged = True
+        _log_chat_run_finished(
+            db,
+            run_id=run.id,
+            outcome=outcome,
+            citation_finalize_ms=citation_finalize_ms,
+            first_visible_text_ms=first_visible_text_ms,
+            provider_event_count=provider_event_count,
         )
 
     try:
@@ -737,11 +844,13 @@ async def _execute_chat_run(
                 support_id=uuid4().hex[:12],
                 error_detail="Conversation not found.",
             )
-            return {"status": "error", "error_code": "defect"}
+            log_run_finished("Failed")
+            return _failed_chat_execution(db, run_id=run.id, error_code=None)
 
         if is_cancel_requested(db, run.id):
             finalize_cancelled(db, run)
-            return {"status": "cancelled"}
+            log_run_finished("Cancelled")
+            return CancelledChatExecution(run_id=run.id)
 
         tools = _chat_tool_specs()
         try:
@@ -756,7 +865,7 @@ async def _execute_chat_run(
             )
             persist_prompt_assembly(db, run=run, assembly=assembly)
             reconcile_prompt_retrievals(db, run=run, assembly=assembly)
-            persist_attached_citations(db, run, assembly.attached_citations)
+            attached_numbering = persist_attached_citations(db, run, assembly.attached_citations)
             db.commit()
         except ContextBudgetError as exc:
             logger.warning(
@@ -782,13 +891,14 @@ async def _execute_chat_run(
                 support_id=uuid4().hex[:12],
                 error_detail=exception_error_detail(exc),
             )
-            return {"status": "error", "error_code": "context_too_large"}
+            log_run_finished("Failed")
+            return _failed_chat_execution(db, run_id=run.id, error_code="context_too_large")
 
         call_owner = LlmCallOwner(kind="chat_run", id=run.id, user_id=run.owner_user_id)
         base_intent = assembly.generate_intent
         messages: list[PromptMessage] = list(base_intent.messages)
         final_usage: Presence[object] = Absent()
-        citation_n_next = len(assembly.attached_citations) + 1
+        citation_n_next = attached_numbering.next_ordinal
         tool_call_index_next = 0
         locally_truncated = False
 
@@ -798,7 +908,6 @@ async def _execute_chat_run(
             text_seq_end: int,
             last_text_flush: float,
         ) -> tuple[str, int | None, float]:
-            nonlocal durable_flush_count
             if not text_buffer:
                 return text_buffer, text_seq_start, last_text_flush
             emitter.assistant_text_delta(
@@ -806,7 +915,6 @@ async def _execute_chat_run(
                 provider_event_seq_start=text_seq_start or text_seq_end,
                 provider_event_seq_end=text_seq_end,
             )
-            durable_flush_count += 1
             return "", None, time.monotonic()
 
         for _iteration in range(MAX_TOOL_ITERATIONS):
@@ -844,8 +952,6 @@ async def _execute_chat_run(
             try:
                 async for event in stream:
                     provider_event_count += 1
-                    if first_provider_event_ms is None:
-                        first_provider_event_ms = int((time.monotonic() - stream_started_at) * 1000)
                     last_provider_event_seq = event.seq
                     inner = event.event
                     if isinstance(inner, StreamStart):
@@ -995,10 +1101,8 @@ async def _execute_chat_run(
                         usage=usage,
                         last_provider_event_seq=last_provider_event_seq,
                     )
-                    log_stream_observed(
-                        status="error", error_code="incomplete", terminal_cause="local_truncation"
-                    )
-                    return {"status": "error", "error_code": "incomplete"}
+                    log_run_finished("Failed")
+                    return _failed_chat_execution(db, run_id=run.id, error_code="incomplete")
                 finalize_cancelled(
                     db,
                     run,
@@ -1006,8 +1110,8 @@ async def _execute_chat_run(
                     usage=usage,
                     last_provider_event_seq=last_provider_event_seq,
                 )
-                log_stream_observed(status="cancelled", error_code=None, terminal_cause="cancelled")
-                return {"status": "cancelled"}
+                log_run_finished("Cancelled")
+                return CancelledChatExecution(run_id=run.id)
 
             if isinstance(terminal_outcome, Incomplete):
                 usage = usage_provider_json(terminal_outcome.meta.usage)
@@ -1029,10 +1133,8 @@ async def _execute_chat_run(
                         usage=usage,
                         last_provider_event_seq=last_provider_event_seq,
                     )
-                    log_stream_observed(
-                        status="error", error_code="refused", terminal_cause="refused"
-                    )
-                    return {"status": "error", "error_code": "refused"}
+                    log_run_finished("Failed")
+                    return _failed_chat_execution(db, run_id=run.id, error_code="refused")
                 finalize_run(
                     db,
                     run_id=run.id,
@@ -1046,10 +1148,8 @@ async def _execute_chat_run(
                     usage=usage,
                     last_provider_event_seq=last_provider_event_seq,
                 )
-                log_stream_observed(
-                    status="error", error_code="incomplete", terminal_cause="incomplete"
-                )
-                return {"status": "error", "error_code": "incomplete"}
+                log_run_finished("Failed")
+                return _failed_chat_execution(db, run_id=run.id, error_code="incomplete")
 
             if isinstance(terminal_outcome, Failed):
                 origin = failure_origin(terminal_outcome.failure)
@@ -1067,8 +1167,8 @@ async def _execute_chat_run(
                     usage=usage_provider_json(terminal_outcome.meta.usage),
                     last_provider_event_seq=last_provider_event_seq,
                 )
-                log_stream_observed(status="error", error_code=code, terminal_cause="failed")
-                return {"status": "error", "error_code": code}
+                log_run_finished("Failed")
+                return _failed_chat_execution(db, run_id=run.id, error_code=code)
 
             assert isinstance(terminal_outcome, Succeeded)
             final_usage = terminal_outcome.meta.usage
@@ -1136,13 +1236,12 @@ async def _execute_chat_run(
                         forced_error=forced_error,
                     )
                     assert run_result.tool_call_id is not None
-                    start_n = citation_n_next
-                    citation_n_next = record_tool_citations(
+                    numbering = number_tool_citation_candidates(
                         db,
-                        run=run,
                         tool_call_id=run_result.tool_call_id,
                         start_ordinal=citation_n_next,
                     )
+                    citation_n_next = numbering.next_ordinal
                     emitter.tool_result(
                         {
                             **run_result.tool_call_event(),
@@ -1155,7 +1254,7 @@ async def _execute_chat_run(
                     tool_results.append(
                         ToolResultMessage(
                             call_id=tc.id,
-                            output=app_search_tool_output(run_result, start_n),
+                            output=app_search_tool_output(run_result, numbering),
                             is_error=run_result.status == "error",
                         )
                     )
@@ -1234,13 +1333,12 @@ async def _execute_chat_run(
                         tool_call_index=tool_call_index_next,
                     )
                     assert run_result.tool_call_id is not None
-                    start_n = citation_n_next
-                    citation_n_next = record_tool_citations(
+                    numbering = number_tool_citation_candidates(
                         db,
-                        run=run,
                         tool_call_id=run_result.tool_call_id,
                         start_ordinal=citation_n_next,
                     )
+                    citation_n_next = numbering.next_ordinal
                     emitter.tool_result(
                         {
                             **run_result.tool_call_event(),
@@ -1253,7 +1351,7 @@ async def _execute_chat_run(
                     tool_results.append(
                         ToolResultMessage(
                             call_id=tc.id,
-                            output=web_search_tool_output(run_result, start_n),
+                            output=web_search_tool_output(run_result, numbering),
                             is_error=run_result.status == "error",
                         )
                     )
@@ -1299,15 +1397,18 @@ async def _execute_chat_run(
                         tool_name=READ_RESOURCE_TOOL_NAME,
                         result=read_result,
                     )
-                    read_n = persist_read_evidence_citation(
+                    read_numbering = persist_read_evidence_candidate(
                         db,
                         run=run,
                         tool_call_id=read_tool_call_id,
                         result=read_result,
                         start_ordinal=citation_n_next,
                     )
-                    if read_n is not None:
-                        citation_n_next += 1
+                    read_n = None
+                    if read_numbering is not None:
+                        citation_n_next = read_numbering.next_ordinal
+                        assert len(read_numbering.rows) == 1
+                        read_n = read_numbering.rows[0].candidate_ordinal
                     emitter.tool_result(
                         tool_trace_event(
                             run=run,
@@ -1512,33 +1613,46 @@ async def _execute_chat_run(
                 usage=usage_provider_json(final_usage),
                 last_provider_event_seq=last_provider_event_seq,
             )
-            log_stream_observed(status="cancelled", error_code=None, terminal_cause="cancelled")
-            return {"status": "cancelled"}
+            log_run_finished("Cancelled")
+            return CancelledChatExecution(run_id=run.id)
 
-        try:
-            emit_citation_index(db, run, full_content, emitter=emitter)
-        except InvalidRequestError as exc:
-            clear_message_citations(db, run)
+        citation_started_at = time.monotonic()
+        citation_result = publish_chat_citations(
+            db,
+            run=run,
+            generated_markdown=full_content,
+            emitter=emitter,
+        )
+        citation_finalize_ms = round((time.monotonic() - citation_started_at) * 1000)
+        if isinstance(citation_result, DegradedCitations):
+            support_id = uuid4().hex[:12]
             finalize_run(
                 db,
                 run_id=run.id,
-                assistant_content=full_content,
-                assistant_status="error",
-                run_status="error",
-                done_status="error",
+                assistant_content=citation_result.content_md,
+                assistant_status="complete",
+                run_status="complete",
+                done_status="complete",
                 error_code=None,
-                support_id=uuid4().hex[:12],
-                error_detail=f"assistant citation markers invalid: {exc.message}",
+                support_id=support_id,
+                publication_warning_code=citation_result.warning_code,
+                error_detail=citation_result.detail,
                 usage=usage_provider_json(final_usage),
                 last_provider_event_seq=last_provider_event_seq,
             )
-            log_stream_observed(status="error", error_code=None, terminal_cause="bad_citations")
-            return {"status": "error", "error_code": "defect"}
+            log_run_finished("Degraded")
+            return DegradedChatExecution(
+                run_id=run.id,
+                message_id=run.assistant_message_id,
+                warning_code=citation_result.warning_code,
+                support_id=support_id,
+            )
 
+        assert isinstance(citation_result, PublishedCitations)
         finalize_run(
             db,
             run_id=run.id,
-            assistant_content=full_content,
+            assistant_content=citation_result.content_md,
             assistant_status="complete",
             run_status="complete",
             done_status="complete",
@@ -1547,8 +1661,12 @@ async def _execute_chat_run(
             last_provider_event_seq=last_provider_event_seq,
             cancelled=False,
         )
-        log_stream_observed(status="complete", error_code=None, terminal_cause="complete")
-        return {"status": "complete"}
+        log_run_finished("Published")
+        return PublishedChatExecution(
+            run_id=run.id,
+            message_id=run.assistant_message_id,
+            citation_count=citation_result.citation_count,
+        )
     except ApiError as exc:
         # execute_generation_stream raises ApiError only for two cases that
         # have no representable ExpectedModelFailure leaf: entitlement denial
@@ -1576,12 +1694,10 @@ async def _execute_chat_run(
                 support_id=_latest_generation_support_id(db, run.id),
                 last_provider_event_seq=last_provider_event_seq,
             )
-            log_stream_observed(
-                status="error", error_code="budget_exceeded", terminal_cause="budget_exceeded"
-            )
-            return {"status": "error", "error_code": "budget_exceeded"}
+            log_run_finished("Failed")
+            return _failed_chat_execution(db, run_id=run.id, error_code="budget_exceeded")
         finalize_defect(db, run_id=run.id, error_detail=exception_error_detail(exc))
-        log_stream_observed(status="error", error_code=None, terminal_cause="defect")
-        return {"status": "error", "error_code": "defect"}
+        log_run_finished("Failed")
+        return _failed_chat_execution(db, run_id=run.id, error_code=None)
     finally:
         rate_limiter.release_inflight_slot(run.owner_user_id)

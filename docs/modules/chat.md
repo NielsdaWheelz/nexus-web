@@ -13,9 +13,9 @@ Backend owners live under `python/nexus/api/routes/chat_runs.py`,
 
 `chat_runs.py` is the run **executor** (provider-stream iteration, the tool loop,
 finalization). The cohesive services it composes each have one owner:
-`chat_run_citations` (selected-retrieval → citation edge, attached citations,
-prune, read-evidence, `citation_index`), `chat_run_tools` (`message_tool_calls`
-lifecycle + tool-output rendering + provider tool-event binding), and the
+`chat_run_citations` (candidate numbering, attached/read evidence, final
+canonical publication, `citation_index`), `chat_run_tools` (`message_tool_calls`
+lifecycle + numbered tool-output rendering + provider tool-event binding), and the
 `ChatRunEventEmitter` in `chat_run_event_store` — the single durable run-event
 append owner (typed streaming methods commit inline for SSE visibility; batch
 tool-result/citation/context events defer to the executor's transaction). The
@@ -49,6 +49,9 @@ Hard-cutover specs that govern chat work. Each owns one axis; they compose.
   `chat_subject`. IMPLEMENTED.
 - `docs/cutovers/assistant-message-trust-trail-hard-cutover.md` — assistant
   trust-trail read model. IMPLEMENTED.
+- `docs/cutovers/chat-publication-thin-spine-hard-cutover.md` — candidate/final
+  citation separation, degraded publication, and terminal run facts.
+  IMPLEMENTED.
 
 ## Engine, View, Adapter Split
 
@@ -314,27 +317,41 @@ body). `ConversationDestinationOverlay` is the "Ask in existing chat…" picker
 identity, revision) in `sessionStorage`; an unknown-status ambiguous failure
 locks reconciliation and replays the same key, and success clears the record.
 
-## Citations Are Edges
+## Citation Candidates And Final Edges
 
-A chat citation is a `resource_edge`, not a column on the telemetry row. As the
-run selects results, `chat_runs.py` calls
-`resource_graph.citations.record_citation` to mint an `origin='citation'` edge
-whose source is the assistant `message:<id>`, whose target is the cited resource,
-and whose dense turn-global `[N]` is the edge `ordinal`. The assistant message's
-rendered `citations` are built from those edges by `build_citation_outs`
+Chat keeps model-facing evidence candidates separate from reader-facing
+citations. One numbering helper assigns dense turn-global
+`message_retrievals.citation_candidate_ordinal` values only to citable rows
+actually exposed to the model. Selection or prompt inclusion alone does not
+make a row a candidate.
+
+After generation, one canonicalizer maps the candidate markers used in the
+answer to dense final ordinals by first appearance. Only then does publication
+mint `origin='citation'` resource edges and set `cited_edge_id`. Sparse valid
+markers are canonicalized, and no markers is a valid answer with no edges.
+Unknown or linked markers publish marker-free prose with the closed
+`CitationsUnavailable` warning and a support id. Graph or database defects fail
+the run; they never degrade.
+
+Final markdown, citation edges, retrieval back-pointers, context refs,
+`citation_index`, warning state, and terminal `done` are one transaction.
+Rendered citations are built from the final edges by `build_citation_outs`
 (`chat_run_response.py`), uniformly with Oracle and Universal Dossiers.
 
 `message_retrievals` is chat-owned **telemetry** and the sole durable
 per-result record: candidate generation and rerank/selection are transient,
 in-memory passes over a tool call's results, and only the
 selected/included outcome is ever written as a row. A cited row points back
-at its citation edge through `cited_edge_id`, set in the same transaction the
-edge is minted. The ordinal lives on the edge, never on the telemetry row.
+at its final citation edge through `cited_edge_id`. Candidate ordinal lives on
+the telemetry row; final reader ordinal lives on the edge.
 
 Assistant message reads also carry a backend-built `trust_trail`. It is the
 durable inspector read model over `chat_runs`, prompt assemblies, tool calls,
 retrieval rows, citation edges, and context-ref-added events. `message_document`
 is text-only; tool and retrieval disclosures render from `message.trust_trail`.
+The run is the sole support-id and publication-warning owner. Terminal SSE
+reconciliation replaces streamed marker text with the persisted canonical
+answer.
 
 ## Backend Validation And Prompt Rendering
 

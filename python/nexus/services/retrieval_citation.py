@@ -7,8 +7,8 @@ validators, and inserts it as a ``message_retrievals`` row.
 This is the single owner of "make a retrieval row": ``app_search``,
 ``web_search``, attached ``<resources>``, and ``read_resource`` evidence all go
 through it, so the validator-sensitive shape lives in exactly one place.
-Citation numbering does NOT live here — citations are ``resource_edges`` rows
-owned by ``resource_graph.citations`` (resource provenance graph D5/D6).
+Candidate numbering and final citation publication do not live here. Chat owns
+both phases; this module only persists retrieval facts.
 """
 
 from __future__ import annotations
@@ -338,8 +338,9 @@ def insert_retrieval_row(
 
     The single validated insert path. ``result_ref``/``context_ref``/``locator``
     are validated by the retrieval schema before the row is written.
-    ``cited_edge_id`` is never written here — the chat run sets it when (and only
-    when) the row's citation edge is recorded.
+    Candidate and final-citation fields are never written here. Chat assigns
+    ``citation_candidate_ordinal`` when evidence is exposed to the model and
+    ``cited_edge_id`` only during final publication.
     """
     payload = {
         "tool_call_id": tool_call_id,

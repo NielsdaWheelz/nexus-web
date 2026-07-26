@@ -19,7 +19,7 @@ from nexus.db.models import (
     ResourceEdge,
     ResourceExternalSnapshot,
 )
-from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
+from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.conversation import NewChatDestination, chat_run_event_payload_json
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.chat_run_citations import _citation_target_ref
@@ -524,9 +524,7 @@ class TestChatRunCreate:
         response = _post_chat_run(
             auth_client,
             user_id,
-            _create_run_payload(
-                conversation_id=str(conversation_id), insertion={"kind": "Empty"}
-            ),
+            _create_run_payload(conversation_id=str(conversation_id), insertion={"kind": "Empty"}),
             idempotency_key="chat-run-empty-into-populated",
         )
 
@@ -1324,9 +1322,7 @@ class TestChatRunTooling:
         apparatus_item_id = uuid4()
 
         def target(uri: str | None):
-            return _citation_target_ref(
-                None, run=None, row={"result_ref": {"citation_target": uri}}
-            )
+            return _citation_target_ref({"result_ref": {"citation_target": uri}})
 
         for uri in (
             f"evidence_span:{span_id}",
@@ -1341,16 +1337,12 @@ class TestChatRunTooling:
             assert target(uri).uri == uri
 
         assert target(None) is None
-        assert _citation_target_ref(None, run=None, row={"result_ref": {}}) is None
+        assert _citation_target_ref({"result_ref": {}}) is None
 
     def test_citation_target_rejects_malformed_or_uncitable_targets(self):
         for raw_target in ("not-a-ref", "library:not-a-uuid", f"library:{uuid4()}"):
             with pytest.raises(AssertionError):
-                _citation_target_ref(
-                    None,
-                    run=None,
-                    row={"result_ref": {"citation_target": raw_target}},
-                )
+                _citation_target_ref({"result_ref": {"citation_target": raw_target}})
 
     def test_chat_run_rejects_client_chat_subject_field(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
@@ -1863,17 +1855,8 @@ class TestChatResponseRetry:
         assert data["assistant_message"]["status"] == "pending"
 
 
-class TestCitationEdgeWriteThrough:
-    """Spec §5.2/§11.6: citations are edges; telemetry keeps only `cited_edge_id`.
-
-    ``record_tool_citations`` mints one ``origin='citation'`` edge per selected
-    retrieval (``source = message:<assistant_message_id>``, dense ordinals,
-    replace-by-ordinal on re-execution) and points the row at it.
-    ``emit_citation_index`` emits backend-built citations keyed by
-    ``citation_edge_id`` and graduates cited LOCAL targets into
-    ``origin='citation'`` context edges with a ``context_ref_added`` event in the
-    context-ref shape.
-    """
+class TestCitationPublication:
+    """Candidate ordinals are prompt facts; final edges are publication facts."""
 
     def _create_chat_run_row(
         self,
@@ -1916,8 +1899,7 @@ class TestCitationEdgeWriteThrough:
     ) -> UUID:
         """Insert one app_search tool-call + one content_chunk retrieval row.
 
-        ``selected`` is what marks a row citable now — there is no per-row
-        ordinal column. Returns the tool_call_id.
+        ``selected`` admits a row to candidate numbering. Returns the tool call.
         """
         tool_call_id = uuid4()
         with direct_db.session() as session:
@@ -2065,7 +2047,10 @@ class TestCitationEdgeWriteThrough:
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
         from nexus.db.models import ChatRun as ChatRunModel
-        from nexus.services.chat_run_citations import emit_citation_index, record_tool_citations
+        from nexus.services.chat_run_citations import (
+            number_tool_citation_candidates,
+            publish_chat_citations,
+        )
 
         (
             user_id,
@@ -2103,61 +2088,96 @@ class TestCitationEdgeWriteThrough:
         with direct_db.session() as session:
             run = session.get(ChatRunModel, run_id)
             assert run is not None, "Test setup must persist the chat run row"
-            next_ordinal = record_tool_citations(
-                session, run=run, tool_call_id=tool_call_id, start_ordinal=1
+            numbering = number_tool_citation_candidates(
+                session, tool_call_id=tool_call_id, start_ordinal=1
             )
-            assert next_ordinal == 2, (
-                f"One selected row must consume exactly one ordinal; got next={next_ordinal}"
+            assert numbering.next_ordinal == 2, (
+                "One selected row must consume exactly one ordinal; "
+                f"got next={numbering.next_ordinal}"
             )
-            # Re-execution parity: recording the same tool call again replaces
-            # the edge at that ordinal instead of failing on the unique index.
-            next_ordinal = record_tool_citations(
-                session, run=run, tool_call_id=tool_call_id, start_ordinal=1
+            numbering = number_tool_citation_candidates(
+                session, tool_call_id=tool_call_id, start_ordinal=1
             )
-            assert next_ordinal == 2
+            assert numbering.next_ordinal == 2
             session.commit()
 
         with direct_db.session() as session:
-            edges = (
+            candidate_ordinal, cited_edge_id = session.execute(
+                text(
+                    "SELECT citation_candidate_ordinal, cited_edge_id "
+                    "FROM message_retrievals "
+                    "WHERE tool_call_id = :tool_call_id"
+                ),
+                {"tool_call_id": tool_call_id},
+            ).one()
+            assert candidate_ordinal == 1
+            assert cited_edge_id is None
+            assert (
                 session.query(ResourceEdge)
                 .filter(
                     ResourceEdge.source_scheme == "message",
                     ResourceEdge.source_id == assistant_message_id,
                     ResourceEdge.origin == "citation",
                 )
-                .all()
-            )
-            assert len(edges) == 1, (
-                f"Exactly one citation edge must exist after re-recording; got "
-                f"{[(e.ordinal, e.target_scheme, e.target_id) for e in edges]}"
-            )
-            edge = edges[0]
-            assert edge.ordinal == 1
-            assert edge.kind == "context"
-            assert (edge.target_scheme, edge.target_id) == ("content_chunk", chunk_id), (
-                f"Chunk citations target content_chunk:<id>; got "
-                f"{edge.target_scheme}:{edge.target_id}"
-            )
-            assert edge.snapshot is not None and edge.snapshot["title"] == "Chunk title", (
-                f"Citation edges carry the display snapshot; got {edge.snapshot}"
-            )
-            cited_edge_id = session.execute(
-                text(
-                    "SELECT cited_edge_id FROM message_retrievals "
-                    "WHERE tool_call_id = :tool_call_id"
-                ),
-                {"tool_call_id": tool_call_id},
-            ).scalar_one()
-            assert cited_edge_id == edge.id, (
-                f"The telemetry row must point at its citation edge; "
-                f"got {cited_edge_id} != {edge.id}"
+                .count()
+                == 0
             )
 
         with direct_db.session() as session:
             run = session.get(ChatRunModel, run_id)
-            emit_citation_index(
-                session, run, "Answer [1].", emitter=ChatRunEventEmitter(session, run)
+            result = publish_chat_citations(
+                session,
+                run=run,
+                generated_markdown="Answer [1].",
+                emitter=ChatRunEventEmitter(session, run),
             )
+            assert result.kind == "Published"
+            assert result.content_md == "Answer [1]."
+            session.rollback()
+
+        with direct_db.session() as session:
+            candidate_ordinal, cited_edge_id = session.execute(
+                text(
+                    "SELECT citation_candidate_ordinal, cited_edge_id "
+                    "FROM message_retrievals "
+                    "WHERE tool_call_id = :tool_call_id"
+                ),
+                {"tool_call_id": tool_call_id},
+            ).one()
+            assert candidate_ordinal == 1
+            assert cited_edge_id is None
+            assert (
+                session.query(ResourceEdge)
+                .filter(
+                    ResourceEdge.source_scheme == "message",
+                    ResourceEdge.source_id == assistant_message_id,
+                    ResourceEdge.origin == "citation",
+                )
+                .count()
+                == 0
+            )
+            assert (
+                session.execute(
+                    text(
+                        "SELECT COUNT(*) FROM chat_run_events "
+                        "WHERE run_id = :run_id "
+                        "AND event_type IN ('citation_index', 'context_ref_added')"
+                    ),
+                    {"run_id": run_id},
+                ).scalar_one()
+                == 0
+            )
+
+        with direct_db.session() as session:
+            run = session.get(ChatRunModel, run_id)
+            assert run is not None
+            result = publish_chat_citations(
+                session,
+                run=run,
+                generated_markdown="Answer [1].",
+                emitter=ChatRunEventEmitter(session, run),
+            )
+            assert result.kind == "Published"
             session.commit()
 
         with direct_db.session() as session:
@@ -2237,7 +2257,10 @@ class TestCitationEdgeWriteThrough:
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
         from nexus.db.models import ChatRun as ChatRunModel
-        from nexus.services.chat_run_citations import emit_citation_index, record_tool_citations
+        from nexus.services.chat_run_citations import (
+            number_tool_citation_candidates,
+            publish_chat_citations,
+        )
 
         (
             user_id,
@@ -2275,11 +2298,17 @@ class TestCitationEdgeWriteThrough:
         with direct_db.session() as session:
             run = session.get(ChatRunModel, run_id)
             assert run is not None
-            next_ordinal = record_tool_citations(
-                session, run=run, tool_call_id=tool_call_id, start_ordinal=1
+            numbering = number_tool_citation_candidates(
+                session, tool_call_id=tool_call_id, start_ordinal=1
             )
-            assert next_ordinal == 1, "Unselected rows must not consume ordinals"
-            emit_citation_index(session, run, "Answer.", emitter=ChatRunEventEmitter(session, run))
+            assert numbering.next_ordinal == 1, "Unselected rows must not consume ordinals"
+            result = publish_chat_citations(
+                session,
+                run=run,
+                generated_markdown="Answer.",
+                emitter=ChatRunEventEmitter(session, run),
+            )
+            assert result.kind == "Published"
             session.commit()
 
         with direct_db.session() as session:
@@ -2308,11 +2337,14 @@ class TestCitationEdgeWriteThrough:
         assert event_count == 0, "No citations → no citation_index / context_ref_added events"
         assert cited_edge_id is None
 
-    def test_citation_index_rejects_missing_assistant_marker(
+    def test_candidates_with_no_markers_publish_without_edges(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
         from nexus.db.models import ChatRun as ChatRunModel
-        from nexus.services.chat_run_citations import emit_citation_index, record_tool_citations
+        from nexus.services.chat_run_citations import (
+            number_tool_citation_candidates,
+            publish_chat_citations,
+        )
 
         (
             user_id,
@@ -2350,21 +2382,42 @@ class TestCitationEdgeWriteThrough:
         with direct_db.session() as session:
             run = session.get(ChatRunModel, run_id)
             assert run is not None
-            record_tool_citations(session, run=run, tool_call_id=tool_call_id, start_ordinal=1)
-            with pytest.raises(InvalidRequestError, match=r"markers=\[\], citations=\[1\]"):
-                emit_citation_index(
-                    session,
-                    run,
-                    "Answer without marker.",
-                    emitter=ChatRunEventEmitter(session, run),
-                )
-            session.rollback()
+            numbering = number_tool_citation_candidates(
+                session,
+                tool_call_id=tool_call_id,
+                start_ordinal=1,
+            )
+            assert numbering.next_ordinal == 2
+            result = publish_chat_citations(
+                session,
+                run=run,
+                generated_markdown="Answer without marker.",
+                emitter=ChatRunEventEmitter(session, run),
+            )
+            assert result.kind == "Published"
+            assert result.citation_count == 0
+            session.commit()
 
-    def test_citation_index_prunes_uncited_selected_retrieval(
+        with direct_db.session() as session:
+            assert (
+                session.query(ResourceEdge)
+                .filter(
+                    ResourceEdge.source_scheme == "message",
+                    ResourceEdge.source_id == assistant_message_id,
+                    ResourceEdge.origin == "citation",
+                )
+                .count()
+                == 0
+            )
+
+    def test_publication_leaves_uncited_candidate_without_back_pointer(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
         from nexus.db.models import ChatRun as ChatRunModel
-        from nexus.services.chat_run_citations import emit_citation_index, record_tool_citations
+        from nexus.services.chat_run_citations import (
+            number_tool_citation_candidates,
+            publish_chat_citations,
+        )
 
         (
             user_id,
@@ -2420,13 +2473,19 @@ class TestCitationEdgeWriteThrough:
             )
             run = session.get(ChatRunModel, run_id)
             assert run is not None
-            assert (
-                record_tool_citations(session, run=run, tool_call_id=tool_call_id, start_ordinal=1)
-                == 3
+            numbering = number_tool_citation_candidates(
+                session,
+                tool_call_id=tool_call_id,
+                start_ordinal=1,
             )
-            emit_citation_index(
-                session, run, "Answer [1].", emitter=ChatRunEventEmitter(session, run)
+            assert numbering.next_ordinal == 3
+            result = publish_chat_citations(
+                session,
+                run=run,
+                generated_markdown="Answer [1].",
+                emitter=ChatRunEventEmitter(session, run),
             )
+            assert result.kind == "Published"
             session.commit()
 
         with direct_db.session() as session:
@@ -2465,8 +2524,7 @@ class TestCitationEdgeWriteThrough:
     def test_selected_uncitable_retrieval_is_unnumbered(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
-        from nexus.db.models import ChatRun as ChatRunModel
-        from nexus.services.chat_run_citations import record_tool_citations
+        from nexus.services.chat_run_citations import number_tool_citation_candidates
 
         (
             user_id,
@@ -2510,10 +2568,10 @@ class TestCitationEdgeWriteThrough:
                 ),
                 {"tool_call_id": tool_call_id},
             )
-            run = session.get(ChatRunModel, run_id)
-            assert run is not None
-            next_ordinal = record_tool_citations(
-                session, run=run, tool_call_id=tool_call_id, start_ordinal=4
+            numbering = number_tool_citation_candidates(
+                session,
+                tool_call_id=tool_call_id,
+                start_ordinal=4,
             )
             session.commit()
 
@@ -2533,7 +2591,7 @@ class TestCitationEdgeWriteThrough:
                 {"tool_call_id": tool_call_id},
             ).scalar_one()
 
-        assert next_ordinal == 4
+        assert numbering.next_ordinal == 4
         assert edge_count == 0
         assert cited_edge_id is None
         payload = json.loads(
@@ -2552,7 +2610,7 @@ class TestCitationEdgeWriteThrough:
                     status="complete",
                     error_code=None,
                 ),
-                4,
+                numbering,
             )
         )
         assert payload["results"] == [
@@ -2564,11 +2622,14 @@ class TestCitationEdgeWriteThrough:
             }
         ]
 
-    def test_emit_citation_index_streams_note_block_locator(
+    def test_citation_publication_streams_note_block_locator(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
         from nexus.db.models import ChatRun as ChatRunModel
-        from nexus.services.chat_run_citations import emit_citation_index
+        from nexus.services.chat_run_citations import (
+            number_tool_citation_candidates,
+            publish_chat_citations,
+        )
 
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
@@ -2625,9 +2686,63 @@ class TestCitationEdgeWriteThrough:
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
         )
+        with direct_db.session() as session:
+            tool_call_id = session.execute(
+                text(
+                    """
+                    INSERT INTO message_tool_calls (
+                        conversation_id, user_message_id, assistant_message_id,
+                        tool_name, tool_call_index, scope, status
+                    )
+                    VALUES (
+                        :conversation_id, :user_message_id, :assistant_message_id,
+                        'app_search', 1, 'all', 'complete'
+                    )
+                    RETURNING id
+                    """
+                ),
+                {
+                    "conversation_id": conversation_id,
+                    "user_message_id": user_message_id,
+                    "assistant_message_id": assistant_message_id,
+                },
+            ).scalar_one()
+            session.execute(
+                text(
+                    """
+                    INSERT INTO message_retrievals (
+                        tool_call_id, ordinal, result_type, source_id, scope,
+                        context_ref, result_ref, selected, source_title,
+                        exact_snippet, deep_link
+                    )
+                    VALUES (
+                        :tool_call_id, 0, 'note_block', :source_id, 'all',
+                        CAST(:context_ref AS jsonb), CAST(:result_ref AS jsonb),
+                        true, 'Research note', :body, :deep_link
+                    )
+                    """
+                ),
+                {
+                    "tool_call_id": tool_call_id,
+                    "source_id": str(note_block_id),
+                    "context_ref": json.dumps({"type": "note_block", "id": str(note_block_id)}),
+                    "result_ref": json.dumps(
+                        {
+                            "type": "note_block",
+                            "id": str(note_block_id),
+                            "citation_target": f"note_block:{note_block_id}",
+                        }
+                    ),
+                    "body": body,
+                    "deep_link": f"/notes/{note_block_id}",
+                },
+            )
+            session.commit()
         direct_db.register_cleanup("resource_edges", "user_id", user_id)
         direct_db.register_cleanup("note_blocks", "id", note_block_id)
         direct_db.register_cleanup("chat_run_events", "run_id", run_id)
+        direct_db.register_cleanup("message_retrievals", "tool_call_id", tool_call_id)
+        direct_db.register_cleanup("message_tool_calls", "id", tool_call_id)
         direct_db.register_cleanup("chat_runs", "id", run_id)
         direct_db.register_cleanup("conversations", "id", conversation_id)
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
@@ -2635,9 +2750,18 @@ class TestCitationEdgeWriteThrough:
         with direct_db.session() as session:
             run = session.get(ChatRunModel, run_id)
             assert run is not None, "Test setup must persist the chat run row"
-            emit_citation_index(
-                session, run, "Answer [1].", emitter=ChatRunEventEmitter(session, run)
+            number_tool_citation_candidates(
+                session,
+                tool_call_id=tool_call_id,
+                start_ordinal=1,
             )
+            result = publish_chat_citations(
+                session,
+                run=run,
+                generated_markdown="Answer [1].",
+                emitter=ChatRunEventEmitter(session, run),
+            )
+            assert result.kind == "Published"
             session.commit()
 
         with direct_db.session() as session:
@@ -2651,7 +2775,7 @@ class TestCitationEdgeWriteThrough:
 
         assert "entries" not in citation_payload
         item = citation_payload["citations"][0]
-        assert item["citation_edge_id"] == str(edge_id)
+        assert item["citation_edge_id"] != str(edge_id)
         citation = item["citation"]
         assert citation["ordinal"] == 1
         assert citation["role"] == "context"
@@ -2678,7 +2802,10 @@ class TestCitationEdgeWriteThrough:
             WebSearchRun,
             persist_web_search_run,
         )
-        from nexus.services.chat_run_citations import emit_citation_index, record_tool_citations
+        from nexus.services.chat_run_citations import (
+            number_tool_citation_candidates,
+            publish_chat_citations,
+        )
 
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
@@ -2751,13 +2878,19 @@ class TestCitationEdgeWriteThrough:
         with direct_db.session() as session:
             run = session.get(ChatRunModel, run_id)
             assert run is not None
-            next_ordinal = record_tool_citations(
-                session, run=run, tool_call_id=tool_call_id, start_ordinal=1
+            numbering = number_tool_citation_candidates(
+                session,
+                tool_call_id=tool_call_id,
+                start_ordinal=1,
             )
-            assert next_ordinal == 2, "Only the selected web result consumes an ordinal"
-            emit_citation_index(
-                session, run, "Web answer [1].", emitter=ChatRunEventEmitter(session, run)
+            assert numbering.next_ordinal == 2
+            result = publish_chat_citations(
+                session,
+                run=run,
+                generated_markdown="Web answer [1].",
+                emitter=ChatRunEventEmitter(session, run),
             )
+            assert result.kind == "Published"
             session.commit()
 
         with direct_db.session() as session:
@@ -2843,7 +2976,10 @@ class TestCitationEdgeWriteThrough:
     ):
         """Reload keeps answer content text-only and rebuilds trust from durable rows."""
         from nexus.db.models import ChatRun as ChatRunModel
-        from nexus.services.chat_run_citations import record_tool_citations
+        from nexus.services.chat_run_citations import (
+            number_tool_citation_candidates,
+            publish_chat_citations,
+        )
         from nexus.services.chat_run_message_blocks import message_document
         from nexus.services.message_trust_trails import build_assistant_trust_trail
 
@@ -2883,7 +3019,17 @@ class TestCitationEdgeWriteThrough:
         with direct_db.session() as session:
             run = session.get(ChatRunModel, run_id)
             assert run is not None
-            record_tool_citations(session, run=run, tool_call_id=tool_call_id, start_ordinal=1)
+            number_tool_citation_candidates(
+                session,
+                tool_call_id=tool_call_id,
+                start_ordinal=1,
+            )
+            publish_chat_citations(
+                session,
+                run=run,
+                generated_markdown="Answer [1].",
+                emitter=ChatRunEventEmitter(session, run),
+            )
             session.commit()
 
         with direct_db.session() as session:
@@ -2924,7 +3070,10 @@ class TestCitationEdgeWriteThrough:
         carries none.
         """
         from nexus.db.models import ChatRun as ChatRunModel
-        from nexus.services.chat_run_citations import record_tool_citations
+        from nexus.services.chat_run_citations import (
+            number_tool_citation_candidates,
+            publish_chat_citations,
+        )
         from nexus.services.chat_run_response import build_chat_run_response
 
         (
@@ -2963,7 +3112,17 @@ class TestCitationEdgeWriteThrough:
         with direct_db.session() as session:
             run = session.get(ChatRunModel, run_id)
             assert run is not None
-            record_tool_citations(session, run=run, tool_call_id=tool_call_id, start_ordinal=1)
+            number_tool_citation_candidates(
+                session,
+                tool_call_id=tool_call_id,
+                start_ordinal=1,
+            )
+            publish_chat_citations(
+                session,
+                run=run,
+                generated_markdown="Answer [1].",
+                emitter=ChatRunEventEmitter(session, run),
+            )
             session.commit()
 
         with direct_db.session() as session:
@@ -3094,7 +3253,10 @@ class TestCitationEdgeWriteThrough:
         assistant message's citations[] field-for-field (n, kind, target,
         snapshot, and the media_id/locator render-contract fields)."""
         from nexus.db.models import ChatRun as ChatRunModel
-        from nexus.services.chat_run_citations import record_tool_citations
+        from nexus.services.chat_run_citations import (
+            number_tool_citation_candidates,
+            publish_chat_citations,
+        )
 
         (
             user_id,
@@ -3132,7 +3294,17 @@ class TestCitationEdgeWriteThrough:
         with direct_db.session() as session:
             run = session.get(ChatRunModel, run_id)
             assert run is not None
-            record_tool_citations(session, run=run, tool_call_id=tool_call_id, start_ordinal=1)
+            number_tool_citation_candidates(
+                session,
+                tool_call_id=tool_call_id,
+                start_ordinal=1,
+            )
+            publish_chat_citations(
+                session,
+                run=run,
+                generated_markdown="Answer [1].",
+                emitter=ChatRunEventEmitter(session, run),
+            )
             session.commit()
         with direct_db.session() as session:
             evidence_span_id = session.execute(
@@ -3179,20 +3351,16 @@ class TestCitationEdgeWriteThrough:
         ], f"GET messages must replay the citation field-for-field; got {assistant['citations']}"
         assert messages[str(user_message_id)]["citations"] == []
 
-    def test_pruned_telemetry_deletes_paired_citation_edge_and_external_snapshot(
+    def test_reexecuted_web_search_replaces_prepublication_candidates_and_snapshots(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
-        """#4/#8: trimming an over-count telemetry row on re-execution deletes its
-        citation edge AND the external_snapshot the edge orphaned — no phantom
-        chip survives. Re-runs persist_web_search_run with FEWER results after a
-        first run cited two web results."""
         from nexus.db.models import ChatRun as ChatRunModel
         from nexus.services.agent_tools.web_search import (
             WebSearchCitation,
             WebSearchRun,
             persist_web_search_run,
         )
-        from nexus.services.chat_run_citations import record_tool_citations
+        from nexus.services.chat_run_citations import number_tool_citation_candidates
 
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
@@ -3249,7 +3417,7 @@ class TestCitationEdgeWriteThrough:
                 tool_call_index=1,
             )
 
-        # Attempt 1: two cited web results → two edges, two snapshots.
+        # Attempt 1: two model candidates and two retrieval-owned snapshots.
         with direct_db.session() as session:
             persist_web_search_run(session, web_run([web_citation(1), web_citation(2)]))
         tool_call_id = self._tool_call_index_1_id(direct_db, assistant_message_id)
@@ -3265,10 +3433,12 @@ class TestCitationEdgeWriteThrough:
         with direct_db.session() as session:
             run = session.get(ChatRunModel, run_id)
             assert run is not None
-            next_ordinal = record_tool_citations(
-                session, run=run, tool_call_id=tool_call_id, start_ordinal=1
+            numbering = number_tool_citation_candidates(
+                session,
+                tool_call_id=tool_call_id,
+                start_ordinal=1,
             )
-            assert next_ordinal == 3, "Two cited results consume ordinals 1 and 2"
+            assert numbering.next_ordinal == 3
             session.commit()
 
         with direct_db.session() as session:
@@ -3276,7 +3446,7 @@ class TestCitationEdgeWriteThrough:
                 session.query(ResourceEdge)
                 .filter(ResourceEdge.source_id == assistant_message_id)
                 .count()
-                == 2
+                == 0
             )
             assert (
                 session.query(ResourceExternalSnapshot)
@@ -3284,52 +3454,51 @@ class TestCitationEdgeWriteThrough:
                 .count()
                 == 2
             )
+            rows = session.execute(
+                text(
+                    "SELECT citation_candidate_ordinal, cited_edge_id "
+                    "FROM message_retrievals WHERE tool_call_id = :tool_call_id "
+                    "ORDER BY ordinal"
+                ),
+                {"tool_call_id": tool_call_id},
+            ).all()
+            assert rows == [(1, None), (2, None)]
 
-        # Attempt 2 (re-execution): only ONE result this time. The writer prunes
-        # the previous telemetry set first, so old citation edges and snapshots
-        # die before the new selected row records its current edge.
+        # Attempt 2: replacement remains pre-publication and drops the stale row.
         with direct_db.session() as session:
             persist_web_search_run(session, web_run([web_citation(1)]))
             run = session.get(ChatRunModel, run_id)
             assert run is not None
-            next_ordinal = record_tool_citations(
-                session, run=run, tool_call_id=tool_call_id, start_ordinal=1
+            numbering = number_tool_citation_candidates(
+                session,
+                tool_call_id=tool_call_id,
+                start_ordinal=1,
             )
-            assert next_ordinal == 2
+            assert numbering.next_ordinal == 2
             session.commit()
 
         with direct_db.session() as session:
-            edges = (
+            assert (
                 session.query(ResourceEdge)
                 .filter(ResourceEdge.source_id == assistant_message_id)
-                .all()
-            )
-            assert len(edges) == 1, (
-                f"The trimmed row's phantom citation edge must be deleted; got "
-                f"{[(e.ordinal, e.target_scheme) for e in edges]}"
+                .count()
+                == 0
             )
             snapshots = (
                 session.query(ResourceExternalSnapshot)
                 .filter(ResourceExternalSnapshot.user_id == user_id)
                 .all()
             )
-            assert len(snapshots) == 1, (
-                f"The edge that was pruned orphaned its external_snapshot; it must be "
-                f"deleted, leaving only the surviving citation's snapshot; got "
-                f"{[s.url for s in snapshots]}"
-            )
-            assert (edges[0].target_scheme, edges[0].target_id) == (
-                "external_snapshot",
-                snapshots[0].id,
-            ), "The surviving edge still points at the surviving snapshot"
-            surviving_cited = session.execute(
+            assert len(snapshots) == 1
+            row = session.execute(
                 text(
-                    "SELECT cited_edge_id FROM message_retrievals "
+                    "SELECT citation_candidate_ordinal, cited_edge_id "
+                    "FROM message_retrievals "
                     "WHERE tool_call_id = :tcid AND ordinal = 0"
                 ),
                 {"tcid": tool_call_id},
-            ).scalar_one()
-            assert surviving_cited == edges[0].id
+            ).one()
+            assert row == (1, None)
 
     def _tool_call_index_1_id(
         self, direct_db: DirectSessionManager, assistant_message_id: UUID

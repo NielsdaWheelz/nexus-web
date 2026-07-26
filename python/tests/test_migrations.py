@@ -24681,3 +24681,233 @@ class TestMigration0194ConsumptionActivityFacts:
             reset_test_schema()
             run_alembic_command("upgrade head")
             engine.dispose()
+
+
+class TestMigration0196ChatPublicationThinSpine:
+    def test_0196_adds_publication_facts_and_backfills_known_candidates(self):
+        reset_test_schema()
+        assert run_alembic_command("upgrade 0195").returncode == 0
+        engine = create_engine(get_test_database_url())
+        user_id = uuid4()
+        conversation_id = uuid4()
+        user_message_id = uuid4()
+        assistant_message_id = uuid4()
+        run_id = uuid4()
+        tool_call_id = uuid4()
+        edge_id = uuid4()
+        cited_retrieval_id = uuid4()
+        uncited_retrieval_id = uuid4()
+        try:
+            with engine.begin() as connection:
+                connection.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                connection.execute(
+                    text(
+                        "INSERT INTO conversations (id, owner_user_id, next_seq) "
+                        "VALUES (:id, :owner_user_id, 3)"
+                    ),
+                    {"id": conversation_id, "owner_user_id": user_id},
+                )
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO messages (
+                            id, conversation_id, seq, role, content, status,
+                            parent_message_id
+                        )
+                        VALUES (
+                            :user_message_id, :conversation_id, 1, 'user',
+                            'Question', 'complete', NULL
+                        ), (
+                            :assistant_message_id, :conversation_id, 2, 'assistant',
+                            'Answer', 'complete', :user_message_id
+                        )
+                        """
+                    ),
+                    {
+                        "conversation_id": conversation_id,
+                        "user_message_id": user_message_id,
+                        "assistant_message_id": assistant_message_id,
+                    },
+                )
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO chat_runs (
+                            id, owner_user_id, conversation_id, user_message_id,
+                            assistant_message_id, idempotency_key, payload_hash, status
+                        )
+                        VALUES (
+                            :id, :owner_user_id, :conversation_id, :user_message_id,
+                            :assistant_message_id, '0196-backfill', 'hash', 'complete'
+                        )
+                        """
+                    ),
+                    {
+                        "id": run_id,
+                        "owner_user_id": user_id,
+                        "conversation_id": conversation_id,
+                        "user_message_id": user_message_id,
+                        "assistant_message_id": assistant_message_id,
+                    },
+                )
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO chat_run_events (
+                            run_id, seq, event_type, payload
+                        )
+                        VALUES (
+                            :run_id, 1, 'done',
+                            '{
+                              "status": "complete",
+                              "usage": {"input_tokens": 12},
+                              "final_chars": 6,
+                              "last_provider_event_seq": 4,
+                              "cancelled": null
+                            }'::jsonb
+                        )
+                        """
+                    ),
+                    {"run_id": run_id},
+                )
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO message_tool_calls (
+                            id, conversation_id, user_message_id, assistant_message_id,
+                            tool_name, tool_call_index, scope, status
+                        )
+                        VALUES (
+                            :id, :conversation_id, :user_message_id, :assistant_message_id,
+                            'app_search', 1, 'all', 'complete'
+                        )
+                        """
+                    ),
+                    {
+                        "id": tool_call_id,
+                        "conversation_id": conversation_id,
+                        "user_message_id": user_message_id,
+                        "assistant_message_id": assistant_message_id,
+                    },
+                )
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO resource_edges (
+                            id, user_id, kind, origin, source_scheme, source_id,
+                            target_scheme, target_id, ordinal, snapshot
+                        )
+                        VALUES (
+                            :id, :user_id, 'context', 'citation', 'message', :source_id,
+                            'message', :target_id, 3, '{}'::jsonb
+                        )
+                        """
+                    ),
+                    {
+                        "id": edge_id,
+                        "user_id": user_id,
+                        "source_id": assistant_message_id,
+                        "target_id": user_message_id,
+                    },
+                )
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO message_retrievals (
+                            id, tool_call_id, ordinal, result_type, source_id,
+                            context_ref, result_ref, cited_edge_id
+                        )
+                        VALUES (
+                            :cited_id, :tool_call_id, 0, 'message', :source_id,
+                            '{}'::jsonb, '{}'::jsonb, :edge_id
+                        ), (
+                            :uncited_id, :tool_call_id, 1, 'message', :source_id,
+                            '{}'::jsonb, '{}'::jsonb, NULL
+                        )
+                        """
+                    ),
+                    {
+                        "cited_id": cited_retrieval_id,
+                        "uncited_id": uncited_retrieval_id,
+                        "tool_call_id": tool_call_id,
+                        "source_id": str(user_message_id),
+                        "edge_id": edge_id,
+                    },
+                )
+
+            result = run_alembic_command("upgrade 0196")
+            assert result.returncode == 0, result.stderr
+            with engine.connect() as connection:
+                columns = {
+                    row.column_name: (row.data_type, row.is_nullable)
+                    for row in connection.execute(
+                        text(
+                            """
+                            SELECT column_name, data_type, is_nullable
+                            FROM information_schema.columns
+                            WHERE table_schema = 'public'
+                              AND (
+                                (table_name = 'message_retrievals'
+                                 AND column_name = 'citation_candidate_ordinal')
+                                OR
+                                (table_name = 'chat_runs'
+                                 AND column_name = 'publication_warning_code')
+                              )
+                            """
+                        )
+                    )
+                }
+                assert columns == {
+                    "citation_candidate_ordinal": ("integer", "YES"),
+                    "publication_warning_code": ("text", "YES"),
+                }
+                ordinals = connection.execute(
+                    text(
+                        """
+                        SELECT id, citation_candidate_ordinal
+                        FROM message_retrievals
+                        WHERE id = ANY(CAST(:ids AS uuid[]))
+                        ORDER BY ordinal
+                        """
+                    ),
+                    {"ids": [cited_retrieval_id, uncited_retrieval_id]},
+                ).all()
+                assert ordinals == [
+                    (cited_retrieval_id, 3),
+                    (uncited_retrieval_id, None),
+                ]
+                assert (
+                    connection.scalar(
+                        text("SELECT publication_warning_code FROM chat_runs WHERE id = :id"),
+                        {"id": run_id},
+                    )
+                    is None
+                )
+                assert connection.scalar(
+                    text(
+                        """
+                        SELECT payload
+                        FROM chat_run_events
+                        WHERE run_id = :run_id AND event_type = 'done'
+                        """
+                    ),
+                    {"run_id": run_id},
+                ) == {
+                    "status": "complete",
+                    "error_code": {"kind": "Absent"},
+                    "support_id": {"kind": "Absent"},
+                    "publication_warning": {"kind": "Absent"},
+                    "usage": {"input_tokens": 12},
+                    "final_chars": 6,
+                    "last_provider_event_seq": 4,
+                    "cancelled": False,
+                }
+
+            result = run_alembic_command("downgrade 0195")
+            assert result.returncode != 0
+            with engine.connect() as connection:
+                assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0196"
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()

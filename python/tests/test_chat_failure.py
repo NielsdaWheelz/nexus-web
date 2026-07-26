@@ -21,7 +21,6 @@ from nexus.schemas.llm import (
     StreamInterruptedChatFailure,
     TimeoutChatFailure,
 )
-from nexus.schemas.presence import Absent, Present
 from nexus.services.chat_failure import (
     TRANSIENT_CODES,
     chat_failure_projection,
@@ -129,7 +128,7 @@ def test_cancelled_status_drives_the_cancelled_variant_regardless_of_error_code(
 
 
 # =============================================================================
-# Per-code variant shape (origin, attempts, support_id)
+# Per-code variant shape (origin, attempts)
 # =============================================================================
 
 
@@ -152,18 +151,23 @@ def test_projection_builds_the_correct_variant(
 
     assert isinstance(result, variant_cls)
     assert result.code == code
-    assert result.support_id == Present[str](value="abc123def456")
+    assert not hasattr(result, "support_id")
     if origin is not None:
         assert result.origin == origin
     if carries_attempts:
         assert result.attempts == 3
 
 
-def test_absent_support_id_when_run_has_no_support_id() -> None:
-    run = _make_run(status="error", error_code="refused", error_origin="provider_http")
+def test_failure_projection_never_duplicates_run_owned_support_id() -> None:
+    run = _make_run(
+        status="error",
+        error_code="refused",
+        error_origin="provider_http",
+        support_id="abc123def456",
+    )
     result = chat_failure_projection(run, has_write_tool_attempt=False)
     assert isinstance(result, RefusedChatFailure)
-    assert result.support_id == Absent()
+    assert not hasattr(result, "support_id")
 
 
 # F2 (§10 576-579): an unrepresentable terminal state degrades on the READ path

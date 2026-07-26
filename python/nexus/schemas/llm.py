@@ -14,9 +14,10 @@ cutover.md` §10):
   card-bearing §10 code; each variant fixes its `origin` to the narrowed
   `ChatRun.error_origin` Literal(s) that code can actually carry (§9's closed
   origin union), except `cancelled`, which carries no origin — a cancelled run
-  has NULL error columns; run status alone drives that variant. Transient
-  variants (mapped from the runtime's `TransientExhausted`) additionally carry
-  `attempts`.
+  has NULL error columns; run status alone drives that variant. The support
+  occurrence belongs to the run read model, not to these taxonomy variants.
+  Transient variants (mapped from the runtime's `TransientExhausted`)
+  additionally carry `attempts`.
 """
 
 from __future__ import annotations
@@ -25,7 +26,6 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from nexus.schemas.presence import Presence
 from nexus.services.llm_profiles import DEFAULT_PROFILE_ID, PROFILES, LlmProfile
 
 # =============================================================================
@@ -95,86 +95,82 @@ class LlmProfilesOut(BaseModel):
 # =============================================================================
 
 
-class RefusedChatFailure(BaseModel):
+class ExpectedChatFailureBase(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class RefusedChatFailure(ExpectedChatFailureBase):
     """Streamed Fable refusal (`provider_stream`) or a non-streamed provider
     refusal (`provider_http`). Never rerunnable (§10)."""
 
     code: Literal["refused"] = "refused"
     origin: Literal["provider_http", "provider_stream"]
-    support_id: Presence[str]
     can_rerun: bool
 
 
-class IncompleteChatFailure(BaseModel):
+class IncompleteChatFailure(ExpectedChatFailureBase):
     """Provider-declared incomplete completion, or local truncation folded to
     the same closed code. `origin` is always `provider_response`."""
 
     code: Literal["incomplete"] = "incomplete"
     origin: Literal["provider_response"]
-    support_id: Presence[str]
     can_rerun: bool
 
 
-class CancelledChatFailure(BaseModel):
+class CancelledChatFailure(ExpectedChatFailureBase):
     """Run status `cancelled` alone drives this variant — `ChatRun` never
     stores a `cancelled` `error_code`, and a cancelled run's error columns are
     NULL, so this variant carries no `origin`."""
 
     code: Literal["cancelled"] = "cancelled"
-    support_id: Presence[str]
     can_rerun: bool
 
 
-class ContextTooLargeChatFailure(BaseModel):
+class ContextTooLargeChatFailure(ExpectedChatFailureBase):
     """Owner-side assembly rejected the intent before any generation attempt
     began (`intent`, ledgerless), or the provider rejected an in-bound request
     as oversize (`provider_http`)."""
 
     code: Literal["context_too_large"] = "context_too_large"
     origin: Literal["intent", "provider_http"]
-    support_id: Presence[str]
     can_rerun: bool
 
 
-class InvalidToolArgumentsChatFailure(BaseModel):
+class InvalidToolArgumentsChatFailure(ExpectedChatFailureBase):
     code: Literal["invalid_tool_arguments"] = "invalid_tool_arguments"
     origin: Literal["tool_arguments"]
-    support_id: Presence[str]
     can_rerun: bool
 
 
-class BudgetExceededChatFailure(BaseModel):
+class BudgetExceededChatFailure(ExpectedChatFailureBase):
     """Platform-token-reservation denial. Never rerunnable (§9)."""
 
     code: Literal["budget_exceeded"] = "budget_exceeded"
     origin: Literal["budget"]
-    support_id: Presence[str]
     can_rerun: bool
 
 
-class RateLimitedChatFailure(BaseModel):
+class RateLimitedChatFailure(ExpectedChatFailureBase):
     """Transient: mapped from the runtime's `TransientExhausted(cause=
     ProviderRateLimit)` leaf."""
 
     code: Literal["rate_limited"] = "rate_limited"
     origin: Literal["provider_http"]
     attempts: int = Field(ge=1)
-    support_id: Presence[str]
     can_rerun: bool
 
 
-class TimeoutChatFailure(BaseModel):
+class TimeoutChatFailure(ExpectedChatFailureBase):
     """Transient: mapped from the runtime's `TransientExhausted(cause=
     ProviderTimeout)` leaf."""
 
     code: Literal["timeout"] = "timeout"
     origin: Literal["transport"]
     attempts: int = Field(ge=1)
-    support_id: Presence[str]
     can_rerun: bool
 
 
-class ProviderUnavailableChatFailure(BaseModel):
+class ProviderUnavailableChatFailure(ExpectedChatFailureBase):
     """Transient: mapped from either the runtime's `TransientExhausted(cause=
     ProviderHttpUnavailable)` (`provider_http`) or `TransientExhausted(cause=
     TransportUnavailable)` (`transport`) leaf."""
@@ -182,11 +178,10 @@ class ProviderUnavailableChatFailure(BaseModel):
     code: Literal["provider_unavailable"] = "provider_unavailable"
     origin: Literal["provider_http", "transport"]
     attempts: int = Field(ge=1)
-    support_id: Presence[str]
     can_rerun: bool
 
 
-class StreamInterruptedChatFailure(BaseModel):
+class StreamInterruptedChatFailure(ExpectedChatFailureBase):
     """Transient: mapped from the runtime's `TransientExhausted(cause=
     ProviderStreamInterrupted)` leaf, and from crashed/interrupted-run
     recovery when provider output existed without a terminal."""
@@ -194,7 +189,6 @@ class StreamInterruptedChatFailure(BaseModel):
     code: Literal["stream_interrupted"] = "stream_interrupted"
     origin: Literal["provider_stream"]
     attempts: int = Field(ge=1)
-    support_id: Presence[str]
     can_rerun: bool
 
 

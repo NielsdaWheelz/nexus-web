@@ -32,7 +32,9 @@ from nexus.schemas.conversation import (
     TrustRetrievalOut,
     TrustRunOut,
     TrustToolCallOut,
+    chat_publication_warning_from_nullable,
 )
+from nexus.schemas.presence import presence_from_nullable
 from nexus.services.chat_failure import (
     chat_failure_projection,
     compute_has_write_tool_attempt,
@@ -279,6 +281,9 @@ def build_assistant_trust_trails(
                     retrieval_status=cast(Any, row.retrieval_status),
                     included_in_prompt=included_in_prompt,
                     created_at=row.created_at,
+                    citation_candidate_ordinal=presence_from_nullable(
+                        row.citation_candidate_ordinal
+                    ),
                     cited_edge_id=row.cited_edge_id,
                     citation_number=citation_number,
                     citation_role=citation_role,
@@ -350,13 +355,6 @@ def build_assistant_trust_trails(
 
         integrity_notices: list[TrustIntegrityNoticeOut] = []
         for row in retrievals_by_message.get(message.id, []):
-            if row.selected and row.cited_edge_id is None:
-                integrity_notices.append(
-                    TrustIntegrityNoticeOut(
-                        code=f"selected_retrieval_missing_citation:{row.id}",
-                        message=f"Selected retrieval {row.id} has no citation edge.",
-                    )
-                )
             if row.cited_edge_id is not None and row.cited_edge_id not in citation_edge_ids:
                 integrity_notices.append(
                     TrustIntegrityNoticeOut(
@@ -424,10 +422,15 @@ def build_assistant_trust_trails(
                     reasoning_option_id=run.reasoning_option_id,
                     provider=run.provider,
                     model_name=run.model_name,
+                    reasoning_effort=presence_from_nullable(run.reasoning_effort),
                     status=cast(Any, "pending" if run.status == "queued" else run.status),
                     usage=cast(dict[str, Any] | None, done_payload.get("usage")),
                     error_code=run.error_code,
                     error_origin=run.error_origin,
+                    support_id=presence_from_nullable(run.support_id),
+                    publication_warning=chat_publication_warning_from_nullable(
+                        run.publication_warning_code
+                    ),
                     failure=chat_failure_projection(
                         run,
                         has_write_tool_attempt=compute_has_write_tool_attempt(db, run),

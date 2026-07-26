@@ -142,7 +142,18 @@ def _insert_terminal_run(
                         "provider_event_seq_end": 1,
                     }
                 ),
-                "done_payload": json.dumps({"status": status}),
+                "done_payload": json.dumps(
+                    {
+                        "status": status,
+                        "error_code": {"kind": "Absent"},
+                        "support_id": {"kind": "Absent"},
+                        "publication_warning": {"kind": "Absent"},
+                        "usage": None,
+                        "final_chars": 2,
+                        "last_provider_event_seq": 1,
+                        "cancelled": status == "cancelled",
+                    }
+                ),
             },
         )
         session.commit()
@@ -540,11 +551,13 @@ class TestChatRunEventStream:
         }
         assert events[1]["data"] == {
             "status": "complete",
+            "error_code": {"kind": "Absent"},
+            "support_id": {"kind": "Absent"},
+            "publication_warning": {"kind": "Absent"},
             "usage": None,
-            "error_code": None,
-            "final_chars": None,
-            "last_provider_event_seq": None,
-            "cancelled": None,
+            "final_chars": 2,
+            "last_provider_event_seq": 1,
+            "cancelled": False,
         }
 
     def test_replays_strict_context_ref_added_payload(
@@ -627,11 +640,13 @@ class TestChatRunEventStream:
         assert [(event["id"], event["event"]) for event in events] == [("3", "done")]
         assert events[0]["data"] == {
             "status": "complete",
+            "error_code": {"kind": "Absent"},
+            "support_id": {"kind": "Absent"},
+            "publication_warning": {"kind": "Absent"},
             "usage": None,
-            "error_code": None,
-            "final_chars": None,
-            "last_provider_event_seq": None,
-            "cancelled": None,
+            "final_chars": 2,
+            "last_provider_event_seq": 1,
+            "cancelled": False,
         }
 
     def test_closes_when_cursor_is_at_terminal_run(
@@ -835,12 +850,7 @@ class TestStreamAuthMiddlewareBoundary:
         assert response.status_code == 200
 
     def test_artifact_build_events_use_stream_token_auth_boundary(self):
-        assert (
-            is_stream_path(
-                "/stream/artifact-builds/opaque-build-handle/events"
-            )
-            is True
-        )
+        assert is_stream_path("/stream/artifact-builds/opaque-build-handle/events") is True
 
         app = FastAPI()
 
@@ -856,9 +866,7 @@ class TestStreamAuthMiddlewareBoundary:
             bootstrap_callback=lambda user_id, email=None: user_id,
         )
 
-        response = TestClient(app).get(
-            "/stream/artifact-builds/opaque-build-handle/events"
-        )
+        response = TestClient(app).get("/stream/artifact-builds/opaque-build-handle/events")
 
         assert response.status_code == 200
 

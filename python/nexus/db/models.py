@@ -4740,6 +4740,7 @@ class MessageRetrieval(Base):
         nullable=False,
         server_default="false",
     )
+    citation_candidate_ordinal: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # One-way provenance pointer to the citation resource_edge, set when this
     # result is cited. Deliberately no FK: edge and telemetry rows are cleaned
     # up by different owners (resource provenance graph D6).
@@ -4896,6 +4897,7 @@ class ChatRun(Base):
     error_origin: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     support_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    publication_warning_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),

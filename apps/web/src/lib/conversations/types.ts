@@ -63,12 +63,11 @@ export interface LlmProfilesOut {
 // Closed, discriminated union (discriminator `code`) exposed by ChatRunOut,
 // message hydration, terminal SSE, reconnect folding, and the trust trail.
 // A DEFECT (internal error) exposes NO variant — `failure` is null but the
-// run status is terminal-failed with a support_id; render the same generic,
+// run status is terminal-failed with a run-owned support_id; render the same generic,
 // non-rerunnable card (see chatFailureMessage in lib/llm/failure.ts).
 // =============================================================================
 
 interface ExpectedChatFailureBase {
-  support_id: Presence<string>;
   can_rerun: boolean;
 }
 
@@ -159,6 +158,10 @@ export type ExpectedChatFailure =
   | ProviderUnavailableChatFailure
   | StreamInterruptedChatFailure;
 
+export interface ChatPublicationWarning {
+  code: "CitationsUnavailable";
+}
+
 export interface MessageRetrieval {
   id?: string;
   tool_call_id?: string;
@@ -183,6 +186,7 @@ export interface MessageRetrieval {
   snippet_suffix?: string | null;
   retrieval_status?: MessageEvidenceRetrievalStatus;
   included_in_prompt?: boolean;
+  citation_candidate_ordinal: Presence<number>;
   cited_edge_id?: string | null;
   citation_number?: number | null;
   citation_role?: "supports" | "contradicts" | "context" | null;
@@ -255,6 +259,9 @@ export interface AssistantTrustTrail {
     error_code: string | null;
     error_origin: string | null;
     failure: ExpectedChatFailure | null;
+    reasoning_effort: Presence<string>;
+    support_id: Presence<string>;
+    publication_warning: Presence<ChatPublicationWarning>;
     final_chars: number | null;
     started_at: string | null;
     completed_at: string | null;
@@ -498,7 +505,8 @@ export interface ChatRun {
   model_name: string | null;
   reasoning_effort: string | null;
   error_origin: string | null;
-  support_id: string | null;
+  support_id: Presence<string>;
+  publication_warning: Presence<ChatPublicationWarning>;
   /** The one chat_failure_projection read. Null for a run that is not a
    * card-bearing failure (still running, or a defect with no stored closed
    * code — render the generic defect card via chatFailureMessage(null)). */

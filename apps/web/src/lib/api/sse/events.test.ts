@@ -72,6 +72,59 @@ describe("toChatSSEEvent", () => {
     ).toThrow("Invalid SSE payload for meta");
   });
 
+  it("parses the complete terminal run contract", () => {
+    const data = {
+      status: "complete",
+      error_code: { kind: "Absent" },
+      support_id: { kind: "Present", value: "sup-1" },
+      publication_warning: {
+        kind: "Present",
+        value: { code: "CitationsUnavailable" },
+      },
+      usage: { input_tokens: 12, output_tokens: 8 },
+      final_chars: 120,
+      last_provider_event_seq: 14,
+      cancelled: false,
+    };
+
+    expect(toChatSSEEvent("done", data)).toEqual({
+      seq: 0,
+      type: "done",
+      data,
+    });
+  });
+
+  it("rejects the legacy nullable terminal payload", () => {
+    expect(() =>
+      toChatSSEEvent("done", {
+        status: "complete",
+        error_code: null,
+        usage: null,
+        final_chars: 120,
+        last_provider_event_seq: 14,
+        cancelled: false,
+      }),
+    ).toThrow();
+  });
+
+  it("rejects an unknown publication warning", () => {
+    expect(() =>
+      toChatSSEEvent("done", {
+        status: "complete",
+        error_code: { kind: "Absent" },
+        support_id: { kind: "Absent" },
+        publication_warning: {
+          kind: "Present",
+          value: { code: "UnknownWarning" },
+        },
+        usage: null,
+        final_chars: 120,
+        last_provider_event_seq: 14,
+        cancelled: false,
+      }),
+    ).toThrow();
+  });
+
   it("parses citation index events as backend-built citations", () => {
     expect(
       toChatSSEEvent("citation_index", {

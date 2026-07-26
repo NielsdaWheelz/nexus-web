@@ -22,7 +22,7 @@ from pydantic import (
 from nexus.schemas.chat_reader_selection import ReaderSelectionInput, ReaderSelectionOut
 from nexus.schemas.citation import CitationOut, CitationRole, CitationTargetRef
 from nexus.schemas.llm import ExpectedChatFailure
-from nexus.schemas.presence import Absent, Presence, absent
+from nexus.schemas.presence import Absent, Presence, Present, absent, present
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.schemas.retrieval import RetrievalContextRef, RetrievalLocator, RetrievalResultRef
 from nexus.schemas.search import SEARCH_RESULT_TYPES
@@ -327,15 +327,36 @@ class ChatRunToolResultEventPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ChatPublicationWarning(BaseModel):
+    """The sole warning carried by a successfully published degraded answer."""
+
+    code: Literal["CitationsUnavailable"] = "CitationsUnavailable"
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+def chat_publication_warning_from_nullable(
+    code: str | None,
+) -> Absent | Present[ChatPublicationWarning]:
+    """Project the nullable run-row code into the one owned warning shape."""
+    if code is None:
+        return absent()
+    if code != "CitationsUnavailable":
+        raise ValueError(f"unknown chat publication warning code: {code!r}")
+    return present(ChatPublicationWarning(code=code))
+
+
 class ChatRunDoneEventPayload(BaseModel):
     """Strict SSE payload emitted when a run reaches a terminal status."""
 
     status: Literal["complete", "error", "cancelled"]
-    usage: dict[str, Any] | None = None
-    error_code: str | None = None
-    final_chars: int | None = Field(default=None, ge=0)
-    last_provider_event_seq: int | None = Field(default=None, ge=0)
-    cancelled: bool | None = None
+    error_code: Presence[str]
+    support_id: Presence[str]
+    publication_warning: Presence[ChatPublicationWarning]
+    usage: dict[str, Any] | None
+    final_chars: int | None = Field(ge=0)
+    last_provider_event_seq: int | None = Field(ge=0)
+    cancelled: bool
 
     model_config = ConfigDict(extra="forbid")
 
@@ -428,10 +449,13 @@ class TrustRunOut(BaseModel):
     reasoning_option_id: str | None = None
     provider: str | None = None
     model_name: str | None = None
+    reasoning_effort: Presence[str]
     status: Literal["pending", "running", "complete", "error", "cancelled"]
     usage: dict[str, Any] | None = None
     error_code: str | None = None
     error_origin: str | None = None
+    support_id: Presence[str]
+    publication_warning: Presence[ChatPublicationWarning]
     failure: ExpectedChatFailure | None = None
     final_chars: int | None = None
     started_at: datetime | None = None
@@ -442,6 +466,7 @@ class TrustRunOut(BaseModel):
 
 
 class TrustRetrievalOut(MessageRetrievalOut):
+    citation_candidate_ordinal: Presence[int]
     cited_edge_id: UUID | None = None
     citation_number: int | None = None
     citation_role: CitationRole | None = None
@@ -782,7 +807,8 @@ class ChatRunOut(BaseModel):
     model_name: str | None = None
     reasoning_effort: str | None = None
     error_origin: str | None = None
-    support_id: str | None = None
+    support_id: Presence[str]
+    publication_warning: Presence[ChatPublicationWarning]
     failure: ExpectedChatFailure | None = None
     cancel_requested_at: datetime | None = None
     started_at: datetime | None = None

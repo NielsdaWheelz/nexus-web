@@ -11,6 +11,7 @@ cleanliness rules forbid, and the mismatched formatter it replaced was a live
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from collections.abc import AsyncIterator, Callable, Sequence
@@ -75,7 +76,7 @@ async def tail_cursor_stream(
     try:
         async for _ in listener.notifications():
             if await request.is_disconnected():
-                close_reason = "client_disconnected"
+                close_reason = "client_detached"
                 return
             try:
                 events, terminal = await run_in_threadpool(read_after, cursor)
@@ -104,6 +105,9 @@ async def tail_cursor_stream(
             if now - last_keepalive >= KEEPALIVE_INTERVAL_SECONDS:
                 yield ": keepalive\n\n"
                 last_keepalive = now
+    except (asyncio.CancelledError, GeneratorExit):
+        close_reason = "client_detached"
+        raise
     except BaseException:
         close_reason = "error"
         raise
@@ -127,7 +131,7 @@ async def tail_snapshot_stream(
     try:
         async for _ in listener.notifications():
             if await request.is_disconnected():
-                close_reason = "client_disconnected"
+                close_reason = "client_detached"
                 return
             try:
                 payload, terminal = await run_in_threadpool(read_snapshot)
@@ -148,6 +152,9 @@ async def tail_snapshot_stream(
             if now - last_keepalive >= KEEPALIVE_INTERVAL_SECONDS:
                 yield ": keepalive\n\n"
                 last_keepalive = now
+    except (asyncio.CancelledError, GeneratorExit):
+        close_reason = "client_detached"
+        raise
     except BaseException:
         close_reason = "error"
         raise

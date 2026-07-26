@@ -93,15 +93,11 @@ def test_non_transient_variant_accepts_only_its_allowed_origins(
     variant_type, code, allowed_origins
 ):
     for origin in allowed_origins:
-        instance = variant_type(
-            code=code, origin=origin, support_id={"kind": "Absent"}, can_rerun=False
-        )
+        instance = variant_type(code=code, origin=origin, can_rerun=False)
         assert instance.origin == origin
 
     with pytest.raises(ValidationError):
-        variant_type(
-            code=code, origin="not-a-real-origin", support_id={"kind": "Absent"}, can_rerun=False
-        )
+        variant_type(code=code, origin="not-a-real-origin", can_rerun=False)
 
 
 @pytest.mark.parametrize(
@@ -121,7 +117,6 @@ def test_transient_variant_accepts_only_its_allowed_origins_and_requires_attempt
             code=code,
             origin=origin,
             attempts=3,
-            support_id={"kind": "Absent"},
             can_rerun=True,
         )
         assert instance.origin == origin
@@ -132,39 +127,43 @@ def test_transient_variant_accepts_only_its_allowed_origins_and_requires_attempt
             code=code,
             origin="not-a-real-origin",
             attempts=3,
-            support_id={"kind": "Absent"},
             can_rerun=True,
         )
 
     with pytest.raises(ValidationError):
-        variant_type(
-            code=code, origin=allowed_origins[0], support_id={"kind": "Absent"}, can_rerun=True
-        )
+        variant_type(code=code, origin=allowed_origins[0], can_rerun=True)
 
 
 def test_cancelled_variant_carries_no_origin_field():
-    cancelled = CancelledChatFailure(
-        code="cancelled", support_id={"kind": "Absent"}, can_rerun=True
-    )
+    cancelled = CancelledChatFailure(code="cancelled", can_rerun=True)
 
     assert not hasattr(cancelled, "origin")
     assert not hasattr(cancelled, "attempts")
+    assert not hasattr(cancelled, "support_id")
 
 
 def test_refused_and_budget_denial_variants_construct_as_non_rerunnable():
     refused = RefusedChatFailure(
         code="refused",
         origin="provider_stream",
-        support_id={"kind": "Present", "value": "abc123def456"},
         can_rerun=False,
     )
-    budget = BudgetExceededChatFailure(
-        code="budget_exceeded", origin="budget", support_id={"kind": "Absent"}, can_rerun=False
-    )
+    budget = BudgetExceededChatFailure(code="budget_exceeded", origin="budget", can_rerun=False)
 
     assert refused.can_rerun is False
-    assert refused.support_id.value == "abc123def456"
     assert budget.can_rerun is False
+
+
+def test_failure_variants_reject_run_owned_support_id() -> None:
+    with pytest.raises(ValidationError):
+        RefusedChatFailure.model_validate(
+            {
+                "code": "refused",
+                "origin": "provider_http",
+                "support_id": {"kind": "Present", "value": "abc123def456"},
+                "can_rerun": False,
+            }
+        )
 
 
 # =============================================================================
@@ -204,9 +203,7 @@ def _sample_payload(code: str) -> dict:
             "can_rerun": True,
         },
     }
-    payload = dict(payloads[code])
-    payload["support_id"] = {"kind": "Absent"}
-    return payload
+    return dict(payloads[code])
 
 
 @pytest.mark.parametrize(

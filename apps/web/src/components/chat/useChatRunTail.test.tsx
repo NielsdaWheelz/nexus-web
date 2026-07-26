@@ -119,7 +119,8 @@ function chatRunData(foldedSeq = 0): ChatRunResponse["data"] {
       model_name: null,
       reasoning_effort: null,
       error_origin: null,
-      support_id: null,
+      support_id: { kind: "Absent" },
+      publication_warning: { kind: "Absent" },
       failure: null,
       cancel_requested_at: null,
       started_at: timestamp,
@@ -178,7 +179,22 @@ function doneEvent(
   status: "complete" | "error" | "cancelled" = "complete",
   errorCode: string | null = null,
 ): SSEEvent {
-  return { seq, type: "done", data: { status, error_code: errorCode } };
+  return {
+    seq,
+    type: "done",
+    data: {
+      status,
+      error_code: errorCode
+        ? { kind: "Present", value: errorCode }
+        : { kind: "Absent" },
+      support_id: { kind: "Absent" },
+      publication_warning: { kind: "Absent" },
+      usage: null,
+      final_chars: null,
+      last_provider_event_seq: null,
+      cancelled: status === "cancelled",
+    },
+  };
 }
 
 // The slice of the sseClientDirect options the tailer wires up and the test drives.
@@ -295,6 +311,103 @@ describe("useChatRunTail", () => {
     );
     const assistant = result.current.messages.find((m) => m.id === ASSISTANT_ID);
     expect(assistant?.status).toBe("complete");
+  });
+
+  it("reconciles a degraded terminal draft to canonical persisted prose and run facts", async () => {
+    const persisted = chatRunData(4);
+    persisted.run = {
+      ...persisted.run,
+      status: "complete",
+      support_id: { kind: "Present", value: "sup-citations" },
+      publication_warning: {
+        kind: "Present",
+        value: { code: "CitationsUnavailable" },
+      },
+      completed_at: timestamp,
+    };
+    persisted.assistant_message = message(
+      ASSISTANT_ID,
+      2,
+      "assistant",
+      "Canonical answer.",
+      USER_ID,
+      "complete",
+    );
+    persisted.assistant_message.trust_trail = {
+      ...persisted.assistant_message.trust_trail!,
+      run: {
+        run_id: RUN_ID,
+        profile_id: "balanced",
+        reasoning_option_id: "default",
+        provider: "openai",
+        model_name: "gpt-test",
+        status: "complete",
+        usage: null,
+        error_code: null,
+        error_origin: null,
+        failure: null,
+        reasoning_effort: { kind: "Present", value: "medium" },
+        support_id: { kind: "Present", value: "sup-citations" },
+        publication_warning: {
+          kind: "Present",
+          value: { code: "CitationsUnavailable" },
+        },
+        final_chars: 17,
+        started_at: timestamp,
+        completed_at: timestamp,
+        total_cost_usd_micros: null,
+      },
+    };
+    stubFetch((input) =>
+      pathOf(input).endsWith(`/api/chat-runs/${RUN_ID}`)
+        ? jsonResponse({ data: persisted })
+        : jsonResponse({}, 404),
+    );
+    const { result } = renderHook(() => useHarness({}));
+
+    act(() => {
+      result.current.dispatch({ type: "set_all", messages: seededPair() });
+    });
+    await act(async () => {
+      await result.current.tailChatRun(chatRunData());
+    });
+
+    const sse = lastSse();
+    await act(async () => {
+      sse.onEvent(metaEvent(1));
+      sse.onEvent(deltaEvent(2, "Draft [99]."));
+      sse.onEvent({
+        seq: 4,
+        type: "done",
+        data: {
+          status: "complete",
+          error_code: { kind: "Absent" },
+          support_id: { kind: "Present", value: "sup-citations" },
+          publication_warning: {
+            kind: "Present",
+            value: { code: "CitationsUnavailable" },
+          },
+          usage: null,
+          final_chars: 17,
+          last_provider_event_seq: 2,
+          cancelled: false,
+        },
+      });
+      sse.onComplete?.(true);
+    });
+
+    await waitFor(() =>
+      expect(assistantText(result.current.messages)).toBe("Canonical answer."),
+    );
+    const assistant = result.current.messages.find((item) => item.id === ASSISTANT_ID);
+    expect(assistant?.trust_trail?.run?.publication_warning).toEqual({
+      kind: "Present",
+      value: { code: "CitationsUnavailable" },
+    });
+    expect(assistant?.trust_trail?.run?.support_id).toEqual({
+      kind: "Present",
+      value: "sup-citations",
+    });
   });
 
   it("drops superseded events and aborts the live stream after abortAll", async () => {

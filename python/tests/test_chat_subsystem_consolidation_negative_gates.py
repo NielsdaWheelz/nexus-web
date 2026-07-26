@@ -96,9 +96,9 @@ def test_chat_dead_optimistic_handler_is_absent():
 
 _EXTRACTED_SERVICE_DEFS = (
     r"^\s*def\s+("
-    r"record_tool_citations|_record_retrieval_citation|_citation_target_ref|"
-    r"persist_attached_citations|prune_tool_call_retrievals|_delete_citation_edge|"
-    r"clear_message_citations|persist_read_evidence_citation|emit_citation_index|"
+    r"number_tool_citation_candidates|canonicalize_chat_citations|_citation_target_ref|"
+    r"persist_attached_citations|prune_tool_call_retrievals|"
+    r"persist_read_evidence_candidate|publish_chat_citations|"
     r"app_search_tool_output|web_search_tool_output|persist_tool_call_start|"
     r"persist_tool_call_error|bind_provider_tool_call_events|tool_start_event|"
     r"persist_tool_call_trace|tool_trace_event"
