@@ -159,8 +159,7 @@ async def test_invariant_failure_crosses_chat_boundary_as_failed_not_degraded(
     async def raise_graph_invariant(db: Session, *_args: object, **_kwargs: object) -> None:
         db.execute(
             text(
-                "UPDATE conversations SET title = 'partial publication' "
-                "WHERE id = :conversation_id"
+                "UPDATE conversations SET title = 'partial publication' WHERE id = :conversation_id"
             ),
             {"conversation_id": run.conversation_id},
         )

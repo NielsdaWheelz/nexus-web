@@ -24,6 +24,7 @@ import SectionOpener from "@/components/ui/SectionOpener";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import { presentConversation } from "@/lib/collections/presenters/conversation";
+import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { RESOURCE_ACTION_CATALOG } from "@/lib/actions/resourceActions";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import type { ConversationSummary } from "@/lib/conversations/types";
@@ -37,13 +38,13 @@ import {
 interface ConversationsSnapshot {
   readonly conversations: readonly ConversationSummary[];
   readonly nextCursor: string | null;
-  readonly hasMore: boolean;
 }
 
 const CONVERSATIONS_VISIT_DATA =
   definePaneVisitDataKey<ConversationsSnapshot>("Conversations.Pagination");
 
 export default function ConversationsPaneBody() {
+  const renderEnvironment = useRenderEnvironment();
   const committedSnapshotRef = useRef<ConversationsSnapshot | null>(null);
   const captureCommitted = useCallback(
     () => committedSnapshotRef.current,
@@ -74,7 +75,6 @@ export default function ConversationsPaneBody() {
     setController({
       conversations: firstPage.data.data,
       nextCursor: firstPage.data.page.next_cursor,
-      hasMore: firstPage.data.page.has_more,
     });
   }, [firstPage]);
 
@@ -101,7 +101,6 @@ export default function ConversationsPaneBody() {
           : {
               conversations: [...current.conversations, ...page.data],
               nextCursor: page.page.next_cursor,
-              hasMore: page.page.has_more,
             },
       );
     } catch (error) {
@@ -153,7 +152,7 @@ export default function ConversationsPaneBody() {
         busyIds: deletingConversationIds.ids.has(conversation.id)
           ? new Set([RESOURCE_ACTION_CATALOG.DeleteConversation.id])
           : new Set(),
-      }),
+      }, renderEnvironment),
     );
 
   const firstPageError =
@@ -207,7 +206,7 @@ export default function ConversationsPaneBody() {
         <>
           {status === "ready" && loadError ? <FeedbackNotice feedback={loadError} /> : null}
           <LoadMoreFooter
-            hasMore={controller?.hasMore ?? false}
+            hasMore={controller !== null && controller.nextCursor !== null}
             loading={loadingMore}
             onLoadMore={loadMore}
             label="Load more conversations"

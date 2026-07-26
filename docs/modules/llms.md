@@ -75,7 +75,9 @@ LlmProfile {
   target: ProviderTarget
   reasoning_options: tuple[ReasoningOption]   # ReasoningOption{id, label}
   default_reasoning_option_id
-  privacy_notice
+  privacy:
+    | { kind: "Standard", notice }
+    | { kind: "ExceptionalRetention", notice }
 }
 ```
 
@@ -87,7 +89,7 @@ LlmProfile {
 | `balanced` | Balanced · Terra | `openai/gpt-5.6-terra` | same GPT-5.6 set | medium | standard |
 | `deep` | Deep · Sol | `openai/gpt-5.6-sol` | same GPT-5.6 set | high | standard |
 | `claude` | Claude · Sonnet 5 | `anthropic/claude-sonnet-5` | low,medium,high,xhigh,max | medium | standard |
-| `fable` | Claude · Fable 5 | `anthropic/claude-fable-5` | low,medium,high,xhigh,max | high | Fable 30-day-retention notice |
+| `fable` | Claude · Fable 5 | `anthropic/claude-fable-5` | low,medium,high,xhigh,max | high | `ExceptionalRetention` (30-day notice) |
 | `gemini` | Gemini · 3.5 Flash | `gemini/gemini-3.5-flash` | minimal,low,medium,high | medium | standard |
 | `kimi` | Kimi · K3 | `moonshot/kimi-k3` | low,high,max | high | standard |
 

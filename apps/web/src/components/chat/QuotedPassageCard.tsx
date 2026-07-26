@@ -155,7 +155,7 @@ function AvailableBody({
   const [expanded, setExpanded] = useState(false);
   const [overflowing, setOverflowing] = useState(false);
 
-  // Detect whether the stored text is taller than the four-line clamp. The full
+  // Detect whether the stored text is taller than the three-line clamp. The full
   // `exact` is always in the DOM; the clamp is purely visual, so the disclosure
   // only appears when there is genuinely more to reveal.
   useLayoutEffect(() => {

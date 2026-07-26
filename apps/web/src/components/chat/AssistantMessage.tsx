@@ -3,10 +3,7 @@
 import { useCallback, useMemo } from "react";
 import { GitBranch, Search } from "lucide-react";
 import Button from "@/components/ui/Button";
-import MachineText, { type MachineSignatureTime } from "@/components/ui/MachineText";
 import { absent } from "@/lib/api/presence";
-import { formatDisplayDate } from "@/lib/display/format";
-import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type {
   BranchDraft,
   ConversationMessage,
@@ -19,12 +16,12 @@ import type { ResourceActivation } from "@/lib/resources/activation";
 import { toReaderCitationData } from "@/lib/conversations/citations";
 import type { CitationOut } from "@/lib/conversations/citationOut";
 import AssistantSelectionPopover from "./AssistantSelectionPopover";
-import AssistantEvidenceDisclosure from "./AssistantEvidenceDisclosure";
-import AssistantTrustInspector, { AssistantWriteTrail } from "./AssistantTrustInspector";
+import AssistantAnswer from "./AssistantAnswer";
+import AssistantDetails from "./AssistantDetails";
+import AssistantWriteTrail from "./AssistantWriteTrail";
 import ChatFailureCard from "./ChatFailureCard";
 import ChatPublicationNotice from "./ChatPublicationNotice";
-import Colophon from "./Colophon";
-import MessageFootnotes from "./MessageFootnotes";
+import MessageSourcesDisclosure from "./MessageSourcesDisclosure";
 import ForkStrip from "./ForkStrip";
 import StreamingGutterCue from "./StreamingGutterCue";
 import { useAssistantSelectionBranch } from "./useAssistantSelectionBranch";
@@ -42,6 +39,7 @@ export default function AssistantMessage({
   connectionLost,
   onReconnectAssistant,
   onStartWalk,
+  timestampLabel,
 }: {
   message: ConversationMessage;
   forkOptions: ForkOption[];
@@ -58,11 +56,11 @@ export default function AssistantMessage({
   connectionLost?: boolean;
   onReconnectAssistant?: (assistantMessageId: string) => void;
   onStartWalk?: (citations: CitationOut[], text: string) => void;
+  timestampLabel: string;
 }) {
-  const display = useRenderEnvironment();
   const assistantText = conversationMessageText(message);
   const toolCalls = message.trust_trail?.tool_calls ?? [];
-  // Citations memoized once at this level; shared by EvidenceDisclosure + MessageFootnotes.
+  // Citations are memoized once and shared by the answer and source disclosure.
   const citations = useMemo(
     () => (message.citations ?? []).map(toReaderCitationData),
     [message.citations],
@@ -108,17 +106,6 @@ export default function AssistantMessage({
     : showFailureCard
       ? assistantText.trim().length > 0
       : true;
-  // The head signature carries this turn's time (hh:mm), so AssistantMessage owns
-  // its own formatting — the parent row's label is a month/day string (D-9).
-  const signatureTime = formatDisplayDate(message.created_at, display, {
-    hour: "numeric",
-    minute: "2-digit",
-  });
-  // Pair the display time with its ISO instant, or pass neither — the D-9 contract.
-  const signature: MachineSignatureTime = signatureTime
-    ? { timestamp: signatureTime, timestampIso: message.created_at }
-    : {};
-
   const createBranchDraft = useCallback(
     (): BranchDraft => ({
       parentMessageId: message.id,
@@ -137,89 +124,45 @@ export default function AssistantMessage({
       className={styles.message}
       data-message-id={message.id}
       data-role="assistant"
+      role="group"
+      aria-label="Assistant response"
       onMouseUp={captureSelection}
       onKeyUp={captureSelection}
     >
-      {canBranchFromAssistant || canWalk ? (
-        <div className={styles.messageActions}>
-          {canBranchFromAssistant ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              leadingIcon={<GitBranch size={14} aria-hidden="true" />}
-              onClick={() => onReplyToAssistant?.(createBranchDraft())}
-              aria-label="Fork from this answer"
-            >
-              Fork
-            </Button>
-          ) : null}
-          {canWalk ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() =>
-                onStartWalk!(message.citations!, conversationMessageText(message))
-              }
-              aria-label="Walk the sources"
-            >
-              Walk
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
       {message.status === "pending" && !showReconnectCard ? (
         <StreamingGutterCue />
       ) : null}
-      <MachineText origin={{ label: "Assistant" }} {...signature}>
-        <ToolActivity toolCalls={toolCalls} />
-        {renderAssistantBody ? (
-          <AssistantEvidenceDisclosure
-            message={message}
-            citations={citations}
-            answerRef={answerRef}
-            onCitationActivate={onCitationActivate}
-          />
-        ) : null}
-        {trustRun?.publication_warning.kind === "Present" ? (
-          <ChatPublicationNotice
-            warning={trustRun.publication_warning.value}
-            supportId={supportId}
-          />
-        ) : null}
-        <MessageFootnotes
+      <ToolActivity toolCalls={toolCalls} />
+      {renderAssistantBody ? (
+        <AssistantAnswer
+          message={message}
           citations={citations}
+          answerRef={answerRef}
           onCitationActivate={onCitationActivate}
         />
-        {message.trust_trail ? (
-          <AssistantWriteTrail
-            conversationId={message.trust_trail.conversation_id}
-            toolCalls={message.trust_trail.tool_calls}
-          />
-        ) : null}
-        {message.trust_trail ? (
-          <AssistantTrustInspector
-            trustTrail={message.trust_trail}
-            onCitationActivate={onCitationActivate}
-          />
-        ) : null}
-        {message.status === "complete" && message.trust_trail?.run ? (
-          <Colophon
-            modelName={message.trust_trail.run.model_name ?? ""}
-            inputTokens={
-              typeof message.trust_trail.run.usage?.input_tokens === "number"
-                ? message.trust_trail.run.usage.input_tokens
-                : null
-            }
-            outputTokens={
-              typeof message.trust_trail.run.usage?.output_tokens === "number"
-                ? message.trust_trail.run.usage.output_tokens
-                : null
-            }
-            totalCostUsdMicros={message.trust_trail.run.total_cost_usd_micros}
-            sourceCount={citations.length}
-          />
-        ) : null}
-      </MachineText>
+      ) : null}
+      {trustRun?.publication_warning.kind === "Present" ? (
+        <ChatPublicationNotice
+          warning={trustRun.publication_warning.value}
+          supportId={supportId}
+        />
+      ) : null}
+      {message.trust_trail ? (
+        <AssistantWriteTrail
+          conversationId={message.trust_trail.conversation_id}
+          toolCalls={message.trust_trail.tool_calls}
+        />
+      ) : null}
+      <MessageSourcesDisclosure
+        citations={citations}
+        onCitationActivate={onCitationActivate}
+      />
+      {message.trust_trail ? (
+        <AssistantDetails
+          trustTrail={message.trust_trail}
+          onCitationActivate={onCitationActivate}
+        />
+      ) : null}
       {selection ? (
         <AssistantSelectionPopover
           selection={selection}
@@ -245,6 +188,36 @@ export default function AssistantMessage({
           onReconnect={() => onReconnectAssistant?.(message.id)}
         />
       ) : null}
+      {canBranchFromAssistant || canWalk ? (
+        <div className={styles.messageActions}>
+          {canBranchFromAssistant ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              leadingIcon={<GitBranch size={14} aria-hidden="true" />}
+              onClick={() => onReplyToAssistant?.(createBranchDraft())}
+              aria-label="Fork from this answer"
+            >
+              Fork
+            </Button>
+          ) : null}
+          {canWalk ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                onStartWalk!(
+                  message.citations!,
+                  conversationMessageText(message),
+                )
+              }
+              aria-label="Walk the sources"
+            >
+              Walk
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
       {onSelectFork ? (
         <ForkStrip
           forks={forkOptions}
@@ -252,6 +225,9 @@ export default function AssistantMessage({
           onSelectFork={onSelectFork}
         />
       ) : null}
+      <time className={styles.timestamp} dateTime={message.created_at}>
+        {timestampLabel}
+      </time>
     </div>
   );
 }
@@ -273,14 +249,17 @@ function ToolActivity({ toolCalls }: { toolCalls: MessageToolCall[] }) {
     ["running", "pending"].includes(toolCall.status),
   );
   if (!active) return null;
-  const label = ACTIVE_TOOL_LABELS[active.tool_name] ?? `Running ${active.tool_name}`;
+  const label =
+    ACTIVE_TOOL_LABELS[active.tool_name] ?? `Running ${active.tool_name}`;
 
   return (
     <div className={styles.toolActivity} role="status" aria-live="polite">
       <Search size={14} aria-hidden="true" />
       <span>{label}</span>
       {active.input_preview ? (
-        <span className={styles.toolActivityPreview}>{active.input_preview}</span>
+        <span className={styles.toolActivityPreview}>
+          {active.input_preview}
+        </span>
       ) : null}
     </div>
   );

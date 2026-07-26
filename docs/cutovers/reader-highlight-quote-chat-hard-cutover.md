@@ -5,6 +5,10 @@ Author: SME council synthesis
 Type: hard cutover
 Date: 2026-07-22
 
+Quote presentation geometry is finalized by
+`docs/cutovers/chat-interface-hard-cutover.md`; snapshot, send, and prompt
+semantics remain owned here.
+
 ## One-Line
 
 Make a reader Highlight a visible, immutable, one-turn chat attachment from
@@ -146,7 +150,11 @@ Out of scope:
 
 - Use the existing editorial user-message register: subtle left accent rail,
   source line, semantic `<blockquote>`, no speech-bubble chrome, no tiny chip.
-- Clamp to four lines with an explicit disclosure; never truncate stored text.
+- Clamp to three lines in pending and sent modes with one explicit in-place
+  disclosure; never truncate stored text.
+- The semantic figure resets its outer margin, uses border-box logical sizing,
+  and cannot exceed the containing pane. Source labels, identifiers, and quote
+  text wrap; the quote never creates pane-level horizontal scrolling.
 - Remove/source/disclosure controls have visible focus and standard touch
   targets. Reduced motion, screen-reader naming, modal focus, and mobile
   keyboard behavior follow the shared primitives.

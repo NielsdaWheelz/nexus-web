@@ -1,9 +1,11 @@
 /* Markdown message typography */
 .markdown {
+  min-inline-size: 0;
+  max-inline-size: 100%;
   font-size: var(--chat-prose-font-size, var(--text-md));
   line-height: var(--chat-prose-line-height, 1.58);
   color: inherit;
-  overflow-wrap: normal;
+  overflow-wrap: anywhere;
 }
 
 .markdown > :where(p, ul, ol, blockquote, h1, h2, h3, h4, hr) {
@@ -58,9 +60,14 @@
   text-underline-offset: 2px;
 }
 
+.markdown :where(p, li, blockquote, h1, h2, h3, h4, td, th) {
+  overflow-wrap: anywhere;
+}
+
 .markdown strong { font-weight: var(--weight-semibold); }
 
 .tableScroll {
+  min-inline-size: 0;
   max-width: 100%;
   margin: 0 0 var(--space-4);
   overflow-x: auto;
@@ -100,6 +107,7 @@
 /* Code blocks */
 .codeBlock {
   position: relative;
+  min-inline-size: 0;
   max-width: 100%;
   margin: 0 0 var(--space-4);
   background: var(--surface-2);
@@ -120,6 +128,7 @@
 }
 
 .codeBlockContent {
+  min-inline-size: 0;
   overflow-x: auto;
   padding: var(--space-3);
   font-family: var(--font-mono);

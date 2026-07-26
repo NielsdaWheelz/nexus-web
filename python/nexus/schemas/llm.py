@@ -22,11 +22,17 @@ cutover.md` §10):
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Literal, assert_never
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from nexus.services.llm_profiles import DEFAULT_PROFILE_ID, PROFILES, LlmProfile
+from nexus.services.llm_profiles import (
+    DEFAULT_PROFILE_ID,
+    PROFILES,
+    ExceptionalRetentionPrivacy,
+    LlmProfile,
+    StandardPrivacy,
+)
 
 # =============================================================================
 # GET /llm-profiles
@@ -40,6 +46,41 @@ class ReasoningOptionOut(BaseModel):
     model_config = ConfigDict(frozen=True)
 
 
+class StandardPrivacyOut(BaseModel):
+    kind: Literal["Standard"]
+    notice: str
+
+    model_config = ConfigDict(frozen=True)
+
+
+class ExceptionalRetentionPrivacyOut(BaseModel):
+    kind: Literal["ExceptionalRetention"]
+    notice: str
+
+    model_config = ConfigDict(frozen=True)
+
+
+ProfilePrivacyOut = Annotated[
+    StandardPrivacyOut | ExceptionalRetentionPrivacyOut,
+    Field(discriminator="kind"),
+]
+
+
+def profile_privacy_out(
+    privacy: StandardPrivacy | ExceptionalRetentionPrivacy,
+) -> ProfilePrivacyOut:
+    match privacy:
+        case StandardPrivacy(notice=notice):
+            return StandardPrivacyOut(kind="Standard", notice=notice)
+        case ExceptionalRetentionPrivacy(notice=notice):
+            return ExceptionalRetentionPrivacyOut(
+                kind="ExceptionalRetention",
+                notice=notice,
+            )
+        case _ as unreachable:
+            assert_never(unreachable)
+
+
 class LlmProfileOut(BaseModel):
     id: str
     label: str
@@ -48,7 +89,7 @@ class LlmProfileOut(BaseModel):
     model_label: str
     reasoning_options: list[ReasoningOptionOut]
     default_reasoning_option_id: str
-    privacy_notice: str
+    privacy: ProfilePrivacyOut
 
     model_config = ConfigDict(frozen=True)
 
@@ -68,7 +109,7 @@ class LlmProfileOut(BaseModel):
                 for option in entry.reasoning_options
             ],
             default_reasoning_option_id=entry.default_reasoning_option_id,
-            privacy_notice=entry.privacy_notice,
+            privacy=profile_privacy_out(entry.privacy),
         )
 
 

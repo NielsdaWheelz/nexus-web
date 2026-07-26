@@ -49,8 +49,7 @@ def test_sparse_candidate_marker_is_canonicalized_to_first_final_ordinal() -> No
     assert result.content_md == "Answer [1]."
     assert result.citation_count == 1
     assert [
-        (citation.candidate_ordinal, citation.final_ordinal)
-        for citation in result.citations
+        (citation.candidate_ordinal, citation.final_ordinal) for citation in result.citations
     ] == [(3, 1)]
 
 
@@ -63,8 +62,7 @@ def test_first_use_order_and_repeated_markers_are_stable() -> None:
     assert result.kind == "Published"
     assert result.content_md == "Fourth [1], second [2], fourth again [1]."
     assert [
-        (citation.candidate_ordinal, citation.final_ordinal)
-        for citation in result.citations
+        (citation.candidate_ordinal, citation.final_ordinal) for citation in result.citations
     ] == [(4, 1), (2, 2)]
 
 
@@ -132,9 +130,7 @@ def test_citation_target_ref_resolves_citable_schemes() -> None:
         "reader_apparatus_item",
     ):
         uri = f"{scheme}:{uuid4()}"
-        resolved = _citation_target_ref(
-            {"result_ref": {"citation_target": uri}}
-        )
+        resolved = _citation_target_ref({"result_ref": {"citation_target": uri}})
         assert resolved is not None
         assert resolved.uri == uri
 
@@ -145,6 +141,4 @@ def test_citation_target_ref_resolves_citable_schemes() -> None:
 def test_citation_target_ref_rejects_malformed_or_uncitable_targets() -> None:
     for raw_target in ("not-a-ref", "library:not-a-uuid", f"library:{uuid4()}"):
         with pytest.raises(AssertionError):
-            _citation_target_ref(
-                {"result_ref": {"citation_target": raw_target}}
-            )
+            _citation_target_ref({"result_ref": {"citation_target": raw_target}})

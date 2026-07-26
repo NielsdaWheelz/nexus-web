@@ -10,6 +10,7 @@ import type { PanePrimaryChromePublicationUpdate } from "@/lib/panes/panePublica
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
+import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
 import type { EffectivePaneSizing } from "@/lib/workspace/paneSizing";
 import {
@@ -25,9 +26,7 @@ import type {
   ForkOption,
 } from "@/lib/conversations/types";
 
-const TEST_VISIT_ID = assumePaneVisitId(
-  "00000000-0000-4000-8000-000000000001",
-);
+const TEST_VISIT_ID = assumePaneVisitId("00000000-0000-4000-8000-000000000001");
 
 function paneSizing(input: {
   widthPx: number;
@@ -92,7 +91,7 @@ const LLM_PROFILES = {
       model_label: "Sonnet",
       reasoning_options: [{ id: "default", label: "Default" }],
       default_reasoning_option_id: "default",
-      privacy_notice: "Processed by Nexus AI.",
+      privacy: { kind: "Standard", notice: "Processed by Nexus AI." },
     },
   ],
 };
@@ -167,7 +166,13 @@ const rootAssistant = message(
   "Choose a branch",
   "root-user",
 );
-const branchAUser = message("branch-a-user", 3, "user", "Ask A", "root-assistant");
+const branchAUser = message(
+  "branch-a-user",
+  3,
+  "user",
+  "Ask A",
+  "root-assistant",
+);
 const branchAAssistant = message(
   "branch-a-assistant",
   4,
@@ -175,7 +180,13 @@ const branchAAssistant = message(
   "Answer A",
   "branch-a-user",
 );
-const branchBUser = message("branch-b-user", 5, "user", "Ask B", "root-assistant");
+const branchBUser = message(
+  "branch-b-user",
+  5,
+  "user",
+  "Ask B",
+  "root-assistant",
+);
 const branchBAssistant = message(
   "branch-b-assistant",
   6,
@@ -445,7 +456,8 @@ function renderPane(
     ) => void;
   } = {},
 ) {
-  const href = options.href ?? "/conversations/00000000-0000-4000-8000-000000000101";
+  const href =
+    options.href ?? "/conversations/00000000-0000-4000-8000-000000000101";
   const routeKey = resolvePaneRouteIdentity(href).routeKey;
   const onReplacePane = options.onReplacePane ?? vi.fn();
   const publishPrimaryChrome =
@@ -456,13 +468,17 @@ function renderPane(
       visitId={TEST_VISIT_ID}
       isActive={true}
       href={href}
-      routeId={href === "/conversations/new" ? "conversation-new" : "conversation"}
+      routeId={
+        href === "/conversations/new" ? "conversation-new" : "conversation"
+      }
       routeKey={routeKey}
       canGoBack={false}
       canGoForward={false}
       onGoBackPane={vi.fn()}
       onGoForwardPane={vi.fn()}
-      pathParams={options.pathParams ?? { id: "00000000-0000-4000-8000-000000000101" }}
+      pathParams={
+        options.pathParams ?? { id: "00000000-0000-4000-8000-000000000101" }
+      }
       onNavigatePane={vi.fn()}
       onReplacePane={onReplacePane}
       onOpenInNewPane={vi.fn()}
@@ -511,7 +527,9 @@ function installChatGeometry(scrollport: HTMLElement) {
   const topMock = vi
     .spyOn(HTMLElement.prototype, "offsetTop", "get")
     .mockImplementation(function (this: HTMLElement) {
-      return this.dataset.messageId ? messageTop[this.dataset.messageId] ?? 0 : 0;
+      return this.dataset.messageId
+        ? (messageTop[this.dataset.messageId] ?? 0)
+        : 0;
     });
   const heightMock = vi
     .spyOn(HTMLElement.prototype, "offsetHeight", "get")
@@ -570,28 +588,36 @@ describe("Conversation", () => {
   it("posts rerun with an idempotency key and tails the returned run", async () => {
     const user = userEvent.setup();
     const rerunData = retryRun();
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = pathOf(input);
-      if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/tree") {
-        return jsonResponse({ data: failedRootRetryTree() });
-      }
-      if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs") {
-        return jsonResponse({ data: [] });
-      }
-      if (path === "/api/llm-profiles") {
-        return jsonResponse({ data: LLM_PROFILES });
-      }
-      if (path === "/api/chat-runs") {
-        return jsonResponse({ data: [] });
-      }
-      if (
-        path === "/api/messages/failed-assistant/rerun" &&
-        init?.method === "POST"
-      ) {
-        return jsonResponse({ data: rerunData });
-      }
-      throw new Error(`Unexpected fetch call: ${path}`);
-    });
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        if (
+          path ===
+          "/api/conversations/00000000-0000-4000-8000-000000000101/tree"
+        ) {
+          return jsonResponse({ data: failedRootRetryTree() });
+        }
+        if (
+          path ===
+          "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs"
+        ) {
+          return jsonResponse({ data: [] });
+        }
+        if (path === "/api/llm-profiles") {
+          return jsonResponse({ data: LLM_PROFILES });
+        }
+        if (path === "/api/chat-runs") {
+          return jsonResponse({ data: [] });
+        }
+        if (
+          path === "/api/messages/failed-assistant/rerun" &&
+          init?.method === "POST"
+        ) {
+          return jsonResponse({ data: rerunData });
+        }
+        throw new Error(`Unexpected fetch call: ${path}`);
+      },
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     renderPane();
@@ -620,10 +646,15 @@ describe("Conversation", () => {
   it("shows a failure card with no Run again action for a non-rerunnable failed root", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = pathOf(input);
-      if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/tree") {
+      if (
+        path === "/api/conversations/00000000-0000-4000-8000-000000000101/tree"
+      ) {
         return jsonResponse({ data: failedRootResendTree() });
       }
-      if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs") {
+      if (
+        path ===
+        "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs"
+      ) {
         return jsonResponse({ data: [] });
       }
       if (path === "/api/llm-profiles") {
@@ -644,9 +675,7 @@ describe("Conversation", () => {
     expect(screen.queryByRole("button", { name: "Run again" })).toBeNull();
     // No rerun request is ever issued.
     expect(
-      fetchMock.mock.calls.some(([input]) =>
-        pathOf(input).endsWith("/rerun"),
-      ),
+      fetchMock.mock.calls.some(([input]) => pathOf(input).endsWith("/rerun")),
     ).toBe(false);
   });
 
@@ -660,10 +689,16 @@ describe("Conversation", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = pathOf(input);
-        if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/tree") {
+        if (
+          path ===
+          "/api/conversations/00000000-0000-4000-8000-000000000101/tree"
+        ) {
           return jsonResponse({ data: treeResponse() });
         }
-        if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs") {
+        if (
+          path ===
+          "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs"
+        ) {
           return jsonResponse({ data: [] });
         }
         if (path === "/api/llm-profiles") {
@@ -673,7 +708,8 @@ describe("Conversation", () => {
           return jsonResponse({ data: [] });
         }
         if (
-          path === "/api/conversations/00000000-0000-4000-8000-000000000101/active-path" &&
+          path ===
+            "/api/conversations/00000000-0000-4000-8000-000000000101/active-path" &&
           init?.method === "POST"
         ) {
           return activePathPromise;
@@ -685,7 +721,9 @@ describe("Conversation", () => {
     renderPane();
 
     expect(await screen.findByText("Answer A")).toBeVisible();
-    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    const scrollport = screen.getByRole("region", {
+      name: "Chat conversation",
+    });
     installChatGeometry(scrollport);
     const composerDock = screen.getByTestId("chat-composer-dock");
     const input = screen.getByRole("textbox", { name: "Ask anything" });
@@ -737,11 +775,17 @@ describe("Conversation", () => {
     const fetchMock = vi.fn(
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = pathOf(input);
-        if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/tree") {
+        if (
+          path ===
+          "/api/conversations/00000000-0000-4000-8000-000000000101/tree"
+        ) {
           treeCalls += 1;
           return jsonResponse({ data: treeResponse() });
         }
-        if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs") {
+        if (
+          path ===
+          "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs"
+        ) {
           return jsonResponse({ data: [] });
         }
         if (path === "/api/llm-profiles") {
@@ -749,7 +793,8 @@ describe("Conversation", () => {
         }
         if (path === "/api/chat-runs") return jsonResponse({ data: [] });
         if (
-          path === "/api/conversations/00000000-0000-4000-8000-000000000101/active-path" &&
+          path ===
+            "/api/conversations/00000000-0000-4000-8000-000000000101/active-path" &&
           init?.method === "POST"
         ) {
           activePathCalls += 1;
@@ -800,13 +845,19 @@ describe("Conversation", () => {
     const fetchMock = vi.fn(
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = pathOf(input);
-        if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/tree") {
+        if (
+          path ===
+          "/api/conversations/00000000-0000-4000-8000-000000000101/tree"
+        ) {
           treeCalls += 1;
           return jsonResponse({
             data: treeResponse({ selected: treeCalls === 1 ? "a" : "b" }),
           });
         }
-        if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs") {
+        if (
+          path ===
+          "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs"
+        ) {
           return jsonResponse({ data: [] });
         }
         if (path === "/api/llm-profiles") {
@@ -814,7 +865,8 @@ describe("Conversation", () => {
         }
         if (path === "/api/chat-runs") return jsonResponse({ data: [] });
         if (
-          path === "/api/conversations/00000000-0000-4000-8000-000000000101/active-path" &&
+          path ===
+            "/api/conversations/00000000-0000-4000-8000-000000000101/active-path" &&
           init?.method === "POST"
         ) {
           activePathCalls += 1;
@@ -861,11 +913,17 @@ describe("Conversation", () => {
     const fetchMock = vi.fn(
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = pathOf(input);
-        if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/tree") {
+        if (
+          path ===
+          "/api/conversations/00000000-0000-4000-8000-000000000101/tree"
+        ) {
           treeCalls += 1;
           return jsonResponse({ data: treeResponse() });
         }
-        if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs") {
+        if (
+          path ===
+          "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs"
+        ) {
           return jsonResponse({ data: [] });
         }
         if (path === "/api/llm-profiles") {
@@ -900,7 +958,8 @@ describe("Conversation", () => {
     expect(
       fetchMock.mock.calls.filter(
         ([input]) =>
-          pathOf(input) === "/api/conversations/00000000-0000-4000-8000-000000000101/active-path",
+          pathOf(input) ===
+          "/api/conversations/00000000-0000-4000-8000-000000000101/active-path",
       ),
     ).toHaveLength(0);
   });
@@ -912,7 +971,10 @@ describe("Conversation", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const path = pathOf(input);
-        if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/tree") {
+        if (
+          path ===
+          "/api/conversations/00000000-0000-4000-8000-000000000101/tree"
+        ) {
           treeCalls += 1;
           return treeCalls === 1
             ? jsonResponse({ data: treeResponse() })
@@ -926,7 +988,10 @@ describe("Conversation", () => {
                 500,
               );
         }
-        if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs") {
+        if (
+          path ===
+          "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs"
+        ) {
           return jsonResponse({ data: [] });
         }
         if (path === "/api/llm-profiles") {
@@ -952,34 +1017,47 @@ describe("Conversation", () => {
     const activePathPromise = new Promise<Response>((resolve) => {
       resolveActivePath = resolve;
     });
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = pathOf(input);
-      if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/tree") {
-        return jsonResponse({ data: treeResponse({ branchBStatus: "pending" }) });
-      }
-      if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs") {
-        return jsonResponse({ data: [] });
-      }
-      if (path === "/api/llm-profiles") {
-        return jsonResponse({ data: LLM_PROFILES });
-      }
-      if (path === "/api/chat-runs") {
-        return jsonResponse({ data: [activeBranchBRun()] });
-      }
-      if (
-        path === "/api/conversations/00000000-0000-4000-8000-000000000101/active-path" &&
-        init?.method === "POST"
-      ) {
-        return activePathPromise;
-      }
-      throw new Error(`Unexpected fetch call: ${path}`);
-    });
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        if (
+          path ===
+          "/api/conversations/00000000-0000-4000-8000-000000000101/tree"
+        ) {
+          return jsonResponse({
+            data: treeResponse({ branchBStatus: "pending" }),
+          });
+        }
+        if (
+          path ===
+          "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs"
+        ) {
+          return jsonResponse({ data: [] });
+        }
+        if (path === "/api/llm-profiles") {
+          return jsonResponse({ data: LLM_PROFILES });
+        }
+        if (path === "/api/chat-runs") {
+          return jsonResponse({ data: [activeBranchBRun()] });
+        }
+        if (
+          path ===
+            "/api/conversations/00000000-0000-4000-8000-000000000101/active-path" &&
+          init?.method === "POST"
+        ) {
+          return activePathPromise;
+        }
+        throw new Error(`Unexpected fetch call: ${path}`);
+      },
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     renderPane();
 
     expect(await screen.findByText("Answer A")).toBeVisible();
-    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    const scrollport = screen.getByRole("region", {
+      name: "Chat conversation",
+    });
     installChatGeometry(scrollport);
     fireEvent.wheel(scrollport, { deltaY: -10 });
     scrollport.scrollTop = 60;
@@ -1004,7 +1082,9 @@ describe("Conversation", () => {
     );
     await waitFor(() => {
       expect(
-        fetchMock.mock.calls.filter(([input]) => pathOf(input) === "/api/chat-runs"),
+        fetchMock.mock.calls.filter(
+          ([input]) => pathOf(input) === "/api/chat-runs",
+        ),
       ).not.toHaveLength(0);
     });
     expect(scrollport.scrollTop).toBe(60);
@@ -1013,59 +1093,67 @@ describe("Conversation", () => {
   it("creates a conversation on first send and navigates to it without a run param", async () => {
     const user = userEvent.setup();
     const onReplacePane = vi.fn();
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = pathOf(input);
-      if (path === "/api/llm-profiles") {
-        return jsonResponse({ data: LLM_PROFILES });
-      }
-      if (path === "/api/conversations/00000000-0000-4000-8000-000000000102/tree") {
-        return jsonResponse({
-          data: {
-            ...treeResponse(),
-            conversation: { ...treeResponse().conversation, id: "00000000-0000-4000-8000-000000000102" },
-          },
-        });
-      }
-      if (path === "/api/chat-runs" && init?.method === "POST") {
-        const body = JSON.parse(String(init.body)) as ChatRunCreateRequest;
-        return jsonResponse({
-          data: {
-            run: {
-              id: "run-1",
-              status: "complete",
-              conversation_id: "00000000-0000-4000-8000-000000000102",
-              user_message_id: "user-message-1",
-              assistant_message_id: "assistant-message-1",
-              profile_id: body.profile_id,
-              reasoning_option_id: body.reasoning_option_id,
-                            cancel_requested_at: null,
-              started_at: timestamp,
-              completed_at: timestamp,
-              error_code: null,
-              created_at: timestamp,
-              updated_at: timestamp,
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        if (path === "/api/llm-profiles") {
+          return jsonResponse({ data: LLM_PROFILES });
+        }
+        if (
+          path ===
+          "/api/conversations/00000000-0000-4000-8000-000000000102/tree"
+        ) {
+          return jsonResponse({
+            data: {
+              ...treeResponse(),
+              conversation: {
+                ...treeResponse().conversation,
+                id: "00000000-0000-4000-8000-000000000102",
+              },
             },
-            conversation: {
-              id: "00000000-0000-4000-8000-000000000102",
-              title: "New chat",
-              sharing: "private",
-              message_count: 2,
-              created_at: timestamp,
-              updated_at: timestamp,
+          });
+        }
+        if (path === "/api/chat-runs" && init?.method === "POST") {
+          const body = JSON.parse(String(init.body)) as ChatRunCreateRequest;
+          return jsonResponse({
+            data: {
+              run: {
+                id: "run-1",
+                status: "complete",
+                conversation_id: "00000000-0000-4000-8000-000000000102",
+                user_message_id: "user-message-1",
+                assistant_message_id: "assistant-message-1",
+                profile_id: body.profile_id,
+                reasoning_option_id: body.reasoning_option_id,
+                cancel_requested_at: null,
+                started_at: timestamp,
+                completed_at: timestamp,
+                error_code: null,
+                created_at: timestamp,
+                updated_at: timestamp,
+              },
+              conversation: {
+                id: "00000000-0000-4000-8000-000000000102",
+                title: "New chat",
+                sharing: "private",
+                message_count: 2,
+                created_at: timestamp,
+                updated_at: timestamp,
+              },
+              user_message: message("user-message-1", 1, "user", body.content),
+              assistant_message: message(
+                "assistant-message-1",
+                2,
+                "assistant",
+                "Done.",
+                "user-message-1",
+              ),
             },
-            user_message: message("user-message-1", 1, "user", body.content),
-            assistant_message: message(
-              "assistant-message-1",
-              2,
-              "assistant",
-              "Done.",
-              "user-message-1",
-            ),
-          },
-        });
-      }
-      throw new Error(`Unexpected fetch call: ${path}`);
-    });
+          });
+        }
+        throw new Error(`Unexpected fetch call: ${path}`);
+      },
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     renderPane({
@@ -1085,7 +1173,9 @@ describe("Conversation", () => {
 
     await waitFor(() => {
       expect(
-        fetchMock.mock.calls.some(([input]) => pathOf(input) === "/api/chat-runs"),
+        fetchMock.mock.calls.some(
+          ([input]) => pathOf(input) === "/api/chat-runs",
+        ),
       ).toBe(true);
     });
 
@@ -1093,7 +1183,9 @@ describe("Conversation", () => {
       ([input, init]) =>
         pathOf(input) === "/api/chat-runs" && init?.method === "POST",
     );
-    const body = JSON.parse(String(chatRunCall?.[1]?.body)) as ChatRunCreateRequest;
+    const body = JSON.parse(
+      String(chatRunCall?.[1]?.body),
+    ) as ChatRunCreateRequest;
     // The atomic New send creates the conversation; no eager POST /conversations.
     expect(body.destination).toEqual({ kind: "New" });
     expect(
@@ -1115,73 +1207,81 @@ describe("Conversation", () => {
 
   it("sends an existing non-empty conversation with the complete assistant leaf as parent", async () => {
     const user = userEvent.setup();
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = pathOf(input);
-      const method = init?.method ?? "GET";
-      if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/tree") {
-        return jsonResponse({ data: treeResponse() });
-      }
-      if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs") {
-        return jsonResponse({ data: [] });
-      }
-      if (path === "/api/llm-profiles") {
-        return jsonResponse({ data: LLM_PROFILES });
-      }
-      if (path === "/api/chat-runs" && method === "GET") {
-        return jsonResponse({ data: [] });
-      }
-      if (path === "/api/chat-runs" && method === "POST") {
-        const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest;
-        const destination = body.destination;
-        const bodyConversationId =
-          destination.kind === "Existing"
-            ? destination.conversation_id
-            : "00000000-0000-4000-8000-000000000101";
-        const bodyParentMessageId =
-          destination.kind === "Existing" &&
-          destination.insertion.kind === "Reply"
-            ? destination.insertion.parent_message_id
-            : null;
-        const followUpUser = message(
-          "follow-up-user",
-          7,
-          "user",
-          body.content,
-          bodyParentMessageId,
-        );
-        const followUpAssistant = message(
-          "follow-up-assistant",
-          8,
-          "assistant",
-          "",
-          followUpUser.id,
-          "pending",
-        );
-        return jsonResponse({
-          data: {
-            run: {
-              id: "follow-up-run",
-              status: "running",
-              conversation_id: bodyConversationId,
-              user_message_id: followUpUser.id,
-              assistant_message_id: followUpAssistant.id,
-              profile_id: body.profile_id,
-              reasoning_option_id: body.reasoning_option_id,
-                            cancel_requested_at: null,
-              started_at: timestamp,
-              completed_at: null,
-              error_code: null,
-              created_at: timestamp,
-              updated_at: timestamp,
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        const method = init?.method ?? "GET";
+        if (
+          path ===
+          "/api/conversations/00000000-0000-4000-8000-000000000101/tree"
+        ) {
+          return jsonResponse({ data: treeResponse() });
+        }
+        if (
+          path ===
+          "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs"
+        ) {
+          return jsonResponse({ data: [] });
+        }
+        if (path === "/api/llm-profiles") {
+          return jsonResponse({ data: LLM_PROFILES });
+        }
+        if (path === "/api/chat-runs" && method === "GET") {
+          return jsonResponse({ data: [] });
+        }
+        if (path === "/api/chat-runs" && method === "POST") {
+          const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest;
+          const destination = body.destination;
+          const bodyConversationId =
+            destination.kind === "Existing"
+              ? destination.conversation_id
+              : "00000000-0000-4000-8000-000000000101";
+          const bodyParentMessageId =
+            destination.kind === "Existing" &&
+            destination.insertion.kind === "Reply"
+              ? destination.insertion.parent_message_id
+              : null;
+          const followUpUser = message(
+            "follow-up-user",
+            7,
+            "user",
+            body.content,
+            bodyParentMessageId,
+          );
+          const followUpAssistant = message(
+            "follow-up-assistant",
+            8,
+            "assistant",
+            "",
+            followUpUser.id,
+            "pending",
+          );
+          return jsonResponse({
+            data: {
+              run: {
+                id: "follow-up-run",
+                status: "running",
+                conversation_id: bodyConversationId,
+                user_message_id: followUpUser.id,
+                assistant_message_id: followUpAssistant.id,
+                profile_id: body.profile_id,
+                reasoning_option_id: body.reasoning_option_id,
+                cancel_requested_at: null,
+                started_at: timestamp,
+                completed_at: null,
+                error_code: null,
+                created_at: timestamp,
+                updated_at: timestamp,
+              },
+              conversation: treeResponse().conversation,
+              user_message: followUpUser,
+              assistant_message: followUpAssistant,
             },
-            conversation: treeResponse().conversation,
-            user_message: followUpUser,
-            assistant_message: followUpAssistant,
-          },
-        });
-      }
-      throw new Error(`Unexpected fetch call: ${method} ${path}`);
-    });
+          });
+        }
+        throw new Error(`Unexpected fetch call: ${method} ${path}`);
+      },
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     renderPane();
@@ -1208,10 +1308,11 @@ describe("Conversation", () => {
 
     const chatRunCall = fetchMock.mock.calls.find(
       ([callInput, callInit]) =>
-        pathOf(callInput) === "/api/chat-runs" &&
-        callInit?.method === "POST",
+        pathOf(callInput) === "/api/chat-runs" && callInit?.method === "POST",
     );
-    const body = JSON.parse(String(chatRunCall?.[1]?.body)) as ChatRunCreateRequest;
+    const body = JSON.parse(
+      String(chatRunCall?.[1]?.body),
+    ) as ChatRunCreateRequest;
     expect(body.content).toBe("Continue from the leaf");
     expect(body.destination).toMatchObject({
       kind: "Existing",
@@ -1228,34 +1329,42 @@ describe("Conversation", () => {
   });
 
   it("disables existing conversation sends while the assistant leaf is pending", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = pathOf(input);
-      const method = init?.method ?? "GET";
-      if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/tree") {
-        return jsonResponse({
-          data: treeResponse({ selected: "b", branchBStatus: "pending" }),
-        });
-      }
-      if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs") {
-        return jsonResponse({ data: [] });
-      }
-      if (path === "/api/llm-profiles") {
-        return jsonResponse({ data: LLM_PROFILES });
-      }
-      if (path === "/api/chat-runs" && method === "GET") {
-        return jsonResponse({ data: [activeBranchBRun()] });
-      }
-      throw new Error(`Unexpected fetch call: ${method} ${path}`);
-    });
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        const method = init?.method ?? "GET";
+        if (
+          path ===
+          "/api/conversations/00000000-0000-4000-8000-000000000101/tree"
+        ) {
+          return jsonResponse({
+            data: treeResponse({ selected: "b", branchBStatus: "pending" }),
+          });
+        }
+        if (
+          path ===
+          "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs"
+        ) {
+          return jsonResponse({ data: [] });
+        }
+        if (path === "/api/llm-profiles") {
+          return jsonResponse({ data: LLM_PROFILES });
+        }
+        if (path === "/api/chat-runs" && method === "GET") {
+          return jsonResponse({ data: [activeBranchBRun()] });
+        }
+        throw new Error(`Unexpected fetch call: ${method} ${path}`);
+      },
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     renderPane();
 
     expect(
       await screen.findByText(
-        "Wait for the assistant response to finish before sending.",
+        "Assistant response in progress. Your draft is still editable.",
       ),
-    ).toBeVisible();
+    ).toHaveAttribute("aria-live", "polite");
     expect(screen.getByRole("button", { name: "SEND" })).toBeDisabled();
     expect(
       fetchMock.mock.calls.filter(
@@ -1273,10 +1382,15 @@ describe("Conversation", () => {
       if (path === "/api/llm-profiles") {
         return jsonResponse({ data: LLM_PROFILES });
       }
-      if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/tree") {
+      if (
+        path === "/api/conversations/00000000-0000-4000-8000-000000000101/tree"
+      ) {
         return new Promise<Response>(() => {});
       }
-      if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs") {
+      if (
+        path ===
+        "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs"
+      ) {
         return jsonResponse({ data: [] });
       }
       if (path === "/api/chat-runs") {
@@ -1290,8 +1404,8 @@ describe("Conversation", () => {
 
     expect(await screen.findByText("Loading conversation...")).toBeVisible();
     expect(
-      await screen.findByText("Loading conversation history before sending."),
-    ).toBeVisible();
+      await screen.findByText("Conversation history is loading."),
+    ).toHaveAttribute("aria-live", "polite");
     expect(screen.getByRole("button", { name: "SEND" })).toBeDisabled();
     expect(screen.getByRole("textbox", { name: "Ask anything" })).toBeVisible();
   });
@@ -1302,13 +1416,18 @@ describe("Conversation", () => {
       if (path === "/api/llm-profiles") {
         return jsonResponse({ data: LLM_PROFILES });
       }
-      if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/tree") {
+      if (
+        path === "/api/conversations/00000000-0000-4000-8000-000000000101/tree"
+      ) {
         return jsonResponse(
           { error: { code: "E_NOT_FOUND", message: "Conversation not found" } },
           404,
         );
       }
-      if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs") {
+      if (
+        path ===
+        "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs"
+      ) {
         return jsonResponse({ data: [] });
       }
       if (path === "/api/chat-runs") {
@@ -1324,9 +1443,7 @@ describe("Conversation", () => {
       await screen.findByText("Failed to load conversation"),
     ).toBeVisible();
     expect(screen.queryByRole("button", { name: "SEND" })).toBeNull();
-    expect(
-      screen.queryByRole("textbox", { name: "Ask anything" }),
-    ).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Ask anything" })).toBeNull();
     expect(
       publishPrimaryChrome.mock.calls.some(
         ([update]) => update.publication?.menu?.kind === "ResourceMenu",
@@ -1371,7 +1488,9 @@ describe("Conversation", () => {
       pathParams: {},
     });
 
-    expect(await screen.findByText("This quote link is malformed")).toBeVisible();
+    expect(
+      await screen.findByText("This quote link is malformed"),
+    ).toBeVisible();
     // No pending quote card was fabricated from the invalid hash.
     expect(screen.queryByRole("figure", { name: "Quoted passage" })).toBeNull();
   });
@@ -1383,10 +1502,16 @@ describe("Conversation", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const path = pathOf(input);
-        if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/tree") {
+        if (
+          path ===
+          "/api/conversations/00000000-0000-4000-8000-000000000101/tree"
+        ) {
           return jsonResponse({ data: treeResponse() });
         }
-        if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs") {
+        if (
+          path ===
+          "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs"
+        ) {
           return jsonResponse({ data: [] });
         }
         if (path === "/api/llm-profiles") {
@@ -1399,62 +1524,66 @@ describe("Conversation", () => {
       }),
     );
 
-    const tree = (secondaryPane: WorkspaceAttachedSecondaryPaneState | null) => (
+    const tree = (
+      secondaryPane: WorkspaceAttachedSecondaryPaneState | null,
+    ) => (
       <FeedbackProvider>
         <ShareControllerProvider>
-          <PaneReturnMementoProvider>
-            <PaneRuntimeProvider
-              paneId="pane-1"
-              visitId={TEST_VISIT_ID}
-              isActive={true}
-              href="/conversations/00000000-0000-4000-8000-000000000101"
-              routeId="conversation"
-              routeKey={
-                resolvePaneRouteIdentity(
-                  "/conversations/00000000-0000-4000-8000-000000000101",
-                ).routeKey
-              }
-              canGoBack={false}
-              canGoForward={false}
-              onGoBackPane={vi.fn()}
-              onGoForwardPane={vi.fn()}
-              pathParams={{
-                id: "00000000-0000-4000-8000-000000000101",
-              }}
-              onNavigatePane={vi.fn()}
-              onReplacePane={vi.fn()}
-              onOpenInNewPane={vi.fn()}
-              onSetPaneLabel={vi.fn()}
-              secondaryPane={secondaryPane}
-              onRequestSecondarySurface={onRequestSecondarySurface}
-              onCloseSecondaryPane={vi.fn()}
-            >
-              <PaneShell
+          <LibraryPlacementControllerProvider>
+            <PaneReturnMementoProvider>
+              <PaneRuntimeProvider
                 paneId="pane-1"
+                visitId={TEST_VISIT_ID}
+                isActive={true}
+                href="/conversations/00000000-0000-4000-8000-000000000101"
+                routeId="conversation"
                 routeKey={
                   resolvePaneRouteIdentity(
                     "/conversations/00000000-0000-4000-8000-000000000101",
                   ).routeKey
                 }
-                routeHeader={{
-                  kind: "section",
-                  destinationId: "chats",
-                  defaultFolio: "none",
+                canGoBack={false}
+                canGoForward={false}
+                onGoBackPane={vi.fn()}
+                onGoForwardPane={vi.fn()}
+                pathParams={{
+                  id: "00000000-0000-4000-8000-000000000101",
                 }}
-                label="Chat"
-                returnMementoEnabled={false}
-                sizing={paneSizing({
-                  widthPx: 480,
-                  minWidthPx: 320,
-                  maxWidthPx: 1400,
-                })}
-                bodyMode="contained"
-                onResizePrimaryPane={vi.fn()}
+                onNavigatePane={vi.fn()}
+                onReplacePane={vi.fn()}
+                onOpenInNewPane={vi.fn()}
+                onSetPaneLabel={vi.fn()}
+                secondaryPane={secondaryPane}
+                onRequestSecondarySurface={onRequestSecondarySurface}
+                onCloseSecondaryPane={vi.fn()}
               >
-                <Conversation />
-              </PaneShell>
-            </PaneRuntimeProvider>
-          </PaneReturnMementoProvider>
+                <PaneShell
+                  paneId="pane-1"
+                  routeKey={
+                    resolvePaneRouteIdentity(
+                      "/conversations/00000000-0000-4000-8000-000000000101",
+                    ).routeKey
+                  }
+                  routeHeader={{
+                    kind: "section",
+                    destinationId: "chats",
+                    defaultFolio: "none",
+                  }}
+                  label="Chat"
+                  returnMementoEnabled={false}
+                  sizing={paneSizing({
+                    widthPx: 480,
+                    minWidthPx: 320,
+                    maxWidthPx: 1400,
+                  })}
+                  bodyMode="contained"
+                  onResizePrimaryPane={vi.fn()}
+                >
+                  <Conversation />
+                </PaneShell>
+              </PaneRuntimeProvider>
+            </PaneReturnMementoProvider>
+          </LibraryPlacementControllerProvider>
         </ShareControllerProvider>
       </FeedbackProvider>
     );
@@ -1474,6 +1603,5 @@ describe("Conversation", () => {
       "resource-context",
       expect.any(HTMLButtonElement),
     );
-
   });
 });

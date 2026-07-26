@@ -13,7 +13,7 @@ One keystroke enters a guided walk that steps through an assistant answer's sour
 
 - **P-1.** `CitationOut` (frontend: `apps/web/src/lib/conversations/citationOut.ts:41`) carries `deep_link: string | null` built backend-side in `python/nexus/services/resource_items/routing.py:108-113`. For evidence-span targets the href is `/media/{media_id}#evidence-{span_id}`; for fragments, `/media/{media_id}#fragment-{id}`; for note-block targets, `/notes/{block_id}`. Verified live values in `AssistantMessage.test.tsx:169` (`deep_link: "/reader/source"` on a `CitationOut`-shaped object). `deep_link === null` only when the target is genuinely unrouteable (deleted media, unresolved oracle anchor).
 - **P-2.** `openInNewPane` (pane runtime signature in `apps/web/src/lib/panes/paneRuntime.tsx`): `(href: string, labelHint?: string, secondarySurfaceId?: WorkspaceSecondarySurfaceId) => void`. The workspace `open_pane` reducer deduplicates by `hasSamePaneRoute`, which uses `normalizePaneRouteKeyHref` to strip the `#` fragment. Consequence: successive walk steps targeting different evidence spans in the **same media file** navigate an existing reader pane to each new span rather than opening additional panes. Steps targeting different media open additional panes. `MAX_PANES = 12` bounds pane-spam.
-- **P-3.** `ConversationMessage.citations` (`types.ts:282`): `CitationOut[]` delivered from the server via `citation_index` SSE event and the message GET; already available on the React rendering path at `AssistantEvidenceDisclosure.tsx:28`. The message text is `conversationMessageText(message)` (`types.ts:290-296`): concatenation of `message_document.blocks[*].text`. Both are available client-side in `AssistantMessage.tsx` without any new API.
+- **P-3.** `ConversationMessage.citations` (`types.ts:282`): `CitationOut[]` delivered from the server via `citation_index` SSE event and the message GET; already available on the React rendering path at `AssistantAnswer.tsx`. The message text is `conversationMessageText(message)` (`types.ts:290-296`): concatenation of `message_document.blocks[*].text`. Both are available client-side in `AssistantMessage.tsx` without any new API.
 - **P-4.** `FloatingActionSurface` (`apps/web/src/components/ui/FloatingActionSurface.tsx`) exists and is used by the highlight quick-note composer. **Verified not the right primitive for the docent HUD** — it portals to `document.body` and is designed for transient popovers anchored to selection rects or DOM elements. The docent HUD is a persistent layout slot. DocentOverlay instead renders inline in the `ChatSurface` compositor slot (see §7.1).
 - **P-5.** `MachineText` (`machine-hand-hard-cutover.md`, SPEC, P-1 of that spec). The citing-sentence caption in the HUD is rendered in MachineText inline variant (`variant="inline"`, `origin={{ label: "Assistant" }}`). See P-9; machine-hand-hard-cutover.md is a hard prerequisite — no fallback `<span>` shim ships.
 - **P-6.** On mobile (`isMobile = true`, `WorkspaceHost.tsx:647`), only the active pane is rendered (`renderedPanes = isMobile ? [activePane] : panes`, `:1097`). Walk steps on mobile use `router.push(href)` (in-pane navigation) instead of `openInNewPane`. The pane runtime `router.push` is available from `usePaneRouter()` (`paneRuntime.tsx` — same file as openInNewPane). There is no "back to conversation" magic; the user navigates back via pane history (`canGoBack` / `router.back()`), which the HUD advertises once it is open.
@@ -228,14 +228,11 @@ CSS: `position: sticky; bottom: 0;` inside the `composerSlot`. A `border-top: 1p
 
 `MessageRow` receives a new optional `onStartWalk?: (citations: CitationOut[], text: string) => void` and passes it directly to `AssistantMessage`. `AssistantMessage` calls it with `(message.citations ?? [], conversationMessageText(message))`. The threading is uniform 2-param at every layer: `Conversation → ChatSurface → MessageRow → AssistantMessage`. Walk-active state is communicated to the user solely through the DocentOverlay HUD; there is no "walking" visual toggle on the Walk button itself.
 
-### 7.4 Soft coordination with `correspondence-hard-cutover.md` (SPEC)
+### 7.4 Chat-interface composition
 
-The Correspondence cutover (`correspondence-hard-cutover.md`) introduces `MessageFootnotes.tsx` (a numbered source list below the prose). When that spec lands, "Walk the sources" could gain a second mount site in the `MessageFootnotes` header (e.g., "4 sources — Walk"). **For S0–S3 the sole canonical entry verb is `AssistantMessage.tsx` `messageActions`** (as per §4.1 ownership table). The footnote-header affordance is a forward-ref for correspondence to add; until then, only the messageActions mount exists. The docent and correspondence specs are **independent**; either can land first:
-
-- Docent first: verb lives in `messageActions`; when correspondence lands it may add the footnote-header affordance by wiring the same `onStartWalk` callback (no removal of messageActions verb required).
-- Correspondence first: `MessageFootnotes` renders without a Walk affordance; when docent lands, the messageActions verb is wired and the footnote mount can follow.
-
-The only shared file is `AssistantMessage.tsx`. If both specs are in flight simultaneously, the correspondence branch touches `.messageActions` to re-style the Fork button area; docent adds a button there. Resolve by porting docent's new button into the correspondence branch at merge, keeping both buttons in the same container.
+The chat-interface cutover renders a closed `MessageSourcesDisclosure` below
+the answer. Walk remains a single verb in `AssistantMessage`'s post-answer
+action row; Sources does not publish a duplicate entry point.
 
 ---
 
@@ -275,9 +272,13 @@ No existing files are deleted. No symbols are removed. No CSS blocks are cut.
 
 **machine-hand-hard-cutover.md (SPEC):** `MachineText` (`variant="inline" origin={{ label: "Assistant" }}`) is used by `DocentOverlay` for the citing-sentence caption. **Hard prerequisite** (P-9): this spec must land before docent. No fallback `<span>` shim is permitted. The negative guard (§13, G9) asserts MachineText IS imported in `DocentOverlay.tsx`.
 
-**correspondence-hard-cutover.md (SPEC):** Shares `AssistantMessage.tsx`. Coordination: docent adds a button in `messageActions`; correspondence restructures the message layout. See §7.4 for merge protocol. No data contract overlap.
+**chat-interface-hard-cutover.md (IMPLEMENTED):** Owns the post-answer action
+row and closed Sources disclosure. Docent supplies the Walk verb; it does not
+add another mount site.
 
-**amanuensis-hard-cutover.md (SPEC):** Also shares `AssistantMessage.tsx` — amanuensis extends the streaming active-tool-label switch and adds trust-trail write rows (inside the machine-hand `MachineText` block), while docent adds the `Walk` button in `messageActions`. Disjoint regions; both sequence after machine-hand; merge additively. No data contract overlap.
+**amanuensis-hard-cutover.md (SPEC):** Also shares `AssistantMessage.tsx` —
+amanuensis extends the streaming active-tool-label switch and adds
+`AssistantWriteTrail`, while docent supplies Walk. No data contract overlap.
 
 **oracle-shell-dissolution-hard-cutover.md (SPEC):** After oracle pane routes land in the workspace pane system, `OracleReadingPaneBody` will have `usePaneRuntime()` → `openInNewPane`. The oracle reading's per-passage `citation: CitationOut | null` array (`OracleReadingPaneBody.tsx:75`) shares the identical deep-link shape (`_citation_out` in `citations.py` is the same backend function). A future S4 wires the Walk verb into oracle by: (1) collecting `state.passages.map(p => p.citation).filter(Boolean)` as the step array; (2) using `passage.exact_snippet` as the `citingSentence` (no `[n]` marker extraction needed). Blocked on oracle-shell-dissolution.
 

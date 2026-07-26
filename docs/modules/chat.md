@@ -52,6 +52,9 @@ Hard-cutover specs that govern chat work. Each owns one axis; they compose.
 - `docs/cutovers/chat-publication-thin-spine-hard-cutover.md` — candidate/final
   citation separation, degraded publication, and terminal run facts.
   IMPLEMENTED.
+- `docs/cutovers/chat-interface-hard-cutover.md` — readable transcript
+  hierarchy, progressive disclosure, typed send/privacy state, quote reflow,
+  and shared conversation-row activation. IMPLEMENTED.
 
 ## Engine, View, Adapter Split
 
@@ -80,6 +83,13 @@ latch in one record per run (`abort === null` ⇔ not streaming). `createRunVisi
 `Conversation` is the full-chat pane adapter. It owns pane chrome, the
 route-owned Context and Forks bodies published into the shared Resource
 Inspector, open-resource routing, and the full-chat composer target.
+
+Conversation lists project summaries through `presentConversation` and the
+shared `CollectionRow -> ResourceRow` path. `ResourceRow` expands the existing
+real primary anchor/button across inert row chrome while keeping nested actions
+independent. Conversation presentation helpers own `Untitled chat`, localized
+message-count copy, and relative updated time derived from the injected render
+environment; render code never reads the wall clock.
 
 There is no inline reader-chat adapter. The deleted `ResourceChatDetail` is
 replaced by opening a full `Conversation` pane. Reader Highlight quotes launch
@@ -114,6 +124,28 @@ scrollbar gutter behavior and must not reserve a stable inline-end gutter.
 Workspace layout must not compensate for chat transcript gutter policy; chat
 keeps that policy local to its scrollport.
 
+## Transcript Presentation
+
+`MessageRow` owns turn role and timestamp projection. User and assistant turns
+keep programmatic role identity and accessible group labels without visible
+`You` or `Assistant` headings. Both use the normal sans reading register at a
+`66ch` maximum measure, `16px` minimum prose size, and `1.5-1.6` line height.
+User turns retain the quiet accent rail. Chat assistant answers do not compose
+`MachineText`; that component remains the machine-register owner for
+non-conversational artifacts.
+
+`AssistantMessage` is the sole assistant-turn composition owner. Its visible
+order is active tool status, answer, publication warning when present,
+consequential write trail with Undo, closed `Sources (N)`, closed `Details`,
+failure/reconnect, Fork/Walk actions, and a fork strip when forks exist. Inline
+citations remain active. The publication warning is a quiet amber
+`role="status"` notice, never a red failure.
+`AssistantDetails` owns run, usage, cost, tool/retrieval, context-reference, and
+integrity diagnostics. The deleted colophon has no compatibility replacement.
+
+Ordinary prose and links wrap inside the pane. Only bounded code and table
+containers may scroll horizontally.
+
 ### Transcript anchoring
 
 `useChatScroll` is the single scroll owner. Transcript anchoring is a hybrid
@@ -138,9 +170,21 @@ error }`. `ChatProfilePicker` is a controlled component
 (`{ value: ProfileSelection | null; onChange; disabled? }` where
 `ProfileSelection = { profileId, reasoningOptionId }`); it emits a corrected
 default selection whenever the current value isn't valid against the loaded
-profiles, and renders the selected profile's `privacy_notice`. The browser
-owns no provider/model/reasoning enum, ordering, default, capability, key, or
-availability policy — see [modules/llms.md](llms.md).
+profiles. Each profile carries a required `privacy` union:
+`{ kind: "Standard"; notice } | { kind: "ExceptionalRetention"; notice }`.
+`ChatProfilePicker` exposes standard copy through a compact `Privacy`
+disclosure and renders exceptional-retention copy while that profile is
+selected. The browser owns no provider/model/reasoning enum, ordering, default,
+capability, key, privacy classification, or availability policy — see
+[modules/llms.md](llms.md).
+
+`useConversation` is the sole owner of caller-level send availability. It
+derives one `ChatSendCapability`: `Available`, `HistoryLoading`,
+`AssistantRunning`, or `ReplyTargetUnavailable`. `ChatComposer` exhaustively
+maps that value to send gating and one screen-reader status. Routine blocked
+state never renders in the visible error slot. Draft editing and Stop remain
+available while an assistant run is active; real errors and ambiguous-send
+reconciliation remain visible.
 
 `buildChatRunBody` is the single frontend `/api/chat-runs` body assembler. It
 produces the hard-cut request shape:
@@ -165,8 +209,10 @@ three (`extra="forbid"`).
 
 `ChatFailureCard` is the only failure renderer, in two modes:
 
-- `{ failure: ExpectedChatFailure | null; canRerun?; onRerun?; rerunning? }` —
-  copy comes from the exhaustive `chatFailureMessage(failure)` helper
+- `{ failure: ExpectedChatFailure | null; supportId: Presence<string>;
+  canRerun?; onRerun?; rerunning? }` — the support occurrence is owned by the
+  run; copy comes from the exhaustive
+  `chatFailureMessage(failure)` helper
   (`lib/llm/failure.ts`), a `switch` over `failure.code` with a compile-time
   `never` exhaustiveness guard; shows an optional `Support ID`; shows a
   **Run again** action iff `canRerun && onRerun`. `failure === null` (a defect
@@ -311,7 +357,9 @@ the path), hydrates one canonical `ReaderSelectionPreview` through
 `GET /chat-reader-selections/highlights/{id}?media_id=`, and passes one
 `PendingTurnContext` to `ChatComposer`. `QuotedPassageCard` renders the quote
 pending (above the composer, removable) and sent (read-only, above the user
-body). `ConversationDestinationOverlay` is the "Ask in existing chat…" picker
+body). Both modes use the same three-line preview and explicit in-place
+expansion. The semantic figure has zero outer margin and cannot exceed its
+containing pane. `ConversationDestinationOverlay` is the "Ask in existing chat…" picker
 (title search over `GET /conversations?q=`). `useChatDraft` persists text,
 `ProfileSelection`, and the active send attempt (idempotency key, payload
 identity, revision) in `sessionStorage`; an unknown-status ambiguous failure
@@ -348,7 +396,10 @@ the telemetry row; final reader ordinal lives on the edge.
 Assistant message reads also carry a backend-built `trust_trail`. It is the
 durable inspector read model over `chat_runs`, prompt assemblies, tool calls,
 retrieval rows, citation edges, and context-ref-added events. `message_document`
-is text-only; tool and retrieval disclosures render from `message.trust_trail`.
+is text-only; `AssistantDetails` renders tool and retrieval diagnostics from
+`message.trust_trail`, while `AssistantWriteTrail` renders consequential writes
+and Undo outside the closed diagnostic disclosure.
+
 The run is the sole support-id and publication-warning owner. Terminal SSE
 reconciliation replaces streamed marker text with the persisted canonical
 answer.

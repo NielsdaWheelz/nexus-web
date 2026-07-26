@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
+import { horizontallyScrollableElements } from "@/__tests__/helpers/horizontalOverflow";
 import type { MediaRetrievalLocator } from "@/lib/api/sse/locators";
 import type { PendingTurnContext } from "@/lib/conversations/pendingTurnContext";
 import type {
@@ -19,7 +20,7 @@ const KEY = assumeReaderSelectionKey({ mediaId: MEDIA_ID, highlightId: HIGHLIGHT
 
 const SOURCE_LABEL = "Chapter 3 — The Tempest";
 
-// Long enough to overflow the four-line clamp inside the narrow test frame, so
+// Long enough to overflow the three-line clamp inside the narrow test frame, so
 // the disclosure control is exercised deterministically.
 const LONG_EXACT =
   "The barometer had been falling since dawn, and by the afternoon watch the " +
@@ -89,7 +90,7 @@ describe("QuotedPassageCard", () => {
     expect(screen.getByText(LONG_EXACT)).toBeInTheDocument();
   });
 
-  it("clamps to four lines but keeps the full text; Expand reveals it", async () => {
+  it("clamps to three lines but keeps the full text; Expand reveals it", async () => {
     const user = userEvent.setup();
     renderFramed(
       <QuotedPassageCard mode="sent" selection={selection()} onActivateSource={vi.fn()} />,
@@ -107,7 +108,52 @@ describe("QuotedPassageCard", () => {
     expect(screen.getByText(LONG_EXACT)).toBeInTheDocument();
   });
 
-  it("shows no disclosure when the passage fits in four lines", async () => {
+  it("uses the same three-line preview in pending and sent modes", async () => {
+    const pending: PendingTurnContext = { kind: "ReaderHighlight", preview: preview() };
+    renderFramed(
+      <>
+        <QuotedPassageCard
+          mode="pending"
+          context={pending}
+          onRemove={vi.fn()}
+          onRetry={vi.fn()}
+          onActivateSource={vi.fn()}
+        />
+        <QuotedPassageCard
+          mode="sent"
+          selection={selection()}
+          onActivateSource={vi.fn()}
+        />
+      </>,
+    );
+
+    expect(
+      await screen.findAllByRole("button", { name: "Expand quoted passage" }),
+    ).toHaveLength(2);
+  });
+
+  it("contains long source names, URLs, and identifiers at 320px", () => {
+    const hostile = "https://example.test/" + "unbroken-source-identifier-".repeat(24);
+    const exact = "unbroken-quote-identifier-".repeat(48);
+    render(
+      <div data-testid="quote-host" style={{ width: "320px", maxWidth: "320px" }}>
+        <QuotedPassageCard
+          mode="sent"
+          selection={selection({ sourceLabel: hostile, exact, prefix: hostile, suffix: hostile })}
+          onActivateSource={vi.fn()}
+        />
+      </div>,
+    );
+
+    const host = screen.getByTestId("quote-host");
+    expect(host.scrollWidth).toBeLessThanOrEqual(host.clientWidth + 1);
+    expect(horizontallyScrollableElements(host)).toEqual([]);
+    expect(screen.getByRole("figure", { name: "Quoted passage" })).toHaveStyle({
+      margin: "0px",
+    });
+  });
+
+  it("shows no disclosure when the passage fits in three lines", async () => {
     renderFramed(
       <QuotedPassageCard
         mode="sent"

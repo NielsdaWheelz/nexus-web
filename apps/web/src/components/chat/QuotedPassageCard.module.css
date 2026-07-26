@@ -12,8 +12,11 @@
   position: relative;
   display: grid;
   gap: var(--space-2);
-  width: 100%;
-  min-width: 0;
+  box-sizing: border-box;
+  inline-size: 100%;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  margin: 0;
   padding-block: var(--space-1);
   padding-inline: var(--space-3) var(--space-2);
   color: var(--ink);
@@ -61,6 +64,7 @@
   justify-content: space-between;
   gap: var(--space-2);
   min-height: 1.5rem;
+  min-inline-size: 0;
 }
 
 .kicker {
@@ -172,6 +176,8 @@
 /* The star: a serif pull-quote carrying the highlight `<mark>` wash. */
 .quote {
   margin: 0;
+  min-inline-size: 0;
+  max-inline-size: 100%;
   font-family: var(--font-serif);
   font-size: var(--text-base);
   line-height: var(--leading-normal);
@@ -182,8 +188,8 @@
 .quoteClamped {
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 4;
-  line-clamp: 4;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
   overflow: hidden;
 }
 

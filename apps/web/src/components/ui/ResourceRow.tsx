@@ -44,21 +44,33 @@ export default function ResourceRow({
   rootProps,
 }: ResourceRowProps) {
   const state = exceptionalStatus ?? activity;
+  const primaryIsInteractive =
+    primary.kind === "link" ||
+    (primary.kind === "button" && !primary.disabled && !primary.busy);
+  const titleContent = (
+    <span className={styles.title} data-row-text dir="auto">
+      {title}
+    </span>
+  );
   const row = (
     <>
-      <div className={styles.titleCell} data-view-transition-part="title">
-        <ResourceActivation
-          primary={primary}
-          className={cx(
-            styles.primary,
-            primary.kind === "static" && styles.staticPrimary,
-          )}
+      {!primaryIsInteractive ? (
+        <div className={styles.titleCell} data-view-transition-part="title">
+          <ResourceActivation primary={primary} className={styles.primary}>
+            {titleContent}
+          </ResourceActivation>
+        </div>
+      ) : (
+        <div
+          className={styles.titleCell}
+          data-view-transition-part="title"
+          aria-hidden="true"
         >
-          <span className={styles.title} data-row-text dir="auto">
+          <span className={styles.title} dir="auto">
             {title}
           </span>
-        </ResourceActivation>
-      </div>
+        </div>
+      )}
       {supporting || state ? (
         <div className={styles.secondary}>
           {supporting ? <div className={styles.supporting}>{supporting}</div> : null}
@@ -78,6 +90,14 @@ export default function ResourceRow({
       ) : null}
       {actions ? <div className={styles.actions}>{actions}</div> : null}
       {expanded ? <div className={styles.expanded}>{expanded}</div> : null}
+      {primaryIsInteractive ? (
+        <ResourceActivation
+          primary={primary}
+          className={cx(styles.primary, styles.interactivePrimary)}
+        >
+          {titleContent}
+        </ResourceActivation>
+      ) : null}
     </>
   );
 

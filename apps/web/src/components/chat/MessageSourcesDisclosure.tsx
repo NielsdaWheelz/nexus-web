@@ -1,5 +1,5 @@
 /**
- * MessageFootnotes — scholarly footnote list for assistant citations.
+ * MessageSourcesDisclosure — compact source list for assistant citations.
  *
  * Receives the memoized ReaderCitationData[] array from AssistantMessage and
  * renders a numbered list below the prose. Each entry is an active link
@@ -12,9 +12,9 @@
 import type { ReaderCitationData } from "@/lib/conversations/readerCitation";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import { hrefForResourceActivation, type ResourceActivation } from "@/lib/resources/activation";
-import styles from "./MessageFootnotes.module.css";
+import styles from "./MessageSourcesDisclosure.module.css";
 
-function FootnoteLink({
+function SourceLink({
   citation,
   onActivate,
 }: {
@@ -38,9 +38,9 @@ function FootnoteLink({
   const label = (
     <>
       {index}.{" "}
-      <span className={styles.footnoteTitle}>{title}</span>
+      <span className={styles.sourceTitle}>{title}</span>
       {sectionLabel ? (
-        <span className={styles.footnoteMeta}> — {sectionLabel}</span>
+        <span className={styles.sourceMeta}> — {sectionLabel}</span>
       ) : null}
     </>
   );
@@ -49,7 +49,7 @@ function FootnoteLink({
     const isExternal = href.startsWith("http://") || href.startsWith("https://");
     return (
       <a
-        className={styles.footnoteLink}
+        className={styles.sourceLink}
         href={href}
         target={isExternal ? "_blank" : undefined}
         rel={isExternal ? "noopener noreferrer" : undefined}
@@ -69,7 +69,7 @@ function FootnoteLink({
     if (targetHref) {
       return (
         <a
-          className={styles.footnoteLink}
+          className={styles.sourceLink}
           href={targetHref}
           onClick={(event) => {
             if (event.metaKey || event.ctrlKey || event.altKey || event.button !== 0) return;
@@ -84,7 +84,7 @@ function FootnoteLink({
     return (
       <button
         type="button"
-        className={styles.footnoteLink}
+        className={styles.sourceLink}
         onClick={(event) => {
           onActivate(activation, activationTarget, event);
         }}
@@ -95,10 +95,10 @@ function FootnoteLink({
   }
 
   // Unavailable citation — plain text, no interaction.
-  return <span className={styles.footnoteLink}>{label}</span>;
+  return <span className={styles.sourceLink}>{label}</span>;
 }
 
-export default function MessageFootnotes({
+export default function MessageSourcesDisclosure({
   citations,
   onCitationActivate,
 }: {
@@ -114,14 +114,15 @@ export default function MessageFootnotes({
   const handleActivate = onCitationActivate ?? (() => undefined);
 
   return (
-    <div className={styles.footnotes}>
-      <ol className={styles.footnoteList} aria-label="Sources">
-        {citations.map((c) => (
-          <li key={c.index} className={styles.footnoteEntry}>
-            <FootnoteLink citation={c} onActivate={handleActivate} />
+    <details className={styles.sources}>
+      <summary>Sources ({citations.length})</summary>
+      <ol className={styles.sourceList} aria-label="Sources">
+        {citations.map((citation) => (
+          <li key={citation.index} className={styles.sourceEntry}>
+            <SourceLink citation={citation} onActivate={handleActivate} />
           </li>
         ))}
       </ol>
-    </div>
+    </details>
   );
 }

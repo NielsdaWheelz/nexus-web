@@ -56,6 +56,7 @@ import {
 import type {
   BranchDraft,
   BranchGraph,
+  ChatSendCapability,
   ChatRunListResponse,
   ChatRunResponse,
   ConversationMessage,
@@ -127,8 +128,8 @@ interface UseConversation {
   error: FeedbackContent | null;
   /** Complete assistant leaf — the default reply/continuation parent. */
   replyParentMessageId: string | null;
-  /** Caller-facing reason to block sends until an existing chat is safe to continue. */
-  sendDisabledReason: string | null;
+  /** The one caller-owned send capability; ChatComposer owns its presentation. */
+  sendCapability: ChatSendCapability;
 
   // identity
   conversationId: string | null;
@@ -908,17 +909,17 @@ export function useConversation(
     return null;
   }, [messages]);
 
-  const sendDisabledReason = useMemo(() => {
-    if (!conversationId) return null;
-    if (loading) return "Loading conversation history before sending.";
-    if (messages.length === 0) return null;
+  const sendCapability = useMemo<ChatSendCapability>(() => {
+    if (!conversationId) return { kind: "Available" };
+    if (loading) return { kind: "HistoryLoading" };
+    if (messages.length === 0) return { kind: "Available" };
     if (
       messages.some(
         (message) =>
           message.role === "assistant" && message.status === "pending",
       )
     ) {
-      return "Wait for the assistant response to finish before sending.";
+      return { kind: "AssistantRunning" };
     }
     if (branchDraft) {
       return messages.some(
@@ -927,13 +928,13 @@ export function useConversation(
           message.role === "assistant" &&
           message.status === "complete",
       )
-        ? null
-        : "Choose a complete assistant response before sending.";
+        ? { kind: "Available" }
+        : { kind: "ReplyTargetUnavailable" };
     }
     if (!replyParentMessageId) {
-      return "Wait for a complete assistant response before sending.";
+      return { kind: "ReplyTargetUnavailable" };
     }
-    return null;
+    return { kind: "Available" };
   }, [branchDraft, conversationId, loading, messages, replyParentMessageId]);
 
   return {
@@ -943,7 +944,7 @@ export function useConversation(
     loading,
     error,
     replyParentMessageId,
-    sendDisabledReason,
+    sendCapability,
     conversationId,
     title,
     onChatRunCreated,

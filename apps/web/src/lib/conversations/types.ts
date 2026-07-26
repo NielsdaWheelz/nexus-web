@@ -33,6 +33,10 @@ export interface LlmReasoningOption {
   label: string;
 }
 
+export type LlmProfilePrivacy =
+  | { readonly kind: "Standard"; readonly notice: string }
+  | { readonly kind: "ExceptionalRetention"; readonly notice: string };
+
 /**
  * A product-facing LLM profile (GET /llm-profiles). The browser owns no
  * provider/model/reasoning enum, ordering, default, capability, key, or
@@ -48,7 +52,7 @@ export interface LlmProfile {
   model_label: string;
   reasoning_options: LlmReasoningOption[];
   default_reasoning_option_id: string;
-  privacy_notice: string;
+  privacy: LlmProfilePrivacy;
 }
 
 /** Response schema for GET /llm-profiles. */
@@ -56,6 +60,12 @@ export interface LlmProfilesOut {
   default_profile_id: string;
   profiles: LlmProfile[];
 }
+
+export type ChatSendCapability =
+  | { readonly kind: "Available" }
+  | { readonly kind: "HistoryLoading" }
+  | { readonly kind: "AssistantRunning" }
+  | { readonly kind: "ReplyTargetUnavailable" };
 
 // =============================================================================
 // ExpectedChatFailure — mirrors python/nexus/schemas/llm.py EXACTLY.
@@ -195,8 +205,7 @@ export interface MessageRetrieval {
 }
 
 export type MessageRetrievalResultRef =
-  | SearchCitationEventData
-  | WebCitationEventData;
+  SearchCitationEventData | WebCitationEventData;
 
 export type MessageEvidenceRetrievalStatus =
   | "attached_context"
@@ -382,10 +391,7 @@ export interface ConversationMessagesResponse {
   };
 }
 
-type BranchAnchorKind =
-  | "none"
-  | "assistant_message"
-  | "assistant_selection";
+type BranchAnchorKind = "none" | "assistant_message" | "assistant_selection";
 
 export type BranchAnchor =
   | { kind: "none" }
@@ -520,7 +526,8 @@ export interface ChatRun {
 }
 
 export interface ChatRunStreamState {
-  status: "queued" | "running" | "complete" | "error" | "cancelled" | "interrupted";
+  status:
+    "queued" | "running" | "complete" | "error" | "cancelled" | "interrupted";
   last_event_seq: number;
   folded_event_seq: number;
   assistant_current_text: string;

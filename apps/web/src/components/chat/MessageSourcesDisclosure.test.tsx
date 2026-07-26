@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
-import MessageFootnotes from "./MessageFootnotes";
+import MessageSourcesDisclosure from "./MessageSourcesDisclosure";
 import type { ReaderCitationData } from "@/lib/conversations/readerCitation";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
@@ -25,15 +25,15 @@ function makeCitation(overrides: Partial<ReaderCitationData> = {}): ReaderCitati
   };
 }
 
-describe("MessageFootnotes", () => {
+describe("MessageSourcesDisclosure", () => {
   it("renders nothing when citations array is empty", () => {
-    render(<MessageFootnotes citations={[]} />);
+    render(<MessageSourcesDisclosure citations={[]} />);
     expect(screen.queryByRole("list", { name: "Sources" })).toBeNull();
   });
 
   it("renders an ordered list with aria-label Sources (AC-4)", () => {
     render(
-      <MessageFootnotes
+      <MessageSourcesDisclosure
         citations={[makeCitation()]}
       />,
     );
@@ -42,7 +42,7 @@ describe("MessageFootnotes", () => {
 
   it("renders citation title in the list entry (AC-4)", () => {
     render(
-      <MessageFootnotes
+      <MessageSourcesDisclosure
         citations={[makeCitation({ preview: { title: "My Source" } })]}
       />,
     );
@@ -51,7 +51,7 @@ describe("MessageFootnotes", () => {
 
   it("renders section label when present", () => {
     render(
-      <MessageFootnotes
+      <MessageSourcesDisclosure
         citations={[
           makeCitation({ preview: { title: "Book", meta: ["Chapter 3"] } }),
         ]}
@@ -66,12 +66,13 @@ describe("MessageFootnotes", () => {
 
     const activation = makeActivation("/reader/source");
     render(
-      <MessageFootnotes
+      <MessageSourcesDisclosure
         citations={[makeCitation({ activation })]}
         onCitationActivate={onActivate}
       />,
     );
 
+    await user.click(screen.getByText("Sources (1)"));
     await user.click(screen.getByRole("link", { name: /1\. Source title/ }));
 
     expect(onActivate).toHaveBeenCalledWith(activation, null, expect.anything());
@@ -79,7 +80,7 @@ describe("MessageFootnotes", () => {
 
   it("renders multiple citations as separate list items", () => {
     render(
-      <MessageFootnotes
+      <MessageSourcesDisclosure
         citations={[
           makeCitation({ index: 1, preview: { title: "First" } }),
           makeCitation({ index: 2, preview: { title: "Second" } }),
@@ -121,17 +122,27 @@ describe("MessageFootnotes", () => {
     };
 
     render(
-      <MessageFootnotes
+      <MessageSourcesDisclosure
         citations={[makeCitation({ activation, target })]}
         onCitationActivate={onActivate}
       />,
     );
 
+    await user.click(screen.getByText("Sources (1)"));
     await user.click(screen.getByRole("button", { name: /1\. Source title/ }));
     expect(onActivate).toHaveBeenCalledWith(
       activation,
       expect.objectContaining({ kind: "media", media_id: "media-1" }),
       expect.anything(),
     );
+  });
+
+  it("uses a closed native Sources (N) disclosure", () => {
+    render(<MessageSourcesDisclosure citations={[makeCitation(), makeCitation({ index: 2 })]} />);
+    // eslint-disable-next-line testing-library/no-node-access -- asserts the native disclosure's default closed state
+    const disclosure = screen.getByText("Sources (2)").closest("details");
+    expect(disclosure).not.toHaveAttribute("open");
+    // eslint-disable-next-line testing-library/no-node-access -- verifies the native summary element, not a custom button facade
+    expect(screen.getByText("Sources (2)").closest("summary")).not.toBeNull();
   });
 });
