@@ -777,7 +777,7 @@ export default function Conversation() {
                 draftKey={composerDraftKey}
                 branchDraft={branchDraft}
                 parentMessageId={activeReplyParentMessageId}
-                disabledReason={convo.sendDisabledReason ?? undefined}
+                sendCapability={convo.sendCapability}
                 activeRunId={convo.activeRunId}
                 onCancelRun={convo.cancelActiveRun}
                 onChatRunCreated={convo.onChatRunCreated}

@@ -33,6 +33,10 @@ export interface LlmReasoningOption {
   label: string;
 }
 
+export type LlmProfilePrivacy =
+  | { readonly kind: "Standard"; readonly notice: string }
+  | { readonly kind: "ExceptionalRetention"; readonly notice: string };
+
 /**
  * A product-facing LLM profile (GET /llm-profiles). The browser owns no
  * provider/model/reasoning enum, ordering, default, capability, key, or
@@ -48,7 +52,7 @@ export interface LlmProfile {
   model_label: string;
   reasoning_options: LlmReasoningOption[];
   default_reasoning_option_id: string;
-  privacy_notice: string;
+  privacy: LlmProfilePrivacy;
 }
 
 /** Response schema for GET /llm-profiles. */
@@ -56,6 +60,12 @@ export interface LlmProfilesOut {
   default_profile_id: string;
   profiles: LlmProfile[];
 }
+
+export type ChatSendCapability =
+  | { readonly kind: "Available" }
+  | { readonly kind: "HistoryLoading" }
+  | { readonly kind: "AssistantRunning" }
+  | { readonly kind: "ReplyTargetUnavailable" };
 
 // =============================================================================
 // ExpectedChatFailure — mirrors python/nexus/schemas/llm.py EXACTLY.

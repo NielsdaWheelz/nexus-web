@@ -10,7 +10,7 @@ profile table and background policy this module reproduces.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from provider_runtime import CATALOG, DirectCertification, ProviderTarget, ReasoningLevel
@@ -39,6 +39,24 @@ class ReasoningOption:
 
 
 @dataclass(frozen=True, slots=True)
+class StandardPrivacy:
+    notice: str
+    kind: Literal["Standard"] = field(default="Standard", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class ExceptionalRetentionPrivacy:
+    notice: str
+    kind: Literal["ExceptionalRetention"] = field(
+        default="ExceptionalRetention",
+        init=False,
+    )
+
+
+type ProfilePrivacy = StandardPrivacy | ExceptionalRetentionPrivacy
+
+
+@dataclass(frozen=True, slots=True)
 class LlmProfile:
     id: str
     label: str
@@ -48,7 +66,7 @@ class LlmProfile:
     target: ProviderTarget
     reasoning_options: tuple[ReasoningOption, ...]
     default_reasoning_option_id: ReasoningLevel
-    privacy_notice: str
+    privacy: ProfilePrivacy
 
 
 _REASONING_LABELS: dict[ReasoningLevel, str] = {
@@ -68,15 +86,19 @@ def _reasoning_options(*ids: ReasoningLevel) -> tuple[ReasoningOption, ...]:
 
 _GPT_56_REASONING = ("none", "low", "medium", "high", "xhigh", "max")
 _CLAUDE_REASONING = ("low", "medium", "high", "xhigh", "max")
-_STANDARD_RETENTION = (
-    "Standard provider retention. Nexus does not send this profile's requests "
-    "or responses to a third party for model training."
+_STANDARD_PRIVACY = StandardPrivacy(
+    notice=(
+        "Standard provider retention. Nexus does not send this profile's requests "
+        "or responses to a third party for model training."
+    )
 )
-_FABLE_RETENTION = (
-    "Anthropic retains Fable 5 requests and responses for 30 days as a "
-    "condition of access to this model; it is not eligible for zero-data-"
-    "retention. Nexus does not send this profile's requests or responses to a "
-    "third party for model training."
+_FABLE_PRIVACY = ExceptionalRetentionPrivacy(
+    notice=(
+        "Anthropic retains Fable 5 requests and responses for 30 days as a "
+        "condition of access to this model; it is not eligible for zero-data-"
+        "retention. Nexus does not send this profile's requests or responses to a "
+        "third party for model training."
+    )
 )
 
 PROFILES: tuple[LlmProfile, ...] = (
@@ -89,7 +111,7 @@ PROFILES: tuple[LlmProfile, ...] = (
         target=ProviderTarget(provider="openai", model="gpt-5.6-luna"),
         reasoning_options=_reasoning_options(*_GPT_56_REASONING),
         default_reasoning_option_id="low",
-        privacy_notice=_STANDARD_RETENTION,
+        privacy=_STANDARD_PRIVACY,
     ),
     LlmProfile(
         id="balanced",
@@ -100,7 +122,7 @@ PROFILES: tuple[LlmProfile, ...] = (
         target=ProviderTarget(provider="openai", model="gpt-5.6-terra"),
         reasoning_options=_reasoning_options(*_GPT_56_REASONING),
         default_reasoning_option_id="medium",
-        privacy_notice=_STANDARD_RETENTION,
+        privacy=_STANDARD_PRIVACY,
     ),
     LlmProfile(
         id="deep",
@@ -111,7 +133,7 @@ PROFILES: tuple[LlmProfile, ...] = (
         target=ProviderTarget(provider="openai", model="gpt-5.6-sol"),
         reasoning_options=_reasoning_options(*_GPT_56_REASONING),
         default_reasoning_option_id="high",
-        privacy_notice=_STANDARD_RETENTION,
+        privacy=_STANDARD_PRIVACY,
     ),
     LlmProfile(
         id="claude",
@@ -122,7 +144,7 @@ PROFILES: tuple[LlmProfile, ...] = (
         target=ProviderTarget(provider="anthropic", model="claude-sonnet-5"),
         reasoning_options=_reasoning_options(*_CLAUDE_REASONING),
         default_reasoning_option_id="medium",
-        privacy_notice=_STANDARD_RETENTION,
+        privacy=_STANDARD_PRIVACY,
     ),
     LlmProfile(
         id="fable",
@@ -133,7 +155,7 @@ PROFILES: tuple[LlmProfile, ...] = (
         target=ProviderTarget(provider="anthropic", model="claude-fable-5"),
         reasoning_options=_reasoning_options(*_CLAUDE_REASONING),
         default_reasoning_option_id="high",
-        privacy_notice=_FABLE_RETENTION,
+        privacy=_FABLE_PRIVACY,
     ),
     LlmProfile(
         id="gemini",
@@ -144,7 +166,7 @@ PROFILES: tuple[LlmProfile, ...] = (
         target=ProviderTarget(provider="gemini", model="gemini-3.5-flash"),
         reasoning_options=_reasoning_options("minimal", "low", "medium", "high"),
         default_reasoning_option_id="medium",
-        privacy_notice=_STANDARD_RETENTION,
+        privacy=_STANDARD_PRIVACY,
     ),
     LlmProfile(
         id="kimi",
@@ -155,7 +177,7 @@ PROFILES: tuple[LlmProfile, ...] = (
         target=ProviderTarget(provider="moonshot", model="kimi-k3"),
         reasoning_options=_reasoning_options("low", "high", "max"),
         default_reasoning_option_id="high",
-        privacy_notice=_STANDARD_RETENTION,
+        privacy=_STANDARD_PRIVACY,
     ),
 )
 

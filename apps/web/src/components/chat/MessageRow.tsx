@@ -90,6 +90,7 @@ export const MessageRow = memo(function MessageRow({
           connectionLost={connectionLostAssistantIds?.has(message.id) === true}
           onReconnectAssistant={onReconnectAssistant}
           onStartWalk={onStartWalk}
+          timestampLabel={timestampLabel}
         />
       );
     case "system":

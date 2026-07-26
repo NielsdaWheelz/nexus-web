@@ -92,7 +92,7 @@ const LLM_PROFILES = {
       model_label: "Sonnet",
       reasoning_options: [{ id: "default", label: "Default" }],
       default_reasoning_option_id: "default",
-      privacy_notice: "Processed by Nexus AI.",
+      privacy: { kind: "Standard", notice: "Processed by Nexus AI." },
     },
   ],
 };
@@ -1251,9 +1251,9 @@ describe("Conversation", () => {
 
     expect(
       await screen.findByText(
-        "Wait for the assistant response to finish before sending.",
+        "Assistant response in progress. Your draft is still editable.",
       ),
-    ).toBeVisible();
+    ).toHaveAttribute("aria-live", "polite");
     expect(screen.getByRole("button", { name: "SEND" })).toBeDisabled();
     expect(
       fetchMock.mock.calls.filter(
@@ -1287,9 +1287,10 @@ describe("Conversation", () => {
     renderPane();
 
     expect(await screen.findByText("Loading conversation...")).toBeVisible();
-    expect(
-      await screen.findByText("Loading conversation history before sending."),
-    ).toBeVisible();
+    expect(await screen.findByText("Conversation history is loading.")).toHaveAttribute(
+      "aria-live",
+      "polite",
+    );
     expect(screen.getByRole("button", { name: "SEND" })).toBeDisabled();
     expect(screen.getByRole("textbox", { name: "Ask anything" })).toBeVisible();
   });

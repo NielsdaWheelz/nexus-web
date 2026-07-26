@@ -537,15 +537,20 @@ Rules:
       id, label, description, provider_label, model_label,
       reasoning_options: [{id, label}],
       default_reasoning_option_id,
-      privacy_notice
+      privacy: {
+        kind: "Standard" | "ExceptionalRetention",
+        notice
+      }
     }]
   }
 }
 ```
 
 The final deployment returns all seven certified profiles in §4. The browser
-owns no provider/model/reasoning enum, ordering, default, capability, key, or
-availability policy.
+owns no provider/model/reasoning enum, ordering, default, capability, key,
+privacy classification, or availability policy. Standard copy is available
+through the chat profile's `Privacy` disclosure; exceptional retention remains
+visible while selected.
 
 This cutover changes only the chat-create selection fields. Existing semantic
 fields such as `conversation_id`, `parent_message_id`, `branch_anchor`,
@@ -768,7 +773,7 @@ the settings-keys pane/navigation, duplicated failure maps, and retry/resend
 routes/actions, including `app/api/messages/[messageId]/retry/route.ts` and
 `app/api/messages/[messageId]/resend/route.ts`. Modify the composer,
 conversation hooks, message renderers,
-`components/chat/AssistantTrustInspector.tsx`,
+`components/chat/AssistantDetails.tsx`,
 `components/chat/useChatRunTail.ts`, `e2e/tests/chatReadiness.ts`, the BFF
 route-count guard, and the hand-authored contracts in
 `lib/conversations/types.ts`, `lib/api/sse/requests.ts`, and

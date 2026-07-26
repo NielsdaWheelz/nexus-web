@@ -4,7 +4,7 @@
  * ChatProfilePicker — the composer's product-facing LLM selector.
  *
  * Renders the GET /llm-profiles catalog (via useChatProfiles): a profile
- * chooser, that profile's reasoning options, and its privacy notice. It owns NO
+ * chooser, that profile's reasoning options, and its privacy disclosure. It owns NO
  * provider/model/reasoning policy — it renders exactly what the endpoint returns
  * and reports a `{ profileId, reasoningOptionId }` selection up to the composer
  * (controlled). It replaces the old model + reasoning + key-mode controls.
@@ -17,7 +17,7 @@
 import { useEffect } from "react";
 import Select from "@/components/ui/Select";
 import { useChatProfiles } from "@/components/chat/useChatProfiles";
-import type { LlmProfile } from "@/lib/conversations/types";
+import type { LlmProfile, LlmProfilePrivacy } from "@/lib/conversations/types";
 import styles from "./ChatProfilePicker.module.css";
 
 export interface ProfileSelection {
@@ -54,6 +54,26 @@ function defaultSelection(
     profileId: profile.id,
     reasoningOptionId: profile.default_reasoning_option_id,
   };
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unexpected profile privacy: ${JSON.stringify(value)}`);
+}
+
+function ProfilePrivacy({ privacy }: { privacy: LlmProfilePrivacy }) {
+  switch (privacy.kind) {
+    case "Standard":
+      return (
+        <details className={styles.privacyDisclosure}>
+          <summary>Privacy</summary>
+          <p>{privacy.notice}</p>
+        </details>
+      );
+    case "ExceptionalRetention":
+      return <p className={styles.exceptionalPrivacy}>{privacy.notice}</p>;
+    default:
+      return assertNever(privacy);
+  }
 }
 
 export default function ChatProfilePicker({
@@ -145,11 +165,7 @@ export default function ChatProfilePicker({
         </label>
       ) : null}
 
-      {selectedProfile?.privacy_notice ? (
-        <span className={styles.privacyNotice}>
-          {selectedProfile.privacy_notice}
-        </span>
-      ) : null}
+      {selectedProfile ? <ProfilePrivacy privacy={selectedProfile.privacy} /> : null}
     </div>
   );
 }

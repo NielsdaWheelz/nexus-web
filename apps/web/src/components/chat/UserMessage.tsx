@@ -55,15 +55,10 @@ export default function UserMessage({
       className={styles.message}
       data-message-id={message.id}
       data-role="user"
+      role="group"
+      aria-label="Your message"
     >
-      <div
-        className={styles.userPrompt}
-        role="group"
-        aria-label="User prompt"
-      >
-        <div className={styles.userKicker}>
-          <span className={styles.userAttribution}>You</span>
-        </div>
+      <div className={styles.userPrompt}>
         {readerSelection ? (
           <QuotedPassageCard
             mode="sent"
@@ -74,7 +69,7 @@ export default function UserMessage({
         <span className={styles.userPromptBody}>{content}</span>
       </div>
       {isTerminalFailure ? <ChatFailureCard failure={null} /> : null}
-      <span className={styles.timestamp}>{timestampLabel}</span>
+      <time className={styles.timestamp} dateTime={message.created_at}>{timestampLabel}</time>
     </div>
   );
 }

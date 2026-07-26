@@ -31,11 +31,10 @@ function message(
   };
 }
 
-// AC-3: deleting the assistant timestamp render site must not disturb the human
-// rows — they still render their hover `.timestamp`, and (unlike the assistant)
-// they never enter the machine register.
-describe("chat human rows keep their hover timestamp (AC-3)", () => {
-  it("user row renders the hover timestamp outside the machine register", () => {
+// Human and assistant turns share the quiet timestamp contract while only the
+// human turn keeps the accent-rail prompt treatment.
+describe("chat human rows keep their timestamp", () => {
+  it("user row renders its timestamp in the normal chat register", () => {
     render(
       <UserMessage
         message={message("user-1", "user", "What is the capital of France?")}
@@ -45,11 +44,15 @@ describe("chat human rows keep their hover timestamp (AC-3)", () => {
 
     const stamp = screen.getByText("Jun 3");
     expect(stamp).toBeInTheDocument();
-    // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: AC-3 contrast invariant — the human row must have no machine-origin ancestor
+    expect(stamp).toHaveAttribute("datetime", timestamp);
+    expect(screen.getByRole("group", { name: "Your message" })).toContainElement(
+      screen.getByText("What is the capital of France?"),
+    );
+    // eslint-disable-next-line testing-library/no-node-access -- asserting the hard-cut machine wrapper has no compatibility path
     expect(stamp.closest("[data-machine-origin]")).toBeNull();
   });
 
-  it("system row renders the hover timestamp", () => {
+  it("system row renders its timestamp", () => {
     render(
       <SystemMessage
         message={message("system-1", "system", "Conversation renamed.")}

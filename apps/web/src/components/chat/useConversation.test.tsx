@@ -364,6 +364,61 @@ describe("useConversation", () => {
     );
   });
 
+  it("derives the closed send capability from history and the visible reply target", async () => {
+    const history = deferred<Response>();
+    stubFetch((input) => {
+      const path = pathOf(input);
+      if (path === "/api/conversations/conversation-1/messages") return history.promise;
+      if (path === "/api/conversations/conversation-2/messages") {
+        return jsonResponse({
+          data: [message("assistant-pending", 2, "assistant", "", "user-1", "pending")],
+          page: { before_cursor: null, next_cursor: null },
+        });
+      }
+      if (path === "/api/conversations/conversation-3/messages") {
+        return jsonResponse({
+          data: [message("assistant-complete", 2, "assistant", "Done", "user-1")],
+          page: { before_cursor: null, next_cursor: null },
+        });
+      }
+      throw new Error(`Unexpected fetch: ${path}`);
+    });
+
+    const initialProps: { conversationId: string | null } = { conversationId: null };
+    const { result, rerender } = renderHook(
+      ({ conversationId }: { conversationId: string | null }) =>
+        useConversation({ conversationId, branching: false }),
+      { initialProps },
+    );
+
+    expect(result.current.sendCapability).toEqual({ kind: "Available" });
+
+    rerender({ conversationId: "conversation-1" });
+    await waitFor(() =>
+      expect(result.current.sendCapability).toEqual({ kind: "HistoryLoading" }),
+    );
+
+    history.resolve(
+      jsonResponse({
+        data: [message("user-only", 1, "user", "Question")],
+        page: { before_cursor: null, next_cursor: null },
+      }),
+    );
+    await waitFor(() =>
+      expect(result.current.sendCapability).toEqual({ kind: "ReplyTargetUnavailable" }),
+    );
+
+    rerender({ conversationId: "conversation-2" });
+    await waitFor(() =>
+      expect(result.current.sendCapability).toEqual({ kind: "AssistantRunning" }),
+    );
+
+    rerender({ conversationId: "conversation-3" });
+    await waitFor(() =>
+      expect(result.current.sendCapability).toEqual({ kind: "Available" }),
+    );
+  });
+
   it("forwards context_ref_added events from the tail to the context-ref owner", async () => {
     const onContextRefAdded = vi.fn();
     const contextRef = decodeContextRef({

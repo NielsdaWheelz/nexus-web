@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
@@ -8,10 +8,11 @@ import MobileSheet from "@/components/ui/MobileSheet";
 import type { ApiPath } from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
 import { useCursorPagination, type CursorPage } from "@/lib/api/useCursorPagination";
-import { formatDisplayNumber, formatRelativeTime } from "@/lib/display/format";
+import { formatDisplayNumber } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import type { ConversationListItem } from "@/lib/conversations/types";
+import { presentConversationListItem } from "@/lib/conversations/presentation";
 import styles from "./ConversationDestinationOverlay.module.css";
 
 const OVERLAY_TITLE = "Ask in existing chat";
@@ -103,18 +104,6 @@ export default function ConversationDestinationOverlay({
   );
 }
 
-function messageCountLabel(
-  count: number,
-  context: Parameters<typeof formatDisplayNumber>[1],
-): string {
-  return count === 1 ? "1 message" : `${formatDisplayNumber(count, context)} messages`;
-}
-
-function conversationTitle(item: ConversationListItem): string {
-  const trimmed = item.title.trim();
-  return trimmed.length > 0 ? trimmed : "Untitled chat";
-}
-
 function buildListHref(query: string, cursor: string | null): ApiPath {
   const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
   if (query) params.set("q", query);
@@ -128,7 +117,6 @@ function buildListHref(query: string, cursor: string | null): ApiPath {
  */
 function DestinationPicker({ onSelect }: { onSelect: (conversationId: string) => void }) {
   const env = useRenderEnvironment();
-  const now = useMemo(() => new Date(env.currentInstant), [env.currentInstant]);
 
   const id = useId();
   const inputId = `${id}-input`;
@@ -270,7 +258,7 @@ function DestinationPicker({ onSelect }: { onSelect: (conversationId: string) =>
         ) : (
           items.map((item) => {
             const active = item.id === effectiveActiveId;
-            const relative = formatRelativeTime(item.updated_at, env, now);
+            const presentation = presentConversationListItem(item, env);
             return (
               <div
                 key={item.id}
@@ -285,16 +273,10 @@ function DestinationPicker({ onSelect }: { onSelect: (conversationId: string) =>
                 onClick={() => onSelect(item.id)}
               >
                 <span className={styles.title} dir="auto">
-                  {conversationTitle(item)}
+                  {presentation.title}
                 </span>
                 <span className={styles.meta}>
-                  {relative ? (
-                    <>
-                      <span>{relative}</span>
-                      {" · "}
-                    </>
-                  ) : null}
-                  <span>{messageCountLabel(item.message_count, env)}</span>
+                  {presentation.metadata}
                 </span>
               </div>
             );

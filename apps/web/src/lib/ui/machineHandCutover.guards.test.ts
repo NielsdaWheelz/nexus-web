@@ -13,7 +13,7 @@ const APP_ROOT = process.cwd();
 const OWNER_MODULE_CSS = "src/components/ui/MachineText.module.css";
 const MACHINE_TOKENS = ["--font-machine", "--ink-machine", "--rail-machine"];
 const MARKDOWN_IMPORTERS = [
-  "src/components/chat/AssistantEvidenceDisclosure.tsx",
+  "src/components/chat/AssistantAnswer.tsx",
   "src/components/dossier/DossierSurface.tsx",
   "src/components/dossier/MediaAbstract.tsx",
   "src/components/notes/DawnWriteBlock.tsx",
@@ -73,8 +73,9 @@ describe("Machine Hand cutover source gates", () => {
     expect(offenders).toEqual([]);
   });
 
-  // §13.3 — prose can't skip the register (closed-set + wrapper check).
-  it("keeps MarkdownMessage importers a closed set of machine-voice sites", () => {
+  // Chat uses the ordinary prose register; the remaining MarkdownMessage
+  // importers are machine-voice sites and keep their MachineText ownership.
+  it("keeps MarkdownMessage importers a closed set with chat outside MachineText", () => {
     const importers = filesUnder("src", isNonTestSource).filter((path) =>
       /from\s+["']@\/components\/ui\/MarkdownMessage["']/.test(sourceText(path)),
     );
@@ -84,21 +85,20 @@ describe("Machine Hand cutover source gates", () => {
     expect(
       sourceText("src/components/dossier/DossierSurface.tsx"),
     ).toMatch(/from\s+["']@\/components\/ui\/MachineText["']/);
-    expect(sourceText("src/components/chat/AssistantMessage.tsx")).toMatch(
-      /from\s+["']@\/components\/ui\/MachineText["']/,
-    );
     expect(sourceText("src/components/notes/DawnWriteBlock.tsx")).toMatch(
       /from\s+["']@\/components\/ui\/MachineText["']/,
     );
 
-    // AssistantEvidenceDisclosure (which imports MarkdownMessage directly) is
-    // rendered ONLY by AssistantMessage — the wrapper that owns the register.
-    const evidenceImporters = filesUnder("src", isNonTestSource)
-      .filter((path) => path !== "src/components/chat/AssistantEvidenceDisclosure.tsx")
+    expect(sourceText("src/components/chat/AssistantMessage.tsx")).not.toMatch(
+      /components\/ui\/MachineText/,
+    );
+
+    const answerImporters = filesUnder("src", isNonTestSource)
+      .filter((path) => path !== "src/components/chat/AssistantAnswer.tsx")
       .filter((path) =>
-        /from\s+["'][^"']*\/AssistantEvidenceDisclosure["']/.test(sourceText(path)),
+        /from\s+["'][^"']*\/AssistantAnswer["']/.test(sourceText(path)),
       );
-    expect(evidenceImporters).toEqual(["src/components/chat/AssistantMessage.tsx"]);
+    expect(answerImporters).toEqual(["src/components/chat/AssistantMessage.tsx"]);
   });
 
   // §13.4 — the Oracle pane tree never imports MachineText (N-1).
@@ -109,19 +109,15 @@ describe("Machine Hand cutover source gates", () => {
     expect(offenders).toEqual([]);
   });
 
-  // §13.5 — the deletions stay dead; the shared .timestamp CSS survives.
-  it("keeps the assistant timestamp render site and the .assistantBody ink deleted", () => {
+  it("keeps the chat machine wrapper and visible role chrome deleted", () => {
     const assistant = sourceText("src/components/chat/AssistantMessage.tsx");
-    expect(assistant).not.toContain("styles.timestamp");
-    expect(assistant).not.toContain("timestampLabel");
+    expect(assistant).not.toContain("MachineText");
+    expect(assistant).not.toContain("Colophon");
+    expect(assistant).not.toContain("AssistantEvidenceDisclosure");
+    expect(assistant).not.toContain("MessageFootnotes");
 
     const messageRowCss = sourceText("src/components/chat/MessageRow.module.css");
-    expect(cssRuleBlock(messageRowCss, ".assistantBody")).not.toContain("color");
-    // The shared .timestamp class is deliberately kept (user/system rows).
     expect(messageRowCss).toContain(".timestamp {");
-
-    const markdownCss = sourceText("src/components/ui/MarkdownMessage.module.css");
-    expect(cssRuleBlock(markdownCss, ".markdown")).not.toContain("var(--ink)");
   });
 
   // §13.6 — the tokens exist once (font) / per theme (ink + rail).

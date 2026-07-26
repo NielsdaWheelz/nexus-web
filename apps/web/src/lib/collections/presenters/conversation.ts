@@ -1,9 +1,10 @@
 /** Pure semantic projections for conversation rows. */
 
-import { absent } from "@/lib/api/presence";
+import { absent, present } from "@/lib/api/presence";
 import { conversationResourceOptions } from "@/lib/actions/resourceActions";
 import { publishResourceRowActions } from "@/lib/collections/resourceActionPublication";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { presentConversationListItem } from "@/lib/conversations/presentation";
 import type { CollectionRowView } from "@/lib/collections/types";
 import type {
   ConversationSummary,
@@ -12,7 +13,9 @@ import type {
 export function presentConversation(
   item: ConversationSummary,
   ctx: Parameters<typeof conversationResourceOptions>[0],
+  environment: Parameters<typeof presentConversationListItem>[1],
 ): CollectionRowView {
+  const presentation = presentConversationListItem(item, environment);
   const href = `/conversations/${item.id}`;
   return {
     id: item.id,
@@ -20,12 +23,12 @@ export function presentConversation(
     primary: {
       kind: "link",
       href,
-      paneLabelHint: item.title,
+      paneLabelHint: presentation.title,
     },
-    title: { text: item.title },
+    title: { text: presentation.title },
     contributors: [],
     publicationDate: absent(),
-    context: absent(),
+    context: present({ kind: "Text", text: presentation.metadata }),
     activity: absent(),
     exceptionalStatus: absent(),
     connections: absent(),

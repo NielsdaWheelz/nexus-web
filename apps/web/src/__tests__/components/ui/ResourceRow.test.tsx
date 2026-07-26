@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { describe, expect, it, vi } from "vitest";
 import { horizontallyScrollableElements } from "@/__tests__/helpers/horizontalOverflow";
@@ -34,7 +34,7 @@ describe("ResourceRow", () => {
     const contributor = screen.getByRole("link", { name: "Ada Author" });
     expect(title).toHaveAttribute("href", "/media/media-1");
     expect(title).toHaveAttribute("data-pane-label-hint", "Media title");
-    expect(screen.getByText("Media title")).toHaveAttribute("dir", "auto");
+    expect(within(title).getByText("Media title")).toHaveAttribute("dir", "auto");
     expect(title).not.toContainElement(contributor);
     expect(title).not.toContainElement(
       screen.getByRole("button", { name: "Primary control" }),
@@ -89,6 +89,30 @@ describe("ResourceRow", () => {
     expect(screen.queryByText("Finished")).toBeNull();
   });
 
+  it("does not activate a disabled primary from inert row chrome", () => {
+    const onActivate = vi.fn();
+    render(
+      <ResourceList ariaLabel="Resources">
+        <ResourceRow
+          primary={{
+            kind: "button",
+            label: "Unavailable item",
+            disabled: true,
+            onActivate,
+          }}
+          title="Unavailable item"
+          supporting="Unavailable metadata"
+        />
+      </ResourceList>,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Unavailable item" }),
+    ).toBeDisabled();
+    fireEvent.click(screen.getByText("Unavailable metadata"));
+    expect(onActivate).not.toHaveBeenCalled();
+  });
+
   it("keeps action activation independent from button primary activation", async () => {
     const onActivate = vi.fn();
     const onAction = vi.fn();
@@ -108,6 +132,25 @@ describe("ResourceRow", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Open item" }));
     expect(onActivate).toHaveBeenCalledOnce();
+  });
+
+  it("keeps nested controls above the row activation target", async () => {
+    const onActivate = vi.fn();
+    const onAction = vi.fn();
+    render(
+      <ResourceList ariaLabel="Resources">
+        <ResourceRow
+          primary={{ kind: "button", label: "Open item", onActivate }}
+          title="Item title"
+          supporting="Updated just now · 1 message"
+          actions={<button type="button" onClick={onAction}>More actions</button>}
+        />
+      </ResourceList>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "More actions" }));
+    expect(onAction).toHaveBeenCalledOnce();
+    expect(onActivate).not.toHaveBeenCalled();
   });
 
   it.each([320, 390, 960])(
@@ -135,7 +178,9 @@ describe("ResourceRow", () => {
       expect(host.scrollWidth).toBeLessThanOrEqual(host.clientWidth + 1);
       expect(horizontallyScrollableElements(host)).toEqual([]);
       expect(screen.queryByRole("img")).toBeNull();
-      const title = screen.getByText(titleText);
+      const title = within(
+        screen.getByRole("link", { name: titleText }),
+      ).getByText(titleText);
       const titleStyle = getComputedStyle(title);
       const titleLineHeight = computedLineHeightPx(titleStyle);
       expect(titleStyle.webkitLineClamp).toBe(
@@ -185,9 +230,11 @@ describe("ResourceRow", () => {
       </div>,
     );
 
-    const title = screen.getByText(
-      "A processing item with a title that uses two lines",
-    );
+    const title = within(
+      screen.getByRole("link", {
+        name: "A processing item with a title that uses two lines",
+      }),
+    ).getByText("A processing item with a title that uses two lines");
     const state = screen.getByText("Processing");
     expect(Math.abs(
       title.getBoundingClientRect().left - state.getBoundingClientRect().left,

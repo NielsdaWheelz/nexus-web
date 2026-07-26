@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { useMemo, useReducer } from "react";
-import AssistantEvidenceDisclosure from "./AssistantEvidenceDisclosure";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
+import AssistantAnswer from "./AssistantAnswer";
 import { useChatMessageUpdates } from "./useChatMessageUpdates";
 import { messageUpdateReducer } from "@/lib/conversations/messageUpdateReducer";
 import { toReaderCitationData } from "@/lib/resourceGraph/citations";
@@ -151,7 +152,9 @@ function CitationIndexHarness() {
       >
         Fold one
       </button>
-      <AssistantEvidenceDisclosure message={message} citations={citations} />
+      <FeedbackProvider>
+        <AssistantAnswer message={message} citations={citations} />
+      </FeedbackProvider>
       <ul aria-label="folded citations">
         {(message.citations ?? []).map((citation) => (
           <li key={citation.ordinal}>

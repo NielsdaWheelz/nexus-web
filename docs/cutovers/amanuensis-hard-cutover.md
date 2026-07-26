@@ -92,7 +92,7 @@ write caps, a visible trust-trail row per write, and per-write Undo.
   `message_tool_calls` (models.py:4292, `result_refs` jsonb array + `status`
   CHECK `pending|running|complete|error|cancelled`). FE render:
   `apps/web/src/components/chat/AssistantMessage.tsx` +
-  `AssistantTrustInspector.tsx`.
+  `AssistantWriteTrail.tsx`.
 - **P-10.** The invariant system prompt is `chat_prompt.render_system_prompt_block`
   (chat_prompt.py:64-95) — the sole owner of tool-usage instructions.
 - **P-11.** The consumption queue for text does not exist; audio has
@@ -102,11 +102,9 @@ write caps, a visible trust-trail row per write, and per-write Undo.
   after it (§10, §11 S6).
 - **P-12.** Config flags follow the `SYNAPSE_ENABLED` pattern
   (config.py:409-411): one `Field(default=..., alias=...)`.
-- **P-13.** The machine-voice register is owned by
-  **docs/cutovers/machine-hand-hard-cutover.md** (SPEC): `MachineText` already
-  wraps every assistant chat turn (origin label `Assistant`). This cutover adds
-  trail-row *content* inside that already-wrapped turn — it does **not** wrap
-  anything itself (§7).
+- **P-13.** Chat presentation is owned by
+  **docs/cutovers/chat-interface-hard-cutover.md** (IMPLEMENTED). The write
+  trail composes the normal chat register and does not wrap the turn.
 
 ---
 
@@ -216,7 +214,7 @@ exists (`pdf_quote_match.compute_match`) but is bound to PDF page spans, not
 | Write-tool call persistence + created-ref record | `chat_run_tools.persist_write_tool_call` (writes created refs into the existing `result_refs`) | *(new sibling of `persist_tool_call_trace`, D-8)* |
 | Per-tool-call revert + `reverted_at` | `agent_tools/writes.undo_tool_call` + `POST …/tool-calls/{id}/undo` | *(new)* |
 | Write-tool system-prompt block | `chat_prompt.render_system_prompt_block` | *(extended — the sole prompt owner)* |
-| Write trail-row + Undo rendering | `AssistantTrustInspector.tsx` (extends BUILT trust trail) | *(extended)* |
+| Write trail-row + Undo rendering | `AssistantWriteTrail.tsx` (consumes BUILT trust trail) | *(extended)* |
 
 ### 4.2 The `assistant` origin shape
 
@@ -359,18 +357,17 @@ trust-trail surface.
 | Surface | Change |
 | --- | --- |
 | `schemas/conversation.py` `TrustToolCallOut` | Add only `reverted_at: datetime \| None` (D-9 — **no** `created_refs` field). Write tools reuse the existing `result_refs: list[dict[str, Any]]` (conversation.py:500) to carry `[{scheme, id}, …]` created refs; read tools keep populating it with `{uri,status,body_chars}` payloads. The two populations are distinguished by `tool_name`. Populated for write tools by `message_trust_trails.build_assistant_trust_trail`. |
-| `apps/web/src/components/chat/AssistantTrustInspector.tsx` | Render a write-tool row per write call: a small-caps kicker label + verb (**Filed to *X*** / **Highlighted "…"** / **Connected *A* ↔ *B*** / **Noted in *page*** / **Queued *X***) + an **Undo** text button (→ **Undone** when `reverted_at`). |
-| `apps/web/src/components/chat/AssistantMessage.tsx` | Live active-tool label extended for the five names (mirrors the existing `active.tool_name` switch). No new turn wrapper. **Build-order: land after machine-hand's `AssistantMessage.tsx` edits** (F-05, §10). |
+| `apps/web/src/components/chat/AssistantWriteTrail.tsx` | Render a write-tool row per write call: a small-caps kicker label + verb (**Filed to *X*** / **Highlighted "…"** / **Connected *A* ↔ *B*** / **Noted in *page*** / **Queued *X***) + an **Undo** text button (→ **Undone** when `reverted_at`). |
+| `apps/web/src/components/chat/AssistantMessage.tsx` | Live active-tool label extended for the five names (mirrors the existing `active.tool_name` switch). No new turn wrapper. |
 | `apps/web/src/lib/conversations/messageUpdateReducer.ts` | Accept write-tool `tool_result` events (already generic over `tool_name`); carry `result_refs`/`reverted_at` through the existing trail patch. |
 
 **Design law.** Trail rows are small-caps text labels with `--tracking-wider`,
 amber `--accent` only on the active verb, a hairline `--stroke-hairline` divider
 between rows — **never pills/badges** (never a `<Chip>`/`<Badge>` element),
 never a bordered card (ResourceRow law).
-Undo is a quiet text button, not a destructive-red control. The whole assistant
-turn is already inside the machine-hand `MachineText` block (origin `Assistant`,
-machine-hand-hard-cutover.md) — this cutover adds **row content only**, never a
-second wrapper (P-13).
+Undo is a quiet text button, not a destructive-red control. The trail sits
+between the answer and Sources in the normal chat register; it adds row content
+only and never a second turn wrapper.
 
 ---
 
@@ -463,23 +460,13 @@ writer). No file, symbol, CSS block, table, or route is deleted.
   adding the `assistant` short-circuit branch (S0, F-05).
 - **assistant-message-trust-trail-hard-cutover.md (BUILT).** Reused wholesale:
   `message_tool_calls` is the created-ref store; `TrustToolCallOut` /
-  `AssistantTrustTrailOut` the wire shape; `AssistantTrustInspector.tsx` the
-  render surface. This cutover *extends* `TrustToolCallOut` (+`reverted_at`;
+  `AssistantTrustTrailOut` the wire shape; `AssistantWriteTrail.tsx` the
+  actionable write surface. This cutover *extends* `TrustToolCallOut` (+`reverted_at`;
   write tools reuse the existing `result_refs`, D-9) and
   `build_assistant_trust_trail`.
-- **machine-hand-hard-cutover.md (SPEC).** Owns `MachineText`, which already wraps
-  the assistant turn (origin `Assistant`). This cutover adds trail-row content
-  **inside** that wrapper and never double-wraps (P-13, §7). **File contention:**
-  machine-hand also makes *structural* edits to `AssistantMessage.tsx` (deletes
-  the hover-timestamp render site + `timestampLabel` prop, moves
-  `StreamingGutterCue`, adds `useRenderEnvironment()`) — disjoint from this
-  cutover's active-tool-label switch, but to avoid a rebase collision **amanuensis
-  S5 must build on a tree where those edits have already landed** (F-05, §11 S5).
-  **`docent-hard-cutover.md` (SPEC) and `correspondence-hard-cutover.md` (SPEC) also
-  edit `AssistantMessage.tsx`** — docent adds a `Walk` button in `messageActions`,
-  correspondence adds `MessageFootnotes`/`Colophon` inside the `MachineText` block;
-  both are disjoint from this cutover's active-tool-label + trust-row edits and from
-  each other. All three sequence after machine-hand and merge additively.
+- **chat-interface-hard-cutover.md (IMPLEMENTED).** Owns the final assistant
+  hierarchy. `AssistantWriteTrail` is visible after the answer; diagnostics live
+  in closed `AssistantDetails`; chat does not compose `MachineText`.
 - **lectern-hard-cutover.md (SPEC, same batch).** Owns `consumption_queue_items`
   and the queue service. `queue_add` writes through that service with
   `source='assistant'`. **Sequencing:** lectern's migration and queue service must
@@ -548,10 +535,8 @@ writer). No file, symbol, CSS block, table, or route is deleted.
   `TrustToolCallOut` (+`reverted_at`) + `build_assistant_trust_trail`.
   *Verify:* `make test-back-integration -k undo`; AC-3 (undo restores prior state
   exactly; second undo is a no-op 200); AC-9 (cap reclamation).
-- **S5 — FE trust-trail write rows.** `AssistantTrustInspector.tsx` write rows +
-  Undo; `AssistantMessage.tsx` active labels; reducer carry-through. **Build-order:
-  land after machine-hand's `AssistantMessage.tsx` edits merge** (F-05, §10) to
-  avoid a rebase collision.
+- **S5 — FE trust-trail write rows.** `AssistantWriteTrail.tsx` write rows +
+  Undo; `AssistantMessage.tsx` active labels; reducer carry-through.
   *Verify:* `cd apps/web && bun run typecheck && bun run test:unit && bun run
   test:browser`; browser test renders each write row and fires Undo through the
   fetch boundary.
@@ -635,7 +620,7 @@ rg -n "assistant" python/nexus/db/models.py | rg "ck_llm_calls_owner_kind" \
 - **Unit (`.test.ts` / BE unit):** `text_quote.resolve` unique/ambiguous/no_match
   and prefix/suffix disambiguation; `_validate_assistant` shape rejects (bad
   scheme, ordinal set, empty excerpt); cap counter arithmetic.
-- **Browser (`.test.tsx`):** `AssistantTrustInspector` renders each write row
+- **Browser (`.test.tsx`):** `AssistantWriteTrail` renders each write row
   (Filed/Highlighted/Connected/Noted/Queued) with role/label queries; Undo button
   fires the undo request through the fetch boundary and flips to **Undone**; no
   `vi.mock` of internals — real providers + fetch-boundary mock.
@@ -679,7 +664,7 @@ rg -n "assistant" python/nexus/db/models.py | rg "ck_llm_calls_owner_kind" \
   `TrustToolCallOut`; write-tool `result_refs` population (D-9, **no** new field).
 - `python/nexus/api/routes/conversations.py` — undo route.
 - `python/nexus/config.py` — `ASSISTANT_WRITE_TOOLS_ENABLED`.
-- `apps/web/src/components/chat/AssistantTrustInspector.tsx`,
+- `apps/web/src/components/chat/AssistantWriteTrail.tsx`,
   `AssistantMessage.tsx`, `apps/web/src/lib/conversations/messageUpdateReducer.ts`.
 
 **Deleted** — none (§9).

@@ -39,6 +39,7 @@ import Button from "@/components/ui/Button";
 import Textarea from "@/components/ui/Textarea";
 import type {
   BranchDraft,
+  ChatSendCapability,
   ChatRunResponse,
 } from "@/lib/conversations/types";
 import styles from "./ChatComposer.module.css";
@@ -87,12 +88,31 @@ interface ChatComposerProps {
   onConversationRefresh?: () => void;
   /** Activate the reader source for a pending or sent quote card. */
   onActivateSource?: (selection: ReaderSelectionOut) => void;
-  /** Blocks sending while caller-owned conversation state is not safe to continue. */
-  disabledReason?: string;
+  /** Caller-owned availability for the current conversation history. */
+  sendCapability: ChatSendCapability;
   /** Active run that can be semantically cancelled without closing the SSE tail. */
   activeRunId?: string | null;
   /** Backend cancel action for the active run. */
   onCancelRun?: () => Promise<void> | void;
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unexpected chat send capability: ${JSON.stringify(value)}`);
+}
+
+function sendCapabilityMessage(capability: ChatSendCapability): string {
+  switch (capability.kind) {
+    case "Available":
+      return "";
+    case "HistoryLoading":
+      return "Conversation history is loading.";
+    case "AssistantRunning":
+      return "Assistant response in progress. Your draft is still editable.";
+    case "ReplyTargetUnavailable":
+      return "Choose a complete assistant response before sending.";
+    default:
+      return assertNever(capability);
+  }
 }
 
 // ============================================================================
@@ -119,7 +139,7 @@ export default function ChatComposer({
   onIntentConsumed,
   onConversationRefresh,
   onActivateSource,
-  disabledReason,
+  sendCapability,
   activeRunId = null,
   onCancelRun,
 }: ChatComposerProps) {
@@ -169,7 +189,13 @@ export default function ChatComposer({
 
   const handleSend = useCallback(async () => {
     const trimmed = content.trim();
-    if (!trimmed || sending || disabledReason || !profile || pendingBlocksSend) {
+    if (
+      !trimmed ||
+      sending ||
+      sendCapability.kind !== "Available" ||
+      !profile ||
+      pendingBlocksSend
+    ) {
       return;
     }
 
@@ -264,7 +290,7 @@ export default function ChatComposer({
   }, [
     content,
     sending,
-    disabledReason,
+    sendCapability,
     profile,
     pendingBlocksSend,
     readerHighlight,
@@ -315,7 +341,7 @@ export default function ChatComposer({
   const composerDisabled = sending || reconciling;
   const sendDisabled =
     sending ||
-    Boolean(disabledReason) ||
+    sendCapability.kind !== "Available" ||
     !profile ||
     !content.trim() ||
     pendingBlocksSend;
@@ -323,15 +349,17 @@ export default function ChatComposer({
   return (
     <div className={styles.composer}>
       <div className={styles.composerShell}>
-        {error && <div className={styles.composerError}>{error}</div>}
-        {reconciling && (
-          <div className={styles.composerError} role="status">
-            Send status unknown — Retry send
+        <span className="sr-only" aria-live="polite">
+          {sendCapabilityMessage(sendCapability)}
+        </span>
+        {error ? (
+          <div className={styles.composerError} role="alert">
+            {error}
           </div>
-        )}
-        {disabledReason && (
-          <div className={styles.composerError} role="status">
-            {disabledReason}
+        ) : null}
+        {reconciling && (
+          <div className={styles.composerError} role="alert">
+            Send status unknown. Retry send.
           </div>
         )}
 

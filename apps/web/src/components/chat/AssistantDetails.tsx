@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
 import { AlertTriangle, Search, Wrench } from "lucide-react";
 import { toReaderCitationData } from "@/lib/conversations/citations";
-import { undoToolCall } from "@/lib/conversations/toolCallUndo";
+import { formatDisplayNumber } from "@/lib/display/format";
+import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type {
   AssistantTrustTrail,
   MessageRetrieval,
@@ -13,136 +13,7 @@ import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import styles from "./MessageRow.module.css";
 
-const WRITE_TOOL_NAMES = new Set([
-  "add_to_library",
-  "jot_note",
-  "create_highlight",
-  "mint_edge",
-  "queue_add",
-]);
-
-function truncate(value: string, max = 80): string {
-  return value.length > max ? `${value.slice(0, max - 1).trimEnd()}…` : value;
-}
-
-function primaryLabel(tool: MessageToolCall): string {
-  const refs = tool.result_refs ?? [];
-  for (const ref of refs) {
-    if (typeof ref.label === "string" && ref.label.trim()) return ref.label;
-  }
-  return "";
-}
-
-function refString(ref: Record<string, unknown>, key: string): string {
-  const value = ref[key];
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function describeWrite(tool: MessageToolCall): {
-  kicker: string;
-  target: string;
-  detail?: string;
-} {
-  const label = primaryLabel(tool);
-  switch (tool.tool_name) {
-    case "add_to_library":
-      return { kicker: "Filed to", target: label || "library" };
-    case "create_highlight":
-      return { kicker: "Highlighted", target: label ? `“${truncate(label)}”` : "passage" };
-    case "mint_edge": {
-      // §2/§7: "Connected A ↔ B" (endpoint labels) with the model's rationale.
-      const edge = (tool.result_refs ?? []).find((ref) => ref.kind === "edge");
-      const source = edge ? refString(edge, "source_label") : "";
-      const target = edge ? refString(edge, "target_label") : "";
-      if (source && target) {
-        const rationale = refString(edge as Record<string, unknown>, "rationale");
-        return {
-          kicker: "Connected",
-          target: `${source} ↔ ${target}`,
-          detail: rationale ? truncate(rationale, 100) : undefined,
-        };
-      }
-      return { kicker: "Connected", target: label || "two resources" };
-    }
-    case "jot_note":
-      return { kicker: "Noted in", target: label || "note" };
-    case "queue_add":
-      return { kicker: "Queued", target: label || "item" };
-    default:
-      return { kicker: tool.tool_name, target: label };
-  }
-}
-
-/**
- * The user-facing assistant write trail: one small-caps row per completed write
- * tool call, each with a quiet Undo (→ "Undone"). Rendered inside the assistant
- * turn's MachineText block; never pills/cards (amanuensis §7).
- */
-export function AssistantWriteTrail({
-  conversationId,
-  toolCalls,
-}: {
-  conversationId: string;
-  toolCalls: MessageToolCall[];
-}) {
-  const writes = toolCalls.filter(
-    (tool) => Boolean(tool.id) && WRITE_TOOL_NAMES.has(tool.tool_name) && tool.status === "complete",
-  );
-  const [reverted, setReverted] = useState<Set<string>>(
-    () => new Set(writes.filter((tool) => tool.reverted_at).map((tool) => tool.id as string)),
-  );
-  const [busy, setBusy] = useState<Set<string>>(() => new Set());
-
-  if (writes.length === 0) return null;
-
-  const undo = async (toolCallId: string) => {
-    setBusy((prev) => new Set(prev).add(toolCallId));
-    try {
-      await undoToolCall(conversationId, toolCallId);
-      setReverted((prev) => new Set(prev).add(toolCallId));
-    } finally {
-      setBusy((prev) => {
-        const next = new Set(prev);
-        next.delete(toolCallId);
-        return next;
-      });
-    }
-  };
-
-  return (
-    <div className={styles.writeTrail} role="list" aria-label="Assistant actions">
-      {writes.map((tool) => {
-        const id = tool.id as string;
-        const isReverted = reverted.has(id) || Boolean(tool.reverted_at);
-        const { kicker, target, detail } = describeWrite(tool);
-        return (
-          <div key={id} className={styles.writeRow} role="listitem">
-            <span className={styles.writeKicker}>{kicker}</span>
-            <span className={styles.writeVerb}>
-              <em>{target}</em>
-              {detail ? <span className={styles.writeDetail}>{detail}</span> : null}
-            </span>
-            {isReverted ? (
-              <span className={styles.writeUndone}>Undone</span>
-            ) : (
-              <button
-                type="button"
-                className={styles.writeUndo}
-                disabled={busy.has(id)}
-                onClick={() => undo(id)}
-                aria-label={`Undo: ${kicker} ${target}`}
-              >
-                Undo
-              </button>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-export default function AssistantTrustInspector({
+export default function AssistantDetails({
   trustTrail,
   onCitationActivate,
 }: {
@@ -153,6 +24,7 @@ export default function AssistantTrustInspector({
     event?: React.MouseEvent,
   ) => void;
 }) {
+  const display = useRenderEnvironment();
   const retrieved = trustTrail.tool_calls.reduce(
     (count, tool) => count + tool.retrievals.length,
     0,
@@ -172,16 +44,17 @@ export default function AssistantTrustInspector({
   const warnings = trustTrail.integrity_notices.length;
 
   return (
-    <details className={styles.trustInspector}>
+    <details className={styles.details}>
       <summary>
-        <span>
-          {trustTrail.tool_calls.length} tools - {retrieved} retrieved - {selected}{" "}
-          selected - {included} included - {trustTrail.citations.length} cited -{" "}
-          {contextRefs} context refs
-        </span>
-        {warnings > 0 ? <strong>{warnings} notices</strong> : null}
+        Details{warnings > 0 ? ` ${warnings} ${warnings === 1 ? "notice" : "notices"}` : ""}
       </summary>
       <div className={styles.trustInspectorPanel}>
+        <section>
+          <h4>Activity</h4>
+          <p>
+            {trustTrail.tool_calls.length} tools · {retrieved} retrieved · {selected} selected · {included} included · {trustTrail.citations.length} cited · {contextRefs} context refs
+          </p>
+        </section>
         {trustTrail.run ? (
           <section>
             <h4>Run</h4>
@@ -217,6 +90,39 @@ export default function AssistantTrustInspector({
                 <dt>Output</dt>
                 <dd>{trustTrail.run.final_chars ?? 0} chars</dd>
               </div>
+              {typeof trustTrail.run.usage?.input_tokens === "number" ? (
+                <div>
+                  <dt>Input</dt>
+                  <dd>
+                    {formatDisplayNumber(trustTrail.run.usage.input_tokens, display)} tokens
+                  </dd>
+                </div>
+              ) : null}
+              {typeof trustTrail.run.usage?.output_tokens === "number" ? (
+                <div>
+                  <dt>Output tokens</dt>
+                  <dd>
+                    {formatDisplayNumber(trustTrail.run.usage.output_tokens, display)} tokens
+                  </dd>
+                </div>
+              ) : null}
+              {typeof trustTrail.run.total_cost_usd_micros === "number" ? (
+                <div>
+                  <dt>Cost</dt>
+                  <dd>
+                    {formatDisplayNumber(
+                      trustTrail.run.total_cost_usd_micros / 1_000_000,
+                      display,
+                      {
+                        style: "currency",
+                        currency: "USD",
+                        minimumFractionDigits: 3,
+                        maximumFractionDigits: 3,
+                      },
+                    )}
+                  </dd>
+                </div>
+              ) : null}
             </dl>
           </section>
         ) : null}

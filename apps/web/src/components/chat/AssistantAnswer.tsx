@@ -11,7 +11,7 @@ import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import styles from "./MessageRow.module.css";
 
-export default function AssistantEvidenceDisclosure({
+export default function AssistantAnswer({
   message,
   citations,
   answerRef,
@@ -28,7 +28,7 @@ export default function AssistantEvidenceDisclosure({
 }) {
   const answerContent = conversationMessageText(message);
   return (
-    <div ref={answerRef} className={styles.assistantBody}>
+    <div ref={answerRef} className={styles.assistantAnswer}>
       <MarkdownMessage
         content={answerContent}
         citations={citations}

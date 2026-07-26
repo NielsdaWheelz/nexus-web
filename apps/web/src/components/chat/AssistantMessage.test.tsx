@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
+import { horizontallyScrollableElements } from "@/__tests__/helpers/horizontalOverflow";
 import type {
   AssistantTrustTrail,
   ConversationMessage,
@@ -11,6 +12,7 @@ import type { CitationOut } from "@/lib/conversations/citationOut";
 import AssistantMessage from "./AssistantMessage";
 
 type TrustRun = NonNullable<AssistantTrustTrail["run"]>;
+const timestampLabel = "Jun 3";
 
 function failureRun(failure: ExpectedChatFailure): TrustRun {
   return {
@@ -138,6 +140,7 @@ describe("AssistantMessage", () => {
       <AssistantMessage
         message={message}
         forkOptions={[]}
+        timestampLabel={timestampLabel}
         onRerunAssistantResponse={onRerunAssistantResponse}
       />,
     );
@@ -156,7 +159,13 @@ describe("AssistantMessage", () => {
     };
     message.trust_trail = { ...message.trust_trail!, status: "error", run: null };
 
-    render(<AssistantMessage message={message} forkOptions={[]} />);
+    render(
+      <AssistantMessage
+        message={message}
+        forkOptions={[]}
+        timestampLabel={timestampLabel}
+      />,
+    );
 
     expect(screen.getByText("Something went wrong")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Run again" })).toBeNull();
@@ -173,7 +182,13 @@ describe("AssistantMessage", () => {
       "Here is a partial answer",
     );
 
-    render(<AssistantMessage message={message} forkOptions={[]} />);
+    render(
+      <AssistantMessage
+        message={message}
+        forkOptions={[]}
+        timestampLabel={timestampLabel}
+      />,
+    );
 
     expect(screen.getByText("Here is a partial answer")).toBeInTheDocument();
     expect(screen.getByText("Response incomplete")).toBeInTheDocument();
@@ -191,7 +206,13 @@ describe("AssistantMessage", () => {
       false,
     );
 
-    render(<AssistantMessage message={message} forkOptions={[]} />);
+    render(
+      <AssistantMessage
+        message={message}
+        forkOptions={[]}
+        timestampLabel={timestampLabel}
+      />,
+    );
 
     expect(screen.getByText("Response declined")).toBeInTheDocument();
     expect(screen.queryByText("leaked refusal preamble")).toBeNull();
@@ -210,7 +231,13 @@ describe("AssistantMessage", () => {
       status: "cancelled",
     };
 
-    render(<AssistantMessage message={message} forkOptions={[]} />);
+    render(
+      <AssistantMessage
+        message={message}
+        forkOptions={[]}
+        timestampLabel={timestampLabel}
+      />,
+    );
 
     expect(screen.getByText("Cancelled")).toBeInTheDocument();
     expect(screen.getByText("This response was cancelled.")).toBeInTheDocument();
@@ -228,6 +255,7 @@ describe("AssistantMessage", () => {
       <AssistantMessage
         message={message}
         forkOptions={[]}
+        timestampLabel={timestampLabel}
         connectionLost
         onReconnectAssistant={onReconnectAssistant}
       />,
@@ -253,6 +281,7 @@ describe("AssistantMessage", () => {
       <AssistantMessage
         message={message}
         forkOptions={[]}
+        timestampLabel={timestampLabel}
         connectionLost
         onReconnectAssistant={vi.fn()}
       />,
@@ -273,6 +302,7 @@ describe("AssistantMessage", () => {
       <AssistantMessage
         message={assistantMessage()}
         forkOptions={[]}
+        timestampLabel={timestampLabel}
         onReplyToAssistant={onReplyToAssistant}
       />,
     );
@@ -309,6 +339,7 @@ describe("AssistantMessage", () => {
       <AssistantMessage
         message={assistantMessage()}
         forkOptions={[]}
+        timestampLabel={timestampLabel}
         onReplyToAssistant={vi.fn()}
       />,
     );
@@ -492,11 +523,12 @@ describe("AssistantMessage", () => {
       <AssistantMessage
         message={message}
         forkOptions={[]}
+        timestampLabel={timestampLabel}
         onCitationActivate={onCitationActivate}
       />,
     );
 
-    fireEvent.click(screen.getByText(/1 tools - 1 retrieved - 1 selected/));
+    fireEvent.click(screen.getByText("Details 1 notice"));
 
     expect(screen.getByText("openai/gpt-test")).toBeInTheDocument();
     expect(screen.getByText(/#1 app_search - complete/)).toBeInTheDocument();
@@ -550,6 +582,7 @@ describe("AssistantMessage", () => {
       <AssistantMessage
         message={message}
         forkOptions={[]}
+        timestampLabel={timestampLabel}
       />,
     );
 
@@ -590,7 +623,11 @@ describe("AssistantMessage", () => {
     };
 
     render(
-      <AssistantMessage message={message} forkOptions={[]} />,
+      <AssistantMessage
+        message={message}
+        forkOptions={[]}
+        timestampLabel={timestampLabel}
+      />,
     );
 
     expect(screen.getByText("Filed to")).toBeInTheDocument();
@@ -625,7 +662,11 @@ describe("AssistantMessage", () => {
     };
 
     render(
-      <AssistantMessage message={message} forkOptions={[]} />,
+      <AssistantMessage
+        message={message}
+        forkOptions={[]}
+        timestampLabel={timestampLabel}
+      />,
     );
 
     expect(screen.getByText("Connected")).toBeInTheDocument();
@@ -658,7 +699,11 @@ describe("AssistantMessage", () => {
     };
 
     render(
-      <AssistantMessage message={message} forkOptions={[]} />,
+      <AssistantMessage
+        message={message}
+        forkOptions={[]}
+        timestampLabel={timestampLabel}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: /^Undo:/ }));
@@ -671,30 +716,28 @@ describe("AssistantMessage", () => {
     expect(screen.queryByRole("button", { name: /^Undo:/ })).toBeNull();
   });
 
-  it("sets the machine register with an ASSISTANT signature and a valid <time> (AC-2)", () => {
+  it("uses normal assistant prose with an accessible role group and a quiet timestamp", () => {
     render(
       <AssistantMessage
         message={assistantMessage()}
         forkOptions={[]}
+        timestampLabel={timestampLabel}
       />,
     );
 
-    // The prose is wrapped by the machine owner, stamped with the honest origin.
-    // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: asserting the prose renders INSIDE the machine wrapper; the wrapper carries a data-provenance attribute, not a role/label
-    const machine = document.querySelector('[data-machine-origin="Assistant"]');
-    expect(machine).not.toBeNull();
-    expect(machine).toContainElement(screen.getByText("Alpha beta gamma"));
-
-    // Head signature: small-caps origin + a machine-readable <time> (the
-    // "· 12:00 AM" text node is the <time>; its datetime is the ISO instant).
-    expect(screen.getByText("Assistant")).toBeInTheDocument();
-    expect(screen.getByText(/^·/)).toHaveAttribute(
+    expect(screen.getByRole("group", { name: "Assistant response" })).toContainElement(
+      screen.getByText("Alpha beta gamma"),
+    );
+    expect(screen.queryByText("Assistant")).toBeNull();
+    // eslint-disable-next-line testing-library/no-node-access -- asserting the removed provenance attribute has no rendered compatibility path
+    expect(document.querySelector("[data-machine-origin]")).toBeNull();
+    expect(screen.getByText("Jun 3")).toHaveAttribute(
       "datetime",
       "2026-06-03T00:00:00Z",
     );
   });
 
-  // --- Colophon + footnotes gating (S3 / AC-4 / AC-5 / AC-6) ----------------
+  // --- Sources + Details disclosure gating ----------------------------------
 
   function citationFixture(): CitationOut {
     return {
@@ -724,7 +767,7 @@ describe("AssistantMessage", () => {
   }
 
   function completedWithRun(): ConversationMessage {
-    const message = assistantMessage("The answer [1].");
+    const message = assistantMessage("The answer.");
     message.citations = [citationFixture()];
     message.trust_trail = {
       ...message.trust_trail!,
@@ -748,67 +791,65 @@ describe("AssistantMessage", () => {
     return message;
   }
 
-  it("renders the colophon and footnotes on a completed turn with a run (AC-4/AC-5/AC-6)", () => {
+  it("keeps Sources and Details closed while preserving their content", () => {
     render(
       <AssistantMessage
         message={completedWithRun()}
         forkOptions={[]}
+        timestampLabel={timestampLabel}
       />,
     );
 
-    // Colophon: model uppercased, tokens, cost, and source count (AC-5/AC-6).
-    const colophon = screen.getByLabelText("Generation provenance");
-    expect(colophon).toHaveTextContent("CLAUDE-SONNET-4-6");
-    expect(colophon).toHaveTextContent("3.2K IN / 1.1K OUT");
-    expect(colophon).toHaveTextContent("$0.014");
-    expect(colophon).toHaveTextContent("1 SOURCE");
-
-    // Footnotes: the <ol aria-label="Sources"> with one entry (AC-4).
+    // eslint-disable-next-line testing-library/no-node-access -- native disclosure closed state lives on its semantic details ancestor
+    expect(screen.getByText("Sources (1)").closest("details")).not.toHaveAttribute("open");
+    // eslint-disable-next-line testing-library/no-node-access -- native disclosure closed state lives on its semantic details ancestor
+    expect(screen.getByText("Details").closest("details")).not.toHaveAttribute("open");
     expect(screen.getByRole("list", { name: "Sources" })).toBeInTheDocument();
-    expect(
-      screen.getByRole("link", { name: /1\. Source title/ }),
-    ).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Details"));
+    expect(screen.getByText("anthropic/claude-sonnet-4-6")).toBeInTheDocument();
+    expect(screen.getByText("3,200 tokens")).toBeInTheDocument();
+    expect(screen.getByText("1,100 tokens")).toBeInTheDocument();
+    expect(screen.getByText("$0.014")).toBeInTheDocument();
   });
 
-  it("omits the colophon while the turn is streaming (AC-5)", () => {
-    const message = completedWithRun();
-    message.status = "pending";
+  it("contains hostile Markdown at 320px while code and tables scroll locally", () => {
+    const hostileLink = `https://example.test/${"unbroken-link-identifier-".repeat(32)}`;
+    const hostileCode = "unbroken-code-identifier-".repeat(28);
+    const hostileTable = "unbroken-table-cell-identifier-".repeat(20);
+    const message = assistantMessage([
+      `A long link stays inside the transcript: ${hostileLink}`,
+      "",
+      "```typescript",
+      `const hostile = \"${hostileCode}\";`,
+      "```",
+      "",
+      "| Column | Value |",
+      "| --- | --- |",
+      `| hostile | ${hostileTable} |`,
+    ].join("\n"));
 
+    document.body.style.margin = "0";
     render(
-      <AssistantMessage
-        message={message}
-        forkOptions={[]}
-      />,
+      <div
+        data-testid="assistant-transcript-host"
+        style={{ width: "320px", maxWidth: "320px" }}
+      >
+        <AssistantMessage
+          message={message}
+          forkOptions={[]}
+          timestampLabel={timestampLabel}
+        />
+      </div>,
     );
 
-    expect(screen.queryByLabelText("Generation provenance")).toBeNull();
-  });
+    const host = screen.getByTestId("assistant-transcript-host");
+    const codeScroll = screen.getByTestId("markdown-code-scroll");
+    const tableScroll = screen.getByTestId("markdown-table-scroll");
 
-  it("omits the colophon on an errored turn (AC-5)", () => {
-    const message = completedWithRun();
-    message.status = "error";
-
-    render(
-      <AssistantMessage
-        message={message}
-        forkOptions={[]}
-      />,
-    );
-
-    expect(screen.queryByLabelText("Generation provenance")).toBeNull();
-  });
-
-  it("omits the colophon when the completed turn has no run data (AC-5)", () => {
-    const message = completedWithRun();
-    message.trust_trail = { ...message.trust_trail!, run: null };
-
-    render(
-      <AssistantMessage
-        message={message}
-        forkOptions={[]}
-      />,
-    );
-
-    expect(screen.queryByLabelText("Generation provenance")).toBeNull();
+    expect(host.clientWidth).toBe(320);
+    expect(host.scrollWidth).toBeLessThanOrEqual(host.clientWidth + 1);
+    expect(codeScroll.scrollWidth).toBeGreaterThan(codeScroll.clientWidth + 1);
+    expect(tableScroll.scrollWidth).toBeGreaterThan(tableScroll.clientWidth + 1);
+    expect(horizontallyScrollableElements(host)).toHaveLength(2);
   });
 });

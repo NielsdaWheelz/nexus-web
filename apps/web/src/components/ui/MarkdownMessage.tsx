@@ -108,6 +108,7 @@ function CodeBlockWrapper({
         ref={contentRef}
         className={styles.codeBlockContent}
         data-lang={language}
+        data-testid="markdown-code-scroll"
       >
         {children}
       </div>

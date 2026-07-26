@@ -24,11 +24,34 @@
   border: 0;
 }
 
-.privacyNotice {
+.exceptionalPrivacy {
   flex: 1 1 100%;
+  min-width: 0;
   color: var(--ink-faint);
   font-size: var(--text-2xs);
   line-height: var(--leading-snug);
+}
+
+.privacyDisclosure {
+  flex: 0 1 auto;
+  min-width: 0;
+  color: var(--ink-faint);
+  font-size: var(--text-2xs);
+  line-height: var(--leading-snug);
+}
+
+.privacyDisclosure[open] {
+  flex: 1 1 100%;
+}
+
+.privacyDisclosure summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.privacyDisclosure p,
+.exceptionalPrivacy {
+  margin: var(--space-1) 0 0;
 }
 
 .status {

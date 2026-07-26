@@ -1,13 +1,15 @@
 .message {
   position: relative;
-  width: 100%;
-  max-width: var(--content-max-width);
+  inline-size: 100%;
+  min-inline-size: 0;
+  max-inline-size: var(--content-max-width);
   --chat-prose-measure: 66ch;
   --chat-prose-font-size: var(--text-md);
   --chat-prose-line-height: 1.58;
   margin-bottom: calc(var(--leading-relaxed) * 1em);
-  font-size: var(--text-sm);
-  line-height: var(--leading-relaxed);
+  font-family: var(--font-sans);
+  font-size: var(--chat-prose-font-size);
+  line-height: var(--chat-prose-line-height);
   animation: messageIn var(--duration-fast) var(--ease-snap);
 }
 
@@ -26,7 +28,7 @@
   }
 }
 
-/* One editorial user register: full-measure, 2 px left rail, YOU kicker. */
+/* User turns retain the quiet accent rail without an explicit role label. */
 
 .userPrompt {
   display: grid;
@@ -38,33 +40,20 @@
   padding-inline-start: var(--space-3);
 }
 
-.userKicker {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  justify-content: space-between;
-}
-
-.userAttribution {
-  font-variant-caps: all-small-caps;
-  letter-spacing: var(--tracking-wider);
-  color: var(--accent-muted);
-  font-size: var(--text-xs);
-}
-
 .userPromptBody {
   display: block;
   min-width: 0;
-  font-size: var(--text-sm);
-  line-height: var(--leading-relaxed);
+  max-inline-size: var(--chat-prose-measure);
+  font-size: var(--chat-prose-font-size);
+  line-height: var(--chat-prose-line-height);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 
-/* Assistant prose ink now flows from the MachineText wrapper; this class stays
-   only as the answer-ref / selection hook (keep it — AssistantEvidenceDisclosure
-   targets it). */
-.assistantBody {
+.assistantAnswer {
+  min-inline-size: 0;
+  max-inline-size: var(--chat-prose-measure);
+  color: var(--ink);
 }
 
 .systemBody {
@@ -81,6 +70,18 @@
   gap: var(--space-2);
   margin-bottom: var(--space-2);
   opacity: 1;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .messageActions {
+    opacity: 0;
+    transition: opacity var(--duration-fast) var(--ease-glide);
+  }
+
+  .message:hover .messageActions,
+  .message:focus-within .messageActions {
+    opacity: 1;
+  }
 }
 
 .streamingCue {
@@ -207,21 +208,22 @@
   font-size: var(--text-2xs);
 }
 
-.trustInspector {
+.details {
   margin-top: var(--space-2);
   color: var(--ink-muted);
   font-size: var(--text-xs);
 }
 
-.trustInspector summary {
+.details summary {
   display: flex;
   gap: var(--space-2);
   align-items: center;
   cursor: pointer;
 }
 
-.trustInspector summary strong {
-  color: var(--warning);
+.details summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }
 
 .trustInspectorPanel {
@@ -354,13 +356,19 @@
   margin-top: var(--space-1);
   font-size: var(--text-xs);
   color: var(--ink-faint);
-  opacity: 0;
+  opacity: 1;
   transition: opacity var(--duration-fast) var(--ease-glide);
 }
 
-.message:hover .timestamp,
-.message:focus-within .timestamp {
-  opacity: 1;
+@media (hover: hover) and (pointer: fine) {
+  .timestamp {
+    opacity: 0;
+  }
+
+  .message:hover .timestamp,
+  .message:focus-within .timestamp {
+    opacity: 1;
+  }
 }
 
 @media (max-width: 640px) {

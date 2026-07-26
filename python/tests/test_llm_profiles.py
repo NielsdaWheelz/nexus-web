@@ -44,6 +44,17 @@ def test_default_profile_is_balanced():
     assert profile(DEFAULT_PROFILE_ID) is not None
 
 
+def test_profile_registry_owns_the_privacy_classification_and_copy():
+    balanced = profile("balanced")
+    fable = profile("fable")
+
+    assert balanced is not None
+    assert fable is not None
+    assert balanced.privacy.kind == "Standard"
+    assert fable.privacy.kind == "ExceptionalRetention"
+    assert "30 days" in fable.privacy.notice
+
+
 def test_operation_profiles_is_total_over_background_llm_operation():
     all_operations = typing.get_args(BackgroundLlmOperation.__value__)
 

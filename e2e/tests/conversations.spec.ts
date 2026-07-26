@@ -72,11 +72,6 @@ async function deleteConversationViaApi(page: Page, conversationId: string) {
   }
 }
 
-function readConversationIdFromUrl(url: string): string | null {
-  const match = url.match(/\/conversations\/([0-9a-f-]+)$/i);
-  return match?.[1] ?? null;
-}
-
 function workspacePaneButton(page: Page, name: RegExp | string) {
   return page
     .getByRole("toolbar", { name: "Workspace panes" })
@@ -122,6 +117,7 @@ async function confirmDeleteFork(panel: Locator, name: string) {
 
 test.describe("conversations", () => {
   test("create conversation", async ({ page }, testInfo) => {
+    test.setTimeout(60_000);
     let conversationId: string | null = null;
     try {
       conversationId = await createConversationViaApi(page);
@@ -134,17 +130,46 @@ test.describe("conversations", () => {
       const conversationLink = page
         .locator(`a[href="/conversations/${conversationId}"]`)
         .first();
+      const conversationRow = conversationLink.locator("xpath=ancestor::li");
       await expect(conversationLink).toBeVisible();
       await expect(conversationLink.getByText(/^chat$/i)).toBeVisible();
       await expect(conversationLink).not.toContainText(
         new RegExp(conversationId.slice(0, 8), "i"),
       );
-      await conversationLink.click();
+      const actionMenu = conversationRow.getByRole("button", {
+        name: /More actions for chat/i,
+      });
+      await actionMenu.click();
+      await expect(page).toHaveURL(/\/conversations$/);
+      await expect(conversationRow).toBeVisible();
+      await page.keyboard.press("Escape");
 
+      // The metadata is inert chrome, not part of the anchor's DOM subtree. Its
+      // click must still reach the shared row's real primary link.
+      const metadata = conversationRow.getByText(/0 messages$/);
+      await expect(metadata).toBeVisible();
+      const metadataBox = await metadata.boundingBox();
+      if (!metadataBox) {
+        throw new Error("Conversation metadata has no visible hit-test bounds.");
+      }
+      const clickPoint = {
+        x: metadataBox.x + metadataBox.width / 2,
+        y: metadataBox.y + metadataBox.height / 2,
+      };
+      await page.mouse.click(
+        clickPoint.x,
+        clickPoint.y,
+      );
+
+      await expect(
+        activeWorkspacePane(page).getByRole("region", {
+          name: "Chat conversation",
+        }),
+      ).toBeVisible({ timeout: 30_000 });
       await expect(page).toHaveURL(
         new RegExp(`/conversations/${conversationId}$`),
       );
-      expect(readConversationIdFromUrl(page.url())).toBe(conversationId);
+      await expect(conversationRow).toHaveCount(0);
       const conversationPaneButton = workspacePaneButton(
         page,
         /^chat\b/i,

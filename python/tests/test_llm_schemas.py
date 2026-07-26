@@ -58,7 +58,8 @@ def test_from_profiles_projects_product_facing_fields_and_omits_target():
     assert projected.provider_label == entry.provider_label
     assert projected.model_label == entry.model_label
     assert projected.default_reasoning_option_id == entry.default_reasoning_option_id
-    assert projected.privacy_notice == entry.privacy_notice
+    assert projected.privacy.kind == entry.privacy.kind
+    assert projected.privacy.notice == entry.privacy.notice
     assert [(o.id, o.label) for o in projected.reasoning_options] == [
         (o.id, o.label) for o in entry.reasoning_options
     ]
@@ -72,6 +73,22 @@ def test_llm_profiles_out_round_trips_through_model_dump():
     restored = LlmProfilesOut.model_validate(dumped)
 
     assert restored == out
+
+
+def test_profile_privacy_is_a_closed_nested_discriminated_union():
+    out = LlmProfilesOut.from_profiles()
+
+    assert {
+        profile.id: profile.privacy.kind for profile in out.profiles
+    } == {
+        "fast": "Standard",
+        "balanced": "Standard",
+        "deep": "Standard",
+        "claude": "Standard",
+        "fable": "ExceptionalRetention",
+        "gemini": "Standard",
+        "kimi": "Standard",
+    }
 
 
 # =============================================================================

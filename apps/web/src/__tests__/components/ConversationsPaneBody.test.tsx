@@ -12,6 +12,8 @@ import PaneRouteBoundary from "@/components/workspace/PaneRouteBoundary";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
+import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
+import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { assumePaneVisitId } from "@/lib/workspace/schema";
 import {
   PaneReturnMementoProvider,
@@ -58,7 +60,9 @@ function withPaneRuntime(node: ReactNode, onNavigatePane = vi.fn()) {
             onOpenInNewPane={vi.fn()}
             onSetPaneLabel={vi.fn()}
           >
-            {node}
+            <LibraryPlacementControllerProvider>
+              {withRenderEnvironment(node)}
+            </LibraryPlacementControllerProvider>
           </PaneRuntimeProvider>
         </ShareControllerProvider>
       </FeedbackProvider>
@@ -107,6 +111,7 @@ describe("ConversationsPaneBody", () => {
       "href",
       "/conversations/new",
     );
+    expect(screen.getByText(/2 messages/)).toBeVisible();
   });
 
   it("keeps starting a new chat visible when the recent list is empty", async () => {
@@ -243,14 +248,13 @@ describe("ConversationsPaneBody", () => {
         if (url.searchParams.get("cursor") === "cursor-2") {
           return jsonResponse({
             data: [second],
-            page: { has_more: false, next_cursor: null },
+            page: { next_cursor: null },
           });
         }
         firstPageRequestCount += 1;
         return jsonResponse({
           data: firstPageRequestCount === 1 ? [first] : [replacement],
           page: {
-            has_more: firstPageRequestCount === 1,
             next_cursor: firstPageRequestCount === 1 ? "cursor-2" : null,
           },
         });
@@ -270,7 +274,9 @@ describe("ConversationsPaneBody", () => {
         resourceGeneration={resourceGeneration}
         publishCommands={publishCommands}
       >
-        <ConversationsPaneBody />
+        <LibraryPlacementControllerProvider>
+          {withRenderEnvironment(<ConversationsPaneBody />)}
+        </LibraryPlacementControllerProvider>
       </PaneReturnJourneyHarness>
     );
     const view = render(journey(0));

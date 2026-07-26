@@ -5,6 +5,11 @@ Author altitude: SME / staff
 Date: 2026-06-12
 Type: hard cutover - no legacy paths, no fallbacks, no backward compatibility, no compat shims
 
+Frontend presentation is owned by
+`docs/cutovers/chat-interface-hard-cutover.md`: the read model renders through
+closed `AssistantDetails`, while consequential writes render through visible
+`AssistantWriteTrail`.
+
 **Superseded by default-library-virtualization-and-transient-state-pruning-hard-cutover.md
 (2026-07-17):** `message_retrieval_candidate_ledgers` and
 `message_rerank_ledgers` — named throughout this document (including the
@@ -215,9 +220,9 @@ fallback in this cutover.
 
 Each assistant message renders:
 
-1. Existing answer text and citation chips.
-2. Existing active tool cue, now reading from `trust_trail.tool_calls`.
-3. A collapsed trust inspector below the answer and outside the answer text
+1. Existing answer text and inline citations.
+2. Existing active tool cue, reading from `trust_trail.tool_calls`.
+3. A closed `Details` disclosure below Sources and outside the answer text
    selection container.
 4. Expanded detail on demand:
    - run/model/status summary;
@@ -230,9 +235,8 @@ Each assistant message renders:
    - context-ref-added records;
    - warnings for integrity mismatches.
 
-The collapsed line is terse, for example:
-
-`2 tools - 18 retrieved - 5 selected - 4 cited - 1 reference added`
+The closed summary is exactly `Details`, plus `N notices` when integrity
+notices exist. Routine counts do not compete with the answer.
 
 ### 6.2 Reload
 
@@ -288,8 +292,11 @@ apps/web/src/lib/conversations/types.ts
 apps/web/src/components/chat/useChatMessageUpdates.ts
   folds live SSE deltas into message.trust_trail
 
-apps/web/src/components/chat/AssistantTrustInspector.tsx
-  presentational inspector
+apps/web/src/components/chat/AssistantDetails.tsx
+  presentational diagnostic disclosure
+
+apps/web/src/components/chat/AssistantWriteTrail.tsx
+  visible consequential writes and Undo
 
 apps/web/src/components/chat/AssistantMessage.tsx
   places the inspector outside the answer text ref
@@ -670,23 +677,24 @@ Edit `python/nexus/services/chat_runs.py`:
 
 Do not invent separate event types for read/inspect. A tool is a tool.
 
-### S6 - Frontend inspector
+### S6 - Frontend details
 
 Add:
 
-- `apps/web/src/components/chat/AssistantTrustInspector.tsx`
+- `apps/web/src/components/chat/AssistantDetails.tsx`
+- `apps/web/src/components/chat/AssistantWriteTrail.tsx`
 - `apps/web/src/components/chat/assistantTrust.ts` or
   `apps/web/src/lib/conversations/assistantTrust.ts` for pure summarizers
 - local CSS in the existing chat message stylesheet
 
 Edit:
 
-- `AssistantMessage.tsx`: render the inspector after
-  `AssistantEvidenceDisclosure` and before `AssistantSelectionPopover`.
+- `AssistantMessage.tsx`: render `AssistantDetails` after Sources and outside
+  the answer selection container; render `AssistantWriteTrail` before Sources.
 - `ToolActivity`: read active tool calls from `trust_trail.tool_calls`.
 - `useChatMessageUpdates.ts`: fold SSE into `message.trust_trail`.
 
-The inspector is outside the answer `ref`. Assistant answer selection must still
+Details and the write trail are outside the answer `ref`. Assistant answer selection must still
 compare rendered answer text to `conversationMessageText(message)` without
 debug text contamination.
 
@@ -698,8 +706,7 @@ This is a developer-grade product surface, not a raw log dump.
 
 Collapsed:
 
-- one-line summary;
-- status icon;
+- the label `Details`;
 - warning count if integrity notices exist;
 - no card-in-card layout;
 - no large explanatory copy.
@@ -867,7 +874,7 @@ Add:
 
 - `assistantTrust.test.ts`: summary counts, warning counts, citation/retrieval
   linkage, safe empty states.
-- `AssistantTrustInspector.test.tsx`: collapsed/expanded rendering, actions,
+- `AssistantDetails.test.tsx`: closed/expanded rendering, actions,
   failed states, no raw prompt display.
 - `useChatRunTail.test.tsx`: live fold of tool/retrieval/citation/reference into
   `trust_trail`, reconnect/reconcile behavior.
@@ -913,7 +920,8 @@ Frontend:
 
 - `apps/web/src/lib/conversations/types.ts`
 - `apps/web/src/lib/conversations/assistantTrust.ts` (new)
-- `apps/web/src/components/chat/AssistantTrustInspector.tsx` (new)
+- `apps/web/src/components/chat/AssistantDetails.tsx` (new)
+- `apps/web/src/components/chat/AssistantWriteTrail.tsx` (new)
 - `apps/web/src/components/chat/AssistantMessage.tsx`
 - `apps/web/src/components/chat/useChatMessageUpdates.ts`
 - `apps/web/src/components/chat/useChatRunTail.ts`
@@ -996,7 +1004,8 @@ reasoning boundary. The trail exposes safe summaries and linkage.
 4. Expand tool-call event grammar and emit read/inspect tool events.
 5. Move frontend live fold state from top-level `tool_calls`/`retrievals` into
    `message.trust_trail`.
-6. Add `AssistantTrustInspector` and switch `ToolActivity` to the trust trail.
+6. Add `AssistantDetails`/`AssistantWriteTrail` and switch `ToolActivity` to
+   the trust trail.
 7. Delete retrieval block append paths and old frontend types.
 8. Land backend, frontend, and e2e tests.
 9. Update chat/architecture docs and mark this spec Implemented.

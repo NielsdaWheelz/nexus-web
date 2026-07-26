@@ -1,14 +1,21 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import type { ComponentProps } from "react";
 import { userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { horizontallyScrollableElements } from "@/__tests__/helpers/horizontalOverflow";
-import ChatComposer from "@/components/chat/ChatComposer";
+import ChatComposerComponent from "@/components/chat/ChatComposer";
 import { __resetChatProfilesCacheForTests } from "@/components/chat/useChatProfiles";
 import { present } from "@/lib/api/presence";
 import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
 import type { PendingTurnContext } from "@/lib/conversations/pendingTurnContext";
 import type { ReaderSelectionPreview } from "@/lib/conversations/readerSelection";
 import type { BranchDraft } from "@/lib/conversations/types";
+
+function ChatComposer(
+  props: Omit<ComponentProps<typeof ChatComposerComponent>, "sendCapability">,
+) {
+  return <ChatComposerComponent {...props} sendCapability={{ kind: "Available" }} />;
+}
 
 const LLM_PROFILES = {
   default_profile_id: "balanced",
@@ -24,7 +31,7 @@ const LLM_PROFILES = {
         { id: "high", label: "High" },
       ],
       default_reasoning_option_id: "default",
-      privacy_notice: "Processed by Nexus AI.",
+      privacy: { kind: "Standard", notice: "Processed by Nexus AI." },
     },
     {
       id: "fast",
@@ -34,7 +41,7 @@ const LLM_PROFILES = {
       model_label: "Haiku",
       reasoning_options: [{ id: "default", label: "Default" }],
       default_reasoning_option_id: "default",
-      privacy_notice: "Processed by Nexus AI.",
+      privacy: { kind: "ExceptionalRetention", notice: "Retained for 30 days." },
     },
   ],
 };
@@ -733,7 +740,7 @@ describe("ChatComposer", () => {
     expect(
       await screen.findByRole("button", { name: "Retry send" }),
     ).toBeVisible();
-    expect(screen.getByText("Send status unknown — Retry send")).toBeVisible();
+    expect(screen.getByText("Send status unknown. Retry send.")).toBeVisible();
     expect(screen.getByRole("textbox", { name: "Ask anything" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "SEND" })).toBeNull();
 
@@ -807,6 +814,48 @@ describe("ChatComposer", () => {
     ).not.toBeInTheDocument();
     expect(screen.queryByText(/web search/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/^scope/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps standard retention behind Privacy and shows exceptional retention immediately", async () => {
+    const user = userEvent.setup();
+    installChatComposerFetchMock();
+
+    render(<ChatComposer conversationId="conversation-1" />);
+
+    expect(await screen.findByText("Privacy")).toBeVisible();
+    expect(screen.queryByText("Processed by Nexus AI.")).not.toBeVisible();
+
+    await user.click(screen.getByText("Privacy"));
+    expect(screen.getByText("Processed by Nexus AI.")).toBeVisible();
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "AI profile" }), "fast");
+    expect(screen.getByText("Retained for 30 days.")).toBeVisible();
+    expect(screen.queryByText("Privacy")).not.toBeInTheDocument();
+  });
+
+  it("keeps a draft editable during an assistant run without a visible wait banner", async () => {
+    const user = userEvent.setup();
+    installChatComposerFetchMock();
+    const onCancelRun = vi.fn();
+
+    render(
+      <ChatComposerComponent
+        conversationId="conversation-1"
+        sendCapability={{ kind: "AssistantRunning" }}
+        activeRunId="run-1"
+        onCancelRun={onCancelRun}
+      />,
+    );
+
+    await screen.findByRole("combobox", { name: "AI profile" });
+    const message = screen.getByRole("textbox", { name: "Ask anything" });
+    await user.click(message);
+    await user.keyboard("Keep writing");
+
+    expect(message).toHaveValue("Keep writing");
+    expect(message).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Stop response" })).toBeVisible();
+    expect(screen.queryByText(/wait for the assistant/i)).not.toBeInTheDocument();
   });
 
   it("keeps the composer controls inside a 320px mobile width without horizontal scrolling", async () => {
