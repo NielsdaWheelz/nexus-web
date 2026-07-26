@@ -27,6 +27,10 @@ import {
   routeResourceActionSubject,
   type ResourceActionSubject,
 } from "@/lib/resources/resourceActionTarget";
+import {
+  parseReaderCursorSnapshot,
+  type ReaderCursorSnapshot,
+} from "@/lib/reader/readerProgress";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
 // --- Branded identities ------------------------------------------------------
@@ -98,6 +102,7 @@ export type ConsumptionState = "Unread" | "InProgress" | "Finished";
 export interface ConsumptionInfo {
   state: ConsumptionState;
   progress: Presence<number>;
+  progressResettable: boolean;
 }
 
 export interface ChapterOut {
@@ -213,9 +218,11 @@ export interface ListeningStateOut {
   resetEpoch: number;
 }
 
-export interface MediaListeningState {
+/** Canonical current-progress snapshot returned only by `ResetProgress`. */
+export interface MediaProgressState {
   mediaId: MediaId;
-  state: ListeningStateOut;
+  readerCursor: ReaderCursorSnapshot;
+  listeningState: Presence<ListeningStateOut>;
 }
 
 // --- Command types (wire: camelCase keys, PascalCase kinds) -------------------
@@ -242,6 +249,7 @@ export type ConsumptionCommand =
       nextCapability: NextCapability;
     }
   | { kind: "SetUnread"; clientMutationId: string; mediaId: MediaId }
+  | { kind: "ResetProgress"; clientMutationId: string; mediaId: MediaId }
   | {
       kind: "UndoCompletion";
       clientMutationId: string;
@@ -272,7 +280,7 @@ export interface ConsumptionResult {
   outcome: ConsumptionOutcome;
   lectern: LecternSnapshot;
   nextItem: Presence<LecternItem>;
-  listeningStates: MediaListeningState[];
+  progressState: Presence<MediaProgressState>;
   completionHandle: Presence<CompletionHandle>;
 }
 
@@ -312,6 +320,13 @@ function asString(raw: unknown, ctx: string): string {
 function asFiniteNumber(raw: unknown, ctx: string): number {
   if (typeof raw !== "number" || !Number.isFinite(raw)) {
     throw new Error(`Invalid ${ctx}: expected a finite number, got ${JSON.stringify(raw)}`);
+  }
+  return raw;
+}
+
+function asBoolean(raw: unknown, ctx: string): boolean {
+  if (typeof raw !== "boolean") {
+    throw new Error(`Invalid ${ctx}: expected a boolean, got ${typeof raw}`);
   }
   return raw;
 }
@@ -396,10 +411,11 @@ export function decodeChapter(raw: unknown): ChapterOut {
 
 function decodeConsumption(raw: unknown): ConsumptionInfo {
   const rec = asRecord(raw, "consumption");
-  exactKeys(rec, ["state", "progress"], "consumption");
+  exactKeys(rec, ["state", "progress", "progressResettable"], "consumption");
   return {
     state: asLiteral(rec.state, ["Unread", "InProgress", "Finished"] as const, "consumption.state"),
     progress: decodePresence(rec.progress, (v) => asFraction(v, "consumption.progress")),
+    progressResettable: asBoolean(rec.progressResettable, "consumption.progressResettable"),
   };
 }
 
@@ -557,12 +573,13 @@ export function decodeListeningState(raw: unknown): ListeningStateOut {
   };
 }
 
-function decodeMediaListeningState(raw: unknown): MediaListeningState {
-  const rec = asRecord(raw, "MediaListeningState");
-  exactKeys(rec, ["mediaId", "state"], "MediaListeningState");
+function decodeMediaProgressState(raw: unknown): MediaProgressState {
+  const rec = asRecord(raw, "MediaProgressState");
+  exactKeys(rec, ["mediaId", "readerCursor", "listeningState"], "MediaProgressState");
   return {
     mediaId: decodeMediaId(rec.mediaId),
-    state: decodeListeningState(rec.state),
+    readerCursor: parseReaderCursorSnapshot(rec.readerCursor),
+    listeningState: decodePresence(rec.listeningState, decodeListeningState),
   };
 }
 
@@ -617,16 +634,14 @@ export function decodeConsumptionResult(raw: unknown): ConsumptionResult {
   const rec = asRecord(raw, "ConsumptionResult");
   exactKeys(
     rec,
-    ["outcome", "lectern", "nextItem", "listeningStates", "completionHandle"],
+    ["outcome", "lectern", "nextItem", "progressState", "completionHandle"],
     "ConsumptionResult",
   );
   return {
     outcome: decodeConsumptionOutcome(rec.outcome),
     lectern: decodeLecternSnapshot(rec.lectern),
     nextItem: decodePresence(rec.nextItem, decodeLecternItem),
-    listeningStates: asArray(rec.listeningStates, "ConsumptionResult.listeningStates").map(
-      decodeMediaListeningState,
-    ),
+    progressState: decodePresence(rec.progressState, decodeMediaProgressState),
     completionHandle: decodePresence(rec.completionHandle, decodeCompletionHandle),
   };
 }

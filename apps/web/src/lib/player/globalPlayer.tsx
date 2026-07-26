@@ -12,7 +12,7 @@
  *     provider only runs the returned `PlaybackEffect`.
  *   - `listeningHeartbeat.ts` — one position heartbeat engine per active
  *     media (created on session start; ticked on the 15s cadence, on pause, and
- *     on seek; drained + adopted around active-media Unread; keepalive-flushed on
+ *     on seek; drained before active-media ResetProgress; keepalive-flushed on
  *     `beforeunload`).
  *   - `LecternProvider` — the FIFO Lectern/consumption capability. Terminal
  *     completion commands and origin maintenance flow through `useLectern()`.
@@ -77,6 +77,7 @@ import {
   playExplicit,
   previewNextDescriptor,
   previous as previousTransition,
+  resetProgress as resetProgressTransition,
   EMPTY_HISTORY,
   type AudioSession,
   type CompletionAttempt,
@@ -628,9 +629,19 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
           );
         }
         heartbeatRef.current?.tick();
+        return;
+      }
+
+      if (transition.effect.kind === "ResetCurrent") {
+        // The old heartbeat was drained before ResetProgress entered the FIFO.
+        // Seek before pause so the pause listener cannot persist the stale
+        // position through the freshly installed generation.
+        seekToSecondsInternal(transition.effect.positionMs / 1000);
+        stopSilenceTrimming();
+        audioElementRef.current?.pause();
       }
     },
-    [latestSnapshot, seekToSecondsInternal, startHeartbeat],
+    [latestSnapshot, seekToSecondsInternal, startHeartbeat, stopSilenceTrimming],
   );
 
   const recordFinishedOverride = useCallback((mediaId: MediaId) => {
@@ -1243,48 +1254,62 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, []);
 
-  // --- Canonical install subscription (origin maintenance + Unread reset) -----
+  // --- Canonical install subscription (origin maintenance + ResetProgress) ---
 
   useEffect(() => {
     const handleEvent = (event: CanonicalInstallEvent) => {
       if (event.kind === "snapshot") {
+        // A successful status-only Unread has no progress-state event. Clear
+        // only the local Finished -> zero start override named by the canonical
+        // command result; leave the active element, overlay, heartbeat, and
+        // fencing tokens entirely untouched.
+        for (const mediaId of event.unreadMediaIds) {
+          finishedOverridesRef.current.delete(mediaId);
+        }
         setSessionState((prev) => applySnapshotInstall(prev, event.snapshot));
         return;
       }
-      // listeningStates: an Unread reset. Adopt each into the overlay and adopt
-      // the (already pre-command-drained) active-media engine so the retained
-      // player seeks to the reset state. The drain itself happens BEFORE the
-      // SetUnread command via the registered pre-command hook below (spec §5.4).
-      const activeMedia = sessionOfState(sessionStateRef.current)?.descriptor.mediaId;
-      for (const { mediaId, state } of event.states) {
-        finishedOverridesRef.current.delete(mediaId);
+      const { mediaId, listeningState } = event.state;
+      finishedOverridesRef.current.delete(mediaId);
+      if (listeningState.kind === "Present") {
+        const state = listeningState.value;
         overlayRef.current.set(mediaId, {
           positionMs: state.positionMs,
           writeRevision: state.writeRevision,
           resetEpoch: state.resetEpoch,
         });
-        if (mediaId === activeMedia && heartbeatRef.current) {
-          heartbeatRef.current.adoptServerState(state);
+        const active = sessionOfState(sessionStateRef.current);
+        if (active?.descriptor.mediaId === mediaId) {
+          // `registerBeforeProgressReset` already retired the old engine. Move
+          // the element to the returned canonical position and pause it, then
+          // create a fresh engine using the server's fencing tokens.
+          applyTransition(
+            resetProgressTransition(
+              sessionStateRef.current,
+              historyRef.current,
+              mediaId,
+              state.positionMs,
+            ),
+          );
+          startHeartbeat(active.descriptor, state.positionMs);
         }
       }
     };
-    // Pre-command drain: before an active-media SetUnread is issued, close and
-    // drain the old heartbeat generation for at most the deadline, then let the
-    // command proceed (spec §5.4). The post-result adoptServerState above revives
-    // the drained engine at the canonical reset.
-    const handleBeforeSetUnread = async (mediaId: MediaId): Promise<void> => {
+    // Pre-command drain: close an active heartbeat generation before the reset
+    // command runs. A timed-out old write remains harmless: the server fences it.
+    const handleBeforeProgressReset = async (mediaId: MediaId): Promise<void> => {
       const activeMedia = sessionOfState(sessionStateRef.current)?.descriptor.mediaId;
       if (mediaId === activeMedia && heartbeatRef.current) {
         await heartbeatRef.current.drainAndStop(HEARTBEAT_DEADLINE_MS);
       }
     };
     const unsubscribeInstall = lectern.onCanonicalInstall(handleEvent);
-    const unsubscribeDrain = lectern.registerBeforeSetUnread(handleBeforeSetUnread);
+    const unsubscribeDrain = lectern.registerBeforeProgressReset(handleBeforeProgressReset);
     return () => {
       unsubscribeInstall();
       unsubscribeDrain();
     };
-  }, [lectern]);
+  }, [applyTransition, lectern, startHeartbeat]);
 
   // --- Keyboard shortcuts ----------------------------------------------------
 

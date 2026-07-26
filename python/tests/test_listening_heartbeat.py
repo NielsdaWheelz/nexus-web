@@ -42,6 +42,8 @@ def _create_audio_media(direct_db: DirectSessionManager) -> UUID:
         "consumption_queue_items",
         "consumption_overrides",
         "podcast_listening_states",
+        "reader_media_state",
+        "reader_engagement_states",
         "library_entries",
     ):
         direct_db.register_cleanup(table, "media_id", media_id)
@@ -163,7 +165,7 @@ class TestPut:
         assert current["positionMs"] == 30_000, "stale PUT must not move position"
         assert current["writeRevision"] == 1
 
-    def test_stale_after_setunread_reset(self, auth_client, direct_db: DirectSessionManager):
+    def test_stale_after_reset_progress(self, auth_client, direct_db: DirectSessionManager):
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         media_id = _create_audio_media(direct_db)
@@ -180,13 +182,27 @@ class TestPut:
             == 200
         )
 
-        # SetUnread bumps write_revision and reset_epoch under the viewer lock.
+        # ResetProgress bumps both listening fences under the viewer lock.
         reset = auth_client.post(
             "/consumption/commands",
             headers=auth_headers(user_id),
-            json={"kind": "SetUnread", "clientMutationId": str(uuid4()), "mediaId": str(media_id)},
+            json={
+                "kind": "ResetProgress",
+                "clientMutationId": str(uuid4()),
+                "mediaId": str(media_id),
+            },
         )
         assert reset.status_code == 200, reset.text
+        assert reset.json()["data"]["progressState"]["value"]["readerCursor"] == {
+            "state": "Empty",
+            "revision": 1,
+        }
+        assert (
+            reset.json()["data"]["progressState"]["value"]["listeningState"]["value"][
+                "writeRevision"
+            ]
+            == 2
+        )
 
         # A pre-reset heartbeat (still expecting revision 1 / epoch 0) is now stale.
         stale = _put(

@@ -206,7 +206,15 @@ def _derive_consumption(
         state, progress = _doc_state(engagement)
     if override is not None:
         state = override
-    return ConsumptionOut(state=state, progress=progress)
+    return ConsumptionOut(
+        state=state,
+        progress=progress,
+        progress_resettable=_progress_resettable(
+            override=override,
+            engagement=engagement,
+            listening=listening,
+        ),
+    )
 
 
 def _audio_state(
@@ -251,6 +259,19 @@ def _doc_state(
     return "InProgress", progress
 
 
+def _progress_resettable(
+    *,
+    override: _state_store.OverrideState | None,
+    engagement: ReaderEngagementRow | None,
+    listening: ListeningRow | None,
+) -> bool:
+    return (
+        override is not None
+        or engagement is not None
+        or (listening is not None and (listening.position_ms > 0 or listening.is_completed))
+    )
+
+
 # ---------------------------------------------------------------------------
 # Collection read-state projection (adopters read through the service boundary)
 # ---------------------------------------------------------------------------
@@ -277,6 +298,7 @@ class MediaReadStateOut:
 
     state: MediaReadState
     progress_fraction: float | None
+    progress_resettable: bool
 
 
 def engagement_fact_rows_sql() -> str:
@@ -285,9 +307,9 @@ def engagement_fact_rows_sql() -> str:
     Binds ``:viewer_id`` and returns one row per media carrying an explicit
     override, reader engagement, or listening state. Columns are
     ``media_id``, ``read_state`` (``Unread``/``InProgress``/``Finished``),
-    ``progress_fraction``, and ``last_engaged_at``. The derivation is identical
-    to :func:`media_read_states`; visibility and destination policy belong to
-    the composing caller.
+    ``progress_fraction``, ``progress_resettable``, and ``last_engaged_at``.
+    The derivation is identical to :func:`media_read_states`; visibility and
+    destination policy belong to the composing caller.
     """
     duration_ms = "COALESCE(pls.duration_ms, pe.duration_seconds * 1000)"
     return f"""
@@ -333,6 +355,12 @@ def engagement_fact_rows_sql() -> str:
                 WHEN m.kind <> 'podcast_episode' THEN res.max_total_progression
                 ELSE NULL
             END AS progress_fraction,
+            (
+                co.media_id IS NOT NULL
+                OR res.media_id IS NOT NULL
+                OR COALESCE(pls.position_ms, 0) > 0
+                OR pls.is_completed IS TRUE
+            ) AS progress_resettable,
             CASE
                 WHEN m.kind = 'podcast_episode' THEN pls.last_engaged_at
                 ELSE res.last_engaged_at
@@ -406,6 +434,11 @@ def media_read_states(
         result[media_id] = MediaReadStateOut(
             state=_STATE_TO_READ_STATE[state],
             progress_fraction=progress.value if isinstance(progress, Present) else None,
+            progress_resettable=_progress_resettable(
+                override=override,
+                engagement=engagement.get(media_id),
+                listening=listening.get(media_id),
+            ),
         )
     return result
 

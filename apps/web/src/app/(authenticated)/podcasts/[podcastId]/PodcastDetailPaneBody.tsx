@@ -42,6 +42,7 @@ import { useBillingAccount } from "@/lib/billing/useBillingAccount";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { useLectern } from "@/lib/lectern/LecternProvider";
 import { useCompletionUndo } from "@/lib/lectern/useCompletionUndo";
+import { runProgressReset } from "@/lib/consumption/progressReset";
 import {
   assumeMediaId,
   type LecternItemId,
@@ -137,6 +138,7 @@ export default function PodcastDetailPaneBody() {
   const offerCompletionUndo = useCompletionUndo();
   const committedSnapshotRef = useRef<PodcastDetailSnapshot | null>(null);
   const reconciliationPendingRef = useRef(false);
+  const reconciliationSuccessRef = useRef<string | null>(null);
   const captureCommitted = useCallback(() => committedSnapshotRef.current, []);
   const restored = usePaneVisitData(
     PODCAST_DETAIL_VISIT_DATA,
@@ -449,12 +451,19 @@ export default function PodcastDetailPaneBody() {
 
     if (podcastDetailResource.status === "ready") {
       applyPodcastDetailLoad(podcastDetailResource.data);
-      setError(null);
+      const successTitle = reconciliationSuccessRef.current;
+      reconciliationSuccessRef.current = null;
+      setError(
+        successTitle === null
+          ? null
+          : { severity: "success", title: successTitle },
+      );
       setLoading(false);
       return;
     }
 
     if (podcastDetailResource.status === "error") {
+      reconciliationSuccessRef.current = null;
       setError(
         toFeedback(podcastDetailResource.error, {
           fallback: "Failed to load podcast detail",
@@ -806,24 +815,19 @@ export default function PodcastDetailPaneBody() {
       episode: PodcastEpisodeMedia,
       isCompleted: boolean,
     ): PodcastEpisodeMedia => {
+      if (!isCompleted) {
+        return { ...episode, episode_state: "unplayed" };
+      }
       const previousListeningState = episode.listening_state;
-      const nextListeningState = isCompleted
-        ? {
-            position_ms: previousListeningState?.position_ms ?? 0,
-            duration_ms: previousListeningState?.duration_ms ?? null,
-            playback_speed: previousListeningState?.playback_speed ?? 1,
-            is_completed: true,
-          }
-        : {
-            position_ms: 0,
-            duration_ms: previousListeningState?.duration_ms ?? null,
-            playback_speed: previousListeningState?.playback_speed ?? 1,
-            is_completed: false,
-          };
       return {
         ...episode,
-        listening_state: nextListeningState,
-        episode_state: isCompleted ? "played" : "unplayed",
+        listening_state: {
+          position_ms: previousListeningState?.position_ms ?? 0,
+          duration_ms: previousListeningState?.duration_ms ?? null,
+          playback_speed: previousListeningState?.playback_speed ?? 1,
+          is_completed: true,
+        },
+        episode_state: "played",
       };
     },
     [],
@@ -904,6 +908,45 @@ export default function PodcastDetailPaneBody() {
       markingEpisodeIds,
       offerCompletionUndo,
       setEpisodes,
+    ],
+  );
+
+  const handleResetEpisodeProgress = useCallback(
+    async (mediaId: string) => {
+      const busyKey = beginEpisodeAction(
+        mediaId,
+        RESOURCE_ACTION_CATALOG.ResetProgress.id,
+      );
+      if (busyKey === null) return;
+      setError(null);
+      try {
+        const outcome = await runProgressReset({
+          mediaId: assumeMediaId(mediaId),
+          isVideo: false,
+          confirmReset: (message) => window.confirm(message),
+          resetProgress: lectern.resetProgress,
+        });
+        if (outcome.kind === "Cancelled") return;
+        const progressState = outcome.result.progressState.value;
+        const listeningState = progressState.listeningState;
+        if (listeningState.kind === "Absent") {
+          throw new Error("Podcast reset must return listening state");
+        }
+        reconciliationSuccessRef.current = "Progress reset.";
+        reload();
+      } catch (error) {
+        if (handleUnauthenticatedApiError(error)) return;
+        if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+        setError(toFeedback(error, { fallback: "Failed to reset progress" }));
+      } finally {
+        finishEpisodeAction(busyKey);
+      }
+    },
+    [
+      beginEpisodeAction,
+      finishEpisodeAction,
+      lectern.resetProgress,
+      reload,
     ],
   );
 
@@ -1206,6 +1249,7 @@ export default function PodcastDetailPaneBody() {
       onEditAuthors={openEpisodeAuthorsEditor}
       onDelete={handleDeleteEpisode}
       onTogglePlayed={handleMarkEpisodeCompletion}
+      onResetProgress={handleResetEpisodeProgress}
     />
   );
 

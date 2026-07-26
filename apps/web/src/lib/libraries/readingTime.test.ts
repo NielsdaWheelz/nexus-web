@@ -32,6 +32,7 @@ function mediaEntry(overrides: Record<string, unknown> = {}) {
       kind: "web_article" as const,
       processing_status: "ready_for_reading" as const,
       read_state: "unread" as const,
+      progress_resettable: false,
       progress_fraction: null,
       published_date: null,
       canonical_source_url: "https://example.test/article",
@@ -328,6 +329,10 @@ describe("decodeLibraryReadingTimeEntry", () => {
       { media: { ...mediaEntry().media, processing_status: "ready" } },
     ],
     ["read state", { media: { ...mediaEntry().media, read_state: null } }],
+    [
+      "progress resettable",
+      { media: { ...mediaEntry().media, progress_resettable: "yes" } },
+    ],
     [
       "progress fraction",
       { media: { ...mediaEntry().media, progress_fraction: Number.NaN } },

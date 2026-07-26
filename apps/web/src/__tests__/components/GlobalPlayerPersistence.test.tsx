@@ -54,11 +54,14 @@ function listeningStatePuts(
   ) as Array<[string, RequestInit?]>;
 }
 
-const DESCRIPTOR_A = buildFooterDescriptor("media-123", "Episode Alpha", {
+const MEDIA_A = "11111111-1111-4111-8111-111111111111";
+const MEDIA_B = "22222222-2222-4222-8222-222222222222";
+
+const DESCRIPTOR_A = buildFooterDescriptor(MEDIA_A, "Episode Alpha", {
   positionMs: 45_000,
   playbackSpeed: 1.75,
 });
-const DESCRIPTOR_B = buildFooterDescriptor("media-456", "Episode Beta");
+const DESCRIPTOR_B = buildFooterDescriptor(MEDIA_B, "Episode Beta");
 
 function PersistenceProbe() {
   const { persistence } = useGlobalPlayer();
@@ -129,7 +132,7 @@ describe("GlobalPlayer listening heartbeat", () => {
 
     await waitFor(() => expect(listeningStatePuts(fetchMock).length).toBeGreaterThanOrEqual(1));
     const [url, init] = listeningStatePuts(fetchMock)[0];
-    expect(String(url)).toContain("/api/media/media-123/listening-state");
+    expect(String(url)).toContain(`/api/media/${MEDIA_A}/listening-state`);
     const body = JSON.parse(String(init?.body ?? "{}"));
     expect(body).toMatchObject({
       positionMs: expect.any(Number),
@@ -162,7 +165,7 @@ describe("GlobalPlayer listening heartbeat", () => {
     await waitFor(() =>
       expect(
         listeningStatePuts(fetchMock).some(([url]) =>
-          String(url).includes("/api/media/media-123/listening-state"),
+          String(url).includes(`/api/media/${MEDIA_A}/listening-state`),
         ),
       ).toBe(true),
     );
@@ -219,10 +222,10 @@ describe("GlobalPlayer listening heartbeat", () => {
     expect(screen.getByRole("region", { name: "Media player" })).toBeInTheDocument();
   });
 
-  it("drains the in-flight heartbeat BEFORE issuing the active-media SetUnread command", async () => {
-    // spec §5.4: "Before active-media Unread, the provider closes and drains the
-    // old generation ... then issues the command." The fetch order must show the
-    // heartbeat PUT resolving before the SetUnread consumption POST.
+  it("drains the in-flight heartbeat BEFORE issuing active-media ResetProgress", async () => {
+    // The reset hook closes and drains the old generation before its command
+    // enters the consumption FIFO. The fetch order must show the heartbeat PUT
+    // resolving before the ResetProgress POST.
     const MEDIA = "33333333-3333-4333-8333-333333333333";
     const order: string[] = [];
     let releasePut!: () => void;
@@ -237,24 +240,30 @@ describe("GlobalPlayer listening heartbeat", () => {
         return jsonResponse({ data: { items: [] } });
       }
       if (url.pathname === "/api/consumption/commands" && method === "POST") {
-        order.push("setUnread");
+        order.push("resetProgress");
         return jsonResponse({
           data: {
             outcome: { kind: "StateOnly" },
             lectern: { items: [] },
             nextItem: { kind: "Absent" },
-            listeningStates: [
-              {
+            progressState: {
+              kind: "Present",
+              value: {
                 mediaId: MEDIA,
-                state: {
-                  positionMs: 0,
-                  durationMs: { kind: "Absent" },
-                  playbackSpeed: 1,
-                  writeRevision: 5,
-                  resetEpoch: 1,
+                readerCursor: { state: "Empty", revision: 1 },
+                listeningState: {
+                  kind: "Present",
+                  value: {
+                    positionMs: 0,
+                    durationMs: { kind: "Absent" },
+                    playbackSpeed: 1,
+                    writeRevision: 5,
+                    resetEpoch: 1,
+                  },
                 },
               },
-            ],
+            },
+            completionHandle: { kind: "Absent" },
           },
         });
       }
@@ -287,7 +296,7 @@ describe("GlobalPlayer listening heartbeat", () => {
 
     function DrainHarness() {
       const { playAudio } = useGlobalPlayer();
-      const { setUnread } = useLectern();
+      const { resetProgress } = useLectern();
       return (
         <>
           <button
@@ -299,10 +308,10 @@ describe("GlobalPlayer listening heartbeat", () => {
           <button
             type="button"
             onClick={() => {
-              setUnread(assumeMediaId(MEDIA)).catch(() => {});
+              resetProgress(assumeMediaId(MEDIA)).catch(() => {});
             }}
           >
-            Mark unread
+            Reset progress
           </button>
           <LecternReadyProbe />
           <GlobalPlayerFooter />
@@ -333,15 +342,15 @@ describe("GlobalPlayer listening heartbeat", () => {
     intervals.run(15_000); // fire one heartbeat -> PUT in flight (hangs)
     await waitFor(() => expect(order).toContain("heartbeatPut"));
 
-    fireEvent.click(screen.getByRole("button", { name: "Mark unread" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reset progress" }));
     // Give the command a chance to (wrongly) race ahead: while the heartbeat PUT
-    // hangs, the SetUnread POST must NOT be sent.
+    // hangs, the ResetProgress POST must NOT be sent.
     await new Promise((resolve) => setTimeout(resolve, 40));
     expect(order).toEqual(["heartbeatPut"]);
 
     // Release the heartbeat: the drain completes, then the command is issued.
     releasePut();
-    await waitFor(() => expect(order).toContain("setUnread"));
-    expect(order.indexOf("heartbeatPut")).toBeLessThan(order.indexOf("setUnread"));
+    await waitFor(() => expect(order).toContain("resetProgress"));
+    expect(order.indexOf("heartbeatPut")).toBeLessThan(order.indexOf("resetProgress"));
   });
 });

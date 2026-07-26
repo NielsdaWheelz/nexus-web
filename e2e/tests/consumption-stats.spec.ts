@@ -30,6 +30,22 @@ interface LecternItem {
   mediaId: string;
 }
 
+interface ListeningState {
+  positionMs: number;
+  durationMs: { kind: "Absent" } | { kind: "Present"; value: number };
+  playbackSpeed: number;
+  writeRevision: number;
+  resetEpoch: number;
+}
+
+interface ResetProgressState {
+  mediaId: string;
+  readerCursor: { state: string; revision: number };
+  listeningState:
+    | { kind: "Absent" }
+    | { kind: "Present"; value: ListeningState };
+}
+
 interface StatsEnvelope {
   data: {
     activity: {
@@ -100,6 +116,43 @@ function silentWav(durationSeconds: number): Buffer {
   return bytes;
 }
 
+async function resetAudioProgress(
+  page: Parameters<typeof gotoSinglePaneWorkspace>[0],
+  mediaId: string,
+): Promise<ResetProgressState> {
+  const reset = await page.request.post("/api/consumption/commands", {
+    headers: stateChangingApiHeaders(),
+    data: { kind: "ResetProgress", clientMutationId: randomUUID(), mediaId },
+  });
+  expect(reset.ok()).toBe(true);
+  const resetBody = (await reset.json()) as {
+    data: {
+      progressState: {
+        kind: string;
+        value?: ResetProgressState;
+      };
+    };
+  };
+  expect(resetBody.data.progressState).toMatchObject({
+    kind: "Present",
+    value: {
+      mediaId,
+      readerCursor: { state: "Empty" },
+      listeningState: {
+        kind: "Present",
+        value: { positionMs: 0 },
+      },
+    },
+  });
+  if (
+    resetBody.data.progressState.kind !== "Present" ||
+    resetBody.data.progressState.value === undefined
+  ) {
+    throw new Error("ResetProgress omitted its canonical progress state");
+  }
+  return resetBody.data.progressState.value;
+}
+
 async function resetAndPlaceAudio(
   page: Parameters<typeof gotoSinglePaneWorkspace>[0],
   mediaId: string,
@@ -122,11 +175,7 @@ async function resetAndPlaceAudio(
     });
     expect(removed.ok()).toBe(true);
   }
-  const reset = await page.request.post("/api/consumption/commands", {
-    headers: stateChangingApiHeaders(),
-    data: { kind: "SetUnread", clientMutationId: randomUUID(), mediaId },
-  });
-  expect(reset.ok()).toBe(true);
+  await resetAudioProgress(page, mediaId);
   const placed = await page.request.post("/api/lectern/commands", {
     headers: stateChangingApiHeaders(),
     data: {
@@ -152,6 +201,66 @@ async function postActivity(
   }
   expect(value.headers()["cache-control"]).toBe("private, no-store");
 }
+
+test("resets podcast progress through the BFF to a canonical install snapshot", async ({
+  page,
+}) => {
+  const audio = seededAudio();
+  const rawDeviceId = `e2e-consumption-reset-${randomUUID()}`;
+  await gotoSinglePaneWorkspace(page, rawDeviceId, "/lectern");
+
+  const beforeResponse = await page.request.get(
+    `/api/media/${audio.media_id}/listening-state`,
+  );
+  expect(beforeResponse.ok()).toBe(true);
+  const before = (await beforeResponse.json()) as { data: ListeningState };
+  const heartbeatGeneration = randomUUID();
+  const heartbeat = await page.request.put(
+    `/api/media/${audio.media_id}/listening-state`,
+    {
+      headers: stateChangingApiHeaders(),
+      data: {
+        positionMs: 12_000,
+        durationMs: {
+          kind: "Present",
+          value: audio.duration_seconds * 1_000,
+        },
+        playbackSpeed: 1.25,
+        expectedWriteRevision: before.data.writeRevision,
+        expectedResetEpoch: before.data.resetEpoch,
+        heartbeatGeneration,
+        heartbeatSequence: 1,
+      },
+    },
+  );
+  expect(heartbeat.ok()).toBe(true);
+
+  const reset = await resetAudioProgress(page, audio.media_id);
+  expect(reset.readerCursor.revision).toBeGreaterThanOrEqual(1);
+  if (reset.listeningState.kind !== "Present") {
+    throw new Error("Podcast ResetProgress omitted its listening state");
+  }
+  expect(reset.listeningState).toMatchObject({
+    kind: "Present",
+    value: {
+      positionMs: 0,
+      durationMs: {
+        kind: "Present",
+        value: audio.duration_seconds * 1_000,
+      },
+      playbackSpeed: 1.25,
+      writeRevision: before.data.writeRevision + 2,
+      resetEpoch: before.data.resetEpoch + 1,
+    },
+  });
+
+  const afterResponse = await page.request.get(
+    `/api/media/${audio.media_id}/listening-state`,
+  );
+  expect(afterResponse.ok()).toBe(true);
+  const after = (await afterResponse.json()) as { data: ListeningState };
+  expect(after.data).toEqual(reset.listeningState.value);
+});
 
 test("records private activity through the BFF and renders filtered Stats", async ({
   page,

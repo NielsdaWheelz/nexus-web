@@ -14,7 +14,11 @@ import Button from "@/components/ui/Button";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
-import { ApiError, isApiError } from "@/lib/api/client";
+import {
+  ApiError,
+  isApiError,
+  isSameSystemApiDefect,
+} from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { playbackVerb, presentLecternItem } from "@/lib/collections/presenters/lectern";
 import type {
@@ -28,6 +32,7 @@ import {
   lecternActivityFacts,
 } from "@/lib/lectern/contract";
 import { useLectern } from "@/lib/lectern/LecternProvider";
+import { runProgressReset } from "@/lib/consumption/progressReset";
 import { descriptorFromLecternItem } from "@/lib/player/playerSession";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import {
@@ -71,7 +76,14 @@ function snapshotItems(
 }
 
 export default function LecternPaneBody() {
-  const { resource, mutation, placeItems, removeItem, setOrder } = useLectern();
+  const {
+    resource,
+    mutation,
+    placeItems,
+    removeItem,
+    setOrder,
+    resetProgress,
+  } = useLectern();
   const { playAudio } = useGlobalPlayer();
   const toast = useFeedback();
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
@@ -131,6 +143,26 @@ export default function LecternPaneBody() {
       });
     },
     [setOrder],
+  );
+
+  const handleResetProgress = useCallback(
+    async (item: LecternItem) => {
+      try {
+        const outcome = await runProgressReset({
+          mediaId: item.mediaId,
+          isVideo: item.kind === "video",
+          confirmReset: (message) => window.confirm(message),
+          resetProgress,
+        });
+        if (outcome.kind === "Cancelled") return;
+        toast.show({ severity: "success", title: "Progress reset." });
+      } catch (error) {
+        if (handleUnauthenticatedApiError(error)) return;
+        if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+        setFeedback(toFeedback(error, { fallback: "Failed to reset progress" }));
+      }
+    },
+    [resetProgress, toast],
   );
 
   const acceptSlateTarget = useCallback<ReadingSlateAccept>(
@@ -245,6 +277,16 @@ export default function LecternPaneBody() {
                 execute: () => playAudio(descriptorFromLecternItem(item)),
               }
             : { kind: "Unavailable" },
+        progressReset: item.consumption.progressResettable
+          ? {
+              kind: "Available",
+              execute: () => handleResetProgress(item),
+            }
+          : { kind: "Unavailable" },
+        progressResetBusy:
+          mutation.kind === "Pending" &&
+          mutation.attempt.kind === "ResetProgress" &&
+          mutation.attempt.mediaId === item.mediaId,
       },
       lecternActivityFacts(item),
     ),

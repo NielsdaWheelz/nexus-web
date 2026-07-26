@@ -53,7 +53,11 @@ function audioLecternItem(itemId: string, mediaId: string, title: string): Lecte
     title,
     subtitle: absent(),
     href: `/media/${mediaId}` as LecternItem["href"],
-    consumption: { state: "Unread", progress: absent() },
+    consumption: {
+      state: "Unread",
+      progress: absent(),
+      progressResettable: false,
+    },
     activation: {
       kind: "FooterAudio",
       streamUrl: `https://cdn.example.com/${mediaId}.mp3`,

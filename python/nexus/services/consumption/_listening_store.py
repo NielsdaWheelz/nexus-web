@@ -11,9 +11,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 
@@ -203,27 +205,67 @@ def mark_completed_in_txn(db: Session, *, viewer_id: UUID, media_id: UUID) -> No
     )
 
 
-def reset_for_unread_in_txn(db: Session, *, viewer_id: UUID, media_id: UUID) -> bool:
-    """Reset an EXISTING listening row to unread-at-zero and advance both fencing
-    counters. Never creates a row; returns whether a row was reset."""
+def reset_progress_in_txn(db: Session, *, viewer_id: UUID, media_id: UUID) -> ListeningRow:
+    """Replace podcast current progress with zero and advance both fences."""
     current = load_state(db, viewer_id=viewer_id, media_id=media_id)
     if current is None:
-        return False
-    db.execute(
-        text(
-            """
-            UPDATE podcast_listening_states
-            SET position_ms = 0,
-                is_completed = false,
-                write_revision = write_revision + 1,
-                reset_epoch = reset_epoch + 1,
-                updated_at = now()
-            WHERE user_id = :viewer_id AND media_id = :media_id
-            """
+        db.execute(
+            text(
+                """
+                INSERT INTO podcast_listening_states (
+                    user_id, media_id, position_ms, duration_ms, playback_speed,
+                    is_completed, write_revision, reset_epoch, updated_at, last_engaged_at
+                )
+                VALUES (:viewer_id, :media_id, 0, NULL, 1.0, false, 1, 1, now(), NULL)
+                """
+            ),
+            {"viewer_id": viewer_id, "media_id": media_id},
+        )
+        return ListeningRow(
+            position_ms=0,
+            duration_ms=None,
+            playback_speed=1.0,
+            write_revision=1,
+            reset_epoch=1,
+            is_completed=False,
+        )
+
+    next_revision = current.write_revision + 1
+    next_epoch = current.reset_epoch + 1
+    result = cast(
+        CursorResult[Any],
+        db.execute(
+            text(
+                """
+                UPDATE podcast_listening_states
+                SET position_ms = 0,
+                    is_completed = false,
+                    write_revision = :next_revision,
+                    reset_epoch = :next_epoch,
+                    updated_at = now(),
+                    last_engaged_at = NULL
+                WHERE user_id = :viewer_id AND media_id = :media_id
+                """
+            ),
+            {
+                "viewer_id": viewer_id,
+                "media_id": media_id,
+                "next_revision": next_revision,
+                "next_epoch": next_epoch,
+            },
         ),
-        {"viewer_id": viewer_id, "media_id": media_id},
     )
-    return True
+    # justify-defect: the owner just read this exact row inside the serialized
+    # command transaction.
+    assert result.rowcount == 1
+    return ListeningRow(
+        position_ms=0,
+        duration_ms=current.duration_ms,
+        playback_speed=current.playback_speed,
+        write_revision=next_revision,
+        reset_epoch=next_epoch,
+        is_completed=False,
+    )
 
 
 def delete_all_users_in_txn(db: Session, *, media_id: UUID) -> None:

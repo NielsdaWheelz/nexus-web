@@ -8,8 +8,8 @@
 - the new `playerDescriptor` DTO field on MediaOut/the episode list (spec §6).
 
 Media is seeded through ``direct_db``; commands and reads run through the real
-HTTP surface (GET/POST /lectern, /consumption/commands, /media/{id}/listening-state)
-plus the internal ``consumption_service`` boundary where there is no HTTP port.
+HTTP surface (GET/POST /lectern, /consumption/commands, /media/{id}/listening-state,
+and /media/{id}/reader-state), plus focused store tests where no HTTP port exists.
 """
 
 from datetime import UTC, datetime
@@ -36,7 +36,6 @@ from nexus.schemas.reader import (
     WebReaderResumeState,
 )
 from nexus.services.consumption import _reader_engagement_store
-from nexus.services.consumption import service as consumption_service
 from tests.factories import add_media_to_library
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -59,6 +58,7 @@ def _register_media_cleanup(direct_db: DirectSessionManager, media_id: UUID) -> 
         "consumption_queue_items",
         "consumption_overrides",
         "podcast_listening_states",
+        "reader_media_state",
         "reader_engagement_states",
         "library_entries",
     ):
@@ -368,6 +368,7 @@ class TestConsumptionStateDerivationMatrix:
 
         item = _get_lectern_item(auth_client, user_id, episode)
         assert item["consumption"]["state"] == "Unread", item
+        assert item["consumption"]["progressResettable"] is True
 
     def test_readable_no_engagement_derives_unread(
         self, auth_client, direct_db: DirectSessionManager
@@ -380,6 +381,57 @@ class TestConsumptionStateDerivationMatrix:
 
         item = _get_lectern_item(auth_client, user_id, article)
         assert item["consumption"]["state"] == "Unread", item
+        assert item["consumption"]["progressResettable"] is False
+
+    def test_completion_history_alone_is_not_progress_resettable(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        article = _create_web_article(direct_db, title="Historical completion")
+        _add_to_library(direct_db, library_id, article)
+        _place(auth_client, user_id, [article])
+
+        finished = _consumption(
+            auth_client,
+            user_id,
+            {
+                "kind": "EnsureMediaFinished",
+                "clientMutationId": str(uuid4()),
+                "mediaId": str(article),
+            },
+        )
+        assert finished["completionHandle"]["kind"] == "Present"
+        reset = _consumption(
+            auth_client,
+            user_id,
+            {
+                "kind": "ResetProgress",
+                "clientMutationId": str(uuid4()),
+                "mediaId": str(article),
+            },
+        )
+        assert reset["progressState"]["kind"] == "Present"
+        with direct_db.session() as session:
+            assert (
+                session.execute(
+                    text(
+                        """
+                        SELECT count(*)
+                        FROM consumption_completion_facts
+                        WHERE user_id = :user_id AND media_id = :media_id
+                        """
+                    ),
+                    {"user_id": user_id, "media_id": article},
+                ).scalar_one()
+                == 1
+            )
+        item = _get_lectern_item(auth_client, user_id, article)
+        assert item["consumption"] == {
+            "state": "Unread",
+            "progress": {"kind": "Absent"},
+            "progressResettable": False,
+        }
 
     def test_readable_any_engagement_row_derives_in_progress(
         self, auth_client, direct_db: DirectSessionManager
@@ -417,7 +469,12 @@ class TestConsumptionStateDerivationMatrix:
                 text=ReaderQuoteContext(quote=None, quote_prefix=None, quote_suffix=None),
             )
 
-        consumption_service.record_reader_engagement(user_id, article, locator(0.94))
+        first = auth_client.put(
+            f"/media/{article}/reader-state",
+            headers=auth_headers(user_id),
+            json={"locator": locator(0.94).model_dump(mode="json"), "base_revision": 0},
+        )
+        assert first.status_code == 200, first.text
         with direct_db.session() as session:
             assert (
                 session.execute(
@@ -430,7 +487,12 @@ class TestConsumptionStateDerivationMatrix:
                 == 0
             )
 
-        consumption_service.record_reader_engagement(user_id, article, locator(0.95))
+        second = auth_client.put(
+            f"/media/{article}/reader-state",
+            headers=auth_headers(user_id),
+            json={"locator": locator(0.95).model_dump(mode="json"), "base_revision": 1},
+        )
+        assert second.status_code == 200, second.text
         with direct_db.session() as session:
             assert (
                 session.execute(
@@ -490,6 +552,7 @@ class TestConsumptionStateDerivationMatrix:
 
         item = _get_lectern_item(auth_client, user_id, article)
         assert item["consumption"]["state"] == "Unread", item
+        assert item["consumption"]["progressResettable"] is True
 
 
 class TestReaderEngagementStore:

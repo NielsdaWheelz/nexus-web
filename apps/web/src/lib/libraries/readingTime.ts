@@ -203,6 +203,10 @@ export function decodeLibraryReadingTimeEntry(
     READ_STATES,
     "Library media read_state",
   );
+  expectBoolean(
+    media.progress_resettable,
+    "Library media progress_resettable",
+  );
   const progressFraction =
     media.progress_fraction === null
       ? null

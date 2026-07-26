@@ -71,6 +71,8 @@ export function presentLecternItem(
   actions: {
     readonly remove: (triggerEl: HTMLButtonElement | null) => void;
     readonly playback: ExecutableResourceAction;
+    readonly progressReset: ExecutableResourceAction;
+    readonly progressResetBusy: boolean;
   },
   activityFacts: LecternActivityFacts,
 ): CollectionRowView {
@@ -86,6 +88,20 @@ export function presentLecternItem(
               void playback.execute(detail);
             },
           },
+        ]
+      : [];
+  const progressReset = actions.progressReset;
+  const operations =
+    progressReset.kind === "Available"
+      ? [
+          projectResourceActionToMenu({
+            kind: "command",
+            catalogKey: "ResetProgress",
+            busy: actions.progressResetBusy,
+            onSelect: (detail) => {
+              void progressReset.execute(detail);
+            },
+          }),
         ]
       : [];
   return {
@@ -108,7 +124,7 @@ export function presentLecternItem(
       target: item.actionTarget,
       groups: {
         core: [],
-        operations: [],
+        operations,
         relationships: [
           projectResourceActionToMenu({
             kind: "command",

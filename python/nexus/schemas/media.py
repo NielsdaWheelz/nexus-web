@@ -261,6 +261,7 @@ class MediaOut(BaseModel):
     # that never derive it (e.g. SSE snapshots).
     read_state: MediaReadState | None = None
     progress_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
+    progress_resettable: bool
     last_engaged_at: datetime | None = None
     # New field (spec `lectern-player-lifecycle-hard-cutover.md` §6: "Lectern,
     # podcast, and media DTOs reuse the same server-derived title/subtitle +

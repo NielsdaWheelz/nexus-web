@@ -78,6 +78,7 @@ export interface PodcastEpisodeMedia {
   } | null;
   subscription_default_playback_speed?: number | null;
   episode_state: EpisodeState | null;
+  progress_resettable: boolean;
   capabilities: MediaCapabilities;
   contributors: ContributorCredit[];
   author_mode: "automatic" | "manual";

@@ -45,7 +45,7 @@ import type {
   LecternResult,
   LecternSnapshot,
   MediaId,
-  MediaListeningState,
+  MediaProgressState,
   NextCapability,
   Placement,
 } from "@/lib/lectern/contract";
@@ -67,13 +67,18 @@ export type LecternMutationState =
     };
 
 /**
- * Minimal event stream the player provider (later unit) subscribes to for
- * resets/origin diffs: one canonical snapshot install and the listening states
- * a consumption command reset.
+ * Minimal install stream for origin maintenance and ResetProgress. The reset
+ * carries exactly one server-authoritative current-progress snapshot. A
+ * snapshot may additionally name successful status-only Unread targets; that
+ * annotation never carries or changes progress state.
  */
 export type CanonicalInstallEvent =
-  | { kind: "snapshot"; snapshot: LecternSnapshot }
-  | { kind: "listeningStates"; states: MediaListeningState[] };
+  | {
+      kind: "snapshot";
+      snapshot: LecternSnapshot;
+      unreadMediaIds: readonly MediaId[];
+    }
+  | { kind: "progressState"; state: MediaProgressState };
 
 export interface LecternCapability {
   resource: AsyncResource<LecternSnapshot>;
@@ -99,19 +104,26 @@ export interface LecternCapability {
     clientMutationId?: string;
   }): Promise<ConsumptionResult>;
   setUnread(mediaId: MediaId): Promise<ConsumptionResult>;
-  undoCompletion(completionHandle: CompletionHandle): Promise<ConsumptionResult>;
+  resetProgress(mediaId: MediaId): Promise<ConsumptionResult>;
+  /**
+   * `unreadMediaId` is local installation metadata only: the sealed server
+   * command remains identified exclusively by `completionHandle`.
+   */
+  undoCompletion(
+    completionHandle: CompletionHandle,
+    options: { unreadMediaId: MediaId },
+  ): Promise<ConsumptionResult>;
   setBatchState(input: {
     mediaIds: MediaId[];
     state: "Finished" | "Unread";
   }): Promise<ConsumptionResult>;
   onCanonicalInstall(listener: (event: CanonicalInstallEvent) => void): () => void;
   /**
-   * Register a pre-command hook run (and awaited) BEFORE an active-media
-   * `SetUnread` is enqueued (spec §5.4: "the provider closes and drains the old
-   * generation ... then issues the command"). The player registers a drain here;
-   * each hook owns its own deadline. Returns an unsubscribe.
+   * Register a pre-command hook run (and awaited) before ResetProgress enters
+   * the FIFO. Active consumers drain their old generation here; server fences
+   * remain the correctness boundary. Returns an unsubscribe.
    */
-  registerBeforeSetUnread(hook: (mediaId: MediaId) => Promise<void>): () => void;
+  registerBeforeProgressReset(hook: (mediaId: MediaId) => Promise<void>): () => void;
   /**
    * Read the provider's current canonical snapshot (undefined until Ready). This
    * is a live read of the FIFO owner, so it stays correct even when the calling
@@ -185,10 +197,11 @@ type LecternEngineMethods = Pick<
   | "ensureMediaFinished"
   | "finishLecternItem"
   | "setUnread"
+  | "resetProgress"
   | "undoCompletion"
   | "setBatchState"
   | "onCanonicalInstall"
-  | "registerBeforeSetUnread"
+  | "registerBeforeProgressReset"
   | "getCanonicalSnapshot"
 >;
 
@@ -211,7 +224,7 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
 
   const gates = new Set<(outcome: GateOutcome) => void>();
   const listeners = new Set<(event: CanonicalInstallEvent) => void>();
-  const beforeSetUnreadHooks = new Set<(mediaId: MediaId) => Promise<void>>();
+  const beforeProgressResetHooks = new Set<(mediaId: MediaId) => Promise<void>>();
 
   const active = (gen: number): boolean => running && gen === generation;
 
@@ -229,11 +242,14 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
     for (const listener of [...listeners]) listener(event);
   }
 
-  function installCanonical(snapshot: LecternSnapshot): void {
+  function installCanonical(
+    snapshot: LecternSnapshot,
+    unreadMediaIds: readonly MediaId[] = [],
+  ): void {
     installCounter += 1;
     lastInstallAt = Date.now();
     setResource({ status: "ready", data: snapshot });
-    emit({ kind: "snapshot", snapshot });
+    emit({ kind: "snapshot", snapshot, unreadMediaIds });
   }
 
   function requireReadySnapshot(): LecternSnapshot {
@@ -344,7 +360,17 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
         return;
       }
       if (ok) {
-        installResult(result as R);
+        try {
+          installResult(result as R);
+        } catch (error) {
+          // A decoded same-system response that violates a cross-field
+          // command invariant is a defect, not a retryable transport result.
+          // Keep the FIFO usable and settle the caller rather than leaving a
+          // rejected lane and a permanently pending capability promise.
+          setMutation({ kind: "Idle" });
+          deferred.reject(error);
+          return;
+        }
         setMutation({ kind: "Idle" });
         deferred.resolve(result as R);
         return;
@@ -474,6 +500,7 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
     gen: number,
     command: ConsumptionCommand,
     presented: LecternSnapshot,
+    unreadMediaIds: readonly MediaId[] = [],
   ): Promise<ConsumptionResult> {
     const deferred = createDeferred<ConsumptionResult>();
     if (mutation.kind === "Idle") {
@@ -486,8 +513,26 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
         presented,
         (signal) => postConsumptionCommand(command, signal),
         (result) => {
-          installCanonical(result.lectern);
-          emit({ kind: "listeningStates", states: result.listeningStates });
+          const progressState = result.progressState;
+          if (command.kind === "ResetProgress") {
+            if (
+              progressState.kind !== "Present" ||
+              progressState.value.mediaId !== command.mediaId
+            ) {
+              // justify-defect: a ResetProgress replay is required to return
+              // one installable state for its exact semantic target.
+              throw new Error("ResetProgress returned no canonical progress state (defect).");
+            }
+          } else if (progressState.kind === "Present") {
+            // justify-defect: the singular progress-state event has one
+            // producer. Accepting it for another command would reintroduce
+            // the removed cross-command install path.
+            throw new Error("Only ResetProgress may return a progress state (defect).");
+          }
+          installCanonical(result.lectern, unreadMediaIds);
+          if (progressState.kind === "Present") {
+            emit({ kind: "progressState", state: progressState.value });
+          }
         },
         deferred,
       ),
@@ -583,38 +628,49 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
   }
 
   // Run every registered pre-command hook to completion. Drains are best-effort:
-  // a hook that rejects (or its own deadline elapses) must not block the command
-  // (spec §5.4 "for at most that deadline, then issues the command").
-  async function runBeforeSetUnread(mediaId: MediaId): Promise<void> {
-    const hooks = [...beforeSetUnreadHooks];
+  // a hook failure must not block reset; the server tombstone/fences reject any
+  // stale write that escapes locally.
+  async function runBeforeProgressReset(mediaId: MediaId): Promise<void> {
+    const hooks = [...beforeProgressResetHooks];
     if (hooks.length === 0) return;
     await Promise.allSettled(hooks.map((hook) => hook(mediaId)));
   }
 
   function setUnread(mediaId: MediaId): Promise<ConsumptionResult> {
     const snapshot = requireReadySnapshot();
-    const gen = generation;
     const command: ConsumptionCommand = {
       kind: "SetUnread",
       clientMutationId: crypto.randomUUID(),
       mediaId,
     };
-    // Close + drain the old generation BEFORE issuing the command so the visible
-    // seek-to-zero is not deferred behind an in-flight heartbeat (spec §5.4).
-    return runBeforeSetUnread(mediaId).then(() => {
+    return enqueueConsumptionMutation(generation, command, snapshot, [mediaId]);
+  }
+
+  function resetProgress(mediaId: MediaId): Promise<ConsumptionResult> {
+    const snapshot = requireReadySnapshot();
+    const gen = generation;
+    const command: ConsumptionCommand = {
+      kind: "ResetProgress",
+      clientMutationId: crypto.randomUUID(),
+      mediaId,
+    };
+    return runBeforeProgressReset(mediaId).then(() => {
       if (!active(gen)) throw makeAbortError();
       return enqueueConsumptionMutation(gen, command, snapshot);
     });
   }
 
-  function undoCompletion(completionHandle: CompletionHandle): Promise<ConsumptionResult> {
+  function undoCompletion(
+    completionHandle: CompletionHandle,
+    options: { unreadMediaId: MediaId },
+  ): Promise<ConsumptionResult> {
     const snapshot = requireReadySnapshot();
     const command: ConsumptionCommand = {
       kind: "UndoCompletion",
       clientMutationId: crypto.randomUUID(),
       completionHandle,
     };
-    return enqueueConsumptionMutation(generation, command, snapshot);
+    return enqueueConsumptionMutation(generation, command, snapshot, [options.unreadMediaId]);
   }
 
   function setBatchState(input: {
@@ -622,13 +678,22 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
     state: "Finished" | "Unread";
   }): Promise<ConsumptionResult> {
     const snapshot = requireReadySnapshot();
+    // Snapshot the exact target list at submission time. The local annotation
+    // must describe the command that is sent, not a caller-owned array later
+    // mutated while the FIFO is waiting.
+    const mediaIds = [...input.mediaIds];
     const command: ConsumptionCommand = {
       kind: "SetBatchState",
       clientMutationId: crypto.randomUUID(),
-      mediaIds: input.mediaIds,
+      mediaIds,
       state: input.state,
     };
-    return enqueueConsumptionMutation(generation, command, snapshot);
+    return enqueueConsumptionMutation(
+      generation,
+      command,
+      snapshot,
+      input.state === "Unread" ? mediaIds : [],
+    );
   }
 
   function onCanonicalInstall(listener: (event: CanonicalInstallEvent) => void): () => void {
@@ -638,10 +703,10 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
     };
   }
 
-  function registerBeforeSetUnread(hook: (mediaId: MediaId) => Promise<void>): () => void {
-    beforeSetUnreadHooks.add(hook);
+  function registerBeforeProgressReset(hook: (mediaId: MediaId) => Promise<void>): () => void {
+    beforeProgressResetHooks.add(hook);
     return () => {
-      beforeSetUnreadHooks.delete(hook);
+      beforeProgressResetHooks.delete(hook);
     };
   }
 
@@ -691,10 +756,11 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
     ensureMediaFinished,
     finishLecternItem,
     setUnread,
+    resetProgress,
     undoCompletion,
     setBatchState,
     onCanonicalInstall,
-    registerBeforeSetUnread,
+    registerBeforeProgressReset,
     getCanonicalSnapshot,
     start,
     stop,
@@ -733,10 +799,11 @@ export function LecternProvider({ children }: { children: ReactNode }) {
       ensureMediaFinished: engine.ensureMediaFinished,
       finishLecternItem: engine.finishLecternItem,
       setUnread: engine.setUnread,
+      resetProgress: engine.resetProgress,
       undoCompletion: engine.undoCompletion,
       setBatchState: engine.setBatchState,
       onCanonicalInstall: engine.onCanonicalInstall,
-      registerBeforeSetUnread: engine.registerBeforeSetUnread,
+      registerBeforeProgressReset: engine.registerBeforeProgressReset,
       getCanonicalSnapshot: engine.getCanonicalSnapshot,
     }),
     [engine, resource, mutation],

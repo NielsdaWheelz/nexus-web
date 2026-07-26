@@ -213,36 +213,6 @@ describe("listeningHeartbeat", () => {
     expect(bodies[1].positionMs).toBe(4000);
   });
 
-  it("ignores a late response whose generation has been retired by adoptServerState", async () => {
-    const bodies: ParsedBody[] = [];
-    let putCount = 0;
-    let resolveFirst: ((response: Response) => void) | undefined;
-    vi.spyOn(globalThis, "fetch").mockImplementation((_input, init = {}) => {
-      const body = parseBody(init);
-      bodies.push(body);
-      putCount += 1;
-      if (putCount === 1) return new Promise<Response>((res) => (resolveFirst = res));
-      return Promise.resolve(echoSuccess(body));
-    });
-
-    const h = makeEngine();
-    h.engine.tick();
-    await flush();
-    expect(bodies).toHaveLength(1);
-    const retiredGeneration = bodies[0].heartbeatGeneration;
-
-    const reset = stateOut({ positionMs: 0, writeRevision: 5, resetEpoch: 1 });
-    h.engine.adoptServerState(reset);
-    expect(h.overlay.at(-1)).toEqual({ positionMs: 0, writeRevision: 5, resetEpoch: 1 });
-    const overlayCount = h.overlay.length;
-
-    // The stale in-flight PUT (retired generation) resolves late: no install.
-    resolveFirst?.(echoSuccess(bodies[0]));
-    await flush();
-    expect(h.overlay.length).toBe(overlayCount);
-    expect(bodies[0].heartbeatGeneration).toBe(retiredGeneration);
-  });
-
   it("timeout recovery retains the local position when the reset epoch is unchanged", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((_input, init = {}) => {
       const method = (init.method ?? "GET").toUpperCase();
@@ -358,32 +328,6 @@ describe("listeningHeartbeat", () => {
     await flush();
     expect(resolved).toBe(true);
     await drain;
-  });
-
-  it("adoptServerState replaces the overlay, seeks, and starts a new generation", async () => {
-    const bodies: ParsedBody[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation((_input, init = {}) => {
-      const body = parseBody(init);
-      bodies.push(body);
-      return Promise.resolve(echoSuccess(body));
-    });
-    const h = makeEngine();
-    h.engine.tick();
-    await flush();
-    const generationBefore = bodies[0].heartbeatGeneration;
-
-    const reset = stateOut({ positionMs: 0, writeRevision: 8, resetEpoch: 2 });
-    h.engine.adoptServerState(reset);
-    expect(h.adopted.at(-1)).toEqual({ state: reset, seek: true });
-    expect(h.overlay.at(-1)).toEqual({ positionMs: 0, writeRevision: 8, resetEpoch: 2 });
-
-    h.engine.tick();
-    await flush();
-    const last = bodies.at(-1);
-    expect(last?.heartbeatGeneration).not.toBe(generationBefore);
-    expect(last?.expectedWriteRevision).toBe(8);
-    expect(last?.expectedResetEpoch).toBe(2);
-    expect(last?.heartbeatSequence).toBe(0);
   });
 
   it("stops sending after stop()", async () => {

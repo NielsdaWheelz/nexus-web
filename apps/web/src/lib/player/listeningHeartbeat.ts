@@ -47,7 +47,7 @@ export interface ListeningHeartbeatConfig {
   initial: { writeRevision: number; resetEpoch: number; positionMs: number };
   /** Read the newest live sample. Must return integer millisecond positions. */
   readSample: () => HeartbeatSample;
-  /** Mint a fresh generation UUID per engine start / recovery / adopt. */
+  /** Mint a fresh generation UUID per engine start or recovery. */
   mintGeneration: () => string;
   /** Adopt a full canonical state; `seek` requests moving playback to it. */
   onStateAdopted: (state: ListeningStateOut, options: { seek: boolean }) => void;
@@ -63,11 +63,8 @@ export interface ListeningHeartbeat {
   /** Attempt a send now (cadence tick / pause / switch). Coalesces to the newest
    * sample when a PUT is already in flight or a recovery is running. */
   tick: () => void;
-  /** Await the in-flight PUT up to `deadlineMs`, then stop (pre-Unread drain). */
+  /** Await the in-flight PUT up to `deadlineMs`, then stop (pre-reset drain). */
   drainAndStop: (deadlineMs: number) => Promise<void>;
-  /** Adopt the Unread command's returned state: replace the overlay, seek, and
-   * start a fresh generation. Revives a drained engine. */
-  adoptServerState: (state: ListeningStateOut) => void;
   /** Best-effort fire-and-forget keepalive PUT for `beforeunload` (no install). */
   flushKeepalive: () => void;
   /** Terminal teardown: abort any in-flight request and send no more. */
@@ -361,25 +358,6 @@ export function createListeningHeartbeat(config: ListeningHeartbeatConfig): List
     stop();
   }
 
-  // Adopt the Unread command result: seek to the reset state, replace the
-  // overlay, and start a new generation. A stale in-flight PUT under the old
-  // generation is left to resolve and is ignored by the generation check.
-  function adoptServerState(state: ListeningStateOut): void {
-    expectedWriteRevision = state.writeRevision;
-    expectedResetEpoch = state.resetEpoch;
-    lastKnownPositionMs = state.positionMs;
-    onStateAdopted(state, { seek: true });
-    onOverlayUpdate({
-      positionMs: state.positionMs,
-      writeRevision: state.writeRevision,
-      resetEpoch: state.resetEpoch,
-    });
-    generation = mintGeneration();
-    sequence = 0;
-    resendQueued = false;
-    status = "Active";
-  }
-
   function flushKeepalive(): void {
     if (status === "Stopped") return;
     const sample = readSample();
@@ -391,7 +369,7 @@ export function createListeningHeartbeat(config: ListeningHeartbeatConfig): List
     });
   }
 
-  return { tick, drainAndStop, adoptServerState, flushKeepalive, stop };
+  return { tick, drainAndStop, flushKeepalive, stop };
 }
 
 function raceWithTimeout(promise: Promise<void>, ms: number): Promise<void> {

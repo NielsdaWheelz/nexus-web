@@ -125,6 +125,19 @@ def record_engagement_in_txn(
     )
 
 
+def delete_in_txn(db: Session, *, viewer_id: UUID, media_id: UUID) -> None:
+    """Clear one reader current-state engagement row during ResetProgress."""
+    db.execute(
+        text(
+            """
+            DELETE FROM reader_engagement_states
+            WHERE user_id = :viewer_id AND media_id = :media_id
+            """
+        ),
+        {"viewer_id": viewer_id, "media_id": media_id},
+    )
+
+
 def delete_all_users_in_txn(db: Session, *, media_id: UUID) -> None:
     """Delete every user's engagement row for a media (media teardown only)."""
     db.execute(

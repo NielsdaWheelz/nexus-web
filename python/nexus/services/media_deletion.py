@@ -599,14 +599,9 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
         text("DELETE FROM podcast_episode_chapters WHERE media_id = :media_id"),
         {"media_id": media_id},
     )
-    # Four in-scope child families through the one consumption owner (spec §3,
-    # §8.15): all users' Lectern/override/listening/reader-engagement rows.
+    # Current Consumption state is removed through its one owner.
     # media_deletion never writes those tables directly.
     consumption_service.delete_media_consumption_state_in_txn(db, media_id=media_id)
-    db.execute(
-        text("DELETE FROM reader_media_state WHERE media_id = :media_id"),
-        {"media_id": media_id},
-    )
     db.execute(
         text("DELETE FROM user_media_deletions WHERE media_id = :media_id"),
         {"media_id": media_id},
@@ -705,19 +700,9 @@ def _delete_viewer_media_state(db: Session, viewer_id: UUID, media_id: UUID) -> 
 
     for highlight in highlight_rows:
         highlights_service.delete_highlight_rows(db, highlight)
-    db.execute(
-        text("""
-            DELETE FROM reader_media_state
-            WHERE user_id = :viewer_id
-              AND media_id = :media_id
-        """),
-        {"viewer_id": viewer_id, "media_id": media_id},
-    )
-    # Behavior change (spec §3): viewer-scoped removal/hide preserves the viewer's
-    # latent Lectern and listening rows (owned by the consumption stores). The
-    # visibility projection hides them while the media is out of the viewer's
-    # workspace; explicit re-add restores them after clearing the hide marker. Only the
-    # last-reference physical teardown removes them, through the consumption owner.
+    # Viewer-scoped removal/hide preserves current Consumption state. Visibility
+    # hides it while the media is out of the workspace; physical teardown removes
+    # it through the Consumption owner.
 
 
 def _delete_storage_objects(

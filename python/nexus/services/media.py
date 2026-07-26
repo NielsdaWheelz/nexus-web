@@ -624,6 +624,10 @@ def _media_out_from_row(
         description_html=row["podcast_description_html"],
         description_text=row["podcast_description_text"],
         metadata_enriched_at=row["metadata_enriched_at"],
+        # This DTO field is always explicit. Contexts outside the viewer-scoped
+        # consumption projection start false; `_apply_consumption_state` then
+        # installs the canonical derived value where applicable.
+        progress_resettable=False,
         # Overwritten by `_apply_consumption_state` for a qualifying podcast
         # episode; every other media stays Absent.
         player_descriptor=absent(),
@@ -639,11 +643,11 @@ def _apply_consumption_state(
 ) -> None:
     """Populate per-viewer read-state + engagement recency onto MediaOuts, in place.
 
-    Read-state (`read_state`, `progress_fraction`) is derived by the consumption
-    projection (`services.consumption`), which owns the explicit override +
-    listening-threshold + reader-engagement model. `last_engaged_at` is a distinct
-    recency concern read through the listening owner (audio) and the reader
-    engagement owner (documents).
+    Read-state (`read_state`, `progress_fraction`, `progress_resettable`) is
+    derived by the consumption projection (`services.consumption`), which owns
+    the explicit override + listening-threshold + reader-engagement model.
+    `last_engaged_at` is a distinct recency concern read through the listening
+    owner (audio) and the reader engagement owner (documents).
     """
     if not media_outs:
         return
@@ -655,6 +659,7 @@ def _apply_consumption_state(
         if state is not None:
             media.read_state = state.state
             media.progress_fraction = state.progress_fraction
+            media.progress_resettable = state.progress_resettable
 
     # Engagement recency: audio rows take their listening-state recency
     # (consumption owner), documents their reader-engagement recency (also the

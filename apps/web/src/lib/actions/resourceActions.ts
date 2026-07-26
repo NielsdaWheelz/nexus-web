@@ -112,6 +112,12 @@ export const RESOURCE_ACTION_CATALOG = {
     busyLabel: "Marking...",
     icon: Undo2,
   },
+  ResetProgress: {
+    id: "ResourceOperation.Media.ResetProgress",
+    label: "Reset progress",
+    busyLabel: "Resetting...",
+    icon: RotateCcw,
+  },
   RemoveMedia: {
     id: "ResourceOperation.Media.Remove",
     label: "Remove media",
@@ -655,6 +661,7 @@ interface MediaOperationCapabilities {
   readonly refreshSource: ExecutableResourceAction;
   readonly retryMetadata: ExecutableResourceAction;
   readonly editAuthors: ExecutableResourceAction;
+  readonly progressReset: ExecutableResourceAction;
   readonly lecternMembership: LecternMembershipAction;
   readonly removeMedia: ExecutableResourceAction;
 }
@@ -790,6 +797,13 @@ function mediaOperationGroups(
       );
     }
   }
+
+  const progressReset = executableDescriptor(
+    "ResetProgress",
+    input.progressReset,
+    input.busyIds,
+  );
+  if (progressReset) operations.push(progressReset);
 
   const remove = executableDescriptor(
     "RemoveMedia",

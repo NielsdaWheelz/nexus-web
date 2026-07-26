@@ -74,6 +74,12 @@ const testState = vi.hoisted(() => ({
   canEditAuthors: false,
   episodeState: null as "unplayed" | "in_progress" | "played" | null,
   readState: null as "unread" | "in_progress" | "finished" | null,
+  progressResettable: false,
+  resetCommandSeen: false,
+  canonicalMediaAfterReset: null as {
+    readState: "unread" | "in_progress" | "finished" | null;
+    progressResettable: boolean;
+  } | null,
   initialMediaFailureStatus: null as number | null,
   canonicalMediaRefetchFailure: null as {
     status: number;
@@ -482,6 +488,9 @@ function crossSectionSourceReferencePassage() {
 }
 
 function mediaResponse() {
+  const canonicalAfterReset = testState.resetCommandSeen
+    ? testState.canonicalMediaAfterReset
+    : null;
   return {
     id: "00000000-0000-4000-8000-000000000001",
     kind: testState.mediaKind,
@@ -507,7 +516,9 @@ function mediaResponse() {
       can_edit_authors: testState.canEditAuthors,
     },
     episode_state: testState.episodeState,
-    read_state: testState.readState,
+    read_state: canonicalAfterReset?.readState ?? testState.readState,
+    progress_resettable:
+      canonicalAfterReset?.progressResettable ?? testState.progressResettable,
   };
 }
 
@@ -904,6 +915,9 @@ describe("MediaPaneBody pane sizing", () => {
     testState.canEditAuthors = false;
     testState.episodeState = null;
     testState.readState = null;
+    testState.progressResettable = false;
+    testState.resetCommandSeen = false;
+    testState.canonicalMediaAfterReset = null;
     testState.initialMediaFailureStatus = null;
     testState.canonicalMediaRefetchFailure = null;
     testState.fragmentFailure = null;
@@ -923,6 +937,48 @@ describe("MediaPaneBody pane sizing", () => {
         if (path === "/api/lectern") {
           // Lets the LecternProvider (consumed by the pane) settle to Ready.
           return jsonResponse({ items: [] });
+        }
+        if (path === "/api/consumption/commands") {
+          const command = JSON.parse(String(init?.body)) as {
+            kind?: string;
+            mediaId?: string;
+          };
+          if (command.kind !== "ResetProgress") {
+            throw new Error(`Unexpected consumption command: ${command.kind}`);
+          }
+          testState.resetCommandSeen = true;
+          return jsonResponse({
+            outcome: { kind: "StateOnly" },
+            lectern: { items: [] },
+            nextItem: { kind: "Absent" },
+            progressState: {
+              kind: "Present",
+              value: {
+                mediaId: "00000000-0000-4000-8000-000000000001",
+                readerCursor: {
+                  state: "Positioned",
+                  revision: 2,
+                  locator: {
+                    kind: "web",
+                    target: { fragment_id: "fragment-1" },
+                    locations: {
+                      text_offset: 99,
+                      progression: 0.99,
+                      total_progression: 0.99,
+                      position: 1,
+                    },
+                    text: {
+                      quote: null,
+                      quote_prefix: null,
+                      quote_suffix: null,
+                    },
+                  },
+                },
+                listeningState: { kind: "Absent" },
+              },
+            },
+            completionHandle: { kind: "Absent" },
+          });
         }
         if (
           path === "/api/conversations" &&
@@ -1195,6 +1251,44 @@ describe("MediaPaneBody pane sizing", () => {
       expect(ids).not.toContain(excludedId);
     },
   );
+
+  it("reconciles reset replay from the canonical media DTO instead of inferring its state", async () => {
+    testState.mediaKind = "web_article";
+    testState.readState = "in_progress";
+    testState.progressResettable = true;
+    testState.canonicalMediaAfterReset = {
+      readState: "finished",
+      progressResettable: true,
+    };
+    const confirmReset = vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderMediaPane();
+
+    const reset = await getPrimaryOption(
+      "ResourceOperation.Media.ResetProgress",
+    );
+    if (reset.kind !== "command") throw new Error("Expected reset command");
+    reset.onSelect({ triggerEl: null });
+
+    await waitFor(() =>
+      expect(apiCallsForPath("/api/consumption/commands")).toHaveLength(1),
+    );
+    let reconciledIds: readonly string[] = [];
+    await waitFor(() => {
+      reconciledIds = publishedMenuActions(latestPrimaryChrome()).map(
+        (action) => action.id,
+      );
+      expect(reconciledIds).toEqual(
+        expect.arrayContaining([
+          "ResourceOperation.Media.MarkUnread",
+          "ResourceOperation.Media.ResetProgress",
+        ]),
+      );
+    });
+    expect(reconciledIds).not.toContain("ResourceOperation.Media.MarkFinished");
+    expect(confirmReset).toHaveBeenCalledWith(
+      "Reset progress? This starts the item from the beginning. Notes and activity history are kept.",
+    );
+  });
 
   it("publishes unavailable resource identity after an initial 404", async () => {
     testState.initialMediaFailureStatus = 404;

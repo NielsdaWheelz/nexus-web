@@ -103,7 +103,9 @@ export function useCompletionUndo(): (input: CompletionUndoInput) => void {
     async (input: CompletionUndoInput) => {
       try {
         if (input.completionHandle.kind === "Present") {
-          await undoCompletion(input.completionHandle.value);
+          await undoCompletion(input.completionHandle.value, {
+            unreadMediaId: input.mediaId,
+          });
         } else {
           await setUnread(input.mediaId);
         }

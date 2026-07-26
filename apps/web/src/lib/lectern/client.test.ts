@@ -37,7 +37,11 @@ function item(overrides: Record<string, unknown> = {}): Record<string, unknown> 
     title: "A title",
     subtitle: { kind: "Present", value: "A subtitle" },
     href: "/media/abc",
-    consumption: { state: "InProgress", progress: { kind: "Present", value: 0.4 } },
+    consumption: {
+      state: "InProgress",
+      progress: { kind: "Present", value: 0.4 },
+      progressResettable: true,
+    },
     activation: footerAudio(),
     ...overrides,
   };
@@ -170,14 +174,52 @@ describe("decodeLecternItem", () => {
 
   it("rejects a lowercase consumption state", () => {
     expect(() =>
-      decodeLecternItem(item({ consumption: { state: "unread", progress: { kind: "Absent" } } })),
+      decodeLecternItem(
+        item({
+          consumption: {
+            state: "unread",
+            progress: { kind: "Absent" },
+            progressResettable: false,
+          },
+        }),
+      ),
     ).toThrow();
   });
 
   it("rejects a progress fraction above 1 (bounds)", () => {
     expect(() =>
       decodeLecternItem(
-        item({ consumption: { state: "InProgress", progress: { kind: "Present", value: 1.5 } } }),
+        item({
+          consumption: {
+            state: "InProgress",
+            progress: { kind: "Present", value: 1.5 },
+            progressResettable: true,
+          },
+        }),
+      ),
+    ).toThrow();
+  });
+
+  it("requires a strict boolean progressResettable projection", () => {
+    expect(() =>
+      decodeLecternItem(
+        item({
+          consumption: {
+            state: "Unread",
+            progress: { kind: "Absent" },
+            progressResettable: "false",
+          },
+        }),
+      ),
+    ).toThrow();
+    expect(() =>
+      decodeLecternItem(
+        item({
+          consumption: {
+            state: "Unread",
+            progress: { kind: "Absent" },
+          },
+        }),
       ),
     ).toThrow();
   });
@@ -261,50 +303,62 @@ describe("decodeLecternResult", () => {
 });
 
 describe("decodeConsumptionResult", () => {
-  it("decodes a Removed outcome with nextItem and listeningStates", () => {
+  it("decodes a ResetProgress result with one installable progress state", () => {
     const result = decodeConsumptionResult({
-      outcome: { kind: "Removed", itemId: ITEM_ID, nextItemId: { kind: "Present", value: NEXT_ITEM_ID } },
-      lectern: { items: [item({ itemId: NEXT_ITEM_ID })] },
-      nextItem: { kind: "Present", value: item({ itemId: NEXT_ITEM_ID }) },
+      outcome: { kind: "StateOnly" },
+      lectern: { items: [item()] },
+      nextItem: { kind: "Absent" },
       completionHandle: { kind: "Absent" },
-      listeningStates: [
-        {
+      progressState: {
+        kind: "Present",
+        value: {
           mediaId: MEDIA_ID,
-          state: {
+          readerCursor: { state: "Empty", revision: 4 },
+          listeningState: {
+            kind: "Present",
+            value: {
             positionMs: 0,
             durationMs: { kind: "Absent" },
             playbackSpeed: 1,
             writeRevision: 1,
             resetEpoch: 1,
+            },
           },
         },
-      ],
+      },
     });
-    expect(result.outcome.kind).toBe("Removed");
-    expect(result.nextItem.kind).toBe("Present");
-    expect(result.listeningStates).toHaveLength(1);
-    expect(result.listeningStates[0].mediaId).toBe(MEDIA_ID);
+    expect(result.outcome).toEqual({ kind: "StateOnly" });
+    expect(result.progressState).toEqual({
+      kind: "Present",
+      value: expect.objectContaining({
+        mediaId: MEDIA_ID,
+        readerCursor: { state: "Empty", revision: 4 },
+      }),
+    });
   });
 
-  it("decodes a StateOnly outcome with an absent nextItem and empty states", () => {
+  it("decodes a StateOnly result with an absent progress state", () => {
     const result = decodeConsumptionResult({
       outcome: { kind: "StateOnly" },
       lectern: { items: [] },
       nextItem: { kind: "Absent" },
-      listeningStates: [],
+      progressState: { kind: "Absent" },
       completionHandle: { kind: "Absent" },
     });
     expect(result.outcome).toEqual({ kind: "StateOnly" });
     expect(result.nextItem).toEqual({ kind: "Absent" });
-    expect(result.listeningStates).toEqual([]);
+    expect(result.progressState).toEqual({ kind: "Absent" });
   });
 
-  it("rejects a missing listeningStates field", () => {
+  it("rejects an unexpected result field", () => {
     expect(() =>
       decodeConsumptionResult({
         outcome: { kind: "StateOnly" },
         lectern: { items: [] },
         nextItem: { kind: "Absent" },
+        progressState: { kind: "Absent" },
+        completionHandle: { kind: "Absent" },
+        unexpected: [],
       }),
     ).toThrow();
   });

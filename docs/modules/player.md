@@ -27,9 +27,11 @@ split by storage and query concern:
   (`run_lectern_command` / `run_consumption_command`) each open a fresh
   session and own one `retry_serializable` transaction: viewer lock -> replay
   claim -> validation -> domain writes -> semantic memo -> snapshot read. Read
-  facades (`get_lectern` / `get_listening_state`) run on the request-scoped
-  session. Policy-neutral engagement, recent-anchor, complete membership, and
-  item-count ports are consumed by Resonance. Two narrow
+  facades (`get_lectern` / `get_listening_state` / `get_reader_cursor`) run on
+  the request-scoped session; `put_reader_cursor` owns one transaction for the
+  cursor CAS, engagement projection, and completion transition. Policy-neutral
+  engagement, recent-anchor, complete membership, and item-count ports are
+  consumed by Resonance. Two narrow
   in-transaction exceptions compose here rather than going
   through a command: `ensure_missing_items_in_txn` (the auto-subscription
   watermark step; only caller is `services/podcasts/poll.py`) and
@@ -43,21 +45,25 @@ split by storage and query concern:
   (position/duration/speed, completion flag, and the heartbeat fencing tokens
   `write_revision`/`reset_epoch`). `last_engaged_at` is advanced by successful
   heartbeats only. The separate operational `updated_at` still advances for
-  manual Finished/Unread mutations; those state-only commands preserve
-  `last_engaged_at`, and a new manual-Finished row starts with it absent.
+  manual Finished and `ResetProgress`; Finished preserves `last_engaged_at`,
+  Reset clears it, and a new manual-Finished row starts with it absent.
   Migration 0186 seeds the new clock from operational `updated_at` only when
   post-fencing state proves the latest mutation was a heartbeat: revision is
   positive, completion is false, and either position is positive or no reset
   has occurred. Pre-fencing, completed, and post-reset zero-position rows remain
   absent because their timestamp is ambiguous.
+- `_reader_cursor_store.py` — sole DML owner of `reader_media_state`: one
+  revision-fenced `Empty` or `Positioned` cursor per viewer/media. A persisted
+  `Empty` tombstone fences stale pre-reset saves without exposing a null-clear
+  reader-state API.
 - `_reader_engagement_store.py` — sole DML owner of `reader_engagement_states`:
   one current-state row per (viewer, media) carrying `last_engaged_at`
   recency and, for non-PDF locators, a monotonic `max_total_progression`
   (`GREATEST(existing, new)` on every save). It is current resume/engagement
   state, not activity history — a save is a plain idempotent
   `INSERT ... ON CONFLICT (user_id, media_id) DO UPDATE`, with no fencing
-  token, composed by the reader-state route after a successful/idempotent
-  cursor write (see [reader-implementation.md](reader-implementation.md)).
+  token, committed atomically with the successful/idempotent cursor write (see
+  [reader-implementation.md](reader-implementation.md)).
 - `_activity_store.py` — sole DML owner of `consumption_activity_spans` and
   `consumption_completion_facts`; `_activity_stats.py` owns their factual
   aggregation and derived sessions. Neither changes the reader cursor or the
@@ -69,8 +75,9 @@ split by storage and query concern:
   does (listening join + chapters + artwork/title). `services/media.py`,
   `services/library_entries.py`, and `services/podcasts/{episodes,
   subscriptions_query}.py` adopt this projection; no other module reads
-  `consumption_overrides`/`podcast_listening_states`/`reader_engagement_states`
-  directly except the one documented exception in `services/media.py`
+  `consumption_overrides`/`podcast_listening_states`/`reader_media_state`/
+  `reader_engagement_states` directly except the one documented exception in
+  `services/media.py`
   (`MediaOut.listening_state`, a raw passthrough of position/duration/speed
   distinct from the derived read-state projection).
 
@@ -85,9 +92,9 @@ database snapshot.
 Media teardown (`docs/cutovers/lectern-player-lifecycle-hard-cutover.md` §3.1;
 see also [storage.md](storage.md)) composes one consumption call,
 `consumption_service.delete_media_consumption_state_in_txn` (all users'
-Lectern/override/listening/reader-engagement/activity/completion rows), inside
-the deletion transaction — `services/media_deletion.py` never writes those
-tables directly.
+Lectern/override/listening/reader-cursor/reader-engagement/activity/completion
+rows), inside the deletion transaction — `services/media_deletion.py` never
+writes those tables directly.
 
 `python/nexus/services/playback_source.py` resolves the playable source for a
 media item (`derive_playback_source`); it is shared by the projection, the
@@ -110,7 +117,8 @@ transport-only command ports; `python/nexus/api/routes/listening_state.py`
 owns the singular heartbeat GET/PUT (no batch endpoint). The two POST ports
 are bounded aggregate command ports, not a generic command bus: `Lectern`
 commands (`PlaceItems`/`RemoveItem`/`SetOrder`) and `Consumption` commands
-(`EnsureMediaFinished`/`FinishLecternItem`/`SetUnread`/`SetBatchState`) each
+(`EnsureMediaFinished`/`FinishLecternItem`/`SetUnread`/`UndoCompletion`/
+`SetBatchState`/`ResetProgress`) each
 share one transaction/replay scope (`Lectern.Commands` /
 `Consumption.Commands`) and one canonical response. POST is
 semantic-idempotent through a client-generated `clientMutationId`, keyed by
@@ -120,9 +128,16 @@ separate, unreplayable CAS mutation fenced by `write_revision`/`reset_epoch`
 (§5.4) — it never memoizes and never reuses the command replay ledger. It
 writes only position/duration/speed; the heartbeat carries no client-supplied
 elapsed-time delta and no client-supplied device identifier, and piggybacks
-no other table's write — reading engagement is recorded on its own path (see
+no other table's write. Reader cursor and engagement writes share their own
+atomic Consumption transaction (see
 [reader-implementation.md](reader-implementation.md)), independent of the
 listening heartbeat.
+
+`SetUnread` and batch Unread change only explicit status. `ResetProgress` is
+the sole progress-clearing command: it clears the override, writes a revisioned
+Empty reader cursor, deletes current reader engagement, and resets/fences
+podcast listening state when applicable. It preserves Lectern membership,
+activity/completion history, notes, and annotations.
 
 Owned-absence fields on every wire shape use `Presence<T>` from
 `nexus/schemas/presence.py` / `apps/web/src/lib/api/presence.ts`
@@ -143,6 +158,11 @@ GET) above `GlobalPlayerProvider` (one `PlayerSession`), which wraps
   FIFO + optimistic-mutation owner), and `useCompletionUndo.ts` (the ten-second
   Undo toast after explicit exact completion). Server pane seeding imports the
   pure contract directly and never imports the browser transport facade.
+- `Reset progress` is one catalog-owned resource operation exposed by Library,
+  Podcast episode, Lectern, and Media surfaces only when the canonical
+  projection says `progressResettable`. `LecternProvider` emits the singular
+  returned `progressState`; the active player installs its listening tokens and
+  pauses, while the mounted reader installs the returned cursor snapshot.
 - `apps/web/src/app/(authenticated)/lectern/LecternPaneBody.tsx` renders the
   canonical **On the lectern** collection followed by the shared **At hand**
   Slate. The Slate consumes an optional server first-paint seed, otherwise

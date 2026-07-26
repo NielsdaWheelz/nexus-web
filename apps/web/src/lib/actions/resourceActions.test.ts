@@ -467,9 +467,11 @@ describe("rich resource builders", () => {
   it("builds media operations and exactly one Lectern relationship from typed capabilities", () => {
     const retry = vi.fn();
     const editAuthors = vi.fn();
+    const resetProgress = vi.fn();
     const remove = vi.fn();
     const busyIds = new Set<ResourceActionId>([
       RESOURCE_ACTION_CATALOG.RetryProcessing.id,
+      RESOURCE_ACTION_CATALOG.ResetProgress.id,
       RESOURCE_ACTION_CATALOG.RemoveMedia.id,
     ]);
     const groups = mediaResourceOptions({
@@ -478,6 +480,7 @@ describe("rich resource builders", () => {
       refreshSource: noAction,
       retryMetadata: noAction,
       editAuthors: available(editAuthors),
+      progressReset: available(resetProgress),
       lecternMembership: { kind: "Add", execute: vi.fn() },
       readState: { kind: "MarkFinished", execute: vi.fn() },
       removeMedia: available(remove),
@@ -493,6 +496,7 @@ describe("rich resource builders", () => {
       "ResourceOperation.Media.RetryProcessing",
       "ResourceOperation.Media.EditAuthors",
       "ResourceOperation.Media.MarkFinished",
+      "ResourceOperation.Media.ResetProgress",
       "RelationshipAction.Lectern.Add",
       "ResourceOperation.Media.Remove",
     ]);
@@ -507,10 +511,16 @@ describe("rich resource builders", () => {
       disabled: true,
       tone: "danger",
     });
+    expect(command(menu, "ResourceOperation.Media.ResetProgress")).toMatchObject({
+      label: "Resetting...",
+      disabled: true,
+    });
     command(menu, "ResourceOperation.Media.EditAuthors").onSelect({
       triggerEl: null,
     });
     expect(editAuthors).toHaveBeenCalledOnce();
+    command(menu, "ResourceOperation.Media.ResetProgress").onSelect({ triggerEl: null });
+    expect(resetProgress).toHaveBeenCalledOnce();
   });
 
   it("projects Remove instead of Add from explicit Lectern membership", () => {
@@ -521,6 +531,7 @@ describe("rich resource builders", () => {
       refreshSource: noAction,
       retryMetadata: noAction,
       editAuthors: noAction,
+      progressReset: noAction,
       lecternMembership: {
         kind: "Remove",
         itemId: assumeLecternItemId("11111111-0000-4000-8000-000000000002"),
@@ -557,6 +568,7 @@ describe("rich resource builders", () => {
             refreshSource: available(refresh),
             retryMetadata: available(metadata),
             editAuthors: noAction,
+            progressReset: noAction,
             lecternMembership: {
               kind: "Remove",
               itemId: assumeLecternItemId(
@@ -593,6 +605,7 @@ describe("rich resource builders", () => {
             refreshSource: noAction,
             retryMetadata: noAction,
             editAuthors: noAction,
+            progressReset: noAction,
             lecternMembership: noAction,
             removeMedia: noAction,
             playedState: {
@@ -711,6 +724,7 @@ describe("rich resource builders", () => {
       refreshSource: noAction,
       retryMetadata: noAction,
       editAuthors: noAction,
+      progressReset: noAction,
       lecternMembership: noAction,
       removeMedia: noAction,
       playedState: { kind: "MarkPlayed", execute: vi.fn() },

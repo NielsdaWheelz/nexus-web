@@ -43,10 +43,14 @@ function readyState(revision: number, locator: ReaderResumeState): ReaderProgres
 }
 
 describe("parseReaderCursorSnapshot", () => {
-  it("decodes exact Empty and Positioned snapshots", () => {
+  it("decodes absent-row and persisted-tombstone Empty snapshots", () => {
     expect(parseReaderCursorSnapshot({ state: "Empty", revision: 0 })).toEqual({
       state: "Empty",
       revision: 0,
+    });
+    expect(parseReaderCursorSnapshot({ state: "Empty", revision: 4 })).toEqual({
+      state: "Empty",
+      revision: 4,
     });
     expect(parseReaderCursorSnapshot({ state: "Positioned", revision: 3, locator: A })).toEqual({
       state: "Positioned",
@@ -61,7 +65,8 @@ describe("parseReaderCursorSnapshot", () => {
       undefined,
       {},
       A,
-      { state: "Empty", revision: 1 },
+      { state: "Empty", revision: -1 },
+      { state: "Empty", revision: 1.5 },
       { state: "Empty", revision: 0, locator: A },
       { state: "Positioned", revision: 0, locator: A },
       { state: "Positioned", revision: 1.5, locator: A },
@@ -229,22 +234,59 @@ describe("reduceReaderProgress: revalidation arbitration", () => {
       remote: { status: "none" },
     });
   });
+
+  it("treats a newer Empty tombstone as a real candidate", () => {
+    const state = reduceReaderProgress(readyState(2, A), {
+      type: "revalidated",
+      snapshot: { state: "Empty", revision: 4 },
+    });
+    expect(state.authority).toEqual({ status: "ready", snapshot: positioned(2, A) });
+    expect(state.remote).toEqual({
+      status: "candidate",
+      snapshot: { state: "Empty", revision: 4 },
+    });
+  });
 });
 
 describe("reduceReaderProgress: conflict against Empty", () => {
-  it("adopts Empty authority defensively and retains the local position", () => {
+  it("keeps a persisted Empty tombstone as a candidate and retains the local position", () => {
     let state = readyState(2, A);
     state = reduceReaderProgress(state, { type: "moved", locator: B });
     state = reduceReaderProgress(state, { type: "save_started" });
     state = reduceReaderProgress(state, {
       type: "save_conflicted",
-      current: { state: "Empty", revision: 0 },
+      current: { state: "Empty", revision: 4 },
     });
     expect(state.authority).toEqual({
       status: "ready",
-      snapshot: { state: "Empty", revision: 0 },
+      snapshot: positioned(2, A),
     });
     expect(state.local).toEqual({ status: "dirty", locator: B });
-    expect(saveBaseRevision(state)).toBe(0);
+    expect(state.remote).toEqual({
+      status: "candidate",
+      snapshot: { state: "Empty", revision: 4 },
+    });
+  });
+});
+
+describe("reduceReaderProgress: canonical reset install", () => {
+  it("replaces local and remote state with the server tombstone", () => {
+    let state = readyState(2, A);
+    state = reduceReaderProgress(state, { type: "moved", locator: B });
+    state = reduceReaderProgress(state, {
+      type: "revalidated",
+      snapshot: positioned(4, C),
+    });
+
+    state = reduceReaderProgress(state, {
+      type: "canonical_snapshot_installed",
+      snapshot: { state: "Empty", revision: 5 },
+    });
+
+    expect(state).toEqual({
+      authority: { status: "ready", snapshot: { state: "Empty", revision: 5 } },
+      local: { status: "clean" },
+      remote: { status: "none" },
+    });
   });
 });

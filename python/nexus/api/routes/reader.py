@@ -24,7 +24,6 @@ from nexus.services import (
     reader_document_map,
     reader_navigation,
 )
-from nexus.services import reader as reader_service
 from nexus.services.consumption import service as consumption_service
 
 router = APIRouter(tags=["media"])
@@ -100,7 +99,7 @@ def get_reader_state(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     """Get the canonical cursor snapshot (Empty or Positioned, never raw null)."""
-    return ok(reader_service.get_reader_cursor(db, viewer.user_id, media_id))
+    return ok(consumption_service.get_reader_cursor(db, viewer.user_id, media_id))
 
 
 @router.put("/media/{media_id}/reader-state")
@@ -108,17 +107,9 @@ def put_reader_state(
     media_id: UUID,
     payload: CursorWrite,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
 ) -> JSONResponse:
-    """Replace the cursor, then record the retry-safe current-state engagement.
-
-    The cursor write commits (or raises 409 on conflict) first; a conflict
-    records no engagement. On cursor success/idempotent success, the engagement
-    command follows in its own transaction; its failure surfaces (not swallowed)
-    and the same cursor write may be retried safely (spec §4.4).
-    """
-    snapshot = reader_service.put_reader_cursor(db, viewer.user_id, media_id, payload)
-    consumption_service.record_reader_engagement(viewer.user_id, media_id, payload.locator)
+    """Atomically replace the cursor and current engagement."""
+    snapshot = consumption_service.put_reader_cursor(viewer.user_id, media_id, payload)
     return JSONResponse(content=ok(snapshot))
 
 

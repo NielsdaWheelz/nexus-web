@@ -33,6 +33,10 @@ import LecternNextPrompt from "@/components/LecternNextPrompt";
 import { useLectern } from "@/lib/lectern/LecternProvider";
 import { useCompletionUndo } from "@/lib/lectern/useCompletionUndo";
 import {
+  runProgressReset,
+  type ProgressResetOutcome,
+} from "@/lib/consumption/progressReset";
+import {
   decodePresentPlayerDescriptor,
   parseMediaId,
   type LecternSnapshot,
@@ -331,6 +335,7 @@ export interface Media extends MediaProcessingSnapshot {
   subscription_default_playback_speed?: number | null;
   episode_state?: "unplayed" | "in_progress" | "played" | null;
   read_state?: "unread" | "in_progress" | "finished" | null;
+  progress_resettable: boolean;
   // Presence<PlayerDescriptor> (camelCase key even inside this snake_case DTO;
   // spec §4/§6). Absent for non-audio media; may be missing until the backend
   // field lands — decoded defensively at the call site.
@@ -936,6 +941,54 @@ export default function MediaPaneBody() {
     setAuthorsEditorOpen(false);
   }, []);
   const [error, setError] = useState<FeedbackContent | null>(null);
+  const handleResetProgress = useCallback(async () => {
+    if (!media) return;
+    let outcome: ProgressResetOutcome;
+    try {
+      outcome = await runProgressReset({
+        mediaId: parseMediaId(id),
+        isVideo: media.kind === "video",
+        confirmReset: (message) => window.confirm(message),
+        resetProgress: lectern.resetProgress,
+      });
+    } catch (resetError) {
+      if (handleUnauthenticatedApiError(resetError)) return;
+      if (!isApiError(resetError) || isSameSystemApiDefect(resetError)) {
+        throw resetError;
+      }
+      feedback.show(
+        toFeedback(resetError, { fallback: "Failed to reset progress" }),
+      );
+      return;
+    }
+    if (outcome.kind === "Cancelled") return;
+
+    // The mutation is committed and its cursor/player state has already been
+    // installed by Lectern. This pane's raw media DTO is a separate projection,
+    // so reload it rather than guessing Read/Finished from a cursor snapshot.
+    feedback.show({ severity: "success", title: "Progress reset." });
+    try {
+      const canonical = await apiFetch<{ data: Media }>(
+        mediaResource.clientPath({ id }),
+      );
+      setMedia((current) =>
+        current?.id === id ? canonical.data : current,
+      );
+    } catch (reconciliationError) {
+      if (handleUnauthenticatedApiError(reconciliationError)) return;
+      if (
+        !isApiError(reconciliationError) ||
+        isSameSystemApiDefect(reconciliationError)
+      ) {
+        throw reconciliationError;
+      }
+      feedback.show(
+        toFeedback(reconciliationError, {
+          fallback: "Progress reset, but the latest state could not be loaded.",
+        }),
+      );
+    }
+  }, [feedback, id, lectern.resetProgress, media]);
   const metadataRetryBaselineRef = useRef<MetadataRetryBaseline | null>(null);
   const [metadataRetryPollsRemaining, setMetadataRetryPollsRemaining] =
     useState(0);
@@ -1027,8 +1080,21 @@ export default function MediaPaneBody() {
       [],
     ),
   });
+  // A canonical Empty cursor is a tombstone, not a locator. Its revision keys
+  // an actual cold mount so every reader format reuses its existing beginning
+  // behavior rather than fabricating a page, fragment, or text offset.
+  const [canonicalResetRevision, setCanonicalResetRevision] = useState<
+    number | null
+  >(null);
+  const pendingCanonicalResetRef = useRef<{
+    revision: number;
+    resolve: (result: ApplyCursorResult) => void;
+  } | null>(null);
   const reportReaderMovement = readerProgress.reportMovement;
   const noteGenuineReaderInput = readerProgress.noteGenuineInput;
+  const drainReaderProgressForReset = readerProgress.drainForProgressReset;
+  const installCanonicalReaderSnapshot =
+    readerProgress.installCanonicalSnapshot;
   const initialReaderResumeStateLoading =
     readerCapability.state === "Readable" &&
     readerProgress.initialSnapshot === undefined &&
@@ -2198,6 +2264,7 @@ export default function MediaPaneBody() {
     initialReaderResumeStateLoading,
     activeRequestedReaderLoc,
     initialEpubResumeState,
+    canonicalResetRevision,
     beginRestoreSession,
     settleRestoreSession,
     updateRestorePhase,
@@ -2349,6 +2416,7 @@ export default function MediaPaneBody() {
     setHoveredApparatusItemId(null);
     setTextRestoreSettled(false);
     setPdfHighlightNavigation(null);
+    setCanonicalResetRevision(null);
   }, [id]);
 
   useEffect(() => {
@@ -2781,8 +2849,57 @@ export default function MediaPaneBody() {
     resolve: (result: ApplyCursorResult) => void;
   } | null>(null);
   applyCursorCommandRef.current = (command: ApplyCursorCommand) => {
-    const locator = command.locator;
+    if (command.source === "canonical" && command.snapshot.state === "Empty") {
+      if (readerCapability.state !== "Readable") {
+        return Promise.resolve<ApplyCursorResult>("failed");
+      }
+      // A reset wins over any feature-owned location target and coarse URL
+      // intent. The server's Empty cursor is the only reset position.
+      clearTarget();
+      if (paneHref !== null) {
+        const hrefWithoutCoarseLocation = stripCoarseReaderQuery(paneHref);
+        const hashStart = hrefWithoutCoarseLocation.indexOf("#");
+        paneRouter.replace(
+          hashStart === -1
+            ? hrefWithoutCoarseLocation
+            : hrefWithoutCoarseLocation.slice(0, hashStart),
+        );
+      }
+      cancelRestoreSession();
+      scrollRestoreAppliedRef.current = false;
+      setTextRestoreSettled(false);
+      setRemoteApplyLocator(null);
+      setActiveTranscriptFragmentId(null);
+      setActiveWebSectionId(null);
+      appliedEpubNavigationRef.current = null;
+      if (readerCapability.locatorKind === "epub") {
+        const firstSection = epubSections?.[0];
+        if (firstSection) {
+          beginRestoreSession("opening_target");
+          setActiveSectionId(firstSection.section_id);
+          setEpubRestoreRequest(
+            buildManualSectionRestoreRequest(firstSection.section_id),
+          );
+        }
+      }
+      setCanonicalResetRevision(command.snapshot.revision);
+      return new Promise<ApplyCursorResult>((resolve) => {
+        pendingCanonicalResetRef.current?.resolve("failed");
+        pendingCanonicalResetRef.current = {
+          revision: command.snapshot.revision,
+          resolve,
+        };
+      });
+    }
+
+    const locator =
+      command.source === "remote"
+        ? command.locator
+        : command.snapshot.state === "Positioned"
+          ? command.snapshot.locator
+          : null;
     if (
+      locator === null ||
       readerCapability.state !== "Readable" ||
       locator.kind !== readerCapability.locatorKind
     ) {
@@ -2856,9 +2973,71 @@ export default function MediaPaneBody() {
     return () => {
       pendingCursorApplyRef.current?.resolve("failed");
       pendingCursorApplyRef.current = null;
+      pendingCanonicalResetRef.current?.resolve("failed");
+      pendingCanonicalResetRef.current = null;
       setRemoteApplyLocator(null);
     };
   }, [id]);
+
+  // Text, transcript, and EPUB readers have remounted/reselected their default
+  // content. Finish the canonical installation only after the viewport has
+  // physically returned to the beginning. PDF resolves from its fresh control
+  // mount below.
+  const activeContentId = activeContent?.fragmentId ?? null;
+  useEffect(() => {
+    const pending = pendingCanonicalResetRef.current;
+    if (
+      pending === null ||
+      pending.revision !== canonicalResetRevision ||
+      isPdf ||
+      activeContentId === null ||
+      !readerLayoutReady ||
+      (isEpub &&
+        (!epubRestoreRequest ||
+          activeEpubSection?.section_id !== epubRestoreRequest.sectionId))
+    ) {
+      return;
+    }
+    const container = getPaneScrollContainer(contentRef.current);
+    if (!container) {
+      return;
+    }
+    container.scrollTop = 0;
+    scrollRestoreAppliedRef.current = true;
+    setTextRestoreSettled(true);
+    pendingCanonicalResetRef.current = null;
+    pending.resolve("applied");
+  }, [
+    activeContentId,
+    activeEpubSection?.section_id,
+    canonicalResetRevision,
+    epubRestoreRequest,
+    isEpub,
+    isPdf,
+    readerLayoutReady,
+  ]);
+
+  useEffect(() => {
+    const unsubscribeInstall = lectern.onCanonicalInstall((event) => {
+      if (event.kind === "progressState" && event.state.mediaId === id) {
+        void installCanonicalReaderSnapshot(event.state.readerCursor);
+      }
+    });
+    const unsubscribeDrain = lectern.registerBeforeProgressReset((mediaId) =>
+      mediaId === id
+        ? drainReaderProgressForReset()
+        : Promise.resolve(),
+    );
+    return () => {
+      unsubscribeInstall();
+      unsubscribeDrain();
+    };
+  }, [
+    id,
+    drainReaderProgressForReset,
+    installCanonicalReaderSnapshot,
+    lectern,
+  ]);
 
   // Capture genuine text movement for web, transcript, and EPUB content.
   useEffect(() => {
@@ -4883,6 +5062,16 @@ export default function MediaPaneBody() {
       ?.can_edit_authors
       ? { kind: "Available", execute: openAuthorsEditor }
       : { kind: "Unavailable" };
+    const progressReset: ExecutableResourceAction = media.progress_resettable
+      ? {
+          kind: "Available",
+          execute: () =>
+            runPaneAction(
+              RESOURCE_ACTION_CATALOG.ResetProgress.id,
+              handleResetProgress,
+            ),
+        }
+      : { kind: "Unavailable" };
     const lecternMembership: LecternMembershipAction =
       lectern.resource.status !== "ready"
         ? { kind: "Unavailable" }
@@ -4925,6 +5114,7 @@ export default function MediaPaneBody() {
       retryMetadata,
       editAuthors,
       removeMedia,
+      progressReset,
       lecternMembership,
       busyIds,
     };
@@ -4934,7 +5124,8 @@ export default function MediaPaneBody() {
             ...commonActions,
             playedState:
               media.episode_state === "played" ||
-              media.listening_state?.is_completed === true
+              (media.episode_state === null &&
+                media.listening_state?.is_completed === true)
                 ? {
                     kind: "MarkUnplayed",
                     execute: () =>
@@ -5050,6 +5241,7 @@ export default function MediaPaneBody() {
     handleMarkEpisodePlayed,
     handleMarkEpisodeUnplayed,
     handleMarkUnread,
+    handleResetProgress,
     handleRefreshSource,
     handleRetryMetadata,
     handleRetryProcessing,
@@ -6412,7 +6604,9 @@ export default function MediaPaneBody() {
                     paneInstance={paneRuntime?.paneId ?? id}
                     onSeek={handleTranscriptSeek}
                   />
-                  {transcriptPaneBody}
+                  <div key={`${id}:${canonicalResetRevision ?? "initial"}`}>
+                    {transcriptPaneBody}
+                  </div>
                 </div>
               </div>
             </div>
@@ -6471,7 +6665,7 @@ export default function MediaPaneBody() {
             ) : (
               <div className={styles.readerFrame}>
                 <PdfReader
-                  key={id}
+                  key={`${id}:${canonicalResetRevision ?? "initial"}`}
                   mediaId={id}
                   beforeContent={readerBanners}
                   contentRef={pdfContentRef}
@@ -6532,20 +6726,37 @@ export default function MediaPaneBody() {
                   onControlsStateChange={setPdfControlsState}
                   onControlsReady={(controls) => {
                     pdfControlsRef.current = controls;
+                    const pending = pendingCanonicalResetRef.current;
+                    if (
+                      controls !== null &&
+                      pending !== null &&
+                      pending.revision === canonicalResetRevision
+                    ) {
+                      pendingCanonicalResetRef.current = null;
+                      pending.resolve("applied");
+                    }
                   }}
                   onIntrinsicWidthChange={handlePdfIntrinsicWidthChange}
                   startPageNumber={
-                    activeRequestedPdfPageNumber ??
-                    resolvedPdfPageNumber ??
-                    initialPdfResumeState?.page ??
-                    undefined
+                    canonicalResetRevision === null
+                      ? (activeRequestedPdfPageNumber ??
+                        resolvedPdfPageNumber ??
+                        initialPdfResumeState?.page ??
+                        undefined)
+                      : undefined
                   }
                   startPageProgression={
-                    activeRequestedPdfPageNumber || resolvedPdfPageNumber
+                    canonicalResetRevision !== null ||
+                    activeRequestedPdfPageNumber ||
+                    resolvedPdfPageNumber
                       ? undefined
                       : (initialPdfResumeState?.page_progression ?? undefined)
                   }
-                  startZoom={initialPdfResumeState?.zoom ?? undefined}
+                  startZoom={
+                    canonicalResetRevision === null
+                      ? (initialPdfResumeState?.zoom ?? undefined)
+                      : undefined
+                  }
                   onResumeStateChange={(resume) => {
                     if (resume) {
                       reportReaderMovement(resume);
@@ -6556,6 +6767,7 @@ export default function MediaPaneBody() {
             )
           ) : isEpub ? (
             <TextDocumentReader
+              key={`${id}:${canonicalResetRevision ?? "initial"}`}
               mediaId={id}
               beforeContent={readerBanners}
               readerRootRef={readerRootRef}
@@ -6586,6 +6798,7 @@ export default function MediaPaneBody() {
             />
           ) : (
             <TextDocumentReader
+              key={`${id}:${canonicalResetRevision ?? "initial"}`}
               mediaId={id}
               beforeContent={readerBanners}
               readerRootRef={readerRootRef}

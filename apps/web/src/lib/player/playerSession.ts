@@ -126,7 +126,8 @@ export const PREVIOUS_RESTART_THRESHOLD_MS = 3000;
 export type PlaybackEffect =
   | { kind: "None" }
   | { kind: "StartSession" }
-  | { kind: "RestartCurrent" };
+  | { kind: "RestartCurrent" }
+  | { kind: "ResetCurrent"; positionMs: number };
 
 export interface SessionTransition {
   state: PlayerSessionState;
@@ -437,6 +438,30 @@ export function applySnapshotInstall(
     default:
       return assertNever(state);
   }
+}
+
+/**
+ * Install ResetProgress for an active audio session. Reset is not navigation:
+ * it retains the descriptor, origin, and local history, but the session becomes
+ * paused at the returned canonical position (zero for a fresh reset). The
+ * provider installs the returned audio fences before it starts the fresh
+ * heartbeat generation.
+ */
+export function resetProgress(
+  state: PlayerSessionState,
+  history: PlayerHistory,
+  mediaId: MediaId,
+  positionMs: number,
+): SessionTransition {
+  const session = sessionOf(state);
+  if (session === undefined || session.descriptor.mediaId !== mediaId) {
+    return { state, history, effect: { kind: "None" } };
+  }
+  return {
+    state: { kind: "Active", session, phase: "Paused" },
+    history,
+    effect: { kind: "ResetCurrent", positionMs },
+  };
 }
 
 // --- Resume authority (spec §6 resume-authority bullet) ---------------------

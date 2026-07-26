@@ -63,6 +63,19 @@ def load_overrides(
     return result
 
 
+def clear_override_in_txn(db: Session, *, viewer_id: UUID, media_id: UUID) -> None:
+    """Clear the one explicit status override when ResetProgress replaces state."""
+    db.execute(
+        text(
+            """
+            DELETE FROM consumption_overrides
+            WHERE user_id = :viewer_id AND media_id = :media_id
+            """
+        ),
+        {"viewer_id": viewer_id, "media_id": media_id},
+    )
+
+
 def delete_all_users_in_txn(db: Session, *, media_id: UUID) -> None:
     """Delete every user's override row for a media (media teardown only)."""
     db.execute(

@@ -26,6 +26,12 @@ session/device/span/dwell history. `reader_engagement_states` and
 separate historical fact tables. This does not revive `reading_sessions`,
 `services/attention.py`, attention payloads, or any historical migration path.
 
+**Progress-reset supersession (2026-07-24):**
+[`media-progress-reset-hard-cutover.md`](media-progress-reset-hard-cutover.md)
+makes reader cursor and engagement writes one transaction, makes Unread
+status-only, and assigns all Nexus-owned current-progress clearing and fencing
+to `ResetProgress`.
+
 ## 0. Sequencing — mandatory
 
 This cutover lands **after** merged Lectern (`604dbed6`) and Alembic `0182_lectern_player_lifecycle`.
@@ -184,7 +190,10 @@ It stores no session, device, span, dwell, or event list. Writes use database `n
 
 The separate row is deliberate: engagement is activity-derived current state with a different lifecycle from the intentional cursor and explicit override. Folding it into either would recreate nullable mixed-shape state. Media teardown removes it through the consumption owner.
 
-Reader PUT becomes the exact existing `CursorWrite {locator, base_revision}` contract. Cursor conflict records no engagement. Cursor success/idempotent success is followed by the retry-safe current-state engagement command; failure is surfaced and the same cursor may be retried safely. Attention-only `204`, best-effort dwell, ambiguous-delta restore, and the rAF tracker die.
+Reader PUT keeps the exact `CursorWrite {locator, base_revision}` contract.
+Cursor CAS, current-state engagement, and any completion transition commit in
+one Consumption transaction; a conflict writes none of them. Attention-only
+`204`, best-effort dwell, ambiguous-delta restore, and the rAF tracker die.
 
 Projection precedence:
 
@@ -193,7 +202,7 @@ Projection precedence:
 3. reader engagement: `max_total_progression >= 0.95` → finished; any row → in progress;
 4. absent → unread.
 
-Document `last_engaged_at` comes from `reader_engagement_states`; audio recency comes from the heartbeat-only `podcast_listening_states.last_engaged_at`. Migration 0186 copies operational `updated_at` only when post-fencing state proves the latest mutation was a heartbeat (`write_revision > 0`, incomplete, and either positive position or no reset). Pre-fencing, completed, and post-reset zero-position rows stay absent because they prove at most that listening once occurred, not when it occurred. Manual Finished/Unread mutations may advance operational `updated_at` but preserve engagement recency. `MediaOut` and Resonance consume those owner-level recency facts; the removed library `surfaced_today` and Lectern Recent products consumed them before the Resonance cutover. This preserves reader-progress AC17 without retaining history or fabricating engagement from state-only commands.
+Document `last_engaged_at` comes from `reader_engagement_states`; audio recency comes from the heartbeat-only `podcast_listening_states.last_engaged_at`. Migration 0186 copies operational `updated_at` only when post-fencing state proves the latest mutation was a heartbeat (`write_revision > 0`, incomplete, and either positive position or no reset). Pre-fencing, completed, and post-reset zero-position rows stay absent because they prove at most that listening once occurred, not when it occurred. Manual Finished may advance operational `updated_at` while preserving engagement recency; Unread does not touch listening state; `ResetProgress` advances the fences and clears engagement recency. `MediaOut` and Resonance consume those owner-level recency facts; the removed library `surfaced_today` and Lectern Recent products consumed them before the Resonance cutover. This preserves reader-progress AC17 without retaining history or fabricating engagement from state-only commands.
 
 Post-cut `ListeningHeartbeatIn` remains strict camel-case, all-required, CAS-fenced, and has **no completion field**. It contains exactly:
 

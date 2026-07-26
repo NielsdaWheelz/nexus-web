@@ -452,7 +452,8 @@ message API responses include a
 `podcast_transcription_usage_daily`, `podcast_transcript_segments`.
 
 **Reader cursor / Lectern / consumption** — `reader_media_state` (the canonical
-resume cursor only; consumption state does not derive directly from it),
+revision-fenced resume cursor, including persisted `Empty` reset tombstones;
+consumption state does not derive directly from it),
 `consumption_queue_items` (the Lectern: one ordered, mixed-media list per
 viewer, membership/order only — completion is never stored on the row),
 `consumption_overrides` (explicit `Unread`/
@@ -463,7 +464,12 @@ observed Reading/Listening/Viewing intervals), `consumption_completion_facts`
 (the first observed post-cutover canonical completion per viewer/media), and
 `media_teardown_intents` (media-deletion claim; see §8.8 and
 [`modules/storage.md`](modules/storage.md)). Current state and historical facts
-are separate; see [`modules/consumption-activity.md`](modules/consumption-activity.md).
+are separate. Explicit status and current progress are also independent:
+`SetUnread` changes only the override, while `ResetProgress` clears the
+override and atomically resets Nexus-owned cursor, engagement, and listening
+state without deleting history or Lectern membership. See
+[`modules/consumption-activity.md`](modules/consumption-activity.md) and
+[`cutovers/media-progress-reset-hard-cutover.md`](cutovers/media-progress-reset-hard-cutover.md).
 
 **Jobs** — `background_jobs` (raw-SQL-only durable queue), plus rate-limiter
 tables (`rate_limit_request_log`, `rate_limit_inflight`, `token_budget_*`) and
@@ -1177,9 +1183,11 @@ Playing** is one device-local audio session, not a second durable list.
 canonical `LecternSnapshot`), `_state_store.py` (`consumption_overrides`
 explicit `Unread`/`Finished`), `_listening_store.py` (`podcast_listening_states`
 position/duration/speed + heartbeat fencing tokens `write_revision`/
-`reset_epoch`), `_reader_engagement_store.py` (`reader_engagement_states`,
-the sole DML owner of current-state reader recency — `last_engaged_at` plus,
-for non-PDF locators, a monotonic `max_total_progression`), `_activity_store.py`
+`reset_epoch`), `_reader_cursor_store.py` (`reader_media_state` revisioned
+`Empty`/`Positioned` cursor CAS), `_reader_engagement_store.py`
+(`reader_engagement_states`, the sole DML owner of current-state reader
+recency — `last_engaged_at` plus, for non-PDF locators, a monotonic
+`max_total_progression`), `_activity_store.py`
 (`consumption_activity_spans` and `consumption_completion_facts` DML),
 `_activity_stats.py` (read-time aggregation/sessionization), and `_projection.py`
 (the combined explicit-override + reader-engagement read model, plus batched
@@ -1191,7 +1199,8 @@ author, and calibrated semantic evidence. It returns at most ten placeable
 media outside the complete queue and excludes `Finished` targets. Two bounded
 aggregate command ports — `POST /lectern/commands`
 (`PlaceItems`/`RemoveItem`/`SetOrder`) and `POST /consumption/commands`
-(`EnsureMediaFinished`/`FinishLecternItem`/`SetUnread`/`SetBatchState`) — each
+(`EnsureMediaFinished`/`FinishLecternItem`/`SetUnread`/`UndoCompletion`/
+`SetBatchState`/`ResetProgress`) — each
 share one `retry_serializable` transaction, one canonical response, and
 `clientMutationId` replay through `services/resource_mutation_replay.py`;
 `GET /lectern` and the retained `GET`/`PUT /media/{id}/listening-state`
@@ -1201,7 +1210,8 @@ shape use `Presence<T>` ([`rules/boundaries.md`](rules/boundaries.md)), never
 
 Media teardown (see [`modules/storage.md`](modules/storage.md)) composes one
 consumption call, `consumption_service.delete_media_consumption_state_in_txn`
-(all users' Lectern/override/listening/reader-engagement rows), inside the
+(all users' Lectern/override/listening/reader-cursor/reader-engagement/
+activity/completion rows), inside the
 deletion transaction — `media_deletion.py` never writes those tables
 directly.
 

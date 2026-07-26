@@ -22,7 +22,6 @@ import {
   readerStateConflictCurrent,
   reduceReaderProgress,
   saveBaseRevision,
-  type ReaderCursorPositioned,
   type ReaderCursorSnapshot,
   type ReaderProgressEvent,
   type ReaderProgressState,
@@ -38,15 +37,22 @@ export type ReaderCapability =
 
 export type ApplyCursorResult = "applied" | "cancelled_by_user" | "failed";
 
-export interface ApplyCursorCommand {
-  requestId: number;
-  generation: number;
-  source: "remote";
-  locator: ReaderResumeState;
-}
+export type ApplyCursorCommand =
+  | {
+      requestId: number;
+      generation: number;
+      source: "remote";
+      locator: ReaderResumeState;
+    }
+  | {
+      requestId: number;
+      generation: number;
+      source: "canonical";
+      snapshot: ReaderCursorSnapshot;
+    };
 
 export interface ReaderProgressHandoffState {
-  snapshot: ReaderCursorPositioned;
+  snapshot: ReaderCursorSnapshot;
   busy: boolean;
   applyFailed: boolean;
   captureUnavailable: boolean;
@@ -62,7 +68,7 @@ interface UseReaderProgressOptions {
   apiFetch?: ApiFetchFn;
   /** Synchronous freshest-position capture; null when no position is available. */
   captureCurrentLocator: () => ReaderResumeState | null;
-  /** Format-owned addressable application of a remote cursor, with completion. */
+  /** Format-owned application of a remote cursor or canonical reset snapshot. */
   applyCursor: (command: ApplyCursorCommand) => Promise<ApplyCursorResult>;
 }
 
@@ -82,6 +88,10 @@ export interface ReaderProgress {
   /** True once a cursor save has failed and remains unresolved. */
   saveFailed: boolean;
   retrySave: () => void;
+  /** Drain the current local writer before `ResetProgress` enters the FIFO. */
+  drainForProgressReset: () => Promise<void>;
+  /** Install a server-authoritative reset/replay snapshot into this mounted reader. */
+  installCanonicalSnapshot: (snapshot: ReaderCursorSnapshot) => Promise<void>;
   handoff: ReaderProgressHandoffState | null;
   acceptRemoteCursor: () => void;
   stayAtLocalPosition: () => void;
@@ -114,6 +124,8 @@ export function useReaderProgress(options: UseReaderProgressOptions): ReaderProg
   const dirtySinceRef = useRef(0);
   const revalidateInFlightRef = useRef(false);
   const applyInFlightRef = useRef(false);
+  const applyIdRef = useRef(0);
+  const saveInFlightRef = useRef<Promise<void> | null>(null);
 
   const captureRef = useRef(options.captureCurrentLocator);
   captureRef.current = options.captureCurrentLocator;
@@ -133,55 +145,72 @@ export function useReaderProgress(options: UseReaderProgressOptions): ReaderProg
    * authority revision; `Stay at this position` passes the candidate revision.
    */
   const sendCursor = useCallback(
-    async (baseRevision: number, keepalive = false): Promise<void> => {
-      const mediaId = readableMediaId;
-      if (mediaId === null) {
-        return;
-      }
-      const locator = pendingLocator(stateRef.current.local);
-      if (locator === null) {
-        return;
-      }
-      const generation = generationRef.current;
-      requestSeqRef.current += 1;
-      apply({ type: "save_started" });
-      const body = { locator, base_revision: baseRevision };
-      try {
-        const res = await fetchFn<{ data: unknown }>(`/api/media/${mediaId}/reader-state`, {
-          method: "PUT",
-          body: JSON.stringify(body),
-          ...(keepalive ? { keepalive } : {}),
-        });
-        if (generationRef.current !== generation) {
+    (baseRevision: number, keepalive = false): Promise<void> => {
+      const run = async (): Promise<void> => {
+        const mediaId = readableMediaId;
+        if (mediaId === null) {
           return;
         }
-        const snapshot = parseReaderCursorSnapshot(res.data);
-        if (snapshot.state !== "Positioned") {
-          throw new Error("Cursor write returned an Empty snapshot");
-        }
-        apply({ type: "save_succeeded", snapshot });
-      } catch (err) {
-        if (generationRef.current !== generation) {
+        const locator = pendingLocator(stateRef.current.local);
+        if (locator === null) {
           return;
         }
-        if (handleUnauthenticatedApiError(err)) {
-          return;
-        }
-        let conflictCurrent: ReaderCursorSnapshot | null = null;
+        const generation = generationRef.current;
+        requestSeqRef.current += 1;
+        apply({ type: "save_started" });
+        const body = { locator, base_revision: baseRevision };
         try {
-          conflictCurrent = readerStateConflictCurrent(err);
-        } catch (contractErr) {
-          console.error("Malformed reader-state conflict response:", contractErr);
+          const res = await fetchFn<{ data: unknown }>(`/api/media/${mediaId}/reader-state`, {
+            method: "PUT",
+            body: JSON.stringify(body),
+            ...(keepalive ? { keepalive } : {}),
+          });
+          if (generationRef.current !== generation) {
+            return;
+          }
+          const snapshot = parseReaderCursorSnapshot(res.data);
+          if (snapshot.state !== "Positioned") {
+            throw new Error("Cursor write returned an Empty snapshot");
+          }
+          apply({ type: "save_succeeded", snapshot });
+        } catch (err) {
+          if (generationRef.current !== generation) {
+            return;
+          }
+          if (handleUnauthenticatedApiError(err)) {
+            return;
+          }
+          let conflictCurrent: ReaderCursorSnapshot | null = null;
+          try {
+            conflictCurrent = readerStateConflictCurrent(err);
+          } catch (contractErr) {
+            console.error("Malformed reader-state conflict response:", contractErr);
+            apply({ type: "save_failed" });
+            return;
+          }
+          if (conflictCurrent !== null) {
+            apply({ type: "save_conflicted", current: conflictCurrent });
+            return;
+          }
+          console.error("Failed to save reader cursor:", err);
           apply({ type: "save_failed" });
-          return;
         }
-        if (conflictCurrent !== null) {
-          apply({ type: "save_conflicted", current: conflictCurrent });
-          return;
-        }
-        console.error("Failed to save reader cursor:", err);
-        apply({ type: "save_failed" });
-      }
+      };
+      const pending = run();
+      saveInFlightRef.current = pending;
+      void pending.then(
+        () => {
+          if (saveInFlightRef.current === pending) {
+            saveInFlightRef.current = null;
+          }
+        },
+        () => {
+          if (saveInFlightRef.current === pending) {
+            saveInFlightRef.current = null;
+          }
+        },
+      );
+      return pending;
     },
     [apply, fetchFn, readableMediaId],
   );
@@ -216,21 +245,31 @@ export function useReaderProgress(options: UseReaderProgressOptions): ReaderProg
   }, [apply, fetchFn, readableMediaId]);
 
   const applyRemote = useCallback(
-    async (snapshot: ReaderCursorPositioned, auto: boolean): Promise<void> => {
+    async (snapshot: ReaderCursorSnapshot, auto: boolean): Promise<void> => {
       if (applyInFlightRef.current) {
         return;
       }
       applyInFlightRef.current = true;
+      const applyId = ++applyIdRef.current;
       setHandoffBusy(true);
       const generation = generationRef.current;
       requestSeqRef.current += 1;
       try {
-        const result = await applyCursorRef.current({
-          requestId: requestSeqRef.current,
-          generation,
-          source: "remote",
-          locator: snapshot.locator,
-        });
+        const result = await applyCursorRef.current(
+          snapshot.state === "Positioned"
+            ? {
+                requestId: requestSeqRef.current,
+                generation,
+                source: "remote",
+                locator: snapshot.locator,
+              }
+            : {
+                requestId: requestSeqRef.current,
+                generation,
+                source: "canonical",
+                snapshot,
+              },
+        );
         if (generationRef.current !== generation) {
           return;
         }
@@ -250,13 +289,85 @@ export function useReaderProgress(options: UseReaderProgressOptions): ReaderProg
         }
         // Cancelled by genuine input: the user keeps their viewport and the
         // candidate stays available; nothing may snap back later.
+      } catch (error) {
+        if (generationRef.current === generation) {
+          console.error("Failed to apply reader cursor:", error);
+          setApplyFailed(true);
+        }
       } finally {
-        applyInFlightRef.current = false;
-        setHandoffBusy(false);
+        if (applyIdRef.current === applyId) {
+          applyInFlightRef.current = false;
+          setHandoffBusy(false);
+        }
       }
     },
     [apply],
   );
+
+  const installCanonicalSnapshot = useCallback(
+    async (snapshot: ReaderCursorSnapshot): Promise<void> => {
+      if (readableMediaId === null) {
+        return;
+      }
+      // Discard timers, in-flight acknowledgements, and any remote handoff from
+      // the prior generation before applying the command's server snapshot.
+      generationRef.current += 1;
+      const generation = generationRef.current;
+      requestSeqRef.current += 1;
+      apply({ type: "canonical_snapshot_installed", snapshot });
+      setInitialSnapshot(snapshot);
+      setAnnouncement("");
+      setApplyFailed(false);
+      setCaptureUnavailable(false);
+
+      applyInFlightRef.current = true;
+      const applyId = ++applyIdRef.current;
+      setHandoffBusy(true);
+      try {
+        const result = await applyCursorRef.current({
+          requestId: requestSeqRef.current,
+          generation,
+          source: "canonical",
+          snapshot,
+        });
+        if (generationRef.current !== generation) {
+          return;
+        }
+        if (result !== "applied") {
+          setApplyFailed(true);
+        }
+      } catch (error) {
+        if (generationRef.current === generation) {
+          console.error("Failed to install canonical reader cursor:", error);
+          setApplyFailed(true);
+        }
+      } finally {
+        if (applyIdRef.current === applyId) {
+          applyInFlightRef.current = false;
+          setHandoffBusy(false);
+        }
+      }
+    },
+    [apply, readableMediaId],
+  );
+
+  const drainForProgressReset = useCallback(async (): Promise<void> => {
+    // Finish the one already-started write, then flush the newest queued local
+    // locator once. The server tombstone remains the race boundary if a write
+    // is ambiguous or new input races this best-effort drain.
+    const inFlight = saveInFlightRef.current;
+    if (inFlight !== null) {
+      await inFlight;
+    }
+    const current = stateRef.current;
+    if (
+      current.authority.status === "ready" &&
+      current.remote.status === "none" &&
+      (current.local.status === "dirty" || current.local.status === "save_failed")
+    ) {
+      await sendCursor(saveBaseRevision(current));
+    }
+  }, [sendCursor]);
 
   const revalidate = useCallback(
     async (trigger: "activation" | "visible" | "focus" | "pageshow" | "online") => {
@@ -571,6 +682,8 @@ export function useReaderProgress(options: UseReaderProgressOptions): ReaderProg
     retryLoad,
     saveFailed: state.local.status === "save_failed",
     retrySave,
+    drainForProgressReset,
+    installCanonicalSnapshot,
     handoff,
     acceptRemoteCursor,
     stayAtLocalPosition,

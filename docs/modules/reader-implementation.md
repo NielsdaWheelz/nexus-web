@@ -456,21 +456,26 @@ pure black/white to reduce halation under long sessions.
 
 ### per-media progress
 
-- `reader_media_state` stores one canonical cursor row per user/media: a
-  non-null jsonb `locator`, a monotonic bigint `revision` (starts `1`), and
-  explicitly named non-cascading FKs (`fk_reader_media_state_user`,
-  `fk_reader_media_state_media`). `updated_at` is metadata, not a conflict
-  token; `revision` is authority.
+- Consumption's `_reader_cursor_store.py` is the sole DML owner of
+  `reader_media_state`. One row per user/media carries a nullable jsonb
+  `locator` and monotonic bigint `revision` (starts `1`). A null locator is an
+  internal revisioned `Empty` reset tombstone; PUT never accepts a null/clear
+  shape. The explicitly named non-cascading FKs are
+  `fk_reader_media_state_user` and `fk_reader_media_state_media`.
+  `updated_at` is metadata; `revision` is authority.
 - `GET /api/media/{id}/reader-state` returns exactly
-  `{state:"Empty",revision:0}` or `{state:"Positioned",revision>=1,locator}` —
-  never raw `null`. An unsupported (future) media kind returns
+  `{state:"Empty",revision>=0}` or
+  `{state:"Positioned",revision>=1,locator}` — never raw `null`. Empty
+  revision `0` means no row; Empty revision `>=1` is a persisted reset
+  tombstone. An unsupported (future) media kind returns
   `400 E_INVALID_REQUEST`; missing/inaccessible media returns masked
   `404 E_MEDIA_NOT_FOUND`.
 - `PUT /api/media/{id}/reader-state` takes the bare `CursorWrite` body
   (`{locator, base_revision}` — no wrapping envelope, no optional sibling
   block). Extra fields, old bare locators, and a top-level `null` clear are
   rejected with `400`.
-  - Empty + `base_revision: 0` creates revision `1`.
+  - Empty + matching `base_revision` writes a Positioned cursor at the next
+    revision; only an absent row starts from `0`.
   - A matching `base_revision` replaces the cursor at `revision + 1`.
   - An equal desired locator is idempotent success at the current revision —
     the cursor is not revised, but the save still counts as engagement (next
@@ -478,15 +483,15 @@ pure black/white to reduce halation under long sessions.
   - A stale `base_revision` returns `409 E_READER_STATE_CONFLICT` with
     `error.details.current` set to the exact current snapshot; nothing is
     mutated, and no engagement is recorded.
-  - On cursor success — including the idempotent equal-locator case — the
-    route composes one retry-safe reader-engagement command in its own
-    transaction: it touches that (viewer, media) row's recency unconditionally
-    and, for non-PDF locators, advances a monotonic whole-document progression
-    high-water mark. This follow-up write is not swallowed on failure; the
-    same PUT may simply be retried, since both the cursor write and the
-    engagement command are themselves idempotent. There is no longer any
-    request shape that writes engagement without a cursor write alongside it,
-    and no `204` response path.
+  - On cursor success — including the idempotent equal-locator case — the same
+    Consumption transaction touches reader-engagement recency and, for
+    non-PDF locators, advances a monotonic whole-document progression
+    high-water mark. Cursor, engagement, and any completion-transition fact
+    commit together. A stale CAS records none of them. There is no request
+    shape that writes engagement without a cursor write, and no `204` path.
+  - `ResetProgress` writes a higher-revision Empty tombstone and clears current
+    engagement atomically. A stale pre-reset save therefore conflicts instead
+    of resurrecting the old position.
 - All reader-state responses carry `Cache-Control: private, no-store`, via an
   exact-path FastAPI middleware and the matching header on the Next reader-state
   BFF route.
@@ -509,7 +514,10 @@ pure black/white to reduce halation under long sessions.
   conflict/adoption decisions live in `apps/web/src/lib/reader/readerProgress.ts`.
   A clean, dormant reader auto-adopts a newer remote cursor; an active or
   locally dirty reader shows the handoff (`Go to most recent position` /
-  `Stay at this position`) instead of teleporting.
+  `Stay at this position`) instead of teleporting. A canonical Empty snapshot
+  from `ResetProgress` invalidates pending generations and asks the active
+  format adapter to apply its existing cold-start beginning; the client never
+  fabricates a locator or revision.
 
 ### consumption activity
 

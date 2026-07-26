@@ -224,6 +224,9 @@ function episodeMedia({
   canRetryMetadata = false,
   canEditAuthors = false,
   audioPlayable = false,
+  progressResettable = false,
+  episodeState = "unplayed",
+  listeningState = null,
 }: {
   id?: string;
   title?: string;
@@ -233,6 +236,14 @@ function episodeMedia({
   canRetryMetadata?: boolean;
   canEditAuthors?: boolean;
   audioPlayable?: boolean;
+  progressResettable?: boolean;
+  episodeState?: "unplayed" | "in_progress" | "played" | null;
+  listeningState?: {
+    position_ms: number;
+    duration_ms: number | null;
+    playback_speed: number;
+    is_completed: boolean;
+  } | null;
 } = {}) {
   const footerAudio = {
     kind: "FooterAudio" as const,
@@ -254,9 +265,10 @@ function episodeMedia({
     processing_status: "ready_for_reading",
     transcript_state: transcriptState,
     transcript_coverage: transcriptCoverage,
-    listening_state: null,
+    listening_state: listeningState,
     subscription_default_playback_speed: null,
-    episode_state: "unplayed",
+    episode_state: episodeState,
+    progress_resettable: progressResettable,
     failure_stage: null,
     last_error_code: null,
     playback_source: null,
@@ -753,7 +765,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
             outcome: { kind: "StateOnly" },
             lectern: { items: [] },
             nextItem: { kind: "Absent" },
-            listeningStates: [],
+            progressState: { kind: "Absent" },
             completionHandle:
               command.kind === "EnsureMediaFinished"
                 ? { kind: "Present", value: completionHandle }
@@ -804,6 +816,116 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
       kind: "UndoCompletion",
       completionHandle,
     });
+  });
+
+  it("resets an independently resettable episode to its canonical unplayed state", async () => {
+    const mediaId = "00000000-0000-4000-8000-000000000111";
+    const commandBodies: Array<Record<string, unknown>> = [];
+    const confirmReset = vi.spyOn(window, "confirm").mockReturnValue(true);
+    let resetCommitted = false;
+    let episodeRequests = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      if (
+        url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011"
+      ) {
+        return jsonResponse(podcastDetailResponse());
+      }
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
+      ) {
+        episodeRequests += 1;
+        return jsonResponse({
+          data: [
+            episodeMedia({
+              progressResettable: !resetCommitted,
+              episodeState: resetCommitted ? "unplayed" : "in_progress",
+              listeningState: {
+                position_ms: resetCommitted ? 0 : 30_000,
+                duration_ms: 60_000,
+                playback_speed: 1.25,
+                is_completed: false,
+              },
+            }),
+          ],
+        });
+      }
+      if (url.pathname === "/api/libraries/writable-destinations") {
+        return jsonResponse({
+          data: [],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      if (url.pathname === "/api/lectern") {
+        return jsonResponse({ data: { items: [] } });
+      }
+      if (
+        url.pathname === "/api/consumption/commands" &&
+        init?.method === "POST"
+      ) {
+        const command = JSON.parse(String(init.body)) as Record<string, unknown>;
+        commandBodies.push(command);
+        resetCommitted = true;
+        return jsonResponse({
+          data: {
+            outcome: { kind: "StateOnly" },
+            lectern: { items: [] },
+            nextItem: { kind: "Absent" },
+            progressState: {
+              kind: "Present",
+              value: {
+                mediaId,
+                readerCursor: { state: "Empty", revision: 1 },
+                listeningState: {
+                  kind: "Present",
+                  value: {
+                    positionMs: 0,
+                    durationMs: { kind: "Present", value: 60_000 },
+                    playbackSpeed: 1.25,
+                    writeRevision: 1,
+                    resetEpoch: 1,
+                  },
+                },
+              },
+            },
+            completionHandle: { kind: "Absent" },
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(<Wrapped />);
+
+    await screen.findByText("Episode 1");
+    fireEvent.click(
+      screen.getByRole("button", { name: "More actions for Episode 1" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Reset progress" }),
+    );
+
+    await waitFor(() => {
+      expect(commandBodies).toEqual([
+        expect.objectContaining({ kind: "ResetProgress", mediaId }),
+      ]);
+    });
+    expect(confirmReset).toHaveBeenCalledWith(
+      "Reset progress? This starts the item from the beginning. Notes and activity history are kept.",
+    );
+    expect(await screen.findByText("Progress reset.")).toBeInTheDocument();
+
+    await waitFor(() => expect(episodeRequests).toBe(2));
+    fireEvent.click(
+      screen.getByRole("button", { name: "More actions for Episode 1" }),
+    );
+    expect(
+      screen.queryByRole("menuitem", { name: "Reset progress" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: "Mark as played" }),
+    ).toBeInTheDocument();
   });
 
   it("re-enriches metadata from a capable episode row without consuming the server capability", async () => {
@@ -1029,6 +1151,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
                 consumption: {
                   state: "Unread",
                   progress: { kind: "Absent" },
+                  progressResettable: false,
                 },
                 activation: {
                   kind: "FooterAudio",

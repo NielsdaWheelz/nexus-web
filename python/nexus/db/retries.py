@@ -39,6 +39,7 @@ RETRYABLE_UNIQUE_CONSTRAINTS = frozenset(
         "uq_contributor_credits_gutenberg_contributor_role",
         "uix_resource_mutations_client_id",
         "reader_profiles_pkey",
+        "uq_reader_media_state_user_media",
         "uq_consumption_queue_items_user_media",
         "uq_consumption_completion_facts_user_media",
         "uq_passage_anchors_identity",

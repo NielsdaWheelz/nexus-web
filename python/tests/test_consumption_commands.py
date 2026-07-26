@@ -41,6 +41,8 @@ def _register_media_cleanup(direct_db: DirectSessionManager, media_id: UUID) -> 
         "consumption_queue_items",
         "consumption_overrides",
         "podcast_listening_states",
+        "reader_media_state",
+        "reader_engagement_states",
         "library_entries",
     ):
         direct_db.register_cleanup(table, "media_id", media_id)
@@ -146,6 +148,7 @@ def _heartbeat(
     expected_write_revision,
     expected_reset_epoch,
     duration_ms=600_000,
+    playback_speed=1.0,
 ):
     return auth_client.put(
         f"/media/{media_id}/listening-state",
@@ -153,13 +156,37 @@ def _heartbeat(
         json={
             "positionMs": position_ms,
             "durationMs": {"kind": "Present", "value": duration_ms},
-            "playbackSpeed": 1.0,
+            "playbackSpeed": playback_speed,
             "expectedWriteRevision": expected_write_revision,
             "expectedResetEpoch": expected_reset_epoch,
             "heartbeatGeneration": str(uuid4()),
             "heartbeatSequence": 1,
         },
     )
+
+
+def _put_reader_cursor(
+    auth_client, user_id: UUID, media_id: UUID, *, locator: dict, base_revision: int
+):
+    return auth_client.put(
+        f"/media/{media_id}/reader-state",
+        headers=auth_headers(user_id),
+        json={"locator": locator, "base_revision": base_revision},
+    )
+
+
+def _transcript_locator(*, total_progression: float = 0.5) -> dict:
+    return {
+        "kind": "transcript",
+        "target": {"fragment_id": str(uuid4())},
+        "locations": {
+            "text_offset": 0,
+            "progression": total_progression,
+            "total_progression": total_progression,
+            "position": 1,
+        },
+        "text": {"quote": None, "quote_prefix": None, "quote_suffix": None},
+    }
 
 
 def _item_by_media(items, media_id) -> dict:
@@ -361,7 +388,7 @@ class TestFinishLecternItem:
 
 
 class TestSetUnread:
-    def test_bump_reset_and_listening_states_payload(
+    def test_changes_status_only_and_leaves_active_progress_untouched(
         self, auth_client, direct_db: DirectSessionManager
     ):
         user_id = create_test_user_id()
@@ -401,60 +428,311 @@ class TestSetUnread:
         assert result.status_code == 200, result.text
         data = result.json()["data"]
         assert data["outcome"] == {"kind": "StateOnly"}
-        assert len(data["listeningStates"]) == 1
-        entry = data["listeningStates"][0]
-        assert entry["mediaId"] == str(episode)
-        assert entry["state"]["positionMs"] == 0
-        assert entry["state"]["writeRevision"] == 3  # 2 -> +1
-        assert entry["state"]["resetEpoch"] == 1  # 0 -> +1
+        assert data["progressState"] == {"kind": "Absent"}
+        with direct_db.session() as session:
+            state = session.execute(
+                text(
+                    """
+                    SELECT position_ms, write_revision, reset_epoch
+                    FROM podcast_listening_states
+                    WHERE user_id = :user_id AND media_id = :media_id
+                    """
+                ),
+                {"user_id": user_id, "media_id": episode},
+            ).one()
+        assert tuple(state) == (120_000, 2, 0)
 
-    def test_replay_adopts_later_progress_without_double_bump(
+
+class TestResetProgress:
+    def test_inaccessible_media_is_masked_as_not_found(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """A real media row outside the viewer's library remains invisible."""
+        viewer_id = create_test_user_id()
+        owner_id = create_test_user_id()
+        _bootstrap(auth_client, viewer_id)
+        owner_library_id = _bootstrap(auth_client, owner_id)
+        episode = _create_podcast_episode(direct_db, title="Private episode")
+        _add_to_library(direct_db, owner_library_id, episode)
+
+        response = _consumption(
+            auth_client,
+            viewer_id,
+            {
+                "kind": "ResetProgress",
+                "clientMutationId": str(uuid4()),
+                "mediaId": str(episode),
+            },
+        )
+
+        assert response.status_code == 404, response.text
+        assert response.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
+
+    def test_rejects_extra_command_fields(self, auth_client):
+        """The ResetProgress command is a closed, discriminated request shape."""
+        user_id = create_test_user_id()
+        _bootstrap(auth_client, user_id)
+
+        response = _consumption(
+            auth_client,
+            user_id,
+            {
+                "kind": "ResetProgress",
+                "clientMutationId": str(uuid4()),
+                "mediaId": str(uuid4()),
+                "unexpected": True,
+            },
+        )
+
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+    def test_resets_current_progress_only_and_fences_stale_writes(
         self, auth_client, direct_db: DirectSessionManager
     ):
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         episode = _create_podcast_episode(direct_db, title="Ep")
         _add_to_library(direct_db, library_id, episode)
+        _place(auth_client, user_id, [episode])
         assert (
             _heartbeat(
                 auth_client,
                 user_id,
                 episode,
-                position_ms=1000,
+                position_ms=120_000,
                 expected_write_revision=0,
                 expected_reset_epoch=0,
+                playback_speed=1.25,
             ).status_code
             == 200
         )
+        locator = _transcript_locator()
+        assert (
+            _put_reader_cursor(
+                auth_client,
+                user_id,
+                episode,
+                locator=locator,
+                base_revision=0,
+            ).status_code
+            == 200
+        )
+        finished = _consumption(
+            auth_client,
+            user_id,
+            {
+                "kind": "EnsureMediaFinished",
+                "clientMutationId": str(uuid4()),
+                "mediaId": str(episode),
+            },
+        )
+        assert finished.status_code == 200, finished.text
+        assert len(_completion_rows(direct_db, user_id=user_id, media_id=episode)) == 1
 
         cmid = str(uuid4())
-        body = {"kind": "SetUnread", "clientMutationId": cmid, "mediaId": str(episode)}
+        assert (
+            _consumption(
+                auth_client,
+                user_id,
+                {"kind": "SetUnread", "clientMutationId": str(uuid4()), "mediaId": str(episode)},
+            ).status_code
+            == 200
+        )
+        body = {"kind": "ResetProgress", "clientMutationId": cmid, "mediaId": str(episode)}
         first = _consumption(auth_client, user_id, body)
         assert first.status_code == 200, first.text
-        # After reset: revision 2, epoch 1, position 0.
-        assert first.json()["data"]["listeningStates"][0]["state"]["writeRevision"] == 2
+        data = first.json()["data"]
+        assert data["outcome"] == {"kind": "StateOnly"}
+        assert data["progressState"] == {
+            "kind": "Present",
+            "value": {
+                "mediaId": str(episode),
+                "readerCursor": {"state": "Empty", "revision": 2},
+                "listeningState": {
+                    "kind": "Present",
+                    "value": {
+                        "positionMs": 0,
+                        "durationMs": {"kind": "Present", "value": 600_000},
+                        "playbackSpeed": 1.25,
+                        "writeRevision": 2,
+                        "resetEpoch": 1,
+                    },
+                },
+            },
+        }
+        item = _item_by_media(data["lectern"]["items"], episode)
+        assert item["consumption"] == {
+            "state": "Unread",
+            "progress": {"kind": "Present", "value": 0.0},
+            "progressResettable": False,
+        }
+        with direct_db.session() as session:
+            assert (
+                session.execute(
+                    text(
+                        """
+                    SELECT count(*)
+                    FROM consumption_overrides
+                    WHERE user_id = :user_id AND media_id = :media_id
+                    """
+                    ),
+                    {"user_id": user_id, "media_id": episode},
+                ).scalar_one()
+                == 0
+            )
+            assert (
+                session.execute(
+                    text(
+                        """
+                    SELECT count(*)
+                    FROM reader_engagement_states
+                    WHERE user_id = :user_id AND media_id = :media_id
+                    """
+                    ),
+                    {"user_id": user_id, "media_id": episode},
+                ).scalar_one()
+                == 0
+            )
+            listening = session.execute(
+                text(
+                    """
+                    SELECT position_ms, is_completed, write_revision, reset_epoch, last_engaged_at
+                    FROM podcast_listening_states
+                    WHERE user_id = :user_id AND media_id = :media_id
+                    """
+                ),
+                {"user_id": user_id, "media_id": episode},
+            ).one()
+        assert tuple(listening) == (0, False, 2, 1, None)
+        # Reset replaces current state only: the factual completion remains
+        # available to existing history/Undo flows.
+        assert len(_completion_rows(direct_db, user_id=user_id, media_id=episode)) == 1
 
-        # New progress lands under the reset fence (expected 2/1).
+        stale_cursor = _put_reader_cursor(
+            auth_client,
+            user_id,
+            episode,
+            locator=_transcript_locator(total_progression=0.6),
+            base_revision=1,
+        )
+        assert stale_cursor.status_code == 409
+        assert stale_cursor.json()["error"]["details"]["current"] == {
+            "state": "Empty",
+            "revision": 2,
+        }
+        stale_heartbeat = _heartbeat(
+            auth_client,
+            user_id,
+            episode,
+            position_ms=5_000,
+            expected_write_revision=1,
+            expected_reset_epoch=0,
+        )
+        assert stale_heartbeat.status_code == 409
+
+        # Freshly fenced progress may proceed. Replay must re-read this exact
+        # canonical state without applying ResetProgress a second time.
         assert (
             _heartbeat(
                 auth_client,
                 user_id,
                 episode,
-                position_ms=5000,
+                position_ms=5_000,
                 expected_write_revision=2,
                 expected_reset_epoch=1,
+            ).status_code
+            == 200
+        )
+        fresh_locator = _transcript_locator(total_progression=0.6)
+        assert (
+            _put_reader_cursor(
+                auth_client,
+                user_id,
+                episode,
+                locator=fresh_locator,
+                base_revision=2,
             ).status_code
             == 200
         )
 
         replay = _consumption(auth_client, user_id, body)
         assert replay.status_code == 200, replay.text
-        entry = replay.json()["data"]["listeningStates"][0]["state"]
-        # Replay does not bump again (revision stays 3, not 4) and adopts the
-        # later position rather than pairing a fresh revision with a stale zero.
-        assert entry["positionMs"] == 5000, entry
-        assert entry["writeRevision"] == 3, entry
-        assert entry["resetEpoch"] == 1, entry
+        progress = replay.json()["data"]["progressState"]["value"]
+        assert progress["readerCursor"] == {
+            "state": "Positioned",
+            "revision": 3,
+            "locator": fresh_locator,
+        }
+        assert progress["listeningState"] == {
+            "kind": "Present",
+            "value": {
+                "positionMs": 5_000,
+                "durationMs": {"kind": "Present", "value": 600_000},
+                "playbackSpeed": 1.0,
+                "writeRevision": 3,
+                "resetEpoch": 1,
+            },
+        }
+
+    def test_absent_podcast_state_initializes_and_new_resets_advance_fences(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        episode = _create_podcast_episode(direct_db, title="No current progress")
+        _add_to_library(direct_db, library_id, episode)
+
+        first = _consumption(
+            auth_client,
+            user_id,
+            {
+                "kind": "ResetProgress",
+                "clientMutationId": str(uuid4()),
+                "mediaId": str(episode),
+            },
+        )
+        assert first.status_code == 200, first.text
+        assert first.json()["data"]["progressState"] == {
+            "kind": "Present",
+            "value": {
+                "mediaId": str(episode),
+                "readerCursor": {"state": "Empty", "revision": 1},
+                "listeningState": {
+                    "kind": "Present",
+                    "value": {
+                        "positionMs": 0,
+                        "durationMs": {"kind": "Absent"},
+                        "playbackSpeed": 1.0,
+                        "writeRevision": 1,
+                        "resetEpoch": 1,
+                    },
+                },
+            },
+        }
+
+        second = _consumption(
+            auth_client,
+            user_id,
+            {
+                "kind": "ResetProgress",
+                "clientMutationId": str(uuid4()),
+                "mediaId": str(episode),
+            },
+        )
+        assert second.status_code == 200, second.text
+        state = second.json()["data"]["progressState"]["value"]
+        assert state["readerCursor"] == {"state": "Empty", "revision": 2}
+        assert state["listeningState"] == {
+            "kind": "Present",
+            "value": {
+                "positionMs": 0,
+                "durationMs": {"kind": "Absent"},
+                "playbackSpeed": 1.0,
+                "writeRevision": 2,
+                "resetEpoch": 2,
+            },
+        }
 
 
 class TestSetBatchState:
@@ -499,7 +777,7 @@ class TestSetBatchState:
         # Never removes Lectern rows.
         assert [i["mediaId"] for i in data["lectern"]["items"]] == [str(ep)]
         assert _item_by_media(data["lectern"]["items"], ep)["consumption"]["state"] == "Finished"
-        assert data["listeningStates"] == []
+        assert data["progressState"] == {"kind": "Absent"}
 
         unread = _consumption(
             auth_client,
@@ -514,8 +792,7 @@ class TestSetBatchState:
         assert unread.status_code == 200, unread.text
         udata = unread.json()["data"]
         assert _item_by_media(udata["lectern"]["items"], ep)["consumption"]["state"] == "Unread"
-        # A reset listening row appears in the payload (created by mark-completed).
-        assert [entry["mediaId"] for entry in udata["listeningStates"]] == [str(ep)]
+        assert udata["progressState"] == {"kind": "Absent"}
 
 
 class TestEnsureMediaFinished:

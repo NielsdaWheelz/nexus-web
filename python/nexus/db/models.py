@@ -2687,7 +2687,7 @@ class PodcastListeningState(Base):
     is_completed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     # Listening-heartbeat fencing tokens (spec §5.4): only an exact expected
     # write_revision + reset_epoch may atomically write position/dwell and
-    # advance write_revision; SetUnread advances both and resets position.
+    # advance write_revision; ResetProgress advances both and resets position.
     write_revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     reset_epoch: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     updated_at: Mapped[datetime] = mapped_column(
@@ -6062,8 +6062,9 @@ class CommandPaletteUsage(Base):
 class ReaderMediaState(Base):
     """The one canonical reader cursor per user + media.
 
-    ``revision`` is the only conflict token (monotonic, starts at 1);
-    ``updated_at`` is metadata. FKs are explicitly named and non-cascading:
+    ``locator IS NULL`` is a revisioned Empty tombstone. ``revision`` is the
+    only conflict token (monotonic, starts at 1); ``updated_at`` is metadata.
+    FKs are explicitly named and non-cascading:
     media deletion removes child rows itself, and there is no user-delete flow,
     so the user FK restricts deletion until that lifecycle is designed.
     """
@@ -6085,7 +6086,7 @@ class ReaderMediaState(Base):
         ForeignKey("media.id", name="fk_reader_media_state_media"),
         nullable=False,
     )
-    locator: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    locator: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
     revision: Mapped[int] = mapped_column(
         BigInteger,
         nullable=False,

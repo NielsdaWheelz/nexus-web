@@ -15,7 +15,8 @@ explicit consumption state. The implementing cutover is
   is their additive duration; it is not de-duplicated wall-clock time.
 - `consumption_completion_facts` stores the first post-cutover canonical
   `Finished` transition for one viewer/media. Exact completion Undo may remove
-  the fact it created; ordinary later Unread does not rewrite history.
+  the fact it created; ordinary later Unread and `ResetProgress` do not rewrite
+  history.
 - Reading requires the eligible focused reader/input state. Listening follows
   the owned global audio element. Viewing is focused, visible video-pane time,
   not verified provider playback.
@@ -52,8 +53,10 @@ ambiguous interval is omitted rather than guessed or persisted for later retry.
 
 Current state remains separate: `reader_media_state`,
 `reader_engagement_states`, and `podcast_listening_states` serve resume,
-progress, and heartbeat behavior. Historical fact reads re-check current media
-visibility and media teardown removes both fact families before parent deletion.
+progress, and heartbeat behavior. `ResetProgress` replaces only that current
+state; it preserves activity spans and completion facts. Historical fact reads
+re-check current media visibility and media teardown removes both fact families
+before parent deletion.
 
 ## Operations
 

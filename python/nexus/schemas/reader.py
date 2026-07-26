@@ -332,13 +332,14 @@ ReaderResumeState = Annotated[
 
 
 class ReaderCursorEmpty(BaseModel):
-    """Snapshot for a user/media pair with no persisted cursor.
+    """Snapshot for a user/media pair with no positioned cursor.
 
-    Revision ``0`` is an API sentinel only; it is never persisted."""
+    An absent row is revision ``0``; a persisted tombstone carries revision
+    ``>= 1`` and fences stale writes."""
 
     model_config = ConfigDict(extra="forbid")
     state: Literal["Empty"] = "Empty"
-    revision: Literal[0] = 0
+    revision: int = Field(default=0, ge=0)
 
 
 class ReaderCursorPositioned(BaseModel):

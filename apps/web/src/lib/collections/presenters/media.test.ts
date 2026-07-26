@@ -34,6 +34,7 @@ function ctx(overrides: Partial<MediaPresenterContext> = {}): MediaPresenterCont
     refreshSource: { kind: "Unavailable" },
     retryMetadata: { kind: "Unavailable" },
     editAuthors: { kind: "Unavailable" },
+    progressReset: { kind: "Unavailable" },
     lecternMembership: { kind: "Unavailable" },
     removeMedia: { kind: "Unavailable" },
     readState: { kind: "Unavailable" },
@@ -168,5 +169,32 @@ describe("presentMedia", () => {
     ).toContain("ResourceOperation.Media.Remove");
     expect(view.actionPublication.groups.core).toEqual([]);
     expect(view).not.toHaveProperty("swipeActions");
+  });
+
+  it("publishes reset progress immediately after the read-state action", () => {
+    const reset = vi.fn();
+    const view = presentMedia(
+      item({ read_state: "finished" }),
+      ctx({
+        readState: { kind: "MarkUnread", execute: vi.fn() },
+        progressReset: { kind: "Available", execute: reset },
+      }),
+    );
+
+    expect(view.actionPublication.kind).toBe("ResourceMenu");
+    if (view.actionPublication.kind !== "ResourceMenu") {
+      throw new Error("Expected resource menu publication");
+    }
+    const operations = view.actionPublication.groups.operations;
+    const markUnreadIndex = operations.findIndex(
+      (action) => action.id === "ResourceOperation.Media.MarkUnread",
+    );
+    expect(operations[markUnreadIndex + 1]?.id).toBe(
+      "ResourceOperation.Media.ResetProgress",
+    );
+    const action = operations[markUnreadIndex + 1];
+    if (action?.kind !== "command") throw new Error("Expected command action");
+    action.onSelect({ triggerEl: null });
+    expect(reset).toHaveBeenCalledOnce();
   });
 });

@@ -22,6 +22,7 @@ function consumption(
       fraction === undefined
         ? { kind: "Absent" }
         : { kind: "Present", value: fraction },
+    progressResettable: false,
   };
 }
 
@@ -57,6 +58,8 @@ function present(item: LecternItem, onRemove = vi.fn()) {
     {
       remove: onRemove,
       playback: { kind: "Unavailable" },
+      progressReset: { kind: "Unavailable" },
+      progressResetBusy: false,
     },
     lecternActivityFacts(item),
   );
@@ -114,6 +117,38 @@ describe("Lectern collection presenters", () => {
     if (action.kind !== "command") throw new Error("Expected command action");
     action.onSelect({ triggerEl: null });
     expect(onRemove).toHaveBeenCalledOnce();
+  });
+
+  it("publishes reset progress only when its independent capability is available", () => {
+    const reset = vi.fn();
+    const item = queueItem({
+      consumption: { ...consumption("InProgress", 0.42), progressResettable: true },
+    });
+    const view = presentLecternItem(
+      item,
+      {
+        remove: vi.fn(),
+        playback: { kind: "Unavailable" },
+        progressReset: { kind: "Available", execute: reset },
+        progressResetBusy: false,
+      },
+      lecternActivityFacts(item),
+    );
+
+    expect(view.actionPublication.kind).toBe("ResourceMenu");
+    if (view.actionPublication.kind !== "ResourceMenu") {
+      throw new Error("Expected resource menu publication");
+    }
+    expect(view.actionPublication.groups.operations).toMatchObject([
+      {
+        id: "ResourceOperation.Media.ResetProgress",
+        label: "Reset progress",
+      },
+    ]);
+    const action = view.actionPublication.groups.operations[0];
+    if (action?.kind !== "command") throw new Error("Expected command action");
+    action.onSelect({ triggerEl: null });
+    expect(reset).toHaveBeenCalledOnce();
   });
 
   it("defects on impossible source-owned FooterAudio timing", () => {

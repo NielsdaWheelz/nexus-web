@@ -12,9 +12,8 @@ from sqlalchemy import event, text
 from sqlalchemy.engine import Engine
 
 import nexus.app as app_module
+from nexus.db.engine import get_engine
 from nexus.db.models import Fragment, Media, MediaKind, ProcessingStatus, ReaderMediaState
-from nexus.errors import ApiErrorCode, ConflictError, NotFoundError
-from nexus.schemas.reader import CursorWrite
 from nexus.services import reader as reader_service
 from tests.factories import add_media_to_library
 from tests.helpers import auth_headers, create_test_user_id
@@ -996,6 +995,71 @@ class TestReaderCursorPut:
         assert resp.json()["error"]["details"]["current"] == {"state": "Empty", "revision": 0}
         assert _cursor_row(direct_db, user_id, media_id) is None
 
+    def test_reset_tombstone_fences_stale_cursor_saves(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        with direct_db.session() as session:
+            media_id, fragment_ids = _create_ready_reader_media(
+                session,
+                kind=MediaKind.web_article.value,
+            )
+
+        _register_media_cleanup(direct_db, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
+        initial = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
+        replacement = {
+            **initial,
+            "locations": {**initial["locations"], "text_offset": 99, "position": 3},
+        }
+        assert (
+            auth_client.put(
+                f"/media/{media_id}/reader-state",
+                json=_cursor_body(initial, 0),
+                headers=auth_headers(user_id),
+            ).status_code
+            == 200
+        )
+
+        reset = auth_client.post(
+            "/consumption/commands",
+            headers=auth_headers(user_id),
+            json={
+                "kind": "ResetProgress",
+                "clientMutationId": str(uuid4()),
+                "mediaId": str(media_id),
+            },
+        )
+        assert reset.status_code == 200, reset.text
+        assert reset.json()["data"]["progressState"]["value"]["readerCursor"] == {
+            "state": "Empty",
+            "revision": 2,
+        }
+        assert _engagement_row(direct_db, user_id, media_id) is None
+
+        stale = auth_client.put(
+            f"/media/{media_id}/reader-state",
+            json=_cursor_body(replacement, 1),
+            headers=auth_headers(user_id),
+        )
+        assert stale.status_code == 409
+        assert stale.json()["error"]["details"]["current"] == {
+            "state": "Empty",
+            "revision": 2,
+        }
+
+        fresh = auth_client.put(
+            f"/media/{media_id}/reader-state",
+            json=_cursor_body(replacement, 2),
+            headers=auth_headers(user_id),
+        )
+        assert fresh.status_code == 200, fresh.text
+        assert fresh.json()["data"] == {
+            "state": "Positioned",
+            "revision": 3,
+            "locator": replacement,
+        }
+
     @pytest.mark.parametrize(
         ("body_builder", "label"),
         [
@@ -1287,8 +1351,8 @@ class TestReaderCursorPut:
         assert sentinel not in str(log_sink)
 
 
-class TestReaderCursorConcurrency:
-    """Real concurrent first inserts, updates, and delete-vs-first-save."""
+class TestReaderCursorDeletionRace:
+    """The media-deletion FK race is normalized through the public route."""
 
     def _seed(self, auth_client, direct_db, *, kind=MediaKind.web_article.value):
         user_id = create_test_user_id()
@@ -1298,160 +1362,8 @@ class TestReaderCursorConcurrency:
         _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
         return user_id, media_id, fragment_ids
 
-    def test_concurrent_first_inserts_same_locator_are_idempotent(
-        self, auth_client, direct_db: DirectSessionManager, engine: Engine
-    ):
-        user_id, media_id, fragment_ids = self._seed(auth_client, direct_db)
-        payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
-
-        def competing_insert() -> None:
-            with direct_db.session() as session:
-                session.execute(
-                    text("""
-                        INSERT INTO reader_media_state (user_id, media_id, locator, revision)
-                        VALUES (:user_id, :media_id, CAST(:locator AS jsonb), 1)
-                    """),
-                    {
-                        "user_id": user_id,
-                        "media_id": media_id,
-                        "locator": reader_service.READER_RESUME_STATE_ADAPTER.dump_json(
-                            reader_service.READER_RESUME_STATE_ADAPTER.validate_python(payload)
-                        ).decode(),
-                    },
-                )
-                session.commit()
-
-        remove_hook = _one_shot_before_execute(
-            engine, "INSERT INTO reader_media_state", competing_insert
-        )
-        try:
-            resp = auth_client.put(
-                f"/media/{media_id}/reader-state",
-                json=_cursor_body(payload, 0),
-                headers=auth_headers(user_id),
-            )
-        finally:
-            remove_hook()
-
-        assert resp.status_code == 200
-        assert resp.json()["data"] == {
-            "state": "Positioned",
-            "revision": 1,
-            "locator": payload,
-        }
-        assert _cursor_row(direct_db, user_id, media_id) == (payload, 1)
-
-    def test_concurrent_first_inserts_different_locator_conflict(
-        self, auth_client, direct_db: DirectSessionManager, engine: Engine
-    ):
-        user_id, media_id, fragment_ids = self._seed(auth_client, direct_db)
-        payload_ours = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
-        payload_winner = {
-            **payload_ours,
-            "locations": {**payload_ours["locations"], "text_offset": 1, "position": 1},
-        }
-
-        def competing_insert() -> None:
-            with direct_db.session() as session:
-                session.execute(
-                    text("""
-                        INSERT INTO reader_media_state (user_id, media_id, locator, revision)
-                        VALUES (:user_id, :media_id, CAST(:locator AS jsonb), 1)
-                    """),
-                    {
-                        "user_id": user_id,
-                        "media_id": media_id,
-                        "locator": reader_service.READER_RESUME_STATE_ADAPTER.dump_json(
-                            reader_service.READER_RESUME_STATE_ADAPTER.validate_python(
-                                payload_winner
-                            )
-                        ).decode(),
-                    },
-                )
-                session.commit()
-
-        remove_hook = _one_shot_before_execute(
-            engine, "INSERT INTO reader_media_state", competing_insert
-        )
-        try:
-            resp = auth_client.put(
-                f"/media/{media_id}/reader-state",
-                json=_cursor_body(payload_ours, 0),
-                headers=auth_headers(user_id),
-            )
-        finally:
-            remove_hook()
-
-        assert resp.status_code == 409
-        assert resp.json()["error"]["details"]["current"] == {
-            "state": "Positioned",
-            "revision": 1,
-            "locator": payload_winner,
-        }
-        assert _cursor_row(direct_db, user_id, media_id) == (payload_winner, 1)
-
-    def test_concurrent_update_yields_one_accepted_and_one_conflict(
-        self, auth_client, direct_db: DirectSessionManager, engine: Engine
-    ):
-        user_id, media_id, fragment_ids = self._seed(auth_client, direct_db)
-        payload_a = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
-        payload_b = {
-            **payload_a,
-            "locations": {**payload_a["locations"], "text_offset": 11, "position": 1},
-        }
-        payload_c = {
-            **payload_a,
-            "locations": {**payload_a["locations"], "text_offset": 22, "position": 2},
-        }
-        seeded = auth_client.put(
-            f"/media/{media_id}/reader-state",
-            json=_cursor_body(payload_a, 0),
-            headers=auth_headers(user_id),
-        )
-        assert seeded.status_code == 200
-
-        def competing_update() -> None:
-            with direct_db.session() as session:
-                session.execute(
-                    text("""
-                        UPDATE reader_media_state
-                        SET locator = CAST(:locator AS jsonb),
-                            revision = revision + 1,
-                            updated_at = now()
-                        WHERE user_id = :user_id AND media_id = :media_id
-                    """),
-                    {
-                        "user_id": user_id,
-                        "media_id": media_id,
-                        "locator": reader_service.READER_RESUME_STATE_ADAPTER.dump_json(
-                            reader_service.READER_RESUME_STATE_ADAPTER.validate_python(payload_c)
-                        ).decode(),
-                    },
-                )
-                session.commit()
-
-        remove_hook = _one_shot_before_execute(
-            engine, "UPDATE reader_media_state", competing_update
-        )
-        try:
-            resp = auth_client.put(
-                f"/media/{media_id}/reader-state",
-                json=_cursor_body(payload_b, 1),
-                headers=auth_headers(user_id),
-            )
-        finally:
-            remove_hook()
-
-        assert resp.status_code == 409
-        assert resp.json()["error"]["details"]["current"] == {
-            "state": "Positioned",
-            "revision": 2,
-            "locator": payload_c,
-        }
-        assert _cursor_row(direct_db, user_id, media_id) == (payload_c, 2)
-
     def test_delete_racing_first_save_returns_masked_404(
-        self, auth_client, direct_db: DirectSessionManager, engine: Engine
+        self, auth_client, direct_db: DirectSessionManager
     ):
         user_id, media_id, fragment_ids = self._seed(auth_client, direct_db)
         payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
@@ -1470,7 +1382,7 @@ class TestReaderCursorConcurrency:
                 session.commit()
 
         remove_hook = _one_shot_before_execute(
-            engine, "INSERT INTO reader_media_state", competing_media_delete
+            get_engine(), "INSERT INTO reader_media_state", competing_media_delete
         )
         try:
             resp = auth_client.put(
@@ -1484,97 +1396,3 @@ class TestReaderCursorConcurrency:
         assert resp.status_code == 404
         assert resp.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
         assert _cursor_row(direct_db, user_id, media_id) is None
-
-    def test_unique_race_normalization_at_read_committed_isolation(
-        self, auth_client, direct_db: DirectSessionManager, engine: Engine
-    ):
-        """Exercise the named-constraint IntegrityError branch directly: with an
-        outer transaction already open the serializable upgrade is skipped, so
-        the racing insert surfaces as the unique violation itself."""
-        user_id, media_id, fragment_ids = self._seed(auth_client, direct_db)
-        payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
-        locator = reader_service.READER_RESUME_STATE_ADAPTER.validate_python(payload)
-        payload_winner = {
-            **payload,
-            "locations": {**payload["locations"], "text_offset": 1, "position": 1},
-        }
-
-        def competing_insert() -> None:
-            with direct_db.session() as session:
-                session.execute(
-                    text("""
-                        INSERT INTO reader_media_state (user_id, media_id, locator, revision)
-                        VALUES (:user_id, :media_id, CAST(:locator AS jsonb), 1)
-                    """),
-                    {
-                        "user_id": user_id,
-                        "media_id": media_id,
-                        "locator": reader_service.READER_RESUME_STATE_ADAPTER.dump_json(
-                            reader_service.READER_RESUME_STATE_ADAPTER.validate_python(
-                                payload_winner
-                            )
-                        ).decode(),
-                    },
-                )
-                session.commit()
-
-        remove_hook = _one_shot_before_execute(
-            engine, "INSERT INTO reader_media_state", competing_insert
-        )
-        try:
-            with direct_db.session() as session:
-                # Open the transaction first so retry_serializable cannot
-                # upgrade isolation; the INSERT then raises the unique
-                # violation that production normalizes by constraint name.
-                session.execute(text("SELECT 1"))
-                with pytest.raises(ConflictError) as excinfo:
-                    reader_service.put_reader_cursor(
-                        session,
-                        user_id,
-                        media_id,
-                        CursorWrite(locator=locator, base_revision=0),
-                    )
-        finally:
-            remove_hook()
-
-        assert excinfo.value.code == ApiErrorCode.E_READER_STATE_CONFLICT
-        assert excinfo.value.details["current"]["revision"] == 1
-        assert excinfo.value.details["current"]["locator"] == payload_winner
-
-    def test_media_fk_race_normalization_at_read_committed_isolation(
-        self, auth_client, direct_db: DirectSessionManager, engine: Engine
-    ):
-        user_id, media_id, fragment_ids = self._seed(auth_client, direct_db)
-        payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
-        locator = reader_service.READER_RESUME_STATE_ADAPTER.validate_python(payload)
-
-        def competing_media_delete() -> None:
-            with direct_db.session() as session:
-                for table in ("library_entries", "fragments"):
-                    session.execute(
-                        text(f"DELETE FROM {table} WHERE media_id = :media_id"),  # noqa: S608
-                        {"media_id": media_id},
-                    )
-                session.execute(
-                    text("DELETE FROM media WHERE id = :media_id"),
-                    {"media_id": media_id},
-                )
-                session.commit()
-
-        remove_hook = _one_shot_before_execute(
-            engine, "INSERT INTO reader_media_state", competing_media_delete
-        )
-        try:
-            with direct_db.session() as session:
-                session.execute(text("SELECT 1"))
-                with pytest.raises(NotFoundError) as excinfo:
-                    reader_service.put_reader_cursor(
-                        session,
-                        user_id,
-                        media_id,
-                        CursorWrite(locator=locator, base_revision=0),
-                    )
-        finally:
-            remove_hook()
-
-        assert excinfo.value.code == ApiErrorCode.E_MEDIA_NOT_FOUND

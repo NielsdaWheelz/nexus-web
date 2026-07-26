@@ -3,11 +3,16 @@ import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, isApiError } from "@/lib/api/client";
 import { isAbortError } from "@/lib/errors";
-import { assumeLecternItemId, assumeMediaId } from "@/lib/lectern/contract";
+import {
+  assumeLecternItemId,
+  assumeMediaId,
+  parseCompletionHandle,
+} from "@/lib/lectern/contract";
 import {
   LECTERN_COMMAND_DEADLINE_MS,
   LecternProvider,
   useLectern,
+  type CanonicalInstallEvent,
   type LecternCapability,
 } from "@/lib/lectern/LecternProvider";
 
@@ -31,7 +36,11 @@ function wireItem(itemId: string, mediaId: string, title: string): Record<string
     title,
     subtitle: { kind: "Absent" },
     href: `/media/${mediaId}`,
-    consumption: { state: "Unread", progress: { kind: "Absent" } },
+    consumption: {
+      state: "Unread",
+      progress: { kind: "Absent" },
+      progressResettable: false,
+    },
     activation: {
       kind: "FooterAudio",
       streamUrl: `https://cdn.example.com/${mediaId}.mp3`,
@@ -115,7 +124,8 @@ function installLecternFetchMock(): LecternFetchMock {
           outcome: { kind: "StateOnly" },
           lectern: wireSnapshot([]),
           nextItem: { kind: "Absent" },
-          listeningStates: [],
+          progressState: { kind: "Absent" },
+          completionHandle: { kind: "Absent" },
         },
       }),
   };
@@ -490,10 +500,38 @@ describe("LecternProvider revalidation", () => {
   });
 });
 
-describe("LecternProvider setUnread pre-command drain", () => {
-  it("runs registered beforeSetUnread hooks to completion BEFORE enqueueing the command", async () => {
+describe("LecternProvider ResetProgress install", () => {
+  it("drains registered consumers before enqueue, then emits the canonical progress state", async () => {
     const mock = installLecternFetchMock();
     mock.handlers.get = async () => jsonResponse({ data: wireSnapshot([]) });
+    mock.handlers.postConsumption = async (body) => {
+      expect(body).toMatchObject({ kind: "ResetProgress", mediaId: MEDIA_A });
+      return jsonResponse({
+        data: {
+          outcome: { kind: "StateOnly" },
+          lectern: wireSnapshot([]),
+          nextItem: { kind: "Absent" },
+          progressState: {
+            kind: "Present",
+            value: {
+              mediaId: MEDIA_A,
+              readerCursor: { state: "Empty", revision: 4 },
+              listeningState: {
+                kind: "Present",
+                value: {
+                  positionMs: 0,
+                  durationMs: { kind: "Present", value: 60_000 },
+                  playbackSpeed: 1,
+                  writeRevision: 8,
+                  resetEpoch: 2,
+                },
+              },
+            },
+          },
+          completionHandle: { kind: "Absent" },
+        },
+      });
+    };
 
     const { result } = renderLectern();
     await waitFor(() => expect(result.current.resource.status).toBe("ready"));
@@ -503,30 +541,108 @@ describe("LecternProvider setUnread pre-command drain", () => {
       releaseHook = resolve;
     });
     let hookMediaId: string | null = null;
-    const unregister = result.current.registerBeforeSetUnread(async (mediaId) => {
+    const installs: CanonicalInstallEvent[] = [];
+    const unregister = result.current.registerBeforeProgressReset(async (mediaId) => {
       hookMediaId = mediaId;
       await hookGate;
     });
+    const unsubscribe = result.current.onCanonicalInstall((event) => installs.push(event));
 
     const consumptionPosts = () =>
       mock.calls.filter((c) => c.path === "/api/consumption/commands");
 
     let promise!: Promise<unknown>;
     act(() => {
-      promise = result.current.setUnread(assumeMediaId(MEDIA_A));
+      promise = result.current.resetProgress(assumeMediaId(MEDIA_A));
     });
     promise.catch(() => {});
 
-    // The hook is invoked with the target media; the command is NOT enqueued while
-    // the drain hook is still pending (spec §5.4: drain, then issue the command).
+    // The hook is invoked with the target media; the reset command is NOT
+    // enqueued while the drain hook is still pending.
     await waitFor(() => expect(hookMediaId).toBe(MEDIA_A));
     expect(consumptionPosts()).toHaveLength(0);
 
-    // Once the drain completes, the SetUnread command finally reaches the network.
+    // Once the drain completes, ResetProgress reaches the FIFO/network and its
+    // one canonical state is emitted after the Lectern snapshot is installed.
     releaseHook();
-    await waitFor(() => expect(consumptionPosts()).toHaveLength(1));
+    await act(async () => {
+      await promise;
+    });
+    expect(consumptionPosts()).toHaveLength(1);
+    expect(installs.at(-1)).toEqual({
+      kind: "progressState",
+      state: {
+        mediaId: MEDIA_A,
+        readerCursor: { state: "Empty", revision: 4 },
+        listeningState: {
+          kind: "Present",
+          value: {
+            positionMs: 0,
+            durationMs: { kind: "Present", value: 60_000 },
+            playbackSpeed: 1,
+            writeRevision: 8,
+            resetEpoch: 2,
+          },
+        },
+      },
+    });
 
     unregister();
+    unsubscribe();
+  });
+
+  it("does not invoke reset drains for status-only Mark Unread", async () => {
+    const mock = installLecternFetchMock();
+    mock.handlers.get = async () => jsonResponse({ data: wireSnapshot([]) });
+    const { result } = renderLectern();
+    await waitFor(() => expect(result.current.resource.status).toBe("ready"));
+
+    const resetDrain = vi.fn(async () => {});
+    const unregister = result.current.registerBeforeProgressReset(resetDrain);
+
+    await act(async () => {
+      await result.current.setUnread(assumeMediaId(MEDIA_A));
+    });
+
+    expect(resetDrain).not.toHaveBeenCalled();
+    const post = mock.calls.find((call) => call.path === "/api/consumption/commands");
+    expect(post?.body).toContain('"kind":"SetUnread"');
+    unregister();
+  });
+
+  it("annotates only successful status-only Unread targets, including batch and undo", async () => {
+    // The empty canonical snapshot proves these ids are direct/non-Lectern
+    // media. Installation must preserve their exact command-target order.
+    const mock = installLecternFetchMock();
+    mock.handlers.get = async () => jsonResponse({ data: wireSnapshot([]) });
+    const { result } = renderLectern();
+    await waitFor(() => expect(result.current.resource.status).toBe("ready"));
+
+    const installs: CanonicalInstallEvent[] = [];
+    const unsubscribe = result.current.onCanonicalInstall((event) => installs.push(event));
+
+    await act(async () => {
+      await result.current.setUnread(assumeMediaId(MEDIA_A));
+      await result.current.setBatchState({
+        mediaIds: [assumeMediaId(MEDIA_B), assumeMediaId(MEDIA_C)],
+        state: "Unread",
+      });
+      await result.current.undoCompletion(
+        parseCompletionHandle("ncc1.abcdefghijklmnopqrstuv.abcdefghijklmnopqrstuv"),
+        { unreadMediaId: assumeMediaId(MEDIA_C) },
+      );
+    });
+
+    expect(installs).toEqual([
+      { kind: "snapshot", snapshot: { items: [] }, unreadMediaIds: [assumeMediaId(MEDIA_A)] },
+      {
+        kind: "snapshot",
+        snapshot: { items: [] },
+        unreadMediaIds: [assumeMediaId(MEDIA_B), assumeMediaId(MEDIA_C)],
+      },
+      { kind: "snapshot", snapshot: { items: [] }, unreadMediaIds: [assumeMediaId(MEDIA_C)] },
+    ]);
+    unsubscribe();
   });
 });
 

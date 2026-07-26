@@ -3,7 +3,15 @@
 **Status:** Proposed implementation specification · 2026-07-15
 
 **Posture:** One coordinated hard cutover. No legacy payloads, fallback readers,
-dual writes, nullable reset path, feature flag, or mixed-version support.
+dual writes, public null-reset path, feature flag, or mixed-version support.
+
+**Progress-reset supersession (2026-07-24):**
+[`media-progress-reset-hard-cutover.md`](media-progress-reset-hard-cutover.md)
+supersedes this document's cursor persistence owner, non-null locator row,
+Empty-revision-zero-only assumption, separate cursor/engagement transactions,
+media-teardown cursor DML, and matching file/acceptance clauses. The reader
+coordinator, strict locator union, CAS, revalidation, and URL-precedence rules
+remain canonical.
 
 **Superseded by default-library-virtualization-and-transient-state-pruning-hard-cutover.md
 (2026-07-17):** the `{cursor?: {locator, base_revision}, attention?}` PUT
@@ -12,10 +20,9 @@ envelope this spec introduced, its `204` attention-only response path, and its
 §5) are all gone. `PUT /media/{id}/reader-state` now takes the bare
 `CursorWrite` body with no sibling block; there is no longer any request
 shape that writes engagement without writing the cursor alongside it. Cursor
-success — including the idempotent equal-locator case — is followed by one
-retry-safe reader-engagement command composed by the route itself, writing a
-new narrow current-state table, `reader_engagement_states`
-(`services/consumption/_reader_engagement_store.py`), which is now the
+success — including the idempotent equal-locator case — writes the narrow
+current-state `reader_engagement_states` row in the same Consumption
+transaction (`services/consumption/_reader_engagement_store.py`), which is now the
 recency source for document engagement everywhere `reading_sessions` used to
 serve that role. This spec's cursor CAS semantics, `useReaderProgress`
 client coordinator, revalidation triggers, and URL-precedence rules are
@@ -104,7 +111,8 @@ genuine reader movement
   -> format-owned locator capture
   -> useReaderProgress (single-flight, latest-only, revision-aware)
   -> existing reader-state BFF
-  -> services/reader.py conditional mutation
+  -> services/consumption/_reader_cursor_store.py conditional mutation
+  -> reader engagement in the same Consumption transaction
   -> reader_media_state (one user/media row)
 
 return / reconnect / pane activation
@@ -117,7 +125,7 @@ return / reconnect / pane activation
 | Concern | Owner | Contract |
 |---|---|---|
 | Locator schema | existing reader types/schemas | Strict media-kind-discriminated `ReaderResumeState` |
-| Canonical cursor and revision | `reader_media_state` + `services/reader.py` | Read snapshot; conditionally replace desired locator |
+| Canonical cursor and revision | `reader_media_state` + Consumption `_reader_cursor_store.py` | Read snapshot; conditionally replace or reset |
 | Browser ordering/revalidation | `useReaderProgress` | One in-flight PUT per mounted coordinator; one queued latest locator |
 | Pure decisions/decoding | `readerProgress.ts` | Strict wire parsing, equality, conflict and adoption decisions |
 | Capture/application | `MediaPaneBody` and format readers | Synchronous capture where available; addressable apply with completion |
@@ -144,7 +152,7 @@ reader_media_state
   id          uuid primary key
   user_id     uuid not null references users(id)
   media_id    uuid not null references media(id)
-  locator     jsonb not null
+  locator     jsonb null
   revision    bigint not null default 1
   created_at  timestamptz not null
   updated_at  timestamptz not null
@@ -154,34 +162,15 @@ reader_media_state
 ```
 
 There is no device ID, client timestamp, URL, history, or presentation state in
-this row. `updated_at` is metadata, not a conflict token.
-
-Migration against the then-live Alembic head:
-
-1. delete legacy rows with null locator;
-2. remove the legacy locator CHECK rather than replacing it;
-3. make locator non-null and add revision defaulting existing rows to `1`;
-4. discover the deployed reader-state FK constraint names from PostgreSQL rather
-   than assuming names absent from the ORM, then recreate both FKs with explicit
-   stable names (`fk_reader_media_state_user` and
-   `fk_reader_media_state_media`) mirrored by the model and default
-   non-cascading behavior;
-   existing media deletion already removes child rows, and there is currently no
-   product user-delete flow, so the user FK restricts deletion until such a
-   lifecycle is explicitly designed;
-5. add no table and no speculative index.
-
-The same migration backfills a zero-dwell `reading_sessions` row for every
-post-0172 reader-state row that has no session, using the cursor `updated_at` as
-`started_at`/`last_active_at`, `device_id='__migrated__'`, `dwell_ms=0`, and
-current total progression when present. The insert is guarded by `NOT EXISTS` for
-that user/media. Migration 0172 already covered older rows; this closes the later
-open/save-with-negligible-dwell gap without inventing dwell.
+this row. `updated_at` is metadata, not a conflict token. A null locator is an
+internal revisioned `Empty` reset tombstone, never a public null-clear payload.
+Migration 0195 makes the column nullable without backfill or a new index; the
+earlier non-null migration remains historical provenance.
 
 Locator validity and positive persisted revision are enforced by
 schemas/services and defect on invalid trusted rows, per `docs/rules/database.md`.
-“Positive” applies only to a stored Positioned row; Empty revision `0` is an API
-sentinel and is never persisted.
+Empty revision `0` means no row; every persisted Positioned or Empty row has a
+positive revision.
 
 ### GET
 
@@ -189,7 +178,7 @@ sentinel and is never persisted.
 
 ```text
 ReaderCursorSnapshot =
-  | { state: "Empty", revision: 0 }
+  | { state: "Empty", revision: integer >= 0 }
   | { state: "Positioned", revision: integer >= 1, locator: ReaderResumeState }
 ```
 
@@ -200,21 +189,14 @@ kind. Missing/inaccessible media returns masked `404 E_MEDIA_NOT_FOUND`.
 
 ### PUT
 
-The one strict browser/server envelope is:
+The one strict browser/server body is:
 
 ```text
 CursorWrite = { locator: ReaderResumeState, base_revision: integer >= 0 }
-
-ReaderProgressWrite =
-  | { cursor: CursorWrite }
-  | { attention: ExistingAttentionBlock }
-  | { cursor: CursorWrite, attention: ExistingAttentionBlock }
 ```
 
-At least one non-null block is required. Extra fields, old bare locators,
-top-level null, the old flat envelope, missing base revision, and public clear are
-rejected with `400`. This cutover does not change the existing attention block's
-identity contract.
+Extra fields, wrapped/old bare locators, top-level null, missing base revision,
+and public clear are rejected with `400`.
 
 Quote context is bounded consistently in backend schemas and the frontend strict
 decoder: `quote` is at most 256 Unicode code points; `quote_prefix` and
@@ -224,7 +206,6 @@ windows. Oversized values are rejected, not truncated at the persistence boundar
 Responses:
 
 - cursor accepted or already equal: `200` with the resulting snapshot;
-- attention only: `204`;
 - stale different cursor: `409 E_READER_STATE_CONFLICT` with
   `error.details.current` containing the exact current snapshot;
 - unsupported kind or locator mismatch: `400`;
@@ -242,14 +223,19 @@ error-header facility.
 | Current | Request | Result |
 |---|---|---|
 | Empty `0` | base `0`, locator A | create A at revision `1` |
+| Empty `N` tombstone | base `N`, locator A | replace with A at `N+1` |
 | Positioned `N`, A | base `N`, locator B | replace with B at `N+1` |
 | Positioned `N`, A | any base, locator A | idempotent success at `N` |
 | Positioned `N`, A | stale base, locator B | `409` with current snapshot |
 
-`services/reader.py` remains the sole cursor writer. Use the repository
-serializable retry primitive; do not add an explicit lock or upsert. Normalize
-only the named user/media uniqueness race from concurrent first inserts into a
-fresh idempotent success or conflict; every other integrity error is a defect.
+Consumption's `_reader_cursor_store.py` is the sole cursor writer. The public
+service uses the repository serializable retry primitive and existing viewer
+serialization lock. Cursor CAS, reader engagement, and any completion
+transition commit in one transaction. `ResetProgress` uses the same owner to
+write a higher-revision Empty tombstone and clear engagement atomically.
+Normalize only the named user/media uniqueness race from concurrent first
+inserts into a fresh idempotent success or conflict; every other integrity
+error is a defect.
 
 Removing the media-row `FOR UPDATE` exposes one additional expected race: media
 deletion can win immediately before a first cursor INSERT. Normalize only the
@@ -259,20 +245,8 @@ a still-visible media row makes the violation a defect. Do not turn unrelated FK
 violations into 404s. Runtime matching uses the explicit final constraint name,
 not an assumed legacy/generated name.
 
-For a combined request, commit/reconcile cursor first, close that transaction,
-then make one best-effort attention attempt in its own transaction. Cursor
-conflict writes no attention. If the cursor committed but attention fails, roll
-back/log the attention attempt and still return `200` with the cursor snapshot;
-the client never retries that combined attention delta, avoiding double-counted
-dwell. Attention-only never calls or touches the cursor service and therefore
-requires `services/attention.py` to perform its own media visibility validation.
-
-Document `last_engaged_at` reads the existing attention sessions rather than
-`reader_media_state.updated_at`; audio/listening behavior is untouched. Concretely,
-replace only the `COALESCE(rms.updated_at, ...)` term inside the direct-media
-`GREATEST` in `library_entries._LAST_ENGAGED_AT_SQL` with the viewer/media latest
-`reading_sessions.last_active_at`. Preserve the sibling `pls.updated_at` term and
-the podcast branch exactly, so audio and podcast recency do not move in this slice.
+Document `last_engaged_at` reads `reader_engagement_states`, never
+`reader_media_state.updated_at`. Podcast recency remains heartbeat-owned.
 
 Never log locator JSON, quote context, URL targets, or validation `input` values.
 The existing validation/error owner must redact them on both untrusted-request
@@ -433,10 +407,10 @@ Create:
 
 Modify only the owning seams:
 
-- backend: `db/models.py`, `schemas/reader.py`, `services/reader.py`, reader
+- backend: `db/models.py`, `schemas/reader.py`,
+  `services/consumption/{service,_reader_cursor_store,_reader_engagement_store}.py`, reader
   route, exact-path no-store middleware and validation redaction in `app.py`,
-  `services/attention.py` for attention-only authorization, document recency
-  reads in `services/media.py`, and the one direct-document term in
+  document recency reads in `services/media.py`, and the one direct-document term in
   `services/library_entries.py`;
 - frontend: API error details, pane runtime/`WorkspaceHost` activity capability,
   no-store wrapping in
@@ -467,9 +441,9 @@ touch listening/device identity, active-pane attention tracking, or audio recenc
    quote context fail strictly; inaccessible media remains masked 404. The
    unsupported-present-kind branch remains forward-defensive rather than an
    invented current fixture.
-6. Attention-only requests never insert, update, delete, or revise cursor state.
-   Cursor success plus attention failure still returns the cursor 200 and never
-   retries the ambiguous dwell delta.
+6. Cursor CAS, reader engagement, and any completion-transition fact commit
+   together. Reset writes a higher-revision Empty tombstone and clears current
+   engagement in that same owner transaction.
 7. A/B/C client observations serialize as A then C with the acknowledged base;
    if A conflicts, queued C remains local and waits for the handoff choice.
 8. Load and ambiguous save failures retain truth and recover without requiring a
@@ -490,10 +464,8 @@ touch listening/device identity, active-pane attention tracking, or audio recenc
     navigation.
 15. Non-readable media produces no progress request or reader loading state.
 16. PDF later application changes page/progression/zoom without remount.
-17. Document engagement recency continues from `reading_sessions` after
-    attention-only cursor touching is removed: migration 0172 history remains,
-    the new migration backfills every later cursor lacking a session with zero
-    invented dwell, and direct-media audio/podcast SQL remains unchanged.
+17. Document engagement recency comes only from
+    `reader_engagement_states`; podcast recency remains heartbeat-owned.
 18. No locator/quote content appears in URL, browser storage, or logs.
 19. No polling, realtime transport, local cursor outbox, per-device model, or
     generic sync abstraction is added.

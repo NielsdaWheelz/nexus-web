@@ -2316,6 +2316,28 @@ def test_podcast_listening_states_sole_writer():
     assert not hits, f"podcast_listening_states written outside its owner:\n{_fmt(hits)}"
 
 
+def test_reader_media_state_sole_writer():
+    # media-progress-reset-hard-cutover §6: cursor state is owned by one store;
+    # callers compose it only through the consumption facade.
+    hits = _excluding(
+        _grep(_CONSUMPTION_TABLE_WRITE + r"reader_media_state", _PY_ROOT),
+        "services/consumption/_reader_cursor_store.py",
+    )
+    assert not hits, f"reader_media_state written outside its owner:\n{_fmt(hits)}"
+
+
+def test_media_progress_reset_removed_paths_absent():
+    # Hard cut: status-only commands never reset current progress, and the
+    # plural listening-state response contract has no live producer or consumer.
+    hits = _grep(
+        r"\breset_for_unread_in_txn\b|\brecord_reader_engagement\b|"
+        r"\blistening_states\b|\blisteningStates\b",
+        _PY_ROOT,
+        _WEB_ROOT,
+    )
+    assert not hits, f"removed media-progress path survives:\n{_fmt(hits)}"
+
+
 # =============================================================================
 # Media teardown (lectern-player-lifecycle-hard-cutover.md §3.1) gates
 # =============================================================================
@@ -2410,20 +2432,20 @@ def test_consumption_projection_reads_confined_to_owners():
     # §3/§8 AC-15, updated by default-library-virtualization §1/§4.4/§6: "no
     # direct consumption projection read remains outside _projection or its
     # per-table store owner" (attention's aggregate read is gone along with
-    # attention.py/reading_sessions; reader_engagement_states, its successor,
-    # is read only through _reader_engagement_store.py). A fully general
+    # attention.py/reading_sessions; reader_engagement_states and
+    # reader_media_state are read only through their stores). A fully general
     # read-gate is impractical: services/media.py is a spec-named projection
     # adopter (§7) that legitimately joins podcast_listening_states directly
     # to hydrate MediaOut.listening_state (raw position/duration/speed
     # passthrough, not the derived Unread/InProgress/Finished projection state),
     # so it is allowlisted by name rather than excluded generically. Any other
-    # file selecting these three tables directly — a route, a new adopter, a
+    # file selecting these four tables directly — a route, a new adopter, a
     # reintroduced per-feature read — fails here instead of forking the read
     # model. db/models.py never matches (it declares __tablename__, not
     # FROM/JOIN literals), so it needs no explicit exclusion.
     pattern = (
         r"\b(?:FROM|JOIN)\s+"
-        r"(?:consumption_overrides|podcast_listening_states|reader_engagement_states)\b"
+        r"(?:consumption_overrides|podcast_listening_states|reader_engagement_states|reader_media_state)\b"
     )
     hits = _excluding(
         _grep(pattern, _PY_ROOT),
@@ -2431,6 +2453,7 @@ def test_consumption_projection_reads_confined_to_owners():
         "services/consumption/_listening_store.py",
         "services/consumption/_projection.py",
         "services/consumption/_reader_engagement_store.py",
+        "services/consumption/_reader_cursor_store.py",
         "services/media.py",
     )
     assert not hits, f"consumption table read outside its owner:\n{_fmt(hits)}"
@@ -2463,12 +2486,9 @@ def test_lifecycle_composition_callsites_enumerated():
     )
 
 
-def test_media_deletion_removes_four_child_families_before_parent():
-    # §3/§8 AC-15, folded further by default-library-virtualization §1/§4.4/§6:
-    # the four in-scope child families — Lectern, explicit override, listening
-    # state, and reader engagement (the reading_sessions/attention.py
-    # successor) — now live entirely inside the one consumption-owner call;
-    # media_deletion.py no longer has a second, attention-owned call site.
+def test_media_deletion_removes_consumption_state_before_parent():
+    # Consumption-owned current state and history live entirely behind one
+    # owner call; media_deletion.py has no direct child-table DML.
     # Assert the single delete_media_consumption_state_in_txn call still
     # precedes the parent media DELETE, inside
     # delete_document_media_if_unreferenced.
@@ -2481,7 +2501,7 @@ def test_media_deletion_removes_four_child_families_before_parent():
     parent_delete_idx = body.index('text("DELETE FROM media WHERE id = :media_id")')
 
     assert consumption_idx < parent_delete_idx, (
-        "consumption child-state deletion (all four families) must precede the parent media DELETE"
+        "consumption state deletion must precede the parent media DELETE"
     )
 
 

@@ -24,7 +24,7 @@ export const READER_STATE_CONFLICT_CODE = "E_READER_STATE_CONFLICT";
 
 export interface ReaderCursorEmpty {
   state: "Empty";
-  revision: 0;
+  revision: number;
 }
 
 export interface ReaderCursorPositioned {
@@ -47,10 +47,15 @@ export function parseReaderCursorSnapshot(value: unknown): ReaderCursorSnapshot 
   }
   const keys = Object.keys(value);
   if (value.state === "Empty") {
-    if (keys.length !== 2 || value.revision !== 0) {
+    if (
+      keys.length !== 2 ||
+      typeof value.revision !== "number" ||
+      !Number.isInteger(value.revision) ||
+      value.revision < 0
+    ) {
       throw new Error("Invalid reader cursor snapshot");
     }
-    return { state: "Empty", revision: 0 };
+    return { state: "Empty", revision: value.revision };
   }
   if (value.state === "Positioned") {
     if (
@@ -102,7 +107,7 @@ export type ProgressLocal =
 
 export type ProgressRemote =
   | { status: "none" }
-  | { status: "candidate"; snapshot: ReaderCursorPositioned };
+  | { status: "candidate"; snapshot: ReaderCursorSnapshot };
 
 export interface ReaderProgressState {
   authority: ProgressAuthority;
@@ -127,6 +132,7 @@ export type ReaderProgressEvent =
   | { type: "save_failed" }
   | { type: "revalidated"; snapshot: ReaderCursorSnapshot }
   | { type: "remote_applied" }
+  | { type: "canonical_snapshot_installed"; snapshot: ReaderCursorSnapshot }
   | { type: "reset" };
 
 /** The locator the user still wants persisted, if any. */
@@ -184,9 +190,11 @@ function reduceRevalidated(
     };
   }
 
-  if (snapshot.revision > authoritySnapshot.revision && snapshot.state === "Positioned") {
-    // The same position at a newer revision reconciles without a prompt.
+  if (snapshot.revision > authoritySnapshot.revision) {
+    // The same position at a newer revision reconciles without a prompt. A
+    // tombstone is a real newer state, never an old-row disappearance fallback.
     if (
+      snapshot.state === "Positioned" &&
       authoritySnapshot.state === "Positioned" &&
       readerResumeStatesEqual(authoritySnapshot.locator, snapshot.locator)
     ) {
@@ -274,15 +282,6 @@ export function reduceReaderProgress(
         return state;
       }
       const latest = state.local.queued ?? state.local.sent;
-      if (event.current.state === "Empty") {
-        // Defensive: the row cannot vanish post-cutover. Adopt Empty authority
-        // so the retained locator can recreate the cursor from base 0.
-        return {
-          authority: { status: "ready", snapshot: event.current },
-          local: { status: "dirty", locator: latest },
-          remote: { status: "none" },
-        };
-      }
       return {
         ...state,
         local: { status: "dirty", locator: latest },
@@ -311,6 +310,13 @@ export function reduceReaderProgress(
       }
       return {
         authority: { status: "ready", snapshot: state.remote.snapshot },
+        local: { status: "clean" },
+        remote: { status: "none" },
+      };
+
+    case "canonical_snapshot_installed":
+      return {
+        authority: { status: "ready", snapshot: event.snapshot },
         local: { status: "clean" },
         remote: { status: "none" },
       };

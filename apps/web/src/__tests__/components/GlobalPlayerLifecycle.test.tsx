@@ -26,11 +26,12 @@ import {
 } from "@/lib/player/globalPlayer";
 import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
 import { absent } from "@/lib/api/presence";
-import type { LecternItem } from "@/lib/lectern/contract";
+import { assumeMediaId, type LecternItem } from "@/lib/lectern/contract";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import {
   buildFooterDescriptor,
   jsonResponse,
+  setAudioMetrics,
   setViewportWidth,
   FOOTER_AUDIO_LABEL,
 } from "../helpers/audio";
@@ -52,7 +53,7 @@ function audioItem(
     title,
     subtitle: absent(),
     href: `/media/${mediaId}` as LecternItem["href"],
-    consumption: { state: "Unread", progress: absent() },
+    consumption: { state: "Unread", progress: absent(), progressResettable: false },
     activation: {
       kind: "FooterAudio",
       streamUrl: `https://cdn.example.com/${mediaId}.mp3`,
@@ -122,6 +123,7 @@ interface MockConfig {
 function installMock(config: MockConfig) {
   const consumptionBodies: Record<string, unknown>[] = [];
   const lecternBodies: Record<string, unknown>[] = [];
+  const heartbeatBodies: Record<string, unknown>[] = [];
   const fetchMock = vi
     .spyOn(globalThis, "fetch")
     .mockImplementation(async (input, init) => {
@@ -140,7 +142,7 @@ function installMock(config: MockConfig) {
                 outcome: { kind: "StateOnly" },
                 lectern: lecternWireSnapshot(config.snapshot()),
                 nextItem: { kind: "Absent" },
-                listeningStates: [],
+                progressState: { kind: "Absent" },
                 completionHandle: { kind: "Absent" },
               },
             });
@@ -158,19 +160,24 @@ function installMock(config: MockConfig) {
             });
       }
       if (url.pathname.endsWith("/listening-state")) {
+        if (method === "PUT") {
+          heartbeatBodies.push(JSON.parse(String(init?.body ?? "{}")));
+        }
         return heartbeatResponse(init);
       }
       return jsonResponse({ data: {} });
     });
-  return { fetchMock, consumptionBodies, lecternBodies };
+  return { fetchMock, consumptionBodies, lecternBodies, heartbeatBodies };
 }
 
 function Probes() {
   const { state } = useGlobalPlayer();
   const origin = state.kind === "Absent" ? "none" : state.session.origin.kind;
+  const phase = state.kind === "Active" ? state.phase : "none";
   return (
     <>
       <span data-testid="state-kind">{state.kind}</span>
+      <span data-testid="state-phase">{phase}</span>
       <span data-testid="origin">{origin}</span>
     </>
   );
@@ -231,6 +238,48 @@ function App({
   );
 }
 
+function StatusOnlyOverrideControls() {
+  const { playAudio } = useGlobalPlayer();
+  const { setUnread } = useLectern();
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => playAudio(buildFooterDescriptor(MEDIA_A, "Override Alpha"))}
+      >
+        Load override A
+      </button>
+      <button
+        type="button"
+        onClick={() => playAudio(buildFooterDescriptor(MEDIA_B, "Override Bravo"))}
+      >
+        Load override B
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          setUnread(assumeMediaId(MEDIA_A)).catch(() => {});
+        }}
+      >
+        Mark override A unread
+      </button>
+    </>
+  );
+}
+
+function StatusOnlyOverrideApp() {
+  return (
+    <LecternProvider>
+      <GlobalPlayerProvider>
+        <LecternReadyProbe />
+        <Probes />
+        <StatusOnlyOverrideControls />
+        <GlobalPlayerFooter />
+      </GlobalPlayerProvider>
+    </LecternProvider>
+  );
+}
+
 async function playAndReady() {
   await screen.findByText("ready", {
     selector: '[data-testid="lectern-status"]',
@@ -275,7 +324,7 @@ describe("GlobalPlayer completion lifecycle", () => {
               kind: "Present",
               value: lecternWireItem(audioItem(ITEM_B, MEDIA_B, "Second")),
             },
-            listeningStates: [],
+            progressState: { kind: "Absent" },
             completionHandle: { kind: "Absent" },
           },
         });
@@ -329,6 +378,68 @@ describe("GlobalPlayer completion lifecycle", () => {
     ).toBe(true);
   });
 
+  it("status-only SetUnread preserves active progress and resumes a previously finished direct media", async () => {
+    const { consumptionBodies, heartbeatBodies } = installMock({ snapshot: () => [] });
+
+    render(<StatusOnlyOverrideApp />);
+    await screen.findByText("ready", {
+      selector: '[data-testid="lectern-status"]',
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Load override A" }));
+    const audio = screen.getByLabelText(FOOTER_AUDIO_LABEL) as HTMLAudioElement;
+    setAudioMetrics(audio, { duration: 120, currentTime: 120 });
+    fireEvent(audio, new Event("durationchange"));
+    fireEvent(audio, new Event("timeupdate"));
+    fireEvent(audio, new Event("ended"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("state-kind").textContent).toBe("PausedAtEnd"),
+    );
+    expect(
+      consumptionBodies.some(
+        (body) => body.kind === "EnsureMediaFinished" && body.mediaId === MEDIA_A,
+      ),
+    ).toBe(true);
+
+    // Replay once so the Finished override starts this session at zero, then
+    // establish the local resume overlay while actively playing at 42 seconds.
+    fireEvent.click(screen.getByRole("button", { name: "Load override A" }));
+    await waitFor(() => expect(audio.currentTime).toBe(0));
+    setAudioMetrics(audio, { duration: 120, currentTime: 42 });
+    fireEvent(audio, new Event("timeupdate"));
+    fireEvent(audio, new Event("play"));
+    fireEvent(audio, new Event("playing"));
+    await waitFor(() => {
+      expect(screen.getByTestId("state-kind").textContent).toBe("Active");
+      expect(screen.getByTestId("state-phase").textContent).toBe("Playing");
+    });
+
+    const heartbeatsBeforeUnread = heartbeatBodies.length;
+    fireEvent.click(screen.getByRole("button", { name: "Mark override A unread" }));
+    await waitFor(() =>
+      expect(
+        consumptionBodies.some(
+          (body) => body.kind === "SetUnread" && body.mediaId === MEDIA_A,
+        ),
+      ).toBe(true),
+    );
+
+    // Unread is status-only: it does not seek/pause, send a progress write, or
+    // rotate the active heartbeat's fencing tokens.
+    expect(audio.currentTime).toBe(42);
+    expect(screen.getByTestId("state-kind").textContent).toBe("Active");
+    expect(screen.getByTestId("state-phase").textContent).toBe("Playing");
+    expect(heartbeatBodies).toHaveLength(heartbeatsBeforeUnread);
+
+    // Replacing the session makes the next A start resolve from the preserved
+    // overlay. A stale Finished override would instead force zero here.
+    fireEvent.click(screen.getByRole("button", { name: "Load override B" }));
+    await waitFor(() => expect(audio.currentTime).toBe(0));
+    fireEvent.click(screen.getByRole("button", { name: "Load override A" }));
+    await waitFor(() => expect(audio.currentTime).toBe(42));
+  });
+
   it("exact-end E_NOT_FOUND falls back to state-only EnsureMediaFinished and stops", async () => {
     let items = [audioItem(ITEM_A, MEDIA_A, "First")];
     const { consumptionBodies } = installMock({
@@ -347,7 +458,7 @@ describe("GlobalPlayer completion lifecycle", () => {
             outcome: { kind: "StateOnly" },
             lectern: lecternWireSnapshot([]),
             nextItem: { kind: "Absent" },
-            listeningStates: [],
+            progressState: { kind: "Absent" },
             completionHandle: { kind: "Absent" },
           },
         });

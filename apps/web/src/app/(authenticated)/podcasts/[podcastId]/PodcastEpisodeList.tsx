@@ -94,6 +94,7 @@ interface PodcastEpisodeListProps {
     episode: PodcastEpisodeMedia,
     isCompleted: boolean,
   ) => Promise<void>;
+  onResetProgress: (mediaId: string) => Promise<void>;
 }
 
 export default function PodcastEpisodeList({
@@ -130,6 +131,7 @@ export default function PodcastEpisodeList({
   onEditAuthors,
   onDelete,
   onTogglePlayed,
+  onResetProgress,
 }: PodcastEpisodeListProps) {
   const connectionSummaries = useConnectionSummaries(
     episodes.map((episode) => `media:${episode.id}`),
@@ -220,6 +222,17 @@ export default function PodcastEpisodeList({
               },
             }
           : { kind: "Unavailable" },
+        progressReset: episode.progress_resettable
+          ? {
+              kind: "Available",
+              execute: async () => {
+                if (actionBusy(RESOURCE_ACTION_CATALOG.ResetProgress.id)) {
+                  return;
+                }
+                await onResetProgress(episode.id);
+              },
+            }
+          : { kind: "Unavailable" },
         playedState:
           deriveEpisodeState(episode) === "played"
             ? {
@@ -266,6 +279,7 @@ export default function PodcastEpisodeList({
             RESOURCE_ACTION_CATALOG.RefreshSource.id,
             RESOURCE_ACTION_CATALOG.RetryMetadata.id,
             RESOURCE_ACTION_CATALOG.RemoveMedia.id,
+            RESOURCE_ACTION_CATALOG.ResetProgress.id,
             RESOURCE_ACTION_CATALOG.AddToLectern.id,
             RESOURCE_ACTION_CATALOG.RemoveFromLectern.id,
           ].filter(actionBusy),

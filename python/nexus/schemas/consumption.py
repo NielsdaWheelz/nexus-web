@@ -20,6 +20,7 @@ from pydantic.alias_generators import to_camel
 
 from nexus.schemas.consumption_activity import CompletionHandle
 from nexus.schemas.presence import Presence
+from nexus.schemas.reader import ReaderCursorSnapshot
 
 # The signed 32-bit ceiling every non-negative integer wire field shares.
 _INT32_MAX = 2_147_483_647
@@ -94,6 +95,7 @@ class ConsumptionOut(BaseModel):
 
     state: ConsumptionStateValue
     progress: Presence[Annotated[float, Field(ge=0, le=1)]]
+    progress_resettable: bool
 
 
 class LecternItemOut(BaseModel):
@@ -237,6 +239,13 @@ class SetUnreadCommand(BaseModel):
     media_id: UUID
 
 
+class ResetProgressCommand(BaseModel):
+    model_config = _IN_CONFIG
+    kind: Literal["ResetProgress"]
+    client_mutation_id: UUID
+    media_id: UUID
+
+
 class UndoCompletionCommand(BaseModel):
     model_config = _IN_CONFIG
     kind: Literal["UndoCompletion"]
@@ -256,6 +265,7 @@ ConsumptionCommand = Annotated[
     EnsureMediaFinishedCommand
     | FinishLecternItemCommand
     | SetUnreadCommand
+    | ResetProgressCommand
     | UndoCompletionCommand
     | SetBatchStateCommand,
     Field(discriminator="kind"),
@@ -274,13 +284,14 @@ class ListeningStateOut(BaseModel):
     reset_epoch: _NonNegInt32
 
 
-class ListeningStateEntry(BaseModel):
-    """A ``(mediaId, state)`` pair for media reset by a logical Unread command."""
+class MediaProgressState(BaseModel):
+    """Canonical current-progress snapshot installed after a reset."""
 
     model_config = _OUT_CONFIG
 
     media_id: UUID
-    state: ListeningStateOut
+    reader_cursor: ReaderCursorSnapshot
+    listening_state: Presence[ListeningStateOut]
 
 
 class StateOnlyOutcome(BaseModel):
@@ -305,7 +316,7 @@ class ConsumptionResult(BaseModel):
     outcome: ConsumptionOutcome
     lectern: LecternSnapshot
     next_item: Presence[LecternItemOut]
-    listening_states: list[ListeningStateEntry]
+    progress_state: Presence[MediaProgressState]
     completion_handle: Presence[CompletionHandle]
 
 

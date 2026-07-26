@@ -1304,7 +1304,7 @@ class TestListLibraryMedia:
             unread_id = create_test_media(session, title="Unread estimate")
             in_progress_id = create_test_media(session, title="Remaining estimate")
             finished_id = create_test_media(session, title="Finished estimate")
-            reset_unread_id = create_test_media(session, title="Reset unread estimate")
+            override_unread_id = create_test_media(session, title="Unread override estimate")
             epub_id = create_test_media(session, title="EPUB estimate")
             pending_id = create_test_media(session, title="Pending estimate", status="extracting")
             zero_id = create_test_media(session, title="Zero estimate")
@@ -1316,7 +1316,7 @@ class TestListLibraryMedia:
                 unread_id,
                 in_progress_id,
                 finished_id,
-                reset_unread_id,
+                override_unread_id,
                 epub_id,
                 pending_id,
                 zero_id,
@@ -1328,7 +1328,7 @@ class TestListLibraryMedia:
             unread_id,
             in_progress_id,
             finished_id,
-            reset_unread_id,
+            override_unread_id,
             epub_id,
             pending_id,
             zero_id,
@@ -1336,25 +1336,25 @@ class TestListLibraryMedia:
             direct_db.register_cleanup("media", "id", media_id)
             direct_db.register_cleanup("fragments", "media_id", media_id)
             direct_db.register_cleanup("library_entries", "media_id", media_id)
-        for media_id in (in_progress_id, finished_id, reset_unread_id):
+        for media_id in (in_progress_id, finished_id, override_unread_id):
             direct_db.register_cleanup("reader_engagement_states", "media_id", media_id)
             direct_db.register_cleanup("reader_media_state", "media_id", media_id)
         direct_db.register_cleanup("consumption_overrides", "media_id", finished_id)
-        direct_db.register_cleanup("consumption_overrides", "media_id", reset_unread_id)
+        direct_db.register_cleanup("consumption_overrides", "media_id", override_unread_id)
 
         fragment_ids: dict[UUID, UUID] = {}
         for media_id in (
             unread_id,
             in_progress_id,
             finished_id,
-            reset_unread_id,
+            override_unread_id,
             epub_id,
             pending_id,
         ):
             with direct_db.session() as session:
                 fragment_ids[media_id] = create_test_fragment(session, media_id, document_text)
 
-        for media_id in (in_progress_id, finished_id, reset_unread_id):
+        for media_id in (in_progress_id, finished_id, override_unread_id):
             reader_state = auth_client.put(
                 f"/media/{media_id}/reader-state",
                 headers=auth_headers(user_id),
@@ -1381,7 +1381,7 @@ class TestListLibraryMedia:
 
         for kind, media_id in (
             ("EnsureMediaFinished", finished_id),
-            ("SetUnread", reset_unread_id),
+            ("SetUnread", override_unread_id),
         ):
             command = auth_client.post(
                 "/consumption/commands",
@@ -1418,12 +1418,12 @@ class TestListLibraryMedia:
         }
         assert by_id[str(finished_id)]["media"]["progress_fraction"] == pytest.approx(0.4)
         assert by_id[str(finished_id)]["media"]["read_state"] == "finished"
-        assert by_id[str(reset_unread_id)]["readingTimeEstimate"]["value"] == {
+        assert by_id[str(override_unread_id)]["readingTimeEstimate"]["value"] == {
             "totalMinutes": 15,
             "remainingMinutes": {"kind": "Absent"},
         }
-        assert by_id[str(reset_unread_id)]["media"]["progress_fraction"] == pytest.approx(0.4)
-        assert by_id[str(reset_unread_id)]["media"]["read_state"] == "unread"
+        assert by_id[str(override_unread_id)]["media"]["progress_fraction"] == pytest.approx(0.4)
+        assert by_id[str(override_unread_id)]["media"]["read_state"] == "unread"
         assert by_id[str(epub_id)]["readingTimeEstimate"]["value"] == {
             "totalMinutes": 15,
             "remainingMinutes": {"kind": "Absent"},

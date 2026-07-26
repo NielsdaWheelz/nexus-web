@@ -209,6 +209,69 @@ describe("useReaderProgress: save scheduling", () => {
   });
 });
 
+describe("useReaderProgress: ResetProgress coordination", () => {
+  it("drains a dirty local cursor immediately before the reset command enters the FIFO", async () => {
+    const scripted = createScriptedFetch();
+    scripted.pushGetJson({ state: "Positioned", revision: 1, locator: START });
+    scripted.pushPutJson({ state: "Positioned", revision: 2, locator: A });
+
+    const { result } = renderHook(() =>
+      useReaderProgress(baseOptions({ apiFetch: scripted.apiFetch })),
+    );
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    act(() => {
+      result.current.reportMovement(A);
+    });
+    await act(async () => {
+      await result.current.drainForProgressReset();
+    });
+
+    const putCalls = scripted.calls.filter(isPut);
+    expect(putCalls).toHaveLength(1);
+    expect(putBody(putCalls[0])).toEqual({ locator: A, base_revision: 1 });
+  });
+
+  it("installs a canonical Empty tombstone, asks the format adapter for a cold start, and ignores an old save", async () => {
+    const scripted = createScriptedFetch();
+    scripted.pushGetJson({ state: "Positioned", revision: 1, locator: START });
+    const oldSave = scripted.pushPutDeferred();
+    const applyCursor = vi.fn(async () => "applied" as const);
+
+    const { result } = renderHook(() =>
+      useReaderProgress(baseOptions({ apiFetch: scripted.apiFetch, applyCursor })),
+    );
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    vi.useFakeTimers();
+    act(() => {
+      result.current.reportMovement(A);
+    });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(scripted.calls.filter(isPut)).toHaveLength(1);
+
+    await act(async () => {
+      await result.current.installCanonicalSnapshot({ state: "Empty", revision: 4 });
+    });
+
+    expect(result.current.initialSnapshot).toEqual({ state: "Empty", revision: 4 });
+    expect(applyCursor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "canonical",
+        snapshot: { state: "Empty", revision: 4 },
+      }),
+    );
+
+    await act(async () => {
+      oldSave.resolve({ data: { state: "Positioned", revision: 2, locator: A } });
+      await oldSave.promise;
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(scripted.calls.filter(isPut)).toHaveLength(1);
+    vi.useRealTimers();
+  });
+});
+
 describe("useReaderProgress: single-flight write ordering", () => {
   it("serializes A/B/C as A then C, with C carrying A's acknowledged revision", async () => {
     const scripted = createScriptedFetch();

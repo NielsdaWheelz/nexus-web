@@ -3,15 +3,15 @@
 Command facades (``run_lectern_command`` / ``run_consumption_command``) each open
 a fresh session and own one ``retry_serializable`` transaction: viewer lock ->
 replay claim -> validation -> domain writes -> semantic memo -> snapshot read
-(spec §5). Read facades (``get_lectern`` / ``get_listening_state``) run on the
-request-scoped session. The heartbeat facade is the separately specified
+(spec §5). Read facades (``get_lectern`` / ``get_listening_state`` /
+``get_reader_cursor``) run on the request-scoped session. The heartbeat facade is the separately specified
 unreplayable CAS mutation. Narrow in-transaction helpers exist only for media
 lifecycle cleanup and the trusted ensure path.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import partial
 from time import perf_counter
@@ -20,9 +20,11 @@ from uuid import UUID
 
 from pydantic import TypeAdapter
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_media
+from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
+from nexus.db.errors import integrity_constraint_name
 from nexus.db.models import MediaKind
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
@@ -46,8 +48,8 @@ from nexus.schemas.consumption import (
     LecternSnapshot,
     ListeningHeartbeatIn,
     ListeningHeartbeatResult,
-    ListeningStateEntry,
     ListeningStateOut,
+    MediaProgressState,
     NextCapability,
     OrderedOutcome,
     PlacedOutcome,
@@ -55,6 +57,7 @@ from nexus.schemas.consumption import (
     PlayerDescriptor,
     RemovedOutcome,
     RemoveItemCommand,
+    ResetProgressCommand,
     SetBatchStateCommand,
     SetUnreadCommand,
     StateOnlyOutcome,
@@ -87,7 +90,7 @@ from nexus.schemas.consumption_activity import (
     RetainedArtifactsOut,
 )
 from nexus.schemas.presence import Absent, Present, absent, nullable_from_presence, present
-from nexus.schemas.reader import ReaderResumeState
+from nexus.schemas.reader import CursorWrite, ReaderCursorSnapshot
 from nexus.services.consumption import (
     _activity_stats,
     _activity_store,
@@ -95,6 +98,7 @@ from nexus.services.consumption import (
     _listening_store,
     _policy,
     _projection,
+    _reader_cursor_store,
     _reader_engagement_store,
     _state_store,
 )
@@ -122,6 +126,15 @@ CONSUMPTION_STATS_LATENCY_BUDGET_MS = 500
 _ACTIVITY_MAX_AGE = timedelta(days=1)
 _ACTIVITY_MAX_FUTURE_SKEW = timedelta(minutes=5)
 _ACTIVITY_BATCH_MAX_BYTES = 48_000
+_VISIBLE_READER_MEDIA_KIND_SQL = text(f"""
+WITH visible_media AS (
+    {visible_media_ids_cte_sql()}
+)
+SELECT media.kind
+FROM media
+WHERE media.id = :media_id
+  AND EXISTS (SELECT 1 FROM visible_media WHERE media_id = media.id)
+""")
 
 _LECTERN_OUTCOME_ADAPTER: TypeAdapter[LecternOutcome] = TypeAdapter(LecternOutcome)
 logger = get_logger(__name__)
@@ -529,6 +542,73 @@ def get_listening_state(db: Session, viewer_id: UUID, media_id: UUID) -> Listeni
     return _projection.to_listening_state_out(row)
 
 
+def get_reader_cursor(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderCursorSnapshot:
+    """Canonical reader cursor snapshot for a visible media item."""
+    media_kind = _visible_reader_media_kind(db, viewer_id=viewer_id, media_id=media_id)
+    return _reader_cursor_store.load_snapshot(
+        db,
+        viewer_id=viewer_id,
+        media_id=media_id,
+        media_kind=media_kind,
+    )
+
+
+def put_reader_cursor(
+    viewer_id: UUID,
+    media_id: UUID,
+    write: CursorWrite,
+) -> ReaderCursorSnapshot:
+    """Atomically replace a cursor, current engagement, and completion transition."""
+    fresh = _fresh_session()
+    try:
+        try:
+            return retry_serializable(
+                fresh,
+                "reader_cursor_write",
+                partial(_put_reader_cursor_op, fresh, viewer_id, media_id, write),
+            )
+        except IntegrityError as exc:
+            if integrity_constraint_name(exc) != _reader_cursor_store.READER_MEDIA_STATE_MEDIA_FK:
+                raise
+            _visible_reader_media_kind(fresh, viewer_id=viewer_id, media_id=media_id)
+            raise
+    finally:
+        fresh.close()
+
+
+def _put_reader_cursor_op(
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+    write: CursorWrite,
+) -> ReaderCursorSnapshot:
+    _lock_viewer(db, viewer_id)
+    media_kind = _visible_reader_media_kind(db, viewer_id=viewer_id, media_id=media_id)
+    was_finished = _effective_state_is_finished(db, viewer_id=viewer_id, media_id=media_id)
+    snapshot = _reader_cursor_store.put_in_txn(
+        db,
+        viewer_id=viewer_id,
+        media_id=media_id,
+        media_kind=media_kind,
+        write=write,
+    )
+    _reader_engagement_store.record_engagement_in_txn(
+        db,
+        viewer_id=viewer_id,
+        media_id=media_id,
+        locator=write.locator,
+    )
+    _record_completion_if_transitioned(
+        db,
+        viewer_id=viewer_id,
+        media_id=media_id,
+        was_finished=was_finished,
+        kind=media_kind,
+    )
+    db.commit()
+    return snapshot
+
+
 def media_read_states(
     db: Session, *, viewer_id: UUID, media_ids: list[UUID]
 ) -> dict[UUID, _projection.MediaReadStateOut]:
@@ -695,7 +775,7 @@ class _ConsumptionEffect:
     kind: Literal["StateOnly", "Removed"]
     removed_item_id: UUID | None = None
     next_item_id: UUID | None = None
-    reset_media_ids: list[UUID] = field(default_factory=list)
+    progress_media_id: UUID | None = None
     completion_handle: CompletionHandle | None = None
 
 
@@ -732,9 +812,7 @@ def _run_consumption_command_op(
             command,
             outcome_memo=cast("dict[str, object]", stored["outcome"]),
             next_item_id=_uuid_or_none(stored["nextItemId"]),
-            reset_media_ids=[
-                UUID(str(value)) for value in cast("list[object]", stored["resetMediaIds"])
-            ],
+            progress_media_id=_uuid_or_none(stored["progressMediaId"]),
             completion_handle=(
                 CompletionHandle(str(stored["completionHandle"]))
                 if stored.get("completionHandle") is not None
@@ -754,7 +832,7 @@ def _run_consumption_command_op(
         command,
         outcome_memo=outcome_memo,
         next_item_id=effect.next_item_id,
-        reset_media_ids=effect.reset_media_ids,
+        progress_media_id=effect.progress_media_id,
         completion_handle=effect.completion_handle,
     )
     record_replay(
@@ -766,7 +844,9 @@ def _run_consumption_command_op(
         response_json={
             "outcome": outcome_memo,
             "nextItemId": str(effect.next_item_id) if effect.next_item_id is not None else None,
-            "resetMediaIds": [str(media_id) for media_id in effect.reset_media_ids],
+            "progressMediaId": str(effect.progress_media_id)
+            if effect.progress_media_id is not None
+            else None,
             "completionHandle": str(effect.completion_handle)
             if effect.completion_handle is not None
             else None,
@@ -791,10 +871,10 @@ def _apply_consumption_command(
         return _apply_finish_lectern_item(db, viewer_id, command)
     if isinstance(command, SetUnreadCommand):
         _require_readable(db, viewer_id, command.media_id)
-        reset = _write_unread_state(db, viewer_id, command.media_id)
-        return _ConsumptionEffect(
-            kind="StateOnly", reset_media_ids=[command.media_id] if reset else []
-        )
+        _write_unread_state(db, viewer_id, command.media_id)
+        return _ConsumptionEffect(kind="StateOnly")
+    if isinstance(command, ResetProgressCommand):
+        return _apply_reset_progress(db, viewer_id, command)
     if isinstance(command, UndoCompletionCommand):
         completion_id = unseal_completion(command.completion_handle)
         media_id = _activity_store.delete_completion_fact_in_txn(
@@ -804,8 +884,8 @@ def _apply_consumption_command(
             raise InvalidRequestError(
                 ApiErrorCode.E_INVALID_REQUEST, "Completion is no longer undoable"
             )
-        reset = _write_unread_state(db, viewer_id, media_id)
-        return _ConsumptionEffect(kind="StateOnly", reset_media_ids=[media_id] if reset else [])
+        _write_unread_state(db, viewer_id, media_id)
+        return _ConsumptionEffect(kind="StateOnly")
     return _apply_set_batch_state(db, viewer_id, command)
 
 
@@ -839,17 +919,47 @@ def _apply_set_batch_state(
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_KIND, "Batch state changes are podcast-episode only"
         )
-    # The batch already knows every media's kind (validated above); pass it
-    # through instead of re-querying it once per media inside the per-media
-    # writers below.
-    reset_media_ids: list[UUID] = []
     for media_id in media_ids:
         if command.state == "Finished":
             _write_finished_state(db, viewer_id, media_id, kind=kinds.get(media_id))
         else:
-            if _write_unread_state(db, viewer_id, media_id, kind=kinds.get(media_id)):
-                reset_media_ids.append(media_id)
-    return _ConsumptionEffect(kind="StateOnly", reset_media_ids=reset_media_ids)
+            _write_unread_state(db, viewer_id, media_id)
+    return _ConsumptionEffect(kind="StateOnly")
+
+
+def _apply_reset_progress(
+    db: Session,
+    viewer_id: UUID,
+    command: ResetProgressCommand,
+) -> _ConsumptionEffect:
+    media_kind = _visible_reader_media_kind(
+        db,
+        viewer_id=viewer_id,
+        media_id=command.media_id,
+    )
+    _reader_cursor_store.reset_in_txn(
+        db,
+        viewer_id=viewer_id,
+        media_id=command.media_id,
+        media_kind=media_kind,
+    )
+    _reader_engagement_store.delete_in_txn(
+        db,
+        viewer_id=viewer_id,
+        media_id=command.media_id,
+    )
+    _state_store.clear_override_in_txn(
+        db,
+        viewer_id=viewer_id,
+        media_id=command.media_id,
+    )
+    if media_kind == MediaKind.podcast_episode.value:
+        _listening_store.reset_progress_in_txn(
+            db,
+            viewer_id=viewer_id,
+            media_id=command.media_id,
+        )
+    return _ConsumptionEffect(kind="StateOnly", progress_media_id=command.media_id)
 
 
 def _write_finished_state(
@@ -877,20 +987,9 @@ def _write_finished_state(
     )
 
 
-def _write_unread_state(
-    db: Session, viewer_id: UUID, media_id: UUID, *, kind: str | None = None
-) -> bool:
-    """Set the unread override; reset an EXISTING podcast listening row. Returns
-    whether a listening row was reset (and thus belongs in ``listeningStates``).
-
-    ``kind`` lets an already-batch-known media kind (SetBatchState) skip the
-    single-media kind lookup below; single-media callers omit it and pay one
-    query, unchanged from before."""
+def _write_unread_state(db: Session, viewer_id: UUID, media_id: UUID) -> None:
+    """Set the explicit Unread status without changing current progress."""
     _state_store.set_override_in_txn(db, viewer_id=viewer_id, media_id=media_id, state="Unread")
-    resolved_kind = kind if kind is not None else _media_kinds(db, [media_id]).get(media_id)
-    if resolved_kind != MediaKind.podcast_episode.value:
-        return False
-    return _listening_store.reset_for_unread_in_txn(db, viewer_id=viewer_id, media_id=media_id)
 
 
 def _build_consumption_result(
@@ -900,7 +999,7 @@ def _build_consumption_result(
     *,
     outcome_memo: dict[str, object],
     next_item_id: UUID | None,
-    reset_media_ids: list[UUID],
+    progress_media_id: UUID | None,
     completion_handle: CompletionHandle | None,
 ) -> ConsumptionResult:
     rows = _lectern_store.load_rows(db, viewer_id=viewer_id)
@@ -917,18 +1016,44 @@ def _build_consumption_result(
             next_item = present(_projection.build_item(db, viewer_id=viewer_id, row=candidate))
 
     outcome = _consumption_outcome(outcome_memo, resolved_next_id)
-    listening = _listening_store.load_states(db, viewer_id=viewer_id, media_ids=reset_media_ids)
-    listening_states = [
-        ListeningStateEntry(
-            media_id=media_id, state=_projection.to_listening_state_out(listening.get(media_id))
+    progress_state: Absent | Present[MediaProgressState] = absent()
+    if progress_media_id is not None:
+        media_kind = _visible_reader_media_kind(
+            db,
+            viewer_id=viewer_id,
+            media_id=progress_media_id,
         )
-        for media_id in reset_media_ids
-    ]
+        reader_cursor = _reader_cursor_store.load_snapshot(
+            db,
+            viewer_id=viewer_id,
+            media_id=progress_media_id,
+            media_kind=media_kind,
+        )
+        listening_state = (
+            present(
+                _projection.to_listening_state_out(
+                    _listening_store.load_state(
+                        db,
+                        viewer_id=viewer_id,
+                        media_id=progress_media_id,
+                    )
+                )
+            )
+            if media_kind == MediaKind.podcast_episode.value
+            else absent()
+        )
+        progress_state = present(
+            MediaProgressState(
+                media_id=progress_media_id,
+                reader_cursor=reader_cursor,
+                listening_state=listening_state,
+            )
+        )
     return ConsumptionResult(
         outcome=outcome,
         lectern=snapshot,
         next_item=next_item,
-        listening_states=listening_states,
+        progress_state=progress_state,
         completion_handle=present(completion_handle) if completion_handle is not None else absent(),
     )
 
@@ -1145,49 +1270,6 @@ def _record_heartbeat_op(
 
 
 # ---------------------------------------------------------------------------
-# Reader engagement (retry-safe current-state upsert; not a replayable command)
-# ---------------------------------------------------------------------------
-
-
-def record_reader_engagement(viewer_id: UUID, media_id: UUID, locator: ReaderResumeState) -> None:
-    """Touch ``reader_engagement_states`` after a successful/idempotent cursor
-    write (route composition, spec §4.4). Fresh session + ``retry_serializable``;
-    no replay memo — this is a plain idempotent upsert, not a replayable command.
-    Failure surfaces to the caller; the same cursor write may be retried safely."""
-    fresh = _fresh_session()
-    try:
-        retry_serializable(
-            fresh,
-            "record_reader_engagement",
-            partial(_record_reader_engagement_op, fresh, viewer_id, media_id, locator),
-        )
-    finally:
-        fresh.close()
-
-
-def _record_reader_engagement_op(
-    db: Session, viewer_id: UUID, media_id: UUID, locator: ReaderResumeState
-) -> None:
-    _lock_viewer(db, viewer_id)
-    _require_readable(db, viewer_id, media_id)
-    was_finished = _effective_state_is_finished(db, viewer_id=viewer_id, media_id=media_id)
-    _reader_engagement_store.record_engagement_in_txn(
-        db, viewer_id=viewer_id, media_id=media_id, locator=locator
-    )
-    kind = _media_kinds(db, [media_id]).get(media_id)
-    if kind is None:
-        raise AssertionError(f"missing media kind for reader engagement: {media_id}")
-    _record_completion_if_transitioned(
-        db,
-        viewer_id=viewer_id,
-        media_id=media_id,
-        was_finished=was_finished,
-        kind=kind,
-    )
-    db.commit()
-
-
-# ---------------------------------------------------------------------------
 # Trusted ensure + media-lifecycle composition helpers
 # ---------------------------------------------------------------------------
 
@@ -1251,14 +1333,15 @@ def _remove_lectern_item_op(db: Session, viewer_id: UUID, item_id: UUID) -> None
 
 
 def delete_media_consumption_state_in_txn(db: Session, *, media_id: UUID) -> None:
-    """Delete all users' Lectern/override/listening/engagement rows for a media
+    """Delete all users' Lectern/override/current-progress/history rows for a media
     (teardown).
 
-    Composed by media teardown inside its owning deletion transaction; the four
-    stores stay the sole DML owners of their tables."""
+    Composed by media teardown inside its owning deletion transaction; the
+    owning stores stay the sole DML owners of their tables."""
     _lectern_store.delete_all_users_in_txn(db, media_id=media_id)
     _state_store.delete_all_users_in_txn(db, media_id=media_id)
     _listening_store.delete_all_users_in_txn(db, media_id=media_id)
+    _reader_cursor_store.delete_all_users_in_txn(db, media_id=media_id)
     _reader_engagement_store.delete_all_users_in_txn(db, media_id=media_id)
     _activity_store.delete_all_for_media_in_txn(db, media_id=media_id)
 
@@ -1285,6 +1368,24 @@ def _lock_viewer(db: Session, viewer_id: UUID) -> None:
 def _require_readable(db: Session, viewer_id: UUID, media_id: UUID) -> None:
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Media not found")
+
+
+def _visible_reader_media_kind(db: Session, *, viewer_id: UUID, media_id: UUID) -> str:
+    media_kind = db.execute(
+        _VISIBLE_READER_MEDIA_KIND_SQL,
+        {"viewer_id": viewer_id, "media_id": media_id},
+    ).scalar_one_or_none()
+    if media_kind is None:
+        db.rollback()
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    resolved = str(media_kind)
+    if not _reader_cursor_store.supports_media_kind(resolved):
+        db.rollback()
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            f"Reader state is not supported for media kind '{resolved}'",
+        )
+    return resolved
 
 
 def _effective_state_is_finished(db: Session, *, viewer_id: UUID, media_id: UUID) -> bool:

@@ -109,7 +109,7 @@ function initialListeningState(): ListeningStateOut {
  */
 export function installLecternPlayerFetchMock(options: { items?: LecternItem[] } = {}) {
   const items = options.items ?? [];
-  const listeningStates = new Map<string, ListeningStateOut>();
+  const listeningStateByMediaId = new Map<string, ListeningStateOut>();
 
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = new URL(String(input), "http://localhost");
@@ -127,13 +127,14 @@ export function installLecternPlayerFetchMock(options: { items?: LecternItem[] }
           outcome: { kind: "StateOnly" },
           lectern: { items },
           nextItem: { kind: "Absent" },
-          listeningStates: [],
+          progressState: { kind: "Absent" },
+          completionHandle: { kind: "Absent" },
         },
       });
     }
     if (url.pathname.endsWith("/listening-state")) {
       const mediaId = url.pathname.split("/").slice(-2, -1)[0] ?? "";
-      const state = listeningStates.get(mediaId) ?? initialListeningState();
+      const state = listeningStateByMediaId.get(mediaId) ?? initialListeningState();
       if (method === "PUT") {
         const body = JSON.parse(String(init?.body ?? "{}")) as {
           positionMs: number;
@@ -149,7 +150,7 @@ export function installLecternPlayerFetchMock(options: { items?: LecternItem[] }
           writeRevision: state.writeRevision + 1,
           resetEpoch: state.resetEpoch,
         };
-        listeningStates.set(mediaId, next);
+        listeningStateByMediaId.set(mediaId, next);
         return jsonResponse({
           data: {
             listeningState: next,

@@ -139,12 +139,14 @@ sync hook would blur.
 
 ### per-media progress
 
-- `reader_media_state` stores one canonical cursor row per user/media: a
-  non-null jsonb `locator` and a monotonic bigint `revision` (starts `1`,
-  authoritative — `updated_at` is metadata only, not a conflict token)
+- Consumption owns one canonical `reader_media_state` row per user/media: a
+  nullable jsonb `locator` and a monotonic bigint `revision` (starts `1`,
+  authoritative — `updated_at` is metadata only, not a conflict token).
+  `locator IS NULL` is an internal revisioned Empty reset tombstone.
 - `GET /api/media/{id}/reader-state` returns exactly
-  `{state:"Empty",revision:0}` or `{state:"Positioned",revision>=1,locator}`,
-  never raw `null`
+  `{state:"Empty",revision>=0}` or
+  `{state:"Positioned",revision>=1,locator}`, never raw `null`; Empty revision
+  `0` means no row and Empty revision `>=1` is a persisted tombstone
 - `PUT /api/media/{id}/reader-state` takes the bare `CursorWrite`
   (`{locator, base_revision}`) — no wrapping envelope and no sibling block;
   old bare locators, extra fields, and a top-level `null` clear are rejected
@@ -156,17 +158,12 @@ sync hook would blur.
   cursor does not advance, but the save still records engagement, because "the
   user opened and saved this document again" is itself the engagement-worthy
   fact, independent of whether the position moved
-- cursor success (including the idempotent equal-locator case) is followed by
-  one retry-safe reader-engagement command in its own transaction: touch that
-  document's recency unconditionally, and for non-PDF locators advance a
-  monotonic whole-document progression high-water mark. The two writes are
-  sequential rather than combined into one transaction on purpose — the
-  cursor is the thing a stale-revision conflict must protect losslessly, while
-  engagement is a current-state fact with no such conflict shape (no fencing
-  token, `GREATEST`-merged); folding them into one atomic write would force
-  the cursor's CAS discipline onto data that does not need it. A failed
-  engagement write is surfaced, not swallowed, because both operations in the
-  pair are safe to retry from the client's perspective.
+- cursor success (including the idempotent equal-locator case), reader
+  engagement, and any completion transition commit in one Consumption
+  transaction. A stale CAS writes none of them.
+- `ResetProgress` writes a higher-revision Empty tombstone and clears current
+  reader engagement in that same owner transaction, so a stale pre-reset save
+  conflicts instead of resurrecting progress
 - `useReaderProgress` is the single browser-side coordinator that serializes
   and coalesces cursor writes (single-flight, latest-only, revision-aware);
   event-driven revalidation on pane activation, visibility, focus, `pageshow`,

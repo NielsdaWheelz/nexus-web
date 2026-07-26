@@ -5,6 +5,16 @@
 
 No blocking question remains.
 
+**Progress-reset supersession (2026-07-24):**
+[`media-progress-reset-hard-cutover.md`](media-progress-reset-hard-cutover.md)
+supersedes this document's Mark Unread rewind behavior, `listeningStates`
+response/event, pre-Unread heartbeat drain, cursor ownership, and matching
+acceptance clauses. Status is now independent from progress: `SetUnread` and
+batch Unread change only the explicit override; `ResetProgress` is the sole
+command that resets/fences Nexus-owned reader and podcast progress. The
+Lectern, player FIFO, heartbeat, replay, and completion contracts remain
+canonical where that later document does not replace them.
+
 **Reading-surface supersession (2026-07-21):**
 [`resonance-reading-slate-hard-cutover.md`](resonance-reading-slate-hard-cutover.md)
 removes `GET /lectern/recent` and its public projection/schema/client surface.
@@ -39,8 +49,9 @@ position/duration/speed/fencing and carries no elapsed-time delta or
 client-supplied device identifier, and media teardown composes one
 consumption call, not two. Document engagement recency moves to a fifth
 consumption store, `reader_engagement_states`
-(`services/consumption/_reader_engagement_store.py`), fed by the reader-state
-PUT rather than by any session/dwell derivation (see
+(`services/consumption/_reader_engagement_store.py`), written atomically with
+the Consumption-owned reader cursor PUT rather than by any session/dwell
+derivation (see
 `docs/modules/{player,reader-implementation}.md`).
 
 ## 1. Target behavior
@@ -64,7 +75,8 @@ PUT rather than by any session/dwell derivation (see
 | Batch Mark played           | `Finished`                 | unchanged                               | unchanged                                                    |
 | Early Next                  | unchanged                  | retain item in place                    | next audio; no wrap                                          |
 | Remove                      | unchanged                  | remove only                             | active origin becomes Direct                                 |
-| Mark unread / unplayed      | `Unread`                   | never add                               | active same-media session seeks to zero; play/pause retained |
+| Mark unread / unplayed      | `Unread`                   | never add                               | active session/progress unchanged                            |
+| Reset progress              | derived `Unread`           | unchanged                               | active audio pauses at zero; reader opens at beginning       |
 | Re-add finished media       | preserve consumption state | move existing row or add new row        | explicit audio Play starts at zero                           |
 | Activate video              | unchanged                  | retain                                  | open media pane; never bind to `<audio>`                     |
 
@@ -471,6 +483,7 @@ FinishLecternItem {
   nextCapability: "Stop" | "FooterAudio" | "Readable"
 }
 SetUnread { kind: "SetUnread", clientMutationId, mediaId }
+ResetProgress { kind: "ResetProgress", clientMutationId, mediaId }
 SetBatchState { kind: "SetBatchState", clientMutationId,
                 mediaIds: MediaId[1..1000], state: "Finished" | "Unread" }
 
@@ -480,7 +493,7 @@ ConsumptionResult {
     | { kind: "Removed", itemId, nextItemId: Presence<LecternItemId> }
   lectern: LecternSnapshot
   nextItem: Presence<LecternItemOut>
-  listeningStates: { mediaId: MediaId, state: ListeningStateOut }[]
+  progressState: Presence<MediaProgressState>
 }
 ```
 
@@ -490,18 +503,19 @@ ConsumptionResult {
   returns Absent; the other values return the first still-current matching item
   and never wrap. Capability is a selection filter, never a precondition that
   can block the terminal write.
-- `SetUnread` is state-only and never adds. For podcast state it resets position
-  and advances both `writeRevision` and `resetEpoch` in the same transaction.
-  Replay advances neither again; the memo stores affected media IDs and the
-  response reads their full current listening state, so an older replay adopts
-  later progress instead of pairing a fresh revision with stale zero.
+- `SetUnread` is status-only and never adds, seeks, resets, or advances a
+  fencing token.
+- `ResetProgress` clears the explicit override, writes a revisioned Empty reader
+  cursor, deletes current reader engagement, and, for podcasts, resets position
+  and advances `writeRevision` and `resetEpoch` in one transaction. Replay
+  advances nothing again and returns one canonical `progressState`.
 - `SetBatchState` is podcast-episode-only and state-only for both values; any
   other kind is `E_INVALID_KIND`. Only the podcast pane currently needs batch;
   it never removes Lectern rows.
-- Podcast `Finished` sets `is_completed=true` without moving position. `Unread`
-  clears completion and resets position to zero. `listeningStates` contains the
-  current rows reset by that logical Unread command and is otherwise empty.
-  Explicit override remains the highest-priority state input.
+- Podcast `Finished` sets `is_completed=true` without moving position.
+  `ResetProgress`, not Unread, clears completion and resets position to zero.
+  Explicit override remains the highest-priority state input until Reset clears
+  it.
 
 ### 5.3 Trusted ensure and auto-subscription
 
@@ -574,8 +588,8 @@ Finished signal is projection-only and never sets `is_completed` or prunes.
 zero. PUT locks the viewer row, then loads or creates the listening row. Only an
 exact expected revision + reset epoch may atomically write position+dwell and
 increment the revision; mismatch returns
-`E_STALE_LISTENING_REVISION` (409) and writes nothing. SetUnread holds the same
-viewer lock while incrementing both counters and resetting position, so a
+`E_STALE_LISTENING_REVISION` (409) and writes nothing. `ResetProgress` holds
+the same viewer lock while incrementing both counters and resetting position, so a
 pre-reset heartbeat either commits first or is rejected later. This makes an
 ambiguous PUT retry incapable of double-counting dwell or overwriting newer
 position.
@@ -586,10 +600,10 @@ bypass the command FIFO but have a named 20-second browser deadline. Timeout or
 network failure never blocks playback or mutations: retire that generation,
 discard its ambiguous dwell delta, and GET current state. If `resetEpoch` is
 unchanged, retain the newest position for a new generation; if it changed,
-discard old samples and adopt the canonical reset. Before active-media Unread, the provider
+discard old samples and adopt the canonical reset. Before active-media Reset, the provider
 closes and drains the old generation for at most that deadline, then issues the
-command. It adopts the returned full state, seeks to its position, replaces the
-old overlay, and starts a new generation. A stale-revision response takes the same GET path;
+command. It adopts the returned full state, pauses and seeks to its position,
+replaces the old overlay, and starts a new generation. A stale-revision response takes the same GET path;
 old-revision samples are never resubmitted under the new revision.
 Heartbeat dwell is intentionally at-most-once: an unknown-outcome delta may be
 lost, but is never replayed or double-counted. Explicit state remains authoritative.
@@ -638,6 +652,7 @@ interface LecternCapability {
     nextCapability: NextCapability;
   }): Promise<ConsumptionResult>;
   setUnread(mediaId: MediaId): Promise<ConsumptionResult>;
+  resetProgress(mediaId: MediaId): Promise<ConsumptionResult>;
   setBatchState(input: {
     mediaIds: MediaId[];
     state: "Finished" | "Unread";
@@ -744,7 +759,7 @@ interface GlobalPlayerCapability {
 - Resume authority is: `Finished -> 0`; otherwise the provider-lifetime
   same-media position overlay; otherwise latest snapshot/media DTO position. The overlay is a
   provider-lifetime `Map<mediaId, {positionMs, writeRevision, resetEpoch}>`, updates on
-  time/seek/switch/heartbeat. Unread installs the returned full listening state
+  time/seek/switch/heartbeat. Reset installs the returned full listening state
   (zero on first execution, possibly later progress on replay); Finished records
   a provider-local zero-start override without seeking
   an already-active session. These facts also govern descriptor-only history and
@@ -891,7 +906,7 @@ interface GlobalPlayerCapability {
    Remove restores its row without changing the exact player origin. Failed
    reconciliation exposes GET-only Retry and never repeats a definitive command.
 9. Heartbeats are single-flight/generation-keyed and server-revision-fenced. Active
-   Unread resets server + retained player to zero; old/late PUTs write neither
+   Reset pauses the retained player at server position zero; old/late PUTs write neither
    position nor dwell. Replay adopts full current state; failed GET suspends only
    persistence with GET-only Retry. Deadline/stale recovery terminate cleanly.
    History switches cannot rewind the provider position map.
@@ -913,11 +928,11 @@ interface GlobalPlayerCapability {
     playback-failure Retry, speed/effects, shell bottom row, safe area, and
     one-editor rule pass behavior tests.
 15. Scoped gates prove deleted routes/symbols and owners: Lectern DML only in
-    `_lectern_store.py`; explicit/listening DML only in their stores; session DML
-    only in `attention.py`; projection reads only in `_projection`/attention;
-    only named lifecycle/auto-sync composition callsites. Media deletion
-    explicitly removes all four in-scope child families before parent deletion.
-    Superseded owner/gate claims are absent.
+    `_lectern_store.py`; explicit/listening/reader-cursor/reader-engagement/
+    activity DML only in their Consumption stores; projection reads only through
+    Consumption owners; only named lifecycle/auto-sync composition callsites.
+    Media deletion invokes the single Consumption teardown owner before parent
+    deletion. Superseded owner/gate claims are absent.
 
 ## 9. Delivery order
 

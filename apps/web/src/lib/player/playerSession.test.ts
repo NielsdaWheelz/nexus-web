@@ -23,6 +23,7 @@ import {
   naturalEndAdvance,
   playExplicit,
   previous,
+  resetProgress,
   resolveOriginForPlay,
   type AudioSession,
   type OverlayEntry,
@@ -73,7 +74,7 @@ function audioItem(itemKey: string, mediaKey: string, positionMs = 0): LecternIt
     title: `Title ${mediaKey}`,
     subtitle: absent(),
     href: assumeAppHref(`/media/${mediaKey}`),
-    consumption: { state: "Unread", progress: absent() },
+    consumption: { state: "Unread", progress: absent(), progressResettable: false },
     activation: footerAudio(positionMs),
     actionTarget: routeResourceActionSubject({
       scheme: "media",
@@ -355,6 +356,52 @@ describe("applySnapshotInstall", () => {
     // The API shape makes it impossible to downgrade an origin from optimistic
     // (Remove/reorder) presentation: there is nowhere to pass one.
     expect(applySnapshotInstall.length).toBe(2);
+  });
+});
+
+// --- resetProgress -----------------------------------------------------------
+
+describe("resetProgress", () => {
+  it("pauses the matching active session at the returned canonical position without navigation", () => {
+    const state = activeState("A", lectern("iA"), 9_000);
+    const history: PlayerHistory = {
+      back: [descriptor("Z")],
+      forward: [descriptor("Y")],
+    };
+    if (state.kind !== "Active") throw new Error("unreachable");
+
+    const result = resetProgress(state, history, mediaId("A"), 0);
+
+    expect(result.state).toEqual({
+      kind: "Active",
+      session: state.session,
+      phase: "Paused",
+    });
+    expect(result.history).toBe(history);
+    expect(result.effect).toEqual({ kind: "ResetCurrent", positionMs: 0 });
+  });
+
+  it("installs a replay's later canonical position rather than inventing zero", () => {
+    const state = activeState("A", direct, 9_000);
+
+    expect(resetProgress(state, EMPTY_HISTORY, mediaId("A"), 4_200).effect).toEqual({
+      kind: "ResetCurrent",
+      positionMs: 4_200,
+    });
+  });
+
+  it("does nothing for a different or absent session", () => {
+    const state = activeState("A", direct);
+    expect(resetProgress(state, EMPTY_HISTORY, mediaId("B"), 0)).toEqual({
+      state,
+      history: EMPTY_HISTORY,
+      effect: { kind: "None" },
+    });
+    expect(resetProgress({ kind: "Absent" }, EMPTY_HISTORY, mediaId("A"), 0)).toEqual({
+      state: { kind: "Absent" },
+      history: EMPTY_HISTORY,
+      effect: { kind: "None" },
+    });
   });
 });
 
