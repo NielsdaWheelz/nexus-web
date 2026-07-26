@@ -2420,6 +2420,7 @@ class TestCitationPublication:
             publish_chat_citations,
         )
         from nexus.services.chat_run_finalize import finalize_run
+        from nexus.services.chat_run_response import build_chat_run_response
 
         (
             user_id,
@@ -2457,6 +2458,9 @@ class TestCitationPublication:
         with direct_db.session() as session:
             run = session.get(ChatRunModel, run_id)
             assert run is not None
+            run.provider = "openai"
+            run.model_name = "gpt-5.6-terra"
+            run.reasoning_effort = "medium"
             numbering = number_tool_citation_candidates(
                 session,
                 tool_call_id=tool_call_id,
@@ -2531,6 +2535,32 @@ class TestCitationPublication:
                 "kind": "Present",
                 "value": {"code": "CitationsUnavailable"},
             }
+            response = build_chat_run_response(session, user_id, run)
+            assert response.run.provider == "openai"
+            assert response.run.model_name == "gpt-5.6-terra"
+            assert response.run.reasoning_effort == "medium"
+            assert response.run.support_id.model_dump(mode="json") == {
+                "kind": "Present",
+                "value": "abc123def456",
+            }
+            assert response.run.publication_warning.model_dump(mode="json") == {
+                "kind": "Present",
+                "value": {"code": "CitationsUnavailable"},
+            }
+            trust_run = response.assistant_message.trust_trail.run
+            assert trust_run is not None
+            assert trust_run.provider == response.run.provider
+            assert trust_run.model_name == response.run.model_name
+            assert trust_run.reasoning_effort.model_dump(mode="json") == {
+                "kind": "Present",
+                "value": response.run.reasoning_effort,
+            }
+            assert trust_run.support_id.model_dump(
+                mode="json"
+            ) == response.run.support_id.model_dump(mode="json")
+            assert trust_run.publication_warning.model_dump(
+                mode="json"
+            ) == response.run.publication_warning.model_dump(mode="json")
 
     def test_publication_leaves_uncited_candidate_without_back_pointer(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
