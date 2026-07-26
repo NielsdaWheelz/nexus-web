@@ -101,6 +101,8 @@ def number_tool_citation_candidates(
     start_ordinal: int,
 ) -> CitationCandidateNumbering:
     """Assign model-facing ordinals to selected citable rows; write no edges."""
+    # justify-service-invariant-check: the next turn-global ordinal crosses
+    # persisted retrieval rows and provider output, while its API type is int.
     if start_ordinal < 1:
         raise AssertionError(f"citation candidate ordinals must be positive; got {start_ordinal}")
     if tool_call_id is None:
@@ -129,6 +131,8 @@ def number_tool_citation_candidates(
         if candidate_ordinal is not None:
             next_ordinal += 1
         existing_ordinal = row["citation_candidate_ordinal"]
+        # justify-service-invariant-check: candidate immutability spans the
+        # persisted row and this numbering pass and cannot live in either type.
         if existing_ordinal is not None and existing_ordinal != candidate_ordinal:
             raise AssertionError(
                 f"retrieval {row['id']} citation candidate ordinal changed "
@@ -164,6 +168,8 @@ def canonicalize_chat_citations(
 ) -> CanonicalCitationResult:
     """Accept generated candidate markers into canonical reader citation syntax."""
     candidate_ordinals = [candidate.candidate_ordinal for candidate in candidates]
+    # justify-service-invariant-check: density and uniqueness are properties of
+    # the complete persisted candidate set, not one CitationCandidate value.
     if sorted(candidate_ordinals) != list(range(1, len(candidate_ordinals) + 1)):
         raise AssertionError(
             f"chat citation candidate ordinals must be dense and unique; got {candidate_ordinals}"
@@ -229,6 +235,8 @@ def _rewrite_markers(
 
 def _citation_target_ref(row: Mapping[str, Any]) -> ResourceRef | None:
     """Return the search-owned citable target stored on a retrieval row."""
+    # justify-service-invariant-check: result_ref is validated on write but is
+    # read back from mutable JSONB and must still satisfy that stored contract.
     result_ref = row["result_ref"]
     if not isinstance(result_ref, Mapping):
         raise AssertionError("message_retrievals.result_ref must be an object")
@@ -390,6 +398,8 @@ def persist_read_evidence_candidate(
         tool_call_id=tool_call_id,
         start_ordinal=start_ordinal,
     )
+    # justify-service-invariant-check: one read tool call owns at most one
+    # retrieval row, an invariant spanning two persisted tables.
     if len(numbering.rows) != 1:
         raise AssertionError(
             f"read tool call {tool_call_id} must own exactly one selected retrieval"
@@ -481,6 +491,8 @@ def publish_chat_citations(
     if not edges:
         return result
 
+    # justify-service-invariant-check: graph replacement and canonicalization
+    # have separate owners whose complete output counts must agree here.
     if len(edges) != len(result.citations):
         raise AssertionError(
             f"chat citation edge count mismatch: {len(edges)} != {len(result.citations)}"
@@ -497,6 +509,8 @@ def publish_chat_citations(
                 "retrieval_id": candidate_by_ordinal[citation.candidate_ordinal].retrieval_id,
             },
         ).scalar_one_or_none()
+        # justify-service-invariant-check: the retrieval row was locked into
+        # the candidate set earlier in this same publication transaction.
         if updated_retrieval_id != candidate_by_ordinal[citation.candidate_ordinal].retrieval_id:
             raise AssertionError(
                 f"citation retrieval {citation.candidate_ordinal} disappeared during publication"
@@ -508,6 +522,8 @@ def publish_chat_citations(
         viewer_id=run.owner_user_id,
         source=message_ref,
     )
+    # justify-service-invariant-check: the graph read model must project every
+    # edge written by this transaction exactly once.
     if len(citation_outs) != len(edges):
         raise AssertionError(
             f"citation read model count mismatch for message {run.assistant_message_id}"
@@ -558,6 +574,8 @@ def publish_chat_citations(
 
 def _required_citation_target(row: Mapping[str, Any]) -> ResourceRef:
     target = _citation_target_ref(row)
+    # justify-service-invariant-check: only citable retrievals receive a
+    # candidate ordinal, a cross-column invariant of the persisted row.
     if target is None:
         raise AssertionError(f"numbered retrieval {row['id']} has no citable target")
     return target

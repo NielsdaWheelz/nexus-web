@@ -269,6 +269,8 @@ def _log_chat_run_finished(
     provider_event_count: int = 0,
 ) -> None:
     run = db.get(ChatRun, run_id)
+    # justify-service-invariant-check: a receipt is emitted only after the
+    # durable run was found and terminalized by this execution boundary.
     assert run is not None, f"terminal chat run {run_id} disappeared"
     queue_wait_ms = (
         max(0, int((run.started_at - run.created_at).total_seconds() * 1000))
@@ -1408,6 +1410,8 @@ async def _execute_chat_run(
                     read_n = None
                     if read_numbering is not None:
                         citation_n_next = read_numbering.next_ordinal
+                        # justify-service-invariant-check: the read capability
+                        # returns one citable retrieval or no numbering.
                         assert len(read_numbering.rows) == 1
                         read_n = read_numbering.rows[0].candidate_ordinal
                     emitter.tool_result(
@@ -1649,6 +1653,8 @@ async def _execute_chat_run(
                 support_id=support_id,
             )
 
+        # justify-service-invariant-check: the closed canonicalizer result was
+        # fully consumed by the degraded branch above.
         assert isinstance(citation_result, PublishedCitations)
         finalize_run(
             db,
