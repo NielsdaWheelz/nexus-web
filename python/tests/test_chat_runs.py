@@ -2410,6 +2410,128 @@ class TestCitationPublication:
                 == 0
             )
 
+    def test_unknown_marker_atomically_publishes_degraded_marker_free_answer(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        from nexus.db.models import ChatRun as ChatRunModel
+        from nexus.db.models import Message as MessageModel
+        from nexus.services.chat_run_citations import (
+            number_tool_citation_candidates,
+            publish_chat_citations,
+        )
+        from nexus.services.chat_run_finalize import finalize_run
+
+        (
+            user_id,
+            conversation_id,
+            media_id,
+            chunk_id,
+            user_message_id,
+            assistant_message_id,
+        ) = self._setup_conversation(auth_client, direct_db)
+        run_id = self._create_chat_run_row(
+            direct_db,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+        )
+        tool_call_id = self._seed_tool_call_with_chunk_row(
+            direct_db,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            media_id=media_id,
+            chunk_id=chunk_id,
+            selected=True,
+        )
+        self._register_cleanups(
+            direct_db,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            media_id=media_id,
+            run_id=run_id,
+            tool_call_id=tool_call_id,
+        )
+
+        with direct_db.session() as session:
+            run = session.get(ChatRunModel, run_id)
+            assert run is not None
+            numbering = number_tool_citation_candidates(
+                session,
+                tool_call_id=tool_call_id,
+                start_ordinal=1,
+            )
+            assert numbering.next_ordinal == 2
+            result = publish_chat_citations(
+                session,
+                run=run,
+                generated_markdown="Known [1], unknown [2].",
+                emitter=ChatRunEventEmitter(session, run),
+            )
+            assert result.kind == "Degraded"
+            assert result.content_md == "Known , unknown ."
+            finalize_run(
+                session,
+                run_id=run.id,
+                assistant_content=result.content_md,
+                assistant_status="complete",
+                run_status="complete",
+                done_status="complete",
+                error_code=None,
+                support_id="abc123def456",
+                publication_warning_code=result.warning_code,
+                error_detail=result.detail,
+            )
+
+        with direct_db.session() as session:
+            run = session.get(ChatRunModel, run_id)
+            message = session.get(MessageModel, assistant_message_id)
+            assert run is not None
+            assert message is not None
+            assert run.status == "complete"
+            assert run.error_code is None
+            assert run.support_id == "abc123def456"
+            assert run.publication_warning_code == "CitationsUnavailable"
+            assert message.status == "complete"
+            assert message.content == "Known , unknown ."
+            assert (
+                session.query(ResourceEdge)
+                .filter(
+                    ResourceEdge.source_scheme == "message",
+                    ResourceEdge.source_id == assistant_message_id,
+                    ResourceEdge.origin == "citation",
+                )
+                .count()
+                == 0
+            )
+            assert (
+                session.execute(
+                    text(
+                        "SELECT cited_edge_id FROM message_retrievals "
+                        "WHERE tool_call_id = :tool_call_id"
+                    ),
+                    {"tool_call_id": tool_call_id},
+                ).scalar_one()
+                is None
+            )
+            events = session.execute(
+                text(
+                    "SELECT event_type, payload FROM chat_run_events "
+                    "WHERE run_id = :run_id ORDER BY seq"
+                ),
+                {"run_id": run_id},
+            ).all()
+            assert [event_type for event_type, _payload in events] == ["done"]
+            assert events[0].payload["support_id"] == {
+                "kind": "Present",
+                "value": "abc123def456",
+            }
+            assert events[0].payload["publication_warning"] == {
+                "kind": "Present",
+                "value": {"code": "CitationsUnavailable"},
+            }
+
     def test_publication_leaves_uncited_candidate_without_back_pointer(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
