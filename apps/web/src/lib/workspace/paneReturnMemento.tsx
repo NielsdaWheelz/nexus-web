@@ -1140,11 +1140,17 @@ export function usePaneReturnScrollport(input: {
   paneId: string;
   enabled: boolean;
   scrollportRef: RefObject<HTMLElement | null>;
+  routeContinuityKey?: string | null;
 }): void {
   const service = usePaneReturnMementoService();
   const scope = usePaneReturnVisitScope();
+  const previousRegistrationRef = useRef<{
+    readonly routeContinuityKey: string;
+    readonly scrollport: HTMLElement;
+  } | null>(null);
   useLayoutEffect(() => {
     if (!input.enabled) {
+      previousRegistrationRef.current = null;
       return;
     }
     const scrollport = input.scrollportRef.current;
@@ -1152,6 +1158,20 @@ export function usePaneReturnScrollport(input: {
     if (!scrollport || !(contentRoot instanceof HTMLElement)) {
       throw new Error("ShellScroll PaneShell requires a committed content root");
     }
+    const preservesLiveScroll =
+      input.routeContinuityKey !== null &&
+      input.routeContinuityKey !== undefined &&
+      previousRegistrationRef.current?.routeContinuityKey ===
+        input.routeContinuityKey &&
+      previousRegistrationRef.current.scrollport === scrollport;
+    previousRegistrationRef.current =
+      input.routeContinuityKey === null ||
+      input.routeContinuityKey === undefined
+        ? null
+        : {
+            routeContinuityKey: input.routeContinuityKey,
+            scrollport,
+          };
     const unregister = service.registerScrollport({
       paneId: input.paneId,
       visitId: scope.visitId,
@@ -1159,15 +1179,18 @@ export function usePaneReturnScrollport(input: {
       scrollport,
       contentRoot,
     });
-    service.requestRestore({
-      paneId: input.paneId,
-      visitId: scope.visitId,
-      routeKey: scope.routeKey,
-    });
+    if (!preservesLiveScroll) {
+      service.requestRestore({
+        paneId: input.paneId,
+        visitId: scope.visitId,
+        routeKey: scope.routeKey,
+      });
+    }
     return unregister;
   }, [
     input.enabled,
     input.paneId,
+    input.routeContinuityKey,
     input.scrollportRef,
     scope.routeKey,
     scope.visitId,

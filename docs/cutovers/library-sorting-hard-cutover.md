@@ -189,6 +189,11 @@ adding one.
 
 ## Frontend architecture
 
+The codec, controls, focus recovery, and capability rules below remain current.
+[Library Entry View Continuity](library-entry-view-continuity-hard-cutover.md)
+supersedes this document's frontend request, mount, loading, commit, return, and
+motion lifecycle.
+
 - Add a Library-specific view codec and closed types.
 - Reuse `usePaneUrlState`.
 - Replace parallel manual/Resonance arrays with one active paginated controller

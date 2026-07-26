@@ -1,4 +1,9 @@
-import { useState } from "react";
+import {
+  Component,
+  useLayoutEffect,
+  useState,
+  type ReactNode,
+} from "react";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -19,6 +24,7 @@ import { ResourceCacheProvider } from "@/lib/api/resourceCache";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
+import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import {
   OPEN_LAUNCHER_EVENT,
   type OpenLauncherDetail,
@@ -32,13 +38,12 @@ import {
   MAX_PANE_VISIT_DATA_BYTES,
   PaneReturnMementoProvider,
   type PaneReturnMementoCommands,
+  usePaneReturnMementoCommands,
 } from "@/lib/workspace/paneReturnMemento";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
 import LibraryPaneBody from "./LibraryPaneBody";
 
-const TEST_VISIT_ID = assumePaneVisitId(
-  "00000000-0000-4000-8000-000000000001",
-);
+const TEST_VISIT_ID = assumePaneVisitId("00000000-0000-4000-8000-000000000001");
 
 // A pane host whose href is real state, so a pane-router replace (the library
 // view codec's write path) re-decodes the view and drives the entries endpoint
@@ -47,16 +52,23 @@ const TEST_VISIT_ID = assumePaneVisitId(
 function StatefulLibraryPane({
   initialHref,
   resources,
+  resourceGeneration = 0,
+  publishCommands,
 }: {
   initialHref: string;
   resources: Record<string, unknown>;
+  resourceGeneration?: number;
+  publishCommands?: (commands: PaneReturnMementoCommands) => void;
 }) {
   const [href, setHref] = useState(initialHref);
   const identity = resolvePaneRouteIdentity(href);
   return (
     <PaneReturnMementoProvider>
+      {publishCommands ? (
+        <PaneReturnCommandsProbe publish={publishCommands} />
+      ) : null}
       <FeedbackProvider>
-        <ResourceCacheProvider value={resources}>
+        <ResourceCacheProvider key={resourceGeneration} value={resources}>
           <ShareControllerProvider>
             <PaneRuntimeProvider
               paneId="pane-1"
@@ -75,7 +87,17 @@ function StatefulLibraryPane({
               onGoForwardPane={vi.fn()}
             >
               <LecternProvider>
-                <LibraryPaneBody />
+                <LibraryPlacementControllerProvider>
+                  <span hidden data-testid="library-pane-href">
+                    {href}
+                  </span>
+                  <div
+                    data-pane-content="true"
+                    data-testid="library-pane-scrollport"
+                  >
+                    <LibraryPaneBody />
+                  </div>
+                </LibraryPlacementControllerProvider>
               </LecternProvider>
             </PaneRuntimeProvider>
           </ShareControllerProvider>
@@ -83,6 +105,39 @@ function StatefulLibraryPane({
       </FeedbackProvider>
     </PaneReturnMementoProvider>
   );
+}
+
+function PaneReturnCommandsProbe({
+  publish,
+}: {
+  publish: (commands: PaneReturnMementoCommands) => void;
+}) {
+  const commands = usePaneReturnMementoCommands();
+  useLayoutEffect(() => publish(commands), [commands, publish]);
+  return null;
+}
+
+class DefectBoundary extends Component<
+  { children: ReactNode; onDefect: (error: unknown) => void },
+  { error: unknown | null }
+> {
+  state: { error: unknown | null } = { error: null };
+
+  static getDerivedStateFromError(error: unknown) {
+    return { error };
+  }
+
+  componentDidCatch(error: unknown) {
+    this.props.onDefect(error);
+  }
+
+  render() {
+    return this.state.error ? (
+      <p>Library defect boundary</p>
+    ) : (
+      this.props.children
+    );
+  }
 }
 
 // AC-4 hydration-hit: when the server prefetched the library pane's primary
@@ -99,8 +154,7 @@ const LIBRARY_ID = "00000000-0000-4000-8000-000000000201";
 const LIBRARY_NAME = "AC-4 Seeded Library";
 const ACTION_MEDIA_ID = "11111111-1111-4111-8111-111111111111";
 const SETTINGS_PODCAST_ID = "22222222-2222-4222-8222-222222222222";
-const OWNER_USER_HANDLE =
-  "nus1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB";
+const OWNER_USER_HANDLE = "nus1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB";
 
 function publishedMenuActions(
   update: PanePrimaryChromePublicationUpdate,
@@ -133,6 +187,8 @@ function seededLibrary() {
     canEditEntries: true,
     canManageMembers: true,
     canTransferOwnership: true,
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
   };
 }
 
@@ -153,14 +209,19 @@ function seededSystemLibraryWithMutableMedia() {
       canTransferOwnership: false,
     },
     entries: [
-      seededMediaEntry("entry-1", "11111111-1111-4111-8111-111111111112", "Corpus Work", {
-        capabilities: {
-          can_delete: true,
-          can_refresh_source: true,
-          can_retry: true,
-          can_retry_metadata: true,
+      seededMediaEntry(
+        "entry-1",
+        "11111111-1111-4111-8111-111111111112",
+        "Corpus Work",
+        {
+          capabilities: {
+            can_delete: true,
+            can_refresh_source: true,
+            can_retry: true,
+            can_retry_metadata: true,
+          },
         },
-      }),
+      ),
     ],
     entriesPage: { has_more: false, next_cursor: null },
   };
@@ -173,6 +234,8 @@ function mediaEntryWire(
   options: {
     readState?: "unread" | "in_progress" | "finished";
     progressFraction?: number | null;
+    kind?: "web_article" | "podcast_episode";
+    progressResettable?: boolean;
     totalMinutes?: number;
     remainingMinutes?: number;
     capabilities?: Record<string, boolean>;
@@ -186,7 +249,7 @@ function mediaEntryWire(
     created_at: options.createdAt ?? "2026-01-01T00:00:00Z",
     media: {
       id: mediaId,
-      kind: "web_article",
+      kind: options.kind ?? "web_article",
       title,
       contributors: [],
       author_mode: "automatic",
@@ -196,25 +259,27 @@ function mediaEntryWire(
       created_at: options.createdAt ?? "2026-01-01T00:00:00Z",
       processing_status: "ready_for_reading",
       read_state: options.readState ?? "unread",
+      progress_resettable: options.progressResettable ?? false,
       progress_fraction: options.progressFraction ?? null,
       capabilities: { can_quote: true, ...options.capabilities },
     },
-    readingTimeEstimate: {
-      kind: "Present",
-      value: {
-        totalMinutes: options.totalMinutes ?? 15,
-        remainingMinutes:
-          options.remainingMinutes === undefined
-            ? { kind: "Absent" }
-            : { kind: "Present", value: options.remainingMinutes },
-      },
-    },
+    readingTimeEstimate:
+      options.kind === "podcast_episode"
+        ? { kind: "Absent" }
+        : {
+            kind: "Present",
+            value: {
+              totalMinutes: options.totalMinutes ?? 15,
+              remainingMinutes:
+                options.remainingMinutes === undefined
+                  ? { kind: "Absent" }
+                  : { kind: "Present", value: options.remainingMinutes },
+            },
+          },
   };
 }
 
-function seededMediaEntry(
-  ...args: Parameters<typeof mediaEntryWire>
-) {
+function seededMediaEntry(...args: Parameters<typeof mediaEntryWire>) {
   return decodeLibraryReadingTimeEntry(mediaEntryWire(...args));
 }
 
@@ -257,23 +322,34 @@ function fetchInputPathWithSearch(input: unknown): string {
 // initial GET /api/lectern on mount; `lecternGetResponse` answers it with an empty
 // snapshot envelope so the provider settles to Ready without console noise.
 function LecternStatusProbe() {
+  const lectern = useLectern();
   return (
-    <span hidden data-testid="lectern-status">
-      {useLectern().resource.status}
-    </span>
+    <>
+      <span hidden data-testid="lectern-status">
+        {lectern.resource.status}
+      </span>
+      <span hidden data-testid="lectern-mutation">
+        {lectern.mutation.kind}
+      </span>
+    </>
   );
 }
 
 const paneWithLectern = (
   <LecternProvider>
-    <LecternStatusProbe />
-    <LibraryPaneBody />
+    <LibraryPlacementControllerProvider>
+      <LecternStatusProbe />
+      <LibraryPaneBody />
+    </LibraryPlacementControllerProvider>
   </LecternProvider>
 );
 
 function lecternGetResponse(input: unknown): Response | null {
   const path = fetchInputPath(input);
-  if (path === "/api/lectern" || path === `/api/libraries/${LIBRARY_ID}/slate`) {
+  if (
+    path === "/api/lectern" ||
+    path === `/api/libraries/${LIBRARY_ID}/slate`
+  ) {
     return Response.json({ data: { items: [] } });
   }
   return null;
@@ -285,7 +361,8 @@ function consumptionSuccessResponse(): Response {
       outcome: { kind: "StateOnly" },
       lectern: { items: [] },
       nextItem: { kind: "Absent" },
-      listeningStates: [],
+      progressState: { kind: "Absent" },
+      completionHandle: { kind: "Absent" },
     },
   });
 }
@@ -312,7 +389,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         resources: {
           [LIBRARY_ID]: {
             library: seededLibrary(),
-            entries: [seededMediaEntry("entry-width", ACTION_MEDIA_ID, longTitle)],
+            entries: [
+              seededMediaEntry("entry-width", ACTION_MEDIA_ID, longTitle),
+            ],
             entriesPage: { has_more: false, next_cursor: null },
           },
         },
@@ -331,7 +410,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       expect(host.clientWidth).toBe(width);
       expect(host.scrollWidth).toBeLessThanOrEqual(host.clientWidth + 1);
       expect(horizontallyScrollableElements(host)).toEqual([]);
-      expect(screen.getByRole("list", { name: "Library entries" })).toBeVisible();
+      expect(
+        screen.getByRole("list", { name: "Library entries" }),
+      ).toBeVisible();
       expect(screen.queryByRole("img")).toBeNull();
       expect(screen.queryByRole("progressbar")).toBeNull();
     },
@@ -423,16 +504,14 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
           .map(([value]) => value)
           .find((value) =>
             publishedMenuActions(value).some(
-              (option) =>
-                option.id === "ViewAction.Library.AddContent",
+              (option) => option.id === "ViewAction.Library.AddContent",
             ),
           );
         expect(update).toBeDefined();
       });
       const add = update
         ? publishedMenuActions(update).find(
-            (option) =>
-              option.id === "ViewAction.Library.AddContent",
+            (option) => option.id === "ViewAction.Library.AddContent",
           )
         : undefined;
       expect(update?.publication?.menu?.kind).toBe("ResourceMenu");
@@ -483,7 +562,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     expect(await screen.findByText("Corpus Work")).toBeInTheDocument();
 
     await user.click(
-      await screen.findByRole("button", { name: "More actions for Corpus Work" }),
+      await screen.findByRole("button", {
+        name: "More actions for Corpus Work",
+      }),
     );
 
     expect(
@@ -519,10 +600,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     const fetchMock = stubFetch(async (input) => {
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
-      if (
-        fetchInputPath(input) ===
-        "/api/resource-graph/connections/summary"
-      ) {
+      if (fetchInputPath(input) === "/api/resource-graph/connections/summary") {
         return Response.json({ data: { summaries: [] } });
       }
       throw new Error(`Unexpected fetch: ${fetchInputPath(input)}`);
@@ -573,7 +651,13 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2`
       ) {
         return Response.json({
-          data: [mediaEntryWire("entry-2", "22222222-2222-4222-8222-222222222222", "Second Page Work")],
+          data: [
+            mediaEntryWire(
+              "entry-2",
+              "22222222-2222-4222-8222-222222222222",
+              "Second Page Work",
+            ),
+          ],
           page: { has_more: false, next_cursor: null },
         });
       }
@@ -589,7 +673,13 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       resources: {
         [LIBRARY_ID]: {
           library: seededLibrary(),
-          entries: [seededMediaEntry("entry-1", "11111111-1111-4111-8111-111111111112", "First Page Work")],
+          entries: [
+            seededMediaEntry(
+              "entry-1",
+              "11111111-1111-4111-8111-111111111112",
+              "First Page Work",
+            ),
+          ],
           entriesPage: { has_more: true, next_cursor: "cursor-2" },
         },
       },
@@ -614,13 +704,16 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
       const path = fetchInputPathWithSearch(input);
-      if (
-        path ===
-        `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2`
-      ) {
+      if (path === `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2`) {
         loadMoreRequests += 1;
         return Response.json({
-          data: [mediaEntryWire("entry-2", "22222222-2222-4222-8222-222222222222", "Second Page Work")],
+          data: [
+            mediaEntryWire(
+              "entry-2",
+              "22222222-2222-4222-8222-222222222222",
+              "Second Page Work",
+            ),
+          ],
           page: { has_more: false, next_cursor: null },
         });
       }
@@ -630,7 +723,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       ) {
         primaryResourceRequests += 1;
         return Response.json({
-          data: [mediaEntryWire("replacement", "replacement", "Replacement Work")],
+          data: [
+            mediaEntryWire("replacement", "replacement", "Replacement Work"),
+          ],
           page: { has_more: false, next_cursor: null },
         });
       }
@@ -652,7 +747,11 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
                 [LIBRARY_ID]: {
                   library: seededLibrary(),
                   entries: [
-                    seededMediaEntry("entry-1", "11111111-1111-4111-8111-111111111112", "First Page Work"),
+                    seededMediaEntry(
+                      "entry-1",
+                      "11111111-1111-4111-8111-111111111112",
+                      "First Page Work",
+                    ),
                   ],
                   entriesPage: {
                     has_more: true,
@@ -700,25 +799,227 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     expect(screen.getByText("Second Page Work")).toBeInTheDocument();
     await waitFor(() => expect(restoredScrollport.scrollTop).toBe(100));
     const restoredSecondTitle = screen.getByText("Second Page Work");
-    // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: the scoped semantic-anchor attributes are the observable restoration contract under test.
-    const restoredSecondRow = restoredSecondTitle.closest<HTMLElement>(
-      "[data-collection-row-id]",
-    );
+    const restoredSecondRow =
+      // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: the scoped semantic-anchor attributes are the observable restoration contract under test.
+      restoredSecondTitle.closest<HTMLElement>(
+        "[data-collection-row-id]",
+      );
     expect(restoredSecondRow).toHaveAttribute(
       "data-collection-row-id",
       "entry-2",
     );
-    // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: row ids are collision-safe only together with their nearest published scope.
-    expect(restoredSecondRow?.closest("[data-pane-return-scope]")).toHaveAttribute(
-      "data-pane-return-scope",
-      "Library.Entries",
-    );
+    expect(
+      // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: row ids are collision-safe only together with their nearest published scope.
+      restoredSecondRow?.closest("[data-pane-return-scope]"),
+    ).toHaveAttribute("data-pane-return-scope", "Library.Entries");
     expect(restoredSecondRow?.getBoundingClientRect().top).toBe(20);
     expect(loadMoreRequests).toBe(1);
     expect(primaryResourceRequests).toBe(0);
     expect(screen.queryByText("Replacement Work")).not.toBeInTheDocument();
     expect(screen.getAllByText("First Page Work")).toHaveLength(1);
     expect(screen.getAllByText("Second Page Work")).toHaveLength(1);
+  });
+
+  it("captures only a coherent committed factual view and its loaded pages", async () => {
+    const user = userEvent.setup();
+    const canonicalHref = `/libraries/${LIBRARY_ID}`;
+    const factualHref = `${canonicalHref}?sort=title&direction=asc`;
+    const factualPath =
+      `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`;
+    const factualPageTwoPath = `${factualPath}&cursor=cursor-factual-2`;
+    let resolveSupersededRequest!: (response: Response) => void;
+    const supersededRequest = new Promise<Response>((resolve) => {
+      resolveSupersededRequest = resolve;
+    });
+    let factualAttempts = 0;
+    let factualPageTwoRequests = 0;
+    let libraryRequests = 0;
+    stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      const path = fetchInputPathWithSearch(input);
+      if (path === `/api/libraries/${LIBRARY_ID}`) {
+        libraryRequests += 1;
+        return Response.json({ data: seededLibrary() });
+      }
+      if (path === factualPath) {
+        factualAttempts += 1;
+        if (factualAttempts === 1) return supersededRequest;
+        if (factualAttempts === 2) {
+          return Response.json(
+            {
+              error: {
+                code: "E_FORBIDDEN",
+                message: "The requested view is unavailable",
+              },
+            },
+            { status: 403 },
+          );
+        }
+        return Response.json({
+          data: [
+            mediaEntryWire(
+              "entry-factual-1",
+              "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+              "Committed Factual Work",
+            ),
+          ],
+          page: {
+            has_more: true,
+            next_cursor: "cursor-factual-2",
+          },
+        });
+      }
+      if (path === factualPageTwoPath) {
+        factualPageTwoRequests += 1;
+        return Response.json({
+          data: [
+            mediaEntryWire(
+              "entry-factual-2",
+              "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+              "Committed Factual Page Two",
+            ),
+          ],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      if (path === `/api/libraries/${LIBRARY_ID}/entries`) {
+        return Response.json({
+          data: [
+            mediaEntryWire(
+              "entry-canonical-network",
+              "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+              "Canonical Network Work",
+            ),
+          ],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      if (fetchInputPath(input) === "/api/resource-graph/connections/summary") {
+        return Response.json({ data: { summaries: [] } });
+      }
+      throw new Error(`Unexpected fetch call: ${path}`);
+    });
+
+    let commands: PaneReturnMementoCommands | null = null;
+    const publishCommands = (next: PaneReturnMementoCommands) => {
+      commands = next;
+    };
+    const seededResources = {
+      [LIBRARY_ID]: {
+        library: seededLibrary(),
+        entries: [
+          seededMediaEntry(
+            "entry-canonical",
+            "11111111-1111-4111-8111-111111111112",
+            "Canonical Work",
+          ),
+        ],
+        entriesPage: { has_more: false, next_cursor: null },
+      },
+    };
+    const journey = (
+      href: string,
+      resourceGeneration: number,
+      resources: Record<string, unknown>,
+    ) => (
+      <PaneReturnJourneyHarness
+        href={href}
+        resources={resources}
+        resourceGeneration={resourceGeneration}
+        publishCommands={publishCommands}
+      >
+        {paneWithLectern}
+      </PaneReturnJourneyHarness>
+    );
+    const view = render(journey(canonicalHref, 0, seededResources));
+    const factualRouteKey = resolvePaneRouteIdentity(factualHref).routeKey;
+
+    expect(await screen.findByText("Canonical Work")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId("lectern-status")).toHaveTextContent("ready"),
+    );
+    await waitFor(() => expect(commands).not.toBeNull());
+    view.rerender(journey(factualHref, 0, seededResources));
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Updating to Title — A–Z. Showing Custom order until it arrives.",
+    );
+    act(() => {
+      commands?.capturePane({
+        paneId: "pane-return-journey",
+        visitId: RETURN_JOURNEY_VISIT_ID,
+        routeKey: factualRouteKey,
+        modality: "Programmatic",
+      });
+    });
+
+    view.rerender(journey(factualHref, 1, {}));
+    expect(
+      await screen.findByText("You do not have access"),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId("lectern-status")).toHaveTextContent("ready"),
+    );
+    expect(factualAttempts).toBe(2);
+    act(() => {
+      commands?.capturePane({
+        paneId: "pane-return-journey",
+        visitId: RETURN_JOURNEY_VISIT_ID,
+        routeKey: factualRouteKey,
+        modality: "Programmatic",
+      });
+    });
+
+    view.rerender(journey(factualHref, 2, {}));
+    expect(
+      await screen.findByText("Committed Factual Work"),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId("lectern-status")).toHaveTextContent("ready"),
+    );
+    expect(factualAttempts).toBe(3);
+    await user.click(screen.getByRole("button", { name: "Load more entries" }));
+    expect(
+      await screen.findByText("Committed Factual Page Two"),
+    ).toBeInTheDocument();
+    const libraryRequestsBeforeRestore = libraryRequests;
+    const factualAttemptsBeforeRestore = factualAttempts;
+    act(() => {
+      commands?.capturePane({
+        paneId: "pane-return-journey",
+        visitId: RETURN_JOURNEY_VISIT_ID,
+        routeKey: factualRouteKey,
+        modality: "Programmatic",
+      });
+    });
+
+    view.rerender(journey(factualHref, 3, {}));
+    expect(screen.getByText("Committed Factual Work")).toBeInTheDocument();
+    expect(screen.getByText("Committed Factual Page Two")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Load more entries" }),
+    ).not.toBeInTheDocument();
+    expect(libraryRequests).toBe(libraryRequestsBeforeRestore);
+    expect(factualAttempts).toBe(factualAttemptsBeforeRestore);
+    expect(factualPageTwoRequests).toBe(1);
+
+    resolveSupersededRequest(
+      Response.json({
+        data: [
+          mediaEntryWire(
+            "entry-stale",
+            "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            "Superseded Factual Work",
+          ),
+        ],
+        page: { has_more: false, next_cursor: null },
+      }),
+    );
+    await act(async () => {
+      await supersededRequest;
+      await Promise.resolve();
+    });
+    expect(screen.queryByText("Superseded Factual Work")).not.toBeInTheDocument();
   });
 
   it("refetches after an over-budget snapshot while preserving the final raw return clamp", async () => {
@@ -819,9 +1120,17 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
       const path = fetchInputPathWithSearch(input);
-      if (path === `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`) {
+      if (
+        path === `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`
+      ) {
         return Response.json({
-          data: [mediaEntryWire("entry-t1", "44444444-4444-4444-8444-444444444444", "Alpha Work")],
+          data: [
+            mediaEntryWire(
+              "entry-t1",
+              "44444444-4444-4444-8444-444444444444",
+              "Alpha Work",
+            ),
+          ],
           page: { has_more: true, next_cursor: "cursor-2" },
         });
       }
@@ -830,7 +1139,13 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc&cursor=cursor-2`
       ) {
         return Response.json({
-          data: [mediaEntryWire("entry-t2", "55555555-5555-4555-8555-555555555555", "Beta Work")],
+          data: [
+            mediaEntryWire(
+              "entry-t2",
+              "55555555-5555-4555-8555-555555555555",
+              "Beta Work",
+            ),
+          ],
           page: { has_more: false, next_cursor: null },
         });
       }
@@ -845,7 +1160,13 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       resources: {
         [LIBRARY_ID]: {
           library: seededLibrary(),
-          entries: [seededMediaEntry("entry-1", "11111111-1111-4111-8111-111111111112", "Canonical Seed")],
+          entries: [
+            seededMediaEntry(
+              "entry-1",
+              "11111111-1111-4111-8111-111111111112",
+              "Canonical Seed",
+            ),
+          ],
           entriesPage: { has_more: false, next_cursor: null },
         },
       },
@@ -873,7 +1194,11 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         fetchInputPathWithSearch(input) ===
         `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2`
       ) {
-        const invalid = mediaEntryWire("entry-2", "22222222-2222-4222-8222-222222222222", "Invalid Work");
+        const invalid = mediaEntryWire(
+          "entry-2",
+          "22222222-2222-4222-8222-222222222222",
+          "Invalid Work",
+        );
         Reflect.deleteProperty(invalid, "readingTimeEstimate");
         return Response.json({
           data: [invalid],
@@ -891,7 +1216,13 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       resources: {
         [LIBRARY_ID]: {
           library: seededLibrary(),
-          entries: [seededMediaEntry("entry-1", "11111111-1111-4111-8111-111111111112", "Valid Work")],
+          entries: [
+            seededMediaEntry(
+              "entry-1",
+              "11111111-1111-4111-8111-111111111112",
+              "Valid Work",
+            ),
+          ],
           entriesPage: { has_more: true, next_cursor: "cursor-2" },
         },
       },
@@ -907,6 +1238,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
   });
 
   it("rejects a malformed factual first-page entry at the reading-time boundary", async () => {
+    const onDefect = vi.fn<(error: unknown) => void>();
     stubFetch(async (input) => {
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
@@ -914,7 +1246,11 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         fetchInputPathWithSearch(input) ===
         `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`
       ) {
-        const invalid = mediaEntryWire("entry-t1", "44444444-4444-4444-8444-444444444444", "Invalid Work");
+        const invalid = mediaEntryWire(
+          "entry-t1",
+          "44444444-4444-4444-8444-444444444444",
+          "Invalid Work",
+        );
         Reflect.deleteProperty(invalid, "readingTimeEstimate");
         return Response.json({
           data: [invalid],
@@ -932,16 +1268,29 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       resources: {
         [LIBRARY_ID]: {
           library: seededLibrary(),
-          entries: [seededMediaEntry("entry-1", "11111111-1111-4111-8111-111111111112", "Canonical Seed")],
+          entries: [
+            seededMediaEntry(
+              "entry-1",
+              "11111111-1111-4111-8111-111111111112",
+              "Canonical Seed",
+            ),
+          ],
           entriesPage: { has_more: false, next_cursor: null },
         },
       },
-      children: paneWithLectern,
+      children: (
+        <DefectBoundary onDefect={onDefect}>
+          {paneWithLectern}
+        </DefectBoundary>
+      ),
     });
 
     expect(
-      await screen.findByText("Failed to load library entries"),
+      await screen.findByText("Library defect boundary"),
     ).toBeInTheDocument();
+    expect(onDefect).toHaveBeenCalledWith(
+      expect.objectContaining({ code: "E_INVALID_RESPONSE" }),
+    );
     expect(screen.queryByText("Invalid Work")).not.toBeInTheDocument();
   });
 
@@ -960,7 +1309,13 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       }
       if (path === `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2`) {
         return Response.json({
-          data: [mediaEntryWire("entry-2", "22222222-2222-4222-8222-222222222222", "Concurrent Work")],
+          data: [
+            mediaEntryWire(
+              "entry-2",
+              "22222222-2222-4222-8222-222222222222",
+              "Concurrent Work",
+            ),
+          ],
           page: { has_more: false, next_cursor: null },
         });
       }
@@ -1071,12 +1426,10 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     expect(
       await screen.findByRole("menuitem", { name: "Marking..." }),
     ).toHaveAttribute("aria-disabled", "true");
-    await user.click(
-      screen.getByRole("menuitem", { name: "Marking..." }),
-    );
-    expect(fetchCallsForPath(fetchMock, "/api/consumption/commands")).toHaveLength(
-      1,
-    );
+    await user.click(screen.getByRole("menuitem", { name: "Marking..." }));
+    expect(
+      fetchCallsForPath(fetchMock, "/api/consumption/commands"),
+    ).toHaveLength(1);
     await user.keyboard("{Escape}");
 
     resolveFirst(
@@ -1100,13 +1453,121 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps reset available when a replay reports later canonical podcast progress", async () => {
+    const user = userEvent.setup();
+    const mediaId = "11111111-1111-4111-8111-111111111111";
+    const commands: Array<Record<string, unknown>> = [];
+    const confirmReset = vi.spyOn(window, "confirm").mockReturnValue(true);
+    let reconciliationRequests = 0;
+    stubFetch(async (input, init) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      if (fetchInputPath(input) === `/api/libraries/${LIBRARY_ID}/entries`) {
+        reconciliationRequests += 1;
+        return Response.json({
+          data: [
+            mediaEntryWire("entry-episode", mediaId, "Resettable Episode", {
+              kind: "podcast_episode",
+              readState: "finished",
+              progressFraction: 0.98,
+              progressResettable: true,
+            }),
+          ],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      if (fetchInputPath(input) === "/api/consumption/commands") {
+        const command = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        commands.push(command);
+        return Response.json({
+          data: {
+            outcome: { kind: "StateOnly" },
+            lectern: { items: [] },
+            nextItem: { kind: "Absent" },
+            progressState: {
+              kind: "Present",
+              value: {
+                mediaId,
+                readerCursor: { state: "Empty", revision: 1 },
+                listeningState: {
+                  kind: "Present",
+                  value: {
+                    positionMs: 59_000,
+                    durationMs: { kind: "Present", value: 60_000 },
+                    playbackSpeed: 1,
+                    writeRevision: 1,
+                    resetEpoch: 1,
+                  },
+                },
+              },
+            },
+            completionHandle: { kind: "Absent" },
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch: ${fetchInputPath(input)}`);
+    });
+
+    renderHydratedPane({
+      href: `/libraries/${LIBRARY_ID}`,
+      resources: {
+        [LIBRARY_ID]: {
+          library: seededLibrary(),
+          entries: [
+            seededMediaEntry("entry-episode", mediaId, "Resettable Episode", {
+              kind: "podcast_episode",
+              readState: "in_progress",
+              progressFraction: 0.5,
+              progressResettable: true,
+            }),
+          ],
+          entriesPage: { has_more: false, next_cursor: null },
+        },
+      },
+      children: paneWithLectern,
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("lectern-status")).toHaveTextContent("ready"),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "More actions for Resettable Episode" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Reset progress" }),
+    );
+
+    await waitFor(() => {
+      expect(commands).toEqual([
+        expect.objectContaining({ kind: "ResetProgress", mediaId }),
+      ]);
+    });
+    expect(confirmReset).toHaveBeenCalledWith(
+      "Reset progress? This starts the item from the beginning. Notes and activity history are kept.",
+    );
+    expect(await screen.findByText("Progress reset.")).toBeInTheDocument();
+    await waitFor(() => expect(reconciliationRequests).toBe(1));
+
+    await user.click(
+      screen.getByRole("button", { name: "More actions for Resettable Episode" }),
+    );
+    expect(
+      screen.getByRole("menuitem", { name: "Reset progress" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: "Mark as unread" }),
+    ).toBeInTheDocument();
+  });
+
   it("suppresses a stale estimate under a factual view after a source refresh", async () => {
     const user = userEvent.setup();
     stubFetch(async (input) => {
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
       const path = fetchInputPathWithSearch(input);
-      if (path === `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`) {
+      if (
+        path === `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`
+      ) {
         return Response.json({
           data: [
             mediaEntryWire("entry-t1", ACTION_MEDIA_ID, "Refreshing Work", {
@@ -1155,7 +1616,13 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       resources: {
         [LIBRARY_ID]: {
           library: seededLibrary(),
-          entries: [seededMediaEntry("entry-1", "11111111-1111-4111-8111-111111111112", "Canonical Seed")],
+          entries: [
+            seededMediaEntry(
+              "entry-1",
+              "11111111-1111-4111-8111-111111111112",
+              "Canonical Seed",
+            ),
+          ],
           entriesPage: { has_more: false, next_cursor: null },
         },
       },
@@ -1186,9 +1653,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       }
       if (path === `/api/media/${ACTION_MEDIA_ID}/retry`) {
         expect(init?.method).toBe("POST");
-        expect(init?.body).toBe(
-          JSON.stringify({ from_stage: "metadata" }),
-        );
+        expect(init?.body).toBe(JSON.stringify({ from_stage: "metadata" }));
         return Response.json({ data: { accepted: true } });
       }
       throw new Error(`Unexpected fetch: ${path}`);
@@ -1224,10 +1689,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
 
     await waitFor(() =>
       expect(
-        fetchCallsForPath(
-          fetchMock,
-          `/api/media/${ACTION_MEDIA_ID}/retry`,
-        ),
+        fetchCallsForPath(fetchMock, `/api/media/${ACTION_MEDIA_ID}/retry`),
       ).toHaveLength(1),
     );
     await user.click(
@@ -1283,15 +1745,190 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     ).toBeVisible();
   });
 
-  it("switches the Sort-by preset, requesting the new view query and re-paginating", async () => {
+  it("keeps the committed collection interactive shell intact until an exact view commits", async () => {
     const user = userEvent.setup();
+    let resolveTitle!: (response: Response) => void;
+    let resolveCreator!: (response: Response) => void;
+    const pendingTitle = new Promise<Response>((resolve) => {
+      resolveTitle = resolve;
+    });
+    const pendingCreator = new Promise<Response>((resolve) => {
+      resolveCreator = resolve;
+    });
     const fetchMock = stubFetch(async (input) => {
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
       const path = fetchInputPathWithSearch(input);
-      if (path === `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`) {
+      if (
+        path === `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`
+      ) {
+        return pendingTitle;
+      }
+      if (
+        path ===
+        `/api/libraries/${LIBRARY_ID}/entries?sort=creator&direction=asc`
+      ) {
+        return pendingCreator;
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    render(
+      <StatefulLibraryPane
+        initialHref={`/libraries/${LIBRARY_ID}`}
+        resources={{
+          [LIBRARY_ID]: {
+            library: seededLibrary(),
+            entries: [
+              seededMediaEntry(
+                "entry-1",
+                ACTION_MEDIA_ID,
+                "First Canonical Work",
+                { capabilities: { can_delete: true } },
+              ),
+              seededMediaEntry(
+                "entry-2",
+                "22222222-2222-4222-8222-222222222223",
+                "Second Canonical Work",
+                { capabilities: { can_delete: true } },
+              ),
+            ],
+            entriesPage: { has_more: false, next_cursor: null },
+          },
+        }}
+      />,
+    );
+
+    expect(await screen.findByText("First Canonical Work")).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", {
+        name: "More actions for First Canonical Work",
+      }),
+    );
+    expect(screen.getByRole("menuitem", { name: "Move down" })).toBeEnabled();
+    expect(
+      screen.getByRole("menuitem", { name: "Remove media" }),
+    ).toBeEnabled();
+    await user.keyboard("{Escape}");
+
+    const sortSelect = screen.getByRole("combobox", { name: "Sort by" });
+    const scrollport = screen.getByTestId("library-pane-scrollport");
+    scrollport.scrollTop = 180;
+    await user.selectOptions(sortSelect, "title-asc");
+
+    expect(sortSelect).toHaveFocus();
+    expect(sortSelect).toHaveValue("title-asc");
+    expect(screen.getByTestId("library-pane-href")).toHaveTextContent(
+      `/libraries/${LIBRARY_ID}?sort=title&direction=asc`,
+    );
+    expect(screen.getByText("First Canonical Work")).toBeInTheDocument();
+    expect(screen.getByText("Second Canonical Work")).toBeInTheDocument();
+    expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Updating to Title — A–Z. Showing Custom order until it arrives.",
+    );
+    expect(
+      screen.getByRole("region", { name: "Library entries" }),
+    ).toHaveAttribute("aria-busy", "true");
+    expect(
+      screen.getByRole("link", { name: "First Canonical Work" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", {
+        name: "More actions for First Canonical Work",
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Load more entries" }),
+    ).not.toBeInTheDocument();
+
+    resolveTitle(
+      Response.json({
+        data: [
+          mediaEntryWire(
+            "entry-t1",
+            "44444444-4444-4444-8444-444444444444",
+            "Titled Work",
+          ),
+        ],
+        page: { has_more: true, next_cursor: "cursor-title-2" },
+      }),
+    );
+
+    expect(await screen.findByText("Titled Work")).toBeInTheDocument();
+    expect(screen.queryByText("First Canonical Work")).not.toBeInTheDocument();
+    expect(sortSelect).toHaveFocus();
+    expect(scrollport.scrollTop).toBe(0);
+    expect(
+      screen.getByRole("button", { name: "Load more entries" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("region", { name: "Library entries" }),
+    ).not.toHaveAttribute("aria-busy");
+
+    await user.selectOptions(sortSelect, "creator-asc");
+
+    expect(screen.getByText("Titled Work")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Load more entries" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Updating to Creator — A–Z. Showing Title — A–Z until it arrives.",
+    );
+
+    resolveCreator(
+      Response.json({
+        data: [
+          mediaEntryWire(
+            "entry-c1",
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "Creator Work",
+          ),
+        ],
+        page: { has_more: false, next_cursor: null },
+      }),
+    );
+
+    expect(await screen.findByText("Creator Work")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`,
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("keeps an honest failed view visible and retries the exact request", async () => {
+    const user = userEvent.setup();
+    let titleAttempts = 0;
+    const fetchMock = stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      const path = fetchInputPathWithSearch(input);
+      if (
+        path === `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`
+      ) {
+        titleAttempts += 1;
+        if (titleAttempts === 1) {
+          return Response.json(
+            {
+              error: {
+                code: "E_FORBIDDEN",
+                message: "The requested view is unavailable",
+              },
+            },
+            { status: 403 },
+          );
+        }
         return Response.json({
-          data: [mediaEntryWire("entry-t1", "44444444-4444-4444-8444-444444444444", "Titled Work")],
+          data: [
+            mediaEntryWire(
+              "entry-t1",
+              "44444444-4444-4444-8444-444444444444",
+              "Recovered Title Work",
+            ),
+          ],
           page: { has_more: false, next_cursor: null },
         });
       }
@@ -1307,7 +1944,13 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         resources={{
           [LIBRARY_ID]: {
             library: seededLibrary(),
-            entries: [seededMediaEntry("entry-1", "11111111-1111-4111-8111-111111111112", "Canonical Seed")],
+            entries: [
+              seededMediaEntry(
+                "entry-1",
+                "11111111-1111-4111-8111-111111111112",
+                "Canonical Seed",
+              ),
+            ],
             entriesPage: { has_more: false, next_cursor: null },
           },
         }}
@@ -1315,17 +1958,242 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     );
 
     expect(await screen.findByText("Canonical Seed")).toBeInTheDocument();
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: "Sort by" }),
-      "title-asc",
+    const sortSelect = screen.getByRole("combobox", { name: "Sort by" });
+    await user.selectOptions(sortSelect, "title-asc");
+
+    const failedStatus = await screen.findByRole("status");
+    expect(failedStatus).toHaveTextContent(
+      "Could not load Title — A–Z. Showing Custom order.",
+    );
+    expect(screen.getByText("Canonical Seed")).toBeInTheDocument();
+    expect(sortSelect).toHaveValue("title-asc");
+    expect(screen.getByTestId("library-pane-href")).toHaveTextContent(
+      `/libraries/${LIBRARY_ID}?sort=title&direction=asc`,
+    );
+    expect(
+      screen.getByRole("region", { name: "Library entries" }),
+    ).not.toHaveAttribute("aria-busy");
+
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByText("Recovered Title Work")).toBeInTheDocument();
+    expect(screen.queryByText("Canonical Seed")).not.toBeInTheDocument();
+    expect(
+      fetchCallsForPath(fetchMock, `/api/libraries/${LIBRARY_ID}/entries`),
+    ).toHaveLength(2);
+  });
+
+  it("keeps the current failure honest after a superseded malformed response", async () => {
+    const user = userEvent.setup();
+    let resolveTitle!: (response: Response) => void;
+    const pendingTitle = new Promise<Response>((resolve) => {
+      resolveTitle = resolve;
+    });
+    let titleSignal: AbortSignal | null = null;
+    let creatorAttempts = 0;
+    const fetchMock = stubFetch(async (input, init) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      const path = fetchInputPathWithSearch(input);
+      if (
+        path === `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`
+      ) {
+        titleSignal = init?.signal ?? null;
+        return pendingTitle;
+      }
+      if (
+        path ===
+        `/api/libraries/${LIBRARY_ID}/entries?sort=creator&direction=asc`
+      ) {
+        creatorAttempts += 1;
+        if (creatorAttempts === 1) {
+          return Response.json(
+            {
+              error: {
+                code: "E_FORBIDDEN",
+                message: "Creator view is unavailable",
+              },
+            },
+            { status: 403 },
+          );
+        }
+        return Response.json({
+          data: [
+            mediaEntryWire(
+              "entry-c1",
+              "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+              "Recovered Creator Work",
+            ),
+          ],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const resources = {
+      [LIBRARY_ID]: {
+        library: seededLibrary(),
+        entries: [
+          seededMediaEntry(
+            "entry-1",
+            "11111111-1111-4111-8111-111111111112",
+            "Canonical Seed",
+          ),
+        ],
+        entriesPage: { has_more: false, next_cursor: null },
+      },
+    };
+    const renderPane = () => (
+      <StatefulLibraryPane
+        initialHref={`/libraries/${LIBRARY_ID}`}
+        resources={resources}
+      />
+    );
+    const view = render(renderPane());
+
+    expect(await screen.findByText("Canonical Seed")).toBeInTheDocument();
+    const sortSelect = screen.getByRole("combobox", { name: "Sort by" });
+    await user.selectOptions(sortSelect, "title-asc");
+    await waitFor(() => expect(titleSignal).not.toBeNull());
+    await user.selectOptions(sortSelect, "creator-asc");
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Could not load Creator — A–Z. Showing Custom order.",
+    );
+    expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
+    expect(titleSignal?.aborted).toBe(true);
+
+    const malformedTitle = mediaEntryWire(
+      "entry-t1",
+      "44444444-4444-4444-8444-444444444444",
+      "Malformed stale title",
+    );
+    Reflect.deleteProperty(malformedTitle, "readingTimeEstimate");
+    await act(async () => {
+      resolveTitle(
+        Response.json({
+          data: [malformedTitle],
+          page: { has_more: false, next_cursor: null },
+        }),
+      );
+      await pendingTitle;
+      await Promise.resolve();
+    });
+    view.rerender(renderPane());
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Could not load Creator — A–Z. Showing Custom order.",
+    );
+    expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
+    expect(screen.queryByText("Malformed stale title")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("Recovered Creator Work")).toBeVisible();
+    expect(creatorAttempts).toBe(2);
+    expect(
+      fetchMock.mock.calls.filter(
+        ([input]) =>
+          fetchInputPathWithSearch(input) ===
+          `/api/libraries/${LIBRARY_ID}/entries?sort=creator&direction=asc`,
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("fetches canonical truth when a pending factual request returns to the bootstrap view", async () => {
+    const user = userEvent.setup();
+    let resolveTitle!: (response: Response) => void;
+    const pendingTitle = new Promise<Response>((resolve) => {
+      resolveTitle = resolve;
+    });
+    let titleSignal: AbortSignal | null = null;
+    const canonicalPath = `/api/libraries/${LIBRARY_ID}/entries`;
+    const titlePath = `${canonicalPath}?sort=title&direction=asc`;
+    const fetchMock = stubFetch(async (input, init) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      const path = fetchInputPathWithSearch(input);
+      if (path === titlePath) {
+        titleSignal = init?.signal ?? null;
+        return pendingTitle;
+      }
+      if (path === canonicalPath) {
+        return Response.json({
+          data: [
+            mediaEntryWire(
+              "entry-fresh",
+              "99999999-9999-4999-8999-999999999999",
+              "Fresh Canonical Work",
+            ),
+          ],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    render(
+      <StatefulLibraryPane
+        initialHref={`/libraries/${LIBRARY_ID}`}
+        resources={{
+          [LIBRARY_ID]: {
+            library: seededLibrary(),
+            entries: [
+              seededMediaEntry(
+                "entry-seed",
+                "11111111-1111-4111-8111-111111111112",
+                "Bootstrap Canonical Work",
+              ),
+            ],
+            entriesPage: { has_more: false, next_cursor: null },
+          },
+        }}
+      />,
     );
 
-    expect(await screen.findByText("Titled Work")).toBeInTheDocument();
-    expect(screen.queryByText("Canonical Seed")).not.toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledWith(
-      `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`,
-      expect.objectContaining({ method: "GET" }),
+    expect(
+      await screen.findByText("Bootstrap Canonical Work"),
+    ).toBeInTheDocument();
+    const sortSelect = screen.getByRole("combobox", { name: "Sort by" });
+    await user.selectOptions(sortSelect, "title-asc");
+    await waitFor(() =>
+      expect(fetchCallsForPath(fetchMock, canonicalPath)).toHaveLength(1),
     );
+
+    await user.selectOptions(sortSelect, "canonical");
+
+    expect(await screen.findByText("Fresh Canonical Work")).toBeInTheDocument();
+    expect(screen.queryByText("Bootstrap Canonical Work")).not.toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.filter(
+        ([input]) => fetchInputPathWithSearch(input) === canonicalPath,
+      ),
+    ).toHaveLength(1);
+    expect(titleSignal?.aborted).toBe(true);
+
+    resolveTitle(
+      Response.json({
+        data: [
+          mediaEntryWire(
+            "entry-stale",
+            "44444444-4444-4444-8444-444444444444",
+            "Stale Title Work",
+          ),
+        ],
+        page: { has_more: false, next_cursor: null },
+      }),
+    );
+    await act(async () => {
+      await pendingTitle;
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Fresh Canonical Work")).toBeInTheDocument();
+    expect(screen.queryByText("Stale Title Work")).not.toBeInTheDocument();
   });
 
   it("toggles Hide finished, requesting completion=unfinished", async () => {
@@ -1334,9 +2202,17 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
       const path = fetchInputPathWithSearch(input);
-      if (path === `/api/libraries/${LIBRARY_ID}/entries?completion=unfinished`) {
+      if (
+        path === `/api/libraries/${LIBRARY_ID}/entries?completion=unfinished`
+      ) {
         return Response.json({
-          data: [mediaEntryWire("entry-u1", "88888888-8888-4888-8888-888888888888", "Unfinished Work")],
+          data: [
+            mediaEntryWire(
+              "entry-u1",
+              "88888888-8888-4888-8888-888888888888",
+              "Unfinished Work",
+            ),
+          ],
           page: { has_more: false, next_cursor: null },
         });
       }
@@ -1352,7 +2228,13 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         resources={{
           [LIBRARY_ID]: {
             library: seededLibrary(),
-            entries: [seededMediaEntry("entry-1", "11111111-1111-4111-8111-111111111112", "Canonical Seed")],
+            entries: [
+              seededMediaEntry(
+                "entry-1",
+                "11111111-1111-4111-8111-111111111112",
+                "Canonical Seed",
+              ),
+            ],
             entriesPage: { has_more: false, next_cursor: null },
           },
         }}
@@ -1371,15 +2253,25 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
 
   it("renders the filtered-empty notice with a Show finished recovery", async () => {
     const user = userEvent.setup();
-    stubFetch(async (input) => {
+    const fetchMock = stubFetch(async (input) => {
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
-      if (
-        fetchInputPathWithSearch(input) ===
-        `/api/libraries/${LIBRARY_ID}/entries?completion=unfinished`
-      ) {
+      const path = fetchInputPathWithSearch(input);
+      if (path === `/api/libraries/${LIBRARY_ID}/entries?completion=unfinished`) {
         return Response.json({
           data: [],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      if (path === `/api/libraries/${LIBRARY_ID}/entries`) {
+        return Response.json({
+          data: [
+            mediaEntryWire(
+              "entry-current",
+              "77777777-7777-4777-8777-777777777777",
+              "Current Canonical Work",
+            ),
+          ],
           page: { has_more: false, next_cursor: null },
         });
       }
@@ -1395,7 +2287,13 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         resources={{
           [LIBRARY_ID]: {
             library: seededLibrary(),
-            entries: [seededMediaEntry("entry-1", "11111111-1111-4111-8111-111111111112", "Canonical Seed")],
+            entries: [
+              seededMediaEntry(
+                "entry-1",
+                "11111111-1111-4111-8111-111111111112",
+                "Canonical Seed",
+              ),
+            ],
             entriesPage: { has_more: false, next_cursor: null },
           },
         }}
@@ -1409,7 +2307,14 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Show finished" }));
 
-    expect(await screen.findByText("Canonical Seed")).toBeInTheDocument();
+    expect(await screen.findByText("Current Canonical Work")).toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.filter(
+        ([input]) =>
+          fetchInputPathWithSearch(input) ===
+          `/api/libraries/${LIBRARY_ID}/entries`,
+      ),
+    ).toHaveLength(1);
     expect(screen.queryByText("No unfinished items")).not.toBeInTheDocument();
   });
 
@@ -1431,16 +2336,20 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         resources={{
           [LIBRARY_ID]: {
             library: seededLibrary(),
-            entries: [seededMediaEntry("entry-1", "11111111-1111-4111-8111-111111111112", "Canonical Seed")],
+            entries: [
+              seededMediaEntry(
+                "entry-1",
+                "11111111-1111-4111-8111-111111111112",
+                "Canonical Seed",
+              ),
+            ],
             entriesPage: { has_more: false, next_cursor: null },
           },
         }}
       />,
     );
 
-    expect(
-      await screen.findByText("Invalid library view"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Invalid library view")).toBeInTheDocument();
     expect(screen.queryByText("Canonical Seed")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("combobox", { name: "Sort by" }),
@@ -1467,9 +2376,14 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       ) {
         return Response.json({
           data: [
-            mediaEntryWire("entry-a1", "99999999-9999-4999-8999-999999999999", "Dated Work", {
-              createdAt: addedIso,
-            }),
+            mediaEntryWire(
+              "entry-a1",
+              "99999999-9999-4999-8999-999999999999",
+              "Dated Work",
+              {
+                createdAt: addedIso,
+              },
+            ),
           ],
           page: { has_more: false, next_cursor: null },
         });
@@ -1488,9 +2402,14 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
           [LIBRARY_ID]: {
             library: seededLibrary(),
             entries: [
-              seededMediaEntry("entry-1", "11111111-1111-4111-8111-111111111112", "Canonical Seed", {
-                createdAt: addedIso,
-              }),
+              seededMediaEntry(
+                "entry-1",
+                "11111111-1111-4111-8111-111111111112",
+                "Canonical Seed",
+                {
+                  createdAt: addedIso,
+                },
+              ),
             ],
             entriesPage: { has_more: false, next_cursor: null },
           },
@@ -1498,7 +2417,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       />,
     );
     expect(await screen.findByText("Canonical Seed")).toBeInTheDocument();
-    expect(screen.queryByText(`Added ${expectedAdded}`)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(`Added ${expectedAdded}`),
+    ).not.toBeInTheDocument();
     unmount();
 
     // Added order: the Added line renders.
@@ -1508,7 +2429,13 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         resources={{
           [LIBRARY_ID]: {
             library: seededLibrary(),
-            entries: [seededMediaEntry("entry-1", "11111111-1111-4111-8111-111111111112", "Canonical Seed")],
+            entries: [
+              seededMediaEntry(
+                "entry-1",
+                "11111111-1111-4111-8111-111111111112",
+                "Canonical Seed",
+              ),
+            ],
             entriesPage: { has_more: false, next_cursor: null },
           },
         }}
@@ -1528,8 +2455,16 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       ) {
         return Response.json({
           data: [
-            mediaEntryWire("entry-t1", "44444444-4444-4444-8444-444444444444", "Alpha Work"),
-            mediaEntryWire("entry-t2", "55555555-5555-4555-8555-555555555555", "Beta Work"),
+            mediaEntryWire(
+              "entry-t1",
+              "44444444-4444-4444-8444-444444444444",
+              "Alpha Work",
+            ),
+            mediaEntryWire(
+              "entry-t2",
+              "55555555-5555-4555-8555-555555555555",
+              "Beta Work",
+            ),
           ],
           page: { has_more: false, next_cursor: null },
         });
@@ -1545,7 +2480,13 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       resources: {
         [LIBRARY_ID]: {
           library: seededLibrary(),
-          entries: [seededMediaEntry("entry-1", "11111111-1111-4111-8111-111111111112", "Canonical Seed")],
+          entries: [
+            seededMediaEntry(
+              "entry-1",
+              "11111111-1111-4111-8111-111111111112",
+              "Canonical Seed",
+            ),
+          ],
           entriesPage: { has_more: false, next_cursor: null },
         },
       },
@@ -1554,9 +2495,11 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
 
     expect(await screen.findByText("Alpha Work")).toBeInTheDocument();
     // Reorder is gated to the canonical/all view, so no per-row Move up/down.
-    await userEvent.setup().click(
-      screen.getByRole("button", { name: "More actions for Alpha Work" }),
-    );
+    await userEvent
+      .setup()
+      .click(
+        screen.getByRole("button", { name: "More actions for Alpha Work" }),
+      );
     expect(
       screen.queryByRole("menuitem", { name: "Move up" }),
     ).not.toBeInTheDocument();
@@ -1571,7 +2514,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
       const path = fetchInputPathWithSearch(input);
-      if (path === `/api/libraries/${LIBRARY_ID}/entries?completion=unfinished`) {
+      if (
+        path === `/api/libraries/${LIBRARY_ID}/entries?completion=unfinished`
+      ) {
         return Response.json({
           data: [
             mediaEntryWire("entry-1", ACTION_MEDIA_ID, "First Work", {
@@ -1579,7 +2524,11 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
               progressFraction: 0.5,
               remainingMinutes: 5,
             }),
-            mediaEntryWire("entry-2", "22222222-2222-4222-8222-222222222222", "Second Work"),
+            mediaEntryWire(
+              "entry-2",
+              "22222222-2222-4222-8222-222222222222",
+              "Second Work",
+            ),
           ],
           page: { has_more: false, next_cursor: null },
         });
@@ -1598,7 +2547,13 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       resources: {
         [LIBRARY_ID]: {
           library: seededLibrary(),
-          entries: [seededMediaEntry("entry-0", "00000000-0000-4000-8000-000000000010", "Canonical Seed")],
+          entries: [
+            seededMediaEntry(
+              "entry-0",
+              "00000000-0000-4000-8000-000000000010",
+              "Canonical Seed",
+            ),
+          ],
           entriesPage: { has_more: false, next_cursor: null },
         },
       },
@@ -1621,9 +2576,10 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       expect(screen.queryByText("First Work")).not.toBeInTheDocument(),
     );
     await waitFor(() =>
-      expect(
-        screen.getByRole("link", { name: "Second Work" }),
-      ).toHaveFocus(),
+      expect(screen.getByRole("link", { name: "Second Work" })).toHaveFocus(),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("lectern-mutation")).toHaveTextContent("Idle"),
     );
   });
 
@@ -1673,7 +2629,13 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       resources: {
         [LIBRARY_ID]: {
           library: seededLibrary(),
-          entries: [seededMediaEntry("entry-0", "00000000-0000-4000-8000-000000000010", "Canonical Seed")],
+          entries: [
+            seededMediaEntry(
+              "entry-0",
+              "00000000-0000-4000-8000-000000000010",
+              "Canonical Seed",
+            ),
+          ],
           entriesPage: { has_more: false, next_cursor: null },
         },
       },
@@ -1704,9 +2666,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       );
     });
     expect(screen.queryByText("No unfinished items")).not.toBeInTheDocument();
-    expect(
-      screen.queryByText("Page One Unfinished"),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Page One Unfinished")).not.toBeInTheDocument();
 
     resolvePage2(
       Response.json({
@@ -1735,36 +2695,37 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     expect(
       screen.getByRole("button", { name: "Show finished" }),
     ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId("lectern-mutation")).toHaveTextContent("Idle"),
+    );
   });
 
-  // Regression/invariant: switching the Sort-by preset from one factual view
-  // to another must issue a fresh page-1 request for the new view — never
-  // carrying the outgoing view's outstanding cursor along. This is the
-  // lightweight form of the view-change reconciliation guard: the full
-  // pane-active/reconciliation race additionally requires toggling pane
-  // activity mid-flight, which the current harness's PaneRuntimeProvider
-  // wiring (isActive is a fixed prop, not stateful) doesn't expose, so this
-  // asserts the simpler, directly-verifiable invariant instead.
-  it("resets the cursor when switching between factual sort views (never carries a stale cursor)", async () => {
+  it("aborts a superseded view and ignores its late response", async () => {
     const user = userEvent.setup();
-    const fetchMock = stubFetch(async (input) => {
+    let resolveTitle!: (response: Response) => void;
+    let resolveCreator!: (response: Response) => void;
+    const pendingTitle = new Promise<Response>((resolve) => {
+      resolveTitle = resolve;
+    });
+    const pendingCreator = new Promise<Response>((resolve) => {
+      resolveCreator = resolve;
+    });
+    let titleSignal: AbortSignal | null = null;
+    const fetchMock = stubFetch(async (input, init) => {
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
       const path = fetchInputPathWithSearch(input);
-      if (path === `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`) {
-        return Response.json({
-          data: [mediaEntryWire("entry-t1", "44444444-4444-4444-8444-444444444444", "Alpha Work")],
-          page: { has_more: true, next_cursor: "cursor-title-2" },
-        });
+      if (
+        path === `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`
+      ) {
+        titleSignal = init?.signal ?? null;
+        return pendingTitle;
       }
       if (
         path ===
         `/api/libraries/${LIBRARY_ID}/entries?sort=creator&direction=asc`
       ) {
-        return Response.json({
-          data: [mediaEntryWire("entry-c1", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "Creator Work")],
-          page: { has_more: false, next_cursor: null },
-        });
+        return pendingCreator;
       }
       return new Response("{}", {
         status: 200,
@@ -1774,34 +2735,71 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
 
     render(
       <StatefulLibraryPane
-        initialHref={`/libraries/${LIBRARY_ID}?sort=title&direction=asc`}
+        initialHref={`/libraries/${LIBRARY_ID}`}
         resources={{
           [LIBRARY_ID]: {
             library: seededLibrary(),
-            entries: [seededMediaEntry("entry-1", "11111111-1111-4111-8111-111111111112", "Canonical Seed")],
+            entries: [
+              seededMediaEntry(
+                "entry-1",
+                "11111111-1111-4111-8111-111111111112",
+                "Canonical Seed",
+              ),
+            ],
             entriesPage: { has_more: false, next_cursor: null },
           },
         }}
       />,
     );
 
-    expect(await screen.findByText("Alpha Work")).toBeInTheDocument();
+    expect(await screen.findByText("Canonical Seed")).toBeInTheDocument();
+    const sortSelect = screen.getByRole("combobox", { name: "Sort by" });
+    await user.selectOptions(sortSelect, "title-asc");
+    await waitFor(() =>
+      expect(
+        fetchCallsForPath(
+          fetchMock,
+          `/api/libraries/${LIBRARY_ID}/entries`,
+        ),
+      ).toHaveLength(1),
+    );
 
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: "Sort by" }),
-      "creator-asc",
+    await user.selectOptions(sortSelect, "creator-asc");
+    await waitFor(() => expect(titleSignal?.aborted).toBe(true));
+
+    resolveCreator(
+      Response.json({
+        data: [
+          mediaEntryWire(
+            "entry-c1",
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "Creator Work",
+          ),
+        ],
+        page: { has_more: false, next_cursor: null },
+      }),
     );
 
     expect(await screen.findByText("Creator Work")).toBeInTheDocument();
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      `/api/libraries/${LIBRARY_ID}/entries?sort=creator&direction=asc`,
-      expect.objectContaining({ method: "GET" }),
+    resolveTitle(
+      Response.json({
+        data: [
+          mediaEntryWire(
+            "entry-t1",
+            "44444444-4444-4444-8444-444444444444",
+            "Stale Title Work",
+          ),
+        ],
+        page: { has_more: true, next_cursor: "cursor-title-2" },
+      }),
     );
-    expect(
-      fetchMock.mock.calls.some(([input]) =>
-        fetchInputPathWithSearch(input).includes("cursor=cursor-title-2"),
-      ),
-    ).toBe(false);
+
+    await act(async () => {
+      await pendingTitle;
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Creator Work")).toBeInTheDocument();
+    expect(screen.queryByText("Stale Title Work")).not.toBeInTheDocument();
+    expect(sortSelect).toHaveValue("creator-asc");
   });
 });

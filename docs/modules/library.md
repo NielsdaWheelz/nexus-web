@@ -193,6 +193,28 @@ media with the consumption projection's monotonic whole-document progression.
 PDF is total-only. Nested `media` is the sole entry consumption owner; root entry
 read-state/progress fields do not exist.
 
+## Frontend entry-view lifecycle
+
+The pane URL owns the requested `LibraryEntryView`; the Library controller owns
+one committed exact page `{view, entries, nextCursor}`. A same-visit query
+replacement is in-place: pane chrome, controls, focus, live ShellScroll
+position, Slate, and Companion stay mounted while the exact first page loads.
+The full query remains runtime/history identity.
+
+- A keyed `useResource` request is latest-wins; only a result associated with
+  the current requested view commits.
+- While requested and committed views differ, prior rows and row navigation
+  remain available; pagination, reorder, and entry mutations do not.
+- Failure retains and labels the prior committed page and exposes Retry.
+- Pane return captures only a ready snapshot whose committed view equals the
+  URL view, and restores Library plus page as one coherent value.
+- A matching commit atomically swaps view, rows, and cursor, resets the
+  collection region, and lets `CollectionView` own the single row transition;
+  reduced motion performs the same commit without animation.
+
+See
+[library-entry-view-continuity-hard-cutover.md](../cutovers/library-entry-view-continuity-hard-cutover.md).
+
 ## Resonance and Reading Slate
 
 `python/nexus/services/resonance/` is the sole relevance-policy owner. It

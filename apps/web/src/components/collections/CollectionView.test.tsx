@@ -1,4 +1,9 @@
-import { useState, type ReactElement, type ReactNode } from "react";
+import {
+  useLayoutEffect,
+  useState,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import {
   fireEvent,
   render as testingRender,
@@ -6,7 +11,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { absent, present } from "@/lib/api/presence";
 import { decodePublicationDate } from "@/lib/dates/publicationDate";
@@ -24,6 +29,58 @@ import { assumePaneVisitId } from "@/lib/workspace/schema";
 import CollectionView from "./CollectionView";
 
 const TEST_VISIT_ID = assumePaneVisitId("00000000-0000-4000-8000-000000000011");
+const ORIGINAL_START_VIEW_TRANSITION = (
+  document as Document & { startViewTransition?: unknown }
+).startViewTransition;
+const ORIGINAL_MATCH_MEDIA = window.matchMedia;
+
+function installStartViewTransition() {
+  const startViewTransition = vi.fn((callback: () => void | Promise<void>) => {
+    const done = Promise.resolve().then(callback).then(() => undefined);
+    return {
+      ready: done,
+      updateCallbackDone: done,
+      finished: done,
+      skipTransition: vi.fn(),
+    };
+  });
+  Object.defineProperty(document, "startViewTransition", {
+    configurable: true,
+    value: startViewTransition,
+  });
+  return startViewTransition;
+}
+
+function installMatchMedia(matches: boolean) {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: vi.fn((query: string) => ({
+      matches,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
+}
+
+afterEach(() => {
+  if (ORIGINAL_START_VIEW_TRANSITION === undefined) {
+    Reflect.deleteProperty(document, "startViewTransition");
+  } else {
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: ORIGINAL_START_VIEW_TRANSITION,
+    });
+  }
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: ORIGINAL_MATCH_MEDIA,
+  });
+});
 
 function PaneReturnTestHarness({ children }: { children: ReactNode }) {
   return (
@@ -36,14 +93,17 @@ function PaneReturnTestHarness({ children }: { children: ReactNode }) {
 }
 
 function render(ui: ReactElement) {
-  return testingRender(
-    <FeedbackProvider>
-      <LibraryPlacementControllerProvider>
-        <ShareControllerProvider>{ui}</ShareControllerProvider>
-      </LibraryPlacementControllerProvider>
-    </FeedbackProvider>,
-    { wrapper: PaneReturnTestHarness },
-  );
+  return testingRender(ui, {
+    wrapper: ({ children }: { children: ReactNode }) => (
+      <PaneReturnTestHarness>
+        <FeedbackProvider>
+          <LibraryPlacementControllerProvider>
+            <ShareControllerProvider>{children}</ShareControllerProvider>
+          </LibraryPlacementControllerProvider>
+        </FeedbackProvider>
+      </PaneReturnTestHarness>
+    ),
+  });
 }
 
 const TEST_RESOURCE_ID = "11111111-1111-4111-8111-111111111111";
@@ -130,6 +190,102 @@ describe("canonical CollectionView", () => {
       screen.getByRole("link", { name: "First document" }),
     ).toHaveAttribute("href", "/media/a");
     expect(screen.queryByRole("img")).toBeNull();
+  });
+
+  it("commits a ready row order and set change in one view transition", async () => {
+    installMatchMedia(false);
+    const startViewTransition = installStartViewTransition();
+    const view = renderView();
+    const committedRows = [
+      ROWS[2],
+      ROWS[0],
+      row("d", "Fourth document"),
+    ];
+
+    view.rerender(
+      <CollectionView
+        returnScope="Test.Documents"
+        rows={committedRows}
+        status="ready"
+        ariaLabel="Documents"
+        surface={false}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getAllByRole("link").map((link) => link.textContent),
+      ).toEqual(["Third document", "First document", "Fourth document"]);
+    });
+    expect(screen.queryByRole("link", { name: "Second document" })).toBeNull();
+    expect(startViewTransition).toHaveBeenCalledOnce();
+  });
+
+  it("starts the committed-row transition during layout before an intermediate paint", async () => {
+    installMatchMedia(false);
+    const startViewTransition = installStartViewTransition();
+    const transitionCallsSeenDuringLayout: number[] = [];
+    const committedRows = [
+      ROWS[2],
+      ROWS[0],
+      row("d", "Fourth document"),
+    ];
+    const Probe = ({ rows }: { rows: readonly CollectionRowView[] }) => {
+      useLayoutEffect(() => {
+        transitionCallsSeenDuringLayout.push(
+          startViewTransition.mock.calls.length,
+        );
+      });
+      return (
+        <CollectionView
+          returnScope="Test.Documents"
+          rows={rows}
+          status="ready"
+          ariaLabel="Documents"
+          surface={false}
+        />
+      );
+    };
+    const view = render(<Probe rows={ROWS} />);
+
+    view.rerender(<Probe rows={committedRows} />);
+
+    expect(transitionCallsSeenDuringLayout.at(-1)).toBe(1);
+    await waitFor(() => {
+      expect(
+        screen.getAllByRole("link").map((link) => link.textContent),
+      ).toEqual(["Third document", "First document", "Fourth document"]);
+    });
+    expect(startViewTransition).toHaveBeenCalledOnce();
+  });
+
+  it("commits the same ready row change without motion when reduced", async () => {
+    installMatchMedia(true);
+    const startViewTransition = installStartViewTransition();
+    const view = renderView();
+    const committedRows = [
+      ROWS[2],
+      ROWS[0],
+      row("d", "Fourth document"),
+    ];
+
+    view.rerender(
+      <CollectionView
+        returnScope="Test.Documents"
+        rows={committedRows}
+        status="ready"
+        ariaLabel="Documents"
+        surface={false}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getAllByRole("link").map((link) => link.textContent),
+      ).toEqual(["Third document", "First document", "Fourth document"]);
+    });
+    expect(screen.queryByRole("link", { name: "Second document" })).toBeNull();
+    expect(startViewTransition).not.toHaveBeenCalled();
   });
 
   it("renders contributors, partial date, and context as one sibling support line", () => {

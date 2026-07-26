@@ -46,16 +46,13 @@ import {
   type ResourceActionId,
 } from "@/lib/actions/resourceActions";
 import { useLectern } from "@/lib/lectern/LecternProvider";
-import {
-  parseMediaId,
-  type LecternItemId,
-} from "@/lib/lectern/contract";
+import { useCompletionUndo } from "@/lib/lectern/useCompletionUndo";
+import { parseMediaId, type LecternItemId } from "@/lib/lectern/contract";
+import { runProgressReset } from "@/lib/consumption/progressReset";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
-import {
-  confirmAndDeleteMedia,
-} from "@/lib/media/mediaLibraries";
+import { confirmAndDeleteMedia } from "@/lib/media/mediaLibraries";
 import {
   addLibraryPlacement,
   listLibraryPlacements,
@@ -80,7 +77,10 @@ import SectionOpener from "@/components/ui/SectionOpener";
 import CollectionView from "@/components/collections/CollectionView";
 import ReadingSlateSection from "@/components/collections/ReadingSlateSection";
 import PaneToolbar from "@/components/ui/PaneToolbar";
-import type { CollectionContext, CollectionRowView } from "@/lib/collections/types";
+import type {
+  CollectionContext,
+  CollectionRowView,
+} from "@/lib/collections/types";
 import type {
   PositiveCount,
   ProgressFraction,
@@ -122,10 +122,7 @@ import {
   type LibraryEntryView,
   type LibraryOrderPresetId,
 } from "@/lib/libraries/libraryView";
-import type {
-  ContributorCredit,
-  MediaAuthors,
-} from "@/lib/contributors/types";
+import type { ContributorCredit, MediaAuthors } from "@/lib/contributors/types";
 import type {
   ActionDescriptor,
   ActionSelectDetail,
@@ -142,10 +139,9 @@ import { slateTargetId } from "@/lib/resonance/contract";
 import type { ReadingSlateAccept } from "@/lib/resonance/useReadingSlate";
 import styles from "./LibraryPaneBody.module.css";
 
-const MediaAuthorsEditor = lazy(() =>
-  import(
-    /* @vite-ignore */ "@/components/contributors/MediaAuthorsEditor"
-  ),
+const MediaAuthorsEditor = lazy(
+  () =>
+    import(/* @vite-ignore */ "@/components/contributors/MediaAuthorsEditor"),
 );
 
 type Library = LibraryOut;
@@ -169,6 +165,7 @@ interface LibraryMediaEntry {
   read_state: "unread" | "in_progress" | "finished";
   progress_fraction: number | null;
   progressFraction: Presence<ProgressFraction>;
+  progress_resettable: boolean;
   last_engaged_at?: string | null;
   capabilities: Partial<MediaActionCapabilities> &
     Pick<MediaActionCapabilities, "can_quote">;
@@ -269,6 +266,12 @@ interface EntryReconciliationResult {
   page: LibraryEntryPage;
 }
 
+interface LibraryEntryPageResult {
+  requestKey: string;
+  view: LibraryEntryView;
+  page: LibraryEntryPage;
+}
+
 function decodeLibraryEntryPage(page: LibraryEntryPageWire): LibraryEntryPage {
   return {
     ...page,
@@ -282,11 +285,37 @@ interface LibraryPaneResource {
   entriesPage: LibraryPageInfo;
 }
 
-interface LibrarySnapshot {
-  readonly library: Library;
+interface LibraryEntryPageSnapshot {
+  readonly view: LibraryEntryView;
   readonly entries: readonly LibraryEntry[];
   readonly nextCursor: string | null;
 }
+
+interface LibrarySnapshot {
+  readonly library: Library;
+  readonly entries: LibraryEntryPageSnapshot;
+}
+
+type LibraryEntriesState =
+  | {
+      kind: "InitialLoading";
+      requestedView: LibraryEntryView;
+    }
+  | {
+      kind: "Ready";
+      committed: LibraryEntryPageSnapshot;
+    }
+  | {
+      kind: "Refreshing";
+      requestedView: LibraryEntryView;
+      committed: LibraryEntryPageSnapshot;
+    }
+  | {
+      kind: "RefreshFailed";
+      requestedView: LibraryEntryView;
+      committed: LibraryEntryPageSnapshot;
+      error: ApiError;
+    };
 
 const LIBRARY_VISIT_DATA =
   definePaneVisitDataKey<LibrarySnapshot>("Library.Entries");
@@ -373,6 +402,7 @@ export default function LibraryPaneBody() {
   const paneId = paneRuntime?.paneId ?? `library-${id}`;
   const feedback = useFeedback();
   const lectern = useLectern();
+  const offerCompletionUndo = useCompletionUndo();
 
   // The pane URL owns the library view (order + completion) via a strict, total
   // codec; `decodedView` is a discriminated result and `view` is null only when
@@ -395,9 +425,6 @@ export default function LibraryPaneBody() {
         next.delete("completion");
         return next;
       },
-      replaceOptions: {
-        viewTransition: { kind: "collection-reflow" } as const,
-      },
     }),
     [id],
   );
@@ -405,45 +432,44 @@ export default function LibraryPaneBody() {
     usePaneUrlState(libraryViewCodec);
   const view = decodedView.kind === "Valid" ? decodedView.view : null;
   const isInitialView = view !== null && isInitialLibraryView(view);
-  // Stable per-view signature (independent of unrelated pane params): the view
-  // key that resets and reloads the single paginated controller on any change.
-  const viewSignature = view ? `${orderToPresetId(view.order)}:${view.completion}` : "invalid";
+  const committedViewInvalidatedRef = useRef(false);
+  const committedSnapshotRef = useRef<LibrarySnapshot | null>(null);
+  const reorderGenerationRef = useRef(0);
   const setView = useCallback(
-    (next: LibraryEntryView) => setDecodedView({ kind: "Valid", view: next }),
+    (next: LibraryEntryView) => {
+      committedViewInvalidatedRef.current = true;
+      committedSnapshotRef.current = null;
+      reorderGenerationRef.current += 1;
+      setDecodedView({ kind: "Valid", view: next });
+    },
     [setDecodedView],
   );
 
-  const committedSnapshotRef = useRef<LibrarySnapshot | null>(null);
-  const captureCommitted = useCallback(
-    () => committedSnapshotRef.current,
-    [],
-  );
+  const captureCommitted = useCallback(() => committedSnapshotRef.current, []);
   const restored = usePaneVisitData(LIBRARY_VISIT_DATA, captureCommitted);
-  const [controller, setController] =
-    useState<LibrarySnapshot | null>(restored);
+  const initialRestored = useRef(restored).current;
+  const [controller, setController] = useState<LibrarySnapshot | null>(
+    initialRestored,
+  );
   const clearAllVisitData = useClearAllPaneVisitData();
-  const allowInitialAdoptionRef = useRef(restored === null);
-  const library = controller?.library ?? null;
+  const allowInitialAdoptionRef = useRef(initialRestored === null);
   const entries = useMemo(
     () =>
       controller === null
         ? EMPTY_LIBRARY_ENTRIES
-        : [...controller.entries],
+        : [...controller.entries.entries],
     [controller],
   );
-  const entryCursor = controller?.nextCursor ?? null;
+  const entryCursor = controller?.entries.nextCursor ?? null;
   const setLibrary: Dispatch<SetStateAction<Library | null>> = useCallback(
     (update) => {
       setController((current) => {
+        if (current === null) return current;
         const library =
           typeof update === "function"
-            ? update(current?.library ?? null)
+            ? update(current.library)
             : update;
-        return library === null
-          ? null
-          : current === null
-            ? { library, entries: [], nextCursor: null }
-            : { ...current, library };
+        return library === null ? null : { ...current, library };
       });
     },
     [],
@@ -452,10 +478,13 @@ export default function LibraryPaneBody() {
     (update) => {
       setController((current) => {
         if (current === null) return current;
-        const previous = [...current.entries];
+        const previous = [...current.entries.entries];
         const entries =
           typeof update === "function" ? update(previous) : update;
-        return { ...current, entries };
+        return {
+          ...current,
+          entries: { ...current.entries, entries },
+        };
       });
     },
     [],
@@ -465,8 +494,13 @@ export default function LibraryPaneBody() {
       setController((current) => {
         if (current === null) return current;
         const nextCursor =
-          typeof update === "function" ? update(current.nextCursor) : update;
-        return { ...current, nextCursor };
+          typeof update === "function"
+            ? update(current.entries.nextCursor)
+            : update;
+        return {
+          ...current,
+          entries: { ...current.entries, nextCursor },
+        };
       });
     },
     [],
@@ -484,6 +518,7 @@ export default function LibraryPaneBody() {
   const retryingMetadataMediaIds = useStringIdSet();
   const deletingMediaIds = useStringIdSet();
   const updatingConsumptionMediaIds = useStringIdSet();
+  const resettingProgressMediaIds = useStringIdSet();
   const addingToLecternMediaIds = useStringIdSet();
   const removingFromLecternMediaIds = useStringIdSet();
   const refreshingPodcastIds = useStringIdSet();
@@ -492,7 +527,6 @@ export default function LibraryPaneBody() {
   const [reorderBusy, setReorderBusy] = useState(false);
   const libraryEntriesStaleRef = useRef(false);
   const entryReconciliationOwnerIdRef = useRef(id);
-  const wasPaneActiveRef = useRef(isPaneActive);
   const paneActiveAtRenderRef = useRef(isPaneActive);
   paneActiveAtRenderRef.current = isPaneActive;
   const entryReconciliationSerialRef = useRef(0);
@@ -526,9 +560,9 @@ export default function LibraryPaneBody() {
   });
   const [authorsEditorMounted, setAuthorsEditorMounted] = useState(false);
   const [authorsEditorOpen, setAuthorsEditorOpen] = useState(false);
-  const [authorsEditorMediaId, setAuthorsEditorMediaId] = useState<string | null>(
-    null,
-  );
+  const [authorsEditorMediaId, setAuthorsEditorMediaId] = useState<
+    string | null
+  >(null);
   const [authorsEditorTrigger, setAuthorsEditorTrigger] =
     useState<HTMLButtonElement | null>(null);
   const authorsEditorMedia =
@@ -616,14 +650,26 @@ export default function LibraryPaneBody() {
   );
   const libraryResource = useResource<LibraryPaneResource, { id: string }>({
     descriptor: libraryResourceDescriptor,
-    params: restored === null ? { id } : null,
+    params: initialRestored === null ? { id } : null,
     load: (params, signal) =>
       paneResourceLoaders.library!.load(
         clientResourceFetcher(signal),
         params,
       ) as Promise<LibraryPaneResource>,
   });
-  const currentLibrary = library?.id === id ? library : null;
+  const requestedViewKey =
+    view === null
+      ? null
+      : libraryEntriesResource.cacheKey({ id, view });
+  const committedViewKey =
+    controller === null
+      ? null
+      : libraryEntriesResource.cacheKey({ id, view: controller.entries.view });
+  const committedMatchesRequested =
+    requestedViewKey !== null && requestedViewKey === committedViewKey;
+  const committedView = controller?.entries.view ?? null;
+  const currentLibrary =
+    controller?.library.id === id ? controller.library : null;
   const adoptLibrary = useCallback(
     (next: LibraryOut | null) => {
       setLibrary((current) =>
@@ -660,17 +706,11 @@ export default function LibraryPaneBody() {
   // Entry mutation (add content, reorder, remove) is hidden for system-protected
   // libraries (e.g. the Oracle Corpus), which report canEditEntries === false.
   const canEditEntries =
-    currentLibrary?.role === "admin" &&
-    currentLibrary.canEditEntries === true;
+    currentLibrary?.role === "admin" && currentLibrary.canEditEntries === true;
   // Explicit reorder gate: Default has server-defined ordering and no reorder
   // UX/endpoint support, independent of canEditEntries (which stays true for
   // Default's "Add content" capability).
   const canReorder = canEditEntries && !isDefaultLibrary;
-  const loading =
-    currentLibrary === null &&
-    error === null &&
-    libraryResource.status === "loading";
-  useSetPaneLabel(currentLibrary?.name ?? (loading ? null : "Library"));
   const connectionSummaries = useConnectionSummaries(
     entries.map((entry) =>
       entry.kind === "podcast"
@@ -679,25 +719,100 @@ export default function LibraryPaneBody() {
     ),
   );
 
-  // The single non-initial first-page seam: a canonical/all view seeds from the
-  // bootstrap resource, any other view fetches page 1 from the entries endpoint.
-  const viewFirstPageParams: LibraryEntriesResourceParams | null =
-    restored === null && view !== null && !isInitialView ? { id, view } : null;
-  const viewFirstPagePath = viewFirstPageParams
-    ? libraryEntriesResource.clientPath(viewFirstPageParams)
-    : null;
-  const viewFetch = useDebouncedFetch<LibraryEntryPage>(
-    viewFirstPagePath,
-    async (signal) => {
-      if (viewFirstPagePath === null) {
-        // justify-defect: a non-null key is only built from a non-null path.
-        throw new Error("Library view first-page fetch lost its path");
+  // The bootstrap page is adopted only for the initial Canonical + All view.
+  // Every requested/committed mismatch, including a return to Canonical, owns
+  // one exact-view entries request.
+  const requestsFirstPage =
+    view !== null &&
+    (controller === null
+      ? !isInitialView || !allowInitialAdoptionRef.current
+      : !committedMatchesRequested ||
+        committedViewInvalidatedRef.current);
+  const firstPageRequestKey = requestsFirstPage ? requestedViewKey : null;
+  const firstPageRequestPath =
+    requestsFirstPage && view !== null
+      ? libraryEntriesResource.clientPath({ id, view })
+      : null;
+  const activeFirstPageRequestKeyRef = useRef(firstPageRequestKey);
+  activeFirstPageRequestKeyRef.current = firstPageRequestKey;
+  const firstPageErrorKeyRef = useRef<string | null>(null);
+  const firstPageResource = useResource<LibraryEntryPageResult>({
+    cacheKey: firstPageRequestKey,
+    load: async (signal) => {
+      const requestKey = firstPageRequestKey;
+      const requestedView = view;
+      const path = firstPageRequestPath;
+      if (requestKey === null || requestedView === null || path === null) {
+        // justify-defect: a non-null resource key is built from this request.
+        throw new Error("Library entry-view request lost its identity");
       }
-      return decodeLibraryEntryPage(
-        await apiFetch<LibraryEntryPageWire>(viewFirstPagePath, { signal }),
-      );
+      let page: LibraryEntryPageWire;
+      try {
+        page = await apiFetch<LibraryEntryPageWire>(path, { signal });
+      } catch (requestError) {
+        if (
+          !isAbortError(requestError) &&
+          !signal.aborted &&
+          activeFirstPageRequestKeyRef.current === requestKey
+        ) {
+          firstPageErrorKeyRef.current = requestKey;
+        }
+        throw requestError;
+      }
+      try {
+        return {
+          requestKey,
+          view: requestedView,
+          page: decodeLibraryEntryPage(page),
+        };
+      } catch (decodeError) {
+        if (
+          !signal.aborted &&
+          activeFirstPageRequestKeyRef.current === requestKey
+        ) {
+          firstPageErrorKeyRef.current = requestKey;
+        }
+        throw new ApiError(
+          200,
+          "E_INVALID_RESPONSE",
+          decodeError instanceof Error
+            ? decodeError.message
+            : "Invalid library entries response",
+        );
+      }
     },
-  );
+  });
+  const failedFirstPage =
+    firstPageRequestKey !== null &&
+    firstPageResource.status === "error" &&
+    firstPageErrorKeyRef.current === firstPageRequestKey
+      ? {
+          error: firstPageResource.error,
+          retry: firstPageResource.retry,
+        }
+      : null;
+  const firstPageError = failedFirstPage?.error ?? null;
+  const entriesState: LibraryEntriesState | null =
+    view === null
+      ? null
+      : controller === null
+        ? { kind: "InitialLoading", requestedView: view }
+        : committedMatchesRequested &&
+            !committedViewInvalidatedRef.current
+          ? { kind: "Ready", committed: controller.entries }
+          : failedFirstPage === null
+            ? {
+                kind: "Refreshing",
+                requestedView: view,
+                committed: controller.entries,
+              }
+            : {
+                kind: "RefreshFailed",
+                requestedView: view,
+                committed: controller.entries,
+                error: failedFirstPage.error,
+              };
+  const viewIsCommitted = entriesState?.kind === "Ready";
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const deletingLibraryRef = useRef(false);
@@ -722,6 +837,7 @@ export default function LibraryPaneBody() {
     (requestedView: LibraryEntryView) => {
       cancelEntryLoadMore();
       committedSnapshotRef.current = null;
+      libraryEntriesStaleRef.current = false;
       clearAllVisitData();
       const serial = entryReconciliationSerialRef.current + 1;
       entryReconciliationSerialRef.current = serial;
@@ -733,6 +849,23 @@ export default function LibraryPaneBody() {
     },
     [cancelEntryLoadMore, clearAllVisitData, id],
   );
+  const markLibraryEntriesStale = useCallback(() => {
+    libraryEntriesStaleRef.current = true;
+    committedSnapshotRef.current = null;
+    clearAllVisitData();
+  }, [clearAllVisitData]);
+  const requestCurrentEntryReconciliation = useCallback(() => {
+    const readySnapshot = committedSnapshotRef.current;
+    if (
+      !paneActiveAtRenderRef.current ||
+      readySnapshot === null ||
+      readySnapshot.library.id !== id
+    ) {
+      markLibraryEntriesStale();
+      return;
+    }
+    requestEntryReconciliation(readySnapshot.entries.view);
+  }, [id, markLibraryEntriesStale, requestEntryReconciliation]);
   const entryReconciliationParams: LibraryEntriesResourceParams | null =
     entryReconciliationRequest
       ? {
@@ -777,59 +910,101 @@ export default function LibraryPaneBody() {
     ) {
       return;
     }
+    const requestViewKey = libraryEntriesResource.cacheKey({
+      id: request.ownerId,
+      view: request.view,
+    });
+    const resultViewKey = libraryEntriesResource.cacheKey({
+      id: result.request.ownerId,
+      view: result.request.view,
+    });
+    if (
+      !viewIsCommitted ||
+      requestViewKey !== resultViewKey ||
+      requestViewKey !== requestedViewKey ||
+      requestViewKey !== committedViewKey
+    ) {
+      markLibraryEntriesStale();
+      setEntryReconciliationRequest(null);
+      return;
+    }
     cancelEntryLoadMore();
     clearRemovedEntryIds();
-    setEntries(result.page.data);
-    setEntryCursor(result.page.page.next_cursor);
+    setController((current) =>
+      current === null ||
+      libraryEntriesResource.cacheKey({
+        id,
+        view: current.entries.view,
+      }) !== requestViewKey
+        ? current
+        : {
+            ...current,
+            entries: {
+              view: result.request.view,
+              entries: result.page.data,
+              nextCursor: result.page.page.next_cursor,
+            },
+          },
+    );
     setLoadMoreError(null);
-    libraryEntriesStaleRef.current = false;
     setEntryReconciliationRequest(null);
   }, [
     cancelEntryLoadMore,
     clearRemovedEntryIds,
+    committedViewKey,
     entryReconciliationFetch.data,
     entryReconciliationRequest,
     id,
-    setEntries,
-    setEntryCursor,
+    markLibraryEntriesStale,
+    requestedViewKey,
+    viewIsCommitted,
   ]);
 
   useEffect(() => {
     if (entryReconciliationOwnerIdRef.current !== id) return;
-    const becameActive = isPaneActive && !wasPaneActiveRef.current;
-    wasPaneActiveRef.current = isPaneActive;
-    if (becameActive && libraryEntriesStaleRef.current && view !== null) {
-      requestEntryReconciliation(view);
+    if (
+      isPaneActive &&
+      libraryEntriesStaleRef.current &&
+      viewIsCommitted &&
+      controller !== null &&
+      entryReconciliationRequest === null
+    ) {
+      requestEntryReconciliation(controller.entries.view);
     }
-  }, [id, isPaneActive, requestEntryReconciliation, view]);
+  }, [
+    controller,
+    entryReconciliationRequest,
+    id,
+    isPaneActive,
+    requestEntryReconciliation,
+    viewIsCommitted,
+  ]);
 
   useEffect(() => {
     entryReconciliationOwnerIdRef.current = id;
     entryReconciliationSerialRef.current += 1;
     libraryEntriesStaleRef.current = false;
-    wasPaneActiveRef.current = paneActiveAtRenderRef.current;
     setEntryReconciliationRequest(null);
   }, [id]);
 
-  // Library identity + error ownership. First-page entry seeding is owned by the
-  // view effect below, not here, so appended pages survive resource re-reads.
+  // The route resource seeds Canonical + All once. A factual deep link waits for
+  // its exact entries page; invalid URL state retains the seed only so Reset can
+  // return to a coherent canonical snapshot.
   useEffect(() => {
     if (libraryResource.status === "ready") {
       if (!allowInitialAdoptionRef.current) return;
       allowInitialAdoptionRef.current = false;
-      setController(
-        isInitialView
-          ? {
-              library: libraryResource.data.library,
-              entries: libraryResource.data.entries,
-              nextCursor: libraryResource.data.entriesPage.next_cursor,
-            }
-          : {
-              library: libraryResource.data.library,
-              entries: [],
-              nextCursor: null,
-            },
-      );
+      if (isInitialView || view === null) {
+        committedViewInvalidatedRef.current = false;
+        setController({
+          library: libraryResource.data.library,
+          entries: {
+            view: view ?? CANONICAL_VIEW,
+            entries: libraryResource.data.entries,
+            nextCursor: libraryResource.data.entriesPage.next_cursor,
+          },
+        });
+      }
       setError(null);
       return;
     }
@@ -848,9 +1023,7 @@ export default function LibraryPaneBody() {
           fallback: "Failed to load library",
         }),
       );
-      setLibrary((current) => (current?.id === id ? null : current));
-      setEntries([]);
-      setEntryCursor(null);
+      setController(null);
       setLoadMoreError(null);
     }
   }, [
@@ -859,95 +1032,114 @@ export default function LibraryPaneBody() {
     isInitialView,
     libraryResource,
     router,
-    setEntries,
-    setEntryCursor,
-    setLibrary,
+    view,
   ]);
 
-  // The single controller keyed by the view: reset on any view change, then seed
-  // page 1 from the bootstrap resource (canonical/all) or clear until the view
-  // fetch delivers page 1 (factual order or unfinished filter).
+  // A view request invalidates view-sensitive work but preserves the committed
+  // page until its exact replacement is ready.
   useEffect(() => {
-    if (view === null || restored !== null) return;
+    if (firstPageRequestKey === null) return;
+    committedViewInvalidatedRef.current = true;
+    reorderGenerationRef.current += 1;
+    setReorderBusy(false);
     cancelEntryLoadMore();
     clearRemovedEntryIds();
+    clearAllVisitData();
     setLoadMoreError(null);
     setViewInvalid(false);
     libraryEntriesStaleRef.current = false;
-    // A reconciliation is bound to the view it was requested under; the fresh
-    // page-1 load below supersedes it, so drop any pending/in-flight one (and
-    // bump the serial) rather than let a stale view's rows/cursor land here.
     entryReconciliationSerialRef.current += 1;
     setEntryReconciliationRequest(null);
-    if (isInitialView) {
-      if (libraryResource.status === "ready") {
-        setEntries(libraryResource.data.entries);
-        setEntryCursor(libraryResource.data.entriesPage.next_cursor);
-      } else {
-        setEntries([]);
-        setEntryCursor(null);
-      }
+  }, [
+    cancelEntryLoadMore,
+    clearRemovedEntryIds,
+    clearAllVisitData,
+    firstPageRequestKey,
+  ]);
+
+  // Install only the response associated with the current requested view.
+  useEffect(() => {
+    if (
+      firstPageResource.status !== "ready" ||
+      firstPageRequestKey === null ||
+      firstPageResource.data.requestKey !== firstPageRequestKey ||
+      requestedViewKey !== firstPageResource.data.requestKey
+    ) {
       return;
     }
-    setEntries([]);
-    setEntryCursor(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    viewSignature,
-    isInitialView,
-    libraryResource,
-    id,
-    cancelEntryLoadMore,
-    clearRemovedEntryIds,
-    restored,
-    setEntries,
-    setEntryCursor,
-  ]);
-
-  // Apply the non-initial view's first page once it lands.
-  useEffect(() => {
-    if (restored !== null || isInitialView || viewFetch.data === null) return;
+    const library =
+      controller?.library ??
+      (libraryResource.status === "ready"
+        ? libraryResource.data.library
+        : null);
+    if (library === null) return;
     cancelEntryLoadMore();
     clearRemovedEntryIds();
-    setEntries(viewFetch.data.data);
-    setEntryCursor(viewFetch.data.page.next_cursor);
+    committedViewInvalidatedRef.current = false;
+    setController({
+      library,
+      entries: {
+        view: firstPageResource.data.view,
+        entries: firstPageResource.data.page.data,
+        nextCursor: firstPageResource.data.page.page.next_cursor,
+      },
+    });
     setLoadMoreError(null);
     setViewInvalid(false);
-    libraryEntriesStaleRef.current = false;
+    const scrollport =
+      listRegionRef.current?.closest<HTMLElement>("[data-pane-content]");
+    if (scrollport) scrollport.scrollTop = 0;
   }, [
-    isInitialView,
-    viewFetch.data,
     cancelEntryLoadMore,
     clearRemovedEntryIds,
-    restored,
-    setEntries,
-    setEntryCursor,
+    controller?.library,
+    firstPageRequestKey,
+    firstPageResource,
+    libraryResource,
+    requestedViewKey,
   ]);
 
-  // A rejected (invalid) view fetch is terminal until the view changes.
+  const firstPageDefect =
+    firstPageError !== null && isSameSystemApiDefect(firstPageError)
+      ? firstPageError
+      : null;
+  const loading =
+    currentLibrary === null &&
+    error === null &&
+    (libraryResource.status === "loading" ||
+      (firstPageRequestKey !== null && firstPageError === null));
+  useSetPaneLabel(currentLibrary?.name ?? (loading ? null : "Library"));
+
   useEffect(() => {
-    if (!isInitialView && isInvalidViewError(viewFetch.error)) {
+    if (isInvalidViewError(firstPageError)) {
       setViewInvalid(true);
     }
-  }, [isInitialView, viewFetch.error]);
+  }, [firstPageError]);
 
   useLayoutEffect(() => {
     committedSnapshotRef.current =
-      entryReconciliationRequest === null ? controller : null;
-  }, [controller, entryReconciliationRequest]);
+      entriesState?.kind === "Ready" &&
+      entryReconciliationRequest === null &&
+      !libraryEntriesStaleRef.current
+        ? controller
+        : null;
+  }, [controller, entriesState?.kind, entryReconciliationRequest]);
 
   usePaneReturnReady(
-    (controller !== null &&
-      (restored !== null || isInitialView || viewFetch.data !== null)) ||
+    entriesState?.kind === "Ready" ||
+      entriesState?.kind === "RefreshFailed" ||
       view === null ||
       viewInvalid ||
-      viewFetch.error !== null ||
+      firstPageError !== null ||
       error !== null,
   );
 
   // Reading-slate intake writes the same library-entry contract as placement.
   const acceptSlateTarget = useCallback<ReadingSlateAccept>(
     (target, options) => {
+      if (!viewIsCommitted || committedView === null) {
+        return Promise.resolve({ kind: "Abandoned" });
+      }
       const targetId = slateTargetId(target);
       const frozenAttempt = () =>
         addLibraryPlacement({ kind: target.kind, id: targetId }, id);
@@ -969,12 +1161,7 @@ export default function LibraryPaneBody() {
               if (!observing) return;
               observing = false;
               options.signal.removeEventListener("abort", abandon);
-              if (isPaneActive && view !== null) {
-                requestEntryReconciliation(view);
-              } else {
-                libraryEntriesStaleRef.current = true;
-                clearAllVisitData();
-              }
+              requestCurrentEntryReconciliation();
               feedback.show({
                 severity: "success",
                 title: `Added to ${currentLibrary?.name ?? "library"}`,
@@ -1014,13 +1201,12 @@ export default function LibraryPaneBody() {
       });
     },
     [
-      clearAllVisitData,
+      committedView,
       currentLibrary?.name,
       feedback,
       id,
-      isPaneActive,
-      requestEntryReconciliation,
-      view,
+      requestCurrentEntryReconciliation,
+      viewIsCommitted,
     ],
   );
 
@@ -1115,11 +1301,7 @@ export default function LibraryPaneBody() {
         retryingMetadataMediaIds.remove(mediaId);
       }
     },
-    [
-      clearAllVisitData,
-      feedback,
-      retryingMetadataMediaIds,
-    ],
+    [clearAllVisitData, feedback, retryingMetadataMediaIds],
   );
 
   const handleDeleteMedia = useCallback(
@@ -1168,7 +1350,12 @@ export default function LibraryPaneBody() {
 
   const handleSetConsumption = useCallback(
     async (mediaId: string, status: "finished" | "unread") => {
-      if (updatingConsumptionMediaIds.has(mediaId)) return;
+      if (
+        updatingConsumptionMediaIds.has(mediaId) ||
+        resettingProgressMediaIds.has(mediaId)
+      ) {
+        return;
+      }
       updatingConsumptionMediaIds.add(mediaId);
       const previous = new Map<string, LibraryMediaConsumption>();
       for (const entry of entries) {
@@ -1192,7 +1379,21 @@ export default function LibraryPaneBody() {
 
       try {
         if (status === "finished") {
-          await lectern.ensureMediaFinished(parseMediaId(mediaId));
+          const parsedMediaId = parseMediaId(mediaId);
+          const preCompletionSnapshot = lectern.getCanonicalSnapshot() ?? {
+            items: [],
+          };
+          const completedItem =
+            preCompletionSnapshot.items.find(
+              (item) => item.mediaId === mediaId,
+            ) ?? null;
+          const result = await lectern.ensureMediaFinished(parsedMediaId);
+          offerCompletionUndo({
+            mediaId: parsedMediaId,
+            preCompletionSnapshot,
+            completedItemId: completedItem?.itemId ?? null,
+            completionHandle: result.completionHandle,
+          });
         } else {
           await lectern.setUnread(parseMediaId(mediaId));
         }
@@ -1232,9 +1433,50 @@ export default function LibraryPaneBody() {
       entries,
       feedback,
       lectern,
+      offerCompletionUndo,
       patchMediaInViews,
       setEntries,
+      resettingProgressMediaIds,
       updatingConsumptionMediaIds,
+    ],
+  );
+
+  const handleResetProgress = useCallback(
+    async (mediaId: string, isVideo: boolean) => {
+      if (
+        resettingProgressMediaIds.has(mediaId) ||
+        updatingConsumptionMediaIds.has(mediaId)
+      ) {
+        return;
+      }
+      if (!viewIsCommitted || committedView === null) return;
+      resettingProgressMediaIds.add(mediaId);
+      try {
+        const outcome = await runProgressReset({
+          mediaId: parseMediaId(mediaId),
+          isVideo,
+          confirmReset: (message) => window.confirm(message),
+          resetProgress: lectern.resetProgress,
+        });
+        if (outcome.kind === "Cancelled") return;
+        requestCurrentEntryReconciliation();
+        feedback.show({ severity: "success", title: "Progress reset." });
+      } catch (error) {
+        if (handleUnauthenticatedApiError(error)) return;
+        if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+        feedback.show(toFeedback(error, { fallback: "Failed to reset progress" }));
+      } finally {
+        resettingProgressMediaIds.remove(mediaId);
+      }
+    },
+    [
+      committedView,
+      feedback,
+      lectern.resetProgress,
+      requestCurrentEntryReconciliation,
+      resettingProgressMediaIds,
+      updatingConsumptionMediaIds,
+      viewIsCommitted,
     ],
   );
 
@@ -1283,12 +1525,7 @@ export default function LibraryPaneBody() {
         removingFromLecternMediaIds.remove(mediaId);
       }
     },
-    [
-      clearAllVisitData,
-      feedback,
-      lectern,
-      removingFromLecternMediaIds,
-    ],
+    [clearAllVisitData, feedback, lectern, removingFromLecternMediaIds],
   );
 
   const handleRefreshPodcast = async (
@@ -1305,8 +1542,7 @@ export default function LibraryPaneBody() {
       );
       setEntries((current) =>
         current.map((candidate) =>
-          candidate.kind === "podcast" &&
-          candidate.podcast.id === podcastId
+          candidate.kind === "podcast" && candidate.podcast.id === podcastId
             ? {
                 ...candidate,
                 podcast: {
@@ -1352,10 +1588,7 @@ export default function LibraryPaneBody() {
       });
       if (
         !confirm(
-          buildPodcastUnsubscribeConfirmation(
-            entry.podcast.title,
-            placements,
-          ),
+          buildPodcastUnsubscribeConfirmation(entry.podcast.title, placements),
         )
       ) {
         return;
@@ -1459,7 +1692,8 @@ export default function LibraryPaneBody() {
     if (
       entryCursor === null ||
       loadingMore ||
-      view === null ||
+      committedView === null ||
+      !viewIsCommitted ||
       entryReconciliationRequest !== null
     ) {
       return;
@@ -1472,7 +1706,11 @@ export default function LibraryPaneBody() {
     setLoadingMore(true);
     setLoadMoreError(null);
     void apiFetch<LibraryEntryPageWire>(
-      libraryEntriesResource.clientPath({ id, view, cursor: entryCursor }),
+      libraryEntriesResource.clientPath({
+        id,
+        view: committedView,
+        cursor: entryCursor,
+      }),
       { signal: controller.signal },
     )
       .then(decodeLibraryEntryPage)
@@ -1517,6 +1755,7 @@ export default function LibraryPaneBody() {
         setLoadingMore(false);
       });
   }, [
+    committedView,
     entryCursor,
     entryReconciliationRequest,
     id,
@@ -1524,13 +1763,15 @@ export default function LibraryPaneBody() {
     loadingMore,
     setEntries,
     setEntryCursor,
-    view,
+    viewIsCommitted,
   ]);
 
   const handleReorderEntries = (nextEntries: LibraryEntry[]) => {
-    if (!canReorder || entryCursor !== null) {
+    if (!viewIsCommitted || !canReorder || entryCursor !== null) {
       return;
     }
+    const generation = reorderGenerationRef.current + 1;
+    reorderGenerationRef.current = generation;
     const previousEntries = entries;
     setEntries(nextEntries);
     setReorderBusy(true);
@@ -1539,8 +1780,12 @@ export default function LibraryPaneBody() {
       method: "PATCH",
       body: JSON.stringify({ entry_ids: nextEntries.map((entry) => entry.id) }),
     })
-      .then(clearAllVisitData)
+      .then(() => {
+        if (generation !== reorderGenerationRef.current) return;
+        clearAllVisitData();
+      })
       .catch((err: unknown) => {
+        if (generation !== reorderGenerationRef.current) return;
         setEntries(previousEntries);
         if (handleUnauthenticatedApiError(err)) return;
         if (isApiError(err)) {
@@ -1557,6 +1802,7 @@ export default function LibraryPaneBody() {
         });
       })
       .finally(() => {
+        if (generation !== reorderGenerationRef.current) return;
         setReorderBusy(false);
       });
   };
@@ -1583,7 +1829,7 @@ export default function LibraryPaneBody() {
       })
     : null;
   const addContentAction: ActionDescriptor[] =
-    currentLibrary && canEditEntries
+    currentLibrary && canEditEntries && viewIsCommitted
       ? [
           {
             kind: "command",
@@ -1611,7 +1857,7 @@ export default function LibraryPaneBody() {
         ]
       : [];
 
-  const hideFinished = view?.completion === "unfinished";
+  const hideFinished = committedView?.completion === "unfinished";
   // Under the unfinished filter the client also drops a row the moment it is
   // marked finished, so Mark Finished visibly removes it from the filtered view.
   const isVisibleEntry = useCallback(
@@ -1636,7 +1882,7 @@ export default function LibraryPaneBody() {
   // lies and a real next page is never stranded behind a hidden footer (AC3/AC8).
   useEffect(() => {
     if (
-      view !== null &&
+      viewIsCommitted &&
       entryCursor !== null &&
       visibleEntries.length === 0 &&
       !loadingMore &&
@@ -1645,7 +1891,7 @@ export default function LibraryPaneBody() {
       handleLoadMoreEntries();
     }
   }, [
-    view,
+    viewIsCommitted,
     entryCursor,
     visibleEntries.length,
     loadingMore,
@@ -1758,11 +2004,47 @@ export default function LibraryPaneBody() {
     return () => cancelAnimationFrame(pendingFocusRafRef.current);
   }, [visibleRowSignature]);
 
+  if (firstPageDefect !== null) {
+    throw firstPageDefect;
+  }
+
   if (loading) {
     return <PaneLoadingState />;
   }
 
   if (!currentLibrary) {
+    if (viewInvalid) {
+      return (
+        <FeedbackNotice severity="error" title="Invalid library view">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() =>
+              setDecodedView({ kind: "Valid", view: CANONICAL_VIEW })
+            }
+          >
+            Reset view
+          </Button>
+        </FeedbackNotice>
+      );
+    }
+    if (failedFirstPage !== null) {
+      return (
+        <FeedbackNotice
+          feedback={toFeedback(failedFirstPage.error, {
+            fallback: "Failed to load library entries",
+          })}
+        >
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={failedFirstPage.retry}
+          >
+            Retry
+          </Button>
+        </FeedbackNotice>
+      );
+    }
     return (
       <FeedbackNotice
         {...(error ?? { severity: "error", title: "Library not found" })}
@@ -1772,17 +2054,19 @@ export default function LibraryPaneBody() {
 
   const invalidView = decodedView.kind === "Invalid" || viewInvalid;
   const canReorderVisibleEntries =
+    viewIsCommitted &&
     canReorder &&
-    view !== null &&
-    view.order.kind === "Canonical" &&
-    view.completion === "all" &&
+    committedView?.order.kind === "Canonical" &&
+    committedView.completion === "all" &&
     entryCursor === null;
   const entryFooter = (
     <>
       {loadMoreError ? <FeedbackNotice {...loadMoreError} /> : null}
       <LoadMoreFooter
         hasMore={
-          entryReconciliationRequest === null && entryCursor !== null
+          viewIsCommitted &&
+          entryReconciliationRequest === null &&
+          entryCursor !== null
         }
         loading={loadingMore}
         onLoadMore={handleLoadMoreEntries}
@@ -1814,6 +2098,37 @@ export default function LibraryPaneBody() {
       </FeedbackNotice>
     )
   ) : null;
+  const requestedViewLabel =
+    view === null
+      ? ""
+      : `${presetLabel(orderToPresetId(view.order), isDefaultLibrary)}${
+          view.completion === "unfinished" ? ", unfinished only" : ""
+        }`;
+  const committedViewLabel =
+    committedView === null
+      ? ""
+      : `${presetLabel(orderToPresetId(committedView.order), isDefaultLibrary)}${
+          committedView.completion === "unfinished" ? ", unfinished only" : ""
+        }`;
+  const entryViewNotice =
+    !invalidView && entriesState?.kind === "Refreshing" ? (
+      <div className={styles.entryViewStatus} role="status">
+        <span>
+          {`Updating to ${requestedViewLabel}. Showing ${committedViewLabel} until it arrives.`}
+        </span>
+      </div>
+    ) : !invalidView && entriesState?.kind === "RefreshFailed" ? (
+      <div className={styles.entryViewStatus} role="status">
+        <span>
+          {`Could not load ${requestedViewLabel}. Showing ${committedViewLabel}.`}
+        </span>
+        {failedFirstPage !== null ? (
+          <Button variant="ghost" size="sm" onClick={failedFirstPage.retry}>
+            Retry
+          </Button>
+        ) : null}
+      </div>
+    ) : null;
 
   const addedContext = (entry: LibraryEntry): Presence<CollectionContext> => {
     const iso =
@@ -1825,7 +2140,7 @@ export default function LibraryPaneBody() {
   };
 
   const entryRowView = (item: LibraryEntry): CollectionRowView => {
-    const showAdded = view?.order.kind === "Added";
+    const showAdded = committedView?.order.kind === "Added";
     if (item.kind === "podcast") {
       const row = presentPodcast(
         {
@@ -1841,7 +2156,7 @@ export default function LibraryPaneBody() {
             `podcast:${item.podcast.id}`,
           ),
           settings:
-            item.subscription?.status === "active"
+            viewIsCommitted && item.subscription?.status === "active"
               ? {
                   kind: "Available",
                   execute: () =>
@@ -1854,14 +2169,14 @@ export default function LibraryPaneBody() {
                 }
               : { kind: "Unavailable" },
           refreshSync:
-            item.subscription?.status === "active"
+            viewIsCommitted && item.subscription?.status === "active"
               ? {
                   kind: "Available",
                   execute: () => handleRefreshPodcast(item),
                 }
               : { kind: "Unavailable" },
           subscription:
-            item.subscription?.status === "active"
+            viewIsCommitted && item.subscription?.status === "active"
               ? {
                   kind: "Subscribed",
                   execute: () => handleUnsubscribePodcast(item),
@@ -1893,69 +2208,79 @@ export default function LibraryPaneBody() {
       readingTimeEstimate: item.readingTimeEstimate,
       connectionSummary: connectionSummaries.get(`media:${item.media.id}`),
       retryProcessing:
-        item.media.capabilities.can_retry
-          ? {
-              kind: "Available",
-              execute: () => handleRetryProcessing(item.media.id),
-            }
-          : { kind: "Unavailable" },
+        viewIsCommitted && item.media.capabilities.can_retry
+        ? {
+            kind: "Available",
+            execute: () => handleRetryProcessing(item.media.id),
+          }
+        : { kind: "Unavailable" },
       refreshSource:
-        item.media.capabilities.can_refresh_source
-          ? {
-              kind: "Available",
-              execute: () => handleRefreshSource(item.media.id),
-            }
-          : { kind: "Unavailable" },
+        viewIsCommitted && item.media.capabilities.can_refresh_source
+        ? {
+            kind: "Available",
+            execute: () => handleRefreshSource(item.media.id),
+          }
+        : { kind: "Unavailable" },
       retryMetadata:
-        item.media.capabilities.can_retry_metadata
-          ? {
-              kind: "Available",
-              execute: () => handleRetryMetadata(item.media.id),
-            }
-          : { kind: "Unavailable" },
-      editAuthors: item.media.capabilities.can_edit_authors
+        viewIsCommitted && item.media.capabilities.can_retry_metadata
+        ? {
+            kind: "Available",
+            execute: () => handleRetryMetadata(item.media.id),
+          }
+        : { kind: "Unavailable" },
+      editAuthors:
+        viewIsCommitted && item.media.capabilities.can_edit_authors
         ? {
             kind: "Available",
             execute: (detail) => openAuthorsEditor(item.media.id, detail),
           }
         : { kind: "Unavailable" },
       removeMedia:
-        item.media.capabilities.can_delete
+        viewIsCommitted && item.media.capabilities.can_delete
+        ? {
+            kind: "Available",
+            execute: () => handleDeleteMedia(item),
+          }
+        : { kind: "Unavailable" },
+      progressReset:
+        viewIsCommitted &&
+        item.media.progress_resettable &&
+        !updatingConsumptionMediaIds.has(item.media.id)
           ? {
               kind: "Available",
-              execute: () => handleDeleteMedia(item),
+              execute: () =>
+                handleResetProgress(
+                  item.media.id,
+                  item.media.kind === "video",
+                ),
             }
           : { kind: "Unavailable" },
       readState:
-        item.media.read_state === "finished"
+        !viewIsCommitted
+          ? { kind: "Unavailable" }
+          : item.media.read_state === "finished"
           ? {
               kind: "MarkUnread",
-              execute: () =>
-                handleSetConsumption(item.media.id, "unread"),
+              execute: () => handleSetConsumption(item.media.id, "unread"),
             }
           : {
               kind: "MarkFinished",
               execute: () => {
                 if (hideFinished) {
-                  captureFocusNeighbor(
-                    libraryRowKey(item, isDefaultLibrary),
-                  );
+                  captureFocusNeighbor(libraryRowKey(item, isDefaultLibrary));
                 }
                 return handleSetConsumption(item.media.id, "finished");
               },
             },
       lecternMembership:
-        lectern.resource.status !== "ready"
+        !viewIsCommitted || lectern.resource.status !== "ready"
           ? { kind: "Unavailable" }
           : lecternItem
             ? {
                 kind: "Remove",
                 itemId: lecternItem.itemId,
                 execute: () =>
-                  handleRemoveFromLectern(
-                    item.media.id,
-                    lecternItem.itemId,
-                  ),
+                  handleRemoveFromLectern(item.media.id, lecternItem.itemId),
               }
             : {
                 kind: "Add",
@@ -1979,6 +2304,9 @@ export default function LibraryPaneBody() {
               RESOURCE_ACTION_CATALOG.MarkFinished.id,
               RESOURCE_ACTION_CATALOG.MarkUnread.id,
             ]
+          : []),
+        ...(resettingProgressMediaIds.ids.has(item.media.id)
+          ? [RESOURCE_ACTION_CATALOG.ResetProgress.id]
           : []),
         ...(addingToLecternMediaIds.ids.has(item.media.id)
           ? [RESOURCE_ACTION_CATALOG.AddToLectern.id]
@@ -2024,7 +2352,7 @@ export default function LibraryPaneBody() {
               </Select>
             </label>
             <Toggle
-              checked={hideFinished}
+              checked={view.completion === "unfinished"}
               onCheckedChange={(checked) =>
                 setView({
                   order: view.order,
@@ -2054,6 +2382,7 @@ export default function LibraryPaneBody() {
       rows={visibleEntryRows}
       status="ready"
       ariaLabel="Library entries"
+      rowActionsAvailable={viewIsCommitted}
       footer={entryFooter}
       surface={false}
       sortable={
@@ -2076,14 +2405,6 @@ export default function LibraryPaneBody() {
             }
           : undefined
       }
-    />
-  ) : !isInitialView && viewFetch.loading ? (
-    <PaneLoadingState />
-  ) : !isInitialView && viewFetch.error !== null ? (
-    <FeedbackNotice
-      feedback={toFeedback(viewFetch.error, {
-        fallback: "Failed to load library entries",
-      })}
     />
   ) : entryCursor !== null ? (
     // Empty after filtering but more pages remain: the auto-advance effect is
@@ -2129,7 +2450,17 @@ export default function LibraryPaneBody() {
           ) : null
         }
       >
-        <div ref={listRegionRef}>{mainBody}</div>
+        <div
+          ref={listRegionRef}
+          role="region"
+          aria-label="Library entries"
+          aria-busy={
+            entriesState?.kind === "Refreshing" ? true : undefined
+          }
+        >
+          {entryViewNotice}
+          {mainBody}
+        </div>
         <ReadingSlateSection
           returnScope="Library.ReadingSlate"
           destination={{

@@ -11,6 +11,7 @@ import { horizontallyScrollableElements } from "@/__tests__/helpers/horizontalOv
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { ResourceCacheProvider } from "@/lib/api/resourceCache";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
+import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { decodeLibraryReadingTimeEntry } from "@/lib/libraries/readingTime";
@@ -47,6 +48,8 @@ function library(id = LIBRARY_ID, name = "Research") {
     canEditEntries: true,
     canManageMembers: true,
     canTransferOwnership: true,
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
   };
 }
 
@@ -80,24 +83,26 @@ function SwitchingHarness({
         >
           <ShareControllerProvider>
             <LecternProvider>
-              <PaneRuntimeProvider
-                paneId="pane-library"
-                visitId={TEST_VISIT_ID}
-                isActive={isActive}
-                href={href}
-                routeId={identity.routeId}
-                routeKey={identity.routeKey}
-                pathParams={{ id: libraryId }}
-                canGoBack={false}
-                canGoForward={false}
-                onNavigatePane={vi.fn()}
-                onReplacePane={vi.fn()}
-                onOpenInNewPane={vi.fn()}
-                onGoBackPane={vi.fn()}
-                onGoForwardPane={vi.fn()}
-              >
-                {children}
-              </PaneRuntimeProvider>
+              <LibraryPlacementControllerProvider>
+                <PaneRuntimeProvider
+                  paneId="pane-library"
+                  visitId={TEST_VISIT_ID}
+                  isActive={isActive}
+                  href={href}
+                  routeId={identity.routeId}
+                  routeKey={identity.routeKey}
+                  pathParams={{ id: libraryId }}
+                  canGoBack={false}
+                  canGoForward={false}
+                  onNavigatePane={vi.fn()}
+                  onReplacePane={vi.fn()}
+                  onOpenInNewPane={vi.fn()}
+                  onGoBackPane={vi.fn()}
+                  onGoForwardPane={vi.fn()}
+                >
+                  {children}
+                </PaneRuntimeProvider>
+              </LibraryPlacementControllerProvider>
             </LecternProvider>
           </ShareControllerProvider>
         </ResourceCacheProvider>
@@ -131,8 +136,10 @@ function entryWire(
       image_url: presentation.image_url ?? null,
       thumbnail_url: presentation.thumbnail_url ?? null,
       canonical_source_url: null,
+      created_at: "2026-01-01T00:00:00Z",
       processing_status: "ready_for_reading",
       read_state: "unread",
+      progress_resettable: false,
       progress_fraction: null,
       capabilities: { can_quote: true },
     },
@@ -222,24 +229,26 @@ function Harness({
         >
           <ShareControllerProvider>
             <LecternProvider>
-              <PaneRuntimeProvider
-                paneId="pane-library"
-                visitId={TEST_VISIT_ID}
-                isActive={isActive}
-                href={href}
-                routeId={identity.routeId}
-                routeKey={identity.routeKey}
-                pathParams={{ id: LIBRARY_ID }}
-                canGoBack={false}
-                canGoForward={false}
-                onNavigatePane={vi.fn()}
-                onReplacePane={vi.fn()}
-                onOpenInNewPane={vi.fn()}
-                onGoBackPane={vi.fn()}
-                onGoForwardPane={vi.fn()}
-              >
-                {children}
-              </PaneRuntimeProvider>
+              <LibraryPlacementControllerProvider>
+                <PaneRuntimeProvider
+                  paneId="pane-library"
+                  visitId={TEST_VISIT_ID}
+                  isActive={isActive}
+                  href={href}
+                  routeId={identity.routeId}
+                  routeKey={identity.routeKey}
+                  pathParams={{ id: LIBRARY_ID }}
+                  canGoBack={false}
+                  canGoForward={false}
+                  onNavigatePane={vi.fn()}
+                  onReplacePane={vi.fn()}
+                  onOpenInNewPane={vi.fn()}
+                  onGoBackPane={vi.fn()}
+                  onGoForwardPane={vi.fn()}
+                >
+                  {children}
+                </PaneRuntimeProvider>
+              </LibraryPlacementControllerProvider>
             </LecternProvider>
           </ShareControllerProvider>
         </ResourceCacheProvider>
@@ -292,7 +301,8 @@ describe("LibraryPaneBody Reading Slate host", () => {
               outcome: { kind: "StateOnly" },
               lectern: { items: [] },
               nextItem: { kind: "Absent" },
-              listeningStates: [],
+              progressState: { kind: "Absent" },
+              completionHandle: { kind: "Absent" },
             },
           });
         }
@@ -322,7 +332,9 @@ describe("LibraryPaneBody Reading Slate host", () => {
         }}
       >
         <LecternProvider>
-          <LibraryPaneBody />
+          <LibraryPlacementControllerProvider>
+            <LibraryPaneBody />
+          </LibraryPlacementControllerProvider>
         </LecternProvider>
       </PaneReturnJourneyHarness>
     );
@@ -511,7 +523,7 @@ describe("LibraryPaneBody Reading Slate host", () => {
         method === "POST"
       ) {
         podcastBodies.push(String(init?.body));
-        return response({ data: {} });
+        return new Response(null, { status: 204 });
       }
       throw new Error(`Unexpected fetch: ${method} ${path}`);
     });
@@ -618,6 +630,145 @@ describe("LibraryPaneBody Reading Slate host", () => {
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
   });
+
+  it.each(["after commit", "while refreshing"] as const)(
+    "reconciles the current committed view when an earlier-view Add finishes %s",
+    async (completionTiming) => {
+      let resolveAdd!: (response: Response) => void;
+      const pendingAdd = new Promise<Response>((resolve) => {
+        resolveAdd = resolve;
+      });
+      let resolveInitialTitle!: (response: Response) => void;
+      const pendingInitialTitle = new Promise<Response>((resolve) => {
+        resolveInitialTitle = resolve;
+      });
+      let slateReads = 0;
+      let titleEntryReads = 0;
+      const currentTitleResponse = () =>
+        response({
+          data: [
+            entryWire("entry-title", SECOND_MEDIA_ID, "Current title view"),
+          ],
+          page: { has_more: false, next_cursor: null },
+        });
+      const fetchMock = vi.fn(
+        async (input: RequestInfo | URL, init?: RequestInit) => {
+          const path = pathWithSearch(input);
+          const method = (init?.method ?? "GET").toUpperCase();
+          if (path === "/api/lectern" && method === "GET") {
+            return response({ data: { items: [] } });
+          }
+          if (
+            path === `/api/libraries/${LIBRARY_ID}/slate` &&
+            method === "GET"
+          ) {
+            slateReads += 1;
+            return response({
+              data: { items: slateReads === 1 ? [slateItem()] : [] },
+            });
+          }
+          if (
+            path === `/api/media/${SUGGESTED_MEDIA_ID}/libraries` &&
+            method === "POST"
+          ) {
+            return pendingAdd;
+          }
+          if (
+            path ===
+              `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc` &&
+            method === "GET"
+          ) {
+            titleEntryReads += 1;
+            if (
+              titleEntryReads === 1 &&
+              completionTiming === "while refreshing"
+            ) {
+              return pendingInitialTitle;
+            }
+            return response({
+              data:
+                titleEntryReads === 1
+                  ? [
+                      entryWire(
+                        "entry-title",
+                        SECOND_MEDIA_ID,
+                        "Current title view",
+                      ),
+                    ]
+                  : [
+                      entryWire(
+                        "entry-title",
+                        SECOND_MEDIA_ID,
+                        "Current title view",
+                      ),
+                      entryWire(
+                        "entry-suggested",
+                        SUGGESTED_MEDIA_ID,
+                        "Suggested work",
+                      ),
+                    ],
+              page: { has_more: false, next_cursor: null },
+            });
+          }
+          throw new Error(`Unexpected fetch: ${method} ${path}`);
+        },
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const user = userEvent.setup();
+      const renderPane = (search = "") => (
+        <Harness isActive search={search}>
+          <LibraryPaneBody />
+        </Harness>
+      );
+      const view = render(renderPane());
+
+      await user.click(
+        await screen.findByRole("button", {
+          name: "Add Suggested work to Research",
+        }),
+      );
+      view.rerender(renderPane("sort=title&direction=asc"));
+
+      if (completionTiming === "after commit") {
+        expect(await screen.findByText("Current title view")).toBeVisible();
+      } else {
+        await waitFor(() => expect(titleEntryReads).toBe(1));
+      }
+
+      await act(async () => {
+        resolveAdd(new Response(null, { status: 204 }));
+        await pendingAdd;
+      });
+      if (completionTiming === "while refreshing") {
+        expect(titleEntryReads).toBe(1);
+        await act(async () => {
+          resolveInitialTitle(currentTitleResponse());
+          await pendingInitialTitle;
+        });
+      }
+
+      await waitFor(() => expect(titleEntryReads).toBe(2));
+      const libraryEntries = screen.getByRole("list", {
+        name: "Library entries",
+      });
+      expect(
+        await within(libraryEntries).findByText("Suggested work"),
+      ).toBeVisible();
+      expect(
+        within(libraryEntries).getByText("Current title view"),
+      ).toBeVisible();
+      expect(
+        fetchMock.mock.calls.some(
+          ([input, init]) =>
+            pathWithSearch(input as RequestInfo | URL) ===
+              `/api/libraries/${LIBRARY_ID}/entries` &&
+            (
+              (init as RequestInit | undefined)?.method ?? "GET"
+            ).toUpperCase() === "GET",
+        ),
+      ).toBe(false);
+    },
+  );
 
   it("retries the exact Add, preserves main rows, and reconciles only the current view", async () => {
     let slateReads = 0;

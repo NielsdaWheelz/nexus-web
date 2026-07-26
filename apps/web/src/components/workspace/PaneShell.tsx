@@ -90,6 +90,7 @@ interface PaneShellProps {
   label: string;
   labelPending?: boolean;
   returnMementoEnabled: boolean;
+  queryNavigation?: "in-place";
   sizing: EffectivePaneSizing;
   bodyMode: PaneBodyMode;
   secondaryPane?: WorkspaceAttachedSecondaryPaneState | null;
@@ -117,6 +118,7 @@ export default function PaneShell({
   label,
   labelPending = false,
   returnMementoEnabled,
+  queryNavigation,
   sizing,
   bodyMode,
   secondaryPane = null,
@@ -178,6 +180,10 @@ export default function PaneShell({
     paneId,
     enabled: returnMementoEnabled,
     scrollportRef: bodyRef,
+    routeContinuityKey:
+      queryNavigation === "in-place"
+        ? `${paneRuntime.visitId}:${paneRuntime.routeId}:${paneRuntime.pathname}`
+        : null,
   });
   const { openShare } = useShareController();
   const { openLibraryPlacement } = useLibraryPlacementController();

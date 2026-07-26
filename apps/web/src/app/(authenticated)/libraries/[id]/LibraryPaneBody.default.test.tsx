@@ -8,6 +8,7 @@ import {
   stubFetch,
 } from "@/__tests__/helpers/fetch";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
+import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { decodeLibraryReadingTimeEntry } from "@/lib/libraries/readingTime";
 import LibraryPaneBody from "./LibraryPaneBody";
 
@@ -20,6 +21,10 @@ import LibraryPaneBody from "./LibraryPaneBody";
 
 const LIBRARY_ID = "00000000-0000-4000-8000-000000000204";
 const LIBRARY_NAME = "My Library";
+const FIRST_MEDIA_ID = "11111111-1111-4111-8111-111111111111";
+const SECOND_MEDIA_ID = "22222222-2222-4222-8222-222222222222";
+const TITLED_MEDIA_ID = "33333333-3333-4333-8333-333333333333";
+const OLDEST_MEDIA_ID = "44444444-4444-4444-8444-444444444444";
 
 function seededDefaultLibrary() {
   return {
@@ -36,6 +41,8 @@ function seededDefaultLibrary() {
     canEditEntries: true,
     canManageMembers: false,
     canTransferOwnership: false,
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
   };
 }
 
@@ -65,6 +72,7 @@ function mediaEntryWire(
         options.mediaCreatedAt ?? options.createdAt ?? "2026-01-01T00:00:00Z",
       processing_status: "ready_for_reading",
       read_state: "unread",
+      progress_resettable: false,
       progress_fraction: null,
       capabilities: { can_quote: true },
     },
@@ -94,7 +102,9 @@ function fetchInputPathWithSearch(input: unknown): string {
 // empty snapshot envelope so the provider settles to Ready without console noise.
 const paneWithLectern = (
   <LecternProvider>
-    <LibraryPaneBody />
+    <LibraryPlacementControllerProvider>
+      <LibraryPaneBody />
+    </LibraryPlacementControllerProvider>
   </LecternProvider>
 );
 
@@ -128,8 +138,8 @@ describe("LibraryPaneBody (Default library)", () => {
         [LIBRARY_ID]: {
           library: seededDefaultLibrary(),
           entries: [
-            seededMediaEntry("entry-1", "media-1", "First Default Work"),
-            seededMediaEntry("entry-2", "media-2", "Second Default Work"),
+            seededMediaEntry("entry-1", FIRST_MEDIA_ID, "First Default Work"),
+            seededMediaEntry("entry-2", SECOND_MEDIA_ID, "Second Default Work"),
           ],
           entriesPage: { has_more: false, next_cursor: null },
         },
@@ -189,7 +199,9 @@ describe("LibraryPaneBody (Default library)", () => {
         `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`
       ) {
         return Response.json({
-          data: [mediaEntryWire("entry-t1", "media-t1", "Titled Default Work")],
+          data: [
+            mediaEntryWire("entry-t1", TITLED_MEDIA_ID, "Titled Default Work"),
+          ],
           page: { has_more: false, next_cursor: null },
         });
       }
@@ -204,7 +216,9 @@ describe("LibraryPaneBody (Default library)", () => {
       resources: {
         [LIBRARY_ID]: {
           library: seededDefaultLibrary(),
-          entries: [seededMediaEntry("entry-1", "media-1", "Canonical Seed")],
+          entries: [
+            seededMediaEntry("entry-1", FIRST_MEDIA_ID, "Canonical Seed"),
+          ],
           entriesPage: { has_more: false, next_cursor: null },
         },
       },
@@ -231,8 +245,8 @@ describe("LibraryPaneBody (Default library)", () => {
         // present on the first page, alongside one genuinely new entry.
         return Response.json({
           data: [
-            mediaEntryWire("entry-1b", "media-1", "First Default Work"),
-            mediaEntryWire("entry-2", "media-2", "Second Default Work"),
+            mediaEntryWire("entry-1b", FIRST_MEDIA_ID, "First Default Work"),
+            mediaEntryWire("entry-2", SECOND_MEDIA_ID, "Second Default Work"),
           ],
           page: { has_more: false, next_cursor: null },
         });
@@ -248,7 +262,13 @@ describe("LibraryPaneBody (Default library)", () => {
       resources: {
         [LIBRARY_ID]: {
           library: seededDefaultLibrary(),
-          entries: [seededMediaEntry("entry-1", "media-1", "First Default Work")],
+          entries: [
+            seededMediaEntry(
+              "entry-1",
+              FIRST_MEDIA_ID,
+              "First Default Work",
+            ),
+          ],
           entriesPage: { has_more: true, next_cursor: "cursor-2" },
         },
       },
@@ -286,7 +306,7 @@ describe("LibraryPaneBody (Default library)", () => {
       ) {
         return Response.json({
           data: [
-            mediaEntryWire("entry-a1", "media-a1", "Oldest Default Work", {
+            mediaEntryWire("entry-a1", OLDEST_MEDIA_ID, "Oldest Default Work", {
               createdAt: entryCreatedIso,
               mediaCreatedAt: mediaCreatedIso,
             }),
@@ -305,7 +325,9 @@ describe("LibraryPaneBody (Default library)", () => {
       resources: {
         [LIBRARY_ID]: {
           library: seededDefaultLibrary(),
-          entries: [seededMediaEntry("entry-1", "media-1", "Canonical Seed")],
+          entries: [
+            seededMediaEntry("entry-1", FIRST_MEDIA_ID, "Canonical Seed"),
+          ],
           entriesPage: { has_more: false, next_cursor: null },
         },
       },
@@ -334,7 +356,7 @@ describe("LibraryPaneBody (Default library)", () => {
         [LIBRARY_ID]: {
           library: seededDefaultLibrary(),
           entries: [
-            seededMediaEntry("entry-1", "media-1", "Canonical Seed", {
+            seededMediaEntry("entry-1", FIRST_MEDIA_ID, "Canonical Seed", {
               mediaCreatedAt: mediaCreatedIso,
             }),
           ],

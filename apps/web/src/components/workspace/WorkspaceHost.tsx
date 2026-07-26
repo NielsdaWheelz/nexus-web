@@ -13,6 +13,7 @@ import {
 import {
   resolvePaneResourceLocator,
   resolvePaneRouteShareIdentity,
+  type PaneResourceLocator,
   type PaneRouteShareIdentity,
 } from "@/lib/panes/paneResourceLocator";
 import { PaneSecondaryContext } from "@/components/workspace/PaneSecondary";
@@ -395,7 +396,7 @@ const PaneContent = memo(function PaneContent({
 
   const contentMountKey =
     route.definition?.queryNavigation === "in-place"
-      ? `${route.id}:${route.pathname}`
+      ? `${visitId}:${route.id}:${route.pathname}`
       : route.definition?.returnMemento.kind === "ShellScroll"
       ? `${visitId}:${routeKey}`
       : routeMountKey;
@@ -702,10 +703,10 @@ function WorkspaceHost() {
     useState<Map<string, PaneFixedChromePublicationRecord>>(() => new Map());
   const [secondaryActivationByPaneId, setSecondaryActivationByPaneId] =
     useState<Map<string, SecondaryActivationDelivery>>(() => new Map());
-  const [resourceItemByRouteKey, setResourceItemByRouteKey] = useState<Map<string, ResourceItem>>(
+  const [resourceItemByLocatorKey, setResourceItemByLocatorKey] = useState<Map<string, ResourceItem>>(
     () => new Map(),
   );
-  const [resourceStatusByRouteKey, setResourceStatusByRouteKey] = useState<
+  const [resourceStatusByLocatorKey, setResourceStatusByLocatorKey] = useState<
     Map<string, PaneResourceStatus>
   >(() => new Map());
   const keybindings = useKeybindings();
@@ -741,70 +742,77 @@ function WorkspaceHost() {
   currentRouteKeyByPaneIdRef.current = currentRouteKeyByPaneId;
   const secondaryPublicationByPaneIdRef = useRef(secondaryPublicationByPaneId);
   secondaryPublicationByPaneIdRef.current = secondaryPublicationByPaneId;
-  const resourceStatusByRouteKeyRef = useRef(resourceStatusByRouteKey);
-  resourceStatusByRouteKeyRef.current = resourceStatusByRouteKey;
-  const resourceLocatorEntries = useMemo(
-    () =>
-      paneDescriptors.flatMap(({ descriptor }) => {
-        const locator = resolvePaneResourceLocator(descriptor.route);
-        return locator
-          ? [{ routeKey: descriptor.routeKey, locator }]
-          : [];
-      }),
-    [paneDescriptors],
+  const resourceStatusByLocatorKeyRef = useRef(resourceStatusByLocatorKey);
+  resourceStatusByLocatorKeyRef.current = resourceStatusByLocatorKey;
+  const resourceLocatorsByKey = useMemo(() => {
+    const next = new Map<string, PaneResourceLocator>();
+    for (const { descriptor } of paneDescriptors) {
+      const locator = resolvePaneResourceLocator(descriptor.route);
+      const locatorKey = paneResourceLocatorKey(locator);
+      if (locator && locatorKey) {
+        next.set(locatorKey, locator);
+      }
+    }
+    return next;
+  }, [paneDescriptors]);
+  const liveResourceLocatorKeysRef = useRef(
+    new Set(resourceLocatorsByKey.keys()),
   );
-  const resourceLocatorRouteKeys = useMemo(
-    () => new Set(resourceLocatorEntries.map((entry) => entry.routeKey)),
-    [resourceLocatorEntries],
-  );
+  liveResourceLocatorKeysRef.current = new Set(resourceLocatorsByKey.keys());
 
   useEffect(() => {
-    const unresolved = resourceLocatorEntries.filter(
-      ({ routeKey }) =>
-        !resourceItemByRouteKey.has(routeKey) &&
-        !resourceStatusByRouteKeyRef.current.has(routeKey),
+    const unresolved = Array.from(resourceLocatorsByKey).filter(
+      ([locatorKey]) =>
+        !resourceItemByLocatorKey.has(locatorKey) &&
+        !resourceStatusByLocatorKeyRef.current.has(locatorKey),
     );
     if (unresolved.length === 0) {
       return;
     }
 
-    setResourceStatusByRouteKey((current) => {
+    setResourceStatusByLocatorKey((current) => {
       const next = new Map(current);
-      for (const entry of unresolved) next.set(entry.routeKey, "pending");
+      for (const [locatorKey] of unresolved) next.set(locatorKey, "pending");
       return next;
     });
 
-    let cancelled = false;
-    resolveResourceLocators(unresolved.map((entry) => entry.locator))
+    resolveResourceLocators(unresolved.map(([, locator]) => locator))
       .then((resolutions) => {
-        if (cancelled) return;
-        setResourceItemByRouteKey((current) => {
+        setResourceItemByLocatorKey((current) => {
           const next = new Map(current);
-          resolutions.forEach((resolution, index) => {
-            const routeKey = unresolved[index]?.routeKey;
-            if (routeKey) next.set(routeKey, resolution.resourceItem);
-          });
+          for (const resolution of resolutions) {
+            const locatorKey = paneResourceLocatorKey(resolution.locator);
+            if (
+              locatorKey &&
+              liveResourceLocatorKeysRef.current.has(locatorKey)
+            ) {
+              next.set(locatorKey, resolution.resourceItem);
+            }
+          }
           return next;
         });
-        setResourceStatusByRouteKey((current) => {
+        setResourceStatusByLocatorKey((current) => {
           const next = new Map(current);
-          for (const entry of unresolved) next.set(entry.routeKey, "ready");
+          for (const [locatorKey] of unresolved) {
+            if (liveResourceLocatorKeysRef.current.has(locatorKey)) {
+              next.set(locatorKey, "ready");
+            }
+          }
           return next;
         });
       })
       .catch(() => {
-        if (cancelled) return;
-        setResourceStatusByRouteKey((current) => {
+        setResourceStatusByLocatorKey((current) => {
           const next = new Map(current);
-          for (const entry of unresolved) next.set(entry.routeKey, "error");
+          for (const [locatorKey] of unresolved) {
+            if (liveResourceLocatorKeysRef.current.has(locatorKey)) {
+              next.set(locatorKey, "error");
+            }
+          }
           return next;
         });
       });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [resourceItemByRouteKey, resourceLocatorEntries]);
+  }, [resourceItemByLocatorKey, resourceLocatorsByKey]);
 
   const publishPaneLayout = useCallback((input: PaneRuntimeLayoutPublication) => {
     if (currentRouteKeyByPaneIdRef.current.get(input.paneId) !== input.routeKey) {
@@ -884,26 +892,26 @@ function WorkspaceHost() {
       }
       return next ?? current;
     });
-    const liveRouteKeys = new Set(currentRouteKeyByPaneId.values());
-    setResourceItemByRouteKey((current) => {
+    const liveLocatorKeys = new Set(resourceLocatorsByKey.keys());
+    setResourceItemByLocatorKey((current) => {
       let next: Map<string, ResourceItem> | null = null;
-      for (const routeKey of current.keys()) {
-        if (liveRouteKeys.has(routeKey)) continue;
+      for (const locatorKey of current.keys()) {
+        if (liveLocatorKeys.has(locatorKey)) continue;
         next ??= new Map(current);
-        next.delete(routeKey);
+        next.delete(locatorKey);
       }
       return next ?? current;
     });
-    setResourceStatusByRouteKey((current) => {
+    setResourceStatusByLocatorKey((current) => {
       let next: Map<string, PaneResourceStatus> | null = null;
-      for (const routeKey of current.keys()) {
-        if (liveRouteKeys.has(routeKey)) continue;
+      for (const locatorKey of current.keys()) {
+        if (liveLocatorKeys.has(locatorKey)) continue;
         next ??= new Map(current);
-        next.delete(routeKey);
+        next.delete(locatorKey);
       }
       return next ?? current;
     });
-  }, [currentRouteKeyByPaneId]);
+  }, [currentRouteKeyByPaneId, resourceLocatorsByKey]);
 
   useEffect(() => {
     const nextTelemetryByPaneId = new Map<string, string>();
@@ -932,17 +940,22 @@ function WorkspaceHost() {
 
   const panes = useMemo(
     () =>
-      paneDescriptors.map(({ pane, descriptor }) =>
-        buildHostPane({
+      paneDescriptors.map(({ pane, descriptor }) => {
+        const resourceLocatorKey = paneResourceLocatorKey(
+          resolvePaneResourceLocator(descriptor.route),
+        );
+        return buildHostPane({
           pane,
           secondaryPane: pane.attachedSecondaryPaneId
             ? state.secondaryPanesById[pane.attachedSecondaryPaneId] ?? null
             : null,
           descriptor,
-          resourceItem: resourceItemByRouteKey.get(descriptor.routeKey) ?? null,
-          resourceStatus:
-            resourceStatusByRouteKey.get(descriptor.routeKey) ??
-            (resourceLocatorRouteKeys.has(descriptor.routeKey) ? "pending" : "none"),
+          resourceItem: resourceLocatorKey
+            ? resourceItemByLocatorKey.get(resourceLocatorKey) ?? null
+            : null,
+          resourceStatus: resourceLocatorKey
+            ? resourceStatusByLocatorKey.get(resourceLocatorKey) ?? "pending"
+            : "none",
           isActive: pane.id === state.activePrimaryPaneId,
           runtimeLayout: getRuntimePaneLayout(
             runtimeLayoutByPaneId,
@@ -961,15 +974,14 @@ function WorkspaceHost() {
           ),
           isMobile,
           workspacePrimaryMetrics,
-        })
-      ),
+        });
+      }),
     [
       paneDescriptors,
       state.activePrimaryPaneId,
       state.secondaryPanesById,
-      resourceItemByRouteKey,
-      resourceLocatorRouteKeys,
-      resourceStatusByRouteKey,
+      resourceItemByLocatorKey,
+      resourceStatusByLocatorKey,
       runtimeLayoutByPaneId,
       secondaryPublicationByPaneId,
       fixedChromePublicationByPaneId,
@@ -1416,6 +1428,7 @@ function WorkspaceHost() {
                       routeShareIdentity={pane.routeShareIdentity}
                       label={pane.label}
                       labelPending={pane.labelState === "pending"}
+                      queryNavigation={pane.route.definition.queryNavigation}
                       returnMementoEnabled={
                         pane.route.definition.returnMemento.kind ===
                         "ShellScroll"

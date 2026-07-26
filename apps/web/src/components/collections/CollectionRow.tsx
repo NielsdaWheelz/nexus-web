@@ -359,6 +359,7 @@ export default function CollectionRow({
   panel,
   primaryControl,
   reorder,
+  rowActionsAvailable = true,
   viewTransitionName,
 }: {
   readonly row: CollectionRowView;
@@ -366,6 +367,7 @@ export default function CollectionRow({
   readonly panel?: ReactNode;
   readonly primaryControl?: ReactNode;
   readonly reorder?: SortableActivatorProps;
+  readonly rowActionsAvailable?: boolean;
   readonly viewTransitionName?: string;
 }) {
   const [showPeers, setShowPeers] = useState(false);
@@ -497,7 +499,9 @@ export default function CollectionRow({
 
   let actions: ReactNode;
   const menuLabel = `More actions for ${row.title.text}`;
-  if (row.actionPublication.kind === "ResourceMenu") {
+  if (!rowActionsAvailable) {
+    actions = undefined;
+  } else if (row.actionPublication.kind === "ResourceMenu") {
     actions = (
       <ResourceCollectionRowActionMenu
         publication={row.actionPublication}

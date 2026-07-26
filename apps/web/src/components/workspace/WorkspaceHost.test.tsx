@@ -33,7 +33,12 @@ import {
   type WorkspaceState,
 } from "@/lib/workspace/schema";
 import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
+import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
+import { ShareControllerProvider } from "@/lib/sharing/controller";
+import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 
+const LIBRARY_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const MEDIA_ID_1 = "11111111-1111-4111-8111-111111111111";
 const MEDIA_ID_2 = "22222222-2222-4222-8222-222222222222";
 const MEDIA_ID_3 = "33333333-3333-4333-8333-333333333333";
@@ -163,6 +168,22 @@ function mediaResourceItem(id: string): ResourceItem {
   };
 }
 
+function libraryResourceItem(id: string): ResourceItem {
+  const ref = `library:${id}`;
+  return {
+    ...mediaResourceItem(id),
+    ref,
+    scheme: "library",
+    route: `/libraries/${id}`,
+    activation: {
+      resourceRef: ref,
+      kind: "route",
+      href: `/libraries/${id}`,
+      unresolvedReason: null,
+    },
+  };
+}
+
 function mediaRoute(href: string) {
   const url = new URL(href, "http://localhost");
   const id = url.pathname.split("/")[2] ?? "";
@@ -184,6 +205,10 @@ function mediaRoute(href: string) {
 }
 
 function routeForHostTest(href: string) {
+  const resolvedRoute = resolvePaneRouteModel(href);
+  if (resolvedRoute.id === "library") {
+    return resolvedRoute;
+  }
   const route = mediaRoute(href);
   switch (route.pathname) {
     case "/libraries":
@@ -333,6 +358,7 @@ function TestPaneBody() {
           ? paneRuntime.secondaryActivation.revisionRef
           : "none"
       }
+      style={hostMocks.useActualPaneShell ? { minHeight: 1200 } : undefined}
     >
       {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- justify-eslint-override: test fixture uses a plain anchor so WorkspaceHost link interception is the behavior under test */}
       <a href="/authors/body-author" data-pane-label-hint="Body Author">
@@ -572,9 +598,15 @@ import WorkspaceHostImpl from "@/components/workspace/WorkspaceHost";
 
 function WorkspaceHost() {
   return (
-    <PaneReturnMementoProvider>
-      <WorkspaceHostImpl />
-    </PaneReturnMementoProvider>
+    <FeedbackProvider>
+      <LibraryPlacementControllerProvider>
+        <ShareControllerProvider>
+          <PaneReturnMementoProvider>
+            <WorkspaceHostImpl />
+          </PaneReturnMementoProvider>
+        </ShareControllerProvider>
+      </LibraryPlacementControllerProvider>
+    </FeedbackProvider>
   );
 }
 
@@ -733,6 +765,84 @@ describe("WorkspaceHost pane route lifecycle", () => {
     ).not.toBeInTheDocument();
     expect(hostMocks.mountedBodyIds).toHaveLength(1);
     expect(hostMocks.unmountedBodyIds).toEqual([]);
+  });
+
+  it("keeps Library query replacements mounted with focus and scroll intact", () => {
+    setPaneHref(`/libraries/${LIBRARY_ID}?sort=title&direction=asc`);
+    const { rerender } = render(<WorkspaceHost />);
+    const firstInstance = screen.getByTestId("route-body").dataset.instanceId;
+    const control = screen.getByRole("textbox", { name: "Pane body control" });
+    const scrollport = screen.getByTestId("route-body-scrollport");
+    scrollport.scrollTop = 180;
+    control.focus();
+
+    replaceCurrentPaneHref(
+      `/libraries/${LIBRARY_ID}?sort=creator&direction=asc`,
+    );
+    rerender(<WorkspaceHost />);
+
+    expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+      "data-route-key",
+      `library:/libraries/${LIBRARY_ID}?sort=creator&direction=asc`,
+    );
+    expect(screen.getByTestId("route-body")).toHaveAttribute(
+      "data-runtime-href",
+      `/libraries/${LIBRARY_ID}?sort=creator&direction=asc`,
+    );
+    expect(screen.getByTestId("route-body")).toHaveAttribute(
+      "data-instance-id",
+      firstInstance,
+    );
+    expect(screen.getByRole("textbox", { name: "Pane body control" })).toHaveFocus();
+    expect(screen.getByTestId("route-body-scrollport").scrollTop).toBe(180);
+    expect(hostMocks.mountedBodyIds).toHaveLength(1);
+    expect(hostMocks.unmountedBodyIds).toEqual([]);
+  });
+
+  it("does not reset Library ShellScroll when only the query changes", () => {
+    hostMocks.useActualPaneShell = true;
+    setPaneHref(`/libraries/${LIBRARY_ID}?sort=title&direction=asc`);
+    const { rerender } = render(
+      <MobileChromeProvider>
+        <WorkspaceHost />
+      </MobileChromeProvider>,
+    );
+    const scrollport = screen.getByTestId("pane-shell-body");
+    scrollport.style.height = "100px";
+    scrollport.style.flex = "0 0 100px";
+    scrollport.scrollTop = 180;
+    expect(scrollport.scrollTop).toBe(180);
+
+    replaceCurrentPaneHref(
+      `/libraries/${LIBRARY_ID}?sort=creator&direction=asc`,
+    );
+    rerender(
+      <MobileChromeProvider>
+        <WorkspaceHost />
+      </MobileChromeProvider>,
+    );
+
+    expect(screen.getByTestId("pane-shell-body")).toBe(scrollport);
+    expect(scrollport.scrollTop).toBe(180);
+  });
+
+  it.each([
+    ["Library", `/libraries/${LIBRARY_ID}?sort=title&direction=asc`],
+    ["Stats", "/stats?view=year&year=2026"],
+  ])("remounts the %s route body for a new visit occurrence", (_route, href) => {
+    setPaneHref(href);
+    const { rerender } = render(<WorkspaceHost />);
+    const firstInstance = screen.getByTestId("route-body").dataset.instanceId;
+
+    setPaneHref(href);
+    rerender(<WorkspaceHost />);
+
+    expect(screen.getByTestId("route-body")).not.toHaveAttribute(
+      "data-instance-id",
+      firstInstance,
+    );
+    expect(hostMocks.mountedBodyIds).toHaveLength(2);
+    expect(hostMocks.unmountedBodyIds).toEqual([Number(firstInstance)]);
   });
 
   it("remounts a ShellScroll route body for a new visit occurrence", () => {
@@ -1010,6 +1120,48 @@ describe("WorkspaceHost pane route lifecycle", () => {
       "data-runtime-resource-status",
       "ready",
     );
+  });
+
+  it("resolves a Library resource locator once across query replacements", async () => {
+    let resolveLocator!: (
+      resolutions: ResourceLocatorResolution[],
+    ) => void;
+    hostMocks.resolveResourceLocators.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveLocator = resolve;
+        }),
+    );
+    setPaneHref(`/libraries/${LIBRARY_ID}?sort=title&direction=asc`);
+    const { rerender } = render(<WorkspaceHost />);
+
+    await waitFor(() => {
+      expect(hostMocks.resolveResourceLocators).toHaveBeenCalledWith([
+        { kind: "resource_ref", ref: `library:${LIBRARY_ID}` },
+      ]);
+    });
+
+    replaceCurrentPaneHref(
+      `/libraries/${LIBRARY_ID}?sort=creator&direction=asc`,
+    );
+    rerender(<WorkspaceHost />);
+
+    expect(hostMocks.resolveResourceLocators).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      resolveLocator([
+        {
+          locator: { kind: "resource_ref", ref: `library:${LIBRARY_ID}` },
+          resourceItem: libraryResourceItem(LIBRARY_ID),
+          canonicalHref: `/libraries/${LIBRARY_ID}`,
+        },
+      ]);
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("route-body")).toHaveAttribute(
+        "data-runtime-resource-status",
+        "ready",
+      );
+    });
   });
 
   it("auto-resizes a visible pane when runtime content raises the minimum width", async () => {
@@ -1324,7 +1476,7 @@ describe("WorkspaceHost secondary publication validation", () => {
       "secondary-1",
     );
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Options" })).toHaveFocus(),
+      expect(screen.getByTestId("pane-shell-chrome")).toHaveFocus(),
     );
   });
 

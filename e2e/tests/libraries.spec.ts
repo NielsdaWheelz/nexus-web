@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type Request } from "@playwright/test";
 import { stateChangingApiHeaders } from "./api";
 import {
   activeWorkspacePane,
@@ -81,6 +81,193 @@ test.describe("libraries", () => {
     await expect(libraryLink).toBeVisible();
     await libraryLink.click();
     await expect(page).toHaveURL(/libraries\/.+/);
+  });
+
+  test("sorts the Default library in place with one exact entries request", async ({
+    page,
+  }, testInfo) => {
+    const librariesResponse = await page.request.get("/api/libraries");
+    expect(librariesResponse.ok()).toBeTruthy();
+    const libraries = (await librariesResponse.json()) as {
+      data: Array<{ id: string; isDefault: boolean }>;
+    };
+    const defaultLibrary = libraries.data.find((library) => library.isDefault);
+    if (!defaultLibrary) {
+      throw new Error("Default library missing from E2E seed");
+    }
+
+    const libraryHref = `/libraries/${defaultLibrary.id}`;
+    await gotoSinglePaneWorkspace(
+      page,
+      workspaceE2eDeviceId(testInfo, "e2e-libraries"),
+      libraryHref,
+    );
+    await expect(page.locator("[data-pane-id]:visible")).toHaveCount(1);
+    const sortSelect = activeWorkspacePane(page).getByRole("combobox", {
+      name: "Sort by",
+    });
+    await expect(sortSelect).toBeVisible({ timeout: 15_000 });
+    await page.waitForLoadState("networkidle");
+    const libraryPane = activeWorkspacePane(page);
+    const entriesRegion = libraryPane.getByRole("region", {
+      name: "Library entries",
+    });
+    const entriesList = entriesRegion.getByRole("list", {
+      name: "Library entries",
+    });
+    const initialFirstTitle = (
+      await entriesList
+        .getByRole("listitem")
+        .first()
+        .getByRole("link")
+        .first()
+        .textContent()
+    )?.trim();
+    if (!initialFirstTitle) {
+      throw new Error("Default library first row had no title");
+    }
+    type EntriesPayload = {
+      data: Array<{
+        media?: { title?: string };
+        podcast?: { title?: string };
+      }>;
+    };
+    const firstTitle = (payload: EntriesPayload) =>
+      (
+        payload.data[0]?.media?.title ?? payload.data[0]?.podcast?.title
+      )?.trim();
+    const titleSorts = [
+      {
+        option: "title-asc",
+        direction: "asc",
+        label: "Title — A–Z",
+      },
+      {
+        option: "title-desc",
+        direction: "desc",
+        label: "Title — Z–A",
+      },
+    ] as const;
+    const preflightSorts = await Promise.all(
+      titleSorts.map(async (sort) => {
+        const path =
+          `/api/libraries/${defaultLibrary.id}/entries` +
+          `?sort=title&direction=${sort.direction}`;
+        const response = await page.request.get(path);
+        expect(response.ok()).toBeTruthy();
+        return {
+          ...sort,
+          path,
+          firstTitle: firstTitle((await response.json()) as EntriesPayload),
+        };
+      }),
+    );
+    const factualSort = preflightSorts.find(
+      (sort) =>
+        sort.firstTitle !== undefined &&
+        sort.firstTitle.length > 0 &&
+        sort.firstTitle !== initialFirstTitle,
+    );
+    if (!factualSort?.firstTitle) {
+      throw new Error(
+        "Neither title order changed the Default library first row",
+      );
+    }
+    const entriesRegionElement = await entriesRegion.elementHandle();
+    if (!entriesRegionElement) {
+      throw new Error("Library entries region did not resolve to a DOM element");
+    }
+    const sortElement = await sortSelect.elementHandle();
+    if (!sortElement) {
+      throw new Error("Sort by control did not resolve to a DOM element");
+    }
+
+    const factualEntriesPath = factualSort.path;
+    const postSettleLibraryGets: string[] = [];
+    const postSettleLocatorResolvePosts: string[] = [];
+    const captureRelevantRequest = (request: Request) => {
+      const method = request.method();
+      const url = new URL(request.url());
+      if (
+        method === "POST" &&
+        url.pathname === "/api/resource-items/locators/resolve"
+      ) {
+        postSettleLocatorResolvePosts.push(url.pathname);
+      }
+      if (method !== "GET") {
+        return;
+      }
+      if (
+        url.pathname === `/api/libraries/${defaultLibrary.id}` ||
+        url.pathname.startsWith(`/api/libraries/${defaultLibrary.id}/`)
+      ) {
+        postSettleLibraryGets.push(`${url.pathname}${url.search}`);
+      }
+    };
+    page.on("request", captureRelevantRequest);
+
+    await sortSelect.focus();
+    await expect(sortSelect).toBeFocused();
+    const factualEntriesResponse = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        response.request().method() === "GET" &&
+        `${url.pathname}${url.search}` === factualEntriesPath
+      );
+    });
+    await sortSelect.selectOption(factualSort.option);
+
+    await expect
+      .poll(() => {
+        const url = new URL(page.url());
+        return `${url.pathname}${url.search}`;
+      })
+      .toBe(
+        `${libraryHref}?sort=title&direction=${factualSort.direction}`,
+      );
+    const response = await factualEntriesResponse;
+    expect(response.ok()).toBeTruthy();
+    const returnedTitle = firstTitle(
+      (await response.json()) as EntriesPayload,
+    );
+    if (!returnedTitle) {
+      throw new Error(
+        "Title-sorted Default library response had no titled entry",
+      );
+    }
+    expect(returnedTitle).toBe(factualSort.firstTitle);
+    expect(returnedTitle).not.toBe(initialFirstTitle);
+
+    await expect(
+      entriesList
+        .getByRole("listitem")
+        .first()
+        .getByText(returnedTitle, { exact: true }),
+    ).toBeVisible();
+    await page.waitForLoadState("networkidle");
+    await expect(sortSelect).toHaveValue(factualSort.option);
+    await expect(sortSelect).toBeFocused();
+    await expect(
+      libraryPane
+        .getByRole("status")
+        .filter({ hasText: `Updating to ${factualSort.label}` }),
+    ).toHaveCount(0);
+    expect(
+      await sortSelect.evaluate(
+        (current, initial) => current === initial,
+        sortElement,
+      ),
+    ).toBe(true);
+    expect(
+      await entriesRegion.evaluate(
+        (current, initial) => current === initial,
+        entriesRegionElement,
+      ),
+    ).toBe(true);
+    await expect(page.locator("[data-pane-id]:visible")).toHaveCount(1);
+    page.off("request", captureRelevantRequest);
+    expect(postSettleLibraryGets).toEqual([factualEntriesPath]);
+    expect(postSettleLocatorResolvePosts).toEqual([]);
   });
 
   test("membership management guardrail", async ({ page }, testInfo) => {

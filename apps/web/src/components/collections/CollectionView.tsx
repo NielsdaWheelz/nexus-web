@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import PaneSurface from "@/components/ui/PaneSurface";
 import ResourceList from "@/components/ui/ResourceList";
 import SortableList from "@/components/sortable/SortableList";
@@ -32,6 +39,7 @@ export default function CollectionView({
   footer,
   rowPanels,
   rowControls,
+  rowActionsAvailable = true,
   sortable,
   surface = true,
 }: {
@@ -47,6 +55,7 @@ export default function CollectionView({
   readonly footer?: ReactNode;
   readonly rowPanels?: Readonly<Record<string, ReactNode>>;
   readonly rowControls?: Readonly<Record<string, ReactNode>>;
+  readonly rowActionsAvailable?: boolean;
   readonly sortable?: {
     readonly disabled?: boolean;
     readonly onReorder: (nextRows: CollectionRowView[]) => void;
@@ -63,7 +72,7 @@ export default function CollectionView({
   const [displayRows, setDisplayRows] = useState<readonly CollectionRowView[]>(rows);
   const displayRowOrderSignatureRef = useRef(rowOrderSignature);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (status !== "ready") {
       displayRowOrderSignatureRef.current = rowOrderSignature;
       setDisplayRows(rows);
@@ -75,17 +84,10 @@ export default function CollectionView({
       return;
     }
 
-    let cancelled = false;
-    queueMicrotask(() => {
-      if (cancelled) return;
-      startSameDocumentViewTransition(() => {
-        displayRowOrderSignatureRef.current = rowOrderSignature;
-        setDisplayRows(rows);
-      });
+    startSameDocumentViewTransition(() => {
+      displayRowOrderSignatureRef.current = rowOrderSignature;
+      setDisplayRows(rows);
     });
-    return () => {
-      cancelled = true;
-    };
   }, [rowOrderSignature, rows, status]);
 
   const rowsForRender = status === "ready" ? displayRows : rows;
@@ -118,6 +120,7 @@ export default function CollectionView({
               as="div"
               panel={rowPanels?.[row.id]}
               primaryControl={rowControls?.[row.id]}
+              rowActionsAvailable={rowActionsAvailable}
               viewTransitionName={
                 viewTransitionsReady
                   ? collectionRowViewTransitionName(transitionScopeId, row.id)
@@ -140,6 +143,7 @@ export default function CollectionView({
             }
             panel={rowPanels?.[row.id]}
             primaryControl={rowControls?.[row.id]}
+            rowActionsAvailable={rowActionsAvailable}
           />
         ))}
       </ResourceList>

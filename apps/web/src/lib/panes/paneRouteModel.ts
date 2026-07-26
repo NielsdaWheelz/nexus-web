@@ -40,8 +40,8 @@ interface PaneRouteModelDefinitionCommon extends PaneWidthContract {
   labelMode: "static" | "dynamic";
   /**
    * An opt-in query policy for URL-owned pane state. Omitted routes preserve
-   * the normal route-keyed mount behavior; Stats alone retains its body while
-   * replacing its query so controls, focus, and scroll stay continuous.
+   * the normal route-keyed mount behavior; opted-in routes retain their body
+   * while replacing their query so controls, focus, and scroll stay continuous.
    */
   queryNavigation?: "in-place";
   secondaryGroups?: readonly WorkspaceSecondaryGroupId[];
@@ -139,6 +139,7 @@ export const PANE_ROUTE_MODELS = [
     pattern: ["libraries", ":id"],
     defaultLabel: "Library",
     labelMode: "dynamic",
+    queryNavigation: "in-place",
     returnMemento: { kind: "ShellScroll" },
     bodyMode: "standard",
     secondaryGroups: ["resource-inspector"],
