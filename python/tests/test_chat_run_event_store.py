@@ -1,11 +1,13 @@
 """Integration contract for chat run state transitions."""
 
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+import nexus.services.chat_runs as chat_runs
 from nexus.db.models import ChatRun, Message
 from nexus.services.chat_run_event_store import mark_running
 from nexus.services.chat_run_finalize import finalize_run
@@ -141,3 +143,33 @@ def test_degraded_publication_is_complete_with_one_warning_occurrence(
         "last_provider_event_seq": None,
         "cancelled": False,
     }
+
+
+async def test_invariant_failure_crosses_chat_boundary_as_failed_not_degraded(
+    db_session: Session,
+    bootstrapped_user: UUID,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = _queued_run(db_session, bootstrapped_user)
+
+    async def raise_graph_invariant(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("resource graph invariant")
+
+    monkeypatch.setattr(chat_runs, "_execute_chat_run", raise_graph_invariant)
+
+    outcome = await chat_runs.execute_chat_run(
+        db_session,
+        run_id=run.id,
+        session_factory=cast(Any, object()),
+        runtime=cast(Any, object()),
+        settings=cast(Any, object()),
+    )
+
+    db_session.refresh(run)
+    assert isinstance(outcome, chat_runs.FailedChatExecution)
+    assert outcome.error_code.kind == "Absent"
+    assert outcome.support_id.kind == "Present"
+    assert run.status == "error"
+    assert run.error_code is None
+    assert run.support_id == outcome.support_id.value
+    assert run.publication_warning_code is None
