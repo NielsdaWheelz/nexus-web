@@ -9,6 +9,7 @@ import {
   type NotePageSummary,
 } from "@/lib/notes/normalize";
 import { todayLocalDate } from "@/lib/localDate";
+import { browserTimeZone } from "@/lib/time/browserTimeZone";
 import {
   normalizeResourceItem,
   type ResourceSurface,
@@ -59,10 +60,6 @@ export interface SaveNoteBodyInput {
 
 interface ApiResponse {
   data: unknown;
-}
-
-function browserTimeZone(): string {
-  return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }
 
 export function normalizeSurface(raw: unknown): ResourceSurface | null {

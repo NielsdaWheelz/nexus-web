@@ -1,14 +1,25 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
+import {
+  PaneReturnMementoProvider,
+  PaneReturnVisitScope,
+} from "@/lib/workspace/paneReturnMemento";
+import { assumePaneVisitId } from "@/lib/workspace/schema";
 import KeybindingsPaneBody from "./KeybindingsPaneBody";
+
+const TEST_VISIT_ID = assumePaneVisitId("00000000-0000-4000-8000-000000000001");
 
 describe("KeybindingsPaneBody", () => {
   it("renders Launcher, canonical destinations, and the Today action", () => {
     render(
-      <KeybindingsProvider>
-        <KeybindingsPaneBody />
-      </KeybindingsProvider>,
+      <PaneReturnMementoProvider>
+        <PaneReturnVisitScope visitId={TEST_VISIT_ID} routeKey="settings:/settings/keybindings">
+          <KeybindingsProvider>
+            <KeybindingsPaneBody />
+          </KeybindingsProvider>
+        </PaneReturnVisitScope>
+      </PaneReturnMementoProvider>,
     );
     expect(screen.getByText("Open launcher")).toBeInTheDocument();
     expect(screen.getByText("Go to Lectern")).toBeInTheDocument();

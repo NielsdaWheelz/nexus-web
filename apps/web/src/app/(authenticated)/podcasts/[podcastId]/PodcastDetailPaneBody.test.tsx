@@ -115,7 +115,11 @@ import {
   RETURN_JOURNEY_VISIT_ID,
 } from "@/__tests__/helpers/paneReturnJourney";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
-import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
+import {
+  LecternProvider,
+  useLectern,
+} from "@/lib/lectern/LecternProvider";
+import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
@@ -161,8 +165,10 @@ function Wrapped() {
         >
           <LecternProvider>
             <GlobalPlayerProvider>
-              <LecternStatus />
-              <PodcastDetailPaneBody />
+              <LibraryPlacementControllerProvider>
+                <LecternStatus />
+                <PodcastDetailPaneBody />
+              </LibraryPlacementControllerProvider>
             </GlobalPlayerProvider>
           </LecternProvider>
         </PaneRuntimeProvider>

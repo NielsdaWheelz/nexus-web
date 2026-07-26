@@ -65,7 +65,7 @@ from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.content_indexing import request_media_content_reindex
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.highlights import create_highlight_for_fragment
-from nexus.services.media_source_ingest import accept_url_source
+from nexus.services.media_source_ingest import accept_url_source, confirm_uploaded_source
 from nexus.services.note_indexing import rebuild_note_content_index
 from nexus.services.notes import pm_doc_from_text, set_highlight_note_body_pm_json
 from nexus.services.reader_apparatus import replace_media_apparatus, source_fingerprint
@@ -73,7 +73,7 @@ from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resou
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.transcript_segments import normalize_transcript_segments
 from nexus.services.transcripts.current import write_current_transcript
-from nexus.services.upload import confirm_ingest, init_upload
+from nexus.services.upload import init_upload
 from nexus.storage.client import get_storage_client
 from nexus.storage.paths import build_upload_staging_storage_path, get_file_extension
 
@@ -813,7 +813,7 @@ def _request_and_drain_media_reindex(session_factory, *, media_id: UUID) -> None
             request_media_content_reindex(
                 db,
                 media_id=media_id,
-                reason="e2e_seed",
+                reason="source_success",
                 request_id="e2e-seed",
             )
             db.commit()
@@ -826,7 +826,11 @@ def _drain_media_pipeline_jobs(session_factory) -> None:
     worker = JobWorker(
         session_factory=session_factory,
         worker_id="e2e-media-pipeline-seed",
-        allowed_kinds=("ingest_media_source", "media_content_reindex_job"),
+        allowed_kinds=(
+            "ingest_media_source",
+            "media_content_reindex_job",
+            "podcast_reindex_semantic_job",
+        ),
     )
     while worker.run_once():
         pass
@@ -1008,9 +1012,24 @@ def _seed_youtube_transcript_media(session_factory, user_id: UUID) -> None:
             transcript_segments=transcript_segments,
             now=now,
         )
-        if write_result.semantic_status != "ready":
-            raise RuntimeError("YouTube transcript E2E semantic index failed")
+        if write_result.semantic_status != "pending":
+            raise RuntimeError("YouTube transcript E2E semantic index was not queued")
         db.commit()
+
+    _drain_media_pipeline_jobs(session_factory)
+    with session_factory() as db:
+        semantic_status = db.execute(
+            text(
+                """
+                SELECT semantic_status
+                FROM media_transcript_states
+                WHERE media_id = :media_id
+                """
+            ),
+            {"media_id": transcript_media_id},
+        ).scalar_one_or_none()
+        if semantic_status != "ready":
+            raise RuntimeError("YouTube transcript E2E semantic index failed")
 
     with session_factory() as db:
         ensure_user_and_default_library(db, user_id)
@@ -1094,10 +1113,12 @@ def _seed_epub_media(session_factory, user_id: UUID) -> None:
     get_storage_client().put_object(storage_path, epub_bytes, "application/epub+zip")
 
     with session_factory() as db:
-        confirm_result = confirm_ingest(
+        confirm_result = confirm_uploaded_source(
             db=db,
             viewer_id=user_id,
             media_id=UUID(epub_media_id_str),
+            library_ids=[],
+            request_id=None,
         )
     epub_media_id_str = confirm_result["media_id"]
     epub_media_id = UUID(epub_media_id_str)
@@ -1212,10 +1233,12 @@ def _seed_reader_resume_media(session_factory, user_id: UUID) -> None:
     )
 
     with session_factory() as db:
-        confirm_result = confirm_ingest(
+        confirm_result = confirm_uploaded_source(
             db=db,
             viewer_id=user_id,
             media_id=UUID(epub_media_id_str),
+            library_ids=[],
+            request_id=None,
         )
     epub_media_id_str = confirm_result["media_id"]
     epub_media_id = UUID(epub_media_id_str)
@@ -1253,10 +1276,12 @@ def _seed_reader_resume_media(session_factory, user_id: UUID) -> None:
     )
 
     with session_factory() as db:
-        confirm_result = confirm_ingest(
+        confirm_result = confirm_uploaded_source(
             db=db,
             viewer_id=user_id,
             media_id=UUID(pdf_media_id_str),
+            library_ids=[],
+            request_id=None,
         )
     pdf_media_id_str = confirm_result["media_id"]
     pdf_media_id = UUID(pdf_media_id_str)
@@ -1567,8 +1592,12 @@ def main() -> None:
     get_storage_client().put_object(storage_path, pdf_bytes, "application/pdf")
 
     with session_factory() as db:
-        confirm_result = confirm_ingest(
-            db=db, viewer_id=user_id, media_id=UUID(uploaded_media_id_str)
+        confirm_result = confirm_uploaded_source(
+            db=db,
+            viewer_id=user_id,
+            media_id=UUID(uploaded_media_id_str),
+            library_ids=[],
+            request_id=None,
         )
 
     media_id_str = confirm_result["media_id"]
