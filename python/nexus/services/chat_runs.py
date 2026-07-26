@@ -734,6 +734,7 @@ async def execute_chat_run(
     except Exception as exc:  # justify-ignore-error: chat-run worker boundary; finalize as a generic defect and report.
         logger.exception("chat_run.unhandled_error", run_id=str(run_id), error=str(exc))
         try:
+            db.rollback()
             finalize_defect(db, run_id=run_id, error_detail=exception_error_detail(exc))
             _log_chat_run_finished(db, run_id=run_id, outcome="Failed")
             return _failed_chat_execution(db, run_id=run_id, error_code=None)

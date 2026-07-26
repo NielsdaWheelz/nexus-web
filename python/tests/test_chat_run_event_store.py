@@ -151,8 +151,19 @@ async def test_invariant_failure_crosses_chat_boundary_as_failed_not_degraded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     run = _queued_run(db_session, bootstrapped_user)
+    original_title = db_session.execute(
+        text("SELECT title FROM conversations WHERE id = :conversation_id"),
+        {"conversation_id": run.conversation_id},
+    ).scalar_one()
 
-    async def raise_graph_invariant(*_args: object, **_kwargs: object) -> None:
+    async def raise_graph_invariant(db: Session, *_args: object, **_kwargs: object) -> None:
+        db.execute(
+            text(
+                "UPDATE conversations SET title = 'partial publication' "
+                "WHERE id = :conversation_id"
+            ),
+            {"conversation_id": run.conversation_id},
+        )
         raise AssertionError("resource graph invariant")
 
     monkeypatch.setattr(chat_runs, "_execute_chat_run", raise_graph_invariant)
@@ -173,3 +184,10 @@ async def test_invariant_failure_crosses_chat_boundary_as_failed_not_degraded(
     assert run.error_code is None
     assert run.support_id == outcome.support_id.value
     assert run.publication_warning_code is None
+    assert (
+        db_session.execute(
+            text("SELECT title FROM conversations WHERE id = :conversation_id"),
+            {"conversation_id": run.conversation_id},
+        ).scalar_one()
+        == original_title
+    )
