@@ -31,6 +31,7 @@ import {
 import {
   dispatchTarget,
   isAndroidShellRestrictedHref,
+  PROGRAMMATIC_ADOPT_LAUNCHER_TARGET_ACTIVATION,
   PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION,
   type DispatchOutcome,
   type LauncherTargetActivation,
@@ -50,6 +51,7 @@ import {
   type LauncherView,
 } from "@/lib/launcher/model";
 import type { LauncherPage } from "@/lib/switchboard/model";
+import { paneStatusLabel } from "@/lib/switchboard/paneStatusLabel";
 import {
   parseLauncherInput,
   type LauncherInput,
@@ -320,6 +322,10 @@ export interface LauncherController {
   switchboardFindRows: readonly SwitchboardRowModel[];
   switchboardFindActiveId: string | null;
   switchboardFindBusy: boolean;
+  // Raw (undelayed) remote in-flight state. `busy` is delayed by
+  // SWITCHBOARD_BUSY_DELAY for the "Searching…" indicator; `pending` gates the
+  // "No results" empty state so it never flashes while a search is running.
+  switchboardFindPending: boolean;
   switchboardOpenablesFailed: boolean;
   switchboardDeepFailed: boolean;
   podcastResults: readonly PodcastBrowseResult[];
@@ -378,6 +384,10 @@ type ExitIntent =
       kind: "Navigate";
       target: LauncherActionTarget;
       retained?: Omit<RetainedActivation, "target">;
+      // Absent → Follow (desktop destination/today keyboard navigation). A
+      // completed Switchboard workflow (Import result) passes an Adopt
+      // activation so it opens beside, never replaces, the source pane.
+      activation?: LauncherTargetActivation;
     }
   | { kind: "Replace"; detail: OpenLauncherDetail };
 
@@ -698,11 +708,7 @@ export function useLauncherController(): LauncherController {
             activationRouteId: pane.activationRouteId,
           },
           label: pane.label,
-          metadata: pane.current
-            ? "Active tab"
-            : pane.visibility === "minimized"
-              ? "Minimized"
-              : "Open tab",
+          metadata: paneStatusLabel(pane),
           recent: false,
         })),
     [switchboardPanes],
@@ -736,11 +742,7 @@ export function useLauncherController(): LauncherController {
             activationRouteId: resolveWorkspaceActivationRouteId(pane.href),
           },
           label: pane.label,
-          metadata: pane.current
-            ? "Active tab"
-            : pane.visibility === "minimized"
-              ? "Minimized"
-              : "Open tab",
+          metadata: paneStatusLabel(pane),
           recent: false,
         },
       ];
@@ -1248,6 +1250,10 @@ export function useLauncherController(): LauncherController {
           });
           return;
         }
+        default: {
+          const _exhaustive: never = item;
+          return _exhaustive;
+        }
       }
     },
     [
@@ -1340,6 +1346,10 @@ export function useLauncherController(): LauncherController {
             sessionId: createRandomId("podcast-discovery"),
           });
           return;
+        default: {
+          const _exhaustive: never = action.target;
+          return _exhaustive;
+        }
       }
     },
     [dispatchWorkspaceTarget, runPageCreation, startAddSession, todaySession],
@@ -1493,7 +1503,9 @@ export function useLauncherController(): LauncherController {
     (target: LauncherActionTarget) => {
       void dispatchOwned(
         target,
-        PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION,
+        // Completed Today capture opens with Adopt (never replace the source
+        // pane); reuses an exact today pane or creates one beside it.
+        PROGRAMMATIC_ADOPT_LAUNCHER_TARGET_ACTIVATION,
         {
           source: page.kind === "TodayCapture" ? "TodayCapture" : "Find",
           completion:
@@ -1640,7 +1652,7 @@ export function useLauncherController(): LauncherController {
         case "Navigate":
           void dispatchOwned(
             intent.target,
-            PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION,
+            intent.activation ?? PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION,
             intent.retained ?? {
               source: page.kind === "Add" ? "Import" : "Place",
               completion: absent(),
@@ -1658,6 +1670,19 @@ export function useLauncherController(): LauncherController {
           const { detail } = intent;
           userMovedRef.current = false;
           suppressReturnFocusRef.current = false;
+          // A bare Root reopen (no query, no lane, not Add) preserves a retained
+          // recovery page so a dismiss → reopen through the open event / hotkey
+          // doesn't lose the target (AC11) — mirrors openRoot's own guard for the
+          // entry points that route straight through requestExit(Replace).
+          if (
+            detail.kind === "Root" &&
+            !detail.query &&
+            (!detail.lane || detail.lane === "all") &&
+            (page.kind === "ActivationBlocked" || page.kind === "ManageTabs")
+          ) {
+            setOpen(true);
+            return;
+          }
           if (detail.kind === "Add") {
             setPage({
               kind: "Add",
@@ -1917,6 +1942,9 @@ export function useLauncherController(): LauncherController {
       requestExit({
         kind: "Navigate",
         target,
+        // Completed Import opens the result with Adopt (never replace the
+        // source pane), matching the capability table's "Adopt result".
+        activation: PROGRAMMATIC_ADOPT_LAUNCHER_TARGET_ACTIVATION,
         retained: {
           source: "Import",
           completion: replayId
@@ -2126,6 +2154,7 @@ export function useLauncherController(): LauncherController {
     switchboardFindBusy:
       showSwitchboardBusy &&
       (openablesFetch.loading || deepFetch.loading),
+    switchboardFindPending: openablesFetch.loading || deepFetch.loading,
     switchboardOpenablesFailed: openablesFetch.error !== null,
     switchboardDeepFailed: deepFetch.error !== null,
     podcastResults: podcastFetch.data ?? [],

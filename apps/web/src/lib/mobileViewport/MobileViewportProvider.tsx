@@ -169,11 +169,19 @@ export function MobileViewportProvider({
     }),
     [registerFixedObstruction, reportMobileSheetKeyboardInset],
   );
-  const projection = resolveMobileViewportProjection({
-    viewportHeightPx: fixedMeasurements.viewportHeightPx,
-    fixedObstructions: fixedMeasurements.rects,
-    mobileSheetKeyboardInsetPx,
-  });
+  // `fixedMeasurements` is identity-stable across renders (the setter returns the
+  // current object when measurements are equal), so memoizing keeps `projection`
+  // referentially stable until an input actually changes — the CSS-var
+  // useLayoutEffect below then only runs on real change, not every render.
+  const projection = useMemo(
+    () =>
+      resolveMobileViewportProjection({
+        viewportHeightPx: fixedMeasurements.viewportHeightPx,
+        fixedObstructions: fixedMeasurements.rects,
+        mobileSheetKeyboardInsetPx,
+      }),
+    [fixedMeasurements, mobileSheetKeyboardInsetPx],
+  );
 
   useLayoutEffect(() => {
     const root = document.documentElement;

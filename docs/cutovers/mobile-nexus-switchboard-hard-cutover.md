@@ -333,7 +333,7 @@ performs a domain mutation.
 type LauncherPage =
   | { kind: "Root" }
   | { kind: "Find"; query: string; scope: SwitchboardFindScope }
-  | { kind: "Actions"; item: SwitchboardItem }
+  | { kind: "Actions"; item: LauncherItem; actions: LauncherAction[] }
   | { kind: "TodayCapture"; sessionId: string }
   | { kind: "CreatePage"; pageId: string; submit: ReplayableSubmitState }
   | {
@@ -393,7 +393,7 @@ type CommittedWorkflow =
 type ReplayableSubmitState =
   | { kind: "Ready" }
   | { kind: "Running" }
-  | { kind: "Retryable"; feedback: Feedback };
+  | { kind: "Retryable"; message: string };
 
 type SwitchboardFindScope =
   | "All"

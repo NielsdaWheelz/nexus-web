@@ -2912,6 +2912,160 @@ class TestSearchResultFormat:
         assert result["context_ref"] == {"type": "page", "id": str(page_id)}
         assert "body_text" not in result
 
+    def test_note_owned_evidence_span_projects_note_block_owner(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """A note-owned evidence span is owned by its note_block, not a
+        fabricated ``media:{id}`` ref built from the note_block id parked in
+        ``source.media_id`` (regression)."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            media_id = create_searchable_media(session, user_id, title="Evidence Owner Source")
+            highlight_id, note_block_id = create_test_highlight_note(
+                session,
+                user_id,
+                media_id,
+                body="note owned evidence span body text term",
+            )
+            span_id = session.execute(
+                text(
+                    """
+                    SELECT id
+                    FROM evidence_spans
+                    WHERE owner_kind = 'note_block' AND owner_id = :note_block_id
+                    LIMIT 1
+                    """
+                ),
+                {"note_block_id": note_block_id},
+            ).scalar_one()
+
+        direct_db.register_cleanup("note_blocks", "id", note_block_id)
+        direct_db.register_cleanup("resource_edges", "source_id", note_block_id)
+        direct_db.register_cleanup("resource_edges", "target_id", note_block_id)
+        direct_db.register_cleanup("highlights", "id", highlight_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        with direct_db.session() as session:
+            resolved = get_search_result(
+                db=session,
+                viewer_id=user_id,
+                result_type="evidence_span",
+                result_id=str(span_id),
+            )
+        result = resolved.model_dump(mode="json")
+
+        assert result["type"] == "evidence_span"
+        assert result["resource_ref"] == f"evidence_span:{span_id}"
+        # The owner is the note_block, not the fabricated media:{note_block_id}.
+        assert result["owner_resource_ref"] == f"note_block:{note_block_id}"
+        # source.media_id still parks the note_block id; the owner must not be
+        # derived from it.
+        assert result["source"]["media_id"] == str(note_block_id)
+
+    def test_highlight_result_owner_resource_ref(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """A highlight result is owned by its anchor media."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            media_id = create_searchable_media(session, user_id, title="Highlight Owner Source")
+            highlight_id, note_block_id = create_test_highlight_note(
+                session,
+                user_id,
+                media_id,
+                body="highlight owner note body text term",
+            )
+
+        direct_db.register_cleanup("note_blocks", "id", note_block_id)
+        direct_db.register_cleanup("resource_edges", "source_id", note_block_id)
+        direct_db.register_cleanup("resource_edges", "target_id", note_block_id)
+        direct_db.register_cleanup("highlights", "id", highlight_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        with direct_db.session() as session:
+            resolved = get_search_result(
+                db=session,
+                viewer_id=user_id,
+                result_type="highlight",
+                result_id=str(highlight_id),
+            )
+        result = resolved.model_dump(mode="json")
+
+        assert result["type"] == "highlight"
+        assert result["resource_ref"] == f"highlight:{highlight_id}"
+        assert result["owner_resource_ref"] == f"media:{media_id}"
+
+    def test_note_block_durable_ref_reresolves_note_origin(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """``get_search_result`` re-classifies a note_block by its durable ref: a
+        block proven by a visible highlight_note edge re-resolves as a highlight
+        note (with excerpt); a plain note block re-resolves as a note."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        plain_page_id = uuid4()
+        plain_note_id = uuid4()
+        with direct_db.session() as session:
+            media_id = create_searchable_media(session, user_id, title="Durable Note Source")
+            highlight_id, highlight_note_id = create_test_highlight_note(
+                session,
+                user_id,
+                media_id,
+                body="highlight note durable body text term",
+            )
+            self._seed_note_block(
+                session,
+                user_id=user_id,
+                page_id=plain_page_id,
+                note_block_id=plain_note_id,
+                page_title="Plain Note Page",
+                body_text="plain note durable body text term",
+            )
+            session.commit()
+
+        direct_db.register_cleanup("pages", "id", plain_page_id)
+        direct_db.register_cleanup("note_blocks", "id", plain_note_id)
+        direct_db.register_cleanup("note_blocks", "id", highlight_note_id)
+        direct_db.register_cleanup("resource_edges", "source_id", highlight_note_id)
+        direct_db.register_cleanup("resource_edges", "target_id", highlight_note_id)
+        direct_db.register_cleanup("highlights", "id", highlight_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        with direct_db.session() as session:
+            highlight_note = get_search_result(
+                db=session,
+                viewer_id=user_id,
+                result_type="note_block",
+                result_id=str(highlight_note_id),
+            ).model_dump(mode="json")
+            plain_note = get_search_result(
+                db=session,
+                viewer_id=user_id,
+                result_type="note_block",
+                result_id=str(plain_note_id),
+            ).model_dump(mode="json")
+
+        assert highlight_note["type"] == "note_block"
+        assert highlight_note["note_origin"] == "highlight_note"
+        assert highlight_note["highlight_excerpt"] == "test exact"
+        assert highlight_note["owner_resource_ref"] == f"note_block:{highlight_note_id}"
+
+        assert plain_note["type"] == "note_block"
+        assert plain_note["note_origin"] == "note"
+        assert plain_note["highlight_excerpt"] is None
+        assert plain_note["owner_resource_ref"] == f"note_block:{plain_note_id}"
+
     def _seed_note_block(
         self,
         session,

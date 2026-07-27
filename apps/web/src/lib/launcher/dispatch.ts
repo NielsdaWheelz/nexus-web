@@ -58,6 +58,15 @@ export const PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION: LauncherTargetActivation =
   modality: "Programmatic",
 };
 
+// Completed Switchboard/launcher workflows (Today capture, Import result) open
+// their canonical target with `Adopt`: reuse an exact pane or create one beside
+// the source, never replace it (spec G5 "never replace the source pane"; the
+// negative gate forbids `Follow` from completed-workflow opens).
+export const PROGRAMMATIC_ADOPT_LAUNCHER_TARGET_ACTIVATION: LauncherTargetActivation = {
+  disposition: { kind: "Adopt" },
+  modality: "Programmatic",
+};
+
 export const KEYBOARD_LAUNCHER_TARGET_ACTIVATION: LauncherTargetActivation = {
   disposition: { kind: "Follow" },
   modality: "Keyboard",

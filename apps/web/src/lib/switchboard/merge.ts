@@ -123,9 +123,9 @@ export function mergeSwitchboardRows(input: {
   for (const row of blocks.flat()) {
     if (!unique.has(row.id)) unique.set(row.id, row);
   }
-  const sorted = blocks
-    .flat()
-    .filter((row, index, all) => all.findIndex((item) => item.id === row.id) === index);
+  // Block order is the source of truth; the Map already holds the first
+  // occurrence of each id in first-appearance order.
+  const sorted = [...unique.values()];
   if (input.activeId === null) return sorted;
 
   const activeIndex = input.previous.findIndex(

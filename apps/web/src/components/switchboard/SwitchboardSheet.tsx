@@ -1,6 +1,6 @@
 "use client";
 
-import type { MouseEvent } from "react";
+import type { MouseEvent, ReactNode } from "react";
 import MobileSheet from "@/components/ui/MobileSheet";
 import AccountMenu from "@/components/appnav/AccountMenu";
 import AddPanel from "@/components/launcher/AddPanel";
@@ -18,6 +18,10 @@ import SwitchboardRecovery from "./SwitchboardRecovery";
 import SwitchboardRoot from "./SwitchboardRoot";
 import { useSwitchboardController } from "./useSwitchboardController";
 import styles from "./switchboard.module.css";
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled Switchboard page: ${JSON.stringify(value)}`);
+}
 
 function CreationStatus({
   kind,
@@ -135,6 +139,131 @@ export default function SwitchboardSheet({
     />
   );
 
+  // One exhaustive switch over the page union: a new LauncherPage variant is a
+  // compile error here instead of silently falling through to the Root render.
+  const renderPage = (): ReactNode => {
+    const page = controller.page;
+    switch (page.kind) {
+      case "Root":
+        return root();
+      case "Find":
+        return (
+          <SwitchboardFind
+            query={page.query}
+            scope={page.scope}
+            rows={controller.switchboardFindRows}
+            activeId={controller.switchboardFindActiveId}
+            busy={controller.switchboardFindBusy}
+            pending={controller.switchboardFindPending}
+            openablesFailed={controller.switchboardOpenablesFailed}
+            deepFailed={controller.switchboardDeepFailed}
+            onBack={controller.back}
+            onQuery={controller.setQuery}
+            onScope={controller.setFindScope}
+            onActive={controller.setSwitchboardFindActiveId}
+            onSelect={(row) => {
+              if (row.item) {
+                controller.openSwitchboardItem(row.item, false);
+              }
+            }}
+            onFork={(row) => {
+              if (row.item) {
+                controller.openSwitchboardItem(row.item, true);
+              }
+            }}
+            actionsFor={controller.switchboardItemActions}
+            onAction={controller.runSwitchboardAction}
+            onRetryOpenables={controller.retrySwitchboardOpenables}
+            onRetryDeep={controller.retrySwitchboardDeep}
+          />
+        );
+      case "Actions":
+        return (
+          <SwitchboardActions
+            label={page.item.title}
+            actions={page.actions}
+            onBack={controller.back}
+            onSelect={controller.runAction}
+          />
+        );
+      case "TodayCapture":
+        return (
+          <TodayCapturePanel
+            session={controller.todaySession}
+            onOpen={controller.openTarget}
+            onBack={controller.back}
+          />
+        );
+      case "CreatePage":
+        return (
+          <CreationStatus
+            kind="page"
+            failed={page.submit.kind === "Retryable"}
+            onRetry={controller.retryPageCreation}
+          />
+        );
+      case "CreateLibrary":
+        return (
+          <CreateLibraryPanel
+            name={page.nameDraft}
+            submit={page.submit}
+            onName={controller.setLibraryNameDraft}
+            onBack={controller.back}
+            onSubmit={controller.submitLibrary}
+          />
+        );
+      case "Add":
+        return (
+          <AddPanelBoundary
+            activeDefect={activeAddDefect}
+            resetKey={page.sessionId}
+            session={controller.addSession}
+            controller={controller}
+            onClearDefect={onClearAddDefect}
+            onDefect={onAddDefect}
+          >
+            <AddPanel
+              session={controller.addSession}
+              dismissalConfirmation={controller.dismissalConfirmation}
+              onOpen={controller.openAddTarget}
+              onClose={controller.close}
+              onBack={controller.back}
+              onKeepWorking={controller.keepWorking}
+              onConfirmDismissal={controller.confirmDismissal}
+              onDefect={onAddDefect}
+            />
+          </AddPanelBoundary>
+        );
+      case "PodcastDiscovery":
+        return (
+          <SwitchboardPodcastPanel
+            query={page.query}
+            results={controller.podcastResults}
+            busy={controller.podcastBusy}
+            subscribingId={controller.podcastSubscribingId}
+            failed={controller.podcastFailed}
+            onBack={controller.back}
+            onQuery={controller.setPodcastQuery}
+            onSelect={controller.selectPodcast}
+            onRetry={controller.retryPodcastSearch}
+          />
+        );
+      case "ActivationBlocked":
+        return (
+          <SwitchboardRecovery
+            retained={page.retained}
+            onManageTabs={controller.manageTabs}
+            onOpen={controller.retryRetainedActivation}
+            onCancel={controller.cancelRetainedActivation}
+          />
+        );
+      case "ManageTabs":
+        return root(true);
+      default:
+        return assertNever(page);
+    }
+  };
+
   return (
     <MobileSheet
       active={active}
@@ -148,123 +277,7 @@ export default function SwitchboardSheet({
       focusKey={controller.focusKey}
       panelId="nexus-switchboard"
     >
-      {controller.page.kind === "Root"
-        ? root()
-        : controller.page.kind === "Find"
-          ? (
-              <SwitchboardFind
-                query={controller.page.query}
-                scope={controller.page.scope}
-                rows={controller.switchboardFindRows}
-                activeId={controller.switchboardFindActiveId}
-                busy={controller.switchboardFindBusy}
-                openablesFailed={controller.switchboardOpenablesFailed}
-                deepFailed={controller.switchboardDeepFailed}
-                onBack={controller.back}
-                onQuery={controller.setQuery}
-                onScope={controller.setFindScope}
-                onActive={controller.setSwitchboardFindActiveId}
-                onSelect={(row) => {
-                  if (row.item) {
-                    controller.openSwitchboardItem(row.item, false);
-                  }
-                }}
-                onFork={(row) => {
-                  if (row.item) {
-                    controller.openSwitchboardItem(row.item, true);
-                  }
-                }}
-                actionsFor={controller.switchboardItemActions}
-                onAction={controller.runSwitchboardAction}
-                onRetryOpenables={controller.retrySwitchboardOpenables}
-                onRetryDeep={controller.retrySwitchboardDeep}
-              />
-            )
-          : controller.page.kind === "Actions"
-            ? (
-                <SwitchboardActions
-                  label={controller.page.item.title}
-                  actions={controller.page.actions}
-                  onBack={controller.back}
-                  onSelect={controller.runAction}
-                />
-              )
-            : controller.page.kind === "TodayCapture"
-              ? (
-                  <TodayCapturePanel
-                    session={controller.todaySession}
-                    onOpen={controller.openTarget}
-                    onBack={controller.back}
-                  />
-                )
-              : controller.page.kind === "CreatePage"
-                ? (
-                    <CreationStatus
-                      kind="page"
-                      failed={controller.page.submit.kind === "Retryable"}
-                      onRetry={controller.retryPageCreation}
-                    />
-                  )
-                : controller.page.kind === "CreateLibrary"
-                  ? (
-                      <CreateLibraryPanel
-                        name={controller.page.nameDraft}
-                        submit={controller.page.submit}
-                        onName={controller.setLibraryNameDraft}
-                        onBack={controller.back}
-                        onSubmit={controller.submitLibrary}
-                      />
-                    )
-                  : controller.page.kind === "Add"
-                    ? (
-                        <AddPanelBoundary
-                          activeDefect={activeAddDefect}
-                          resetKey={controller.page.sessionId}
-                          session={controller.addSession}
-                          controller={controller}
-                          onClearDefect={onClearAddDefect}
-                          onDefect={onAddDefect}
-                        >
-                          <AddPanel
-                            session={controller.addSession}
-                            dismissalConfirmation={
-                              controller.dismissalConfirmation
-                            }
-                            onOpen={controller.openAddTarget}
-                            onClose={controller.close}
-                            onBack={controller.back}
-                            onKeepWorking={controller.keepWorking}
-                            onConfirmDismissal={
-                              controller.confirmDismissal
-                            }
-                            onDefect={onAddDefect}
-                          />
-                        </AddPanelBoundary>
-                      )
-                    : controller.page.kind === "PodcastDiscovery"
-                      ? (
-                          <SwitchboardPodcastPanel
-                            query={controller.page.query}
-                            results={controller.podcastResults}
-                            busy={controller.podcastBusy}
-                            subscribingId={controller.podcastSubscribingId}
-                            failed={controller.podcastFailed}
-                            onBack={controller.back}
-                            onQuery={controller.setPodcastQuery}
-                            onSelect={controller.selectPodcast}
-                            onRetry={controller.retryPodcastSearch}
-                          />
-                        )
-                      : controller.page.kind === "ActivationBlocked"
-                        ? (
-                            <SwitchboardRecovery
-                              retained={controller.page.retained}
-                              onManageTabs={controller.manageTabs}
-                              onOpen={controller.retryRetainedActivation}
-                              onCancel={controller.cancelRetainedActivation}
-                            />
-                          )
-                        : root(true)}
+      {renderPage()}
     </MobileSheet>
   );
 }

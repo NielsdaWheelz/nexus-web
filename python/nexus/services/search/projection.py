@@ -267,13 +267,16 @@ def search_owner_ref(result: InternalSearchResult) -> ResourceRef:
         ),
     ):
         return _result_resource_ref(result)
+    if isinstance(result, _RankedEvidenceSpanResult):
+        # A note-owned span's ``source.media_id`` is its note_block id, so the
+        # owner is carried explicitly rather than fabricated as ``media:{id}``.
+        return result.owner_ref
     if isinstance(
         result,
         (
             _RankedContentChunkResult,
             _RankedFragmentResult,
             _RankedHighlightResult,
-            _RankedEvidenceSpanResult,
             _RankedReaderApparatusItemResult,
         ),
     ):

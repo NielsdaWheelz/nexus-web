@@ -1297,4 +1297,113 @@ describe("Launcher — mobile Switchboard Find", () => {
     expect(window.location.pathname).toBe(`/pages/${String(replayId)}`);
     expect(pageCreates).toHaveLength(1);
   });
+
+  it("opens Today's page in a new tab beside the source pane (Adopt, never Follow)", async () => {
+    viewport.setMobile(true);
+    const panes = Array.from({ length: 2 }, (_, index) => {
+      const id = `pane-${index}`;
+      return {
+        id,
+        currentVisit: createPaneVisit("/libraries"),
+        primaryWidthPx: workspacePrimaryMetrics.primaryDefaultWidthPx,
+        visibility: index === 0 ? ("visible" as const) : ("minimized" as const),
+        history: createEmptyPaneHistory(),
+        attachedSecondaryPaneId: null,
+      };
+    });
+    const initialState = createWorkspaceStateFromPrimaryPanes({
+      activePrimaryPaneId: panes[0]!.id,
+      primaryPanes: panes,
+    });
+    const todayPageId = "11111111-1111-1111-1111-111111111111";
+    handleMediaRequest = async (url) => {
+      if (url.pathname.startsWith("/api/notes/daily/")) {
+        return jsonResponse({
+          data: { page: { id: todayPageId, title: "Today" } },
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url.pathname}`);
+    };
+    renderLauncher(initialState);
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Open Nexus, 2 tabs" }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Nexus" });
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: /^Note$/ }),
+    );
+    // Today Capture is pushed inside the same sheet.
+    await within(dialog).findByRole("button", { name: "New note" });
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Open today" }),
+    );
+
+    // A completed Today capture opens its page with Adopt: it creates a NEW tab
+    // beside the source pane (2 → 3) and never replaces the source pane in place.
+    // A regression to Follow would navigate the active pane instead, leaving the
+    // tab count at 2.
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Nexus" })).toBeNull(),
+    );
+    expect(window.location.pathname).toBe(`/pages/${todayPageId}`);
+    expect(
+      await screen.findByRole("button", { name: "Open Nexus, 3 tabs" }),
+    ).toBeVisible();
+  });
+});
+
+describe("Launcher — desktop recovery reopen", () => {
+  it("keeps a retained recovery page when reopened via the open event (AC11)", async () => {
+    // Desktop, workspace already at the tab cap so a completed workflow's
+    // activation is rejected into ActivationBlocked recovery.
+    const panes = Array.from({ length: MAX_PANES }, (_, index) => {
+      const id = `pane-${index}`;
+      return {
+        id,
+        currentVisit: createPaneVisit("/libraries"),
+        primaryWidthPx: workspacePrimaryMetrics.primaryDefaultWidthPx,
+        visibility: index === 0 ? ("visible" as const) : ("minimized" as const),
+        history: createEmptyPaneHistory(),
+        attachedSecondaryPaneId: null,
+      };
+    });
+    const initialState = createWorkspaceStateFromPrimaryPanes({
+      activePrimaryPaneId: panes[0]!.id,
+      primaryPanes: panes,
+    });
+    handleMediaRequest = async (url, init) => {
+      if (url.pathname === "/api/notes/pages" && init?.method === "POST") {
+        const body = parseJsonBody(init);
+        return jsonResponse({
+          data: { id: body.page_id, title: "Untitled", daily_note: null },
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url.pathname}`);
+    };
+    renderLauncher(initialState);
+
+    // Reach ActivationBlocked: New page completes, then its activation is
+    // rejected by the pane cap.
+    open({ kind: "Root", lane: "create" });
+    let dialog = await screen.findByRole("dialog", { name: "Launcher" });
+    await userEvent.click(
+      await within(dialog).findByRole("option", { name: /New page/i }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Tab limit reached" }),
+    ).toBeVisible();
+
+    // Dismiss the recovery (backdrop), then reopen through the open event — the
+    // path the old-code Replace exit discarded the retained page on.
+    fireEvent.click(screen.getByRole("presentation"));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Launcher" })).toBeNull(),
+    );
+    open();
+    dialog = await screen.findByRole("dialog", { name: "Launcher" });
+    expect(
+      within(dialog).getByRole("heading", { name: "Tab limit reached" }),
+    ).toBeVisible();
+  });
 });

@@ -12,6 +12,7 @@ describe("SwitchboardFind", () => {
         rows={[]}
         activeId={null}
         busy={false}
+        pending={false}
         openablesFailed={false}
         deepFailed={false}
         onBack={() => {}}
@@ -48,6 +49,7 @@ describe("SwitchboardFind", () => {
         ]}
         activeId="OpenPane:pane-a"
         busy={false}
+        pending={false}
         openablesFailed={false}
         deepFailed={false}
         onBack={() => {}}
@@ -84,6 +86,7 @@ describe("SwitchboardFind", () => {
         ]}
         activeId={null}
         busy={false}
+        pending={false}
         openablesFailed={false}
         deepFailed
         onBack={() => {}}
@@ -102,5 +105,33 @@ describe("SwitchboardFind", () => {
     expect(screen.getByText(/Couldn’t search inside content/)).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: /Retry/ }));
     expect(onRetryDeep).toHaveBeenCalledOnce();
+  });
+
+  it("suppresses the empty state while a remote search is still pending", () => {
+    const emptyProps = {
+      query: "zzz",
+      scope: "All" as const,
+      rows: [],
+      activeId: null,
+      busy: false,
+      openablesFailed: false,
+      deepFailed: false,
+      onBack: () => {},
+      onQuery: () => {},
+      onScope: () => {},
+      onActive: () => {},
+      onSelect: () => {},
+      onFork: () => {},
+      actionsFor: () => [],
+      onAction: () => {},
+      onRetryOpenables: () => {},
+      onRetryDeep: () => {},
+    };
+    // Pending (in-flight, before the delayed busy indicator) must NOT flash "No results".
+    const view = render(<SwitchboardFind {...emptyProps} pending />);
+    expect(screen.queryByText(/No results for/)).toBeNull();
+    // Once no remote work is in flight and nothing matched, the empty state shows.
+    view.rerender(<SwitchboardFind {...emptyProps} pending={false} />);
+    expect(screen.getByText(/No results for “zzz”/)).toBeVisible();
   });
 });

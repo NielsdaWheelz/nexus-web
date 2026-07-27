@@ -23,6 +23,7 @@ export default function SwitchboardFind({
   rows,
   activeId,
   busy,
+  pending,
   openablesFailed,
   deepFailed,
   onBack,
@@ -41,6 +42,7 @@ export default function SwitchboardFind({
   rows: readonly SwitchboardRowModel[];
   activeId: string | null;
   busy: boolean;
+  pending: boolean;
   openablesFailed: boolean;
   deepFailed: boolean;
   onBack: () => void;
@@ -118,7 +120,7 @@ export default function SwitchboardFind({
         ) : null}
       </div>
 
-      {!blank && rows.length === 0 && !busy ? (
+      {!blank && rows.length === 0 && !pending ? (
         <p className={styles.empty}>No results for “{query.trim()}”</p>
       ) : null}
       <ul className={styles.rows} aria-label="Find results">

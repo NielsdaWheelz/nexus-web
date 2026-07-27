@@ -267,13 +267,6 @@ export function expectLibraryOutForId(
   return library;
 }
 
-export function expectLibraryOutEnvelope(
-  raw: unknown,
-  name = "LibraryResponse",
-): LibraryOut {
-  return expectLibraryOut(envelopeData(raw, name), `${name}.data`);
-}
-
 export function expectLibraryOutEnvelopeForId(
   raw: unknown,
   requestedId: string,

@@ -53,12 +53,14 @@ export default function SwitchboardPodcastPanel({
         />
       </label>
       {failed ? (
-        <p role="status">
-          Couldn’t search podcasts.{" "}
-          <button type="button" onClick={onRetry}>
-            <RotateCw size={14} aria-hidden="true" /> Retry
-          </button>
-        </p>
+        <div className={styles.sourceStatus}>
+          <p role="status">
+            Couldn’t search podcasts.{" "}
+            <button type="button" onClick={onRetry}>
+              <RotateCw size={14} aria-hidden="true" /> Retry
+            </button>
+          </p>
+        </div>
       ) : null}
       {query.trim() && !busy && !failed && results.length === 0 ? (
         <p className={styles.empty}>No podcasts found</p>

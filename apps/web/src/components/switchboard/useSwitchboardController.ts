@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { getPaneRouteIcon } from "@/lib/panes/paneRouteTable";
+import { paneStatusLabel } from "@/lib/switchboard/paneStatusLabel";
 import type { LauncherController } from "@/components/launcher/useLauncherController";
 
 export function useSwitchboardController(controller: LauncherController) {
@@ -18,11 +19,7 @@ export function useSwitchboardController(controller: LauncherController) {
       controller.switchboardPanes.map((pane) => ({
         id: pane.id,
         label: pane.label,
-        metadata: pane.current
-          ? "Active tab"
-          : pane.visibility === "minimized"
-            ? "Minimized"
-            : "Open tab",
+        metadata: paneStatusLabel(pane),
         current: pane.current,
         activationRouteId: pane.activationRouteId,
       })),
