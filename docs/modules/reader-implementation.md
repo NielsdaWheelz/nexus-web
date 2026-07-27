@@ -34,6 +34,26 @@ contract.
 
 ## architecture
 
+### mobile scroll-linked chrome
+
+Mobile document readers publish their own scroll state to the workspace
+`MobileChromeProvider`.
+
+- `TextDocumentReader` owns publication for web articles and EPUB sections.
+- `MediaPaneBody` owns publication for its readable-transcript scrollport.
+- `PdfReader` owns publication for PDF pages.
+- Each source establishes a baseline when its scrollport mounts, then publishes
+  updates from that same scrollport.
+- The provider alone owns collapse progress, direction reversal, idle settle,
+  visibility locks, and reduced-motion pinning.
+- The app bar and optional format toolbar are presentation consumers; they
+  never infer scroll policy.
+
+Chrome motion is transform-only and never changes reader padding, selection,
+resume state, or scroll position. Non-reader and window scroll are outside this
+contract. See [workspace.md](workspace.md#mobile-reader-chrome) for the workspace
+composition contract.
+
 ### Resource Inspector and Document Map surfaces
 
 The Media pane publishes one `resource-inspector` secondary group:

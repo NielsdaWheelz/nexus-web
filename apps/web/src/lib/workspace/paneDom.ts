@@ -13,7 +13,9 @@ export function findPaneChromeFocusTarget(
   const mobileOptions = mobileProjection?.querySelector<HTMLElement>(
     "[data-pane-options-trigger]",
   );
-  if (mobileOptions?.isConnected) return mobileOptions;
+  if (mobileOptions?.isConnected && !mobileOptions.closest("[inert]")) {
+    return mobileOptions;
+  }
 
   const pane = Array.from(
     document.querySelectorAll<HTMLElement>("[data-pane-id]"),

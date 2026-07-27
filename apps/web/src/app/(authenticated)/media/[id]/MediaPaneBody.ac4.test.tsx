@@ -72,7 +72,11 @@ vi.mock("@/components/workspace/PanePrimaryChrome", () => ({
 }));
 
 vi.mock("@/lib/workspace/mobileChrome", () => ({
-  usePaneMobileChromeController: () => null,
+  usePaneMobileChromeController: () => ({
+    startReaderScroll: () => {},
+    updateReaderScroll: () => {},
+    acquireVisibleLock: () => () => {},
+  }),
 }));
 
 function seededMedia() {

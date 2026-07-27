@@ -1,11 +1,13 @@
 "use client";
 
+import { useEffect } from "react";
 import LibraryEntryEditor from "@/components/libraries/LibraryEntryEditor";
 import Dialog from "@/components/ui/Dialog";
 import MobileSheet from "@/components/ui/MobileSheet";
 import type { LibraryPlacementSession } from "@/lib/libraries/placementController";
 import { useLibraryPlacement } from "@/lib/libraries/useLibraryPlacement";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { usePaneMobileChromeController } from "@/lib/workspace/mobileChrome";
 import styles from "./LibraryPlacementOverlay.module.css";
 
 interface LibraryPlacementOverlayProps {
@@ -35,6 +37,15 @@ function returnFocusFallback(session: LibraryPlacementSession | null) {
   return fallback?.kind === "Present" ? fallback.value : undefined;
 }
 
+function MobileChromeLock() {
+  const { acquireVisibleLock } = usePaneMobileChromeController();
+  useEffect(
+    () => acquireVisibleLock("library-picker"),
+    [acquireVisibleLock],
+  );
+  return null;
+}
+
 export default function LibraryPlacementOverlay({
   session,
   onClose,
@@ -58,6 +69,7 @@ export default function LibraryPlacementOverlay({
 
   return (
     <>
+      {active && isMobile ? <MobileChromeLock /> : null}
       <Dialog
         open={active && !isMobile}
         onClose={onClose}

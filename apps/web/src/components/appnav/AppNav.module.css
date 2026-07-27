@@ -486,10 +486,17 @@
   }
 }
 
+@property --mobile-chrome-collapse {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
 /* ============================================================
    Mobile top bar (fixed; no backdrop-filter on this persistent surface)
    ============================================================ */
 .topBar {
+  --mobile-chrome-collapse: 0;
   position: fixed;
   top: 0;
   left: 0;
@@ -502,11 +509,12 @@
   padding: env(safe-area-inset-top) var(--space-2) 0;
   background: var(--surface-2);
   border-bottom: 1px solid var(--edge-subtle);
-  transition: transform var(--duration-base) var(--ease-glide);
+  transform: translateY(calc(-100% * var(--mobile-chrome-collapse)));
+  will-change: transform;
 }
 
-.topBar[data-hidden="true"] {
-  transform: translateY(-100%);
+.topBar[data-mobile-chrome-phase="Settling"] {
+  transition: --mobile-chrome-collapse var(--duration-fast) var(--ease-glide);
 }
 
 .topBarControls {

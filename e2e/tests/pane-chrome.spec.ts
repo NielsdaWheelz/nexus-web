@@ -34,9 +34,6 @@ interface SeededReaderResumeMedia {
   epub_media_id: string;
 }
 
-// Interaction policy, deliberately independent from the CSS top-bar geometry.
-const MOBILE_TOP_ALWAYS_VISIBLE_SCROLL_PX = 60;
-
 function readSeed<T>(seedFile: string): T {
   const seedPath = path.join(__dirname, "..", ".seed", seedFile);
   return JSON.parse(readFileSync(seedPath, "utf-8")) as T;
@@ -313,14 +310,101 @@ async function expectMobilePaneShellInvariants(page: Page): Promise<void> {
   await expectActivePaneShellContainedByViewport(page);
 }
 
-async function expectPaneChromeHidden(
+async function readMobileChrome(page: Page) {
+  const readSurface = (locator: Locator) =>
+    locator.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        phase: element.getAttribute("data-mobile-chrome-phase"),
+        progress: Number.parseFloat(
+          style.getPropertyValue("--mobile-chrome-collapse"),
+        ),
+        transform: style.transform,
+      };
+    });
+
+  return {
+    appBar: await readSurface(page.getByRole("banner")),
+    paneToolbar: await readSurface(
+      paneShell(page).getByTestId("pane-shell-chrome"),
+    ),
+  };
+}
+
+async function expectMobileChrome(
   page: Page,
-  hidden: boolean,
+  expected: { phase: string; progress: number },
 ): Promise<void> {
-  await expect(paneShell(page)).toHaveAttribute(
-    "data-mobile-chrome-hidden",
-    hidden ? "true" : "false",
+  const roundedProgress = Math.round(expected.progress * 1_000) / 1_000;
+  await expect
+    .poll(async () => {
+      const chrome = await readMobileChrome(page);
+      return {
+        appBar: {
+          phase: chrome.appBar.phase,
+          progress: Math.round(chrome.appBar.progress * 1_000) / 1_000,
+        },
+        paneToolbar: {
+          phase: chrome.paneToolbar.phase,
+          progress:
+            Math.round(chrome.paneToolbar.progress * 1_000) / 1_000,
+        },
+      };
+    })
+    .toEqual({
+      appBar: { phase: expected.phase, progress: roundedProgress },
+      paneToolbar: { phase: expected.phase, progress: roundedProgress },
+    });
+}
+
+async function expectNoReaderToolbar(page: Page): Promise<void> {
+  const metrics = await paneShell(page)
+    .getByTestId("pane-shell-chrome")
+    .evaluate((element) => ({
+      childElementCount: element.childElementCount,
+      height: element.getBoundingClientRect().height,
+    }));
+  expect(metrics).toEqual({ childElementCount: 0, height: 0 });
+}
+
+async function expectFullyRetreatedChrome(page: Page): Promise<void> {
+  const metrics = await page.evaluate(() => {
+    const appBar = document.querySelector<HTMLElement>(
+      'header[data-mobile-chrome-phase="Hidden"]',
+    );
+    const paneToolbar = document.querySelector<HTMLElement>(
+      '[data-pane-shell="true"] [data-testid="pane-shell-chrome"]',
+    );
+    if (!appBar || !paneToolbar) {
+      return null;
+    }
+    return {
+      appBarBottom: appBar.getBoundingClientRect().bottom,
+      paneToolbarBottom: paneToolbar.getBoundingClientRect().bottom,
+      paneToolbarHeight: paneToolbar.getBoundingClientRect().height,
+    };
+  });
+  expect(metrics).not.toBeNull();
+  expect(metrics?.paneToolbarHeight).toBeGreaterThan(0);
+  expect(metrics?.appBarBottom).toBeLessThanOrEqual(1);
+  expect(metrics?.paneToolbarBottom).toBeLessThanOrEqual(1);
+}
+
+async function waitForMobileChromeFrame(page: Page): Promise<void> {
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }),
   );
+}
+
+async function releaseMobileChromeFocus(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+  });
 }
 
 async function expectToolbarToFitPaneChrome(
@@ -506,7 +590,7 @@ test.describe("pane chrome", () => {
     await expectNoDocumentHorizontalOverflow(page);
   });
 
-  test("mobile document panes keep scroll position stable while chrome hides and reveals deliberately", async ({
+  test("mobile document panes track reader scroll continuously and preserve content position", async ({
     page,
   }, testInfo) => {
     await useMobileViewport(page);
@@ -528,22 +612,32 @@ test.describe("pane chrome", () => {
         ),
       )
       .toBeGreaterThan(200);
-    await expectPaneChromeHidden(page, false);
+    await releaseMobileChromeFocus(page);
+    await expectMobileChrome(page, { phase: "Visible", progress: 0 });
+
     await page.evaluate(() => {
       window.scrollTo(0, 240);
       window.dispatchEvent(new Event("scroll"));
     });
-    await expectPaneChromeHidden(page, false);
-    const topRevealZone = MOBILE_TOP_ALWAYS_VISIBLE_SCROLL_PX;
+    await expectMobileChrome(page, { phase: "Visible", progress: 0 });
+    await activePane.evaluate((element) => {
+      element.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    await expectMobileChrome(page, { phase: "Visible", progress: 0 });
+    await expectNoReaderToolbar(page);
 
-    await setScrollTop(documentViewport, Math.max(1, topRevealZone - 8));
-    await expectPaneChromeHidden(page, false);
+    await setScrollTop(documentViewport, 40);
+    await waitForMobileChromeFrame(page);
+    await expectMobileChrome(page, { phase: "Tracking", progress: 0.5 });
+    const partialChrome = await readMobileChrome(page);
+    expect(partialChrome.appBar.transform).not.toBe("none");
+    await expectNoReaderToolbar(page);
+    await expectScrollTop(documentViewport, 40);
 
-    await setScrollTop(documentViewport, topRevealZone + 12);
-    await expectPaneChromeHidden(page, false);
-
-    await setScrollTop(documentViewport, topRevealZone + 40);
-    await expectPaneChromeHidden(page, true);
+    await setScrollTop(documentViewport, 72);
+    await waitForMobileChromeFrame(page);
+    await expectMobileChrome(page, { phase: "Hidden", progress: 1 });
+    await expectScrollTop(documentViewport, 72);
     await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
     await expect(
       page.getByRole("button", { name: "Pane options", exact: true }),
@@ -557,17 +651,39 @@ test.describe("pane chrome", () => {
       await expect(cluster).toHaveAttribute("inert", "");
     }
 
-    await setScrollTop(documentViewport, topRevealZone + 34);
-    await expectPaneChromeHidden(page, true);
+    await setScrollTop(documentViewport, 68);
+    await waitForMobileChromeFrame(page);
+    await expectMobileChrome(page, { phase: "Tracking", progress: 1 });
 
-    await setScrollTop(documentViewport, topRevealZone + 22);
-    await expectPaneChromeHidden(page, true);
-
-    await setScrollTop(documentViewport, topRevealZone + 18);
-    await expectPaneChromeHidden(page, false);
+    await setScrollTop(documentViewport, 28);
+    await waitForMobileChromeFrame(page);
+    await expectMobileChrome(page, {
+      phase: "Tracking",
+      progress: 0.4375,
+    });
+    await expectMobileChrome(page, { phase: "Visible", progress: 0 });
     await expect(
       page.getByRole("button", { name: "Pane options", exact: true }),
     ).toHaveCount(1);
+
+    await page
+      .getByRole("button", { name: "Pane options", exact: true })
+      .click();
+    await expect(page.getByRole("menu")).toBeVisible();
+    await expectMobileChrome(page, { phase: "Pinned", progress: 0 });
+    await setScrollTop(documentViewport, 100);
+    await expectMobileChrome(page, { phase: "Pinned", progress: 0 });
+    await expectScrollTop(documentViewport, 100);
+
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await waitForMobileChromeFrame(page);
+    await releaseMobileChromeFocus(page);
+    await expectMobileChrome(page, { phase: "Visible", progress: 0 });
+    await setScrollTop(documentViewport, 140);
+    await waitForMobileChromeFrame(page);
+    await expectMobileChrome(page, { phase: "Tracking", progress: 0.5 });
+    await expectScrollTop(documentViewport, 140);
   });
 
   test("mobile PDF panes use the PDF scroller as the chrome visibility owner", async ({
@@ -604,15 +720,129 @@ test.describe("pane chrome", () => {
       .toBe(true);
     await setScrollTop(pdfViewport, 0);
     await expectScrollTop(pdfViewport, 0);
-    await expectPaneChromeHidden(page, false);
-    await setScrollTop(pdfViewport, MOBILE_TOP_ALWAYS_VISIBLE_SCROLL_PX + 12);
-    await expectPaneChromeHidden(page, false);
+    await releaseMobileChromeFocus(page);
+    await expectMobileChrome(page, { phase: "Visible", progress: 0 });
+    await setScrollTop(pdfViewport, 40);
+    await waitForMobileChromeFrame(page);
+    await expectMobileChrome(page, { phase: "Tracking", progress: 0.5 });
+    await expectScrollTop(pdfViewport, 40);
 
-    await setScrollTop(pdfViewport, MOBILE_TOP_ALWAYS_VISIBLE_SCROLL_PX + 40);
-    await expectPaneChromeHidden(page, true);
+    await setScrollTop(pdfViewport, 72);
+    await waitForMobileChromeFrame(page);
+    await expectMobileChrome(page, { phase: "Hidden", progress: 1 });
+    await expectScrollTop(pdfViewport, 72);
+    await expectFullyRetreatedChrome(page);
+    await expectMobileScrollerOffset(pdfViewport, activePane.locator(
+      '[data-testid^="pdf-page-surface-"]',
+    ).first());
 
     await setScrollTop(pdfViewport, 0);
-    await expectPaneChromeHidden(page, false);
+    await waitForMobileChromeFrame(page);
+    await expectMobileChrome(page, { phase: "Visible", progress: 0 });
+    await expectScrollTop(pdfViewport, 0);
+  });
+
+  test("mobile EPUB and transcript panes publish only from their own scrollports", async ({
+    page,
+  }, testInfo) => {
+    await useMobileViewport(page);
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+
+    const epubSeed = readSeed<SeededNonPdfMedia>("epub-media.json");
+    const transcriptSeed = readSeed<SeededNonPdfMedia>("youtube-media.json");
+    for (const [mediaId, viewportHeight] of [
+      [epubSeed.media_id, 844],
+      [transcriptSeed.media_id, 430],
+    ] as const) {
+      await page.setViewportSize({ width: 390, height: viewportHeight });
+      const activePane = await gotoPaneChromePath(
+        page,
+        testInfo,
+        `/media/${mediaId}`,
+      );
+      const viewport = activePane.getByTestId("document-viewport");
+      await expect(viewport).toBeVisible({ timeout: 20_000 });
+      await expect
+        .poll(() =>
+          viewport.evaluate(
+            (element) => element.scrollHeight - element.clientHeight,
+          ),
+        )
+        .toBeGreaterThan(72);
+
+      await setScrollTop(viewport, 0);
+      await releaseMobileChromeFocus(page);
+      await expectMobileChrome(page, { phase: "Visible", progress: 0 });
+      await setScrollTop(viewport, 40);
+      await waitForMobileChromeFrame(page);
+      await expectMobileChrome(page, { phase: "Tracking", progress: 0.5 });
+      await expectScrollTop(viewport, 40);
+    }
+  });
+
+  test("mobile PDF chrome clears a nonzero safe-area inset without moving content", async ({
+    page,
+  }, testInfo) => {
+    await useMobileViewport(page);
+    const cdp = await page.context().newCDPSession(page);
+    try {
+      await cdp.send("Emulation.setSafeAreaInsetsOverride", {
+        insets: {
+          top: 24,
+          topMax: 24,
+          left: 0,
+          leftMax: 0,
+          bottom: 0,
+          bottomMax: 0,
+          right: 0,
+          rightMax: 0,
+        },
+      });
+      await page.emulateMedia({ reducedMotion: "no-preference" });
+
+      const pdfSeed = readSeed<SeededPdfMedia>("pdf-media.json");
+      const activePane = await gotoPaneChromePath(
+        page,
+        testInfo,
+        `/media/${pdfSeed.media_id}`,
+      );
+      const pdfViewport = activePane.getByLabel("PDF document");
+      const firstPdfPage = activePane
+        .locator('[data-testid^="pdf-page-surface-"]')
+        .first();
+      await expect(pdfViewport).toBeVisible({ timeout: 20_000 });
+      await expect(firstPdfPage).toBeVisible({ timeout: 20_000 });
+      await expect
+        .poll(() =>
+          pdfViewport.evaluate(
+            (element) => element.scrollHeight - element.clientHeight,
+          ),
+        )
+        .toBeGreaterThan(72);
+
+      await setScrollTop(pdfViewport, 0);
+      await releaseMobileChromeFocus(page);
+      await setScrollTop(pdfViewport, 72);
+      await waitForMobileChromeFrame(page);
+      await expectMobileChrome(page, { phase: "Hidden", progress: 1 });
+      await expectScrollTop(pdfViewport, 72);
+      await expectFullyRetreatedChrome(page);
+      await expectMobileScrollerOffset(pdfViewport, firstPdfPage);
+    } finally {
+      await cdp.send("Emulation.setSafeAreaInsetsOverride", {
+        insets: {
+          top: 0,
+          topMax: 0,
+          left: 0,
+          leftMax: 0,
+          bottom: 0,
+          bottomMax: 0,
+          right: 0,
+          rightMax: 0,
+        },
+      });
+      await cdp.detach();
+    }
   });
 
   test("mobile reduced-motion keeps document chrome pinned visible", async ({
@@ -637,20 +867,10 @@ test.describe("pane chrome", () => {
         ),
       )
       .toBeGreaterThan(200);
-    await setScrollTop(
-      documentViewport,
-      MOBILE_TOP_ALWAYS_VISIBLE_SCROLL_PX + 12,
-    );
-    await expectPaneChromeHidden(page, false);
-    await setScrollTop(
-      documentViewport,
-      MOBILE_TOP_ALWAYS_VISIBLE_SCROLL_PX + 40,
-    );
-    await expectPaneChromeHidden(page, false);
-    await expectScrollTop(
-      documentViewport,
-      MOBILE_TOP_ALWAYS_VISIBLE_SCROLL_PX + 40,
-    );
+    await expectMobileChrome(page, { phase: "Pinned", progress: 0 });
+    await setScrollTop(documentViewport, 100);
+    await expectMobileChrome(page, { phase: "Pinned", progress: 0 });
+    await expectScrollTop(documentViewport, 100);
 
     const pdfSeed = readSeed<SeededPdfMedia>("pdf-media.json");
     activePane = await gotoPaneChromePath(
@@ -678,15 +898,10 @@ test.describe("pane chrome", () => {
         { timeout: 20_000 },
       )
       .toBe(true);
-    await expectPaneChromeHidden(page, false);
-    await setScrollTop(pdfViewport, MOBILE_TOP_ALWAYS_VISIBLE_SCROLL_PX + 12);
-    await expectPaneChromeHidden(page, false);
-    await setScrollTop(pdfViewport, MOBILE_TOP_ALWAYS_VISIBLE_SCROLL_PX + 40);
-    await expectPaneChromeHidden(page, false);
-    await expectScrollTop(
-      pdfViewport,
-      MOBILE_TOP_ALWAYS_VISIBLE_SCROLL_PX + 40,
-    );
+    await expectMobileChrome(page, { phase: "Pinned", progress: 0 });
+    await setScrollTop(pdfViewport, 100);
+    await expectMobileChrome(page, { phase: "Pinned", progress: 0 });
+    await expectScrollTop(pdfViewport, 100);
   });
 
   test("shows page/chapter navigation only for supported media kinds", async ({

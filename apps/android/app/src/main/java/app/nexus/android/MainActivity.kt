@@ -4,10 +4,13 @@ import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.os.Message
 import android.util.Base64
+import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.ValueCallback
@@ -15,10 +18,15 @@ import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.browser.customtabs.CustomTabsIntent
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import java.security.MessageDigest
 import java.security.SecureRandom
 
@@ -43,9 +51,20 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
+    // justify-kotlin-override: API 26-34 require the deprecated color setter for
+    // black status-bar protection; API 35+ safely ignores it in favor of the inset overlay.
+    @Suppress("DEPRECATION")
+    private fun configureStatusBarColor() {
+        window.statusBarColor = Color.BLACK
+    }
+
     @Suppress("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        configureStatusBarColor()
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightStatusBars = false
 
         webView = WebView(this)
         NexusWebView.configure(webView)
@@ -153,7 +172,36 @@ class MainActivity : AppCompatActivity() {
         }
 
         webView.webChromeClient = shellChromeClient
-        setContentView(webView)
+        val statusBarProtection = View(this).apply {
+            id = R.id.status_bar_protection
+            setBackgroundColor(Color.BLACK)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        val root = FrameLayout(this).apply {
+            addView(
+                webView,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+            )
+            addView(
+                statusBarProtection,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    0,
+                    Gravity.TOP
+                )
+            )
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
+            statusBarProtection.layoutParams.height =
+                insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
+            statusBarProtection.requestLayout()
+            insets
+        }
+        setContentView(root)
+        ViewCompat.requestApplyInsets(root)
 
         onBackPressedDispatcher.addCallback(
             this,
@@ -175,6 +223,9 @@ class MainActivity : AppCompatActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        if (intent.data == null) {
+            return
+        }
         loadUrlFromIntent(intent)
     }
 
@@ -242,24 +293,28 @@ class MainActivity : AppCompatActivity() {
     }
 
     internal fun loadUrlFromIntent(intent: Intent?) {
+        val uri = intent?.data ?: run {
+            if (webView.url != BuildConfig.NEXUS_BASE_URL) {
+                webView.loadUrl(BuildConfig.NEXUS_BASE_URL)
+            }
+            return
+        }
         val launchUrl =
-            intent?.data?.let { uri ->
-                if (
-                    uri.scheme == "nexus" &&
-                    uri.host == "auth" &&
-                    uri.path == "/handoff"
-                ) {
-                    val callbackUri = nexusBaseUri.buildUpon()
-                        .path("/auth/handoff")
-                        .encodedQuery(uri.encodedQuery)
-                        .appendQueryParameter("hv", pendingHandoffVerifier ?: "")
-                        .build()
-                    pendingHandoffVerifier = null
-                    if (isOwnedUrl(callbackUri)) callbackUri.toString() else null
-                } else {
-                    uri.takeIf(::isOwnedUrl)?.toString()
-                }
-            } ?: BuildConfig.NEXUS_BASE_URL
+            if (
+                uri.scheme == "nexus" &&
+                uri.host == "auth" &&
+                uri.path == "/handoff"
+            ) {
+                val callbackUri = nexusBaseUri.buildUpon()
+                    .path("/auth/handoff")
+                    .encodedQuery(uri.encodedQuery)
+                    .appendQueryParameter("hv", pendingHandoffVerifier ?: "")
+                    .build()
+                pendingHandoffVerifier = null
+                callbackUri.takeIf(::isOwnedUrl)?.toString()
+            } else {
+                uri.takeIf(::isOwnedUrl)?.toString()
+            } ?: return
         if (webView.url == launchUrl) {
             return
         }

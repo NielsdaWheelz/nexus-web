@@ -8,6 +8,7 @@ import type {
 } from "react";
 import { useEffect, useRef } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
+import type { MobileChromeScrollSnapshot } from "@/lib/workspace/mobileChrome";
 import styles from "./page.module.css";
 
 type TextDocumentContentState =
@@ -28,12 +29,6 @@ type TextDocumentContentState =
       renderedHtml: string;
     };
 
-export interface DocumentScrollSnapshot {
-  scrollTop: number;
-  scrollHeight: number;
-  clientHeight: number;
-}
-
 export default function TextDocumentReader({
   mediaId,
   beforeContent,
@@ -44,7 +39,8 @@ export default function TextDocumentReader({
   focusMode,
   hyphenation,
   contentState,
-  onDocumentScroll,
+  onStartReaderScroll,
+  onUpdateReaderScroll,
   onContentClick,
   onContentPointerOver,
   onContentPointerOut,
@@ -61,7 +57,8 @@ export default function TextDocumentReader({
   focusMode: string;
   hyphenation: string;
   contentState: TextDocumentContentState;
-  onDocumentScroll: (snapshot: DocumentScrollSnapshot) => void;
+  onStartReaderScroll: (snapshot: MobileChromeScrollSnapshot) => void;
+  onUpdateReaderScroll: (snapshot: MobileChromeScrollSnapshot) => void;
   onContentClick: (event: MouseEvent<HTMLDivElement>) => void;
   onContentPointerOver: (event: PointerEvent<HTMLDivElement>) => void;
   onContentPointerOut: (event: PointerEvent<HTMLDivElement>) => void;
@@ -70,8 +67,10 @@ export default function TextDocumentReader({
   onInternalLinkClick?: (href: string | null) => boolean;
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
-  const onDocumentScrollRef = useRef(onDocumentScroll);
-  onDocumentScrollRef.current = onDocumentScroll;
+  const onStartReaderScrollRef = useRef(onStartReaderScroll);
+  const onUpdateReaderScrollRef = useRef(onUpdateReaderScroll);
+  onStartReaderScrollRef.current = onStartReaderScroll;
+  onUpdateReaderScrollRef.current = onUpdateReaderScroll;
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -79,17 +78,18 @@ export default function TextDocumentReader({
       return;
     }
 
-    const publishScroll = () => {
-      onDocumentScrollRef.current({
-        scrollTop: viewport.scrollTop,
-        scrollHeight: viewport.scrollHeight,
-        clientHeight: viewport.clientHeight,
-      });
-    };
+    const snapshot = (): MobileChromeScrollSnapshot => ({
+      scrollTop: viewport.scrollTop,
+      scrollHeight: viewport.scrollHeight,
+      clientHeight: viewport.clientHeight,
+    });
+
+    onStartReaderScrollRef.current(snapshot());
+    const publishScroll = () => onUpdateReaderScrollRef.current(snapshot());
 
     viewport.addEventListener("scroll", publishScroll, { passive: true });
     return () => viewport.removeEventListener("scroll", publishScroll);
-  }, []);
+  }, [mediaId]);
 
   function handleRenderedContentClick(event: MouseEvent<HTMLDivElement>) {
     const target = event.target;

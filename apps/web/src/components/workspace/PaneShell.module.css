@@ -91,7 +91,7 @@
   padding: var(--space-1) var(--space-2);
 }
 
-/* The pane toolbar bar sits just below the fixed app top bar and hides with it. */
+/* The pane toolbar sits below the fixed app bar and shares its retreat phase. */
 .paneShell[data-mobile="true"] .chrome {
   position: absolute;
   top: calc(env(safe-area-inset-top) + var(--appnav-bar-height));
@@ -99,20 +99,22 @@
   right: 0;
   z-index: 11;
   background: var(--surface-2);
-  transition: transform var(--duration-base) var(--ease-glide), opacity var(--duration-fast) var(--ease-glide);
-  will-change: transform, opacity;
+  --mobile-chrome-collapse: 0;
+  transform: translateY(
+    calc(
+      -1 * var(--mobile-chrome-collapse) *
+        (env(safe-area-inset-top) + var(--appnav-bar-height) + var(--mobile-pane-chrome-height))
+    )
+  );
+  will-change: transform;
+}
+
+.paneShell[data-mobile="true"] .chrome[data-mobile-chrome-phase="Settling"] {
+  transition: --mobile-chrome-collapse var(--duration-fast) var(--ease-glide);
 }
 
 .paneShell[data-mobile="true"] .chrome:empty {
   border-bottom: none;
-}
-
-.mobileChromeHidden .chrome {
-  transform: translateY(
-    calc(-1 * (env(safe-area-inset-top) + var(--appnav-bar-height) + var(--mobile-pane-chrome-height)))
-  );
-  opacity: 0;
-  pointer-events: none;
 }
 
 .paneShell[data-mobile="true"] .body[data-body-mode="standard"],

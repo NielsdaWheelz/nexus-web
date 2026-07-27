@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type RefObject,
 } from "react";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import type {
@@ -17,6 +18,17 @@ import type {
 } from "@/lib/ui/actionDescriptor";
 import type { PaneHeaderModel } from "@/lib/panes/paneHeaderModel";
 import type { SurfaceHeaderNavigation } from "@/components/ui/SurfaceHeader";
+import {
+  initialMobileChromeMotionState,
+  mobileChromePresentationProgress,
+  reduceMobileChromeMotion,
+  SCROLL_IDLE_SETTLE_DELAY_MS,
+  type MobileChromeMotionPhase,
+  type MobileChromeMotionState,
+  type MobileChromeScrollSnapshot,
+} from "@/lib/workspace/mobileChromeMotion";
+
+export type { MobileChromeScrollSnapshot } from "@/lib/workspace/mobileChromeMotion";
 
 export type PaneMobileChromeLockReason =
   | "reader-restore"
@@ -25,180 +37,421 @@ export type PaneMobileChromeLockReason =
   | "highlight-navigation"
   | "mobile-secondary"
   | "library-picker"
-  | "action-menu";
+  | "action-menu"
+  | "chrome-focus";
+
+export type MobileChromeSurfaceRole = "AppBar" | "PaneToolbar";
 
 export interface PaneMobileChromeController {
-  onDocumentScroll: (snapshot: {
-    scrollTop: number;
-    scrollHeight: number;
-    clientHeight: number;
-  }) => void;
+  startReaderScroll: (snapshot: MobileChromeScrollSnapshot) => void;
+  updateReaderScroll: (snapshot: MobileChromeScrollSnapshot) => void;
   acquireVisibleLock: (reason: PaneMobileChromeLockReason) => () => void;
 }
 
 /** The active pane's chrome, published by the mounted PaneShell for the mobile top bar. */
 export interface MobilePaneChrome {
   paneId: string;
+  routeKey: string;
   identityId: string;
   header: PaneHeaderModel;
   navigation: SurfaceHeaderNavigation;
-  /**
-   * Direct header actions (e.g. the Companion toggle) rendered by the mobile top
-   * bar immediately before the Options menu — they are NOT folded into Options.
-   */
   actions: readonly PaneHeaderAction[];
   options: readonly ActionDescriptor[];
 }
 
-/**
- * The hide-on-scroll controller is split into two contexts so the volatile
- * `hidden`/`paneChrome` state — which flips on every scroll and chrome publish —
- * does not re-render the heavy reader bodies that only need the stable controller
- * methods. Readers consume {@link usePaneMobileChromeController} (stable only);
- * the mobile top bar consumes {@link useMobileChrome} (stable + volatile).
- */
 interface StableController extends PaneMobileChromeController {
   setPaneChrome: (chrome: MobilePaneChrome | null) => void;
+  registerSurface: (
+    surface: HTMLElement,
+    role: MobileChromeSurfaceRole,
+  ) => () => void;
 }
 
 interface VolatileChromeState {
-  hidden: boolean;
+  motionPhase: MobileChromeMotionPhase;
   paneChrome: MobilePaneChrome | null;
+  finishSettle: () => void;
 }
 
 const StableControllerContext = createContext<StableController | null>(null);
 const VolatileChromeContext = createContext<VolatileChromeState | null>(null);
+const COLLAPSE_PROPERTY = "--mobile-chrome-collapse";
 
-// Hide after a deliberate downward scroll; reveal on upward scroll or near the top.
-const SCROLL_DELTA_EPSILON_PX = 1;
-const HIDE_TOLERANCE_PX = 24;
-const REVEAL_TOLERANCE_PX = 16;
-// Scroll policy, deliberately independent from the CSS top-bar height.
-const TOP_ALWAYS_VISIBLE_SCROLL_PX = 60;
+function initialPrefersReducedMotion(): boolean {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function")
+    return false;
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function samePhase(
+  left: MobileChromeMotionPhase,
+  right: MobileChromeMotionPhase,
+): boolean {
+  if (left.kind !== right.kind) return false;
+  if (left.kind === "Tracking" && right.kind === "Tracking") {
+    return left.direction === right.direction;
+  }
+  if (left.kind === "Settling" && right.kind === "Settling") {
+    return left.target === right.target;
+  }
+  return true;
+}
+
+function phaseAtProgress(
+  state: MobileChromeMotionState,
+  progress: number,
+): MobileChromeMotionPhase {
+  if (state.direction != null)
+    return { kind: "Tracking", direction: state.direction };
+  return progress === 0 ? { kind: "Visible" } : { kind: "Hidden" };
+}
 
 export function MobileChromeProvider({ children }: { children: ReactNode }) {
   const isMobile = useIsMobileViewport();
-  const [hidden, setHidden] = useState(false);
-  const [visibleLockCount, setVisibleLockCount] = useState(0);
-  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
-  const [paneChrome, setPaneChrome] = useState<MobilePaneChrome | null>(null);
-
-  const lastScrollTopRef = useRef(0);
-  const scrollDirectionRef = useRef<"down" | "up" | null>(null);
-  const directionStartRef = useRef(0);
-  const visibleLocksRef = useRef<Map<number, PaneMobileChromeLockReason>>(new Map());
+  const [paneChrome, setPaneChromeState] = useState<MobilePaneChrome | null>(
+    null,
+  );
+  const [motionPhase, setMotionPhase] = useState<MobileChromeMotionPhase>({
+    kind: "Visible",
+  });
+  const motionRef = useRef(initialMobileChromeMotionState());
+  const publishedPhaseRef = useRef<MobileChromeMotionPhase>({
+    kind: "Visible",
+  });
+  const activePaneRouteRef = useRef<{
+    paneId: string;
+    routeKey: string;
+  } | null>(null);
+  const isMobileRef = useRef(isMobile);
+  const previousIsMobileRef = useRef(isMobile);
+  const prefersReducedMotionRef = useRef(initialPrefersReducedMotion());
+  const visibleLocksRef = useRef<Map<number, PaneMobileChromeLockReason>>(
+    new Map(),
+  );
   const nextLockIdRef = useRef(0);
+  const surfacesRef = useRef(new Map<MobileChromeSurfaceRole, HTMLElement>());
+  const frameRef = useRef<number | null>(null);
+  const pendingProgressRef = useRef(0);
+  const settleTimerRef = useRef<number | null>(null);
 
-  const showNow = useCallback(() => {
-    setHidden(false);
-    scrollDirectionRef.current = null;
-    directionStartRef.current = lastScrollTopRef.current;
+  isMobileRef.current = isMobile;
+
+  const publishPhase = useCallback((phase: MobileChromeMotionPhase) => {
+    if (samePhase(publishedPhaseRef.current, phase)) return;
+    publishedPhaseRef.current = phase;
+    setMotionPhase(phase);
   }, []);
 
-  // Reveal the bar when switching panes or leaving mobile.
-  const activePaneId = paneChrome?.paneId ?? null;
-  useEffect(() => {
-    setHidden(false);
-    scrollDirectionRef.current = null;
-    directionStartRef.current = 0;
-    lastScrollTopRef.current = 0;
-  }, [isMobile, activePaneId]);
-
-  // Pin reduced-motion users' bar permanently visible.
-  useEffect(() => {
-    if (typeof window.matchMedia !== "function") return;
-    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const update = () => {
-      setPrefersReducedMotion(query.matches);
-      if (query.matches) setHidden(false);
-    };
-    update();
-    query.addEventListener("change", update);
-    return () => query.removeEventListener("change", update);
+  const writeProgress = useCallback((progress: number) => {
+    for (const surface of surfacesRef.current.values()) {
+      surface.style.setProperty(COLLAPSE_PROPERTY, String(progress));
+    }
   }, []);
 
-  const onDocumentScroll = useCallback(
-    (snapshot: { scrollTop: number; scrollHeight: number; clientHeight: number }) => {
-      if (!isMobile || prefersReducedMotion) return;
-      const maxScrollTop = Math.max(0, snapshot.scrollHeight - snapshot.clientHeight);
-      const scrollTop = Math.min(Math.max(0, snapshot.scrollTop), maxScrollTop);
-      const delta = scrollTop - lastScrollTopRef.current;
-      lastScrollTopRef.current = scrollTop;
+  const cancelFrame = useCallback(() => {
+    if (frameRef.current == null) return;
+    window.cancelAnimationFrame(frameRef.current);
+    frameRef.current = null;
+  }, []);
 
-      if (scrollTop <= TOP_ALWAYS_VISIBLE_SCROLL_PX) {
-        setHidden(false);
-        scrollDirectionRef.current = null;
-        directionStartRef.current = scrollTop;
-        return;
-      }
-      if (Math.abs(delta) < SCROLL_DELTA_EPSILON_PX) return;
-
-      const direction = delta > 0 ? "down" : "up";
-      if (scrollDirectionRef.current !== direction) {
-        scrollDirectionRef.current = direction;
-        directionStartRef.current = scrollTop;
-        return;
-      }
-      const distance = Math.abs(scrollTop - directionStartRef.current);
-      if (direction === "down" && distance >= HIDE_TOLERANCE_PX) setHidden(true);
-      else if (direction === "up" && distance >= REVEAL_TOLERANCE_PX) setHidden(false);
+  const scheduleProgressWrite = useCallback(
+    (progress: number) => {
+      pendingProgressRef.current = progress;
+      if (frameRef.current != null) return;
+      frameRef.current = window.requestAnimationFrame(() => {
+        frameRef.current = null;
+        writeProgress(pendingProgressRef.current);
+      });
     },
-    [isMobile, prefersReducedMotion],
+    [writeProgress],
+  );
+
+  const cancelSettleTimer = useCallback(() => {
+    if (settleTimerRef.current == null) return;
+    window.clearTimeout(settleTimerRef.current);
+    settleTimerRef.current = null;
+  }, []);
+
+  const commit = useCallback(
+    (next: MobileChromeMotionState) => {
+      motionRef.current = next;
+      publishPhase(next.phase);
+      scheduleProgressWrite(mobileChromePresentationProgress(next));
+    },
+    [publishPhase, scheduleProgressWrite],
+  );
+
+  const reset = useCallback(
+    (pinned: boolean) => {
+      cancelFrame();
+      cancelSettleTimer();
+      const next = reduceMobileChromeMotion(initialMobileChromeMotionState(), {
+        kind: pinned ? "Pin" : "Unpin",
+      });
+      commit(next);
+    },
+    [cancelFrame, cancelSettleTimer, commit],
+  );
+
+  const interruptSettle = useCallback(() => {
+    const state = motionRef.current;
+    if (state.phase.kind !== "Settling") return state;
+    cancelFrame();
+    const surface = surfacesRef.current.get("AppBar");
+    if (!surface)
+      throw new Error("Mobile chrome settling requires an AppBar surface");
+    const progress = Number.parseFloat(
+      window.getComputedStyle(surface).getPropertyValue(COLLAPSE_PROPERTY),
+    );
+    if (!Number.isFinite(progress)) {
+      throw new Error(
+        "Mobile chrome surfaces must expose a numeric collapse progress",
+      );
+    }
+    const next = {
+      ...state,
+      phase: phaseAtProgress(state, progress),
+      progress: Math.min(1, Math.max(0, progress)),
+    };
+    writeProgress(next.progress);
+    motionRef.current = next;
+    publishPhase(next.phase);
+    return next;
+  }, [cancelFrame, publishPhase, writeProgress]);
+
+  const finishSettle = useCallback(() => {
+    if (motionRef.current.phase.kind !== "Settling") return;
+    const next = reduceMobileChromeMotion(motionRef.current, {
+      kind: "FinishSettle",
+    });
+    motionRef.current = next;
+    publishPhase(next.phase);
+  }, [publishPhase]);
+
+  const startReaderScroll = useCallback(
+    (snapshot: MobileChromeScrollSnapshot) => {
+      if (!isMobileRef.current) return;
+      cancelFrame();
+      cancelSettleTimer();
+      let next = reduceMobileChromeMotion(initialMobileChromeMotionState(), {
+        kind: "Start",
+        snapshot,
+      });
+      if (prefersReducedMotionRef.current || visibleLocksRef.current.size > 0) {
+        next = reduceMobileChromeMotion(next, { kind: "Pin" });
+      }
+      commit(next);
+    },
+    [cancelFrame, cancelSettleTimer, commit],
+  );
+
+  const updateReaderScroll = useCallback(
+    (snapshot: MobileChromeScrollSnapshot) => {
+      if (!isMobileRef.current) return;
+      const prior = motionRef.current;
+      const candidate = reduceMobileChromeMotion(prior, {
+        kind: "Scroll",
+        snapshot,
+      });
+      if (candidate === prior) return;
+      const interrupted = interruptSettle();
+      let next =
+        interrupted === prior
+          ? candidate
+          : reduceMobileChromeMotion(interrupted, { kind: "Scroll", snapshot });
+      const pinned =
+        prefersReducedMotionRef.current || visibleLocksRef.current.size > 0;
+
+      if (pinned) {
+        cancelFrame();
+        cancelSettleTimer();
+        next = reduceMobileChromeMotion(next, { kind: "Pin" });
+        commit(next);
+        return;
+      }
+
+      cancelSettleTimer();
+      commit(next);
+      if (
+        next.phase.kind === "Pinned" ||
+        next.progress === 0 ||
+        next.progress === 1
+      )
+        return;
+      settleTimerRef.current = window.setTimeout(() => {
+        settleTimerRef.current = null;
+        commit(reduceMobileChromeMotion(motionRef.current, { kind: "Settle" }));
+      }, SCROLL_IDLE_SETTLE_DELAY_MS);
+    },
+    [cancelFrame, cancelSettleTimer, commit, interruptSettle],
   );
 
   const acquireVisibleLock = useCallback(
     (reason: PaneMobileChromeLockReason) => {
-      if (!isMobile) return () => {};
+      if (!isMobileRef.current) return () => {};
       const lockId = (nextLockIdRef.current += 1);
+      const wasUnlocked = visibleLocksRef.current.size === 0;
       visibleLocksRef.current.set(lockId, reason);
-      setVisibleLockCount(visibleLocksRef.current.size);
-      showNow();
+      if (wasUnlocked) {
+        cancelFrame();
+        cancelSettleTimer();
+        commit(reduceMobileChromeMotion(motionRef.current, { kind: "Pin" }));
+      }
       let released = false;
       return () => {
         if (released) return;
         released = true;
         visibleLocksRef.current.delete(lockId);
-        setVisibleLockCount(visibleLocksRef.current.size);
-        if (visibleLocksRef.current.size === 0) showNow();
+        if (visibleLocksRef.current.size === 0) {
+          const next = reduceMobileChromeMotion(motionRef.current, {
+            kind: "Unpin",
+          });
+          cancelFrame();
+          cancelSettleTimer();
+          commit(next);
+        }
       };
     },
-    [isMobile, showNow],
+    [cancelFrame, cancelSettleTimer, commit],
+  );
+
+  const setPaneChrome = useCallback(
+    (chrome: MobilePaneChrome | null) => {
+      const active = activePaneRouteRef.current;
+      if (
+        chrome != null &&
+        (chrome.paneId !== active?.paneId ||
+          chrome.routeKey !== active.routeKey)
+      ) {
+        activePaneRouteRef.current = {
+          paneId: chrome.paneId,
+          routeKey: chrome.routeKey,
+        };
+        reset(
+          !isMobileRef.current ||
+            prefersReducedMotionRef.current ||
+            visibleLocksRef.current.size > 0,
+        );
+      }
+      setPaneChromeState(chrome);
+    },
+    [reset],
+  );
+
+  const registerSurface = useCallback(
+    (surface: HTMLElement, role: MobileChromeSurfaceRole) => {
+      surfacesRef.current.set(role, surface);
+      scheduleProgressWrite(
+        mobileChromePresentationProgress(motionRef.current),
+      );
+      return () => {
+        if (surfacesRef.current.get(role) === surface)
+          surfacesRef.current.delete(role);
+      };
+    },
+    [scheduleProgressWrite],
+  );
+
+  useEffect(() => {
+    if (previousIsMobileRef.current === isMobile) return;
+    previousIsMobileRef.current = isMobile;
+    reset(
+      !isMobile ||
+        prefersReducedMotionRef.current ||
+        visibleLocksRef.current.size > 0,
+    );
+  }, [isMobile, reset]);
+
+  useEffect(() => {
+    if (
+      typeof window === "undefined" ||
+      typeof window.matchMedia !== "function"
+    )
+      return;
+    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => {
+      if (query.matches === prefersReducedMotionRef.current) return;
+      prefersReducedMotionRef.current = query.matches;
+      reset(
+        query.matches ||
+          !isMobileRef.current ||
+          visibleLocksRef.current.size > 0,
+      );
+    };
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, [reset]);
+
+  useEffect(
+    () => () => {
+      cancelFrame();
+      cancelSettleTimer();
+      surfacesRef.current.clear();
+    },
+    [cancelFrame, cancelSettleTimer],
   );
 
   const stable = useMemo<StableController>(
-    () => ({ onDocumentScroll, acquireVisibleLock, setPaneChrome }),
-    [onDocumentScroll, acquireVisibleLock],
+    () => ({
+      startReaderScroll,
+      updateReaderScroll,
+      acquireVisibleLock,
+      setPaneChrome,
+      registerSurface,
+    }),
+    [
+      acquireVisibleLock,
+      registerSurface,
+      setPaneChrome,
+      startReaderScroll,
+      updateReaderScroll,
+    ],
   );
 
   const volatile = useMemo<VolatileChromeState>(
-    () => ({
-      hidden: hidden && visibleLockCount === 0 && !prefersReducedMotion,
-      paneChrome,
-    }),
-    [hidden, visibleLockCount, prefersReducedMotion, paneChrome],
+    () => ({ motionPhase, paneChrome, finishSettle }),
+    [finishSettle, motionPhase, paneChrome],
   );
 
   return (
     <StableControllerContext.Provider value={stable}>
-      <VolatileChromeContext.Provider value={volatile}>{children}</VolatileChromeContext.Provider>
+      <VolatileChromeContext.Provider value={volatile}>
+        {children}
+      </VolatileChromeContext.Provider>
     </StableControllerContext.Provider>
   );
 }
 
-/** Full chrome state (stable controller + volatile hidden/paneChrome) for the mobile top bar. */
 export function useMobileChrome(): StableController & VolatileChromeState {
   const stable = useContext(StableControllerContext);
   const volatile = useContext(VolatileChromeContext);
-  if (!stable || !volatile) throw new Error("useMobileChrome must be used within MobileChromeProvider");
+  if (!stable || !volatile)
+    throw new Error("useMobileChrome must be used within MobileChromeProvider");
   return { ...stable, ...volatile };
 }
 
-/**
- * Stable controller for pane bodies (scroll publication + visible locks). Excludes
- * the volatile state so heavy readers do not re-render on hide/reveal or chrome publish.
- */
 export function usePaneMobileChromeController(): PaneMobileChromeController {
   const stable = useContext(StableControllerContext);
-  if (!stable) throw new Error("usePaneMobileChromeController must be used within MobileChromeProvider");
+  if (!stable)
+    throw new Error(
+      "usePaneMobileChromeController must be used within MobileChromeProvider",
+    );
   return stable;
+}
+
+export function useMobileChromeSurface(
+  ref: RefObject<HTMLElement | null>,
+  role: MobileChromeSurfaceRole,
+) {
+  const stable = useContext(StableControllerContext);
+  if (!stable)
+    throw new Error(
+      "useMobileChromeSurface must be used within MobileChromeProvider",
+    );
+  useEffect(() => {
+    const surface = ref.current;
+    if (!surface) return;
+    return stable.registerSurface(surface, role);
+  }, [ref, role, stable]);
 }

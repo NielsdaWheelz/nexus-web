@@ -66,14 +66,16 @@ vi.mock("@/components/chat/useChatRunTail", () => ({
 // renders in isolation (matches PaneShell.test.tsx and the body-pane tests).
 vi.mock("@/lib/workspace/mobileChrome", () => ({
   useMobileChrome: () => ({
-    hidden: false,
+    motionPhase: { kind: "Visible" },
     paneChrome: null,
     setPaneChrome: () => {},
-    onDocumentScroll: () => {},
     acquireVisibleLock: () => () => {},
+    finishSettle: () => {},
   }),
+  useMobileChromeSurface: () => {},
   usePaneMobileChromeController: () => ({
-    onDocumentScroll: () => {},
+    startReaderScroll: () => {},
+    updateReaderScroll: () => {},
     acquireVisibleLock: () => () => {},
   }),
 }));

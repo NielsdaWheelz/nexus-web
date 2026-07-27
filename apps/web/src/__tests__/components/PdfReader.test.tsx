@@ -22,6 +22,19 @@ const pdfRuntimeState = vi.hoisted(() => ({
   createdHighlightId: "created-highlight-1",
 }));
 
+const mobileChromeMocks = vi.hoisted(() => ({
+  startReaderScroll: vi.fn(),
+  updateReaderScroll: vi.fn(),
+  acquireVisibleLock: vi.fn(() => () => {}),
+}));
+
+vi.mock("@/lib/sharing/controller", () => ({
+  useShareController: () => ({
+    openShare: vi.fn(),
+    closeShare: vi.fn(),
+  }),
+}));
+
 function rectList(rects: DOMRect[]): DOMRectList {
   return Object.assign(rects, {
     item: (index: number) => rects[index] ?? null,
@@ -29,7 +42,7 @@ function rectList(rects: DOMRect[]): DOMRectList {
 }
 
 vi.mock("@/lib/workspace/mobileChrome", () => ({
-  usePaneMobileChromeController: () => null,
+  usePaneMobileChromeController: () => mobileChromeMocks,
 }));
 
 vi.mock("@/lib/api/client", async () => {
@@ -44,7 +57,7 @@ vi.mock("@/lib/api/client", async () => {
       error instanceof Error && error.name === "ApiError",
     isUnauthenticatedApiError: () => false,
     apiFetch: vi.fn(async (path: string, init?: RequestInit) => {
-      if (path === "/api/media/media-1/file") {
+      if (path === "/api/media/media-1/file" || path === "/api/media/media-2/file") {
         return {
           data: {
             url: "https://example.test/document.pdf",
@@ -54,7 +67,8 @@ vi.mock("@/lib/api/client", async () => {
       }
 
       if (
-        path.startsWith("/api/media/media-1/pdf-highlights?") &&
+        (path.startsWith("/api/media/media-1/pdf-highlights?") ||
+          path.startsWith("/api/media/media-2/pdf-highlights?")) &&
         (init?.method ?? "GET") === "GET"
       ) {
         const params = new URLSearchParams(path.split("?")[1] ?? "");
@@ -267,6 +281,9 @@ describe("PdfReader selection chat destinations", () => {
     pdfRuntimeState.pageWidths = [600];
     pdfRuntimeState.pageHighlights = [];
     pdfRuntimeState.createdHighlightId = "created-highlight-1";
+    mobileChromeMocks.startReaderScroll.mockReset();
+    mobileChromeMocks.updateReaderScroll.mockReset();
+    mobileChromeMocks.acquireVisibleLock.mockClear();
     vi.mocked(apiFetch).mockClear();
   });
 
@@ -280,6 +297,33 @@ describe("PdfReader selection chat destinations", () => {
 
     const viewport = await screen.findByLabelText("PDF document");
     expect(viewport).toContainElement(screen.getByText("Reader readiness"));
+  });
+
+  it("starts then updates mobile chrome from the PDF viewport", async () => {
+    const view = render(<PdfReader mediaId="media-1" />);
+
+    const viewport = await screen.findByLabelText("PDF document");
+    await waitFor(() => {
+      expect(mobileChromeMocks.startReaderScroll).toHaveBeenCalledOnce();
+    });
+
+    Object.defineProperties(viewport, {
+      scrollTop: { value: 216, configurable: true },
+      scrollHeight: { value: 1_200, configurable: true },
+      clientHeight: { value: 480, configurable: true },
+    });
+    fireEvent.scroll(viewport);
+
+    expect(mobileChromeMocks.updateReaderScroll).toHaveBeenCalledWith({
+      scrollTop: 216,
+      scrollHeight: 1_200,
+      clientHeight: 480,
+    });
+
+    view.rerender(<PdfReader mediaId="media-2" />);
+    await waitFor(() => {
+      expect(mobileChromeMocks.startReaderScroll).toHaveBeenCalledTimes(2);
+    });
   });
 
   it("creates a PDF highlight and quotes it to a new chat", async () => {

@@ -1,12 +1,15 @@
 "use client";
 
-import { useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { ChevronLeft, ChevronRight, Command, Plus } from "lucide-react";
 import AsterismMark from "@/components/AsterismMark";
 import ActionBar from "@/components/ui/ActionBar";
 import ActionMenu from "@/components/ui/ActionMenu";
 import PaneHeaderIdentity from "@/components/ui/PaneHeaderIdentity";
-import { useMobileChrome } from "@/lib/workspace/mobileChrome";
+import {
+  useMobileChrome,
+  useMobileChromeSurface,
+} from "@/lib/workspace/mobileChrome";
 import { pluralize } from "@/lib/text/pluralize";
 import styles from "./AppNav.module.css";
 
@@ -21,29 +24,74 @@ export default function NavTopBar({
   onOpenAdd: () => void;
   paneCount: number;
 }) {
-  const { hidden, paneChrome, acquireVisibleLock } = useMobileChrome();
+  const { motionPhase, paneChrome, acquireVisibleLock, finishSettle } =
+    useMobileChrome();
   const navigation = paneChrome?.navigation;
   const actions = paneChrome?.actions ?? [];
   const options = paneChrome?.options ?? [];
   const releaseLockRef = useRef<(() => void) | null>(null);
+  const releaseFocusLockRef = useRef<(() => void) | null>(null);
+  const topBarRef = useRef<HTMLElement>(null);
+  useMobileChromeSurface(topBarRef, "AppBar");
+
+  useEffect(
+    () => () => {
+      releaseLockRef.current?.();
+      releaseLockRef.current = null;
+      releaseFocusLockRef.current?.();
+      releaseFocusLockRef.current = null;
+    },
+    [],
+  );
 
   const showPaneCount = paneCount > 0;
   const commandLabel = showPaneCount
     ? `Search or ask anything (${pluralize(paneCount, "open tab")})`
     : "Search or ask anything";
+  const controlsHidden = motionPhase.kind === "Hidden";
+  const handleActionMenuOpenChange = useCallback(
+    (open: boolean) => {
+      if (open) {
+        if (releaseLockRef.current) return;
+        releaseLockRef.current = acquireVisibleLock("action-menu");
+        return;
+      }
+      releaseLockRef.current?.();
+      releaseLockRef.current = null;
+    },
+    [acquireVisibleLock],
+  );
 
   return (
     <header
+      ref={topBarRef}
       className={styles.topBar}
-      data-hidden={hidden ? "true" : "false"}
+      data-mobile-chrome-phase={motionPhase.kind}
       data-header-kind={paneChrome?.header.kind}
       data-pane-chrome-for={paneChrome?.paneId}
+      onFocusCapture={() => {
+        if (releaseFocusLockRef.current) return;
+        releaseFocusLockRef.current = acquireVisibleLock("chrome-focus");
+      }}
+      onBlurCapture={(event) => {
+        if (event.currentTarget.contains(event.relatedTarget)) return;
+        releaseFocusLockRef.current?.();
+        releaseFocusLockRef.current = null;
+      }}
+      onTransitionEnd={(event) => {
+        if (
+          event.target === event.currentTarget &&
+          event.propertyName === "--mobile-chrome-collapse"
+        ) {
+          finishSettle();
+        }
+      }}
     >
       <div
         className={styles.topBarControls}
         data-testid="top-bar-controls"
-        aria-hidden={hidden || undefined}
-        inert={hidden || undefined}
+        aria-hidden={controlsHidden || undefined}
+        inert={controlsHidden || undefined}
       >
         <button
           type="button"
@@ -89,8 +137,8 @@ export default function NavTopBar({
       <div
         className={styles.topBarControls}
         data-testid="top-bar-controls"
-        aria-hidden={hidden || undefined}
-        inert={hidden || undefined}
+        aria-hidden={controlsHidden || undefined}
+        inert={controlsHidden || undefined}
       >
         <button
           type="button"
@@ -128,14 +176,7 @@ export default function NavTopBar({
             triggerAttributes={{
               "data-pane-options-trigger": paneChrome?.paneId,
             }}
-            onOpenChange={(open) => {
-              if (open) {
-                releaseLockRef.current = acquireVisibleLock("action-menu");
-              } else {
-                releaseLockRef.current?.();
-                releaseLockRef.current = null;
-              }
-            }}
+            onOpenChange={handleActionMenuOpenChange}
           />
         )}
       </div>

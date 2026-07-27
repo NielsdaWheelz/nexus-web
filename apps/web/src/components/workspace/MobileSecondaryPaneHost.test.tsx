@@ -52,6 +52,7 @@ function MobileChromePublisher({
   const chrome = useMemo(
     () => ({
       paneId,
+      routeKey: `libraries:/${paneId}`,
       identityId: `${paneId}-identity`,
       header: {
         kind: "section" as const,

@@ -1,258 +1,450 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { useRef } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { useEffect, useRef, type MutableRefObject } from "react";
 import {
   MobileChromeProvider,
   useMobileChrome,
+  useMobileChromeSurface,
+  type MobileChromeSurfaceRole,
 } from "@/lib/workspace/mobileChrome";
 
-// Force the provider's mobile gating on so scroll/hide behavior is active.
+const viewport = vi.hoisted(() => ({ mobile: true }));
+
 vi.mock("@/lib/ui/useIsMobileViewport", () => ({
-  useIsMobileViewport: () => true,
+  useIsMobileViewport: () => viewport.mobile,
 }));
 
-const SCROLL_HEIGHT = 2000;
-const CLIENT_HEIGHT = 500;
+const snapshot = (scrollTop: number) => ({
+  scrollTop,
+  scrollHeight: 2_000,
+  clientHeight: 500,
+});
 
-/**
- * A consumer that surfaces `hidden` as text and exposes buttons that drive the
- * provider. Each scroll button calls `onDocumentScroll` with a fixed scrollTop
- * against a stable 2000x500 viewport (maxScrollTop = 1500).
- */
-function Consumer({ scrollTops }: { scrollTops: number[] }) {
-  const { hidden, onDocumentScroll, acquireVisibleLock } = useMobileChrome();
-  const releaseRef = useRef<null | (() => void)>(null);
+function RegisteredSurface({ role }: { role: MobileChromeSurfaceRole }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useMobileChromeSurface(ref, role);
+  return <div ref={ref} data-testid={role} />;
+}
+
+function paneChrome(paneId: string, routeKey = `${paneId}:route-a`) {
+  return {
+    paneId,
+    routeKey,
+    identityId: `${paneId}-identity`,
+    header: {
+      kind: "section" as const,
+      standingHead: paneId,
+      folio: { kind: "none" as const },
+      pending: false,
+    },
+    navigation: {
+      canGoBack: false,
+      canGoForward: false,
+      onBack: () => {},
+      onForward: () => {},
+    },
+    actions: [],
+    options: [],
+  };
+}
+
+function SourceOnMount({ update }: { update: boolean }) {
+  const { startReaderScroll, updateReaderScroll } = useMobileChrome();
+  useEffect(() => {
+    startReaderScroll(snapshot(100));
+    if (update) updateReaderScroll(snapshot(132));
+  }, [startReaderScroll, update, updateReaderScroll]);
+  return null;
+}
+
+function Surface({
+  reversed = false,
+  renders,
+  startOnMount = false,
+  updateOnMount = false,
+}: {
+  reversed?: boolean;
+  renders?: MutableRefObject<number>;
+  startOnMount?: boolean;
+  updateOnMount?: boolean;
+}) {
+  if (renders) renders.current += 1;
+  const {
+    motionPhase,
+    startReaderScroll,
+    updateReaderScroll,
+    acquireVisibleLock,
+    finishSettle,
+    setPaneChrome,
+  } = useMobileChrome();
+  const releaseFirstRef = useRef<(() => void) | null>(null);
+  const releaseSecondRef = useRef<(() => void) | null>(null);
+  const surfaces = (
+    <>
+      <RegisteredSurface role="AppBar" />
+      <RegisteredSurface role="PaneToolbar" />
+    </>
+  );
+  const reversedSurfaces = (
+    <>
+      <RegisteredSurface role="PaneToolbar" />
+      <RegisteredSurface role="AppBar" />
+    </>
+  );
   return (
     <div>
-      <div data-testid="state">{hidden ? "hidden" : "visible"}</div>
-      {scrollTops.map((scrollTop, index) => (
-        <button
-          key={index}
-          type="button"
-          data-testid={`scroll-${index}`}
-          onClick={() =>
-            onDocumentScroll({
-              scrollTop,
-              scrollHeight: SCROLL_HEIGHT,
-              clientHeight: CLIENT_HEIGHT,
-            })
-          }
-        >
-          scroll to {scrollTop}
-        </button>
-      ))}
+      {reversed ? reversedSurfaces : surfaces}
+      {startOnMount ? <SourceOnMount update={updateOnMount} /> : null}
+      <div data-testid="phase">{motionPhase.kind}</div>
       <button
         type="button"
-        data-testid="acquire-lock"
-        onClick={() => {
-          releaseRef.current = acquireVisibleLock("text-selection");
-        }}
-      >
-        acquire lock
-      </button>
+        data-testid="start"
+        onClick={() => startReaderScroll(snapshot(100))}
+      />
       <button
         type="button"
-        data-testid="release-lock"
+        data-testid="start-top"
+        onClick={() => startReaderScroll(snapshot(0))}
+      />
+      <button
+        type="button"
+        data-testid="scroll-40"
+        onClick={() => updateReaderScroll(snapshot(40))}
+      />
+      <button
+        type="button"
+        data-testid="scroll-116"
+        onClick={() => updateReaderScroll(snapshot(116))}
+      />
+      <button
+        type="button"
+        data-testid="scroll-132"
+        onClick={() => updateReaderScroll(snapshot(132))}
+      />
+      <button
+        type="button"
+        data-testid="scroll-140"
+        onClick={() => updateReaderScroll(snapshot(140))}
+      />
+      <button
+        type="button"
+        data-testid="scroll-148"
+        onClick={() => updateReaderScroll(snapshot(148))}
+      />
+      <button
+        type="button"
+        data-testid="scroll-top"
+        onClick={() => updateReaderScroll(snapshot(8))}
+      />
+      <button
+        type="button"
+        data-testid="pane-a"
+        onClick={() => setPaneChrome(paneChrome("pane-a"))}
+      />
+      <button
+        type="button"
+        data-testid="pane-a-route-b"
+        onClick={() => setPaneChrome(paneChrome("pane-a", "pane-a:route-b"))}
+      />
+      <button
+        type="button"
+        data-testid="lock-first"
         onClick={() => {
-          releaseRef.current?.();
-          releaseRef.current = null;
+          releaseFirstRef.current = acquireVisibleLock("text-selection");
         }}
-      >
-        release lock
-      </button>
+      />
+      <button
+        type="button"
+        data-testid="lock-second"
+        onClick={() => {
+          releaseSecondRef.current = acquireVisibleLock("pdf-selection");
+        }}
+      />
+      <button
+        type="button"
+        data-testid="release-first"
+        onClick={() => releaseFirstRef.current?.()}
+      />
+      <button
+        type="button"
+        data-testid="release-second"
+        onClick={() => releaseSecondRef.current?.()}
+      />
+      <button type="button" data-testid="finish" onClick={finishSettle} />
     </div>
   );
 }
 
-function renderConsumer(scrollTops: number[]) {
+function renderSurface(
+  options: {
+    reversed?: boolean;
+    renders?: MutableRefObject<number>;
+    startOnMount?: boolean;
+    updateOnMount?: boolean;
+  } = {},
+) {
   return render(
     <MobileChromeProvider>
-      <Consumer scrollTops={scrollTops} />
+      <Surface {...options} />
     </MobileChromeProvider>,
   );
 }
 
-function scrollTo(index: number) {
-  fireEvent.click(screen.getByTestId(`scroll-${index}`));
-}
-
-function mockReducedMotion(matches: boolean) {
-  vi.spyOn(window, "matchMedia").mockImplementation(((query: string) => {
-    const isReduceQuery = query === "(prefers-reduced-motion: reduce)";
-    return {
-      matches: isReduceQuery ? matches : false,
-      media: query,
-      onchange: null,
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-    } as unknown as MediaQueryList;
-  }) as typeof window.matchMedia);
-}
-
-/** Drives setPaneChrome so the pane-switch reset can be exercised. */
-function PaneSwitchConsumer() {
-  const { hidden, onDocumentScroll, setPaneChrome } = useMobileChrome();
-  const setPane = (paneId: string) =>
-    setPaneChrome({
-      paneId,
-      identityId: `${paneId}-identity`,
-      header: {
-        kind: "section",
-        standingHead: paneId,
-        folio: { kind: "none" },
-        pending: false,
-      },
-      navigation: { canGoBack: false, canGoForward: false, onBack: () => {}, onForward: () => {} },
-      actions: [],
-      options: [],
-    });
-  const scroll = (scrollTop: number) =>
-    onDocumentScroll({ scrollTop, scrollHeight: SCROLL_HEIGHT, clientHeight: CLIENT_HEIGHT });
-  return (
-    <div>
-      <div data-testid="state">{hidden ? "hidden" : "visible"}</div>
-      <button type="button" data-testid="scroll-0" onClick={() => scroll(100)} />
-      <button type="button" data-testid="scroll-1" onClick={() => scroll(130)} />
-      <button type="button" data-testid="pane-a" onClick={() => setPane("pane-a")} />
-      <button type="button" data-testid="pane-b" onClick={() => setPane("pane-b")} />
-    </div>
-  );
+function click(testId: string) {
+  fireEvent.click(screen.getByTestId(testId));
 }
 
 describe("MobileChromeProvider", () => {
+  let frames = new Map<number, FrameRequestCallback>();
+  let nextFrame = 0;
+  let reducedMotion = false;
+  let removeMediaListener = vi.fn();
+
+  beforeEach(() => {
+    viewport.mobile = true;
+    vi.useFakeTimers();
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      const id = (nextFrame += 1);
+      frames.set(id, callback);
+      return id;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation((id) => {
+      frames.delete(id);
+    });
+    vi.spyOn(window, "matchMedia").mockImplementation(
+      ((query: string) =>
+        ({
+          matches:
+            query === "(prefers-reduced-motion: reduce)" && reducedMotion,
+          media: query,
+          onchange: null,
+          addEventListener: vi.fn(),
+          removeEventListener: removeMediaListener,
+          addListener: vi.fn(),
+          removeListener: vi.fn(),
+          dispatchEvent: vi.fn(),
+        }) as MediaQueryList) as typeof window.matchMedia,
+    );
+  });
+
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
+    frames = new Map();
+    nextFrame = 0;
+    reducedMotion = false;
+    removeMediaListener = vi.fn();
     document.body.innerHTML = "";
   });
 
-  it("starts visible", () => {
-    renderConsumer([]);
-    expect(screen.getByTestId("state")).toHaveTextContent("visible");
+  function flushFrame() {
+    const queued = [...frames.values()];
+    frames.clear();
+    act(() => queued.forEach((callback) => callback(0)));
+  }
+
+  function progress(role: MobileChromeSurfaceRole) {
+    return screen
+      .getByTestId(role)
+      .style.getPropertyValue("--mobile-chrome-collapse");
+  }
+
+  it("initializes both surfaces together and coalesces tracking writes", () => {
+    renderSurface();
+    click("start");
+    flushFrame();
+    click("scroll-116");
+    click("scroll-132");
+
+    expect(frames.size).toBe(1);
+    flushFrame();
+    expect(progress("AppBar")).toBe("0.375");
+    expect(progress("PaneToolbar")).toBe("0.375");
   });
 
-  it("hides after a deliberate downward scroll of >= 24px past the top zone", async () => {
-    // Two downward calls: the first records the "down" direction (start = 100),
-    // the second accumulates |130 - 100| = 30 >= HIDE_TOLERANCE_PX (24).
-    renderConsumer([100, 130]);
+  it("does not erase a child source baseline while registering initial motion preference", () => {
+    renderSurface({ startOnMount: true });
+    flushFrame();
+    click("scroll-132");
+    flushFrame();
 
-    scrollTo(0);
-    expect(screen.getByTestId("state")).toHaveTextContent("visible");
+    expect(progress("AppBar")).toBe("0.375");
+  });
 
-    scrollTo(1);
-    await waitFor(() =>
-      expect(screen.getByTestId("state")).toHaveTextContent("hidden"),
+  it("uses the first down gesture after a top start", () => {
+    renderSurface();
+    click("start-top");
+    flushFrame();
+    click("scroll-40");
+    flushFrame();
+
+    expect(progress("AppBar")).toBe("0.5");
+  });
+
+  it("samples AppBar progress when interruption registration order is reversed", () => {
+    renderSurface({ reversed: true });
+    click("start");
+    flushFrame();
+    click("scroll-132");
+    flushFrame();
+    act(() => vi.advanceTimersByTime(120));
+    flushFrame();
+    screen
+      .getByTestId("AppBar")
+      .style.setProperty("--mobile-chrome-collapse", "0.3");
+    screen
+      .getByTestId("PaneToolbar")
+      .style.setProperty("--mobile-chrome-collapse", "0.8");
+
+    click("scroll-140");
+
+    expect(progress("AppBar")).toBe("0.3");
+    expect(progress("PaneToolbar")).toBe("0.3");
+    click("finish");
+    flushFrame();
+    expect(screen.getByTestId("phase")).toHaveTextContent("Tracking");
+    expect(progress("AppBar")).toBe(String(0.3 + 8 / 64));
+  });
+
+  it("does not render volatile consumers for same-direction tracking samples", () => {
+    const renders = { current: 0 };
+    renderSurface({ renders });
+    click("start");
+    flushFrame();
+    click("scroll-116");
+    flushFrame();
+    const trackingRenders = renders.current;
+
+    click("scroll-132");
+    click("scroll-140");
+    click("scroll-148");
+    flushFrame();
+
+    expect(renders.current).toBe(trackingRenders);
+  });
+
+  it("holds both locks until the final release", () => {
+    renderSurface();
+    click("start");
+    flushFrame();
+    click("lock-first");
+    click("lock-second");
+    flushFrame();
+    click("release-first");
+    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
+    click("release-second");
+    flushFrame();
+    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
+  });
+
+  it("preserves the current baseline through a lock with no new scroll", () => {
+    renderSurface();
+    click("start");
+    flushFrame();
+    click("scroll-132");
+    flushFrame();
+    click("lock-first");
+    flushFrame();
+    click("release-first");
+    click("scroll-140");
+    click("scroll-148");
+    flushFrame();
+
+    expect(progress("AppBar")).toBe("0.125");
+  });
+
+  it("cleans queued frame, timer, and media listener on unmount", () => {
+    const cancelFrame = vi.mocked(window.cancelAnimationFrame);
+    const clearTimer = vi.spyOn(window, "clearTimeout");
+    const view = renderSurface();
+    click("start");
+    flushFrame();
+    click("scroll-116");
+    const cancelledBeforeUnmount = cancelFrame.mock.calls.length;
+    const clearedBeforeUnmount = clearTimer.mock.calls.length;
+
+    view.unmount();
+
+    expect(cancelFrame.mock.calls.length).toBeGreaterThan(
+      cancelledBeforeUnmount,
+    );
+    expect(clearTimer.mock.calls.length).toBeGreaterThan(clearedBeforeUnmount);
+    expect(removeMediaListener).toHaveBeenCalledWith(
+      "change",
+      expect.any(Function),
     );
   });
 
-  it("does not hide before the down accumulation reaches 24px", async () => {
-    // First call sets direction (start = 100); second accumulates only 10px (< 24).
-    renderConsumer([100, 110]);
+  it("lets source start establish the final baseline after a pane change", () => {
+    renderSurface();
+    click("pane-a");
+    click("start");
+    flushFrame();
+    click("scroll-132");
+    flushFrame();
 
-    scrollTo(0);
-    scrollTo(1);
-
-    // Give the state a chance to settle, then assert it never hid.
-    await Promise.resolve();
-    expect(screen.getByTestId("state")).toHaveTextContent("visible");
+    expect(progress("AppBar")).toBe("0.375");
   });
 
-  it("reveals after a deliberate upward scroll of >= 16px once hidden", async () => {
-    // 0,1: hide (down 100 -> 130). 2: records "up" direction (start = 120).
-    // 3: accumulates |100 - 120| = 20 >= REVEAL_TOLERANCE_PX (16). Still > 60.
-    renderConsumer([100, 130, 120, 100]);
+  it("resets when the active pane navigates to another route", () => {
+    renderSurface();
+    click("pane-a");
+    click("start");
+    flushFrame();
+    click("scroll-132");
+    flushFrame();
+    expect(progress("AppBar")).toBe("0.375");
 
-    scrollTo(0);
-    scrollTo(1);
-    await waitFor(() =>
-      expect(screen.getByTestId("state")).toHaveTextContent("hidden"),
-    );
+    click("pane-a-route-b");
+    flushFrame();
 
-    scrollTo(2);
-    scrollTo(3);
-    await waitFor(() =>
-      expect(screen.getByTestId("state")).toHaveTextContent("visible"),
-    );
+    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
+    expect(progress("AppBar")).toBe("0");
   });
 
-  it("always shows when scrollTop is within the independent top zone (<= 60)", async () => {
-    // Hide first, then a scroll into the top zone (40 <= 60) forces visible.
-    renderConsumer([100, 130, 40]);
-
-    scrollTo(0);
-    scrollTo(1);
-    await waitFor(() =>
-      expect(screen.getByTestId("state")).toHaveTextContent("hidden"),
-    );
-
-    scrollTo(2);
-    await waitFor(() =>
-      expect(screen.getByTestId("state")).toHaveTextContent("visible"),
-    );
-  });
-
-  it("keeps the bar visible through a hide-scroll while a lock is held, then resumes hiding after release", async () => {
-    // Indices 0,1 hide (100 -> 130); after release, 2,3 hide again (160 -> 190).
-    renderConsumer([100, 130, 160, 190]);
-
-    // Acquire a visible lock; bar is pinned visible.
-    fireEvent.click(screen.getByTestId("acquire-lock"));
-    expect(screen.getByTestId("state")).toHaveTextContent("visible");
-
-    // A full hide-scroll must NOT hide while the lock is held.
-    scrollTo(0);
-    scrollTo(1);
-    await Promise.resolve();
-    expect(screen.getByTestId("state")).toHaveTextContent("visible");
-
-    // Releasing all locks re-reveals the bar (showNow) and resumes normal behavior.
-    fireEvent.click(screen.getByTestId("release-lock"));
-    await waitFor(() =>
-      expect(screen.getByTestId("state")).toHaveTextContent("visible"),
-    );
-
-    // A fresh deliberate downward scroll now hides again, proving behavior resumed.
-    scrollTo(2);
-    scrollTo(3);
-    await waitFor(() =>
-      expect(screen.getByTestId("state")).toHaveTextContent("hidden"),
-    );
-  });
-
-  it("pins the bar visible under prefers-reduced-motion and never hides on scroll", async () => {
-    mockReducedMotion(true);
-    renderConsumer([100, 130]);
-
-    await waitFor(() =>
-      expect(screen.getByTestId("state")).toHaveTextContent("visible"),
-    );
-
-    scrollTo(0);
-    scrollTo(1);
-    await Promise.resolve();
-    expect(screen.getByTestId("state")).toHaveTextContent("visible");
-  });
-
-  it("reveals the bar again when the active pane changes", async () => {
-    render(
+  it("resets when mobile mode exits and enters", () => {
+    const view = renderSurface();
+    click("start");
+    flushFrame();
+    click("scroll-132");
+    flushFrame();
+    viewport.mobile = false;
+    view.rerender(
       <MobileChromeProvider>
-        <PaneSwitchConsumer />
+        <Surface />
       </MobileChromeProvider>,
     );
-
-    fireEvent.click(screen.getByTestId("pane-a"));
-    fireEvent.click(screen.getByTestId("scroll-0"));
-    fireEvent.click(screen.getByTestId("scroll-1"));
-    await waitFor(() =>
-      expect(screen.getByTestId("state")).toHaveTextContent("hidden"),
+    flushFrame();
+    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
+    viewport.mobile = true;
+    view.rerender(
+      <MobileChromeProvider>
+        <Surface />
+      </MobileChromeProvider>,
     );
+    flushFrame();
 
-    // Switching panes resets the hide state so the new pane's bar starts visible.
-    fireEvent.click(screen.getByTestId("pane-b"));
-    await waitFor(() =>
-      expect(screen.getByTestId("state")).toHaveTextContent("visible"),
-    );
+    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
+    expect(progress("AppBar")).toBe("0");
+  });
+
+  it("pins reduced-motion readers before any scroll sample can collapse chrome", () => {
+    reducedMotion = true;
+    renderSurface();
+    click("start");
+    click("scroll-132");
+    flushFrame();
+
+    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
+    expect(progress("AppBar")).toBe("0");
+  });
+
+  it("pins an initial reduced-motion source before its first update", () => {
+    reducedMotion = true;
+    renderSurface({ startOnMount: true, updateOnMount: true });
+    flushFrame();
+
+    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
+    expect(progress("AppBar")).toBe("0");
   });
 });

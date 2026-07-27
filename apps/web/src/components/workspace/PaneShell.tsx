@@ -59,7 +59,10 @@ import type {
   ActionDescriptor,
   PaneHeaderAction,
 } from "@/lib/ui/actionDescriptor";
-import { useMobileChrome } from "@/lib/workspace/mobileChrome";
+import {
+  useMobileChrome,
+  useMobileChromeSurface,
+} from "@/lib/workspace/mobileChrome";
 import type { EffectivePaneSizing } from "@/lib/workspace/paneSizing";
 import { usePaneReturnScrollport } from "@/lib/workspace/paneReturnMemento";
 import {
@@ -194,7 +197,15 @@ export default function PaneShell({
     readonly routeKey: string;
     readonly publication: PanePrimaryChromePublication;
   } | null>(null);
-  const { hidden, setPaneChrome } = useMobileChrome();
+  const { motionPhase, setPaneChrome, acquireVisibleLock } = useMobileChrome();
+  const releaseFocusLockRef = useRef<(() => void) | null>(null);
+  useMobileChromeSurface(chromeRef, "PaneToolbar");
+  useEffect(
+    () => () => {
+      releaseFocusLockRef.current?.();
+    },
+    [],
+  );
   const identityId = useId();
   const landmarkLabelId = useId();
 
@@ -249,7 +260,8 @@ export default function PaneShell({
   const effectiveActions =
     acceptedPrimaryChrome?.actions ?? EMPTY_HEADER_ACTIONS;
   const effectiveMenu = acceptedPrimaryChrome?.menu;
-  const mobileChromeHidden = isMobile && hidden;
+  const toolbarHidden =
+    Boolean(effectiveToolbar) && motionPhase.kind === "Hidden";
   const secondaryPresentation =
     secondaryPane &&
     secondaryPublication?.groupId === secondaryPane.groupId &&
@@ -285,9 +297,7 @@ export default function PaneShell({
     }
     const node = chromeRef.current;
     const update = () => {
-      setMobileChromeHeight(
-        Math.max(0, Math.round(node.getBoundingClientRect().height)),
-      );
+      setMobileChromeHeight(Math.max(0, node.getBoundingClientRect().height));
     };
     update();
     const observer = new ResizeObserver(update);
@@ -427,13 +437,14 @@ export default function PaneShell({
     paneRuntime,
     routeShareIdentity,
   ]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!isMobile) return;
     // Direct header actions (e.g. the Companion toggle) travel on their own
     // channel so the mobile top bar renders them beside — never folded into —
     // the Options menu.
     setPaneChrome({
       paneId,
+      routeKey,
       identityId,
       header,
       navigation,
@@ -447,14 +458,12 @@ export default function PaneShell({
     isMobile,
     navigation,
     paneId,
+    routeKey,
     reconciledActions,
     paneMenuOptions,
     setPaneChrome,
   ]);
 
-  const shellClass = mobileChromeHidden
-    ? `${styles.paneShell} ${styles.mobileChromeHidden}`
-    : styles.paneShell;
   const bodyId = `${paneId}-body`;
   const expandedActionRetainsSecondary = reconciledActions.some(
     (action) =>
@@ -514,13 +523,12 @@ export default function PaneShell({
 
   return (
     <section
-      className={shellClass}
+      className={styles.paneShell}
       aria-labelledby={landmarkLabelId}
       data-testid="pane-shell-root"
       data-pane-shell="true"
       data-header-kind={header.kind}
       data-active={isActive ? "true" : "false"}
-      data-mobile-chrome-hidden={mobileChromeHidden ? "true" : "false"}
       data-mobile={isMobile ? "true" : "false"}
       style={shellStyle}
     >
@@ -544,8 +552,18 @@ export default function PaneShell({
           className={styles.chrome}
           data-testid="pane-shell-chrome"
           data-pane-chrome-focus="true"
+          data-mobile-chrome-phase={motionPhase.kind}
           tabIndex={-1}
           onMouseDown={onChromeMouseDown}
+          onFocusCapture={() => {
+            if (releaseFocusLockRef.current) return;
+            releaseFocusLockRef.current = acquireVisibleLock("chrome-focus");
+          }}
+          onBlurCapture={(event) => {
+            if (event.currentTarget.contains(event.relatedTarget)) return;
+            releaseFocusLockRef.current?.();
+            releaseFocusLockRef.current = null;
+          }}
         >
           {!isMobile ? (
             <SurfaceHeader
@@ -557,7 +575,14 @@ export default function PaneShell({
             />
           ) : null}
           {effectiveToolbar ? (
-            <div className={styles.toolbar}>{effectiveToolbar}</div>
+            <div
+              className={styles.toolbar}
+              data-testid="pane-shell-toolbar"
+              aria-hidden={toolbarHidden || undefined}
+              inert={toolbarHidden || undefined}
+            >
+              {effectiveToolbar}
+            </div>
           ) : null}
         </div>
         <div

@@ -15,7 +15,6 @@ import {
   useMemo,
   lazy,
   Suspense,
-  type UIEvent,
 } from "react";
 import { executeResourceChat } from "@/lib/resources/resourceActionExecution";
 import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
@@ -170,6 +169,7 @@ import {
 } from "@/lib/panes/paneRuntime";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { usePaneMobileChromeController } from "@/lib/workspace/mobileChrome";
+import type { MobileChromeScrollSnapshot } from "@/lib/workspace/mobileChrome";
 import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
 import { usePaneFixedChrome } from "@/components/workspace/PaneFixedChrome";
 import type { PanePrimaryChromePublication } from "@/lib/panes/panePublications";
@@ -234,9 +234,7 @@ import { useDocumentActions } from "@/lib/media/useDocumentActions";
 import type { MediaActionCapabilities } from "@/lib/media/ingestionClient";
 import { useFocusModeTracking } from "@/lib/reader/useFocusModeTracking";
 import ReaderContentsNav from "@/components/reader/ReaderContentsNav";
-import TextDocumentReader, {
-  type DocumentScrollSnapshot,
-} from "./TextDocumentReader";
+import TextDocumentReader from "./TextDocumentReader";
 import TranscriptPlaybackPanel from "./TranscriptPlaybackPanel";
 import { useReaderActivityAdapter } from "./ReaderActivityAdapter";
 import TranscriptContentPanel from "./TranscriptContentPanel";
@@ -653,6 +651,7 @@ export default function MediaPaneBody() {
     [id, paneRouter],
   );
   const paneMobileChrome = usePaneMobileChromeController();
+  const transcriptViewportRef = useRef<HTMLDivElement | null>(null);
   const viewport = useViewportState();
   const {
     target,
@@ -2653,10 +2652,9 @@ export default function MediaPaneBody() {
       return;
     }
 
-    let releaseChromeLock =
-      isMobileViewport && paneMobileChrome
-        ? paneMobileChrome.acquireVisibleLock("reader-restore")
-        : null;
+    let releaseChromeLock = isMobileViewport
+      ? paneMobileChrome.acquireVisibleLock("reader-restore")
+      : null;
     const releaseChrome = () => {
       releaseChromeLock?.();
       releaseChromeLock = null;
@@ -3147,10 +3145,9 @@ export default function MediaPaneBody() {
     let rafId = 0;
     const MAX_ATTEMPTS = 96;
 
-    let releaseChromeLock =
-      isMobileViewport && paneMobileChrome
-        ? paneMobileChrome.acquireVisibleLock("reader-restore")
-        : null;
+    let releaseChromeLock = isMobileViewport
+      ? paneMobileChrome.acquireVisibleLock("reader-restore")
+      : null;
     const releaseChrome = () => {
       releaseChromeLock?.();
       releaseChromeLock = null;
@@ -3491,10 +3488,9 @@ export default function MediaPaneBody() {
       return;
     }
 
-    let releaseChromeLock =
-      isMobileViewport && paneMobileChrome
-        ? paneMobileChrome.acquireVisibleLock("reader-restore")
-        : null;
+    let releaseChromeLock = isMobileViewport
+      ? paneMobileChrome.acquireVisibleLock("reader-restore")
+      : null;
     const releaseChrome = () => {
       releaseChromeLock?.();
       releaseChromeLock = null;
@@ -3672,7 +3668,7 @@ export default function MediaPaneBody() {
 
     let unlockChromeFrame = 0;
     let releaseChromeLock: (() => void) | null = null;
-    if (isMobileViewport && paneMobileChrome) {
+    if (isMobileViewport) {
       releaseChromeLock = paneMobileChrome.acquireVisibleLock(
         "highlight-navigation",
       );
@@ -3754,7 +3750,7 @@ export default function MediaPaneBody() {
     }
     let unlockChromeFrame = 0;
     let releaseChromeLock: (() => void) | null = null;
-    if (isMobileViewport && paneMobileChrome) {
+    if (isMobileViewport) {
       releaseChromeLock = paneMobileChrome.acquireVisibleLock(
         "highlight-navigation",
       );
@@ -4873,23 +4869,44 @@ export default function MediaPaneBody() {
     [commitEvidenceActivation, focusHighlight],
   );
 
-  const handleDocumentScroll = useCallback(
-    (snapshot: DocumentScrollSnapshot) => {
-      paneMobileChrome?.onDocumentScroll(snapshot);
+  const startReaderScroll = useCallback(
+    (snapshot: MobileChromeScrollSnapshot) => {
+      paneMobileChrome.startReaderScroll(snapshot);
     },
     [paneMobileChrome],
   );
 
-  const handleDocumentScrollEvent = useCallback(
-    (event: UIEvent<HTMLDivElement>) => {
-      handleDocumentScroll({
-        scrollTop: event.currentTarget.scrollTop,
-        scrollHeight: event.currentTarget.scrollHeight,
-        clientHeight: event.currentTarget.clientHeight,
-      });
+  const updateReaderScroll = useCallback(
+    (snapshot: MobileChromeScrollSnapshot) => {
+      paneMobileChrome.updateReaderScroll(snapshot);
     },
-    [handleDocumentScroll],
+    [paneMobileChrome],
   );
+
+  useEffect(() => {
+    if (!isTranscriptMedia) {
+      return;
+    }
+    const viewport = transcriptViewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    const snapshot = (): MobileChromeScrollSnapshot => ({
+      scrollTop: viewport.scrollTop,
+      scrollHeight: viewport.scrollHeight,
+      clientHeight: viewport.clientHeight,
+    });
+    startReaderScroll(snapshot());
+    const publishScroll = () => updateReaderScroll(snapshot());
+    viewport.addEventListener("scroll", publishScroll, { passive: true });
+    return () => viewport.removeEventListener("scroll", publishScroll);
+  }, [
+    id,
+    isTranscriptMedia,
+    startReaderScroll,
+    updateReaderScroll,
+  ]);
 
   // The highlight whose quote is awaiting an "Ask in existing chat…" destination
   // pick. The overlay is hosted below; a non-null id opens it. Selecting a row
@@ -5604,7 +5621,7 @@ export default function MediaPaneBody() {
   }, [media?.playerDescriptor]);
 
   useEffect(() => {
-    if (!paneMobileChrome || !isMobileViewport) {
+    if (!isMobileViewport) {
       return;
     }
     const releaseLocks: Array<() => void> = [];
@@ -6577,10 +6594,10 @@ export default function MediaPaneBody() {
           {isTranscriptMedia ? (
             <div className={styles.readerFrame}>
               <div
+                ref={transcriptViewportRef}
                 className={styles.documentViewport}
                 data-testid="document-viewport"
                 data-pane-content="true"
-                onScroll={handleDocumentScrollEvent}
               >
                 {readerBanners}
                 <div className={styles.transcriptPane}>
@@ -6777,7 +6794,8 @@ export default function MediaPaneBody() {
               focusMode={focusModeForRoot}
               hyphenation={hyphenationForRoot}
               contentState={epubTextDocumentContentState}
-              onDocumentScroll={handleDocumentScroll}
+              onStartReaderScroll={startReaderScroll}
+              onUpdateReaderScroll={updateReaderScroll}
               onContentClick={handleReaderContentClick}
               onContentPointerOver={handleContentPointerOver}
               onContentPointerOut={handleContentPointerOut}
@@ -6808,7 +6826,8 @@ export default function MediaPaneBody() {
               focusMode={focusModeForRoot}
               hyphenation={hyphenationForRoot}
               contentState={webTextDocumentContentState}
-              onDocumentScroll={handleDocumentScroll}
+              onStartReaderScroll={startReaderScroll}
+              onUpdateReaderScroll={updateReaderScroll}
               onContentClick={handleReaderContentClick}
               onContentPointerOver={handleContentPointerOver}
               onContentPointerOut={handleContentPointerOut}

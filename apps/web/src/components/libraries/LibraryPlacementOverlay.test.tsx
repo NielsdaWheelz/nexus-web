@@ -13,6 +13,10 @@ import {
   LibraryPlacementControllerProvider,
   useLibraryPlacementController,
 } from "@/lib/libraries/placementController";
+import {
+  MobileChromeProvider,
+  useMobileChrome,
+} from "@/lib/workspace/mobileChrome";
 
 const LIBRARY_1 = "00000000-0000-4000-8000-000000000001";
 const LIBRARY_2 = "00000000-0000-4000-8000-000000000002";
@@ -91,6 +95,10 @@ function Harness() {
   );
 }
 
+function ChromePhase() {
+  return <div data-testid="mobile-chrome-phase">{useMobileChrome().motionPhase.kind}</div>;
+}
+
 function renderHarness(viewport: "desktop" | "mobile" = "desktop") {
   vi.spyOn(window, "matchMedia").mockImplementation(
     (query: string) =>
@@ -109,9 +117,12 @@ function renderHarness(viewport: "desktop" | "mobile" = "desktop") {
   );
   return render(
     withRenderEnvironment(
-      <LibraryPlacementControllerProvider>
-        <Harness />
-      </LibraryPlacementControllerProvider>,
+      <MobileChromeProvider>
+        <LibraryPlacementControllerProvider>
+          <Harness />
+          <ChromePhase />
+        </LibraryPlacementControllerProvider>
+      </MobileChromeProvider>,
       viewport === "mobile" ? { initialViewport: "mobile" } : {},
     ),
   );
@@ -449,8 +460,16 @@ describe("LibraryPlacementOverlay", () => {
 
     const sheet = screen.getByTestId("library-placement-sheet");
     await waitFor(() => expect(sheet).toHaveFocus());
+    await waitFor(() =>
+      expect(screen.getByTestId("mobile-chrome-phase")).toHaveTextContent("Pinned"),
+    );
     expect(
       screen.getByRole("searchbox", { name: "Search libraries" }),
     ).not.toHaveFocus();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.getByTestId("mobile-chrome-phase")).toHaveTextContent("Visible"),
+    );
   });
 });

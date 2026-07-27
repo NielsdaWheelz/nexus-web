@@ -8,7 +8,8 @@ function renderReader(
   overrides: Partial<Parameters<typeof TextDocumentReader>[0]> = {},
 ) {
   const onContentClick = vi.fn();
-  const onDocumentScroll = vi.fn();
+  const onStartReaderScroll = vi.fn();
+  const onUpdateReaderScroll = vi.fn();
   const onContentPointerOver = vi.fn();
   const onContentPointerOut = vi.fn();
   const onContentFocus = vi.fn();
@@ -30,7 +31,8 @@ function renderReader(
       status: "ready",
       renderedHtml: '<p><a href="chapter-2.xhtml#target">Internal</a></p>',
     },
-    onDocumentScroll,
+    onStartReaderScroll,
+    onUpdateReaderScroll,
     onContentClick,
     onContentPointerOver,
     onContentPointerOut,
@@ -39,10 +41,13 @@ function renderReader(
     ...overrides,
   };
 
-  render(<TextDocumentReader {...props} />);
+  const view = render(<TextDocumentReader {...props} />);
   return {
+    props,
+    rerender: view.rerender,
     onContentClick,
-    onDocumentScroll,
+    onStartReaderScroll,
+    onUpdateReaderScroll,
     onContentPointerOver,
     onContentPointerOut,
     onContentFocus,
@@ -141,8 +146,13 @@ describe("TextDocumentReader", () => {
     expect(onContentBlur).toHaveBeenCalledTimes(1);
   });
 
-  it("publishes document viewport scroll snapshots", () => {
-    const { onDocumentScroll } = renderReader();
+  it("starts then updates from its document viewport scroll owner", () => {
+    const {
+      props,
+      rerender,
+      onStartReaderScroll,
+      onUpdateReaderScroll,
+    } = renderReader();
     const viewport = screen.getByTestId("document-viewport");
     Object.defineProperties(viewport, {
       scrollTop: { value: 120, configurable: true },
@@ -150,13 +160,22 @@ describe("TextDocumentReader", () => {
       clientHeight: { value: 400, configurable: true },
     });
 
+    expect(onStartReaderScroll).toHaveBeenCalledTimes(1);
+
+    fireEvent.scroll(window);
+    expect(onUpdateReaderScroll).not.toHaveBeenCalled();
+
     fireEvent.scroll(viewport);
 
-    expect(onDocumentScroll).toHaveBeenCalledWith({
+    expect(onUpdateReaderScroll).toHaveBeenCalledOnce();
+    expect(onUpdateReaderScroll).toHaveBeenCalledWith({
       scrollTop: 120,
       scrollHeight: 1_000,
       clientHeight: 400,
     });
+
+    rerender(<TextDocumentReader {...props} mediaId="media-2" />);
+    expect(onStartReaderScroll).toHaveBeenCalledTimes(2);
   });
 
   it("centers the fixed-measure text column inside a wider reader viewport", () => {
@@ -181,7 +200,8 @@ describe("TextDocumentReader", () => {
             status: "ready",
             renderedHtml: "<p>Centered text.</p>",
           }}
-          onDocumentScroll={() => {}}
+          onStartReaderScroll={() => {}}
+          onUpdateReaderScroll={() => {}}
           onContentClick={() => {}}
           onContentPointerOver={() => {}}
           onContentPointerOut={() => {}}

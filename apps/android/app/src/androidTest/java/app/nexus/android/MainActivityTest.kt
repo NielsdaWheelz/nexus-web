@@ -3,16 +3,20 @@ package app.nexus.android
 import android.app.Activity
 import android.app.Instrumentation.ActivityResult
 import android.content.Intent
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.os.Message
 import android.os.SystemClock
+import android.view.View
 import android.webkit.CookieManager
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import androidx.lifecycle.Lifecycle
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.espresso.intent.Intents
@@ -81,6 +85,31 @@ class MainActivityTest {
     }
 
     @Test
+    fun statusBarHasDarkNativeProtectionWithLightIcons() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            waitUntil("Expected native status-bar protection to receive its inset height.") {
+                var height = 0
+                scenario.onActivity { activity ->
+                    height = activity.findViewById<View>(R.id.status_bar_protection).height
+                }
+                height > 0
+            }
+
+            scenario.onActivity { activity ->
+                val protection = activity.findViewById<View>(R.id.status_bar_protection)
+
+                assertEquals(Color.BLACK, (protection.background as ColorDrawable).color)
+                assertFalse(
+                    WindowInsetsControllerCompat(
+                        activity.window,
+                        activity.window.decorView
+                    ).isAppearanceLightStatusBars
+                )
+            }
+        }
+    }
+
+    @Test
     fun offOriginUrlOpensACustomTabIntent() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             val externalUri = Uri.parse("https://external.example.com/privacy")
@@ -138,18 +167,75 @@ class MainActivityTest {
     }
 
     @Test
+    fun coldLauncherIntentLoadsTheBaseRoot() {
+        val baseUri = Uri.parse(BuildConfig.NEXUS_BASE_URL)
+        val intent = Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
+            setClass(
+                ApplicationProvider.getApplicationContext(),
+                MainActivity::class.java
+            )
+        }
+
+        ActivityScenario.launch<MainActivity>(intent).use { scenario ->
+            waitUntil("Expected cold launcher intent to load the base root.") {
+                var currentUri: Uri? = null
+                scenario.onActivity { activity ->
+                    currentUri = activity.webView.url?.let(Uri::parse)
+                }
+                currentUri?.scheme == baseUri.scheme &&
+                    currentUri?.host == baseUri.host &&
+                    currentUri?.port == baseUri.port &&
+                    (currentUri?.path.isNullOrEmpty() || currentUri?.path == "/") &&
+                    currentUri?.query == null &&
+                    currentUri?.fragment == null
+            }
+        }
+    }
+
+    @Test
+    fun unsupportedExplicitIntentDoesNotReloadTheWebView() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            val ownedUrl = "${BuildConfig.NEXUS_BASE_URL}/settings"
+
+            scenario.onActivity { activity ->
+                activity.routeUrl(Uri.parse(ownedUrl))
+            }
+            waitUntil("Expected WebView to load owned Nexus URL.") {
+                var currentUrl: String? = null
+                scenario.onActivity { activity ->
+                    currentUrl = activity.webView.url
+                }
+                currentUrl == ownedUrl
+            }
+
+            var activity: MainActivity? = null
+            scenario.onActivity { activity = it }
+            InstrumentationRegistry.getInstrumentation().callActivityOnNewIntent(
+                checkNotNull(activity),
+                Intent(Intent.ACTION_VIEW, Uri.parse("https://external.example.com/ignored"))
+            )
+
+            scenario.onActivity { activity ->
+                assertEquals(ownedUrl, activity.webView.url)
+            }
+        }
+    }
+
+    @Test
     fun ownedCallbackIntentWhileRunningLoadsThatExactUrl() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             val callbackUrl =
                 "${BuildConfig.NEXUS_BASE_URL}/auth/callback?code=test-code&next=%2Flibraries"
 
-            scenario.onActivity { activity ->
-                activity.loadUrlFromIntent(
-                    Intent(Intent.ACTION_VIEW, Uri.parse(callbackUrl)).apply {
-                        setClass(activity, MainActivity::class.java)
-                    }
-                )
-            }
+            var activity: MainActivity? = null
+            scenario.onActivity { activity = it }
+            InstrumentationRegistry.getInstrumentation().callActivityOnNewIntent(
+                checkNotNull(activity),
+                Intent(Intent.ACTION_VIEW, Uri.parse(callbackUrl)).apply {
+                    setClass(checkNotNull(activity), MainActivity::class.java)
+                }
+            )
 
             waitUntil("Expected app link callback new intent to load in the WebView.") {
                 var currentUrl: String? = null
@@ -283,7 +369,7 @@ class MainActivityTest {
     }
 
     @Test
-    fun backNavigationUsesWebViewHistoryFirst() {
+    fun warmLauncherIntentPreservesWebViewHistoryAndBackNavigation() {
         val firstUrl = "${BuildConfig.NEXUS_BASE_URL}/first"
         val secondUrl = "${BuildConfig.NEXUS_BASE_URL}/second"
 
@@ -328,6 +414,19 @@ class MainActivityTest {
                     canGoBack = activity.webView.canGoBack()
                 }
                 currentUrl == secondUrl && progress == 100 && canGoBack
+            }
+
+            var activity: MainActivity? = null
+            scenario.onActivity { activity = it }
+            InstrumentationRegistry.getInstrumentation().callActivityOnNewIntent(
+                checkNotNull(activity),
+                Intent(Intent.ACTION_MAIN).apply {
+                    addCategory(Intent.CATEGORY_LAUNCHER)
+                }
+            )
+            scenario.onActivity { activity ->
+                assertEquals(secondUrl, activity.webView.url)
+                assertTrue(activity.webView.canGoBack())
             }
 
             scenario.onActivity { activity ->

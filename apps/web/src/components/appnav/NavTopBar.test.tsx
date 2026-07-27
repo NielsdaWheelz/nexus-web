@@ -1,15 +1,25 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useEffect } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import NavTopBar from "./NavTopBar";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
-import { MobileChromeProvider, useMobileChrome } from "@/lib/workspace/mobileChrome";
+import {
+  MobileChromeProvider,
+  useMobileChrome,
+} from "@/lib/workspace/mobileChrome";
 
 function PublishChrome() {
   const { setPaneChrome } = useMobileChrome();
   useEffect(() => {
     setPaneChrome({
       paneId: "pane-a",
+      routeKey: "libraries:/libraries",
       identityId: "pane-a-identity",
       header: {
         kind: "section",
@@ -36,6 +46,7 @@ function PublishResourceChrome() {
   useEffect(() => {
     setPaneChrome({
       paneId: "pane-media",
+      routeKey: "media:/media/media-a",
       identityId: "pane-media-identity",
       header: {
         kind: "resource",
@@ -87,6 +98,7 @@ function PublishNavigationChrome({
   useEffect(() => {
     setPaneChrome({
       paneId: "pane-a",
+      routeKey: "libraries:/libraries",
       identityId: "pane-a-identity",
       header: {
         kind: "section",
@@ -108,23 +120,60 @@ function PublishNavigationChrome({
   return null;
 }
 
-function HideChrome() {
-  const { onDocumentScroll } = useMobileChrome();
+function CollapseChrome() {
+  const { startReaderScroll, updateReaderScroll } = useMobileChrome();
   return (
     <button
       type="button"
       onClick={() => {
-        onDocumentScroll({ scrollTop: 100, scrollHeight: 1000, clientHeight: 400 });
-        onDocumentScroll({ scrollTop: 130, scrollHeight: 1000, clientHeight: 400 });
+        startReaderScroll({
+          scrollTop: 9,
+          scrollHeight: 1000,
+          clientHeight: 400,
+        });
+        updateReaderScroll({
+          scrollTop: 100,
+          scrollHeight: 1000,
+          clientHeight: 400,
+        });
       }}
     >
-      Hide chrome
+      Collapse chrome
     </button>
   );
 }
 
+function TrackChrome() {
+  const { startReaderScroll, updateReaderScroll } = useMobileChrome();
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        startReaderScroll({
+          scrollTop: 9,
+          scrollHeight: 1000,
+          clientHeight: 400,
+        });
+        updateReaderScroll({
+          scrollTop: 40,
+          scrollHeight: 1000,
+          clientHeight: 400,
+        });
+      }}
+    >
+      Track chrome
+    </button>
+  );
+}
+
+function MotionPhase() {
+  const { motionPhase } = useMobileChrome();
+  return <output data-testid="motion-phase">{motionPhase.kind}</output>;
+}
+
 describe("NavTopBar", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -182,16 +231,15 @@ describe("NavTopBar", () => {
       </MobileChromeProvider>,
     );
 
-    expect(screen.getByRole("heading", { name: "The Left Hand of Darkness" })).toHaveAttribute(
-      "id",
-      "pane-media-identity",
-    );
+    expect(
+      screen.getByRole("heading", { name: "The Left Hand of Darkness" }),
+    ).toHaveAttribute("id", "pane-media-identity");
     const bar = screen.getByRole("banner");
     expect(bar).toHaveAttribute("data-header-kind", "resource");
     expect(bar).toHaveAttribute("data-pane-chrome-for", "pane-media");
   });
 
-  it("keeps the route heading accessible while hide-on-scroll chrome is translated", async () => {
+  it("keeps the route heading available while only fully hidden controls leave the accessibility tree", async () => {
     vi.stubGlobal("innerWidth", 390);
     vi.spyOn(window, "matchMedia").mockImplementation(
       (query: string) =>
@@ -211,7 +259,7 @@ describe("NavTopBar", () => {
       withRenderEnvironment(
         <MobileChromeProvider>
           <PublishResourceChrome />
-          <HideChrome />
+          <CollapseChrome />
           <NavTopBar
             onOpenSheet={() => {}}
             onOpenCommand={() => {}}
@@ -223,10 +271,10 @@ describe("NavTopBar", () => {
       ),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Hide chrome" }));
+    fireEvent.click(screen.getByRole("button", { name: "Collapse chrome" }));
     const navigation = screen.getByRole("banner");
     await waitFor(() =>
-      expect(navigation).toHaveAttribute("data-hidden", "true"),
+      expect(navigation).toHaveAttribute("data-mobile-chrome-phase", "Hidden"),
     );
     expect(navigation).not.toHaveAttribute("aria-hidden");
     expect(navigation).not.toHaveAttribute("inert");
@@ -243,6 +291,144 @@ describe("NavTopBar", () => {
       expect(controls).toHaveAttribute("aria-hidden", "true");
       expect(controls).toHaveAttribute("inert");
     }
+  });
+
+  it("keeps controls available while chrome tracks and settles", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("innerWidth", 390);
+    vi.spyOn(window, "matchMedia").mockImplementation(
+      (query: string) =>
+        ({
+          matches: query.includes("max-width"),
+          media: query,
+          onchange: null,
+          addEventListener() {},
+          removeEventListener() {},
+          addListener() {},
+          removeListener() {},
+          dispatchEvent: () => false,
+        }) as MediaQueryList,
+    );
+
+    render(
+      withRenderEnvironment(
+        <MobileChromeProvider>
+          <PublishChrome />
+          <TrackChrome />
+          <NavTopBar
+            onOpenSheet={() => {}}
+            onOpenCommand={() => {}}
+            onOpenAdd={() => {}}
+            paneCount={1}
+          />
+        </MobileChromeProvider>,
+        { initialViewport: "mobile" },
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Track chrome" }));
+    const navigation = screen.getByRole("banner");
+    expect(navigation).toHaveAttribute("data-mobile-chrome-phase", "Tracking");
+    for (const controls of screen.getAllByTestId("top-bar-controls")) {
+      expect(controls).not.toHaveAttribute("aria-hidden");
+      expect(controls).not.toHaveAttribute("inert");
+    }
+
+    act(() => vi.advanceTimersByTime(120));
+
+    expect(navigation).toHaveAttribute("data-mobile-chrome-phase", "Settling");
+    for (const controls of screen.getAllByTestId("top-bar-controls")) {
+      expect(controls).not.toHaveAttribute("aria-hidden");
+      expect(controls).not.toHaveAttribute("inert");
+    }
+  });
+
+  it("pins visible controls while focus remains in the chrome", async () => {
+    vi.stubGlobal("innerWidth", 390);
+    vi.spyOn(window, "matchMedia").mockImplementation(
+      (query: string) =>
+        ({
+          matches: query.includes("max-width"),
+          media: query,
+          onchange: null,
+          addEventListener() {},
+          removeEventListener() {},
+          addListener() {},
+          removeListener() {},
+          dispatchEvent: () => false,
+        }) as MediaQueryList,
+    );
+
+    render(
+      withRenderEnvironment(
+        <MobileChromeProvider>
+          <PublishChrome />
+          <CollapseChrome />
+          <NavTopBar
+            onOpenSheet={() => {}}
+            onOpenCommand={() => {}}
+            onOpenAdd={() => {}}
+            paneCount={1}
+          />
+        </MobileChromeProvider>,
+        { initialViewport: "mobile" },
+      ),
+    );
+
+    const navigation = screen.getByRole("banner");
+    const command = screen.getByRole("button", {
+      name: /Search or ask anything/,
+    });
+    fireEvent.focus(command);
+
+    await waitFor(() =>
+      expect(navigation).toHaveAttribute("data-mobile-chrome-phase", "Pinned"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Collapse chrome" }));
+    expect(navigation).toHaveAttribute("data-mobile-chrome-phase", "Pinned");
+    expect(command).toBeVisible();
+
+    fireEvent.blur(command);
+    await waitFor(() =>
+      expect(navigation).toHaveAttribute("data-mobile-chrome-phase", "Visible"),
+    );
+  });
+
+  it("releases an open action-menu lock when the top bar unmounts", async () => {
+    vi.stubGlobal("innerWidth", 390);
+    const tree = (showTopBar: boolean) =>
+      withRenderEnvironment(
+        <MobileChromeProvider>
+          <PublishResourceChrome />
+          <CollapseChrome />
+          <MotionPhase />
+          {showTopBar ? (
+            <NavTopBar
+              onOpenSheet={() => {}}
+              onOpenCommand={() => {}}
+              onOpenAdd={() => {}}
+              paneCount={1}
+            />
+          ) : null}
+        </MobileChromeProvider>,
+        { initialViewport: "mobile" },
+      );
+    const view = render(tree(true));
+
+    fireEvent.click(screen.getByRole("button", { name: "Pane options" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("motion-phase")).toHaveTextContent("Pinned"),
+    );
+
+    view.rerender(tree(false));
+    await waitFor(() =>
+      expect(screen.getByTestId("motion-phase")).toHaveTextContent("Visible"),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Collapse chrome" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("motion-phase")).toHaveTextContent("Hidden"),
+    );
   });
 
   it("keeps Companion immediately before Options at 390px", () => {

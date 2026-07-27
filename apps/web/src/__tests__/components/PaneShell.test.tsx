@@ -17,6 +17,7 @@ import type {
   PaneHeaderAction,
 } from "@/lib/ui/actionDescriptor";
 import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
+import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
 import type { EffectivePaneSizing } from "@/lib/workspace/paneSizing";
 import { assumePaneVisitId } from "@/lib/workspace/schema";
 import { routeShareTarget } from "@/lib/sharing/targets";
@@ -27,6 +28,8 @@ const TEST_VISIT_ID = assumePaneVisitId("00000000-0000-4000-8000-000000000001");
 
 const mobileChromeMock = vi.hoisted(() => ({
   setPaneChrome: vi.fn(),
+  acquireVisibleLock: vi.fn(() => vi.fn()),
+  motionPhase: { kind: "Visible" } as { kind: string; direction?: string },
 }));
 const shareControllerMock = vi.hoisted(() => ({
   openShare: vi.fn(),
@@ -37,14 +40,15 @@ const libraryPlacementControllerMock = vi.hoisted(() => ({
 
 vi.mock("@/lib/workspace/mobileChrome", () => ({
   useMobileChrome: () => ({
-    hidden: false,
+    motionPhase: mobileChromeMock.motionPhase,
     paneChrome: null,
     setPaneChrome: mobileChromeMock.setPaneChrome,
-    onDocumentScroll: () => {},
-    acquireVisibleLock: () => () => {},
+    acquireVisibleLock: mobileChromeMock.acquireVisibleLock,
   }),
+  useMobileChromeSurface: () => {},
   usePaneMobileChromeController: () => ({
-    onDocumentScroll: () => {},
+    startReaderScroll: () => {},
+    updateReaderScroll: () => {},
     acquireVisibleLock: () => () => {},
   }),
 }));
@@ -234,6 +238,8 @@ class TestErrorBoundary extends Component<
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mobileChromeMock.motionPhase = { kind: "Visible" };
+  mobileChromeMock.acquireVisibleLock.mockImplementation(() => vi.fn());
 });
 
 describe("PaneShell", () => {
@@ -622,6 +628,139 @@ describe("PaneShell", () => {
     ).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "Companion" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Options" })).toBeNull();
+  });
+
+  it("keeps toolbar controls available through tracking and settling, then hides only them at the endpoint", async () => {
+    const mobileToolbar = {
+      routeHeader: resourceHeader,
+      routeShareIdentity: null,
+      label: "Media",
+      isMobile: true,
+      children: (
+        <PrimaryChromeProbe
+          publication={{
+            ...readyResource("Document title"),
+            toolbar: <button type="button">Reader controls</button>,
+          }}
+        />
+      ),
+    } satisfies Partial<PaneProps>;
+    const view = render(paneTree(mobileToolbar));
+
+    await screen.findByRole("button", { name: "Reader controls" });
+    const chrome = screen.getByTestId("pane-shell-chrome");
+    const body = screen.getByTestId("pane-shell-body");
+    const toolbar = screen.getByTestId("pane-shell-toolbar");
+    expect(chrome).toHaveAttribute("data-mobile-chrome-phase", "Visible");
+    expect(chrome).not.toHaveAttribute("aria-hidden");
+    expect(chrome).not.toHaveAttribute("inert");
+    expect(toolbar).not.toHaveAttribute("aria-hidden");
+    expect(toolbar).not.toHaveAttribute("inert");
+
+    mobileChromeMock.motionPhase = { kind: "Tracking", direction: "Down" };
+    view.rerender(paneTree(mobileToolbar));
+
+    expect(chrome).toHaveAttribute("data-mobile-chrome-phase", "Tracking");
+    expect(screen.getByRole("button", { name: "Reader controls" })).toBeVisible();
+    expect(chrome).not.toHaveAttribute("aria-hidden");
+    expect(chrome).not.toHaveAttribute("inert");
+    expect(toolbar).not.toHaveAttribute("aria-hidden");
+    expect(toolbar).not.toHaveAttribute("inert");
+
+    mobileChromeMock.motionPhase = { kind: "Settling" };
+    view.rerender(paneTree(mobileToolbar));
+
+    expect(chrome).toHaveAttribute("data-mobile-chrome-phase", "Settling");
+    expect(screen.getByRole("button", { name: "Reader controls" })).toBeVisible();
+    expect(toolbar).not.toHaveAttribute("aria-hidden");
+    expect(toolbar).not.toHaveAttribute("inert");
+
+    mobileChromeMock.motionPhase = { kind: "Hidden" };
+    view.rerender(paneTree(mobileToolbar));
+
+    expect(chrome).toHaveAttribute("data-mobile-chrome-phase", "Hidden");
+    expect(chrome).not.toHaveAttribute("aria-hidden");
+    expect(chrome).not.toHaveAttribute("inert");
+    expect(toolbar).toHaveAttribute("aria-hidden", "true");
+    expect(toolbar).toHaveAttribute("inert");
+    expect(screen.getByTestId("pane-shell-body")).toBe(body);
+  });
+
+  it("lets hidden pane chrome focus reveal its toolbar", async () => {
+    const mobileToolbar = {
+      routeHeader: resourceHeader,
+      routeShareIdentity: null,
+      label: "Media",
+      isMobile: true,
+      children: (
+        <PrimaryChromeProbe
+          publication={{
+            ...readyResource("Document title"),
+            toolbar: <button type="button">Reader controls</button>,
+          }}
+        />
+      ),
+    } satisfies Partial<PaneProps>;
+    mobileChromeMock.motionPhase = { kind: "Hidden" };
+    mobileChromeMock.acquireVisibleLock.mockImplementation(() => {
+      mobileChromeMock.motionPhase = { kind: "Pinned" };
+      return vi.fn();
+    });
+    const view = render(paneTree(mobileToolbar));
+
+    await screen.findByRole("button", { name: "Reader controls", hidden: true });
+    const chrome = screen.getByTestId("pane-shell-chrome");
+    expect(chrome).not.toHaveAttribute("inert");
+
+    fireEvent.focus(chrome);
+    view.rerender(paneTree(mobileToolbar));
+
+    expect(mobileChromeMock.acquireVisibleLock).toHaveBeenCalledWith("chrome-focus");
+    expect(chrome).toHaveAttribute("data-mobile-chrome-phase", "Pinned");
+    expect(screen.getByRole("button", { name: "Reader controls" })).toBeVisible();
+  });
+
+  it("leaves the pane toolbar surface empty when the reader publishes no toolbar", async () => {
+    mobileChromeMock.motionPhase = { kind: "Hidden" };
+    render(
+      paneTree({
+        routeHeader: resourceHeader,
+        routeShareIdentity: null,
+        label: "Media",
+        isMobile: true,
+        children: <PrimaryChromeProbe publication={readyResource("Document title")} />,
+      }),
+    );
+
+    const chrome = screen.getByTestId("pane-shell-chrome");
+    expect(chrome).toHaveAttribute("data-mobile-chrome-phase", "Hidden");
+    expect(chrome).not.toHaveAttribute("aria-hidden");
+    expect(chrome).not.toHaveAttribute("inert");
+    expect(chrome).toBeEmptyDOMElement();
+  });
+
+  it("falls back to the pane chrome sentinel when the mobile Options trigger is inert", () => {
+    render(
+      <>
+        <header data-pane-chrome-for="pane-a">
+          <div inert>
+            <button type="button" data-pane-options-trigger="pane-a">
+              Pane options
+            </button>
+          </div>
+        </header>
+        <div data-pane-id="pane-a">
+          <div
+            data-testid="pane-chrome-sentinel"
+            data-pane-chrome-focus="true"
+            tabIndex={-1}
+          />
+        </div>
+      </>,
+    );
+
+    const sentinel = screen.getByTestId("pane-chrome-sentinel");
+    expect(findPaneChromeFocusTarget("pane-a")).toBe(sentinel);
   });
 
   it("publishes keyed Chat busy state and guards rapid re-entry", async () => {

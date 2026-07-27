@@ -6,7 +6,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type UIEvent,
   type MutableRefObject,
   type ReactNode,
 } from "react";
@@ -702,19 +701,25 @@ export default function PdfReader({
     });
   }, [publishIntrinsicWidth]);
 
-  const handleViewerContainerScroll = useCallback(
-    (event: UIEvent<HTMLDivElement>) => {
-      paneMobileChrome?.onDocumentScroll({
-        scrollTop: event.currentTarget.scrollTop,
-        scrollHeight: event.currentTarget.scrollHeight,
-        clientHeight: event.currentTarget.clientHeight,
-      });
-    },
-    [paneMobileChrome],
-  );
+  useEffect(() => {
+    const viewport = viewerContainerRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    const snapshot = () => ({
+      scrollTop: viewport.scrollTop,
+      scrollHeight: viewport.scrollHeight,
+      clientHeight: viewport.clientHeight,
+    });
+    paneMobileChrome.startReaderScroll(snapshot());
+    const publishScroll = () => paneMobileChrome.updateReaderScroll(snapshot());
+    viewport.addEventListener("scroll", publishScroll, { passive: true });
+    return () => viewport.removeEventListener("scroll", publishScroll);
+  }, [mediaId, paneMobileChrome]);
 
   useEffect(() => {
-    if (!isMobile || !paneMobileChrome || selection === null) {
+    if (!isMobile || selection === null) {
       return;
     }
     const releaseChromeLock =
@@ -2558,7 +2563,6 @@ export default function PdfReader({
               className={styles.viewerContainer}
               data-pane-content="true"
               aria-label="PDF document"
-              onScroll={handleViewerContainerScroll}
             >
               {beforeContent}
               <div

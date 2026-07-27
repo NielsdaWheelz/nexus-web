@@ -37,15 +37,17 @@ import type { MediaRetrievalLocator } from "@/lib/api/sse/locators";
 import { useEscapeKey } from "@/lib/ui/useEscapeKey";
 import { useModalLayer } from "@/lib/ui/useModalLayer";
 
-const TEST_VISIT_ID = assumePaneVisitId(
-  "00000000-0000-4000-8000-000000000001",
-);
 import type {
   ReaderEvidenceConfidence,
   ReaderEvidenceSourceKind,
 } from "@/lib/reader/documentMap";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
 import MediaPaneBody from "./MediaPaneBody";
+
+const TEST_VISIT_ID = assumePaneVisitId(
+  "00000000-0000-4000-8000-000000000001",
+);
+const SOURCE_CHANGE_MEDIA_ID = "00000000-0000-4000-8000-000000000002";
 
 const testState = vi.hoisted(() => ({
   apiFetch: vi.fn(),
@@ -118,7 +120,10 @@ const testState = vi.hoisted(() => ({
 
 const paneChromeMocks = vi.hoisted(() => ({
   usePanePrimaryChrome: vi.fn(),
-  usePaneMobileChromeController: vi.fn(() => null),
+  usePaneMobileChromeController: vi.fn(),
+  startReaderScroll: vi.fn(),
+  updateReaderScroll: vi.fn(),
+  acquireVisibleLock: vi.fn(() => () => {}),
 }));
 
 vi.mock("@/lib/api/client", async () => {
@@ -821,13 +826,12 @@ function ReaderInteractionStack({
 function renderMediaPane(
   options: {
     href?: string;
+    pathMediaId?: string;
     isActive?: boolean;
     secondaryPane?: WorkspaceAttachedSecondaryPaneState | null;
     renderSecondarySurfaceId?: WorkspaceSecondarySurfaceId;
   } = {},
 ) {
-  const href = options.href ?? "/media/00000000-0000-4000-8000-000000000001";
-  const identity = resolvePaneRouteIdentity(href);
   const onSetPaneLayout = vi.fn();
   const onSetPaneLabel = vi.fn();
   const onNavigatePane = vi.fn();
@@ -837,46 +841,57 @@ function renderMediaPane(
   const onSetFixedChrome = vi.fn();
   const onSetPaneSecondary = vi.fn();
 
-  render(
-    <FeedbackProvider>
-      <LecternProvider>
-        <ShareControllerProvider>
-          <GlobalPlayerProvider>
-            <PaneRuntimeProvider
-              paneId="pane-1"
-              visitId={TEST_VISIT_ID}
-              isActive={options.isActive ?? true}
-              href={href}
-              routeId={identity.routeId}
-              routeKey={identity.routeKey}
-              secondaryPane={options.secondaryPane ?? null}
-              canGoBack={false}
-              canGoForward={false}
-              onGoBackPane={vi.fn()}
-              onGoForwardPane={vi.fn()}
-              pathParams={{ id: "00000000-0000-4000-8000-000000000001" }}
-              onNavigatePane={onNavigatePane}
-              onReplacePane={vi.fn()}
-              onOpenInNewPane={onOpenInNewPane}
-              onSetPaneLabel={onSetPaneLabel}
-              onSetPaneLayout={onSetPaneLayout}
-              onRequestSecondarySurface={onRequestSecondarySurface}
-              onCloseSecondaryPane={onCloseSecondaryPane}
-            >
-              <PaneSecondaryTestHost
-                onSetPaneSecondary={onSetPaneSecondary}
-                renderSurfaceId={options.renderSecondarySurfaceId}
+  const tree = (nextOptions: typeof options) => {
+    const href =
+      nextOptions.href ?? "/media/00000000-0000-4000-8000-000000000001";
+    const identity = resolvePaneRouteIdentity(href);
+    return (
+      <FeedbackProvider>
+        <LecternProvider>
+          <ShareControllerProvider>
+            <GlobalPlayerProvider>
+              <PaneRuntimeProvider
+                paneId="pane-1"
+                visitId={TEST_VISIT_ID}
+                isActive={nextOptions.isActive ?? true}
+                href={href}
+                routeId={identity.routeId}
+                routeKey={identity.routeKey}
+                secondaryPane={nextOptions.secondaryPane ?? null}
+                canGoBack={false}
+                canGoForward={false}
+                onGoBackPane={vi.fn()}
+                onGoForwardPane={vi.fn()}
+                pathParams={{
+                  id:
+                    nextOptions.pathMediaId ??
+                    "00000000-0000-4000-8000-000000000001",
+                }}
+                onNavigatePane={onNavigatePane}
+                onReplacePane={vi.fn()}
+                onOpenInNewPane={onOpenInNewPane}
+                onSetPaneLabel={onSetPaneLabel}
+                onSetPaneLayout={onSetPaneLayout}
+                onRequestSecondarySurface={onRequestSecondarySurface}
+                onCloseSecondaryPane={onCloseSecondaryPane}
               >
-                <PaneFixedChromeContext.Provider value={onSetFixedChrome}>
-                  <MediaPaneBody />
-                </PaneFixedChromeContext.Provider>
-              </PaneSecondaryTestHost>
-            </PaneRuntimeProvider>
-          </GlobalPlayerProvider>
-        </ShareControllerProvider>
-      </LecternProvider>
-    </FeedbackProvider>,
-  );
+                <PaneSecondaryTestHost
+                  onSetPaneSecondary={onSetPaneSecondary}
+                  renderSurfaceId={nextOptions.renderSecondarySurfaceId}
+                >
+                  <PaneFixedChromeContext.Provider value={onSetFixedChrome}>
+                    <MediaPaneBody />
+                  </PaneFixedChromeContext.Provider>
+                </PaneSecondaryTestHost>
+              </PaneRuntimeProvider>
+            </GlobalPlayerProvider>
+          </ShareControllerProvider>
+        </LecternProvider>
+      </FeedbackProvider>
+    );
+  };
+
+  const view = render(tree(options));
 
   return {
     onSetPaneLayout,
@@ -887,7 +902,10 @@ function renderMediaPane(
     onOpenInNewPane,
     onSetPaneSecondary,
     onSetFixedChrome,
-    routeKey: identity.routeKey,
+    routeKey: resolvePaneRouteIdentity(
+      options.href ?? "/media/00000000-0000-4000-8000-000000000001",
+    ).routeKey,
+    rerender: (nextOptions: typeof options) => view.rerender(tree(nextOptions)),
   };
 }
 
@@ -928,12 +946,24 @@ describe("MediaPaneBody pane sizing", () => {
     testState.readerPersistence = { state: "Clean" };
     paneChromeMocks.usePanePrimaryChrome.mockReset();
     paneChromeMocks.usePaneMobileChromeController.mockClear();
+    paneChromeMocks.startReaderScroll.mockReset();
+    paneChromeMocks.updateReaderScroll.mockReset();
+    paneChromeMocks.acquireVisibleLock.mockClear();
+    paneChromeMocks.usePaneMobileChromeController.mockReturnValue({
+      startReaderScroll: paneChromeMocks.startReaderScroll,
+      updateReaderScroll: paneChromeMocks.updateReaderScroll,
+      acquireVisibleLock: paneChromeMocks.acquireVisibleLock,
+    });
     for (const fn of Object.values(testState.readerContextFns)) {
       fn.mockReset();
     }
     testState.apiFetch.mockImplementation(
       async (input: unknown, init?: RequestInit) => {
-        const path = pathOf(input);
+        const requestPath = pathOf(input);
+        const path = requestPath.replace(
+          SOURCE_CHANGE_MEDIA_ID,
+          "00000000-0000-4000-8000-000000000001",
+        );
         if (path === "/api/lectern") {
           // Lets the LecternProvider (consumed by the pane) settle to Ready.
           return jsonResponse({ items: [] });
@@ -1442,6 +1472,47 @@ describe("MediaPaneBody pane sizing", () => {
       expect(await screen.findByTestId("html-renderer")).toBeInTheDocument();
     },
   );
+
+  it.each(["web_article", "epub", "podcast_episode", "video"] as const)(
+    "publishes %s scroll from its reader viewport",
+    async (kind) => {
+      testState.mediaKind = kind;
+      renderMediaPane();
+
+      const viewport = await screen.findByTestId("document-viewport");
+      await waitFor(() => {
+        expect(paneChromeMocks.startReaderScroll).toHaveBeenCalledOnce();
+      });
+
+      Object.defineProperties(viewport, {
+        scrollTop: { value: 144, configurable: true },
+        scrollHeight: { value: 1_000, configurable: true },
+        clientHeight: { value: 400, configurable: true },
+      });
+      fireEvent.scroll(viewport);
+
+      expect(paneChromeMocks.updateReaderScroll).toHaveBeenCalledWith({
+        scrollTop: 144,
+        scrollHeight: 1_000,
+        clientHeight: 400,
+      });
+    },
+  );
+
+  it("restarts the transcript scroll source when its media id changes", async () => {
+    testState.mediaKind = "video";
+    const { rerender } = renderMediaPane();
+    await screen.findByTestId("document-viewport");
+    await waitFor(() => {
+      expect(paneChromeMocks.startReaderScroll).toHaveBeenCalledOnce();
+    });
+
+    rerender({ pathMediaId: SOURCE_CHANGE_MEDIA_ID });
+
+    await waitFor(() => {
+      expect(paneChromeMocks.startReaderScroll).toHaveBeenCalledTimes(2);
+    });
+  });
 
   it("activates a SourceReference target across EPUB sections using the target locator", async () => {
     testState.mediaKind = "epub";
