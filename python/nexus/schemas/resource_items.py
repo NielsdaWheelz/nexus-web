@@ -384,34 +384,52 @@ class ResourceLocatorResolveResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
-class ResourceSurfaceItemOut(BaseModel):
-    edge_id: UUID = Field(
-        validation_alias=AliasChoices("edge_id", "edgeId"),
-        serialization_alias="edgeId",
-    )
-    target: ResourceItemOut
-    source_order_key: str = Field(
-        validation_alias=AliasChoices("source_order_key", "sourceOrderKey"),
-        serialization_alias="sourceOrderKey",
-    )
-    view_state: dict[str, Any] | None = Field(
-        None,
-        validation_alias=AliasChoices("view_state", "viewState"),
-        serialization_alias="viewState",
-    )
+class PageTitleSurfaceContent(BaseModel):
+    kind: Literal["page_title"]
+    title: str
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(extra="forbid")
+
+
+class NoteBodySurfaceContent(BaseModel):
+    kind: Literal["note_body"]
+    body_pm_json: dict[str, Any]
+    body_text: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ResourceSummarySurfaceContent(BaseModel):
+    kind: Literal["resource_summary"]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+ResourceSurfaceContent = Annotated[
+    PageTitleSurfaceContent | NoteBodySurfaceContent | ResourceSummarySurfaceContent,
+    Field(discriminator="kind"),
+]
+
+
+class ResourceSurfaceNode(BaseModel):
+    item: ResourceItemOut
+    content: ResourceSurfaceContent
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ResourceSurfaceOccurrence(BaseModel):
+    occurrence_id: UUID
+    target: ResourceSurfaceNode
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class ResourceSurfaceOut(BaseModel):
-    source: ResourceItemOut
-    ordered_items: list[ResourceSurfaceItemOut] = Field(
-        default_factory=list,
-        validation_alias=AliasChoices("ordered_items", "orderedItems"),
-        serialization_alias="orderedItems",
-    )
+    source: ResourceSurfaceNode
+    ordered_items: list[ResourceSurfaceOccurrence] = Field(default_factory=list)
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(extra="forbid")
 
 
 class ResourceLaneVersionIn(BaseModel):
@@ -422,37 +440,96 @@ class ResourceLaneVersionIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class OrderedResourceTargetIn(BaseModel):
-    ref: str
-    source_order_key: str = Field(
-        min_length=1,
-        max_length=64,
-        validation_alias=AliasChoices("source_order_key", "sourceOrderKey"),
-        serialization_alias="sourceOrderKey",
-    )
+class SurfaceStartPosition(BaseModel):
+    kind: Literal["start"]
 
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+    model_config = ConfigDict(extra="forbid")
 
 
-class ResourceSurfaceMutationRequest(BaseModel):
+class SurfaceAfterPosition(BaseModel):
+    kind: Literal["after"]
+    occurrence_id: UUID
+
+    model_config = ConfigDict(extra="forbid")
+
+
+SurfacePosition = Annotated[
+    SurfaceStartPosition | SurfaceAfterPosition,
+    Field(discriminator="kind"),
+]
+
+
+class InsertNoteSurfaceCommand(BaseModel):
+    type: Literal["insert_note"]
+    note_id: UUID
+    position: SurfacePosition
+    body_pm_json: dict[str, Any]
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("body_pm_json")
+    @classmethod
+    def validate_body_pm_json(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return validate_note_body_pm_json(value) or value
+
+
+class SplitNoteSurfaceCommand(BaseModel):
+    type: Literal["split_note"]
+    occurrence_id: UUID
+    note_id: UUID
+    left_body_pm_json: dict[str, Any]
+    right_body_pm_json: dict[str, Any]
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("left_body_pm_json", "right_body_pm_json")
+    @classmethod
+    def validate_body_pm_json(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return validate_note_body_pm_json(value) or value
+
+
+class InsertResourceSurfaceCommand(BaseModel):
+    type: Literal["insert_resource"]
+    target_ref: str
+    position: SurfacePosition
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MoveOccurrenceSurfaceCommand(BaseModel):
+    type: Literal["move_occurrence"]
+    occurrence_id: UUID
+    position: SurfacePosition
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class RemoveOccurrenceSurfaceCommand(BaseModel):
+    type: Literal["remove_occurrence"]
+    occurrence_id: UUID
+
+    model_config = ConfigDict(extra="forbid")
+
+
+SurfaceCommand = Annotated[
+    InsertNoteSurfaceCommand
+    | SplitNoteSurfaceCommand
+    | InsertResourceSurfaceCommand
+    | MoveOccurrenceSurfaceCommand
+    | RemoveOccurrenceSurfaceCommand,
+    Field(discriminator="type"),
+]
+
+
+class ResourceSurfaceCommandRequest(BaseModel):
     client_mutation_id: str = Field(
         min_length=1,
         max_length=120,
-        validation_alias=AliasChoices("client_mutation_id", "clientMutationId"),
-        serialization_alias="clientMutationId",
     )
-    base_versions: list[ResourceLaneVersionIn] = Field(
-        default_factory=list,
-        validation_alias=AliasChoices("base_versions", "baseVersions"),
-        serialization_alias="baseVersions",
-    )
-    ordered_targets: list[OrderedResourceTargetIn] = Field(
-        default_factory=list,
-        validation_alias=AliasChoices("ordered_targets", "orderedTargets"),
-        serialization_alias="orderedTargets",
-    )
+    base_versions: list[ResourceLaneVersionIn] = Field(default_factory=list)
+    command: SurfaceCommand
 
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+    model_config = ConfigDict(extra="forbid")
 
 
 class ResourceBodyMutationRequest(BaseModel):
@@ -535,20 +612,8 @@ class ResourceTitleMutationOut(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
-class ResourceSurfaceMutationOut(BaseModel):
-    client_mutation_id: str = Field(
-        validation_alias=AliasChoices("client_mutation_id", "clientMutationId"),
-        serialization_alias="clientMutationId",
-    )
+class ResourceSurfaceCommandOut(BaseModel):
+    client_mutation_id: str
     surface: ResourceSurfaceOut
-    changed_edge_ids: list[UUID] = Field(
-        default_factory=list,
-        validation_alias=AliasChoices("changed_edge_ids", "changedEdgeIds"),
-        serialization_alias="changedEdgeIds",
-    )
-    updated_at: datetime = Field(
-        validation_alias=AliasChoices("updated_at", "updatedAt"),
-        serialization_alias="updatedAt",
-    )
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(extra="forbid")

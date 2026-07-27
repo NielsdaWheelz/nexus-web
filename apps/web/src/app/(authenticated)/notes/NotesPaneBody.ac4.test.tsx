@@ -2,6 +2,7 @@ import { fireEvent, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
 import { stubFetch, wasFetchPathCalled } from "@/__tests__/helpers/fetch";
+import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { ResolvedPaneBodyMarker } from "@/lib/panes/paneRenderRegistry";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import NotesPaneBody from "./NotesPaneBody";
@@ -34,8 +35,6 @@ describe("NotesPaneBody — Today button", () => {
                 title: "Today",
                 updated_at: "2026-07-07T00:00:00.000Z",
                 daily_note: { local_date: "2026-07-07" },
-                surface: null,
-                blocks: [],
               },
             },
           }),
@@ -61,7 +60,11 @@ describe("NotesPaneBody — Today button", () => {
     renderHydratedPane({
       href: "/notes",
       resources: {},
-      children: <NotesPaneBody />,
+      children: (
+        <LibraryPlacementControllerProvider>
+          <NotesPaneBody />
+        </LibraryPlacementControllerProvider>
+      ),
     });
 
     const todayButton = await screen.findByRole("button", { name: "Today" });
@@ -115,7 +118,9 @@ describe("NotesPaneBody (AC-4 hydration hit)", () => {
       },
       children: (
         <ResolvedPaneBodyMarker>
-          <NotesPaneBody />
+          <LibraryPlacementControllerProvider>
+            <NotesPaneBody />
+          </LibraryPlacementControllerProvider>
         </ResolvedPaneBodyMarker>
       ),
     });

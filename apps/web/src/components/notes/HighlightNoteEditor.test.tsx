@@ -1,12 +1,9 @@
 import { act } from "react";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
-import {
-  createOutlineDocFromBlock,
-  paragraphFromText,
-} from "@/lib/notes/prosemirror/schema";
+import { paragraphFromText } from "@/lib/notes/prosemirror/schema";
 import type { StoredNoteEditorDraft } from "@/lib/notes/useNoteEditorSession";
 import HighlightNoteEditor from "./HighlightNoteEditor";
 
@@ -125,13 +122,13 @@ describe("HighlightNoteEditor persistence", () => {
     );
 
     const editor = await screen.findByRole("textbox", { name: "Highlight note" });
-    const draftBlockId = noteBlockIdFromEditor(editor);
     await user.click(editor);
     await user.keyboard("first");
 
     await waitFor(() => {
       expect(onSave).toHaveBeenCalledTimes(1);
     }, { timeout: 3000 });
+    const draftBlockId = onSave.mock.calls[0]![2];
     expect(onSave).toHaveBeenNthCalledWith(
       1,
       "highlight-1",
@@ -192,13 +189,13 @@ describe("HighlightNoteEditor persistence", () => {
     );
 
     const editor = await screen.findByRole("textbox", { name: "Highlight note" });
-    const draftBlockId = noteBlockIdFromEditor(editor);
     await user.click(editor);
     await user.keyboard("first");
 
     await waitFor(() => {
       expect(onSave).toHaveBeenCalledTimes(1);
     }, { timeout: 3000 });
+    const draftBlockId = onSave.mock.calls[0]![2];
 
     rerender(
       <FeedbackProvider>
@@ -237,14 +234,10 @@ describe("HighlightNoteEditor persistence", () => {
 
   it("recovers a stored draft visibly and waits for explicit save", async () => {
     const user = userEvent.setup();
-    const draftDoc = createOutlineDocFromBlock({
-      id: "note-1",
-      bodyPmJson: paragraphFromText("offline highlight note").toJSON() as Record<string, unknown>,
-      bodyText: "offline highlight note",
-    });
     storeNoteDraft("highlight:highlight-1:note-1", {
-      doc: draftDoc.toJSON(),
-      metadata: null,
+      bodyPmJson: paragraphFromText("offline highlight note").toJSON(),
+      bodyText: "offline highlight note",
+      metadata: { blockId: "note-1" },
       sequence: 4,
       clientMutationId: "highlight-recovered-cmid",
     });
@@ -298,18 +291,6 @@ describe("HighlightNoteEditor persistence", () => {
   });
 });
 
-function noteBlockIdFromEditor(editor: HTMLElement): string {
-  // Compact highlight notes hide the "Open note block" handle (display:none),
-  // which drops its accessible name, so read the id from the block list item.
-  const blockId = within(editor)
-    .getByRole("listitem")
-    .getAttribute("data-note-block-id");
-  if (!blockId) {
-    throw new Error("Expected the editor to render a note block id");
-  }
-  return blockId;
-}
-
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve: () => void = () => undefined;
   const promise = new Promise<void>((next) => {
@@ -320,12 +301,13 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 
 function storeNoteDraft(
   resourceKey: string,
-  draft: Omit<StoredNoteEditorDraft, "version" | "doc" | "updatedAt"> & {
-    doc: unknown;
+  draft: Omit<StoredNoteEditorDraft, "version" | "body" | "updatedAt"> & {
+    bodyPmJson: Record<string, unknown>;
+    bodyText: string;
   }
 ): void {
   window.localStorage.setItem(
-    `nexus.noteDraft:${resourceKey}`,
+    `nexus.noteBodyDraft:${resourceKey}`,
     JSON.stringify({
       version: 1,
       updatedAt: "2026-01-01T00:00:00.000Z",

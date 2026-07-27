@@ -1,0 +1,160 @@
+.body {
+  max-width: 76ch;
+  width: 100%;
+}
+
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.noteRow,
+.resourceRow,
+.insertionRow {
+  position: relative;
+  transition:
+    background-color 150ms var(--ease-glide),
+    opacity 150ms var(--ease-glide),
+    transform 150ms var(--ease-glide);
+}
+
+.noteRow {
+  min-height: 44px;
+  padding-block: var(--space-2);
+}
+
+.noteEditor {
+  padding-inline-end: 44px;
+}
+
+.resourceRow {
+  align-items: center;
+  display: flex;
+  min-height: 52px;
+}
+
+.resourceActivation {
+  align-items: flex-start;
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  cursor: pointer;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 44px;
+  min-width: 0;
+  padding: var(--space-2) 44px var(--space-2) var(--space-3);
+  text-align: start;
+}
+
+.resourceActivation:hover {
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+}
+
+.resourceActivation:focus-visible,
+.insertNote:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--ink) 42%, transparent);
+  outline-offset: 2px;
+}
+
+.resourceLabel {
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.resourceSummary {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.rowActions {
+  align-items: center;
+  display: flex;
+  inset-inline-end: 0;
+  opacity: 0;
+  position: absolute;
+  top: var(--space-1);
+  transition: opacity 150ms var(--ease-glide);
+}
+
+.noteRow:hover .rowActions,
+.noteRow:focus-within .rowActions,
+.resourceRow:hover .rowActions,
+.resourceRow:focus-within .rowActions {
+  opacity: 1;
+}
+
+.insertionRow {
+  min-height: 44px;
+}
+
+.insertNote {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  cursor: text;
+  display: flex;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding: 0 var(--space-3);
+  width: 100%;
+}
+
+.insertNote:hover {
+  color: var(--ink);
+}
+
+.addItem {
+  padding-block-start: var(--space-2);
+}
+
+.addItemSearch {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.addItemSearch label {
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.addItemSearch input {
+  background: var(--canvas);
+  border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent);
+  border-radius: var(--radius-md);
+  color: var(--ink);
+  font: inherit;
+  min-height: 44px;
+  padding-inline: var(--space-3);
+}
+
+.addItemSearch input:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--ink) 42%, transparent);
+  outline-offset: 2px;
+}
+
+@media (hover: none) {
+  .rowActions {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .noteRow,
+  .resourceRow,
+  .insertionRow,
+  .rowActions {
+    transition: none;
+  }
+}

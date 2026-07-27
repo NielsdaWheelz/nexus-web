@@ -10,14 +10,13 @@ import {
   lecternSlateResource,
   mediaFragmentsResource,
   mediaResource,
-  noteBlockResource,
   notePagesResource,
   settingsAccountResource,
 } from "@/lib/api/resource";
 import { decodeSlateEnvelope } from "@/lib/resonance/contract";
 import type { ResourceFetcher } from "@/lib/api/resourceTransport";
 import type { PaneRouteId, RouteParams } from "@/lib/panes/paneRouteModel";
-import { normalizeBlock, normalizePageSummary } from "@/lib/notes/normalize";
+import { normalizePageSummary } from "@/lib/notes/normalize";
 import { shouldLoadInitialMediaFragments } from "@/lib/media/documentReadiness";
 import { isAbortError } from "@/lib/errors";
 import { decodeContributorDetail } from "@/lib/contributors/detail";
@@ -175,19 +174,6 @@ export const paneResourceLoaders: Partial<Record<PaneRouteId, PaneResourceLoader
         ),
       };
     },
-  },
-
-  note: {
-    cacheKey: (p) => noteBlockResource.cacheKey({ blockId: p.blockId }),
-    load: async (request, p) =>
-      normalizeBlock(
-        (
-          await request<{ blockId: string }, { data: Record<string, unknown> }>(
-            noteBlockResource,
-            { blockId: p.blockId },
-          )
-        ).data,
-      ),
   },
 
   notes: {

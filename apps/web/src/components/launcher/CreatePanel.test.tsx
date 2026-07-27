@@ -15,10 +15,7 @@ import { userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
-import {
-  createOutlineDocFromBlock,
-  paragraphFromText,
-} from "@/lib/notes/prosemirror/schema";
+import { paragraphFromText } from "@/lib/notes/prosemirror/schema";
 import type { StoredNoteEditorDraft } from "@/lib/notes/useNoteEditorSession";
 import type { LauncherActionTarget } from "@/lib/launcher/model";
 import CreatePanel from "./CreatePanel";
@@ -57,13 +54,9 @@ function stubQuickCapture() {
       return jsonResponse({
         data: {
           id: String(body.id ?? "block-new"),
-          page_id: "page-today",
-          parent_block_id: null,
-          order_key: "a",
           body_pm_json: body.body_pm_json ?? { type: "paragraph" },
           body_text: "captured text",
-          collapsed: false,
-          children: [],
+          version_by_lane: { body: 1 },
         },
       });
     }
@@ -92,10 +85,13 @@ function renderCreatePanel(): {
 // Pre-store a recoverable draft under the CreatePanel resource key.
 function storeNoteDraft(
   resourceKey: string,
-  draft: Omit<StoredNoteEditorDraft, "version" | "doc" | "updatedAt"> & { doc: unknown },
+  draft: Omit<StoredNoteEditorDraft, "version" | "body" | "updatedAt"> & {
+    bodyPmJson: Record<string, unknown>;
+    bodyText: string;
+  },
 ): void {
   window.localStorage.setItem(
-    `nexus.noteDraft:${resourceKey}`,
+    `nexus.noteBodyDraft:${resourceKey}`,
     JSON.stringify({
       version: 1,
       updatedAt: "2026-01-01T00:00:00.000Z",
@@ -164,14 +160,10 @@ describe("CreatePanel", () => {
   it("recovers a stored draft and saves it with its stored identity on Save", async () => {
     const user = userEvent.setup();
     const fetchMock = stubQuickCapture();
-    const draftDoc = createOutlineDocFromBlock({
-      id: "recovered-quick-block",
-      bodyPmJson: paragraphFromText("offline quick note").toJSON() as Record<string, unknown>,
-      bodyText: "offline quick note",
-    });
     storeNoteDraft("quick-note:daily", {
-      doc: draftDoc.toJSON(),
-      metadata: null,
+      bodyPmJson: paragraphFromText("offline quick note").toJSON(),
+      bodyText: "offline quick note",
+      metadata: { blockId: "recovered-quick-block" },
       sequence: 6,
       clientMutationId: "quick-note-recovered-cmid",
     });
@@ -200,14 +192,10 @@ describe("CreatePanel", () => {
   it("discards a recovered draft, clearing the recovery notice without saving", async () => {
     const user = userEvent.setup();
     const fetchMock = stubQuickCapture();
-    const draftDoc = createOutlineDocFromBlock({
-      id: "recovered-quick-block",
-      bodyPmJson: paragraphFromText("offline quick note").toJSON() as Record<string, unknown>,
-      bodyText: "offline quick note",
-    });
     storeNoteDraft("quick-note:daily", {
-      doc: draftDoc.toJSON(),
-      metadata: null,
+      bodyPmJson: paragraphFromText("offline quick note").toJSON(),
+      bodyText: "offline quick note",
+      metadata: { blockId: "recovered-quick-block" },
       sequence: 6,
       clientMutationId: "quick-note-recovered-cmid",
     });
@@ -221,7 +209,11 @@ describe("CreatePanel", () => {
       expect(screen.queryByText("Recovered unsaved changes")).not.toBeInTheDocument();
     });
     expect(quickCaptureBodies(fetchMock)).toHaveLength(0);
-    expect(window.localStorage.getItem("nexus.noteDraft:quick-note:daily")).toBeNull();
+    expect(
+      window.localStorage.getItem(
+        "nexus.noteBodyDraft:quick-note:daily",
+      ),
+    ).toBeNull();
   });
 
   it("invokes onBack when the New note header is pressed", () => {

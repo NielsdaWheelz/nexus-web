@@ -6,10 +6,10 @@ export const revalidate = 0;
 
 type Params = Promise<{ resourceRef: string }>;
 
-export async function PUT(req: Request, { params }: { params: Params }) {
+export async function POST(req: Request, { params }: { params: Params }) {
   const { resourceRef } = await params;
   return proxyToFastAPI(
     req,
-    `/resource-items/${encodeURIComponent(resourceRef)}/adjacency`,
+    `/resource-items/${encodeURIComponent(resourceRef)}/surface/commands`,
   );
 }

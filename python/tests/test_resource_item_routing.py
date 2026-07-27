@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import Fragment
 from nexus.schemas.reader_apparatus import ReaderApparatusLocatorStatus
+from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.reader_apparatus import replace_media_apparatus, source_fingerprint
 from nexus.services.resource_graph.refs import ResourceRef
@@ -21,6 +22,7 @@ from tests.factories import (
     create_searchable_media,
     create_test_conversation_with_message,
     create_test_highlight,
+    create_test_library_artifact,
 )
 from tests.helpers import create_test_user_id
 
@@ -237,3 +239,130 @@ def test_batched_reader_resource_routes_match_single_owner_with_bounded_queries(
     assert actual[f"reader_apparatus_item:{pdf_apparatus_ids['pdf-current']}"].kind == "route"
     assert actual[f"reader_apparatus_item:{pdf_apparatus_ids['pdf-stale']}"].kind == "none"
     assert statement_count == 4
+
+
+def test_heterogeneous_dynamic_routes_match_single_owner_with_row_bounded_queries(
+    db_session: Session,
+) -> None:
+    user_id = create_test_user_id()
+    library_id = ensure_user_and_default_library(db_session, user_id)
+    media_id = create_searchable_media(db_session, user_id, title="Dynamic routing parity")
+
+    chunk_ids = [uuid4(), uuid4()]
+    db_session.execute(
+        text(
+            """
+            INSERT INTO content_chunks (
+                id, owner_kind, owner_id, chunk_idx, source_kind, chunk_text,
+                token_count, heading_path, summary_locator
+            )
+            VALUES (
+                :id, 'media', :media_id, :chunk_idx, 'web_article', :chunk_text,
+                2, '[]'::jsonb, '{}'::jsonb
+            )
+            """
+        ),
+        [
+            {
+                "id": chunk_id,
+                "media_id": media_id,
+                "chunk_idx": 10_000 + index,
+                "chunk_text": f"Dynamic chunk {index}",
+            }
+            for index, chunk_id in enumerate(chunk_ids)
+        ],
+    )
+
+    contributor_ids = [uuid4(), uuid4()]
+    db_session.execute(
+        text(
+            """
+            INSERT INTO contributors (id, handle, display_name)
+            VALUES (:id, :handle, :display_name)
+            """
+        ),
+        [
+            {
+                "id": contributor_id,
+                "handle": f"dynamic-route-{index}",
+                "display_name": f"Dynamic Route {index}",
+            }
+            for index, contributor_id in enumerate(contributor_ids)
+        ],
+    )
+
+    passage_ids = [uuid4(), uuid4()]
+    db_session.execute(
+        text(
+            """
+            INSERT INTO passage_anchors (
+                id, user_id, owner_scheme, owner_id, selector_version, anchor_key, selector
+            )
+            VALUES (
+                :id, :user_id, 'media', :media_id, 1, :anchor_key,
+                '{"exact":"dynamic"}'::jsonb
+            )
+            """
+        ),
+        [
+            {
+                "id": passage_id,
+                "user_id": user_id,
+                "media_id": media_id,
+                "anchor_key": f"dynamic-route-{index}",
+            }
+            for index, passage_id in enumerate(passage_ids)
+        ],
+    )
+    artifact_id, revision_id = create_test_library_artifact(
+        db_session,
+        library_id=library_id,
+        requester_user_id=user_id,
+    )
+    db_session.flush()
+
+    base_refs = [
+        ResourceRef(scheme="content_chunk", id=chunk_ids[0]),
+        ResourceRef(scheme="contributor", id=contributor_ids[0]),
+        ResourceRef(scheme="passage_anchor", id=passage_ids[0]),
+        ResourceRef(scheme="artifact", id=artifact_id),
+        ResourceRef(scheme="artifact_revision", id=revision_id),
+    ]
+    expanded_refs = [
+        *base_refs,
+        ResourceRef(scheme="content_chunk", id=chunk_ids[1]),
+        ResourceRef(scheme="contributor", id=contributor_ids[1]),
+        ResourceRef(scheme="passage_anchor", id=passage_ids[1]),
+    ]
+    expected = {
+        ref.uri: resource_activation_for_ref(db_session, viewer_id=user_id, ref=ref)
+        for ref in expanded_refs
+    }
+
+    def load_with_statement_count(
+        refs: list[ResourceRef],
+    ) -> tuple[dict[str, ResourceActivationOut], int]:
+        statement_count = 0
+
+        def count_statement(*_args: object) -> None:
+            nonlocal statement_count
+            statement_count += 1
+
+        engine = db_session.get_bind()
+        event.listen(engine, "before_cursor_execute", count_statement)
+        try:
+            actual = resource_activations_for_refs(
+                db_session,
+                viewer_id=user_id,
+                refs=refs,
+            )
+        finally:
+            event.remove(engine, "before_cursor_execute", count_statement)
+        return actual, statement_count
+
+    base_actual, base_statement_count = load_with_statement_count(base_refs)
+    expanded_actual, expanded_statement_count = load_with_statement_count(expanded_refs)
+
+    assert base_actual == {ref.uri: expected[ref.uri] for ref in base_refs}
+    assert expanded_actual == expected
+    assert base_statement_count == expanded_statement_count == 5

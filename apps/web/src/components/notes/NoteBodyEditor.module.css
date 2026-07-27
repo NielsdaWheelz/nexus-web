@@ -25,51 +25,14 @@
   white-space: pre-wrap;
 }
 
-.editorView :global(ul),
-.editorView :global(ol) {
-  margin: 0;
-  padding: 0;
-}
-
-.editorView :global(li[data-note-block-id]) {
-  display: block;
-  list-style: none;
-  margin: 0;
-  padding: 0 0 0 24px;
-  position: relative;
-}
-
-.editorView :global(.note-block-handle) {
-  background: currentColor;
-  border: 0;
-  border-radius: var(--radius-full);
-  cursor: pointer;
-  height: 6px;
-  left: 6px;
-  opacity: 0.72;
-  padding: 0;
-  position: absolute;
-  top: 0.82em;
-  width: 6px;
-}
-
-.editorView :global(.note-block-handle:hover),
-.editorView :global(.note-block-handle:focus-visible) {
-  height: 10px;
-  left: 4px;
-  opacity: 1;
-  outline: none;
-  top: calc(0.82em - 2px);
-  width: 10px;
-}
-
-.editorView :global(.note-block-content) {
-  min-height: 24px;
-}
-
 .editorView :global(p) {
   margin: 0;
   min-height: 24px;
+}
+
+.editorView :global(pre) {
+  margin: 0;
+  white-space: pre-wrap;
 }
 
 .editorView :global(.nexus-note-range-pulse) {
@@ -86,7 +49,11 @@
     background-color: var(--highlight-yellow);
   }
   50% {
-    background-color: color-mix(in srgb, var(--highlight-yellow) 24%, transparent);
+    background-color: color-mix(
+      in srgb,
+      var(--highlight-yellow) 24%,
+      transparent
+    );
   }
 }
 
@@ -112,8 +79,8 @@
 .editorView :global(.note-object-embed) {
   border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
   border-radius: var(--radius-lg);
-  margin: 8px 0;
-  padding: 8px 10px;
+  margin: var(--space-2) 0;
+  padding: var(--space-2) var(--space-3);
 }
 
 .compact {
@@ -121,15 +88,6 @@
   line-height: var(--leading-snug);
 }
 
-.compact :global(.note-block-handle) {
-  display: none;
-}
-
-.compact :global(li[data-note-block-id]) {
-  padding-left: 0;
-}
-
-.compact :global(.note-block-content),
 .compact :global(p) {
   min-height: 0;
 }

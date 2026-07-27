@@ -1,4 +1,5 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   definePaneReturnGeometry,
@@ -8,43 +9,120 @@ import {
 import NotePaneBody from "@/app/(authenticated)/notes/[blockId]/NotePaneBody";
 import NotesPaneBody from "@/app/(authenticated)/notes/NotesPaneBody";
 import PagePaneBody from "@/app/(authenticated)/pages/[pageId]/PagePaneBody";
+import { jsonResponse } from "@/__tests__/helpers/fetch";
 import type { NotePage } from "@/lib/notes/api";
-import type { NoteBlock } from "@/lib/notes/normalize";
-import { paragraphFromText } from "@/lib/notes/prosemirror/schema";
+import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { usePaneReturnReady } from "@/lib/panes/paneRuntime";
 import type { PaneReturnMementoCommands } from "@/lib/workspace/paneReturnMemento";
 import { assumePaneVisitId } from "@/lib/workspace/schema";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 
-const AWAY_VISIT_ID = assumePaneVisitId(
-  "00000000-0000-4000-8000-000000000092",
-);
+const AWAY_VISIT_ID = assumePaneVisitId("00000000-0000-4000-8000-000000000092");
 const PANE_ID = "notes-return-journey";
 const PAGE_ID = "11111111-1111-4111-8111-111111111111";
-const PAGE_BLOCK_1 = "22222222-2222-4222-8222-222222222221";
-const PAGE_BLOCK_2 = "22222222-2222-4222-8222-222222222222";
-const NOTE_BLOCK_ID = "33333333-3333-4333-8333-333333333333";
+const PAGE_NOTE_1 = "22222222-2222-4222-8222-222222222221";
+const PAGE_NOTE_2 = "22222222-2222-4222-8222-222222222222";
+const NOTE_ID = "33333333-3333-4333-8333-333333333333";
 
 function ReadyAwayBody() {
   usePaneReturnReady(true);
   return <div>Away route</div>;
 }
 
-function noteBlock(id: string, text: string): NoteBlock {
+function withLibraryPlacement(children: ReactNode) {
+  return (
+    <LibraryPlacementControllerProvider>
+      {children}
+    </LibraryPlacementControllerProvider>
+  );
+}
+
+function resourceItem(ref: string, label: string) {
+  const [scheme, id] = ref.split(":") as [string, string];
   return {
+    ref,
+    scheme,
     id,
-    parentBlockId: null,
-    orderKey: "0000000001",
-    bodyPmJson: paragraphFromText(text).toJSON() as Record<string, unknown>,
-    bodyText: text,
-    collapsed: false,
-    children: [],
-    versionByLane: { body: 1, outgoing_edges: 1 },
+    label,
+    summary: "",
+    route: null,
+    activation: {
+      resource_ref: ref,
+      kind: "none",
+      href: null,
+      unresolved_reason: null,
+    },
+    missing: false,
+    capabilities: {
+      user_relation: {
+        user_link_source: false,
+        user_link_target: "none",
+        note_reference_target: false,
+      },
+      sharing: "None",
+      libraryPlacement: "None",
+      attachable: false,
+      chat_subject: "none",
+      readable: "none",
+      inspectable: "none",
+      citable_result_type: null,
+      citation_output_source: false,
+      app_search_scope: false,
+      conversation_search_scope: false,
+      prompt_render: "none",
+      expansion_policy: "none",
+      expandable: false,
+      adjacency_source: true,
+      adjacency_target: true,
+    },
+    version_by_lane: { title: 1, body: 1, outgoing_edges: 1 },
   };
 }
 
-function page(blocks: NoteBlock[], updatedAt: string): NotePage {
+function noteOccurrence(id: string, text: string) {
+  return {
+    occurrence_id: `edge-${id}`,
+    target: {
+      item: resourceItem(`note_block:${id}`, text),
+      content: {
+        kind: "note_body",
+        body_pm_json: {
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              content: [{ type: "text", text }],
+            },
+          ],
+        },
+        body_text: text,
+      },
+    },
+  };
+}
+
+function surface(input: {
+  sourceRef: string;
+  sourceContent:
+    | { kind: "page_title"; title: string }
+    | {
+        kind: "note_body";
+        body_pm_json: Record<string, unknown>;
+        body_text: string;
+      };
+  orderedItems: ReturnType<typeof noteOccurrence>[];
+}) {
+  return {
+    source: {
+      item: resourceItem(input.sourceRef, "Return journey"),
+      content: input.sourceContent,
+    },
+    ordered_items: input.orderedItems,
+  };
+}
+
+function page(updatedAt: string): NotePage {
   return {
     id: PAGE_ID,
     title: "Return journey page",
@@ -53,11 +131,25 @@ function page(blocks: NoteBlock[], updatedAt: string): NotePage {
       id: PAGE_ID,
       href: `/pages/${PAGE_ID}`,
     }),
-    surface: null,
     updatedAt,
     dailyNote: null,
-    blocks,
   };
+}
+
+function stubSurfaceFetch(readSurface: (sourceRef: string) => unknown) {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(
+      input instanceof Request ? input.url : String(input),
+      "http://localhost",
+    );
+    const match = url.pathname.match(/^\/api\/resource-items\/(.+)\/surface$/);
+    if (match) {
+      return jsonResponse({ data: readSurface(decodeURIComponent(match[1]!)) });
+    }
+    throw new Error(`Unexpected fetch: ${url.pathname}`);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
 }
 
 describe("Notes route owners — pane return", () => {
@@ -77,16 +169,26 @@ describe("Notes route owners — pane return", () => {
     const resources = {
       "notes:pages": [
         {
-          id: "page-1",
+          id: PAGE_NOTE_1,
           title: "First page",
           description: null,
           updatedAt: "2026-07-01T00:00:00.000Z",
+          actionTarget: routeResourceActionSubject({
+            scheme: "page",
+            id: PAGE_NOTE_1,
+            href: `/pages/${PAGE_NOTE_1}`,
+          }),
         },
         {
-          id: "page-2",
+          id: PAGE_NOTE_2,
           title: "Second page",
           description: null,
           updatedAt: "2026-07-02T00:00:00.000Z",
+          actionTarget: routeResourceActionSubject({
+            scheme: "page",
+            id: PAGE_NOTE_2,
+            href: `/pages/${PAGE_NOTE_2}`,
+          }),
         },
       ],
     };
@@ -114,14 +216,16 @@ describe("Notes route owners — pane return", () => {
         <ReadyAwayBody />
       </PaneShellReturnJourneyHarness>
     );
-    const view = render(target(0));
+    const view = render(withLibraryPlacement(target(0)));
 
-    expect(await screen.findByText("Second page")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Second page" }),
+    ).toBeInTheDocument();
     await waitFor(() => expect(commands).not.toBeNull());
     const sourceScrollport = screen.getByTestId("pane-shell-body");
     definePaneReturnGeometry(sourceScrollport, {
-      "page-1": 0,
-      "page-2": 120,
+      [PAGE_NOTE_1]: 0,
+      [PAGE_NOTE_2]: 120,
     });
     act(() => {
       sourceScrollport.scrollTop = 100;
@@ -133,23 +237,28 @@ describe("Notes route owners — pane return", () => {
       });
     });
 
-    view.rerender(away);
+    view.rerender(withLibraryPlacement(away));
     expect(await screen.findByText("Away route")).toBeInTheDocument();
-    view.rerender(target(2));
+    view.rerender(withLibraryPlacement(target(2)));
 
     const restoredScrollport = screen.getByTestId("pane-shell-body");
-    expect(await screen.findByText("Second page")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Second page" }),
+    ).toBeInTheDocument();
     definePaneReturnGeometry(restoredScrollport, {
-      "page-1": 0,
-      "page-2": 120,
+      [PAGE_NOTE_1]: 0,
+      [PAGE_NOTE_2]: 120,
     });
     await waitFor(() => expect(restoredScrollport.scrollTop).toBe(100));
-    const restoredTitle = screen.getByText("Second page");
+    const restoredTitle = screen.getByRole("link", { name: "Second page" });
     // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: scoped pane-return anchor identity is an explicit DOM capability contract.
     const restoredAnchor = restoredTitle.closest<HTMLElement>(
       "[data-collection-row-id]",
     );
-    expect(restoredAnchor).toHaveAttribute("data-collection-row-id", "page-2");
+    expect(restoredAnchor).toHaveAttribute(
+      "data-collection-row-id",
+      PAGE_NOTE_2,
+    );
     // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: anchor ids are collision-safe only within their explicit pane-return scope.
     expect(restoredAnchor?.closest("[data-pane-return-scope]")).toHaveAttribute(
       "data-pane-return-scope",
@@ -158,15 +267,24 @@ describe("Notes route owners — pane return", () => {
     expect(restoredAnchor?.getBoundingClientRect().top).toBe(20);
   });
 
-  it("clamps the Page raw position when the saved editor block is gone", async () => {
+  it("clamps the Page raw position when an ordered note is gone", async () => {
     let commands: PaneReturnMementoCommands | null = null;
     const publishCommands = (next: PaneReturnMementoCommands) => {
       commands = next;
     };
     const href = `/pages/${PAGE_ID}`;
     const routeKey = resolvePaneRouteIdentity(href).routeKey;
-    const firstBlock = noteBlock(PAGE_BLOCK_1, "First editor block");
-    const secondBlock = noteBlock(PAGE_BLOCK_2, "Removed editor block");
+    let orderedItems = [
+      noteOccurrence(PAGE_NOTE_1, "First ordered note"),
+      noteOccurrence(PAGE_NOTE_2, "Removed ordered note"),
+    ];
+    stubSurfaceFetch((sourceRef) =>
+      surface({
+        sourceRef,
+        sourceContent: { kind: "page_title", title: "Return journey page" },
+        orderedItems,
+      }),
+    );
     const target = (resourceGeneration: number, initialPage: NotePage) => (
       <PaneShellReturnJourneyHarness
         href={href}
@@ -192,21 +310,15 @@ describe("Notes route owners — pane return", () => {
       </PaneShellReturnJourneyHarness>
     );
     const view = render(
-      target(
-        0,
-        page(
-          [firstBlock, { ...secondBlock, orderKey: "0000000002" }],
-          "2026-07-01T00:00:00.000Z",
-        ),
-      ),
+      withLibraryPlacement(target(0, page("2026-07-01T00:00:00.000Z"))),
     );
 
-    expect(await screen.findByText("Removed editor block")).toBeInTheDocument();
+    expect(await screen.findByText("Removed ordered note")).toBeInTheDocument();
     await waitFor(() => expect(commands).not.toBeNull());
     const sourceScrollport = screen.getByTestId("pane-shell-body");
     definePaneReturnGeometry(sourceScrollport, {
-      [PAGE_BLOCK_1]: 0,
-      [PAGE_BLOCK_2]: 120,
+      [`edge-${PAGE_NOTE_1}`]: 0,
+      [`edge-${PAGE_NOTE_2}`]: 120,
     });
     act(() => {
       sourceScrollport.scrollTop = 100;
@@ -218,35 +330,51 @@ describe("Notes route owners — pane return", () => {
       });
     });
 
-    view.rerender(away);
+    view.rerender(withLibraryPlacement(away));
     expect(await screen.findByText("Away route")).toBeInTheDocument();
     const awayScrollport = screen.getByTestId("pane-shell-body");
     definePaneReturnGeometry(awayScrollport, {}, { scrollHeight: 140 });
+    orderedItems = [noteOccurrence(PAGE_NOTE_1, "First ordered note")];
     view.rerender(
-      target(
-        2,
-        page([firstBlock], "2026-07-02T00:00:00.000Z"),
-      ),
+      withLibraryPlacement(target(2, page("2026-07-02T00:00:00.000Z"))),
     );
 
-    expect(await screen.findByText("First editor block")).toBeInTheDocument();
-    expect(screen.queryByText("Removed editor block")).not.toBeInTheDocument();
+    expect(await screen.findByText("First ordered note")).toBeInTheDocument();
+    expect(screen.queryByText("Removed ordered note")).not.toBeInTheDocument();
     await waitFor(() => expect(awayScrollport.scrollTop).toBe(40));
   });
 
-  it("restores the Note editor-block anchor after an away visit", async () => {
+  it("restores the Note ordered-resource anchor after an away visit", async () => {
     let commands: PaneReturnMementoCommands | null = null;
     const publishCommands = (next: PaneReturnMementoCommands) => {
       commands = next;
     };
-    const href = `/notes/${NOTE_BLOCK_ID}`;
+    const href = `/notes/${NOTE_ID}`;
     const routeKey = resolvePaneRouteIdentity(href).routeKey;
-    const block = noteBlock(NOTE_BLOCK_ID, "Standalone return note");
+    stubSurfaceFetch((sourceRef) =>
+      surface({
+        sourceRef,
+        sourceContent: {
+          kind: "note_body",
+          body_pm_json: {
+            type: "doc",
+            content: [
+              {
+                type: "paragraph",
+                content: [{ type: "text", text: "Note masthead" }],
+              },
+            ],
+          },
+          body_text: "Note masthead",
+        },
+        orderedItems: [noteOccurrence(PAGE_NOTE_1, "Standalone return note")],
+      }),
+    );
     const target = (resourceGeneration: number) => (
       <PaneShellReturnJourneyHarness
         href={href}
         visitId={RETURN_JOURNEY_VISIT_ID}
-        resources={{ [`note-block:${NOTE_BLOCK_ID}`]: block }}
+        resources={{}}
         resourceGeneration={resourceGeneration}
         publishCommands={publishCommands}
         paneId={PANE_ID}
@@ -266,12 +394,16 @@ describe("Notes route owners — pane return", () => {
         <ReadyAwayBody />
       </PaneShellReturnJourneyHarness>
     );
-    const view = render(target(0));
+    const view = render(withLibraryPlacement(target(0)));
 
-    expect(await screen.findByText("Standalone return note")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Standalone return note"),
+    ).toBeInTheDocument();
     await waitFor(() => expect(commands).not.toBeNull());
     const sourceScrollport = screen.getByTestId("pane-shell-body");
-    definePaneReturnGeometry(sourceScrollport, { [NOTE_BLOCK_ID]: 120 });
+    definePaneReturnGeometry(sourceScrollport, {
+      [`edge-${PAGE_NOTE_1}`]: 120,
+    });
     act(() => {
       sourceScrollport.scrollTop = 100;
       commands?.capturePane({
@@ -282,28 +414,17 @@ describe("Notes route owners — pane return", () => {
       });
     });
 
-    view.rerender(away);
+    view.rerender(withLibraryPlacement(away));
     expect(await screen.findByText("Away route")).toBeInTheDocument();
-    view.rerender(target(2));
+    view.rerender(withLibraryPlacement(target(2)));
 
     const restoredScrollport = screen.getByTestId("pane-shell-body");
-    expect(await screen.findByText("Standalone return note")).toBeInTheDocument();
-    definePaneReturnGeometry(restoredScrollport, { [NOTE_BLOCK_ID]: 120 });
+    expect(
+      await screen.findByText("Standalone return note"),
+    ).toBeInTheDocument();
+    definePaneReturnGeometry(restoredScrollport, {
+      [`edge-${PAGE_NOTE_1}`]: 120,
+    });
     await waitFor(() => expect(restoredScrollport.scrollTop).toBe(100));
-    const restoredText = screen.getByText("Standalone return note");
-    // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: scoped pane-return anchor identity is an explicit DOM capability contract.
-    const restoredAnchor = restoredText.closest<HTMLElement>(
-      "[data-note-block-id]",
-    );
-    expect(restoredAnchor).toHaveAttribute(
-      "data-note-block-id",
-      NOTE_BLOCK_ID,
-    );
-    // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: anchor ids are collision-safe only within their explicit pane-return scope.
-    expect(restoredAnchor?.closest("[data-pane-return-scope]")).toHaveAttribute(
-      "data-pane-return-scope",
-      "Notes.EditorBlocks",
-    );
-    expect(restoredAnchor?.getBoundingClientRect().top).toBe(20);
   });
 });

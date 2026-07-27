@@ -1,24 +1,21 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { resolveResourceLocators } from "@/lib/resources/resourceLocators";
-import {
-  createOutlineDocFromBlock,
-  firstOutlineBlockFromDoc,
-} from "@/lib/notes/prosemirror/schema";
+import { emptyNoteBody, type NoteBodyValue } from "@/lib/notes/prosemirror/schema";
 import { noteBodyHasContent } from "@/lib/notes/prosemirror/bodyContent";
 import {
   readStoredNoteEditorDraft,
   useNoteEditorSession,
 } from "@/lib/notes/useNoteEditorSession";
 import NoteDraftRecovery from "@/components/notes/NoteDraftRecovery";
-import ProseMirrorOutlineEditor from "@/components/notes/ProseMirrorOutlineEditor";
+import NoteBodyEditor from "@/components/notes/NoteBodyEditor";
 import type { HighlightLinkedNoteBlock } from "@/lib/highlights/api";
+import { isRecord } from "@/lib/validation";
 import styles from "./HighlightNoteEditor.module.css";
 
 export default function HighlightNoteEditor({
@@ -90,41 +87,37 @@ export default function HighlightNoteEditor({
     }
   }, [draftBlockId, noteBlockId]);
 
-  const persistedDoc = useMemo(
-    () =>
-      createOutlineDocFromBlock({
-        id: note?.note_block_id ?? draftBlockId,
-        bodyPmJson: note?.body_pm_json ?? null,
-        bodyText: note?.body_text ?? "",
-      }),
-    [draftBlockId, note?.body_pm_json, note?.body_text, note?.note_block_id],
+  const persistedBody = useMemo<NoteBodyValue>(
+    () => ({
+      bodyPmJson: note?.body_pm_json ?? emptyNoteBody().bodyPmJson,
+      bodyText: note?.body_text ?? "",
+    }),
+    [note?.body_pm_json, note?.body_text],
   );
-  const [initialDoc, setInitialDoc] = useState(
-    () => readStoredNoteEditorDraft(resourceKey)?.doc ?? persistedDoc,
+  const [initialBody, setInitialBody] = useState(
+    () => readStoredNoteEditorDraft(resourceKey)?.body ?? persistedBody,
   );
 
-  const saveDoc = useCallback(
+  const saveBody = useCallback(
     async (
-      nextDoc: ProseMirrorNode,
+      body: NoteBodyValue,
       { clientMutationId }: { clientMutationId: string },
     ) => {
       const saveResourceKey = resourceKey;
       const saveEditVersion = editVersionRef.current;
-      const block = firstOutlineBlockFromDoc(nextDoc);
-      if (!block) return;
 
       const persistedBlockId = persistedBlockIdRef.current;
-      if (noteBodyHasContent(block)) {
+      if (noteBodyHasContent(body)) {
         const savedBlock = await onSave(
           highlightId,
           persistedBlockId,
-          block.id,
-          block.bodyPmJson,
+          draftBlockId,
+          body.bodyPmJson,
           clientMutationId,
         );
         if (currentResourceKeyRef.current === saveResourceKey) {
           persistedBlockIdRef.current =
-            savedBlock?.note_block_id ?? persistedBlockId ?? block.id;
+            savedBlock?.note_block_id ?? persistedBlockId ?? draftBlockId;
         }
         return;
       }
@@ -144,12 +137,13 @@ export default function HighlightNoteEditor({
         }
       }
     },
-    [highlightId, onDelete, onSave, resourceKey],
+    [draftBlockId, highlightId, onDelete, onSave, resourceKey],
   );
 
   const session = useNoteEditorSession({
     resourceKey,
-    save: saveDoc,
+    save: saveBody,
+    draftMetadata: () => ({ blockId: draftBlockId }),
     onError: (error) => {
       if (handleUnauthenticatedApiError(error)) return;
       feedback.show(toFeedback(error, { fallback: "Failed to save note" }));
@@ -172,37 +166,37 @@ export default function HighlightNoteEditor({
     const isInitialLoad = loadedResourceKeyRef.current === null;
     loadedResourceKeyRef.current = resourceKey;
     const storedDraft = readStoredNoteEditorDraft(resourceKey);
-    setInitialDoc(storedDraft?.doc ?? persistedDoc);
+    if (
+      !noteBlockId &&
+      storedDraft &&
+      isRecord(storedDraft.metadata) &&
+      typeof storedDraft.metadata.blockId === "string"
+    ) {
+      draftBlockRef.current.blockId = storedDraft.metadata.blockId;
+    }
+    setInitialBody(storedDraft?.body ?? persistedBody);
     if (!isInitialLoad) {
       setEditorResetSerial((current) => current + 1);
     }
     if (storedDraft) {
       recoverSessionDraft(storedDraft);
     }
-  }, [persistedDoc, recoverSessionDraft, resourceKey]);
+  }, [noteBlockId, persistedBody, recoverSessionDraft, resourceKey]);
 
   const scheduleSave = useCallback(
-    (nextDoc: ProseMirrorNode) => {
+    (body: NoteBodyValue) => {
       editVersionRef.current += 1;
       onLocalChange?.();
-      scheduleSessionSave(nextDoc);
+      scheduleSessionSave(body);
     },
     [onLocalChange, scheduleSessionSave],
   );
 
   const discardRecoveredDraft = useCallback(() => {
     discardSessionDraft();
-    setInitialDoc(persistedDoc);
+    setInitialBody(persistedBody);
     setEditorResetSerial((current) => current + 1);
-  }, [discardSessionDraft, persistedDoc]);
-
-  const openBlock = useCallback(
-    (blockId: string, openInNewPane: boolean) => {
-      if (!blockId) return;
-      onOpenLink(`/notes/${blockId}`, { newPane: openInNewPane });
-    },
-    [onOpenLink],
-  );
+  }, [discardSessionDraft, persistedBody]);
 
   const openObject = useCallback(
     async (objectType: string, objectId: string, openInNewPane: boolean) => {
@@ -229,17 +223,15 @@ export default function HighlightNoteEditor({
 
   return (
     <div className={styles.shell} data-editable={editable ? "true" : "false"}>
-      <ProseMirrorOutlineEditor
+      <NoteBodyEditor
         resourceKey={editorResourceKey}
-        initialDoc={initialDoc}
+        initialBodyPmJson={initialBody.bodyPmJson}
+        fallbackBodyText={initialBody.bodyText}
         editable={editable}
         ariaLabel="Highlight note"
-        createBlockId={createRandomId}
-        singleBlock
         compact
-        onDocChange={editable ? scheduleSave : undefined}
+        onBodyChange={editable ? scheduleSave : undefined}
         onBlurFlush={flushSession}
-        onOpenBlock={openBlock}
         onOpenObject={openObject}
         onFeedback={feedback.show}
         onError={(error) => {

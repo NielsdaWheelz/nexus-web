@@ -1,5 +1,9 @@
-import { Schema, type Node as ProseMirrorNode } from "prosemirror-model";
-import type { NoteBlock } from "@/lib/notes/normalize";
+import {
+  Schema,
+  type MarkSpec,
+  type Node as ProseMirrorNode,
+  type NodeSpec,
+} from "prosemirror-model";
 import { isRecord } from "@/lib/validation";
 
 function requiredDomAttribute(dom: HTMLElement, name: string): string | false {
@@ -7,354 +11,256 @@ function requiredDomAttribute(dom: HTMLElement, name: string): string | false {
   return value ? value : false;
 }
 
-function prosemirrorNodeJson(node: ProseMirrorNode): Record<string, unknown> {
-  const json = node.toJSON();
-  if (!isRecord(json)) {
-    throw new Error("ProseMirror node JSON must be an object");
-  }
-  return json;
-}
+export const noteBodyNodeSpecs = {
+  note_body_doc: {
+    content: "block_body",
+  },
+  paragraph: {
+    content: "inline*",
+    group: "block_body block",
+    parseDOM: [{ tag: "p" }],
+    toDOM: () => ["p", 0],
+  },
+  text: {
+    group: "inline",
+  },
+  hard_break: {
+    inline: true,
+    group: "inline",
+    selectable: false,
+    parseDOM: [{ tag: "br" }],
+    toDOM: () => ["br"],
+  },
+  object_ref: {
+    inline: true,
+    group: "inline",
+    atom: true,
+    attrs: {
+      objectType: {},
+      objectId: {},
+      label: { default: "" },
+    },
+    parseDOM: [
+      {
+        tag: "span[data-object-type][data-object-id]",
+        getAttrs: (dom) => {
+          if (!(dom instanceof HTMLElement)) return false;
+          const objectType = requiredDomAttribute(dom, "data-object-type");
+          const objectId = requiredDomAttribute(dom, "data-object-id");
+          if (!objectType || !objectId) return false;
+          return {
+            objectType,
+            objectId,
+            label: dom.textContent ?? "",
+          };
+        },
+      },
+    ],
+    toDOM: (node) => [
+      "span",
+      {
+        "data-object-type": node.attrs.objectType,
+        "data-object-id": node.attrs.objectId,
+        contenteditable: "false",
+        class: "note-object-ref",
+        role: "link",
+        tabindex: "0",
+        "aria-label": `Open ${
+          node.attrs.label || `${node.attrs.objectType}:${node.attrs.objectId}`
+        }`,
+      },
+      node.attrs.label || `${node.attrs.objectType}:${node.attrs.objectId}`,
+    ],
+  },
+  object_embed: {
+    group: "block_body block",
+    atom: true,
+    selectable: true,
+    attrs: {
+      objectType: {},
+      objectId: {},
+      label: { default: "" },
+      relationType: { default: "embeds" },
+      displayMode: { default: "compact" },
+    },
+    parseDOM: [
+      {
+        tag: "div[data-object-embed-type][data-object-embed-id]",
+        getAttrs: (dom) => {
+          if (!(dom instanceof HTMLElement)) return false;
+          const objectType = requiredDomAttribute(
+            dom,
+            "data-object-embed-type",
+          );
+          const objectId = requiredDomAttribute(dom, "data-object-embed-id");
+          if (!objectType || !objectId) return false;
+          return {
+            objectType,
+            objectId,
+            label: dom.textContent ?? "",
+            relationType: dom.getAttribute("data-relation-type") ?? "embeds",
+            displayMode: dom.getAttribute("data-display-mode") ?? "compact",
+          };
+        },
+      },
+    ],
+    toDOM: (node) => [
+      "div",
+      {
+        "data-object-type": node.attrs.objectType,
+        "data-object-id": node.attrs.objectId,
+        "data-object-embed-type": node.attrs.objectType,
+        "data-object-embed-id": node.attrs.objectId,
+        "data-relation-type": node.attrs.relationType,
+        "data-display-mode": node.attrs.displayMode,
+        contenteditable: "false",
+        class: "note-object-embed",
+        role: "link",
+        tabindex: "0",
+        "aria-label": `Open ${
+          node.attrs.label || `${node.attrs.objectType}:${node.attrs.objectId}`
+        }`,
+      },
+      node.attrs.label || `${node.attrs.objectType}:${node.attrs.objectId}`,
+    ],
+  },
+  code_block: {
+    content: "text*",
+    marks: "",
+    group: "block_body block",
+    code: true,
+    defining: true,
+    parseDOM: [{ tag: "pre", preserveWhitespace: "full" }],
+    toDOM: () => ["pre", ["code", 0]],
+  },
+  image: {
+    inline: true,
+    group: "inline",
+    draggable: false,
+    attrs: {
+      src: {},
+      alt: { default: null },
+      title: { default: null },
+    },
+    parseDOM: [
+      {
+        tag: "img[src]",
+        getAttrs: (dom) => {
+          if (!(dom instanceof HTMLImageElement)) return false;
+          return {
+            src: dom.getAttribute("src"),
+            alt: dom.getAttribute("alt"),
+            title: dom.getAttribute("title"),
+          };
+        },
+      },
+    ],
+    toDOM: (node) => ["img", { ...node.attrs, draggable: "false" }],
+  },
+} satisfies Record<string, NodeSpec>;
 
-export const outlineSchema = new Schema({
-  topNode: "outline_doc",
-  nodes: {
-    outline_doc: {
-      content: "outline_block*",
-    },
-    outline_block: {
-      content: "block_body outline_block*",
-      attrs: {
-        id: {},
-        collapsed: { default: false },
-      },
-      defining: true,
-      parseDOM: [
-        {
-          tag: "li[data-note-block-id]",
-          getAttrs: (dom) => {
-            if (!(dom instanceof HTMLElement)) return false;
-            return {
-              id: dom.getAttribute("data-note-block-id"),
-              collapsed: dom.getAttribute("data-collapsed") === "true",
-            };
-          },
-        },
-      ],
-      toDOM: (node) => [
-        "li",
-        {
-          "data-note-block-id": node.attrs.id,
-          "data-collapsed": node.attrs.collapsed ? "true" : "false",
-        },
-        [
-          "button",
-          {
-            type: "button",
-            "data-note-block-open": node.attrs.id,
-            contenteditable: "false",
-            tabindex: "0",
-            "aria-label": "Open note block",
-            class: "note-block-handle",
-          },
-        ],
-        ["div", { class: "note-block-content" }, 0],
-      ],
-    },
-    paragraph: {
-      content: "inline*",
-      group: "block_body block",
-      parseDOM: [{ tag: "p" }],
-      toDOM: () => ["p", 0],
-    },
-    text: {
-      group: "inline",
-    },
-    hard_break: {
-      inline: true,
-      group: "inline",
-      selectable: false,
-      parseDOM: [{ tag: "br" }],
-      toDOM: () => ["br"],
-    },
-    object_ref: {
-      inline: true,
-      group: "inline",
-      atom: true,
-      attrs: {
-        objectType: {},
-        objectId: {},
-        label: { default: "" },
-      },
-      parseDOM: [
-        {
-          tag: "span[data-object-type][data-object-id]",
-          getAttrs: (dom) => {
-            if (!(dom instanceof HTMLElement)) return false;
-            const objectType = requiredDomAttribute(dom, "data-object-type");
-            const objectId = requiredDomAttribute(dom, "data-object-id");
-            if (!objectType || !objectId) return false;
-            return {
-              objectType,
-              objectId,
-              label: dom.textContent ?? "",
-            };
-          },
-        },
-      ],
-      toDOM: (node) => [
-        "span",
-        {
-          "data-object-type": node.attrs.objectType,
-          "data-object-id": node.attrs.objectId,
-          contenteditable: "false",
-          class: "note-object-ref",
-          role: "link",
-          tabindex: "0",
-          "aria-label": `Open ${
-            node.attrs.label || `${node.attrs.objectType}:${node.attrs.objectId}`
-          }`,
-        },
-        node.attrs.label || `${node.attrs.objectType}:${node.attrs.objectId}`,
-      ],
-    },
-    object_embed: {
-      group: "block_body block",
-      atom: true,
-      selectable: true,
-      attrs: {
-        objectType: {},
-        objectId: {},
-        label: { default: "" },
-        relationType: { default: "embeds" },
-        displayMode: { default: "compact" },
-      },
-      parseDOM: [
-        {
-          tag: "div[data-object-embed-type][data-object-embed-id]",
-          getAttrs: (dom) => {
-            if (!(dom instanceof HTMLElement)) return false;
-            const objectType = requiredDomAttribute(dom, "data-object-embed-type");
-            const objectId = requiredDomAttribute(dom, "data-object-embed-id");
-            if (!objectType || !objectId) return false;
-            return {
-              objectType,
-              objectId,
-              label: dom.textContent ?? "",
-              relationType: dom.getAttribute("data-relation-type") ?? "embeds",
-              displayMode: dom.getAttribute("data-display-mode") ?? "compact",
-            };
-          },
-        },
-      ],
-      toDOM: (node) => [
-        "div",
-        {
-          "data-object-type": node.attrs.objectType,
-          "data-object-id": node.attrs.objectId,
-          "data-object-embed-type": node.attrs.objectType,
-          "data-object-embed-id": node.attrs.objectId,
-          "data-relation-type": node.attrs.relationType,
-          "data-display-mode": node.attrs.displayMode,
-          contenteditable: "false",
-          class: "note-object-embed",
-          role: "link",
-          tabindex: "0",
-          "aria-label": `Open ${
-            node.attrs.label || `${node.attrs.objectType}:${node.attrs.objectId}`
-          }`,
-        },
-        node.attrs.label || `${node.attrs.objectType}:${node.attrs.objectId}`,
-      ],
-    },
-    code_block: {
-      content: "text*",
-      marks: "",
-      group: "block_body block",
-      code: true,
-      defining: true,
-      parseDOM: [{ tag: "pre", preserveWhitespace: "full" }],
-      toDOM: () => ["pre", ["code", 0]],
-    },
-    image: {
-      inline: true,
-      group: "inline",
-      draggable: true,
-      attrs: {
-        src: {},
-        alt: { default: null },
-        title: { default: null },
-      },
-      parseDOM: [
-        {
-          tag: "img[src]",
-          getAttrs: (dom) => {
-            if (!(dom instanceof HTMLImageElement)) return false;
-            return {
-              src: dom.getAttribute("src"),
-              alt: dom.getAttribute("alt"),
-              title: dom.getAttribute("title"),
-            };
-          },
-        },
-      ],
-      toDOM: (node) => ["img", node.attrs],
-    },
+export const noteBodyMarkSpecs = {
+  strong: {
+    parseDOM: [{ tag: "strong" }, { tag: "b" }],
+    toDOM: () => ["strong", 0],
   },
-  marks: {
-    strong: {
-      parseDOM: [{ tag: "strong" }, { tag: "b" }],
-      toDOM: () => ["strong", 0],
-    },
-    em: {
-      parseDOM: [{ tag: "em" }, { tag: "i" }],
-      toDOM: () => ["em", 0],
-    },
-    code: {
-      parseDOM: [{ tag: "code" }],
-      toDOM: () => ["code", 0],
-    },
-    link: {
-      attrs: {
-        href: {},
-        title: { default: null },
-      },
-      inclusive: false,
-      parseDOM: [
-        {
-          tag: "a[href]",
-          getAttrs: (dom) => {
-            if (!(dom instanceof HTMLAnchorElement)) return false;
-            return {
-              href: dom.getAttribute("href"),
-              title: dom.getAttribute("title"),
-            };
-          },
-        },
-      ],
-      toDOM: (mark) => ["a", mark.attrs, 0],
-    },
-    strikethrough: {
-      parseDOM: [{ tag: "s" }, { tag: "del" }],
-      toDOM: () => ["s", 0],
-    },
+  em: {
+    parseDOM: [{ tag: "em" }, { tag: "i" }],
+    toDOM: () => ["em", 0],
   },
+  code: {
+    parseDOM: [{ tag: "code" }],
+    toDOM: () => ["code", 0],
+  },
+  link: {
+    attrs: {
+      href: {},
+      title: { default: null },
+    },
+    inclusive: false,
+    parseDOM: [
+      {
+        tag: "a[href]",
+        getAttrs: (dom) => {
+          if (!(dom instanceof HTMLAnchorElement)) return false;
+          return {
+            href: dom.getAttribute("href"),
+            title: dom.getAttribute("title"),
+          };
+        },
+      },
+    ],
+    toDOM: (mark) => ["a", mark.attrs, 0],
+  },
+  strikethrough: {
+    parseDOM: [{ tag: "s" }, { tag: "del" }],
+    toDOM: () => ["s", 0],
+  },
+} satisfies Record<string, MarkSpec>;
+
+export const noteBodySchema = new Schema({
+  topNode: "note_body_doc",
+  nodes: noteBodyNodeSpecs,
+  marks: noteBodyMarkSpecs,
 });
 
-export function paragraphFromText(text: string): ProseMirrorNode {
-  const paragraph = outlineSchema.nodes.paragraph;
-  if (!paragraph) {
-    throw new Error("Missing paragraph node in notes schema");
-  }
-  return paragraph.create(null, text ? outlineSchema.text(text) : null);
+export interface NoteBodyValue {
+  bodyPmJson: Record<string, unknown>;
+  bodyText: string;
 }
 
-function blockToNode(block: NoteBlock): ProseMirrorNode {
-  const outlineBlock = outlineSchema.nodes.outline_block;
-  if (!outlineBlock) {
-    throw new Error("Missing outline_block node in notes schema");
-  }
-
-  let paragraph = paragraphFromText(block.bodyText);
-  try {
-    const parsed = outlineSchema.nodeFromJSON(block.bodyPmJson);
-    if (
-      parsed.type === outlineSchema.nodes.paragraph ||
-      parsed.type === outlineSchema.nodes.code_block ||
-      parsed.type === outlineSchema.nodes.object_embed
-    ) {
-      paragraph = parsed;
-    }
-  } catch {
-    paragraph = paragraphFromText(block.bodyText);
-  }
-
-	  return outlineBlock.create(
-	    {
-	      id: block.id,
-	      collapsed: block.collapsed,
-	    },
-    [paragraph, ...block.children.map(blockToNode)]
+export function paragraphFromText(text: string): ProseMirrorNode {
+  return noteBodySchema.nodes.paragraph!.create(
+    null,
+    text ? noteBodySchema.text(text) : null,
   );
 }
 
-export function createEmptyOutlineDoc(blockId = "new-block"): ProseMirrorNode {
-  const doc = outlineSchema.nodes.outline_doc;
-  const block = outlineSchema.nodes.outline_block;
-  if (!doc || !block) {
-    throw new Error("Missing notes schema nodes");
-  }
-	  return doc.create(null, [
-	    block.create({ id: blockId, collapsed: false }, [paragraphFromText("")]),
-	  ]);
+export function emptyNoteBody(): NoteBodyValue {
+  return noteBodyValueFromNode(paragraphFromText(""));
 }
 
-export function createOutlineDocFromBlock(input: {
-	  id: string;
-	  bodyPmJson?: Record<string, unknown> | null;
-	  bodyText?: string | null;
-	  collapsed?: boolean | null;
-	}): ProseMirrorNode {
-  const doc = outlineSchema.nodes.outline_doc;
-  const block = outlineSchema.nodes.outline_block;
-  if (!doc || !block) {
-    throw new Error("Missing notes schema nodes");
-  }
+export function createNoteBodyDoc(input: {
+  bodyPmJson?: Record<string, unknown>;
+  fallbackBodyText?: string;
+}): ProseMirrorNode {
+  const body = noteBodyNodeFromJson(
+    input.bodyPmJson,
+    input.fallbackBodyText ?? "",
+  );
+  return noteBodySchema.nodes.note_body_doc!.create(null, body);
+}
 
-  let paragraph = paragraphFromText(input.bodyText ?? "");
-  if (input.bodyPmJson) {
+export function noteBodyValueFromDoc(doc: ProseMirrorNode): NoteBodyValue {
+  const body = doc.firstChild ?? paragraphFromText("");
+  return noteBodyValueFromNode(body);
+}
+
+export function noteBodyNodeFromJson(
+  bodyPmJson: Record<string, unknown> | undefined,
+  fallbackBodyText = "",
+): ProseMirrorNode {
+  if (bodyPmJson) {
     try {
-      const parsed = outlineSchema.nodeFromJSON(input.bodyPmJson);
-      if (
-        parsed.type === outlineSchema.nodes.paragraph ||
-        parsed.type === outlineSchema.nodes.code_block ||
-        parsed.type === outlineSchema.nodes.object_embed
-      ) {
-        paragraph = parsed;
+      const parsed = noteBodySchema.nodeFromJSON(bodyPmJson);
+      if (parsed.type.isInGroup("block_body")) {
+        return parsed;
       }
     } catch {
-      paragraph = paragraphFromText(input.bodyText ?? "");
+      // Same-system body JSON should already be valid. The text projection is
+      // retained only as the explicit render-boundary recovery value.
     }
   }
-
-  return doc.create(null, [
-    block.create(
-	      {
-	        id: input.id,
-	        collapsed: Boolean(input.collapsed),
-	      },
-      [paragraph]
-    ),
-  ]);
+  return paragraphFromText(fallbackBodyText);
 }
 
-export function noteBlocksToOutlineDoc(blocks: NoteBlock[]): ProseMirrorNode {
-  const doc = outlineSchema.nodes.outline_doc;
-  if (!doc) {
-    throw new Error("Missing outline_doc node in notes schema");
+function noteBodyValueFromNode(body: ProseMirrorNode): NoteBodyValue {
+  const bodyPmJson = body.toJSON();
+  if (!isRecord(bodyPmJson)) {
+    throw new Error("ProseMirror note body JSON must be an object");
   }
-  if (blocks.length === 0) {
-    return createEmptyOutlineDoc();
-  }
-  return doc.create(null, blocks.map(blockToNode));
-}
-
-export function firstOutlineBlockFromDoc(doc: ProseMirrorNode): {
-  id: string;
-  bodyPmJson: Record<string, unknown>;
-  bodyText: string;
-} | null {
-  let result: { id: string; bodyPmJson: Record<string, unknown>; bodyText: string } | null = null;
-  doc.descendants((node) => {
-    if (result || node.type !== outlineSchema.nodes.outline_block) {
-      return true;
-    }
-    const paragraph = node.childCount > 0 ? node.child(0) : paragraphFromText("");
-    result = {
-      id: String(node.attrs.id),
-      bodyPmJson: prosemirrorNodeJson(paragraph),
-      bodyText: paragraph.textContent.trim(),
-    };
-    return false;
-  });
-  return result;
+  return {
+    bodyPmJson,
+    bodyText: body.textContent.trim(),
+  };
 }

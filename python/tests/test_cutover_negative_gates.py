@@ -1808,6 +1808,40 @@ def test_notes_pages_object_graph_old_note_structure_absent_in_production():
     )
 
 
+def test_notes_pages_surface_editor_legacy_symbols_absent_in_production():
+    hits = _filtered(
+        r"\b(?:"
+        r"ProseMirrorOutlineEditor|outlineSchema|outline_doc|outline_block|"
+        r"resourceSurfacePersistence|SaveResourceSurfaceInput|saveResourceSurface|"
+        r"ResourceSurfaceMutationRequest|replace_surface|apply_note_surface|"
+        r"find_surface_note|delete_block_subtree"
+        r")\b",
+        _PY_ROOT,
+        _WEB_ROOT,
+        exclude=_FRONTEND_TEST,
+    )
+    assert not hits, f"legacy recursive/replacement surface API referenced:\n{_fmt(hits)}"
+    notes_service = (_PY_ROOT / "services/notes.py").read_text()
+    assert "insert_ordered_target(" not in notes_service, (
+        "Quick Capture and Amanuensis must compose the shared surface insert-note capability"
+    )
+
+
+def test_notes_pages_surface_editor_legacy_modules_and_routes_absent():
+    retired_paths = (
+        "apps/web/src/components/notes/ProseMirrorOutlineEditor.tsx",
+        "apps/web/src/components/notes/ProseMirrorOutlineEditor.module.css",
+        "apps/web/src/components/notes/ProseMirrorOutlineEditor.test.tsx",
+        "apps/web/src/lib/notes/resourceSurfacePersistence.ts",
+        "apps/web/src/lib/notes/resourceSurfacePersistence.test.ts",
+        "apps/web/src/app/api/resource-items/[resourceRef]/adjacency/route.ts",
+    )
+    present = [path for path in retired_paths if (_REPO_ROOT / path).exists()]
+    assert not present, "legacy note/page surface files still present:\n" + "\n".join(
+        f"  - {path}" for path in present
+    )
+
+
 # =============================================================================
 # Incoming reader connections cutover — one graph read model + one sidecar layout
 # =============================================================================

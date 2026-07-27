@@ -42,7 +42,7 @@ model. On top of that model it layers:
 
 - a **reader** that renders every format with stable text addressing, so
   highlights, quotes, and AI citations all anchor to exact text;
-- a block-based **notes** outliner that links to anything;
+- flat, graph-native **notes and pages** that link to anything;
 - an **AI chat** that streams answers grounded in retrieval over your library,
   with branching conversations and clickable citations that jump into the
   reader;
@@ -1156,21 +1156,40 @@ directory or root Authors pane; author search lives in the universal Launcher
 at `/search?kinds=people`, and author chips link to the `/authors/{handle}`
 detail-only pane (works list, curator-gated rename).
 
-### 8.7 Notes
+### 8.7 Notes and pages
 
-A resource-native outliner (`services/notes.py`). `pages` (ordinary + daily)
-own only titles; `note_blocks` own only body content. Ordered page/note
-adjacency lives in `resource_edges` with `origin='user'`; `source_order_key` is
-the occurrence rank per source resource. Collapsed state lives in
-`resource_view_states`. Page-surface saves are UI conveniences over resource
-item body/title/version/mutation and ordered-adjacency services. Inline
-`object_ref`/`object_embed` nodes sync into `resource_edges` with
-`origin='note_body'` (`replace_edges_for_origin` keeps the block's edge set in
-step with its body); a note attached to a highlight is itself a `note_block`
-linked by an `origin='highlight_note'` edge. Note bodies are indexed directly as
-`note_block` content owners via `note_indexing.enqueue_note_reindex`.
-Frontend: `components/notes/ProseMirrorOutlineEditor.tsx` +
-`lib/notes/prosemirror/*`.
+Pages and notes are resource surfaces, not documents or trees. A `page` owns
+only its title; a `note_block` owns only its ProseMirror body. Their pane bodies
+are the same flat, one-hop projection of explicit outgoing `resource_edges`
+where `kind='context'`, `origin='user'`, `source_order_key IS NOT NULL`,
+`ordinal IS NULL`, and `snapshot IS NULL`. The edge id is the stable occurrence
+id and the dense order key is its rank. A move changes rank without replacing
+the edge; unlink removes only the edge, never its target.
+
+`services/resource_items/surfaces.py` owns the batched read projection and the
+atomic `insert_note`, `split_note`, `insert_resource`, `move`, and `remove`
+commands. Commands use resource versions, durable mutation replay, and one
+SERIALIZABLE transaction. Surface activation uses the bounded batch router, so
+heterogeneous rows add no per-occurrence query loop. Intrinsic page-title and
+note-body edits use the resource-item mutation owner. `services/notes.py`
+remains the notes collection, daily-page, quick-capture, and Dawn Write facade;
+Quick Capture and Amanuensis compose the surface owner's insert-note capability
+and do not own a second surface-write protocol.
+
+Inline `object_ref`/`object_embed` nodes remain part of note prose and sync
+`origin='note_body'` edges. Highlight notes remain ordinary notes linked by an
+`origin='highlight_note'` edge. Note bodies retain direct indexing through
+`note_indexing.enqueue_note_reindex`. Backlinks, citations, and inferred
+relations remain Companion concerns rather than editor rows.
+
+Frontend composition is one `ResourceSurfaceEditor` and one
+`useResourceSurfaceSession` for both panes, with `NoteBodyEditor` as the sole
+prose primitive. `ResourceSurfaceBodyEditor` is a React-owned flat occurrence
+list, not a second serialized ProseMirror document; each inline note owns one
+independent editor keyed by stable resource identity. Enter in a surface note
+splits to a new note; Shift+Enter adds a line break. Page-title Enter focuses or
+inserts the first note. The editor does not expose hierarchy, collapse,
+cross-note merge, or full-list replacement semantics.
 
 ### 8.8 Lectern & podcast playback
 

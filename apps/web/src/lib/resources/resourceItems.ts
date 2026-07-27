@@ -57,17 +57,33 @@ export interface ResourceItem {
   versionByLane: Record<string, number>;
 }
 
-export interface ResourceSurfaceItem {
-  edgeId: string;
-  target: ResourceItem;
-  sourceOrderKey: string;
-  viewState: Record<string, unknown> | null;
+export type ResourceSurfaceContent =
+  | { kind: "page_title"; title: string }
+  | {
+      kind: "note_body";
+      bodyPmJson: Record<string, unknown>;
+      bodyText: string;
+    }
+  | { kind: "resource_summary" };
+
+export interface ResourceSurfaceNode {
+  item: ResourceItem;
+  content: ResourceSurfaceContent;
+}
+
+export interface ResourceSurfaceOccurrence {
+  occurrenceId: string;
+  target: ResourceSurfaceNode;
 }
 
 export interface ResourceSurface {
-  source: ResourceItem;
-  orderedItems: ResourceSurfaceItem[];
+  source: ResourceSurfaceNode;
+  orderedItems: ResourceSurfaceOccurrence[];
 }
+
+export type SurfacePosition =
+  | { kind: "start" }
+  | { kind: "after"; occurrenceId: string };
 
 function normalizeUserRelation(raw: unknown): ResourceUserRelation {
   const record = requiredRecord(raw, "resource user relation");
@@ -96,7 +112,9 @@ export function normalizeResourceItem(
   if (!isShareMode(capabilities.sharing)) {
     throw new Error("Invalid resource sharing capability");
   }
-  if (!isLibraryPlacementMode(capabilities.libraryPlacement)) {
+  const libraryPlacement =
+    capabilities.libraryPlacement ?? capabilities.library_placement;
+  if (!isLibraryPlacementMode(libraryPlacement)) {
     throw new Error("Invalid resource library placement capability");
   }
   const versionByLane = isRecord(raw.versionByLane)
@@ -118,7 +136,7 @@ export function normalizeResourceItem(
         capabilities.userRelation ?? capabilities.user_relation,
       ),
       sharing: capabilities.sharing,
-      libraryPlacement: capabilities.libraryPlacement,
+      libraryPlacement,
       attachable: Boolean(capabilities.attachable),
       chatSubject: String(
         capabilities.chatSubject ?? capabilities.chat_subject ?? "none",
@@ -164,5 +182,52 @@ export function normalizeResourceItem(
         Number(version),
       ]),
     ),
+  };
+}
+
+function normalizeResourceSurfaceContent(raw: unknown): ResourceSurfaceContent {
+  const content = requiredRecord(raw, "surface content");
+  switch (requiredString(content.kind, "surface content kind")) {
+    case "page_title":
+      return { kind: "page_title", title: String(content.title ?? "") };
+    case "note_body":
+      return {
+        kind: "note_body",
+        bodyPmJson: requiredRecord(content.body_pm_json, "note body JSON"),
+        bodyText: String(content.body_text ?? ""),
+      };
+    case "resource_summary":
+      return { kind: "resource_summary" };
+    default:
+      throw new Error("Invalid surface content kind");
+  }
+}
+
+function normalizeResourceSurfaceNode(raw: unknown): ResourceSurfaceNode {
+  const node = requiredRecord(raw, "surface node");
+  return {
+    item: normalizeResourceItem(requiredRecord(node.item, "surface item")),
+    content: normalizeResourceSurfaceContent(node.content),
+  };
+}
+
+/** Decodes only the canonical snake_case resource-surface wire contract. */
+export function normalizeResourceSurface(raw: unknown): ResourceSurface {
+  const surface = requiredRecord(raw, "resource surface");
+  if (!Array.isArray(surface.ordered_items)) {
+    throw new Error("Resource surface is missing ordered_items");
+  }
+  return {
+    source: normalizeResourceSurfaceNode(surface.source),
+    orderedItems: surface.ordered_items.map((rawOccurrence) => {
+      const occurrence = requiredRecord(rawOccurrence, "surface occurrence");
+      return {
+        occurrenceId: requiredString(
+          occurrence.occurrence_id,
+          "surface occurrence id",
+        ),
+        target: normalizeResourceSurfaceNode(occurrence.target),
+      };
+    }),
   };
 }

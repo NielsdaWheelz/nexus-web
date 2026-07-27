@@ -9,17 +9,12 @@ import { isRecord } from "@/lib/validation";
 // (which imports apiFetch at module scope) so the isomorphic pane resource loaders
 // can normalize note payloads without pulling client transport.
 
-export interface NoteBlock {
+/** The intrinsic, reusable note resource. Placement belongs to resource_edges. */
+export interface NoteContent {
   id: string;
-  parentBlockId: string | null;
-  orderKey: string | null;
   bodyPmJson: Record<string, unknown>;
   bodyText: string;
-  collapsed: boolean;
-  children: NoteBlock[];
-  createdAt?: string;
-  updatedAt?: string;
-  versionByLane?: Record<string, number>;
+  versionByLane: Record<string, number>;
 }
 
 export interface NotePageSummary {
@@ -46,9 +41,8 @@ export function requiredString(value: unknown, label: string): string {
   return value;
 }
 
-export function normalizeBlock(raw: Record<string, unknown>): NoteBlock {
+export function normalizeNoteContent(raw: Record<string, unknown>): NoteContent {
   assertNoTopLevelLegacyArtifactIdentityKey(raw, "note block");
-  const children = Array.isArray(raw.children) ? raw.children : [];
   const versionByLane = isRecord(raw.versionByLane)
     ? raw.versionByLane
     : isRecord(raw.version_by_lane)
@@ -56,40 +50,12 @@ export function normalizeBlock(raw: Record<string, unknown>): NoteBlock {
       : {};
   return {
     id: requiredString(raw.id, "note block id"),
-    parentBlockId:
-      typeof raw.parentBlockId === "string"
-        ? raw.parentBlockId
-        : typeof raw.parent_block_id === "string"
-          ? raw.parent_block_id
-          : null,
-    orderKey:
-      typeof raw.orderKey === "string"
-        ? raw.orderKey
-        : typeof raw.order_key === "string"
-          ? raw.order_key
-          : null,
     bodyPmJson: isRecord(raw.bodyPmJson)
       ? raw.bodyPmJson
       : isRecord(raw.body_pm_json)
         ? raw.body_pm_json
         : { type: "paragraph" },
     bodyText: String(raw.bodyText ?? raw.body_text ?? ""),
-    collapsed: Boolean(raw.collapsed),
-    children: children.map((child) =>
-      normalizeBlock(requiredRecord(child, "note block child")),
-    ),
-    createdAt:
-      typeof raw.createdAt === "string"
-        ? raw.createdAt
-        : typeof raw.created_at === "string"
-          ? raw.created_at
-          : undefined,
-    updatedAt:
-      typeof raw.updatedAt === "string"
-        ? raw.updatedAt
-        : typeof raw.updated_at === "string"
-          ? raw.updated_at
-          : undefined,
     versionByLane: Object.fromEntries(
       Object.entries(versionByLane).map(([lane, version]) => [
         lane,

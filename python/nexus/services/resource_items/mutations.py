@@ -150,9 +150,9 @@ def _require_base_version(
     request: ResourceTitleMutationRequest | ResourceBodyMutationRequest,
 ) -> None:
     matches = [base for base in request.base_versions if base.ref == ref.uri and base.lane == lane]
-    if len(matches) != 1:
+    if len(request.base_versions) != 1 or len(matches) != 1:
         raise ConflictError(
-            ApiErrorCode.E_NOTE_CONFLICT,
+            ApiErrorCode.E_RESOURCE_CONFLICT,
             "Resource version base is required",
             details={
                 "current": surfaces.resource_item_out(db, viewer_id=viewer_id, ref=ref).model_dump(
@@ -163,7 +163,7 @@ def _require_base_version(
     current = versions.ensure_version(db, viewer_id=viewer_id, ref=ref, lane=lane)
     if current.version != matches[0].version:
         raise ConflictError(
-            ApiErrorCode.E_NOTE_CONFLICT,
+            ApiErrorCode.E_RESOURCE_CONFLICT,
             "Resource version is stale",
             details={
                 "current": surfaces.resource_item_out(db, viewer_id=viewer_id, ref=ref).model_dump(

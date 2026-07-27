@@ -13,7 +13,7 @@ from nexus.schemas.resource_items import (
     ResourceBodyMutationRequest,
     ResourceLocatorResolveRequest,
     ResourceLocatorResolveResponse,
-    ResourceSurfaceMutationRequest,
+    ResourceSurfaceCommandRequest,
     ResourceTitleMutationRequest,
 )
 from nexus.schemas.resource_targets import ResourceTargetSearchRequest
@@ -101,15 +101,15 @@ def get_resource_surface(
     return ok(surfaces.get_surface(db, viewer_id=viewer.user_id, source=_parse_ref(resource_ref)))
 
 
-@router.put("/{resource_ref}/adjacency")
-def replace_resource_surface(
+@router.post("/{resource_ref}/surface/commands")
+def execute_resource_surface_command(
     resource_ref: str,
-    request: ResourceSurfaceMutationRequest,
+    request: ResourceSurfaceCommandRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     return ok(
-        surfaces.replace_surface(
+        surfaces.execute_surface_command(
             db,
             viewer_id=viewer.user_id,
             source=_parse_ref(resource_ref),

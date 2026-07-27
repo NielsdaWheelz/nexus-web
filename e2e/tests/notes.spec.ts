@@ -56,14 +56,42 @@ interface HighlightsPayload {
 interface NotePagePayload {
   data: {
     id: string;
-    blocks: NoteBlockPayload[];
   };
 }
 
-interface NoteBlockPayload {
-  id: string;
-  bodyText: string;
-  children: NoteBlockPayload[];
+interface ResourceSurfacePayload {
+  data: {
+    source: {
+      item: {
+        ref: string;
+        version_by_lane: Record<string, number>;
+      };
+      content:
+        | { kind: "page_title"; title: string }
+        | {
+            kind: "note_body";
+            body_pm_json: Record<string, unknown>;
+            body_text: string;
+          };
+    };
+    ordered_items: Array<{
+      occurrence_id: string;
+      target: {
+        item: {
+          ref: string;
+          id: string;
+          version_by_lane: Record<string, number>;
+        };
+        content:
+          | {
+              kind: "note_body";
+              body_pm_json: Record<string, unknown>;
+              body_text: string;
+            }
+          | { kind: "resource_summary" };
+      };
+    }>;
+  };
 }
 
 interface ResourceGraphConnectionsPayload {
@@ -178,10 +206,12 @@ async function blockedExactsForFragment(
   return payload.data.highlights.map((highlight) => highlight.exact);
 }
 
-async function readNotePage(page: Page, pageId: string) {
-  const response = await page.request.get(`/api/notes/pages/${pageId}`);
-  await expectOk(response, "Fetch note page");
-  return ((await response.json()) as NotePagePayload).data;
+async function readResourceSurface(page: Page, ref: string) {
+  const response = await page.request.get(
+    `/api/resource-items/${encodeURIComponent(ref)}/surface`
+  );
+  await expectOk(response, `Fetch resource surface ${ref}`);
+  return ((await response.json()) as ResourceSurfacePayload).data;
 }
 
 async function readResourceGraphEdges(page: Page, ref: string, origin = "user") {
@@ -234,14 +264,15 @@ async function scrollHighlightIntoView(contentPane: Locator, highlightId: string
 }
 
 test.describe("notes cutover", () => {
-  test("persists page outline edits through the resource surface command", async ({
+  test("edits a flat page resource surface with atomic note commands", async ({
     page,
   }, testInfo) => {
     test.slow();
     const deviceId = workspaceE2eDeviceId(testInfo, "e2e-page-surface");
     const title = `E2E graph page ${Date.now()}`;
-    const rootText = `E2E graph root ${Date.now()}`;
-    const childText = `E2E graph child ${Date.now()}`;
+    const firstText = `E2E graph first ${Date.now()}`;
+    const secondFirstLine = `E2E graph second ${Date.now()}`;
+    const secondSecondLine = "Shift Enter stays inside this note";
     let pageId: string | null = null;
     let productError: unknown = null;
 
@@ -256,34 +287,52 @@ test.describe("notes cutover", () => {
 
       await gotoSinglePaneWorkspace(page, deviceId, `/pages/${pageId}`);
       const activePane = activeWorkspacePane(page);
-      const outline = activePane.getByRole("textbox", { name: "Notes outline" });
-      await expect(outline).toBeVisible({ timeout: 15_000 });
-      await outline.click();
-      await page.keyboard.insertText(rootText);
-      await page.keyboard.press("Enter");
-      await page.keyboard.insertText(childText);
-      await page.keyboard.press("Tab");
+      const pageTitle = activePane.getByRole("textbox", { name: "Page title" });
+      await expect(pageTitle).toBeVisible({ timeout: 15_000 });
+      await pageTitle.press("Enter");
 
-      await activePane.getByRole("textbox", { name: "Page title" }).click();
+      const firstNote = activePane.getByRole("textbox", { name: "Edit note 1" });
+      await expect(firstNote).toBeFocused({ timeout: 10_000 });
+      await page.keyboard.insertText(firstText);
+      await page.keyboard.press("Enter");
+      const secondNote = activePane.getByRole("textbox", { name: "Edit note 2" });
+      await expect(secondNote).toBeFocused({ timeout: 10_000 });
+      await page.keyboard.insertText(secondFirstLine);
+      await page.keyboard.press("Shift+Enter");
+      await page.keyboard.insertText(secondSecondLine);
+      await pageTitle.click();
 
       await expect
         .poll(
           async () => {
             if (!pageId) return false;
-            const notePage = await readNotePage(page, pageId);
-            const root = notePage.blocks.find((block) => block.bodyText === rootText);
-            return root?.children.some((child) => child.bodyText === childText) === true;
+            const surface = await readResourceSurface(page, `page:${pageId}`);
+            return (
+              surface.ordered_items.length === 2 &&
+              surface.ordered_items[0]?.target.content.kind === "note_body" &&
+              surface.ordered_items[0].target.content.body_text === firstText &&
+              surface.ordered_items[1]?.target.content.kind === "note_body" &&
+              surface.ordered_items[1].target.content.body_text ===
+                `${secondFirstLine}\n${secondSecondLine}`
+            );
           },
           { timeout: 20_000 }
         )
         .toBe(true);
 
-      const notePage = await readNotePage(page, pageId);
-      const rootBlock = notePage.blocks.find((block) => block.bodyText === rootText);
-      expect(rootBlock, "Expected persisted root block").toBeTruthy();
-      const childBlock = rootBlock?.children.find((block) => block.bodyText === childText);
-      expect(childBlock, "Expected persisted nested child block").toBeTruthy();
-      if (!rootBlock || !childBlock) throw new Error("Missing persisted outline blocks");
+      const beforeMove = await readResourceSurface(page, `page:${pageId}`);
+      const occurrenceIds = beforeMove.ordered_items.map((item) => item.occurrence_id);
+      expect(occurrenceIds).toHaveLength(2);
+
+      await secondNote.click();
+      await page.keyboard.press("Alt+ArrowUp");
+      await expect
+        .poll(async () => {
+          if (!pageId) return [];
+          const surface = await readResourceSurface(page, `page:${pageId}`);
+          return surface.ordered_items.map((item) => item.occurrence_id);
+        })
+        .toEqual([occurrenceIds[1], occurrenceIds[0]]);
 
       const pageEdges = await readResourceGraphEdges(page, `page:${pageId}`);
       expect(pageEdges).toEqual(
@@ -291,30 +340,29 @@ test.describe("notes cutover", () => {
           expect.objectContaining({
             origin: "user",
             source_ref: `page:${pageId}`,
-            target_ref: `note_block:${rootBlock.id}`,
+            target_ref: beforeMove.ordered_items[1]?.target.item.ref,
             source_order_key: "0000000001",
           }),
-        ])
-      );
-
-      const rootEdges = await readResourceGraphEdges(page, `note_block:${rootBlock.id}`);
-      expect(rootEdges).toEqual(
-        expect.arrayContaining([
           expect.objectContaining({
             origin: "user",
-            source_ref: `note_block:${rootBlock.id}`,
-            target_ref: `note_block:${childBlock.id}`,
-            source_order_key: "0000000001",
+            source_ref: `page:${pageId}`,
+            target_ref: beforeMove.ordered_items[0]?.target.item.ref,
+            source_order_key: "0000000002",
           }),
         ])
       );
 
       await page.reload({ waitUntil: "domcontentloaded" });
-      const reloadedOutline = activeWorkspacePane(page).getByRole("textbox", {
-        name: "Notes outline",
+      const reloadedSurface = activeWorkspacePane(page).getByRole("region", {
+        name: "Ordered resources",
       });
-      await expect(reloadedOutline).toContainText(rootText, { timeout: 15_000 });
-      await expect(reloadedOutline).toContainText(childText, { timeout: 15_000 });
+      await expect(reloadedSurface).toContainText(firstText, { timeout: 15_000 });
+      await expect(reloadedSurface).toContainText(secondFirstLine, {
+        timeout: 15_000,
+      });
+      await expect(
+        reloadedSurface.getByRole("textbox", { name: "Edit note 1" })
+      ).toContainText(secondFirstLine);
     } catch (error) {
       productError = error;
       throw error;
@@ -331,7 +379,7 @@ test.describe("notes cutover", () => {
           cleanupErrors.push(error);
         }
       }
-      throwE2eCleanupFailures("Page resource surface command", productError, cleanupErrors);
+      throwE2eCleanupFailures("Flat page resource surface", productError, cleanupErrors);
     }
   });
 
@@ -401,7 +449,7 @@ test.describe("notes cutover", () => {
       await gotoSinglePaneWorkspace(page, deviceId, `/notes/${noteBlockId}`);
       await expect(page).toHaveURL(new RegExp(`/notes/${noteBlockId}`));
       const notePane = activeWorkspacePane(page);
-      const noteBody = notePane.getByRole("textbox", { name: "Note body" });
+      const noteBody = notePane.getByRole("textbox", { name: "Note content" });
       await expect(noteBody).toContainText(noteText, { timeout: 10_000 });
       await expect(noteBody.locator(`[data-object-id="${seeded.media_id}"]`)).toHaveText(
         "Source media"
@@ -423,10 +471,16 @@ test.describe("notes cutover", () => {
           { timeout: 10_000 }
         )
         .toBe(true);
-      // The connections apparatus renders inline in the note-pane footer (no
-      // secondary drawer): machine-output-in-place hard cutover.
-      const connectionsPane = notePane.getByRole("region", { name: "Connections" });
+      await notePane
+        .getByTestId("pane-shell-chrome")
+        .getByRole("button", { name: "Companion" })
+        .filter({ visible: true })
+        .click();
+      const connectionsPane = notePane
+        .getByTestId("workspace-secondary-pane")
+        .filter({ visible: true });
       await expect(connectionsPane).toBeVisible({ timeout: 10_000 });
+      await connectionsPane.getByRole("tab", { name: "Connections" }).click();
       await expect(connectionsPane).toContainText("E2E linked-items web article seed", {
         timeout: 10_000,
       });
@@ -606,7 +660,7 @@ test.describe("notes cutover", () => {
       await gotoSinglePaneWorkspace(page, deviceId, `/notes/${noteBlockId}`);
       await expect(page).toHaveURL(new RegExp(`/notes/${noteBlockId}`));
       const noteBody = activeWorkspacePane(page).getByRole("textbox", {
-        name: "Note body",
+        name: "Note content",
       });
       await expect(noteBody).toContainText(noteText, { timeout: 10_000 });
     } catch (error) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeResourceItem } from "./resourceItems";
+import { normalizeResourceItem, normalizeResourceSurface } from "./resourceItems";
 
 function rawResourceItem(
   overrides: Partial<Record<string, unknown>> = {},
@@ -25,7 +25,7 @@ function rawResourceItem(
         note_reference_target: true,
       },
       sharing: "ResourceGrants",
-      libraryPlacement: "ManageEntries",
+      library_placement: "ManageEntries",
       attachable: true,
       chat_subject: "label",
       readable: "body",
@@ -157,14 +157,48 @@ describe("normalizeResourceItem", () => {
     expect(() =>
       normalizeResourceItem({
         ...value,
-        capabilities: { ...capabilities, libraryPlacement: undefined },
+        capabilities: { ...capabilities, library_placement: undefined },
       }),
     ).toThrow("Invalid resource library placement capability");
     expect(() =>
       normalizeResourceItem({
         ...value,
-        capabilities: { ...capabilities, libraryPlacement: "Manage" },
+        capabilities: { ...capabilities, library_placement: "Manage" },
       }),
     ).toThrow("Invalid resource library placement capability");
+  });
+
+  it("accepts only canonical snake_case surface occurrences", () => {
+    const surface = normalizeResourceSurface({
+      source: {
+        item: rawResourceItem(),
+        content: { kind: "page_title", title: "Page" },
+      },
+      ordered_items: [
+        {
+          occurrence_id: "edge-1",
+          target: {
+            item: rawResourceItem(),
+            content: {
+              kind: "note_body",
+              body_pm_json: { type: "paragraph" },
+              body_text: "A note",
+            },
+          },
+        },
+      ],
+    });
+
+    expect(surface.orderedItems[0]?.occurrenceId).toBe("edge-1");
+    expect(surface.orderedItems[0]?.target.content).toMatchObject({
+      kind: "note_body",
+      bodyText: "A note",
+    });
+    expect(() =>
+      normalizeResourceSurface({
+        source: { item: rawResourceItem(), content: { kind: "page_title" } },
+        orderedItems: [],
+      }),
+    ).toThrow("ordered_items");
   });
 });

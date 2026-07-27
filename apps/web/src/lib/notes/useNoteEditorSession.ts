@@ -1,15 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Node as ProseMirrorNode } from "prosemirror-model";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
-import { outlineSchema } from "@/lib/notes/prosemirror/schema";
+import {
+  createNoteBodyDoc,
+  noteBodyValueFromDoc,
+  type NoteBodyValue,
+} from "@/lib/notes/prosemirror/schema";
 
 export const NOTE_AUTOSAVE_IDLE_DELAY_MS = 1500;
 export const NOTE_AUTOSAVE_MAX_WAIT_MS = 5000;
 export const NOTE_LAYOUT_MEASURE_DELAY_MS = 100;
-const NOTE_DRAFT_STORAGE_PREFIX = "nexus.noteDraft:";
+const NOTE_DRAFT_STORAGE_PREFIX = "nexus.noteBodyDraft:";
 
 export type NoteEditorSessionStatus =
   | "clean"
@@ -27,7 +30,7 @@ export interface NoteEditorSaveContext {
 
 interface UseNoteEditorSessionOptions {
   resourceKey: string;
-  save: (doc: ProseMirrorNode, context: NoteEditorSaveContext) => Promise<void>;
+  save: (body: NoteBodyValue, context: NoteEditorSaveContext) => Promise<void>;
   draftMetadata?: () => unknown;
   onError?: (error: unknown) => void;
 }
@@ -35,8 +38,8 @@ interface UseNoteEditorSessionOptions {
 export interface NoteEditorSession {
   status: NoteEditorSessionStatus;
   hasRecoveredDraft: boolean;
-  scheduleSave(doc: ProseMirrorNode): void;
-  flush(doc?: ProseMirrorNode): void;
+  scheduleSave(body: NoteBodyValue): void;
+  flush(body?: NoteBodyValue): void;
   recoverDraft(draft: StoredNoteEditorDraft): void;
   retry(): void;
   discardDraft(): void;
@@ -45,7 +48,7 @@ export interface NoteEditorSession {
 
 export interface StoredNoteEditorDraft {
   version: 1;
-  doc: ProseMirrorNode;
+  body: NoteBodyValue;
   metadata: unknown;
   sequence: number;
   clientMutationId: string;
@@ -67,21 +70,21 @@ export function useNoteEditorSession({
   const mountedRef = useRef(false);
   const generationRef = useRef(0);
   const localSequenceRef = useRef(0);
-  const pendingDocRef = useRef<ProseMirrorNode | null>(null);
+  const pendingDocRef = useRef<NoteBodyValue | null>(null);
   const pendingSequenceRef = useRef(0);
   const pendingClientMutationIdRef = useRef<string | null>(null);
-  const queuedDocRef = useRef<ProseMirrorNode | null>(null);
+  const queuedDocRef = useRef<NoteBodyValue | null>(null);
   const queuedSequenceRef = useRef(0);
   const queuedClientMutationIdRef = useRef<string | null>(null);
   const saveInFlightRef = useRef(false);
   const idleTimerRef = useRef<number | null>(null);
   const maxWaitTimerRef = useRef<number | null>(null);
   const startSaveRef = useRef<(
-    doc: ProseMirrorNode,
+    body: NoteBodyValue,
     sequence: number,
     clientMutationId: string
   ) => void>(() => undefined);
-  const flushRef = useRef<(doc?: ProseMirrorNode) => void>(() => undefined);
+  const flushRef = useRef<(body?: NoteBodyValue) => void>(() => undefined);
 
   useEffect(() => {
     resourceKeyRef.current = resourceKey;
@@ -118,7 +121,7 @@ export function useNoteEditorSession({
 
   const startSave = useCallback(
     (
-      doc: ProseMirrorNode,
+      doc: NoteBodyValue,
       sequence: number,
       clientMutationId: string
     ) => {
@@ -216,7 +219,7 @@ export function useNoteEditorSession({
   }, [startSave]);
 
   const flush = useCallback(
-    (doc?: ProseMirrorNode) => {
+    (doc?: NoteBodyValue) => {
       if (doc && pendingDocRef.current) {
         const clientMutationId =
           pendingClientMutationIdRef.current ??
@@ -251,7 +254,7 @@ export function useNoteEditorSession({
   }, [flush]);
 
   const scheduleSave = useCallback(
-    (doc: ProseMirrorNode) => {
+    (doc: NoteBodyValue) => {
       const nextSequence = localSequenceRef.current + 1;
       const clientMutationId = createClientMutationId(nextSequence);
       localSequenceRef.current = nextSequence;
@@ -289,7 +292,7 @@ export function useNoteEditorSession({
       generationRef.current += 1;
       clearTimers();
       localSequenceRef.current = Math.max(localSequenceRef.current, draft.sequence);
-      pendingDocRef.current = draft.doc;
+      pendingDocRef.current = draft.body;
       pendingSequenceRef.current = draft.sequence;
       pendingClientMutationIdRef.current = draft.clientMutationId;
       queuedDocRef.current = null;
@@ -399,7 +402,8 @@ export function readStoredNoteEditorDraft(resourceKey: string): StoredNoteEditor
   try {
     const draft = JSON.parse(raw) as {
       version?: unknown;
-      doc?: unknown;
+      bodyPmJson?: unknown;
+      bodyText?: unknown;
       metadata?: unknown;
       sequence?: unknown;
       clientMutationId?: unknown;
@@ -409,7 +413,9 @@ export function readStoredNoteEditorDraft(resourceKey: string): StoredNoteEditor
       typeof draft !== "object" ||
       draft === null ||
       draft.version !== 1 ||
-      draft.doc === undefined ||
+      typeof draft.bodyPmJson !== "object" ||
+      draft.bodyPmJson === null ||
+      typeof draft.bodyText !== "string" ||
       !isStoredDraftSequence(draft.sequence) ||
       typeof draft.clientMutationId !== "string" ||
       draft.clientMutationId.length === 0 ||
@@ -419,9 +425,15 @@ export function readStoredNoteEditorDraft(resourceKey: string): StoredNoteEditor
       window.localStorage.removeItem(`${NOTE_DRAFT_STORAGE_PREFIX}${resourceKey}`);
       return null;
     }
+    const body = noteBodyValueFromDoc(
+      createNoteBodyDoc({
+        bodyPmJson: draft.bodyPmJson as Record<string, unknown>,
+        fallbackBodyText: draft.bodyText,
+      }),
+    );
     return {
       version: 1,
-      doc: ProseMirrorNode.fromJSON(outlineSchema, draft.doc),
+      body,
       metadata: draft.metadata,
       sequence: draft.sequence,
       clientMutationId: draft.clientMutationId,
@@ -435,7 +447,7 @@ export function readStoredNoteEditorDraft(resourceKey: string): StoredNoteEditor
 
 function storeNoteEditorDraft(
   resourceKey: string,
-  doc: ProseMirrorNode,
+  body: NoteBodyValue,
   metadata: unknown,
   sequence: number,
   clientMutationId: string
@@ -448,7 +460,8 @@ function storeNoteEditorDraft(
       `${NOTE_DRAFT_STORAGE_PREFIX}${resourceKey}`,
       JSON.stringify({
         version: 1,
-        doc: doc.toJSON(),
+        bodyPmJson: body.bodyPmJson,
+        bodyText: body.bodyText,
         metadata,
         sequence,
         clientMutationId,

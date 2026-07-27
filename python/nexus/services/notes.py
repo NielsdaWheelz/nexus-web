@@ -17,7 +17,6 @@ from nexus.db.models import (
     DailyNotePage,
     NoteBlock,
     Page,
-    ResourceEdge,
 )
 from nexus.db.retries import retry_serializable
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
@@ -35,7 +34,6 @@ from nexus.services import note_bodies, passage_anchors
 from nexus.services.content_indexing import IndexOwner, delete_content_index
 from nexus.services.highlight_access import get_highlight_for_visible_read_or_404
 from nexus.services.note_indexing import enqueue_note_reindex
-from nexus.services.resource_graph import adjacency as graph_adjacency
 from nexus.services.resource_graph import highlight_notes as graph_highlight_notes
 from nexus.services.resource_graph.cleanup import (
     delete_edges_for_deleted_resource,
@@ -47,7 +45,8 @@ from nexus.services.resource_graph.refs import (
     ResourceScheme,
 )
 from nexus.services.resource_graph.schemas import EdgeCreate
-from nexus.services.resource_items import surfaces, versions
+from nexus.services.resource_items import surfaces as resource_surfaces
+from nexus.services.resource_items import versions
 from nexus.services.resource_mutation_replay import (
     canonical_json_bytes,
     lookup_replay,
@@ -309,38 +308,18 @@ def quick_capture(
         if replay is not None:
             return NoteBlockOut.model_validate(replay)
 
-        block = _upsert_note_body(db, viewer_id, request.id, request.body_pm_json)
         source = _page_ref(page.id)
-        target = _note_ref(block.id)
-        if _ordered_edge_to_target(db, viewer_id, source, target) is None:
-            surface = surfaces.get_surface(db, viewer_id=viewer_id, source=source)
-            graph_adjacency.replace_ordered_targets(
-                db,
-                user_id=viewer_id,
-                source=source,
-                targets=[
-                    graph_adjacency.OrderedTarget(
-                        target=ResourceRef(
-                            scheme=cast(ResourceScheme, item.target.scheme),
-                            id=item.target.id,
-                        ),
-                        source_order_key=item.source_order_key,
-                    )
-                    for item in surface.ordered_items
-                ]
-                + [
-                    graph_adjacency.OrderedTarget(
-                        target=target,
-                        source_order_key=_next_order_key(db, viewer_id, source),
-                    )
-                ],
-            )
-            _bump_version(db, viewer_id, source, "outgoing_edges")
-        enqueue_note_reindex(db, note_block_id=block.id, reason="quick_capture")
+        block = resource_surfaces.insert_note_occurrence_without_commit(
+            db,
+            viewer_id=viewer_id,
+            source=source,
+            note_id=request.id,
+            body_pm_json=request.body_pm_json,
+            position="end",
+            reindex_reason="quick_capture",
+        )
         response = NoteBlockOut(
             id=block.id,
-            parent_block_id=None,
-            order_key=None,
             body_pm_json=block.body_pm_json,
             body_text=block.body_text,
             created_at=block.created_at,
@@ -373,37 +352,18 @@ def append_note_block_to_page(
     not carry a client-mutation replay (the tool loop re-arms at the tool-call
     level). The page must belong to the viewer."""
     page = get_page_for_owner_or_404(db, viewer_id, page_id)
-    block = _upsert_note_body(db, viewer_id, uuid4(), body_pm_json)
     source = _page_ref(page.id)
-    target = _note_ref(block.id)
-    surface = surfaces.get_surface(db, viewer_id=viewer_id, source=source)
-    graph_adjacency.replace_ordered_targets(
+    block = resource_surfaces.insert_note_occurrence_without_commit(
         db,
-        user_id=viewer_id,
+        viewer_id=viewer_id,
         source=source,
-        targets=[
-            graph_adjacency.OrderedTarget(
-                target=ResourceRef(
-                    scheme=cast(ResourceScheme, item.target.scheme),
-                    id=item.target.id,
-                ),
-                source_order_key=item.source_order_key,
-            )
-            for item in surface.ordered_items
-        ]
-        + [
-            graph_adjacency.OrderedTarget(
-                target=target,
-                source_order_key=_next_order_key(db, viewer_id, source),
-            )
-        ],
+        note_id=uuid4(),
+        body_pm_json=body_pm_json,
+        position="end",
+        reindex_reason="assistant_jot_note",
     )
-    _bump_version(db, viewer_id, source, "outgoing_edges")
-    enqueue_note_reindex(db, note_block_id=block.id, reason="assistant_jot_note")
     response = NoteBlockOut(
         id=block.id,
-        parent_block_id=None,
-        order_key=None,
         body_pm_json=block.body_pm_json,
         body_text=block.body_text,
         created_at=block.created_at,
@@ -425,8 +385,6 @@ def get_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> NoteBlockOut
     block = get_note_block_for_owner_or_404(db, viewer_id, block_id)
     return NoteBlockOut(
         id=block.id,
-        parent_block_id=None,
-        order_key=None,
         body_pm_json=block.body_pm_json,
         body_text=block.body_text,
         created_at=block.created_at,
@@ -510,8 +468,6 @@ def set_highlight_note_body_pm_json(
             )
         response = NoteBlockOut(
             id=block.id,
-            parent_block_id=None,
-            order_key=None,
             body_pm_json=block.body_pm_json,
             body_text=block.body_text,
             created_at=block.created_at,
@@ -645,7 +601,6 @@ def _resolve_daily_page_once(
 
 
 def _page_out(db: Session, viewer_id: UUID, page: Page) -> NotePageOut:
-    surface = graph_adjacency.load_page_surface(db, user_id=viewer_id, page_id=page.id)
     daily_local_date = db.scalar(
         select(DailyNotePage.local_date).where(
             DailyNotePage.page_id == page.id,
@@ -656,29 +611,10 @@ def _page_out(db: Session, viewer_id: UUID, page: Page) -> NotePageOut:
         id=page.id,
         title=page.title,
         updated_at=page.updated_at,
-        surface=surfaces.get_surface(db, viewer_id=viewer_id, source=_page_ref(page.id)),
-        blocks=[_surface_note_out(db, node) for node in surface.roots],
         daily_note=(
             DailyNotePageSummaryOut(local_date=daily_local_date)
             if daily_local_date is not None
             else None
-        ),
-    )
-
-
-def _surface_note_out(db: Session, node: graph_adjacency.SurfaceNote) -> NoteBlockOut:
-    return NoteBlockOut(
-        id=node.block.id,
-        parent_block_id=node.parent.id if node.parent.scheme == "note_block" else None,
-        order_key=node.source_order_key,
-        body_pm_json=node.block.body_pm_json,
-        body_text=node.block.body_text,
-        collapsed=node.collapsed,
-        children=[_surface_note_out(db, child) for child in node.children],
-        created_at=node.block.created_at,
-        updated_at=node.block.updated_at,
-        version_by_lane=versions.versions_for_ref(
-            db, viewer_id=node.block.user_id, ref=_note_ref(node.block.id)
         ),
     )
 
@@ -712,37 +648,3 @@ def _note_ref(block_id: UUID) -> ResourceRef:
 
 def _bump_version(db: Session, viewer_id: UUID, ref: ResourceRef, lane: str) -> None:
     versions.bump_version(db, viewer_id=viewer_id, ref=ref, lane=lane)
-
-
-def _next_order_key(db: Session, viewer_id: UUID, source: ResourceRef) -> str:
-    last = db.scalar(
-        select(ResourceEdge.source_order_key)
-        .where(
-            ResourceEdge.user_id == viewer_id,
-            ResourceEdge.source_scheme == source.scheme,
-            ResourceEdge.source_id == source.id,
-            ResourceEdge.kind == "context",
-            ResourceEdge.origin == "user",
-            ResourceEdge.source_order_key.is_not(None),
-        )
-        .order_by(ResourceEdge.source_order_key.desc())
-        .limit(1)
-    )
-    return "0000000001" if last is None else f"{int(last) + 1:010d}"
-
-
-def _ordered_edge_to_target(
-    db: Session, viewer_id: UUID, source: ResourceRef, target: ResourceRef
-) -> ResourceEdge | None:
-    return db.scalar(
-        select(ResourceEdge).where(
-            ResourceEdge.user_id == viewer_id,
-            ResourceEdge.source_scheme == source.scheme,
-            ResourceEdge.source_id == source.id,
-            ResourceEdge.target_scheme == target.scheme,
-            ResourceEdge.target_id == target.id,
-            ResourceEdge.kind == "context",
-            ResourceEdge.origin == "user",
-            ResourceEdge.source_order_key.is_not(None),
-        )
-    )

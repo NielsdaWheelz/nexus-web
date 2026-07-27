@@ -3,6 +3,7 @@ import { ApiError } from "@/lib/api/client";
 import { callFastAPI } from "@/lib/api/server";
 import { DEVICE_COOKIE_NAME } from "@/lib/auth/deviceCookie";
 import { REQUEST_PATH_HEADER } from "@/lib/auth/requestPath";
+import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { ReaderProfile } from "@/lib/reader/types";
 import {
   assumePaneVisitId,
@@ -483,34 +484,30 @@ describe("loadWorkspaceBootstrap", () => {
         id: NOTE_PAGE_ID,
         title: "Seeded page",
         updatedAt: "2026-01-01T00:00:00Z",
+        actionTarget: routeResourceActionSubject({
+          scheme: "page",
+          id: NOTE_PAGE_ID,
+          href: `/pages/${NOTE_PAGE_ID}`,
+        }),
       },
     ]);
   });
 
-  it("normalizes and seeds note block resources", async () => {
+  it("does not seed the deleted note-block resource path", async () => {
     requestHeaders.set(REQUEST_PATH_HEADER, `/notes/${NOTE_BLOCK_ID}`);
     respondWith({
       "/me/reader-profile": PROFILE_OK,
-      [`/notes/blocks/${NOTE_BLOCK_ID}`]: {
-        data: {
-          id: NOTE_BLOCK_ID,
-          body_text: "Seeded note block",
-        },
-      },
     });
 
     const result = await loadWorkspaceBootstrap(false);
 
-    expect(result.resources[`note-block:${NOTE_BLOCK_ID}`]).toEqual({
-      id: NOTE_BLOCK_ID,
-      parentBlockId: null,
-      orderKey: null,
-      bodyPmJson: { type: "paragraph" },
-      bodyText: "Seeded note block",
-      collapsed: false,
-      children: [],
-      versionByLane: {},
-    });
+    // A note pane owns a canonical client-side resource-surface read. The
+    // bootstrap must never revive the deleted `/notes/blocks/:id` seed shape.
+    expect(result.resources).not.toHaveProperty(`note-block:${NOTE_BLOCK_ID}`);
+    expect(mockCallFastAPI).not.toHaveBeenCalledWith(
+      `/notes/blocks/${NOTE_BLOCK_ID}`,
+      expect.anything(),
+    );
   });
 
   it("seeds the initial conversations list resource", async () => {

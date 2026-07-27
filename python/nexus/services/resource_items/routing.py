@@ -15,13 +15,25 @@ from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.schemas.reader_apparatus import ReaderApparatusLocatorStatus
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.artifacts.subject_policy import SUBJECT_POLICIES, visible_persisted_subject
-from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_graph.resolve import (
     oracle_anchor_current_target,
     reader_target_for_citation_target,
 )
 
 _BATCHED_ROUTE_SCHEMES = frozenset({"highlight", "message", "fragment", "reader_apparatus_item"})
+_BATCHED_ACTIVATION_ROUTE_SCHEMES = frozenset(
+    {
+        *_BATCHED_ROUTE_SCHEMES,
+        "content_chunk",
+        "evidence_span",
+        "artifact",
+        "artifact_revision",
+        "contributor",
+        "oracle_passage_anchor",
+        "passage_anchor",
+    }
+)
 
 
 def route_for_visible_apparatus_item(
@@ -116,11 +128,10 @@ def resource_activations_for_refs(
     refs: Sequence[ResourceRef],
     missing_ref_uris: set[str] | frozenset[str] = frozenset(),
 ) -> dict[str, ResourceActivationOut]:
-    """Batch deterministic high-volume graph routes and delegate the rest.
+    """Batch every route admitted by the heterogeneous resource surface.
 
     Visibility comes from canonical resource hydration via missing_ref_uris.
-    Locator-sensitive schemes stay on resource_activation_for_ref so this
-    optimization cannot fork their current/stale routing semantics.
+    Query count is bounded by the finite set of schemes, never by ref count.
     """
 
     unique = {ref.uri: ref for ref in refs}
@@ -128,6 +139,7 @@ def resource_activations_for_refs(
 
     routes = {ref.uri: route for ref in visible if (route := _static_route(ref)) is not None}
     routes.update(_routes_for_refs(db, viewer_id=viewer_id, refs=visible))
+    external_urls = _external_urls_for_refs(db, viewer_id=viewer_id, refs=visible)
     activations: dict[str, ResourceActivationOut] = {}
     for ref in unique.values():
         if ref.uri in missing_ref_uris:
@@ -146,20 +158,51 @@ def resource_activations_for_refs(
                 href=href,
                 unresolved_reason=None,
             )
-        elif ref.scheme in _BATCHED_ROUTE_SCHEMES or _static_route(ref) is not None:
+        elif ref.scheme == "external_snapshot":
+            url = external_urls.get(ref.uri)
+            activations[ref.uri] = ResourceActivationOut(
+                resource_ref=ref.uri,
+                kind="external" if url is not None else "none",
+                href=url,
+                unresolved_reason=None if url is not None else "not_routeable",
+            )
+        else:
             activations[ref.uri] = ResourceActivationOut(
                 resource_ref=ref.uri,
                 kind="none",
                 href=None,
                 unresolved_reason="not_routeable",
             )
-        else:
-            activations[ref.uri] = resource_activation_for_ref(
-                db,
-                viewer_id=viewer_id,
-                ref=ref,
-            )
     return activations
+
+
+def _external_urls_for_refs(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    refs: Sequence[ResourceRef],
+) -> dict[str, str]:
+    snapshot_refs = [ref for ref in refs if ref.scheme == "external_snapshot"]
+    if not snapshot_refs:
+        return {}
+    rows = db.execute(
+        text(
+            """
+            SELECT id, url
+            FROM resource_external_snapshots
+            WHERE id = ANY(:ids) AND user_id = :viewer_id
+            """
+        ),
+        {
+            "ids": [ref.id for ref in snapshot_refs],
+            "viewer_id": viewer_id,
+        },
+    ).all()
+    return {
+        f"external_snapshot:{row[0]}": str(row[1])
+        for row in rows
+        if isinstance(row[1], str) and row[1]
+    }
 
 
 def _static_route(ref: ResourceRef) -> str | None:
@@ -184,7 +227,7 @@ def _routes_for_refs(
 ) -> dict[str, str]:
     by_scheme: dict[str, list[ResourceRef]] = defaultdict(list)
     for ref in refs:
-        if ref.scheme in _BATCHED_ROUTE_SCHEMES:
+        if ref.scheme in _BATCHED_ACTIVATION_ROUTE_SCHEMES:
             by_scheme[ref.scheme].append(ref)
 
     routes: dict[str, str] = {}
@@ -271,7 +314,261 @@ def _routes_for_refs(
             )
             if route is not None:
                 routes[f"reader_apparatus_item:{row[0]}"] = route
+    routes.update(_dynamic_routes_for_refs(db, viewer_id=viewer_id, by_scheme=by_scheme))
     return routes
+
+
+def _dynamic_routes_for_refs(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    by_scheme: dict[str, list[ResourceRef]],
+) -> dict[str, str]:
+    """Resolve non-static adjacency routes with one set query per scheme."""
+
+    routes: dict[str, str] = {}
+    artifact_subjects: dict[str, ResourceRef] = {}
+
+    artifact_refs = by_scheme["artifact"]
+    if artifact_refs:
+        rows = db.execute(
+            text(
+                """
+                SELECT id, subject_scheme, subject_id
+                FROM artifacts
+                WHERE id = ANY(:ids)
+                """
+            ),
+            {"ids": [ref.id for ref in artifact_refs]},
+        ).all()
+        artifact_subjects.update(
+            {
+                f"artifact:{row[0]}": ResourceRef(
+                    scheme=cast(ResourceScheme, str(row[1])),
+                    id=UUID(str(row[2])),
+                )
+                for row in rows
+            }
+        )
+
+    revision_refs = by_scheme["artifact_revision"]
+    if revision_refs:
+        rows = db.execute(
+            text(
+                """
+                SELECT r.id, a.subject_scheme, a.subject_id
+                FROM artifact_revisions r
+                JOIN artifact_builds b ON b.id = r.build_id
+                JOIN artifacts a ON a.id = b.artifact_id
+                WHERE r.id = ANY(:ids)
+                """
+            ),
+            {"ids": [ref.id for ref in revision_refs]},
+        ).all()
+        artifact_subjects.update(
+            {
+                f"artifact_revision:{row[0]}": ResourceRef(
+                    scheme=cast(ResourceScheme, str(row[1])),
+                    id=UUID(str(row[2])),
+                )
+                for row in rows
+            }
+        )
+
+    oracle_targets: dict[UUID, ResourceRef] = {}
+    oracle_refs = by_scheme["oracle_passage_anchor"]
+    if oracle_refs:
+        rows = db.execute(
+            text(
+                """
+                SELECT id, current_evidence_span_id, current_content_chunk_id
+                FROM oracle_passage_anchors
+                WHERE id = ANY(:ids) AND resolution_status = 'resolved'
+                """
+            ),
+            {"ids": [ref.id for ref in oracle_refs]},
+        ).all()
+        for row in rows:
+            if row[1] is not None:
+                oracle_targets[UUID(str(row[0]))] = ResourceRef(
+                    scheme="evidence_span",
+                    id=UUID(str(row[1])),
+                )
+            elif row[2] is not None:
+                oracle_targets[UUID(str(row[0]))] = ResourceRef(
+                    scheme="content_chunk",
+                    id=UUID(str(row[2])),
+                )
+
+    chunk_ids = {ref.id for ref in by_scheme["content_chunk"]}
+    chunk_ids.update(
+        target.id for target in oracle_targets.values() if target.scheme == "content_chunk"
+    )
+    chunk_rows: dict[UUID, Any] = {}
+    if chunk_ids:
+        rows = db.execute(
+            text(
+                """
+                SELECT id, owner_kind, owner_id, primary_evidence_span_id, summary_locator
+                FROM content_chunks
+                WHERE id = ANY(:ids)
+                """
+            ),
+            {"ids": list(chunk_ids)},
+        ).all()
+        chunk_rows = {UUID(str(row[0])): row for row in rows}
+
+    evidence_ids = {ref.id for ref in by_scheme["evidence_span"]}
+    evidence_ids.update(
+        target.id for target in oracle_targets.values() if target.scheme == "evidence_span"
+    )
+    evidence_ids.update(UUID(str(row[3])) for row in chunk_rows.values() if row[3] is not None)
+    evidence_rows: dict[UUID, Any] = {}
+    if evidence_ids:
+        rows = db.execute(
+            text(
+                """
+                SELECT id, owner_kind, owner_id, selector, resolver_kind
+                FROM evidence_spans
+                WHERE id = ANY(:ids)
+                """
+            ),
+            {"ids": list(evidence_ids)},
+        ).all()
+        evidence_rows = {UUID(str(row[0])): row for row in rows}
+
+    evidence_routes = {
+        evidence_id: route
+        for evidence_id, row in evidence_rows.items()
+        if (route := _route_for_evidence_row(evidence_id, row)) is not None
+    }
+    routes.update(
+        {
+            f"evidence_span:{ref.id}": evidence_routes[ref.id]
+            for ref in by_scheme["evidence_span"]
+            if ref.id in evidence_routes
+        }
+    )
+
+    chunk_routes = {
+        chunk_id: route
+        for chunk_id, row in chunk_rows.items()
+        if (route := _route_for_content_chunk_row(row, evidence_routes=evidence_routes)) is not None
+    }
+    routes.update(
+        {
+            f"content_chunk:{ref.id}": chunk_routes[ref.id]
+            for ref in by_scheme["content_chunk"]
+            if ref.id in chunk_routes
+        }
+    )
+    for anchor_id, target in oracle_targets.items():
+        route = (
+            evidence_routes.get(target.id)
+            if target.scheme == "evidence_span"
+            else chunk_routes.get(target.id)
+        )
+        if route is not None:
+            routes[f"oracle_passage_anchor:{anchor_id}"] = route
+
+    contributor_ids = {ref.id for ref in by_scheme["contributor"]}
+    contributor_ids.update(
+        subject.id for subject in artifact_subjects.values() if subject.scheme == "contributor"
+    )
+    contributor_handles: dict[UUID, str] = {}
+    if contributor_ids:
+        rows = db.execute(
+            text("SELECT id, handle FROM contributors WHERE id = ANY(:ids)"),
+            {"ids": list(contributor_ids)},
+        ).all()
+        contributor_handles = {UUID(str(row[0])): str(row[1]) for row in rows}
+    routes.update(
+        {
+            f"contributor:{ref.id}": f"/authors/{quote(contributor_handles[ref.id], safe='')}"
+            for ref in by_scheme["contributor"]
+            if ref.id in contributor_handles
+        }
+    )
+
+    for uri, subject in artifact_subjects.items():
+        route = _static_route(subject)
+        if route is None and subject.scheme == "contributor":
+            handle = contributor_handles.get(subject.id)
+            route = f"/authors/{handle}" if handle is not None else None
+        if route is not None:
+            routes[uri] = route
+
+    passage_refs = by_scheme["passage_anchor"]
+    if passage_refs:
+        rows = db.execute(
+            text(
+                """
+                SELECT id, owner_scheme, owner_id
+                FROM passage_anchors
+                WHERE id = ANY(:ids) AND user_id = :viewer_id
+                """
+            ),
+            {
+                "ids": [ref.id for ref in passage_refs],
+                "viewer_id": viewer_id,
+            },
+        ).all()
+        for row in rows:
+            if row[1] == "media":
+                routes[f"passage_anchor:{row[0]}"] = f"/media/{row[2]}#passage-{row[0]}"
+            elif row[1] == "note_block":
+                routes[f"passage_anchor:{row[0]}"] = f"/notes/{row[2]}#passage-{row[0]}"
+
+    return routes
+
+
+def _route_for_evidence_row(evidence_id: UUID, row: Any) -> str | None:
+    owner_kind = str(row[1])
+    if owner_kind == "media":
+        return f"/media/{row[2]}#evidence-{evidence_id}"
+    if owner_kind != "note_block" or str(row[4]) != "note":
+        return None
+    selector = row[3] if isinstance(row[3], dict) else {}
+    block_id = selector.get("note_block_id")
+    start_offset = selector.get("start_offset")
+    end_offset = selector.get("end_offset")
+    if (
+        not isinstance(block_id, str)
+        or not isinstance(start_offset, int)
+        or not isinstance(end_offset, int)
+        or start_offset < 0
+        or end_offset <= start_offset
+    ):
+        return None
+    return f"/notes/{block_id}"
+
+
+def _route_for_content_chunk_row(
+    row: Any,
+    *,
+    evidence_routes: dict[UUID, str],
+) -> str | None:
+    primary_span_id = row[3]
+    if primary_span_id is not None:
+        return evidence_routes.get(UUID(str(primary_span_id)))
+    owner_kind = str(row[1])
+    if owner_kind == "media":
+        return f"/media/{row[2]}"
+    if owner_kind != "note_block":
+        return None
+    locator = row[4] if isinstance(row[4], dict) else {}
+    block_id = locator.get("note_block_id")
+    start_offset = locator.get("start_offset")
+    end_offset = locator.get("end_offset")
+    if (
+        not isinstance(block_id, str)
+        or not isinstance(start_offset, int)
+        or not isinstance(end_offset, int)
+        or start_offset < 0
+        or end_offset <= start_offset
+    ):
+        return None
+    return f"/notes/{block_id}"
 
 
 def route_for_ref(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> str | None:

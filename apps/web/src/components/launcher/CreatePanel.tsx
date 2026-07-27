@@ -1,17 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { ArrowLeft } from "lucide-react";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { quickCaptureDailyNote, saveNoteBody } from "@/lib/notes/api";
-import type { NoteBlock } from "@/lib/notes/normalize";
+import type { NoteContent } from "@/lib/notes/normalize";
 import { createRandomId } from "@/lib/createRandomId";
-import ProseMirrorOutlineEditor from "@/components/notes/ProseMirrorOutlineEditor";
+import NoteBodyEditor from "@/components/notes/NoteBodyEditor";
 import {
-  createEmptyOutlineDoc,
-  createOutlineDocFromBlock,
-  firstOutlineBlockFromDoc,
+  emptyNoteBody,
+  type NoteBodyValue,
 } from "@/lib/notes/prosemirror/schema";
 import { noteBodyHasContent } from "@/lib/notes/prosemirror/bodyContent";
 import {
@@ -26,6 +24,7 @@ import {
 import NoteDraftRecovery from "@/components/notes/NoteDraftRecovery";
 import Button from "@/components/ui/Button";
 import type { LauncherActionTarget } from "@/lib/launcher/model";
+import { isRecord } from "@/lib/validation";
 import styles from "./CreatePanel.module.css";
 
 export default function CreatePanel({
@@ -40,40 +39,37 @@ export default function CreatePanel({
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
   const resourceKey = "quick-note:daily";
   const [editorResetSerial, setEditorResetSerial] = useState(0);
-  const [initialDoc, setInitialDoc] = useState(
+  const [initialBody, setInitialBody] = useState(
     () =>
-      readStoredNoteEditorDraft(resourceKey)?.doc ??
-      createEmptyOutlineDoc(createRandomId()),
+      readStoredNoteEditorDraft(resourceKey)?.body ?? emptyNoteBody(),
   );
   const editorResourceKey = `${resourceKey}:editor:${editorResetSerial}`;
-  const currentDocRef = useRef<ProseMirrorNode | null>(null);
-  const persistedBlockRef = useRef<NoteBlock | null>(null);
+  const currentBodyRef = useRef<NoteBodyValue | null>(null);
+  const persistedBlockRef = useRef<NoteContent | null>(null);
+  const draftBlockIdRef = useRef(createRandomId());
 
-  const saveDoc = useCallback(
+  const saveBody = useCallback(
     async (
-      doc: ProseMirrorNode,
+      body: NoteBodyValue,
       { clientMutationId }: { clientMutationId: string },
     ) => {
-      const block = firstOutlineBlockFromDoc(doc);
       const persisted = persistedBlockRef.current;
-      if (!block || (!persisted && !noteBodyHasContent(block))) {
+      if (!persisted && !noteBodyHasContent(body)) {
         return;
       }
-      if (persisted && !noteBodyHasContent(block)) {
+      if (persisted && !noteBodyHasContent(body)) {
         await saveNoteBody(persisted.id, {
           clientMutationId,
           baseVersion: persisted.versionByLane?.body ?? null,
-          bodyPmJson: firstOutlineBlockFromDoc(
-            createEmptyOutlineDoc(persisted.id),
-          )!.bodyPmJson,
+          bodyPmJson: emptyNoteBody().bodyPmJson,
         });
         persistedBlockRef.current = null;
         return;
       }
       persistedBlockRef.current = await quickCaptureDailyNote({
-        blockId: persisted?.id ?? block.id,
+        blockId: persisted?.id ?? draftBlockIdRef.current,
         clientMutationId,
-        bodyPmJson: block.bodyPmJson,
+        bodyPmJson: body.bodyPmJson,
       });
     },
     [],
@@ -81,7 +77,8 @@ export default function CreatePanel({
 
   const session = useNoteEditorSession({
     resourceKey,
-    save: saveDoc,
+    save: saveBody,
+    draftMetadata: () => ({ blockId: draftBlockIdRef.current }),
     onError: (error) => {
       if (handleUnauthenticatedApiError(error)) return;
       setFeedback(
@@ -102,37 +99,42 @@ export default function CreatePanel({
   useEffect(() => {
     const storedDraft = readStoredNoteEditorDraft(resourceKey);
     if (storedDraft) {
+      if (
+        isRecord(storedDraft.metadata) &&
+        typeof storedDraft.metadata.blockId === "string"
+      ) {
+        draftBlockIdRef.current = storedDraft.metadata.blockId;
+      }
       recoverSessionDraft(storedDraft);
     }
   }, [recoverSessionDraft]);
 
   const scheduleSave = useCallback(
-    (doc: ProseMirrorNode) => {
-      currentDocRef.current = doc;
+    (body: NoteBodyValue) => {
+      currentBodyRef.current = body;
       setFeedback(null);
-      scheduleSessionSave(doc);
+      scheduleSessionSave(body);
     },
     [scheduleSessionSave],
   );
 
   const openToday = useCallback(() => {
-    flushSession(currentDocRef.current ?? undefined);
+    flushSession(currentBodyRef.current ?? undefined);
     onOpen({ kind: "open-today" });
     onClose();
   }, [flushSession, onOpen, onClose]);
 
   const resetToPersistedOrEmpty = useCallback(() => {
     const persisted = persistedBlockRef.current;
-    const nextDoc = persisted
-      ? createOutlineDocFromBlock({
-          id: persisted.id,
+    const nextBody = persisted
+      ? {
           bodyPmJson: persisted.bodyPmJson,
           bodyText: persisted.bodyText,
-          collapsed: persisted.collapsed,
-        })
-      : createEmptyOutlineDoc(createRandomId());
-    currentDocRef.current = nextDoc;
-    setInitialDoc(nextDoc);
+        }
+      : emptyNoteBody();
+    currentBodyRef.current = nextBody;
+    draftBlockIdRef.current = persisted?.id ?? createRandomId();
+    setInitialBody(nextBody);
     setEditorResetSerial((current) => current + 1);
   }, []);
 
@@ -155,14 +157,13 @@ export default function CreatePanel({
       </button>
       <div className={styles.quickNoteForm}>
         <div className={styles.quickNoteEditor}>
-          <ProseMirrorOutlineEditor
+          <NoteBodyEditor
             resourceKey={editorResourceKey}
-            initialDoc={initialDoc}
+            initialBodyPmJson={initialBody.bodyPmJson}
+            fallbackBodyText={initialBody.bodyText}
             ariaLabel="Quick note to today"
-            createBlockId={createRandomId}
-            singleBlock
             compact
-            onDocChange={scheduleSave}
+            onBodyChange={scheduleSave}
             onBlurFlush={flushSession}
             onFeedback={setFeedback}
             onError={(error) => {

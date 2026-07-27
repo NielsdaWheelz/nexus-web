@@ -8,24 +8,11 @@ from uuid import UUID
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
-from nexus.schemas.resource_items import (
-    ResourceSurfaceOut,
-    validate_note_body_pm_json,
-)
+from nexus.schemas.resource_items import validate_note_body_pm_json
 
 
 class NoteBlockOut(BaseModel):
     id: UUID
-    parent_block_id: UUID | None = Field(
-        None,
-        validation_alias=AliasChoices("parent_block_id", "parentBlockId"),
-        serialization_alias="parentBlockId",
-    )
-    order_key: str | None = Field(
-        None,
-        validation_alias=AliasChoices("order_key", "orderKey"),
-        serialization_alias="orderKey",
-    )
     body_pm_json: dict[str, Any] = Field(
         validation_alias=AliasChoices("body_pm_json", "bodyPmJson"),
         serialization_alias="bodyPmJson",
@@ -34,8 +21,6 @@ class NoteBlockOut(BaseModel):
         validation_alias=AliasChoices("body_text", "bodyText"),
         serialization_alias="bodyText",
     )
-    collapsed: bool = False
-    children: list[NoteBlockOut] = Field(default_factory=list)
     created_at: datetime = Field(
         validation_alias=AliasChoices("created_at", "createdAt"),
         serialization_alias="createdAt",
@@ -73,8 +58,6 @@ class DailyNotePageSummaryOut(BaseModel):
 
 
 class NotePageOut(NotePageSummaryOut):
-    surface: ResourceSurfaceOut | None = None
-    blocks: list[NoteBlockOut] = Field(default_factory=list)
     daily_note: DailyNotePageSummaryOut | None = Field(
         None,
         serialization_alias="dailyNote",
