@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  type FocusEvent as ReactFocusEvent,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import { ChevronLeft, ChevronRight, Command, Plus } from "lucide-react";
 import AsterismMark from "@/components/AsterismMark";
 import ActionBar from "@/components/ui/ActionBar";
@@ -10,6 +16,7 @@ import {
   useMobileChrome,
   useMobileChromeSurface,
 } from "@/lib/workspace/mobileChrome";
+import { usePaneWarm } from "@/lib/panes/paneWarm";
 import { pluralize } from "@/lib/text/pluralize";
 import styles from "./AppNav.module.css";
 
@@ -26,6 +33,7 @@ export default function NavTopBar({
 }) {
   const { motionPhase, paneChrome, acquireVisibleLock, finishSettle } =
     useMobileChrome();
+  const warmPane = usePaneWarm();
   const navigation = paneChrome?.navigation;
   const actions = paneChrome?.actions ?? [];
   const options = paneChrome?.options ?? [];
@@ -60,6 +68,28 @@ export default function NavTopBar({
       releaseLockRef.current = null;
     },
     [acquireVisibleLock],
+  );
+  const handleIdentityClickCapture = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      if (!(event.target instanceof Element)) return;
+      const anchor = event.target.closest("a[href]");
+      if (anchor instanceof HTMLAnchorElement) {
+        paneChrome?.activateIdentityAnchor(event, anchor);
+      }
+    },
+    [paneChrome],
+  );
+  const handleIdentityIntentCapture = useCallback(
+    (
+      event: ReactMouseEvent<HTMLDivElement> | ReactFocusEvent<HTMLDivElement>,
+    ) => {
+      if (!(event.target instanceof Element)) return;
+      const anchor = event.target.closest("a[href]");
+      if (!(anchor instanceof HTMLAnchorElement)) return;
+      const href = anchor.getAttribute("href");
+      if (href && !href.startsWith("#")) warmPane(href);
+    },
+    [warmPane],
   );
 
   return (
@@ -128,9 +158,18 @@ export default function NavTopBar({
         </button>
       </div>
 
-      <div className={styles.topBarTitle}>
+      <div
+        className={styles.topBarTitle}
+        onClickCapture={handleIdentityClickCapture}
+        onMouseOverCapture={handleIdentityIntentCapture}
+        onFocusCapture={handleIdentityIntentCapture}
+      >
         {paneChrome ? (
-          <PaneHeaderIdentity id={paneChrome.identityId} model={paneChrome.header} />
+          <PaneHeaderIdentity
+            id={paneChrome.identityId}
+            model={paneChrome.header}
+            projection="Mobile"
+          />
         ) : null}
       </div>
 

@@ -686,10 +686,11 @@ from evidence rather than this spec.
 ### Media credits and administration entry
 
 Media publishes the effective ordered roles through the typed resource-header
-credit model. Persistent chrome contains one compact, non-focusable text
-summary: an unprefixed Authors group followed by truthful role-labelled groups,
-with every effective role/name/order represented once. Title and credits
-ellipsize independently.
+credit model. Persistent chrome contains one bounded structured projection:
+the first two credit items on desktop and the first one on mobile, preserving
+group and item order. Resolved visible credits are native pane links; unresolved
+credits are text; a noninteractive `+N` counts the unmounted tail. Each visible
+name owns its ellipsis, so no hidden focus target survives.
 
 Every ready resource includes **Credits…**, including zero-credit resources.
 Its read-only Dialog or MobileSheet shows the complete wrapping title, role
@@ -1141,11 +1142,13 @@ all `__pycache__`/`.pyc` artifacts—including stale
 25. A same-name picker shows only visible credited work context, supports explicit
     distinct creation, disables duplicate selection, and never leaks private or
     zero-work context.
-26. Persistent media chrome shows compact structured credits only; complete
-    linked credits remain inspectable through **Credits…**. No bordered Authors
-    row, **No authors**, inline Add/Edit control, or manual marker survives.
-    Authorized Add/Edit Authors administration exists only in Options; manual
-    reset remains inside the editor.
+26. Persistent media chrome shows the ordered two-credit desktop/one-credit
+    mobile prefix. Resolved visible credits are native pane links, unresolved
+    credits are text, and noninteractive `+N` counts the unmounted tail.
+    Complete linked credits remain inspectable through **Credits…**. No bordered
+    Authors row, **No authors**, inline Add/Edit control, or manual marker
+    survives. Authorized Add/Edit Authors administration exists only in Options;
+    manual reset remains inside the editor.
 27. Full ARIA combobox state, nested Escape, MobileSheet Back/backdrop/drag,
     blocked-Back history re-arm, desktop dirty guard, exact Options-trigger
     return with shared disconnected-trigger fallback, reorder announcements,

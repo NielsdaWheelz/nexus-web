@@ -17,6 +17,7 @@ import type {
   PaneHeaderAction,
 } from "@/lib/ui/actionDescriptor";
 import type { PaneHeaderModel } from "@/lib/panes/paneHeaderModel";
+import type { TargetLinkMouseEvent } from "@/lib/panes/targetLinkActivation";
 import type { SurfaceHeaderNavigation } from "@/components/ui/SurfaceHeader";
 import {
   initialMobileChromeMotionState,
@@ -54,6 +55,10 @@ export interface MobilePaneChrome {
   routeKey: string;
   identityId: string;
   header: PaneHeaderModel;
+  activateIdentityAnchor: (
+    event: TargetLinkMouseEvent,
+    anchor: HTMLAnchorElement,
+  ) => void;
   navigation: SurfaceHeaderNavigation;
   actions: readonly PaneHeaderAction[];
   options: readonly ActionDescriptor[];

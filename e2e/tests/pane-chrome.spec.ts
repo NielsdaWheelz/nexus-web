@@ -5,8 +5,10 @@ import {
   type Page,
   type TestInfo,
 } from "@playwright/test";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { stateChangingApiHeaders } from "./api";
 import {
   expectActivePaneShellContainedByViewport,
   expectNoDocumentHorizontalOverflow,
@@ -57,6 +59,23 @@ async function gotoPaneChromePath(
 
 async function useMobileViewport(page: Page): Promise<void> {
   await page.setViewportSize({ width: 390, height: 844 });
+}
+
+async function setPaneChromeAuthors(
+  page: Page,
+  mediaId: string,
+  body: Record<string, unknown>,
+): Promise<void> {
+  const response = await page.request.put(`/api/media/${mediaId}/authors`, {
+    headers: stateChangingApiHeaders(),
+    data: { clientMutationId: randomUUID(), ...body },
+  });
+  expect(
+    response.ok(),
+    `PUT /api/media/${mediaId}/authors failed: ${response.status()} ${(
+      await response.text()
+    ).slice(0, 400)}`,
+  ).toBeTruthy();
 }
 
 async function setScrollTop(
@@ -235,14 +254,17 @@ async function expectMobileDirectStateOffset(state: Locator): Promise<void> {
   );
 }
 
-async function expectResourceIdentityFitsMobileTopBar(
-  page: Page,
+async function expectResourceIdentityFitsChrome(
+  chrome: Locator,
 ): Promise<void> {
-  const topBar = page.getByRole("banner");
-  const resourceHead = topBar.locator('[data-resource-head="true"]');
+  const resourceHead = chrome.locator('[data-resource-head="true"]');
   await expect(resourceHead).toHaveAttribute("data-status", "ready", {
     timeout: 20_000,
   });
+  const firstCreditLink = resourceHead.getByRole("link").first();
+  await expect(firstCreditLink).toHaveCount(1);
+  await firstCreditLink.focus();
+  await expect(firstCreditLink).toBeFocused();
 
   const geometry = await resourceHead.evaluate((identity) => {
     const bar = identity.closest("header");
@@ -262,6 +284,44 @@ async function expectResourceIdentityFitsMobileTopBar(
     );
     const title = identity.querySelector("h1");
     const credits = identity.querySelector('[data-resource-credits="true"]');
+    const creditLabels = credits
+      ? Array.from(credits.querySelectorAll<HTMLElement>("[title]")).flatMap(
+          (credit) => {
+            const label = credit.firstElementChild;
+            if (!(label instanceof HTMLElement)) return [];
+            const style = getComputedStyle(label);
+            return [
+              {
+                overflow: style.overflow,
+                textOverflow: style.textOverflow,
+                whiteSpace: style.whiteSpace,
+              },
+            ];
+          },
+        )
+      : [];
+    const focusedLink =
+      document.activeElement instanceof HTMLAnchorElement &&
+      identity.contains(document.activeElement)
+        ? document.activeElement
+        : null;
+    const focusedRect = focusedLink?.getBoundingClientRect();
+    const focusedStyle = focusedLink ? getComputedStyle(focusedLink) : null;
+    let clippingAncestorCount = 0;
+    let ancestor = focusedLink?.parentElement;
+    while (ancestor) {
+      const style = getComputedStyle(ancestor);
+      if (
+        style.overflowX === "hidden" ||
+        style.overflowX === "clip" ||
+        style.overflowY === "hidden" ||
+        style.overflowY === "clip"
+      ) {
+        clippingAncestorCount += 1;
+      }
+      if (ancestor === bar) break;
+      ancestor = ancestor.parentElement;
+    }
     return {
       withinBar:
         identityRect.left >= barRect.left &&
@@ -272,8 +332,13 @@ async function expectResourceIdentityFitsMobileTopBar(
       titleWhiteSpace: title ? getComputedStyle(title).whiteSpace : null,
       titleOverflow: title ? getComputedStyle(title).textOverflow : null,
       creditsWhiteSpace: credits ? getComputedStyle(credits).whiteSpace : null,
-      creditsOverflow: credits ? getComputedStyle(credits).textOverflow : null,
-      identityWidth: identityRect.width,
+      creditLabels,
+      focusedHeight: focusedRect?.height ?? 0,
+      focusedOutlineStyle: focusedStyle?.outlineStyle ?? null,
+      focusedOutlineWidth: Number.parseFloat(
+        focusedStyle?.outlineWidth ?? "0",
+      ),
+      clippingAncestorCount,
     };
   });
 
@@ -283,9 +348,19 @@ async function expectResourceIdentityFitsMobileTopBar(
     titleWhiteSpace: "nowrap",
     titleOverflow: "ellipsis",
     creditsWhiteSpace: "nowrap",
-    creditsOverflow: "ellipsis",
+    focusedOutlineStyle: "solid",
+    clippingAncestorCount: 0,
   });
-  expect(geometry?.identityWidth ?? 0).toBeGreaterThanOrEqual(160);
+  expect(geometry?.focusedOutlineWidth ?? 0).toBeGreaterThan(0);
+  expect(geometry?.focusedHeight ?? 0).toBeGreaterThanOrEqual(24);
+  expect(geometry?.creditLabels.length ?? 0).toBeGreaterThan(0);
+  for (const label of geometry?.creditLabels ?? []) {
+    expect(label).toEqual({
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      whiteSpace: "nowrap",
+    });
+  }
 }
 
 function paneShell(page: Page) {
@@ -485,60 +560,82 @@ test.describe("pane chrome", () => {
   test("pins section/resource geometry and keeps mobile resource identity clear of controls", async ({
     page,
   }, testInfo) => {
-    let activePane = await gotoPaneChromePath(page, testInfo, "/libraries");
-    await expect(
-      activePane.locator('[data-surface-header="true"]'),
-    ).toHaveAttribute("data-header-kind", "section");
-    expect(await surfaceHeaderHeight(activePane)).toBe(44);
-    expect(await paneChromeTrackHeight(activePane)).toBe(44);
-
     const nonPdfSeed = readSeed<SeededNonPdfMedia>("non-pdf-media.json");
-    activePane = await gotoPaneChromePath(
-      page,
-      testInfo,
-      `/media/${nonPdfSeed.media_id}`,
-    );
-    const resourceHeader = activePane.locator('[data-surface-header="true"]');
-    await expect(
-      resourceHeader.locator('[data-resource-head="true"]'),
-    ).toHaveAttribute("data-status", "ready", { timeout: 20_000 });
-    await expect(resourceHeader).toHaveAttribute(
-      "data-header-kind",
-      "resource",
-    );
-    expect(await surfaceHeaderHeight(activePane)).toBe(60);
-    expect(await paneChromeTrackHeight(activePane)).toBe(60);
-    await expect(
-      resourceHeader.getByText("Libraries", { exact: true }),
-    ).toHaveCount(0);
+    await setPaneChromeAuthors(page, nonPdfSeed.media_id, {
+      mode: "manual",
+      authors: [
+        {
+          creditedName:
+            "Pane chrome geometry credit — Extended Attribution Name",
+          binding: {
+            kind: "new",
+            displayName:
+              "Pane chrome geometry credit — Extended Attribution Name",
+          },
+        },
+      ],
+    });
+    try {
+      await page.setViewportSize({ width: 769, height: 844 });
+      let activePane = await gotoPaneChromePath(page, testInfo, "/libraries");
+      await expect(
+        activePane.locator('[data-surface-header="true"]'),
+      ).toHaveAttribute("data-header-kind", "section");
+      expect(await surfaceHeaderHeight(activePane)).toBe(44);
+      expect(await paneChromeTrackHeight(activePane)).toBe(44);
 
-    await useMobileViewport(page);
-    activePane = await gotoPaneChromePath(page, testInfo, "/libraries");
-    const mobileSectionChrome = page.locator(
-      '[data-pane-chrome-for="pane-chrome-default"]',
-    );
-    await expect(mobileSectionChrome).toHaveCount(1);
-    await expect(mobileSectionChrome).toHaveAttribute(
-      "data-header-kind",
-      "section",
-    );
-    expect(await mobileTopBarHeight(page)).toBe(60);
-    await expectMobileTouchTargets(page);
-    await expectNoDocumentHorizontalOverflow(page);
+      activePane = await gotoPaneChromePath(
+        page,
+        testInfo,
+        `/media/${nonPdfSeed.media_id}`,
+      );
+      const resourceHeader = activePane.locator('[data-surface-header="true"]');
+      await expect(
+        resourceHeader.locator('[data-resource-head="true"]'),
+      ).toHaveAttribute("data-status", "ready", { timeout: 20_000 });
+      await expect(resourceHeader).toHaveAttribute(
+        "data-header-kind",
+        "resource",
+      );
+      expect(await surfaceHeaderHeight(activePane)).toBe(60);
+      expect(await paneChromeTrackHeight(activePane)).toBe(60);
+      await expectResourceIdentityFitsChrome(resourceHeader);
+      await expectNoDocumentHorizontalOverflow(page);
+      await expect(
+        resourceHeader.getByText("Libraries", { exact: true }),
+      ).toHaveCount(0);
 
-    activePane = await gotoPaneChromePath(
-      page,
-      testInfo,
-      `/media/${nonPdfSeed.media_id}`,
-    );
-    await expectMobilePaneShellInvariants(page);
-    expect(await mobileTopBarHeight(page)).toBe(60);
-    await expectResourceIdentityFitsMobileTopBar(page);
-    await expectMobileTouchTargets(page);
-    await expectNoDocumentHorizontalOverflow(page);
-    await expect(
-      page.getByRole("banner").getByText("Libraries", { exact: true }),
-    ).toHaveCount(0);
+      await useMobileViewport(page);
+      activePane = await gotoPaneChromePath(page, testInfo, "/libraries");
+      const mobileSectionChrome = page.locator(
+        '[data-pane-chrome-for="pane-chrome-default"]',
+      );
+      await expect(mobileSectionChrome).toHaveCount(1);
+      await expect(mobileSectionChrome).toHaveAttribute(
+        "data-header-kind",
+        "section",
+      );
+      expect(await mobileTopBarHeight(page)).toBe(60);
+      await expectMobileTouchTargets(page);
+      await expectNoDocumentHorizontalOverflow(page);
+
+      activePane = await gotoPaneChromePath(
+        page,
+        testInfo,
+        `/media/${nonPdfSeed.media_id}`,
+      );
+      await expectMobilePaneShellInvariants(page);
+      expect(await mobileTopBarHeight(page)).toBe(60);
+      await expectResourceIdentityFitsChrome(page.getByRole("banner"));
+      await expectNoDocumentHorizontalOverflow(page);
+      await expect(
+        page.getByRole("banner").getByText("Libraries", { exact: true }),
+      ).toHaveCount(0);
+    } finally {
+      await setPaneChromeAuthors(page, nonPdfSeed.media_id, {
+        mode: "automatic",
+      });
+    }
   });
 
   test("mobile text, PDF, and direct media states consume the shared content offset", async ({

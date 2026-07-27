@@ -60,6 +60,7 @@ function MobileChromePublisher({
         folio: { kind: "none" as const },
         pending: false,
       },
+      activateIdentityAnchor: () => {},
       navigation: {
         canGoBack: false,
         canGoForward: false,

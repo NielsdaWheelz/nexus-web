@@ -9,6 +9,7 @@ import {
 } from "@/lib/workspace/mobileChrome";
 
 const viewport = vi.hoisted(() => ({ mobile: true }));
+const noopActivateIdentityAnchor = () => {};
 
 vi.mock("@/lib/ui/useIsMobileViewport", () => ({
   useIsMobileViewport: () => viewport.mobile,
@@ -37,6 +38,7 @@ function paneChrome(paneId: string, routeKey = `${paneId}:route-a`) {
       folio: { kind: "none" as const },
       pending: false,
     },
+    activateIdentityAnchor: noopActivateIdentityAnchor,
     navigation: {
       canGoBack: false,
       canGoForward: false,

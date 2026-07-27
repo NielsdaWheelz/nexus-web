@@ -52,7 +52,7 @@ export function workspaceTargetClickIntent(event: {
   };
 }
 
-type TargetLinkMouseEvent = Pick<
+export type TargetLinkMouseEvent = Pick<
   ReactMouseEvent,
   | "altKey"
   | "button"

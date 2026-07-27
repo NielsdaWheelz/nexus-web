@@ -82,7 +82,11 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(
               <ChevronRight size={20} aria-hidden="true" />
             </button>
           </div>
-          <PaneHeaderIdentity id={identityId} model={header} />
+          <PaneHeaderIdentity
+            id={identityId}
+            model={header}
+            projection="Desktop"
+          />
         </div>
 
         <div className={styles.trailing}>

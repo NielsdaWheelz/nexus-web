@@ -13,6 +13,9 @@ import {
   MobileChromeProvider,
   useMobileChrome,
 } from "@/lib/workspace/mobileChrome";
+import type { TargetLinkMouseEvent } from "@/lib/panes/targetLinkActivation";
+
+const noopActivateIdentityAnchor = () => {};
 
 function PublishChrome() {
   const { setPaneChrome } = useMobileChrome();
@@ -27,6 +30,7 @@ function PublishChrome() {
         folio: { kind: "count", value: 37, unit: "source" },
         pending: false,
       },
+      activateIdentityAnchor: noopActivateIdentityAnchor,
       navigation: {
         canGoBack: false,
         canGoForward: false,
@@ -41,7 +45,14 @@ function PublishChrome() {
   return null;
 }
 
-function PublishResourceChrome() {
+function PublishResourceChrome({
+  activateIdentityAnchor = noopActivateIdentityAnchor,
+}: {
+  activateIdentityAnchor?: (
+    event: TargetLinkMouseEvent,
+    anchor: HTMLAnchorElement,
+  ) => void;
+}) {
   const { setPaneChrome } = useMobileChrome();
   useEffect(() => {
     setPaneChrome({
@@ -54,10 +65,19 @@ function PublishResourceChrome() {
           status: "ready",
           title: "The Left Hand of Darkness",
           creditGroups: [
-            { kind: "authors", credits: [{ label: "Ursula K. Le Guin" }] },
+            {
+              kind: "authors",
+              credits: [
+                {
+                  label: "Ursula K. Le Guin",
+                  href: "/authors/ursula-k-le-guin",
+                },
+              ],
+            },
           ],
         },
       },
+      activateIdentityAnchor,
       navigation: {
         canGoBack: false,
         canGoForward: false,
@@ -83,7 +103,7 @@ function PublishResourceChrome() {
       ],
     });
     return () => setPaneChrome(null);
-  }, [setPaneChrome]);
+  }, [activateIdentityAnchor, setPaneChrome]);
   return null;
 }
 
@@ -106,6 +126,7 @@ function PublishNavigationChrome({
         folio: { kind: "none" },
         pending: false,
       },
+      activateIdentityAnchor: noopActivateIdentityAnchor,
       navigation: {
         canGoBack: true,
         canGoForward: true,
@@ -237,6 +258,34 @@ describe("NavTopBar", () => {
     const bar = screen.getByRole("banner");
     expect(bar).toHaveAttribute("data-header-kind", "resource");
     expect(bar).toHaveAttribute("data-pane-chrome-for", "pane-media");
+  });
+
+  it("delegates identity-link activation to the active pane", () => {
+    const activateIdentityAnchor = vi.fn(
+      (event: TargetLinkMouseEvent, anchor: HTMLAnchorElement) => {
+        event.preventDefault();
+        return anchor;
+      },
+    );
+    render(
+      <MobileChromeProvider>
+        <PublishResourceChrome
+          activateIdentityAnchor={activateIdentityAnchor}
+        />
+        <NavTopBar
+          onOpenSheet={() => {}}
+          onOpenCommand={() => {}}
+          onOpenAdd={() => {}}
+          paneCount={1}
+        />
+      </MobileChromeProvider>,
+    );
+
+    const link = screen.getByRole("link", { name: "Ursula K. Le Guin" });
+    fireEvent.click(link, { detail: 1 });
+
+    expect(activateIdentityAnchor).toHaveBeenCalledOnce();
+    expect(activateIdentityAnchor.mock.calls[0]?.[1]).toBe(link);
   });
 
   it("keeps the route heading available while only fully hidden controls leave the accessibility tree", async () => {

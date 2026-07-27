@@ -26,6 +26,10 @@ import {
   useRecordPaneNavigationModality,
 } from "@/lib/panes/paneRuntime";
 import {
+  activateTargetAnchor,
+  type TargetLinkMouseEvent,
+} from "@/lib/panes/targetLinkActivation";
+import {
   RESOURCE_ACTION_CATALOG,
   composeResourceMenu,
   resolveResourceCoreActions,
@@ -148,6 +152,14 @@ export default function PaneShell({
   }
   const feedback = useFeedback();
   const recordNavigationModality = useRecordPaneNavigationModality();
+  const activateTarget = paneRuntime.activateTarget;
+  const activateIdentityAnchor = useCallback(
+    (event: TargetLinkMouseEvent, anchor: HTMLAnchorElement) => {
+      recordNavigationModality(event.detail === 0 ? "Keyboard" : "Pointer");
+      activateTargetAnchor({ event, runtime: { activateTarget }, anchor });
+    },
+    [activateTarget, recordNavigationModality],
+  );
   const canGoBack = paneRouter.canGoBack;
   const canGoForward = paneRouter.canGoForward;
   const navigation = useMemo<SurfaceHeaderNavigation>(
@@ -451,12 +463,14 @@ export default function PaneShell({
       routeKey,
       identityId,
       header,
+      activateIdentityAnchor,
       navigation,
       actions: reconciledActions,
       options: paneMenuOptions,
     });
     return () => setPaneChrome(null);
   }, [
+    activateIdentityAnchor,
     header,
     identityId,
     isMobile,

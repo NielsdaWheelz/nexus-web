@@ -1,4 +1,5 @@
 import { Component, type ComponentProps, type ReactNode } from "react";
+import Link from "next/link";
 import {
   fireEvent,
   render,
@@ -23,6 +24,7 @@ import { assumePaneVisitId } from "@/lib/workspace/schema";
 import { routeShareTarget } from "@/lib/sharing/targets";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
+import type { MobilePaneChrome } from "@/lib/workspace/mobileChrome";
 
 const TEST_VISIT_ID = assumePaneVisitId("00000000-0000-4000-8000-000000000001");
 
@@ -63,7 +65,10 @@ vi.mock("@/lib/libraries/placementController", () => ({
 const runtimeNavigation = {
   back: vi.fn(),
   forward: vi.fn(),
-  activateWorkspaceTarget: vi.fn(() => ({ kind: "CreatedPane" as const, paneId: "pane-b" })),
+  activateWorkspaceTarget: vi.fn(() => ({
+    kind: "CreatedPane" as const,
+    paneId: "pane-b",
+  })),
 };
 
 const sectionHeader = {
@@ -628,6 +633,87 @@ describe("PaneShell", () => {
     ).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "Companion" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Options" })).toBeNull();
+  });
+
+  it("keeps projected mobile identity links inside pane navigation", async () => {
+    render(
+      paneTree({
+        routeHeader: resourceHeader,
+        routeShareIdentity: null,
+        label: "Media",
+        isMobile: true,
+        children: (
+          <PrimaryChromeProbe
+            publication={{
+              header: {
+                kind: "resource",
+                resource: {
+                  status: "ready",
+                  title: "Computing Machinery",
+                  creditGroups: [
+                    {
+                      kind: "authors",
+                      credits: [
+                        {
+                          label: "Ada Lovelace",
+                          href: "/authors/ada-lovelace",
+                        },
+                      ],
+                    },
+                  ],
+                },
+              },
+            }}
+          />
+        ),
+      }),
+    );
+
+    await waitFor(() => {
+      expect(mobileChromeMock.setPaneChrome).toHaveBeenCalled();
+    });
+    const publication = mobileChromeMock.setPaneChrome.mock.calls
+      .map(([value]) => value as MobilePaneChrome | null)
+      .findLast((value) => value !== null);
+    if (!publication) {
+      throw new Error("PaneShell did not publish mobile pane chrome");
+    }
+
+    render(
+      <Link
+        href="/authors/ada-lovelace"
+        data-pane-label-hint="Ada Lovelace"
+        onClick={(event) =>
+          publication.activateIdentityAnchor(event, event.currentTarget)
+        }
+      >
+        Ada Lovelace
+      </Link>,
+    );
+    const link = screen.getByRole("link", { name: "Ada Lovelace" });
+
+    fireEvent.click(link, { detail: 0 });
+    expect(runtimeNavigation.activateWorkspaceTarget).toHaveBeenCalledWith({
+      originPaneId: "pane-a",
+      target: {
+        href: "/authors/ada-lovelace",
+        labelHint: "Ada Lovelace",
+      },
+      disposition: { kind: "Follow" },
+      modality: "Keyboard",
+    });
+
+    fireEvent.click(link, { detail: 1, shiftKey: true });
+    expect(runtimeNavigation.activateWorkspaceTarget).toHaveBeenLastCalledWith({
+      originPaneId: "pane-a",
+      target: {
+        href: "/authors/ada-lovelace",
+        labelHint: "Ada Lovelace",
+      },
+      disposition: { kind: "Fork" },
+      modality: "Pointer",
+    });
+    expect(runtimeNavigation.activateWorkspaceTarget).toHaveBeenCalledTimes(2);
   });
 
   it("keeps toolbar controls available through tracking and settling, then hides only them at the endpoint", async () => {

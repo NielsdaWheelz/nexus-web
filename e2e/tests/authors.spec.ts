@@ -364,17 +364,38 @@ test.describe("author journeys", () => {
     await expect(paneStrip.getByText(existingName, { exact: true })).toHaveCount(0);
     await expect(paneStrip.getByText(newName, { exact: true })).toHaveCount(0);
 
-    // Persistent chrome stays compact and non-focusable; complete linked credits
-    // remain inspectable through the dedicated Credits overlay.
+    // Persistent chrome exposes the bounded ordered prefix as pane-native links;
+    // the complete linked ledger remains in the dedicated Credits overlay.
     await expect(pane.getByText("Authors edited manually")).toHaveCount(0);
     const compactCredits = pane.locator('[data-resource-credits="true"]');
+    const existingAuthorLink = compactCredits.getByRole("link", {
+      name: existingName,
+      exact: true,
+    });
+    const newAuthorLink = compactCredits.getByRole("link", {
+      name: newName,
+      exact: true,
+    });
+    await expect(existingAuthorLink).toHaveAttribute("href", /^\/authors\//);
+    await expect(existingAuthorLink).toHaveAttribute(
+      "data-pane-label-hint",
+      existingName,
+    );
+    await expect(newAuthorLink).toHaveAttribute("href", /^\/authors\//);
+    await expect(compactCredits.getByRole("link")).toHaveCount(2);
+    await expect(compactCredits.getByText(/^\+\d+$/)).toHaveCount(0);
+
+    await existingAuthorLink.click();
     await expect(
-      compactCredits.getByText(existingName, { exact: true }),
-    ).toHaveCount(1);
+      pane.getByRole("heading", { level: 1, name: existingName }),
+    ).toBeVisible();
+    await pane
+      .getByRole("button", { name: "Go back in this pane", exact: true })
+      .click();
     await expect(
-      compactCredits.getByText(newName, { exact: true }),
-    ).toHaveCount(1);
-    await expect(compactCredits.locator("a, button")).toHaveCount(0);
+      pane.getByRole("heading", { level: 1, name: targetMedia.title }),
+    ).toBeVisible();
+
     await optionsTrigger.click();
     await page.getByRole("menuitem", { name: "Credits…" }).click();
     const credits = page.getByRole("dialog", { name: "Credits" });
@@ -411,7 +432,7 @@ test.describe("author journeys", () => {
     await resetAuthorsToAutomatic(page, targetMediaId);
   });
 
-  test("media author editor returns focus to the mobile Options trigger", async ({
+  test("mobile header link and author overlays preserve pane behavior", async ({
     page,
   }, testInfo) => {
     await page.setViewportSize({ width: 390, height: 667 });
@@ -423,6 +444,11 @@ test.describe("author journeys", () => {
       (_, index) =>
         `Mobile Credit ${String(index + 1).padStart(2, "0")} ${token} — Extended Attribution`,
     );
+    const [firstDisplayName, secondDisplayName] = displayNames;
+    const lastDisplayName = displayNames.at(-1);
+    if (!firstDisplayName || !secondDisplayName || !lastDisplayName) {
+      throw new Error("mobile credit fixture must contain at least two names");
+    }
     const originalAuthors = await readMediaAuthorSnapshot(page, mediaId);
     const retentionSnapshot = await readMediaAuthorSnapshot(
       page,
@@ -484,12 +510,60 @@ test.describe("author journeys", () => {
       const compactCredits = mobileChrome.locator(
         '[data-resource-credits="true"]',
       );
-      for (const displayName of displayNames) {
-        await expect(
-          compactCredits.getByText(displayName, { exact: true }),
-        ).toHaveCount(1);
+      const firstCreditLink = compactCredits.getByRole("link", {
+        name: firstDisplayName,
+        exact: true,
+      });
+      await expect(firstCreditLink).toHaveAttribute("href", /^\/authors\//);
+      await expect(compactCredits.getByRole("link")).toHaveCount(1);
+      await expect(
+        compactCredits.getByText(secondDisplayName, { exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        compactCredits.getByText(lastDisplayName, { exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        compactCredits.getByText(`+${displayNames.length - 1}`, {
+          exact: true,
+        }),
+      ).toHaveCount(1);
+
+      const authorHref = await firstCreditLink.getAttribute("href");
+      if (!authorHref?.startsWith("/authors/")) {
+        throw new Error(
+          `expected canonical author href; received ${authorHref}`,
+        );
       }
-      await expect(compactCredits.locator("a, button")).toHaveCount(0);
+      const authorApiPath = authorHref.replace(
+        /^\/authors\//,
+        "/api/contributors/",
+      );
+      const warmedAuthorRequests = new Set<string>();
+      page.on("request", (request) => {
+        const pathname = new URL(request.url()).pathname;
+        if (
+          pathname === authorApiPath ||
+          pathname === `${authorApiPath}/works`
+        ) {
+          warmedAuthorRequests.add(pathname);
+        }
+      });
+      await firstCreditLink.focus();
+      await expect
+        .poll(() => [...warmedAuthorRequests].sort(), {
+          message: "mobile credit focus should warm author detail and works",
+        })
+        .toEqual([authorApiPath, `${authorApiPath}/works`].sort());
+
+      await firstCreditLink.click();
+      await expect(
+        pane.getByRole("heading", { level: 1, name: firstDisplayName }),
+      ).toBeVisible();
+      await mobileChrome
+        .getByRole("button", { name: "Go back", exact: true })
+        .click();
+      await expect(firstCreditLink).toBeVisible();
+
       await optionsTrigger.click();
       const editAuthors = page.getByRole("menuitem", {
         name: /^Edit authors/,
@@ -520,7 +594,7 @@ test.describe("author journeys", () => {
         exact: true,
       });
       await expect(credits).toBeVisible();
-      const lastCredit = credits.getByText(displayNames.at(-1)!, {
+      const lastCredit = credits.getByText(lastDisplayName, {
         exact: true,
       });
       await expect(lastCredit).toHaveCount(1);

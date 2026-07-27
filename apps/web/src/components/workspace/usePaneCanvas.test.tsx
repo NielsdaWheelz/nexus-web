@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import Link from "next/link";
 import { usePaneCanvas } from "./usePaneCanvas";
 
 const defaultPaneIds = ["a", "b", "c"];
@@ -47,7 +48,12 @@ function Harness({
               onMouseDown={handleChromeMouseDown}
             >
               {id}
-              {id === "a" ? <button type="button">menu</button> : null}
+              {id === "a" ? (
+                <>
+                  <button type="button">menu</button>
+                  <Link href="/authors/ursula-le-guin">author</Link>
+                </>
+              ) : null}
             </header>
             {id === "b" ? (
               <div
@@ -128,6 +134,21 @@ describe("usePaneCanvas", () => {
     const before = canvas.scrollLeft;
 
     fireEvent.mouseDown(screen.getByRole("button", { name: "menu" }), {
+      button: 0,
+      clientX: 150,
+    });
+    fireEvent.mouseMove(document, { clientX: 60 });
+    fireEvent.mouseUp(document);
+
+    expect(canvas.scrollLeft).toBe(before);
+  });
+
+  it("does not start a drag from a mousedown on a header link", () => {
+    render(<Harness mode="desktop" />);
+    const canvas = screen.getByTestId("canvas");
+    const before = canvas.scrollLeft;
+
+    fireEvent.mouseDown(screen.getByRole("link", { name: "author" }), {
       button: 0,
       clientX: 150,
     });

@@ -454,21 +454,24 @@ IDs. Counts are asserted within each pane/chrome projection, never globally.
 Compact example:
 
 ```text
-Ursula K. Le Guin, Brian Attebery · Editors: Susan Wood, Ann J. Lane · Translator: Margaret Chodos-Irvine
+Ursula K. Le Guin, Brian Attebery +3
 ```
 
 Formatting rules:
 
+- desktop renders the first two credit items; mobile renders the first one;
 - names within a group: `, `;
 - groups: ` · `;
 - authors: visually unprefixed, with sr-only `Authors: `;
 - other roles: canonical singular/plural label plus `: `;
-- summary is non-focusable text, so ellipsis never hides a focusable link.
+- resolved visible credits are native pane links; unresolved credits are text;
+- a noninteractive `+N` counts the unmounted tail.
 
-The compact line ellipsizes. Every ready resource includes `Credits…`, including
-zero-credit resources; its read-only Dialog/MobileSheet shows the full wrapping
-title, groups (possibly empty), and links. This avoids truncation measurement
-and preserves a visual inspection path. Reuse the single typed contributor-role
+Each visible name owns its ellipsis, so no hidden or clipped focus target
+survives. Every ready resource includes `Credits…`, including zero-credit
+resources; its read-only Dialog/MobileSheet shows the full wrapping title,
+groups (possibly empty), and links. This avoids truncation measurement and
+preserves a visual inspection path. Reuse the single typed contributor-role
 registry and grouping owner; do not create a second vocabulary or formatter.
 
 `Add author…` / `Edit authors…` appears separately only when
@@ -796,8 +799,10 @@ Identity and layout:
 
 Credits/authors/focus:
 
-- Compact summary preserves every effective role/name/order once in persistent
-  chrome and contains no clipped focusable link.
+- Compact chrome preserves the ordered two-credit desktop/one-credit mobile
+  prefix. Resolved visible credits are pane links, unresolved credits are text,
+  and the exact unmounted tail is summarized by noninteractive `+N`.
+- No focusable credit is hidden or clipped.
 - Complete credits preserve links and wrap without truncation.
 - No bordered Authors row, `No authors`, manual marker, or inline Add/Edit
   survives.
