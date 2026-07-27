@@ -514,12 +514,12 @@ describe("Launcher — embedded panels", () => {
       name: "Add content",
     });
     const libraries = within(firstDialog).getByRole("button", {
-      name: /Libraries My Library only Change/,
+      name: "Libraries: No additional libraries",
     });
     await userEvent.click(libraries);
     expect(
       await within(firstDialog).findByRole("combobox", {
-        name: "Libraries",
+        name: "Search or create a library",
       }),
     ).toBeInTheDocument();
     expect(libraries).toHaveAttribute("aria-expanded", "true");
@@ -537,12 +537,12 @@ describe("Launcher — embedded panels", () => {
     );
     expect(
       within(replacement).getByRole("button", {
-        name: /Libraries My Library only Change/,
+        name: "Libraries: No additional libraries",
       }),
     ).toHaveAttribute("aria-expanded", "false");
     expect(
       within(replacement).queryByRole("combobox", {
-        name: "Libraries",
+        name: "Search or create a library",
       }),
     ).not.toBeInTheDocument();
   });

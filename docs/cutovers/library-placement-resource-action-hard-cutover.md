@@ -4,6 +4,17 @@
 
 **Type:** Hard cutover; one final path, no compatibility aliases or fallbacks.
 
+> **Superseded (2026-07-27):**
+> [`library-chooser-interaction-hard-cutover.md`](library-chooser-interaction-hard-cutover.md)
+> supersedes this document's chooser interaction/presentation rules — the
+> `Interaction Rules` section's `aria-pressed` toggle and inline-overlay
+> details, and the `LibraryEntryPanel` component named in `Ownership And
+> Files`, are gone. Placement now composes `LibraryPlacementOverlay` →
+> `LibraryChooserSurface` → `LibraryEntryEditor` → `LibraryChooser`; see that
+> document's §2–§3 for current interaction, ordering, and ownership. This
+> document's placement authorization, capability, and API contracts remain
+> normative.
+
 ## Goal
 
 Make item-to-library placement a direct resource relationship action.

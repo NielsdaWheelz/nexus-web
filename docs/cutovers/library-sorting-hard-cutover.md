@@ -141,7 +141,14 @@ Do not strip leading articles such as “A” or “The.”
 
 ## Cursor design
 
-One new cursor family:
+> **Superseded (2026-07-27):**
+> [`library-all-and-smart-views-hard-cutover.md`](library-all-and-smart-views-hard-cutover.md)
+> hard-cuts this family to the authenticated `library_entries:view:v2` cursor
+> (canonical-JSON `{v, q, after}` + domain-separated HMAC-SHA256; the view now
+> includes an entry projection and the viewer UUID is no longer serialized).
+> The exact-view binding and failure semantics below are otherwise retained.
+
+One cursor family (v1 shape as introduced here; since replaced by v2):
 
 ```text
 library_entries:view:v1 {

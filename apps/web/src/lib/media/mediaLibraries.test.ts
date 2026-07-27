@@ -19,7 +19,7 @@ describe("confirmAndDeleteMedia", () => {
     ).resolves.toEqual({ kind: "Cancelled" });
 
     expect(confirmRemoval).toHaveBeenCalledWith(
-      'Delete "A Work" from My Library and libraries you manage? This cannot be undone.',
+      'Delete "A Work" from All and libraries you manage? This cannot be undone.',
     );
     expect(confirmRemoval).toHaveBeenCalledTimes(1);
     expect(fetchSpy).not.toHaveBeenCalled();

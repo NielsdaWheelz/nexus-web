@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import LibraryDestinationPicker from "@/components/LibraryDestinationPicker";
+import LibraryDestinationField from "@/components/libraries/LibraryDestinationField";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { isUnauthenticatedApiError } from "@/lib/api/client";
 import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
@@ -212,11 +212,11 @@ export default function ShareCapture({
             </div>
           ))}
         </div>
-        <LibraryDestinationPicker
+        <LibraryDestinationField
+          label="Library destinations"
+          emptyLabel="No additional libraries"
           selected={selectedDestinations}
           onChange={setSelectedDestinations}
-          presentation={{ kind: "Inline" }}
-          label="Library destinations"
           interaction={
             creatingDestination
               ? { kind: "Creating" }
@@ -232,6 +232,7 @@ export default function ShareCapture({
               setCreatingDestination(false);
             }
           }}
+          layer="modal"
         />
         <div className={styles.actions}>
           <button

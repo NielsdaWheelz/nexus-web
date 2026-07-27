@@ -316,7 +316,7 @@ function ResourceCollectionRowActionMenu({
                 subject,
                 openLibraryPlacement,
                 options: {
-                  returnFocusTo: () => detail.triggerEl,
+                  anchor: () => detail.triggerEl,
                   returnFocusFallback: present(() =>
                     findPaneChromeFocusTarget(runtime.paneId),
                   ),

@@ -13,6 +13,7 @@ import {
   SYNC_INTERVAL_MS,
   type HeartbeatSample,
 } from "@/lib/player/listeningHeartbeat";
+import { consumptionProjectionSnapshot } from "@/lib/consumption/projectionRevision";
 
 const MEDIA: MediaId = assumeMediaId("00000000-0000-4000-8000-000000000001");
 
@@ -162,11 +163,15 @@ describe("listeningHeartbeat", () => {
     });
     const h = makeEngine({ initial: { writeRevision: 4, resetEpoch: 1, positionMs: 0 } });
     h.setSample({ positionMs: 6000, durationMs: present(200_000), playbackSpeed: 1.5 });
+    const beforeRevision = consumptionProjectionSnapshot().revision;
 
     h.engine.tick();
     await flush();
 
     expect(bodies).toHaveLength(1);
+    // Accepted heartbeat install publishes exactly one consumption-projection
+    // revision (not flushKeepalive, which never installs).
+    expect(consumptionProjectionSnapshot().revision).toBe(beforeRevision + 1);
     expect(bodies[0]).toMatchObject({
       positionMs: 6000,
       durationMs: { kind: "Present", value: 200_000 },

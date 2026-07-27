@@ -1,0 +1,20 @@
+/*
+ * Desktop anchored-popover shell only (library-chooser-interaction-hard-cutover.md
+ * §3 + chooser-content-contract §2.0/§2.1). Position comes from the inline
+ * `useAnchoredPosition` style (position: fixed); this file never sets position.
+ * The mobile surface is the shared MobileSheet and is not restyled here.
+ */
+.surface {
+  --library-chooser-width: 380px;
+
+  width: var(--library-chooser-width, 380px);
+  max-height: min(70vh, calc(100dvh - var(--space-8)));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface-canvas);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-3);
+  z-index: 1200;
+}

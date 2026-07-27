@@ -374,7 +374,7 @@ describe("LibraryPaneBody Reading Slate host", () => {
       journey(1, [entry("entry-fresh", SECOND_MEDIA_ID, "Fresh server work")]),
     );
 
-    expect(await screen.findByText("Fresh server work")).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "Fresh server work" })).toBeInTheDocument();
     expect(screen.queryByText("Existing work")).not.toBeInTheDocument();
     expect(reconciliationRequests).toBe(1);
   });
@@ -446,7 +446,7 @@ describe("LibraryPaneBody Reading Slate host", () => {
         <LibraryPaneBody key={SECOND_LIBRARY_ID} />
       </SwitchingHarness>,
     );
-    expect(await screen.findByText("Archived work")).toBeVisible();
+    expect(await screen.findByRole("link", { name: "Archived work" })).toBeVisible();
     expect(secondEntryReads).toBe(0);
 
     view.rerender(
@@ -497,7 +497,9 @@ describe("LibraryPaneBody Reading Slate host", () => {
     expect(
       await screen.findByText("No podcasts or media in this library yet."),
     ).toBeVisible();
-    expect(await screen.findByText("Suggested work")).toBeVisible();
+    expect(
+      await screen.findByRole("link", { name: "Suggested work" }),
+    ).toBeVisible();
     expect(
       screen.getByRole("list", { name: "Suggestions for Research" }),
     ).toBeVisible();
@@ -577,7 +579,7 @@ describe("LibraryPaneBody Reading Slate host", () => {
     const slate = await screen.findByRole("region", {
       name: "Suggestions for Research",
     });
-    expect(screen.getByRole("list", { name: "Library entries" })).toBeVisible();
+    expect(screen.getByRole("list", { name: "Research" })).toBeVisible();
     expect(within(slate).getByRole("list")).toBeVisible();
     expect(
       within(slate).getByText(
@@ -623,7 +625,7 @@ describe("LibraryPaneBody Reading Slate host", () => {
       </Harness>,
     );
 
-    expect(await screen.findByText("Minimal row")).toBeVisible();
+    expect(await screen.findByRole("link", { name: "Minimal row" })).toBeVisible();
     expect(screen.queryByText(publisher)).not.toBeInTheDocument();
     expect(screen.queryByText("ready_for_reading")).not.toBeInTheDocument();
     expect(screen.queryByText("web_article")).not.toBeInTheDocument();
@@ -730,7 +732,7 @@ describe("LibraryPaneBody Reading Slate host", () => {
       view.rerender(renderPane("sort=title&direction=asc"));
 
       if (completionTiming === "after commit") {
-        expect(await screen.findByText("Current title view")).toBeVisible();
+        expect(await screen.findByRole("link", { name: "Current title view" })).toBeVisible();
       } else {
         await waitFor(() => expect(titleEntryReads).toBe(1));
       }
@@ -748,14 +750,12 @@ describe("LibraryPaneBody Reading Slate host", () => {
       }
 
       await waitFor(() => expect(titleEntryReads).toBe(2));
-      const libraryEntries = screen.getByRole("list", {
-        name: "Library entries",
-      });
+      const libraryEntries = screen.getByRole("list", { name: "Research" });
       expect(
-        await within(libraryEntries).findByText("Suggested work"),
+        await within(libraryEntries).findByRole("link", { name: "Suggested work" }),
       ).toBeVisible();
       expect(
-        within(libraryEntries).getByText("Current title view"),
+        within(libraryEntries).getByRole("link", { name: "Current title view" }),
       ).toBeVisible();
       expect(
         fetchMock.mock.calls.some(
@@ -832,10 +832,8 @@ describe("LibraryPaneBody Reading Slate host", () => {
       </Harness>,
     );
 
-    const rankedList = await screen.findByRole("list", {
-      name: "Library entries",
-    });
-    expect(within(rankedList).getByText("Existing work")).toBeVisible();
+    const rankedList = await screen.findByRole("list", { name: "Research" });
+    expect(within(rankedList).getByRole("link", { name: "Existing work" })).toBeVisible();
     await user.click(
       await screen.findByRole("button", {
         name: "Add Suggested work to Research",
@@ -843,14 +841,14 @@ describe("LibraryPaneBody Reading Slate host", () => {
     );
     const unknown = await screen.findByRole("alert");
     expect(unknown).toHaveTextContent("Couldn’t confirm Add");
-    expect(within(rankedList).getByText("Existing work")).toBeVisible();
+    expect(within(rankedList).getByRole("link", { name: "Existing work" })).toBeVisible();
     await user.click(within(unknown).getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(addAttempts).toBe(2));
     expect(requestBodies[1]).toBe(requestBodies[0]);
     expect(JSON.parse(requestBodies[0] ?? "")).toEqual({
       library_ids: [LIBRARY_ID],
     });
-    expect(within(rankedList).getByText("Existing work")).toBeVisible();
+    expect(within(rankedList).getByRole("link", { name: "Existing work" })).toBeVisible();
     await waitFor(() => expect(entryReads).toBe(2));
     expect(screen.getByText("Failed to refresh library entries")).toBeVisible();
 
@@ -865,7 +863,7 @@ describe("LibraryPaneBody Reading Slate host", () => {
       </Harness>,
     );
     expect(entryReads).toBe(2);
-    expect(within(rankedList).getByText("Existing work")).toBeVisible();
+    expect(within(rankedList).getByRole("link", { name: "Existing work" })).toBeVisible();
     expect(screen.getByText("Failed to refresh library entries")).toBeVisible();
     // Reconciliation used only the current factual view, never the canonical
     // (query-less) entries endpoint.
@@ -879,6 +877,6 @@ describe("LibraryPaneBody Reading Slate host", () => {
 
     await user.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(entryReads).toBe(3));
-    expect(await within(rankedList).findByText("Suggested work")).toBeVisible();
+    expect(await within(rankedList).findByRole("link", { name: "Suggested work" })).toBeVisible();
   });
 });

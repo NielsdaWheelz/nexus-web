@@ -6,6 +6,7 @@ import {
   PodcastOpmlContractDefect,
   PodcastOpmlEncodingError,
 } from "./opmlImport";
+import { libraryPlacementSnapshot } from "@/lib/libraries/placementRevision";
 
 describe("getPodcastOpmlFileError", () => {
   it("accepts OPML/XML by owned filename or XML media type", () => {
@@ -102,6 +103,29 @@ describe("importPodcastOpml", () => {
       importPodcastOpml({ file, libraryIds: [] }),
     ).rejects.toBeInstanceOf(PodcastOpmlEncodingError);
     expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it("publishes one Unknown placement change after a successful import", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        data: {
+          total: 1,
+          imported: 1,
+          skipped_already_subscribed: 0,
+          skipped_invalid: 0,
+          errors: [],
+        },
+      }),
+    );
+    const file = new File(["<opml />"], "feeds.opml", { type: "text/xml" });
+    const before = libraryPlacementSnapshot().revision;
+
+    await importPodcastOpml({ file, libraryIds: ["library-1"] });
+
+    const after = libraryPlacementSnapshot();
+    expect(after.revision).toBe(before + 1);
+    expect(after.affectedLibraryIds).toBe("Unknown");
     fetchSpy.mockRestore();
   });
 });

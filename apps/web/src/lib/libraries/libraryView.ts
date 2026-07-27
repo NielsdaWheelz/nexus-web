@@ -1,6 +1,7 @@
-// Library-specific view: closed order/completion types plus a strict, total
-// URLSearchParams <-> LibraryEntryView codec and preset helpers for the
-// "Sort by" select. See docs/cutovers/library-sorting-hard-cutover.md.
+// Library-specific view: closed order/projection/completion types plus a
+// strict, total URLSearchParams <-> LibraryEntryView codec, view-selector
+// helpers, and exact product labels. See
+// docs/cutovers/library-all-and-smart-views-hard-cutover.md.
 
 export type SortDirection = "asc" | "desc";
 
@@ -13,9 +14,14 @@ export type LibraryEntryOrder =
 
 export type Completion = "all" | "unfinished";
 
+export type LibraryEntryProjection =
+  | { kind: "AllItems"; completion: Completion }
+  | { kind: "Unfiled"; completion: Completion }
+  | { kind: "InProgress" };
+
 export interface LibraryEntryView {
   order: LibraryEntryOrder;
-  completion: Completion;
+  projection: LibraryEntryProjection;
 }
 
 export type DecodedLibraryView =
@@ -59,6 +65,19 @@ function orderForFactualSort(
   }
 }
 
+/** Strict order decode: canonical when sort absent, factual requires both sort and direction. */
+function decodeOrder(params: URLSearchParams): LibraryEntryOrder | null {
+  const rawSort = params.get("sort");
+  const rawDirection = params.get("direction");
+  if (rawSort === null) {
+    return rawDirection === null ? { kind: "Canonical" } : null;
+  }
+  if (!isFactualSortKey(rawSort) || !isSortDirection(rawDirection)) {
+    return null;
+  }
+  return orderForFactualSort(rawSort, rawDirection);
+}
+
 /** Strict, total decode. Never normalizes or falls back on a recognized-but-bad value. */
 export function decodeLibraryView(params: URLSearchParams): DecodedLibraryView {
   const rawCompletion = params.get("completion");
@@ -71,24 +90,31 @@ export function decodeLibraryView(params: URLSearchParams): DecodedLibraryView {
     return { kind: "Invalid" };
   }
 
-  const rawSort = params.get("sort");
-  const rawDirection = params.get("direction");
-  if (rawSort === null) {
-    if (rawDirection !== null) {
+  const rawProjection = params.get("projection");
+  let projection: LibraryEntryProjection;
+  if (rawProjection === null) {
+    projection = { kind: "AllItems", completion };
+  } else if (rawProjection === "unfiled") {
+    projection = { kind: "Unfiled", completion };
+  } else if (rawProjection === "in-progress") {
+    // InProgress + Unfinished is unrepresentable.
+    if (completion === "unfinished") {
       return { kind: "Invalid" };
     }
-    return { kind: "Valid", view: { order: { kind: "Canonical" }, completion } };
-  }
-  if (!isFactualSortKey(rawSort) || !isSortDirection(rawDirection)) {
+    projection = { kind: "InProgress" };
+  } else {
     return { kind: "Invalid" };
   }
-  return {
-    kind: "Valid",
-    view: { order: orderForFactualSort(rawSort, rawDirection), completion },
-  };
+
+  const order = decodeOrder(params);
+  if (order === null) {
+    return { kind: "Invalid" };
+  }
+
+  return { kind: "Valid", view: { order, projection } };
 }
 
-/** Copies `current`, replaces the three view-owned keys, preserves everything else. */
+/** Copies `current`, replaces the view-owned keys, preserves everything else. */
 export function encodeLibraryView(
   view: LibraryEntryView,
   current: URLSearchParams,
@@ -97,6 +123,7 @@ export function encodeLibraryView(
   next.delete("sort");
   next.delete("direction");
   next.delete("completion");
+  next.delete("projection");
   switch (view.order.kind) {
     case "Canonical":
       break;
@@ -119,16 +146,126 @@ export function encodeLibraryView(
     default:
       assertNever(view.order);
   }
-  if (view.completion === "unfinished") {
+  switch (view.projection.kind) {
+    case "AllItems":
+      break;
+    case "Unfiled":
+      next.set("projection", "unfiled");
+      break;
+    case "InProgress":
+      next.set("projection", "in-progress");
+      break;
+    default:
+      assertNever(view.projection);
+  }
+  if (completionOf(view) === "unfinished") {
     next.set("completion", "unfinished");
   }
   return next;
 }
 
-/** The API query suffix (e.g. "?sort=title&direction=asc&completion=unfinished", or "" for canonical/all). */
+/** The API query suffix (e.g. "?projection=unfiled&completion=unfinished", or "" for canonical all-items). */
 export function buildLibraryEntriesQuery(view: LibraryEntryView): string {
   const qs = encodeLibraryView(view, new URLSearchParams()).toString();
   return qs ? `?${qs}` : "";
+}
+
+export type ProjectionOptionId = "all-items" | "unfiled" | "in-progress";
+
+/** Default libraries offer Unfiled; named and system libraries do not. */
+export function projectionOptionsFor(
+  isDefaultLibrary: boolean,
+): readonly ProjectionOptionId[] {
+  return isDefaultLibrary
+    ? ["all-items", "unfiled", "in-progress"]
+    : ["all-items", "in-progress"];
+}
+
+export function projectionOptionLabel(id: ProjectionOptionId): string {
+  switch (id) {
+    case "all-items":
+      return "All items";
+    case "unfiled":
+      return "Unfiled";
+    case "in-progress":
+      return "In Progress";
+    default:
+      return assertNever(id);
+  }
+}
+
+export function projectionOptionOf(view: LibraryEntryView): ProjectionOptionId {
+  switch (view.projection.kind) {
+    case "AllItems":
+      return "all-items";
+    case "Unfiled":
+      return "unfiled";
+    case "InProgress":
+      return "in-progress";
+    default:
+      return assertNever(view.projection);
+  }
+}
+
+/** The completion carried by the projection; In Progress has no completion, so "all". */
+export function completionOf(view: LibraryEntryView): Completion {
+  return view.projection.kind === "InProgress"
+    ? "all"
+    : view.projection.completion;
+}
+
+export function projectionSupportsCompletion(view: LibraryEntryView): boolean {
+  return view.projection.kind !== "InProgress";
+}
+
+/**
+ * Switch projection, preserving order. `all-items <-> unfiled` carry the current
+ * completion; entering In Progress drops it; leaving In Progress starts at "all".
+ */
+export function withProjectionOption(
+  view: LibraryEntryView,
+  id: ProjectionOptionId,
+): LibraryEntryView {
+  const completion = completionOf(view);
+  switch (id) {
+    case "all-items":
+      return { order: view.order, projection: { kind: "AllItems", completion } };
+    case "unfiled":
+      return { order: view.order, projection: { kind: "Unfiled", completion } };
+    case "in-progress":
+      return { order: view.order, projection: { kind: "InProgress" } };
+    default:
+      return assertNever(id);
+  }
+}
+
+/** Set completion on a projection that carries it; a no-op for In Progress. */
+export function withCompletion(
+  view: LibraryEntryView,
+  completion: Completion,
+): LibraryEntryView {
+  switch (view.projection.kind) {
+    case "AllItems":
+      return { order: view.order, projection: { kind: "AllItems", completion } };
+    case "Unfiled":
+      return { order: view.order, projection: { kind: "Unfiled", completion } };
+    case "InProgress":
+      return view;
+    default:
+      return assertNever(view.projection);
+  }
+}
+
+/** Exact product label: `{projection} · {order}[ · unfinished only]`. */
+export function formatLibraryView(
+  view: LibraryEntryView,
+  isDefaultLibrary: boolean,
+): string {
+  const projectionLabel = projectionOptionLabel(projectionOptionOf(view));
+  const orderLabel = presetLabel(orderToPresetId(view.order), isDefaultLibrary);
+  const unfinishedOnly =
+    completionOf(view) === "unfinished" && projectionSupportsCompletion(view);
+  return `${projectionLabel} · ${orderLabel}${unfinishedOnly ? " · unfinished only" : ""}`;
 }
 
 export type LibraryOrderPresetId =

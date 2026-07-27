@@ -1,7 +1,7 @@
 "use client";
 
-import { useRef, useState } from "react";
-import LibraryDestinationDisclosure from "@/components/LibraryDestinationDisclosure";
+import { useRef } from "react";
+import LibraryDestinationField from "@/components/libraries/LibraryDestinationField";
 import Button from "@/components/ui/Button";
 import {
   couldNotSubscribeCount,
@@ -54,7 +54,6 @@ export default function OpmlImportPanel({
   onManagePodcasts,
 }: OpmlImportPanelProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [destinationsOpen, setDestinationsOpen] = useState(false);
   const file = selectedFile(state);
   const feedback = feedbackFor(state);
   const feedbackId = "add-opml-feedback";
@@ -117,11 +116,9 @@ export default function OpmlImportPanel({
         ) : null}
       </section>
 
-      <LibraryDestinationDisclosure
+      <LibraryDestinationField
         label="Libraries for new subscriptions"
-        emptySummary="No libraries selected"
-        open={destinationsOpen}
-        onOpenChange={setDestinationsOpen}
+        emptyLabel="No libraries selected"
         selected={destinations}
         onChange={onDestinationsChange}
         interaction={
@@ -132,6 +129,7 @@ export default function OpmlImportPanel({
               : { kind: "Enabled" }
         }
         onCreateDestination={onCreateDestination}
+        layer="palette"
       />
 
       {state.kind === "Complete" ? (

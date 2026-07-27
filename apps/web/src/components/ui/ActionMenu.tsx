@@ -18,6 +18,7 @@ import {
   projectActionControlState,
   type ActionDescriptor,
 } from "@/lib/ui/actionDescriptor";
+import { resolveTransientPortalContainer } from "@/lib/ui/transientPortalContainer";
 import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
 import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
 import { useHistoryDismiss } from "@/lib/ui/useHistoryDismiss";
@@ -77,20 +78,6 @@ const TABBABLE_SELECTOR = [
   "select:not([disabled])",
   '[tabindex]:not([tabindex="-1"])',
 ].join(",");
-
-function resolvePortalContainer(
-  trigger: HTMLButtonElement | null,
-  modalOwned: boolean,
-): HTMLElement {
-  if (!modalOwned) return document.body;
-  const modal = trigger?.closest<HTMLElement>('[role="dialog"]');
-  if (!modal) {
-    throw new Error(
-      "A modal-owned ActionMenu requires a containing dialog element.",
-    );
-  }
-  return modal;
-}
 
 export default function ActionMenu({
   options,
@@ -445,7 +432,10 @@ export default function ActionMenu({
       {menu && typeof document !== "undefined"
         ? createPortal(
             menu,
-            resolvePortalContainer(toggleRef.current, modalToken !== null),
+            resolveTransientPortalContainer(
+              toggleRef.current,
+              modalToken !== null,
+            ),
           )
         : null}
     </div>

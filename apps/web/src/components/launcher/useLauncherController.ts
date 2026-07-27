@@ -98,7 +98,7 @@ const EMPTY_FRECENCY = new Map<string, number>();
 const EMPTY_SEARCH: SearchResultRowViewModel[] = [];
 const EMPTY_BROWSE: BrowseResult[] = [];
 const EMPTY_WEB: LauncherWebResult[] = [];
-// Quick add-url / browse-acquire ingest into "My Library only"; the AddPanel offers a picker.
+// Quick add-url / browse-acquire ingest with no additional libraries; the AddPanel offers a picker.
 const DEFAULT_LIBRARY_IDS: string[] = [];
 
 async function fetchBrowse(

@@ -32,6 +32,11 @@ import SectionOpener from "@/components/ui/SectionOpener";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import PaneToolbar from "@/components/ui/PaneToolbar";
 import { presentLibrary } from "@/lib/collections/presenters/library";
+import {
+  isReservedLibraryName,
+  RESERVED_LIBRARY_NAME_MESSAGE,
+} from "@/lib/libraries/presentation";
+import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
 import { RESOURCE_ACTION_CATALOG } from "@/lib/actions/resourceActions";
 import { useHydrationPreservedInput } from "@/lib/ui/useHydrationPreservedInput";
 import LibrarySettingsDialog from "@/components/LibrarySettingsDialog";
@@ -215,9 +220,11 @@ export default function LibrariesPaneBody() {
         })
       : null;
 
+  const newLibraryNameReserved = isReservedLibraryName(newLibraryName);
+
   const handleCreateLibrary = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newLibraryName.trim()) return;
+    if (!newLibraryName.trim() || newLibraryNameReserved) return;
 
     setCreating(true);
     try {
@@ -246,6 +253,7 @@ export default function LibrariesPaneBody() {
       await apiFetch(`/api/libraries/${library.id}`, {
         method: "DELETE",
       });
+      publishLibraryPlacementChange("Unknown");
       setController((current) =>
         current === null
           ? current
@@ -488,22 +496,46 @@ export default function LibrariesPaneBody() {
         toolbar={
           <PaneToolbar
             search={
-              <form className={styles.createForm} onSubmit={handleCreateLibrary}>
-                <Input
-                  {...newLibraryNameInputProps}
-                  placeholder="New library name..."
-                  className={styles.inputField}
-                  disabled={creating}
-                />
-                <Button
-                  type="submit"
-                  variant="primary"
-                  size="md"
-                  disabled={creating || !newLibraryName.trim()}
+              <>
+                <form
+                  className={styles.createForm}
+                  onSubmit={handleCreateLibrary}
                 >
-                  {creating ? "Creating..." : "Create"}
-                </Button>
-              </form>
+                  <Input
+                    {...newLibraryNameInputProps}
+                    placeholder="New library name..."
+                    className={styles.inputField}
+                    disabled={creating}
+                    aria-invalid={newLibraryNameReserved || undefined}
+                    aria-describedby={
+                      newLibraryNameReserved
+                        ? "library-name-reserved"
+                        : undefined
+                    }
+                  />
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    size="md"
+                    disabled={
+                      creating ||
+                      !newLibraryName.trim() ||
+                      newLibraryNameReserved
+                    }
+                  >
+                    {creating ? "Creating..." : "Create"}
+                  </Button>
+                </form>
+                {newLibraryNameReserved ? (
+                  <p
+                    id="library-name-reserved"
+                    role="alert"
+                    className={styles.createHint}
+                  >
+                    {RESERVED_LIBRARY_NAME_MESSAGE}
+                  </p>
+                ) : null}
+              </>
             }
           />
         }

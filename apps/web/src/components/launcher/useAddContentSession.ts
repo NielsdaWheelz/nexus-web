@@ -33,6 +33,7 @@ import {
   removeLibraryPlacement,
   type LibraryPlacementOption,
 } from "@/lib/libraries/libraryPlacement";
+import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
 import {
   getPodcastOpmlFileError,
   importPodcastOpml,
@@ -504,6 +505,12 @@ export function useAddContentSession(): AddContentSessionController {
     outcomes.forEach((outcome, index) => {
       const item = requireIndexedItem(items, index);
       if (outcome.kind === "Fulfilled") {
+        // One acknowledged create-with-placement unit. Publish this unit's
+        // destination ids so panes reconcile; the create call in ingestionClient
+        // stays decoupled and never republishes.
+        publishLibraryPlacementChange(
+          item.destinations.map((destination) => destination.id),
+        );
         return;
       }
       if (signal.aborted || isAbortError(outcome.error)) return;
@@ -621,6 +628,7 @@ export function useAddContentSession(): AddContentSessionController {
               kind: "ResolveItem",
               item: acceptedItem(item.id, item.intent, result),
             });
+            publishLibraryPlacementChange(libraryIds);
           }
         } else {
           const result = await uploadIngestFile({
@@ -656,6 +664,7 @@ export function useAddContentSession(): AddContentSessionController {
                     result,
                   ),
           });
+          publishLibraryPlacementChange(libraryIds);
         }
       } catch (error) {
         if (

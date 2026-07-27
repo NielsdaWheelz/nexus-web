@@ -402,11 +402,15 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     });
     expect(subscribeButton).toBeInTheDocument();
 
-    const picker = screen.getByRole("combobox", { name: "Libraries" });
-    fireEvent.focus(picker);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Libraries: No libraries selected" }),
+    );
     fireEvent.click(await screen.findByRole("option", { name: "Research" }));
     fireEvent.click(await screen.findByRole("option", { name: "Books" }));
-    fireEvent.keyDown(picker, { key: "Escape" });
+    fireEvent.keyDown(
+      screen.getByRole("combobox", { name: "Search or create a library" }),
+      { key: "Escape" },
+    );
 
     fireEvent.click(subscribeButton);
 

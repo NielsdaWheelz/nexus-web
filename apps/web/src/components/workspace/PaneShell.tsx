@@ -426,7 +426,7 @@ export default function PaneShell({
               subject,
               openLibraryPlacement,
               options: {
-                returnFocusTo: () => detail.triggerEl,
+                anchor: () => detail.triggerEl,
                 returnFocusFallback: present(() =>
                   findPaneChromeFocusTarget(paneId),
                 ),

@@ -2,6 +2,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, isApiError } from "@/lib/api/client";
+import { consumptionProjectionSnapshot } from "@/lib/consumption/projectionRevision";
 import { isAbortError } from "@/lib/errors";
 import {
   assumeLecternItemId,
@@ -722,6 +723,7 @@ describe("LecternProvider ResetProgress install", () => {
 
     const resetDrain = vi.fn(async () => {});
     const unregister = result.current.registerBeforeProgressReset(resetDrain);
+    const beforeRevision = consumptionProjectionSnapshot().revision;
 
     await act(async () => {
       await result.current.setUnread(assumeMediaId(MEDIA_A));
@@ -730,6 +732,8 @@ describe("LecternProvider ResetProgress install", () => {
     expect(resetDrain).not.toHaveBeenCalled();
     const post = mock.calls.find((call) => call.path === "/api/consumption/commands");
     expect(post?.body).toContain('"kind":"SetUnread"');
+    // The consumption install callback publishes exactly one projection revision.
+    expect(consumptionProjectionSnapshot().revision).toBe(beforeRevision + 1);
     unregister();
   });
 

@@ -29,6 +29,7 @@ import {
 import { ApiError, isApiError } from "@/lib/api/client";
 import type { AsyncResource } from "@/lib/api/useResource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { publishConsumptionProjectionChange } from "@/lib/consumption/projectionRevision";
 import { isAbortError } from "@/lib/errors";
 import {
   getLectern,
@@ -554,6 +555,9 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
             throw new Error("Only ResetProgress may return a progress state (defect).");
           }
           installCanonical(result.lectern, unreadMediaIds);
+          // One acknowledged consumption write for all six commands; the pane
+          // decides whether to refetch from its own committed projection.
+          publishConsumptionProjectionChange();
           if (progressState.kind === "Present") {
             emit({ kind: "progressState", state: progressState.value });
           }

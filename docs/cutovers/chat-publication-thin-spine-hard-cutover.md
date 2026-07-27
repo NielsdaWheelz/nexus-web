@@ -1,6 +1,6 @@
 # Chat Publication Thin-Spine Hard Cutover
 
-Status: IMPLEMENTED
+Status: DRAFT
 Date: 2026-07-26
 Type: hard cutover; no legacy path, fallback parser, compatibility payload, or dual write
 
@@ -130,8 +130,6 @@ Rules:
 - Backfill `citation_candidate_ordinal` from the cited edge ordinal where
   `cited_edge_id` already exists. Leave unrecoverable historical candidates
   NULL. No runtime compatibility branch reads old semantics.
-- Rewrite persisted historical `done` events once to the strict eight-field
-  Presence contract; do not retain a legacy decoder.
 - Add no indexes or database business-invariant constraints.
 
 ## Capability contracts

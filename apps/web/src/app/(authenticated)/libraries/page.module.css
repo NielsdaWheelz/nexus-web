@@ -7,6 +7,12 @@
   flex: 1;
 }
 
+.createHint {
+  margin: var(--space-1) 0 0;
+  color: var(--danger);
+  font-size: var(--text-xs);
+}
+
 .invitationInbox {
   display: grid;
   gap: var(--space-3);

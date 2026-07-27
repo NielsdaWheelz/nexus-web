@@ -15,7 +15,7 @@ import type { LibraryPlacementTarget } from "@/lib/libraries/libraryPlacement";
 import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
 
 export interface LibraryPlacementOpenOptions {
-  returnFocusTo: ReturnFocusTarget;
+  anchor: ReturnFocusTarget;
   returnFocusFallback: Presence<ReturnFocusTarget>;
 }
 

@@ -105,7 +105,7 @@ export async function confirmAndDeleteMedia({
 }): Promise<MediaRemovalOutcome> {
   if (
     !confirmRemoval(
-      `Delete "${mediaTitle}" from My Library and libraries you manage? This cannot be undone.`,
+      `Delete "${mediaTitle}" from All and libraries you manage? This cannot be undone.`,
     )
   ) {
     return { kind: "Cancelled" };

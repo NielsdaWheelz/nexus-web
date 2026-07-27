@@ -73,7 +73,7 @@ describe("resource action execution", () => {
       const openLibraryPlacement = vi.fn();
       const returnFocus = () => null;
       const options: LibraryPlacementOpenOptions = {
-        returnFocusTo: returnFocus,
+        anchor: returnFocus,
         returnFocusFallback: { kind: "Absent" },
       };
 
@@ -100,7 +100,7 @@ describe("resource action execution", () => {
   it("rejects unsupported, missing, and contradictory placement subjects", () => {
     const openLibraryPlacement = vi.fn();
     const options: LibraryPlacementOpenOptions = {
-      returnFocusTo: () => null,
+      anchor: () => null,
       returnFocusFallback: { kind: "Absent" },
     };
     const pageRef = assumeCanonicalResourceRef(

@@ -1,4 +1,5 @@
 import { apiCommand204, apiFetch } from "@/lib/api/client";
+import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { isRecord } from "@/lib/validation";
 
@@ -134,6 +135,7 @@ export async function addLibraryPlacement(
         method: "POST",
         body: JSON.stringify({ podcast_id: target.id }),
       });
+      publishLibraryPlacementChange([libraryId]);
       return;
   }
 }
@@ -149,12 +151,14 @@ export async function removeLibraryPlacement(
         method: "DELETE",
         signal,
       });
+      publishLibraryPlacementChange([libraryId]);
       return;
     case "Podcast":
       await apiCommand204(
         `/api/libraries/${libraryId}/podcasts/${target.id}`,
         { method: "DELETE", signal },
       );
+      publishLibraryPlacementChange([libraryId]);
       return;
   }
 }
@@ -169,6 +173,7 @@ export async function addMediaToLibraries(
     body: JSON.stringify({ library_ids: libraryIds }),
     signal,
   });
+  publishLibraryPlacementChange([...libraryIds]);
 }
 
 // Add Content already owns an authorized intake session and patches its local

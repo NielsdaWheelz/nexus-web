@@ -733,11 +733,13 @@ def _load_library(
             out.append(_missing(ref.uri, "library"))
             continue
         count = virtual_counts.get(row[0], physical_counts.get(row[0], 0))
+        # The viewer's own Default library presents as "All" on every label
+        # surface; its stored seeded name is never shown.
         out.append(
             LoadedResource(
                 uri=ref.uri,
                 scheme="library",
-                title=str(row[1]),
+                title="All" if bool(row[2]) else str(row[1]),
                 item_count=int(count),
             )
         )
@@ -754,7 +756,9 @@ def _load_artifact(
             """
             SELECT a.id, a.subject_scheme, a.subject_id,
                    COALESCE(
-                       m.title, c.title, l.name, p.title, co.display_name,
+                       m.title, c.title,
+                       CASE WHEN l.is_default THEN 'All' ELSE l.name END,
+                       p.title, co.display_name,
                        pg.title, CASE WHEN nb.id IS NOT NULL THEN 'Note' END
                    ) AS subject_title,
                    r.id AS revision_id, r.content_md,
@@ -825,7 +829,9 @@ def _load_artifact_revision(
             """
             SELECT r.id, a.id AS artifact_id, a.subject_scheme, a.subject_id,
                    COALESCE(
-                       m.title, c.title, l.name, p.title, co.display_name,
+                       m.title, c.title,
+                       CASE WHEN l.is_default THEN 'All' ELSE l.name END,
+                       p.title, co.display_name,
                        pg.title, CASE WHEN nb.id IS NOT NULL THEN 'Note' END
                    ) AS subject_title,
                    r.content_md, a.current_revision_id = r.id AS is_current,
