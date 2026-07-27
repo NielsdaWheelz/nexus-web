@@ -3,12 +3,12 @@ import { describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api/client";
 import { useReaderProgress } from "./useReaderProgress";
 import type { ReaderCursorPositioned } from "./readerProgress";
-import type { ReaderResumeState } from "./types";
+import type { ReaderResumeState, WebReaderResumeState } from "./types";
 
 type Options = Parameters<typeof useReaderProgress>[0];
 type ApiFetch = NonNullable<Options["apiFetch"]>;
 
-function webLocator(textOffset: number): ReaderResumeState {
+function webLocator(textOffset: number): WebReaderResumeState {
   return {
     kind: "web",
     target: { fragment_id: "frag-1" },
@@ -30,6 +30,15 @@ const Z = webLocator(40);
 const OTHER = webLocator(50);
 const OTHER2 = webLocator(60);
 const CAP = webLocator(70);
+const TERMINAL_WEB: ReaderResumeState = {
+  ...webLocator(80),
+  locations: {
+    text_offset: 80,
+    progression: 1,
+    total_progression: 1,
+    position: 1,
+  },
+};
 
 function baseOptions(overrides: Partial<Options> = {}): Options {
   return {
@@ -37,6 +46,7 @@ function baseOptions(overrides: Partial<Options> = {}): Options {
     isPaneActive: true,
     captureCurrentLocator: () => null,
     applyCursor: async () => "applied",
+    onTerminalWriteAcknowledged: () => {},
     ...overrides,
   };
 }
@@ -206,6 +216,103 @@ describe("useReaderProgress: save scheduling", () => {
     });
 
     vi.useRealTimers();
+  });
+});
+
+describe("useReaderProgress: terminal write acknowledgement", () => {
+  it("notifies the latest callback after an equal terminal web write persists", async () => {
+    const scripted = createScriptedFetch();
+    scripted.pushGetJson({ state: "Positioned", revision: 1, locator: START });
+    const staleAcknowledgement = vi.fn();
+    const acknowledgement = vi.fn();
+
+    const { result, rerender } = renderHook(
+      ({ onTerminalWriteAcknowledged }) =>
+        useReaderProgress(
+          baseOptions({ apiFetch: scripted.apiFetch, onTerminalWriteAcknowledged }),
+        ),
+      { initialProps: { onTerminalWriteAcknowledged: staleAcknowledgement } },
+    );
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    rerender({ onTerminalWriteAcknowledged: acknowledgement });
+    scripted.pushPutJson({
+      state: "Positioned",
+      revision: 2,
+      locator: TERMINAL_WEB,
+    });
+    act(() => {
+      result.current.reportMovement(TERMINAL_WEB);
+    });
+    await act(async () => {
+      await result.current.drainForProgressReset();
+    });
+
+    expect(acknowledgement).toHaveBeenCalledOnce();
+    expect(staleAcknowledgement).not.toHaveBeenCalled();
+  });
+
+  it("does not notify for a nonterminal or unequal successful write", async () => {
+    const scripted = createScriptedFetch();
+    scripted.pushGetJson({ state: "Positioned", revision: 1, locator: START });
+    const acknowledgement = vi.fn();
+
+    const { result } = renderHook(() =>
+      useReaderProgress(
+        baseOptions({ apiFetch: scripted.apiFetch, onTerminalWriteAcknowledged: acknowledgement }),
+      ),
+    );
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    scripted.pushPutJson({ state: "Positioned", revision: 2, locator: A });
+    act(() => {
+      result.current.reportMovement(A);
+    });
+    await act(async () => {
+      await result.current.drainForProgressReset();
+    });
+
+    scripted.pushPutJson({ state: "Positioned", revision: 3, locator: A });
+    act(() => {
+      result.current.reportMovement(TERMINAL_WEB);
+    });
+    await act(async () => {
+      await result.current.drainForProgressReset();
+    });
+
+    expect(acknowledgement).not.toHaveBeenCalled();
+  });
+
+  it("does not notify after a terminal write failure or conflict", async () => {
+    const scripted = createScriptedFetch();
+    scripted.pushGetJson({ state: "Positioned", revision: 1, locator: START });
+    const acknowledgement = vi.fn();
+
+    const { result } = renderHook(() =>
+      useReaderProgress(
+        baseOptions({ apiFetch: scripted.apiFetch, onTerminalWriteAcknowledged: acknowledgement }),
+      ),
+    );
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    scripted.pushPutReject(new Error("network down"));
+    act(() => {
+      result.current.reportMovement(TERMINAL_WEB);
+    });
+    await act(async () => {
+      await result.current.drainForProgressReset();
+    });
+
+    scripted.pushGetJson({ state: "Positioned", revision: 1, locator: START });
+    scripted.pushPutReject(
+      conflictError({ state: "Positioned", revision: 3, locator: TERMINAL_WEB }),
+    );
+    act(() => {
+      result.current.retrySave();
+    });
+    await waitFor(() => expect(result.current.handoff).not.toBeNull());
+
+    expect(acknowledgement).not.toHaveBeenCalled();
   });
 });
 
@@ -392,6 +499,50 @@ describe("useReaderProgress: stayAtLocalPosition", () => {
     });
 
     await waitFor(() => expect(result.current.handoff).toBeNull());
+  });
+
+  it("keeps a pending terminal locator when layout capture has moved", async () => {
+    const scripted = createScriptedFetch();
+    scripted.pushGetJson({ state: "Positioned", revision: 1, locator: START });
+    const conflictSnapshot: ReaderCursorPositioned = {
+      state: "Positioned",
+      revision: 5,
+      locator: Z,
+    };
+
+    const { result } = renderHook(() =>
+      useReaderProgress(
+        baseOptions({
+          apiFetch: scripted.apiFetch,
+          captureCurrentLocator: () => CAP,
+        }),
+      ),
+    );
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    vi.useFakeTimers();
+    scripted.pushPutReject(conflictError(conflictSnapshot));
+    act(() => {
+      result.current.reportMovement(TERMINAL_WEB);
+    });
+    await vi.advanceTimersByTimeAsync(500);
+    vi.useRealTimers();
+    await waitFor(() => expect(result.current.handoff).not.toBeNull());
+
+    scripted.pushPutJson({
+      state: "Positioned",
+      revision: 6,
+      locator: TERMINAL_WEB,
+    });
+    act(() => {
+      result.current.stayAtLocalPosition();
+    });
+
+    await waitFor(() => expect(scripted.calls.filter(isPut)).toHaveLength(2));
+    expect(putBody(scripted.calls.filter(isPut).at(-1))).toEqual({
+      locator: TERMINAL_WEB,
+      base_revision: 5,
+    });
   });
 
   it("surfaces captureUnavailable when the synchronous capture returns null", async () => {
@@ -643,6 +794,47 @@ describe("useReaderProgress: lifecycle capture", () => {
     // The still-armed idle timer must not double-send after the flush.
     await new Promise((resolve) => setTimeout(resolve, 600));
     expect(scripted.calls.filter(isPut)).toHaveLength(1);
+  });
+
+  it("keeps a failed terminal locator when lifecycle capture has moved", async () => {
+    const scripted = createScriptedFetch();
+    scripted.pushGetJson({ state: "Positioned", revision: 1, locator: START });
+
+    const { result } = renderHook(() =>
+      useReaderProgress(
+        baseOptions({
+          apiFetch: scripted.apiFetch,
+          captureCurrentLocator: () => CAP,
+        }),
+      ),
+    );
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    vi.useFakeTimers();
+    scripted.pushPutReject(new Error("network down"));
+    act(() => {
+      result.current.reportMovement(TERMINAL_WEB);
+    });
+    await vi.advanceTimersByTimeAsync(500);
+    vi.useRealTimers();
+    await waitFor(() => expect(result.current.saveFailed).toBe(true));
+
+    scripted.pushPutJson({
+      state: "Positioned",
+      revision: 2,
+      locator: TERMINAL_WEB,
+    });
+    act(() => {
+      window.dispatchEvent(new Event("pagehide"));
+    });
+
+    await waitFor(() => expect(scripted.calls.filter(isPut)).toHaveLength(2));
+    const call = scripted.calls.filter(isPut).at(-1);
+    expect(putBody(call)).toEqual({
+      locator: TERMINAL_WEB,
+      base_revision: 1,
+    });
+    expect(call?.init?.keepalive).toBe(true);
   });
 
   it("sends a same-locator cursor write on a clean lifecycle flush, so engagement still advances", async () => {

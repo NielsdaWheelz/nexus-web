@@ -205,6 +205,21 @@ pixels.
 this makes resume resilient to font-size, line-height, and column-width
 changes.
 
+### natural completion uses semantic end evidence
+
+First-visible canonical offsets are correct for resume but cannot prove the end
+of a reflowable document: at physical bottom the first visible line remains
+roughly one viewport before the final text. Completion therefore uses the
+actual text scrollport and an in-flow end marker, not another percentage
+heuristic.
+
+Trusted forward input gates the terminal observation so restore, hash
+navigation, and typography reflow cannot finish a document. The final canonical
+unit emits the existing locator at its exact text length with both progressions
+equal to `1`; Consumption remains the only Finished-policy owner. This reuses
+the cursor transaction, engagement high-water, and Lectern projection without a
+completion event model, observer framework, or second command.
+
 ### layered epub/web/pdf resume
 
 - epub resolves one-shot hash targets such as `#loc-<section_id>` first,

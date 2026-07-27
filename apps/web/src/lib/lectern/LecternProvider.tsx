@@ -117,6 +117,8 @@ export interface LecternCapability {
     mediaIds: MediaId[];
     state: "Finished" | "Unread";
   }): Promise<ConsumptionResult>;
+  /** Queue one best-effort canonical refresh, bypassing lifecycle throttling. */
+  revalidate(): void;
   onCanonicalInstall(listener: (event: CanonicalInstallEvent) => void): () => void;
   /**
    * Register a pre-command hook run (and awaited) before ResetProgress enters
@@ -200,6 +202,7 @@ type LecternEngineMethods = Pick<
   | "resetProgress"
   | "undoCompletion"
   | "setBatchState"
+  | "revalidate"
   | "onCanonicalInstall"
   | "registerBeforeProgressReset"
   | "getCanonicalSnapshot"
@@ -217,7 +220,8 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
   let lane: Promise<void> = Promise.resolve();
   let installCounter = 0;
   let lastInstallAt = 0;
-  let revalidationQueued = false;
+  let lifecycleRevalidationQueued = false;
+  let forcedRevalidationQueued = false;
 
   let resource: AsyncResource<LecternSnapshot> = { status: "loading" };
   let mutation: LecternMutationState = { kind: "Idle" };
@@ -308,7 +312,7 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
       let failure: unknown;
       let ok = false;
       try {
-        snapshot = await runWithDeadline(getLectern);
+        snapshot = await runWithDeadline((signal) => getLectern({ signal }));
         ok = true;
       } catch (error) {
         failure = error;
@@ -414,7 +418,7 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
     let failure: unknown;
     let ok = false;
     try {
-      snapshot = await runWithDeadline(getLectern);
+      snapshot = await runWithDeadline((signal) => getLectern({ signal }));
       ok = true;
     } catch (error) {
       failure = error;
@@ -433,29 +437,41 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
     });
   }
 
-  async function runRevalidationGet(gen: number, enqueuedCounter: number): Promise<void> {
+  async function runRevalidationGet(
+    gen: number,
+    forced: boolean,
+    enqueuedCounter: number,
+  ): Promise<void> {
     try {
       if (!active(gen)) return;
       let snapshot: LecternSnapshot | undefined;
       let ok = false;
       try {
-        snapshot = await runWithDeadline(getLectern);
+        snapshot = await runWithDeadline((signal) =>
+          getLectern(forced ? { signal, cache: "no-store" } : { signal }),
+        );
         ok = true;
       } catch (error) {
         // justify-ignore-error: revalidation is best-effort. A failed background
-        // GET keeps the last good snapshot; the spec surfaces no error affordance
-        // for revalidation (never poll, no public refresh). Unauthenticated
-        // failures still classify to the login-redirect owner.
+        // GET keeps the last good snapshot; the spec gives background refresh no
+        // error affordance and never polls. Unauthenticated failures still
+        // classify to the login-redirect owner.
         handleUnauthenticatedApiError(error);
         ok = false;
       }
       if (!active(gen) || !ok) return;
-      // Skip installing if any mutation/reconciliation install landed after this
-      // GET was enqueued (a GET cannot overwrite a later mutation result).
+      // Skip installing if another FIFO install landed while this GET was in
+      // flight (a GET cannot overwrite a later mutation result).
       if (installCounter !== enqueuedCounter) return;
       installCanonical(snapshot as LecternSnapshot);
     } finally {
-      revalidationQueued = false;
+      if (gen === generation) {
+        if (forced) {
+          forcedRevalidationQueued = false;
+        } else {
+          lifecycleRevalidationQueued = false;
+        }
+      }
     }
   }
 
@@ -463,10 +479,18 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
     if (!active(gen)) return;
     if (resource.status !== "ready") return;
     if (Date.now() - lastInstallAt < LECTERN_REVALIDATE_MIN_INTERVAL_MS) return;
-    if (revalidationQueued) return;
-    revalidationQueued = true;
+    if (lifecycleRevalidationQueued) return;
+    lifecycleRevalidationQueued = true;
     const enqueuedCounter = installCounter;
-    enqueue(() => runRevalidationGet(gen, enqueuedCounter));
+    enqueue(() => runRevalidationGet(gen, false, enqueuedCounter));
+  }
+
+  function revalidate(): void {
+    const gen = generation;
+    if (!active(gen) || forcedRevalidationQueued) return;
+    forcedRevalidationQueued = true;
+    // Capture after all earlier FIFO work, immediately before this GET starts.
+    enqueue(() => runRevalidationGet(gen, true, installCounter));
   }
 
   function enqueueLecternMutation(
@@ -726,7 +750,8 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
     running = true;
     if (lifecycleController.signal.aborted) lifecycleController = new AbortController();
     lane = Promise.resolve();
-    revalidationQueued = false;
+    lifecycleRevalidationQueued = false;
+    forcedRevalidationQueued = false;
     setResource({ status: "loading" });
     setMutation({ kind: "Idle" });
     onFocus = () => maybeRevalidate(gen);
@@ -759,6 +784,7 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
     resetProgress,
     undoCompletion,
     setBatchState,
+    revalidate,
     onCanonicalInstall,
     registerBeforeProgressReset,
     getCanonicalSnapshot,
@@ -802,6 +828,7 @@ export function LecternProvider({ children }: { children: ReactNode }) {
       resetProgress: engine.resetProgress,
       undoCompletion: engine.undoCompletion,
       setBatchState: engine.setBatchState,
+      revalidate: engine.revalidate,
       onCanonicalInstall: engine.onCanonicalInstall,
       registerBeforeProgressReset: engine.registerBeforeProgressReset,
       getCanonicalSnapshot: engine.getCanonicalSnapshot,

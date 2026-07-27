@@ -16,11 +16,50 @@ import {
   scrollElementIntoPaneView,
 } from "@/lib/reader/paneScroll";
 
+export const READER_END_TOLERANCE_PX = 2;
+
 export {
   getPaneScrollContainer,
   isElementInPaneView,
   scrollElementIntoPaneView,
 };
+
+export function isTextViewportAtEnd(
+  viewport: HTMLElement,
+  endMarker: HTMLElement,
+): boolean {
+  if (
+    !viewport.isConnected ||
+    !endMarker.isConnected ||
+    viewport.scrollHeight <= 0 ||
+    viewport.clientHeight <= 0
+  ) {
+    return false;
+  }
+
+  const bottomDistance =
+    viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop;
+  if (Math.abs(bottomDistance) > READER_END_TOLERANCE_PX) {
+    return false;
+  }
+
+  const viewportRect = viewport.getBoundingClientRect();
+  const endMarkerRect = endMarker.getBoundingClientRect();
+  if (
+    viewportRect.width <= 0 ||
+    viewportRect.height <= 0 ||
+    endMarkerRect.width <= 0 ||
+    endMarkerRect.height <= 0
+  ) {
+    return false;
+  }
+  return (
+    endMarkerRect.right > viewportRect.left &&
+    endMarkerRect.left < viewportRect.right &&
+    endMarkerRect.bottom > viewportRect.top &&
+    endMarkerRect.top < viewportRect.bottom
+  );
+}
 
 export function findFirstVisibleCanonicalOffset(
   container: HTMLElement,

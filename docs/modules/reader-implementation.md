@@ -54,6 +54,28 @@ resume state, or scroll position. Non-reader and window scroll are outside this
 contract. See [workspace.md](workspace.md#mobile-reader-chrome) for the workspace
 composition contract.
 
+### natural document completion
+
+Web articles and the final EPUB section render a semantic end marker inside the
+same `.documentViewport` that owns reading scroll. `TextDocumentReader`
+publishes that exact viewport through one scroll listener; mobile chrome,
+resume capture, and activity measurement consume the publication.
+
+Natural completion requires trusted forward scroll intent after the current
+content generation was positioned. Programmatic restore, hash navigation,
+remote handoff, reflow, and section loading never complete a document. A short
+document completes only after a forward wheel/touch/key intent while its end is
+already visible.
+
+The terminal capture is the existing `web` or `epub` locator at the canonical
+text length. Only the last canonical fragment/navigation section may set both
+`progression` and `total_progression` to exact `1`. The browser owns no Finished
+threshold and sends no completion command: the ordinary reader-state PUT
+atomically advances Consumption engagement and completion. After the write is
+acknowledged, the Lectern provider performs one FIFO-owned revalidation. Its
+canonical Finished projection may publish the existing next-item prompt in the
+in-flow endcap; navigation remains an explicit user action.
+
 ### Resource Inspector and Document Map surfaces
 
 The Media pane publishes one `resource-inspector` secondary group:

@@ -18,8 +18,11 @@ import {
   type LecternSnapshot,
 } from "@/lib/lectern/contract";
 
-export async function getLectern(signal?: AbortSignal): Promise<LecternSnapshot> {
-  const body = await apiFetch<unknown>("/api/lectern", { signal });
+export async function getLectern(options: {
+  signal?: AbortSignal;
+  cache?: RequestCache;
+} = {}): Promise<LecternSnapshot> {
+  const body = await apiFetch<unknown>("/api/lectern", options);
   return decodeDataEnvelope(body, decodeLecternSnapshot, "GET /api/lectern");
 }
 

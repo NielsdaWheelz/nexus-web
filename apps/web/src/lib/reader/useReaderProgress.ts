@@ -70,6 +70,8 @@ interface UseReaderProgressOptions {
   captureCurrentLocator: () => ReaderResumeState | null;
   /** Format-owned application of a remote cursor or canonical reset snapshot. */
   applyCursor: (command: ApplyCursorCommand) => Promise<ApplyCursorResult>;
+  /** A terminal web/EPUB cursor write was durably acknowledged by the server. */
+  onTerminalWriteAcknowledged: () => void;
 }
 
 export interface ReaderProgress {
@@ -97,6 +99,14 @@ export interface ReaderProgress {
   stayAtLocalPosition: () => void;
   /** Polite live-region text; empty when nothing to announce. */
   announcement: string;
+}
+
+function isTerminalReaderLocator(locator: ReaderResumeState): boolean {
+  return (
+    (locator.kind === "web" || locator.kind === "epub") &&
+    locator.locations.progression === 1 &&
+    locator.locations.total_progression === 1
+  );
 }
 
 export function useReaderProgress(options: UseReaderProgressOptions): ReaderProgress {
@@ -131,6 +141,8 @@ export function useReaderProgress(options: UseReaderProgressOptions): ReaderProg
   captureRef.current = options.captureCurrentLocator;
   const applyCursorRef = useRef(options.applyCursor);
   applyCursorRef.current = options.applyCursor;
+  const onTerminalWriteAcknowledgedRef = useRef(options.onTerminalWriteAcknowledged);
+  onTerminalWriteAcknowledgedRef.current = options.onTerminalWriteAcknowledged;
 
   /** Reduce, mirror synchronously, and dispatch — callers act on the result. */
   const apply = useCallback((event: ReaderProgressEvent): ReaderProgressState => {
@@ -173,6 +185,19 @@ export function useReaderProgress(options: UseReaderProgressOptions): ReaderProg
             throw new Error("Cursor write returned an Empty snapshot");
           }
           apply({ type: "save_succeeded", snapshot });
+          if (
+            isTerminalReaderLocator(locator) &&
+            isTerminalReaderLocator(snapshot.locator) &&
+            readerResumeStatesEqual(locator, snapshot.locator)
+          ) {
+            try {
+              onTerminalWriteAcknowledgedRef.current();
+            } catch (error) {
+              // The cursor has already been acknowledged. A consumer-owned
+              // follow-up cannot turn that durable success into a save failure.
+              console.error("Terminal reader cursor acknowledgement failed:", error);
+            }
+          }
         } catch (err) {
           if (generationRef.current !== generation) {
             return;
@@ -442,9 +467,14 @@ export function useReaderProgress(options: UseReaderProgressOptions): ReaderProg
       return;
     }
     if (current.local.status === "dirty" || current.local.status === "save_failed") {
-      const captured = captureRef.current();
-      if (captured !== null && !readerResumeStatesEqual(captured, current.local.locator)) {
-        apply({ type: "moved", locator: captured });
+      if (!isTerminalReaderLocator(current.local.locator)) {
+        const captured = captureRef.current();
+        if (
+          captured !== null &&
+          !readerResumeStatesEqual(captured, current.local.locator)
+        ) {
+          apply({ type: "moved", locator: captured });
+        }
       }
       void sendCursor(saveBaseRevision(current), true);
       return;
@@ -645,7 +675,11 @@ export function useReaderProgress(options: UseReaderProgressOptions): ReaderProg
     if (current.remote.status !== "candidate") {
       return;
     }
-    const captured = captureRef.current();
+    const pending = pendingLocator(current.local);
+    const captured =
+      pending !== null && isTerminalReaderLocator(pending)
+        ? pending
+        : captureRef.current();
     if (captured === null) {
       setCaptureUnavailable(true);
       return;

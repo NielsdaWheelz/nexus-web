@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { userEvent } from "vitest/browser";
 import { useReaderActivityAdapter } from "./ReaderActivityAdapter";
@@ -44,9 +44,8 @@ function ReaderHarness({
 }) {
   const readerRootRef = useRef<HTMLDivElement>(null);
   const pdfContentRef = useRef<HTMLDivElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
-  const cursorRef = useRef(null);
-  useReaderActivityAdapter({
+  const { noteGenuineInput, publishTextMeasurement } =
+    useReaderActivityAdapter({
     mediaId: "00000000-0000-4000-8000-000000000702",
     observerKey: "reader:activity-test",
     canRead: true,
@@ -55,24 +54,37 @@ function ReaderHarness({
     viewport: { hydrated: true, kind: "desktop" },
     readerRootRef,
     pdfContentRef,
-    contentRef,
-    cursorRef,
-    activeContent: isPdf ? null : { canonicalText: "reader fixture", documentWordStart: 10 },
+    activeContent: isPdf
+      ? null
+      : { canonicalText: "reader fixture", documentWordStart: 10 },
     pdfControls: isPdf
       ? {
           pageNumber: 2,
           numPages: 4,
         }
       : null,
-    totalProgression,
-    isUserScrollKey: (event) => event.key === "ArrowDown",
-  });
+    });
+  useEffect(() => {
+    if (!isPdf) {
+      publishTextMeasurement({
+        anchorOffset: 7,
+        totalProgression,
+      });
+    }
+  }, [isPdf, publishTextMeasurement, totalProgression]);
   return (
-    <div ref={contentRef} data-pane-content>
-      <div ref={isPdf ? pdfContentRef : readerRootRef} data-testid="reader-root" tabIndex={0}>
+    <>
+      <div
+        ref={isPdf ? pdfContentRef : readerRootRef}
+        data-testid="reader-root"
+        tabIndex={0}
+      >
         Reader
       </div>
-    </div>
+      <button type="button" onClick={noteGenuineInput}>
+        Trusted viewport intent
+      </button>
+    </>
   );
 }
 
@@ -131,6 +143,20 @@ describe("useReaderActivityAdapter", () => {
 
     await waitFor(() => expect(latestReadingObservation().eligible).toBe(true));
     expect(latestReadingObservation().measurement.progress).toBe(0.5);
+  });
+
+  it("takes text scroll activity only from the shared trusted viewport path", async () => {
+    render(<ReaderHarness />);
+    const root = screen.getByTestId("reader-root");
+
+    fireEvent.wheel(root, { deltaY: 10 });
+    expect(latestReadingObservation().eligible).toBe(false);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Trusted viewport intent" }),
+    );
+    await waitFor(() => expect(latestReadingObservation().eligible).toBe(true));
+    expect(latestReadingObservation().measurement.progress).toBe(0.25);
   });
 
   it("publishes PDF progression without a word position", async () => {

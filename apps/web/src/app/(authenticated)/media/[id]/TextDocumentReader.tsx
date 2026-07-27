@@ -1,15 +1,25 @@
 import type {
   CSSProperties,
   FocusEvent,
+  KeyboardEvent,
   MouseEvent,
   PointerEvent,
   ReactNode,
   RefObject,
+  TouchEvent,
+  WheelEvent,
 } from "react";
 import { useEffect, useRef } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
-import type { MobileChromeScrollSnapshot } from "@/lib/workspace/mobileChrome";
 import styles from "./page.module.css";
+
+export type ReaderViewportSnapshot = {
+  scrollTop: number;
+  scrollHeight: number;
+  clientHeight: number;
+};
+
+export type TrustedScrollDirection = "forward" | "backward";
 
 type TextDocumentContentState =
   | {
@@ -34,13 +44,17 @@ export default function TextDocumentReader({
   beforeContent,
   readerRootRef,
   contentRef,
+  textViewportRef,
+  textEndRef,
   readerSurfaceClassName,
   readerSurfaceStyle,
   focusMode,
   hyphenation,
   contentState,
-  onStartReaderScroll,
-  onUpdateReaderScroll,
+  onViewportReady,
+  onViewportScroll,
+  onTrustedScrollIntent,
+  endContent,
   onContentClick,
   onContentPointerOver,
   onContentPointerOut,
@@ -52,13 +66,17 @@ export default function TextDocumentReader({
   beforeContent?: ReactNode;
   readerRootRef: RefObject<HTMLDivElement | null>;
   contentRef: RefObject<HTMLDivElement | null>;
+  textViewportRef: RefObject<HTMLDivElement | null>;
+  textEndRef: RefObject<HTMLElement | null>;
   readerSurfaceClassName: string;
   readerSurfaceStyle: CSSProperties;
   focusMode: string;
   hyphenation: string;
   contentState: TextDocumentContentState;
-  onStartReaderScroll: (snapshot: MobileChromeScrollSnapshot) => void;
-  onUpdateReaderScroll: (snapshot: MobileChromeScrollSnapshot) => void;
+  onViewportReady: (snapshot: ReaderViewportSnapshot) => void;
+  onViewportScroll: (snapshot: ReaderViewportSnapshot) => void;
+  onTrustedScrollIntent: (direction: TrustedScrollDirection) => void;
+  endContent: ReactNode;
   onContentClick: (event: MouseEvent<HTMLDivElement>) => void;
   onContentPointerOver: (event: PointerEvent<HTMLDivElement>) => void;
   onContentPointerOut: (event: PointerEvent<HTMLDivElement>) => void;
@@ -66,30 +84,104 @@ export default function TextDocumentReader({
   onContentBlur: (event: FocusEvent<HTMLDivElement>) => void;
   onInternalLinkClick?: (href: string | null) => boolean;
 }) {
-  const viewportRef = useRef<HTMLDivElement | null>(null);
-  const onStartReaderScrollRef = useRef(onStartReaderScroll);
-  const onUpdateReaderScrollRef = useRef(onUpdateReaderScroll);
-  onStartReaderScrollRef.current = onStartReaderScroll;
-  onUpdateReaderScrollRef.current = onUpdateReaderScroll;
+  const onViewportReadyRef = useRef(onViewportReady);
+  const onViewportScrollRef = useRef(onViewportScroll);
+  const onTrustedScrollIntentRef = useRef(onTrustedScrollIntent);
+  const lastTouchYRef = useRef<number | null>(null);
+  const pointerScrollActiveRef = useRef(false);
+  const lastScrollTopRef = useRef(0);
+  onViewportReadyRef.current = onViewportReady;
+  onViewportScrollRef.current = onViewportScroll;
+  onTrustedScrollIntentRef.current = onTrustedScrollIntent;
 
   useEffect(() => {
-    const viewport = viewportRef.current;
+    const viewport = textViewportRef.current;
     if (!viewport) {
       return;
     }
 
-    const snapshot = (): MobileChromeScrollSnapshot => ({
+    const snapshot = (): ReaderViewportSnapshot => ({
       scrollTop: viewport.scrollTop,
       scrollHeight: viewport.scrollHeight,
       clientHeight: viewport.clientHeight,
     });
 
-    onStartReaderScrollRef.current(snapshot());
-    const publishScroll = () => onUpdateReaderScrollRef.current(snapshot());
+    lastScrollTopRef.current = viewport.scrollTop;
+    onViewportReadyRef.current(snapshot());
+    const publishScroll = (event: Event) => {
+      const nextSnapshot = snapshot();
+      const delta = nextSnapshot.scrollTop - lastScrollTopRef.current;
+      lastScrollTopRef.current = nextSnapshot.scrollTop;
+      onViewportScrollRef.current(nextSnapshot);
+      if (pointerScrollActiveRef.current && event.isTrusted && delta !== 0) {
+        onTrustedScrollIntentRef.current(
+          delta > 0 ? "forward" : "backward",
+        );
+      }
+    };
 
     viewport.addEventListener("scroll", publishScroll, { passive: true });
     return () => viewport.removeEventListener("scroll", publishScroll);
-  }, [mediaId]);
+  }, [mediaId, textViewportRef]);
+
+  function publishTrustedScrollIntent(direction: TrustedScrollDirection) {
+    onTrustedScrollIntentRef.current(direction);
+  }
+
+  function handleWheel(event: WheelEvent<HTMLDivElement>) {
+    if (!event.isTrusted) return;
+    if (event.deltaY === 0) return;
+    publishTrustedScrollIntent(event.deltaY > 0 ? "forward" : "backward");
+  }
+
+  function handleTouchStart(event: TouchEvent<HTMLDivElement>) {
+    if (!event.isTrusted) return;
+    lastTouchYRef.current = event.touches[0]?.clientY ?? null;
+  }
+
+  function handleTouchMove(event: TouchEvent<HTMLDivElement>) {
+    if (!event.isTrusted) return;
+    const touchY = event.touches[0]?.clientY;
+    const previousTouchY = lastTouchYRef.current;
+    lastTouchYRef.current = touchY ?? null;
+    if (
+      touchY === undefined ||
+      previousTouchY === null ||
+      touchY === previousTouchY
+    ) {
+      return;
+    }
+    publishTrustedScrollIntent(
+      touchY < previousTouchY ? "forward" : "backward",
+    );
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (!event.isTrusted) return;
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    if (
+      event.key === "ArrowDown" ||
+      event.key === "PageDown" ||
+      event.key === "End" ||
+      ((event.key === " " || event.key === "Spacebar") && !event.shiftKey)
+    ) {
+      publishTrustedScrollIntent("forward");
+      return;
+    }
+    if (
+      event.key === "ArrowUp" ||
+      event.key === "PageUp" ||
+      event.key === "Home" ||
+      ((event.key === " " || event.key === "Spacebar") && event.shiftKey)
+    ) {
+      publishTrustedScrollIntent("backward");
+    }
+  }
+
+  function handlePointerDown(event: PointerEvent<HTMLDivElement>) {
+    pointerScrollActiveRef.current =
+      event.isTrusted && event.target === event.currentTarget;
+  }
 
   function handleRenderedContentClick(event: MouseEvent<HTMLDivElement>) {
     const target = event.target;
@@ -124,10 +216,24 @@ export default function TextDocumentReader({
   return (
     <div className={styles.readerFrame}>
       <div
-        ref={viewportRef}
+        ref={textViewportRef}
         className={styles.documentViewport}
         data-testid="document-viewport"
         data-pane-content="true"
+        tabIndex={0}
+        role="region"
+        aria-label="Document reading area"
+        onWheel={handleWheel}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onPointerDown={handlePointerDown}
+        onPointerUp={() => {
+          pointerScrollActiveRef.current = false;
+        }}
+        onPointerCancel={() => {
+          pointerScrollActiveRef.current = false;
+        }}
+        onKeyDown={handleKeyDown}
       >
         {beforeContent}
         <div
@@ -164,6 +270,11 @@ export default function TextDocumentReader({
                 />
               </div>
             )}
+            {contentState.status === "ready" ? (
+              <section ref={textEndRef} className={styles.readerEndcap}>
+                {endContent}
+              </section>
+            ) : null}
           </div>
         </div>
       </div>

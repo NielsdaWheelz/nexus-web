@@ -19,6 +19,14 @@ hard-cuts the independent Recent product and replaces it with the on-demand
 Resonance-owned **At hand** Slate. Lectern queue ordering and command ownership
 remain unchanged.
 
+**Reader-completion supersession (2026-07-26):**
+[`reader-natural-completion-hard-cutover.md`](reader-natural-completion-hard-cutover.md)
+supersedes this document's threshold-driven browser prompt, rejection of an end
+marker, and out-of-flow prompt placement. Natural completion now uses trusted
+forward input at the final semantic DOM end, persists an exact terminal locator
+through the existing reader-state path, and renders the canonical next prompt
+inside the text scrollport. Lectern command ownership remains unchanged.
+
 ## One-line
 
 Rename `playback_queue_items` → `consumption_queue_items` and widen it to hold any

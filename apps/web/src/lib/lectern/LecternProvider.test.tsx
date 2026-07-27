@@ -10,6 +10,7 @@ import {
 } from "@/lib/lectern/contract";
 import {
   LECTERN_COMMAND_DEADLINE_MS,
+  LECTERN_REVALIDATE_MIN_INTERVAL_MS,
   LecternProvider,
   useLectern,
   type CanonicalInstallEvent,
@@ -100,6 +101,7 @@ interface RecordedCall {
   path: string;
   method: string;
   body: string | null;
+  cache: RequestCache | undefined;
 }
 
 interface LecternFetchMock {
@@ -133,7 +135,7 @@ function installLecternFetchMock(): LecternFetchMock {
     const url = new URL(String(input), "http://localhost");
     const method = (init?.method ?? "GET").toUpperCase();
     const body = typeof init?.body === "string" ? init.body : null;
-    calls.push({ path: url.pathname, method, body });
+    calls.push({ path: url.pathname, method, body, cache: init?.cache });
     const signal = init?.signal ?? null;
     if (url.pathname === "/api/lectern" && method === "GET") return handlers.get(signal);
     if (url.pathname === "/api/lectern/commands" && method === "POST") {
@@ -497,6 +499,127 @@ describe("LecternProvider revalidation", () => {
     });
     await drain();
     expect(mock.gets()).toHaveLength(2);
+  });
+
+  it("forces one no-store FIFO refresh after earlier mutation work", async () => {
+    const mock = installLecternFetchMock();
+    mock.handlers.get = async () => {
+      return jsonResponse({
+        data: wireSnapshot(ITEMS_AB),
+      });
+    };
+    mock.handlers.postLectern = async () =>
+      jsonResponse({
+        data: lecternRemoved(ITEM_A, [wireItem(ITEM_B, MEDIA_B, "Bravo")]),
+      });
+
+    const { result } = renderLectern();
+    await waitFor(() => expect(result.current.resource.status).toBe("ready"));
+
+    let removal!: Promise<unknown>;
+    act(() => {
+      removal = result.current.removeItem(idA);
+      result.current.revalidate();
+      result.current.revalidate();
+    });
+    await act(async () => {
+      await removal;
+    });
+    // The forced GET captures install ordering when it starts after the
+    // mutation, so it installs its own current response rather than skipping
+    // itself based on the counter from its original enqueue point.
+    await waitFor(() => expect(titles(result.current)).toEqual(["Alpha", "Bravo"]));
+    expect(mock.gets()).toHaveLength(2);
+    expect(mock.gets()[1]?.cache).toBe("no-store");
+  });
+
+  it("queues one forced refresh while loading and recovers an initial GET failure", async () => {
+    vi.useFakeTimers();
+    const mock = installLecternFetchMock();
+    let getCount = 0;
+    mock.handlers.get = (signal) => {
+      getCount += 1;
+      return getCount === 1
+        ? hangUntilAbort(signal)
+        : Promise.resolve(jsonResponse({ data: wireSnapshot(ITEMS_AB) }));
+    };
+
+    const { result } = renderLectern();
+    act(() => {
+      result.current.revalidate();
+      result.current.revalidate();
+    });
+    await drain();
+    expect(mock.gets()).toHaveLength(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(LECTERN_COMMAND_DEADLINE_MS);
+    });
+    await drain();
+
+    expect(result.current.resource.status).toBe("ready");
+    expect(mock.gets()).toHaveLength(2);
+    expect(mock.gets()[1]?.cache).toBe("no-store");
+  });
+
+  it("queues a forced refresh behind an in-flight lifecycle refresh", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-16T00:00:00.000Z"));
+    const mock = installLecternFetchMock();
+    let getCount = 0;
+    let resolveLifecycleGet!: (response: Response) => void;
+    mock.handlers.get = () => {
+      getCount += 1;
+      if (getCount === 2) {
+        return new Promise<Response>((resolve) => {
+          resolveLifecycleGet = resolve;
+        });
+      }
+      return Promise.resolve(jsonResponse({ data: wireSnapshot(ITEMS_AB) }));
+    };
+
+    const { result } = renderLectern();
+    await drain();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(LECTERN_REVALIDATE_MIN_INTERVAL_MS);
+    });
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await drain();
+    expect(mock.gets()).toHaveLength(2);
+
+    act(() => {
+      result.current.revalidate();
+      result.current.revalidate();
+      resolveLifecycleGet(jsonResponse({ data: wireSnapshot(ITEMS_AB) }));
+    });
+    await drain();
+    expect(mock.gets()).toHaveLength(3);
+
+    expect(mock.gets()[1]?.cache).toBeUndefined();
+    expect(mock.gets()[2]?.cache).toBe("no-store");
+  });
+
+  it("keeps the last good snapshot when a forced refresh fails", async () => {
+    const mock = installLecternFetchMock();
+    let getCount = 0;
+    mock.handlers.get = async () => {
+      getCount += 1;
+      return getCount === 1
+        ? jsonResponse({ data: wireSnapshot(ITEMS_AB) })
+        : errorResponse(503, "E_UPSTREAM", "refresh unavailable");
+    };
+
+    const { result } = renderLectern();
+    await waitFor(() => expect(result.current.resource.status).toBe("ready"));
+
+    act(() => {
+      result.current.revalidate();
+    });
+    await waitFor(() => expect(mock.gets()).toHaveLength(2));
+    await waitFor(() => expect(titles(result.current)).toEqual(["Alpha", "Bravo"]));
+    expect(result.current.mutation.kind).toBe("Idle");
   });
 });
 
