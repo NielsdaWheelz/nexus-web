@@ -4,12 +4,12 @@
 **Type:** Hard cutover — no legacy code, no fallbacks, no backward-compat shims, no dual identity sources, no client-side restore round-trip.
 **Migration:** None. (`workspace_sessions` table + `WorkspaceState` schema are unchanged; only *where* the device key lives and *when* the session is read change.)
 
-> **Restore-semantics supersession (2026-07-20):** the neutral bare
-> `/libraries` landing described below is historical. `/lectern` is now the
-> canonical authenticated home and an explicit route intent: server restore
-> preserves saved panes, then restores or appends and activates Lectern. See
-> [`docs/modules/app-navigation.md`](../modules/app-navigation.md). The
-> streaming, first-paint, and shared-resolver contracts remain unchanged.
+> **Launch-resume supersession (2026-07-26):** the bare `/libraries` landing
+> and `initialHref` entry representation described below are historical. Bare
+> pathname `/` is now Resume; `/lectern` remains explicit Home; the bootstrap
+> owns the private entry union and returns no `initialHref`. See
+> [`app-launch-resume-hard-cutover.md`](app-launch-resume-hard-cutover.md).
+> The streaming, first-paint, and shared-resolver contracts remain unchanged.
 
 ## One-line
 
@@ -46,7 +46,7 @@ A measurement pass (production build + static waterfall read) overturned the lea
 **Open the app → the chrome is on screen instantly → your actual workspace (the panes you left open) paints with its data, with no wrong-screen flash, no address-bar jump, and no second render.**
 
 1. **Instant chrome.** The first HTTP flush is the shell skeleton (AppNav rail + pane region in its loading state), painted before any FastAPI call resolves and before app JS executes. TTFB is gated only on the local auth check, not on data.
-2. **Correct-from-first-paint workspace.** The first hydrated render shows the user's restored panes (count, order, active pane, per-pane history, attached tool panes) — not a default pane that later swaps. On a bare landing (`/libraries`) the user lands directly in their last workspace; on a deep link (`/media/123`) that pane is active inside the restored layout.
+2. **Correct-from-first-paint workspace.** The first hydrated render shows the user's restored panes (count, order, active pane, per-pane history, attached tool panes) — not a default pane that later swaps. On Resume (`/`) the user lands directly in their last workspace; on a deep link (`/media/123`) that pane is active inside the restored layout.
 3. **Seeded pane data.** Every restored *visible* pane paints from server-prefetched data (hydration cache) — no client fetch for those panes. A pane whose prefetch timed out shows its normal loading state and the client fetches it (one code path; prefetch is the optimization).
 4. **No round-trip, no flash.** There is no post-mount session fetch and no `hydrate` re-dispatch. The only client-side settle is column-width normalization to the current viewport (a layout adjust within the first frame, never a content/pane change).
 5. **Cross-device continuity preserved.** First load on a new device restores the most-recent session from another device (resolved server-side), exactly as before.

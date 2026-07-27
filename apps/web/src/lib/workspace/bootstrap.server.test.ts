@@ -188,11 +188,75 @@ describe("loadWorkspaceBootstrap", () => {
 
     const result = await loadWorkspaceBootstrap(false);
 
-    expect(result.initialHref).toBe("/libraries");
     expect(result.resources["libraries:0"]).toEqual(librariesEnvelope);
   });
 
-  it("falls back to the Lectern home when no request-path header is present", async () => {
+  it("defects when the required request-path header is missing", async () => {
+    await expect(loadWorkspaceBootstrap(false)).rejects.toThrow(
+      "Missing required workspace request path",
+    );
+    expect(mockCallFastAPI).not.toHaveBeenCalled();
+  });
+
+  it("defects when the request-path header is malformed or non-canonical", async () => {
+    requestHeaders.set(REQUEST_PATH_HEADER, "/lectern/../libraries");
+
+    await expect(loadWorkspaceBootstrap(false)).rejects.toThrow(
+      "Request path must be a canonical pathname and search",
+    );
+    expect(mockCallFastAPI).not.toHaveBeenCalled();
+  });
+
+  it("resumes a saved root workspace unchanged without creating or seeding a root pane", async () => {
+    requestHeaders.set(REQUEST_PATH_HEADER, "/");
+    requestCookies.set(DEVICE_COOKIE_NAME, "dev-1");
+    const ownState = workspace({
+      activePrimaryPaneId: "pane-notes",
+      primaryPanes: [
+        primary("pane-notes", "/notes"),
+        primary("pane-media", "/media/123"),
+      ],
+    });
+    const media = { kind: "epub", capabilities: { can_read: true } };
+    respondWith({
+      "/me/reader-profile": PROFILE_OK,
+      "/me/workspace-session?device_id=dev-1": sessionEnvelope({ own: ownState }),
+      "/notes/pages": { data: { pages: [] } },
+      "/media/123": { data: media },
+    });
+
+    const result = await loadWorkspaceBootstrap(false);
+
+    expect(result.initialState).toEqual(ownState);
+    expect(result.initialState.activePrimaryPaneId).toBe("pane-notes");
+    expect(visibleHrefs(result.initialState)).toEqual(["/notes", "/media/123"]);
+    expect(visibleHrefs(result.initialState)).not.toContain("/lectern");
+    expect(mockCallFastAPI).not.toHaveBeenCalledWith("/", expect.anything());
+  });
+
+  it("treats a root shell query as Resume instead of a pane href", async () => {
+    requestHeaders.set(REQUEST_PATH_HEADER, "/?launcher=1&lane=browse&q=kafka");
+    requestCookies.set(DEVICE_COOKIE_NAME, "dev-1");
+    const ownState = workspace({
+      primaryPanes: [primary("pane-notes", "/notes")],
+    });
+    respondWith({
+      "/me/reader-profile": PROFILE_OK,
+      "/me/workspace-session?device_id=dev-1": sessionEnvelope({ own: ownState }),
+      "/notes/pages": { data: { pages: [] } },
+    });
+
+    const result = await loadWorkspaceBootstrap(false);
+
+    expect(visibleHrefs(result.initialState)).toEqual(["/notes"]);
+    expect(mockCallFastAPI).not.toHaveBeenCalledWith(
+      "/?launcher=1&lane=browse&q=kafka",
+      expect.anything(),
+    );
+  });
+
+  it("uses the Lectern default only when root Resume has no usable session", async () => {
+    requestHeaders.set(REQUEST_PATH_HEADER, "/");
     const slateEnvelope = { data: { items: [] } };
     respondWith({
       "/me/reader-profile": PROFILE_OK,
@@ -201,8 +265,10 @@ describe("loadWorkspaceBootstrap", () => {
 
     const result = await loadWorkspaceBootstrap(false);
 
-    expect(result.initialHref).toBe(WORKSPACE_DEFAULT_FALLBACK_HREF);
-    expect(result.initialHref).toBe("/lectern");
+    expect(visibleHrefs(result.initialState)).toEqual([
+      WORKSPACE_DEFAULT_FALLBACK_HREF,
+    ]);
+    expect(activeHref(result.initialState)).toBe(WORKSPACE_DEFAULT_FALLBACK_HREF);
     expect(result.resources["lectern:slate:0"]).toEqual({ items: [] });
   });
 
@@ -857,7 +923,7 @@ describe("loadWorkspaceBootstrap", () => {
 
     const panes = getWorkspacePrimaryPanes(result.initialState);
     expect(panes).toHaveLength(1);
-    expect(panes[0]?.currentVisit.href).toBe(result.initialHref);
+    expect(panes[0]?.currentVisit.href).toBe("/media/solo");
     expect(mockCallFastAPI).not.toHaveBeenCalledWith(
       expect.stringContaining("/me/workspace-session"),
       expect.anything(),
@@ -887,7 +953,7 @@ describe("loadWorkspaceBootstrap", () => {
 
     const panes = getWorkspacePrimaryPanes(result.initialState);
     expect(panes).toHaveLength(1);
-    expect(panes[0]?.currentVisit.href).toBe(result.initialHref);
+    expect(panes[0]?.currentVisit.href).toBe("/media/solo");
     expect(result.resources["solo"]).toEqual({
       media,
       fragments: { status: "ready", data: [] },

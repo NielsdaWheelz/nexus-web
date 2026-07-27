@@ -1302,6 +1302,14 @@ is a _projection_ of the active pane (mirrored via `history.replaceState`), not
 the driver. New devs frequently look in `page.tsx` for behavior that lives in
 `*PaneBody.tsx`.
 
+Authenticated entry is classified once by `loadWorkspaceBootstrap`: pathname
+`/` is Resume and preserves the selected saved workspace exactly; every other
+protected href is Navigate and uses the existing deep-link merge. With no usable
+saved session, Resume creates the existing one-pane Lectern empty state.
+`/lectern` remains explicit Home. Launcher root query intents are consumed in a
+layout effect before the workspace's passive state-to-URL projection, so they
+open over Resume and never become panes.
+
 - **Workspace shell** (`lib/workspace/*`, `components/workspace/*`): a tabbed,
   multi-pane canvas. Durable state (`WorkspaceState`: primary panes with
   visit-identified Back/Forward history, attached secondary tool panes, widths)
@@ -1365,19 +1373,21 @@ the driver. New devs frequently look in `page.tsx` for behavior that lives in
   **required** read on the normal 30 s server-request deadline, since it seeds
   `ReaderProvider` and workspace width restoration, so a failed or malformed read
   rejects the whole bootstrap rather than fabricating a default — alongside the
-  best-effort saved session and the URL pane's speculative resource seed, then
-  (2) the remaining restored visible panes — returning
-  `{ initialHref, readerProfile, initialState, resources }` (a hydration cache keyed
-  exactly as each pane's `useResource` reads it). Session and pane seeds stay
-  best-effort under a deadline; a timed-out seed degrades to the normal client fetch.
+  best-effort saved session and, only for Navigate, the explicit pane's
+  speculative resource seed, then (2) the remaining restored visible panes —
+  returning `{ readerProfile, initialState, resources }` (a hydration cache keyed
+  exactly as each pane's `useResource` reads it). Resume never seeds root. Session
+  and pane seeds stay best-effort under a deadline; a timed-out seed degrades to
+  the normal client fetch.
   A rejected bootstrap surfaces as the error boundary's accessible Retry UI, which
   re-issues the Server Component request (`router.refresh()`) before resetting the
   boundary.
 - **Server-side restore (no round-trip, no flash).** Device identity is a server-owned
   httpOnly `nx_device` cookie minted in middleware (`lib/auth/deviceCookie.ts`) —
   request-forwarded so this SSR sees it, response-set for future requests. The data root
-  reads it, fetches the saved workspace-session, and `selectRestoredState` /
-  `mergeRestoredWorkspaceWithDeepLink` merge it with the deep-link intent; the store
+  reads it, fetches the saved workspace-session, and classifies `/` as Resume or every
+  other protected href as Navigate. Resume uses `selectRestoredState` unchanged or the
+  Lectern empty state; Navigate applies `mergeRestoredWorkspaceWithDeepLink`. The store
   **seeds its reducer** with that `initialState`, so the first render already shows the
   right panes (no `hydrate` dispatch on load). `useWorkspaceSession` keeps only **capture**
   (debounced PUT) + **flush** (keepalive on page hide); the BFF `PUT /api/me/workspace-session`

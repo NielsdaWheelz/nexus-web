@@ -15,14 +15,12 @@ Android local verification remains environment-blocked in this worktree:
 `./gradlew :app:testDebugUnitTest -PnexusGoogleWebClientId=test-web-client-id`
 requires an Android SDK location (`ANDROID_HOME` or `apps/android/local.properties`).
 
-> **Current-state supersession (2026-07-20):** the canonical authenticated
-> home is now `/lectern`, not `/libraries`. Auth, root redirect, workspace
-> fallback, Share Capture, and the app brand derive that value from
-> `APP_AUTHENTICATED_HOME_HREF`. Explicit Lectern intent is preserved alongside
-> restored panes rather than acting as a neutral restore placeholder. See
-> [`docs/modules/app-navigation.md`](../modules/app-navigation.md). The
-> `/libraries` examples below remain historical evidence for this cutover and
-> must not be read as the current home contract.
+> **Current-state supersession (2026-07-26):** `/lectern` is the canonical
+> explicit Home and auth default. Bare `/` is Resume and has no redirect. Auth,
+> workspace empty-state fallback, Share Capture, and the app brand derive Home
+> from `APP_AUTHENTICATED_HOME_HREF`. See
+> [`app-launch-resume-hard-cutover.md`](app-launch-resume-hard-cutover.md). The
+> root-redirect and `/libraries` examples below are historical evidence only.
 
 This is a hard-cutover plan. It does not preserve legacy auth-return URL
 builders, duplicate password sign-in APIs, route-local `next` setters, ad hoc
@@ -61,7 +59,7 @@ unauthenticated navigation owner, and one deployed verification lane.
   default target, post-parse local-target validation, default `next`
   suppression, and every auth URL builder.
 - `apps/web/src/lib/routes/defaults.ts` owns the authenticated app-home route;
-  auth, workspace, and the root redirect derive from it.
+  auth and the workspace empty state derive from it.
 - `apps/web/src/lib/api/client.ts` is pure transport parsing. It throws
   structured `ApiError` values and does not navigate.
 - `apps/web/src/lib/auth/UnauthenticatedApiBoundary.tsx` owns client-side
@@ -683,7 +681,8 @@ Do not hide provider-state verification behind a dashboard checklist.
 - `apps/web/src/lib/auth/redirects.ts`
   - Derive default auth return target.
 - `apps/web/next.config.ts`
-  - Keep root redirect aligned with `APP_AUTHENTICATED_HOME_HREF`.
+  - Historical: the root redirect added by this cutover was removed by the
+    launch-resume hard cutover.
 - Tests under `apps/web/src/lib/workspace/*`
   - Update imports/expectations as needed.
 

@@ -39,7 +39,7 @@ function twoPaneSession(): WorkspaceState {
       makeWorkspacePane("pane-session-libraries", "/libraries", { primaryWidthPx: 480 }),
       makeWorkspacePane("pane-session-notes", "/notes", { primaryWidthPx: 520 }),
     ],
-    { activePrimaryPaneId: "pane-session-libraries" },
+    { activePrimaryPaneId: "pane-session-notes" },
   );
 }
 
@@ -117,27 +117,35 @@ function activeWorkspacePaneButton(page: Page) {
 }
 
 test.describe("workspace session restore", () => {
-  test("cold open silently restores a saved session", async ({ page }, testInfo) => {
+  test("root Resume restores the exact active workspace without Lectern", async ({ page }, testInfo) => {
     const deviceId = workspaceSessionRestoreDeviceId(testInfo);
     await pinDeviceId(page, deviceId);
     await seedWorkspaceSession(page.request, twoPaneSession());
 
     try {
-      // Cold open the active pane's own route; siblings hydrate from the session.
-      await page.goto("/libraries");
+      await page.goto("/");
 
-      // The saved two-pane workspace is restored silently — no banner, no
-      // clicks. Both panes appear once the fetch + restore resolves.
+      // Resume restores the persisted workspace unchanged: Notes remains active
+      // and Lectern is not merged into the saved pane set.
       await expect(workspacePaneButton(page, /^Libraries\b/)).toBeVisible({
         timeout: 15_000,
       });
       await expect(workspacePaneButton(page, /^Notes\b/)).toBeVisible({
         timeout: 15_000,
       });
+      await expect(workspacePaneButton(page, /^Notes\b/)).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+      await expect(workspacePaneButton(page, /^Lectern\b/)).toHaveCount(0);
+      await expect(
+        page
+          .getByRole("toolbar", { name: "Workspace panes" })
+          .getByRole("button", { name: /^Close / }),
+      ).toHaveCount(2);
 
-      // Layout never travels in the URL: the address bar is just the active
-      // pane's path, with no encoded-state query param.
-      await expect(page).toHaveURL(/\/libraries$/);
+      // The address bar remains a projection of the restored active pane.
+      await expect(page).toHaveURL(/\/notes$/);
     } finally {
       await seedWorkspaceSession(page.request, trivialSession());
     }
@@ -234,7 +242,7 @@ test.describe("workspace session restore", () => {
   }, testInfo) => {
     const deviceId = workspaceSessionRestoreDeviceId(testInfo);
     await pinDeviceId(page, deviceId);
-    // Seed a two-pane session whose first pane is the active one (Libraries).
+    // Seed a two-pane session whose active pane is Notes.
     await seedWorkspaceSession(page.request, twoPaneSession());
 
     try {

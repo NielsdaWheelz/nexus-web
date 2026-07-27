@@ -105,19 +105,24 @@ brand mark, because that makes an apparent Home activation trigger rail chrome.
 
 ## Home and workspace restore
 
-`APP_AUTHENTICATED_HOME_HREF`, the auth default, root redirect, workspace
-fallback, and brand href all derive from `/lectern`.
+`APP_AUTHENTICATED_HOME_HREF`, the auth default, workspace empty-state fallback,
+and brand href all derive from `/lectern`. There is no root redirect.
 
-Lectern is an explicit route intent, not a neutral placeholder for “whatever
-workspace was active.” On login or a bare authenticated landing, restore keeps
-the saved panes and then either:
+`/` is the authenticated **Resume** entry. Server bootstrap restores the saved
+workspace unchanged, including its active primary pane; when no usable session
+exists it creates the one-pane Lectern empty state. Root Launcher query intents
+are consumed before the workspace projects that active pane back into the URL,
+so they open over the restored workspace and never become panes.
+
+`/lectern` is the explicit Home route intent, not a neutral placeholder for
+“whatever workspace was active.” It keeps saved panes and then either:
 
 1. restores and activates an existing Lectern pane, or
 2. appends and activates a Lectern pane.
 
 A lone, history-free Lectern pane remains a trivial persisted session for
-cross-device restore selection. That storage heuristic does not erase the
-current request's Lectern intent.
+cross-device restore selection. That storage heuristic does not erase an
+explicit `/lectern` request.
 
 ## Change checklist
 

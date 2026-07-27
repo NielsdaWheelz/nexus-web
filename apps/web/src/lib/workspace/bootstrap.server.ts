@@ -24,7 +24,37 @@ import {
   mergeRestoredWorkspaceWithDeepLink,
   selectRestoredState,
 } from "@/lib/workspace/workspaceRestore";
-import { WORKSPACE_DEFAULT_FALLBACK_HREF } from "@/lib/workspace/workspaceHref";
+import {
+  WORKSPACE_DEFAULT_FALLBACK_HREF,
+  parseWorkspaceHref,
+} from "@/lib/workspace/workspaceHref";
+
+type WorkspaceEntryIntent =
+  | { kind: "Resume" }
+  | { kind: "Navigate"; href: string };
+
+function parseWorkspaceEntryIntent(
+  requestPath: string | null,
+): WorkspaceEntryIntent {
+  if (requestPath === null) {
+    throw new Error("Missing required workspace request path");
+  }
+
+  const parsed = parseWorkspaceHref(requestPath);
+  if (
+    !parsed ||
+    parsed.hash ||
+    `${parsed.pathname}${parsed.search}` !== requestPath
+  ) {
+    throw new Error(
+      `Request path must be a canonical pathname and search: ${JSON.stringify(requestPath)}`,
+    );
+  }
+
+  return parsed.pathname === "/"
+    ? { kind: "Resume" }
+    : { kind: "Navigate", href: requestPath };
+}
 
 // Seed one pane's resource into the resource cache, keyed exactly as the pane's useResource
 // reads it (AC-4) — or null if there's no loader, or it throws/times out, in which case the
@@ -111,41 +141,68 @@ async function loadSession(
   };
 }
 
-// The authenticated shell's single server data root: the initial pane href (from the
-// middleware-stamped request path), the reader profile, the server-restored workspace
-// (merged with the deep link), and a hydration cache of every restored visible pane's data —
-// so the first paint shows the right panes, with their data, and no client round-trip.
+// The authenticated shell's single server data root: the middleware-stamped entry intent,
+// reader profile, server-restored workspace, and hydration cache of every restored visible
+// pane's data — so the first paint shows the right panes, with their data, and no client
+// round-trip.
 export async function loadWorkspaceBootstrap(androidShell: boolean): Promise<{
-  initialHref: string;
   readerProfile: ReaderProfile;
   initialState: WorkspaceState;
   resources: DehydratedResources;
 }> {
-  const initialHref =
-    (await headers()).get(REQUEST_PATH_HEADER) ?? WORKSPACE_DEFAULT_FALLBACK_HREF;
+  const entryIntent = parseWorkspaceEntryIntent(
+    (await headers()).get(REQUEST_PATH_HEADER),
+  );
   const deviceId = readDeviceId(await cookies());
 
-  // Wave 1 — reader profile, saved session, and the URL pane's resource: concurrent. The
-  // profile is required (it seeds ReaderProvider and width restoration); session and pane
-  // seeds stay best-effort. None gates the first byte — the shell skeleton already streamed.
+  let urlSeedPromise: ReturnType<typeof seedPane> | null;
+  switch (entryIntent.kind) {
+    case "Resume":
+      urlSeedPromise = null;
+      break;
+    case "Navigate":
+      urlSeedPromise = seedPane(entryIntent.href);
+      break;
+    default: {
+      const exhaustive: never = entryIntent;
+      throw new Error(`Unexpected workspace entry intent: ${exhaustive}`);
+    }
+  }
+
+  // Wave 1 — reader profile, saved session, and only a Navigate pane's resource are
+  // concurrent. Resume never speculatively seeds root. The profile is required; session and
+  // pane seeds stay best-effort. None gates the first byte — the shell skeleton streamed.
   const [readerProfile, session, urlSeed] = await Promise.all([
     loadReaderProfile(),
     loadSession(deviceId),
-    seedPane(initialHref),
+    urlSeedPromise,
   ]);
 
-  // Identity: merge the restored session (own → most-recent-elsewhere) with the deep-link
-  // intent. Width metrics come from the reader profile, matching the client's first-paint
-  // probe seed so the restored widths need no settle.
+  // Width metrics come from the reader profile, matching the client's first-paint probe seed
+  // so restored widths need no settle. Session selection remains own → most-recent-elsewhere.
   const widthPx = estimatePrimaryWidthPx(readerProfile);
   const metrics = { primaryMinWidthPx: widthPx, primaryDefaultWidthPx: widthPx };
-  const deepLink = createDefaultWorkspaceState(initialHref, metrics);
   const restored = session
     ? selectRestoredState(session.own, session.mostRecentElsewhere, metrics, androidShell)
     : null;
-  const initialState = restored
-    ? mergeRestoredWorkspaceWithDeepLink(restored, deepLink, metrics)
-    : deepLink;
+  let initialState: WorkspaceState;
+  switch (entryIntent.kind) {
+    case "Resume":
+      initialState =
+        restored ?? createDefaultWorkspaceState(WORKSPACE_DEFAULT_FALLBACK_HREF, metrics);
+      break;
+    case "Navigate": {
+      const deepLink = createDefaultWorkspaceState(entryIntent.href, metrics);
+      initialState = restored
+        ? mergeRestoredWorkspaceWithDeepLink(restored, deepLink, metrics)
+        : deepLink;
+      break;
+    }
+    default: {
+      const exhaustive: never = entryIntent;
+      throw new Error(`Unexpected workspace entry intent: ${exhaustive}`);
+    }
+  }
 
   // Wave 2 — seed the remaining restored visible panes, concurrent, deduped by resource. The
   // URL pane is pre-marked as seeded only when its wave-1 seed actually succeeded; if that seed
@@ -155,7 +212,9 @@ export async function loadWorkspaceBootstrap(androidShell: boolean): Promise<{
     resources[urlSeed.cacheKey] = urlSeed.data;
   }
   const seededRouteKeys = new Set(
-    urlSeed ? [resolvePaneRouteIdentity(initialHref).routeKey] : [],
+    entryIntent.kind === "Navigate" && urlSeed
+      ? [resolvePaneRouteIdentity(entryIntent.href).routeKey]
+      : [],
   );
   const extraHrefs = getWorkspacePrimaryPanes(initialState)
     .filter((pane) => pane.visibility === "visible")
@@ -174,5 +233,5 @@ export async function loadWorkspaceBootstrap(androidShell: boolean): Promise<{
     }
   }
 
-  return { initialHref, readerProfile, initialState, resources };
+  return { readerProfile, initialState, resources };
 }

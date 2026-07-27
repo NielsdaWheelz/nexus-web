@@ -3,6 +3,7 @@ import {
   gotoWithWorkspaceSession,
   makeWorkspacePane,
   makeWorkspaceState,
+  workspacePaneButton,
   workspaceE2eDeviceId,
   type WorkspaceState,
 } from "./workspace";
@@ -56,7 +57,49 @@ function workspaceWithSearchPane(): WorkspaceState {
   );
 }
 
+function workspaceWithNotesAndSearchPanes(): WorkspaceState {
+  return makeWorkspaceState(
+    [
+      makeWorkspacePane("pane-notes", "/notes"),
+      makeWorkspacePane("pane-search", "/search"),
+    ],
+    { activePrimaryPaneId: "pane-notes" },
+  );
+}
+
 test.describe("launcher", () => {
+  test("desktop: root Launcher intent opens over the restored workspace", async ({
+    page,
+  }, testInfo) => {
+    await gotoWithWorkspaceSession(
+      page,
+      workspaceE2eDeviceId(testInfo, "e2e-root-launcher"),
+      workspaceWithNotesAndSearchPanes(),
+      "/?launcher=1&lane=browse&q=kafka",
+    );
+
+    const dialog = launcherDialog(page);
+    await expect(dialog).toBeVisible();
+    await expect(launcherInput(dialog)).toHaveValue("kafka");
+    await expect(dialog.getByRole("button", { name: "Browse" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    await expect(workspacePaneButton(page, /^Notes\b/)).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await expect(workspacePaneButton(page, /^Search\b/)).toBeVisible();
+    await expect(workspacePaneButton(page, /^Lectern\b/)).toHaveCount(0);
+    await expect(
+      page
+        .getByRole("toolbar", { name: "Workspace panes" })
+        .getByRole("button", { name: /^Close / }),
+    ).toHaveCount(2);
+    await expect(page).toHaveURL(/\/notes$/);
+  });
+
   test("desktop: Add aliases open the source workbench without a chooser", async ({
     page,
   }) => {

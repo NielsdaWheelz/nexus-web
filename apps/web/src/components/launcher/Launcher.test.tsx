@@ -33,6 +33,8 @@ import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { createDefaultWorkspaceState } from "@/lib/workspace/schema";
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
+import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
+import { ShareControllerProvider } from "@/lib/sharing/controller";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 
 const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
@@ -176,17 +178,21 @@ function renderLauncher() {
     withRenderEnvironment(
       <KeybindingsProvider>
         <FeedbackProvider>
-          <WorkspaceStoreProvider
-            workspacePrimaryMetrics={workspacePrimaryMetrics}
-            initialState={createDefaultWorkspaceState(
-              "/libraries",
-              workspacePrimaryMetrics,
-            )}
-          >
-            <LecternProvider>
-              <Launcher />
-            </LecternProvider>
-          </WorkspaceStoreProvider>
+          <PaneReturnMementoProvider>
+            <WorkspaceStoreProvider
+              workspacePrimaryMetrics={workspacePrimaryMetrics}
+              initialState={createDefaultWorkspaceState(
+                "/libraries",
+                workspacePrimaryMetrics,
+              )}
+            >
+              <LecternProvider>
+                <ShareControllerProvider>
+                  <Launcher />
+                </ShareControllerProvider>
+              </LecternProvider>
+            </WorkspaceStoreProvider>
+          </PaneReturnMementoProvider>
         </FeedbackProvider>
       </KeybindingsProvider>,
     ),
@@ -200,20 +206,24 @@ function renderLauncherWithOpener() {
     withRenderEnvironment(
       <KeybindingsProvider>
         <FeedbackProvider>
-          <WorkspaceStoreProvider
-            workspacePrimaryMetrics={workspacePrimaryMetrics}
-            initialState={createDefaultWorkspaceState(
-              "/libraries",
-              workspacePrimaryMetrics,
-            )}
-          >
-            <LecternProvider>
-              <button type="button" data-testid="launcher-opener">
-                Opener
-              </button>
-              <Launcher />
-            </LecternProvider>
-          </WorkspaceStoreProvider>
+          <PaneReturnMementoProvider>
+            <WorkspaceStoreProvider
+              workspacePrimaryMetrics={workspacePrimaryMetrics}
+              initialState={createDefaultWorkspaceState(
+                "/libraries",
+                workspacePrimaryMetrics,
+              )}
+            >
+              <LecternProvider>
+                <ShareControllerProvider>
+                  <button type="button" data-testid="launcher-opener">
+                    Opener
+                  </button>
+                  <Launcher />
+                </ShareControllerProvider>
+              </LecternProvider>
+            </WorkspaceStoreProvider>
+          </PaneReturnMementoProvider>
         </FeedbackProvider>
       </KeybindingsProvider>,
     ),
@@ -1120,7 +1130,7 @@ describe("Launcher — URL-param lane seed", () => {
     window.history.replaceState({}, "", "/?launcher=1&lane=browse&q=kafka");
     renderLauncher();
 
-    // The controller's mount effect fires and opens the dialog automatically.
+    // The controller's mount layout effect opens the dialog automatically.
     const dialog = await screen.findByRole("dialog", { name: "Launcher" });
     expect(dialog).toBeInTheDocument();
     expect(laneChip("Browse")).toHaveAttribute("aria-pressed", "true");

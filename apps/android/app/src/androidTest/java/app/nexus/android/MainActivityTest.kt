@@ -197,6 +197,7 @@ class MainActivityTest {
     fun unsupportedExplicitIntentDoesNotReloadTheWebView() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             val ownedUrl = "${BuildConfig.NEXUS_BASE_URL}/settings"
+            val unsupportedUri = Uri.parse("https://external.example.com/ignored")
 
             scenario.onActivity { activity ->
                 activity.routeUrl(Uri.parse(ownedUrl))
@@ -209,14 +210,8 @@ class MainActivityTest {
                 currentUrl == ownedUrl
             }
 
-            var activity: MainActivity? = null
-            scenario.onActivity { activity = it }
-            InstrumentationRegistry.getInstrumentation().callActivityOnNewIntent(
-                checkNotNull(activity),
-                Intent(Intent.ACTION_VIEW, Uri.parse("https://external.example.com/ignored"))
-            )
-
             scenario.onActivity { activity ->
+                activity.loadUrlFromIntent(Intent(Intent.ACTION_VIEW, unsupportedUri))
                 assertEquals(ownedUrl, activity.webView.url)
             }
         }
@@ -228,14 +223,9 @@ class MainActivityTest {
             val callbackUrl =
                 "${BuildConfig.NEXUS_BASE_URL}/auth/callback?code=test-code&next=%2Flibraries"
 
-            var activity: MainActivity? = null
-            scenario.onActivity { activity = it }
-            InstrumentationRegistry.getInstrumentation().callActivityOnNewIntent(
-                checkNotNull(activity),
-                Intent(Intent.ACTION_VIEW, Uri.parse(callbackUrl)).apply {
-                    setClass(checkNotNull(activity), MainActivity::class.java)
-                }
-            )
+            scenario.onActivity { activity ->
+                activity.loadUrlFromIntent(Intent(Intent.ACTION_VIEW, Uri.parse(callbackUrl)))
+            }
 
             waitUntil("Expected app link callback new intent to load in the WebView.") {
                 var currentUrl: String? = null
@@ -416,14 +406,23 @@ class MainActivityTest {
                 currentUrl == secondUrl && progress == 100 && canGoBack
             }
 
-            var activity: MainActivity? = null
-            scenario.onActivity { activity = it }
-            InstrumentationRegistry.getInstrumentation().callActivityOnNewIntent(
-                checkNotNull(activity),
-                Intent(Intent.ACTION_MAIN).apply {
-                    addCategory(Intent.CATEGORY_LAUNCHER)
+            scenario.onActivity { activity ->
+                activity.startActivity(
+                    Intent(Intent.ACTION_MAIN).apply {
+                        setClass(activity, MainActivity::class.java)
+                        addCategory(Intent.CATEGORY_LAUNCHER)
+                        putExtra("test_reentry", true)
+                    }
+                )
+            }
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            waitUntil("Expected launcher intent to reach the running activity.") {
+                var delivered = false
+                scenario.onActivity { activity ->
+                    delivered = activity.intent.getBooleanExtra("test_reentry", false)
                 }
-            )
+                delivered
+            }
             scenario.onActivity { activity ->
                 assertEquals(secondUrl, activity.webView.url)
                 assertTrue(activity.webView.canGoBack())

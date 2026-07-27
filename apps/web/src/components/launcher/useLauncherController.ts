@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
 import {
   apiFetch,
@@ -790,7 +797,7 @@ export function useLauncherController(): LauncherController {
     return () => window.removeEventListener(OPEN_LAUNCHER_EVENT, handler);
   }, [requestExit]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const cmd = params.get("cmd");
     if (params.get("launcher") !== "1" && cmd === null) return;
