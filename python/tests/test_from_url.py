@@ -36,6 +36,7 @@ from sqlalchemy.exc import ProgrammingError
 
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.media_source_ingest import accept_url_source
 from nexus.storage.client import StorageError
 from nexus.storage.paths import build_source_artifact_storage_path
@@ -242,6 +243,7 @@ def _x_root_payload(post_id: str, *, quoted_id: str | None = None) -> dict:
                 "text": "Quoted insight from Grace.",
                 "created_at": "2026-04-15T11:00:00.000Z",
                 "conversation_id": quoted_id,
+                "referenced_tweets": [{"type": "quoted", "id": "5555555555"}],
             }
         )
         include_users.append({"id": "20", "name": "Grace Hopper", "username": "grace"})
@@ -274,7 +276,10 @@ def _x_search_payload(post_id: str) -> dict:
                 "text": "Second post in the author's thread.",
                 "created_at": "2026-04-15T12:01:00.000Z",
                 "conversation_id": post_id,
-                "referenced_tweets": [{"type": "replied_to", "id": post_id}],
+                "referenced_tweets": [
+                    {"type": "replied_to", "id": post_id},
+                    {"type": "quoted", "id": "4444444444"},
+                ],
             },
             {
                 "id": "9999999999",
@@ -1131,6 +1136,9 @@ class TestFromUrlSuccess:
         direct_db.register_cleanup("media_source_attempts", "id", source_attempt_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("document_embed_artifact_states", "media_id", media_id)
+        direct_db.register_cleanup("document_embeds", "media_id", media_id)
+        direct_db.register_cleanup("resource_edges", "source_id", media_id)
 
         assert data["ingest_enqueued"] is True, (
             "Expected ingest_enqueued=True when queue row is persisted."
@@ -1558,6 +1566,9 @@ class TestFromUrlXPost:
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("media_source_attempts", "id", UUID(data["source_attempt_id"]))
         direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("document_embed_artifact_states", "media_id", media_id)
+        direct_db.register_cleanup("document_embeds", "media_id", media_id)
+        direct_db.register_cleanup("resource_edges", "source_id", media_id)
 
         assert data["idempotency_outcome"] == "created"
         assert data["source_type"] == "x_author_thread"
@@ -1586,7 +1597,7 @@ class TestFromUrlXPost:
             ).fetchone()
             fragments = session.execute(
                 text("""
-                    SELECT f.idx, f.html_sanitized, f.canonical_text, COUNT(fb.id)
+                    SELECT f.idx, f.html_sanitized, f.canonical_text, COUNT(fb.id), f.id
                     FROM fragments f
                     LEFT JOIN fragment_blocks fb ON fb.fragment_id = f.id
                     WHERE f.media_id = :media_id
@@ -1604,6 +1615,69 @@ class TestFromUrlXPost:
                       AND provider_id = 'post:4444444444'
                 """)
             ).fetchone()
+            quoted_attempt = (
+                None
+                if quoted_media is None
+                else session.execute(
+                    text("""
+                        SELECT id, source_type, status, provider_target_ref, job_id
+                        FROM media_source_attempts
+                        WHERE media_id = :media_id
+                        ORDER BY attempt_no
+                    """),
+                    {"media_id": quoted_media[0]},
+                ).one()
+            )
+            quoted_fragment = (
+                None
+                if quoted_media is None
+                else session.execute(
+                    text("""
+                        SELECT id, html_sanitized, canonical_text
+                        FROM fragments
+                        WHERE media_id = :media_id
+                    """),
+                    {"media_id": quoted_media[0]},
+                ).one()
+            )
+            quote_embeds = session.execute(
+                text("""
+                    SELECT fragment_id,
+                           (SELECT idx FROM fragments WHERE id = document_embeds.fragment_id),
+                           ordinal, occurrence_key, provider, embed_kind,
+                           source_shape, resolution_status, canonical_source_url,
+                           provider_target_ref, target_media_id, placeholder_text,
+                           canonical_start_offset, canonical_end_offset
+                    FROM document_embeds
+                    WHERE media_id = :media_id
+                    ORDER BY ordinal
+                """),
+                {"media_id": media_id},
+            ).all()
+            quote_edge = session.execute(
+                text("""
+                    SELECT kind, origin, source_scheme, source_id, target_scheme, target_id
+                    FROM resource_edges
+                    WHERE source_id = :media_id
+                      AND origin = 'document_embed'
+                """),
+                {"media_id": media_id},
+            ).one()
+            deeper_quote_state = session.execute(
+                text("""
+                    SELECT
+                        (SELECT count(*) FROM media
+                         WHERE provider = 'x' AND provider_id = 'post:5555555555'),
+                        (SELECT count(*) FROM media_source_attempts
+                         WHERE provider = 'x' AND provider_target_ref = '5555555555'),
+                        (SELECT count(*) FROM document_embeds
+                         WHERE provider_target_ref = 'post:5555555555'),
+                        (SELECT count(*) FROM resource_edges
+                         WHERE source_id = :quoted_media_id
+                           AND origin = 'document_embed')
+                """),
+                {"quoted_media_id": quoted_media[0] if quoted_media is not None else None},
+            ).one()
             quoted_job_ids = (
                 []
                 if quoted_media is None
@@ -1646,15 +1720,19 @@ class TestFromUrlXPost:
         assert fragments[0][0] == 0
         assert "<script" not in fragments[0][1]
         assert "Opening post from Ada." in fragments[0][2]
-        assert "Quoted post by Grace Hopper" in fragments[0][2]
+        assert "Quoted X post by @grace — Open in Nexus" in fragments[0][2]
+        assert "Quoted X post by @grace — Open in Nexus" in fragments[1][2]
+        assert "Quoted insight from Grace." not in "\n".join(row[2] for row in fragments)
+        assert "<blockquote" not in "\n".join(row[1] for row in fragments)
+        assert "http://localhost:3000" not in "\n".join(row[1] for row in fragments)
         assert "A reply from someone else" not in "\n".join(row[2] for row in fragments)
         assert "Side reply from Ada" not in "\n".join(row[2] for row in fragments)
         assert fragments[0][3] >= 1
         assert fragments[1][0] == 1
         assert "Second post in the author's thread." in fragments[1][2]
         assert quoted_media is not None
-        direct_db.register_cleanup("library_entries", "media_id", quoted_media[0])
         direct_db.register_cleanup("media", "id", quoted_media[0])
+        direct_db.register_cleanup("library_entries", "media_id", quoted_media[0])
         assert quoted_media[1] == "web_article"
         assert quoted_media[2] == "X post by Grace Hopper"
         assert quoted_media[3] == "https://x.com/i/status/4444444444"
@@ -1662,6 +1740,155 @@ class TestFromUrlXPost:
         assert quoted_media[5] == "x"
         assert quoted_media[6] == "post:4444444444"
         assert quoted_media[7] == "ready_for_reading"
+        assert quoted_attempt is not None
+        direct_db.register_cleanup("media_source_attempts", "id", quoted_attempt[0])
+        assert quoted_attempt[1:] == ("x_post", "succeeded", "4444444444", None)
+        assert quoted_fragment is not None
+        assert "Quoted insight from Grace." in quoted_fragment[2]
+        assert "Quotes another X post — Open on X" in quoted_fragment[2]
+        assert 'href="https://x.com/i/status/5555555555"' in quoted_fragment[1]
+        assert tuple(deeper_quote_state) == (0, 0, 0, 0)
+        assert len(quote_embeds) == 2
+        quote_embed = quote_embeds[0]
+        assert quote_embed[0] is not None
+        assert quote_embed[1] == 0
+        assert quote_embed[2:12] == (
+            0,
+            "x-quote:1234567890:4444444444",
+            "x",
+            "post",
+            "provider_json",
+            "resolved",
+            "https://x.com/i/status/4444444444",
+            "post:4444444444",
+            quoted_media[0],
+            "Quoted X post by @grace — Open in Nexus",
+        )
+        assert (
+            fragments[0][2][quote_embed[12] : quote_embed[13]]
+            == "Quoted X post by @grace — Open in Nexus"
+        )
+        second_quote_embed = quote_embeds[1]
+        assert second_quote_embed[1] == 1
+        assert second_quote_embed[2] == 1
+        assert second_quote_embed[3] == "x-quote:1234567891:4444444444"
+        assert second_quote_embed[10] == quoted_media[0]
+        assert (
+            fragments[1][2][second_quote_embed[12] : second_quote_embed[13]]
+            == "Quoted X post by @grace — Open in Nexus"
+        )
+        assert tuple(quote_edge) == (
+            "context",
+            "document_embed",
+            "media",
+            media_id,
+            "media",
+            quoted_media[0],
+        )
+        from nexus.services.media_source_ingest import accept_embedded_source
+
+        with direct_db.session() as session:
+            direct_reuse = accept_embedded_source(
+                db=session,
+                viewer_id=user_id,
+                url="https://x.com/grace/status/4444444444",
+                parent_media_id=media_id,
+                document_embed_key="direct-reuse-after-quote-publication",
+                library_ids=[],
+                request_id="direct-reuse-after-quote-publication",
+            )
+            session.commit()
+        assert direct_reuse.media_id == quoted_media[0]
+        assert direct_reuse.source_attempt_id == quoted_attempt[0]
+        assert direct_reuse.source_attempt_status == "succeeded"
+        assert direct_reuse.needs_enqueue is False
+
+        with direct_db.session() as session:
+            rebuild_fragment_content_index(
+                session,
+                media_id=media_id,
+                source_kind="web_article",
+                fragments=[
+                    SimpleNamespace(
+                        id=fragment_id,
+                        idx=fragment_idx,
+                        html_sanitized=html_sanitized,
+                        canonical_text=canonical_text,
+                    )
+                    for (
+                        fragment_idx,
+                        html_sanitized,
+                        canonical_text,
+                        _block_count,
+                        fragment_id,
+                    ) in fragments
+                ],
+                reason="x-quote-ownership-test",
+            )
+            rebuild_fragment_content_index(
+                session,
+                media_id=quoted_media[0],
+                source_kind="web_article",
+                fragments=[
+                    SimpleNamespace(
+                        id=quoted_fragment[0],
+                        idx=0,
+                        html_sanitized=quoted_fragment[1],
+                        canonical_text=quoted_fragment[2],
+                    )
+                ],
+                reason="x-quote-ownership-test",
+            )
+            session.commit()
+        _register_background_jobs_for_media(direct_db, media_id)
+        _register_background_jobs_for_media(direct_db, quoted_media[0])
+
+        parent_search = auth_client.get(
+            f"/search?q=insight&kinds=documents&scope=media:{media_id}",
+            headers=auth_headers(user_id),
+        )
+        child_search = auth_client.get(
+            f"/search?q=insight&kinds=documents&scope=media:{quoted_media[0]}",
+            headers=auth_headers(user_id),
+        )
+        assert parent_search.status_code == 200, parent_search.text
+        assert parent_search.json()["results"] == []
+        assert child_search.status_code == 200, child_search.text
+        assert any(
+            row["type"] == "content_chunk" and row["source"]["media_id"] == str(quoted_media[0])
+            for row in child_search.json()["results"]
+        )
+
+        quote_start = quoted_fragment[2].index("Quoted insight from Grace.")
+        highlight_response = auth_client.post(
+            f"/fragments/{quoted_fragment[0]}/highlights",
+            json={
+                "start_offset": quote_start,
+                "end_offset": quote_start + len("Quoted insight from Grace."),
+                "color": "yellow",
+            },
+            headers=auth_headers(user_id),
+        )
+        assert highlight_response.status_code == 201, highlight_response.text
+        highlight = highlight_response.json()["data"]
+        direct_db.register_cleanup("highlights", "id", UUID(highlight["id"]))
+        assert highlight["exact"] == "Quoted insight from Grace."
+        assert highlight["anchor"]["fragment_id"] == str(quoted_fragment[0])
+
+        parent_highlights = auth_client.get(
+            f"/media/{media_id}/highlights",
+            headers=auth_headers(user_id),
+        )
+        child_highlights = auth_client.get(
+            f"/media/{quoted_media[0]}/highlights",
+            headers=auth_headers(user_id),
+        )
+        assert parent_highlights.status_code == 200, parent_highlights.text
+        assert parent_highlights.json()["data"]["highlights"] == []
+        assert child_highlights.status_code == 200, child_highlights.text
+        assert [row["id"] for row in child_highlights.json()["data"]["highlights"]] == [
+            highlight["id"]
+        ]
         for job_id in quoted_job_ids:
             direct_db.register_cleanup("background_jobs", "id", job_id)
         for job_id, _kind in jobs:
@@ -1669,6 +1896,226 @@ class TestFromUrlXPost:
         assert [kind for _job_id, kind in jobs if kind == "ingest_media_source"] == [
             "ingest_media_source"
         ]
+
+    def test_unavailable_direct_quote_persists_external_reference_only(
+        self, auth_client, direct_db: DirectSessionManager, remote_http, monkeypatch
+    ):
+        _patch_x_api_settings(monkeypatch)
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        post_id = "3131313131"
+        quote_id = "7777777777"
+        root_payload = _x_root_payload(post_id)
+        root_payload["data"]["referenced_tweets"] = [{"type": "quoted", "id": quote_id}]
+        remote_http.get(f"https://api.x.com/2/tweets/{post_id}").mock(
+            return_value=httpx.Response(200, json=root_payload)
+        )
+        remote_http.get("https://api.x.com/2/tweets/search/all").mock(
+            return_value=httpx.Response(
+                200,
+                json={"data": [root_payload["data"]], "meta": {"result_count": 1}},
+            )
+        )
+        quote_route = remote_http.get("https://api.x.com/2/tweets").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "errors": [
+                        {
+                            "resource_id": quote_id,
+                            "resource_type": "tweet",
+                            "title": "Not Found Error",
+                            "type": "https://api.x.com/2/problems/resource-not-found",
+                        }
+                    ]
+                },
+            )
+        )
+
+        response = auth_client.post(
+            "/media/from_url",
+            json={"url": f"https://x.com/ada/status/{post_id}"},
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 202, response.text
+        data = response.json()["data"]
+        media_id = UUID(data["media_id"])
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("media_source_attempts", "id", UUID(data["source_attempt_id"]))
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("document_embed_artifact_states", "media_id", media_id)
+        direct_db.register_cleanup("document_embeds", "media_id", media_id)
+        direct_db.register_cleanup("resource_edges", "source_id", media_id)
+
+        _run_source_attempt_for_media(direct_db, media_id)
+        _register_background_jobs_for_media(direct_db, media_id)
+        _register_x_provider_event_cleanup(
+            direct_db,
+            f"author-thread:10:{post_id}",
+        )
+
+        with direct_db.session() as session:
+            fragment = session.execute(
+                text("""
+                    SELECT html_sanitized, canonical_text
+                    FROM fragments
+                    WHERE media_id = :media_id
+                """),
+                {"media_id": media_id},
+            ).one()
+            occurrence = session.execute(
+                text("""
+                    SELECT resolution_status, canonical_source_url,
+                           provider_target_ref, target_media_id, placeholder_text,
+                           error_code
+                    FROM document_embeds
+                    WHERE media_id = :media_id
+                """),
+                {"media_id": media_id},
+            ).one()
+            child_and_edge_counts = session.execute(
+                text("""
+                    SELECT
+                        (SELECT count(*) FROM media
+                         WHERE provider = 'x' AND provider_id = :provider_id),
+                        (SELECT count(*) FROM resource_edges
+                         WHERE source_id = :media_id AND origin = 'document_embed')
+                """),
+                {"media_id": media_id, "provider_id": f"post:{quote_id}"},
+            ).one()
+
+        assert quote_route.call_count == 1
+        assert "Quoted X post unavailable — Open on X" in fragment[1]
+        assert "<blockquote" not in fragment[0]
+        assert tuple(occurrence) == (
+            "failed",
+            f"https://x.com/i/status/{quote_id}",
+            f"post:{quote_id}",
+            None,
+            "Quoted X post unavailable — Open on X",
+            "E_X_POST_UNAVAILABLE",
+        )
+        assert tuple(child_and_edge_counts) == (0, 0)
+
+        fragments_response = auth_client.get(
+            f"/media/{media_id}/fragments",
+            headers=auth_headers(user_id),
+        )
+        assert fragments_response.status_code == 200, fragments_response.text
+        embed = fragments_response.json()["data"][0]["document_embeds"][0]
+        assert embed["target"]["status"] == "missing"
+        assert embed["display"]["actions"] == [
+            {
+                "kind": "open_original",
+                "label": "Original",
+                "href": f"https://x.com/i/status/{quote_id}",
+                "disabled": False,
+            }
+        ]
+
+    @pytest.mark.parametrize(
+        "child_is_already_ready",
+        [False, True],
+        ids=["pending-child", "ready-child"],
+    )
+    def test_quote_snapshot_completes_existing_queued_x_post_without_second_fetch(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        remote_http,
+        monkeypatch,
+        child_is_already_ready,
+    ):
+        from nexus.services.media_source_ingest import (
+            accept_embedded_source,
+            enqueue_accepted_source_attempt_in_transaction,
+        )
+
+        _patch_x_api_settings(monkeypatch)
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        root_route, search_route = _expect_x_author_thread(remote_http, "4141414141")
+
+        response = auth_client.post(
+            "/media/from_url",
+            json={"url": "https://x.com/ada/status/4141414141"},
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 202, response.text
+        data = response.json()["data"]
+        media_id = UUID(data["media_id"])
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("media_source_attempts", "id", UUID(data["source_attempt_id"]))
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("document_embed_artifact_states", "media_id", media_id)
+        direct_db.register_cleanup("document_embeds", "media_id", media_id)
+        direct_db.register_cleanup("resource_edges", "source_id", media_id)
+
+        with direct_db.session() as session:
+            accepted = accept_embedded_source(
+                db=session,
+                viewer_id=user_id,
+                url="https://x.com/grace/status/4444444444",
+                parent_media_id=media_id,
+                document_embed_key="preaccepted-direct-x-post",
+                library_ids=[],
+                request_id="preaccepted-direct-x-post",
+            )
+            assert accepted.needs_enqueue is True
+            enqueue_accepted_source_attempt_in_transaction(
+                session,
+                media_id=accepted.media_id,
+                attempt_id=accepted.source_attempt_id,
+                actor_user_id=user_id,
+                request_id="preaccepted-direct-x-post",
+            )
+            if child_is_already_ready:
+                session.execute(
+                    text("""
+                        UPDATE media
+                        SET processing_status = 'ready_for_reading'
+                        WHERE id = :media_id
+                    """),
+                    {"media_id": accepted.media_id},
+                )
+            session.commit()
+        direct_db.register_cleanup("media", "id", accepted.media_id)
+        direct_db.register_cleanup("library_entries", "media_id", accepted.media_id)
+        direct_db.register_cleanup("media_source_attempts", "id", accepted.source_attempt_id)
+
+        result = _run_source_attempt_for_media(direct_db, media_id)
+        assert result["processing_status"] == "ready_for_reading"
+        _register_x_provider_event_cleanup(
+            direct_db,
+            "author-thread:10:4141414141",
+        )
+
+        with direct_db.session() as session:
+            child_state = session.execute(
+                text("""
+                    SELECT m.processing_status, msa.status, bj.status, bj.result
+                    FROM media AS m
+                    JOIN media_source_attempts AS msa ON msa.media_id = m.id
+                    JOIN background_jobs AS bj ON bj.id = msa.job_id
+                    WHERE m.id = :media_id
+                      AND msa.id = :attempt_id
+                """),
+                {
+                    "media_id": accepted.media_id,
+                    "attempt_id": accepted.source_attempt_id,
+                },
+            ).one()
+            child_job_id = session.execute(
+                text("SELECT job_id FROM media_source_attempts WHERE id = :attempt_id"),
+                {"attempt_id": accepted.source_attempt_id},
+            ).scalar_one()
+            direct_db.register_cleanup("background_jobs", "id", child_job_id)
+        _register_background_jobs_for_media(direct_db, media_id)
+
+        assert root_route.call_count == 1
+        assert search_route.call_count == 1
+        assert child_state[0:3] == ("ready_for_reading", "succeeded", "succeeded")
+        assert child_state[3] == {"status": "superseded"}
 
     def test_x_post_reuse_is_global_across_users(
         self, auth_client, direct_db: DirectSessionManager, remote_http, monkeypatch
@@ -1701,6 +2148,9 @@ class TestFromUrlXPost:
             "media_source_attempts", "id", UUID(first_data["source_attempt_id"])
         )
         direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("document_embed_artifact_states", "media_id", media_id)
+        direct_db.register_cleanup("document_embeds", "media_id", media_id)
+        direct_db.register_cleanup("resource_edges", "source_id", media_id)
         assert first_data["idempotency_outcome"] == "created"
         assert first_data["source_type"] == "x_author_thread"
         assert first_data["processing_status"] == "pending"
@@ -1719,8 +2169,16 @@ class TestFromUrlXPost:
                 """)
             ).fetchone()
             if quoted_media is not None:
-                direct_db.register_cleanup("library_entries", "media_id", quoted_media[0])
                 direct_db.register_cleanup("media", "id", quoted_media[0])
+                direct_db.register_cleanup("library_entries", "media_id", quoted_media[0])
+                quoted_attempt_id = session.execute(
+                    text("""
+                        SELECT id FROM media_source_attempts
+                        WHERE media_id = :media_id
+                    """),
+                    {"media_id": quoted_media[0]},
+                ).scalar_one()
+                direct_db.register_cleanup("media_source_attempts", "id", quoted_attempt_id)
             cleanup_media_ids = [str(media_id)]
             if quoted_media is not None:
                 cleanup_media_ids.append(str(quoted_media[0]))
@@ -1733,6 +2191,7 @@ class TestFromUrlXPost:
                 {"media_ids": cleanup_media_ids},
             ).scalars():
                 direct_db.register_cleanup("background_jobs", "id", job_id)
+        assert quoted_media is not None
 
         second_response = auth_client.post(
             "/media/from_url",
@@ -1761,10 +2220,21 @@ class TestFromUrlXPost:
                 """),
                 {"media_id": media_id},
             ).fetchall()
+            quoted_attachments = session.execute(
+                text("""
+                    SELECT library_id
+                    FROM library_entries
+                    WHERE media_id = :media_id
+                """),
+                {"media_id": quoted_media[0]},
+            ).fetchall()
 
         attached_library_ids = {row[0] for row in attachments}
         assert default_library_a in attached_library_ids
         assert default_library_b in attached_library_ids
+        quoted_library_ids = {row[0] for row in quoted_attachments}
+        assert default_library_a in quoted_library_ids
+        assert default_library_b in quoted_library_ids
 
     def test_x_api_failure_does_not_fall_back_to_generic_article(
         self, auth_client, direct_db: DirectSessionManager, remote_http, monkeypatch
@@ -2433,6 +2903,9 @@ class TestFromUrlXPost:
         direct_db.register_cleanup("media_source_attempts", "id", source_attempt_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("document_embed_artifact_states", "media_id", media_id)
+        direct_db.register_cleanup("document_embeds", "media_id", media_id)
+        direct_db.register_cleanup("resource_edges", "source_id", media_id)
 
         response = auth_client.post(
             f"/media/{media_id}/refresh",
@@ -2516,11 +2989,12 @@ class TestFromUrlXPost:
         assert "Old single tweet" not in combined_text
         assert "Opening post from Ada." in combined_text
         assert "Second post in the author's thread." in combined_text
-        assert "Quoted post by Grace Hopper" in combined_text
+        assert "Quoted X post by @grace — Open in Nexus" in combined_text
+        assert "Quoted insight from Grace." not in combined_text
         assert "Side reply from Ada" not in combined_text
         assert quoted_media is not None
-        direct_db.register_cleanup("library_entries", "media_id", quoted_media[0])
         direct_db.register_cleanup("media", "id", quoted_media[0])
+        direct_db.register_cleanup("library_entries", "media_id", quoted_media[0])
         assert quoted_media[1] == "post:4444444444"
         assert quoted_media[2] == "X post by Grace Hopper"
         for job_id in job_ids:
@@ -2562,6 +3036,9 @@ class TestFromUrlXPost:
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("media_source_attempts", "id", source_attempt_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("document_embed_artifact_states", "media_id", media_id)
+        direct_db.register_cleanup("document_embeds", "media_id", media_id)
+        direct_db.register_cleanup("resource_edges", "source_id", media_id)
 
         real_apply = source_ingest_module.replace_source_observed_role_slices
 
@@ -2650,12 +3127,33 @@ class TestFromUrlXPost:
                     WHERE provider = 'x' AND provider_id = 'post:4444444444'
                 """)
             ).scalar_one()
+            quoted_index_state = session.execute(
+                text("""
+                    SELECT status, status_reason, revision
+                    FROM content_index_states
+                    WHERE owner_kind = 'media' AND owner_id = :media_id
+                """),
+                {"media_id": quoted_media_id},
+            ).one()
+            quoted_reindex_job_count = session.execute(
+                text("""
+                    SELECT count(*)
+                    FROM background_jobs
+                    WHERE kind = 'media_content_reindex_job'
+                      AND payload->>'media_id' = :media_id
+                """),
+                {"media_id": str(quoted_media_id)},
+            ).scalar_one()
+        direct_db.register_cleanup("content_index_states", "owner_id", quoted_media_id)
+        _register_background_jobs_for_media(direct_db, quoted_media_id)
         for contributor_id in {row[2] for row in [*quoted_rows, *thread_rows]}:
             direct_db.register_cleanup("contributors", "id", contributor_id)
             direct_db.register_cleanup("contributor_aliases", "contributor_id", contributor_id)
             direct_db.register_cleanup("contributor_external_ids", "contributor_id", contributor_id)
             direct_db.register_cleanup("contributor_credits", "contributor_id", contributor_id)
         assert reused_quoted_count == 1, "the retry must reuse the quoted media, not duplicate it"
+        assert quoted_index_state == ("pending", "source_success", 1)
+        assert quoted_reindex_job_count == 1
         assert [(row[0], row[1]) for row in quoted_rows] == [("Grace Hopper", "author")]
         assert [(row[0], row[1]) for row in thread_rows] == [("Ada Lovelace", "author")]
 

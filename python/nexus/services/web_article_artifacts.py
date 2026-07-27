@@ -9,18 +9,24 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import Fragment, FragmentBlock
 from nexus.services.content_indexing import IndexOwner, delete_content_index
-from nexus.services.document_embeds import delete_document_embed_artifacts
+from nexus.services.document_embeds import (
+    prepare_document_embed_artifacts_for_fragment_replacement,
+)
 
 
 def delete_web_article_artifacts(
     db: Session,
     *,
-    owner_user_id: UUID,
     media_id: UUID,
     include_content_index: bool,
 ) -> None:
-    """Delete rewriteable web-article artifacts for a media row."""
-    delete_document_embed_artifacts(db, owner_user_id=owner_user_id, media_id=media_id)
+    """Delete rewriteable non-embed web-article artifacts for a media row.
+
+    The document-embed owner replaces its complete artifact after new fragments
+    exist. This helper only releases old fragment locators; keeping the rows and
+    edges until replacement preserves the prior viewer-scoped graph audience.
+    """
+    prepare_document_embed_artifacts_for_fragment_replacement(db, media_id=media_id)
     if include_content_index:
         delete_content_index(db, owner=IndexOwner("media", media_id))
 

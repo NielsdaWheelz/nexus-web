@@ -2117,6 +2117,7 @@ describe("MediaPaneBody pane sizing", () => {
         occurrence_key: "embed:000000:youtube:dQw4w9WgXcQ",
         provider: "youtube",
         kind: "video",
+        source_shape: "iframe",
         source_url: {
           status: "present",
           value: "https://youtu.be/dQw4w9WgXcQ",
@@ -2125,7 +2126,11 @@ describe("MediaPaneBody pane sizing", () => {
           status: "present",
           value: "https://youtu.be/dQw4w9WgXcQ",
         },
-        locator: { canonical_start_offset: 8, canonical_end_offset: 36 },
+        locator: {
+          canonical_start_offset: 8,
+          canonical_end_offset: 36,
+          placeholder_text: "Embedded video: Launch video",
+        },
         display: {
           mode: "resolved",
           label: "Embedded video: Launch video",
@@ -2135,6 +2140,7 @@ describe("MediaPaneBody pane sizing", () => {
         target: {
           status: "exact",
           media_id: "child-1",
+          href: "/media/child-1",
           kind: "video",
           title: "Launch video",
           thumbnail_url: null,

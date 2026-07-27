@@ -16,6 +16,14 @@ export type DocumentEmbedProvider =
 export type DocumentEmbedKind =
   "video" | "post" | "audio" | "link_preview" | "unknown";
 
+export type DocumentEmbedSourceShape =
+  | "iframe"
+  | "blockquote"
+  | "anchor"
+  | "video_tag"
+  | "provider_json"
+  | "unknown";
+
 export type DocumentEmbedUrlStatus = "present" | "absent" | "malformed";
 
 export interface DocumentEmbedUrl {
@@ -26,6 +34,7 @@ export interface DocumentEmbedUrl {
 export interface DocumentEmbedLocator {
   canonical_start_offset: number | null;
   canonical_end_offset: number | null;
+  placeholder_text: string;
 }
 
 export type DocumentEmbedDisplayMode =
@@ -61,6 +70,7 @@ export type DocumentEmbedTargetStatus =
 export interface DocumentEmbedTarget {
   status: DocumentEmbedTargetStatus;
   media_id: string | null;
+  href: string | null;
   kind: string | null;
   title: string | null;
   thumbnail_url: string | null;
@@ -75,6 +85,7 @@ export interface DocumentEmbed {
   occurrence_key: string;
   provider: DocumentEmbedProvider;
   kind: DocumentEmbedKind;
+  source_shape: DocumentEmbedSourceShape;
   source_url: DocumentEmbedUrl;
   canonical_url: DocumentEmbedUrl;
   locator: DocumentEmbedLocator;
@@ -153,7 +164,7 @@ export function decodeDocumentEmbed(
   decodeUrl(value.thumbnail_url, `${name}.thumbnail_url`);
   decodeText(value.authored_text, `${name}.authored_text`);
   decodeText(value.error_code, `${name}.error_code`);
-  expectOneOf(
+  const sourceShape = expectOneOf(
     value.source_shape,
     [
       "iframe",
@@ -198,6 +209,7 @@ export function decodeDocumentEmbed(
       ["video", "post", "audio", "link_preview", "unknown"] as const,
       `${name}.kind`,
     ),
+    source_shape: sourceShape,
     source_url: sourceUrl,
     canonical_url: canonicalUrl,
     locator: decodeLocator(value.locator, `${name}.locator`),
@@ -282,6 +294,10 @@ function decodeLocator(raw: unknown, name: string): DocumentEmbedLocator {
       value.canonical_end_offset,
       `${name}.canonical_end_offset`,
     ),
+    placeholder_text: expectString(
+      value.placeholder_text,
+      `${name}.placeholder_text`,
+    ),
   };
 }
 
@@ -350,7 +366,7 @@ function decodeTarget(raw: unknown, name: string): DocumentEmbedTarget {
     name,
   );
   expectNullableString(value.resource_ref, `${name}.resource_ref`);
-  expectNullableString(value.href, `${name}.href`);
+  const href = expectNullableString(value.href, `${name}.href`);
   return {
     status: expectOneOf(
       value.status,
@@ -367,6 +383,7 @@ function decodeTarget(raw: unknown, name: string): DocumentEmbedTarget {
       `${name}.status`,
     ),
     media_id: expectNullableString(value.media_id, `${name}.media_id`),
+    href,
     kind: expectNullableString(value.kind, `${name}.kind`),
     title: expectNullableString(value.title, `${name}.title`),
     thumbnail_url: expectNullableString(
@@ -470,6 +487,14 @@ function buildDocumentEmbedCard(
   embed: DocumentEmbed,
   classNames: DocumentEmbedClassNames,
 ): HTMLElement {
+  if (
+    embed.provider === "x" &&
+    embed.kind === "post" &&
+    embed.source_shape === "provider_json"
+  ) {
+    return buildXQuotePostReference(document, embed, classNames);
+  }
+
   const card = document.createElement("figure");
   card.className = classNames.card;
   card.setAttribute("data-nexus-document-embed-id", embed.occurrence_key);
@@ -537,6 +562,71 @@ function buildDocumentEmbedCard(
 
   card.append(body);
   return card;
+}
+
+function buildXQuotePostReference(
+  document: Document,
+  embed: DocumentEmbed,
+  classNames: DocumentEmbedClassNames,
+): HTMLElement {
+  const label = embed.locator.placeholder_text;
+  if (!label.trim() || label !== embed.display.label) {
+    throw new Error(
+      `X quote-post reference ${embed.occurrence_key} has mismatched placeholder and display text`,
+    );
+  }
+
+  const target = xQuotePostReferenceTarget(embed);
+  const reference = document.createElement("div");
+  reference.className = classNames.card;
+  reference.setAttribute(
+    "data-nexus-document-embed-id",
+    embed.occurrence_key,
+  );
+  reference.setAttribute("data-document-embed-state", embed.display.mode);
+  reference.setAttribute("data-document-embed-provider", embed.provider);
+  reference.setAttribute("data-document-embed-kind", embed.kind);
+  reference.setAttribute(
+    "data-document-embed-presentation",
+    "compact-reference",
+  );
+
+  const link = document.createElement("a");
+  link.className = classNames.action;
+  link.href = target.href;
+  link.textContent = label;
+  if (target.external) {
+    link.target = "_blank";
+    link.rel = "noreferrer";
+  }
+  reference.append(link);
+  return reference;
+}
+
+function xQuotePostReferenceTarget(
+  embed: DocumentEmbed,
+): { href: string; external: boolean } {
+  if (embed.target.status === "exact") {
+    const href = normalizedRelativeUrl(embed.target.href);
+    if (href) {
+      return { href, external: false };
+    }
+    throw new Error(
+      `X quote-post reference ${embed.occurrence_key} has no valid activation target`,
+    );
+  }
+
+  const original = embed.display.actions.find(
+    (action) => action.kind === "open_original" && !action.disabled,
+  );
+  const href = normalizedHttpOrRelativeUrl(original?.href ?? null);
+  if (href && isExternalHref(href)) {
+    return { href, external: true };
+  }
+
+  throw new Error(
+    `X quote-post reference ${embed.occurrence_key} has no valid activation target`,
+  );
 }
 
 function buildDocumentEmbedActions(
@@ -611,6 +701,15 @@ function normalizedHttpOrRelativeUrl(value: string | null): string | null {
   } catch {
     return null;
   }
+}
+
+function normalizedRelativeUrl(value: string | null): string | null {
+  const normalized = normalizedHttpOrRelativeUrl(value);
+  return normalized?.startsWith("/") &&
+    !normalized.startsWith("//") &&
+    !normalized.includes("\\")
+    ? normalized
+    : null;
 }
 
 function isExternalHref(href: string): boolean {

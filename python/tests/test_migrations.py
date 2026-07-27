@@ -24911,3 +24911,116 @@ class TestMigration0196ChatPublicationThinSpine:
             reset_test_schema()
             run_alembic_command("upgrade head")
             engine.dispose()
+
+
+class TestMigration0197XPostSourceAttemptProvenance:
+    def test_0197_repairs_missing_attempt_and_blocks_downgrade(self):
+        reset_test_schema()
+        assert run_alembic_command("upgrade 0196").returncode == 0
+        engine = create_engine(get_test_database_url())
+        user_id = uuid4()
+        media_id = uuid4()
+        canonical_url = "https://x.com/i/status/4444444444"
+        try:
+            with engine.begin() as connection:
+                connection.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                connection.execute(
+                    text("""
+                        INSERT INTO media (
+                            id, kind, title, processing_status, created_by_user_id,
+                            requested_url, canonical_url, canonical_source_url,
+                            provider, provider_id
+                        )
+                        VALUES (
+                            :id, 'web_article', 'Legacy quoted X post',
+                            'ready_for_reading', :user_id, :canonical_url,
+                            :canonical_url, :canonical_url, 'x', 'post:4444444444'
+                        )
+                    """),
+                    {
+                        "id": media_id,
+                        "user_id": user_id,
+                        "canonical_url": canonical_url,
+                    },
+                )
+                connection.execute(
+                    text("""
+                        INSERT INTO media_source_attempts (
+                            media_id, created_by_user_id, source_type, attempt_no,
+                            status, intent_key, provider, provider_target_ref,
+                            source_payload
+                        )
+                        VALUES
+                            (
+                                :media_id, :user_id, 'x_author_thread', 1,
+                                'succeeded', 'legacy-wrong-type', 'x', '4444444444',
+                                '{"post_id": "4444444444"}'::jsonb
+                            ),
+                            (
+                                :media_id, :user_id, 'x_post', 2,
+                                'failed', 'legacy-failed-x-post', 'x', '4444444444',
+                                '{"post_id": "4444444444"}'::jsonb
+                            ),
+                            (
+                                :media_id, :user_id, 'x_post', 3,
+                                'succeeded', 'legacy-wrong-x-post-identity',
+                                NULL, 'wrong-target',
+                                '{"post_id": "wrong-target"}'::jsonb
+                            )
+                    """),
+                    {"media_id": media_id, "user_id": user_id},
+                )
+
+            result = run_alembic_command("upgrade 0197")
+            assert result.returncode == 0, result.stderr
+            with engine.connect() as connection:
+                attempt = connection.execute(
+                    text("""
+                        SELECT source_type, attempt_no, run_count, status,
+                               requested_url, canonical_source_url, provider,
+                               provider_target_ref, source_payload, finished_at
+                        FROM media_source_attempts
+                        WHERE media_id = :media_id
+                          AND source_type = 'x_post'
+                          AND status = 'succeeded'
+                          AND provider = 'x'
+                          AND provider_target_ref = '4444444444'
+                    """),
+                    {"media_id": media_id},
+                ).one()
+                assert tuple(attempt[:9]) == (
+                    "x_post",
+                    4,
+                    1,
+                    "succeeded",
+                    canonical_url,
+                    canonical_url,
+                    "x",
+                    "4444444444",
+                    {"post_id": "4444444444"},
+                )
+                assert attempt.finished_at is not None
+
+            result = run_alembic_command("downgrade 0196")
+            assert result.returncode != 0
+            with engine.connect() as connection:
+                assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0197"
+                assert (
+                    connection.scalar(
+                        text("""
+                            SELECT count(*)
+                            FROM media_source_attempts
+                            WHERE media_id = :media_id
+                              AND source_type = 'x_post'
+                              AND status = 'succeeded'
+                              AND provider = 'x'
+                              AND provider_target_ref = '4444444444'
+                        """),
+                        {"media_id": media_id},
+                    )
+                    == 1
+                )
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()

@@ -229,11 +229,18 @@ Existing direct X URL behavior:
 - direct X URL ingest creates `x_author_thread`,
 - provider truth comes from the official X API,
 - quote posts are separate child media with `provider_id = "post:<post_id>"`,
+- the parent contains only a compact typed reference to each direct quote,
+- the already-fetched direct quote snapshot publishes the child without another
+  X request,
+- a quote inside that child remains an external X link; ingestion does not
+  recurse,
 - raw oEmbed/widget HTML is not used.
 
 Inline X embeds reuse this provider boundary but represent the source-authored
 embed as a single-post child media. The direct URL `x_author_thread` behavior is
-not widened to mean every inline post.
+not widened to mean every inline post. See
+`x-quote-post-resource-reference-hard-cutover.md` for the author-thread quote
+specialization.
 
 ### YouTube provider and playback
 
@@ -696,69 +703,60 @@ Status ownership:
 - Occurrence rows own per-embed `resolution_status`; they do not own aggregate
   status.
 
-Public service API:
+Artifact mutation contract:
 
 ```python
+DocumentEmbedTargetOutcome = (
+    DocumentEmbedTargetAcceptSource
+    | DocumentEmbedTargetMaterialized
+    | DocumentEmbedTargetTerminal
+)
+
 def replace_document_embed_artifact(
     db: Session,
     *,
     owner_user_id: UUID,
     media_id: UUID,
     source_attempt_id: UUID,
-    extraction_result: DocumentEmbedExtractionResult,
-    fragment_bindings: Sequence[DocumentEmbedFragmentBinding],
-) -> DocumentEmbedArtifactOut:
-    ...
-
-def replace_document_embeds_for_media(
-    db: Session,
-    *,
-    owner_user_id: UUID,
-    media_id: UUID,
-    source_attempt_id: UUID,
-    detected: Sequence[DetectedDocumentEmbed],
-    fragment_bindings: Sequence[DocumentEmbedFragmentBinding],
-) -> list[DocumentEmbedOut]:
-    ...
-
-def list_document_embeds_for_fragments(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    fragment_ids: Sequence[UUID],
-) -> dict[UUID, list[DocumentEmbedOut]]:
-    ...
-
-def list_document_embeds_for_document_map(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    media_id: UUID,
-) -> list[DocumentEmbedOut]:
-    ...
-
-def set_document_embed_target_media(
-    db: Session,
-    *,
-    owner_user_id: UUID,
-    embed_id: UUID,
-    target_media_id: UUID,
-    status: DocumentEmbedResolutionStatus,
-) -> None:
+    occurrences: Sequence[DocumentEmbedArtifactOccurrence],
+    extraction_error_code: str | None,
+    extraction_error_message: str | None,
+    request_id: str | None,
+    locked_existing_target_media_ids: frozenset[UUID],
+) -> list[tuple[UUID, UUID]]:
     ...
 ```
 
+Each occurrence carries its `fragment_id`, global ordinal, stable key, locator,
+and exactly one target outcome:
+
+- `accept_source(canonical_url)` creates or reuses a supported child source;
+- `materialized(media_id)` links a child already published by its provider owner;
+- `terminal(status, error)` records unsupported or failed content without a
+  child.
+
+This is the only artifact mutation API. Fragment, media, and Document Map reads
+use query helpers over the same current rows; no per-fragment replacement or
+per-occurrence target setter exists.
+
 Transaction rules:
 
-- `replace_document_embed_artifact` runs in the same transaction that publishes
-  the current readable artifact. No public read may observe new current
-  fragments with missing or stale embed state.
+- The caller supplies the complete occurrence batch across all current
+  fragments. One call replaces the old occurrence rows, aggregate state, and
+  `document_embed` edges, then writes the new rows, state, and distinct resolved
+  target edges.
+- Replacement runs in the transaction that publishes the current readable
+  artifact. No public read may observe new current fragments with missing or
+  stale embed state.
 - If extraction fails before trusted occurrences exist, the same transaction
   publishes the readable artifact with a `failed` artifact state and zero
   occurrence rows.
-- Child source attempts may be created after parent artifact publication. Their
-  later completion updates `target_media_id` and resolution status in their own
-  source-owner transactions.
+- `accept_source` may create an accepted child attempt in that transaction. The
+  caller binds returned child attempts to durable jobs in the same transaction;
+  those jobs become visible and runnable only when publication commits.
+- Provider-owned synchronous publication supplies `materialized(media_id)`;
+  later child completion synchronizes target status and edges through the
+  document-embed owner.
 - Every status update sets `updated_at = now()` in application SQL. No trigger is
   used.
 - No helper commits. Callers own the transaction boundary.
@@ -833,10 +831,21 @@ Target behavior:
 
 Reuse:
 
-- factor existing quote-post materialization into a reusable single-post
-  materializer,
-- direct X URL author-thread capture can continue creating quote children with
-  the same lower-level single-post helper.
+- direct inline X embeds use the normal accepted `x_post` source attempt and
+  official single-post fetch;
+- direct X author-thread quotes reuse the same X-post snapshot publisher but
+  supply the quote already fetched with the parent;
+- both paths converge on `provider = "x", provider_id = "post:<post_id>"` and a
+  succeeded `x_post` source attempt.
+
+Author-thread quote presentation is link-only:
+
+- resolved: `Quoted X post by @user — Open in Nexus`;
+- unavailable: `Quoted X post unavailable — Open on X`;
+- deeper quote in the saved child: `Quotes another X post — Open on X`.
+
+The parent never contains the quoted body or media. Direct quote occurrences use
+`source_shape = "provider_json"` and the current artifact batch command.
 
 ### System 6: YouTube embed child materialization
 
@@ -1637,12 +1646,11 @@ Embedded child attempt payload:
 
 ```json
 {
-  "kind": "embedded_source",
+  "url": "https://...",
+  "kind": "<child media kind>",
   "parent_media_id": "<uuid>",
-  "document_embed_id": "<uuid>",
-  "source_url": "https://...",
-  "provider": "youtube",
-  "provider_target_ref": "video:<id>",
+  "document_embed_key": "<stable occurrence key>",
+  "<provider-owned target field>": "<id>",
   "library_ids": ["<uuid>"]
 }
 ```
@@ -1655,8 +1663,9 @@ X provider event contract:
   rate-limited, auth/config failure, and transient provider failure,
 - child `x_post` retry reuses the child source attempt and does not rerun parent
   article extraction,
-- quote-post child materialization and embedded `x_post` share lower-level
-  snapshot/rendering helpers but keep separate source-attempt ownership.
+- direct inline X embeds fetch a single-post snapshot; X author-thread quotes
+  publish the already-fetched snapshot through the same X-post artifact owner,
+- every child publication completes its own `x_post` source attempt.
 
 ### Sanitized placeholder schema
 
@@ -2045,7 +2054,8 @@ No runtime support branches for old payloads are added.
 
 - Add typed embed slot renderer.
 - Add inline cards and controlled YouTube playback.
-- Add X static archived card.
+- Add X static archived card for source-authored web-article embeds and compact
+  link-only references for X author-thread quotes.
 - Add unsupported/failed cards.
 - Add Document Map Embeds lens.
 - Add highlight, quote, focus mode, resume position, desktop rail, and mobile
@@ -2164,7 +2174,9 @@ The cutover is complete only when all criteria are true:
    positions.
 4. YouTube embedded videos create or reuse child video media.
 5. Embedded X posts create or reuse child `x_post` media through the official X
-   API and post-specific provider events.
+   API and post-specific provider events. X author-thread direct quotes publish
+   from their parent snapshot without a second provider request and render as
+   link-only references.
 6. X oEmbed is not called anywhere.
 7. Unsupported providers show inline unsupported cards.
 8. Failed providers show inline failed cards.
@@ -2200,10 +2212,6 @@ The cutover is complete only when all criteria are true:
 
 These are implementation questions, not product blockers:
 
-- Whether child embedded media should be listed in normal library views by
-  default or only reachable through parent connections. The first implementation
-  should inherit parent libraries because X quote posts already behave as
-  separate media.
 - Whether unsupported native Substack videos can later become a supported
   provider. That requires a provider-specific contract and is not a reason to
   allow generic iframes now.

@@ -5,7 +5,7 @@ context: the ``<quote>`` inside a ``<resource>`` highlight, the
 ``<reader_selection>`` turn anchor, and the ``<assistant_selection>`` branch
 anchor. Every leaf is ``xml_escape``d at the interpolation site
 (generated-text.md). Named ``chat_quote`` to avoid the unrelated
-``_render_quote_block`` in ``x_rendering`` (HTML quote-tweets).
+the X resource-reference renderer in ``x_rendering`` (HTML quote posts).
 """
 
 from __future__ import annotations

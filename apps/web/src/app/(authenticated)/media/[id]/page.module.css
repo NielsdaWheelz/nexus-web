@@ -162,6 +162,21 @@
   border-left-color: var(--danger);
 }
 
+.documentEmbedCard[data-document-embed-presentation="compact-reference"] {
+  display: block;
+  margin: var(--space-3) 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.documentEmbedCard[data-document-embed-presentation="compact-reference"]
+  .documentEmbedAction {
+  display: inline;
+  font: inherit;
+  font-weight: var(--weight-medium);
+}
+
 .documentEmbedMedia {
   min-width: 0;
 }

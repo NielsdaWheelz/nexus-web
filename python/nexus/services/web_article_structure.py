@@ -6,12 +6,19 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from dataclasses import replace as dataclass_replace
-from typing import cast
+from typing import assert_never, cast
+from uuid import UUID
 
 from lxml.html import HtmlElement, fragment_fromstring, tostring
 
 from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.document_embed_extraction import DetectedDocumentEmbed, extract_document_embeds
+from nexus.services.document_embeds import (
+    DocumentEmbedArtifactOccurrence,
+    DocumentEmbedTargetAcceptSource,
+    DocumentEmbedTargetOutcome,
+    DocumentEmbedTargetTerminal,
+)
 from nexus.services.fragment_blocks import FragmentBlockSpec
 from nexus.services.reader_apparatus import extract_html_apparatus
 from nexus.services.sanitize_html import sanitize_html
@@ -63,6 +70,51 @@ class _Heading:
     anchor_id: str
     ordinal: int
     visible: bool
+
+
+def document_embed_artifact_occurrences(
+    *,
+    fragment_id: UUID,
+    document_embeds: list[WebArticleDocumentEmbed],
+) -> list[DocumentEmbedArtifactOccurrence]:
+    return [
+        DocumentEmbedArtifactOccurrence(
+            fragment_id=fragment_id,
+            ordinal=item.detected.ordinal,
+            occurrence_key=item.detected.occurrence_key,
+            provider=item.detected.provider,
+            embed_kind=item.detected.embed_kind,
+            source_shape=item.detected.source_shape,
+            source_url=item.detected.source_url,
+            canonical_source_url=item.detected.canonical_source_url,
+            provider_target_ref=item.detected.provider_target_ref,
+            title=item.detected.title,
+            authored_text=item.detected.authored_text,
+            placeholder_text=item.detected.placeholder_text,
+            canonical_start_offset=item.canonical_start_offset,
+            canonical_end_offset=item.canonical_end_offset,
+            target=_document_embed_target(item.detected),
+        )
+        for item in document_embeds
+    ]
+
+
+def _document_embed_target(detected: DetectedDocumentEmbed) -> DocumentEmbedTargetOutcome:
+    match detected.resolution_status:
+        case "pending":
+            if detected.canonical_source_url is None:
+                # justify-defect: pending extraction is the accepted-source branch
+                # and the extraction boundary always supplies its canonical URL.
+                raise AssertionError("pending document embed has no canonical source URL")
+            return DocumentEmbedTargetAcceptSource(detected.canonical_source_url)
+        case "unsupported" | "failed" as status:
+            return DocumentEmbedTargetTerminal(
+                status=status,
+                error_code=detected.error_code,
+                error_message=detected.error_message,
+            )
+        case unreachable:
+            assert_never(unreachable)
 
 
 def prepare_web_article_fragment(

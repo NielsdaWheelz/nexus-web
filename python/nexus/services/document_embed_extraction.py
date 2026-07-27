@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 from urllib.parse import urljoin, urlparse
 
 from lxml.html import Element, HtmlElement, tostring
 
 from nexus.errors import InvalidRequestError
+from nexus.schemas.media import DocumentEmbedKind, DocumentEmbedProvider, DocumentEmbedSourceShape
 from nexus.services.html_tree import parse_html_document
 from nexus.services.url_normalize import validate_requested_url
 from nexus.services.x_identity import classify_x_url
@@ -22,10 +24,10 @@ _MAX_TITLE_LENGTH = 300
 class DetectedDocumentEmbed:
     ordinal: int
     occurrence_key: str
-    provider: str
-    embed_kind: str
-    source_shape: str
-    resolution_status: str
+    provider: DocumentEmbedProvider
+    embed_kind: DocumentEmbedKind
+    source_shape: DocumentEmbedSourceShape
+    resolution_status: Literal["pending", "unsupported", "failed"]
     source_url: str | None
     canonical_source_url: str | None
     provider_target_ref: str | None
@@ -189,10 +191,10 @@ def _is_x_blockquote(element: HtmlElement) -> bool:
 def _embed(
     ordinal: int,
     *,
-    provider: str,
-    embed_kind: str,
-    source_shape: str,
-    resolution_status: str,
+    provider: DocumentEmbedProvider,
+    embed_kind: DocumentEmbedKind,
+    source_shape: DocumentEmbedSourceShape,
+    resolution_status: Literal["pending", "unsupported", "failed"],
     source_url: str | None,
     canonical_source_url: str | None,
     provider_target_ref: str | None,

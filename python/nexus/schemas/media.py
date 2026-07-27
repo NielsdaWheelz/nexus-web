@@ -105,6 +105,14 @@ DocumentEmbedAggregateStatus = Literal[
     "partial",
     "failed",
 ]
+DocumentEmbedProvider = Literal[
+    "youtube", "x", "substack", "vimeo", "spotify", "generic", "unknown"
+]
+DocumentEmbedKind = Literal["video", "post", "audio", "link_preview", "unknown"]
+DocumentEmbedSourceShape = Literal[
+    "iframe", "blockquote", "anchor", "video_tag", "provider_json", "unknown"
+]
+DocumentEmbedResolutionStatus = Literal["pending", "resolving", "resolved", "unsupported", "failed"]
 
 
 class DocumentEmbedSummaryOut(BaseModel):
@@ -183,10 +191,10 @@ class DocumentEmbedOut(BaseModel):
     fragment_id: UUID | None = None
     occurrence_key: str
     ordinal: int
-    provider: Literal["youtube", "x", "substack", "vimeo", "spotify", "generic", "unknown"]
-    kind: Literal["video", "post", "audio", "link_preview", "unknown"]
-    source_shape: Literal["iframe", "blockquote", "anchor", "video_tag", "provider_json", "unknown"]
-    resolution_status: Literal["pending", "resolving", "resolved", "unsupported", "failed"]
+    provider: DocumentEmbedProvider
+    kind: DocumentEmbedKind
+    source_shape: DocumentEmbedSourceShape
+    resolution_status: DocumentEmbedResolutionStatus
     source_url: DocumentEmbedUrlOut
     canonical_url: DocumentEmbedUrlOut
     provider_target_ref: DocumentEmbedProviderRefOut

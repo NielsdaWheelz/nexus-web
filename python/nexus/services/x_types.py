@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
+from typing import Literal
 
 X_AUTHOR_THREAD_PROVIDER_ID_PREFIX = "author-thread:"
 X_POST_PROVIDER_ID_PREFIX = "post:"
@@ -81,6 +82,22 @@ class XPostSnapshot:
 
 
 @dataclass(frozen=True)
+class XResolvedQuoteReference:
+    kind: Literal["resolved"] = field(default="resolved", init=False)
+    post: XPostSnapshot
+
+
+@dataclass(frozen=True)
+class XUnavailableQuoteReference:
+    kind: Literal["unavailable"] = field(default="unavailable", init=False)
+    post_id: str
+    canonical_url: str
+
+
+type XQuoteReference = XResolvedQuoteReference | XUnavailableQuoteReference
+
+
+@dataclass(frozen=True)
 class XAuthorThreadSnapshot:
     requested_post_id: str
     conversation_id: str
@@ -88,7 +105,7 @@ class XAuthorThreadSnapshot:
     canonical_url: str
     author: XUserSnapshot
     posts: tuple[XPostSnapshot, ...]
-    quoted_posts: Mapping[str, XPostSnapshot]
+    quote_references: Mapping[str, XQuoteReference]
     users: Mapping[str, XUserSnapshot]
     media: Mapping[str, XMediaSnapshot]
 

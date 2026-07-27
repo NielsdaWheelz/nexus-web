@@ -35,7 +35,12 @@ from nexus.errors import (
     InvalidRequestError,
     NotFoundError,
 )
-from nexus.jobs.queue import JobExecutionContext, enqueue_job
+from nexus.jobs.queue import (
+    JobExecutionContext,
+    enqueue_job,
+    lock_jobs_for_payload,
+    supersede_unclaimed_job,
+)
 from nexus.logging import get_logger
 from nexus.schemas.media import FromUrlResponse
 from nexus.services import library_entries, library_governance
@@ -100,6 +105,7 @@ from nexus.services.web_article_structure import (
     prepare_web_article_fragment,
 )
 from nexus.services.x_identity import classify_x_url, is_x_url
+from nexus.services.x_provider_lock import lock_x_provider_identity
 from nexus.services.youtube_identity import classify_youtube_url, is_youtube_url
 from nexus.services.youtube_video_ingest import run_youtube_video_ingest
 from nexus.storage.client import StorageClientBase, StorageError, get_storage_client
@@ -156,9 +162,103 @@ class EmbeddedSourceAcceptance:
     media_id: UUID
     source_attempt_id: UUID
     source_type: str
+    provider_target_ref: str | None
     source_attempt_status: str
     processing_status: str
     needs_enqueue: bool
+
+
+def complete_x_post_snapshot_attempt(
+    db: Session,
+    *,
+    media: Media,
+    source_attempt_id: UUID,
+    viewer_id: UUID,
+    post_id: str,
+    canonical_url: str,
+    request_id: str | None,
+) -> MediaSourceAttempt:
+    """Complete an accepted X-post child from its parent provider snapshot."""
+    if media.provider != "x" or media.provider_id != f"post:{post_id}":
+        # justify-service-invariant-check: Media is a broad persistence model;
+        # the X-post provider identity cannot be represented in its static type.
+        raise AssertionError("X-post snapshot attempt requires canonical X-post media")
+    attempt = db.get(MediaSourceAttempt, source_attempt_id)
+    if (
+        attempt is None
+        or attempt.media_id != media.id
+        or attempt.source_type != source_types.X_POST
+    ):
+        # justify-defect: embedded-source acceptance returned this exact owned
+        # X-post attempt in the same publication flow.
+        raise AssertionError("accepted X-post source attempt identity changed")
+    if attempt.status == _ATTEMPT_SUCCEEDED:
+        return attempt
+    now = datetime.now(UTC)
+    if attempt.status == _ATTEMPT_FAILED:
+        attempt = create_attempt(
+            db,
+            media=media,
+            viewer_id=viewer_id,
+            source_type=source_types.X_POST,
+            intent_key=build_intent_key(source_types.X_POST, canonical_url, post_id),
+            requested_url=canonical_url,
+            canonical_source_url=canonical_url,
+            provider="x",
+            provider_target_ref=post_id,
+            source_payload={"post_id": post_id},
+            request_id=request_id,
+            idempotency_key=None,
+            status=_ATTEMPT_SUCCEEDED,
+        )
+    else:
+        if attempt.status not in {
+            _ATTEMPT_ACCEPTED,
+            _ATTEMPT_QUEUED,
+            _ATTEMPT_RUNNING,
+        }:
+            # justify-defect: only an accepted/in-flight attempt can be
+            # completed from the provider snapshot owned by its parent.
+            raise AssertionError("X-post source attempt has invalid completion state")
+        if attempt.status == _ATTEMPT_ACCEPTED and attempt.job_id is not None:
+            # justify-defect: accepted attempts have not acquired queue
+            # ownership yet.
+            raise AssertionError("accepted X-post source attempt unexpectedly owns a job")
+        if attempt.status in {_ATTEMPT_QUEUED, _ATTEMPT_RUNNING}:
+            jobs = lock_jobs_for_payload(
+                db,
+                kind="ingest_media_source",
+                expected_payload_match={"attempt_id": str(attempt.id)},
+            )
+            exact_jobs = [job for job in jobs if job.id == attempt.job_id]
+            if len(exact_jobs) != 1:
+                # justify-defect: an in-flight source attempt owns one exact
+                # durable ingest job through its job_id and payload.
+                raise AssertionError("in-flight X-post attempt has no exact ingest job")
+            job = exact_jobs[0]
+            if (
+                attempt.status == _ATTEMPT_QUEUED
+                and job.status in {"pending", "failed"}
+                and job.claimed_by is None
+            ):
+                supersede_unclaimed_job(
+                    db,
+                    job_id=job.id,
+                    kind="ingest_media_source",
+                )
+            elif job.status != "running":
+                # justify-defect: terminal/dead queue state cannot still own an
+                # in-flight source attempt.
+                raise AssertionError("in-flight X-post attempt has invalid job state")
+        attempt.status = _ATTEMPT_SUCCEEDED
+        attempt.error_code = None
+        attempt.error_message = None
+        attempt.retry_after_seconds = None
+    attempt.run_count = max(1, int(attempt.run_count or 0))
+    attempt.started_at = attempt.started_at or now
+    attempt.finished_at = now
+    attempt.updated_at = now
+    return attempt
 
 
 def accept_url_source(
@@ -288,6 +388,24 @@ def _accept_url_source(
         library_entries.assign_libraries_for_media_in_current_transaction(
             db, viewer_id, media.id, library_ids
         )
+        if not created and spec["source_type"] == source_types.X_AUTHOR_THREAD:
+            from nexus.services.document_embeds import (
+                reconcile_document_embed_edges_for_viewer,
+                resolved_document_embed_target_media_ids,
+            )
+
+            for target_media_id in resolved_document_embed_target_media_ids(db, media_id=media.id):
+                library_entries.assign_libraries_for_media_in_current_transaction(
+                    db,
+                    viewer_id,
+                    target_media_id,
+                    library_ids,
+                )
+            reconcile_document_embed_edges_for_viewer(
+                db,
+                viewer_id=viewer_id,
+                media_id=media.id,
+            )
     attempt_status = _ATTEMPT_ACCEPTED if created else _reused_url_attempt_status(media)
     source_payload: dict[str, object] = {
         "url": url,
@@ -551,6 +669,8 @@ def accept_embedded_source(
             ApiErrorCode.E_INVALID_REQUEST,
             "Unsupported embedded source provider.",
         )
+    if spec["source_type"] == source_types.X_POST:
+        lock_x_provider_identity(db, str(spec["provider_id"]))
 
     now = datetime.now(UTC)
     media = _find_reusable_url_media(db, viewer_id, spec)
@@ -586,6 +706,7 @@ def accept_embedded_source(
             media_id=media.id,
             source_attempt_id=existing_attempt.id,
             source_type=existing_attempt.source_type,
+            provider_target_ref=existing_attempt.provider_target_ref,
             source_attempt_status=existing_attempt.status,
             processing_status=_status_to_str(media.processing_status),
             needs_enqueue=False,
@@ -623,6 +744,7 @@ def accept_embedded_source(
         media_id=media.id,
         source_attempt_id=attempt.id,
         source_type=attempt.source_type,
+        provider_target_ref=attempt.provider_target_ref,
         source_attempt_status=attempt.status,
         processing_status=_status_to_str(media.processing_status),
         needs_enqueue=created,
@@ -1256,12 +1378,26 @@ def _run_claimed_source_attempt(
             def publish_author_failure(
                 phase_db: Session, _attempt: MediaSourceAttempt
             ) -> tuple[str, str]:
+                from nexus.services.content_indexing import request_media_content_reindex
+
                 _finish_failed_attempt(phase_db, attempt_id, media_id, author_failure)
                 _sync_document_embed_targets(
                     phase_db,
                     media_id,
                     locked_media_ids=publication_media_ids,
                 )
+                for additional_media_id in additional_reindex_media_ids:
+                    request_media_content_reindex(
+                        phase_db,
+                        media_id=additional_media_id,
+                        reason="source_success",
+                        request_id=request_id,
+                    )
+                    _sync_document_embed_targets(
+                        phase_db,
+                        additional_media_id,
+                        locked_media_ids=publication_media_ids,
+                    )
                 return _source_error_fields(author_failure)
 
             try:
@@ -1346,6 +1482,12 @@ def _run_claimed_source_attempt(
             terminal_media_id,
             locked_media_ids=publication_media_ids,
         )
+        for additional_media_id in additional_reindex_media_ids:
+            _sync_document_embed_targets(
+                phase_db,
+                additional_media_id,
+                locked_media_ids=publication_media_ids,
+            )
 
     try:
         run_source_publication_phase(
@@ -2893,8 +3035,10 @@ def _run_prepared_html_article(
 
     from nexus.services.document_embeds import (
         DocumentEmbedLockSetChanged,
+        delete_document_embed_artifacts,
         replace_document_embed_artifact,
     )
+    from nexus.services.web_article_structure import document_embed_artifact_occurrences
 
     embed_urls = [
         item.detected.canonical_source_url
@@ -2930,9 +3074,14 @@ def _run_prepared_html_article(
             owner_user_id = locked_attempt.created_by_user_id or media.created_by_user_id
             if owner_user_id is None:
                 raise AssertionError("stored HTML source attempt has no owner")
+            if not extract_embeds:
+                delete_document_embed_artifacts(
+                    db,
+                    owner_user_id=owner_user_id,
+                    media_id=media_id,
+                )
             delete_web_article_artifacts(
                 db,
-                owner_user_id=owner_user_id,
                 media_id=media_id,
                 include_content_index=False,
             )
@@ -2952,8 +3101,10 @@ def _run_prepared_html_article(
                     owner_user_id=owner_user_id,
                     media_id=media_id,
                     source_attempt_id=locked_attempt.id,
-                    fragment_id=fragment.id,
-                    document_embeds=prepared.document_embeds,
+                    occurrences=document_embed_artifact_occurrences(
+                        fragment_id=fragment.id,
+                        document_embeds=prepared.document_embeds,
+                    ),
                     extraction_error_code=prepared.document_embed_extraction_error_code,
                     extraction_error_message=prepared.document_embed_extraction_error_message,
                     request_id=request_id,

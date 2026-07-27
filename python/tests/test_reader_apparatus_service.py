@@ -752,7 +752,6 @@ def test_refresh_cleanup_preserves_apparatus_for_stable_key_reconciliation(
 
             delete_web_article_artifacts(
                 session,
-                owner_user_id=user_id,
                 media_id=media_id,
                 include_content_index=False,
             )
