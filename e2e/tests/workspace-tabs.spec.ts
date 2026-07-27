@@ -44,7 +44,7 @@ interface LibraryListResponse {
   data: Array<{
     id: string;
     name: string;
-    is_default: boolean;
+    isDefault: boolean;
   }>;
 }
 
@@ -139,47 +139,86 @@ test.describe("workspace tabs", () => {
   // Opening panes produces tabs
   // -------------------------------------------------------------------------
 
-  test("desktop: opening a second pane from a link adds a tab to the strip", async ({
+  test("desktop: plain links restore exact panes and Shift creates an exact duplicate", async ({
     page,
   }, testInfo) => {
     const librariesResponse = await page.request.get("/api/libraries");
     expect(librariesResponse.ok()).toBeTruthy();
     const libraries = (await librariesResponse.json()) as LibraryListResponse;
-    const defaultLibrary = libraries.data.find((library) => library.is_default);
+    const defaultLibrary = libraries.data.find((library) => library.isDefault);
     if (!defaultLibrary) {
       throw new Error("Default library missing from E2E seed.");
     }
 
-    await gotoSinglePaneWorkspace(
+    const libraryHref = `/libraries/${defaultLibrary.id}`;
+    await gotoWithWorkspaceSession(
       page,
       workspaceTabsDeviceId(testInfo),
+      makeWorkspaceState(
+        [
+          makeWorkspacePane("pane-libraries", "/libraries", {
+            history: {
+              back: [makeWorkspaceVisit("/notes")],
+              forward: [],
+            },
+          }),
+          makeWorkspacePane("pane-library", libraryHref, {
+            visibility: "minimized",
+          }),
+        ],
+        { activePrimaryPaneId: "pane-libraries" },
+      ),
       "/libraries",
-      {
-        history: {
-          back: [makeWorkspaceVisit("/notes")],
-          forward: [],
-        },
-      },
     );
 
     const strip = workspacePaneStrip(page);
     await expect(strip).toBeVisible();
-
-    // Only the Libraries tab exists initially.
     await expect(workspacePaneButton(page, /^Libraries\b/)).toBeVisible();
-    await expect(workspacePaneButton(page, /^Search\b/)).toHaveCount(0);
+    await expect(
+      workspacePaneButton(
+        page,
+        new RegExp(
+          `^${escapeRegExp(defaultLibrary.name)}\\b.*Minimized\\. Restore\\.`,
+        ),
+      ),
+    ).toBeVisible();
 
-    // Shift-click opens a new pane (the standard in-app gesture).
-    const libraryLink = activeWorkspacePane(page)
+    const librariesPane = page.locator('[data-pane-id="pane-libraries"]');
+    const libraryLink = librariesPane
       .getByRole("link", { name: defaultLibrary.name })
       .first();
     await expect(libraryLink).toBeVisible();
-    await libraryLink.click({ modifiers: ["Shift"] });
 
-    // A new library tab now appears in the strip.
-    await expect(workspacePaneButton(page, new RegExp(`^${escapeRegExp(defaultLibrary.name)}\\b`))).toBeVisible({
-      timeout: 10_000,
-    });
+    await libraryLink.click();
+    await expect(page).toHaveURL(new RegExp(`${escapeRegExp(libraryHref)}$`));
+    await expect(page.locator("[data-pane-id]")).toHaveCount(2);
+    await expect(
+      workspacePaneButton(
+        page,
+        new RegExp(`^${escapeRegExp(defaultLibrary.name)}\\b`),
+      ),
+    ).toHaveAttribute("aria-current", "page");
+    await expect(workspacePaneButton(page, /^Libraries\b/)).toBeVisible();
+
+    await workspacePaneButton(page, /^Libraries\b/).click();
+    await librariesPane
+      .getByRole("button", { name: "Go back in this pane" })
+      .click();
+    await expect(page).toHaveURL(/\/notes$/);
+    await expect(page.locator("[data-pane-id]")).toHaveCount(2);
+    await librariesPane
+      .getByRole("button", { name: "Go forward in this pane" })
+      .click();
+    await expect(page).toHaveURL(/\/libraries$/);
+
+    await libraryLink.click({ modifiers: ["Shift"] });
+    await expect(page.locator("[data-pane-id]")).toHaveCount(3);
+    await expect(
+      workspacePaneButton(
+        page,
+        new RegExp(`^${escapeRegExp(defaultLibrary.name)}\\b`),
+      ),
+    ).toHaveCount(2);
   });
 
   // -------------------------------------------------------------------------
@@ -398,7 +437,7 @@ test.describe("workspace tabs", () => {
     const librariesResponse = await page.request.get("/api/libraries");
     expect(librariesResponse.ok()).toBeTruthy();
     const libraries = (await librariesResponse.json()) as LibraryListResponse;
-    const defaultLibrary = libraries.data.find((library) => library.is_default);
+    const defaultLibrary = libraries.data.find((library) => library.isDefault);
     if (!defaultLibrary) {
       throw new Error("Default library missing from E2E seed.");
     }

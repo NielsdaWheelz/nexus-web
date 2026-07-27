@@ -34,7 +34,7 @@ import type {
   EmphasisSegment,
   ExceptionalStatus,
 } from "@/lib/collections/types";
-import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import {
   executeResourceChat,
   executeResourceLibraryPlacement,
@@ -233,25 +233,16 @@ function ResourceCollectionRowActionMenu({
     throw new Error("Collection resource publications must not publish core actions");
   }
 
-  const requirePaneRuntime = () => {
-    if (paneRuntime === null) {
-      // justify-defect: standing collection actions execute only inside a pane;
-      // no alternate navigation contract exists at this surface.
-      throw new Error("Collection resource action requires pane runtime");
-    }
-    return paneRuntime;
-  };
-
   const openResource = (
     target: Extract<typeof publication.target, { kind: "Resource" }>,
   ) => {
-    const runtime = requirePaneRuntime();
+    const runtime = requirePaneRuntime(paneRuntime, "CollectionRow");
     executeResourceOpen({
       target,
       resourceNavigation: {
         labelHint: title,
-        navigate: (href) => runtime.router.push(href, { labelHint: title }),
-        openInNewPane: runtime.openInNewPane,
+        activateTarget: runtime.activateTarget,
+        disposition: { kind: "Follow" },
       },
     });
   };
@@ -268,7 +259,7 @@ function ResourceCollectionRowActionMenu({
           executors: {
             open: openResource,
             share: (subject, detail) => {
-              const runtime = requirePaneRuntime();
+              const runtime = requirePaneRuntime(paneRuntime, "CollectionRow");
               executeResourceShare({
                 subject,
                 openShare,
@@ -282,14 +273,17 @@ function ResourceCollectionRowActionMenu({
               busyIdsRef.current = nextBusyIds;
               setBusyIds(nextBusyIds);
               try {
-                const runtime = requirePaneRuntime();
+                const runtime = requirePaneRuntime(paneRuntime, "CollectionRow");
                 await executeResourceChat({
                   ref: subject.ref,
                   openConversation: (conversationId) =>
-                    runtime.openInNewPane(
-                      `/conversations/${conversationId}`,
-                      "Chat",
-                    ),
+                    void runtime.activateTarget({
+                      target: {
+                        href: `/conversations/${conversationId}`,
+                        labelHint: "Chat",
+                      },
+                      disposition: { kind: "Adopt" },
+                    }),
                 });
               } catch (error) {
                 if (handleUnauthenticatedApiError(error)) return;
@@ -317,7 +311,7 @@ function ResourceCollectionRowActionMenu({
           target: publication.target,
           executors: {
             libraryPlacement: (subject, detail) => {
-              const runtime = requirePaneRuntime();
+              const runtime = requirePaneRuntime(paneRuntime, "CollectionRow");
               executeResourceLibraryPlacement({
                 subject,
                 openLibraryPlacement,

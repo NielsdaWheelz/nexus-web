@@ -15,7 +15,7 @@ import {
   isLibraryContractDefect,
   type LibraryOut,
 } from "@/lib/libraries/contract";
-import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
+import { requestWorkspaceTargetActivation } from "@/lib/workspace/workspaceTargetActivationIngress";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import {
   createLinkShare,
@@ -278,11 +278,16 @@ function SharePanel({
 
   const handleManageMembers = useCallback(() => {
     if (!snapshot || snapshot.sharing !== "LibraryMembership") return;
-    const accepted = requestOpenInAppPane(snapshot.authenticatedHref, {
-      secondaryActivation: {
-        kind: "Surface",
-        surfaceId: "resource-members",
+    const accepted = requestWorkspaceTargetActivation({
+      target: {
+        href: snapshot.authenticatedHref,
+        secondaryActivation: {
+          kind: "Surface",
+          surfaceId: "resource-members",
+        },
       },
+      disposition: { kind: "Follow" },
+      modality: "Programmatic",
     });
     if (accepted) {
       onClose();

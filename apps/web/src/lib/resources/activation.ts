@@ -4,6 +4,10 @@ import {
   type ResourceRef,
 } from "@/lib/resourceGraph/resourceRef";
 import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
+import type {
+  WorkspaceTarget,
+  WorkspaceTargetDisposition,
+} from "@/lib/workspace/targetActivation";
 
 export interface ResourceActivation {
   resourceRef: string;
@@ -69,47 +73,39 @@ export function secondaryActivationForResource(
 
 export function activateResource(
   activation: ResourceActivation,
-  options: {
+  input: {
     labelHint?: string | null;
-    openInNewPane?: (
-      href: string,
-      labelHint?: string,
-      secondaryActivation?: WorkspaceSecondaryActivation,
-    ) => void;
-    navigate?: (href: string) => void;
-    newPane?: boolean;
+    disposition: WorkspaceTargetDisposition;
+    activateTarget: (input: {
+      target: WorkspaceTarget;
+      disposition: WorkspaceTargetDisposition;
+    }) => void;
   },
 ): boolean {
   const href = hrefForResourceActivation(activation);
   if (!href) return false;
   if (activation.kind === "external" && typeof window !== "undefined") {
-    if (options.newPane) {
-      window.open(href, "_blank", "noopener,noreferrer");
-    } else {
-      window.location.assign(href);
+    switch (input.disposition.kind) {
+      case "Follow":
+        window.location.assign(href);
+        return true;
+      case "Fork":
+        window.open(href, "_blank", "noopener,noreferrer");
+        return true;
+      case "Adopt":
+        // justify-defect: named adoption is a workspace-only operation and
+        // cannot preserve an origin when crossing into an external browser.
+        throw new Error("Cannot adopt an external resource target");
     }
-    return true;
   }
   const secondaryActivation = secondaryActivationForResource(activation);
-  if (secondaryActivation && options.openInNewPane) {
-    options.openInNewPane(
+  input.activateTarget({
+    target: {
       href,
-      options.labelHint ?? undefined,
-      secondaryActivation,
-    );
-    return true;
-  }
-  if (options.newPane && options.openInNewPane) {
-    options.openInNewPane(href, options.labelHint ?? undefined);
-    return true;
-  }
-  if (options.navigate) {
-    options.navigate(href);
-    return true;
-  }
-  if (options.openInNewPane) {
-    options.openInNewPane(href, options.labelHint ?? undefined);
-    return true;
-  }
-  return false;
+      ...(input.labelHint ? { labelHint: input.labelHint } : {}),
+      ...(secondaryActivation ? { secondaryActivation } : {}),
+    },
+    disposition: input.disposition,
+  });
+  return true;
 }

@@ -1,6 +1,7 @@
 "use client";
 
-import { usePaneRouter } from "@/lib/panes/paneRuntime";
+import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import { FeedbackNotice, toFeedback } from "@/components/feedback/Feedback";
 import { useResource } from "@/lib/api/useResource";
 import MediaImage from "@/components/ui/MediaImage";
@@ -20,7 +21,7 @@ interface OracleSummary {
 }
 
 export default function OracleAlephGrid() {
-  const paneRouter = usePaneRouter();
+  const paneRuntime = usePaneRuntime();
   const readingsResource = useResource<{ data: OracleSummary[] }>({
     cacheKey: "oracle-readings",
     path: () => "/api/oracle/readings",
@@ -71,7 +72,15 @@ export default function OracleAlephGrid() {
             key={row.id}
             type="button"
             className={`${styles.alephCell}${pending ? ` ${styles.alephCellPending}` : ""}`}
-            onClick={() => paneRouter.push(`/oracle/${row.id}`)}
+            onClick={(event) =>
+              requirePaneRuntime(
+                paneRuntime,
+                "Oracle Aleph target activation",
+              ).activateTarget({
+                target: { href: `/oracle/${row.id}` },
+                disposition: workspaceTargetClickIntent(event).disposition,
+              })
+            }
             aria-label={`Folio ${toRoman(row.folio_number)}: ${motto}`}
           >
             {plateSrc !== null && (

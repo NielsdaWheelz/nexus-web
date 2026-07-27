@@ -32,12 +32,12 @@ import {
   usePaneParam,
   usePaneReturnReady,
   usePaneRuntime,
+  requirePaneRuntime,
   usePaneRouter,
   usePaneSearchParams,
   usePaneVisitData,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
-import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
 import { useBillingAccount } from "@/lib/billing/useBillingAccount";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { useLectern } from "@/lib/lectern/LecternProvider";
@@ -130,7 +130,6 @@ export default function PodcastDetailPaneBody() {
   const podcastId = usePaneParam("podcastId");
   const paneRouter = usePaneRouter();
   const paneRuntime = usePaneRuntime();
-  const openInNewPane = paneRuntime?.openInNewPane;
   const paneSearchParams = usePaneSearchParams();
   const { account: billingAccount } = useBillingAccount();
   const player = useGlobalPlayer();
@@ -1154,17 +1153,6 @@ export default function PodcastDetailPaneBody() {
     busyIds: paneBusyIds,
   });
 
-  const openConnectionRoute = useCallback(
-    (
-      href: string,
-      inNewPane: boolean,
-      secondaryActivation?: WorkspaceSecondaryActivation,
-    ) => {
-      if (inNewPane) openInNewPane?.(href, undefined, secondaryActivation);
-      else paneRouter.push(href);
-    },
-    [openInNewPane, paneRouter],
-  );
   const connectionsComposerController = useConnectionsComposerController({
     scheme: "podcast",
     id: podcastId ?? "",
@@ -1174,10 +1162,10 @@ export default function PodcastDetailPaneBody() {
       <ConnectionsSurface
         resourceRef={{ scheme: "podcast", id: podcastId ?? "" }}
         composerController={connectionsComposerController}
-        onOpenRoute={openConnectionRoute}
+        activateTarget={requirePaneRuntime(paneRuntime, "PodcastDetailPaneBody").activateTarget}
       />
     ),
-    [connectionsComposerController, openConnectionRoute, podcastId],
+    [connectionsComposerController, paneRuntime, podcastId],
   );
   const { companionAction } = useResourceInspector({
     scheme: "podcast",

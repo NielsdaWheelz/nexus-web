@@ -19,7 +19,9 @@ import { createNotePage, quickCaptureDailyNote } from "@/lib/notes/api";
 import { openTodayPage } from "@/lib/notes/openToday";
 import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import { paragraphFromText } from "@/lib/notes/prosemirror/schema";
-import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
+import { requestWorkspaceTargetActivation } from "@/lib/workspace/workspaceTargetActivationIngress";
+import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
+import type { PaneNavigationModality } from "@/lib/workspace/paneReturnMemento";
 import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";
 import {
   executeResourceChat,
@@ -41,6 +43,32 @@ import type {
 // target the viewer can't actually open). External/unknown routes → false.
 export function isAndroidShellRestrictedHref(href: string, androidShell: boolean): boolean {
   return androidShell && isAndroidShellRestrictedRouteId(resolvePaneRoute(href).id);
+}
+
+export interface LauncherTargetActivation {
+  readonly disposition: WorkspaceTargetDisposition;
+  readonly modality: PaneNavigationModality;
+}
+
+export const PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION: LauncherTargetActivation = {
+  disposition: { kind: "Follow" },
+  modality: "Programmatic",
+};
+
+export const KEYBOARD_LAUNCHER_TARGET_ACTIVATION: LauncherTargetActivation = {
+  disposition: { kind: "Follow" },
+  modality: "Keyboard",
+};
+
+function activateLauncherTarget(
+  target: { href: string; labelHint?: string },
+  activation: LauncherTargetActivation,
+): void {
+  requestWorkspaceTargetActivation({
+    target,
+    disposition: activation.disposition,
+    modality: activation.modality,
+  });
 }
 
 // True when dispatching `target` moves the workspace to a new/other surface (opens or
@@ -93,6 +121,7 @@ export interface LauncherDispatchCtx {
 export async function dispatchTarget(
   target: LauncherActionTarget,
   ctx: LauncherDispatchCtx,
+  activation: LauncherTargetActivation,
 ): Promise<void> {
   const { feedback } = ctx;
   // Centralized Local Vault guard: true (and toasts) when the in-app route is
@@ -120,7 +149,10 @@ export async function dispatchTarget(
       // type: ask that pane to focus its box on arrival. SearchPaneBody enforces the
       // blank-query gate, so a search href carrying a query never grabs focus.
       if (resolvePaneRoute(target.href).id === "search") requestSearchInputFocus();
-      requestOpenInAppPane(target.href, target.labelHint ? { labelHint: target.labelHint } : undefined);
+      activateLauncherTarget(
+        { href: target.href, labelHint: target.labelHint },
+        activation,
+      );
       return;
     case "ResourceOpen":
       // The shared executor owns route/external activation; Launcher only
@@ -136,13 +168,14 @@ export async function dispatchTarget(
         target: target.subject,
         resourceNavigation: {
           labelHint: target.labelHint,
-          navigate: (href) =>
-            requestOpenInAppPane(href, { labelHint: target.labelHint }),
-          openInNewPane: (href, labelHint, secondaryActivation) =>
-            requestOpenInAppPane(href, {
-              labelHint: labelHint ?? target.labelHint,
-              secondaryActivation,
-            }),
+          activateTarget: ({ target, disposition }) => {
+            requestWorkspaceTargetActivation({
+              target,
+              disposition,
+              modality: activation.modality,
+            });
+          },
+          disposition: activation.disposition,
         },
       });
       return;
@@ -157,17 +190,27 @@ export async function dispatchTarget(
       await executeResourceChat({
         ref: target.ref,
         openConversation: (conversationId) => {
-          requestOpenInAppPane(`/conversations/${conversationId}`, {
-            labelHint: "Chat",
+          // Resource Chat preserves its source for ordinary selection, but a
+          // literal Shift-pointer Fork remains a Fork like every other Launcher
+          // target. Keyboard Shift arrives as Follow and therefore stays Adopt.
+          const disposition =
+            activation.disposition.kind === "Fork"
+              ? activation.disposition
+              : { kind: "Adopt" as const };
+          requestWorkspaceTargetActivation({
+            target: { href: `/conversations/${conversationId}`, labelHint: "Chat" },
+            disposition,
+            modality: activation.modality,
           });
         },
       });
       return;
     }
     case "Ask":
-      requestOpenInAppPane(`/conversations/new?draft=${encodeURIComponent(target.text)}`, {
+      activateLauncherTarget({
+        href: `/conversations/new?draft=${encodeURIComponent(target.text)}`,
         labelHint: "New chat",
-      });
+      }, activation);
       return;
     case "queue-add":
       await ctx.placeItems({ mediaIds: [parseMediaId(target.mediaId)], placement: { kind: "Last" } });
@@ -175,13 +218,13 @@ export async function dispatchTarget(
       return;
     case "add-url": {
       const res = await addMediaFromUrl({ url: target.url, libraryIds: ctx.defaultLibraryIds });
-      requestOpenInAppPane(
-        res.duplicate ? `/media/${res.mediaId}?duplicate=true` : `/media/${res.mediaId}`,
-      );
+      activateLauncherTarget({
+        href: res.duplicate ? `/media/${res.mediaId}?duplicate=true` : `/media/${res.mediaId}`,
+      }, activation);
       return;
     }
     case "open-today":
-      await openTodayPage();
+      await openTodayPage(activation);
       return;
     case "create-note":
       await quickCaptureDailyNote({
@@ -189,7 +232,7 @@ export async function dispatchTarget(
         clientMutationId: createRandomId("quick-note"),
         bodyPmJson: paragraphFromText(target.text).toJSON() as Record<string, unknown>,
       });
-      await openTodayPage();
+      await openTodayPage(activation);
       return;
     case "browse-acquire": {
       // Documents/videos become owned media; podcasts/episodes subscribe to a podcast.
@@ -199,19 +242,19 @@ export async function dispatchTarget(
         case "documents":
         case "videos": {
           if (result.media_id) {
-            requestOpenInAppPane(`/media/${result.media_id}`, { labelHint: result.title });
+            activateLauncherTarget({ href: `/media/${result.media_id}`, labelHint: result.title }, activation);
             return;
           }
           const added = await addMediaFromUrl({
             url: result.type === "documents" ? result.url : result.watch_url,
             libraryIds: ctx.defaultLibraryIds,
           });
-          requestOpenInAppPane(`/media/${added.mediaId}`, { labelHint: result.title });
+          activateLauncherTarget({ href: `/media/${added.mediaId}`, labelHint: result.title }, activation);
           return;
         }
         case "podcasts": {
           if (result.podcast_id) {
-            requestOpenInAppPane(`/podcasts/${result.podcast_id}`, { labelHint: result.title });
+            activateLauncherTarget({ href: `/podcasts/${result.podcast_id}`, labelHint: result.title }, activation);
             return;
           }
           const subscribed = await subscribeToPodcast({
@@ -224,12 +267,12 @@ export async function dispatchTarget(
             description: result.description,
             library_ids: ctx.defaultLibraryIds,
           });
-          requestOpenInAppPane(`/podcasts/${subscribed.podcast_id}`, { labelHint: result.title });
+          activateLauncherTarget({ href: `/podcasts/${subscribed.podcast_id}`, labelHint: result.title }, activation);
           return;
         }
         case "podcast_episodes": {
           if (result.podcast_id) {
-            requestOpenInAppPane(`/podcasts/${result.podcast_id}`, { labelHint: result.podcast_title });
+            activateLauncherTarget({ href: `/podcasts/${result.podcast_id}`, labelHint: result.podcast_title }, activation);
             return;
           }
           const subscribed = await subscribeToPodcast({
@@ -242,9 +285,7 @@ export async function dispatchTarget(
             description: null,
             library_ids: ctx.defaultLibraryIds,
           });
-          requestOpenInAppPane(`/podcasts/${subscribed.podcast_id}`, {
-            labelHint: result.podcast_title,
-          });
+          activateLauncherTarget({ href: `/podcasts/${subscribed.podcast_id}`, labelHint: result.podcast_title }, activation);
           return;
         }
         default: {
@@ -254,12 +295,12 @@ export async function dispatchTarget(
       }
     }
     case "new-conversation":
-      requestOpenInAppPane("/conversations/new", { labelHint: "New chat" });
+      activateLauncherTarget({ href: "/conversations/new", labelHint: "New chat" }, activation);
       return;
     case "create-page": {
       const created = await createNotePage({ title: "Untitled" });
       setPendingNoteFocus({ pageId: created.id, target: "title" });
-      requestOpenInAppPane(`/pages/${created.id}`, { labelHint: created.title });
+      activateLauncherTarget({ href: `/pages/${created.id}`, labelHint: created.title }, activation);
       return;
     }
     case "share":

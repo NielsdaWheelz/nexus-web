@@ -4,7 +4,7 @@ import { type MouseEvent } from "react";
 import { CircleUser, LogOut } from "lucide-react";
 import Link from "next/link";
 import ActionMenu from "@/components/ui/ActionMenu";
-import type { AppNavActivationResult } from "./navActivation";
+import type { AppNavActivationResult } from "@/lib/panes/targetLinkActivation";
 import type { NavItem } from "./navModel";
 import styles from "./AppNav.module.css";
 

@@ -49,7 +49,6 @@ import {
   getSecondaryWidthPolicy,
   resolveEffectiveSecondarySizing,
   type WorkspaceDossierActivation,
-  type WorkspaceSecondaryActivation,
   type WorkspaceSecondarySizing,
   type WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
@@ -75,6 +74,10 @@ import {
 } from "@/lib/workspace/store";
 import type { ResourceItem } from "@/lib/resources/resourceItems";
 import { resolveResourceLocators } from "@/lib/resources/resourceLocators";
+import type {
+  WorkspaceTargetActivationRequest,
+  WorkspaceTargetActivationResult,
+} from "@/lib/workspace/targetActivation";
 import { usePaneCanvas } from "./usePaneCanvas";
 import PaneRouteBoundary from "./PaneRouteBoundary";
 import styles from "./WorkspaceHost.module.css";
@@ -218,7 +221,7 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
   secondaryPane,
   secondaryActivation,
   navigatePane,
-  openPane,
+  activateWorkspaceTarget,
   canGoBack,
   canGoForward,
   goBackPane,
@@ -253,14 +256,9 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
       modality?: PaneNavigationModality;
     },
   ) => void;
-  openPane: (input: {
-    href: string;
-    openerPaneId?: string | null;
-    activate?: boolean;
-    labelHint?: string;
-    secondaryActivation?: WorkspaceSecondaryActivation;
-    modality?: PaneNavigationModality;
-  }) => void;
+  activateWorkspaceTarget: (
+    request: WorkspaceTargetActivationRequest,
+  ) => WorkspaceTargetActivationResult;
   canGoBack: boolean;
   canGoForward: boolean;
   goBackPane: (paneId: string, modality?: PaneNavigationModality) => void;
@@ -307,23 +305,6 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
       }),
     [navigatePane]
   );
-  const handleOpenInNewPane = useCallback(
-    (
-      h: string,
-      labelHint?: string,
-      secondaryActivation?: WorkspaceSecondaryActivation,
-      modality?: PaneNavigationModality,
-    ) =>
-      openPane({
-        href: h,
-        openerPaneId: paneId,
-        activate: true,
-        labelHint,
-        secondaryActivation,
-        modality,
-      }),
-    [openPane, paneId]
-  );
   const handlePaneSecondaryPublication = useCallback(
     (publication: PaneSecondaryPublication | null) => {
       publishPaneSecondary({ paneId, routeKey, publication });
@@ -354,7 +335,7 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
       canGoForward={canGoForward}
       onNavigatePane={navigatePane}
       onReplacePane={handleReplacePane}
-      onOpenInNewPane={handleOpenInNewPane}
+      onActivateWorkspaceTarget={activateWorkspaceTarget}
       onGoBackPane={goBackPane}
       onGoForwardPane={goForwardPane}
       onSetPaneLabel={publishPaneLabel}
@@ -675,7 +656,7 @@ function WorkspaceHost() {
     runtimeLabelByPaneId,
     pendingSecondaryActivationByPaneId,
     activatePane,
-    openPane,
+    activateWorkspaceTarget,
     acknowledgePendingSecondaryActivation,
     navigatePane,
     goBackPane,
@@ -1404,7 +1385,7 @@ function WorkspaceHost() {
                       : null
                   }
                   navigatePane={navigatePane}
-                  openPane={openPane}
+                  activateWorkspaceTarget={activateWorkspaceTarget}
                   canGoBack={pane.canGoBack}
                   canGoForward={pane.canGoForward}
                   goBackPane={goBackPane}

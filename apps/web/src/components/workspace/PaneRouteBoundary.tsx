@@ -8,9 +8,8 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
-import { handlePaneInternalAnchorClick } from "@/lib/panes/paneLinkNavigation";
+import { activateTargetAnchor } from "@/lib/panes/targetLinkActivation";
 import {
-  usePaneRouter,
   usePaneRuntime,
   useRecordPaneNavigationModality,
 } from "@/lib/panes/paneRuntime";
@@ -18,9 +17,7 @@ import { usePaneWarm } from "@/lib/panes/paneWarm";
 import styles from "./WorkspaceHost.module.css";
 
 export default function PaneRouteBoundary({ children }: { children: ReactNode }) {
-  const router = usePaneRouter();
   const paneRuntime = usePaneRuntime();
-  const openInNewPane = paneRuntime?.openInNewPane;
   const warmPane = usePaneWarm();
   const recordNavigationModality = useRecordPaneNavigationModality();
   const isActivationTarget = useCallback((target: EventTarget | null) => {
@@ -47,14 +44,10 @@ export default function PaneRouteBoundary({ children }: { children: ReactNode })
       }
       const anchor = target.closest("a[href]");
       if (anchor instanceof HTMLAnchorElement) {
-        handlePaneInternalAnchorClick(
-          event,
-          openInNewPane ? { router, openInNewPane } : null,
-          anchor,
-        );
+        activateTargetAnchor({ event, runtime: paneRuntime, anchor });
       }
     },
-    [isActivationTarget, openInNewPane, recordNavigationModality, router],
+    [isActivationTarget, paneRuntime, recordNavigationModality],
   );
   const handlePointerDownCapture = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {

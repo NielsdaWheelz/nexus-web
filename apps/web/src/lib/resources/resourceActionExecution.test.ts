@@ -25,10 +25,11 @@ const subject: ResourceActionSubject = {
 };
 
 describe("resource action execution", () => {
-  it("opens a Resource through its actual activation and supplied navigation", () => {
-    const navigate = vi.fn();
+  it("opens a Resource through the supplied workspace target capability", () => {
+    const activateTarget = vi.fn();
     const resourceNavigation = {
-      navigate,
+      activateTarget,
+      disposition: { kind: "Follow" as const },
     };
 
     executeResourceOpen({
@@ -36,7 +37,12 @@ describe("resource action execution", () => {
       resourceNavigation,
     });
 
-    expect(navigate).toHaveBeenCalledWith(subject.activation.href);
+    expect(activateTarget).toHaveBeenCalledWith({
+      target: {
+        href: subject.activation.href,
+      },
+      disposition: { kind: "Follow" },
+    });
   });
 
   it("opens Share with the canonical resource target and supplied options", () => {
@@ -138,14 +144,15 @@ describe("resource action execution", () => {
     expect(openLibraryPlacement).not.toHaveBeenCalled();
   });
 
-  it("lets supplied navigation and Share errors propagate", () => {
+  it("lets supplied target activation and Share errors propagate", () => {
     const navigationError = new Error("navigation failed");
 
     expect(() =>
       executeResourceOpen({
         target: subject,
         resourceNavigation: {
-          navigate: () => {
+          disposition: { kind: "Follow" },
+          activateTarget: () => {
             throw navigationError;
           },
         },

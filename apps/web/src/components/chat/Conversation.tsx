@@ -15,7 +15,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DocentOverlay from "@/components/chat/DocentOverlay";
 import { useDocentWalk } from "@/lib/conversations/useDocentWalk";
-import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import Button from "@/components/ui/Button";
 import ChatComposer from "@/components/chat/ChatComposer";
 import ChatSurface from "@/components/chat/ChatSurface";
@@ -70,10 +69,12 @@ import {
   usePaneHash,
   usePaneParam,
   usePaneRouter,
+  requirePaneRuntime,
   usePaneRuntime,
   usePaneSearchParams,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
+import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import styles from "@/app/(authenticated)/conversations/page.module.css";
@@ -203,15 +204,11 @@ function usePendingReaderSelection(
 export default function Conversation() {
   const conversationId = usePaneParam("id");
   const router = usePaneRouter();
-  const paneRuntime = usePaneRuntime();
-  const openInNewPane = paneRuntime?.openInNewPane;
-  const isMobile = useIsMobileViewport();
+  const paneRuntime = requirePaneRuntime(usePaneRuntime(), "Conversation");
   const { walk, startWalk, next, prev, leave } = useDocentWalk({
-    openInNewPane,
-    router,
-    isMobile,
+    activateTarget: paneRuntime.activateTarget,
   });
-  const resourceRef = paneRuntime?.resourceRef ?? null;
+  const resourceRef = paneRuntime.resourceRef;
   const searchParams = usePaneSearchParams();
   const draft = searchParams.get("draft") ?? "";
   const initialTargetMessageId = searchParams.get("message");
@@ -273,9 +270,10 @@ export default function Conversation() {
     [],
   );
 
-  // Navigate the pane to the resolved conversation once it is created on the new
-  // route. The engine already seeds the optimistic turn and resumes active runs
-  // on the next load, so no `?run=` replay param is needed.
+  // Finalize the provisional /conversations/new location in this same pane once
+  // its first send resolves an id. This is current-visit/history replacement,
+  // not a user target activation: the engine retains its optimistic turn and
+  // resumes active runs on the next load, so no `?run=` replay param is needed.
   const startedOnNewRouteRef = useRef(conversationId === null);
   const navigatedRef = useRef(false);
   const onConversationCreated = useCallback(
@@ -486,32 +484,28 @@ export default function Conversation() {
       event?: React.MouseEvent,
     ) => {
       if (target) dispatchReaderSourceActivation(target);
-      if (event?.shiftKey) {
-        activateResource(activation, {
-          labelHint: target?.label,
-          openInNewPane,
-          newPane: true,
-        });
-        return;
-      }
+      if (event?.defaultPrevented) return;
       if (resourceRef === activation.resourceRef) return;
       activateResource(activation, {
         labelHint: target?.label,
-        navigate: (href) => router.push(href),
+        activateTarget: paneRuntime.activateTarget,
+        disposition: event
+          ? workspaceTargetClickIntent(event).disposition
+          : { kind: "Follow" },
       });
     },
-    [openInNewPane, resourceRef, router],
+    [paneRuntime, resourceRef],
   );
 
   const handleOpenResource = useCallback(
     (contextRef: ContextRefOut) => {
       activateResource(contextRef.activation, {
         labelHint: contextRef.label,
-        openInNewPane,
-        newPane: true,
+        activateTarget: paneRuntime.activateTarget,
+        disposition: { kind: "Follow" },
       });
     },
-    [openInNewPane],
+    [paneRuntime],
   );
 
   // Pending + sent quote cards delegate snapshot activation here: the reader

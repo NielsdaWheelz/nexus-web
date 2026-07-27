@@ -17,29 +17,52 @@ describe("activateResource", () => {
     vi.unstubAllGlobals();
   });
 
-  it("falls through to navigation when a new pane was requested but unavailable", () => {
-    const navigate = vi.fn();
-
-    expect(activateResource(route, { navigate, newPane: true })).toBe(true);
-
-    expect(navigate).toHaveBeenCalledWith(route.href);
-  });
-
-  it("forwards the pane label hint through route activation", () => {
-    const openInNewPane = vi.fn();
+  it("delegates a route to the semantic workspace target capability", () => {
+    const activateTarget = vi.fn();
 
     expect(
       activateResource(route, {
-        labelHint: "The Left Hand of Darkness",
-        openInNewPane,
-        newPane: true,
+        activateTarget,
+        disposition: { kind: "Follow" },
       }),
     ).toBe(true);
 
-    expect(openInNewPane).toHaveBeenCalledWith(
-      route.href,
-      "The Left Hand of Darkness",
-    );
+    expect(activateTarget).toHaveBeenCalledWith({
+      target: { href: route.href },
+      disposition: { kind: "Follow" },
+    });
+  });
+
+  it("forwards label and secondary activation as target payload", () => {
+    const activateTarget = vi.fn();
+    const revisionRef =
+      "artifact_revision:44444444-4444-4444-8444-444444444444";
+    const activation = {
+      ...route,
+      resourceRef: revisionRef,
+      href: "/conversations/33333333-3333-4333-8333-333333333333",
+    };
+
+    expect(
+      activateResource(activation, {
+        labelHint: "The Left Hand of Darkness",
+        activateTarget,
+        disposition: { kind: "Fork" },
+      }),
+    ).toBe(true);
+
+    expect(activateTarget).toHaveBeenCalledWith({
+      target: {
+        href: activation.href,
+        labelHint: "The Left Hand of Darkness",
+        secondaryActivation: {
+          kind: "DossierRevision",
+          surfaceId: "resource-dossier",
+          revisionRef,
+        },
+      },
+      disposition: { kind: "Fork" },
+    });
   });
 
   it("owns external browser activation", () => {
@@ -55,7 +78,7 @@ describe("activateResource", () => {
           href: "https://example.test/source",
           unresolvedReason: null,
         },
-        { navigate: vi.fn() },
+        { activateTarget: vi.fn(), disposition: { kind: "Follow" } },
       ),
     ).toBe(true);
 
@@ -63,27 +86,31 @@ describe("activateResource", () => {
     expect(open).not.toHaveBeenCalled();
   });
 
-  it("routes artifact revisions through the typed Dossier workspace command", () => {
-    const openInNewPane = vi.fn();
-    const revisionRef =
-      "artifact_revision:44444444-4444-4444-8444-444444444444";
-    const activation = {
-      ...route,
-      resourceRef: revisionRef,
-      href: "/conversations/33333333-3333-4333-8333-333333333333",
-    };
+  it("opens an external resource in a new browser tab when forked", () => {
+    const assign = vi.fn();
+    const open = vi.fn();
+    vi.stubGlobal("window", { location: { assign }, open });
 
-    expect(activateResource(activation, { openInNewPane })).toBe(true);
-    expect(openInNewPane).toHaveBeenCalledWith(
-      activation.href,
-      undefined,
-      {
-        kind: "DossierRevision",
-        surfaceId: "resource-dossier",
-        revisionRef,
-      },
+    expect(
+      activateResource(
+        {
+          resourceRef: "external_snapshot:11111111-1111-4111-8111-111111111111",
+          kind: "external",
+          href: "https://example.test/source",
+          unresolvedReason: null,
+        },
+        { activateTarget: vi.fn(), disposition: { kind: "Fork" } },
+      ),
+    ).toBe(true);
+
+    expect(open).toHaveBeenCalledWith(
+      "https://example.test/source",
+      "_blank",
+      "noopener,noreferrer",
     );
+    expect(assign).not.toHaveBeenCalled();
   });
+
 });
 
 describe("secondaryActivationForResource", () => {

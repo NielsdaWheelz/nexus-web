@@ -24,6 +24,7 @@ import type {
   ReaderEvidenceUserEdge,
 } from "@/lib/reader/documentMap";
 import { isReaderEvidenceUserLink } from "@/lib/reader/documentMap";
+import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import {
   evidenceItemPassesFilters,
   type EvidenceFilters,
@@ -59,11 +60,11 @@ export interface EvidencePaneSurfaceProps {
   onActivatePassage: (group: ReaderEvidencePassageGroup) => boolean;
   onActivateObject: (
     object: ReaderEvidenceObject,
-    options: { newPane: boolean },
+    disposition: WorkspaceTargetDisposition,
   ) => void;
   onActivateSourceTarget: (
     target: ReaderEvidenceSourceTarget,
-    options: { newPane: boolean },
+    disposition: WorkspaceTargetDisposition,
   ) => void;
   onHoverItem: (item: ReaderEvidenceItem | null) => void;
   onDismissSynapse: (edgeId: string) => Promise<void>;

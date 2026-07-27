@@ -67,13 +67,17 @@ import {
   hrefForResourceActivation,
   type ResourceActivation,
 } from "@/lib/resources/activation";
+import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import {
   executeResourceChat,
   executeResourceOpen,
   executeResourceShare,
 } from "@/lib/resources/resourceActionExecution";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
-import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
+import type {
+  WorkspaceTarget,
+  WorkspaceTargetDisposition,
+} from "@/lib/workspace/targetActivation";
 import { SYNAPSE_SOURCE_SCHEMES } from "@/lib/resources/resourceCapabilities";
 import { resourceIconForUri } from "@/lib/resources/resourceKind";
 import { useResourceTargetSearch } from "@/lib/resources/useResourceTargetSearch";
@@ -134,15 +138,14 @@ const CONNECTION_PANEL_KINDS: EdgeKind[] = [
 export default function ConnectionsSurface({
   resourceRef,
   composerController,
-  onOpenRoute,
+  activateTarget,
 }: {
   resourceRef: ResourceRef;
   composerController: ConnectionsComposerController;
-  onOpenRoute: (
-    href: string,
-    openInNewPane: boolean,
-    secondaryActivation?: WorkspaceSecondaryActivation,
-  ) => void;
+  activateTarget: (input: {
+    target: WorkspaceTarget;
+    disposition: WorkspaceTargetDisposition;
+  }) => void;
 }) {
   const composerId = useId();
   const composerDraft = useSyncExternalStore(
@@ -258,16 +261,14 @@ export default function ConnectionsSurface({
   }, [connectionsResource]);
 
   const openConnection = useCallback(
-    (connection: Connection, openInNewPane: boolean) => {
+    (connection: Connection, disposition: WorkspaceTargetDisposition) => {
       activateResource(connection.activation, {
         labelHint: connection.label,
-        openInNewPane: (href, _labelHint, secondaryActivation) =>
-          onOpenRoute(href, true, secondaryActivation),
-        navigate: (href) => onOpenRoute(href, false),
-        newPane: openInNewPane,
+        activateTarget,
+        disposition,
       });
     },
-    [onOpenRoute],
+    [activateTarget],
   );
 
   return (
@@ -335,10 +336,10 @@ export default function ConnectionsSurface({
             <ConnectionRow
               key={connection.edgeId}
               connection={connection}
-              onOpen={(openInNewPane) =>
-                openConnection(connection, openInNewPane)
+              onOpen={(disposition) =>
+                openConnection(connection, disposition)
               }
-              onOpenRoute={onOpenRoute}
+              activateTarget={activateTarget}
               onChanged={reloadConnections}
             />
           ))}
@@ -351,16 +352,15 @@ export default function ConnectionsSurface({
 function ConnectionRow({
   connection,
   onOpen,
-  onOpenRoute,
+  activateTarget,
   onChanged,
 }: {
   connection: Connection;
-  onOpen: (openInNewPane: boolean) => void;
-  onOpenRoute: (
-    href: string,
-    openInNewPane: boolean,
-    secondaryActivation?: WorkspaceSecondaryActivation,
-  ) => void;
+  onOpen: (disposition: WorkspaceTargetDisposition) => void;
+  activateTarget: (input: {
+    target: WorkspaceTarget;
+    disposition: WorkspaceTargetDisposition;
+  }) => void;
   onChanged: () => void;
 }) {
   const Icon = resourceIconForUri(connection.ref);
@@ -406,9 +406,8 @@ function ConnectionRow({
           target: subject,
           resourceNavigation: {
             labelHint: connection.label,
-            navigate: (href) => onOpenRoute(href, false),
-            openInNewPane: (href, _labelHint, secondaryActivation) =>
-              onOpenRoute(href, true, secondaryActivation),
+            activateTarget,
+            disposition: { kind: "Follow" },
           },
         }),
       share: (subject, { triggerEl }) =>
@@ -427,7 +426,13 @@ function ConnectionRow({
             executeResourceChat({
               ref: subject.ref,
               openConversation: (conversationId) =>
-                onOpenRoute(`/conversations/${conversationId}`, true),
+                activateTarget({
+                  target: {
+                    href: `/conversations/${conversationId}`,
+                    labelHint: "Chat",
+                  },
+                  disposition: { kind: "Adopt" },
+                }),
             }),
           failure: "Chat could not be started.",
         }),
@@ -484,7 +489,9 @@ function ConnectionRow({
         type="button"
         className={styles.linkButton}
         disabled={connection.missing}
-        onClick={(event) => onOpen(event.shiftKey)}
+        onClick={(event) =>
+          onOpen(workspaceTargetClickIntent(event).disposition)
+        }
       >
         <Icon size={14} aria-hidden="true" />
         <span className={styles.connectionText}>

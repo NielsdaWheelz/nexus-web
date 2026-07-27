@@ -11,6 +11,7 @@ import {
   launcherRowIds,
 } from "@/lib/launcher/model";
 import type { LauncherController } from "./useLauncherController";
+import { KEYBOARD_LAUNCHER_TARGET_ACTIVATION } from "@/lib/launcher/dispatch";
 import styles from "./launcher.module.css";
 
 export default function LauncherInput({
@@ -42,7 +43,8 @@ export default function LauncherInput({
         if (action) controller.runAction(action);
       } else {
         const item = activeLauncherItem(view, activeId);
-        if (item) controller.select(item);
+        if (item)
+          controller.select(item, KEYBOARD_LAUNCHER_TARGET_ACTIVATION);
       }
       return;
     }

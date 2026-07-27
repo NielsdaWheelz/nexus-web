@@ -157,7 +157,7 @@ function withProviders(node: ReactNode) {
                 onGoForwardPane={vi.fn()}
                 onNavigatePane={vi.fn()}
                 onReplacePane={vi.fn()}
-                onOpenInNewPane={vi.fn()}
+                onActivateWorkspaceTarget={vi.fn(() => ({ kind: "ActivatedExisting" as const, paneId: "pane" }))}
                 onSetPaneLabel={vi.fn()}
               >
                 <LecternMutationNotice />

@@ -17,7 +17,7 @@ const defaultNavigationProps = {
   canGoBack: false,
   canGoForward: false,
   onNavigatePane: vi.fn(),
-  onOpenInNewPane: vi.fn(),
+  onActivateWorkspaceTarget: vi.fn(() => ({ kind: "ActivatedExisting" as const, paneId: "pane" })),
   onGoBackPane: vi.fn(),
   onGoForwardPane: vi.fn(),
 };

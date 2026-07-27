@@ -9,6 +9,7 @@ import {
   type RenderResult,
 } from "@testing-library/react";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
 import AppNav from "./AppNav";
 import {
   OPEN_LAUNCHER_EVENT,
@@ -19,6 +20,7 @@ import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
 import {
   createDefaultWorkspaceState,
   getWorkspacePrimaryPanes,
+  MAX_PANES,
 } from "@/lib/workspace/schema";
 import {
   useWorkspaceStore,
@@ -72,8 +74,9 @@ function renderNav(
 ): RenderResult {
   return render(
     withRenderEnvironment(
-      <KeybindingsProvider>
-        <MobileChromeProvider>
+      <FeedbackProvider>
+        <KeybindingsProvider>
+          <MobileChromeProvider>
           <PaneReturnMementoProvider>
             <WorkspaceStoreProvider
               workspacePrimaryMetrics={workspacePrimaryMetrics}
@@ -86,8 +89,9 @@ function renderNav(
               <WorkspaceProbe />
             </WorkspaceStoreProvider>
           </PaneReturnMementoProvider>
-        </MobileChromeProvider>
-      </KeybindingsProvider>,
+          </MobileChromeProvider>
+        </KeybindingsProvider>
+      </FeedbackProvider>,
       renderEnvironment,
     ),
   );
@@ -152,7 +156,7 @@ describe("AppNav (desktop rail)", () => {
     );
   });
 
-  it("reactivates an exact existing destination pane instead of duplicating it", async () => {
+  it("follows in place and reactivates an exact existing destination pane", async () => {
     renderNav();
 
     fireEvent.click(screen.getByRole("link", { name: "Podcasts" }));
@@ -163,8 +167,19 @@ describe("AppNav (desktop rail)", () => {
     });
     expect(screen.getByTestId("workspace-probe")).toHaveAttribute(
       "data-pane-count",
-      "2",
+      "1",
     );
+
+    fireEvent.click(screen.getByRole("link", { name: "Podcasts" }), {
+      detail: 1,
+      shiftKey: true,
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("workspace-probe")).toHaveAttribute(
+        "data-pane-count",
+        "2",
+      );
+    });
 
     fireEvent.click(screen.getByRole("link", { name: "Libraries" }));
     await waitFor(() => {
@@ -290,6 +305,51 @@ describe("AppNav (desktop rail)", () => {
       );
     });
     expect(account).not.toHaveFocus();
+  });
+
+  it("does not restore the Account trigger when Shift-clicking current Settings forks", async () => {
+    renderNav({}, "/settings");
+    const account = screen.getByRole("button", { name: "Account" });
+    account.focus();
+    fireEvent.click(account);
+
+    const settings = await screen.findByRole("menuitem", { name: "Settings" });
+    fireEvent.click(settings, { detail: 1, shiftKey: true });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("workspace-probe")).toHaveAttribute(
+        "data-pane-count",
+        "2",
+      );
+    });
+    expect(account).not.toHaveFocus();
+  });
+
+  it("restores the Account trigger when pane-cap rejection keeps Settings unchanged", async () => {
+    renderNav({}, "/settings");
+    const podcasts = screen.getByRole("link", { name: "Podcasts" });
+    for (let index = 1; index < MAX_PANES; index += 1) {
+      fireEvent.click(podcasts, { detail: 1, shiftKey: true });
+    }
+    await waitFor(() => {
+      expect(screen.getByTestId("workspace-probe")).toHaveAttribute(
+        "data-pane-count",
+        String(MAX_PANES),
+      );
+    });
+
+    const account = screen.getByRole("button", { name: "Account" });
+    account.focus();
+    fireEvent.click(account);
+    const settings = await screen.findByRole("menuitem", { name: "Settings" });
+    fireEvent.click(settings, { detail: 1, shiftKey: true });
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("menuitem", { name: "Settings" }),
+      ).not.toBeInTheDocument();
+    });
+    await waitFor(() => expect(account).toHaveFocus());
   });
 
   it("rail ::before has no grain background-image (feTurbulence removed)", () => {

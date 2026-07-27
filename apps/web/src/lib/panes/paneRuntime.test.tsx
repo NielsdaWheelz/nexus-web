@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import {
   PaneRuntimeProvider,
+  requirePaneRuntime,
   usePaneRuntime,
   usePaneRouter,
   useSetPaneLabel,
@@ -19,6 +20,12 @@ const LIBRARY_HREF = `/libraries/${LIBRARY_ID}`;
 const TEST_VISIT_ID = assumePaneVisitId(
   "00000000-0000-4000-8000-000000000001",
 );
+
+it("keeps a missing required pane runtime as an owner defect", () => {
+  expect(() => requirePaneRuntime(null, "LibraryPaneBody")).toThrow(
+    "LibraryPaneBody requires a pane runtime",
+  );
+});
 
 function TestPaneRuntimeProvider(
   props: ComponentProps<typeof PaneRuntimeProvider>,
@@ -54,17 +61,20 @@ function NavigateOnMount({
   return null;
 }
 
-function OpenInNewPaneOnMount() {
+function ActivateForkOnMount() {
   const runtime = usePaneRuntime();
   useEffect(() => {
     if (!runtime) {
       throw new Error("Pane runtime missing");
     }
-    runtime.openInNewPane(
-      MEDIA_HREF_1,
-      "Library Row Label",
-      { kind: "Surface", surfaceId: "resource-evidence" },
-    );
+    runtime.activateTarget({
+      target: {
+        href: MEDIA_HREF_1,
+        labelHint: "Library Row Label",
+        secondaryActivation: { kind: "Surface", surfaceId: "resource-evidence" },
+      },
+      disposition: { kind: "Fork" },
+    });
   }, [runtime]);
   return null;
 }
@@ -148,6 +158,7 @@ const defaultNavigationProps = {
   canGoForward: false,
   onGoBackPane: vi.fn(),
   onGoForwardPane: vi.fn(),
+  onActivateWorkspaceTarget: vi.fn(),
 };
 
 function installStartViewTransition() {
@@ -218,7 +229,6 @@ function runtime(
       {...defaultNavigationProps}
       onNavigatePane={vi.fn()}
       onReplacePane={vi.fn()}
-      onOpenInNewPane={vi.fn()}
       onSetPaneLabel={onSetPaneLabel}
     >
       <Publisher label="Same label" />
@@ -277,7 +287,6 @@ describe("PaneRuntimeProvider", () => {
         {...defaultNavigationProps}
         onNavigatePane={onNavigatePane}
         onReplacePane={onReplacePane}
-        onOpenInNewPane={vi.fn()}
       >
         <NavigateOnMount action={action} />
       </TestPaneRuntimeProvider>,
@@ -292,8 +301,8 @@ describe("PaneRuntimeProvider", () => {
     });
   });
 
-  it("passes label hints through openInNewPane", async () => {
-    const onOpenInNewPane = vi.fn();
+  it("binds origin and modality for target activation", async () => {
+    const onActivateWorkspaceTarget = vi.fn(() => ({ kind: "CreatedPane" as const, paneId: "pane-2" }));
     const identity = resolvePaneRouteIdentity(LIBRARY_HREF);
 
     render(
@@ -307,19 +316,23 @@ describe("PaneRuntimeProvider", () => {
         {...defaultNavigationProps}
         onNavigatePane={vi.fn()}
         onReplacePane={vi.fn()}
-        onOpenInNewPane={onOpenInNewPane}
+        onActivateWorkspaceTarget={onActivateWorkspaceTarget}
       >
-        <OpenInNewPaneOnMount />
+        <ActivateForkOnMount />
       </TestPaneRuntimeProvider>,
     );
 
     await waitFor(() => {
-      expect(onOpenInNewPane).toHaveBeenCalledWith(
-        MEDIA_HREF_1,
-        "Library Row Label",
-        { kind: "Surface", surfaceId: "resource-evidence" },
-        "Programmatic",
-      );
+      expect(onActivateWorkspaceTarget).toHaveBeenCalledWith({
+        originPaneId: "pane-1",
+        target: {
+          href: MEDIA_HREF_1,
+          labelHint: "Library Row Label",
+          secondaryActivation: { kind: "Surface", surfaceId: "resource-evidence" },
+        },
+        disposition: { kind: "Fork" },
+        modality: "Programmatic",
+      });
     });
   });
 
@@ -340,7 +353,6 @@ describe("PaneRuntimeProvider", () => {
         {...defaultNavigationProps}
         onNavigatePane={vi.fn()}
         onReplacePane={onReplacePane}
-        onOpenInNewPane={vi.fn()}
       >
         <NavigateOnMount action="replace" viewTransition={{ kind: "collection-reflow" }} />
       </TestPaneRuntimeProvider>,
@@ -372,7 +384,6 @@ describe("PaneRuntimeProvider", () => {
         {...defaultNavigationProps}
         onNavigatePane={vi.fn()}
         onReplacePane={onReplacePane}
-        onOpenInNewPane={vi.fn()}
       >
         <NavigateOnMount action="replace" viewTransition={{ kind: "collection-reflow" }} />
       </TestPaneRuntimeProvider>,
@@ -406,7 +417,7 @@ describe("PaneRuntimeProvider", () => {
         onGoForwardPane={onGoForwardPane}
         onNavigatePane={vi.fn()}
         onReplacePane={vi.fn()}
-        onOpenInNewPane={vi.fn()}
+        onActivateWorkspaceTarget={vi.fn()}
       >
         <GoBackForwardOnMount />
       </TestPaneRuntimeProvider>,
@@ -434,7 +445,6 @@ describe("PaneRuntimeProvider", () => {
       ...defaultNavigationProps,
       onNavigatePane: vi.fn(),
       onReplacePane: vi.fn(),
-      onOpenInNewPane: vi.fn(),
     };
 
     const { rerender } = render(
@@ -467,9 +477,9 @@ describe("PaneRuntimeProvider", () => {
       routeKey: identity.routeKey,
       onNavigatePane: vi.fn(),
       onReplacePane: vi.fn(),
-      onOpenInNewPane: vi.fn(),
       onGoBackPane: vi.fn(),
       onGoForwardPane: vi.fn(),
+      onActivateWorkspaceTarget: vi.fn(),
     };
 
     const { rerender } = render(
@@ -524,7 +534,6 @@ describe("PaneRuntimeProvider", () => {
         {...defaultNavigationProps}
         onNavigatePane={vi.fn()}
         onReplacePane={vi.fn()}
-        onOpenInNewPane={vi.fn()}
         onSetPaneLayout={onSetPaneLayout}
       >
         <PublishLayoutOnMount />
@@ -559,7 +568,6 @@ describe("PaneRuntimeProvider", () => {
         {...defaultNavigationProps}
         onNavigatePane={vi.fn()}
         onReplacePane={vi.fn()}
-        onOpenInNewPane={vi.fn()}
         secondaryPane={{
           id: "secondary-1",
           parentPrimaryPaneId: "pane-1",
@@ -605,7 +613,6 @@ describe("PaneRuntimeProvider", () => {
         {...defaultNavigationProps}
         onNavigatePane={vi.fn()}
         onReplacePane={vi.fn()}
-        onOpenInNewPane={vi.fn()}
       >
         <RuntimeShapeProbe onValue={onValue} />
       </TestPaneRuntimeProvider>,

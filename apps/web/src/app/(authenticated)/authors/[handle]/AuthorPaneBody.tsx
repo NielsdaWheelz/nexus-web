@@ -46,12 +46,11 @@ import {
   useClearAllPaneVisitData,
   usePaneParam,
   usePaneReturnReady,
-  usePaneRouter,
   usePaneRuntime,
+  requirePaneRuntime,
   usePaneVisitData,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
-import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { emptyResourceMenuGroups } from "@/lib/actions/resourceActions";
 import styles from "./page.module.css";
@@ -94,9 +93,7 @@ function resolveAuthorConnectionsResource(
 
 export default function AuthorPaneBody() {
   const handle = usePaneParam("handle");
-  const router = usePaneRouter();
   const paneRuntime = usePaneRuntime();
-  const openInNewPane = paneRuntime?.openInNewPane;
   const committedSnapshotRef = useRef<AuthorPaneSeed | null>(null);
   const captureCommitted = useCallback(
     () => committedSnapshotRef.current,
@@ -170,17 +167,6 @@ export default function AuthorPaneBody() {
     () => data?.works.map(presentContributorWork) ?? [],
     [data?.works],
   );
-  const openRoute = useCallback(
-    (
-      href: string,
-      inNewPane: boolean,
-      secondaryActivation?: WorkspaceSecondaryActivation,
-    ) => {
-      if (inNewPane) openInNewPane?.(href, undefined, secondaryActivation);
-      else router.push(href);
-    },
-    [openInNewPane, router],
-  );
   const canonicalHandle = data?.detail.handle ?? null;
   const connectionsComposerController = useConnectionsComposerController({
     scheme: "contributor",
@@ -200,7 +186,7 @@ export default function AuthorPaneBody() {
         <ConnectionsSurface
           resourceRef={connectionsResource.ref}
           composerController={connectionsComposerController}
-          onOpenRoute={openRoute}
+          activateTarget={requirePaneRuntime(paneRuntime, "AuthorPaneBody").activateTarget}
         />
       ) : connectionsResource.kind === "Loading" ? (
         <FeedbackNotice severity="info" title="Loading connections…" />
@@ -209,7 +195,7 @@ export default function AuthorPaneBody() {
           This author’s resource identity could not be resolved.
         </FeedbackNotice>
       ),
-    [connectionsComposerController, connectionsResource, openRoute],
+    [connectionsComposerController, connectionsResource, paneRuntime],
   );
   const { companionAction } = useResourceInspector({
     scheme: "contributor",

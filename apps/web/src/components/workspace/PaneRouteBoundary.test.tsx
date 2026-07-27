@@ -7,9 +7,14 @@ import {
   PaneRuntimeProvider,
   type PaneNavigationCommandOptions,
 } from "@/lib/panes/paneRuntime";
-import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
-import type { PaneNavigationModality } from "@/lib/workspace/paneReturnMemento";
+import type {
+  WorkspaceTargetActivationRequest,
+  WorkspaceTargetActivationResult,
+} from "@/lib/workspace/targetActivation";
 import { assumePaneVisitId } from "@/lib/workspace/schema";
+import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
+import ReaderCitation from "@/components/ui/ReaderCitation";
 import PaneRouteBoundary from "./PaneRouteBoundary";
 
 const TEST_VISIT_ID = assumePaneVisitId(
@@ -29,16 +34,17 @@ type NavigatePane = (
   options: PaneNavigationCommandOptions,
 ) => void;
 
-type OpenInNewPane = (
-  href: string,
-  labelHint?: string,
-  secondaryActivation?: WorkspaceSecondaryActivation,
-  modality?: PaneNavigationModality,
-) => void;
+type ActivateWorkspaceTarget = (
+  request: WorkspaceTargetActivationRequest,
+) => WorkspaceTargetActivationResult;
+
+function unchangedActivation(): WorkspaceTargetActivationResult {
+  return { kind: "Unchanged", paneId: "pane-1" };
+}
 
 function renderBoundary(input: {
   navigatePane?: NavigatePane;
-  openInNewPane?: OpenInNewPane;
+  activateWorkspaceTarget?: ActivateWorkspaceTarget;
   disabled?: boolean;
 }) {
   render(
@@ -55,7 +61,9 @@ function renderBoundary(input: {
       onGoForwardPane={vi.fn()}
       onNavigatePane={input.navigatePane ?? vi.fn<NavigatePane>()}
       onReplacePane={vi.fn()}
-      onOpenInNewPane={input.openInNewPane ?? vi.fn<OpenInNewPane>()}
+      onActivateWorkspaceTarget={
+        input.activateWorkspaceTarget ?? vi.fn(unchangedActivation)
+      }
     >
       <PaneRouteBoundary>
         <ActionMenu
@@ -99,7 +107,7 @@ function renderIntentBoundary(input: {
         onGoForwardPane={vi.fn()}
         onNavigatePane={vi.fn<NavigatePane>()}
         onReplacePane={vi.fn()}
-        onOpenInNewPane={vi.fn<OpenInNewPane>()}
+        onActivateWorkspaceTarget={vi.fn(unchangedActivation)}
       >
         <PaneRouteBoundary>
           <a href={input.href}>Go</a>
@@ -178,51 +186,105 @@ describe("PaneRouteBoundary — prefetch-on-intent delegate", () => {
 });
 
 describe("PaneRouteBoundary", () => {
-  it("routes portaled menu links through the current pane", async () => {
+  it("leaves a rich citation to its bubble owner after capture", () => {
+    const activateWorkspaceTarget = vi.fn(unchangedActivation);
+    const onActivate = vi.fn();
+    render(
+      <PaneReturnMementoProvider>
+        <FeedbackProvider>
+          <PaneRuntimeProvider
+            paneId="pane-1"
+            visitId={TEST_VISIT_ID}
+            isActive={true}
+            href="/settings"
+            routeId="settings"
+            routeKey="settings:/settings"
+            canGoBack={false}
+            canGoForward={false}
+            onGoBackPane={vi.fn()}
+            onGoForwardPane={vi.fn()}
+            onNavigatePane={vi.fn<NavigatePane>()}
+            onReplacePane={vi.fn()}
+            onActivateWorkspaceTarget={activateWorkspaceTarget}
+          >
+            <PaneRouteBoundary>
+              <ReaderCitation
+                index={1}
+                preview={{ title: "Citation" }}
+                activation={{
+                  resourceRef: "media:media-1",
+                  kind: "route",
+                  href: "/media/media-1",
+                  unresolvedReason: null,
+                }}
+                target={null}
+                onActivate={onActivate}
+              />
+            </PaneRouteBoundary>
+          </PaneRuntimeProvider>
+        </FeedbackProvider>
+      </PaneReturnMementoProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "Open citation 1" }));
+
+    expect(activateWorkspaceTarget).toHaveBeenCalledOnce();
+    expect(activateWorkspaceTarget).toHaveBeenCalledWith({
+      originPaneId: "pane-1",
+      target: { href: "/media/media-1" },
+      disposition: { kind: "Follow" },
+      modality: "Keyboard",
+    });
+    expect(onActivate).toHaveBeenCalledOnce();
+  });
+
+  it("activates portaled menu links from the current pane", async () => {
     const user = userEvent.setup();
-    const navigatePane = vi.fn();
-    renderBoundary({ navigatePane });
+    const activateWorkspaceTarget = vi.fn(unchangedActivation);
+    renderBoundary({ activateWorkspaceTarget });
 
     await user.click(screen.getByRole("button", { name: "Actions" }));
     await user.click(screen.getByRole("menuitem", { name: "Reader settings" }));
 
-    expect(navigatePane).toHaveBeenCalledWith(
-      "pane-1",
-      "/settings/reader",
-      { labelHint: "Reader settings", modality: "Pointer" },
-    );
+    expect(activateWorkspaceTarget).toHaveBeenCalledWith({
+      originPaneId: "pane-1",
+      target: { href: "/settings/reader", labelHint: "Reader settings" },
+      disposition: { kind: "Follow" },
+      modality: "Pointer",
+    });
   });
 
-  it("opens portaled menu links in a sibling pane on Shift-click", async () => {
+  it("activates Shift-clicked portaled menu links as Fork", async () => {
     const user = userEvent.setup();
     const navigatePane = vi.fn();
-    const openInNewPane = vi.fn();
-    renderBoundary({ navigatePane, openInNewPane });
+    const activateWorkspaceTarget = vi.fn(unchangedActivation);
+    renderBoundary({ navigatePane, activateWorkspaceTarget });
 
     await user.click(screen.getByRole("button", { name: "Actions" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Reader settings" }), {
       shiftKey: true,
+      detail: 1,
     });
 
-    expect(openInNewPane).toHaveBeenCalledWith(
-      "/settings/reader",
-      "Reader settings",
-      undefined,
-      "Keyboard",
-    );
+    expect(activateWorkspaceTarget).toHaveBeenCalledWith({
+      originPaneId: "pane-1",
+      target: { href: "/settings/reader", labelHint: "Reader settings" },
+      disposition: { kind: "Fork" },
+      modality: "Pointer",
+    });
     expect(navigatePane).not.toHaveBeenCalled();
   });
 
   it("leaves disabled portaled menu links alone", async () => {
     const user = userEvent.setup();
     const navigatePane = vi.fn();
-    const openInNewPane = vi.fn();
-    renderBoundary({ navigatePane, openInNewPane, disabled: true });
+    const activateWorkspaceTarget = vi.fn(unchangedActivation);
+    renderBoundary({ navigatePane, activateWorkspaceTarget, disabled: true });
 
     await user.click(screen.getByRole("button", { name: "Actions" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Reader settings" }));
 
     expect(navigatePane).not.toHaveBeenCalled();
-    expect(openInNewPane).not.toHaveBeenCalled();
+    expect(activateWorkspaceTarget).not.toHaveBeenCalled();
   });
 });

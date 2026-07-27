@@ -2,19 +2,17 @@
 
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import type { CitationOut } from "@/lib/conversations/citationOut";
-import type { PaneScopedRouter } from "@/lib/panes/paneRuntime";
+import type { WorkspaceTarget } from "@/lib/workspace/targetActivation";
 import { hasActiveInteractionOwner } from "@/lib/ui/useEscapeKey";
 import { docentReducer, DOCENT_IDLE, type DocentWalkState } from "./docentWalk";
 
 export function useDocentWalk({
-  openInNewPane,
-  router,
-  isMobile,
+  activateTarget,
 }: {
-  /** Narrows paneRuntime.tsx openInNewPane (omits unused secondary activation). */
-  openInNewPane: ((href: string, labelHint?: string) => void) | undefined;
-  router: PaneScopedRouter;
-  isMobile: boolean;
+  activateTarget: (input: {
+    target: WorkspaceTarget;
+    disposition: { kind: "Adopt" };
+  }) => void;
 }): {
   walk: DocentWalkState;
   startWalk: (citations: CitationOut[], messageText: string) => void;
@@ -43,15 +41,11 @@ export function useDocentWalk({
   // Stable refs for values used inside effects to avoid spurious re-fires.
   const walkStepsRef = useRef(walk.steps);
   walkStepsRef.current = walk.steps;
-  const openInNewPaneRef = useRef(openInNewPane);
-  openInNewPaneRef.current = openInNewPane;
-  const routerRef = useRef(router);
-  routerRef.current = router;
-  const isMobileRef = useRef(isMobile);
-  isMobileRef.current = isMobile;
+  const activateTargetRef = useRef(activateTarget);
+  activateTargetRef.current = activateTarget;
 
   // Tracks the last (status, index, epoch) that drove a pane transition so we
-  // don't re-fire when identity of openInNewPane/router changes between renders,
+  // don't re-fire when target activation identity changes between renders,
   // while still re-driving when a fresh walk starts at the same (status, index).
   const prevDrivenRef = useRef<{
     status: string;
@@ -82,11 +76,10 @@ export function useDocentWalk({
     const step = walkStepsRef.current[walk.index];
     if (!step?.href) return;
 
-    if (isMobileRef.current) {
-      routerRef.current.push(step.href);
-    } else {
-      openInNewPaneRef.current?.(step.href, step.title);
-    }
+    activateTargetRef.current({
+      target: { href: step.href, labelHint: step.title },
+      disposition: { kind: "Adopt" },
+    });
   }, [walk.status, walk.index, walk.epoch]);
 
   // Keyboard effect: scoped to walk-active only (modal shortcuts, not global).

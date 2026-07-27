@@ -13,6 +13,9 @@ import type { ReaderCitationData } from "@/lib/conversations/readerCitation";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import { hrefForResourceActivation, type ResourceActivation } from "@/lib/resources/activation";
 import styles from "./MessageSourcesDisclosure.module.css";
+import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { secondaryActivationForResource } from "@/lib/resources/activation";
 
 function SourceLink({
   citation,
@@ -26,6 +29,7 @@ function SourceLink({
   ) => void;
 }) {
   const href = hrefForResourceActivation(citation.activation);
+  const paneRuntime = usePaneRuntime();
   const { activation, target, preview, index } = citation;
 
   // Resolve the effective target — mirror ReaderCitation's activationTarget logic.
@@ -54,10 +58,17 @@ function SourceLink({
         target={isExternal ? "_blank" : undefined}
         rel={isExternal ? "noopener noreferrer" : undefined}
         onClick={(event) => {
-          if (event.metaKey || event.ctrlKey || event.altKey || event.button !== 0) return;
-          event.preventDefault();
+          const handled = activateTargetLink({
+            event,
+            runtime: paneRuntime,
+            href,
+            secondaryActivation: secondaryActivationForResource(activation) ?? undefined,
+            sourceAnchor: event.currentTarget,
+          });
+          if (handled === "unhandled") return;
           onActivate(activation, null, event);
         }}
+        data-workspace-rich-target="true"
       >
         {label}
       </a>
@@ -72,10 +83,18 @@ function SourceLink({
           className={styles.sourceLink}
           href={targetHref}
           onClick={(event) => {
-            if (event.metaKey || event.ctrlKey || event.altKey || event.button !== 0) return;
-            event.preventDefault();
+            const handled = activateTargetLink({
+              event,
+              runtime: paneRuntime,
+              href: targetHref,
+              labelHint: activationTarget.label,
+              secondaryActivation: secondaryActivationForResource(activation) ?? undefined,
+              sourceAnchor: event.currentTarget,
+            });
+            if (handled === "unhandled") return;
             onActivate(activation, activationTarget, event);
           }}
+          data-workspace-rich-target="true"
         >
           {label}
         </a>

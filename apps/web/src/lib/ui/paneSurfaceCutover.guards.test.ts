@@ -254,7 +254,7 @@ describe("pane surface/resource row cutover source gates", () => {
       "src/lib/collections/presenters/episode.ts",
       "src/lib/collections/presenters/media.ts",
       "src/lib/collections/presenters/search.ts",
-      "src/lib/panes/paneLinkNavigation.ts",
+      "src/lib/panes/targetLinkActivation.ts",
       "src/lib/panes/paneRuntime.tsx",
       "src/lib/ui/viewTransitions.ts",
     ]);

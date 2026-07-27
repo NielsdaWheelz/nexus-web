@@ -109,6 +109,7 @@ function initialListeningState(): ListeningStateOut {
  */
 export function installLecternPlayerFetchMock(options: { items?: LecternItem[] } = {}) {
   const items = options.items ?? [];
+  const wireItems = items.map(({ actionTarget: _actionTarget, ...item }) => item);
   const listeningStateByMediaId = new Map<string, ListeningStateOut>();
 
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -116,16 +117,16 @@ export function installLecternPlayerFetchMock(options: { items?: LecternItem[] }
     const method = init?.method ?? "GET";
 
     if (url.pathname === "/api/lectern" && method === "GET") {
-      return jsonResponse({ data: { items } });
+      return jsonResponse({ data: { items: wireItems } });
     }
     if (url.pathname === "/api/lectern/commands" && method === "POST") {
-      return jsonResponse({ data: { outcome: { kind: "Ordered" }, lectern: { items } } });
+      return jsonResponse({ data: { outcome: { kind: "Ordered" }, lectern: { items: wireItems } } });
     }
     if (url.pathname === "/api/consumption/commands" && method === "POST") {
       return jsonResponse({
         data: {
           outcome: { kind: "StateOnly" },
-          lectern: { items },
+          lectern: { items: wireItems },
           nextItem: { kind: "Absent" },
           progressState: { kind: "Absent" },
           completionHandle: { kind: "Absent" },

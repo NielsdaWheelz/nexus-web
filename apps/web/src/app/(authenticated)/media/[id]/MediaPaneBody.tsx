@@ -166,7 +166,9 @@ import {
   usePaneSearchParams,
   useSetPaneLabel,
   usePaneRuntime,
+  requirePaneRuntime,
 } from "@/lib/panes/paneRuntime";
+import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { usePaneMobileChromeController } from "@/lib/workspace/mobileChrome";
 import type { MobileChromeScrollSnapshot } from "@/lib/workspace/mobileChrome";
@@ -621,23 +623,31 @@ function evidenceItemSnippet(item: ReaderEvidenceItem): string | null {
 }
 
 export default function MediaPaneBody() {
+  const paneRuntime = requirePaneRuntime(usePaneRuntime(), "MediaPaneBody");
   const id = usePaneParam("id");
   if (!id) {
     throw new Error("media route requires an id");
   }
 
   const paneSearchParams = usePaneSearchParams();
-  const paneRuntime = usePaneRuntime();
   const paneRouter = usePaneRouter();
   const mediaReaderViewTransition = useMediaReaderViewTransition(id);
-  const openInNewPane = paneRuntime?.openInNewPane;
-  const setPaneLayout = paneRuntime?.setPaneLayout;
-  const requestSecondarySurface = paneRuntime?.requestSecondarySurface;
-  const closeSecondaryPane = paneRuntime?.closeSecondaryPane;
-  const secondaryPane = paneRuntime?.secondaryPane ?? null;
+  const activateForkTarget = useCallback(
+    (href: string, labelHint?: string) => {
+      paneRuntime.activateTarget({
+        target: { href, ...(labelHint ? { labelHint } : {}) },
+        disposition: { kind: "Fork" },
+      });
+    },
+    [paneRuntime],
+  );
+  const setPaneLayout = paneRuntime.setPaneLayout;
+  const requestSecondarySurface = paneRuntime.requestSecondarySurface;
+  const closeSecondaryPane = paneRuntime.closeSecondaryPane;
+  const secondaryPane = paneRuntime.secondaryPane ?? null;
   const returnFocusFallback = useCallback(
-    () => findPaneChromeFocusTarget(paneRuntime?.paneId),
-    [paneRuntime?.paneId],
+    () => findPaneChromeFocusTarget(paneRuntime.paneId),
+    [paneRuntime.paneId],
   );
   // Reader-owned location-target seam: replaces the mounted media visit's
   // href (loc/fragment) without creating a pane-history checkpoint. Pane
@@ -867,7 +877,7 @@ export default function MediaPaneBody() {
           completionHandle: result.completionHandle,
         });
         if (result.nextItem.kind === "Present") {
-          openInNewPane?.(
+          activateForkTarget(
             result.nextItem.value.href,
             result.nextItem.value.title,
           );
@@ -886,7 +896,7 @@ export default function MediaPaneBody() {
         ...toFeedback(err, { fallback: "Failed to mark as finished" }),
       });
     }
-  }, [feedback, id, lectern, offerCompletionUndo, openInNewPane]);
+  }, [activateForkTarget, feedback, id, lectern, offerCompletionUndo]);
 
   // ---- Core data state ----
   const [media, setMedia] = useState<Media | null>(null);
@@ -1069,7 +1079,7 @@ export default function MediaPaneBody() {
   >(() => Promise.resolve("failed"));
   const readerProgress = useReaderProgress({
     capability: readerCapability,
-    isPaneActive: paneRuntime?.isActive ?? true,
+    isPaneActive: paneRuntime.isActive,
     captureCurrentLocator: useCallback(
       () => captureCurrentLocatorRef.current(),
       [],
@@ -1141,7 +1151,7 @@ export default function MediaPaneBody() {
   // replace, preserving apparatus, unrelated query intent, and hash. Later
   // query changes from workspace history traversal or destination activations
   // always navigate.
-  const paneHref = paneRuntime?.href ?? null;
+  const paneHref = paneRuntime.href;
   const [coldQueryMode, setColdQueryMode] = useState<"pending" | "open">(
     "pending",
   );
@@ -4108,7 +4118,7 @@ export default function MediaPaneBody() {
       const rowId = sourceReferenceByStableKey.get(itemId)?.item.id ?? itemId;
       setFocusedApparatusItemId(rowId);
       commitEvidenceActivation(rowId);
-      requestSecondarySurface?.("resource-evidence");
+      requestSecondarySurface("resource-evidence");
       focusReaderApparatusInContent(itemId, false);
     },
     [
@@ -4367,8 +4377,12 @@ export default function MediaPaneBody() {
           id,
           href: `/media/${id}`,
         }).ref,
-        openConversation: (conversationId) =>
-          openInNewPane?.(`/conversations/${conversationId}`, "Chat"),
+        openConversation: (conversationId) => {
+          paneRuntime.activateTarget({
+            target: { href: `/conversations/${conversationId}`, labelHint: "Chat" },
+            disposition: { kind: "Adopt" },
+          });
+        },
       });
     } catch (error: unknown) {
       if (handleUnauthenticatedApiError(error)) return;
@@ -4381,7 +4395,7 @@ export default function MediaPaneBody() {
     } finally {
       keyboardChatBusyRef.current = false;
     }
-  }, [feedback, id, openInNewPane]);
+  }, [feedback, id, paneRuntime]);
 
   // ==========================================================================
   // EPUB Section Navigation
@@ -4562,9 +4576,10 @@ export default function MediaPaneBody() {
   const inspectorSurfaceActive =
     activeReaderSecondarySurface === "resource-evidence" ||
     (activeReaderSecondarySurface === "resource-contents" && contentsAvailable);
-  const inspectorRegionId = paneRuntime?.paneId
-    ? paneSecondaryRegionId(paneRuntime.paneId, "resource-inspector")
-    : null;
+  const inspectorRegionId = paneSecondaryRegionId(
+    paneRuntime.paneId,
+    "resource-inspector",
+  );
   const showDesktopDocumentMapRail =
     !isMobileViewport && documentMapAvailable && documentMapMarkers.length > 0;
   const desktopDocumentMapRailWidthPx = showDesktopDocumentMapRail
@@ -4573,8 +4588,8 @@ export default function MediaPaneBody() {
 
   const readerRootRef = useRef<HTMLDivElement | null>(null);
   const readerActivityObserverKey = useMemo(
-    () => `reader:${paneRuntime?.paneId ?? id}`,
-    [id, paneRuntime?.paneId],
+    () => `reader:${paneRuntime.paneId}`,
+    [paneRuntime.paneId],
   );
 
   useReaderActivityAdapter({
@@ -4582,7 +4597,7 @@ export default function MediaPaneBody() {
     observerKey: readerActivityObserverKey,
     canRead,
     isPdf,
-    paneActive: paneRuntime?.isActive !== false,
+    paneActive: paneRuntime.isActive,
     viewport,
     readerRootRef,
     pdfContentRef,
@@ -4601,9 +4616,6 @@ export default function MediaPaneBody() {
     renderedHtml,
   );
   useEffect(() => {
-    if (!setPaneLayout) {
-      return;
-    }
     setPaneLayout({
       primaryWidth:
         isPdf && pdfIntrinsicWidthPx !== null
@@ -4924,17 +4936,20 @@ export default function MediaPaneBody() {
   const quoteHighlightToNewChat = useCallback(
     (highlightId: string) => {
       refreshMediaHighlights();
-      openInNewPane?.(
-        readerHighlightChatIntentHref(
-          readerHighlightChatIntent(
-            { kind: "New" },
-            assumeReaderSelectionKey({ mediaId: id, highlightId }),
+      paneRuntime.activateTarget({
+        target: {
+          href: readerHighlightChatIntentHref(
+            readerHighlightChatIntent(
+              { kind: "New" },
+              assumeReaderSelectionKey({ mediaId: id, highlightId }),
+            ),
           ),
-        ),
-        "Chat",
-      );
+          labelHint: "Chat",
+        },
+        disposition: { kind: "Adopt" },
+      });
     },
-    [id, openInNewPane, refreshMediaHighlights],
+    [id, paneRuntime, refreshMediaHighlights],
   );
 
   // "Ask in existing chat…": open the destination picker over this Highlight.
@@ -4952,17 +4967,20 @@ export default function MediaPaneBody() {
       const highlightId = pendingExistingChatHighlightId;
       setPendingExistingChatHighlightId(null);
       if (highlightId === null) return;
-      openInNewPane?.(
-        readerHighlightChatIntentHref(
-          readerHighlightChatIntent(
-            { kind: "Existing", conversationId },
-            assumeReaderSelectionKey({ mediaId: id, highlightId }),
+      paneRuntime.activateTarget({
+        target: {
+          href: readerHighlightChatIntentHref(
+            readerHighlightChatIntent(
+              { kind: "Existing", conversationId },
+              assumeReaderSelectionKey({ mediaId: id, highlightId }),
+            ),
           ),
-        ),
-        "Chat",
-      );
+          labelHint: "Chat",
+        },
+        disposition: { kind: "Adopt" },
+      });
     },
-    [id, openInNewPane, pendingExistingChatHighlightId],
+    [id, paneRuntime, pendingExistingChatHighlightId],
   );
 
   const handleDismissSynapse = useCallback(async (edgeId: string) => {
@@ -5197,7 +5215,7 @@ export default function MediaPaneBody() {
       label: "Reader settings",
       restoreFocusOnClose: false,
       onSelect: () => {
-        openInNewPane?.("/settings/reader", "Reader settings");
+        activateForkTarget("/settings/reader", "Reader settings");
       },
     });
 
@@ -5269,7 +5287,7 @@ export default function MediaPaneBody() {
     mediaReadState,
     openAuthorsEditor,
     openCreditsOverlay,
-    openInNewPane,
+    activateForkTarget,
     readerProfile.theme,
     readerPersistence.state,
     refreshSourceBusy,
@@ -5282,15 +5300,15 @@ export default function MediaPaneBody() {
   ]);
 
   const closeSecondaryOnMobile = useCallback(() => {
-    if (isMobileViewport) closeSecondaryPane?.();
+    if (isMobileViewport) closeSecondaryPane();
   }, [closeSecondaryPane, isMobileViewport]);
 
   const handleOpenNoteLink = useCallback(
-    (href: string, options: { newPane: boolean }) => {
-      if (options.newPane) openInNewPane?.(href);
-      else paneRouter.push(href);
+    (href: string, disposition: WorkspaceTargetDisposition) => {
+      if (disposition.kind === "Fork") activateForkTarget(href);
+      else paneRuntime.activateTarget({ target: { href }, disposition });
     },
-    [openInNewPane, paneRouter],
+    [activateForkTarget, paneRuntime],
   );
 
   const contentsSurfaceBody = useMemo(
@@ -5332,10 +5350,10 @@ export default function MediaPaneBody() {
   const toggleInspector = useCallback(
     (detail: ActionSelectDetail) => {
       if (inspectorSurfaceActive) {
-        closeSecondaryPane?.();
+        closeSecondaryPane();
         return;
       }
-      requestSecondarySurface?.(defaultInspectorSurface, {
+      requestSecondarySurface(defaultInspectorSurface, {
         returnFocusTo: detail.triggerEl,
       });
     },
@@ -5353,7 +5371,7 @@ export default function MediaPaneBody() {
   //   G c       → chat (opens new pane)
   //   G e       → Evidence surface
   useEffect(() => {
-    if (paneRuntime?.isActive !== true) return;
+    if (!paneRuntime.isActive) return;
 
     let chordPendingG = false;
     let chordTimeoutId: number | null = null;
@@ -5425,7 +5443,7 @@ export default function MediaPaneBody() {
         } else if (event.key === "e") {
           event.preventDefault();
           clearChord();
-          requestSecondarySurface?.("resource-evidence");
+          requestSecondarySurface("resource-evidence");
         } else {
           // Non-chord key: execute bare-G default immediately and pass through
           clearChord();
@@ -5443,7 +5461,7 @@ export default function MediaPaneBody() {
     documentMapAvailable,
     inspectorRegionId,
     openChatForMedia,
-    paneRuntime?.isActive,
+    paneRuntime.isActive,
     requestSecondarySurface,
     toggleInspector,
   ]);
@@ -5714,8 +5732,8 @@ export default function MediaPaneBody() {
     onLinked: refreshLinkedReaderState,
     // The Connection's note lives on the Evidence sidecar's Link card, where the
     // Add/Edit/Remove-note controls are hosted; both toast affordances open it.
-    onAddLinkNote: () => requestSecondarySurface?.("resource-evidence"),
-    onViewConnection: () => requestSecondarySurface?.("resource-evidence"),
+    onAddLinkNote: () => requestSecondarySurface("resource-evidence"),
+    onViewConnection: () => requestSecondarySurface("resource-evidence"),
   });
 
   // Open the Link session with a source built from the gesture — an existing
@@ -6088,7 +6106,7 @@ export default function MediaPaneBody() {
     );
     if (!location) return;
     urlApparatusAppliedRef.current = requestedApparatusStableKey;
-    requestSecondarySurface?.("resource-evidence");
+    requestSecondarySurface("resource-evidence");
     const target = location.item.targets.find(
       (candidate) => candidate.stable_key === requestedApparatusStableKey,
     );
@@ -6107,7 +6125,7 @@ export default function MediaPaneBody() {
   const activateDocumentMapMarker = useCallback(
     (marker: ReaderDocumentMapMarker) => {
       const surface = readerSurfaceForMarkerKind(marker.kind);
-      if (surface) requestSecondarySurface?.(surface);
+      if (surface) requestSecondarySurface(surface);
       if (marker.kind === "Contents") {
         const sectionId = marker.item_id.startsWith("contents:")
           ? marker.item_id.slice("contents:".length)
@@ -6185,38 +6203,40 @@ export default function MediaPaneBody() {
   );
 
   const handleActivateEvidenceObject = useCallback(
-    (object: ReaderEvidenceObject, options: { newPane: boolean }) => {
+    (object: ReaderEvidenceObject, disposition: WorkspaceTargetDisposition) => {
       const activated = activateResource(object.activation, {
         labelHint: object.label,
-        openInNewPane,
-        navigate: paneRouter.push,
-        newPane: options.newPane || object.kind === "Chat",
+        activateTarget: paneRuntime.activateTarget,
+        disposition: {
+          kind:
+            object.kind === "Chat"
+              ? "Adopt"
+              : disposition.kind,
+        },
       });
       if (activated) closeSecondaryOnMobile();
     },
-    [closeSecondaryOnMobile, openInNewPane, paneRouter],
+    [closeSecondaryOnMobile, paneRuntime],
   );
 
   const handleActivateEvidenceSourceTarget = useCallback(
-    (target: ReaderEvidenceSourceTarget, options: { newPane: boolean }) => {
-      if (!options.newPane && target.resolution.kind === "Resolved") {
+    (target: ReaderEvidenceSourceTarget, disposition: WorkspaceTargetDisposition) => {
+      if (disposition.kind === "Follow" && target.resolution.kind === "Resolved") {
         activateEvidenceSourceTargetResolution(target);
         return;
       }
       const activated = activateResource(target.activation, {
         labelHint:
           target.label.kind === "Present" ? target.label.value : "Source",
-        openInNewPane,
-        navigate: paneRouter.push,
-        newPane: options.newPane,
+        activateTarget: paneRuntime.activateTarget,
+        disposition,
       });
       if (activated) closeSecondaryOnMobile();
     },
     [
       activateEvidenceSourceTargetResolution,
       closeSecondaryOnMobile,
-      openInNewPane,
-      paneRouter,
+      paneRuntime,
     ],
   );
 
@@ -6617,8 +6637,8 @@ export default function MediaPaneBody() {
                         ? (videoSeekTargetMs ?? activeRequestedStartMs)
                         : null
                     }
-                    paneActive={paneRuntime?.isActive ?? true}
-                    paneInstance={paneRuntime?.paneId ?? id}
+                    paneActive={paneRuntime.isActive}
+                    paneInstance={paneRuntime.paneId}
                     onSeek={handleTranscriptSeek}
                   />
                   <div key={`${id}:${canonicalResetRevision ?? "initial"}`}>
@@ -6849,12 +6869,12 @@ export default function MediaPaneBody() {
             contentRef={isPdf ? pdfContentRef : contentRef}
             measureKey={documentMapEvidenceMeasureKey}
             isMobile={isMobileViewport}
-            onOpenSidecar={() => requestSecondarySurface?.("resource-evidence")}
+            onOpenSidecar={() => requestSecondarySurface("resource-evidence")}
             onActivateItem={(itemId) => {
               if (!readerEvidence) return;
               const location = findEvidenceItem(readerEvidence, itemId);
               if (location?.scope !== "passage" || !location.group) return;
-              requestSecondarySurface?.("resource-evidence");
+              requestSecondarySurface("resource-evidence");
               activateEvidencePassage(location.group, location.item.id);
             }}
             onDismissSynapse={handleDismissSynapse}

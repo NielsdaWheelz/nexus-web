@@ -3,8 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FeedbackNotice, toFeedback } from "@/components/feedback/Feedback";
 import { useResource } from "@/lib/api/useResource";
-import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
-import { usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
+import {
+  requirePaneRuntime,
+  usePaneRuntime,
+  usePaneSearchParams,
+} from "@/lib/panes/paneRuntime";
 import { constellationMst } from "@/lib/atlas/constellationMst";
 import { corpusMagnitude } from "@/lib/atlas/corpusMagnitude";
 import OracleThemeWrapper from "@/app/(authenticated)/oracle/OracleThemeWrapper";
@@ -348,7 +351,7 @@ function drawNebulaLabel(d: DrawContext): void {
 // ---- component -------------------------------------------------------------
 
 export default function GrandAtlasPaneBody() {
-  const paneRouter = usePaneRouter();
+  const paneRuntime = usePaneRuntime();
   const searchParams = usePaneSearchParams();
   const readingsHighlighted = searchParams.get("layer") === "readings";
 
@@ -639,14 +642,26 @@ export default function GrandAtlasPaneBody() {
   const onSelectStar = useCallback(
     (star: HitStar) => {
       if (star.layer === "corpus") {
-        requestOpenInAppPane(`/media/${star.id}`);
+        requirePaneRuntime(
+          paneRuntime,
+          "Atlas corpus target activation",
+        ).activateTarget({
+          target: { href: `/media/${star.id}` },
+          disposition: { kind: "Follow" },
+        });
         return;
       }
       // Readings folio: first tap traces its constellation, second enters. Read
       // the current selection from the ref so back-to-back taps aren't served a
       // stale closure.
       if (selectedReadingIdRef.current === star.id) {
-        paneRouter.push(`/oracle/${star.id}`);
+        requirePaneRuntime(
+          paneRuntime,
+          "Atlas reading target activation",
+        ).activateTarget({
+          target: { href: `/oracle/${star.id}` },
+          disposition: { kind: "Follow" },
+        });
         return;
       }
       // Update the ref synchronously so a second tap in the same tick (before
@@ -655,7 +670,7 @@ export default function GrandAtlasPaneBody() {
       setSelectedReadingId(star.id);
       setPeerIds([]);
     },
-    [paneRouter],
+    [paneRuntime],
   );
 
   const onPointerDown = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {

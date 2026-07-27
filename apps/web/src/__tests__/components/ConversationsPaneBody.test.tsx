@@ -57,7 +57,7 @@ function withPaneRuntime(node: ReactNode, onNavigatePane = vi.fn()) {
             onGoForwardPane={vi.fn()}
             onNavigatePane={onNavigatePane}
             onReplacePane={vi.fn()}
-            onOpenInNewPane={vi.fn()}
+            onActivateWorkspaceTarget={vi.fn(() => ({ kind: "ActivatedExisting" as const, paneId: "pane" }))}
             onSetPaneLabel={vi.fn()}
           >
             <LibraryPlacementControllerProvider>

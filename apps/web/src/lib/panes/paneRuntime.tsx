@@ -33,8 +33,13 @@ import { preloadPane } from "@/lib/panes/paneRenderRegistry";
 import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";
 import type { PaneRuntimeLayout } from "@/lib/workspace/paneSizing";
 import type {
+  WorkspaceTarget,
+  WorkspaceTargetActivationRequest,
+  WorkspaceTargetActivationResult,
+  WorkspaceTargetDisposition,
+} from "@/lib/workspace/targetActivation";
+import type {
   WorkspaceDossierActivation,
-  WorkspaceSecondaryActivation,
   WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
 import type { PaneRouteId } from "@/lib/panes/paneRouteModel";
@@ -82,7 +87,7 @@ export interface PaneSecondarySurfaceRequestOptions {
   readonly returnFocusTo?: HTMLElement | null;
 }
 
-interface PaneRuntimeContextValue {
+export interface PaneRuntimeContextValue {
   paneId: string;
   visitId: PaneVisitId;
   /** Workspace-host pane activity; owners use it for adoption-versus-handoff. */
@@ -105,11 +110,10 @@ interface PaneRuntimeContextValue {
    *  ambient `window.location`. */
   hash: string;
   router: PaneScopedRouter;
-  openInNewPane: (
-    href: string,
-    labelHint?: string,
-    secondaryActivation?: WorkspaceSecondaryActivation,
-  ) => void;
+  activateTarget: (input: {
+    target: WorkspaceTarget;
+    disposition: WorkspaceTargetDisposition;
+  }) => WorkspaceTargetActivationResult;
   setPaneLabel: (label: string | null) => void;
   setPaneLayout: (layout: PaneRuntimeLayout) => void;
   requestSecondarySurface: (
@@ -154,12 +158,9 @@ interface PaneRuntimeProviderProps {
     href: string,
     options: PaneNavigationCommandOptions,
   ) => void;
-  onOpenInNewPane: (
-    href: string,
-    labelHint: string | undefined,
-    secondaryActivation: WorkspaceSecondaryActivation | undefined,
-    modality: PaneNavigationModality,
-  ) => void;
+  onActivateWorkspaceTarget: (
+    request: WorkspaceTargetActivationRequest,
+  ) => WorkspaceTargetActivationResult;
   onGoBackPane: (paneId: string, modality: PaneNavigationModality) => void;
   onGoForwardPane: (paneId: string, modality: PaneNavigationModality) => void;
   onSetPaneLabel?: (input: {
@@ -259,7 +260,7 @@ export function PaneRuntimeProvider({
   canGoForward,
   onNavigatePane,
   onReplacePane,
-  onOpenInNewPane,
+  onActivateWorkspaceTarget,
   onGoBackPane,
   onGoForwardPane,
   onSetPaneLabel,
@@ -308,7 +309,7 @@ export function PaneRuntimeProvider({
     secondaryPaneId,
     onNavigatePane,
     onReplacePane,
-    onOpenInNewPane,
+    onActivateWorkspaceTarget,
     onGoBackPane,
     onGoForwardPane,
     onSetPaneLabel,
@@ -325,7 +326,7 @@ export function PaneRuntimeProvider({
     secondaryPaneId,
     onNavigatePane,
     onReplacePane,
-    onOpenInNewPane,
+    onActivateWorkspaceTarget,
     onGoBackPane,
     onGoForwardPane,
     onSetPaneLabel,
@@ -389,22 +390,18 @@ export function PaneRuntimeProvider({
     }),
     [consumeNavigationModality],
   );
-  const openInNewPane = useCallback(
-    (
-      nextHref: string,
-      labelHint?: string,
-      secondaryActivation?: WorkspaceSecondaryActivation,
-    ) => {
-      const normalized = normalizeWorkspaceHref(nextHref);
-      if (!normalized) {
-        return;
-      }
-      commandsRef.current.onOpenInNewPane(
-        normalized,
-        labelHint,
-        secondaryActivation,
-        consumeNavigationModality(),
-      );
+  const activateTarget = useCallback(
+    (input: {
+      target: WorkspaceTarget;
+      disposition: WorkspaceTargetDisposition;
+    }): WorkspaceTargetActivationResult => {
+      const current = commandsRef.current;
+      return current.onActivateWorkspaceTarget({
+        originPaneId: current.paneId,
+        target: input.target,
+        disposition: input.disposition,
+        modality: consumeNavigationModality(),
+      });
     },
     [consumeNavigationModality],
   );
@@ -488,7 +485,7 @@ export function PaneRuntimeProvider({
       searchParams: parsed.searchParams,
       hash: parsed.hash,
       router,
-      openInNewPane,
+      activateTarget,
       setPaneLabel,
       setPaneLayout,
       requestSecondarySurface,
@@ -499,7 +496,7 @@ export function PaneRuntimeProvider({
     [
       href,
       router,
-      openInNewPane,
+      activateTarget,
       setPaneLabel,
       setPaneLayout,
       requestSecondarySurface,
@@ -541,6 +538,20 @@ export function PaneRuntimeProvider({
 
 export function usePaneRuntime(): PaneRuntimeContextValue | null {
   return useContext(PaneRuntimeContext);
+}
+
+/**
+ * Converts an optional ambient pane runtime into the hard owner contract used
+ * by surfaces that cannot perform their requested action outside a pane.
+ */
+export function requirePaneRuntime(
+  runtime: PaneRuntimeContextValue | null,
+  owner: string,
+): PaneRuntimeContextValue {
+  if (!runtime) {
+    throw new Error(`${owner} requires a pane runtime`);
+  }
+  return runtime;
 }
 
 export function usePaneRouter(): PaneScopedRouter {

@@ -16,9 +16,9 @@ import { useConnectionsComposerController } from "./connectionsComposerControlle
 function ConnectionsSurface(
   props: Omit<
     ComponentProps<typeof ConnectionsSurfaceImpl>,
-    "composerController" | "onOpenRoute"
+    "composerController" | "activateTarget"
   > & {
-    onOpenRoute?: ComponentProps<typeof ConnectionsSurfaceImpl>["onOpenRoute"];
+    activateTarget?: ComponentProps<typeof ConnectionsSurfaceImpl>["activateTarget"];
   },
 ) {
   const composerController = useConnectionsComposerController(
@@ -29,7 +29,7 @@ function ConnectionsSurface(
       <ConnectionsSurfaceImpl
         {...props}
         composerController={composerController}
-        onOpenRoute={props.onOpenRoute ?? (() => {})}
+        activateTarget={props.activateTarget ?? vi.fn()}
       />
     </ShareControllerProvider>
   );
@@ -277,7 +277,7 @@ function TabSwitchHarness({
         <ConnectionsSurfaceImpl
           resourceRef={resourceRef}
           composerController={composerController}
-          onOpenRoute={() => {}}
+          activateTarget={() => {}}
         />
       ) : (
         <div>Dossier tab</div>
@@ -476,7 +476,7 @@ describe("ConnectionsSurface", () => {
 
   it("opens a connected artifact revision on its exact local Dossier revision", async () => {
     const user = userEvent.setup();
-    const onOpenRoute = vi.fn();
+    const activateTarget = vi.fn();
     const revisionRef =
       "artifact_revision:77777777-7777-4777-8777-777777777777";
     vi.stubGlobal(
@@ -508,7 +508,7 @@ describe("ConnectionsSurface", () => {
     render(
       <ConnectionsSurface
         resourceRef={{ scheme: "note_block", id: BLOCK_A }}
-        onOpenRoute={onOpenRoute}
+        activateTarget={activateTarget}
       />,
     );
 
@@ -518,15 +518,18 @@ describe("ConnectionsSurface", () => {
       }),
     );
 
-    expect(onOpenRoute).toHaveBeenCalledWith(
-      `/conversations/${CONVERSATION_ID}`,
-      true,
-      {
-        kind: "DossierRevision",
-        surfaceId: "resource-dossier",
-        revisionRef,
+    expect(activateTarget).toHaveBeenCalledWith({
+      target: {
+        href: `/conversations/${CONVERSATION_ID}`,
+        labelHint: "Historical Dossier",
+        secondaryActivation: {
+          kind: "DossierRevision",
+          surfaceId: "resource-dossier",
+          revisionRef,
+        },
       },
-    );
+      disposition: { kind: "Follow" },
+    });
   });
 
   it("keeps the connect composer collapsed until the disclosure reveals it", async () => {

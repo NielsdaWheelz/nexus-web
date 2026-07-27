@@ -22,6 +22,10 @@ import {
   assumePaneVisitId,
   type PaneVisitId,
 } from "@/lib/workspace/schema";
+import type {
+  WorkspaceTargetActivationRequest,
+  WorkspaceTargetActivationResult,
+} from "@/lib/workspace/targetActivation";
 import OracleConcordance from "../OracleConcordance";
 import OracleReadingPaneBody, { type ReadingDetail } from "./OracleReadingPaneBody";
 import { PanePrimaryChromeProvider } from "@/components/workspace/PanePrimaryChrome";
@@ -47,22 +51,8 @@ vi.mock("@/lib/api/sse-client", () => ({
   sseClientDirect: mocks.sseClientDirect,
 }));
 
-// requestOpenInAppPane either postMessages to the parent frame or enqueues on
-// window.__nexusPendingPaneOpenQueue when the pane graph is not yet ready.
-// Both paths are checked so the tests are robust to iframe vs. flat context.
-function resolvedOpenHrefs(
-  postMessageSpy: ReturnType<typeof vi.spyOn>,
-): string[] {
-  const msgHrefs = (
-    postMessageSpy.mock.calls as Array<[Record<string, unknown>, ...unknown[]]>
-  )
-    .map(([msg]) => msg?.href)
-    .filter((h): h is string => typeof h === "string");
-  const queue = (
-    (window as unknown as Record<string, unknown>)
-      .__nexusPendingPaneOpenQueue as Array<{ href: string }> | undefined
-  ) ?? [];
-  return [...msgHrefs, ...queue.map((d) => d.href)];
+function unchangedActivation(paneId: string): WorkspaceTargetActivationResult {
+  return { kind: "Unchanged", paneId };
 }
 
 function readingPane(
@@ -70,6 +60,9 @@ function readingPane(
   publishPrimaryChrome: (
     update: PanePrimaryChromePublicationUpdate,
   ) => void = () => {},
+  onActivateWorkspaceTarget: (
+    request: WorkspaceTargetActivationRequest,
+  ) => WorkspaceTargetActivationResult = () => unchangedActivation("pane-1"),
 ) {
   const href = `/oracle/${readingId}`;
   return (
@@ -88,7 +81,7 @@ function readingPane(
         pathParams={{ readingId }}
         onNavigatePane={vi.fn()}
         onReplacePane={vi.fn()}
-        onOpenInNewPane={vi.fn()}
+        onActivateWorkspaceTarget={onActivateWorkspaceTarget}
       >
         <FeedbackProvider>
           <PanePrimaryChromeProvider publish={publishPrimaryChrome}>
@@ -198,7 +191,7 @@ function oracleReturnApp(phase: "source" | "away" | "return") {
         pathParams={{ readingId: "00000000-0000-4000-8000-000000000021" }}
         onNavigatePane={vi.fn()}
         onReplacePane={vi.fn()}
-        onOpenInNewPane={vi.fn()}
+        onActivateWorkspaceTarget={() => unchangedActivation("pane-return-test")}
       >
         <OracleReturnScrollport phase={phase} visitId={visitId} />
       </PaneRuntimeProvider>
@@ -207,8 +200,6 @@ function oracleReturnApp(phase: "source" | "away" | "return") {
 }
 
 describe("OracleReadingPaneBody", () => {
-  let postMessageSpy: ReturnType<typeof vi.spyOn>;
-
   beforeEach(() => {
     mocks.fetchStreamToken.mockReset();
     mocks.fetchStreamToken.mockResolvedValue({
@@ -217,14 +208,11 @@ describe("OracleReadingPaneBody", () => {
     });
     mocks.sseClientDirect.mockReset();
     mocks.sseClientDirect.mockReturnValue(vi.fn());
-    postMessageSpy = vi.spyOn(window.parent ?? window, "postMessage");
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
-    delete (window as unknown as Record<string, unknown>)
-      .__nexusPendingPaneOpenQueue;
   });
 
   it("does not apply the final return clamp before an async reading commits", async () => {
@@ -597,14 +585,73 @@ describe("OracleReadingPaneBody", () => {
       }),
     );
 
-    render(readingPane("00000000-0000-4000-8000-000000000021"));
+    const onActivateWorkspaceTarget = vi.fn(() => unchangedActivation("pane-1"));
+    render(
+      readingPane(
+        "00000000-0000-4000-8000-000000000021",
+        undefined,
+        onActivateWorkspaceTarget,
+      ),
+    );
 
     const chip = await screen.findByRole("link", { name: "Open citation 1" });
     expect(chip).toBeInTheDocument();
     expect(chip).toHaveAttribute("href", "/media/media-1#fragment-fragment-1");
-    chip.addEventListener("click", (event) => event.preventDefault(), { once: true });
-    await userEvent.click(chip);
-    expect(resolvedOpenHrefs(postMessageSpy)).toContain("/media/media-1#fragment-fragment-1");
+    fireEvent.click(chip, { shiftKey: true, detail: 1 });
+    expect(onActivateWorkspaceTarget).toHaveBeenCalledWith(
+      expect.objectContaining({
+        originPaneId: "pane-1",
+        target: expect.objectContaining({ href: "/media/media-1#fragment-fragment-1" }),
+        disposition: { kind: "Fork" },
+      }),
+    );
+  });
+
+  it("retries a failed reading through workspace target activation", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string, init?: RequestInit) => {
+        if (path === "/api/oracle/readings/00000000-0000-4000-8000-000000000021") {
+          return jsonResponse({
+            data: readingDetail({
+              id: "00000000-0000-4000-8000-000000000021",
+              question: "Can the oracle try again?",
+              folioNumber: 1,
+              status: "failed",
+              errorCode: "E_LLM_BAD_REQUEST",
+            }),
+          });
+        }
+        if (path === "/api/oracle/readings" && init?.method === "POST") {
+          return jsonResponse({
+            data: {
+              reading_id: "00000000-0000-4000-8000-000000000022",
+              folio_number: 2,
+              status: "pending",
+            },
+          });
+        }
+        throw new Error(`Unexpected fetch path: ${path}`);
+      }),
+    );
+    const onActivateWorkspaceTarget = vi.fn(() => unchangedActivation("pane-1"));
+    render(
+      readingPane(
+        "00000000-0000-4000-8000-000000000021",
+        undefined,
+        onActivateWorkspaceTarget,
+      ),
+    );
+
+    await userEvent.click(await screen.findByRole("button", { name: "Retry reading" }));
+
+    await waitFor(() => {
+      expect(onActivateWorkspaceTarget).toHaveBeenCalledWith(expect.objectContaining({
+        originPaneId: "pane-1",
+        target: { href: "/oracle/00000000-0000-4000-8000-000000000022" },
+        disposition: { kind: "Follow" },
+      }));
+    });
   });
 
   it("renders and opens a note citation chip for note-owned evidence", async () => {
@@ -660,13 +707,25 @@ describe("OracleReadingPaneBody", () => {
       }),
     );
 
-    render(readingPane("00000000-0000-4000-8000-000000000021"));
+    const onActivateWorkspaceTarget = vi.fn(() => unchangedActivation("pane-1"));
+    render(
+      readingPane(
+        "00000000-0000-4000-8000-000000000021",
+        undefined,
+        onActivateWorkspaceTarget,
+      ),
+    );
 
     const chip = await screen.findByRole("link", { name: "Open citation 1" });
     expect(chip).toHaveAttribute("href", "/notes/block-1");
-    chip.addEventListener("click", (event) => event.preventDefault(), { once: true });
     await userEvent.click(chip);
-    expect(resolvedOpenHrefs(postMessageSpy)).toContain("/notes/block-1");
+    expect(onActivateWorkspaceTarget).toHaveBeenCalledWith(
+      expect.objectContaining({
+        originPaneId: "pane-1",
+        target: expect.objectContaining({ href: "/notes/block-1" }),
+        disposition: { kind: "Follow" },
+      }),
+    );
   });
 
   it("renders and opens an anchor citation chip for a public-domain passage", async () => {
@@ -730,16 +789,24 @@ describe("OracleReadingPaneBody", () => {
       }),
     );
 
-    render(readingPane("00000000-0000-4000-8000-000000000021"));
+    const onActivateWorkspaceTarget = vi.fn(() => unchangedActivation("pane-1"));
+    render(
+      readingPane(
+        "00000000-0000-4000-8000-000000000021",
+        undefined,
+        onActivateWorkspaceTarget,
+      ),
+    );
 
     const chip = await screen.findByRole("link", { name: "Open citation 1" });
     expect(chip).toHaveAttribute("href", "/media/media-9#fragment-fragment-9");
-    chip.addEventListener("click", (event) => event.preventDefault(), {
-      once: true,
-    });
     await userEvent.click(chip);
-    expect(resolvedOpenHrefs(postMessageSpy)).toContain(
-      "/media/media-9#fragment-fragment-9",
+    expect(onActivateWorkspaceTarget).toHaveBeenCalledWith(
+      expect.objectContaining({
+        originPaneId: "pane-1",
+        target: expect.objectContaining({ href: "/media/media-9#fragment-fragment-9" }),
+        disposition: { kind: "Follow" },
+      }),
     );
   });
 
@@ -837,6 +904,7 @@ describe("OracleReadingPaneBody", () => {
     );
 
     const concordanceHref = "/oracle/00000000-0000-4000-8000-000000000021";
+    const onActivateWorkspaceTarget = vi.fn(() => unchangedActivation("pane-1"));
     const concordancePane = (status: string) => (
       <PaneRuntimeProvider
         paneId="pane-1"
@@ -852,7 +920,7 @@ describe("OracleReadingPaneBody", () => {
         pathParams={{ readingId: "00000000-0000-4000-8000-000000000021" }}
         onNavigatePane={vi.fn()}
         onReplacePane={vi.fn()}
-        onOpenInNewPane={vi.fn()}
+        onActivateWorkspaceTarget={onActivateWorkspaceTarget}
       >
         <OracleConcordance readingId="00000000-0000-4000-8000-000000000021" status={status} />
       </PaneRuntimeProvider>
@@ -862,6 +930,22 @@ describe("OracleReadingPaneBody", () => {
 
     expect(await screen.findByText("Concordance")).toBeInTheDocument();
     expect(screen.getByText("In limine")).toBeInTheDocument();
+
+    const entry = screen.getByRole("button", { name: /Folio II/ });
+    await userEvent.click(entry);
+    fireEvent.click(entry, { shiftKey: true, detail: 1 });
+    expect(onActivateWorkspaceTarget).toHaveBeenNthCalledWith(1, {
+      originPaneId: "pane-1",
+      target: { href: "/oracle/reading-2" },
+      disposition: { kind: "Follow" },
+      modality: "Programmatic",
+    });
+    expect(onActivateWorkspaceTarget).toHaveBeenNthCalledWith(2, {
+      originPaneId: "pane-1",
+      target: { href: "/oracle/reading-2" },
+      disposition: { kind: "Fork" },
+      modality: "Programmatic",
+    });
 
     rerender(concordancePane("streaming"));
 
@@ -905,7 +989,7 @@ describe("OracleReadingPaneBody", () => {
           pathParams={{ readingId }}
           onNavigatePane={vi.fn()}
           onReplacePane={vi.fn()}
-          onOpenInNewPane={vi.fn()}
+          onActivateWorkspaceTarget={() => unchangedActivation("pane-1")}
         >
           <OracleConcordance readingId={readingId} status="complete" />
         </PaneRuntimeProvider>

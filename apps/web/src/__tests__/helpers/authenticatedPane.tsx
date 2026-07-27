@@ -36,7 +36,7 @@ export function renderHydratedPane({
 }: RenderHydratedPaneOptions): RenderResult & {
   onNavigatePane: ReturnType<typeof vi.fn>;
   onReplacePane: ReturnType<typeof vi.fn>;
-  onOpenInNewPane: ReturnType<typeof vi.fn>;
+  onActivateWorkspaceTarget: ReturnType<typeof vi.fn>;
   onGoBackPane: ReturnType<typeof vi.fn>;
   onGoForwardPane: ReturnType<typeof vi.fn>;
   onSetPaneLabel: ReturnType<typeof vi.fn>;
@@ -52,7 +52,7 @@ export function renderHydratedPane({
 
   const onNavigatePane = vi.fn();
   const onReplacePane = vi.fn();
-  const onOpenInNewPane = vi.fn();
+  const onActivateWorkspaceTarget = vi.fn(() => ({ kind: "ActivatedExisting" as const, paneId }));
   const onGoBackPane = vi.fn();
   const onGoForwardPane = vi.fn();
   const onSetPaneLabel = vi.fn();
@@ -78,7 +78,7 @@ export function renderHydratedPane({
               pathParams={pathParams ?? route.params}
               onNavigatePane={onNavigatePane}
               onReplacePane={onReplacePane}
-              onOpenInNewPane={onOpenInNewPane}
+              onActivateWorkspaceTarget={onActivateWorkspaceTarget}
               onGoBackPane={onGoBackPane}
               onGoForwardPane={onGoForwardPane}
               onSetPaneLabel={onSetPaneLabel}
@@ -100,7 +100,7 @@ export function renderHydratedPane({
     ...view,
     onNavigatePane,
     onReplacePane,
-    onOpenInNewPane,
+    onActivateWorkspaceTarget,
     onGoBackPane,
     onGoForwardPane,
     onSetPaneLabel,

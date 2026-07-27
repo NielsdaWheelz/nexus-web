@@ -40,8 +40,8 @@ no non-default destination.
 | Fixed-nav membership, order, and decoration                       | `apps/web/src/components/appnav/navModel.ts`                                                                      |
 | Route-to-semantic-section ownership                               | section `header.destinationId`, or resource `sectionDestinationId`, in `apps/web/src/lib/panes/paneRouteModel.ts` |
 | Rail/sheet projection and pane dispatch                           | `apps/web/src/components/appnav/AppNav.tsx`                                                                       |
-| Plain-click interception policy                                   | `apps/web/src/components/appnav/navActivation.ts`                                                                 |
-| Pane reuse, restoration, and activation                           | `openPane` in `apps/web/src/lib/workspace/store.tsx`                                                              |
+| Internal-link gesture policy                                      | `apps/web/src/lib/panes/targetLinkActivation.ts`                                                                  |
+| Target selection, restoration, creation, and activation           | `activateWorkspaceTarget` in `apps/web/src/lib/workspace/store.tsx`                                               |
 | Server-restored deep-link merge                                   | `apps/web/src/lib/workspace/workspaceRestore.ts`                                                                  |
 | Launcher projection                                               | `apps/web/src/lib/launcher/providers.ts`                                                                          |
 | Direct Add intent/session                                         | `apps/web/src/lib/launcher/launcherEvents.ts` and `apps/web/src/components/launcher/useAddContentSession.ts`      |
@@ -72,10 +72,11 @@ running heads and navigation cannot drift through parallel maps.
 
 ## Activation and pane reuse
 
-A plain primary-button activation of a supported app link is claimed by the
-workspace and dispatched through `openPane({ href })`. `openPane` restores and
-activates an exact matching pane—including a minimized pane—or opens a new pane
-when none exists. It does not replace the currently active pane.
+A plain primary-button activation of a supported app link is `Follow`. It
+restores and activates an exact matching pane, including a minimized pane; when
+none exists, it navigates the active pane. `Shift`+click is `Fork`: it creates
+and activates a fresh pane after the active pane even when an exact pane is
+already open.
 
 The activation boundary returns an explicit focus-owner result, never a boolean:
 
@@ -85,13 +86,15 @@ The activation boundary returns an explicit focus-owner result, never a boolean:
 - `handled-destination-focus`: another pane was opened or reactivated, so the
   workspace destination owns focus.
 
-AppNav decides between the handled results with `hasSamePaneRoute`, the same
-identity contract the workspace uses for exact pane reuse.
+AppNav derives the focus owner from the workspace activation result. Only an
+unchanged or rejected activation retains source focus; navigation, restoration,
+and creation hand focus ownership to the destination.
 
 The click policy leaves already-prevented events, non-primary buttons, and
-Meta/Ctrl/Alt/Shift activations untouched so browser-native open-in-new-tab and
+Meta/Ctrl/Alt activations untouched so browser-native open-in-new-tab and
 related link gestures still work. The rendered anchor always retains a real
-`href` for semantics, copy-link behavior, and no-JavaScript fallback.
+`href` for semantics, copy-link behavior, and no-JavaScript fallback. Touch and
+`Enter` use `Follow`.
 
 The mobile sheet closes only after the workspace claims a navigation event. A
 real destination handoff and Launcher/Add handoffs suppress return-focus; an

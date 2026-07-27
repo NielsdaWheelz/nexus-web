@@ -488,7 +488,7 @@ function authorPane({
         pathParams={{ handle: HANDLE }}
         onNavigatePane={() => {}}
         onReplacePane={() => {}}
-        onOpenInNewPane={() => {}}
+        onActivateWorkspaceTarget={vi.fn(() => ({ kind: "Unchanged" as const, paneId: "pane-1" }))}
         >
           <AuthorPaneBody />
         </PaneRuntimeProvider>

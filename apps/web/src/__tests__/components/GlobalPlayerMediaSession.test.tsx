@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
+import { WorkspaceTestProvider } from "@/__tests__/helpers/WorkspaceTestProvider";
 import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
 import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
 import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer";
@@ -102,7 +103,7 @@ function Harness() {
         type="button"
         onClick={() =>
           playAudio(
-            buildFooterDescriptor("media-a", "Episode A", {
+            buildFooterDescriptor("11111111-1111-4111-8111-111111111111", "Episode A", {
               subtitle: "Queue Podcast",
               artworkUrl: "https://cdn.example.com/podcast-cover.jpg",
             })
@@ -127,11 +128,13 @@ function App() {
   // GlobalPlayerProvider consumes useLectern(), so it must be wrapped in a
   // LecternProvider; `installLecternPlayerFetchMock` serves the mount fetches.
   return (
-    <LecternProvider>
-      <GlobalPlayerProvider>
+    <WorkspaceTestProvider>
+      <LecternProvider>
+        <GlobalPlayerProvider>
         <Harness />
-      </GlobalPlayerProvider>
-    </LecternProvider>
+        </GlobalPlayerProvider>
+      </LecternProvider>
+    </WorkspaceTestProvider>
   );
 }
 

@@ -837,7 +837,7 @@ function renderMediaPane(
   const onNavigatePane = vi.fn();
   const onRequestSecondarySurface = vi.fn();
   const onCloseSecondaryPane = vi.fn();
-  const onOpenInNewPane = vi.fn();
+  const onActivateWorkspaceTarget = vi.fn(() => ({ kind: "ActivatedExisting" as const, paneId: "pane-1" }));
   const onSetFixedChrome = vi.fn();
   const onSetPaneSecondary = vi.fn();
 
@@ -869,7 +869,7 @@ function renderMediaPane(
                 }}
                 onNavigatePane={onNavigatePane}
                 onReplacePane={vi.fn()}
-                onOpenInNewPane={onOpenInNewPane}
+                onActivateWorkspaceTarget={onActivateWorkspaceTarget}
                 onSetPaneLabel={onSetPaneLabel}
                 onSetPaneLayout={onSetPaneLayout}
                 onRequestSecondarySurface={onRequestSecondarySurface}
@@ -899,7 +899,7 @@ function renderMediaPane(
     onNavigatePane,
     onRequestSecondarySurface,
     onCloseSecondaryPane,
-    onOpenInNewPane,
+    onActivateWorkspaceTarget,
     onSetPaneSecondary,
     onSetFixedChrome,
     routeKey: resolvePaneRouteIdentity(
@@ -908,6 +908,14 @@ function renderMediaPane(
     rerender: (nextOptions: typeof options) => view.rerender(tree(nextOptions)),
   };
 }
+
+describe("MediaPaneBody runtime contract", () => {
+  it("defects immediately without its required pane runtime", () => {
+    expect(() => render(<MediaPaneBody />)).toThrow(
+      "MediaPaneBody requires a pane runtime",
+    );
+  });
+});
 
 describe("MediaPaneBody pane sizing", () => {
   beforeEach(() => {
@@ -1554,7 +1562,7 @@ describe("MediaPaneBody pane sizing", () => {
     testState.mediaKind = "epub";
     testState.includeSecondEpubSection = true;
     testState.documentMapPassageGroups = [crossSectionSourceReferencePassage()];
-    const { onOpenInNewPane } = renderMediaPane({
+    const { onActivateWorkspaceTarget } = renderMediaPane({
       renderSecondarySurfaceId: "resource-evidence",
     });
 
@@ -1563,13 +1571,19 @@ describe("MediaPaneBody pane sizing", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Target note" }), {
       shiftKey: true,
+      detail: 1,
     });
 
-    expect(onOpenInNewPane).toHaveBeenCalledWith(
-      "/media/00000000-0000-4000-8000-000000000001?apparatus=target",
-      "Target note",
-      undefined,
-      "Programmatic",
+    expect(onActivateWorkspaceTarget).toHaveBeenCalledWith(
+      {
+        originPaneId: "pane-1",
+        target: {
+          href: "/media/00000000-0000-4000-8000-000000000001?apparatus=target",
+          labelHint: "Target note",
+        },
+        disposition: { kind: "Fork" },
+        modality: "Programmatic",
+      },
     );
     expect(
       apiCallsForPath("/api/media/00000000-0000-4000-8000-000000000001/sections/section-2"),
@@ -2128,7 +2142,7 @@ describe("MediaPaneBody pane sizing", () => {
     testState.mediaKind = "web_article";
     testState.includeToc = true;
     testState.documentMapDocumentItems = [noteTargetDocumentItem()];
-    const { onNavigatePane } = renderMediaPane({
+    const { onActivateWorkspaceTarget } = renderMediaPane({
       renderSecondarySurfaceId: "resource-evidence",
     });
 
@@ -2139,11 +2153,15 @@ describe("MediaPaneBody pane sizing", () => {
       screen.getByRole("button", { name: "Open Research note" }),
     );
 
-    expect(onNavigatePane).toHaveBeenCalledWith(
-      "pane-1",
-      "/notes/33333333-3333-4333-8333-333333333333",
-      { modality: "Programmatic" },
-    );
+    expect(onActivateWorkspaceTarget).toHaveBeenCalledWith({
+      originPaneId: "pane-1",
+      target: {
+        href: "/notes/33333333-3333-4333-8333-333333333333",
+        labelHint: "Research note",
+      },
+      disposition: { kind: "Follow" },
+      modality: "Programmatic",
+    });
   });
 
   it.each([
@@ -2239,7 +2257,7 @@ describe("MediaPaneBody pane sizing", () => {
     testState.conversationResponse = new Promise((resolve) => {
       resolveConversation = resolve;
     });
-    const { onOpenInNewPane } = renderMediaPane();
+    const { onActivateWorkspaceTarget } = renderMediaPane();
     await getReadyPrimaryChrome();
 
     fireEvent.keyDown(document, { key: "G", shiftKey: true });
@@ -2254,11 +2272,13 @@ describe("MediaPaneBody pane sizing", () => {
     }
     resolveConversation({ data: { id: "conversation-1" } });
     await waitFor(() => {
-      expect(onOpenInNewPane).toHaveBeenCalledWith(
-        "/conversations/conversation-1",
-        "Chat",
-        undefined,
-        "Programmatic",
+      expect(onActivateWorkspaceTarget).toHaveBeenCalledWith(
+        {
+          originPaneId: "pane-1",
+          target: { href: "/conversations/conversation-1", labelHint: "Chat" },
+          disposition: { kind: "Adopt" },
+          modality: "Programmatic",
+        },
       );
     });
   });

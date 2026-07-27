@@ -4,7 +4,7 @@ import { Component, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ShareOverlay from "./ShareOverlay";
 import { getMemberLibrary } from "@/lib/libraries/client";
-import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
+import { requestWorkspaceTargetActivation } from "@/lib/workspace/workspaceTargetActivationIngress";
 import { ApiError } from "@/lib/api/client";
 import { LibraryContractDefect } from "@/lib/libraries/contract";
 import { createLinkShare, fetchShareSnapshot } from "@/lib/sharing/api";
@@ -34,14 +34,14 @@ vi.mock("@/lib/libraries/client", async () => {
     getMemberLibrary: vi.fn(),
   };
 });
-vi.mock("@/lib/panes/openInAppPane", async () => {
+vi.mock("@/lib/workspace/workspaceTargetActivationIngress", async () => {
   const actual =
-    await vi.importActual<typeof import("@/lib/panes/openInAppPane")>(
-      "@/lib/panes/openInAppPane",
+    await vi.importActual<typeof import("@/lib/workspace/workspaceTargetActivationIngress")>(
+      "@/lib/workspace/workspaceTargetActivationIngress",
     );
   return {
     ...actual,
-    requestOpenInAppPane: vi.fn(),
+    requestWorkspaceTargetActivation: vi.fn(),
   };
 });
 vi.mock("@/lib/ui/useIsMobileViewport", () => ({
@@ -51,7 +51,7 @@ vi.mock("@/lib/ui/useIsMobileViewport", () => ({
 const fetchShareSnapshotMock = vi.mocked(fetchShareSnapshot);
 const createLinkShareMock = vi.mocked(createLinkShare);
 const getMemberLibraryMock = vi.mocked(getMemberLibrary);
-const requestOpenInAppPaneMock = vi.mocked(requestOpenInAppPane);
+const requestWorkspaceTargetActivationMock = vi.mocked(requestWorkspaceTargetActivation);
 const MEDIA_ID = "11111111-1111-4111-8111-111111111111";
 const LIBRARY_ID = "22222222-2222-4222-8222-222222222222";
 const PUBLIC_HREF = `http://localhost:3000/s#share=nxshr1_${"A".repeat(43)}`;
@@ -176,7 +176,7 @@ describe("ShareOverlay public native sharing", () => {
     fetchShareSnapshotMock.mockResolvedValue(snapshot());
     createLinkShareMock.mockReset();
     getMemberLibraryMock.mockReset();
-    requestOpenInAppPaneMock.mockReset();
+    requestWorkspaceTargetActivationMock.mockReset();
   });
 
   it("opens the canonical Library pane on Members and closes after accepted dispatch", async () => {
@@ -184,22 +184,24 @@ describe("ShareOverlay public native sharing", () => {
     const onClose = vi.fn();
     fetchShareSnapshotMock.mockResolvedValue(librarySnapshot());
     getMemberLibraryMock.mockResolvedValue(libraryOut());
-    requestOpenInAppPaneMock.mockReturnValue(true);
+    requestWorkspaceTargetActivationMock.mockReturnValue(true);
 
     render(<ShareOverlay session={librarySession()} onClose={onClose} />);
     await user.click(
       await screen.findByRole("button", { name: "Manage members" }),
     );
 
-    expect(requestOpenInAppPaneMock).toHaveBeenCalledWith(
-      librarySnapshot().authenticatedHref,
-      {
+    expect(requestWorkspaceTargetActivationMock).toHaveBeenCalledWith({
+      target: {
+        href: librarySnapshot().authenticatedHref,
         secondaryActivation: {
           kind: "Surface",
           surfaceId: "resource-members",
         },
       },
-    );
+      disposition: { kind: "Follow" },
+      modality: "Programmatic",
+    });
     expect(onClose).toHaveBeenCalledOnce();
   });
 
@@ -208,7 +210,7 @@ describe("ShareOverlay public native sharing", () => {
     const onClose = vi.fn();
     fetchShareSnapshotMock.mockResolvedValue(librarySnapshot());
     getMemberLibraryMock.mockResolvedValue(libraryOut());
-    requestOpenInAppPaneMock.mockReturnValue(false);
+    requestWorkspaceTargetActivationMock.mockReturnValue(false);
 
     render(<ShareOverlay session={librarySession()} onClose={onClose} />);
     await user.click(

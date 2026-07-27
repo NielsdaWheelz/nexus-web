@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import { formatClock } from "@/lib/formatClock";
 import { presenceValueOr } from "@/lib/api/presence";
 import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
@@ -28,7 +35,8 @@ import { useVoiceRecorder } from "@/lib/walknotes/useVoiceRecorder";
 import { transcribeAudio } from "@/lib/walknotes/transcribeAudio";
 import MediaImage from "@/components/ui/MediaImage";
 import MobileSheet from "@/components/ui/MobileSheet";
-import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
+import { useWorkspaceStore } from "@/lib/workspace/store";
+import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import WalknoteReviewPanel from "@/components/walknotes/WalknoteReviewPanel";
 import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
@@ -201,6 +209,26 @@ function nextPreviewText(preview: ReturnType<typeof useGlobalPlayer>["nextPrevie
 }
 
 export default function GlobalPlayerFooter() {
+  const workspace = useWorkspaceStore();
+  const activateMediaTarget = useCallback(
+    (event: ReactMouseEvent<HTMLAnchorElement>, href: string) => {
+      activateTargetLink({
+        event,
+        runtime: {
+          activateTarget: ({ target, disposition }) => {
+            workspace.activateWorkspaceTarget({
+              originPaneId: workspace.state.activePrimaryPaneId,
+              target,
+              disposition,
+              modality: event.detail === 0 ? "Keyboard" : "Pointer",
+            });
+          },
+        },
+        href,
+      });
+    },
+    [workspace],
+  );
   const isMobile = useIsMobileViewport();
   const [effectsOpen, setEffectsOpen] = useState(false);
   const [mobileExpanded, setMobileExpanded] = useState(false);
@@ -455,12 +483,22 @@ export default function GlobalPlayerFooter() {
   const openLecternFromMobileExpanded = () => {
     miniExpandButtonRef.current?.focus();
     setMobileExpanded(false);
-    requestOpenInAppPane("/lectern", { labelHint: "Lectern" });
+    workspace.activateWorkspaceTarget({
+      originPaneId: workspace.state.activePrimaryPaneId,
+      target: { href: "/lectern", labelHint: "Lectern" },
+      disposition: { kind: "Follow" },
+      modality: "Programmatic",
+    });
   };
   const openLecternFromDesktopMore = () => {
     moreButtonRef.current?.focus();
     setMoreOpen(false);
-    requestOpenInAppPane("/lectern", { labelHint: "Lectern" });
+    workspace.activateWorkspaceTarget({
+      originPaneId: workspace.state.activePrimaryPaneId,
+      target: { href: "/lectern", labelHint: "Lectern" },
+      disposition: { kind: "Follow" },
+      modality: "Programmatic",
+    });
   };
   const getWalknoteReviewReturnFocusTarget = () =>
     isMobile ? markButtonMobileRef.current : markButtonDesktopRef.current;
@@ -553,7 +591,13 @@ export default function GlobalPlayerFooter() {
             )}
             <span className={styles.kicker}>Now playing</span>
             <div className={styles.metaText}>
-              <a href={`/media/${descriptor.mediaId}`} className={styles.trackLink}>
+              <a
+                href={`/media/${descriptor.mediaId}`}
+                className={styles.trackLink}
+                onClick={(event) =>
+                  activateMediaTarget(event, `/media/${descriptor.mediaId}`)
+                }
+              >
                 {descriptor.title}
               </a>
               {chapterLabel && <span className={styles.chapterLabel}>{chapterLabel}</span>}
@@ -797,7 +841,13 @@ export default function GlobalPlayerFooter() {
           )}
 
           <div className={styles.expandedMeta}>
-            <a href={`/media/${descriptor.mediaId}`} className={styles.trackLink}>
+            <a
+              href={`/media/${descriptor.mediaId}`}
+              className={styles.trackLink}
+              onClick={(event) =>
+                activateMediaTarget(event, `/media/${descriptor.mediaId}`)
+              }
+            >
               {descriptor.title}
             </a>
             {chapterLabel && <span className={styles.chapterLabel}>{chapterLabel}</span>}

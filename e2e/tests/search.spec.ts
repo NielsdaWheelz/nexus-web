@@ -105,6 +105,7 @@ async function clickCitationResult(
 
   await citationLink.click();
   await expect(page).toHaveURL(new RegExp(`/media/${escapeRegExp(mediaId)}#evidence-`));
+  await expect(page.locator("[data-pane-id]")).toHaveCount(1);
 
   const url = new URL(page.url());
   expect(url.pathname).toBe(`/media/${mediaId}`);

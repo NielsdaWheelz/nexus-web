@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
+import { WorkspaceTestProvider } from "@/__tests__/helpers/WorkspaceTestProvider";
 import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
 import { assumeMediaId } from "@/lib/lectern/contract";
@@ -88,11 +89,13 @@ function Harness() {
 
 function App() {
   return (
-    <LecternProvider>
-      <GlobalPlayerProvider>
+    <WorkspaceTestProvider>
+      <LecternProvider>
+        <GlobalPlayerProvider>
         <Harness />
-      </GlobalPlayerProvider>
-    </LecternProvider>
+        </GlobalPlayerProvider>
+      </LecternProvider>
+    </WorkspaceTestProvider>
   );
 }
 
@@ -320,11 +323,13 @@ describe("GlobalPlayer listening heartbeat", () => {
     }
 
     render(
-      <LecternProvider>
-        <GlobalPlayerProvider>
+      <WorkspaceTestProvider>
+        <LecternProvider>
+          <GlobalPlayerProvider>
           <DrainHarness />
-        </GlobalPlayerProvider>
-      </LecternProvider>,
+          </GlobalPlayerProvider>
+        </LecternProvider>
+      </WorkspaceTestProvider>,
     );
 
     await screen.findByText("ready", { selector: '[data-testid="lectern-status"]' });

@@ -15,6 +15,7 @@ import {
 import NoteDraftRecovery from "@/components/notes/NoteDraftRecovery";
 import NoteBodyEditor from "@/components/notes/NoteBodyEditor";
 import type { HighlightLinkedNoteBlock } from "@/lib/highlights/api";
+import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import { isRecord } from "@/lib/validation";
 import styles from "./HighlightNoteEditor.module.css";
 
@@ -44,7 +45,7 @@ export default function HighlightNoteEditor({
     shouldApply: () => boolean,
   ) => Promise<void>;
   onLocalChange?: () => void;
-  onOpenLink: (href: string, options: { newPane: boolean }) => void;
+  onOpenLink: (href: string, disposition: WorkspaceTargetDisposition) => void;
 }) {
   const feedback = useFeedback();
   const editVersionRef = useRef(0);
@@ -199,7 +200,7 @@ export default function HighlightNoteEditor({
   }, [discardSessionDraft, persistedBody]);
 
   const openObject = useCallback(
-    async (objectType: string, objectId: string, openInNewPane: boolean) => {
+    async (objectType: string, objectId: string, disposition: WorkspaceTargetDisposition) => {
       const ref = `${objectType}:${objectId}`;
       if (!parseResourceRef(ref)) return;
       let href: string | null = null;
@@ -216,7 +217,7 @@ export default function HighlightNoteEditor({
         return;
       }
       if (!href) return;
-      onOpenLink(href, { newPane: openInNewPane });
+      onOpenLink(href, disposition);
     },
     [feedback, onOpenLink],
   );

@@ -65,7 +65,7 @@ function StatefulSearchPane({ initialHref }: { initialHref: string }) {
         onReplacePane={(_paneId: string, nextHref: string) => {
           setHref(nextHref);
         }}
-        onOpenInNewPane={vi.fn()}
+        onActivateWorkspaceTarget={vi.fn(() => ({ kind: "ActivatedExisting" as const, paneId: "pane" }))}
         onSetPaneLabel={vi.fn()}
       >
         <SearchPaneBody />

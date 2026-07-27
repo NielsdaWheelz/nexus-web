@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
+import { WorkspaceTestProvider } from "@/__tests__/helpers/WorkspaceTestProvider";
 import { present } from "@/lib/api/presence";
 import type { ChapterOut } from "@/lib/lectern/contract";
 import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
@@ -231,7 +232,7 @@ function Harness() {
         type="button"
         onClick={() =>
           playAudio(
-            buildFooterDescriptor("media-123", "Episode Alpha", {
+            buildFooterDescriptor("11111111-1111-4111-8111-111111111111", "Episode Alpha", {
               chapters: EPISODE_CHAPTERS,
               durationMs: 120_000,
             })
@@ -257,11 +258,13 @@ function App() {
   // LecternProvider; both fire `/api/lectern` + heartbeat fetches on mount, which
   // `installLecternPlayerFetchMock` (beforeEach) serves.
   return (
-    <LecternProvider>
-      <GlobalPlayerProvider>
+    <WorkspaceTestProvider>
+      <LecternProvider>
+        <GlobalPlayerProvider>
         <Harness />
-      </GlobalPlayerProvider>
-    </LecternProvider>
+        </GlobalPlayerProvider>
+      </LecternProvider>
+    </WorkspaceTestProvider>
   );
 }
 

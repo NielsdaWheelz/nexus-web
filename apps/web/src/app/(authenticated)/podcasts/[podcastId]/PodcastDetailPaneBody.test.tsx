@@ -161,7 +161,7 @@ function Wrapped() {
           onGoForwardPane={vi.fn()}
           onNavigatePane={vi.fn()}
           onReplacePane={vi.fn()}
-          onOpenInNewPane={vi.fn()}
+          onActivateWorkspaceTarget={vi.fn(() => ({ kind: "Unchanged" as const, paneId: "pane-1" }))}
         >
           <LecternProvider>
             <GlobalPlayerProvider>

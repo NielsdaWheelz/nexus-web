@@ -178,7 +178,7 @@ export function PaneShellReturnJourneyHarness({
             canGoForward
             onNavigatePane={() => {}}
             onReplacePane={() => {}}
-            onOpenInNewPane={() => {}}
+            onActivateWorkspaceTarget={() => ({ kind: "ActivatedExisting", paneId: "pane-1" })}
             onGoBackPane={() => {}}
             onGoForwardPane={() => {}}
             onSetPaneLabel={() => {}}
@@ -259,7 +259,7 @@ export function PaneReturnJourneyHarness({
             canGoForward
             onNavigatePane={() => {}}
             onReplacePane={() => {}}
-            onOpenInNewPane={() => {}}
+            onActivateWorkspaceTarget={() => ({ kind: "ActivatedExisting", paneId: "pane-1" })}
             onGoBackPane={() => {}}
             onGoForwardPane={() => {}}
             onSetPaneLabel={() => {}}

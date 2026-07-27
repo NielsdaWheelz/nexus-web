@@ -11,7 +11,13 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import { activateResource } from "@/lib/resources/activation";
 import { fetchResourceSurface } from "@/lib/resourceSurface/api";
 import { useResourceSurfaceSession } from "@/lib/resourceSurface/useResourceSurfaceSession";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import { resolveResourceLocators } from "@/lib/resources/resourceLocators";
 import type { ResourceSurface } from "@/lib/resources/resourceItems";
+import type {
+  WorkspaceTarget,
+  WorkspaceTargetDisposition,
+} from "@/lib/workspace/targetActivation";
 import styles from "./ResourceSurfaceEditor.module.css";
 
 const EMPTY_NOTE_BODY = {
@@ -24,8 +30,7 @@ export default function ResourceSurfaceEditor({
   focusMastheadSerial = 0,
   focusBodySerial = 0,
   onSurfaceReady,
-  onOpenObject,
-  onOpenRoute,
+  activateTarget,
   notePulseTarget,
 }: {
   sourceRef: string;
@@ -33,8 +38,10 @@ export default function ResourceSurfaceEditor({
   focusMastheadSerial?: number;
   focusBodySerial?: number;
   onSurfaceReady?: (surface: ResourceSurface) => void;
-  onOpenObject?: (objectType: string, objectId: string, openInNewPane: boolean) => void;
-  onOpenRoute?: (href: string, openInNewPane: boolean) => void;
+  activateTarget: (input: {
+    target: WorkspaceTarget;
+    disposition: WorkspaceTargetDisposition;
+  }) => void;
   notePulseTarget?: NotePulseEditorTarget | null;
 }) {
   const [loaded, setLoaded] = useState<ResourceSurface | null>(null);
@@ -77,8 +84,7 @@ export default function ResourceSurfaceEditor({
     setBodyFocus={setBodyFocus}
     feedback={feedback}
     setFeedback={setFeedback}
-    onOpenObject={onOpenObject}
-    onOpenRoute={onOpenRoute}
+    activateTarget={activateTarget}
     notePulseTarget={notePulseTarget}
   />;
 }
@@ -94,8 +100,7 @@ function LoadedResourceSurfaceEditor({
   setBodyFocus,
   feedback,
   setFeedback,
-  onOpenObject,
-  onOpenRoute,
+  activateTarget,
   notePulseTarget,
 }: {
   sourceRef: string;
@@ -108,8 +113,10 @@ function LoadedResourceSurfaceEditor({
   setBodyFocus: React.Dispatch<React.SetStateAction<{ occurrenceId: string | null; serial: number }>>;
   feedback: FeedbackContent | null;
   setFeedback: React.Dispatch<React.SetStateAction<FeedbackContent | null>>;
-  onOpenObject?: (objectType: string, objectId: string, openInNewPane: boolean) => void;
-  onOpenRoute?: (href: string, openInNewPane: boolean) => void;
+  activateTarget: (input: {
+    target: WorkspaceTarget;
+    disposition: WorkspaceTargetDisposition;
+  }) => void;
   notePulseTarget?: NotePulseEditorTarget | null;
 }) {
   const session = useResourceSurfaceSession({
@@ -169,14 +176,39 @@ function LoadedResourceSurfaceEditor({
     insertNote({ kind: "start" });
   }, [bodyFocus.serial, insertNote, session.surface.orderedItems, setBodyFocus]);
 
-  const activate = useCallback((item: ResourceSurface["orderedItems"][number]["target"]["item"], openInNewPane: boolean) => {
+  const activate = useCallback((item: ResourceSurface["orderedItems"][number]["target"]["item"], disposition: WorkspaceTargetDisposition) => {
     activateResource(item.activation, {
-      newPane: openInNewPane,
-      navigate: (href) => onOpenRoute?.(href, false),
-      openInNewPane: (href) => onOpenRoute?.(href, true),
       labelHint: item.label,
+      activateTarget,
+      disposition,
     });
-  }, [onOpenRoute]);
+  }, [activateTarget]);
+
+  const openObject = useCallback(async (
+    objectType: string,
+    objectId: string,
+    disposition: WorkspaceTargetDisposition,
+  ) => {
+    const ref = `${objectType}:${objectId}`;
+    if (!parseResourceRef(ref)) return;
+    try {
+      const [resolved] = await resolveResourceLocators([
+        { kind: "resource_ref", ref },
+      ]);
+      const href = resolved?.resourceItem.route;
+      if (!href) {
+        setFeedback({
+          severity: "warning",
+          title: "Linked object could not be opened.",
+        });
+        return;
+      }
+      activateTarget({ target: { href }, disposition });
+    } catch (error: unknown) {
+      if (handleUnauthenticatedApiError(error)) return;
+      setFeedback(toFeedback(error, { fallback: "Linked object could not be opened." }));
+    }
+  }, [activateTarget, setFeedback]);
 
   const source = session.surface.source;
   const masthead = source.content.kind === "page_title" ? (
@@ -200,7 +232,7 @@ function LoadedResourceSurfaceEditor({
       notePulseTarget={notePulseTarget}
       onBodyChange={(change: NoteBodyChange) => session.updateSourceNoteBody(change)}
       onBlurFlush={(change: NoteBodyChange) => session.updateSourceNoteBody({ ...change, flush: true })}
-      onOpenObject={onOpenObject}
+      onOpenObject={openObject}
       onFeedback={setFeedback}
       onError={(error) => setFeedback(toFeedback(error, { fallback: "This note could not be edited." }))}
     />
@@ -233,7 +265,7 @@ function LoadedResourceSurfaceEditor({
         onBodyChange={(change) => session.updateBody(change)}
         onBodyBlur={(change) => session.updateBody({ ...change, flush: true })}
         onActivate={activate}
-        onOpenObject={onOpenObject}
+        onOpenObject={openObject}
         onFeedback={setFeedback}
         onError={(error) => setFeedback(toFeedback(error, { fallback: "This surface could not be edited." }))}
       />

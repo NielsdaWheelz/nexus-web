@@ -7,6 +7,7 @@ import {
   createWorkspaceStateFromPrimaryPanes,
   getWorkspacePrimaryPanes,
   MAX_PANE_HISTORY_STACK_LENGTH,
+  MAX_PANES,
   MAX_TOTAL_PANE_HISTORY_ENTRIES,
   type PaneVisit,
   type WorkspacePrimaryPaneState,
@@ -27,10 +28,7 @@ import {
   usePaneReturnReady,
   usePaneReturnScrollport,
 } from "@/lib/workspace/paneReturnMemento";
-import {
-  NEXUS_OPEN_PANE_EVENT,
-  type OpenInAppPaneDetail,
-} from "@/lib/panes/openInAppPane";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
 
 const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
   primaryMinWidthPx: 684,
@@ -44,9 +42,11 @@ function WorkspaceStoreProvider(
   props: ComponentProps<typeof WorkspaceStoreProviderBase>,
 ) {
   return (
-    <PaneReturnMementoProvider>
-      <WorkspaceStoreProviderBase {...props} />
-    </PaneReturnMementoProvider>
+    <FeedbackProvider>
+      <PaneReturnMementoProvider>
+        <WorkspaceStoreProviderBase {...props} />
+      </PaneReturnMementoProvider>
+    </FeedbackProvider>
   );
 }
 
@@ -115,6 +115,19 @@ function mockWorkspaceSession() {
 function StoreProbe({ onStore }: { onStore: (store: WorkspaceStore) => void }) {
   onStore(useWorkspaceStore());
   return null;
+}
+
+function activateTarget(
+  workspace: WorkspaceStore,
+  input: Omit<Parameters<WorkspaceStore["activateWorkspaceTarget"]>[0], "originPaneId" | "modality"> & {
+    originPaneId?: string;
+  },
+) {
+  return workspace.activateWorkspaceTarget({
+    ...input,
+    originPaneId: input.originPaneId ?? workspace.state.activePrimaryPaneId,
+    modality: "Programmatic",
+  });
 }
 
 function ReturnScrollport({
@@ -281,12 +294,94 @@ describe("WorkspaceStoreProvider", () => {
     window.history.replaceState({}, "", "/libraries");
   });
 
+  it("serializes synchronous creations at the pane limit without eviction", async () => {
+    const { workspace } = renderSeeded(
+      workspaceState({
+        primaryPanes: Array.from({ length: MAX_PANES - 1 }, (_, index) =>
+          pane(`pane-${index}`, "/libraries"),
+        ),
+      }),
+      "/libraries",
+    );
+    const initialPaneIds = primaryPanes(workspace().state).map((pane) => pane.id);
+    const results: ReturnType<
+      WorkspaceStore["activateWorkspaceTarget"]
+    >[] = [];
+
+    act(() => {
+      results.push(
+        activateTarget(workspace(), {
+          target: { href: "/conversations" },
+          disposition: { kind: "Fork" },
+        }),
+        activateTarget(workspace(), {
+          target: { href: "/notes" },
+          disposition: { kind: "Fork" },
+        }),
+      );
+    });
+
+    expect(results).toEqual([
+      expect.objectContaining({ kind: "CreatedPane" }),
+      { kind: "Rejected", reason: "PaneLimitReached" },
+    ]);
+    expect(primaryPanes(workspace().state)).toHaveLength(MAX_PANES);
+    expect(primaryPanes(workspace().state).map((pane) => pane.id)).toEqual(
+      expect.arrayContaining(initialPaneIds),
+    );
+    expect(screen.getByText("Pane limit reached")).toBeInTheDocument();
+    flushWorkspaceSession();
+  });
+
+  it("follows into the origin with pane-local history and restores minimized matches", async () => {
+    const workspace = await mountWorkspaceStore("/libraries");
+    const originPaneId = workspace().state.activePrimaryPaneId;
+    const originVisit = primaryPanes(workspace().state)[0]!.currentVisit;
+
+    expect(
+      activateTarget(workspace(), {
+        target: { href: "/conversations" },
+        disposition: { kind: "Follow" },
+      }),
+    ).toEqual({ kind: "NavigatedOrigin", paneId: originPaneId });
+    await waitFor(() => {
+      expect(primaryPanes(workspace().state)[0]?.history.back).toEqual([originVisit]);
+    });
+
+    act(() => {
+      activateTarget(workspace(), {
+        target: { href: "/lectern" },
+        disposition: { kind: "Fork" },
+      });
+    });
+    await waitFor(() => expect(primaryPanes(workspace().state)).toHaveLength(2));
+    const targetPaneId = workspace().state.activePrimaryPaneId;
+    act(() => workspace().minimizePane(targetPaneId));
+
+    expect(
+      activateTarget(workspace(), {
+        originPaneId,
+        target: { href: "/lectern" },
+        disposition: { kind: "Follow" },
+      }),
+    ).toEqual({ kind: "ActivatedExisting", paneId: targetPaneId });
+    await waitFor(() => {
+      expect(primaryPanes(workspace().state).find((pane) => pane.id === targetPaneId)?.visibility).toBe("visible");
+      expect(primaryPanes(workspace().state).find((pane) => pane.id === originPaneId)?.currentVisit.href).toBe("/conversations");
+    });
+    flushWorkspaceSession();
+  });
+
   it("opens a pane after the opener and activates it", async () => {
     const workspace = await mountWorkspaceStore();
     const openerPaneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
-      workspace().openPane({ href: "/conversations", openerPaneId });
+      activateTarget(workspace(), {
+        originPaneId: openerPaneId,
+        target: { href: "/conversations" },
+        disposition: { kind: "Adopt" },
+      });
     });
 
     await waitFor(() => {
@@ -308,7 +403,10 @@ describe("WorkspaceStoreProvider", () => {
     const workspace = await mountWorkspaceStore();
 
     act(() => {
-      workspace().openPane({ href: "/lectern", activate: false });
+      activateTarget(workspace(), {
+        target: { href: "/lectern" },
+        disposition: { kind: "Adopt" },
+      });
     });
     await waitFor(() => expect(primaryPanes(workspace().state)).toHaveLength(2));
     const lecternPaneId = primaryPanes(workspace().state)[1]!.id;
@@ -321,7 +419,10 @@ describe("WorkspaceStoreProvider", () => {
     });
 
     act(() => {
-      workspace().openPane({ href: "/lectern" });
+      activateTarget(workspace(), {
+        target: { href: "/lectern" },
+        disposition: { kind: "Adopt" },
+      });
     });
     await waitFor(() => {
       expect(primaryPanes(workspace().state)).toHaveLength(2);
@@ -338,7 +439,10 @@ describe("WorkspaceStoreProvider", () => {
     const workspace = await mountWorkspaceStore();
 
     act(() => {
-      workspace().openPane({ href: "/media/11111111-1111-4111-8111-111111111111" });
+      activateTarget(workspace(), {
+        target: { href: "/media/11111111-1111-4111-8111-111111111111" },
+        disposition: { kind: "Adopt" },
+      });
     });
 
     await waitFor(() => {
@@ -354,7 +458,10 @@ describe("WorkspaceStoreProvider", () => {
     const workspace = await mountWorkspaceStore();
 
     act(() => {
-      workspace().openPane({ href: "/libraries/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" });
+      activateTarget(workspace(), {
+        target: { href: "/libraries/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" },
+        disposition: { kind: "Adopt" },
+      });
     });
 
     await waitFor(() => {
@@ -363,7 +470,7 @@ describe("WorkspaceStoreProvider", () => {
     flushWorkspaceSession();
   });
 
-  it("owns and acknowledges a queued Dossier revision from the global pane-open contract", async () => {
+  it("delivers secondary activation to the selected target pane", async () => {
     const workspace = await mountWorkspaceStore();
     const href = "/media/11111111-1111-4111-8111-111111111111";
     const activation = {
@@ -374,11 +481,12 @@ describe("WorkspaceStoreProvider", () => {
     } as const;
 
     act(() => {
-      window.dispatchEvent(
-        new CustomEvent<OpenInAppPaneDetail>(NEXUS_OPEN_PANE_EVENT, {
-          detail: { href, secondaryActivation: activation },
-        }),
-      );
+      workspace().activateWorkspaceTarget({
+        originPaneId: workspace().state.activePrimaryPaneId,
+        target: { href, secondaryActivation: activation },
+        disposition: { kind: "Adopt" },
+        modality: "Programmatic",
+      });
     });
 
     await waitFor(() => {
@@ -414,7 +522,10 @@ describe("WorkspaceStoreProvider", () => {
     const workspace = await mountWorkspaceStore("/media/11111111-1111-4111-8111-111111111111");
 
     act(() => {
-      workspace().openPane({ href: "/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa?run=run-old" });
+      activateTarget(workspace(), {
+        target: { href: "/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa?run=run-old" },
+        disposition: { kind: "Adopt" },
+      });
     });
     await waitFor(() => {
       expect(activeHref(workspace())).toBe("/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa?run=run-old");
@@ -422,7 +533,10 @@ describe("WorkspaceStoreProvider", () => {
     const conversationPaneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
-      workspace().openPane({ href: "/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa?run=run-new" });
+      activateTarget(workspace(), {
+        target: { href: "/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa?run=run-new" },
+        disposition: { kind: "Adopt" },
+      });
     });
 
     await waitFor(() => {
@@ -756,7 +870,10 @@ describe("WorkspaceStoreProvider", () => {
     const workspace = await mountWorkspaceStore("/media/11111111-1111-4111-8111-111111111111");
 
     act(() => {
-      workspace().openPane({ href: "/media/11111111-1111-4111-8111-111111111111?loc=chapter-2" });
+      activateTarget(workspace(), {
+        target: { href: "/media/11111111-1111-4111-8111-111111111111?loc=chapter-2" },
+        disposition: { kind: "Adopt" },
+      });
     });
 
     await waitFor(() => {
@@ -804,7 +921,10 @@ describe("WorkspaceStoreProvider", () => {
     });
 
     act(() => {
-      workspace().openPane({ href: "/media/11111111-1111-4111-8111-111111111111?loc=chapter-2" });
+      activateTarget(workspace(), {
+        target: { href: "/media/11111111-1111-4111-8111-111111111111?loc=chapter-2" },
+        disposition: { kind: "Adopt" },
+      });
     });
 
     await waitFor(() => {
@@ -875,7 +995,10 @@ describe("WorkspaceStoreProvider", () => {
     const paneAId = workspace().state.activePrimaryPaneId;
 
     act(() => {
-      workspace().openPane({ href: "/media/22222222-2222-4222-8222-222222222222" });
+      activateTarget(workspace(), {
+        target: { href: "/media/22222222-2222-4222-8222-222222222222" },
+        disposition: { kind: "Adopt" },
+      });
     });
     await waitFor(() => {
       expect(primaryPanes(workspace().state)).toHaveLength(2);
@@ -1100,7 +1223,10 @@ describe("WorkspaceStoreProvider", () => {
     expect(primaryPanes(workspace().state)[0]?.visibility).toBe("visible");
 
     act(() => {
-      workspace().openPane({ href: "/conversations", activate: false });
+      activateTarget(workspace(), {
+        target: { href: "/conversations" },
+        disposition: { kind: "Adopt" },
+      });
     });
     await waitFor(() => {
       expect(primaryPanes(workspace().state)).toHaveLength(2);
@@ -1134,7 +1260,10 @@ describe("WorkspaceStoreProvider", () => {
     const firstPaneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
-      workspace().openPane({ href: "/conversations/new", activate: false });
+      activateTarget(workspace(), {
+        target: { href: "/conversations/new" },
+        disposition: { kind: "Adopt" },
+      });
     });
     await waitFor(() => {
       expect(primaryPanes(workspace().state)).toHaveLength(2);
@@ -1175,7 +1304,10 @@ describe("WorkspaceStoreProvider", () => {
     const workspace = await mountWorkspaceStore();
 
     act(() => {
-      workspace().openPane({ href: "/conversations", activate: true });
+      activateTarget(workspace(), {
+        target: { href: "/conversations" },
+        disposition: { kind: "Adopt" },
+      });
     });
     await waitFor(() => {
       expect(activeHref(workspace())).toBe("/conversations");
@@ -1183,10 +1315,10 @@ describe("WorkspaceStoreProvider", () => {
     const secondPaneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
-      workspace().openPane({
-        href: "/media/11111111-1111-4111-8111-111111111111",
-        openerPaneId: secondPaneId,
-        activate: false,
+      activateTarget(workspace(), {
+        originPaneId: secondPaneId,
+        target: { href: "/media/11111111-1111-4111-8111-111111111111" },
+        disposition: { kind: "Adopt" },
       });
     });
     await waitFor(() => {
@@ -1211,7 +1343,10 @@ describe("WorkspaceStoreProvider", () => {
     const firstPaneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
-      workspace().openPane({ href: "/conversations", activate: false });
+      activateTarget(workspace(), {
+        target: { href: "/conversations" },
+        disposition: { kind: "Adopt" },
+      });
     });
     await waitFor(() => {
       expect(primaryPanes(workspace().state)).toHaveLength(2);
@@ -1335,7 +1470,13 @@ describe("WorkspaceStoreProvider", () => {
     const workspace = await mountWorkspaceStore("/libraries");
 
     act(() => {
-      workspace().openPane({ href: "/media/11111111-1111-4111-8111-111111111111", labelHint: "Library Row Label" });
+      activateTarget(workspace(), {
+        target: {
+          href: "/media/11111111-1111-4111-8111-111111111111",
+          labelHint: "Library Row Label",
+        },
+        disposition: { kind: "Adopt" },
+      });
     });
 
     await waitFor(() => {
@@ -1361,6 +1502,37 @@ describe("WorkspaceStoreProvider", () => {
         labelSource: "runtime",
       });
     });
+    flushWorkspaceSession();
+  });
+
+  it("keeps Fork label hints attached to their duplicate panes", async () => {
+    const workspace = await mountWorkspaceStore("/libraries");
+    const href = "/media/11111111-1111-4111-8111-111111111111";
+
+    act(() => {
+      activateTarget(workspace(), {
+        target: { href, labelHint: "First duplicate" },
+        disposition: { kind: "Fork" },
+      });
+    });
+    await waitFor(() => expect(primaryPanes(workspace().state)).toHaveLength(2));
+    const firstForkPaneId = workspace().state.activePrimaryPaneId;
+
+    act(() => {
+      activateTarget(workspace(), {
+        target: { href, labelHint: "Second duplicate" },
+        disposition: { kind: "Fork" },
+      });
+    });
+    await waitFor(() => expect(primaryPanes(workspace().state)).toHaveLength(3));
+    const secondForkPaneId = workspace().state.activePrimaryPaneId;
+
+    expect(workspace().runtimeLabelByPaneId.get(firstForkPaneId)?.label).toBe(
+      "First duplicate",
+    );
+    expect(workspace().runtimeLabelByPaneId.get(secondForkPaneId)?.label).toBe(
+      "Second duplicate",
+    );
     flushWorkspaceSession();
   });
 
@@ -1394,10 +1566,19 @@ describe("WorkspaceStoreProvider", () => {
     const workspace = await mountWorkspaceStore("/libraries");
 
     act(() => {
-      workspace().openPane({ href: "/media/11111111-1111-4111-8111-111111111111", labelHint: "First label" });
-      workspace().openPane({
-        href: "/media/11111111-1111-4111-8111-111111111111?loc=chapter-2",
-        labelHint: "Second label",
+      activateTarget(workspace(), {
+        target: {
+          href: "/media/11111111-1111-4111-8111-111111111111",
+          labelHint: "First label",
+        },
+        disposition: { kind: "Adopt" },
+      });
+      activateTarget(workspace(), {
+        target: {
+          href: "/media/11111111-1111-4111-8111-111111111111?loc=chapter-2",
+          labelHint: "Second label",
+        },
+        disposition: { kind: "Adopt" },
       });
     });
 
@@ -1495,7 +1676,10 @@ describe("WorkspaceStoreProvider", () => {
     );
 
     act(() => {
-      workspace().openPane({ href: "/libraries/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" });
+      activateTarget(workspace(), {
+        target: { href: "/libraries/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" },
+        disposition: { kind: "Adopt" },
+      });
     });
     await waitFor(() => {
       expect(primaryPanes(workspace().state)).toHaveLength(2);
@@ -1515,7 +1699,10 @@ describe("WorkspaceStoreProvider", () => {
     const pushStateSpy = vi.spyOn(window.history, "pushState");
 
     act(() => {
-      workspace().openPane({ href: "/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa?run=run-1" });
+      activateTarget(workspace(), {
+        target: { href: "/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa?run=run-1" },
+        disposition: { kind: "Adopt" },
+      });
     });
 
     await waitFor(() => {

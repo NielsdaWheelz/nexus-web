@@ -73,7 +73,7 @@ function App({
           canGoForward={false}
           onNavigatePane={vi.fn()}
           onReplacePane={vi.fn()}
-          onOpenInNewPane={vi.fn()}
+          onActivateWorkspaceTarget={vi.fn(() => ({ kind: "ActivatedExisting" as const, paneId: "pane" }))}
           onGoBackPane={vi.fn()}
           onGoForwardPane={vi.fn()}
         >

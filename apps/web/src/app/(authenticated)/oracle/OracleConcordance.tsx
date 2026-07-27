@@ -1,6 +1,7 @@
 "use client";
 
-import { usePaneRouter } from "@/lib/panes/paneRuntime";
+import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import { useResource } from "@/lib/api/useResource";
 import { toRoman } from "@/lib/toRoman";
 import styles from "./oracle.module.css";
@@ -43,14 +44,22 @@ export default function OracleConcordance({
   readingId: string;
   status: string;
 }) {
-  const paneRouter = usePaneRouter();
+  const paneRuntime = usePaneRuntime();
   if (status !== "complete") return null;
 
   return (
     <OracleConcordanceEntries
       key={readingId}
       readingId={readingId}
-      onOpen={(id) => paneRouter.push(`/oracle/${id}`)}
+      onOpen={(id, event) =>
+        requirePaneRuntime(
+          paneRuntime,
+          "Oracle concordance target activation",
+        ).activateTarget({
+          target: { href: `/oracle/${id}` },
+          disposition: workspaceTargetClickIntent(event).disposition,
+        })
+      }
     />
   );
 }
@@ -60,7 +69,7 @@ function OracleConcordanceEntries({
   onOpen,
 }: {
   readingId: string;
-  onOpen: (id: string) => void;
+  onOpen: (id: string, event: React.MouseEvent<HTMLButtonElement>) => void;
 }) {
   const concordanceResource = useResource<{ data: ConcordanceEntry[] }>({
     cacheKey: readingId,
@@ -81,7 +90,7 @@ function OracleConcordanceEntries({
             <button
               type="button"
               className={styles.concordanceItem}
-              onClick={() => onOpen(entry.id)}
+              onClick={(event) => onOpen(entry.id, event)}
             >
               <span>Folio {toRoman(entry.folio_number)} · {entry.folio_theme ?? "—"}</span>
               <span className={styles.concordanceMotto}>{entry.folio_motto}</span>

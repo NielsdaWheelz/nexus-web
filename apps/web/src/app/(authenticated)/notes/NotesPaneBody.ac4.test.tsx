@@ -5,6 +5,10 @@ import { stubFetch, wasFetchPathCalled } from "@/__tests__/helpers/fetch";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { ResolvedPaneBodyMarker } from "@/lib/panes/paneRenderRegistry";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import {
+  parseWorkspaceTargetActivationMessage,
+  setWorkspaceTargetActivationReceiverReady,
+} from "@/lib/workspace/workspaceTargetActivationIngress";
 import NotesPaneBody from "./NotesPaneBody";
 
 const TODAY_PAGE_ID = "11111111-0000-4000-8000-000000000001";
@@ -19,6 +23,7 @@ const HYDRATED_PAGE_ID = "22222222-0000-4000-8000-000000000002";
 
 describe("NotesPaneBody — Today button", () => {
   afterEach(() => {
+    setWorkspaceTargetActivationReceiverReady(false);
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -50,12 +55,7 @@ describe("NotesPaneBody — Today button", () => {
       throw new Error(`Unexpected fetch: ${url.pathname}`);
     });
 
-    // Spy on navigation side-effect. In Chromium (iframe), requestOpenInAppPane
-    // posts to window.parent; in environments where parent === window it enqueues.
-    const postMessageSpy = vi.spyOn(
-      window.parent ?? window,
-      "postMessage",
-    );
+    const postMessageSpy = vi.spyOn(window.parent, "postMessage");
 
     renderHydratedPane({
       href: "/notes",
@@ -73,18 +73,18 @@ describe("NotesPaneBody — Today button", () => {
     fireEvent.click(todayButton);
 
     await vi.waitFor(() => {
-      const hrefs = postMessageSpy.mock.calls
-        .map(([msg]) => (msg as Record<string, unknown>)?.href)
-        .filter((h): h is string => typeof h === "string");
-      const queue =
-        ((window as unknown as Record<string, unknown>).__nexusPendingPaneOpenQueue as
-          | Array<{ href: string }>
-          | undefined) ?? [];
-      const allHrefs = [...hrefs, ...queue.map((d) => d.href)];
-      expect(allHrefs).toContain(`/pages/${TODAY_PAGE_ID}`);
+      const requests = postMessageSpy.mock.calls
+        .map(([message]) => parseWorkspaceTargetActivationMessage(message))
+        .filter((request) => request !== null);
+      expect(requests).toEqual([
+        {
+          target: { href: `/pages/${TODAY_PAGE_ID}`, labelHint: "Today" },
+          disposition: { kind: "Follow" },
+          modality: "Programmatic",
+        },
+      ]);
     });
 
-    postMessageSpy.mockRestore();
     void fetchMock;
   });
 });

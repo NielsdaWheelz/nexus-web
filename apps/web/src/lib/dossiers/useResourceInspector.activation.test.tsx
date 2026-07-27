@@ -108,7 +108,7 @@ function InspectorVisibilityHarness({
       canGoForward={false}
       onNavigatePane={vi.fn()}
       onReplacePane={vi.fn()}
-      onOpenInNewPane={vi.fn()}
+      onActivateWorkspaceTarget={vi.fn(() => ({ kind: "Unchanged" as const, paneId: "pane-1" }))}
       onGoBackPane={vi.fn()}
       onGoForwardPane={vi.fn()}
       onSetPaneLayout={vi.fn<(input: PaneRuntimeLayoutPublication) => void>()}
@@ -128,9 +128,9 @@ function renderInspector(
     onNavigatePane?: ComponentProps<
       typeof PaneRuntimeProvider
     >["onNavigatePane"];
-    onOpenInNewPane?: ComponentProps<
+    onActivateWorkspaceTarget?: ComponentProps<
       typeof PaneRuntimeProvider
-    >["onOpenInNewPane"];
+    >["onActivateWorkspaceTarget"];
     onRequestSecondarySurface?: ComponentProps<
       typeof PaneRuntimeProvider
     >["onRequestSecondarySurface"];
@@ -160,7 +160,7 @@ function renderInspector(
       canGoForward={false}
       onNavigatePane={options.onNavigatePane ?? vi.fn()}
       onReplacePane={vi.fn()}
-      onOpenInNewPane={options.onOpenInNewPane ?? vi.fn()}
+      onActivateWorkspaceTarget={options.onActivateWorkspaceTarget ?? vi.fn(() => ({ kind: "Unchanged" as const, paneId: "pane-1" }))}
       onGoBackPane={vi.fn()}
       onGoForwardPane={vi.fn()}
       onSetPaneLayout={vi.fn<(input: PaneRuntimeLayoutPublication) => void>()}
@@ -274,11 +274,11 @@ describe("useResourceInspector workspace activation", () => {
   });
 
   it("opens a Dossier citation on its exact artifact revision through the pane runtime", async () => {
-    const onOpenInNewPane =
-      vi.fn<ComponentProps<typeof PaneRuntimeProvider>["onOpenInNewPane"]>();
+    const onActivateWorkspaceTarget =
+      vi.fn<ComponentProps<typeof PaneRuntimeProvider>["onActivateWorkspaceTarget"]>();
     const revisionRef =
       "artifact_revision:33333333-3333-4333-8333-333333333333";
-    const { publishSecondary } = renderInspector(null, { onOpenInNewPane });
+    const { publishSecondary } = renderInspector(null, { onActivateWorkspaceTarget });
 
     await waitFor(() => {
       expect(publishSecondary).toHaveBeenCalled();
@@ -293,23 +293,26 @@ describe("useResourceInspector workspace activation", () => {
       null,
     );
 
-    expect(onOpenInNewPane).toHaveBeenCalledWith(
-      "/conversations/44444444-4444-4444-8444-444444444444",
-      undefined,
-      {
-        kind: "DossierRevision",
-        surfaceId: "resource-dossier",
-        revisionRef,
+    expect(onActivateWorkspaceTarget).toHaveBeenCalledWith({
+      originPaneId: "pane-1",
+      target: {
+        href: "/conversations/44444444-4444-4444-8444-444444444444",
+        secondaryActivation: {
+          kind: "DossierRevision",
+          surfaceId: "resource-dossier",
+          revisionRef,
+        },
       },
-      "Programmatic",
-    );
+      disposition: { kind: "Follow" },
+      modality: "Programmatic",
+    });
   });
 
   it("pulses a same-resource target without navigating away", async () => {
     const onNavigatePane =
       vi.fn<ComponentProps<typeof PaneRuntimeProvider>["onNavigatePane"]>();
-    const onOpenInNewPane =
-      vi.fn<ComponentProps<typeof PaneRuntimeProvider>["onOpenInNewPane"]>();
+    const onActivateWorkspaceTarget =
+      vi.fn<ComponentProps<typeof PaneRuntimeProvider>["onActivateWorkspaceTarget"]>();
     const target: ReaderSourceTarget = {
       kind: "media",
       source: "message_retrieval",
@@ -329,7 +332,7 @@ describe("useResourceInspector workspace activation", () => {
     const { publishSecondary } = renderInspector(null, {
       resourceItem: mediaResourceItem(),
       onNavigatePane,
-      onOpenInNewPane,
+      onActivateWorkspaceTarget,
     });
 
     await waitFor(() => {
@@ -348,18 +351,18 @@ describe("useResourceInspector workspace activation", () => {
 
     expect(dispatchReaderSourceActivation).toHaveBeenCalledWith(target);
     expect(onNavigatePane).not.toHaveBeenCalled();
-    expect(onOpenInNewPane).not.toHaveBeenCalled();
+    expect(onActivateWorkspaceTarget).not.toHaveBeenCalled();
   });
 
   it("preserves Shift activation as a sibling-pane open", async () => {
     const onNavigatePane =
       vi.fn<ComponentProps<typeof PaneRuntimeProvider>["onNavigatePane"]>();
-    const onOpenInNewPane =
-      vi.fn<ComponentProps<typeof PaneRuntimeProvider>["onOpenInNewPane"]>();
+    const onActivateWorkspaceTarget =
+      vi.fn<ComponentProps<typeof PaneRuntimeProvider>["onActivateWorkspaceTarget"]>();
     const href = "/pages/55555555-5555-4555-8555-555555555555";
     const { publishSecondary } = renderInspector(null, {
       onNavigatePane,
-      onOpenInNewPane,
+      onActivateWorkspaceTarget,
     });
 
     await waitFor(() => {
@@ -376,12 +379,12 @@ describe("useResourceInspector workspace activation", () => {
       { shiftKey: true } as ReactMouseEvent,
     );
 
-    expect(onOpenInNewPane).toHaveBeenCalledWith(
-      href,
-      undefined,
-      undefined,
-      "Programmatic",
-    );
+    expect(onActivateWorkspaceTarget).toHaveBeenCalledWith({
+      originPaneId: "pane-1",
+      target: { href },
+      disposition: { kind: "Fork" },
+      modality: "Programmatic",
+    });
     expect(onNavigatePane).not.toHaveBeenCalled();
   });
 

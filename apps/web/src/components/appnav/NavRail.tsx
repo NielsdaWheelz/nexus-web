@@ -14,7 +14,7 @@ import Link from "next/link";
 import AsterismMark from "@/components/AsterismMark";
 import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
 import NavAccount from "./NavAccount";
-import type { AppNavActivationResult } from "./navActivation";
+import type { AppNavActivationResult } from "@/lib/panes/targetLinkActivation";
 import type { NavItem } from "./navModel";
 import styles from "./AppNav.module.css";
 

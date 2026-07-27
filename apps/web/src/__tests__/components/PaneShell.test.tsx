@@ -63,7 +63,7 @@ vi.mock("@/lib/libraries/placementController", () => ({
 const runtimeNavigation = {
   back: vi.fn(),
   forward: vi.fn(),
-  openInNewPane: vi.fn(),
+  activateWorkspaceTarget: vi.fn(() => ({ kind: "CreatedPane" as const, paneId: "pane-b" })),
 };
 
 const sectionHeader = {
@@ -146,7 +146,7 @@ function RuntimeRoute({
           onGoForwardPane={runtimeNavigation.forward}
           onNavigatePane={vi.fn()}
           onReplacePane={vi.fn()}
-          onOpenInNewPane={runtimeNavigation.openInNewPane}
+          onActivateWorkspaceTarget={runtimeNavigation.activateWorkspaceTarget}
         >
           {children}
         </PaneRuntimeProvider>
@@ -813,12 +813,15 @@ describe("PaneShell", () => {
       }
       resolveFetch(Response.json({ data: { id: "conversation-1" } }));
       await waitFor(() => {
-        expect(runtimeNavigation.openInNewPane).toHaveBeenCalledWith(
-          "/conversations/conversation-1",
-          "Chat",
-          undefined,
-          "Programmatic",
-        );
+        expect(runtimeNavigation.activateWorkspaceTarget).toHaveBeenCalledWith({
+          originPaneId: "pane-a",
+          target: {
+            href: "/conversations/conversation-1",
+            labelHint: "Chat",
+          },
+          disposition: { kind: "Adopt" },
+          modality: "Programmatic",
+        });
       });
     } finally {
       fetchSpy.mockRestore();

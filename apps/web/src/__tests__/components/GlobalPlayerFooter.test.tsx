@@ -2,12 +2,14 @@ import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
+import { WorkspaceTestProvider } from "@/__tests__/helpers/WorkspaceTestProvider";
 import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
 import { WalknoteSessionProvider } from "@/lib/walknotes/walknoteSession";
 import { present, absent } from "@/lib/api/presence";
 import type { ChapterOut, LecternItem } from "@/lib/lectern/contract";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { useWorkspaceStore } from "@/lib/workspace/store";
 import {
   buildFooterDescriptor,
   installLecternPlayerFetchMock,
@@ -39,11 +41,15 @@ const PODCAST_CHAPTERS: ChapterOut[] = [
   { title: "Deep Dive", startMs: 60_000, endMs: present(120_000) },
 ];
 
-const EPISODE_DESCRIPTOR = buildFooterDescriptor("media-123", "Episode Alpha", {
+const EPISODE_DESCRIPTOR = buildFooterDescriptor(
+  "11111111-1111-4111-8111-111111111111",
+  "Episode Alpha",
+  {
   streamUrl: "https://cdn.example.com/episode-alpha.mp3",
   sourceUrl: "https://example.com/episode-alpha",
-  chapters: PODCAST_CHAPTERS,
-});
+    chapters: PODCAST_CHAPTERS,
+  },
+);
 
 function audioLecternItem(itemId: string, mediaId: string, title: string): LecternItem {
   return {
@@ -96,20 +102,46 @@ function LecternReadyProbe() {
   return <span data-testid="lectern-status">{resource.status}</span>;
 }
 
+function WorkspaceProbe() {
+  const { state } = useWorkspaceStore();
+  const activePane = state.primaryPanesById[state.activePrimaryPaneId];
+  return <>
+    <output data-testid="workspace-probe">{activePane?.currentVisit.href}</output>
+    <output data-testid="workspace-pane-count">
+      {Object.keys(state.primaryPanesById).length}
+    </output>
+  </>;
+}
+
 function RouteHarness({ descriptor = EPISODE_DESCRIPTOR }: { descriptor?: ReturnType<typeof buildFooterDescriptor> }) {
   const [route, setRoute] = useState<"a" | "b">("a");
   return (
-    <LecternProvider>
-      <GlobalPlayerProvider>
+    <WorkspaceTestProvider>
+      <LecternProvider>
+        <GlobalPlayerProvider>
         <button type="button" onClick={() => setRoute("b")}>
           Navigate away
         </button>
         <input type="text" aria-label="Episode notes" />
         <LecternReadyProbe />
+        <WorkspaceProbe />
         {route === "a" ? <PlayButton descriptor={descriptor} /> : <p>Route B content</p>}
         <GlobalPlayerFooter />
-      </GlobalPlayerProvider>
-    </LecternProvider>
+        </GlobalPlayerProvider>
+      </LecternProvider>
+    </WorkspaceTestProvider>
+  );
+}
+
+function NativeModifierHarness() {
+  return (
+    <div
+      onClick={(event) => {
+        if (event.metaKey || event.ctrlKey) event.preventDefault();
+      }}
+    >
+      <RouteHarness />
+    </div>
   );
 }
 
@@ -121,13 +153,15 @@ async function loadEpisode() {
 async function mountMobileFooter() {
   setViewportWidth(390);
   render(
-    <LecternProvider>
-      <GlobalPlayerProvider>
+    <WorkspaceTestProvider>
+      <LecternProvider>
+        <GlobalPlayerProvider>
         <LecternReadyProbe />
         <PlayButton />
         <GlobalPlayerFooter />
-      </GlobalPlayerProvider>
-    </LecternProvider>,
+        </GlobalPlayerProvider>
+      </LecternProvider>
+    </WorkspaceTestProvider>,
   );
   await loadEpisode();
   return screen.findByRole("button", { name: "Expand player" });
@@ -177,6 +211,59 @@ describe("GlobalPlayerFooter", () => {
     expect(screen.getByText("Route B content")).toBeInTheDocument();
     expect(screen.getByText("Episode Alpha")).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Media player" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("link", { name: "Episode Alpha" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("workspace-probe")).toHaveTextContent(
+        `/media/${EPISODE_DESCRIPTOR.mediaId}`,
+      );
+    });
+    expect(screen.getByTestId("workspace-pane-count")).toHaveTextContent("1");
+  });
+
+  it("follows the real track anchor on plain and Shift-keyboard activation", async () => {
+    render(<RouteHarness />);
+    await loadEpisode();
+    const track = screen.getByRole("link", { name: "Episode Alpha" });
+    expect(track).toHaveAttribute("href", `/media/${EPISODE_DESCRIPTOR.mediaId}`);
+
+    fireEvent.click(track, { detail: 0, shiftKey: true });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("workspace-probe")).toHaveTextContent(
+        `/media/${EPISODE_DESCRIPTOR.mediaId}`,
+      );
+    });
+    expect(screen.getByTestId("workspace-pane-count")).toHaveTextContent("1");
+  });
+
+  it("forks a fresh pane from the real track anchor on Shift pointer activation", async () => {
+    render(<RouteHarness />);
+    await loadEpisode();
+
+    fireEvent.click(screen.getByRole("link", { name: "Episode Alpha" }), {
+      detail: 1,
+      shiftKey: true,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("workspace-probe")).toHaveTextContent(
+        `/media/${EPISODE_DESCRIPTOR.mediaId}`,
+      );
+    });
+    expect(screen.getByTestId("workspace-pane-count")).toHaveTextContent("2");
+  });
+
+  it("leaves Meta and Ctrl track-anchor clicks to the browser", async () => {
+    render(<NativeModifierHarness />);
+    await loadEpisode();
+    const track = screen.getByRole("link", { name: "Episode Alpha" });
+
+    fireEvent.click(track, { detail: 1, metaKey: true });
+    fireEvent.click(track, { detail: 1, ctrlKey: true });
+
+    expect(screen.getByTestId("workspace-probe")).toHaveTextContent("/lectern");
+    expect(screen.getByTestId("workspace-pane-count")).toHaveTextContent("1");
   });
 
   it("switches footer presentation to mobile mode", async () => {
@@ -428,15 +515,17 @@ describe("GlobalPlayerFooter walknote Mark button", () => {
 
   async function mountDesktopFooter() {
     render(
-      <LecternProvider>
-        <GlobalPlayerProvider>
+      <WorkspaceTestProvider>
+        <LecternProvider>
+          <GlobalPlayerProvider>
           <WalknoteSessionProvider>
             <LecternReadyProbe />
             <PlayButton />
             <GlobalPlayerFooter />
           </WalknoteSessionProvider>
-        </GlobalPlayerProvider>
-      </LecternProvider>,
+          </GlobalPlayerProvider>
+        </LecternProvider>
+      </WorkspaceTestProvider>,
     );
     await loadEpisode();
   }

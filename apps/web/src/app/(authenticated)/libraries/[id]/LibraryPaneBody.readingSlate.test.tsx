@@ -96,7 +96,7 @@ function SwitchingHarness({
                   canGoForward={false}
                   onNavigatePane={vi.fn()}
                   onReplacePane={vi.fn()}
-                  onOpenInNewPane={vi.fn()}
+                  onActivateWorkspaceTarget={vi.fn(() => ({ kind: "Unchanged" as const, paneId: "pane-library" }))}
                   onGoBackPane={vi.fn()}
                   onGoForwardPane={vi.fn()}
                 >
@@ -242,7 +242,7 @@ function Harness({
                   canGoForward={false}
                   onNavigatePane={vi.fn()}
                   onReplacePane={vi.fn()}
-                  onOpenInNewPane={vi.fn()}
+                  onActivateWorkspaceTarget={vi.fn(() => ({ kind: "Unchanged" as const, paneId: "pane-library" }))}
                   onGoBackPane={vi.fn()}
                   onGoForwardPane={vi.fn()}
                 >

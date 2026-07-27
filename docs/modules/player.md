@@ -189,7 +189,7 @@ GET) above `GlobalPlayerProvider` (one `PlayerSession`), which wraps
 - `apps/web/src/components/GlobalPlayerFooter.tsx` — transport, Walknotes
   entry points, and the read-only "Next on the Lectern" / "Forward: _title_"
   preview. The dock is not an editor; all "Open Lectern" affordances navigate
-  via `requestOpenInAppPane`.
+  through workspace target activation.
 
 ## Boundary With Podcast Sync
 

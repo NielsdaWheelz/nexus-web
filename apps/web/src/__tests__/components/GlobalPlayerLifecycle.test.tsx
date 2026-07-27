@@ -20,6 +20,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
+import { WorkspaceTestProvider } from "@/__tests__/helpers/WorkspaceTestProvider";
 import {
   GlobalPlayerProvider,
   useGlobalPlayer,
@@ -227,14 +228,16 @@ function App({
   playTitle: string;
 }) {
   return (
-    <LecternProvider>
-      <GlobalPlayerProvider>
+    <WorkspaceTestProvider>
+      <LecternProvider>
+        <GlobalPlayerProvider>
         <LecternReadyProbe />
         <Probes />
         <Controls playMediaId={playMediaId} playTitle={playTitle} />
         <GlobalPlayerFooter />
-      </GlobalPlayerProvider>
-    </LecternProvider>
+        </GlobalPlayerProvider>
+      </LecternProvider>
+    </WorkspaceTestProvider>
   );
 }
 
@@ -269,14 +272,16 @@ function StatusOnlyOverrideControls() {
 
 function StatusOnlyOverrideApp() {
   return (
-    <LecternProvider>
-      <GlobalPlayerProvider>
+    <WorkspaceTestProvider>
+      <LecternProvider>
+        <GlobalPlayerProvider>
         <LecternReadyProbe />
         <Probes />
         <StatusOnlyOverrideControls />
         <GlobalPlayerFooter />
-      </GlobalPlayerProvider>
-    </LecternProvider>
+        </GlobalPlayerProvider>
+      </LecternProvider>
+    </WorkspaceTestProvider>
   );
 }
 

@@ -31,9 +31,10 @@ import { isRecord } from "@/lib/validation";
 import {
   usePaneParam,
   usePaneReturnReady,
-  usePaneRouter,
+  requirePaneRuntime,
+  usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
-import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
+import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { emptyResourceMenuGroups } from "@/lib/actions/resourceActions";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
@@ -407,9 +408,12 @@ function oracleFailureFeedback(errorCode: string | null): FeedbackContent {
 
 export default function OracleReadingPaneBody() {
   const readingId = usePaneParam("readingId");
+  const paneRuntime = requirePaneRuntime(
+    usePaneRuntime(),
+    "OracleReadingPaneBody",
+  );
   if (!readingId) throw new Error("OracleReadingPaneBody: readingId param is required");
 
-  const paneRouter = usePaneRouter();
   const [state, setState] = useState<ReadingState>(initialState);
   const [loadError, setLoadError] = useState<FeedbackContent | null>(null);
   const [retryError, setRetryError] = useState<FeedbackContent | null>(null);
@@ -455,7 +459,10 @@ export default function OracleReadingPaneBody() {
           body: JSON.stringify({ question }),
         },
       );
-      paneRouter.push(`/oracle/${body.data.reading_id}`);
+      paneRuntime.activateTarget({
+        target: { href: `/oracle/${body.data.reading_id}` },
+        disposition: { kind: "Follow" },
+      });
     } catch (error) {
       if (handleUnauthenticatedApiError(error)) return;
       setRetryError(
@@ -465,7 +472,7 @@ export default function OracleReadingPaneBody() {
       );
       setRetryingReading(false);
     }
-  }, [retryingReading, paneRouter, state.question]);
+  }, [paneRuntime, retryingReading, state.question]);
 
   useEffect(() => {
     setState(initialState());
@@ -520,14 +527,18 @@ export default function OracleReadingPaneBody() {
   }, [streamPhase]);
 
   const activateCitation = useCallback(
-    (activation: ResourceActivation, target: ReaderSourceTarget | null) => {
+    (activation: ResourceActivation, target: ReaderSourceTarget | null, event?: React.MouseEvent) => {
       if (target) dispatchReaderSourceActivation(target);
+      if (event?.defaultPrevented) return;
       activateResource(activation, {
         labelHint: target?.label,
-        navigate: (href) => requestOpenInAppPane(href),
+        activateTarget: paneRuntime.activateTarget,
+        disposition: event
+          ? workspaceTargetClickIntent(event).disposition
+          : { kind: "Follow" },
       });
     },
-    [],
+    [paneRuntime],
   );
 
   usePanePrimaryChrome({

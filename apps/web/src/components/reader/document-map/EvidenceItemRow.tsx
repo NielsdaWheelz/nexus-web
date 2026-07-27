@@ -38,7 +38,9 @@ import { absent } from "@/lib/api/presence";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { HighlightLinkedNoteBlock } from "@/lib/highlights/api";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
-import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
+import { requestWorkspaceTargetActivation } from "@/lib/workspace/workspaceTargetActivationIngress";
+import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
+import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import {
   executeResourceChat,
   executeResourceOpen,
@@ -92,7 +94,7 @@ export interface EvidenceHighlightActions {
     clientMutationId: string,
     shouldApply: () => boolean,
   ) => Promise<void>;
-  onOpenNoteLink: (href: string, options: { newPane: boolean }) => void;
+  onOpenNoteLink: (href: string, disposition: WorkspaceTargetDisposition) => void;
 }
 
 /**
@@ -116,11 +118,11 @@ export interface EvidenceLinkActions {
 
 type ActivateEvidenceObject = (
   object: ReaderEvidenceObject,
-  options: { newPane: boolean },
+  disposition: WorkspaceTargetDisposition,
 ) => void;
 type ActivateEvidenceSourceTarget = (
   target: ReaderEvidenceSourceTarget,
-  options: { newPane: boolean },
+  disposition: WorkspaceTargetDisposition,
 ) => void;
 type HoverEvidenceItem = (item: ReaderEvidenceItem | null) => void;
 
@@ -266,8 +268,8 @@ export function EvidenceItemRow({
             <EvidenceResourceActionMenu
               target={item.object.actionTarget}
               label={item.object.label}
-              onOpen={(newPane) =>
-                onActivateObject(item.object, { newPane })
+              onOpen={(disposition) =>
+                onActivateObject(item.object, disposition)
               }
               relationship={
                 item.kind === "Synapse"
@@ -474,7 +476,10 @@ function AssociationRow({
           disabled={association.object.activation.kind === "none"}
           aria-label={objectActionLabel}
           onClick={(event) =>
-            onActivateObject(association.object, { newPane: event.shiftKey })
+            onActivateObject(
+              association.object,
+              workspaceTargetClickIntent(event).disposition,
+            )
           }
         >
           <Icon size={14} aria-hidden="true" />
@@ -484,8 +489,8 @@ function AssociationRow({
         <EvidenceResourceActionMenu
           target={association.object.actionTarget}
           label={association.object.label}
-          onOpen={(newPane) =>
-            onActivateObject(association.object, { newPane })
+          onOpen={(disposition) =>
+            onActivateObject(association.object, disposition)
           }
           relationship={
             removableAssociation
@@ -519,7 +524,7 @@ function EvidenceResourceActionMenu({
 }: {
   target: ResourceActionSubject;
   label: string;
-  onOpen: (newPane: boolean) => void;
+  onOpen: (disposition: WorkspaceTargetDisposition) => void;
   relationship: EvidenceRelationshipAction;
 }) {
   const { openShare } = useShareController();
@@ -564,8 +569,9 @@ function EvidenceResourceActionMenu({
           target: subject,
           resourceNavigation: {
             labelHint: label,
-            navigate: () => onOpen(false),
-            openInNewPane: () => onOpen(true),
+            activateTarget: ({ disposition }) =>
+              onOpen(disposition),
+            disposition: { kind: "Follow" },
           },
         }),
       share: (subject, { triggerEl }) =>
@@ -584,8 +590,13 @@ function EvidenceResourceActionMenu({
             executeResourceChat({
               ref: subject.ref,
               openConversation: (conversationId) => {
-                requestOpenInAppPane(`/conversations/${conversationId}`, {
-                  labelHint: "Chat",
+                requestWorkspaceTargetActivation({
+                  target: {
+                    href: `/conversations/${conversationId}`,
+                    labelHint: "Chat",
+                  },
+                  disposition: { kind: "Adopt" },
+                  modality: "Programmatic",
                 });
               },
             }),
@@ -647,7 +658,9 @@ function ObjectOpenButton({
       className={styles.iconButton}
       disabled={object.activation.kind === "none"}
       aria-label={`Open ${object.label}`}
-      onClick={(event) => onActivate(object, { newPane: event.shiftKey })}
+      onClick={(event) =>
+        onActivate(object, workspaceTargetClickIntent(event).disposition)
+      }
     >
       <ExternalLink size={14} aria-hidden="true" />
     </button>
@@ -685,7 +698,9 @@ function SourceTargetRow({
         type="button"
         className={styles.objectButton}
         disabled={target.activation.kind === "none"}
-        onClick={(event) => onActivate(target, { newPane: event.shiftKey })}
+        onClick={(event) =>
+          onActivate(target, workspaceTargetClickIntent(event).disposition)
+        }
       >
         <span>{label}</span>
         {target.resolution.kind === "Resolved" ? (
@@ -697,7 +712,7 @@ function SourceTargetRow({
       <EvidenceResourceActionMenu
         target={target.actionTarget}
         label={label}
-        onOpen={(newPane) => onActivate(target, { newPane })}
+        onOpen={(disposition) => onActivate(target, disposition)}
         relationship={{ kind: "None" }}
       />
       {target.body.kind === "Present" ? (

@@ -158,8 +158,8 @@ Honesty as ornament; the ledger data is already there.
 
 - **The Docent** — any cited answer offered as a guided walk: one keystroke
   steps through the actual passages, pane by pane, via the evidence deep-links
-  and `openInNewPane` choreography that already exist. The cheap, honest form
-  of "generated UI."
+  and source-preserving workspace target activation. The cheap, honest form of
+  "generated UI."
 - **The Grand Atlas** — Oracle's star map generalized to the whole library: an
   engraved celestial chart where constellations are libraries, stars are
   works, faint lines are synapse edges, and red-gold lines are contradictions.

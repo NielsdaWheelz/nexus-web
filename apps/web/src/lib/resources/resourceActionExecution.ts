@@ -12,9 +12,7 @@ import type {
 } from "@/lib/sharing/types";
 
 type ActivateResourceOptions = Parameters<typeof activateResource>[1];
-type ResourceNavigation = ActivateResourceOptions & {
-  readonly navigate: NonNullable<ActivateResourceOptions["navigate"]>;
-};
+type ResourceNavigation = ActivateResourceOptions;
 type OpenShare = (target: ShareTarget, options: ShareOpenOptions) => void;
 type OpenLibraryPlacement = (
   target: LibraryPlacementTarget,

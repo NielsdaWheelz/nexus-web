@@ -86,7 +86,7 @@ describe("launcher architecture invariants", () => {
   it("routes every launcher open through dispatch.ts — one opener (AC-9)", () => {
     // dispatch.ts lives in lib/launcher/, so NOTHING under components/launcher/ may open a pane.
     const opensPane =
-      /\b(?:requestOpenInAppPane|activateResource)\s*\(|window\.location\.assign\s*\(/;
+      /\b(?:requestWorkspaceTargetActivation|activateResource)\s*\(|window\.location\.assign\s*\(/;
     const offenders = sourceFiles(
       join(APP_ROOT, "src/components/launcher"),
     ).filter((path) => opensPane.test(sourceText(path)));

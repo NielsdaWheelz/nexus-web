@@ -145,6 +145,36 @@ disconnects.
 
 Do not introduce another workspace mobile drawer or sheet owner.
 
+## Target Activation
+
+The workspace owns cross-pane product-target activation through
+`activateWorkspaceTarget`. Callers provide a supported href, semantic
+disposition, optional label/secondary payload, and navigation modality; they
+never choose a pane or invoke pane creation directly.
+
+- `Follow`: activate and restore an exact route-key match; otherwise push the
+  target in the origin pane.
+- `Fork`: always create and activate a fresh pane immediately after the origin.
+- `Adopt`: activate and restore an exact match; otherwise create after the
+  origin. Only named workflows that must preserve their source use it.
+
+Exact identity is route plus normalized query and ignores hash. With duplicate
+exact panes, selection is origin first, then the first visible match, then the
+first minimized match. A different hash pushes in the selected target pane;
+query-distinct product targets remain distinct. Secondary activation is
+delivered after pane selection and never changes disposition.
+
+At the 12-pane cap, `Fork` or creating `Adopt` is rejected atomically with
+non-modal feedback. The workspace never evicts another pane to satisfy target
+activation.
+
+`targetLinkActivation.ts` is the one browser gesture adapter. Plain click and
+`Enter` are `Follow`; `Shift`+click is `Fork`; Meta/Ctrl/Alt, middle-click,
+downloads, external links, `_blank`, fragments, and already-prevented events
+remain browser- or route-owned. Anchors retain real hrefs. Route-local reader
+location, sort/filter, and pagination controls keep their feature-owned
+push/replace/no-write policy.
+
 ## Fixed Chrome
 
 Fixed primary chrome is desktop-only. Pane bodies may publish fixed chrome, but

@@ -21,7 +21,7 @@ import {
 } from "@/lib/api/client";
 import { absent } from "@/lib/api/presence";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
+import { requestWorkspaceTargetActivation } from "@/lib/workspace/workspaceTargetActivationIngress";
 import type { ContextRefOut } from "@/lib/resourceGraph/contextRefs";
 import {
   executeResourceChat,
@@ -111,9 +111,8 @@ function ContextRefRow({
           target: subject,
           resourceNavigation: {
             labelHint: contextRef.label,
-            navigate: () => onOpenResource(contextRef),
-            openInNewPane: () => onOpenResource(contextRef),
-            newPane: true,
+            activateTarget: () => onOpenResource(contextRef),
+            disposition: { kind: "Follow" },
           },
         }),
       share: (subject, { triggerEl }) =>
@@ -132,8 +131,13 @@ function ContextRefRow({
             executeResourceChat({
               ref: subject.ref,
               openConversation: (conversationId) => {
-                requestOpenInAppPane(`/conversations/${conversationId}`, {
-                  labelHint: "Chat",
+                requestWorkspaceTargetActivation({
+                  target: {
+                    href: `/conversations/${conversationId}`,
+                    labelHint: "Chat",
+                  },
+                  disposition: { kind: "Adopt" },
+                  modality: "Programmatic",
                 });
               },
             }),

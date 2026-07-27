@@ -10,8 +10,9 @@ import {
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import { getWorkspacePrimaryPanes } from "@/lib/workspace/schema";
 import { getPaneRouteIcon } from "@/lib/panes/paneRouteTable";
-import { hasSamePaneRoute } from "@/lib/panes/paneIdentity";
+import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { sectionDestinationIdForHref } from "@/lib/panes/paneRouteModel";
+import type { WorkspaceTargetActivationResult } from "@/lib/workspace/targetActivation";
 import { dispatchOpenLauncher } from "@/lib/launcher/launcherEvents";
 import { DEFAULT_KEYBINDINGS } from "@/lib/keybindings";
 import { useKeybinding, useKeybindingLabel } from "@/lib/keybindingsProvider";
@@ -23,7 +24,6 @@ import {
   type NavDestination,
   type NavItem,
 } from "./navModel";
-import { handleAppNavLinkActivation } from "./navActivation";
 import NavRail from "./NavRail";
 import NavSheet from "./NavSheet";
 import NavTopBar from "./NavTopBar";
@@ -46,7 +46,7 @@ const NAV_ACCOUNT_ITEM = toNavItem(NAV_ACCOUNT);
 
 export default function AppNav() {
   const isMobile = useIsMobileViewport();
-  const { state, openPane } = useWorkspaceStore();
+  const { state, activateWorkspaceTarget } = useWorkspaceStore();
 
   const [collapsed, setCollapsed] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -83,19 +83,30 @@ export default function AppNav() {
 
   const onNavigate = useCallback(
     (event: MouseEvent<HTMLElement>, href: string) => {
-      return handleAppNavLinkActivation(event, href, (nextHref) => {
-        const result =
-          activePane && hasSamePaneRoute(activePane.currentVisit.href, nextHref)
-            ? "handled-source-focus"
-            : "handled-destination-focus";
-        openPane({
-          href: nextHref,
-          modality: event.detail === 0 ? "Keyboard" : "Pointer",
-        });
-        return result;
+      const activation = { result: null as WorkspaceTargetActivationResult | null };
+      const result = activateTargetLink({
+        event,
+        runtime: {
+          activateTarget: ({ target, disposition }) => {
+            activation.result = activateWorkspaceTarget({
+              originPaneId: state.activePrimaryPaneId,
+              target,
+              disposition,
+              modality: event.detail === 0 ? "Keyboard" : "Pointer",
+            });
+          },
+        },
+        href,
       });
+      if (result === "unhandled") {
+        return result;
+      }
+      return activation.result?.kind === "Unchanged" ||
+        activation.result?.kind === "Rejected"
+        ? "handled-source-focus"
+        : "handled-destination-focus";
     },
-    [activePane, openPane],
+    [activateWorkspaceTarget, state.activePrimaryPaneId],
   );
 
   const openCommand = useCallback(() => dispatchOpenLauncher(), []);

@@ -11,12 +11,14 @@ import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { notePagesResource, type NoResourceParams } from "@/lib/api/resource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
+  requirePaneRuntime,
   usePaneReturnReady,
-  usePaneRouter,
+  usePaneRuntime,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import { createNotePage } from "@/lib/notes/api";
 import { openTodayPage } from "@/lib/notes/openToday";
+import { PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION } from "@/lib/launcher/dispatch";
 import type { NotePageSummary } from "@/lib/notes/normalize";
 import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
@@ -27,7 +29,7 @@ import { useHydrationPreservedInput } from "@/lib/ui/useHydrationPreservedInput"
 import styles from "./notes.module.css";
 
 export default function NotesPaneBody() {
-  const router = usePaneRouter();
+  const paneRuntime = usePaneRuntime();
   const [localPages, setLocalPages] = useState<NotePageSummary[] | null>(null);
   const {
     value: title,
@@ -74,7 +76,7 @@ export default function NotesPaneBody() {
 
   const openToday = useCallback(async () => {
     try {
-      await openTodayPage();
+      await openTodayPage(PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION);
     } catch (error: unknown) {
       if (handleUnauthenticatedApiError(error)) return;
       setFeedback(toFeedback(error, { fallback: "Could not open today." }));
@@ -92,12 +94,18 @@ export default function NotesPaneBody() {
       ]);
       setTitle("");
       setPendingNoteFocus({ pageId: page.id, target: trimmedTitle ? "body" : "title" });
-      router.push(`/pages/${page.id}`);
+      requirePaneRuntime(
+        paneRuntime,
+        "Notes created-page target activation",
+      ).activateTarget({
+        target: { href: `/pages/${page.id}`, labelHint: page.title },
+        disposition: { kind: "Follow" },
+      });
     } catch (error: unknown) {
       if (handleUnauthenticatedApiError(error)) return;
       setFeedback(toFeedback(error, { fallback: "Page could not be created." }));
     }
-  }, [resourcePages, router, setTitle, title]);
+  }, [paneRuntime, resourcePages, setTitle, title]);
 
   return (
     <CollectionView

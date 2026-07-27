@@ -11,8 +11,9 @@ import { apiFetch } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
 import {
+  requirePaneRuntime,
   usePaneReturnReady,
-  usePaneRouter,
+  usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
 import OracleAlephGrid from "./OracleAlephGrid";
 import OracleThemeWrapper from "./OracleThemeWrapper";
@@ -22,7 +23,7 @@ import styles from "./oracle.module.css";
 const QUESTION_MAX = 280;
 
 export default function OracleLandingPaneBody() {
-  const paneRouter = usePaneRouter();
+  const paneRuntime = usePaneRuntime();
   usePaneReturnReady(true);
 
   const [question, setQuestion] = useState("");
@@ -60,7 +61,13 @@ export default function OracleLandingPaneBody() {
           headers: { "Idempotency-Key": createRandomId("oracle-read") },
           body: JSON.stringify({ question: cleaned }),
         });
-        paneRouter.push(`/oracle/${body.data.reading_id}`);
+        requirePaneRuntime(
+          paneRuntime,
+          "Oracle created-reading target activation",
+        ).activateTarget({
+          target: { href: `/oracle/${body.data.reading_id}` },
+          disposition: { kind: "Follow" },
+        });
       } catch (error) {
         if (handleUnauthenticatedApiError(error)) return;
         setSubmitError(
@@ -71,7 +78,7 @@ export default function OracleLandingPaneBody() {
         setSubmitting(false);
       }
     },
-    [question, paneRouter],
+    [question, paneRuntime],
   );
 
   const remaining = QUESTION_MAX - question.length;

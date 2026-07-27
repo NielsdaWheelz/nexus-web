@@ -104,10 +104,10 @@ import {
   usePaneReturnReady,
   usePaneRouter,
   usePaneRuntime,
+  requirePaneRuntime,
   usePaneVisitData,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
-import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
 import type { LibraryOut } from "@/lib/libraries/contract";
 import { useLibraryMembers } from "@/lib/libraries/useLibraryMembers";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
@@ -397,7 +397,6 @@ export default function LibraryPaneBody() {
   }
   const router = usePaneRouter();
   const paneRuntime = usePaneRuntime();
-  const { openInNewPane } = paneRuntime ?? {};
   const isPaneActive = paneRuntime?.isActive ?? true;
   const paneId = paneRuntime?.paneId ?? `library-${id}`;
   const feedback = useFeedback();
@@ -1898,17 +1897,6 @@ export default function LibraryPaneBody() {
     loadMoreError,
     handleLoadMoreEntries,
   ]);
-  const openConnectionRoute = useCallback(
-    (
-      href: string,
-      inNewPane: boolean,
-      secondaryActivation?: WorkspaceSecondaryActivation,
-    ) => {
-      if (inNewPane) openInNewPane?.(href, undefined, secondaryActivation);
-      else router.push(href);
-    },
-    [openInNewPane, router],
-  );
   const connectionsComposerController = useConnectionsComposerController({
     scheme: "library",
     id,
@@ -1918,10 +1906,10 @@ export default function LibraryPaneBody() {
       <ConnectionsSurface
         resourceRef={{ scheme: "library", id }}
         composerController={connectionsComposerController}
-        onOpenRoute={openConnectionRoute}
+        activateTarget={requirePaneRuntime(paneRuntime, "LibraryPaneBody").activateTarget}
       />
     ),
-    [connectionsComposerController, id, openConnectionRoute],
+    [connectionsComposerController, id, paneRuntime],
   );
   const membersBody = useMemo(
     () =>

@@ -1,14 +1,45 @@
-import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render as renderBase, screen } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import MessageSourcesDisclosure from "./MessageSourcesDisclosure";
 import type { ReaderCitationData } from "@/lib/conversations/readerCitation";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
+import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
+import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
+import { assumePaneVisitId } from "@/lib/workspace/schema";
+
+const activateWorkspaceTarget = vi.fn(() => ({ kind: "CreatedPane" as const, paneId: "pane-2" }));
+
+function render(node: React.ReactNode) {
+  return renderBase(
+    <PaneReturnMementoProvider>
+      <FeedbackProvider>
+        <PaneRuntimeProvider
+          paneId="pane-1"
+          visitId={assumePaneVisitId("00000000-0000-4000-8000-000000000001")}
+          isActive
+          href="/conversations/conversation-1"
+          routeId="conversation"
+          canGoBack={false}
+          canGoForward={false}
+          onNavigatePane={vi.fn()}
+          onReplacePane={vi.fn()}
+          onActivateWorkspaceTarget={activateWorkspaceTarget}
+          onGoBackPane={vi.fn()}
+          onGoForwardPane={vi.fn()}
+        >
+          {node}
+        </PaneRuntimeProvider>
+      </FeedbackProvider>
+    </PaneReturnMementoProvider>,
+  );
+}
 
 function makeActivation(href: string): ResourceActivation {
   return {
-    resourceRef: "media:media-1",
+    resourceRef: "media:11111111-1111-4111-8111-111111111111",
     kind: "route",
     href,
     unresolvedReason: null,
@@ -19,13 +50,16 @@ function makeCitation(overrides: Partial<ReaderCitationData> = {}): ReaderCitati
   return {
     index: 1,
     preview: { title: "Source title", meta: ["Section label"] },
-    activation: makeActivation("/reader/source"),
+    activation: makeActivation("/media/media-1"),
     target: null,
     ...overrides,
   };
 }
 
 describe("MessageSourcesDisclosure", () => {
+  beforeEach(() => {
+    activateWorkspaceTarget.mockClear();
+  });
   it("renders nothing when citations array is empty", () => {
     render(<MessageSourcesDisclosure citations={[]} />);
     expect(screen.queryByRole("list", { name: "Sources" })).toBeNull();
@@ -64,7 +98,7 @@ describe("MessageSourcesDisclosure", () => {
     const user = userEvent.setup();
     const onActivate = vi.fn();
 
-    const activation = makeActivation("/reader/source");
+    const activation = makeActivation("/media/media-1");
     render(
       <MessageSourcesDisclosure
         citations={[makeCitation({ activation })]}
@@ -76,6 +110,47 @@ describe("MessageSourcesDisclosure", () => {
     await user.click(screen.getByRole("link", { name: /1\. Source title/ }));
 
     expect(onActivate).toHaveBeenCalledWith(activation, null, expect.anything());
+    expect(onActivate).toHaveBeenCalledOnce();
+    expect(activateWorkspaceTarget).toHaveBeenCalledWith({
+      originPaneId: "pane-1",
+        target: { href: "/media/media-1" },
+      disposition: { kind: "Follow" },
+      modality: "Programmatic",
+    });
+  });
+
+  it("forks a Shift-pointer rich source exactly once", async () => {
+    const user = userEvent.setup();
+    const onActivate = vi.fn();
+    render(<MessageSourcesDisclosure citations={[makeCitation()]} onCitationActivate={onActivate} />);
+
+    await user.click(screen.getByText("Sources (1)"));
+    fireEvent.click(screen.getByRole("link", { name: /1\. Source title/ }), {
+      shiftKey: true,
+      detail: 1,
+    });
+
+    expect(activateWorkspaceTarget).toHaveBeenCalledOnce();
+    expect(activateWorkspaceTarget).toHaveBeenCalledWith(expect.objectContaining({
+      disposition: { kind: "Fork" },
+    }));
+    expect(onActivate).toHaveBeenCalledOnce();
+  });
+
+  it("keeps Shift-keyboard rich source activation as Follow", async () => {
+    const user = userEvent.setup();
+    render(<MessageSourcesDisclosure citations={[makeCitation()]} />);
+
+    await user.click(screen.getByText("Sources (1)"));
+    fireEvent.click(screen.getByRole("link", { name: /1\. Source title/ }), {
+      shiftKey: true,
+      detail: 0,
+    });
+
+    expect(activateWorkspaceTarget).toHaveBeenCalledWith(expect.objectContaining({
+      disposition: { kind: "Follow" },
+      modality: "Programmatic",
+    }));
   });
 
   it("renders multiple citations as separate list items", () => {
@@ -144,5 +219,28 @@ describe("MessageSourcesDisclosure", () => {
     expect(disclosure).not.toHaveAttribute("open");
     // eslint-disable-next-line testing-library/no-node-access -- verifies the native summary element, not a custom button facade
     expect(screen.getByText("Sources (2)").closest("summary")).not.toBeNull();
+  });
+
+  it.each([
+    ["external", makeActivation("https://example.com/source")],
+    ["unsupported", makeActivation("/api/podcasts/export/opml")],
+  ])("leaves a %s source native with no workspace activation", async (_kind, activation) => {
+    const user = userEvent.setup();
+    let browserOwned = false;
+    const recordBrowserOwnership = (event: MouseEvent) => {
+      browserOwned = !event.defaultPrevented;
+      event.preventDefault();
+    };
+    document.addEventListener("click", recordBrowserOwnership);
+    try {
+      render(<MessageSourcesDisclosure citations={[makeCitation({ activation })]} />);
+      await user.click(screen.getByText("Sources (1)"));
+      fireEvent.click(screen.getByRole("link", { name: /1\. Source title/ }));
+    } finally {
+      document.removeEventListener("click", recordBrowserOwnership);
+    }
+
+    expect(browserOwned).toBe(true);
+    expect(activateWorkspaceTarget).not.toHaveBeenCalled();
   });
 });

@@ -25,6 +25,8 @@ import type {
 } from "@/lib/resources/resourceItems";
 import { useResourceTargetSearch } from "@/lib/resources/useResourceTargetSearch";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
+import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
+import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import styles from "./ResourceSurfaceBodyEditor.module.css";
 
@@ -65,11 +67,11 @@ export interface ResourceSurfaceBodyEditorProps {
   onInsertResource: (request: ResourceSurfaceInsertResourceRequest) => void;
   onBodyChange: (change: ResourceSurfaceBodyChange) => void;
   onBodyBlur: (change: ResourceSurfaceBodyChange) => void;
-  onActivate: (item: ResourceItem, openInNewPane: boolean) => void;
-  onOpenObject?: (
+  onActivate: (item: ResourceItem, disposition: WorkspaceTargetDisposition) => void;
+  onOpenObject: (
     objectType: string,
     objectId: string,
-    openInNewPane: boolean,
+    disposition: WorkspaceTargetDisposition,
   ) => void;
   onFeedback?: (feedback: FeedbackContent) => void;
   onError?: (error: unknown) => void;
@@ -293,7 +295,12 @@ export default function ResourceSurfaceBodyEditor({
                 type="button"
                 className={styles.resourceActivation}
                 aria-label={`Open ${label}`}
-                onClick={(event) => onActivate(item, event.shiftKey)}
+                onClick={(event) =>
+                  onActivate(
+                    item,
+                    workspaceTargetClickIntent(event).disposition,
+                  )
+                }
               >
                 <span className={styles.resourceLabel}>{label}</span>
                 {item.summary ? (

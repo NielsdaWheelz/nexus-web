@@ -18,10 +18,12 @@ import {
   type StatsUrlState,
 } from "@/lib/consumption/statsContract";
 import {
+  requirePaneRuntime,
   usePaneReturnReady,
-  usePaneRouter,
+  usePaneRuntime,
   usePaneSearchParams,
 } from "@/lib/panes/paneRuntime";
+import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import { useHydratedBrowserTimeZone } from "@/lib/time/browserTimeZone";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import styles from "./StatsPaneBody.module.css";
@@ -402,7 +404,7 @@ function WorkTables({
   includeDevices?: boolean;
   onFilter?: (key: "media" | "contributor" | "device", value: string) => void;
 }) {
-  const router = usePaneRouter();
+  const paneRuntime = usePaneRuntime();
   return (
     <>
       <Section
@@ -437,7 +439,16 @@ function WorkTables({
                       <button
                         type="button"
                         className={styles.rowLink}
-                        onClick={() => router.push(href)}
+                        onClick={(event) =>
+                          requirePaneRuntime(
+                            paneRuntime,
+                            "Stats work target activation",
+                          ).activateTarget({
+                            target: { href, labelHint: row.title },
+                            disposition:
+                              workspaceTargetClickIntent(event).disposition,
+                          })
+                        }
                       >
                         {row.title}
                       </button>
@@ -570,7 +581,7 @@ function SessionRows({
   loadingMore: boolean;
   onLoadMore: () => void;
 }) {
-  const router = usePaneRouter();
+  const paneRuntime = usePaneRuntime();
   return (
     <>
       <table>
@@ -591,7 +602,16 @@ function SessionRows({
                     <button
                       type="button"
                       className={styles.rowLink}
-                      onClick={() => router.push(href)}
+                      onClick={(event) =>
+                        requirePaneRuntime(
+                          paneRuntime,
+                          "Stats session target activation",
+                        ).activateTarget({
+                          target: { href, labelHint: row.title },
+                          disposition:
+                            workspaceTargetClickIntent(event).disposition,
+                        })
+                      }
                     >
                       {row.title}
                     </button>
@@ -656,7 +676,7 @@ function CreatedAndKept({ data }: { data: ConsumptionStats }) {
 }
 
 function Completions({ data }: { data: ConsumptionStats }) {
-  const router = usePaneRouter();
+  const paneRuntime = usePaneRuntime();
   return (
     <Section
       title="Completions"
@@ -683,7 +703,16 @@ function Completions({ data }: { data: ConsumptionStats }) {
                     <button
                       type="button"
                       className={styles.rowLink}
-                      onClick={() => router.push(href)}
+                      onClick={(event) =>
+                        requirePaneRuntime(
+                          paneRuntime,
+                          "Stats completion target activation",
+                        ).activateTarget({
+                          target: { href, labelHint: row.title },
+                          disposition:
+                            workspaceTargetClickIntent(event).disposition,
+                        })
+                      }
                     >
                       {row.title}
                     </button>

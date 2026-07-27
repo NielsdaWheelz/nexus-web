@@ -13,10 +13,7 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import { consumePendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import { fetchDailyNotePage, fetchDawnWrite, fetchNotePage, type DawnWrite, type NotePage } from "@/lib/notes/api";
 import { shiftLocalDate } from "@/lib/localDate";
-import { usePaneParam, usePaneReturnReady, usePaneRouter, usePaneRuntime, useSetPaneLabel } from "@/lib/panes/paneRuntime";
-import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
-import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
-import { resolveResourceLocators } from "@/lib/resources/resourceLocators";
+import { requirePaneRuntime, usePaneParam, usePaneReturnReady, usePaneRuntime, useSetPaneLabel } from "@/lib/panes/paneRuntime";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 
 export default function PagePaneBody({
@@ -29,7 +26,6 @@ export default function PagePaneBody({
   const routePageId = usePaneParam("pageId");
   const pageId = pageIdOverride ?? routePageId;
   if (!pageId) throw new Error("page route requires a page id");
-  const router = usePaneRouter();
   const paneRuntime = usePaneRuntime();
   const [page, setPage] = useState<NotePage | null>(
     initialPage?.id === pageId ? initialPage : null,
@@ -61,34 +57,24 @@ export default function PagePaneBody({
     else if (pending) setFocusBodySerial((current) => current + 1);
   }, [pageId, ready]);
 
-  const openRoute = useCallback((href: string, openInNewPane: boolean, secondary?: WorkspaceSecondaryActivation) => {
-    if (openInNewPane) paneRuntime?.openInNewPane?.(href, undefined, secondary);
-    else router.push(href);
-  }, [paneRuntime, router]);
-  const openObject = useCallback(async (type: string, id: string, openInNewPane: boolean) => {
-    const ref = `${type}:${id}`;
-    if (!parseResourceRef(ref)) return;
-    try {
-      const [resolved] = await resolveResourceLocators([{ kind: "resource_ref", ref }]);
-      if (resolved?.resourceItem.route) openRoute(resolved.resourceItem.route, openInNewPane);
-    } catch (error) {
-      if (!handleUnauthenticatedApiError(error)) {
-        setFeedback(toFeedback(error, { fallback: "That linked item could not be opened." }));
-      }
-    }
-  }, [openRoute]);
 
   const dailyLocalDate = page?.dailyNote?.localDate ?? null;
   const openDatedPage = useCallback(async (localDate: string) => {
     const next = await fetchDailyNotePage(localDate);
-    router.push(`/pages/${next.id}`);
-  }, [router]);
+    requirePaneRuntime(paneRuntime, "Page dated-page activation").activateTarget({
+      target: { href: `/pages/${next.id}`, labelHint: next.title },
+      disposition: { kind: "Follow" },
+    });
+  }, [paneRuntime]);
   const viewActions = useMemo<ActionDescriptor[]>(() => dailyLocalDate ? [
     { kind: "command", id: "ViewAction.Page.OpenYesterday", label: "Open yesterday", onSelect: () => void openDatedPage(shiftLocalDate(dailyLocalDate, -1)) },
     { kind: "command", id: "ViewAction.Page.OpenTomorrow", label: "Open tomorrow", onSelect: () => void openDatedPage(shiftLocalDate(dailyLocalDate, 1)) },
   ] : [], [dailyLocalDate, openDatedPage]);
   const composer = useConnectionsComposerController({ scheme: "page", id: pageId });
-  const connections = useMemo(() => <ConnectionsSurface resourceRef={{ scheme: "page", id: pageId }} composerController={composer} onOpenRoute={openRoute} />, [composer, openRoute, pageId]);
+  const connections = useMemo(
+    () => <ConnectionsSurface resourceRef={{ scheme: "page", id: pageId }} composerController={composer} activateTarget={requirePaneRuntime(paneRuntime, "Page connections activation").activateTarget} />,
+    [composer, pageId, paneRuntime],
+  );
   const { companionAction } = useResourceInspector({ scheme: "page", handle: pageId, bodies: { linkedItems: connections } });
   usePanePrimaryChrome({
     actions: companionAction ? [companionAction] : [],
@@ -114,8 +100,7 @@ export default function PagePaneBody({
         const { title } = surface.source.content;
         setPage((current) => current ? { ...current, title } : current);
       }}
-      onOpenObject={openObject}
-      onOpenRoute={openRoute}
+      activateTarget={requirePaneRuntime(paneRuntime, "Page target activation").activateTarget}
     />
   </>;
 }

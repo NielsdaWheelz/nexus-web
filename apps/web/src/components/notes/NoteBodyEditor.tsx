@@ -24,6 +24,7 @@ import { history } from "prosemirror-history";
 import { isApiError } from "@/lib/api/client";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { usePaneReturnDescendantReady } from "@/lib/panes/paneRuntime";
+import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import {
   createNoteBodyKeymap,
   createObjectRefSyntaxPlugin,
@@ -49,6 +50,7 @@ import {
 } from "@/lib/media/sourceUrlCapture";
 import { codepointLength, codepointToUtf16 } from "@/lib/highlights/codepoints";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
+import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import {
   parseResourceRef,
   type ResourceScheme,
@@ -90,7 +92,7 @@ export interface NoteBodyEditorProps {
   onOpenObject?: (
     objectType: string,
     objectId: string,
-    openInNewPane: boolean,
+    disposition: WorkspaceTargetDisposition,
   ) => void;
   onFeedback?: (feedback: FeedbackContent) => void;
   onError?: (error: unknown) => void;
@@ -548,7 +550,7 @@ export default function NoteBodyEditor({
           onOpenObjectRef.current?.(
             objectRef.dataset.objectType ?? "",
             objectRef.dataset.objectId ?? "",
-            event.shiftKey,
+            workspaceTargetClickIntent(event).disposition,
           );
           return true;
         },
@@ -620,7 +622,7 @@ export default function NoteBodyEditor({
               onOpenObjectRef.current?.(
                 objectRef.dataset.objectType ?? "",
                 objectRef.dataset.objectId ?? "",
-                event.shiftKey,
+                workspaceTargetClickIntent(event).disposition,
               );
               return true;
             }

@@ -5,6 +5,7 @@ import HighlightNoteEditor from "@/components/notes/HighlightNoteEditor";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import MobileSheet from "@/components/ui/MobileSheet";
 import type { HighlightLinkedNoteBlock } from "@/lib/highlights/api";
+import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import { useInitialFocus } from "@/lib/ui/useInitialFocus";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import styles from "./HighlightQuickNoteComposer.module.css";
@@ -61,7 +62,7 @@ export default function HighlightQuickNoteComposer({
     clientMutationId: string,
     shouldApply: () => boolean
   ) => Promise<void>;
-  onOpenLink: (href: string, options: { newPane: boolean }) => void;
+  onOpenLink: (href: string, disposition: WorkspaceTargetDisposition) => void;
 }) {
   const isMobile = useIsMobileViewport();
   const desktopPanelRef = useRef<HTMLDivElement>(null);

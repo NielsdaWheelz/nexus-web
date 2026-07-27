@@ -91,7 +91,7 @@ const hostMocks = vi.hoisted(() => ({
     string,
     (publication: PaneFixedChromePublication | null) => void
   >(),
-  openInNewPaneRequest: null as {
+  targetActivationRequest: null as {
     href: string;
     labelHint?: string;
     activation: WorkspaceSecondaryActivation;
@@ -108,7 +108,7 @@ const hostMocks = vi.hoisted(() => ({
     runtimeLabelByPaneId: new Map(),
     pendingSecondaryActivationByPaneId: new Map(),
     activatePane: vi.fn(),
-    openPane: vi.fn(),
+    activateWorkspaceTarget: vi.fn(),
     acknowledgePendingSecondaryActivation: vi.fn(),
     navigatePane: vi.fn(),
     goBackPane: vi.fn(),
@@ -284,7 +284,7 @@ function TestPaneBody() {
           null)
       : null,
   );
-  const didOpenInNewPaneRef = useRef(false);
+  const didActivateTargetRef = useRef(false);
   const fixedChromeWidthPx = paneRuntime
     ? (hostMocks.fixedChromeWidthByPaneId.get(paneRuntime.paneId) ??
       hostMocks.fixedChromeWidthPx)
@@ -330,16 +330,19 @@ function TestPaneBody() {
     }
   }, [paneRuntime]);
   useEffect(() => {
-    const request = hostMocks.openInNewPaneRequest;
-    if (!request || !paneRuntime || didOpenInNewPaneRef.current) {
+    const request = hostMocks.targetActivationRequest;
+    if (!request || !paneRuntime || didActivateTargetRef.current) {
       return;
     }
-    didOpenInNewPaneRef.current = true;
-    paneRuntime.openInNewPane(
-      request.href,
-      request.labelHint,
-      request.activation,
-    );
+    didActivateTargetRef.current = true;
+    paneRuntime.activateTarget({
+      target: {
+        href: request.href,
+        labelHint: request.labelHint,
+        secondaryActivation: request.activation,
+      },
+      disposition: { kind: "Fork" },
+    });
   }, [paneRuntime]);
   return (
     <div
@@ -694,11 +697,11 @@ describe("WorkspaceHost pane route lifecycle", () => {
     hostMocks.secondaryPublicationByPaneId = new Map();
     hostMocks.secondaryPublisherByPaneId = new Map();
     hostMocks.fixedChromePublisherByPaneId = new Map();
-    hostMocks.openInNewPaneRequest = null;
+    hostMocks.targetActivationRequest = null;
     hostMocks.resolveResourceLocators.mockReset();
     hostMocks.resolveResourceLocators.mockResolvedValue([]);
     hostMocks.store.activatePane.mockReset();
-    hostMocks.store.openPane.mockReset();
+    hostMocks.store.activateWorkspaceTarget.mockReset();
     hostMocks.store.acknowledgePendingSecondaryActivation.mockReset();
     hostMocks.store.pendingSecondaryActivationByPaneId = new Map();
     hostMocks.store.acknowledgePendingSecondaryActivation.mockImplementation(
@@ -1216,12 +1219,13 @@ describe("WorkspaceHost pane route lifecycle", () => {
 
     fireEvent.click(screen.getByRole("link", { name: "Chrome Author" }));
 
-    expect(hostMocks.store.navigatePane).toHaveBeenCalledWith(
-      "pane-1",
-      "/authors/author-1",
-      { labelHint: "Chrome Author", modality: "Keyboard" },
-    );
-    expect(hostMocks.store.openPane).not.toHaveBeenCalled();
+    expect(hostMocks.store.activateWorkspaceTarget).toHaveBeenCalledWith({
+      originPaneId: "pane-1",
+      target: { href: "/authors/author-1", labelHint: "Chrome Author" },
+      disposition: { kind: "Follow" },
+      modality: "Keyboard",
+    });
+    expect(hostMocks.store.navigatePane).not.toHaveBeenCalled();
   });
 
   it("routes header Back and Forward through the target pane only", () => {
@@ -1255,28 +1259,28 @@ describe("WorkspaceHost pane route lifecycle", () => {
 
     fireEvent.click(screen.getByRole("link", { name: "Body Author" }));
 
-    expect(hostMocks.store.navigatePane).toHaveBeenCalledWith(
-      "pane-1",
-      "/authors/body-author",
-      { labelHint: "Body Author", modality: "Keyboard" },
-    );
-    expect(hostMocks.store.openPane).not.toHaveBeenCalled();
+    expect(hostMocks.store.activateWorkspaceTarget).toHaveBeenCalledWith({
+      originPaneId: "pane-1",
+      target: { href: "/authors/body-author", labelHint: "Body Author" },
+      disposition: { kind: "Follow" },
+      modality: "Keyboard",
+    });
+    expect(hostMocks.store.navigatePane).not.toHaveBeenCalled();
   });
 
   it("opens pane chrome internal links in a sibling pane on Shift-click", () => {
     render(<WorkspaceHost />);
 
     fireEvent.click(screen.getByRole("link", { name: "Chrome Author" }), {
+      detail: 1,
       shiftKey: true,
     });
 
-    expect(hostMocks.store.openPane).toHaveBeenCalledWith({
-      href: "/authors/author-1",
-      openerPaneId: "pane-1",
-      activate: true,
-      labelHint: "Chrome Author",
-      secondaryActivation: undefined,
-      modality: "Keyboard",
+    expect(hostMocks.store.activateWorkspaceTarget).toHaveBeenCalledWith({
+      originPaneId: "pane-1",
+      target: { href: "/authors/author-1", labelHint: "Chrome Author" },
+      disposition: { kind: "Fork" },
+      modality: "Pointer",
     });
     expect(hostMocks.store.navigatePane).not.toHaveBeenCalled();
   });
@@ -1380,8 +1384,8 @@ describe("WorkspaceHost secondary publication validation", () => {
     hostMocks.secondaryPublicationByPaneId = new Map();
     hostMocks.secondaryPublisherByPaneId = new Map();
     hostMocks.fixedChromePublisherByPaneId = new Map();
-    hostMocks.openInNewPaneRequest = null;
-    hostMocks.store.openPane.mockReset();
+    hostMocks.targetActivationRequest = null;
+    hostMocks.store.activateWorkspaceTarget.mockReset();
     hostMocks.store.acknowledgePendingSecondaryActivation.mockReset();
     hostMocks.store.pendingSecondaryActivationByPaneId = new Map();
     hostMocks.store.acknowledgePendingSecondaryActivation.mockImplementation(
@@ -1653,7 +1657,7 @@ describe("WorkspaceHost secondary publication validation", () => {
       revisionRef:
         "artifact_revision:44444444-4444-4444-8444-444444444444",
     } as const;
-    hostMocks.openInNewPaneRequest = {
+    hostMocks.targetActivationRequest = {
       href: MEDIA_HREF_1,
       labelHint: "Dossier",
       activation,
@@ -1662,12 +1666,14 @@ describe("WorkspaceHost secondary publication validation", () => {
     render(<WorkspaceHost />);
 
     await waitFor(() => {
-      expect(hostMocks.store.openPane).toHaveBeenCalledWith({
-        href: MEDIA_HREF_1,
-        openerPaneId: "pane-1",
-        activate: true,
-        labelHint: "Dossier",
-        secondaryActivation: activation,
+      expect(hostMocks.store.activateWorkspaceTarget).toHaveBeenCalledWith({
+        originPaneId: "pane-1",
+        target: {
+          href: MEDIA_HREF_1,
+          labelHint: "Dossier",
+          secondaryActivation: activation,
+        },
+        disposition: { kind: "Fork" },
         modality: "Programmatic",
       });
     });

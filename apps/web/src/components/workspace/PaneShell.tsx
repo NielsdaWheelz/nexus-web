@@ -380,11 +380,15 @@ export default function PaneShell({
           try {
             await executeResourceChat({
               ref: subject.ref,
-              openConversation: (conversationId) =>
-                paneRuntime.openInNewPane(
-                  `/conversations/${conversationId}`,
-                  "Chat",
-                ),
+              openConversation: (conversationId) => {
+                void paneRuntime.activateTarget({
+                  target: {
+                    href: `/conversations/${conversationId}`,
+                    labelHint: "Chat",
+                  },
+                  disposition: { kind: "Adopt" },
+                });
+              },
             });
           } catch (error: unknown) {
             if (handleUnauthenticatedApiError(error)) return;

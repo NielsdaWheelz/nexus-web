@@ -1,11 +1,15 @@
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { assumePaneVisitId } from "@/lib/workspace/schema";
 import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
+import type {
+  WorkspaceTargetActivationRequest,
+  WorkspaceTargetActivationResult,
+} from "@/lib/workspace/targetActivation";
 import StatsPaneBody from "./StatsPaneBody";
 
 const VISIT_ID = assumePaneVisitId("00000000-0000-4000-8000-000000000001");
@@ -174,8 +178,15 @@ function stats(
 
 function StatefulStats({
   href = "/stats?view=stats&period=day&anchor=2026-07-24",
+  onActivateWorkspaceTarget = () => ({
+    kind: "Unchanged",
+    paneId: "stats-pane",
+  }),
 }: {
   href?: string;
+  onActivateWorkspaceTarget?: (
+    request: WorkspaceTargetActivationRequest,
+  ) => WorkspaceTargetActivationResult;
 }) {
   const [currentHref, setCurrentHref] = useState(href);
   return (
@@ -197,7 +208,7 @@ function StatefulStats({
           onGoForwardPane={vi.fn()}
           onNavigatePane={vi.fn()}
           onReplacePane={(_id, next) => setCurrentHref(next)}
-          onOpenInNewPane={vi.fn()}
+          onActivateWorkspaceTarget={onActivateWorkspaceTarget}
           onSetPaneLabel={vi.fn()}
         >
           <StatsPaneBody />
@@ -251,7 +262,7 @@ describe("StatsPaneBody", () => {
       "true",
     );
     expect(within(section).getByText("(UTC-07:00)")).toBeVisible();
-    expect(screen.getByText("Current streak")).toBeVisible();
+    expect(screen.getByText("Ending streak")).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Previous" }));
     expect(await screen.findByText("Ending streak")).toBeVisible();
     expect(screen.getAllByText("The Left Hand of Darkness")[0]).toBeVisible();
@@ -490,5 +501,40 @@ describe("StatsPaneBody", () => {
         screen.getAllByRole("button", { name: "The Left Hand of Darkness" }),
       ).toHaveLength(4),
     );
+  });
+
+  it("follows a normal work-row click and forks a Shift-pointer click", async () => {
+    installFetch(() => response(stats()));
+    const onActivateWorkspaceTarget = vi.fn(() => ({
+      kind: "Unchanged" as const,
+      paneId: "stats-pane",
+    }));
+    const user = userEvent.setup();
+    render(<StatefulStats onActivateWorkspaceTarget={onActivateWorkspaceTarget} />);
+
+    const workRow = (await screen.findAllByRole("button", {
+      name: "The Left Hand of Darkness",
+    }))[0];
+    await user.click(workRow);
+    fireEvent.click(workRow, { shiftKey: true, detail: 1 });
+
+    expect(onActivateWorkspaceTarget).toHaveBeenNthCalledWith(1, {
+      originPaneId: "stats-pane",
+      target: {
+        href: `/media/${MEDIA_ID}`,
+        labelHint: "The Left Hand of Darkness",
+      },
+      disposition: { kind: "Follow" },
+      modality: "Programmatic",
+    });
+    expect(onActivateWorkspaceTarget).toHaveBeenNthCalledWith(2, {
+      originPaneId: "stats-pane",
+      target: {
+        href: `/media/${MEDIA_ID}`,
+        labelHint: "The Left Hand of Darkness",
+      },
+      disposition: { kind: "Fork" },
+      modality: "Programmatic",
+    });
   });
 });

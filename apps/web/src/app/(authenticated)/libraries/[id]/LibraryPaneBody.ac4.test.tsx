@@ -82,7 +82,7 @@ function StatefulLibraryPane({
               canGoForward={false}
               onNavigatePane={(_paneId: string, next: string) => setHref(next)}
               onReplacePane={(_paneId: string, next: string) => setHref(next)}
-              onOpenInNewPane={vi.fn()}
+              onActivateWorkspaceTarget={vi.fn(() => ({ kind: "Unchanged" as const, paneId: "pane-1" }))}
               onGoBackPane={vi.fn()}
               onGoForwardPane={vi.fn()}
             >
@@ -2064,7 +2064,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       "Could not load Creator — A–Z. Showing Custom order.",
     );
     expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
-    expect(titleSignal?.aborted).toBe(true);
+    expect((titleSignal as AbortSignal | null)?.aborted).toBe(true);
 
     const malformedTitle = mediaEntryWire(
       "entry-t1",
@@ -2174,7 +2174,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         ([input]) => fetchInputPathWithSearch(input) === canonicalPath,
       ),
     ).toHaveLength(1);
-    expect(titleSignal?.aborted).toBe(true);
+    expect((titleSignal as AbortSignal | null)?.aborted).toBe(true);
 
     resolveTitle(
       Response.json({

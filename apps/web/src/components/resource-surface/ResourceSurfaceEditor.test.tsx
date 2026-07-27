@@ -14,7 +14,12 @@ function response(data: unknown) {
 function item(ref: string, scheme: string, id: string, label = "") {
   return {
     ref, scheme, id, label, summary: "", route: null,
-    activation: { resource_ref: ref, kind: "none", href: null, unresolved_reason: null },
+    activation: {
+      resource_ref: ref,
+      kind: scheme === "media" ? "route" : "none",
+      href: scheme === "media" ? `/media/${id}` : null,
+      unresolved_reason: null,
+    },
     missing: false,
     capabilities: {
       user_relation: { user_link_source: false, user_link_target: "none", note_reference_target: false },
@@ -28,6 +33,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("ResourceSurfaceEditor", () => {
   it("renders only direct ordered rows below the page masthead", async () => {
+    const activateTarget = vi.fn();
     const fetchMock = vi.fn(async () => response({
       source: { item: item(PAGE_REF, "page", PAGE_REF.slice(5)), content: { kind: "page_title", title: "Today" } },
       ordered_items: [
@@ -38,14 +44,26 @@ describe("ResourceSurfaceEditor", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(
       <div data-testid="mobile-host" style={{ width: 390, maxWidth: 390 }}>
-        <ResourceSurfaceEditor sourceRef={PAGE_REF} />
+        <ResourceSurfaceEditor
+          sourceRef={PAGE_REF}
+          activateTarget={activateTarget}
+        />
       </div>,
     );
 
     expect(await screen.findByRole("textbox", { name: "Page title" })).toHaveValue("Today");
     expect(screen.getByRole("region", { name: "Ordered resources" })).toBeVisible();
     expect(await screen.findByRole("textbox", { name: "Edit note 1" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Open Reading" })).toBeVisible();
+    const reading = screen.getByRole("button", { name: "Open Reading" });
+    expect(reading).toBeVisible();
+    await userEvent.click(reading);
+    expect(activateTarget).toHaveBeenCalledWith({
+      target: {
+        href: "/media/33333333-3333-4333-8333-333333333333",
+        labelHint: "Reading",
+      },
+      disposition: { kind: "Follow" },
+    });
     expect(screen.queryByText("Companion")).not.toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const host = screen.getByTestId("mobile-host");
@@ -114,7 +132,9 @@ describe("ResourceSurfaceEditor", () => {
       });
     });
     vi.stubGlobal("fetch", fetchMock);
-    render(<ResourceSurfaceEditor sourceRef={PAGE_REF} />);
+    render(
+      <ResourceSurfaceEditor sourceRef={PAGE_REF} activateTarget={vi.fn()} />,
+    );
 
     const first = await screen.findByRole("textbox", { name: "Edit note 1" });
     await userEvent.click(first);
@@ -124,6 +144,53 @@ describe("ResourceSurfaceEditor", () => {
       expect(
         screen.getByRole("textbox", { name: "Edit note 2" }),
       ).toHaveFocus(),
+    );
+  });
+
+  it("resolves a note object reference through the required target capability", async () => {
+    const activateTarget = vi.fn();
+    const pageId = "33333333-3333-4333-8333-333333333333";
+    const pageRef = `page:${pageId}`;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/locators/resolve")) {
+        return response({
+          resolutions: [{
+            locator: { kind: "resource_ref", ref: pageRef },
+            resource_item: { ...item(pageRef, "page", pageId, "Project"), route: `/pages/${pageId}` },
+            canonical_href: `/pages/${pageId}`,
+          }],
+        });
+      }
+      return response({
+        source: {
+          item: item(NOTE_REF, "note_block", NOTE_REF.slice(11)),
+          content: {
+            kind: "note_body",
+            body_pm_json: {
+              type: "paragraph",
+              content: [{
+                type: "object_ref",
+                attrs: { objectType: "page", objectId: pageId, label: "Project" },
+              }],
+            },
+            body_text: "Project",
+          },
+        },
+        ordered_items: [],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <ResourceSurfaceEditor sourceRef={NOTE_REF} activateTarget={activateTarget} />,
+    );
+
+    await userEvent.click(await screen.findByRole("link", { name: "Open Project" }));
+
+    await vi.waitFor(() =>
+      expect(activateTarget).toHaveBeenCalledWith({
+        target: { href: `/pages/${pageId}` },
+        disposition: { kind: "Follow" },
+      }),
     );
   });
 });

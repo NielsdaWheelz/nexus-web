@@ -2,11 +2,6 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
-import {
-  NEXUS_OPEN_PANE_EVENT,
-  consumePendingPaneOpenQueue,
-  parseOpenInAppPaneMessage,
-} from "@/lib/panes/openInAppPane";
 import GrandAtlasPaneBody from "./GrandAtlasPaneBody";
 import {
   ALTITUDE_SPAN,
@@ -17,6 +12,10 @@ import {
   type CelestialPosition,
 } from "./projection";
 import { assumePaneVisitId } from "@/lib/workspace/schema";
+import type {
+  WorkspaceTargetActivationRequest,
+  WorkspaceTargetActivationResult,
+} from "@/lib/workspace/targetActivation";
 
 const TEST_VISIT_ID = assumePaneVisitId(
   "00000000-0000-4000-8000-000000000001",
@@ -75,31 +74,16 @@ function screenPoint(celestial: CelestialPosition, cameraAzimuth = 0) {
   return projectToScreen(celestial, cameraAzimuth, W / 2, H / 2, RADIUS);
 }
 
-/**
- * requestOpenInAppPane resolves to one of three sinks depending on the frame: a
- * postMessage to window.parent (vitest runs the test in an iframe, so this is
- * the live path), a window CustomEvent (pane graph ready, same frame), or the
- * pending-open queue (graph not ready). Capture all three.
- */
-function capturePaneOpenHrefs(): () => string[] {
-  const hrefs: string[] = [];
-  window.addEventListener(NEXUS_OPEN_PANE_EVENT, (event) => {
-    const detail = (event as CustomEvent<{ href: string }>).detail;
-    if (detail?.href) hrefs.push(detail.href);
-  });
-  const originalPostMessage = window.parent.postMessage.bind(window.parent);
-  vi.spyOn(window.parent, "postMessage").mockImplementation(
-    (...args: Parameters<typeof window.parent.postMessage>) => {
-      const parsed = parseOpenInAppPaneMessage(args[0]);
-      if (parsed?.href) hrefs.push(parsed.href);
-      // Forward everything so vitest's own parent-frame comms keep working.
-      return (originalPostMessage as (...a: unknown[]) => void)(...args);
-    },
-  );
-  return () => [...hrefs, ...consumePendingPaneOpenQueue().map((item) => item.href)];
+function unchangedActivation(): WorkspaceTargetActivationResult {
+  return { kind: "Unchanged", paneId: "pane-1" };
 }
 
-function atlasPane(over: { href?: string; onNavigatePane?: () => void } = {}) {
+function atlasPane(over: {
+  href?: string;
+  onActivateWorkspaceTarget?: (
+    request: WorkspaceTargetActivationRequest,
+  ) => WorkspaceTargetActivationResult;
+} = {}) {
   const href = over.href ?? "/atlas";
   return (
     <PaneRuntimeProvider
@@ -114,9 +98,11 @@ function atlasPane(over: { href?: string; onNavigatePane?: () => void } = {}) {
       onGoBackPane={vi.fn()}
       onGoForwardPane={vi.fn()}
       pathParams={{}}
-      onNavigatePane={over.onNavigatePane ?? vi.fn()}
+      onNavigatePane={vi.fn()}
       onReplacePane={vi.fn()}
-      onOpenInNewPane={vi.fn()}
+      onActivateWorkspaceTarget={
+        over.onActivateWorkspaceTarget ?? vi.fn(unchangedActivation)
+      }
     >
       <GrandAtlasPaneBody />
     </PaneRuntimeProvider>
@@ -140,7 +126,6 @@ describe("GrandAtlasPaneBody", () => {
     vi.spyOn(HTMLCanvasElement.prototype, "setPointerCapture").mockImplementation(
       () => undefined,
     );
-    consumePendingPaneOpenQueue();
   });
 
   afterEach(() => {
@@ -237,9 +222,8 @@ describe("GrandAtlasPaneBody", () => {
         throw new Error(`Unexpected fetch: ${path}`);
       }),
     );
-    const onNavigatePane = vi.fn();
-    const paneOpens = capturePaneOpenHrefs();
-    render(atlasPane({ onNavigatePane }));
+    const onActivateWorkspaceTarget = vi.fn(unchangedActivation);
+    render(atlasPane({ onActivateWorkspaceTarget }));
     await screen.findByText("1 star");
 
     const canvas = screen.getByRole("img", {
@@ -251,10 +235,13 @@ describe("GrandAtlasPaneBody", () => {
     fireEvent.pointerUp(canvas, { clientX: point.x, clientY: point.y, pointerId: 1 });
 
     await waitFor(() => {
-      expect(paneOpens()).toContain("/media/m-42");
+      expect(onActivateWorkspaceTarget).toHaveBeenCalledWith({
+        originPaneId: "pane-1",
+        target: { href: "/media/m-42" },
+        disposition: { kind: "Follow" },
+        modality: "Programmatic",
+      });
     });
-    // The atlas pane itself never navigates on a corpus click.
-    expect(onNavigatePane).not.toHaveBeenCalled();
   });
 
   it("does not open a pane when the pointer dragged past the tap threshold", async () => {
@@ -267,8 +254,8 @@ describe("GrandAtlasPaneBody", () => {
         throw new Error(`Unexpected fetch: ${path}`);
       }),
     );
-    const paneOpens = capturePaneOpenHrefs();
-    render(atlasPane());
+    const onActivateWorkspaceTarget = vi.fn(unchangedActivation);
+    render(atlasPane({ onActivateWorkspaceTarget }));
     await screen.findByText("1 star");
     const canvas = screen.getByRole("img", {
       name: /celestial chart of the whole library/i,
@@ -278,7 +265,7 @@ describe("GrandAtlasPaneBody", () => {
     fireEvent.pointerDown(canvas, { clientX: point.x, clientY: point.y, pointerId: 1 });
     fireEvent.pointerUp(canvas, { clientX: point.x + 40, clientY: point.y, pointerId: 1 });
 
-    expect(paneOpens()).toHaveLength(0);
+    expect(onActivateWorkspaceTarget).not.toHaveBeenCalled();
   });
 
   it("keeps the canvas touch-owned and rotates camera azimuth on horizontal drag", async () => {
@@ -454,8 +441,8 @@ describe("GrandAtlasPaneBody", () => {
       throw new Error(`Unexpected fetch: ${path}`);
     });
     vi.stubGlobal("fetch", fetchMock);
-    const onNavigatePane = vi.fn();
-    render(atlasPane({ href: "/atlas?layer=readings", onNavigatePane }));
+    const onActivateWorkspaceTarget = vi.fn(unchangedActivation);
+    render(atlasPane({ href: "/atlas?layer=readings", onActivateWorkspaceTarget }));
     await screen.findByText("0 stars");
 
     const canvas = screen.getByRole("img", {
@@ -482,14 +469,12 @@ describe("GrandAtlasPaneBody", () => {
     fireEvent.pointerUp(canvas, { clientX: point.x, clientY: point.y, pointerId: 2 });
 
     await waitFor(() => {
-      expect(
-        onNavigatePane.mock.calls.some(
-          ([paneId, href]) =>
-            paneId === "pane-1" &&
-            typeof href === "string" &&
-            href.includes("/oracle/folio-9"),
-        ),
-      ).toBe(true);
+      expect(onActivateWorkspaceTarget).toHaveBeenCalledWith({
+        originPaneId: "pane-1",
+        target: { href: "/oracle/folio-9" },
+        disposition: { kind: "Follow" },
+        modality: "Programmatic",
+      });
     });
   });
 });

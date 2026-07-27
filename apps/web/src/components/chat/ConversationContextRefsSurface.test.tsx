@@ -4,12 +4,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ComponentProps, ReactNode } from "react";
 import { useConversationContextRefs } from "@/lib/conversations/useConversationContextRefs";
 import {
-  consumePendingPaneOpenQueue,
-  NEXUS_OPEN_PANE_EVENT,
-  parseOpenInAppPaneMessage,
-  setPaneGraphReady,
-  type OpenInAppPaneDetail,
-} from "@/lib/panes/openInAppPane";
+  consumePendingWorkspaceTargetActivationRequests,
+  parseWorkspaceTargetActivationMessage,
+  setWorkspaceTargetActivationReceiverReady,
+  WORKSPACE_TARGET_ACTIVATION_EVENT,
+  type WorkspaceTargetActivationIngressRequest,
+} from "@/lib/workspace/workspaceTargetActivationIngress";
 import type { ContextRefOut } from "@/lib/resourceGraph/contextRefs";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
@@ -94,24 +94,24 @@ function contextRefWire(item = contextRef()) {
 }
 
 function openedPanes() {
-  const details: OpenInAppPaneDetail[] = [];
+  const details: WorkspaceTargetActivationIngressRequest[] = [];
   const listener = (event: Event) => {
     if (event instanceof CustomEvent) {
-      details.push(event.detail as OpenInAppPaneDetail);
+      details.push(event.detail as WorkspaceTargetActivationIngressRequest);
     }
   };
-  window.addEventListener(NEXUS_OPEN_PANE_EVENT, listener);
+  window.addEventListener(WORKSPACE_TARGET_ACTIVATION_EVENT, listener);
   const postMessage = vi
     .spyOn(window.parent, "postMessage")
     .mockImplementation((message) => {
-      const detail = parseOpenInAppPaneMessage(message);
+      const detail = parseWorkspaceTargetActivationMessage(message);
       if (detail !== null) details.push(detail);
     });
   return {
     details,
     stop: () => {
-      details.push(...consumePendingPaneOpenQueue());
-      window.removeEventListener(NEXUS_OPEN_PANE_EVENT, listener);
+      details.push(...consumePendingWorkspaceTargetActivationRequests());
+      window.removeEventListener(WORKSPACE_TARGET_ACTIVATION_EVENT, listener);
       postMessage.mockRestore();
     },
   };
@@ -129,8 +129,8 @@ function ContextRefsOwner() {
 }
 
 afterEach(() => {
-  setPaneGraphReady(false);
-  consumePendingPaneOpenQueue();
+  setWorkspaceTargetActivationReceiverReady(false);
+  consumePendingWorkspaceTargetActivationRequests();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -237,7 +237,7 @@ describe("ConversationContextRefsSurface", () => {
       jsonResponse({ data: { id: CONVERSATION_ID } }),
     );
     vi.stubGlobal("fetch", fetchMock);
-    setPaneGraphReady(true);
+    setWorkspaceTargetActivationReceiverReady(true);
     const panes = openedPanes();
 
     try {
@@ -266,9 +266,9 @@ describe("ConversationContextRefsSurface", () => {
       await waitFor(() =>
         expect(panes.details).toEqual([
           {
-            href: `/conversations/${CONVERSATION_ID}`,
-            labelHint: "Chat",
-            secondaryActivation: undefined,
+            target: { href: `/conversations/${CONVERSATION_ID}`, labelHint: "Chat" },
+            disposition: { kind: "Adopt" },
+            modality: "Programmatic",
           },
         ]),
       );

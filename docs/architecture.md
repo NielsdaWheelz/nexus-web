@@ -1351,13 +1351,15 @@ open over Resume and never become panes.
   Lectern → Libraries → Podcasts → Chats → Notes → Atlas → Oracle for both rail
   and mobile sheet. Section routes derive semantic navigation ownership from
   `header.destinationId`; resource routes (notably `/media/{id}`) declare one
-  `sectionDestinationId`, with no duplicate field or prefix map. Plain clicks
-  dispatch through workspace `openPane` to
-  restore/reuse an exact pane or open a new one; modified/non-primary clicks remain
-  native anchor gestures. The activation result explicitly assigns focus to the
-  source trigger for an already-active destination or to the destination for a
-  real pane handoff, so closing mobile/account surfaces do not strand or steal
-  focus. Lectern is the brand and authenticated-home target.
+  `sectionDestinationId`, with no duplicate field or prefix map. All cross-pane
+  product targets dispatch through `activateWorkspaceTarget`: plain click and
+  Enter follow an exact open pane or navigate the origin pane, Shift+click
+  always forks a fresh pane, and named source-preserving workflows adopt an
+  exact pane or create one. Meta/Ctrl/Alt/non-primary gestures remain native.
+  The activation result assigns focus to the source only for unchanged/rejected
+  activation and to the destination for a real handoff, so closing
+  mobile/account surfaces do not strand or steal focus. Lectern is the brand
+  and authenticated-home target.
   Pinning is intentionally absent; personalized retrieval lives in the Lectern
   Reading Slate and Launcher ranking. See
   [`modules/app-navigation.md`](modules/app-navigation.md).

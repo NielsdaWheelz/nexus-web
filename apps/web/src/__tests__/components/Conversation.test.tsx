@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ComponentProps } from "react";
 import { userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Conversation from "@/components/chat/Conversation";
@@ -456,6 +457,9 @@ function renderPane(
       href: string,
       options?: { labelHint?: string },
     ) => void;
+    onActivateWorkspaceTarget?: ComponentProps<
+      typeof PaneRuntimeProvider
+    >["onActivateWorkspaceTarget"];
   } = {},
 ) {
   const href =
@@ -483,7 +487,10 @@ function renderPane(
       }
       onNavigatePane={vi.fn()}
       onReplacePane={onReplacePane}
-      onOpenInNewPane={vi.fn()}
+      onActivateWorkspaceTarget={
+        options.onActivateWorkspaceTarget ??
+        vi.fn(() => ({ kind: "ActivatedExisting" as const, paneId: "pane" }))
+      }
       onSetPaneLabel={vi.fn()}
     >
       <PanePrimaryChromeProvider publish={publishPrimaryChrome}>
@@ -1092,9 +1099,13 @@ describe("Conversation", () => {
     expect(scrollport.scrollTop).toBe(60);
   });
 
-  it("creates a conversation on first send and navigates to it without a run param", async () => {
+  it("finalizes the new-route current visit on first send without opening another pane", async () => {
     const user = userEvent.setup();
     const onReplacePane = vi.fn();
+    const onActivateWorkspaceTarget = vi.fn(() => ({
+      kind: "CreatedPane" as const,
+      paneId: "unexpected-pane",
+    }));
     const fetchMock = vi.fn(
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = pathOf(input);
@@ -1162,6 +1173,7 @@ describe("Conversation", () => {
       href: "/conversations/new",
       pathParams: {},
       onReplacePane,
+      onActivateWorkspaceTarget,
     });
 
     expect(
@@ -1205,6 +1217,7 @@ describe("Conversation", () => {
         { modality: "Programmatic" },
       );
     });
+    expect(onActivateWorkspaceTarget).not.toHaveBeenCalled();
   });
 
   it("sends an existing non-empty conversation with the complete assistant leaf as parent", async () => {
@@ -1553,7 +1566,7 @@ describe("Conversation", () => {
                 }}
                 onNavigatePane={vi.fn()}
                 onReplacePane={vi.fn()}
-                onOpenInNewPane={vi.fn()}
+                onActivateWorkspaceTarget={vi.fn(() => ({ kind: "ActivatedExisting" as const, paneId: "pane" }))}
                 onSetPaneLabel={vi.fn()}
                 secondaryPane={secondaryPane}
                 onRequestSecondarySurface={onRequestSecondarySurface}

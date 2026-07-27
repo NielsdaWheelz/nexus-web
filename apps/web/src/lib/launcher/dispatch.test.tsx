@@ -1,15 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  consumePendingPaneOpenQueue,
-  NEXUS_OPEN_PANE_EVENT,
-  parseOpenInAppPaneMessage,
-  setPaneGraphReady,
-  type OpenInAppPaneDetail,
-} from "@/lib/panes/openInAppPane";
+  consumePendingWorkspaceTargetActivationRequests,
+  parseWorkspaceTargetActivationMessage,
+  setWorkspaceTargetActivationReceiverReady,
+  type WorkspaceTargetActivationIngressRequest,
+} from "@/lib/workspace/workspaceTargetActivationIngress";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import {
   dispatchTarget,
+  PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION,
   targetNavigates,
   type LauncherDispatchCtx,
 } from "./dispatch";
@@ -33,23 +33,17 @@ function dispatchCtx(): LauncherDispatchCtx {
   };
 }
 
-function openedPanes(): {
-  readonly details: OpenInAppPaneDetail[];
+function openedTargets(): {
+  readonly details: WorkspaceTargetActivationIngressRequest[];
   readonly stop: () => void;
 } {
-  const details: OpenInAppPaneDetail[] = [];
-  const listener = (event: Event) => {
-    if (event instanceof CustomEvent) {
-      details.push(event.detail as OpenInAppPaneDetail);
-    }
-  };
-  window.addEventListener(NEXUS_OPEN_PANE_EVENT, listener);
+  const details: WorkspaceTargetActivationIngressRequest[] = [];
   const originalPostMessage = window.parent.postMessage.bind(window.parent);
   const postMessage = vi
     .spyOn(window.parent, "postMessage")
     .mockImplementation(
       (...args: Parameters<typeof window.parent.postMessage>) => {
-        const parsed = parseOpenInAppPaneMessage(args[0]);
+        const parsed = parseWorkspaceTargetActivationMessage(args[0]);
         if (parsed !== null) details.push(parsed);
         return originalPostMessage(...args);
       },
@@ -57,19 +51,18 @@ function openedPanes(): {
   return {
     details,
     stop: () => {
-      details.push(...consumePendingPaneOpenQueue());
-      window.removeEventListener(NEXUS_OPEN_PANE_EVENT, listener);
+      details.push(...consumePendingWorkspaceTargetActivationRequests());
       postMessage.mockRestore();
     },
   };
 }
 
 beforeEach(() => {
-  setPaneGraphReady(true);
+  setWorkspaceTargetActivationReceiverReady(true);
 });
 
 afterEach(() => {
-  setPaneGraphReady(false);
+  setWorkspaceTargetActivationReceiverReady(false);
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -81,12 +74,13 @@ describe("Launcher resource action dispatch", () => {
       id: "11111111-1111-4111-8111-111111111111",
       href: "/media/11111111-1111-4111-8111-111111111111",
     });
-    const panes = openedPanes();
+    const panes = openedTargets();
 
     try {
       await dispatchTarget(
         { kind: "ResourceOpen", subject, labelHint: "A resource" },
         dispatchCtx(),
+        PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION,
       );
     } finally {
       panes.stop();
@@ -94,9 +88,12 @@ describe("Launcher resource action dispatch", () => {
 
     expect(panes.details).toEqual([
       {
-        href: "/media/11111111-1111-4111-8111-111111111111",
-        labelHint: "A resource",
-        secondaryActivation: undefined,
+        target: {
+          href: "/media/11111111-1111-4111-8111-111111111111",
+          labelHint: "A resource",
+        },
+        disposition: { kind: "Follow" },
+        modality: "Programmatic",
       },
     ]);
     expect(
@@ -117,7 +114,11 @@ describe("Launcher resource action dispatch", () => {
     const ctx = dispatchCtx();
     const options = ctx.shareOptions();
 
-    await dispatchTarget({ kind: "ResourceShare", subject }, ctx);
+    await dispatchTarget(
+      { kind: "ResourceShare", subject },
+      ctx,
+      PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION,
+    );
 
     expect(ctx.openShare).toHaveBeenCalledWith(
       { kind: "Resource", ref: subject.ref },
@@ -139,10 +140,14 @@ describe("Launcher resource action dispatch", () => {
       }),
     );
     vi.stubGlobal("fetch", fetchMock);
-    const panes = openedPanes();
+    const panes = openedTargets();
 
     try {
-      await dispatchTarget({ kind: "ResourceChat", ref }, dispatchCtx());
+      await dispatchTarget(
+        { kind: "ResourceChat", ref },
+        dispatchCtx(),
+        PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION,
+      );
     } finally {
       panes.stop();
     }
@@ -156,9 +161,9 @@ describe("Launcher resource action dispatch", () => {
     );
     expect(panes.details).toEqual([
       {
-        href: "/conversations/conversation-1",
-        labelHint: "Chat",
-        secondaryActivation: undefined,
+        target: { href: "/conversations/conversation-1", labelHint: "Chat" },
+        disposition: { kind: "Adopt" },
+        modality: "Programmatic",
       },
     ]);
     expect(targetNavigates({ kind: "ResourceChat", ref })).toBe(true);
@@ -176,10 +181,18 @@ describe("Launcher resource action dispatch", () => {
         }),
     );
     vi.stubGlobal("fetch", fetchMock);
-    const panes = openedPanes();
+    const panes = openedTargets();
 
-    const first = dispatchTarget({ kind: "ResourceChat", ref }, dispatchCtx());
-    const second = dispatchTarget({ kind: "ResourceChat", ref }, dispatchCtx());
+    const first = dispatchTarget(
+      { kind: "ResourceChat", ref },
+      dispatchCtx(),
+      PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION,
+    );
+    const second = dispatchTarget(
+      { kind: "ResourceChat", ref },
+      dispatchCtx(),
+      PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION,
+    );
     resolveFetch?.(
       new Response(JSON.stringify({ data: { id: "conversation-1" } }), {
         status: 200,
@@ -193,7 +206,7 @@ describe("Launcher resource action dispatch", () => {
     }
 
     expect(fetchMock).toHaveBeenCalledOnce();
-    expect(panes.details.map((detail) => detail.href)).toEqual([
+    expect(panes.details.map((detail) => detail.target.href)).toEqual([
       "/conversations/conversation-1",
     ]);
   });
@@ -201,12 +214,13 @@ describe("Launcher resource action dispatch", () => {
   it("preserves generic Ask as a draft conversation", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    const panes = openedPanes();
+    const panes = openedTargets();
 
     try {
       await dispatchTarget(
         { kind: "Ask", text: "A general question" },
         dispatchCtx(),
+        PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION,
       );
     } finally {
       panes.stop();
@@ -215,9 +229,73 @@ describe("Launcher resource action dispatch", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(panes.details).toEqual([
       {
-        href: "/conversations/new?draft=A%20general%20question",
-        labelHint: "New chat",
-        secondaryActivation: undefined,
+        target: {
+          href: "/conversations/new?draft=A%20general%20question",
+          labelHint: "New chat",
+        },
+        disposition: { kind: "Follow" },
+        modality: "Programmatic",
+      },
+    ]);
+  });
+
+  it("threads Shift-pointer Fork to launcher targets", async () => {
+    const panes = openedTargets();
+
+    try {
+      await dispatchTarget(
+        {
+          kind: "href",
+          href: "/libraries",
+          externalShell: false,
+          labelHint: "Libraries",
+        },
+        dispatchCtx(),
+        { disposition: { kind: "Fork" }, modality: "Pointer" },
+      );
+    } finally {
+      panes.stop();
+    }
+
+    expect(panes.details).toEqual([
+      {
+        target: { href: "/libraries", labelHint: "Libraries" },
+        disposition: { kind: "Fork" },
+        modality: "Pointer",
+      },
+    ]);
+  });
+
+  it("keeps ordinary resource Chat as Adopt but preserves explicit Fork", async () => {
+    const ref = assumeCanonicalResourceRef(
+      "media:11111111-1111-4111-8111-111111111111",
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ data: { id: "conversation-1" } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+    const panes = openedTargets();
+
+    try {
+      await dispatchTarget(
+        { kind: "ResourceChat", ref },
+        dispatchCtx(),
+        { disposition: { kind: "Fork" }, modality: "Pointer" },
+      );
+    } finally {
+      panes.stop();
+    }
+
+    expect(panes.details).toEqual([
+      {
+        target: { href: "/conversations/conversation-1", labelHint: "Chat" },
+        disposition: { kind: "Fork" },
+        modality: "Pointer",
       },
     ]);
   });

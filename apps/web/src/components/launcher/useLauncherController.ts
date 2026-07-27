@@ -26,7 +26,9 @@ import { buildItemActions } from "@/lib/launcher/actions";
 import {
   dispatchTarget,
   isAndroidShellRestrictedHref,
+  PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION,
   targetNavigates,
+  type LauncherTargetActivation,
   type LauncherDispatchCtx,
 } from "@/lib/launcher/dispatch";
 import {
@@ -143,7 +145,7 @@ export interface LauncherController {
   setLane(lane: LauncherLane): void;
   clearLane(): void;
   setActiveId(id: string): void;
-  select(item: LauncherItem): void;
+  select(item: LauncherItem, activation: LauncherTargetActivation): void;
   openTarget(target: LauncherActionTarget): void;
   openAddTarget(target: LauncherActionTarget): void;
   drill(item: LauncherItem): void;
@@ -499,7 +501,7 @@ export function useLauncherController(): LauncherController {
   );
 
   const select = useCallback(
-    (item: LauncherItem) => {
+    (item: LauncherItem, activation: LauncherTargetActivation) => {
       const target = item.target;
       if (target.kind === "open-add") {
         startAddSession(target.seed);
@@ -527,17 +529,21 @@ export function useLauncherController(): LauncherController {
       suppressReturnFocusRef.current = targetNavigates(target);
       setOpen(false);
       logSelection(item);
-      void dispatchTarget(target, dispatchCtx).catch(fail);
+      void dispatchTarget(target, dispatchCtx, activation).catch(fail);
     },
     [dispatchCtx, logSelection, fail, input.text, startAddSession],
   );
 
-  // CreatePanel opens its post-action pane through the one dispatch owner (AC-9)
-  // instead of calling requestOpenInAppPane directly. AddPanel uses openAddTarget,
+  // CreatePanel opens its post-action pane through the one dispatch owner (AC-9).
+  // AddPanel uses openAddTarget,
   // whose guarded Navigate intent closes Add after the destination accepts focus.
   const openTarget = useCallback(
     (target: LauncherActionTarget) => {
-      void dispatchTarget(target, dispatchCtx).catch(fail);
+      void dispatchTarget(
+        target,
+        dispatchCtx,
+        PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION,
+      ).catch(fail);
     },
     [dispatchCtx, fail],
   );
@@ -546,13 +552,21 @@ export function useLauncherController(): LauncherController {
     (action: LauncherAction) => {
       // pane-close keeps the Launcher open and returns to the root list; everything else closes.
       if (action.target.kind === "pane-close") {
-        void dispatchTarget(action.target, dispatchCtx).catch(fail);
+        void dispatchTarget(
+          action.target,
+          dispatchCtx,
+          PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION,
+        ).catch(fail);
         setPage({ kind: "root" });
         return;
       }
       suppressReturnFocusRef.current = targetNavigates(action.target);
       setOpen(false);
-      void dispatchTarget(action.target, dispatchCtx).catch(fail);
+      void dispatchTarget(
+        action.target,
+        dispatchCtx,
+        PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION,
+      ).catch(fail);
     },
     [dispatchCtx, fail],
   );
@@ -560,7 +574,11 @@ export function useLauncherController(): LauncherController {
   const trailing = useCallback(
     (item: LauncherItem) => {
       if (item.trailingAction)
-        void dispatchTarget(item.trailingAction.target, dispatchCtx).catch(
+        void dispatchTarget(
+          item.trailingAction.target,
+          dispatchCtx,
+          PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION,
+        ).catch(
           fail,
         );
     },
@@ -578,7 +596,11 @@ export function useLauncherController(): LauncherController {
     if (!input.text) return;
     suppressReturnFocusRef.current = true; // ask opens a new chat pane
     setOpen(false);
-    void dispatchTarget({ kind: "Ask", text: input.text }, dispatchCtx).catch(
+    void dispatchTarget(
+      { kind: "Ask", text: input.text },
+      dispatchCtx,
+      PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION,
+    ).catch(
       fail,
     );
   }, [input.text, dispatchCtx, fail]);
@@ -630,7 +652,11 @@ export function useLauncherController(): LauncherController {
           suppressReturnFocusRef.current = targetNavigates(intent.target);
           discardAddSession();
           setOpen(false);
-          void dispatchTarget(intent.target, dispatchCtx).catch(fail);
+          void dispatchTarget(
+            intent.target,
+            dispatchCtx,
+            PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION,
+          ).catch(fail);
           return;
         case "Replace": {
           const { detail } = intent;

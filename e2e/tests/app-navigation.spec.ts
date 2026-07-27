@@ -91,7 +91,7 @@ test.describe("app navigation", () => {
     await expect(navigation.getByText("Tools", { exact: true })).toHaveCount(0);
   });
 
-  test("desktop navigation restores exact panes, preserves native gestures, and separates Home from Expand", async ({
+  test("desktop navigation follows, restores, forks, and preserves native gestures", async ({
     page,
   }, testInfo) => {
     await gotoWithWorkspaceSession(
@@ -128,6 +128,12 @@ test.describe("app navigation", () => {
     await expect(page).toHaveURL(/\/libraries$/);
     await expect(paneWraps).toHaveCount(2);
 
+    await navigation
+      .getByRole("link", { name: "Libraries" })
+      .click({ modifiers: ["Shift"] });
+    await expect(paneWraps).toHaveCount(3);
+    await expect(workspacePaneButton(page, /^Libraries\b/)).toHaveCount(2);
+
     const [nativePage] = await Promise.all([
       page.context().waitForEvent("page"),
       navigation
@@ -137,7 +143,7 @@ test.describe("app navigation", () => {
     await nativePage.waitForLoadState("domcontentloaded");
     await expect(nativePage).toHaveURL(/\/notes$/);
     await expect(page).toHaveURL(/\/libraries$/);
-    await expect(paneWraps).toHaveCount(2);
+    await expect(paneWraps).toHaveCount(3);
     await nativePage.close();
 
     await page.getByRole("button", { name: "Collapse navigation" }).click();

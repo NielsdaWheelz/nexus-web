@@ -1,10 +1,18 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type MouseEvent } from "react";
 import { ChevronRight, X } from "lucide-react";
 import { LAUNCHER_OPTION_ID_PREFIX, type LauncherItem } from "@/lib/launcher/model";
+import type { LauncherTargetActivation } from "@/lib/launcher/dispatch";
+import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import Pill from "@/components/ui/Pill";
 import styles from "./launcher.module.css";
+
+export function launcherRowActivation(
+  event: MouseEvent<HTMLDivElement>,
+): LauncherTargetActivation {
+  return workspaceTargetClickIntent(event);
+}
 
 export default function LauncherRow({
   item,
@@ -16,7 +24,7 @@ export default function LauncherRow({
 }: {
   item: LauncherItem;
   selected: boolean;
-  onSelect(item: LauncherItem): void;
+  onSelect(item: LauncherItem, activation: LauncherTargetActivation): void;
   onDrill(item: LauncherItem): void;
   onTrailing(item: LauncherItem): void;
   onHover(id: string): void;
@@ -39,7 +47,7 @@ export default function LauncherRow({
       className={styles.option}
       data-active={selected || undefined}
       onMouseMove={() => onHover(item.id)}
-      onClick={() => onSelect(item)}
+      onClick={(event) => onSelect(item, launcherRowActivation(event))}
     >
       <Icon size={16} aria-hidden="true" />
       <span className={styles.optionText}>

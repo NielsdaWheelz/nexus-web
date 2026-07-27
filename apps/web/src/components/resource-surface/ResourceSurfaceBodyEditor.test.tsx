@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { describe, expect, it, vi } from "vitest";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
@@ -33,7 +33,9 @@ describe("ResourceSurfaceBodyEditor", () => {
       screen.getByRole("textbox", { name: "Edit note 1" }),
     ).toHaveTextContent("First note");
     await userEvent.click(screen.getByRole("button", { name: "Open Paper" }));
-    expect(onActivate).toHaveBeenCalledWith(items[1]!.target.item, false);
+    expect(onActivate).toHaveBeenCalledWith(items[1]!.target.item, {
+      kind: "Follow",
+    });
 
     await userEvent.click(screen.getByRole("button", { name: "Add a note" }));
     expect(onInsertNote).toHaveBeenCalledWith({
@@ -74,6 +76,23 @@ describe("ResourceSurfaceBodyEditor", () => {
     expect(onInsertNote).toHaveBeenCalledWith({ kind: "start" });
   });
 
+  it("forks only a Shift pointer activation", () => {
+    const onActivate = vi.fn();
+    const items = [resourceOccurrence("occ-media", "Paper")];
+    renderEditor(items, { onActivate });
+
+    const button = screen.getByRole("button", { name: "Open Paper" });
+    fireEvent.click(button, { detail: 1, shiftKey: true });
+    fireEvent.click(button, { detail: 0, shiftKey: true });
+
+    expect(onActivate).toHaveBeenNthCalledWith(1, items[0]!.target.item, {
+      kind: "Fork",
+    });
+    expect(onActivate).toHaveBeenNthCalledWith(2, items[0]!.target.item, {
+      kind: "Follow",
+    });
+  });
+
   it("keeps a newly inserted note focused when its occurrence becomes canonical", async () => {
     const optimistic = noteOccurrence(
       "local:22222222-2222-4222-8222-222222222222",
@@ -105,6 +124,7 @@ describe("ResourceSurfaceBodyEditor", () => {
           onBodyChange={vi.fn()}
           onBodyBlur={vi.fn()}
           onActivate={vi.fn()}
+          onOpenObject={vi.fn()}
         />,
       ),
     );
@@ -169,6 +189,7 @@ function renderEditor(
         onBodyChange={vi.fn()}
         onBodyBlur={vi.fn()}
         onActivate={vi.fn()}
+        onOpenObject={vi.fn()}
         {...overrides}
       />,
     ),

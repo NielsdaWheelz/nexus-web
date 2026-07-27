@@ -26,6 +26,7 @@ import {
 } from "react";
 import { createElement, type ReactNode } from "react";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
 import {
   normalizePaneSecondaryPublication,
@@ -156,12 +157,17 @@ export function useResourceInspector({
       if (target) {
         dispatchReaderSourceActivation(target);
       }
+      if (event?.defaultPrevented) return;
       const runtime = commands.paneRuntime;
-      if (event?.shiftKey) {
+      if (!runtime) return;
+      const disposition = event
+        ? workspaceTargetClickIntent(event).disposition
+        : { kind: "Follow" as const };
+      if (disposition.kind === "Fork") {
         activateResource(activation, {
           labelHint: target?.label,
-          openInNewPane: runtime?.openInNewPane,
-          newPane: true,
+          activateTarget: runtime.activateTarget,
+          disposition,
         });
         return;
       }
@@ -182,8 +188,8 @@ export function useResourceInspector({
       }
       activateResource(activation, {
         labelHint: target?.label,
-        navigate: runtime ? (href) => runtime.router.push(href) : undefined,
-        openInNewPane: runtime?.openInNewPane,
+        activateTarget: runtime.activateTarget,
+        disposition,
       });
     },
     [],

@@ -214,7 +214,7 @@ function Harness({
   ) => boolean;
   activateSourceTarget?: (
     target: ReaderEvidenceSourceTarget,
-    options: { newPane: boolean },
+    disposition: import("@/lib/workspace/targetActivation").WorkspaceTargetDisposition,
   ) => void;
   onDismissSynapse?: (edgeId: string) => Promise<void>;
   onRemoveUserEdge?: (edge: ReaderEvidenceUserEdge) => Promise<void>;
@@ -301,7 +301,7 @@ describe("EvidencePaneSurface", () => {
     expect(screen.getByText("Footnote one")).toBeInTheDocument();
   });
 
-  it("gives a valid source target universal core while preserving Shift activation", async () => {
+  it("gives a valid source target universal core with pointer-only Shift forking", async () => {
     const source = evidence();
     const sourceReference = source.passage_groups[0]!.items[2]!;
     if (sourceReference.kind !== "SourceReference") {
@@ -332,11 +332,20 @@ describe("EvidencePaneSurface", () => {
     );
     fireEvent.click(
       within(sourceArticle).getByRole("button", { name: "Source work" }),
-      { shiftKey: true },
+      { detail: 1, shiftKey: true },
     );
     expect(activateSourceTarget).toHaveBeenCalledWith(
       expect.objectContaining({ stable_key: "source-target" }),
-      { newPane: true },
+      { kind: "Fork" },
+    );
+    activateSourceTarget.mockClear();
+    fireEvent.click(
+      within(sourceArticle).getByRole("button", { name: "Source work" }),
+      { detail: 0, shiftKey: true },
+    );
+    expect(activateSourceTarget).toHaveBeenCalledWith(
+      expect.objectContaining({ stable_key: "source-target" }),
+      { kind: "Follow" },
     );
 
     await userEvent.click(
