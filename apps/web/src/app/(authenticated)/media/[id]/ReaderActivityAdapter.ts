@@ -1,11 +1,9 @@
 "use client";
 
-import { useEffect, useRef, type RefObject } from "react";
+import { useCallback, useEffect, useRef, type RefObject } from "react";
 import { activityRecorder } from "@/lib/consumption/activityRecorder";
 import { parseMediaRef } from "@/lib/consumption/activityContract";
 import { documentWordBoundaryOrdinal } from "@/lib/consumption/canonicalWordPosition";
-import type { CanonicalCursorResult } from "@/lib/highlights/canonicalCursor";
-import { findFirstVisibleCanonicalOffset, getPaneScrollContainer } from "./paneTextAnchor";
 
 interface ReaderActivityText {
   canonicalText: string;
@@ -31,15 +29,36 @@ interface UseReaderActivityAdapterInput {
   viewport: ReaderActivityViewport;
   readerRootRef: RefObject<HTMLDivElement | null>;
   pdfContentRef: RefObject<HTMLDivElement | null>;
-  contentRef: RefObject<HTMLDivElement | null>;
-  cursorRef: RefObject<CanonicalCursorResult | null>;
   activeContent: ReaderActivityText | null;
   pdfControls: ReaderActivityPdfControls | null;
+}
+
+interface ReaderActivityTextMeasurement {
+  anchorOffset: number | null;
   totalProgression: number | null;
-  isUserScrollKey: (event: KeyboardEvent) => boolean;
+}
+
+interface ReaderActivityAdapter {
+  noteGenuineInput: () => void;
+  publishTextMeasurement: (
+    measurement: ReaderActivityTextMeasurement,
+  ) => void;
 }
 
 const READING_IDLE_AFTER_MS = 300_000;
+
+function isPdfScrollKey(event: KeyboardEvent): boolean {
+  return (
+    event.key === "ArrowDown" ||
+    event.key === "ArrowUp" ||
+    event.key === "PageDown" ||
+    event.key === "PageUp" ||
+    event.key === "Home" ||
+    event.key === "End" ||
+    event.key === " " ||
+    event.key === "Spacebar"
+  );
+}
 
 /**
  * Publish one reader pane's eligibility to the tab-local activity recorder.
@@ -54,14 +73,28 @@ export function useReaderActivityAdapter({
   viewport,
   readerRootRef,
   pdfContentRef,
-  contentRef,
-  cursorRef,
   activeContent,
   pdfControls,
-  totalProgression,
-  isUserScrollKey,
-}: UseReaderActivityAdapterInput): void {
+}: UseReaderActivityAdapterInput): ReaderActivityAdapter {
   const lastGenuineInputMonoRef = useRef<number | undefined>(undefined);
+  const textMeasurementRef = useRef<ReaderActivityTextMeasurement>({
+    anchorOffset: null,
+    totalProgression: null,
+  });
+  const updateRef = useRef<() => void>(() => undefined);
+
+  const noteGenuineInput = useCallback(() => {
+    lastGenuineInputMonoRef.current = performance.now();
+    updateRef.current();
+  }, []);
+
+  const publishTextMeasurement = useCallback(
+    (measurement: ReaderActivityTextMeasurement) => {
+      textMeasurementRef.current = measurement;
+      updateRef.current();
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!viewport.hydrated || !canRead || (!isPdf && !activeContent)) {
@@ -74,19 +107,15 @@ export function useReaderActivityAdapter({
     const update = () => {
       const now = performance.now();
       const lastGenuineInputMono = lastGenuineInputMonoRef.current;
-      const container = isPdf ? null : getPaneScrollContainer(contentRef.current);
-      const cursor = cursorRef.current;
-      const anchorOffset =
-        !isPdf && container && cursor
-          ? findFirstVisibleCanonicalOffset(container, cursor)
-          : null;
+      const textMeasurement = textMeasurementRef.current;
       const wordPosition =
-        anchorOffset === null || activeContent?.documentWordStart === undefined
+        textMeasurement.anchorOffset === null ||
+        activeContent?.documentWordStart === undefined
           ? undefined
           : documentWordBoundaryOrdinal({
               canonicalText: activeContent.canonicalText,
               documentWordStart: activeContent.documentWordStart,
-              offset: anchorOffset,
+              offset: textMeasurement.anchorOffset,
             });
       recorder.observe(observerKey, {
         mediaRef: parseMediaRef(`media:${mediaId}`),
@@ -108,7 +137,7 @@ export function useReaderActivityAdapter({
               ? pdfControls && pdfControls.numPages > 0
                 ? pdfControls.pageNumber / pdfControls.numPages
                 : undefined
-              : (totalProgression ?? undefined),
+              : (textMeasurement.totalProgression ?? undefined),
           // PDFs have no canonical text ordinal. `undefined` becomes Absent at
           // the recorder's strict wire boundary.
           wordPosition,
@@ -123,46 +152,49 @@ export function useReaderActivityAdapter({
     });
     const noteInput = (event: Event) => {
       if (!event.isTrusted) return;
-      if (event instanceof KeyboardEvent && !isUserScrollKey(event)) return;
+      if (event instanceof KeyboardEvent && !isPdfScrollKey(event)) return;
       lastGenuineInputMonoRef.current = performance.now();
       update();
     };
-    const refreshMeasurement = () => update();
+    updateRef.current = update;
     root.addEventListener("pointerdown", noteInput, { passive: true });
-    root.addEventListener("touchstart", noteInput, { passive: true });
-    root.addEventListener("wheel", noteInput, { passive: true });
-    root.addEventListener("keydown", noteInput);
-    root.addEventListener("scroll", refreshMeasurement, { passive: true });
+    if (isPdf) {
+      root.addEventListener("touchstart", noteInput, { passive: true });
+      root.addEventListener("wheel", noteInput, { passive: true });
+      root.addEventListener("keydown", noteInput);
+      root.addEventListener("scroll", update, { passive: true });
+    }
     document.addEventListener("visibilitychange", update);
     window.addEventListener("focus", update);
     window.addEventListener("blur", update);
     update();
     return () => {
       root.removeEventListener("pointerdown", noteInput);
-      root.removeEventListener("touchstart", noteInput);
-      root.removeEventListener("wheel", noteInput);
-      root.removeEventListener("keydown", noteInput);
-      root.removeEventListener("scroll", refreshMeasurement);
+      if (isPdf) {
+        root.removeEventListener("touchstart", noteInput);
+        root.removeEventListener("wheel", noteInput);
+        root.removeEventListener("keydown", noteInput);
+        root.removeEventListener("scroll", update);
+      }
       document.removeEventListener("visibilitychange", update);
       window.removeEventListener("focus", update);
       window.removeEventListener("blur", update);
+      updateRef.current = () => undefined;
       unregister();
     };
   }, [
     activeContent,
     canRead,
-    contentRef,
-    cursorRef,
     isPdf,
-    isUserScrollKey,
     mediaId,
     observerKey,
     paneActive,
     pdfContentRef,
     pdfControls,
     readerRootRef,
-    totalProgression,
     viewport.hydrated,
     viewport.kind,
   ]);
+
+  return { noteGenuineInput, publishTextMeasurement };
 }

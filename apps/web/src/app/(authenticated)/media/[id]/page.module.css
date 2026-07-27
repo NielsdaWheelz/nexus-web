@@ -258,6 +258,11 @@
   scrollbar-width: thin;
 }
 
+.documentViewport:focus-visible {
+  outline: 2px solid var(--reader-accent, var(--accent));
+  outline-offset: -2px;
+}
+
 @media (max-width: 640px) {
   .documentEmbedCard {
     grid-template-columns: minmax(0, 1fr);
@@ -283,6 +288,21 @@
 .readerContentInner {
   max-width: var(--reader-column-width-ch, 65ch);
   margin: 0 auto;
+}
+
+.readerEndcap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-8);
+  padding: var(--space-5) 0 calc(var(--space-8) + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--reader-border-subtle, var(--edge-subtle));
+  color: var(--reader-text-muted, var(--ink-faint));
+  font-size: var(--text-sm);
+}
+
+.readerEndcapLabel {
+  margin: 0;
 }
 
 .apparatusPreview {

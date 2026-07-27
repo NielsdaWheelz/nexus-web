@@ -43,6 +43,7 @@ import type {
 } from "@/lib/reader/documentMap";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
 import MediaPaneBody from "./MediaPaneBody";
+import styles from "./page.module.css";
 
 const TEST_VISIT_ID = assumePaneVisitId(
   "00000000-0000-4000-8000-000000000001",
@@ -93,6 +94,7 @@ const testState = vi.hoisted(() => ({
   onMetadataRetryEnqueued: null as (() => void) | null,
   includeToc: false,
   includeSecondEpubSection: false,
+  secondEpubCanonicalText: "",
   isMobileViewport: false,
   fragmentHtml: "<p>Readable text.</p>",
   fragmentCanonicalText: "",
@@ -106,6 +108,8 @@ const testState = vi.hoisted(() => ({
     | { state: "Clean" }
     | { state: "Pending" }
     | { state: "Forbidden"; failure: unknown },
+  lecternItems: [] as Record<string, unknown>[],
+  readerStateConflictOnce: false,
   readerContextFns: {
     setTheme: vi.fn(),
     setFontFamily: vi.fn(),
@@ -264,7 +268,15 @@ vi.mock("@/components/HtmlRenderer", () => ({
         </div>
       );
     }
-    return <div data-testid="html-renderer" className={className} />;
+    return (
+      <div data-testid="html-renderer" className={className}>
+        <p>
+          {htmlSanitized.includes("Cross-section evidence")
+            ? "Cross-section evidence."
+            : "Readable text."}
+        </p>
+      </div>
+    );
   },
 }));
 
@@ -291,6 +303,102 @@ function apiCallsForPath(path: string): unknown[][] {
   return testState.apiFetch.mock.calls.filter(
     ([input]) => pathOf(input) === path,
   );
+}
+
+function readerStatePutCalls(): unknown[][] {
+  return apiCallsForPath(
+    "/api/media/00000000-0000-4000-8000-000000000001/reader-state",
+  ).filter(([, init]) => (init as RequestInit | undefined)?.method === "PUT");
+}
+
+function readerStatePutBody(call: unknown[] | undefined) {
+  const init = call?.[1] as RequestInit | undefined;
+  if (!init?.body) {
+    throw new Error("Expected reader-state PUT body");
+  }
+  return JSON.parse(String(init.body)) as {
+    locator: {
+      kind: string;
+      target: Record<string, unknown>;
+      locations: {
+        text_offset: number;
+        progression: number;
+        total_progression: number;
+      };
+    };
+  };
+}
+
+function setTextViewportGeometry({
+  atEnd,
+  scrollHeight,
+}: {
+  atEnd: boolean;
+  scrollHeight: number;
+}) {
+  const viewport = screen.getByRole("region", {
+    name: "Document reading area",
+  });
+  const endLabel =
+    screen.queryByText("End of article") ?? screen.queryByText("End of book");
+  /* eslint-disable testing-library/no-node-access -- terminal geometry belongs to the marker wrapping the semantic label; non-final EPUB markers intentionally have no label */
+  const endMarker =
+    endLabel?.parentElement ??
+    viewport.querySelector<HTMLElement>(`.${styles.readerEndcap}`);
+  /* eslint-enable testing-library/no-node-access */
+  if (!endMarker) {
+    throw new Error("Expected in-flow reader end marker");
+  }
+  const paragraph = screen.getByText(
+    /^(Readable text\.|Cross-section evidence\.)$/,
+  );
+  Object.defineProperties(viewport, {
+    clientWidth: { configurable: true, value: 400 },
+    clientHeight: { configurable: true, value: 100 },
+    scrollHeight: { configurable: true, value: scrollHeight },
+    scrollTop: {
+      configurable: true,
+      value: atEnd ? Math.max(0, scrollHeight - 100) : 0,
+      writable: true,
+    },
+  });
+  viewport.getBoundingClientRect = () =>
+    ({
+      left: 0,
+      top: 0,
+      right: 400,
+      bottom: 100,
+      width: 400,
+      height: 100,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    }) as DOMRect;
+  endMarker.getBoundingClientRect = () =>
+    ({
+      left: 0,
+      top: atEnd ? 80 : 180,
+      right: 400,
+      bottom: atEnd ? 100 : 200,
+      width: 400,
+      height: 20,
+      x: 0,
+      y: atEnd ? 80 : 180,
+      toJSON: () => ({}),
+    }) as DOMRect;
+  paragraph.getBoundingClientRect = () =>
+    ({
+      left: 0,
+      top: 0,
+      right: 400,
+      bottom: 20,
+      width: 400,
+      height: 20,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    }) as DOMRect;
+  return viewport;
 }
 
 interface DocumentMapPassageGroupFixture {
@@ -620,6 +728,33 @@ function fragmentResponse() {
   ];
 }
 
+function readableLecternItem({
+  itemId,
+  mediaId,
+  title,
+  state,
+}: {
+  itemId: string;
+  mediaId: string;
+  title: string;
+  state: "Unread" | "InProgress" | "Finished";
+}) {
+  return {
+    itemId,
+    mediaId,
+    kind: "web_article",
+    title,
+    subtitle: { kind: "Absent" },
+    href: `/media/${mediaId}`,
+    consumption: {
+      state,
+      progress: state === "Finished" ? { kind: "Present", value: 1 } : { kind: "Absent" },
+      progressResettable: state !== "Unread",
+    },
+    activation: { kind: "Readable" },
+  };
+}
+
 function navigationTocNodes() {
   if (!testState.includeToc) {
     return [];
@@ -922,6 +1057,7 @@ describe("MediaPaneBody pane sizing", () => {
     testState.apiFetch.mockReset();
     testState.includeToc = false;
     testState.includeSecondEpubSection = false;
+    testState.secondEpubCanonicalText = "";
     testState.isMobileViewport = false;
     testState.fragmentHtml = "<p>Readable text.</p>";
     testState.fragmentCanonicalText = "";
@@ -952,6 +1088,8 @@ describe("MediaPaneBody pane sizing", () => {
     testState.onMetadataRetryEnqueued = null;
     testState.readerFocusMode = "off";
     testState.readerPersistence = { state: "Clean" };
+    testState.lecternItems = [];
+    testState.readerStateConflictOnce = false;
     paneChromeMocks.usePanePrimaryChrome.mockReset();
     paneChromeMocks.usePaneMobileChromeController.mockClear();
     paneChromeMocks.startReaderScroll.mockReset();
@@ -974,7 +1112,7 @@ describe("MediaPaneBody pane sizing", () => {
         );
         if (path === "/api/lectern") {
           // Lets the LecternProvider (consumed by the pane) settle to Ready.
-          return jsonResponse({ items: [] });
+          return jsonResponse({ items: testState.lecternItems });
         }
         if (path === "/api/consumption/commands") {
           const command = JSON.parse(String(init?.body)) as {
@@ -1047,9 +1185,37 @@ describe("MediaPaneBody pane sizing", () => {
         if (path === "/api/media/00000000-0000-4000-8000-000000000001/reader-state") {
           if (init?.method === "PUT") {
             const body = init.body ? JSON.parse(String(init.body)) : {};
+            if (testState.readerStateConflictOnce) {
+              testState.readerStateConflictOnce = false;
+              throw {
+                status: 409,
+                code: "E_READER_STATE_CONFLICT",
+                details: {
+                  current: {
+                    state: "Positioned",
+                    revision: 4,
+                    locator: {
+                      kind: "web",
+                      target: { fragment_id: "fragment-1" },
+                      locations: {
+                        text_offset: 1,
+                        progression: 0.1,
+                        total_progression: 0.1,
+                        position: 1,
+                      },
+                      text: {
+                        quote: "R",
+                        quote_prefix: null,
+                        quote_suffix: "eadable text.",
+                      },
+                    },
+                  },
+                },
+              };
+            }
             return jsonResponse({
               state: "Positioned",
-              revision: 1,
+              revision: Number(body.base_revision ?? 0) + 1,
               locator: body.locator,
             });
           }
@@ -1082,7 +1248,7 @@ describe("MediaPaneBody pane sizing", () => {
                 href_path: "chapter-1.xhtml",
                 href_fragment: null,
                 anchor_id: null,
-                char_count: 0,
+                char_count: testState.fragmentCanonicalText.length,
               },
               ...(testState.includeSecondEpubSection
                 ? [
@@ -1099,7 +1265,7 @@ describe("MediaPaneBody pane sizing", () => {
                       href_path: "chapter-2.xhtml",
                       href_fragment: null,
                       anchor_id: null,
-                      char_count: 23,
+                      char_count: testState.secondEpubCanonicalText.length,
                     },
                   ]
                 : []),
@@ -1127,7 +1293,7 @@ describe("MediaPaneBody pane sizing", () => {
             next_section_id: null,
             html_sanitized: testState.fragmentHtml,
             canonical_text: testState.fragmentCanonicalText,
-            char_count: 0,
+            char_count: testState.fragmentCanonicalText.length,
             word_count: 2,
             created_at: "2026-01-01T00:00:00Z",
           });
@@ -1146,8 +1312,8 @@ describe("MediaPaneBody pane sizing", () => {
             prev_section_id: "section-1",
             next_section_id: null,
             html_sanitized: "<p>Cross-section evidence.</p>",
-            canonical_text: "",
-            char_count: 0,
+            canonical_text: testState.secondEpubCanonicalText,
+            char_count: testState.secondEpubCanonicalText.length,
             word_count: 2,
             created_at: "2026-01-01T00:00:00Z",
           });
@@ -1198,6 +1364,222 @@ describe("MediaPaneBody pane sizing", () => {
       });
     },
   );
+
+  it("finishes a final web unit only after fresh forward intent and reports it once", async () => {
+    testState.mediaKind = "web_article";
+    testState.fragmentCanonicalText = "Readable text.";
+    testState.renderHtmlInMock = true;
+    testState.lecternItems = [
+      readableLecternItem({
+        itemId: "11111111-1111-4111-8111-111111111111",
+        mediaId: "00000000-0000-4000-8000-000000000001",
+        title: "Reader fixture",
+        state: "Finished",
+      }),
+      readableLecternItem({
+        itemId: "22222222-2222-4222-8222-222222222222",
+        mediaId: "00000000-0000-4000-8000-000000000003",
+        title: "Next fixture",
+        state: "Unread",
+      }),
+    ];
+    renderMediaPane();
+
+    const endLabel = await screen.findByText("End of article");
+    const viewport = setTextViewportGeometry({
+      atEnd: true,
+      scrollHeight: 100,
+    });
+    expect(viewport).toContainElement(endLabel);
+    expect(viewport).toContainElement(
+      screen.getByRole("button", {
+        name: "Next on the lectern: Next fixture",
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        apiCallsForPath(
+          "/api/media/00000000-0000-4000-8000-000000000001/reader-state",
+        ),
+      ).not.toHaveLength(0),
+    );
+
+    const user = userEvent.setup();
+    await user.click(viewport);
+    await user.wheel(viewport, { delta: { y: -1 } });
+    await new Promise((resolve) => window.setTimeout(resolve, 600));
+    expect(readerStatePutCalls()).toHaveLength(0);
+
+    setTextViewportGeometry({ atEnd: false, scrollHeight: 200 });
+    await user.wheel(viewport, { delta: { y: 1 } });
+    await new Promise((resolve) => window.requestAnimationFrame(resolve));
+    setTextViewportGeometry({ atEnd: true, scrollHeight: 100 });
+    fireEvent.scroll(viewport);
+    await new Promise((resolve) => window.setTimeout(resolve, 600));
+    expect(readerStatePutCalls()).toHaveLength(0);
+
+    await user.wheel(viewport, { delta: { y: 1 } });
+    await waitFor(() => expect(readerStatePutCalls()).toHaveLength(1));
+    expect(readerStatePutBody(readerStatePutCalls()[0]).locator).toMatchObject({
+      kind: "web",
+      target: { fragment_id: "fragment-1" },
+      locations: {
+        text_offset: 14,
+        progression: 1,
+        total_progression: 1,
+      },
+    });
+    await waitFor(() =>
+      expect(apiCallsForPath("/api/lectern").length).toBeGreaterThanOrEqual(2),
+    );
+
+    await user.wheel(viewport, { delta: { y: 1 } });
+    await new Promise((resolve) => window.setTimeout(resolve, 600));
+    expect(readerStatePutCalls()).toHaveLength(1);
+  });
+
+  it("preserves an exact terminal locator through lifecycle capture and conflict Stay", async () => {
+    testState.mediaKind = "web_article";
+    testState.fragmentCanonicalText = "Readable text.";
+    testState.renderHtmlInMock = true;
+    testState.readerStateConflictOnce = true;
+    renderMediaPane();
+
+    await screen.findByText("End of article");
+    const viewport = setTextViewportGeometry({
+      atEnd: true,
+      scrollHeight: 100,
+    });
+    await waitFor(() =>
+      expect(
+        apiCallsForPath(
+          "/api/media/00000000-0000-4000-8000-000000000001/reader-state",
+        ),
+      ).not.toHaveLength(0),
+    );
+
+    const user = userEvent.setup();
+    await user.click(viewport);
+    await user.wheel(viewport, { delta: { y: 1 } });
+    await new Promise((resolve) => window.requestAnimationFrame(resolve));
+    window.dispatchEvent(new Event("pagehide"));
+
+    await waitFor(() => expect(readerStatePutCalls()).toHaveLength(1));
+    expect(
+      readerStatePutBody(readerStatePutCalls()[0]).locator.locations,
+    ).toMatchObject({
+      text_offset: 14,
+      progression: 1,
+      total_progression: 1,
+    });
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Stay at this position",
+      }),
+    );
+    await waitFor(() => expect(readerStatePutCalls()).toHaveLength(2));
+    expect(
+      readerStatePutBody(readerStatePutCalls()[1]).locator.locations,
+    ).toMatchObject({
+      text_offset: 14,
+      progression: 1,
+      total_progression: 1,
+    });
+  });
+
+  it("captures the current nonterminal position after leaving a reported end", async () => {
+    testState.mediaKind = "web_article";
+    testState.fragmentCanonicalText = "Readable text.";
+    testState.renderHtmlInMock = true;
+    renderMediaPane();
+
+    await screen.findByText("End of article");
+    const viewport = setTextViewportGeometry({
+      atEnd: true,
+      scrollHeight: 200,
+    });
+    await waitFor(() =>
+      expect(
+        apiCallsForPath(
+          "/api/media/00000000-0000-4000-8000-000000000001/reader-state",
+        ),
+      ).not.toHaveLength(0),
+    );
+
+    const user = userEvent.setup();
+    await user.click(viewport);
+    await user.wheel(viewport, { delta: { y: 1 } });
+    await waitFor(() => expect(readerStatePutCalls()).toHaveLength(1));
+    expect(
+      readerStatePutBody(readerStatePutCalls()[0]).locator.locations,
+    ).toMatchObject({
+      progression: 1,
+      total_progression: 1,
+    });
+
+    setTextViewportGeometry({ atEnd: false, scrollHeight: 200 });
+    fireEvent.scroll(viewport);
+    window.dispatchEvent(new Event("pagehide"));
+    await waitFor(() => expect(readerStatePutCalls()).toHaveLength(2));
+    expect(
+      readerStatePutBody(readerStatePutCalls()[1]).locator.locations,
+    ).toMatchObject({
+      text_offset: 0,
+      progression: 0,
+      total_progression: 0,
+    });
+  });
+
+  it("emits an exact terminal EPUB locator only from the final navigation section", async () => {
+    testState.mediaKind = "epub";
+    testState.fragmentCanonicalText = "Readable text.";
+    testState.secondEpubCanonicalText = "Cross-section evidence.";
+    testState.includeSecondEpubSection = true;
+    testState.renderHtmlInMock = true;
+    renderMediaPane();
+
+    await screen.findByText("Readable text.");
+    expect(screen.queryByText("End of book")).not.toBeInTheDocument();
+    const firstViewport = setTextViewportGeometry({
+      atEnd: true,
+      scrollHeight: 100,
+    });
+    const user = userEvent.setup();
+    await user.click(firstViewport);
+    await user.wheel(firstViewport, { delta: { y: 1 } });
+    await new Promise((resolve) => window.setTimeout(resolve, 600));
+    expect(
+      readerStatePutCalls().some(
+        (call) =>
+          readerStatePutBody(call).locator.locations.progression === 1 &&
+          readerStatePutBody(call).locator.locations.total_progression === 1,
+      ),
+    ).toBe(false);
+
+    await renderLatestToolbar();
+    await user.click(screen.getByRole("button", { name: "Next section" }));
+    await screen.findByText("End of book");
+    const finalViewport = setTextViewportGeometry({
+      atEnd: true,
+      scrollHeight: 100,
+    });
+    await user.click(finalViewport);
+    await user.wheel(finalViewport, { delta: { y: 1 } });
+
+    await waitFor(() =>
+      expect(
+        readerStatePutCalls().some((call) => {
+          const locator = readerStatePutBody(call).locator;
+          return (
+            locator.kind === "epub" &&
+            locator.target.section_id === "section-2" &&
+            locator.locations.progression === 1 &&
+            locator.locations.total_progression === 1
+          );
+        }),
+      ).toBe(true),
+    );
+  });
 
   it("publishes intrinsic PDF primary layout and fixed chrome", async () => {
     testState.mediaKind = "pdf";
@@ -1489,20 +1871,23 @@ describe("MediaPaneBody pane sizing", () => {
 
       const viewport = await screen.findByTestId("document-viewport");
       await waitFor(() => {
-        expect(paneChromeMocks.startReaderScroll).toHaveBeenCalledOnce();
+        expect(paneChromeMocks.startReaderScroll).toHaveBeenCalled();
       });
+      await new Promise((resolve) => window.requestAnimationFrame(resolve));
 
       Object.defineProperties(viewport, {
-        scrollTop: { value: 144, configurable: true },
+        scrollTop: { value: 144, configurable: true, writable: true },
         scrollHeight: { value: 1_000, configurable: true },
         clientHeight: { value: 400, configurable: true },
       });
       fireEvent.scroll(viewport);
 
-      expect(paneChromeMocks.updateReaderScroll).toHaveBeenCalledWith({
-        scrollTop: 144,
-        scrollHeight: 1_000,
-        clientHeight: 400,
+      await waitFor(() => {
+        expect(paneChromeMocks.updateReaderScroll).toHaveBeenCalledWith({
+          scrollTop: 144,
+          scrollHeight: 1_000,
+          clientHeight: 400,
+        });
       });
     },
   );

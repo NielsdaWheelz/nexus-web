@@ -198,6 +198,7 @@ import {
   getPaneScrollContainer,
   isElementInPaneView,
   isCanonicalTextAnchorVisible,
+  isTextViewportAtEnd,
   scrollElementIntoPaneView,
   scrollToCanonicalTextAnchor,
 } from "./paneTextAnchor";
@@ -236,7 +237,10 @@ import { useDocumentActions } from "@/lib/media/useDocumentActions";
 import type { MediaActionCapabilities } from "@/lib/media/ingestionClient";
 import { useFocusModeTracking } from "@/lib/reader/useFocusModeTracking";
 import ReaderContentsNav from "@/components/reader/ReaderContentsNav";
-import TextDocumentReader from "./TextDocumentReader";
+import TextDocumentReader, {
+  type ReaderViewportSnapshot,
+  type TrustedScrollDirection,
+} from "./TextDocumentReader";
 import TranscriptPlaybackPanel from "./TranscriptPlaybackPanel";
 import { useReaderActivityAdapter } from "./ReaderActivityAdapter";
 import TranscriptContentPanel from "./TranscriptContentPanel";
@@ -601,19 +605,6 @@ function temporaryTextEvidenceHighlightFromQuote({
   };
 }
 
-function isUserScrollKey(event: KeyboardEvent): boolean {
-  return (
-    event.key === "ArrowDown" ||
-    event.key === "ArrowUp" ||
-    event.key === "PageDown" ||
-    event.key === "PageUp" ||
-    event.key === "Home" ||
-    event.key === "End" ||
-    event.key === " " ||
-    event.key === "Spacebar"
-  );
-}
-
 function evidenceItemSnippet(item: ReaderEvidenceItem): string | null {
   if (item.kind === "Highlight") return item.quote || item.label;
   if (item.kind === "Synapse" && item.rationale) return item.rationale;
@@ -698,14 +689,8 @@ export default function MediaPaneBody() {
   // One-shot: URL-driven (history/cold-query) navigation seeds the capture
   // baseline instead of persisting; only genuine input after it may promote.
   const suppressNextTextCaptureRef = useRef(false);
-  const [textRestoreSettled, setTextRestoreSettled] = useState(false);
+  const textRestoreSettledRef = useRef(false);
   const [readerLayoutReady, setReaderLayoutReady] = useState(false);
-  // Reader position remains useful activity evidence; canonical Consumption state
-  // alone decides whether the next-item prompt is available.
-  const [currentTotalProgression, setCurrentTotalProgression] = useState<
-    number | null
-  >(null);
-
   const lectern = useLectern();
   const offerCompletionUndo = useCompletionUndo();
   const lecternResource = lectern.resource;
@@ -735,10 +720,6 @@ export default function MediaPaneBody() {
     },
     [],
   );
-
-  useEffect(() => {
-    setCurrentTotalProgression(null);
-  }, [id]);
 
   // Canonical projected Finished state, not a browser threshold, enables the
   // explicit next-item prompt.
@@ -1077,6 +1058,10 @@ export default function MediaPaneBody() {
   const applyCursorCommandRef = useRef<
     (command: ApplyCursorCommand) => Promise<ApplyCursorResult>
   >(() => Promise.resolve("failed"));
+  const handleTerminalWriteAcknowledged = useCallback(
+    () => lectern.revalidate(),
+    [lectern],
+  );
   const readerProgress = useReaderProgress({
     capability: readerCapability,
     isPaneActive: paneRuntime.isActive,
@@ -1088,6 +1073,7 @@ export default function MediaPaneBody() {
       (command: ApplyCursorCommand) => applyCursorCommandRef.current(command),
       [],
     ),
+    onTerminalWriteAcknowledged: handleTerminalWriteAcknowledged,
   });
   // A canonical Empty cursor is a tombstone, not a locator. Its revision keys
   // an actual cold mount so every reader format reuses its existing beginning
@@ -1432,7 +1418,28 @@ export default function MediaPaneBody() {
 
   const contentRef = useRef<HTMLDivElement>(null);
   const pdfContentRef = useRef<HTMLDivElement>(null);
+  const textViewportRef = useRef<HTMLDivElement>(null);
+  const textEndRef = useRef<HTMLElement>(null);
   const cursorRef = useRef<CanonicalCursorResult | null>(null);
+  const textProgressGenerationRef = useRef(0);
+  const hasTrustedForwardTextScrollIntentRef = useRef(false);
+  const terminalReportedGenerationRef = useRef<number | null>(null);
+  const pendingTextViewportPublicationRef = useRef<{
+    snapshot: ReaderViewportSnapshot;
+    ready: boolean;
+    trustedIntent: boolean;
+  } | null>(null);
+  const textViewportDimensionsRef = useRef<{
+    width: number;
+    height: number;
+    scrollHeight: number;
+  } | null>(null);
+  const textViewportCaptureFrameRef = useRef(0);
+  const resetTextProgressGeneration = useCallback(() => {
+    textProgressGenerationRef.current += 1;
+    hasTrustedForwardTextScrollIntentRef.current = false;
+    terminalReportedGenerationRef.current = null;
+  }, []);
   // A Document Map marker activation that had to navigate to a non-active
   // fragment/section before its highlight could be pulsed.
   const pendingDocumentMapPulseRef = useRef<{
@@ -1448,14 +1455,15 @@ export default function MediaPaneBody() {
 
   const beginRestoreSession = useCallback(
     (phase: Exclude<ReaderRestorePhase, "settled" | "cancelled">) => {
+      resetTextProgressGeneration();
       restoreSessionIdRef.current += 1;
       scrollRestoreAppliedRef.current = false;
       lastSavedTextAnchorOffsetRef.current = null;
-      setTextRestoreSettled(false);
+      textRestoreSettledRef.current = false;
       setRestorePhase(phase);
       return restoreSessionIdRef.current;
     },
-    [],
+    [resetTextProgressGeneration],
   );
 
   const updateRestorePhase = useCallback(
@@ -1474,7 +1482,7 @@ export default function MediaPaneBody() {
       return false;
     }
     setRestorePhase("settled");
-    setTextRestoreSettled(true);
+    textRestoreSettledRef.current = true;
     setEpubRestoreRequest(null);
     return true;
   }, []);
@@ -1482,7 +1490,7 @@ export default function MediaPaneBody() {
   const cancelRestoreSession = useCallback(() => {
     restoreSessionIdRef.current += 1;
     setRestorePhase("cancelled");
-    setTextRestoreSettled(true);
+    textRestoreSettledRef.current = true;
     setEpubRestoreRequest(null);
   }, []);
 
@@ -1972,6 +1980,29 @@ export default function MediaPaneBody() {
     isEpub,
     isPdf,
   ]);
+  const isFinalTextUnit = useMemo(() => {
+    if (!activeContent || canonicalCpLength(activeContent.canonicalText) === 0) {
+      return false;
+    }
+    if (isEpub) {
+      return (
+        activeEpubSection !== null &&
+        epubSections !== null &&
+        epubSections.at(-1)?.section_id === activeEpubSection.section_id
+      );
+    }
+    return (
+      media?.kind === "web_article" &&
+      fragments.at(-1)?.id === activeContent.fragmentId
+    );
+  }, [
+    activeContent,
+    activeEpubSection,
+    epubSections,
+    fragments,
+    isEpub,
+    media?.kind,
+  ]);
 
   useEffect(() => {
     const retainedSelection = selectionSnapshotRef.current;
@@ -2423,10 +2454,21 @@ export default function MediaPaneBody() {
     suppressNextTextCaptureRef.current = false;
     setFocusedApparatusItemId(null);
     setHoveredApparatusItemId(null);
-    setTextRestoreSettled(false);
+    textRestoreSettledRef.current = false;
     setPdfHighlightNavigation(null);
     setCanonicalResetRevision(null);
   }, [id]);
+
+  useEffect(() => {
+    resetTextProgressGeneration();
+  }, [
+    activeRequestedReaderLoc,
+    freshFragmentTargetId,
+    requestedApparatusStableKey,
+    requestedEvidenceId,
+    requestedHighlightId,
+    resetTextProgressGeneration,
+  ]);
 
   useEffect(() => {
     if (media?.kind !== "web_article" || webSections === null) {
@@ -2458,14 +2500,16 @@ export default function MediaPaneBody() {
   }, [activeRequestedReaderLoc, feedback, media?.kind, setTarget, webSections]);
 
   useEffect(() => {
+    resetTextProgressGeneration();
     scrollRestoreAppliedRef.current = false;
     lastSavedTextAnchorOffsetRef.current = null;
-    setTextRestoreSettled(false);
-  }, [activeContent?.fragmentId]);
+    textRestoreSettledRef.current = false;
+  }, [activeContent?.fragmentId, resetTextProgressGeneration]);
 
   const activeFragmentId = activeContent?.fragmentId ?? null;
 
   useEffect(() => {
+    resetTextProgressGeneration();
     if (isPdf || !activeFragmentId) {
       setReaderLayoutReady(false);
       return;
@@ -2489,58 +2533,18 @@ export default function MediaPaneBody() {
         window.cancelAnimationFrame(secondFrame);
       }
     };
-  }, [activeFragmentId, id, isPdf, readerLayoutKey]);
-
-  useEffect(() => {
-    if (
-      isPdf ||
-      restorePhase === "idle" ||
-      restorePhase === "settled" ||
-      restorePhase === "cancelled"
-    ) {
-      return;
-    }
-
-    const container = getPaneScrollContainer(contentRef.current);
-    if (!container) {
-      return;
-    }
-
-    const cancelPendingRestore = () => {
-      noteGenuineReaderInput();
-      cancelRestoreSession();
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (isUserScrollKey(event)) {
-        cancelPendingRestore();
-      }
-    };
-
-    container.addEventListener("wheel", cancelPendingRestore, {
-      passive: true,
-    });
-    container.addEventListener("touchmove", cancelPendingRestore, {
-      passive: true,
-    });
-    window.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      container.removeEventListener("wheel", cancelPendingRestore);
-      container.removeEventListener("touchmove", cancelPendingRestore);
-      window.removeEventListener("keydown", handleKeyDown);
-    };
   }, [
-    activeContent?.fragmentId,
-    cancelRestoreSession,
+    activeFragmentId,
+    id,
     isPdf,
-    noteGenuineReaderInput,
-    restorePhase,
+    readerLayoutKey,
+    resetTextProgressGeneration,
   ]);
 
   // Restore text locators for web, transcript, and EPUB content.
   useEffect(() => {
     if (isPdf || !activeContent) {
-      setTextRestoreSettled(false);
+      textRestoreSettledRef.current = false;
       return;
     }
     if (targetStatus === "pending" || targetStatus === "active") {
@@ -2555,7 +2559,7 @@ export default function MediaPaneBody() {
       return;
     }
     if (isEpub && !epubRestoreRequest) {
-      setTextRestoreSettled(true);
+      textRestoreSettledRef.current = true;
       return;
     }
     if (
@@ -2657,7 +2661,7 @@ export default function MediaPaneBody() {
       return;
     }
 
-    const container = getPaneScrollContainer(contentRef.current);
+    const container = textViewportRef.current;
     if (!container) {
       return;
     }
@@ -2766,14 +2770,22 @@ export default function MediaPaneBody() {
       );
       const activeLength = canonicalCpLength(activeContent.canonicalText);
       const absoluteOffset = activeTextStartOffset + anchorOffset;
+      const isTerminalLocator =
+        isFinalTextUnit && anchorOffset === activeLength;
       const locations = {
         text_offset: anchorOffset,
         progression:
-          activeLength > 0 ? Math.min(1, anchorOffset / activeLength) : 0,
+          isTerminalLocator
+            ? 1
+            : activeLength > 0
+              ? Math.min(1, anchorOffset / activeLength)
+              : 0,
         total_progression:
-          totalTextLength > 0
-            ? Math.min(1, absoluteOffset / totalTextLength)
-            : 0,
+          isTerminalLocator
+            ? 1
+            : totalTextLength > 0
+              ? Math.min(1, absoluteOffset / totalTextLength)
+              : 0,
         position: Math.floor(absoluteOffset / READER_POSITION_BUCKET_CP) + 1,
       };
       const text = {
@@ -2810,6 +2822,7 @@ export default function MediaPaneBody() {
       activeTextSource,
       activeTextStartOffset,
       isEpub,
+      isFinalTextUnit,
       isTranscriptMedia,
       totalTextLength,
     ],
@@ -2817,9 +2830,7 @@ export default function MediaPaneBody() {
 
   // Stable reader viewport focus target after a handoff button resolves.
   const focusReaderViewport = useCallback(() => {
-    const container = isPdf
-      ? pdfContentRef.current
-      : getPaneScrollContainer(contentRef.current);
+    const container = isPdf ? pdfContentRef.current : textViewportRef.current;
     if (!container) {
       return;
     }
@@ -2838,10 +2849,21 @@ export default function MediaPaneBody() {
     if (!activeContent || !activeTextSource || isMismatchDisabled) {
       return null;
     }
-    const container = getPaneScrollContainer(contentRef.current);
+    const container = textViewportRef.current;
     const cursor = cursorRef.current;
     if (!container || !cursor) {
       return null;
+    }
+    if (
+      terminalReportedGenerationRef.current ===
+        textProgressGenerationRef.current &&
+      isFinalTextUnit &&
+      textEndRef.current !== null &&
+      isTextViewportAtEnd(container, textEndRef.current)
+    ) {
+      return buildTextLocatorAtOffset(
+        canonicalCpLength(activeContent.canonicalText),
+      );
     }
     const anchorOffset = findFirstVisibleCanonicalOffset(container, cursor);
     if (anchorOffset === null) {
@@ -2863,6 +2885,7 @@ export default function MediaPaneBody() {
       }
       // A reset wins over any feature-owned location target and coarse URL
       // intent. The server's Empty cursor is the only reset position.
+      resetTextProgressGeneration();
       clearTarget();
       if (paneHref !== null) {
         const hrefWithoutCoarseLocation = stripCoarseReaderQuery(paneHref);
@@ -2875,7 +2898,7 @@ export default function MediaPaneBody() {
       }
       cancelRestoreSession();
       scrollRestoreAppliedRef.current = false;
-      setTextRestoreSettled(false);
+      textRestoreSettledRef.current = false;
       setRemoteApplyLocator(null);
       setActiveTranscriptFragmentId(null);
       setActiveWebSectionId(null);
@@ -3006,13 +3029,13 @@ export default function MediaPaneBody() {
     ) {
       return;
     }
-    const container = getPaneScrollContainer(contentRef.current);
+    const container = textViewportRef.current;
     if (!container) {
       return;
     }
     container.scrollTop = 0;
     scrollRestoreAppliedRef.current = true;
-    setTextRestoreSettled(true);
+    textRestoreSettledRef.current = true;
     pendingCanonicalResetRef.current = null;
     pending.resolve("applied");
   }, [
@@ -3045,87 +3068,6 @@ export default function MediaPaneBody() {
     drainReaderProgressForReset,
     installCanonicalReaderSnapshot,
     lectern,
-  ]);
-
-  // Capture genuine text movement for web, transcript, and EPUB content.
-  useEffect(() => {
-    if (
-      isPdf ||
-      !activeContent ||
-      !activeTextSource ||
-      isMismatchDisabled ||
-      initialReaderResumeStateLoading ||
-      !textRestoreSettled
-    ) {
-      return;
-    }
-    const container = getPaneScrollContainer(contentRef.current);
-    if (!container) {
-      return;
-    }
-
-    let rafId = 0;
-    const handleScroll = () => {
-      if (rafId) {
-        window.cancelAnimationFrame(rafId);
-      }
-      rafId = window.requestAnimationFrame(() => {
-        const cursor = cursorRef.current;
-        if (!cursor) {
-          return;
-        }
-        const anchorOffset = findFirstVisibleCanonicalOffset(container, cursor);
-        if (anchorOffset === null) {
-          return;
-        }
-        if (
-          !isEpub &&
-          !isTranscriptMedia &&
-          anchorOffset === 0 &&
-          container.scrollTop <= 1 &&
-          lastSavedTextAnchorOffsetRef.current === null
-        ) {
-          return;
-        }
-        if (lastSavedTextAnchorOffsetRef.current === anchorOffset) {
-          return;
-        }
-        if (suppressNextTextCaptureRef.current) {
-          suppressNextTextCaptureRef.current = false;
-          lastSavedTextAnchorOffsetRef.current = anchorOffset;
-          return;
-        }
-        lastSavedTextAnchorOffsetRef.current = anchorOffset;
-        const locator = buildTextLocatorAtOffset(anchorOffset);
-        if (!locator) {
-          return;
-        }
-        if (locator.kind !== "pdf") {
-          setCurrentTotalProgression(locator.locations.total_progression);
-        }
-        reportReaderMovement(locator);
-      });
-    };
-
-    container.addEventListener("scroll", handleScroll, { passive: true });
-    handleScroll();
-    return () => {
-      container.removeEventListener("scroll", handleScroll);
-      if (rafId) {
-        window.cancelAnimationFrame(rafId);
-      }
-    };
-  }, [
-    isPdf,
-    activeContent,
-    activeTextSource,
-    buildTextLocatorAtOffset,
-    initialReaderResumeStateLoading,
-    isEpub,
-    reportReaderMovement,
-    isMismatchDisabled,
-    isTranscriptMedia,
-    textRestoreSettled,
   ]);
 
   // Scroll to anchor target after section content loads.
@@ -3195,7 +3137,7 @@ export default function MediaPaneBody() {
 
       const target = findTarget();
       if (target) {
-        const container = getPaneScrollContainer(contentRef.current);
+        const container = textViewportRef.current;
         if (!container) {
           if (attempt < MAX_ATTEMPTS) {
             rafId = window.requestAnimationFrame(() =>
@@ -3226,7 +3168,7 @@ export default function MediaPaneBody() {
       }
 
       if (epubRestoreRequest.allowSectionTopFallback) {
-        const container = getPaneScrollContainer(contentRef.current);
+        const container = textViewportRef.current;
         if (container) {
           container.scrollTop = 0;
         }
@@ -3493,7 +3435,7 @@ export default function MediaPaneBody() {
     }
     webSectionScrollKeyRef.current = key;
 
-    const container = getPaneScrollContainer(contentRef.current);
+    const container = textViewportRef.current;
     if (!container) {
       return;
     }
@@ -4103,6 +4045,7 @@ export default function MediaPaneBody() {
         READER_APPARATUS_FOCUS_CLASS,
       );
       if (shouldScroll) {
+        resetTextProgressGeneration();
         const container = getPaneScrollContainer(root);
         if (container) {
           scrollElementIntoPaneView(container, element, { block: "center" });
@@ -4110,7 +4053,11 @@ export default function MediaPaneBody() {
       }
       pulseReaderApparatusElement(element);
     },
-    [readerApparatusItemIdsForRow, sourceReferenceByStableKey],
+    [
+      readerApparatusItemIdsForRow,
+      resetTextProgressGeneration,
+      sourceReferenceByStableKey,
+    ],
   );
 
   const activateVisibleReaderApparatusItem = useCallback(
@@ -4592,7 +4539,7 @@ export default function MediaPaneBody() {
     [paneRuntime.paneId],
   );
 
-  useReaderActivityAdapter({
+  const readerActivity = useReaderActivityAdapter({
     mediaId: id,
     observerKey: readerActivityObserverKey,
     canRead,
@@ -4601,12 +4548,8 @@ export default function MediaPaneBody() {
     viewport,
     readerRootRef,
     pdfContentRef,
-    contentRef,
-    cursorRef,
     activeContent,
     pdfControls: pdfControlsState,
-    totalProgression: currentTotalProgression,
-    isUserScrollKey,
   });
   const focusModeForRoot = readerProfile.focus_mode;
   const hyphenationForRoot = readerProfile.hyphenation;
@@ -4893,6 +4836,280 @@ export default function MediaPaneBody() {
       paneMobileChrome.updateReaderScroll(snapshot);
     },
     [paneMobileChrome],
+  );
+
+  const {
+    noteGenuineInput: noteGenuineReaderActivityInput,
+    publishTextMeasurement,
+  } = readerActivity;
+  const scheduleTextViewportCapture = useCallback(
+    (
+      snapshot: ReaderViewportSnapshot,
+      ready: boolean,
+      trustedIntent: boolean,
+    ) => {
+      pendingTextViewportPublicationRef.current = {
+        snapshot,
+        ready:
+          ready || pendingTextViewportPublicationRef.current?.ready === true,
+        trustedIntent:
+          trustedIntent ||
+          pendingTextViewportPublicationRef.current?.trustedIntent === true,
+      };
+      if (textViewportCaptureFrameRef.current !== 0) {
+        return;
+      }
+      textViewportCaptureFrameRef.current = window.requestAnimationFrame(() => {
+        textViewportCaptureFrameRef.current = 0;
+        const publication = pendingTextViewportPublicationRef.current;
+        pendingTextViewportPublicationRef.current = null;
+        if (!publication) {
+          return;
+        }
+
+        const container = textViewportRef.current;
+        if (container) {
+          const dimensions = {
+            width: container.clientWidth,
+            height: container.clientHeight,
+            scrollHeight: container.scrollHeight,
+          };
+          const previousDimensions = textViewportDimensionsRef.current;
+          if (
+            previousDimensions !== null &&
+            (previousDimensions.width !== dimensions.width ||
+              previousDimensions.height !== dimensions.height ||
+              previousDimensions.scrollHeight !== dimensions.scrollHeight)
+          ) {
+            if (!publication.trustedIntent) {
+              suppressNextTextCaptureRef.current = true;
+            }
+            resetTextProgressGeneration();
+          }
+          textViewportDimensionsRef.current = dimensions;
+        }
+
+        if (publication.ready) {
+          startReaderScroll(publication.snapshot);
+        } else {
+          updateReaderScroll(publication.snapshot);
+        }
+
+        const cursor = cursorRef.current;
+        const anchorOffset =
+          container && cursor
+            ? findFirstVisibleCanonicalOffset(container, cursor)
+            : null;
+        let locator =
+          anchorOffset === null
+            ? null
+            : buildTextLocatorAtOffset(anchorOffset);
+
+        const activeLength = activeContent
+          ? canonicalCpLength(activeContent.canonicalText)
+          : 0;
+        const isAtEligibleTextEnd =
+          container !== null &&
+          textEndRef.current !== null &&
+          isFinalTextUnit &&
+          activeLength > 0 &&
+          (isEpub
+            ? epubTextDocumentContentState.status === "ready"
+            : webTextDocumentContentState.status === "ready") &&
+          isTextViewportAtEnd(container, textEndRef.current);
+        const canReportTerminal =
+          isAtEligibleTextEnd &&
+          hasTrustedForwardTextScrollIntentRef.current &&
+          terminalReportedGenerationRef.current !==
+            textProgressGenerationRef.current;
+        if (canReportTerminal) {
+          locator = buildTextLocatorAtOffset(activeLength);
+        }
+
+        publishTextMeasurement({
+          anchorOffset: canReportTerminal ? activeLength : anchorOffset,
+          totalProgression:
+            locator?.kind === "pdf"
+              ? null
+              : (locator?.locations.total_progression ?? null),
+        });
+
+        if (
+          isPdf ||
+          !activeContent ||
+          !activeTextSource ||
+          isMismatchDisabled ||
+          initialReaderResumeStateLoading ||
+          !textRestoreSettledRef.current ||
+          !locator
+        ) {
+          return;
+        }
+        if (canReportTerminal) {
+          terminalReportedGenerationRef.current =
+            textProgressGenerationRef.current;
+          lastSavedTextAnchorOffsetRef.current = activeLength;
+          reportReaderMovement(locator);
+          return;
+        }
+        if (
+          isAtEligibleTextEnd &&
+          terminalReportedGenerationRef.current ===
+            textProgressGenerationRef.current
+        ) {
+          return;
+        }
+        if (anchorOffset === null) {
+          return;
+        }
+        if (
+          !isEpub &&
+          !isTranscriptMedia &&
+          anchorOffset === 0 &&
+          publication.snapshot.scrollTop <= 1 &&
+          lastSavedTextAnchorOffsetRef.current === null
+        ) {
+          return;
+        }
+        if (lastSavedTextAnchorOffsetRef.current === anchorOffset) {
+          return;
+        }
+        if (suppressNextTextCaptureRef.current) {
+          suppressNextTextCaptureRef.current = false;
+          lastSavedTextAnchorOffsetRef.current = anchorOffset;
+          return;
+        }
+        lastSavedTextAnchorOffsetRef.current = anchorOffset;
+        reportReaderMovement(locator);
+      });
+    },
+    [
+      activeContent,
+      activeTextSource,
+      buildTextLocatorAtOffset,
+      epubTextDocumentContentState.status,
+      initialReaderResumeStateLoading,
+      isEpub,
+      isFinalTextUnit,
+      isMismatchDisabled,
+      isPdf,
+      isTranscriptMedia,
+      publishTextMeasurement,
+      reportReaderMovement,
+      resetTextProgressGeneration,
+      startReaderScroll,
+      updateReaderScroll,
+      webTextDocumentContentState.status,
+    ],
+  );
+
+  const handleTextViewportReady = useCallback(
+    (snapshot: ReaderViewportSnapshot) => {
+      scheduleTextViewportCapture(snapshot, true, false);
+    },
+    [scheduleTextViewportCapture],
+  );
+  const handleTextViewportScroll = useCallback(
+    (snapshot: ReaderViewportSnapshot) => {
+      scheduleTextViewportCapture(snapshot, false, false);
+    },
+    [scheduleTextViewportCapture],
+  );
+  const handleTrustedTextScrollIntent = useCallback(
+    (direction: TrustedScrollDirection) => {
+      noteGenuineReaderInput();
+      noteGenuineReaderActivityInput();
+      if (
+        restorePhase !== "idle" &&
+        restorePhase !== "settled" &&
+        restorePhase !== "cancelled"
+      ) {
+        cancelRestoreSession();
+      }
+      if (direction === "forward") {
+        hasTrustedForwardTextScrollIntentRef.current = true;
+      }
+      const container = textViewportRef.current;
+      if (container) {
+        scheduleTextViewportCapture(
+          {
+            scrollTop: container.scrollTop,
+            scrollHeight: container.scrollHeight,
+            clientHeight: container.clientHeight,
+          },
+          false,
+          true,
+        );
+      }
+    },
+    [
+      cancelRestoreSession,
+      noteGenuineReaderActivityInput,
+      noteGenuineReaderInput,
+      restorePhase,
+      scheduleTextViewportCapture,
+    ],
+  );
+
+  useEffect(() => {
+    resetTextProgressGeneration();
+    const viewport = textViewportRef.current;
+    if (!viewport) {
+      textViewportDimensionsRef.current = null;
+      return;
+    }
+    textViewportDimensionsRef.current = {
+      width: viewport.clientWidth,
+      height: viewport.clientHeight,
+      scrollHeight: viewport.scrollHeight,
+    };
+    const observer = new ResizeObserver(() => {
+      const dimensions = {
+        width: viewport.clientWidth,
+        height: viewport.clientHeight,
+        scrollHeight: viewport.scrollHeight,
+      };
+      const previousDimensions = textViewportDimensionsRef.current;
+      if (
+        previousDimensions !== null &&
+        previousDimensions.width === dimensions.width &&
+        previousDimensions.height === dimensions.height &&
+        previousDimensions.scrollHeight === dimensions.scrollHeight
+      ) {
+        return;
+      }
+      suppressNextTextCaptureRef.current = true;
+      resetTextProgressGeneration();
+      textViewportDimensionsRef.current = dimensions;
+      scheduleTextViewportCapture(
+        {
+          scrollTop: viewport.scrollTop,
+          scrollHeight: viewport.scrollHeight,
+          clientHeight: viewport.clientHeight,
+        },
+        false,
+        false,
+      );
+    });
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [
+    hyphenationForRoot,
+    readerLayoutKey,
+    renderedHtml,
+    resetTextProgressGeneration,
+    scheduleTextViewportCapture,
+  ]);
+
+  useEffect(
+    () => () => {
+      if (textViewportCaptureFrameRef.current !== 0) {
+        window.cancelAnimationFrame(textViewportCaptureFrameRef.current);
+        textViewportCaptureFrameRef.current = 0;
+      }
+      pendingTextViewportPublicationRef.current = null;
+    },
+    [],
   );
 
   useEffect(() => {
@@ -5833,54 +6050,62 @@ export default function MediaPaneBody() {
     return { start, end };
   }, [activeContent, activeTextStartOffset, isPdf, totalTextLength]);
 
-  const scrollRenderedHighlightIntoView = useCallback((highlightId: string) => {
-    const escapedId = escapeAttrValue(highlightId);
-    const MAX_ATTEMPTS = 30;
-    let attempt = 0;
+  const scrollRenderedHighlightIntoView = useCallback(
+    (highlightId: string) => {
+      resetTextProgressGeneration();
+      const escapedId = escapeAttrValue(highlightId);
+      const MAX_ATTEMPTS = 30;
+      let attempt = 0;
 
-    const scroll = () => {
+      const scroll = () => {
+        const root = contentRef.current;
+        if (!root) {
+          return;
+        }
+        const target =
+          root.querySelector<HTMLElement>(
+            `[data-active-highlight-ids~="${escapedId}"]`,
+          ) ??
+          root.querySelector<HTMLElement>(
+            `[data-highlight-anchor="${escapedId}"]`,
+          );
+        const container = target ? getPaneScrollContainer(target) : null;
+        if (target && container) {
+          scrollElementIntoPaneView(container, target, { block: "center" });
+          if (isElementInPaneView(container, target)) {
+            return;
+          }
+        }
+        attempt += 1;
+        if (attempt < MAX_ATTEMPTS) {
+          window.requestAnimationFrame(scroll);
+        }
+      };
+
+      scroll();
+    },
+    [resetTextProgressGeneration],
+  );
+
+  const scrollDocumentEmbedIntoView = useCallback(
+    (occurrenceKey: string) => {
+      resetTextProgressGeneration();
       const root = contentRef.current;
       if (!root) {
         return;
       }
-      const target =
-        root.querySelector<HTMLElement>(
-          `[data-active-highlight-ids~="${escapedId}"]`,
-        ) ??
-        root.querySelector<HTMLElement>(
-          `[data-highlight-anchor="${escapedId}"]`,
-        );
+      const target = root.querySelector<HTMLElement>(
+        `[data-nexus-document-embed-id="${escapeAttrValue(occurrenceKey)}"]`,
+      );
       const container = target ? getPaneScrollContainer(target) : null;
-      if (target && container) {
-        scrollElementIntoPaneView(container, target, { block: "center" });
-        if (isElementInPaneView(container, target)) {
-          return;
-        }
+      if (!target || !container) {
+        return;
       }
-      attempt += 1;
-      if (attempt < MAX_ATTEMPTS) {
-        window.requestAnimationFrame(scroll);
-      }
-    };
-
-    scroll();
-  }, []);
-
-  const scrollDocumentEmbedIntoView = useCallback((occurrenceKey: string) => {
-    const root = contentRef.current;
-    if (!root) {
-      return;
-    }
-    const target = root.querySelector<HTMLElement>(
-      `[data-nexus-document-embed-id="${escapeAttrValue(occurrenceKey)}"]`,
-    );
-    const container = target ? getPaneScrollContainer(target) : null;
-    if (!target || !container) {
-      return;
-    }
-    scrollElementIntoPaneView(container, target, { block: "center" });
-    pulseReaderApparatusElement(target);
-  }, []);
+      scrollElementIntoPaneView(container, target, { block: "center" });
+      pulseReaderApparatusElement(target);
+    },
+    [resetTextProgressGeneration],
+  );
 
   useEffect(() => {
     const pending = pendingDocumentEmbedPulseRef.current;
@@ -6515,6 +6740,19 @@ export default function MediaPaneBody() {
         focusReaderViewport={focusReaderViewport}
       />
     ) : null;
+  const textReaderEndContent = isFinalTextUnit ? (
+    <>
+      <p className={styles.readerEndcapLabel}>
+        {isEpub ? "End of book" : "End of article"}
+      </p>
+      {nextReadableItem ? (
+        <LecternNextPrompt
+          title={nextReadableItem.title}
+          onSelect={() => void handleOpenNextReadable()}
+        />
+      ) : null}
+    </>
+  ) : null;
 
   const transcriptPaneBody = initialFragmentsFailure ? (
     <div className={styles.mobileDocumentState}>
@@ -6814,8 +7052,12 @@ export default function MediaPaneBody() {
               focusMode={focusModeForRoot}
               hyphenation={hyphenationForRoot}
               contentState={epubTextDocumentContentState}
-              onStartReaderScroll={startReaderScroll}
-              onUpdateReaderScroll={updateReaderScroll}
+              textViewportRef={textViewportRef}
+              textEndRef={textEndRef}
+              onViewportReady={handleTextViewportReady}
+              onViewportScroll={handleTextViewportScroll}
+              onTrustedScrollIntent={handleTrustedTextScrollIntent}
+              endContent={textReaderEndContent}
               onContentClick={handleReaderContentClick}
               onContentPointerOver={handleContentPointerOver}
               onContentPointerOut={handleContentPointerOut}
@@ -6846,8 +7088,12 @@ export default function MediaPaneBody() {
               focusMode={focusModeForRoot}
               hyphenation={hyphenationForRoot}
               contentState={webTextDocumentContentState}
-              onStartReaderScroll={startReaderScroll}
-              onUpdateReaderScroll={updateReaderScroll}
+              textViewportRef={textViewportRef}
+              textEndRef={textEndRef}
+              onViewportReady={handleTextViewportReady}
+              onViewportScroll={handleTextViewportScroll}
+              onTrustedScrollIntent={handleTrustedTextScrollIntent}
+              endContent={textReaderEndContent}
               onContentClick={handleReaderContentClick}
               onContentPointerOver={handleContentPointerOver}
               onContentPointerOut={handleContentPointerOut}
@@ -6856,7 +7102,7 @@ export default function MediaPaneBody() {
             />
           )}
           {readerProgressOverlay}
-          {!isTranscriptMedia && canRead && nextReadableItem ? (
+          {isPdf && canRead && nextReadableItem ? (
             <LecternNextPrompt
               title={nextReadableItem.title}
               onSelect={() => void handleOpenNextReadable()}
