@@ -246,6 +246,7 @@ export default function PodcastDetailPaneBody() {
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [subscribeBusy, setSubscribeBusy] = useState(false);
   const [creatingDestination, setCreatingDestination] = useState(false);
+  const destinationCreateIds = useRef<Map<string, string>>(new Map());
   const [selectedDestinations, setSelectedDestinations] = useState<
     readonly LibraryDestinationSelection[]
   >([]);
@@ -1278,8 +1279,20 @@ export default function PodcastDetailPaneBody() {
                   }
                   onCreateDestination={async (name) => {
                     setCreatingDestination(true);
+                    const normalizedName = name.trim();
+                    const libraryId =
+                      destinationCreateIds.current.get(normalizedName) ??
+                      crypto.randomUUID();
+                    destinationCreateIds.current.set(
+                      normalizedName,
+                      libraryId,
+                    );
                     try {
-                      const library = await createLibrary({ name });
+                      const library = await createLibrary({
+                        libraryId,
+                        name: normalizedName,
+                      });
+                      destinationCreateIds.current.delete(normalizedName);
                       clearAllVisitData();
                       return library;
                     } finally {

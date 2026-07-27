@@ -1,11 +1,18 @@
 "use client";
 
-import { useCallback, useRef, type CSSProperties, type ReactNode } from "react";
+import {
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { createPortal } from "react-dom";
 import { cx } from "@/lib/ui/cx";
 import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
 import { useHistoryDismiss, type DismissDecision } from "@/lib/ui/useHistoryDismiss";
 import { useKeyboardInset } from "@/lib/ui/useKeyboardInset";
+import { useMobileViewport } from "@/lib/mobileViewport/MobileViewportProvider";
 import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
 import {
   ModalLayerProvider,
@@ -56,6 +63,15 @@ interface MobileSheetProps {
   /** Stable test ids for backdrop/panel (existing tests keep their selectors). */
   backdropTestId?: string;
   panelTestId?: string;
+}
+
+function MobileSheetKeyboardReporter({ insetPx }: { insetPx: number }) {
+  const mobileViewport = useMobileViewport();
+  useLayoutEffect(
+    () => mobileViewport.reportMobileSheetKeyboardInset(insetPx),
+    [insetPx, mobileViewport],
+  );
+  return null;
 }
 
 /**
@@ -133,10 +149,15 @@ export default function MobileSheet({
     panelRef.current.style.transform = "";
     if (event.clientY - start > DRAG_DISMISS_PX) requestDismiss();
   }
+  function onPointerCancel() {
+    dragStartRef.current = null;
+    if (panelRef.current) panelRef.current.style.transform = "";
+  }
 
   if (!active) return null;
   return createPortal(
     <ModalLayerProvider token={overlay.layerToken}>
+      <MobileSheetKeyboardReporter insetPx={inset} />
       <div
         className={styles.backdrop}
         data-layer={layer}
@@ -154,10 +175,14 @@ export default function MobileSheet({
           aria-label={ariaLabel}
           tabIndex={-1}
           data-testid={panelTestId}
-          style={{ "--keyboard-inset": `${inset}px` } as CSSProperties}
+          style={
+            {
+              "--keyboard-inset": "var(--mobile-overlay-keyboard-inset)",
+            } as CSSProperties
+          }
           onClick={(event) => event.stopPropagation()}
           {...(grabber
-            ? { onPointerDown, onPointerMove, onPointerUp, onPointerCancel: onPointerUp }
+            ? { onPointerDown, onPointerMove, onPointerUp, onPointerCancel }
             : null)}
         >
           {grabber ? <div className={styles.grabber} data-grabber aria-hidden="true" /> : null}

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import ValidationError
@@ -34,7 +34,7 @@ def test_resource_ref_locator_projects_resource_item(
     page = notes.create_page(
         db_session,
         bootstrapped_user,
-        CreatePageRequest(title="Locator Page"),
+        CreatePageRequest(page_id=uuid4(), title="Locator Page"),
     )
 
     result = resolve_resource_locator(
@@ -55,7 +55,7 @@ def test_batch_locator_resolution_preserves_input_order(
     page = notes.create_page(
         db_session,
         bootstrapped_user,
-        CreatePageRequest(title="Batch Page"),
+        CreatePageRequest(page_id=uuid4(), title="Batch Page"),
     )
     local_date = date(2026, 6, 19)
 

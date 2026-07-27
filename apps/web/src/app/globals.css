@@ -106,7 +106,7 @@
   --z-raised: 10;
   --z-overlay: 100;
   --z-modal: 1000;
-  --z-palette: 1100; /* command palette: above NavSheet (1001), below ActionMenu (1200) */
+  --z-palette: 1100; /* launcher: above modal sheets, below ActionMenu (1200) */
   --z-toast: 10000;
 
   /* Command-palette glass blur (theme-invariant; tints live in each theme block) */
@@ -123,7 +123,9 @@
   --pane-resource-header-height: 60px;
   --appnav-bar-height: var(--pane-resource-header-height);
   --tabsbar-height: 40px;
-  --mobile-bottom-obstruction: 64px;
+  --mobile-content-bottom-clearance: env(safe-area-inset-bottom);
+  --mobile-nexus-bottom-offset: env(safe-area-inset-bottom);
+  --mobile-overlay-keyboard-inset: 0px;
   --resize-handle-width: 8px;
   --content-max-width: 700px;
 

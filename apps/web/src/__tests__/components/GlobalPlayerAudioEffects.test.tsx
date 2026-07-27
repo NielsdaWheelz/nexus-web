@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
+import { MobileViewportProvider } from "@/lib/mobileViewport/MobileViewportProvider";
 import { WorkspaceTestProvider } from "@/__tests__/helpers/WorkspaceTestProvider";
 import { present } from "@/lib/api/presence";
 import type { ChapterOut } from "@/lib/lectern/contract";
@@ -241,7 +242,9 @@ function Harness() {
       >
         Play episode
       </button>
-      <GlobalPlayerFooter />
+      <MobileViewportProvider>
+        <GlobalPlayerFooter />
+      </MobileViewportProvider>
     </>
   );
 }

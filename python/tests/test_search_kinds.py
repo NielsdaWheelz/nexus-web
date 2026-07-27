@@ -327,6 +327,12 @@ def test_dedup_strings_none_is_empty() -> None:
 def test_search_query_effective_result_types_derive_from_kinds() -> None:
     query = SearchQuery(text="x", requested_kinds=frozenset({"highlights"}))
     assert query.effective_result_types == ("highlight",)
+    assert query.highlight_notes_only is True
+
+
+def test_search_query_notes_owns_general_note_retrieval() -> None:
+    query = SearchQuery(text="x", requested_kinds=frozenset({"notes", "highlights"}))
+    assert query.highlight_notes_only is False
 
 
 def test_search_query_default_kinds_resolve_to_all_result_types() -> None:

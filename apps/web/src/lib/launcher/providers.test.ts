@@ -123,6 +123,8 @@ function makeSearchResult(
     noteBody: null,
     ...partial,
     resourceRef,
+    ownerResourceRef: partial.ownerResourceRef ?? resourceRef,
+    noteOrigin: partial.noteOrigin ?? null,
     activation,
     actionTarget,
   };
@@ -467,7 +469,7 @@ describe("buildLauncherItems — command items", () => {
 });
 
 // ---------------------------------------------------------------------------
-// (f) create items → new-conversation / create-page / open-create
+// (f) create items → new-conversation / create-page / open-today-capture
 // ---------------------------------------------------------------------------
 
 describe("buildLauncherItems — create items", () => {
@@ -484,7 +486,7 @@ describe("buildLauncherItems — create items", () => {
 
     const note = items.find((i) => i.id === "create-note")!;
     expect(note.sectionId).toBe("create");
-    expect(note.target).toEqual({ kind: "open-create" });
+    expect(note.target).toEqual({ kind: "open-today-capture" });
   });
 });
 

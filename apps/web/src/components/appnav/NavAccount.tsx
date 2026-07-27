@@ -1,10 +1,9 @@
 "use client";
 
 import { type MouseEvent } from "react";
-import { CircleUser, LogOut } from "lucide-react";
-import Link from "next/link";
-import ActionMenu from "@/components/ui/ActionMenu";
+import { CircleUser } from "lucide-react";
 import type { AppNavActivationResult } from "@/lib/panes/targetLinkActivation";
+import AccountMenu from "./AccountMenu";
 import type { NavItem } from "./navModel";
 import styles from "./AppNav.module.css";
 
@@ -20,11 +19,10 @@ export default function NavAccount({
   collapsed: boolean;
   onNavigate: (event: MouseEvent<HTMLElement>, href: string) => AppNavActivationResult;
 }) {
-  const SettingsIcon = settings.icon;
   return (
-    <ActionMenu
-      className={styles.account}
-      label="Account"
+    <AccountMenu
+      settings={settings}
+      active={active}
       placement="above"
       align="start"
       renderTrigger={(trigger) => (
@@ -41,47 +39,7 @@ export default function NavAccount({
           {!collapsed && <span className={styles.itemLabel}>Account</span>}
         </button>
       )}
-      options={[
-        {
-          kind: "custom",
-          id: "settings",
-          label: settings.label,
-          render: ({ closeMenu, closeMenuWithoutFocus }) => (
-            <Link
-              href={settings.href}
-              role="menuitem"
-              className={styles.menuItem}
-              aria-current={active ? "page" : undefined}
-              onClick={(event) => {
-                const result = onNavigate(event, settings.href);
-                if (result === "unhandled") return;
-                if (result === "handled-source-focus") closeMenu();
-                else closeMenuWithoutFocus();
-              }}
-            >
-              <SettingsIcon size={16} aria-hidden="true" />
-              {settings.label}
-            </Link>
-          ),
-        },
-        {
-          kind: "custom",
-          id: "signout",
-          label: "Sign Out",
-          render: () => (
-            <form action="/auth/signout" method="post" className={styles.menuForm}>
-              <button
-                type="submit"
-                role="menuitem"
-                className={`${styles.menuItem} ${styles.menuItemDanger}`}
-              >
-                <LogOut size={16} aria-hidden="true" />
-                Sign Out
-              </button>
-            </form>
-          ),
-        },
-      ]}
+      onNavigate={onNavigate}
     />
   );
 }

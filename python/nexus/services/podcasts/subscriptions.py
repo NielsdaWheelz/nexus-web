@@ -164,6 +164,12 @@ def import_subscriptions_from_opml(
 
                 existing_status = _get_subscription_status_value(db, viewer_id, podcast_id)
                 if existing_status == "active":
+                    set_subscription_libraries_in_current_transaction(
+                        db,
+                        viewer_id,
+                        podcast_id,
+                        library_ids,
+                    )
                     summary.skipped_already_subscribed += 1
                     continue
 

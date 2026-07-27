@@ -115,7 +115,10 @@ describe("SelectionPopover", () => {
 
   beforeEach(() => {
     setViewport(1280, 900);
-    document.documentElement.style.setProperty("--mobile-bottom-obstruction", "64px");
+    document.documentElement.style.setProperty(
+      "--mobile-content-bottom-clearance",
+      "64px",
+    );
     Object.defineProperty(window, "visualViewport", {
       configurable: true,
       value: undefined,
@@ -123,7 +126,9 @@ describe("SelectionPopover", () => {
   });
 
   afterEach(() => {
-    document.documentElement.style.removeProperty("--mobile-bottom-obstruction");
+    document.documentElement.style.removeProperty(
+      "--mobile-content-bottom-clearance",
+    );
     vi.stubGlobal("innerWidth", originalInnerWidth);
     vi.stubGlobal("innerHeight", originalInnerHeight);
     window.dispatchEvent(new Event("resize"));

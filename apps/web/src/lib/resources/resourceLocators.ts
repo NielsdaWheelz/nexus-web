@@ -1,7 +1,10 @@
 import { apiFetch } from "@/lib/api/client";
-import { normalizeResourceItem, type ResourceItem } from "@/lib/resources/resourceItems";
+import {
+  decodeResourceItem,
+  type ResourceItem,
+} from "@/lib/resources/resourceItems";
 import type { PaneResourceLocator } from "@/lib/panes/paneResourceLocator";
-import { isRecord } from "@/lib/validation";
+import { expectExactRecord } from "@/lib/validation";
 
 export interface ResourceLocatorResolution {
   locator: PaneResourceLocator;
@@ -17,24 +20,31 @@ export async function resolveResourceLocators(
     method: "POST",
     body: JSON.stringify({ locators }),
   });
-  const data = isRecord(response.data) ? response.data : {};
-  const resolutions = Array.isArray(data.resolutions) ? data.resolutions : [];
+  const data = expectExactRecord(
+    response.data,
+    ["resolutions"],
+    "resource locator response",
+  );
+  if (!Array.isArray(data.resolutions)) {
+    throw new TypeError("resource locator response.resolutions must be an array");
+  }
+  const resolutions = data.resolutions;
   return resolutions.map((raw) => {
-    const row = isRecord(raw) ? raw : {};
-    const item = isRecord(row.resourceItem)
-      ? row.resourceItem
-      : isRecord(row.resource_item)
-        ? row.resource_item
-        : {};
+    const row = expectExactRecord(
+      raw,
+      ["locator", "resourceItem", "canonicalHref"],
+      "resource locator resolution",
+    );
+    const canonicalHref = row.canonicalHref;
+    if (canonicalHref !== null && typeof canonicalHref !== "string") {
+      throw new TypeError(
+        "resource locator resolution.canonicalHref must be a string or null",
+      );
+    }
     return {
       locator: row.locator as PaneResourceLocator,
-      resourceItem: normalizeResourceItem(item),
-      canonicalHref:
-        typeof row.canonicalHref === "string"
-          ? row.canonicalHref
-          : typeof row.canonical_href === "string"
-            ? row.canonical_href
-            : null,
+      resourceItem: decodeResourceItem(row.resourceItem),
+      canonicalHref,
     };
   });
 }

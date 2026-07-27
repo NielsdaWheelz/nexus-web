@@ -13,6 +13,7 @@ import {
 } from "react";
 import {
   MAX_PANES,
+  MAX_RECENTLY_CLOSED_PANES,
   createPaneVisit,
   createSecondaryPaneId,
   createDefaultWorkspaceState,
@@ -21,6 +22,8 @@ import {
   getWorkspacePrimaryPane,
   getWorkspacePrimaryPanes,
   normalizePaneLabel,
+  restoreClosedPaneSnapshot,
+  type ClosedPaneSnapshot,
   type WorkspacePrimaryPaneState,
   type WorkspaceState,
 } from "@/lib/workspace/schema";
@@ -115,6 +118,15 @@ type WorkspaceAction =
   | { type: "resize_secondary_pane"; secondaryPaneId: string; widthPx: number }
   | { type: "minimize_pane"; paneId: string }
   | { type: "restore_pane"; paneId: string };
+
+type WorkspaceStoreAction =
+  | WorkspaceAction
+  | { type: "restore_closed_pane"; paneId: string };
+
+interface WorkspaceReducerState {
+  workspace: WorkspaceState;
+  recentlyClosedPanes: ClosedPaneSnapshot[];
+}
 
 function paneReturnTopology(state: WorkspaceState): PaneReturnVisitTopology {
   return {
@@ -530,6 +542,76 @@ function workspaceReducer(
   return exhaustiveAction;
 }
 
+function workspaceStoreReducer(
+  state: WorkspaceReducerState,
+  action: WorkspaceStoreAction,
+  workspacePrimaryMetrics: WorkspacePrimaryMetrics,
+): WorkspaceReducerState {
+  if (action.type === "restore_closed_pane") {
+    const snapshot = state.recentlyClosedPanes.find(
+      (candidate) => candidate.pane.id === action.paneId,
+    );
+    if (!snapshot) {
+      // justify-defect: the restore command comes from a currently projected
+      // recently-closed row.
+      throw new Error(`Recently closed pane not found: ${action.paneId}`);
+    }
+    const restored = restoreClosedPaneSnapshot({
+      state: state.workspace,
+      snapshot,
+      workspacePrimaryMetrics,
+    });
+    if (restored.kind === "Rejected") {
+      return state;
+    }
+    return {
+      workspace: restored.state,
+      recentlyClosedPanes: state.recentlyClosedPanes.filter(
+        (candidate) => candidate.pane.id !== action.paneId,
+      ),
+    };
+  }
+
+  if (action.type !== "close_pane") {
+    return {
+      ...state,
+      workspace: workspaceReducer(
+        state.workspace,
+        action,
+        workspacePrimaryMetrics,
+      ),
+    };
+  }
+
+  const panes = getWorkspacePrimaryPanes(state.workspace);
+  const orderIndex = panes.findIndex((pane) => pane.id === action.paneId);
+  if (orderIndex < 0) {
+    return state;
+  }
+  const pane = panes[orderIndex]!;
+  const secondaryPane = getAttachedSecondaryPane(state.workspace, pane);
+  const snapshot: ClosedPaneSnapshot = {
+    pane,
+    secondaryPane: secondaryPane
+      ? { kind: "Present", value: secondaryPane }
+      : { kind: "Absent" },
+    orderIndex,
+  };
+  return {
+    workspace: workspaceReducer(
+      state.workspace,
+      action,
+      workspacePrimaryMetrics,
+    ),
+    recentlyClosedPanes: [
+      snapshot,
+      ...state.recentlyClosedPanes.filter(
+        (candidate) => candidate.pane.id !== pane.id,
+      ),
+    ].slice(0, MAX_RECENTLY_CLOSED_PANES),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Build pane for an open action
 // ---------------------------------------------------------------------------
@@ -625,12 +707,17 @@ export interface WorkspacePendingSecondaryActivation {
   activation: WorkspaceSecondaryActivation;
 }
 
+export type RestoreClosedPaneResult =
+  | { kind: "Restored"; paneId: string }
+  | { kind: "Rejected"; reason: "PaneLimitReached" };
+
 // ---------------------------------------------------------------------------
 // Store context + provider
 // ---------------------------------------------------------------------------
 
 interface WorkspaceStoreValue {
   state: WorkspaceState;
+  recentlyClosedPanes: readonly ClosedPaneSnapshot[];
   workspacePrimaryMetrics: WorkspacePrimaryMetrics;
   runtimeLabelByPaneId: ReadonlyMap<string, WorkspacePaneLabelRecord>;
   pendingSecondaryActivationByPaneId: ReadonlyMap<
@@ -659,6 +746,7 @@ interface WorkspaceStoreValue {
   goBackPane: (paneId: string, modality?: PaneNavigationModality) => void;
   goForwardPane: (paneId: string, modality?: PaneNavigationModality) => void;
   closePane: (paneId: string) => void;
+  restoreClosedPane: (paneId: string) => RestoreClosedPaneResult;
   resizePrimaryPane: (paneId: string, widthPx: number) => void;
   requestSecondarySurface: (
     primaryPaneId: string,
@@ -698,10 +786,19 @@ export function WorkspaceStoreProvider({
   // Seed from the server-restored state (the data root already merged the saved session
   // with the deep-link intent), so the first render shows the right panes — no post-mount
   // restore, no flash. Column widths reconcile at render in WorkspaceHost (resolveEffectivePaneSizing).
-  const [state, dispatch] = useReducer(
-    (current: WorkspaceState, action: WorkspaceAction) =>
-      workspaceReducer(current, action, workspacePrimaryMetrics),
-    initialState
+  const [reducerState, dispatchStoreAction] = useReducer(
+    (current: WorkspaceReducerState, action: WorkspaceStoreAction) =>
+      workspaceStoreReducer(current, action, workspacePrimaryMetrics),
+    {
+      workspace: initialState,
+      recentlyClosedPanes: [],
+    },
+  );
+  const state = reducerState.workspace;
+  const recentlyClosedPanes = reducerState.recentlyClosedPanes;
+  const dispatch = useCallback(
+    (action: WorkspaceAction) => dispatchStoreAction(action),
+    [],
   );
   const [runtimeLabelByPaneId, setRuntimeLabelByPaneId] = useState<
     Map<string, WorkspacePaneLabelRecord>
@@ -720,6 +817,8 @@ export function WorkspaceStoreProvider({
   >(new Map());
   const stateRef = useRef(state);
   stateRef.current = state;
+  const recentlyClosedPanesRef = useRef(recentlyClosedPanes);
+  recentlyClosedPanesRef.current = recentlyClosedPanes;
   const primaryPanes = useMemo(() => getWorkspacePrimaryPanes(state), [state]);
   const returnMemento = usePaneReturnMementoCommands();
   const feedback = useFeedback();
@@ -862,7 +961,7 @@ export function WorkspaceStoreProvider({
       activate: true,
       transition: { mode: "replace", href: locationHref },
     });
-  }, []);
+  }, [dispatch]);
 
   useEffect(() => {
     if (hashFoldedRef.current) {
@@ -909,12 +1008,19 @@ export function WorkspaceStoreProvider({
         resolvePaneRouteKey(pane.currentVisit.href),
       );
     }
+    const retainedLabelRouteKeyByPaneId = new Map(currentRouteKeyByPaneId);
+    for (const snapshot of recentlyClosedPanes) {
+      retainedLabelRouteKeyByPaneId.set(
+        snapshot.pane.id,
+        resolvePaneRouteKey(snapshot.pane.currentVisit.href),
+      );
+    }
 
     setRuntimeLabelByPaneId((prev) => {
       let changed = false;
       const next = new Map<string, WorkspacePaneLabelRecord>();
       for (const [id, record] of prev) {
-        if (record.routeKey !== currentRouteKeyByPaneId.get(id)) {
+        if (record.routeKey !== retainedLabelRouteKeyByPaneId.get(id)) {
           changed = true;
           continue;
         }
@@ -935,7 +1041,7 @@ export function WorkspaceStoreProvider({
       }
       return changed ? next : current;
     });
-  }, [primaryPanes]);
+  }, [primaryPanes, recentlyClosedPanes]);
 
   // --- Apply queued labels after target selection ---
   useEffect(() => {
@@ -988,7 +1094,7 @@ export function WorkspaceStoreProvider({
 
   const activatePane = useCallback(
     (paneId: string) => dispatch({ type: "activate_pane", paneId }),
-    []
+    [dispatch]
   );
 
   const acknowledgePendingSecondaryActivation = useCallback(
@@ -1060,6 +1166,7 @@ export function WorkspaceStoreProvider({
       dispatch(action);
     },
     [
+      dispatch,
       preparePaneTransition,
       publishPaneLabelHint,
       workspacePrimaryMetrics,
@@ -1077,7 +1184,7 @@ export function WorkspaceStoreProvider({
       dispatch(action);
       return nextState;
     },
-    [workspacePrimaryMetrics],
+    [dispatch, workspacePrimaryMetrics],
   );
 
   const activateWorkspaceTarget = useCallback(
@@ -1252,7 +1359,7 @@ export function WorkspaceStoreProvider({
       });
       dispatch(action);
     },
-    [returnMemento, workspacePrimaryMetrics]
+    [dispatch, returnMemento, workspacePrimaryMetrics]
   );
 
   const goForwardPane = useCallback(
@@ -1279,7 +1386,7 @@ export function WorkspaceStoreProvider({
       });
       dispatch(action);
     },
-    [returnMemento, workspacePrimaryMetrics]
+    [dispatch, returnMemento, workspacePrimaryMetrics]
   );
 
   const closePane = useCallback(
@@ -1295,13 +1402,37 @@ export function WorkspaceStoreProvider({
               )
             : null,
       }),
-    [workspacePrimaryMetrics]
+    [dispatch, workspacePrimaryMetrics]
+  );
+
+  const restoreClosedPane = useCallback(
+    (paneId: string): RestoreClosedPaneResult => {
+      const snapshot = recentlyClosedPanesRef.current.find(
+        (candidate) => candidate.pane.id === paneId,
+      );
+      if (!snapshot) {
+        // justify-defect: the restore command comes from a currently projected
+        // recently-closed row.
+        throw new Error(`Recently closed pane not found: ${paneId}`);
+      }
+      const result = restoreClosedPaneSnapshot({
+        state: stateRef.current,
+        snapshot,
+        workspacePrimaryMetrics,
+      });
+      if (result.kind === "Rejected") {
+        return result;
+      }
+      dispatchStoreAction({ type: "restore_closed_pane", paneId });
+      return { kind: "Restored", paneId };
+    },
+    [workspacePrimaryMetrics],
   );
 
   const resizePrimaryPane = useCallback(
     (paneId: string, widthPx: number) =>
       dispatch({ type: "resize_primary_pane", paneId, widthPx }),
-    []
+    [dispatch]
   );
 
   const requestSecondarySurface = useCallback(
@@ -1312,41 +1443,41 @@ export function WorkspaceStoreProvider({
         surfaceId,
         secondaryPaneId: createSecondaryPaneId(),
       }),
-    []
+    [dispatch]
   );
 
   const closeSecondaryPane = useCallback(
     (secondaryPaneId: string) =>
       dispatch({ type: "close_secondary_pane", secondaryPaneId }),
-    []
+    [dispatch]
   );
 
   const dropSecondaryPane = useCallback(
     (secondaryPaneId: string) =>
       dispatch({ type: "drop_secondary_pane", secondaryPaneId }),
-    []
+    [dispatch]
   );
 
   const setSecondarySurface = useCallback(
     (secondaryPaneId: string, surfaceId: WorkspaceSecondarySurfaceId) =>
       dispatch({ type: "set_secondary_surface", secondaryPaneId, surfaceId }),
-    []
+    [dispatch]
   );
 
   const resizeSecondaryPane = useCallback(
     (secondaryPaneId: string, widthPx: number) =>
       dispatch({ type: "resize_secondary_pane", secondaryPaneId, widthPx }),
-    []
+    [dispatch]
   );
 
   const minimizePane = useCallback(
     (paneId: string) => dispatch({ type: "minimize_pane", paneId }),
-    []
+    [dispatch]
   );
 
   const restorePane = useCallback(
     (paneId: string) => dispatch({ type: "restore_pane", paneId }),
-    []
+    [dispatch]
   );
 
   const publishPaneLabel = useCallback(
@@ -1381,6 +1512,7 @@ export function WorkspaceStoreProvider({
   const value = useMemo<WorkspaceHostStoreValue>(
     () => ({
       state,
+      recentlyClosedPanes,
       workspacePrimaryMetrics,
       runtimeLabelByPaneId,
       pendingSecondaryActivationByPaneId,
@@ -1391,6 +1523,7 @@ export function WorkspaceStoreProvider({
       goBackPane,
       goForwardPane,
       closePane,
+      restoreClosedPane,
       resizePrimaryPane,
       requestSecondarySurface,
       closeSecondaryPane,
@@ -1403,6 +1536,7 @@ export function WorkspaceStoreProvider({
     }),
     [
       state,
+      recentlyClosedPanes,
       workspacePrimaryMetrics,
       runtimeLabelByPaneId,
       pendingSecondaryActivationByPaneId,
@@ -1413,6 +1547,7 @@ export function WorkspaceStoreProvider({
       goBackPane,
       goForwardPane,
       closePane,
+      restoreClosedPane,
       resizePrimaryPane,
       requestSecondarySurface,
       closeSecondaryPane,

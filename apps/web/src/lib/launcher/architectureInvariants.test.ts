@@ -123,6 +123,66 @@ describe("launcher architecture invariants", () => {
   });
 });
 
+describe("mobile Nexus Switchboard architecture invariants", () => {
+  it("keeps every superseded mobile surface physically deleted", () => {
+    const legacyNavSurface = ["Nav", "Sheet"].join("");
+    const legacyLauncherSurface = ["Launcher", "Sheet"].join("");
+    const legacyTopBar = ["Nav", "TopBar"].join("");
+    const legacyCreateSurface = ["Create", "Panel"].join("");
+    const deleted = [
+      `src/components/appnav/${legacyNavSurface}.tsx`,
+      `src/components/appnav/${legacyNavSurface}.test.tsx`,
+      `src/components/appnav/${legacyTopBar}.tsx`,
+      `src/components/appnav/${legacyTopBar}.test.tsx`,
+      `src/components/launcher/${legacyLauncherSurface}.tsx`,
+      `src/components/launcher/${legacyCreateSurface}.tsx`,
+      `src/components/launcher/${legacyCreateSurface}.test.tsx`,
+      `src/components/launcher/${legacyCreateSurface}.module.css`,
+    ];
+
+    expect(deleted.filter((path) => existsSync(join(APP_ROOT, path)))).toEqual(
+      [],
+    );
+  });
+
+  it("contains no legacy mobile surface identifiers in production source", () => {
+    const banned = new RegExp(
+      [["Nav", "Sheet"].join(""), ["Launcher", "Sheet"].join(""), ["nav", "sheet"].join("-")].join("|"),
+    );
+    expect(
+      appAndComponentAndLib().filter((path) => banned.test(sourceText(path))),
+    ).toEqual([]);
+  });
+
+  it("keeps Switchboard components presentation-only", () => {
+    const forbiddenCapability =
+      /\b(?:apiFetch|fetch|createNotePage|createLibrary|subscribeToPodcast|activateWorkspaceTarget|dispatchTarget)\s*\(|window\.(?:location|open)\b/;
+    const offenders = sourceFiles(
+      join(APP_ROOT, "src/components/switchboard"),
+    ).filter((path) => forbiddenCapability.test(sourceText(path)));
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("keeps keyboard viewport reads in the existing keyboard owner", () => {
+    const offenders = sourceFiles(
+      join(APP_ROOT, "src/components/switchboard"),
+    )
+      .concat(sourceFiles(join(APP_ROOT, "src/lib/mobileViewport")))
+      .filter((path) => sourceText(path).includes("visualViewport"));
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("uses one strict ResourceItem decoder with no permissive normalizer", () => {
+    const production = appAndComponentAndLib().map(sourceText).join("\n");
+    expect(production).not.toContain(["normalize", "ResourceItem"].join(""));
+    expect(
+      production.match(/function\s+decodeResourceItem\s*\(/g),
+    ).toHaveLength(1);
+  });
+});
+
 describe("Add content intake architecture invariants", () => {
   it("has no Add lane, mode chooser, implicit scheduler, or child-owned session", () => {
     const launcherModel = sourceText("src/lib/launcher/model.ts");

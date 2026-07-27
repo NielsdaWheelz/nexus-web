@@ -38,6 +38,7 @@ def _chunk_result(
         snippet="a <b>resonant</b> passage",
         title=title,
         resource_ref=resource_ref,
+        owner_resource_ref=f"media:{media_id}",
         activation={"resourceRef": resource_ref, "kind": "none", "href": None},
         citation_target=f"evidence_span:{span_id}" if span_id is not None else None,
         context_ref=SearchResultContextRefOut(

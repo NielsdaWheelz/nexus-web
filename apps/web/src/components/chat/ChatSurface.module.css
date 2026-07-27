@@ -85,7 +85,14 @@
     padding: 0 var(--space-3);
   }
 
-  .composerSlot {
-    padding-bottom: env(safe-area-inset-bottom);
+}
+
+@media (max-width: 768px) {
+  .surface {
+    padding-bottom: var(--mobile-content-bottom-clearance);
+  }
+
+  .scrollport {
+    scroll-padding-bottom: var(--mobile-content-bottom-clearance);
   }
 }

@@ -3,6 +3,7 @@ import {
   decodePodcastOpmlImportResponse,
   getPodcastOpmlFileError,
   importPodcastOpml,
+  podcastOpmlReplayIdentity,
   PodcastOpmlContractDefect,
   PodcastOpmlEncodingError,
 } from "./opmlImport";
@@ -92,6 +93,31 @@ describe("decodePodcastOpmlImportResponse", () => {
 });
 
 describe("importPodcastOpml", () => {
+  it("derives one stable identity from normalized OPML and sorted destinations", async () => {
+    const first = await podcastOpmlReplayIdentity({
+      file: new File(["\r\n<opml><body /></opml>\r\n"], "feeds.opml", {
+        type: "text/xml",
+      }),
+      libraryIds: ["library-b", "library-a", "library-b"],
+    });
+    const replay = await podcastOpmlReplayIdentity({
+      file: new File(["<opml><body /></opml>"], "feeds.xml", {
+        type: "application/xml",
+      }),
+      libraryIds: ["library-a", "library-b"],
+    });
+    const changed = await podcastOpmlReplayIdentity({
+      file: new File(["<opml><body /></opml>"], "feeds.xml", {
+        type: "application/xml",
+      }),
+      libraryIds: ["library-a"],
+    });
+
+    expect(first).toMatch(/^opml-sha256:[0-9a-f]{64}$/);
+    expect(replay).toBe(first);
+    expect(changed).not.toBe(first);
+  });
+
   it("rejects malformed UTF-8 bytes before the JSON API boundary", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const file = new File([new Uint8Array([0xc3, 0x28])], "feeds.opml", {

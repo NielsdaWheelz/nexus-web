@@ -155,7 +155,7 @@ def create_library(
 
     The viewer becomes the owner and admin of the new library.
     """
-    result = library_governance.create_library(db, viewer.user_id, body.name)
+    result = library_governance.create_library(db, viewer.user_id, body)
     return ok(result, by_alias=True)
 
 

@@ -155,6 +155,7 @@ def search(db: Session, viewer_id: UUID, query: SearchQuery) -> SearchResponse:
         contributor_handles=contributor_handles,
         roles=roles,
         content_kinds=content_kinds,
+        highlight_notes_only=query.highlight_notes_only,
         transaction_active_at_entry=transaction_active_at_entry,
     )
 

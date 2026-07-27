@@ -39,7 +39,7 @@ function projectResourceActionToLauncher(
 }
 
 function projectResourceCoreActionToLauncher(
-  item: LauncherItem,
+  label: string,
   target: ResourceOpenTarget,
   catalogKey: ResourceCoreCatalogKey,
 ): LauncherAction {
@@ -47,7 +47,7 @@ function projectResourceCoreActionToLauncher(
     case "Open":
       return projectResourceActionToLauncher("Open", {
         ...target,
-        labelHint: target.labelHint ?? item.title,
+        labelHint: target.labelHint ?? label,
       });
     case "Share":
       return projectResourceActionToLauncher("Share", {
@@ -60,6 +60,23 @@ function projectResourceCoreActionToLauncher(
         ref: target.subject.ref,
       });
   }
+}
+
+export function buildResourceItemActions(
+  subject: ResourceOpenTarget["subject"],
+  label: string,
+): LauncherAction[] {
+  const target: ResourceOpenTarget = {
+    kind: "ResourceOpen",
+    subject,
+    labelHint: label,
+  };
+  return resolveResourceCoreCatalogKeys(
+    subject,
+    "Representation",
+  ).map((catalogKey) =>
+    projectResourceCoreActionToLauncher(label, target, catalogKey),
+  );
 }
 
 export function buildItemActions(item: LauncherItem): LauncherAction[] {
@@ -110,13 +127,7 @@ export function buildItemActions(item: LauncherItem): LauncherAction[] {
   }
 
   if (item.target.kind === "ResourceOpen") {
-    const target = item.target;
-    return resolveResourceCoreCatalogKeys(
-      target.subject,
-      "Representation",
-    ).map((catalogKey) =>
-      projectResourceCoreActionToLauncher(item, target, catalogKey),
-    );
+    return buildResourceItemActions(item.target.subject, item.title);
   }
 
   return [];

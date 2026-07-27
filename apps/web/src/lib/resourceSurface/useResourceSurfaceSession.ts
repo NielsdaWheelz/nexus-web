@@ -11,6 +11,7 @@ import {
 } from "@/lib/resourceSurface/api";
 import { isApiError } from "@/lib/api/client";
 import type { ResourceItem, ResourceSurface, ResourceSurfaceOccurrence } from "@/lib/resources/resourceItems";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { isRecord } from "@/lib/validation";
 
 const IDLE_DELAY_MS = 1500;
@@ -117,9 +118,12 @@ function optimistic(surface: ResourceSurface, command: ResourceSurfaceCommand): 
     orderedItems.splice(index < 0 ? orderedItems.length : index + 1, 0, localOccurrence(surface, command.noteId, command.rightBodyPmJson));
     return { ...surface, orderedItems };
   }
-  const [scheme, id] = command.targetRef.split(":", 2);
+  const parsedTarget = parseResourceRef(command.targetRef);
+  if (parsedTarget === null) {
+    throw new TypeError("insert_resource targetRef must be canonical");
+  }
   const orderedItems = [...surface.orderedItems];
-  orderedItems.splice(insertIndex(orderedItems, command.position), 0, { occurrenceId: `local:${command.targetRef}`, target: { item: { ...surface.source.item, ref: command.targetRef, scheme, id, label: "Resource", summary: "", route: null, activation: { resourceRef: command.targetRef, kind: "none", href: null, unresolvedReason: null } }, content: { kind: "resource_summary" } } });
+  orderedItems.splice(insertIndex(orderedItems, command.position), 0, { occurrenceId: `local:${command.targetRef}`, target: { item: { ...surface.source.item, ref: command.targetRef, scheme: parsedTarget.scheme, id: parsedTarget.id, label: "Resource", summary: "", route: null, activation: { resourceRef: command.targetRef, kind: "none", href: null, unresolvedReason: null } }, content: { kind: "resource_summary" } } });
   return { ...surface, orderedItems };
 }
 

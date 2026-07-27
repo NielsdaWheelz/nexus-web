@@ -64,6 +64,32 @@ function noteBlock() {
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const OWNER_USER_HANDLE =
+  "nus1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB";
+
+function createdLibraryResponse(body: Record<string, unknown>): Response {
+  return jsonResponse(
+    {
+      data: {
+        id: body.library_id,
+        name: String(body.name),
+        color: null,
+        ownerUserHandle: OWNER_USER_HANDLE,
+        isDefault: false,
+        role: "admin",
+        systemKey: null,
+        canRename: true,
+        canDelete: true,
+        canEditEntries: true,
+        canManageMembers: true,
+        canTransferOwnership: true,
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+      },
+    },
+    201,
+  );
+}
 
 function installShareFetch({
   fromUrl,
@@ -101,18 +127,7 @@ function installShareFetch({
       if (url.pathname === "/api/libraries" && method === "POST") {
         const body = parseJsonBody(init);
         if (createLibrary) return createLibrary(body);
-        return jsonResponse(
-          {
-            data: {
-              id: "lib-created",
-              name: String(body.name),
-              color: null,
-              created_at: "2026-01-01T00:00:00Z",
-              updated_at: "2026-01-01T00:00:00Z",
-            },
-          },
-          201,
-        );
+        return createdLibraryResponse(body);
       }
 
       if (url.pathname === "/api/media/from-url" && method === "POST") {
@@ -159,6 +174,18 @@ function quickCaptureBodies(fetchMock: ReturnType<typeof installShareFetch>) {
         new URL(pathFor(input), "http://localhost").pathname.endsWith(
           "/quick-capture",
         ) && init?.method === "POST",
+    )
+    .map(([, init]) => parseJsonBody(init));
+}
+
+function libraryCreateBodies(
+  fetchMock: ReturnType<typeof installShareFetch>,
+) {
+  return fetchMock.mock.calls
+    .filter(
+      ([input, init]) =>
+        new URL(pathFor(input), "http://localhost").pathname ===
+          "/api/libraries" && init?.method === "POST",
     )
     .map(([, init]) => parseJsonBody(init));
 }
@@ -227,11 +254,52 @@ describe("ShareCapture", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
+      const createdId = libraryCreateBodies(fetchMock)[0]?.library_id;
+      expect(createdId).toMatch(UUID_RE);
       expect(fromUrlBodies(fetchMock)).toContainEqual({
         url: "https://example.com/article",
-        library_ids: ["lib-created"],
+        library_ids: [createdId],
       });
     });
+  });
+
+  it("retains one destination id when creation is retried after response loss", async () => {
+    let attempt = 0;
+    const fetchMock = installShareFetch({
+      createLibrary: (body) => {
+        attempt += 1;
+        if (attempt === 1) {
+          throw new TypeError("Response lost");
+        }
+        return createdLibraryResponse(body);
+      },
+    });
+
+    renderShareCapture("https://example.com/article");
+
+    const input = screen.getByRole("combobox", {
+      name: "Library destinations",
+    });
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "Created" } });
+    fireEvent.click(
+      await screen.findByRole("option", { name: "Create “Created”" }),
+    );
+    await screen.findByText("Response lost");
+
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "Created " } });
+    fireEvent.change(input, { target: { value: "Created" } });
+    fireEvent.click(
+      await screen.findByRole("option", { name: "Create “Created”" }),
+    );
+    await screen.findByRole("button", { name: "Remove Created" });
+
+    const bodies = libraryCreateBodies(fetchMock);
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0]?.library_id).toMatch(UUID_RE);
+    expect(bodies[1]?.library_id).toBe(bodies[0]?.library_id);
+    expect(bodies.map((body) => body.name)).toEqual(["Created", "Created"]);
   });
 
   it("does not save while destination creation is pending", async () => {

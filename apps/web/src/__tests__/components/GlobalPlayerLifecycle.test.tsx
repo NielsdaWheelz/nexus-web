@@ -20,6 +20,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
+import { MobileViewportProvider } from "@/lib/mobileViewport/MobileViewportProvider";
 import { WorkspaceTestProvider } from "@/__tests__/helpers/WorkspaceTestProvider";
 import {
   GlobalPlayerProvider,
@@ -234,7 +235,9 @@ function App({
         <LecternReadyProbe />
         <Probes />
         <Controls playMediaId={playMediaId} playTitle={playTitle} />
-        <GlobalPlayerFooter />
+        <MobileViewportProvider>
+          <GlobalPlayerFooter />
+        </MobileViewportProvider>
         </GlobalPlayerProvider>
       </LecternProvider>
     </WorkspaceTestProvider>
@@ -278,7 +281,9 @@ function StatusOnlyOverrideApp() {
         <LecternReadyProbe />
         <Probes />
         <StatusOnlyOverrideControls />
-        <GlobalPlayerFooter />
+        <MobileViewportProvider>
+          <GlobalPlayerFooter />
+        </MobileViewportProvider>
         </GlobalPlayerProvider>
       </LecternProvider>
     </WorkspaceTestProvider>

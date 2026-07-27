@@ -44,6 +44,7 @@ class _RankedNoteBlockResult:
     body_text: str
     score: _SearchScore
     highlight_excerpt: str | None = None
+    note_origin: Literal["note", "highlight_note"] = "note"
     locator: dict[str, Any] | None = None
     result_type: Literal["note_block"] = "note_block"
 

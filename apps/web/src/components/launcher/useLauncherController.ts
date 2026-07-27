@@ -18,16 +18,21 @@ import {
 import { useDebouncedFetch } from "@/lib/api/useDebouncedFetch";
 import { useResource } from "@/lib/api/useResource";
 import { usePaneWarm } from "@/lib/panes/paneWarm";
+import { resolveWorkspaceActivationRouteId } from "@/lib/panes/paneIdentity";
+import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { matchesKeyEvent } from "@/lib/keybindings";
 import { useKeybindings } from "@/lib/keybindingsProvider";
 import { useLectern } from "@/lib/lectern/LecternProvider";
-import { buildItemActions } from "@/lib/launcher/actions";
+import {
+  buildItemActions,
+  buildResourceItemActions,
+} from "@/lib/launcher/actions";
 import {
   dispatchTarget,
   isAndroidShellRestrictedHref,
   PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION,
-  targetNavigates,
+  type DispatchOutcome,
   type LauncherTargetActivation,
   type LauncherDispatchCtx,
 } from "@/lib/launcher/dispatch";
@@ -42,9 +47,9 @@ import {
   type LauncherActionTarget,
   type LauncherItem,
   type LauncherLane,
-  type LauncherPage,
   type LauncherView,
 } from "@/lib/launcher/model";
+import type { LauncherPage } from "@/lib/switchboard/model";
 import {
   parseLauncherInput,
   type LauncherInput,
@@ -58,10 +63,17 @@ import {
 } from "@/lib/launcher/providers";
 import { rankLauncher } from "@/lib/launcher/ranking";
 import { DESTINATIONS } from "@/lib/navigation/destinations";
-import { fetchSearchResultPage } from "@/lib/search/searchApi";
+import type { Destination } from "@/lib/navigation/destinations";
+import {
+  fetchSearchResultPage,
+  SearchContractDefect,
+} from "@/lib/search/searchApi";
 import { searchHref } from "@/lib/search/searchParams";
 import type { SearchResultRowViewModel } from "@/lib/search/types";
-import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+import {
+  useRenderEnvironment,
+  useViewportState,
+} from "@/lib/renderEnvironment/provider";
 import type { DismissDecision } from "@/lib/ui/useHistoryDismiss";
 import { getWorkspacePrimaryPanes } from "@/lib/workspace/schema";
 import {
@@ -69,9 +81,49 @@ import {
   useWorkspaceStore,
 } from "@/lib/workspace/store";
 import { useShareController } from "@/lib/sharing/controller";
-import { present } from "@/lib/api/presence";
 import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
-import type { BrowseResponse, BrowseResult } from "@/lib/browse/types";
+import type { BrowseResult } from "@/lib/browse/types";
+import {
+  fetchBrowseResults,
+  fetchPodcastBrowseResults,
+} from "@/lib/browse/client";
+import {
+  ResourceOpenablesContractDefect,
+  searchOpenableResources,
+} from "@/lib/resources/openableResources";
+import type { ResourceItem } from "@/lib/resources/resourceItems";
+import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
+import {
+  switchboardOpenableSchemes,
+  switchboardSearchQuery,
+} from "@/lib/switchboard/findScopes";
+import {
+  mergeSwitchboardRows,
+  resourceMatchForQuery,
+} from "@/lib/switchboard/merge";
+import {
+  completeSwitchboardPerformance,
+  NEXUS_OPENABLES_PERFORMANCE,
+} from "@/lib/switchboard/performance";
+import type {
+  CommittedWorkflow,
+  RetainedActivation,
+  SwitchboardFindScope,
+  SwitchboardItem,
+  SwitchboardRowModel,
+} from "@/lib/switchboard/model";
+import { SWITCHBOARD_PLACES } from "@/lib/switchboard/places";
+import {
+  getQuickAction,
+  SWITCHBOARD_QUICK_ACTION_IDS,
+  type SwitchboardQuickAction,
+} from "@/lib/launcher/quickActions";
+import { absent, present, type Presence } from "@/lib/api/presence";
+import { createNotePage } from "@/lib/notes/api";
+import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
+import { createLibrary } from "@/lib/libraries/client";
+import { createRandomId } from "@/lib/createRandomId";
+import { subscribeToPodcast } from "@/app/(authenticated)/podcasts/podcastSubscriptions";
 import {
   resolveAddPanelInitialFocus,
   type AddDismissalConfirmation,
@@ -80,6 +132,10 @@ import {
   useAddContentSession,
   type AddContentSessionController,
 } from "./useAddContentSession";
+import {
+  useTodayCaptureSession,
+  type TodayCaptureSessionController,
+} from "./useTodayCaptureSession";
 
 interface LauncherHistoryResponse {
   data: {
@@ -92,6 +148,9 @@ interface OracleReadingsResponse {
 }
 
 const HISTORY_DEBOUNCE_MS = 200;
+const SWITCHBOARD_OPENABLE_DEBOUNCE_MS = 80;
+const SWITCHBOARD_DEEP_DEBOUNCE_MS = 160;
+const SWITCHBOARD_BUSY_DELAY_MS = 150;
 const ORACLE_TTL_MS = 5 * 60_000;
 const EMPTY_RECENT: LauncherRecentRow[] = [];
 const EMPTY_FRECENCY = new Map<string, number>();
@@ -101,18 +160,129 @@ const EMPTY_WEB: LauncherWebResult[] = [];
 // Quick add-url / browse-acquire ingest into "My Library only"; the AddPanel offers a picker.
 const DEFAULT_LIBRARY_IDS: string[] = [];
 
-async function fetchBrowse(
+function isRetryableWorkflowFailure(error: unknown): boolean {
+  return (
+    isApiError(error) ||
+    error instanceof TypeError ||
+    error instanceof DOMException
+  );
+}
+
+type PodcastBrowseResult = Extract<
+  BrowseResult,
+  { type: "podcasts" | "podcast_episodes" }
+>;
+
+export interface SwitchboardPane {
+  id: string;
+  href: string;
+  label: string;
+  visibility: "visible" | "minimized";
+  current: boolean;
+  activationRouteId: ReturnType<typeof resolveWorkspaceActivationRouteId>;
+}
+
+export interface SwitchboardClosedPane {
+  id: string;
+  label: string;
+}
+
+function routeOnlyOpenableSubject(item: ResourceItem) {
+  const href = item.activation.href;
+  if (item.activation.kind !== "route" || href === null) {
+    // justify-defect: the owned openables endpoint admits route activations only.
+    throw new Error(`Openable resource is not route-admitted: ${item.ref}`);
+  }
+  const ref = assumeCanonicalResourceRef(item.ref);
+  if (item.activation.resourceRef !== ref) {
+    // justify-defect: a canonical ResourceItem cannot identify two resources.
+    throw new Error(`Openable activation does not match ${item.ref}`);
+  }
+  return {
+    href,
+    subject: {
+      kind: "Resource" as const,
+      ref,
+      activation: item.activation,
+      missing: item.missing,
+    },
+  };
+}
+
+function openableRow(
+  item: ResourceItem,
   query: string,
-  signal: AbortSignal,
-): Promise<BrowseResult[]> {
-  const params = new URLSearchParams({ q: query, limit: "4" });
-  const response = await apiFetch<BrowseResponse>(
-    `/api/browse?${params.toString()}`,
-    { signal },
-  );
-  return Object.values(response.data.sections).flatMap(
-    (section) => section?.results ?? [],
-  );
+  recentRouteIds: ReadonlySet<string>,
+): SwitchboardRowModel {
+  const { href, subject } = routeOnlyOpenableSubject(item);
+  return {
+    id: `Resource:${item.ref}`,
+    item: {
+      kind: "Resource",
+      occurrenceRef: item.ref,
+      ownerRef: item.ref,
+      activationRouteId: resolveWorkspaceActivationRouteId(href),
+      subject,
+      label: item.label,
+      summary: item.summary,
+      match: resourceMatchForQuery(
+        item.label,
+        item.summary,
+        query,
+        "Openable",
+      ),
+    },
+    label: item.label,
+    metadata: item.summary,
+    recent: recentRouteIds.has(resolveWorkspaceActivationRouteId(href)),
+  };
+}
+
+function deepSearchRow(
+  result: SearchResultRowViewModel,
+  query: string,
+  recentRouteIds: ReadonlySet<string>,
+): SwitchboardRowModel | null {
+  const href = result.actionTarget.activation.href;
+  if (
+    result.actionTarget.missing ||
+    result.actionTarget.activation.kind !== "route" ||
+    href === null
+  ) {
+    return null;
+  }
+  const summary =
+    result.snippetSegments.map((segment) => segment.text).join("").trim() ||
+    result.sourceMeta ||
+    result.typeLabel;
+  const deep =
+    result.resourceRef !== result.ownerResourceRef ||
+    result.contextRef?.locator !== undefined ||
+    result.type === "note_block" ||
+    result.type === "message";
+  return {
+    id: `Resource:${result.resourceRef}`,
+    item: {
+      kind: "Resource",
+      occurrenceRef: result.resourceRef,
+      ownerRef: result.ownerResourceRef,
+      activationRouteId: resolveWorkspaceActivationRouteId(href),
+      subject: result.actionTarget,
+      label: result.primaryText,
+      summary,
+      match: deep
+        ? "Deep"
+        : resourceMatchForQuery(
+            result.primaryText,
+            summary,
+            query,
+            "Openable",
+          ),
+    },
+    label: result.primaryText,
+    metadata: result.sourceMeta ?? result.typeLabel,
+    recent: recentRouteIds.has(resolveWorkspaceActivationRouteId(href)),
+  };
 }
 
 async function fetchWeb(
@@ -129,11 +299,13 @@ async function fetchWeb(
 
 export interface LauncherController {
   open: boolean;
+  paneCount: number;
   query: string;
   input: LauncherInput;
   lane: LauncherLane;
   page: LauncherPage;
   addSession: AddContentSessionController;
+  todaySession: TodayCaptureSessionController;
   dialogLabel: string;
   focusKey: string;
   dismissalConfirmation: AddDismissalConfirmation;
@@ -141,6 +313,19 @@ export interface LauncherController {
   searchLoading: boolean;
   browseLoading: boolean;
   activeId: string | null;
+  switchboardPanes: readonly SwitchboardPane[];
+  switchboardClosedPanes: readonly SwitchboardClosedPane[];
+  switchboardPlaces: readonly Destination[];
+  switchboardQuickActions: readonly SwitchboardQuickAction[];
+  switchboardFindRows: readonly SwitchboardRowModel[];
+  switchboardFindActiveId: string | null;
+  switchboardFindBusy: boolean;
+  switchboardOpenablesFailed: boolean;
+  switchboardDeepFailed: boolean;
+  podcastResults: readonly PodcastBrowseResult[];
+  podcastBusy: boolean;
+  podcastSubscribingId: string | null;
+  podcastFailed: boolean;
   setQuery(next: string): void;
   setLane(lane: LauncherLane): void;
   clearLane(): void;
@@ -153,6 +338,28 @@ export interface LauncherController {
   runAction(action: LauncherAction): void;
   trailing(item: LauncherItem): void;
   askCurrent(): void;
+  openRoot(): void;
+  enterFind(): void;
+  setFindScope(scope: SwitchboardFindScope): void;
+  setSwitchboardFindActiveId(id: string): void;
+  openSwitchboardItem(item: SwitchboardItem, fork: boolean): void;
+  switchboardItemActions(item: SwitchboardItem): readonly LauncherAction[];
+  runSwitchboardAction(action: LauncherAction): void;
+  openSwitchboardPlace(destination: Destination): void;
+  runSwitchboardQuickAction(action: SwitchboardQuickAction): void;
+  closeSwitchboardPane(paneId: string): void;
+  restoreSwitchboardPane(paneId: string): void;
+  retrySwitchboardOpenables(): void;
+  retrySwitchboardDeep(): void;
+  setLibraryNameDraft(name: string): void;
+  submitLibrary(): void;
+  retryPageCreation(): void;
+  setPodcastQuery(query: string): void;
+  selectPodcast(result: PodcastBrowseResult): void;
+  retryPodcastSearch(): void;
+  manageTabs(): void;
+  retryRetainedActivation(): void;
+  cancelRetainedActivation(): void;
   close(): void;
   dismissAccepted(): void;
   guardClose(): DismissDecision;
@@ -167,7 +374,11 @@ type ExitIntent =
   | { kind: "Close" }
   | { kind: "Root" }
   | { kind: "Content" }
-  | { kind: "Navigate"; target: LauncherActionTarget }
+  | {
+      kind: "Navigate";
+      target: LauncherActionTarget;
+      retained?: Omit<RetainedActivation, "target">;
+    }
   | { kind: "Replace"; detail: OpenLauncherDetail };
 
 type PendingDismissal = {
@@ -177,6 +388,7 @@ type PendingDismissal = {
 
 export function useLauncherController(): LauncherController {
   const { androidShell, platform } = useRenderEnvironment();
+  const viewport = useViewportState();
   const keybindings = useKeybindings();
   const feedback = useFeedback();
   const { openShare } = useShareController();
@@ -185,6 +397,7 @@ export function useLauncherController(): LauncherController {
   // case calls it. useLectern requires a LecternProvider ancestor (AuthenticatedShell).
   const { placeItems } = useLectern();
   const addSession = useAddContentSession();
+  const todaySession = useTodayCaptureSession();
   const {
     start: startAddSession,
     backToContent: backToAddContent,
@@ -194,10 +407,19 @@ export function useLauncherController(): LauncherController {
   const [open, setOpen] = useState(false);
   const [query, setQueryState] = useState("");
   const [laneOverride, setLaneOverride] = useState<LauncherLane | null>(null);
-  const [page, setPage] = useState<LauncherPage>({ kind: "root" });
+  const [page, setPage] = useState<LauncherPage>({ kind: "Root" });
   const [activeId, setActiveIdState] = useState<string | null>(null);
   const [pendingDismissal, setPendingDismissal] =
     useState<PendingDismissal | null>(null);
+  const [switchboardFindActiveId, setSwitchboardFindActiveId] =
+    useState<string | null>(null);
+  const [openablesRetry, setOpenablesRetry] = useState(0);
+  const [deepRetry, setDeepRetry] = useState(0);
+  const [podcastRetry, setPodcastRetry] = useState(0);
+  const [podcastSubscribingId, setPodcastSubscribingId] =
+    useState<string | null>(null);
+  const [showSwitchboardBusy, setShowSwitchboardBusy] = useState(false);
+  const podcastSubscribeRunningRef = useRef(new Set<string>());
   const userMovedRef = useRef(false); // true once the user arrows/hovers; else active follows the top
   const [historyPath, setHistoryPath] = useState<ApiPath | null>(null);
   const [oracleKey, setOracleKey] = useState<string | null>(null);
@@ -208,9 +430,21 @@ export function useLauncherController(): LauncherController {
   // opener) on every open; a navigating dispatch flips it true just before it closes so
   // the surface's useReturnFocus doesn't yank focus back from the destination.
   const suppressReturnFocusRef = useRef(false);
+  const previousSwitchboardRowsRef = useRef<{
+    key: string;
+    rows: readonly SwitchboardRowModel[];
+  }>({ key: "", rows: [] });
 
-  const { state, runtimeLabelByPaneId, activatePane, closePane, restorePane } =
-    useWorkspaceStore();
+  const {
+    state,
+    recentlyClosedPanes,
+    runtimeLabelByPaneId,
+    activatePane,
+    activateWorkspaceTarget,
+    closePane,
+    restoreClosedPane,
+    restorePane,
+  } = useWorkspaceStore();
 
   useEffect(() => {
     if (open) suppressReturnFocusRef.current = false;
@@ -222,11 +456,16 @@ export function useLauncherController(): LauncherController {
 
   // --- Fetching: recents (debounced via useResource), oracle (TTL), search + browse/web (debounced) ---
   const requestedHistoryPath = useMemo<ApiPath | null>(() => {
-    if (!open) return null;
+    if (
+      !open ||
+      (viewport.isMobile && page.kind !== "Find")
+    ) {
+      return null;
+    }
     return input.text
       ? `/api/me/palette-history?${new URLSearchParams({ query: input.text }).toString()}`
       : "/api/me/palette-history";
-  }, [open, input.text]);
+  }, [open, input.text, page.kind, viewport.isMobile]);
 
   useEffect(() => {
     if (requestedHistoryPath === null) {
@@ -257,14 +496,14 @@ export function useLauncherController(): LauncherController {
   );
 
   useEffect(() => {
-    if (!open) {
+    if (!open || viewport.isMobile) {
       setOracleKey(null);
       return;
     }
     if (Date.now() - oracleFetchedAt.current < ORACLE_TTL_MS) return;
     oracleVersion.current += 1;
     setOracleKey(`oracle-readings:${oracleVersion.current}`);
-  }, [open]);
+  }, [open, viewport.isMobile]);
 
   const oracleResource = useResource<OracleReadingsResponse>({
     cacheKey: oracleKey,
@@ -282,7 +521,10 @@ export function useLauncherController(): LauncherController {
   // Search feeds the blended `all` lane and the dedicated `search` lane; the other lanes
   // don't show in-library hits, so don't fetch for them.
   const searchFetch = useDebouncedFetch(
-    open && (lane === "all" || lane === "search") && input.text.length >= 2
+    open &&
+      !viewport.isMobile &&
+      (lane === "all" || lane === "search") &&
+      input.text.length >= 2
       ? searchHref(input.searchQuery)
       : null,
     (signal) =>
@@ -297,12 +539,20 @@ export function useLauncherController(): LauncherController {
 
   // Inline external discovery (/api/browse + /api/web/search) is the `browse` lane only; `all` shows
   // just the pinned "Browse the web" deep-link row, so it never hits external providers.
-  const browseEnabled = open && lane === "browse" && input.text.length >= 2;
+  const browseEnabled =
+    open &&
+    !viewport.isMobile &&
+    lane === "browse" &&
+    input.text.length >= 2;
   const browseFetch = useDebouncedFetch(
     browseEnabled ? input.text : null,
     async (signal) => {
       const [browseRows, webRows] = await Promise.all([
-        fetchBrowse(input.text, signal),
+        fetchBrowseResults({
+          query: input.text,
+          limit: 4,
+          signal,
+        }),
         fetchWeb(input.text, signal),
       ]);
       return { browseRows, webRows };
@@ -311,6 +561,90 @@ export function useLauncherController(): LauncherController {
   );
   const browseResults = browseFetch.data?.browseRows ?? EMPTY_BROWSE;
   const webResults = browseFetch.data?.webRows ?? EMPTY_WEB;
+
+  const mobileFindQuery =
+    page.kind === "Find" ? page.query.trim() : "";
+  const mobileFindScope =
+    page.kind === "Find" ? page.scope : ("All" as const);
+  const mobileFindEnabled =
+    open && viewport.isMobile && page.kind === "Find";
+  const openablesFetch = useDebouncedFetch(
+    mobileFindEnabled && mobileFindQuery.length >= 1
+      ? `${mobileFindScope}:${mobileFindQuery}:${openablesRetry}`
+      : null,
+    (signal) =>
+      searchOpenableResources({
+        q: mobileFindQuery,
+        schemes: switchboardOpenableSchemes(mobileFindScope),
+        signal,
+      }),
+    { debounceMs: SWITCHBOARD_OPENABLE_DEBOUNCE_MS },
+  );
+  useLayoutEffect(() => {
+    if (openablesFetch.data !== null) {
+      completeSwitchboardPerformance(NEXUS_OPENABLES_PERFORMANCE);
+    }
+  }, [openablesFetch.data]);
+  const switchboardDeepQuery = useMemo(
+    () => switchboardSearchQuery(mobileFindScope, mobileFindQuery),
+    [mobileFindQuery, mobileFindScope],
+  );
+  const deepFetch = useDebouncedFetch(
+    mobileFindEnabled &&
+      mobileFindQuery.length >= 2 &&
+      switchboardDeepQuery !== null
+      ? `${mobileFindScope}:${mobileFindQuery}:${deepRetry}`
+      : null,
+    (signal) =>
+      fetchSearchResultPage(switchboardDeepQuery!, {
+        limit: 20,
+        cursor: null,
+        signal,
+      }),
+    { debounceMs: SWITCHBOARD_DEEP_DEBOUNCE_MS },
+  );
+
+  const podcastQuery =
+    page.kind === "PodcastDiscovery" ? page.query.trim() : "";
+  const podcastFetch = useDebouncedFetch(
+    open &&
+      page.kind === "PodcastDiscovery" &&
+      podcastQuery.length >= 1
+      ? `${podcastQuery}:${podcastRetry}`
+      : null,
+    (signal) =>
+      fetchPodcastBrowseResults({
+        query: podcastQuery,
+        signal,
+      }),
+    { debounceMs: SWITCHBOARD_DEEP_DEBOUNCE_MS },
+  );
+
+  const switchboardContractDefect =
+    openablesFetch.error instanceof ResourceOpenablesContractDefect ||
+    isSameSystemApiDefect(openablesFetch.error)
+      ? openablesFetch.error
+      : deepFetch.error instanceof SearchContractDefect ||
+          isSameSystemApiDefect(deepFetch.error)
+        ? deepFetch.error
+        : null;
+  if (switchboardContractDefect !== null) {
+    throw switchboardContractDefect;
+  }
+
+  const mobileRemoteBusy =
+    openablesFetch.loading || deepFetch.loading || podcastFetch.loading;
+  useEffect(() => {
+    if (!mobileRemoteBusy) {
+      setShowSwitchboardBusy(false);
+      return;
+    }
+    const timer = window.setTimeout(
+      () => setShowSwitchboardBusy(true),
+      SWITCHBOARD_BUSY_DELAY_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [mobileRemoteBusy]);
 
   // --- Context → items → view (pure, memoized) ---
   const panes = useMemo(
@@ -325,6 +659,158 @@ export function useLauncherController(): LauncherController {
   );
   const currentHref =
     panes.find((pane) => pane.id === state.activePrimaryPaneId)?.href ?? null;
+
+  const switchboardPanes = useMemo<SwitchboardPane[]>(
+    () =>
+      panes.map((pane) => ({
+        ...pane,
+        current: pane.id === state.activePrimaryPaneId,
+        activationRouteId: resolveWorkspaceActivationRouteId(pane.href),
+      })),
+    [panes, state.activePrimaryPaneId],
+  );
+  const switchboardClosedPanes = useMemo<SwitchboardClosedPane[]>(
+    () =>
+      recentlyClosedPanes.map((snapshot) => ({
+        id: snapshot.pane.id,
+        label: resolveWorkspacePaneLabel(
+          snapshot.pane,
+          runtimeLabelByPaneId,
+        ).label,
+      })),
+    [recentlyClosedPanes, runtimeLabelByPaneId],
+  );
+  const ownerPaneRows = useMemo<SwitchboardRowModel[]>(
+    () =>
+      [...switchboardPanes]
+        .sort((left, right) => {
+          if (left.current !== right.current) return left.current ? -1 : 1;
+          if (left.visibility !== right.visibility) {
+            return left.visibility === "visible" ? -1 : 1;
+          }
+          return 0;
+        })
+        .map((pane) => ({
+          id: `OpenPane:${pane.id}`,
+          item: {
+            kind: "OpenPane",
+            paneId: pane.id,
+            activationRouteId: pane.activationRouteId,
+          },
+          label: pane.label,
+          metadata: pane.current
+            ? "Active tab"
+            : pane.visibility === "minimized"
+              ? "Minimized"
+              : "Open tab",
+          recent: false,
+        })),
+    [switchboardPanes],
+  );
+  const recentRouteIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const history of historyRows) {
+      if (resolvePaneRoute(history.target_href).id !== "unsupported") {
+        ids.add(resolveWorkspaceActivationRouteId(history.target_href));
+      }
+    }
+    return ids;
+  }, [historyRows]);
+
+  const localFindRows = useMemo<SwitchboardRowModel[]>(() => {
+    const query = mobileFindQuery.toLocaleLowerCase();
+    if (!query) return [];
+    const paneRows = switchboardPanes.flatMap((pane) => {
+      if (
+        !pane.label.toLocaleLowerCase().includes(query) &&
+        !pane.href.toLocaleLowerCase().includes(query)
+      ) {
+        return [];
+      }
+      return [
+        {
+          id: `OpenPane:${pane.id}`,
+          item: {
+            kind: "OpenPane" as const,
+            paneId: pane.id,
+            activationRouteId: resolveWorkspaceActivationRouteId(pane.href),
+          },
+          label: pane.label,
+          metadata: pane.current
+            ? "Active tab"
+            : pane.visibility === "minimized"
+              ? "Minimized"
+              : "Open tab",
+          recent: false,
+        },
+      ];
+    });
+    const recentHrefs = new Set(
+      historyRows.map((history) => history.target_href),
+    );
+    const destinationRows = DESTINATIONS.flatMap((destination) => {
+      if (
+        ![
+          destination.label,
+          destination.href,
+          ...destination.keywords,
+        ].some((value) => value.toLocaleLowerCase().includes(query))
+      ) {
+        return [];
+      }
+      return [
+        {
+          id: `Destination:${destination.id}`,
+          item: {
+            kind: "Destination" as const,
+            destinationId: destination.id,
+          },
+          label: destination.label,
+          metadata: "Place",
+          recent: recentHrefs.has(destination.href),
+        },
+      ];
+    });
+    return [...paneRows, ...destinationRows];
+  }, [historyRows, mobileFindQuery, switchboardPanes]);
+
+  const openableRows = useMemo(
+    () =>
+      (openablesFetch.data?.items ?? []).map((item) =>
+        openableRow(item, mobileFindQuery, recentRouteIds),
+      ),
+    [mobileFindQuery, openablesFetch.data, recentRouteIds],
+  );
+  const deepRows = useMemo(() => {
+    return (deepFetch.data?.rows ?? []).flatMap((result) => {
+      const row = deepSearchRow(result, mobileFindQuery, recentRouteIds);
+      return row ? [row] : [];
+    });
+  }, [deepFetch.data, mobileFindQuery, recentRouteIds]);
+  const switchboardFindRows = useMemo(() => {
+    const key = `${mobileFindScope}:${mobileFindQuery}`;
+    const previous =
+      previousSwitchboardRowsRef.current.key === key
+        ? previousSwitchboardRowsRef.current.rows
+        : [];
+    const rows = mergeSwitchboardRows({
+      query: mobileFindQuery,
+      previous,
+      incoming: [...localFindRows, ...openableRows, ...deepRows],
+      ownerPanes: ownerPaneRows,
+      activeId: switchboardFindActiveId,
+    });
+    previousSwitchboardRowsRef.current = { key, rows };
+    return rows;
+  }, [
+    localFindRows,
+    deepRows,
+    mobileFindQuery,
+    mobileFindScope,
+    openableRows,
+    ownerPaneRows,
+    switchboardFindActiveId,
+  ]);
 
   const ctx = useMemo<LauncherContext>(
     () => ({
@@ -364,7 +850,7 @@ export function useLauncherController(): LauncherController {
   );
   const view = useMemo<LauncherView>(
     () =>
-      page.kind === "actions"
+      page.kind === "Actions"
         ? { state: "actions", item: page.item, actions: page.actions }
         : rootView,
     [page, rootView],
@@ -416,6 +902,8 @@ export function useLauncherController(): LauncherController {
     () => ({
       androidShell,
       feedback,
+      activePaneId: state.activePrimaryPaneId,
+      activateWorkspaceTarget,
       defaultLibraryIds: DEFAULT_LIBRARY_IDS,
       placeItems,
       panes,
@@ -439,6 +927,7 @@ export function useLauncherController(): LauncherController {
     [
       androidShell,
       feedback,
+      activateWorkspaceTarget,
       placeItems,
       panes,
       activatePane,
@@ -500,21 +989,473 @@ export function useLauncherController(): LauncherController {
     [feedback],
   );
 
+  const returnTo = useMemo<RetainedActivation["returnTo"]>(
+    () =>
+      page.kind === "Find"
+        ? { kind: "Find", query: page.query, scope: page.scope }
+        : { kind: "Root" },
+    [page],
+  );
+
+  const applyDispatchOutcome = useCallback(
+    (
+      outcome: DispatchOutcome,
+      retained: Omit<RetainedActivation, "target">,
+    ) => {
+      switch (outcome.kind) {
+        case "Stayed":
+          return;
+        case "NavigationAccepted":
+          suppressReturnFocusRef.current = true;
+          setOpen(false);
+          return;
+        case "NavigationRejected":
+          setPage({
+            kind: "ActivationBlocked",
+            retained: {
+              ...retained,
+              target: outcome.target,
+            },
+          });
+          return;
+      }
+    },
+    [],
+  );
+
+  const dispatchOwned = useCallback(
+    (
+      target: LauncherActionTarget,
+      activation: LauncherTargetActivation,
+      retained: Omit<RetainedActivation, "target">,
+    ) =>
+      dispatchTarget(target, dispatchCtx, activation).then((outcome) => {
+        applyDispatchOutcome(outcome, retained);
+        return outcome;
+      }),
+    [applyDispatchOutcome, dispatchCtx],
+  );
+
+  const dispatchWorkspaceTarget = useCallback(
+    (input: {
+      target: RetainedActivation["target"];
+      source: RetainedActivation["source"];
+      completion?: Presence<CommittedWorkflow>;
+      returnTo: RetainedActivation["returnTo"];
+      fork?: boolean;
+      onAccepted?: () => void;
+    }) => {
+      void dispatchOwned(
+        {
+          kind: "href",
+          href: input.target.href,
+          externalShell: false,
+          labelHint: input.target.labelHint,
+        },
+        {
+          disposition: { kind: input.fork ? "Fork" : "Adopt" },
+          modality: "Programmatic",
+        },
+        {
+          source: input.source,
+          completion: input.completion ?? absent(),
+          returnTo: input.returnTo,
+        },
+      )
+        .then((outcome) => {
+          if (outcome.kind === "NavigationAccepted") input.onAccepted?.();
+        })
+        .catch(fail);
+    },
+    [dispatchOwned, fail],
+  );
+
+  const runPageCreation = useCallback(
+    (pageId: string) => {
+      setPage({ kind: "CreatePage", pageId, submit: { kind: "Running" } });
+      void createNotePage({ pageId, title: "Untitled" })
+        .then((created) => {
+          setPendingNoteFocus({ pageId: created.id, target: "title" });
+          dispatchWorkspaceTarget({
+            target: {
+              href: `/pages/${created.id}`,
+              labelHint: created.title,
+            },
+            source: "Page",
+            completion: present({ kind: "Page", replayId: pageId }),
+            returnTo: { kind: "Root" },
+          });
+        })
+        .catch((error: unknown) => {
+          if (handleUnauthenticatedApiError(error)) return;
+          if (
+            isSameSystemApiDefect(error) ||
+            !isRetryableWorkflowFailure(error)
+          ) {
+            throw error;
+          }
+          setPage({
+            kind: "CreatePage",
+            pageId,
+            submit: {
+              kind: "Retryable",
+              message: toFeedback(error, {
+                fallback: "Couldn’t create page. Retry",
+              }).title,
+            },
+          });
+        });
+    },
+    [dispatchWorkspaceTarget],
+  );
+
+  const submitLibrary = useCallback(() => {
+    if (page.kind !== "CreateLibrary" || page.submit.kind === "Running") {
+      return;
+    }
+    const name = page.nameDraft.trim();
+    if (!name) return;
+    const libraryId = page.libraryId;
+    setPage({ ...page, nameDraft: name, submit: { kind: "Running" } });
+    void createLibrary({ libraryId, name })
+      .then((library) => {
+        dispatchWorkspaceTarget({
+          target: {
+            href: `/libraries/${library.id}`,
+            labelHint: library.name,
+          },
+          source: "Library",
+          completion: present({ kind: "Library", replayId: libraryId }),
+          returnTo: { kind: "Root" },
+        });
+      })
+      .catch((error: unknown) => {
+        if (handleUnauthenticatedApiError(error)) return;
+        if (
+          isSameSystemApiDefect(error) ||
+          !isRetryableWorkflowFailure(error)
+        ) {
+          throw error;
+        }
+        setPage({
+          kind: "CreateLibrary",
+          libraryId,
+          nameDraft: name,
+          submit: {
+            kind: "Retryable",
+            message: toFeedback(error, {
+              fallback: "Couldn’t create library. Retry",
+            }).title,
+          },
+        });
+      });
+  }, [dispatchWorkspaceTarget, page]);
+
+  const setLibraryNameDraft = useCallback((name: string) => {
+    setPage((current) => {
+      if (
+        current.kind !== "CreateLibrary" ||
+        current.submit.kind === "Running"
+      ) {
+        return current;
+      }
+      return {
+        ...current,
+        nameDraft: name,
+        libraryId:
+          current.submit.kind === "Retryable" &&
+          name !== current.nameDraft
+            ? crypto.randomUUID()
+            : current.libraryId,
+        submit: { kind: "Ready" },
+      };
+    });
+  }, []);
+
+  const openSwitchboardItem = useCallback(
+    (item: SwitchboardItem, fork: boolean) => {
+      switch (item.kind) {
+        case "OpenPane": {
+          const pane = panes.find((candidate) => candidate.id === item.paneId);
+          if (!pane) {
+            // justify-defect: rendered pane rows come from the current workspace.
+            throw new Error(`Unknown Switchboard pane: ${item.paneId}`);
+          }
+          if (fork) {
+            dispatchWorkspaceTarget({
+              target: { href: pane.href, labelHint: pane.label },
+              source: "Find",
+              returnTo,
+              fork: true,
+            });
+            return;
+          }
+          if (pane.visibility === "minimized") restorePane(item.paneId);
+          else activatePane(item.paneId);
+          suppressReturnFocusRef.current =
+            item.paneId !== state.activePrimaryPaneId;
+          setOpen(false);
+          return;
+        }
+        case "ClosedPane": {
+          const result = restoreClosedPane(item.paneId);
+          if (result.kind === "Rejected") {
+            feedback.show({
+              severity: "warning",
+              title: "Tab limit reached",
+              message: "Close a tab, then restore this one.",
+            });
+            return;
+          }
+          suppressReturnFocusRef.current = true;
+          setOpen(false);
+          return;
+        }
+        case "Destination": {
+          const destination = DESTINATIONS.find(
+            (candidate) => candidate.id === item.destinationId,
+          );
+          if (!destination) {
+            // justify-defect: destination ids are projected from the registry.
+            throw new Error(
+              `Unknown Switchboard destination: ${item.destinationId}`,
+            );
+          }
+          dispatchWorkspaceTarget({
+            target: {
+              href: destination.href,
+              labelHint: destination.label,
+            },
+            source: "Find",
+            returnTo,
+            fork,
+          });
+          return;
+        }
+        case "Resource": {
+          const href = item.subject.activation.href;
+          if (item.subject.activation.kind !== "route" || href === null) {
+            // justify-defect: Switchboard Find admits internal routes only.
+            throw new Error(
+              `Switchboard resource is not internally routeable: ${item.occurrenceRef}`,
+            );
+          }
+          dispatchWorkspaceTarget({
+            target: { href, labelHint: item.label },
+            source: "Find",
+            returnTo,
+            fork,
+          });
+          return;
+        }
+      }
+    },
+    [
+      activatePane,
+      dispatchWorkspaceTarget,
+      feedback,
+      panes,
+      restoreClosedPane,
+      restorePane,
+      returnTo,
+      state.activePrimaryPaneId,
+    ],
+  );
+
+  const openSwitchboardPlace = useCallback(
+    (destination: Destination) => {
+      dispatchWorkspaceTarget({
+        target: { href: destination.href, labelHint: destination.label },
+        source: "Place",
+        returnTo: { kind: "Root" },
+      });
+    },
+    [dispatchWorkspaceTarget],
+  );
+
+  const switchboardItemActions = useCallback(
+    (item: SwitchboardItem): readonly LauncherAction[] =>
+      item.kind === "Resource"
+        ? buildResourceItemActions(item.subject, item.label)
+        : [],
+    [],
+  );
+
+  const runSwitchboardAction = useCallback(
+    (action: LauncherAction) => {
+      void dispatchOwned(
+        action.target,
+        {
+          disposition: { kind: "Adopt" },
+          modality: "Programmatic",
+        },
+        {
+          source: "Find",
+          completion: absent(),
+          returnTo,
+        },
+      ).catch(fail);
+    },
+    [dispatchOwned, fail, returnTo],
+  );
+
+  const runSwitchboardQuickAction = useCallback(
+    (action: SwitchboardQuickAction) => {
+      switch (action.target.kind) {
+        case "TodayCapture":
+          setPage({
+            kind: "TodayCapture",
+            sessionId: todaySession.start(),
+          });
+          return;
+        case "CreatePage":
+          runPageCreation(crypto.randomUUID());
+          return;
+        case "CreateChat":
+          dispatchWorkspaceTarget({
+            target: { href: "/conversations/new", labelHint: "New chat" },
+            source: "Chat",
+            returnTo: { kind: "Root" },
+            fork: true,
+          });
+          return;
+        case "CreateLibrary":
+          setPage({
+            kind: "CreateLibrary",
+            nameDraft: "",
+            libraryId: crypto.randomUUID(),
+            submit: { kind: "Ready" },
+          });
+          return;
+        case "Import":
+          setPage({
+            kind: "Add",
+            sessionId: startAddSession(action.target.seed),
+          });
+          return;
+        case "PodcastDiscovery":
+          setPage({
+            kind: "PodcastDiscovery",
+            query: "",
+            sessionId: createRandomId("podcast-discovery"),
+          });
+          return;
+      }
+    },
+    [dispatchWorkspaceTarget, runPageCreation, startAddSession, todaySession],
+  );
+
+  const selectPodcast = useCallback(
+    (result: PodcastBrowseResult) => {
+      const title =
+        result.type === "podcasts" ? result.title : result.podcast_title;
+      if (result.podcast_id) {
+        dispatchWorkspaceTarget({
+          target: {
+            href: `/podcasts/${result.podcast_id}`,
+            labelHint: title,
+          },
+          source: "Podcast",
+          returnTo: { kind: "Root" },
+        });
+        return;
+      }
+      const subscriptionKey = result.provider_podcast_id;
+      if (podcastSubscribeRunningRef.current.size > 0) return;
+      podcastSubscribeRunningRef.current.add(subscriptionKey);
+      setPodcastSubscribingId(subscriptionKey);
+      const replayId =
+        page.kind === "PodcastDiscovery"
+          ? `${page.sessionId}:${subscriptionKey}`
+          : createRandomId("podcast-discovery");
+      const podcast =
+        result.type === "podcasts"
+          ? {
+              provider_podcast_id: result.provider_podcast_id,
+              title: result.title,
+              contributors: result.contributors,
+              feed_url: result.feed_url,
+              website_url: result.website_url,
+              image_url: result.image_url,
+              description: result.description,
+            }
+          : {
+              provider_podcast_id: result.provider_podcast_id,
+              title: result.podcast_title,
+              contributors: result.podcast_contributors,
+              feed_url: result.feed_url,
+              website_url: result.website_url,
+              image_url: result.podcast_image_url,
+              description: null,
+            };
+      void subscribeToPodcast({
+        ...podcast,
+        library_ids: DEFAULT_LIBRARY_IDS,
+      })
+        .then((subscribed) => {
+          dispatchWorkspaceTarget({
+            target: {
+              href: `/podcasts/${subscribed.podcast_id}`,
+              labelHint: title,
+            },
+            source: "Podcast",
+            completion: present({
+              kind: "PodcastSubscription",
+              replayId,
+            }),
+            returnTo: { kind: "Root" },
+          });
+        })
+        .catch((error: unknown) => {
+          if (handleUnauthenticatedApiError(error)) return;
+          if (
+            isSameSystemApiDefect(error) ||
+            !isRetryableWorkflowFailure(error)
+          ) {
+            throw error;
+          }
+          feedback.show(
+            toFeedback(error, {
+              fallback: "Podcast could not be subscribed. Retry",
+            }),
+          );
+        })
+        .finally(() => {
+          podcastSubscribeRunningRef.current.delete(subscriptionKey);
+          setPodcastSubscribingId((current) =>
+            current === subscriptionKey ? null : current,
+          );
+        });
+    },
+    [dispatchWorkspaceTarget, feedback, page],
+  );
+
   const select = useCallback(
     (item: LauncherItem, activation: LauncherTargetActivation) => {
       const target = item.target;
       if (target.kind === "open-add") {
-        startAddSession(target.seed);
-        setPage({ kind: "add" });
+        setPage({ kind: "Add", sessionId: startAddSession(target.seed) });
         return;
       }
-      if (target.kind === "open-create") {
-        setPage({ kind: "create" });
+      if (target.kind === "open-today-capture") {
+        setPage({
+          kind: "TodayCapture",
+          sessionId: todaySession.start(),
+        });
+        return;
+      }
+      if (target.kind === "create-page") {
+        runPageCreation(crypto.randomUUID());
         return;
       }
       if (target.kind === "set-lane") {
         userMovedRef.current = false;
-        setPage({ kind: "root" });
+        const nextQuery = target.query ?? input.text;
+        setPage(
+          nextQuery
+            ? { kind: "Find", query: nextQuery, scope: "All" }
+            : { kind: "Root" },
+        );
         const sigil = LANE_SIGIL[target.lane];
         if (sigil) {
           setLaneOverride(null);
@@ -526,95 +1467,143 @@ export function useLauncherController(): LauncherController {
         // stay open — do NOT call setOpen(false)
         return;
       }
-      suppressReturnFocusRef.current = targetNavigates(target);
-      setOpen(false);
       logSelection(item);
-      void dispatchTarget(target, dispatchCtx, activation).catch(fail);
+      void dispatchOwned(target, activation, {
+        source: "Find",
+        completion: absent(),
+        returnTo,
+      }).catch(fail);
     },
-    [dispatchCtx, logSelection, fail, input.text, startAddSession],
+    [
+      dispatchOwned,
+      fail,
+      input.text,
+      logSelection,
+      returnTo,
+      runPageCreation,
+      startAddSession,
+      todaySession,
+    ],
   );
 
-  // CreatePanel opens its post-action pane through the one dispatch owner (AC-9).
+  // TodayCapturePanel opens its post-action pane through the one dispatch owner.
   // AddPanel uses openAddTarget,
   // whose guarded Navigate intent closes Add after the destination accepts focus.
   const openTarget = useCallback(
     (target: LauncherActionTarget) => {
-      void dispatchTarget(
+      void dispatchOwned(
         target,
-        dispatchCtx,
         PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION,
+        {
+          source: page.kind === "TodayCapture" ? "TodayCapture" : "Find",
+          completion:
+            page.kind === "TodayCapture" &&
+            todaySession.committedReplayId !== null
+              ? present({
+                  kind: "TodayCapture",
+                  replayId: todaySession.committedReplayId,
+                })
+              : absent(),
+          returnTo,
+        },
       ).catch(fail);
     },
-    [dispatchCtx, fail],
+    [dispatchOwned, fail, page.kind, returnTo, todaySession.committedReplayId],
   );
 
   const runAction = useCallback(
     (action: LauncherAction) => {
       // pane-close keeps the Launcher open and returns to the root list; everything else closes.
       if (action.target.kind === "pane-close") {
-        void dispatchTarget(
+        void dispatchOwned(
           action.target,
-          dispatchCtx,
           PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION,
+          {
+            source: "Find",
+            completion: absent(),
+            returnTo,
+          },
         ).catch(fail);
-        setPage({ kind: "root" });
+        setPage({ kind: "Root" });
         return;
       }
-      suppressReturnFocusRef.current = targetNavigates(action.target);
-      setOpen(false);
-      void dispatchTarget(
+      void dispatchOwned(
         action.target,
-        dispatchCtx,
         PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION,
+        {
+          source: "Find",
+          completion: absent(),
+          returnTo,
+        },
       ).catch(fail);
     },
-    [dispatchCtx, fail],
+    [dispatchOwned, fail, returnTo],
   );
 
   const trailing = useCallback(
     (item: LauncherItem) => {
       if (item.trailingAction)
-        void dispatchTarget(
+        void dispatchOwned(
           item.trailingAction.target,
-          dispatchCtx,
           PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION,
+          {
+            source: "Find",
+            completion: absent(),
+            returnTo,
+          },
         ).catch(
           fail,
         );
     },
-    [dispatchCtx, fail],
+    [dispatchOwned, fail, returnTo],
   );
 
   const drill = useCallback((item: LauncherItem) => {
     if (!item.hasActions) return;
     const actions = buildItemActions(item);
     if (actions.length === 0) return;
-    setPage({ kind: "actions", item, actions });
+    setPage({ kind: "Actions", item, actions });
   }, []);
 
   const askCurrent = useCallback(() => {
     if (!input.text) return;
-    suppressReturnFocusRef.current = true; // ask opens a new chat pane
-    setOpen(false);
-    void dispatchTarget(
+    void dispatchOwned(
       { kind: "Ask", text: input.text },
-      dispatchCtx,
       PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION,
+      {
+        source: "Chat",
+        completion: absent(),
+        returnTo,
+      },
     ).catch(
       fail,
     );
-  }, [input.text, dispatchCtx, fail]);
+  }, [dispatchOwned, fail, input.text, returnTo]);
 
   const setQuery = useCallback((next: string) => {
     userMovedRef.current = false;
     setQueryState(next);
-    setPage({ kind: "root" });
+    setPage((current) =>
+      current.kind === "Find"
+        ? { ...current, query: next }
+        : next.trim()
+          ? { kind: "Find", query: next, scope: "All" }
+          : { kind: "Root" },
+    );
   }, []);
 
   const setLane = useCallback(
     (next: LauncherLane) => {
       userMovedRef.current = false;
-      setPage({ kind: "root" });
+      setPage(
+        input.text
+          ? {
+              kind: "Find",
+              query: input.text,
+              scope: page.kind === "Find" ? page.scope : "All",
+            }
+          : { kind: "Root" },
+      );
       const sigil = LANE_SIGIL[next];
       if (sigil) {
         setLaneOverride(null);
@@ -624,7 +1613,7 @@ export function useLauncherController(): LauncherController {
         setQueryState(input.text);
       }
     },
-    [input.text],
+    [input.text, page],
   );
 
   const clearLane = useCallback(() => {
@@ -642,35 +1631,48 @@ export function useLauncherController(): LauncherController {
           return;
         case "Root":
           discardAddSession();
-          setPage({ kind: "root" });
+          setPage({ kind: "Root" });
           return;
         case "Close":
           discardAddSession();
           setOpen(false);
           return;
         case "Navigate":
-          suppressReturnFocusRef.current = targetNavigates(intent.target);
-          discardAddSession();
-          setOpen(false);
-          void dispatchTarget(
+          void dispatchOwned(
             intent.target,
-            dispatchCtx,
             PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION,
-          ).catch(fail);
+            intent.retained ?? {
+              source: page.kind === "Add" ? "Import" : "Place",
+              completion: absent(),
+              returnTo,
+            },
+          )
+            .then((outcome) => {
+              if (outcome.kind === "NavigationAccepted") {
+                discardAddSession();
+              }
+            })
+            .catch(fail);
           return;
         case "Replace": {
           const { detail } = intent;
           userMovedRef.current = false;
           suppressReturnFocusRef.current = false;
           if (detail.kind === "Add") {
-            startAddSession(detail.seed);
-            setPage({ kind: "add" });
+            setPage({
+              kind: "Add",
+              sessionId: startAddSession(detail.seed),
+            });
             setLaneOverride(null);
             setQueryState("");
           } else {
             discardAddSession();
-            setPage({ kind: "root" });
             const seedQuery = detail.query ?? "";
+            setPage(
+              seedQuery
+                ? { kind: "Find", query: seedQuery, scope: "All" }
+                : { kind: "Root" },
+            );
             const sigil = detail.lane ? LANE_SIGIL[detail.lane] : undefined;
             if (sigil) {
               setLaneOverride(null);
@@ -687,13 +1689,24 @@ export function useLauncherController(): LauncherController {
         }
       }
     },
-    [backToAddContent, discardAddSession, dispatchCtx, fail, startAddSession],
+    [
+      backToAddContent,
+      discardAddSession,
+      dispatchOwned,
+      fail,
+      page.kind,
+      returnTo,
+      startAddSession,
+    ],
   );
 
   const guardExit = useCallback(
     (intent: ExitIntent): DismissDecision => {
       if (pendingDismissal) return "blocked";
-      if (page.kind !== "add") return "accepted";
+      if (page.kind === "TodayCapture") {
+        return todaySession.checkpointForDismissal();
+      }
+      if (page.kind !== "Add") return "accepted";
       if (addSession.state.mutation.kind === "Running") {
         setPendingDismissal({ confirmation: "Stop", intent });
         return "blocked";
@@ -712,6 +1725,7 @@ export function useLauncherController(): LauncherController {
       addSession.state.mutation.kind,
       page.kind,
       pendingDismissal,
+      todaySession,
     ],
   );
 
@@ -723,7 +1737,7 @@ export function useLauncherController(): LauncherController {
   );
 
   const back = useCallback(() => {
-    if (page.kind === "add" && addSession.state.branch === "Opml") {
+    if (page.kind === "Add" && addSession.state.branch === "Opml") {
       requestExit({ kind: "Content" });
       return;
     }
@@ -734,25 +1748,190 @@ export function useLauncherController(): LauncherController {
     () => requestExit({ kind: "Close" }),
     [requestExit],
   );
+  const openRoot = useCallback(
+    () => {
+      if (
+        page.kind === "ActivationBlocked" ||
+        page.kind === "ManageTabs"
+      ) {
+        suppressReturnFocusRef.current = false;
+        setOpen(true);
+        return;
+      }
+      requestExit({ kind: "Replace", detail: { kind: "Root" } });
+    },
+    [page.kind, requestExit],
+  );
+  const enterFind = useCallback(() => {
+    setSwitchboardFindActiveId(null);
+    setQueryState("");
+    setPage({ kind: "Find", query: "", scope: "All" });
+  }, []);
+  const setFindScope = useCallback((scope: SwitchboardFindScope) => {
+    setSwitchboardFindActiveId(null);
+    setPage((current) =>
+      current.kind === "Find" ? { ...current, scope } : current,
+    );
+  }, []);
+  const closeSwitchboardPane = useCallback(
+    (paneId: string) => closePane(paneId),
+    [closePane],
+  );
+  const restoreSwitchboardPane = useCallback(
+    (paneId: string) =>
+      openSwitchboardItem({ kind: "ClosedPane", paneId }, false),
+    [openSwitchboardItem],
+  );
+  const retryPageCreation = useCallback(() => {
+    if (page.kind === "CreatePage" && page.submit.kind === "Retryable") {
+      runPageCreation(page.pageId);
+    }
+  }, [page, runPageCreation]);
+  const setPodcastQuery = useCallback((query: string) => {
+    setPage((current) =>
+      current.kind === "PodcastDiscovery" ? { ...current, query } : current,
+    );
+  }, []);
+  const manageTabs = useCallback(() => {
+    setPage((current) =>
+      current.kind === "ActivationBlocked"
+        ? { kind: "ManageTabs", retained: current.retained }
+        : current,
+    );
+  }, []);
+  const retryRetainedActivation = useCallback(() => {
+    if (
+      page.kind !== "ActivationBlocked" &&
+      page.kind !== "ManageTabs"
+    ) {
+      return;
+    }
+    const retained = page.retained;
+    dispatchWorkspaceTarget({
+      target: retained.target,
+      source: retained.source,
+      completion: retained.completion,
+      returnTo: retained.returnTo,
+      fork: retained.source === "Chat",
+      onAccepted: () => {
+        setPage(
+          retained.returnTo.kind === "Find"
+            ? {
+                kind: "Find",
+                query: retained.returnTo.query,
+                scope: retained.returnTo.scope,
+              }
+            : { kind: "Root" },
+        );
+      },
+    });
+  }, [dispatchWorkspaceTarget, page]);
+  const cancelRetainedActivation = useCallback(() => {
+    setPage((current) => {
+      if (
+        current.kind !== "ActivationBlocked" &&
+        current.kind !== "ManageTabs"
+      ) {
+        return current;
+      }
+      return current.retained.returnTo.kind === "Find"
+        ? {
+            kind: "Find",
+            query: current.retained.returnTo.query,
+            scope: current.retained.returnTo.scope,
+          }
+        : { kind: "Root" };
+    });
+  }, []);
+  useEffect(() => {
+    const replayId = todaySession.committedReplayId;
+    if (replayId === null) return;
+    setPage((current) => {
+      if (
+        (current.kind !== "ActivationBlocked" &&
+          current.kind !== "ManageTabs") ||
+        current.retained.source !== "TodayCapture" ||
+        current.retained.completion.kind === "Present"
+      ) {
+        return current;
+      }
+      return {
+        ...current,
+        retained: {
+          ...current.retained,
+          completion: present({
+            kind: "TodayCapture",
+            replayId,
+          }),
+        },
+      };
+    });
+  }, [todaySession.committedReplayId]);
   const dismissAccepted = useCallback(
     () => performExit({ kind: "Close" }),
     [performExit],
   );
-  const guardClose = useCallback(
-    () => guardExit({ kind: "Close" }),
-    [guardExit],
-  );
-  const escape = useCallback(() => {
-    if (page.kind === "root") {
-      requestExit({ kind: "Close" });
-      return;
+  const guardClose = useCallback((): DismissDecision => {
+    if (
+      page.kind === "Root" ||
+      page.kind === "ActivationBlocked" ||
+      page.kind === "ManageTabs"
+    ) {
+      return guardExit({ kind: "Close" });
     }
-    back();
-  }, [back, page.kind, requestExit]);
+    const intent: ExitIntent =
+      page.kind === "Add" && addSession.state.branch === "Opml"
+        ? { kind: "Content" }
+        : { kind: "Root" };
+    if (guardExit(intent) === "accepted") performExit(intent);
+    // A nested transition always keeps the one mounted sheet open. MobileSheet
+    // must therefore treat even a successful pop as a blocked sheet dismissal.
+    return "blocked";
+  }, [addSession.state.branch, guardExit, page.kind, performExit]);
+  const escape = useCallback(() => {
+    if (guardClose() === "accepted") dismissAccepted();
+  }, [dismissAccepted, guardClose]);
 
   const openAddTarget = useCallback(
-    (target: LauncherActionTarget) => requestExit({ kind: "Navigate", target }),
-    [requestExit],
+    (target: LauncherActionTarget) => {
+      let replayId: string | null = null;
+      if (
+        target.kind === "href" &&
+        target.href === "/podcasts" &&
+        addSession.state.opml.kind === "Complete"
+      ) {
+        replayId = addSession.opmlReplayIdentity;
+      } else if (target.kind === "href") {
+        const mediaId = /^\/media\/([^/?#]+)/.exec(target.href)?.[1] ?? null;
+        const committed = mediaId
+          ? addSession.state.items.find(
+              (item) =>
+                (item.kind === "Accepted" &&
+                  item.result.mediaId === mediaId) ||
+                (item.kind === "AcceptedUncertain" &&
+                  item.mediaId === mediaId),
+            )
+          : undefined;
+        replayId = committed?.id ?? null;
+      }
+      requestExit({
+        kind: "Navigate",
+        target,
+        retained: {
+          source: "Import",
+          completion: replayId
+            ? present({ kind: "Import", replayId })
+            : absent(),
+          returnTo: { kind: "Root" },
+        },
+      });
+    },
+    [
+      addSession.opmlReplayIdentity,
+      addSession.state.items,
+      addSession.state.opml.kind,
+      requestExit,
+    ],
   );
 
   const keepWorking = useCallback(() => setPendingDismissal(null), []);
@@ -766,8 +1945,36 @@ export function useLauncherController(): LauncherController {
 
   const initialFocus = useCallback(
     (container: HTMLElement, isMobile: boolean): HTMLElement | null => {
-      if (page.kind !== "add") {
-        return container.querySelector<HTMLElement>('[role="combobox"]');
+      if (page.kind === "Root") {
+        return isMobile
+          ? container.querySelector<HTMLElement>("[data-switchboard-heading]")
+          : container.querySelector<HTMLElement>('[role="combobox"]');
+      }
+      if (page.kind === "Find") {
+        return container.querySelector<HTMLElement>('input[type="search"]');
+      }
+      if (page.kind === "TodayCapture") {
+        return container.querySelector<HTMLElement>(
+          '[role="textbox"][aria-label="Quick note to today"]',
+        );
+      }
+      if (page.kind === "CreateLibrary") {
+        return container.querySelector<HTMLElement>(
+          "[data-switchboard-library-name]",
+        );
+      }
+      if (page.kind === "PodcastDiscovery") {
+        return container.querySelector<HTMLElement>(
+          "[data-switchboard-podcast-query]",
+        );
+      }
+      if (page.kind === "ManageTabs") {
+        return container.querySelector<HTMLElement>(
+          "[data-switchboard-open-heading]",
+        );
+      }
+      if (page.kind !== "Add") {
+        return container.querySelector<HTMLElement>("[data-switchboard-heading]");
       }
       return resolveAddPanelInitialFocus(container, isMobile, {
         branch: addSession.state.branch,
@@ -778,13 +1985,13 @@ export function useLauncherController(): LauncherController {
   );
 
   const dialogLabel =
-    page.kind === "add"
+    page.kind === "Add"
       ? addSession.state.branch === "Opml"
         ? "Import OPML"
         : "Add content"
       : "Launcher";
   const focusKey =
-    page.kind === "add"
+    page.kind === "Add"
       ? `${addSession.state.sessionId}:${addSession.state.branch}:${
           addSession.state.branch === "Content" &&
           addSession.state.initialFocus === "Opml"
@@ -895,11 +2102,13 @@ export function useLauncherController(): LauncherController {
 
   return {
     open,
+    paneCount: panes.length,
     query,
     input,
     lane,
     page,
     addSession,
+    todaySession,
     dialogLabel,
     focusKey,
     dismissalConfirmation,
@@ -907,6 +2116,22 @@ export function useLauncherController(): LauncherController {
     searchLoading: searchFetch.loading,
     browseLoading: browseFetch.loading,
     activeId,
+    switchboardPanes,
+    switchboardClosedPanes,
+    switchboardPlaces: SWITCHBOARD_PLACES,
+    switchboardQuickActions:
+      SWITCHBOARD_QUICK_ACTION_IDS.map(getQuickAction),
+    switchboardFindRows,
+    switchboardFindActiveId,
+    switchboardFindBusy:
+      showSwitchboardBusy &&
+      (openablesFetch.loading || deepFetch.loading),
+    switchboardOpenablesFailed: openablesFetch.error !== null,
+    switchboardDeepFailed: deepFetch.error !== null,
+    podcastResults: podcastFetch.data ?? [],
+    podcastBusy: showSwitchboardBusy && podcastFetch.loading,
+    podcastSubscribingId,
+    podcastFailed: podcastFetch.error !== null,
     setQuery,
     setLane,
     clearLane,
@@ -919,6 +2144,31 @@ export function useLauncherController(): LauncherController {
     runAction,
     trailing,
     askCurrent,
+    openRoot,
+    enterFind,
+    setFindScope,
+    setSwitchboardFindActiveId,
+    openSwitchboardItem,
+    switchboardItemActions,
+    runSwitchboardAction,
+    openSwitchboardPlace,
+    runSwitchboardQuickAction,
+    closeSwitchboardPane,
+    restoreSwitchboardPane,
+    retrySwitchboardOpenables: () =>
+      setOpenablesRetry((current) => current + 1),
+    retrySwitchboardDeep: () =>
+      setDeepRetry((current) => current + 1),
+    setLibraryNameDraft,
+    submitLibrary,
+    retryPageCreation,
+    setPodcastQuery,
+    selectPodcast,
+    retryPodcastSearch: () =>
+      setPodcastRetry((current) => current + 1),
+    manageTabs,
+    retryRetainedActivation,
+    cancelRetainedActivation,
     close,
     dismissAccepted,
     guardClose,

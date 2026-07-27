@@ -40,6 +40,10 @@ from tests.utils.db import DirectSessionManager
 pytestmark = pytest.mark.integration
 
 
+def _library_create_body(name: str) -> dict[str, str]:
+    return {"library_id": str(uuid4()), "name": name}
+
+
 def _user_handle(user_id: UUID) -> str:
     return str(seal_user(user_id))
 
@@ -170,7 +174,7 @@ class TestCreateLibrary:
 
         response = auth_client.post(
             "/libraries",
-            json={"name": "My New Library"},
+            json=_library_create_body("My New Library"),
             headers=auth_headers(user_id),
         )
 
@@ -188,7 +192,7 @@ class TestCreateLibrary:
 
         response = auth_client.post(
             "/libraries",
-            json={"name": "Test Library"},
+            json=_library_create_body("Test Library"),
             headers=auth_headers(user_id),
         )
 
@@ -214,7 +218,7 @@ class TestCreateLibrary:
 
         response = auth_client.post(
             "/libraries",
-            json={"name": ""},
+            json=_library_create_body(""),
             headers=auth_headers(user_id),
         )
 
@@ -225,17 +229,17 @@ class TestCreateLibrary:
         assert response.json()["error"]["code"] in ("E_INVALID_REQUEST", "E_NAME_INVALID")
 
     def test_create_library_whitespace_only_name(self, auth_client):
-        """Whitespace-only name returns 400 E_NAME_INVALID."""
+        """Whitespace-only name fails the strict request schema."""
         user_id = create_test_user_id()
 
         response = auth_client.post(
             "/libraries",
-            json={"name": "   "},
+            json=_library_create_body("   "),
             headers=auth_headers(user_id),
         )
 
         assert response.status_code == 400
-        assert response.json()["error"]["code"] == "E_NAME_INVALID"
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
     def test_create_library_name_too_long(self, auth_client):
         """Name > 100 chars returns 400."""
@@ -243,7 +247,7 @@ class TestCreateLibrary:
 
         response = auth_client.post(
             "/libraries",
-            json={"name": "x" * 101},
+            json=_library_create_body("x" * 101),
             headers=auth_headers(user_id),
         )
 
@@ -255,7 +259,7 @@ class TestCreateLibrary:
 
         response = auth_client.post(
             "/libraries",
-            json={"name": "  My Library  "},
+            json=_library_create_body("  My Library  "),
             headers=auth_headers(user_id),
         )
 
@@ -294,9 +298,15 @@ class TestListLibraries:
         user_id = create_test_user_id()
 
         # Create some libraries
-        auth_client.post("/libraries", json={"name": "Lib A"}, headers=auth_headers(user_id))
-        auth_client.post("/libraries", json={"name": "Lib B"}, headers=auth_headers(user_id))
-        auth_client.post("/libraries", json={"name": "Lib C"}, headers=auth_headers(user_id))
+        auth_client.post(
+            "/libraries", json=_library_create_body("Lib A"), headers=auth_headers(user_id)
+        )
+        auth_client.post(
+            "/libraries", json=_library_create_body("Lib B"), headers=auth_headers(user_id)
+        )
+        auth_client.post(
+            "/libraries", json=_library_create_body("Lib C"), headers=auth_headers(user_id)
+        )
 
         response = auth_client.get("/libraries", headers=auth_headers(user_id))
 
@@ -315,7 +325,9 @@ class TestListLibraries:
 
         # Create 5 libraries
         for i in range(5):
-            auth_client.post("/libraries", json={"name": f"Lib {i}"}, headers=auth_headers(user_id))
+            auth_client.post(
+                "/libraries", json=_library_create_body(f"Lib {i}"), headers=auth_headers(user_id)
+            )
 
         response = auth_client.get("/libraries?limit=3", headers=auth_headers(user_id))
 
@@ -338,7 +350,7 @@ class TestListLibraries:
         for idx in range(3):
             response = auth_client.post(
                 "/libraries",
-                json={"name": f"Cursor Library {idx}"},
+                json=_library_create_body(f"Cursor Library {idx}"),
                 headers=auth_headers(user_id),
             )
             assert response.status_code == 201, response.text
@@ -371,7 +383,7 @@ class TestListLibraries:
         for idx in range(3):
             response = auth_client.post(
                 "/libraries",
-                json={"name": f"Scoped Cursor Library {idx}"},
+                json=_library_create_body(f"Scoped Cursor Library {idx}"),
                 headers=auth_headers(owner_id),
             )
             assert response.status_code == 201, response.text
@@ -462,7 +474,7 @@ class TestWritableLibraryDestinations:
         for idx in range(105):
             response = auth_client.post(
                 "/libraries",
-                json={"name": f"Destination {idx:03d}"},
+                json=_library_create_body(f"Destination {idx:03d}"),
                 headers=auth_headers(user_id),
             )
             assert response.status_code == 201, response.text
@@ -482,7 +494,7 @@ class TestWritableLibraryDestinations:
         for idx in range(4):
             response = auth_client.post(
                 "/libraries",
-                json={"name": f"Paged Destination {idx}"},
+                json=_library_create_body(f"Paged Destination {idx}"),
                 headers=auth_headers(user_id),
             )
             assert response.status_code == 201, response.text
@@ -517,7 +529,7 @@ class TestWritableLibraryDestinations:
         for idx in range(3):
             response = auth_client.post(
                 "/libraries",
-                json={"name": f"Scoped Destination {idx}"},
+                json=_library_create_body(f"Scoped Destination {idx}"),
                 headers=auth_headers(owner_id),
             )
             assert response.status_code == 201, response.text
@@ -742,7 +754,7 @@ class TestRenameLibrary:
 
         # Create library
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Original Name"}, headers=auth_headers(user_id)
+            "/libraries", json=_library_create_body("Original Name"), headers=auth_headers(user_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -795,7 +807,7 @@ class TestRenameLibrary:
         user_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Test"}, headers=auth_headers(user_id)
+            "/libraries", json=_library_create_body("Test"), headers=auth_headers(user_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -822,7 +834,7 @@ class TestDeleteLibrary:
 
         # Create library
         create_resp = auth_client.post(
-            "/libraries", json={"name": "To Delete"}, headers=auth_headers(user_id)
+            "/libraries", json=_library_create_body("To Delete"), headers=auth_headers(user_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -880,7 +892,7 @@ class TestDeleteLibrary:
 
         # Create library and add media
         create_resp = auth_client.post(
-            "/libraries", json={"name": "To Delete"}, headers=auth_headers(user_id)
+            "/libraries", json=_library_create_body("To Delete"), headers=auth_headers(user_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -1065,7 +1077,7 @@ class TestDeleteDocument:
         direct_db.register_cleanup("media", "id", media_id)
 
         library_resp = auth_client.post(
-            "/libraries", json={"name": "Shared"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Shared"), headers=auth_headers(owner_id)
         )
         library_id = library_resp.json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(member_id))
@@ -1108,7 +1120,7 @@ class TestPodcastLibraryEntries:
         user_id = create_test_user_id()
         create_resp = auth_client.post(
             "/libraries",
-            json={"name": "Podcasts"},
+            json=_library_create_body("Podcasts"),
             headers=auth_headers(user_id),
         )
         library_id = create_resp.json()["data"]["id"]
@@ -1195,7 +1207,7 @@ class TestPodcastLibraryEntries:
         user_id = create_test_user_id()
         create_resp = auth_client.post(
             "/libraries",
-            json={"name": "Sports"},
+            json=_library_create_body("Sports"),
             headers=auth_headers(user_id),
         )
         library_id = create_resp.json()["data"]["id"]
@@ -2148,7 +2160,7 @@ class TestDefaultLibraryVirtualView:
 
         # Share: owner files the media into a library shared with viewer.
         lib_resp = auth_client.post(
-            "/libraries", json={"name": "Shared"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Shared"), headers=auth_headers(owner_id)
         )
         shared_library_id = lib_resp.json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(viewer_id))
@@ -2292,7 +2304,7 @@ class TestDefaultLibraryVirtualView:
         # check exercises the cursor's library_id binding, not membership
         # masking.
         other_resp = auth_client.post(
-            "/libraries", json={"name": "Other library"}, headers=auth_headers(user_a)
+            "/libraries", json=_library_create_body("Other library"), headers=auth_headers(user_a)
         )
         library_c = other_resp.json()["data"]["id"]
         direct_db.register_cleanup("memberships", "library_id", UUID(library_c))
@@ -2353,7 +2365,9 @@ class TestReorderLibraryMedia:
     """
 
     def _create_non_default_library(self, auth_client, user_id: UUID, name: str) -> str:
-        resp = auth_client.post("/libraries", json={"name": name}, headers=auth_headers(user_id))
+        resp = auth_client.post(
+            "/libraries", json=_library_create_body(name), headers=auth_headers(user_id)
+        )
         assert resp.status_code == 201, resp.text
         return resp.json()["data"]["id"]
 
@@ -2514,7 +2528,7 @@ class TestReorderLibraryMedia:
 
         create_resp = auth_client.post(
             "/libraries",
-            json={"name": "Shared order library"},
+            json=_library_create_body("Shared order library"),
             headers=auth_headers(owner_id),
         )
         library_id = create_resp.json()["data"]["id"]
@@ -2569,7 +2583,7 @@ class TestReorderLibraryMedia:
         entry reorders by entry id and stays dense (0..n-1)."""
         user_id = create_test_user_id()
         library_id = auth_client.post(
-            "/libraries", json={"name": "Mixed order"}, headers=auth_headers(user_id)
+            "/libraries", json=_library_create_body("Mixed order"), headers=auth_headers(user_id)
         ).json()["data"]["id"]
         podcast_id = uuid4()
 
@@ -2676,7 +2690,7 @@ class TestGetLibrary:
         user_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Test Lib"}, headers=auth_headers(user_id)
+            "/libraries", json=_library_create_body("Test Lib"), headers=auth_headers(user_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -2694,7 +2708,7 @@ class TestGetLibrary:
         user_b = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Private"}, headers=auth_headers(user_a)
+            "/libraries", json=_library_create_body("Private"), headers=auth_headers(user_a)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -2711,7 +2725,7 @@ class TestGetLibrary:
         owner_id = create_test_user_id()
         admin_id = create_test_user_id()
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Shared"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Shared"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(admin_id))
@@ -2751,7 +2765,7 @@ class TestDeleteLibraryGovernance:
 
         # Create library
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Shared"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Shared"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -2780,7 +2794,7 @@ class TestDeleteLibraryGovernance:
         admin_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Shared"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Shared"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -2806,7 +2820,7 @@ class TestDeleteLibraryGovernance:
         outsider_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Private"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Private"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -2834,7 +2848,7 @@ class TestListMembers:
         member_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -2874,7 +2888,7 @@ class TestListMembers:
         """Limit parameter works and clamps to 200."""
         owner_id = create_test_user_id()
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -2893,7 +2907,7 @@ class TestListMembers:
         member_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -2920,7 +2934,7 @@ class TestListMembers:
         outsider_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Private"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Private"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(outsider_id))
@@ -2953,7 +2967,7 @@ class TestListMembers:
         owner_id = create_test_user_id()
         library_response = auth_client.post(
             "/libraries",
-            json={"name": "Large team"},
+            json=_library_create_body("Large team"),
             headers=auth_headers(owner_id),
         )
         library_id = library_response.json()["data"]["id"]
@@ -3007,7 +3021,7 @@ class TestListMembers:
         admin_id = create_test_user_id()
         library_response = auth_client.post(
             "/libraries",
-            json={"name": "Cursor scope"},
+            json=_library_create_body("Cursor scope"),
             headers=auth_headers(owner_id),
         )
         library_id = library_response.json()["data"]["id"]
@@ -3046,7 +3060,7 @@ class TestListMembers:
 
         other_library = auth_client.post(
             "/libraries",
-            json={"name": "Other scope"},
+            json=_library_create_body("Other scope"),
             headers=auth_headers(owner_id),
         ).json()["data"]["id"]
         wrong_library = auth_client.get(
@@ -3068,7 +3082,7 @@ class TestUpdateMemberRole:
         member_email = f"hydrated-{member_id}@example.com"
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -3106,7 +3120,7 @@ class TestUpdateMemberRole:
         member_email = f"idempotent-{member_id}@example.com"
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -3141,7 +3155,7 @@ class TestUpdateMemberRole:
         target_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -3172,7 +3186,7 @@ class TestUpdateMemberRole:
         outsider_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(outsider_id))
@@ -3190,7 +3204,7 @@ class TestUpdateMemberRole:
         owner_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -3207,7 +3221,7 @@ class TestUpdateMemberRole:
         owner_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -3227,7 +3241,7 @@ class TestUpdateMemberRole:
         admin_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -3258,7 +3272,7 @@ class TestUpdateMemberRole:
         admin_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -3308,7 +3322,7 @@ class TestRemoveMember:
         member_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -3345,7 +3359,7 @@ class TestRemoveMember:
         owner_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -3364,7 +3378,7 @@ class TestRemoveMember:
         target_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -3394,7 +3408,7 @@ class TestRemoveMember:
         outsider_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Private"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Private"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(outsider_id))
@@ -3411,7 +3425,7 @@ class TestRemoveMember:
         owner_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -3430,7 +3444,7 @@ class TestRemoveMember:
         admin_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -3460,7 +3474,7 @@ class TestRemoveMember:
         admin_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -3537,7 +3551,7 @@ class TestTransferOwnership:
         member_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -3582,7 +3596,7 @@ class TestTransferOwnership:
         owner_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -3602,7 +3616,7 @@ class TestTransferOwnership:
         admin_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -3633,7 +3647,7 @@ class TestTransferOwnership:
         member_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -3662,7 +3676,7 @@ class TestTransferOwnership:
         outsider_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(outsider_id))
@@ -3694,7 +3708,7 @@ class TestTransferOwnership:
         owner_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -3714,7 +3728,7 @@ class TestTransferOwnership:
         member_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
         original_updated_at = create_resp.json()["data"]["updatedAt"]
@@ -3747,7 +3761,7 @@ class TestTransferOwnership:
         member_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -3793,7 +3807,7 @@ class TestGovernanceCommandRaces:
         member_id = create_test_user_id()
         library_id = auth_client.post(
             "/libraries",
-            json={"name": "Role remove race"},
+            json=_library_create_body("Role remove race"),
             headers=auth_headers(owner_id),
         ).json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(member_id))
@@ -3844,7 +3858,7 @@ class TestGovernanceCommandRaces:
         target_id = create_test_user_id()
         library_id = auth_client.post(
             "/libraries",
-            json={"name": f"Transfer {competing_command} race"},
+            json=_library_create_body(f"Transfer {competing_command} race"),
             headers=auth_headers(owner_id),
         ).json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(admin_id))
@@ -3921,7 +3935,7 @@ class TestGovernanceCommandRaces:
         invitee_id = create_test_user_id()
         library_id = auth_client.post(
             "/libraries",
-            json={"name": "Accept revoke race"},
+            json=_library_create_body("Accept revoke race"),
             headers=auth_headers(owner_id),
         ).json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(invitee_id))
@@ -3985,7 +3999,7 @@ class TestGovernanceInvariantRepair:
         member_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -4050,7 +4064,9 @@ class TestVisibility:
 
         # User A creates a library
         create_resp = auth_client.post(
-            "/libraries", json={"name": "User A's Library"}, headers=auth_headers(user_a)
+            "/libraries",
+            json=_library_create_body("User A's Library"),
+            headers=auth_headers(user_a),
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -4067,7 +4083,9 @@ class TestVisibility:
 
         # User A creates a library
         create_resp = auth_client.post(
-            "/libraries", json={"name": "User A's Library"}, headers=auth_headers(user_a)
+            "/libraries",
+            json=_library_create_body("User A's Library"),
+            headers=auth_headers(user_a),
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -4098,7 +4116,7 @@ class TestLibraryInviteCreateList:
         invitee_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -4147,7 +4165,7 @@ class TestLibraryInviteCreateList:
         invitee_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -4178,7 +4196,7 @@ class TestLibraryInviteCreateList:
         invitee_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -4216,7 +4234,7 @@ class TestLibraryInviteCreateList:
         owner_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -4236,7 +4254,7 @@ class TestLibraryInviteCreateList:
         member_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -4264,7 +4282,7 @@ class TestLibraryInviteCreateList:
         owner_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -4282,7 +4300,7 @@ class TestLibraryInviteCreateList:
         invitee_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -4312,7 +4330,7 @@ class TestLibraryInviteCreateList:
         invitee_b = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -4352,7 +4370,7 @@ class TestLibraryInviteCreateList:
         invitee_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -4394,7 +4412,7 @@ class TestLibraryInviteCreateList:
         outsider_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(outsider_id))
@@ -4413,7 +4431,7 @@ class TestLibraryInviteCreateList:
         owner_id = create_test_user_id()
         library_id = auth_client.post(
             "/libraries",
-            json={"name": "Large invite set"},
+            json=_library_create_body("Large invite set"),
             headers=auth_headers(owner_id),
         ).json()["data"]["id"]
         invitee_ids = [uuid4() for _ in range(205)]
@@ -4487,7 +4505,7 @@ class TestLibraryInviteCreateList:
         invitee_ids = [create_test_user_id(), create_test_user_id()]
         library_id = auth_client.post(
             "/libraries",
-            json={"name": "Invite cursor scope"},
+            json=_library_create_body("Invite cursor scope"),
             headers=auth_headers(owner_id),
         ).json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(admin_id))
@@ -4556,7 +4574,7 @@ class TestLibraryInviteCreateList:
 
         other_library = auth_client.post(
             "/libraries",
-            json={"name": "Other invite scope"},
+            json=_library_create_body("Other invite scope"),
             headers=auth_headers(owner_id),
         ).json()["data"]["id"]
         wrong_library = auth_client.get(
@@ -4577,7 +4595,7 @@ class TestLibraryInviteCreateList:
         # Create two libraries and invite the same user
         for name in ("Lib A", "Lib B"):
             create_resp = auth_client.post(
-                "/libraries", json={"name": name}, headers=auth_headers(owner_id)
+                "/libraries", json=_library_create_body(name), headers=auth_headers(owner_id)
             )
             lib_id = create_resp.json()["data"]["id"]
             auth_client.post(
@@ -4611,7 +4629,7 @@ class TestLibraryInviteCreateList:
         )
         library_id = auth_client.post(
             "/libraries",
-            json={"name": "Viewer projection"},
+            json=_library_create_body("Viewer projection"),
             headers=auth_headers(owner_id),
         ).json()["data"]["id"]
         auth_client.post(
@@ -4639,7 +4657,7 @@ class TestLibraryInviteCreateList:
         invitee_ids = [create_test_user_id() for _ in range(3)]
         library_id = auth_client.post(
             "/libraries",
-            json={"name": "Invite page refresh"},
+            json=_library_create_body("Invite page refresh"),
             headers=auth_headers(owner_id),
         ).json()["data"]["id"]
         for invitee_id in invitee_ids:
@@ -4694,7 +4712,7 @@ class TestLibraryInviteCreateList:
         auth_client.get("/me", headers=auth_headers(invitee_id))
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -4749,7 +4767,7 @@ class TestLibraryInviteAccept:
         invitee_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(invitee_id))
@@ -4783,7 +4801,7 @@ class TestLibraryInviteAccept:
 
         # Create library with media
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -4849,7 +4867,7 @@ class TestLibraryInviteAccept:
         invitee_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -4902,7 +4920,7 @@ class TestLibraryInviteAccept:
         invitee_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 
@@ -4932,7 +4950,7 @@ class TestLibraryInviteAccept:
         invitee_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(invitee_id))
@@ -4969,7 +4987,7 @@ class TestLibraryInviteAccept:
         invitee_headers = auth_headers(invitee_id, email=invitee_email)
         library_id = auth_client.post(
             "/libraries",
-            json={"name": "Accept projection"},
+            json=_library_create_body("Accept projection"),
             headers=auth_headers(owner_id),
         ).json()["data"]["id"]
         auth_client.get("/me", headers=invitee_headers)
@@ -5015,7 +5033,7 @@ class TestLibraryInviteAccept:
         invitee_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(invitee_id))
@@ -5043,7 +5061,7 @@ class TestLibraryInviteAccept:
         other_user = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(invitee_id))
@@ -5106,7 +5124,7 @@ class TestLibraryInviteAccept:
         invitee_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(invitee_id))
@@ -5162,7 +5180,7 @@ class TestLibraryInviteDecline:
         invitee_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(invitee_id))
@@ -5187,7 +5205,7 @@ class TestLibraryInviteDecline:
         invitee_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(invitee_id))
@@ -5222,7 +5240,7 @@ class TestLibraryInviteDecline:
         invitee_headers = auth_headers(invitee_id, email=invitee_email)
         library_id = auth_client.post(
             "/libraries",
-            json={"name": "Decline projection"},
+            json=_library_create_body("Decline projection"),
             headers=auth_headers(owner_id),
         ).json()["data"]["id"]
         auth_client.get("/me", headers=invitee_headers)
@@ -5268,7 +5286,7 @@ class TestLibraryInviteDecline:
         invitee_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(invitee_id))
@@ -5321,7 +5339,7 @@ class TestLibraryInviteRevoke:
         invitee_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(invitee_id))
@@ -5340,7 +5358,7 @@ class TestLibraryInviteRevoke:
         invitee_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(invitee_id))
@@ -5366,7 +5384,7 @@ class TestLibraryInviteRevoke:
         invitee_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(invitee_id))
@@ -5394,7 +5412,7 @@ class TestLibraryInviteRevoke:
         outsider_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(invitee_id))
@@ -5416,7 +5434,7 @@ class TestLibraryInviteRevoke:
         invitee_id = create_test_user_id()
 
         create_resp = auth_client.post(
-            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+            "/libraries", json=_library_create_body("Team"), headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
 

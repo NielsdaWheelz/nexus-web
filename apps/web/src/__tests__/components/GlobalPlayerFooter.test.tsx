@@ -10,6 +10,7 @@ import { present, absent } from "@/lib/api/presence";
 import type { ChapterOut, LecternItem } from "@/lib/lectern/contract";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { useWorkspaceStore } from "@/lib/workspace/store";
+import { MobileViewportProvider } from "@/lib/mobileViewport/MobileViewportProvider";
 import {
   buildFooterDescriptor,
   installLecternPlayerFetchMock,
@@ -126,7 +127,9 @@ function RouteHarness({ descriptor = EPISODE_DESCRIPTOR }: { descriptor?: Return
         <LecternReadyProbe />
         <WorkspaceProbe />
         {route === "a" ? <PlayButton descriptor={descriptor} /> : <p>Route B content</p>}
-        <GlobalPlayerFooter />
+        <MobileViewportProvider>
+          <GlobalPlayerFooter />
+        </MobileViewportProvider>
         </GlobalPlayerProvider>
       </LecternProvider>
     </WorkspaceTestProvider>
@@ -158,7 +161,9 @@ async function mountMobileFooter() {
         <GlobalPlayerProvider>
         <LecternReadyProbe />
         <PlayButton />
-        <GlobalPlayerFooter />
+        <MobileViewportProvider>
+          <GlobalPlayerFooter />
+        </MobileViewportProvider>
         </GlobalPlayerProvider>
       </LecternProvider>
     </WorkspaceTestProvider>,
@@ -455,6 +460,20 @@ describe("GlobalPlayerFooter mobile expanded sheet a11y", () => {
     await waitFor(() => expect(document.body.style.overflow).toBe(""));
   });
 
+  it("registers the fixed mobile player as shared content clearance", async () => {
+    await mountMobileFooter();
+
+    const footer = screen.getByRole("region", { name: "Media player" });
+    expect(getComputedStyle(footer).position).toBe("fixed");
+    await waitFor(() => {
+      expect(
+        document.documentElement.style.getPropertyValue(
+          "--mobile-content-bottom-clearance",
+        ),
+      ).toMatch(/[1-9]\d*px/);
+    });
+  });
+
   it("moves focus into the expanded sheet on open", async () => {
     const opener = await mountMobileFooter();
     expandSheet(opener);
@@ -521,7 +540,9 @@ describe("GlobalPlayerFooter walknote Mark button", () => {
           <WalknoteSessionProvider>
             <LecternReadyProbe />
             <PlayButton />
-            <GlobalPlayerFooter />
+            <MobileViewportProvider>
+              <GlobalPlayerFooter />
+            </MobileViewportProvider>
           </WalknoteSessionProvider>
           </GlobalPlayerProvider>
         </LecternProvider>

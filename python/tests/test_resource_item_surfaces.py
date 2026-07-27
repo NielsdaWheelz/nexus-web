@@ -67,7 +67,11 @@ def _body_base(surface, occurrence_index: int = 0) -> ResourceLaneVersionIn:
 def test_surface_is_one_hop_and_projects_note_bodies_in_one_response(
     db_session: Session, bootstrapped_user: UUID
 ) -> None:
-    page = notes.create_page(db_session, bootstrapped_user, CreatePageRequest(title="Surface"))
+    page = notes.create_page(
+        db_session,
+        bootstrapped_user,
+        CreatePageRequest(page_id=uuid4(), title="Surface"),
+    )
     source = _page_ref(page.id)
     first = surfaces.execute_surface_command(
         db_session,
@@ -125,7 +129,11 @@ def test_surface_note_hydration_query_count_is_independent_of_row_count(
     db_session: Session, bootstrapped_user: UUID
 ) -> None:
     def page_with_notes(title: str, count: int) -> ResourceRef:
-        page = notes.create_page(db_session, bootstrapped_user, CreatePageRequest(title=title))
+        page = notes.create_page(
+            db_session,
+            bootstrapped_user,
+            CreatePageRequest(page_id=uuid4(), title=title),
+        )
         source = _page_ref(page.id)
         surface = surfaces.get_surface(db_session, viewer_id=bootstrapped_user, source=source)
         for index in range(count):
@@ -180,7 +188,11 @@ def test_surface_note_hydration_query_count_is_independent_of_row_count(
 def test_surface_command_replay_and_conflict_return_the_canonical_surface(
     db_session: Session, bootstrapped_user: UUID
 ) -> None:
-    page = notes.create_page(db_session, bootstrapped_user, CreatePageRequest(title="Replay"))
+    page = notes.create_page(
+        db_session,
+        bootstrapped_user,
+        CreatePageRequest(page_id=uuid4(), title="Replay"),
+    )
     source = _page_ref(page.id)
     initial = surfaces.get_surface(db_session, viewer_id=bootstrapped_user, source=source)
     request = ResourceSurfaceCommandRequest(
@@ -226,7 +238,11 @@ def test_surface_command_replay_and_conflict_return_the_canonical_surface(
 
 def test_surface_command_route_is_post_only_and_snake_case(authenticated_client) -> None:
     headers = auth_headers(uuid4())
-    page = authenticated_client.post("/notes/pages", headers=headers, json={"title": "Route"})
+    page = authenticated_client.post(
+        "/notes/pages",
+        headers=headers,
+        json={"page_id": str(uuid4()), "title": "Route"},
+    )
     assert page.status_code == 201, page.text
     page_id = page.json()["data"]["id"]
     surface_path = f"/resource-items/page:{page_id}/surface"
@@ -277,7 +293,11 @@ def test_surface_command_route_is_post_only_and_snake_case(authenticated_client)
 def test_intrinsic_mutation_requires_exact_base_lane(
     db_session: Session, bootstrapped_user: UUID
 ) -> None:
-    page = notes.create_page(db_session, bootstrapped_user, CreatePageRequest(title="Exact"))
+    page = notes.create_page(
+        db_session,
+        bootstrapped_user,
+        CreatePageRequest(page_id=uuid4(), title="Exact"),
+    )
     ref = _page_ref(page.id)
     with pytest.raises(ConflictError) as excinfo:
         resource_item_mutations.update_title(
@@ -299,7 +319,11 @@ def test_intrinsic_mutation_requires_exact_base_lane(
 def test_move_preserves_occurrence_and_view_state_and_remove_keeps_dense_keys(
     db_session: Session, bootstrapped_user: UUID
 ) -> None:
-    page = notes.create_page(db_session, bootstrapped_user, CreatePageRequest(title="Move"))
+    page = notes.create_page(
+        db_session,
+        bootstrapped_user,
+        CreatePageRequest(page_id=uuid4(), title="Move"),
+    )
     source = _page_ref(page.id)
     first = surfaces.execute_surface_command(
         db_session,
@@ -401,10 +425,14 @@ def test_split_is_atomic_and_reused_note_edits_and_unlinks_remain_resource_nativ
     db_session: Session, bootstrapped_user: UUID
 ) -> None:
     first_page = notes.create_page(
-        db_session, bootstrapped_user, CreatePageRequest(title="First surface")
+        db_session,
+        bootstrapped_user,
+        CreatePageRequest(page_id=uuid4(), title="First surface"),
     )
     second_page = notes.create_page(
-        db_session, bootstrapped_user, CreatePageRequest(title="Second surface")
+        db_session,
+        bootstrapped_user,
+        CreatePageRequest(page_id=uuid4(), title="Second surface"),
     )
     first_source = _page_ref(first_page.id)
     second_source = _page_ref(second_page.id)
@@ -537,7 +565,7 @@ def test_insert_commands_reject_unknown_positions_before_writing(
     page = notes.create_page(
         db_session,
         bootstrapped_user,
-        CreatePageRequest(title="Fail closed"),
+        CreatePageRequest(page_id=uuid4(), title="Fail closed"),
     )
     source = _page_ref(page.id)
     first = surfaces.execute_surface_command(

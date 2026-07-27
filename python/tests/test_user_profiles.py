@@ -20,6 +20,10 @@ from tests.helpers import auth_headers, create_test_user_id
 pytestmark = pytest.mark.integration
 
 
+def _library_create_body(name: str) -> dict[str, str]:
+    return {"library_id": str(uuid4()), "name": name}
+
+
 def _enable_sharing(direct_db, user_id) -> None:
     with direct_db.session() as db:
         db.execute(
@@ -371,7 +375,7 @@ class TestMemberResponseEnrichment:
         # Create library
         lib_resp = auth_client.post(
             "/libraries",
-            json={"name": "Member Test Lib"},
+            json=_library_create_body("Member Test Lib"),
             headers=headers,
         )
         assert lib_resp.status_code == 201
@@ -416,7 +420,7 @@ class TestMemberResponseEnrichment:
         # Create library
         lib_resp = auth_client.post(
             "/libraries",
-            json={"name": "Invite Test Lib"},
+            json=_library_create_body("Invite Test Lib"),
             headers=owner_headers,
         )
         lib_id = lib_resp.json()["data"]["id"]
@@ -485,7 +489,7 @@ class TestInviteByEmail:
         # Create library
         lib_resp = auth_client.post(
             "/libraries",
-            json={"name": "Email Invite Lib"},
+            json=_library_create_body("Email Invite Lib"),
             headers=owner_headers,
         )
         lib_id = lib_resp.json()["data"]["id"]
@@ -520,7 +524,7 @@ class TestInviteByEmail:
 
         lib_resp = auth_client.post(
             "/libraries",
-            json={"name": "No User Lib"},
+            json=_library_create_body("No User Lib"),
             headers=owner_headers,
         )
         lib_id = lib_resp.json()["data"]["id"]
@@ -549,7 +553,7 @@ class TestInviteByEmail:
 
         lib_resp = auth_client.post(
             "/libraries",
-            json={"name": "Neither Lib"},
+            json=_library_create_body("Neither Lib"),
             headers=owner_headers,
         )
         lib_id = lib_resp.json()["data"]["id"]
@@ -575,7 +579,7 @@ class TestLibraryInviteBilling:
         auth_client.get("/me", headers=auth_headers(invitee))
         library_id = auth_client.post(
             "/libraries",
-            json={"name": "Free invite gate"},
+            json=_library_create_body("Free invite gate"),
             headers=owner_headers,
         ).json()["data"]["id"]
 
@@ -600,7 +604,7 @@ class TestLibraryInviteBilling:
         _enable_sharing(direct_db, owner)
         library_id = auth_client.post(
             "/libraries",
-            json={"name": "Downgrade invite gate"},
+            json=_library_create_body("Downgrade invite gate"),
             headers=owner_headers,
         ).json()["data"]["id"]
         body = {"invitee": _user_invitee(invitee), "role": "member"}

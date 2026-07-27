@@ -310,7 +310,7 @@
   flex-direction: column;
   gap: var(--space-3);
   margin-top: var(--space-8);
-  padding: var(--space-5) 0 calc(var(--space-8) + env(safe-area-inset-bottom));
+  padding: var(--space-5) 0 var(--space-8);
   border-top: 1px solid var(--reader-border-subtle, var(--edge-subtle));
   color: var(--reader-text-muted, var(--ink-faint));
   font-size: var(--text-sm);
@@ -800,7 +800,9 @@
 @media (max-width: 768px) {
   .documentViewport {
     padding-top: var(--mobile-pane-content-offset);
+    padding-bottom: var(--mobile-content-bottom-clearance);
     scroll-padding-top: var(--mobile-pane-content-offset);
+    scroll-padding-bottom: var(--mobile-content-bottom-clearance);
   }
 
   .mobileDocumentState {

@@ -443,6 +443,65 @@ class MainActivityTest {
     }
 
     @Test
+    fun hardwareBackPopsNestedSwitchboardPagesBeforeRoot() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            loadNestedSwitchboardHistory(scenario)
+
+            scenario.onActivity { activity ->
+                activity.onBackPressedDispatcher.onBackPressed()
+            }
+            waitForSwitchboardPage(
+                scenario,
+                page = "Find",
+                fragment = "#find",
+                message = "Expected Android back to pop Workflow to Switchboard Find."
+            )
+
+            scenario.onActivity { activity ->
+                activity.onBackPressedDispatcher.onBackPressed()
+            }
+            waitForSwitchboardPage(
+                scenario,
+                page = "Root",
+                fragment = "#root",
+                message = "Expected Android back to pop Find to Switchboard Root."
+            )
+        }
+    }
+
+    @Test
+    fun orientationRecreationPreservesNestedSwitchboardHistory() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            loadNestedSwitchboardHistory(scenario)
+
+            // ActivityScenario recreation exercises the saved-instance path used
+            // by an orientation configuration change without relying on a
+            // device/emulator rotation lock.
+            scenario.recreate()
+
+            waitForSwitchboardPage(
+                scenario,
+                page = "Workflow",
+                fragment = "#workflow",
+                message = "Expected orientation recreation to keep the active Switchboard workflow."
+            )
+            scenario.onActivity { activity ->
+                assertTrue(
+                    "Expected restored Switchboard workflow to retain nested back history.",
+                    activity.webView.canGoBack()
+                )
+                activity.onBackPressedDispatcher.onBackPressed()
+            }
+            waitForSwitchboardPage(
+                scenario,
+                page = "Find",
+                fragment = "#find",
+                message = "Expected restored Switchboard history to pop Workflow to Find."
+            )
+        }
+    }
+
+    @Test
     fun backgroundingAndResumingKeepsTheWebViewLoaded() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             val ownedUrl = "${BuildConfig.NEXUS_BASE_URL}/settings"
@@ -592,6 +651,64 @@ class MainActivityTest {
             }
 
             assertNull(callback.value)
+        }
+    }
+
+    private fun loadNestedSwitchboardHistory(
+        scenario: ActivityScenario<MainActivity>
+    ) {
+        val switchboardUrl = "${BuildConfig.NEXUS_BASE_URL}/android-test-switchboard"
+        val document =
+            """
+            <!doctype html>
+            <meta charset="utf-8">
+            <title>Switchboard Root</title>
+            <body></body>
+            <script>
+              const render = (state) => {
+                const page = state?.page ?? "Root";
+                document.title = `Switchboard ${'$'}{page}`;
+                document.body.textContent = page;
+              };
+              window.addEventListener("popstate", (event) => render(event.state));
+              history.replaceState({ page: "Root" }, "", "#root");
+              history.pushState({ page: "Find" }, "", "#find");
+              history.pushState({ page: "Workflow" }, "", "#workflow");
+              render(history.state);
+            </script>
+            """.trimIndent()
+
+        scenario.onActivity { activity ->
+            activity.webView.loadDataWithBaseURL(
+                switchboardUrl,
+                document,
+                "text/html",
+                "utf-8",
+                switchboardUrl
+            )
+        }
+        waitForSwitchboardPage(
+            scenario,
+            page = "Workflow",
+            fragment = "#workflow",
+            message = "Expected nested Switchboard test history to reach Workflow."
+        )
+    }
+
+    private fun waitForSwitchboardPage(
+        scenario: ActivityScenario<MainActivity>,
+        page: String,
+        fragment: String,
+        message: String
+    ) {
+        waitUntil(message) {
+            var title: String? = null
+            var currentUrl: String? = null
+            scenario.onActivity { activity ->
+                title = activity.webView.title
+                currentUrl = activity.webView.url
+            }
+            title == "Switchboard $page" && currentUrl?.endsWith(fragment) == true
         }
     }
 

@@ -6,11 +6,13 @@ machinery that serves documents.
 
 from __future__ import annotations
 
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.auth.permissions import highlight_readability_sql
 from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services.resource_graph.highlight_notes import highlight_excerpts_for_note_blocks
 from nexus.services.search.constants import (
@@ -123,6 +125,8 @@ def _search_note_chunks(
     scope_type: str,
     scope_id: UUID | None,
     limit: int,
+    *,
+    required_origin: Literal["any", "highlight_note"] = "any",
 ) -> list[InternalSearchResult]:
     """Hybrid note-block search over note-owned content chunks."""
     if not q.strip():
@@ -144,8 +148,31 @@ def _search_note_chunks(
         "min_semantic_similarity": CONTENT_CHUNK_MIN_SEMANTIC_SIMILARITY,
         **scope_params,
     }
+    origin_filter = (
+        f"""
+            AND EXISTS (
+                SELECT 1
+                FROM resource_edges highlight_note_edge
+                JOIN highlights h
+                  ON h.id = highlight_note_edge.source_id
+                 AND highlight_note_edge.source_scheme = 'highlight'
+                WHERE highlight_note_edge.user_id = :viewer_id
+                  AND highlight_note_edge.origin = 'highlight_note'
+                  AND highlight_note_edge.target_scheme = 'note_block'
+                  AND highlight_note_edge.target_id = note_block.id
+                  AND {highlight_readability_sql("h")}
+            )
+        """
+        if required_origin == "highlight_note"
+        else ""
+    )
     eligible_chunks = f"""
-        owned_notes AS (SELECT id FROM note_blocks WHERE user_id = :viewer_id),
+        owned_notes AS (
+            SELECT note_block.id
+            FROM note_blocks note_block
+            WHERE note_block.user_id = :viewer_id
+            {origin_filter}
+        ),
         eligible_chunks AS (
             SELECT
                 cc.id,
@@ -239,6 +266,7 @@ def _search_note_chunks(
                 body_text=body_text,
                 score=_build_search_score(row["raw_score"]),
                 highlight_excerpt=excerpts.get(block_id),
+                note_origin=("highlight_note" if block_id in excerpts else "note"),
                 locator=retrieval_locator_json(
                     {
                         "type": "note_block_offsets",
@@ -257,6 +285,8 @@ def _highlight_excerpts(db: Session, viewer_id: UUID, note_ids: list[UUID]) -> d
     return {
         note_id: _truncate_snippet(exact)
         for note_id, exact in highlight_excerpts_for_note_blocks(
-            db, viewer_id=viewer_id, note_ids=note_ids
+            db,
+            viewer_id=viewer_id,
+            note_ids=note_ids,
         ).items()
     }

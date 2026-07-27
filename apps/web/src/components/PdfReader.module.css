@@ -137,7 +137,9 @@
 
   .viewerContainer {
     padding-top: var(--mobile-pane-content-offset);
+    padding-bottom: var(--mobile-content-bottom-clearance);
     scroll-padding-top: var(--mobile-pane-content-offset);
+    scroll-padding-bottom: var(--mobile-content-bottom-clearance);
   }
 
   .mobileTopState {

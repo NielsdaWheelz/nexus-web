@@ -16,13 +16,17 @@ import { clampPaneWidth, getDefaultPaneWidthPx } from "@/lib/workspace/paneWidth
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 import { paneRouteAllowsSecondaryGroup } from "@/lib/panes/paneRouteModel";
 import {
+  getSecondaryWidthPolicy,
   getSecondaryGroupForSurface,
   isWorkspaceSecondaryGroupId,
   isWorkspaceSecondarySurfaceId,
+  resolveEffectiveSecondarySizing,
   type WorkspaceSecondaryState,
 } from "@/lib/panes/paneSecondaryModel";
+import type { Presence } from "@/lib/api/presence";
 
 export const MAX_PANES = 12;
+export const MAX_RECENTLY_CLOSED_PANES = 5;
 export const MAX_PANE_HISTORY_STACK_LENGTH = 12;
 export const MAX_TOTAL_PANE_HISTORY_ENTRIES = 48;
 const MAX_PANE_LABEL_LENGTH = 120;
@@ -64,6 +68,16 @@ export interface WorkspaceState {
   primaryPanesById: Record<string, WorkspacePrimaryPaneState>;
   secondaryPanesById: Record<string, WorkspaceAttachedSecondaryPaneState>;
 }
+
+export interface ClosedPaneSnapshot {
+  pane: WorkspacePrimaryPaneState;
+  secondaryPane: Presence<WorkspaceAttachedSecondaryPaneState>;
+  orderIndex: number;
+}
+
+export type ClosedPaneSnapshotRestoreResult =
+  | { kind: "Restored"; state: WorkspaceState }
+  | { kind: "Rejected"; reason: "PaneLimitReached" };
 
 export function createPaneId(): string {
   return createRandomId("pane");
@@ -195,6 +209,99 @@ export function trimWorkspacePaneHistory(state: WorkspaceState): WorkspaceState 
   return {
     ...state,
     primaryPanesById: Object.fromEntries(panes.map((pane) => [pane.id, pane])),
+  };
+}
+
+export function restoreClosedPaneSnapshot(input: {
+  state: WorkspaceState;
+  snapshot: ClosedPaneSnapshot;
+  workspacePrimaryMetrics: WorkspacePrimaryMetrics;
+}): ClosedPaneSnapshotRestoreResult {
+  const panes = getWorkspacePrimaryPanes(input.state);
+  if (panes.length >= MAX_PANES) {
+    return { kind: "Rejected", reason: "PaneLimitReached" };
+  }
+  if (
+    input.state.primaryPanesById[input.snapshot.pane.id] ||
+    input.state.primaryPaneOrder.includes(input.snapshot.pane.id)
+  ) {
+    // justify-defect: a successfully closed pane identity cannot still be open.
+    throw new Error(
+      `Closed-pane restore found duplicate primary pane identity: ${input.snapshot.pane.id}`,
+    );
+  }
+
+  let secondaryPane: WorkspaceAttachedSecondaryPaneState | null = null;
+  switch (input.snapshot.secondaryPane.kind) {
+    case "Absent":
+      break;
+    case "Present": {
+      const candidate = input.snapshot.secondaryPane.value;
+      if (
+        input.state.secondaryPanesById[candidate.id] ||
+        panes.some((pane) => pane.attachedSecondaryPaneId === candidate.id)
+      ) {
+        // justify-defect: one attached secondary identity cannot belong to two
+        // primary panes.
+        throw new Error(
+          `Closed-pane restore found duplicate secondary pane identity: ${candidate.id}`,
+        );
+      }
+      if (
+        paneRouteAllowsSecondaryGroup(
+          input.snapshot.pane.currentVisit.href,
+          candidate.groupId,
+        )
+      ) {
+        secondaryPane = {
+          ...candidate,
+          parentPrimaryPaneId: input.snapshot.pane.id,
+          widthPx: resolveEffectiveSecondarySizing({
+            storedWidthPx: candidate.widthPx,
+            policy: getSecondaryWidthPolicy(candidate.groupId),
+          }).widthPx,
+        };
+      }
+      break;
+    }
+    default: {
+      const exhaustivePresence: never = input.snapshot.secondaryPane;
+      return exhaustivePresence;
+    }
+  }
+
+  const restoredPane: WorkspacePrimaryPaneState = {
+    ...input.snapshot.pane,
+    primaryWidthPx: clampPaneWidth(
+      input.snapshot.pane.primaryWidthPx,
+      input.workspacePrimaryMetrics,
+    ),
+    visibility: "visible",
+    attachedSecondaryPaneId: secondaryPane?.id ?? null,
+  };
+  const insertIndex = Math.min(
+    panes.length,
+    Math.max(0, Math.trunc(input.snapshot.orderIndex)),
+  );
+  const primaryPanes = [
+    ...panes.slice(0, insertIndex),
+    restoredPane,
+    ...panes.slice(insertIndex),
+  ];
+  const secondaryPanesById = secondaryPane
+    ? {
+        ...input.state.secondaryPanesById,
+        [secondaryPane.id]: secondaryPane,
+      }
+    : input.state.secondaryPanesById;
+  const restoredState = createWorkspaceStateFromPrimaryPanes({
+    activePrimaryPaneId: restoredPane.id,
+    primaryPanes,
+    secondaryPanesById,
+  });
+  return {
+    kind: "Restored",
+    state: trimWorkspacePaneHistory(restoredState),
   };
 }
 

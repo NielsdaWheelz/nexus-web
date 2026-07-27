@@ -552,6 +552,143 @@ class TestBasicSearch:
         assert highlight_row["locator"]["type"] == "web_text_offsets"
         assert highlight_row["locator"]["media_id"] == str(media_id)
 
+    def test_highlights_filters_linked_notes_before_candidate_limit(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        plain_note_id = UUID("00000000-0000-4000-8000-000000000001")
+
+        with direct_db.session() as session:
+            media_id = create_searchable_media(session, user_id, title="Highlight note scope")
+            highlight_id, linked_note_id = create_test_highlight_note(
+                session,
+                user_id,
+                media_id,
+                body="semantic highlight note needle",
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO note_blocks (id, user_id, body_pm_json, body_text)
+                    VALUES (
+                        :note_id,
+                        :user_id,
+                        jsonb_build_object(
+                            'type', 'paragraph',
+                            'content', jsonb_build_array(
+                                jsonb_build_object(
+                                    'type', 'text', 'text', 'semantic highlight note needle'
+                                )
+                            )
+                        ),
+                        'semantic highlight note needle'
+                    )
+                    """
+                ),
+                {"note_id": plain_note_id, "user_id": user_id},
+            )
+            rebuild_note_content_index(
+                session,
+                note_block_id=plain_note_id,
+                reason="prelimit-classification-test",
+            )
+            session.commit()
+
+        direct_db.register_cleanup("note_blocks", "id", plain_note_id)
+        direct_db.register_cleanup("note_blocks", "id", linked_note_id)
+        direct_db.register_cleanup("resource_edges", "target_id", linked_note_id)
+        direct_db.register_cleanup("highlights", "id", highlight_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        monkeypatch.setattr("nexus.services.search.candidates.CANDIDATES_PER_TYPE", 1)
+
+        notes_response = auth_client.get(
+            "/search?q=semantic+highlight+note+needle&kinds=notes",
+            headers=auth_headers(user_id),
+        )
+        assert notes_response.status_code == 200, notes_response.text
+        note_ids = {
+            row["id"] for row in notes_response.json()["results"] if row["type"] == "note_block"
+        }
+        assert str(plain_note_id) in note_ids
+        assert str(linked_note_id) not in note_ids
+
+        highlights_response = auth_client.get(
+            "/search?q=semantic+highlight+note+needle&kinds=highlights",
+            headers=auth_headers(user_id),
+        )
+        assert highlights_response.status_code == 200, highlights_response.text
+        highlight_note_rows = [
+            row for row in highlights_response.json()["results"] if row["type"] == "note_block"
+        ]
+        assert [row["id"] for row in highlight_note_rows] == [str(linked_note_id)]
+        assert highlight_note_rows[0]["note_origin"] == "highlight_note"
+
+    def test_highlight_note_scope_requires_complete_highlight_readability(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            media_id = create_searchable_media(
+                session,
+                user_id,
+                title="Hidden highlight note source",
+            )
+            highlight_id, note_block_id = create_test_highlight_note(
+                session,
+                user_id,
+                media_id,
+                body="tombstoned annotation needle",
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO user_media_deletions (user_id, media_id)
+                    VALUES (:user_id, :media_id)
+                    """
+                ),
+                {"user_id": user_id, "media_id": media_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("note_blocks", "id", note_block_id)
+        direct_db.register_cleanup("resource_edges", "target_id", note_block_id)
+        direct_db.register_cleanup("highlights", "id", highlight_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("user_media_deletions", "media_id", media_id)
+
+        highlights_response = auth_client.get(
+            "/search?q=tombstoned+annotation+needle&kinds=highlights",
+            headers=auth_headers(user_id),
+        )
+        assert highlights_response.status_code == 200, highlights_response.text
+        assert all(row["id"] != str(note_block_id) for row in highlights_response.json()["results"])
+
+        notes_response = auth_client.get(
+            "/search?q=tombstoned+annotation+needle&kinds=notes",
+            headers=auth_headers(user_id),
+        )
+        assert notes_response.status_code == 200, notes_response.text
+        note_row = next(
+            row
+            for row in notes_response.json()["results"]
+            if row["type"] == "note_block" and row["id"] == str(note_block_id)
+        )
+        assert note_row["note_origin"] == "note"
+        assert note_row["highlight_excerpt"] is None
+
     def test_highlight_search_requires_active_index_run(
         self, auth_client, direct_db: DirectSessionManager
     ):
@@ -2054,6 +2191,8 @@ class TestSearchResultFormat:
         assert result["media_kind"] == "web_article"
         assert result["activation"]["href"] == f"/media/{media_id}"
         assert "deep_link" not in result
+        assert result["resource_ref"] == f"media:{media_id}"
+        assert result["owner_resource_ref"] == f"media:{media_id}"
         assert result["context_ref"] == {"type": "media", "id": str(media_id)}
 
     def test_media_result_contributors_use_frontend_wire_keys(
@@ -2162,6 +2301,8 @@ class TestSearchResultFormat:
                 "id": result["id"],
                 "evidence_span_ids": result["evidence_span_ids"],
             }
+            assert result["resource_ref"] == f"content_chunk:{result['id']}"
+            assert result["owner_resource_ref"] == f"media:{media_id}"
             assert "idx" not in result
 
     def test_media_content_index_results_require_ready_index(
@@ -2406,6 +2547,8 @@ class TestSearchResultFormat:
         assert result["activation"]["href"] == (
             f"/conversations/{conversation_id}?message={message_id}"
         )
+        assert result["resource_ref"] == f"message:{message_id}"
+        assert result["owner_resource_ref"] == f"conversation:{conversation_id}"
         assert "deep_link" not in result
         assert result["context_ref"] == {"type": "message", "id": str(message_id)}
 
@@ -2716,6 +2859,9 @@ class TestSearchResultFormat:
         )
 
         assert result["type"] == "note_block"
+        assert result["resource_ref"] == f"note_block:{note_block_id}"
+        assert result["owner_resource_ref"] == f"note_block:{note_block_id}"
+        assert result["note_origin"] == "highlight_note"
         assert result["source_label"] == "note"
         assert result["highlight_excerpt"] == "test exact"
         assert result["body_text"] == note_body
@@ -2757,6 +2903,8 @@ class TestSearchResultFormat:
         result = next((row for row in data["results"] if row["id"] == str(page_id)), None)
         assert result is not None, f"Expected page {page_id} in results; got {data['results']}"
         assert result["type"] == "page"
+        assert result["resource_ref"] == f"page:{page_id}"
+        assert result["owner_resource_ref"] == f"page:{page_id}"
         assert result["title"] == "Garden Planning"
         assert "description" not in result
         assert result["activation"]["href"] == f"/pages/{page_id}"

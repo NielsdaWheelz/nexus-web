@@ -11,7 +11,6 @@ import {
   Globe,
   Link as LinkIcon,
   MessageSquare,
-  MessageSquarePlus,
   Mic,
   PanelLeft,
   Plus,
@@ -33,6 +32,11 @@ import type { SearchResultRowViewModel } from "@/lib/search/types";
 import { toRoman } from "@/lib/toRoman";
 import type { LauncherInput } from "./parseLauncherInput";
 import type { LauncherItem } from "./model";
+import {
+  DESKTOP_CREATE_ACTION_IDS,
+  getQuickAction,
+  type SwitchboardQuickAction,
+} from "./quickActions";
 
 // A bare-URL paste is a hard signal: its "Add to library" row must outrank everything.
 const URL_SIGNAL_BOOST = 1_000_000;
@@ -210,35 +214,53 @@ function commandItems(ctx: LauncherContext): LauncherItem[] {
 }
 
 function createItems(ctx: LauncherContext): LauncherItem[] {
-  return [
-    {
-      id: "create-conversation",
-      title: "New conversation",
-      keywords: ["chat", "message"],
-      icon: MessageSquarePlus,
-      target: { kind: "new-conversation" } as const,
-    },
-    {
-      id: "create-page",
-      title: "New page",
-      keywords: ["note", "notes", "outline", "page"],
-      icon: Plus,
-      target: { kind: "create-page" } as const,
-    },
-    {
-      id: "create-note",
-      title: "Create note…",
-      keywords: ["daily", "capture", "journal", "note"],
-      icon: FileText,
-      target: { kind: "open-create" } as const,
-    },
-  ].map((row) => ({
-    ...row,
-    sectionId: "create",
-    source: "static",
-    rank: {},
-    shortcutLabel: shortcutFor(ctx, row.id),
-  }));
+  return DESKTOP_CREATE_ACTION_IDS.map((id) => {
+    const action = getQuickAction(id);
+    const row = desktopCreateRow(action);
+    return {
+      ...row,
+      keywords: [...action.keywords],
+      icon: action.icon,
+      target: row.target,
+      sectionId: "create" as const,
+      source: "static" as const,
+      rank: {},
+      shortcutLabel: shortcutFor(ctx, row.id),
+    };
+  });
+}
+
+function desktopCreateRow(action: SwitchboardQuickAction): Pick<
+  LauncherItem,
+  "id" | "title" | "target"
+> {
+  switch (action.target.kind) {
+    case "CreateChat":
+      return {
+        id: "create-conversation",
+        title: "New conversation",
+        target: { kind: "new-conversation" },
+      };
+    case "CreatePage":
+      return {
+        id: "create-page",
+        title: "New page",
+        target: { kind: "create-page" },
+      };
+    case "TodayCapture":
+      return {
+        id: "create-note",
+        title: "Create note…",
+        target: { kind: "open-today-capture" },
+      };
+    case "CreateLibrary":
+    case "Import":
+    case "PodcastDiscovery": {
+      throw new Error(
+        `Quick action is not in the desktop create projection: ${action.id}`,
+      );
+    }
+  }
 }
 
 function addItems(ctx: LauncherContext): LauncherItem[] {

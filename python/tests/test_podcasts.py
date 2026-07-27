@@ -33,6 +33,10 @@ from tests.utils.db import DirectSessionManager
 pytestmark = pytest.mark.integration
 
 
+def _library_create_body(name: str) -> dict[str, str]:
+    return {"library_id": str(uuid4()), "name": name}
+
+
 def test_direct_semantic_repair_rebuilds_ready_transcript_with_stale_embedding_model(
     db_session,
 ):
@@ -1352,6 +1356,68 @@ class TestPodcastSubscriptionSyncLifecycle:
         assert subscription_count == 1, (
             f"concurrent duplicate subscribes created {subscription_count} subscription rows"
         )
+
+    def test_subscribe_response_loss_retry_returns_one_canonical_subscription(
+        self,
+        auth_client,
+        direct_db,
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        with direct_db.session() as session:
+            library_id = _create_test_library(
+                session,
+                user_id,
+                "Subscription replay destination",
+            )
+        direct_db.register_cleanup("memberships", "library_id", library_id)
+        direct_db.register_cleanup("libraries", "id", library_id)
+
+        provider_id = f"response-loss-subscribe-{uuid4()}"
+        payload = {
+            **_podcast_payload(provider_id, "Response Loss Subscription"),
+            "library_ids": [str(library_id)],
+        }
+
+        first = _subscribe(auth_client, user_id, payload)
+        second = _subscribe(auth_client, user_id, payload)
+        assert first["podcast_id"] == second["podcast_id"]
+        assert first["subscription_created"] is True
+        assert second["subscription_created"] is False
+
+        podcast_id = UUID(first["podcast_id"])
+        direct_db.register_cleanup(
+            "podcast_subscription_libraries", "subscription_podcast_id", podcast_id
+        )
+        direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
+        direct_db.register_cleanup("podcasts", "id", podcast_id)
+        with direct_db.session() as session:
+            counts = session.execute(
+                text(
+                    """
+                    SELECT
+                        (
+                            SELECT count(*)
+                            FROM podcast_subscriptions
+                            WHERE user_id = :user_id
+                              AND podcast_id = :podcast_id
+                        ),
+                        (
+                            SELECT count(*)
+                            FROM podcast_subscription_libraries
+                            WHERE subscription_user_id = :user_id
+                              AND subscription_podcast_id = :podcast_id
+                              AND library_id = :library_id
+                        )
+                    """
+                ),
+                {
+                    "user_id": user_id,
+                    "podcast_id": podcast_id,
+                    "library_id": library_id,
+                },
+            ).one()
+        assert counts == (1, 1)
 
     def test_subscribe_rejects_invalid_feed_url(self, auth_client):
         user_id = create_test_user_id()
@@ -4630,7 +4696,7 @@ def _create_library(auth_client, user_id: UUID, *, name: str) -> UUID:
     response = auth_client.post(
         "/libraries",
         headers=auth_headers(user_id),
-        json={"name": name},
+        json=_library_create_body(name),
     )
     assert response.status_code == 201, (
         f"expected library create 201, got {response.status_code}: {response.text}"
@@ -7764,6 +7830,87 @@ class TestPodcastOpmlImportExport:
         assert subscription_count == 1, (
             f"concurrent OPML import created {subscription_count} subscription rows"
         )
+
+    def test_opml_response_loss_retry_reasserts_requested_libraries(
+        self,
+        auth_client,
+        direct_db,
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        with direct_db.session() as session:
+            old_library_id = _create_test_library(
+                session,
+                user_id,
+                "Before OPML replay",
+            )
+            requested_library_id = _create_test_library(
+                session,
+                user_id,
+                "OPML replay destination",
+            )
+        for library_id in (old_library_id, requested_library_id):
+            direct_db.register_cleanup("memberships", "library_id", library_id)
+            direct_db.register_cleanup("libraries", "id", library_id)
+
+        provider_id = f"response-loss-opml-{uuid4()}"
+        payload = {
+            **_podcast_payload(provider_id, "Response Loss OPML"),
+            "library_ids": [str(old_library_id)],
+        }
+        subscribed = _subscribe(auth_client, user_id, payload)
+        podcast_id = UUID(subscribed["podcast_id"])
+        direct_db.register_cleanup(
+            "podcast_subscription_libraries", "subscription_podcast_id", podcast_id
+        )
+        direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
+        direct_db.register_cleanup("podcasts", "id", podcast_id)
+
+        opml = _build_opml_document(
+            [
+                (
+                    '    <outline type="rss" text="Response Loss OPML" '
+                    f'xmlUrl="{payload["feed_url"]}" />'
+                )
+            ]
+        ).decode("utf-8")
+        request_body = {
+            "opml": opml,
+            "default_library_ids": [str(requested_library_id)],
+            "per_feed_library_ids": {},
+        }
+
+        first = auth_client.post(
+            "/podcasts/import/opml",
+            json=request_body,
+            headers=auth_headers(user_id),
+        )
+        assert first.status_code == 200, first.text
+        second = auth_client.post(
+            "/podcasts/import/opml",
+            json=request_body,
+            headers=auth_headers(user_id),
+        )
+        assert second.status_code == 200, second.text
+        assert first.json()["data"]["skipped_already_subscribed"] == 1
+        assert second.json()["data"]["skipped_already_subscribed"] == 1
+
+        with direct_db.session() as session:
+            replayed_library_ids = {
+                UUID(str(row[0]))
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT library_id
+                        FROM podcast_subscription_libraries
+                        WHERE subscription_user_id = :user_id
+                          AND subscription_podcast_id = :podcast_id
+                        """
+                    ),
+                    {"user_id": user_id, "podcast_id": podcast_id},
+                ).all()
+            }
+        assert replayed_library_ids == {requested_library_id}
 
     def test_import_opml_rejects_non_xml_payload(self, auth_client):
         user_id = create_test_user_id()

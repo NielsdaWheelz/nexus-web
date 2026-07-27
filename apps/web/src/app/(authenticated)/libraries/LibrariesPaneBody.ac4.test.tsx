@@ -3,6 +3,7 @@ import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
 import { PanePrimaryChromeProvider } from "@/components/workspace/PanePrimaryChrome";
+import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import LibrariesPaneBody from "./LibrariesPaneBody";
 import { stubFetch, wasFetchPathCalled } from "@/__tests__/helpers/fetch";
 
@@ -62,19 +63,120 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
       },
       children: (
         <PanePrimaryChromeProvider publish={publish}>
-          <LibrariesPaneBody />
+          <LibraryPlacementControllerProvider>
+            <LibrariesPaneBody />
+          </LibraryPlacementControllerProvider>
         </PanePrimaryChromeProvider>
       ),
     });
 
     // (a) The seeded library's name renders from the hydration cache.
     expect(
-      await screen.findByText("Bootstrapped Reading Room"),
+      await screen.findByRole("link", {
+        name: "Bootstrapped Reading Room",
+      }),
     ).toBeInTheDocument();
 
     // (b) No client fetch to the libraries list endpoint — the seed was the source.
     const fetchedLibraries = wasFetchPathCalled(fetchSpy, "/api/libraries");
     expect(fetchedLibraries).toBe(false);
+  });
+
+  it("retains an id across a response-loss retry and rotates it when the draft changes", async () => {
+    const user = userEvent.setup();
+    const createBodies: Array<Record<string, unknown>> = [];
+    const fetchSpy = stubFetch(async (input, init) => {
+      const path = fetchInputPathWithSearch(input);
+      const url = new URL(path, "http://localhost");
+      if (path === "/api/libraries/invites") {
+        return Response.json({ data: [] });
+      }
+      if (url.pathname === "/api/libraries" && init?.method === "POST") {
+        if (typeof init.body !== "string") {
+          throw new Error("Expected a JSON create body");
+        }
+        const body = JSON.parse(init.body) as Record<string, unknown>;
+        createBodies.push(body);
+        if (createBodies.length < 3) {
+          return Response.json(
+            { error: { code: "E_INTERNAL", message: "Response lost" } },
+            { status: 500 },
+          );
+        }
+        return Response.json(
+          {
+            data: {
+              id: body.library_id,
+              name: body.name,
+              color: null,
+              ownerUserHandle: OWNER_USER_HANDLE,
+              isDefault: false,
+              role: "admin",
+              systemKey: null,
+              canRename: true,
+              canDelete: true,
+              canEditEntries: true,
+              canManageMembers: true,
+              canTransferOwnership: true,
+              createdAt: "2026-07-27T12:00:00Z",
+              updatedAt: "2026-07-27T12:00:00Z",
+            },
+          },
+          { status: 201 },
+        );
+      }
+      if (url.pathname === "/api/libraries") {
+        return Response.json({
+          data: [],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      throw new Error(`unexpected fetch: ${path}`);
+    });
+
+    renderHydratedPane({
+      href: "/libraries",
+      resources: {
+        "libraries:0": {
+          data: [],
+          page: { has_more: false, next_cursor: null },
+        },
+      },
+      children: (
+        <LibraryPlacementControllerProvider>
+          <LibrariesPaneBody />
+        </LibraryPlacementControllerProvider>
+      ),
+    });
+
+    const name = screen.getByPlaceholderText("New library name...");
+    const create = screen.getByRole("button", { name: "Create" });
+    await user.type(name, "First draft");
+    await user.click(create);
+    await vi.waitFor(() => expect(createBodies).toHaveLength(1));
+    await vi.waitFor(() => expect(create).toBeEnabled());
+
+    await user.clear(name);
+    await user.type(name, "Changed draft");
+    await user.click(create);
+    await vi.waitFor(() => expect(createBodies).toHaveLength(2));
+    await vi.waitFor(() => expect(create).toBeEnabled());
+    await user.click(create);
+    await vi.waitFor(() => expect(createBodies).toHaveLength(3));
+
+    expect(createBodies.map((body) => body.name)).toEqual([
+      "First draft",
+      "Changed draft",
+      "Changed draft",
+    ]);
+    expect(createBodies[0]?.library_id).not.toBe(
+      createBodies[1]?.library_id,
+    );
+    expect(createBodies[1]?.library_id).toBe(createBodies[2]?.library_id);
+    expect(createBodies[2]?.library_id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+    void fetchSpy;
   });
 
   it("loads another library page from the hydrated first page cursor", async () => {
@@ -134,12 +236,18 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
           page: { has_more: true, next_cursor: "cursor-2" },
         },
       },
-      children: <LibrariesPaneBody />,
+      children: (
+        <LibraryPlacementControllerProvider>
+          <LibrariesPaneBody />
+        </LibraryPlacementControllerProvider>
+      ),
     });
 
     await user.click(await screen.findByRole("button", { name: "Load more libraries" }));
 
-    expect(await screen.findByText("Second Page Library")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Second Page Library" }),
+    ).toBeInTheDocument();
     expect(fetchSpy).toHaveBeenCalledWith(
       "/api/libraries?cursor=cursor-2",
       expect.objectContaining({ method: "GET" }),
@@ -239,7 +347,11 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
           page: { has_more: false, next_cursor: null },
         },
       },
-      children: <LibrariesPaneBody />,
+      children: (
+        <LibraryPlacementControllerProvider>
+          <LibrariesPaneBody />
+        </LibraryPlacementControllerProvider>
+      ),
     });
 
     expect(

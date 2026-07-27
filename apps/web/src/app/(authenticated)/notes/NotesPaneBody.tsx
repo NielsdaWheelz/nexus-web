@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -37,6 +37,10 @@ export default function NotesPaneBody() {
     inputProps: titleInputProps,
   } = useHydrationPreservedInput();
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
+  const pageCreateReplayRef = useRef<{
+    pageId: string;
+    title: string;
+  } | null>(null);
   const pagesResource = useResource<NotePageSummary[], NoResourceParams>({
     descriptor: notePagesResource,
     params: {},
@@ -86,8 +90,14 @@ export default function NotesPaneBody() {
   const createPage = useCallback(async () => {
     const trimmedTitle = title.trim();
     const nextTitle = trimmedTitle || "Untitled";
+    const replay =
+      pageCreateReplayRef.current?.title === nextTitle
+        ? pageCreateReplayRef.current
+        : { pageId: crypto.randomUUID(), title: nextTitle };
+    pageCreateReplayRef.current = replay;
     try {
-      const page = await createNotePage({ title: nextTitle });
+      const page = await createNotePage(replay);
+      pageCreateReplayRef.current = null;
       setLocalPages((current) => [
         page,
         ...(current ?? resourcePages ?? []),

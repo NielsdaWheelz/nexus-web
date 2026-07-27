@@ -389,8 +389,13 @@ describe("LibraryDestinationPicker", () => {
 
   it("creates and auto-selects a strictly decoded destination", async () => {
     const fetchMock = installLibraryFetch();
+    const libraryId = crypto.randomUUID();
     render(
-      <Harness onCreateDestination={async (name) => createLibrary({ name })} />,
+      <Harness
+        onCreateDestination={async (name) =>
+          createLibrary({ libraryId, name })
+        }
+      />,
     );
 
     const input = screen.getByRole("combobox", { name: "Libraries" });
@@ -407,7 +412,10 @@ describe("LibraryDestinationPicker", () => {
       ([input, init]) =>
         pathFor(input) === "/api/libraries" && init?.method === "POST",
     );
-    expect(parseJsonBody(createCall?.[1])).toEqual({ name: "New Library" });
+    expect(parseJsonBody(createCall?.[1])).toEqual({
+      library_id: libraryId,
+      name: "New Library",
+    });
   });
 
   it("restores focus after Creating rerenders as Enabled", async () => {
@@ -537,7 +545,9 @@ describe("LibraryDestinationPicker", () => {
     render(
       <DefectBoundary>
         <Harness
-          onCreateDestination={async (name) => createLibrary({ name })}
+          onCreateDestination={async (name) =>
+            createLibrary({ libraryId: crypto.randomUUID(), name })
+          }
         />
       </DefectBoundary>,
     );

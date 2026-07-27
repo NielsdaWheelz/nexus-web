@@ -3,34 +3,23 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   type FocusEvent as ReactFocusEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import { ChevronLeft, ChevronRight, Command, Plus } from "lucide-react";
-import AsterismMark from "@/components/AsterismMark";
-import ActionBar from "@/components/ui/ActionBar";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import ActionMenu from "@/components/ui/ActionMenu";
 import PaneHeaderIdentity from "@/components/ui/PaneHeaderIdentity";
+import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import {
   useMobileChrome,
   useMobileChromeSurface,
 } from "@/lib/workspace/mobileChrome";
 import { usePaneWarm } from "@/lib/panes/paneWarm";
-import { pluralize } from "@/lib/text/pluralize";
 import styles from "./AppNav.module.css";
 
-export default function NavTopBar({
-  onOpenSheet,
-  onOpenCommand,
-  onOpenAdd,
-  paneCount,
-}: {
-  onOpenSheet: () => void;
-  onOpenCommand: () => void;
-  onOpenAdd: () => void;
-  paneCount: number;
-}) {
+export default function MobilePaneBar() {
   const { motionPhase, paneChrome, acquireVisibleLock, finishSettle } =
     useMobileChrome();
   const warmPane = usePaneWarm();
@@ -52,10 +41,20 @@ export default function NavTopBar({
     [],
   );
 
-  const showPaneCount = paneCount > 0;
-  const commandLabel = showPaneCount
-    ? `Search or ask anything (${pluralize(paneCount, "open tab")})`
-    : "Search or ask anything";
+  const menuOptions = useMemo<readonly ActionDescriptor[]>(() => {
+    const forward: ActionDescriptor[] = navigation?.canGoForward
+      ? [
+          {
+            kind: "command",
+            id: "pane-forward",
+            label: "Go forward",
+            icon: <ChevronRight size={18} aria-hidden="true" />,
+            onSelect: () => navigation.onForward("Pointer"),
+          },
+        ]
+      : [];
+    return [...forward, ...actions, ...options];
+  }, [actions, navigation, options]);
   const controlsHidden = motionPhase.kind === "Hidden";
   const handleActionMenuOpenChange = useCallback(
     (open: boolean) => {
@@ -123,39 +122,18 @@ export default function NavTopBar({
         aria-hidden={controlsHidden || undefined}
         inert={controlsHidden || undefined}
       >
-        <button
-          type="button"
-          className={`${styles.topBarButton} ${styles.topBarBrand}`}
-          onClick={onOpenSheet}
-          aria-label="Open navigation"
-          aria-haspopup="dialog"
-        >
-          <AsterismMark size={20} />
-        </button>
-        <button
-          type="button"
-          className={styles.topBarButton}
-          onClick={(event) =>
-            navigation?.onBack(event.detail === 0 ? "Keyboard" : "Pointer")
-          }
-          disabled={!navigation?.canGoBack}
-          aria-label="Go back"
-        >
-          <ChevronLeft size={20} aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          className={`${styles.topBarButton} ${styles.topBarForward}`}
-          onClick={(event) =>
-            navigation?.onForward(
-              event.detail === 0 ? "Keyboard" : "Pointer",
-            )
-          }
-          disabled={!navigation?.canGoForward}
-          aria-label="Go forward"
-        >
-          <ChevronRight size={20} aria-hidden="true" />
-        </button>
+        {navigation?.canGoBack ? (
+          <button
+            type="button"
+            className={styles.topBarButton}
+            onClick={(event) =>
+              navigation.onBack(event.detail === 0 ? "Keyboard" : "Pointer")
+            }
+            aria-label="Go back"
+          >
+            <ChevronLeft size={20} aria-hidden="true" />
+          </button>
+        ) : null}
       </div>
 
       <div
@@ -179,37 +157,9 @@ export default function NavTopBar({
         aria-hidden={controlsHidden || undefined}
         inert={controlsHidden || undefined}
       >
-        <button
-          type="button"
-          className={styles.topBarButton}
-          onClick={onOpenCommand}
-          aria-label={commandLabel}
-          aria-haspopup="dialog"
-        >
-          <span className={styles.topBarCommandIcon}>
-            <Command size={20} aria-hidden="true" />
-            {showPaneCount ? (
-              <span className={styles.topBarCommandBadge} aria-hidden="true">
-                {paneCount}
-              </span>
-            ) : null}
-          </span>
-        </button>
-        <button
-          type="button"
-          className={`${styles.topBarButton} ${styles.topBarAdd}`}
-          onClick={onOpenAdd}
-          aria-label="Add content"
-          aria-haspopup="dialog"
-        >
-          <Plus size={20} aria-hidden="true" />
-        </button>
-        {actions.length > 0 && (
-          <ActionBar options={actions} label="Pane actions" />
-        )}
-        {options.length > 0 && (
+        {paneChrome ? (
           <ActionMenu
-            options={options}
+            options={menuOptions}
             label="Pane options"
             className={styles.topBarOptions}
             triggerAttributes={{
@@ -217,7 +167,7 @@ export default function NavTopBar({
             }}
             onOpenChange={handleActionMenuOpenChange}
           />
-        )}
+        ) : null}
       </div>
     </header>
   );

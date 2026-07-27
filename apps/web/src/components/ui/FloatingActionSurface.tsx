@@ -398,7 +398,6 @@ interface ViewportBounds {
 function viewportBounds(isMobileViewport: boolean, viewportPadding: number): ViewportBounds {
   const visualViewport = window.visualViewport;
   const safeAreaInsets = readSafeAreaInsets();
-  const rootStyle = getComputedStyle(document.documentElement);
   const viewportLeft = isMobileViewport ? (visualViewport?.offsetLeft ?? 0) : 0;
   const viewportTop = isMobileViewport ? (visualViewport?.offsetTop ?? 0) : 0;
   const viewportWidth = isMobileViewport
@@ -407,9 +406,9 @@ function viewportBounds(isMobileViewport: boolean, viewportPadding: number): Vie
   const viewportHeight = isMobileViewport
     ? (visualViewport?.height ?? window.innerHeight)
     : window.innerHeight;
-  const mobileBottomNavHeight = isMobileViewport
-    ? readPx(rootStyle.getPropertyValue("--mobile-bottom-obstruction"))
-    : 0;
+  const mobileContentBottomClearance = isMobileViewport
+    ? readMobileContentBottomClearance()
+    : safeAreaInsets.bottom;
 
   return {
     minLeft: viewportLeft + viewportPadding + safeAreaInsets.left,
@@ -419,9 +418,21 @@ function viewportBounds(isMobileViewport: boolean, viewportPadding: number): Vie
       viewportTop +
       viewportHeight -
       viewportPadding -
-      safeAreaInsets.bottom -
-      mobileBottomNavHeight,
+      mobileContentBottomClearance,
   };
+}
+
+function readMobileContentBottomClearance(): number {
+  const probe = document.createElement("div");
+  probe.style.position = "fixed";
+  probe.style.visibility = "hidden";
+  probe.style.pointerEvents = "none";
+  probe.style.height =
+    "var(--mobile-content-bottom-clearance, env(safe-area-inset-bottom))";
+  document.body.appendChild(probe);
+  const clearance = readPx(window.getComputedStyle(probe).height);
+  probe.remove();
+  return clearance;
 }
 
 function readSafeAreaInsets(): { top: number; right: number; bottom: number; left: number } {

@@ -1,8 +1,8 @@
 /**
- * CreatePanel — focused component tests (real Chromium, real providers, fetch boundary
+ * TodayCapturePanel — focused component tests (real Chromium, real providers, fetch boundary
  * stubbed). Recovers the quick-note behavior that lived in the deleted
  * `__tests__/components/AddContentTray.test.tsx` after the universal-launcher cutover
- * moved the quick-note editor into `CreatePanel.tsx`. Mounts the panel directly with
+ * moved the quick-note editor into `TodayCapturePanel.tsx`. Mounts the panel directly with
  * stub `onOpen`/`onClose`/`onBack` callbacks (its new contract).
  *
  * The quick-note seam is `quickCaptureDailyNote` → `POST /api/notes/quick-capture`,
@@ -11,6 +11,7 @@
  * the Launcher surface and are covered by `Launcher.test.tsx`.
  */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
@@ -18,7 +19,8 @@ import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { paragraphFromText } from "@/lib/notes/prosemirror/schema";
 import type { StoredNoteEditorDraft } from "@/lib/notes/useNoteEditorSession";
 import type { LauncherActionTarget } from "@/lib/launcher/model";
-import CreatePanel from "./CreatePanel";
+import TodayCapturePanel from "./TodayCapturePanel";
+import { useTodayCaptureSession } from "./useTodayCaptureSession";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -64,25 +66,33 @@ function stubQuickCapture() {
   });
 }
 
-function renderCreatePanel(): {
+function renderTodayCapturePanel(): {
   onOpen: ReturnType<typeof vi.fn<(target: LauncherActionTarget) => void>>;
-  onClose: ReturnType<typeof vi.fn<() => void>>;
   onBack: ReturnType<typeof vi.fn<() => void>>;
 } {
   const onOpen = vi.fn<(target: LauncherActionTarget) => void>();
-  const onClose = vi.fn<() => void>();
   const onBack = vi.fn<() => void>();
+  function Harness() {
+    const session = useTodayCaptureSession();
+    return (
+      <TodayCapturePanel
+        session={session}
+        onOpen={onOpen}
+        onBack={onBack}
+      />
+    );
+  }
   render(
     withRenderEnvironment(
       <FeedbackProvider>
-        <CreatePanel onOpen={onOpen} onClose={onClose} onBack={onBack} />
+        <Harness />
       </FeedbackProvider>,
     ),
   );
-  return { onOpen, onClose, onBack };
+  return { onOpen, onBack };
 }
 
-// Pre-store a recoverable draft under the CreatePanel resource key.
+// Pre-store a recoverable draft under the Today Capture resource key.
 function storeNoteDraft(
   resourceKey: string,
   draft: Omit<StoredNoteEditorDraft, "version" | "body" | "updatedAt"> & {
@@ -111,29 +121,28 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("CreatePanel", () => {
+describe("TodayCapturePanel", () => {
   it("renders the quick-note editor and the New note back header", () => {
     stubQuickCapture();
-    renderCreatePanel();
+    renderTodayCapturePanel();
 
     expect(screen.getByRole("textbox", { name: "Quick note to today" })).toBeInTheDocument();
     expect(screen.getByText("New note")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open today" })).toBeInTheDocument();
   });
 
-  it("flushes the typed draft and routes to today via onOpen then onClose on 'Open today'", async () => {
+  it("flushes the typed draft and routes to today through the shell owner", async () => {
     const user = userEvent.setup();
     const fetchMock = stubQuickCapture();
-    const { onOpen, onClose } = renderCreatePanel();
+    const { onOpen } = renderTodayCapturePanel();
 
     const editor = screen.getByRole("textbox", { name: "Quick note to today" });
     await user.click(editor);
     await user.keyboard("captured text");
     fireEvent.click(screen.getByRole("button", { name: "Open today" }));
 
-    // The dispatch contract: open the daily note, then dismiss the launcher.
+    // The dispatch outcome owner closes only after workspace acceptance.
     expect(onOpen).toHaveBeenCalledWith({ kind: "open-today" });
-    expect(onClose).toHaveBeenCalledTimes(1);
 
     // "Open today" flushes the pending draft to the quick-capture endpoint.
     await waitFor(() => {
@@ -147,12 +156,11 @@ describe("CreatePanel", () => {
 
   it("routes to today even with an empty editor and does not POST a quick capture", async () => {
     const fetchMock = stubQuickCapture();
-    const { onOpen, onClose } = renderCreatePanel();
+    const { onOpen } = renderTodayCapturePanel();
 
     fireEvent.click(screen.getByRole("button", { name: "Open today" }));
 
     expect(onOpen).toHaveBeenCalledWith({ kind: "open-today" });
-    expect(onClose).toHaveBeenCalledTimes(1);
     // Nothing to flush: an empty quick note must not create a daily block.
     expect(quickCaptureBodies(fetchMock)).toHaveLength(0);
   });
@@ -168,7 +176,7 @@ describe("CreatePanel", () => {
       clientMutationId: "quick-note-recovered-cmid",
     });
 
-    renderCreatePanel();
+    renderTodayCapturePanel();
 
     const editor = await screen.findByRole("textbox", { name: "Quick note to today" });
     expect(editor).toHaveTextContent("offline quick note");
@@ -200,7 +208,7 @@ describe("CreatePanel", () => {
       clientMutationId: "quick-note-recovered-cmid",
     });
 
-    renderCreatePanel();
+    renderTodayCapturePanel();
 
     expect(await screen.findByText("Recovered unsaved changes")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Discard" }));
@@ -218,10 +226,122 @@ describe("CreatePanel", () => {
 
   it("invokes onBack when the New note header is pressed", () => {
     stubQuickCapture();
-    const { onBack } = renderCreatePanel();
+    const { onBack } = renderTodayCapturePanel();
 
     fireEvent.click(screen.getByText("New note"));
 
     expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the current draft when the viewport projection remounts", async () => {
+    const user = userEvent.setup();
+    stubQuickCapture();
+
+    function ProjectionHarness() {
+      const session = useTodayCaptureSession();
+      const [projection, setProjection] = useState<"Mobile" | "Desktop">(
+        "Mobile",
+      );
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() =>
+              setProjection((current) =>
+                current === "Mobile" ? "Desktop" : "Mobile",
+              )
+            }
+          >
+            Rotate projection
+          </button>
+          <div key={projection} data-projection={projection}>
+            <TodayCapturePanel
+              session={session}
+              onOpen={() => {}}
+              onBack={() => {}}
+            />
+          </div>
+        </>
+      );
+    }
+
+    render(
+      withRenderEnvironment(
+        <FeedbackProvider>
+          <ProjectionHarness />
+        </FeedbackProvider>,
+      ),
+    );
+
+    const editor = screen.getByRole("textbox", {
+      name: "Quick note to today",
+    });
+    await user.click(editor);
+    await user.keyboard("survives rotation");
+    await user.click(
+      screen.getByRole("button", { name: "Rotate projection" }),
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("textbox", { name: "Quick note to today" }),
+      ).toHaveTextContent("survives rotation"),
+    );
+  });
+
+  it("starts a fresh logical capture only after the previous note committed", async () => {
+    const user = userEvent.setup();
+    stubQuickCapture();
+
+    function NewCaptureHarness() {
+      const session = useTodayCaptureSession();
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              session.start();
+            }}
+          >
+            Start new capture
+          </button>
+          <output data-testid="capture-session">{session.sessionId}</output>
+          <output data-testid="capture-status">{session.saveStatus}</output>
+          <TodayCapturePanel
+            session={session}
+            onOpen={() => {}}
+            onBack={() => {}}
+          />
+        </>
+      );
+    }
+
+    render(
+      withRenderEnvironment(
+        <FeedbackProvider>
+          <NewCaptureHarness />
+        </FeedbackProvider>,
+      ),
+    );
+
+    const previousSessionId = screen.getByTestId("capture-session").textContent;
+    const editor = screen.getByRole("textbox", {
+      name: "Quick note to today",
+    });
+    await user.click(editor);
+    await user.keyboard("first capture");
+    await user.click(screen.getByRole("button", { name: "Open today" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("capture-status")).toHaveTextContent("saved"),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Start new capture" }));
+
+    expect(screen.getByTestId("capture-session").textContent).not.toBe(
+      previousSessionId,
+    );
+    expect(
+      screen.getByRole("textbox", { name: "Quick note to today" }),
+    ).toHaveTextContent("");
   });
 });

@@ -26,7 +26,10 @@ _PositiveInt32 = Annotated[int, Field(strict=True, ge=1, le=_INT32_MAX)]
 
 
 class CreateLibraryRequest(BaseModel):
+    library_id: UUID
     name: str = Field(..., min_length=1, max_length=100, description="Library name (1-100 chars)")
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
 
 class UpdateLibraryRequest(BaseModel):

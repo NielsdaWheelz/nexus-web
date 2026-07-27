@@ -111,7 +111,6 @@ export type LauncherActionTarget =
   | { kind: "create-note"; text: string } // quick capture → daily note
   | { kind: "browse-acquire"; result: BrowseResult } // open if owned, else add by url
   | { kind: "new-conversation" }
-  | { kind: "create-page" } // create an empty page then open it
   | { kind: "share"; target: ShareTarget }
   | { kind: "copy-external-link"; href: string }
   | { kind: "pane-open"; paneId: string } // activate, restoring if minimized
@@ -122,7 +121,8 @@ export type LauncherActionTarget =
 // Panel targets: the controller intercepts these to push an embedded page (not dispatch).
 export type LauncherPanelTarget =
   | { kind: "open-add"; seed: AddSeed }
-  | { kind: "open-create" };
+  | { kind: "open-today-capture" }
+  | { kind: "create-page" };
 
 export type LauncherTarget = LauncherActionTarget | LauncherPanelTarget;
 
@@ -187,12 +187,6 @@ export type LauncherView =
   | { state: "resting"; groups: LauncherGroup[] }
   | { state: "querying"; results: LauncherItem[] }
   | { state: "actions"; item: LauncherItem; actions: LauncherAction[] };
-
-export type LauncherPage =
-  | { kind: "root" }
-  | { kind: "actions"; item: LauncherItem; actions: LauncherAction[] }
-  | { kind: "add" }
-  | { kind: "create" };
 
 // Ordered ids of the selectable rows in a view — items at root, actions when drilled.
 // Used for arrow-nav and to keep the active row valid across view changes.

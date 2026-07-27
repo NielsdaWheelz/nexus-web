@@ -30,10 +30,14 @@ describe("useAddContentSession mutation lifecycle", () => {
       let session!: AddContentSessionController;
       let resolveRequest!: (response: Response) => void;
       let requestSignal: AbortSignal | undefined;
+      let requestedLibraryId = "";
       vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
         const url = new URL(String(input), "http://localhost");
         expect(url.pathname).toBe("/api/libraries");
         expect(init?.method).toBe("POST");
+        requestedLibraryId = (
+          JSON.parse(String(init?.body)) as { library_id: string }
+        ).library_id;
         requestSignal = init?.signal as AbortSignal;
         return new Promise<Response>((resolve) => {
           resolveRequest = resolve;
@@ -69,7 +73,7 @@ describe("useAddContentSession mutation lifecycle", () => {
         resolveRequest(
           jsonResponse({
             data: {
-              id: "library-stale",
+              id: requestedLibraryId,
               name: "Stale destination",
               color: null,
               ownerUserHandle:
@@ -94,6 +98,74 @@ describe("useAddContentSession mutation lifecycle", () => {
       expect(session.state.defaultDestinations).toEqual([]);
     },
   );
+
+  it("reuses a destination create id after response loss and rotates it after success", async () => {
+    let session!: AddContentSessionController;
+    const requests: Array<{ library_id: string; name: string }> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      const request = JSON.parse(String(init?.body)) as {
+        library_id: string;
+        name: string;
+      };
+      requests.push(request);
+      if (requests.length === 1) {
+        return new Response("<!doctype html><title>Lost response</title>", {
+          status: 200,
+          headers: { "Content-Type": "text/html" },
+        });
+      }
+      return jsonResponse({
+        data: {
+          id: request.library_id,
+          name: request.name,
+          color: null,
+          ownerUserHandle:
+            "nus1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB",
+          isDefault: false,
+          role: "admin",
+          systemKey: null,
+          canRename: true,
+          canDelete: true,
+          canEditEntries: true,
+          canManageMembers: true,
+          canTransferOwnership: true,
+          createdAt: "2026-07-21T12:00:00Z",
+          updatedAt: "2026-07-21T12:00:00Z",
+        },
+      });
+    });
+    render(<Harness onRender={(next) => (session = next)} />);
+    act(() => session.start(CONTENT_SEED));
+
+    await act(async () => {
+      await expect(
+        session.createDestination("  Replay destination  "),
+      ).rejects.toThrow("API returned a non-JSON response");
+    });
+    let replayed!: Awaited<
+      ReturnType<AddContentSessionController["createDestination"]>
+    >;
+    await act(async () => {
+      replayed = await session.createDestination("Replay destination");
+    });
+    let nextLogicalSubmit!: Awaited<
+      ReturnType<AddContentSessionController["createDestination"]>
+    >;
+    await act(async () => {
+      nextLogicalSubmit =
+        await session.createDestination("Replay destination");
+    });
+
+    expect(requests.map((request) => request.name)).toEqual([
+      "Replay destination",
+      "Replay destination",
+      "Replay destination",
+    ]);
+    expect(requests[1]?.library_id).toBe(requests[0]?.library_id);
+    expect(requests[2]?.library_id).not.toBe(requests[1]?.library_id);
+    expect(replayed.id).toBe(requests[0]?.library_id);
+    expect(nextLogicalSubmit.id).toBe(requests[2]?.library_id);
+  });
 
   it("aborts Stop, blocks competing intent, and ignores a stale completion", async () => {
     let session!: AddContentSessionController;
@@ -308,26 +380,54 @@ describe("useAddContentSession mutation lifecycle", () => {
     });
   });
 
-  it("restores the selected OPML file when the same-system request defects", async () => {
+  it("retains OPML replay identity and retries the exact logical submit after response loss", async () => {
     let session!: AddContentSessionController;
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      apiErrorResponse(500, "E_INTERNAL"),
-    );
+    const requestBodies: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      requestBodies.push(String(init?.body));
+      if (requestBodies.length === 1) {
+        return new Response("<!doctype html><title>Lost response</title>", {
+          status: 200,
+          headers: { "Content-Type": "text/html" },
+        });
+      }
+      return jsonResponse({
+        data: {
+          total: 1,
+          imported: 0,
+          skipped_already_subscribed: 1,
+          skipped_invalid: 0,
+          errors: [],
+        },
+      });
+    });
     render(<Harness onRender={(next) => (session = next)} />);
 
     act(() => session.start({ kind: "Opml", initialDestinations: [] }));
-    const file = new File(["<opml><body /></opml>"], "feeds.opml", {
-      type: "text/xml",
-    });
+    const file = new File(
+      [
+        '<opml><body><outline type="rss" xmlUrl="https://example.com/feed.xml" /></body></opml>',
+      ],
+      "feeds.opml",
+      { type: "text/xml" },
+    );
     act(() => session.setOpmlFile(file));
     await act(async () => {
-      await expect(session.importOpml()).rejects.toMatchObject({
-        code: "E_INTERNAL",
-      });
+      await expect(session.importOpml()).rejects.toThrow(
+        "API returned a non-JSON response",
+      );
     });
 
     expect(session.state.mutation.kind).toBe("Idle");
     expect(session.state.opml).toEqual({ kind: "Ready", file });
+    const replayIdentity = session.opmlReplayIdentity;
+    expect(replayIdentity).toMatch(/^opml-sha256:[0-9a-f]{64}$/);
+
+    await act(async () => session.importOpml());
+    expect(session.opmlReplayIdentity).toBe(replayIdentity);
+    expect(requestBodies).toHaveLength(2);
+    expect(requestBodies[1]).toBe(requestBodies[0]);
+    expect(session.state.opml).toMatchObject({ kind: "Complete" });
   });
 
   it("restores Unloaded after an authoritative placement read defects", async () => {

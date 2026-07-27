@@ -10,6 +10,7 @@ function viewModel(
   return {
     key: "content_chunk-chunk-1",
     resourceRef,
+    ownerResourceRef: "media:b1b2c3d4-e5f6-7890-abcd-ef1234567890",
     activation: {
       resourceRef,
       kind: "route",
@@ -47,6 +48,7 @@ function viewModel(
     publicationDate: { kind: "Absent" },
     contributorCredits: [],
     noteBody: null,
+    noteOrigin: null,
     ...overrides,
   };
 }

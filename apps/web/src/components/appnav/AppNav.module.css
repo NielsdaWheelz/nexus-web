@@ -407,85 +407,6 @@
   white-space: nowrap;
 }
 
-/* ============================================================
-   Mobile slide-over sheet
-   ============================================================ */
-.sheetBackdrop {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-modal);
-  background: var(--overlay-scrim);
-  opacity: 0;
-  animation: appnavFade var(--duration-fast) var(--ease-glide) forwards;
-}
-
-.sheet {
-  position: fixed;
-  top: 0;
-  left: 0;
-  bottom: 0;
-  z-index: calc(var(--z-modal) + 1);
-  display: flex;
-  flex-direction: column;
-  width: min(86vw, 320px);
-  padding: var(--space-3) var(--space-2)
-    calc(var(--space-3) + env(safe-area-inset-bottom));
-  padding-top: calc(var(--space-3) + env(safe-area-inset-top));
-  background: var(--surface-2);
-  border-right: 1px solid var(--edge-subtle);
-  box-shadow: var(--shadow-4);
-  transform: translateX(-100%);
-  animation: appnavSlideIn var(--duration-base) var(--ease-bloom) forwards;
-}
-
-.sheet .commandBar {
-  margin-top: var(--space-2);
-}
-
-.sheetClose {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--size-xl);
-  height: var(--size-xl);
-  flex-shrink: 0;
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--ink-muted);
-  cursor: pointer;
-}
-
-.sheetClose:hover {
-  background: var(--surface-hover);
-  color: var(--ink);
-}
-
-.sheet .item {
-  min-height: var(--size-xl);
-}
-
-.sheetFooter {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin-top: var(--space-3);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--edge-subtle);
-}
-
-@keyframes appnavFade {
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes appnavSlideIn {
-  to {
-    transform: translateX(0);
-  }
-}
-
 @property --mobile-chrome-collapse {
   syntax: "<number>";
   inherits: false;
@@ -527,8 +448,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: var(--size-xl);
-  height: var(--size-xl);
+  width: 48px;
+  height: 48px;
   flex-shrink: 0;
   border: none;
   border-radius: var(--radius-md);
@@ -550,17 +471,9 @@
   cursor: default;
 }
 
-.topBarBrand {
-  color: var(--accent);
-}
-
-.topBarAdd {
-  color: var(--accent);
-}
-
 .topBarOptions > button {
-  min-width: var(--size-xl);
-  min-height: var(--size-xl);
+  min-width: 48px;
+  min-height: 48px;
 }
 
 .topBarTitle {
@@ -571,69 +484,15 @@
   min-width: 0;
 }
 
-.topBarCommandIcon {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-/* Open-tab count anchored to the command symbol, ringed against the bar. */
-.topBarCommandBadge {
-  position: absolute;
-  top: -7px;
-  right: -8px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 var(--space-1);
-  border: 1px solid var(--surface-2);
-  border-radius: var(--radius-full);
-  background: var(--accent);
-  color: var(--ink-on-accent);
-  font-size: 10px;
-  font-weight: var(--weight-semibold);
-  line-height: 1;
-  pointer-events: none;
-}
 
 @media (max-width: 303px) {
   .topBar,
   .topBarControls {
     gap: 0;
   }
-
-  .topBarAdd {
-    display: none;
-  }
-}
-
-@media (max-width: 480px) {
-  .topBar[data-header-kind="resource"] .topBarForward,
-  .topBar[data-header-kind="resource"] .topBarAdd {
-    display: none;
-  }
-}
-
-@media (max-width: 235px) {
-  .topBarForward {
-    display: none;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sheetBackdrop {
-    opacity: 1;
-    animation: none;
-  }
-
-  .sheet {
-    transform: none;
-    animation: none;
-  }
-
   .rail,
   .collapseButton,
   .commandBar,

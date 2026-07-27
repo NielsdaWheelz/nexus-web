@@ -34,12 +34,21 @@ function normalizePage(raw: Record<string, unknown>): NotePage {
   return { ...normalizePageSummary(raw), dailyNote };
 }
 
-export async function createNotePage(input: { title: string }): Promise<NotePage> {
+export async function createNotePage(input: {
+  pageId: string;
+  title: string;
+}): Promise<NotePage> {
   const response = await apiFetch<ApiResponse>("/api/notes/pages", {
     method: "POST",
-    body: JSON.stringify({ title: input.title }),
+    body: JSON.stringify({ page_id: input.pageId, title: input.title }),
   });
-  return normalizePage(requiredRecord(response.data, "note page"));
+  const page = normalizePage(requiredRecord(response.data, "note page"));
+  if (page.id !== input.pageId) {
+    throw new Error(
+      `Notes API create response id ${page.id} does not match requested page ${input.pageId}`,
+    );
+  }
+  return page;
 }
 
 export async function fetchDailyNotePage(

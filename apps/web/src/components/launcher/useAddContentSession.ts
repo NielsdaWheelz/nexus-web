@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useReducer, useRef } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import {
   toFeedback,
   type FeedbackContent,
@@ -36,6 +36,7 @@ import {
 import {
   getPodcastOpmlFileError,
   importPodcastOpml,
+  podcastOpmlReplayIdentity,
   PodcastOpmlEncodingError,
 } from "@/lib/podcasts/opmlImport";
 import {
@@ -70,7 +71,8 @@ type SubmissionItem = Extract<AddItem, { kind: "Draft" }>;
 export interface AddContentSessionController {
   readonly state: AddSessionState;
   readonly dirty: boolean;
-  start(seed: AddSeed): void;
+  readonly opmlReplayIdentity: string | null;
+  start(seed: AddSeed): string;
   setUrlText(text: string): void;
   reviewUrls(): boolean;
   stageFiles(files: readonly File[]): boolean;
@@ -187,6 +189,8 @@ export function useAddContentSession(): AddContentSessionController {
     }),
   );
   const stateRef = useRef(state);
+  const [opmlReplayIdentity, setOpmlReplayIdentity] =
+    useState<string | null>(null);
   const generationRef = useRef(0);
   const sessionAbortRef = useRef(new AbortController());
   const acceptedUploadIdentityByItemIdRef = useRef(
@@ -196,6 +200,7 @@ export function useAddContentSession(): AddContentSessionController {
   const placementProgressByMediaIdRef = useRef(
     new Map<string, PlacementMutationProgress>(),
   );
+  const destinationCreateIdByNameRef = useRef(new Map<string, string>());
 
   const apply = useCallback((action: AddSessionAction) => {
     stateRef.current = reduceAddSession(stateRef.current, action);
@@ -222,13 +227,14 @@ export function useAddContentSession(): AddContentSessionController {
       acceptedUploadIdentityByItemIdRef.current.clear();
       startedSubmissionItemIdsRef.current.clear();
       placementProgressByMediaIdRef.current.clear();
-      apply({
-        kind: "Reset",
-        state: createAddSessionState({
-          seed,
-          sessionId: createRandomId("add-session"),
-        }),
+      destinationCreateIdByNameRef.current.clear();
+      setOpmlReplayIdentity(null);
+      const next = createAddSessionState({
+        seed,
+        sessionId: createRandomId("add-session"),
       });
+      apply({ kind: "Reset", state: next });
+      return next.sessionId;
     },
     [apply],
   );
@@ -240,6 +246,8 @@ export function useAddContentSession(): AddContentSessionController {
     acceptedUploadIdentityByItemIdRef.current.clear();
     startedSubmissionItemIdsRef.current.clear();
     placementProgressByMediaIdRef.current.clear();
+    destinationCreateIdByNameRef.current.clear();
+    setOpmlReplayIdentity(null);
     apply({
       kind: "Reset",
       state: createAddSessionState({
@@ -743,17 +751,25 @@ export function useAddContentSession(): AddContentSessionController {
       return;
     }
     const file = current.opml.file;
+    const libraryIds = current.opmlDestinations.map(
+      (destination) => destination.id,
+    );
     const generation = generationRef.current;
     const signal = sessionAbortRef.current.signal;
     apply({ kind: "StartMutation", operation: { kind: "ImportOpml" } });
     apply({ kind: "SetOpml", opml: { kind: "Importing", file } });
     let defect: unknown;
     try {
+      const replayIdentity = await podcastOpmlReplayIdentity({
+        file,
+        libraryIds,
+        signal,
+      });
+      if (generation !== generationRef.current || signal.aborted) return;
+      setOpmlReplayIdentity(replayIdentity);
       const result = await importPodcastOpml({
         file,
-        libraryIds: current.opmlDestinations.map(
-          (destination) => destination.id,
-        ),
+        libraryIds,
         signal,
       });
       if (generation === generationRef.current) {
@@ -1156,18 +1172,28 @@ export function useAddContentSession(): AddContentSessionController {
       }
       const generation = generationRef.current;
       const signal = sessionAbortRef.current.signal;
+      const normalizedName = name.trim();
+      const libraryId =
+        destinationCreateIdByNameRef.current.get(normalizedName) ??
+        crypto.randomUUID();
+      destinationCreateIdByNameRef.current.set(normalizedName, libraryId);
       apply({
         kind: "StartMutation",
         operation: { kind: "CreateDestination" },
       });
       try {
-        const destination = await createLibrary({ name, signal });
+        const destination = await createLibrary({
+          libraryId,
+          name: normalizedName,
+          signal,
+        });
         if (generation !== generationRef.current || signal.aborted) {
           throw new DOMException(
             "Destination creation no longer belongs to the active Add session.",
             "AbortError",
           );
         }
+        destinationCreateIdByNameRef.current.delete(normalizedName);
         return {
           id: destination.id,
           name: destination.name,
@@ -1184,6 +1210,7 @@ export function useAddContentSession(): AddContentSessionController {
   return {
     state,
     dirty: isAddSessionDirty(state),
+    opmlReplayIdentity,
     start,
     setUrlText,
     reviewUrls,

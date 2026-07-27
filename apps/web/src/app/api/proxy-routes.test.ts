@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const API_ROUTE_COUNT = 137;
+const API_ROUTE_COUNT = 150;
 const EXTENSION_PROXY_ROUTES = new Set([
   "src/app/api/extension/session/route.ts",
   "src/app/api/media/capture/article/route.ts",
@@ -17,6 +17,7 @@ const REQUIRED_PROXY_ROUTES = new Set([
   "src/app/api/artifacts/dossiers/[subjectScheme]/[subjectHandle]/builds/route.ts",
   "src/app/api/artifacts/dossiers/[subjectScheme]/[subjectHandle]/route.ts",
   "src/app/api/resource-items/locators/resolve/route.ts",
+  "src/app/api/resource-items/openables/search/route.ts",
   "src/app/api/walknotes/transcribe/route.ts",
 ]);
 // Routes that intentionally are NOT FastAPI proxies. The CSP violation sink must accept

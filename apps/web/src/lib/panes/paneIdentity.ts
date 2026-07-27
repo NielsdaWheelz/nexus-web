@@ -15,6 +15,10 @@ export interface PaneRouteIdentity {
   resourceLocator: PaneResourceLocator | null;
 }
 
+export type WorkspaceActivationRouteId = string & {
+  readonly __workspaceActivationRouteId: unique symbol;
+};
+
 export function normalizePaneRouteKeyHref(href: string): string {
   const normalizedHref = normalizeWorkspaceHref(href) ?? "/";
   return normalizedHref.split("#", 1)[0] ?? normalizedHref;
@@ -51,6 +55,18 @@ export function paneResourceLocatorKey(locator: PaneResourceLocator | null): str
       return _exhaustive;
     }
   }
+}
+
+export function resolveWorkspaceActivationRouteId(
+  href: string,
+): WorkspaceActivationRouteId {
+  const identity = resolvePaneRouteIdentity(href);
+  const ownerKey = paneResourceLocatorKey(identity.resourceLocator);
+  // justify-type-assertion: this owner is the sole constructor for the opaque
+  // activation-route identity.
+  return (ownerKey
+    ? `${identity.routeId}:${ownerKey}`
+    : identity.routeKey) as WorkspaceActivationRouteId;
 }
 
 export function hasSamePaneResource(leftHref: string, rightHref: string): boolean {

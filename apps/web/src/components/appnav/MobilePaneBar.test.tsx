@@ -7,7 +7,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import NavTopBar from "./NavTopBar";
+import MobilePaneBar from "./MobilePaneBar";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import {
   MobileChromeProvider,
@@ -192,7 +192,7 @@ function MotionPhase() {
   return <output data-testid="motion-phase">{motionPhase.kind}</output>;
 }
 
-describe("NavTopBar", () => {
+describe("MobilePaneBar", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
@@ -203,12 +203,7 @@ describe("NavTopBar", () => {
     render(
       <MobileChromeProvider>
         <PublishChrome />
-        <NavTopBar
-          onOpenSheet={() => {}}
-          onOpenCommand={() => {}}
-          onOpenAdd={() => {}}
-          paneCount={1}
-        />
+        <MobilePaneBar />
       </MobileChromeProvider>,
     );
 
@@ -216,39 +211,30 @@ describe("NavTopBar", () => {
     expect(screen.getByText("37 sources")).toBeInTheDocument();
   });
 
-  it("passes explicit pointer and keyboard modality through mobile navigation", () => {
+  it("keeps Back in chrome and moves Forward into the pane menu", () => {
     const onBack = vi.fn();
     const onForward = vi.fn();
     render(
       <MobileChromeProvider>
         <PublishNavigationChrome onBack={onBack} onForward={onForward} />
-        <NavTopBar
-          onOpenSheet={() => {}}
-          onOpenCommand={() => {}}
-          onOpenAdd={() => {}}
-          paneCount={1}
-        />
+        <MobilePaneBar />
       </MobileChromeProvider>,
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Go back" }), {
       detail: 1,
     });
-    fireEvent.click(screen.getByRole("button", { name: "Go forward" }));
+    fireEvent.click(screen.getByRole("button", { name: "Pane options" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Go forward" }));
     expect(onBack).toHaveBeenCalledWith("Pointer");
-    expect(onForward).toHaveBeenCalledWith("Keyboard");
+    expect(onForward).toHaveBeenCalledWith("Pointer");
   });
 
   it("renders the active pane's resource identity from the shared model", () => {
     render(
       <MobileChromeProvider>
         <PublishResourceChrome />
-        <NavTopBar
-          onOpenSheet={() => {}}
-          onOpenCommand={() => {}}
-          onOpenAdd={() => {}}
-          paneCount={1}
-        />
+        <MobilePaneBar />
       </MobileChromeProvider>,
     );
 
@@ -272,12 +258,7 @@ describe("NavTopBar", () => {
         <PublishResourceChrome
           activateIdentityAnchor={activateIdentityAnchor}
         />
-        <NavTopBar
-          onOpenSheet={() => {}}
-          onOpenCommand={() => {}}
-          onOpenAdd={() => {}}
-          paneCount={1}
-        />
+        <MobilePaneBar />
       </MobileChromeProvider>,
     );
 
@@ -309,12 +290,7 @@ describe("NavTopBar", () => {
         <MobileChromeProvider>
           <PublishResourceChrome />
           <CollapseChrome />
-          <NavTopBar
-            onOpenSheet={() => {}}
-            onOpenCommand={() => {}}
-            onOpenAdd={() => {}}
-            paneCount={1}
-          />
+          <MobilePaneBar />
         </MobileChromeProvider>,
         { initialViewport: "mobile" },
       ),
@@ -333,9 +309,7 @@ describe("NavTopBar", () => {
         name: "The Left Hand of Darkness",
       }),
     ).toBeVisible();
-    expect(
-      screen.queryByRole("button", { name: /Search or ask anything/ }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Pane options" })).toBeNull();
     for (const controls of screen.getAllByTestId("top-bar-controls")) {
       expect(controls).toHaveAttribute("aria-hidden", "true");
       expect(controls).toHaveAttribute("inert");
@@ -364,12 +338,7 @@ describe("NavTopBar", () => {
         <MobileChromeProvider>
           <PublishChrome />
           <TrackChrome />
-          <NavTopBar
-            onOpenSheet={() => {}}
-            onOpenCommand={() => {}}
-            onOpenAdd={() => {}}
-            paneCount={1}
-          />
+          <MobilePaneBar />
         </MobileChromeProvider>,
         { initialViewport: "mobile" },
       ),
@@ -411,33 +380,26 @@ describe("NavTopBar", () => {
     render(
       withRenderEnvironment(
         <MobileChromeProvider>
-          <PublishChrome />
+          <PublishResourceChrome />
           <CollapseChrome />
-          <NavTopBar
-            onOpenSheet={() => {}}
-            onOpenCommand={() => {}}
-            onOpenAdd={() => {}}
-            paneCount={1}
-          />
+          <MobilePaneBar />
         </MobileChromeProvider>,
         { initialViewport: "mobile" },
       ),
     );
 
     const navigation = screen.getByRole("banner");
-    const command = screen.getByRole("button", {
-      name: /Search or ask anything/,
-    });
-    fireEvent.focus(command);
+    const options = screen.getByRole("button", { name: "Pane options" });
+    fireEvent.focus(options);
 
     await waitFor(() =>
       expect(navigation).toHaveAttribute("data-mobile-chrome-phase", "Pinned"),
     );
     fireEvent.click(screen.getByRole("button", { name: "Collapse chrome" }));
     expect(navigation).toHaveAttribute("data-mobile-chrome-phase", "Pinned");
-    expect(command).toBeVisible();
+    expect(options).toBeVisible();
 
-    fireEvent.blur(command);
+    fireEvent.blur(options);
     await waitFor(() =>
       expect(navigation).toHaveAttribute("data-mobile-chrome-phase", "Visible"),
     );
@@ -452,12 +414,7 @@ describe("NavTopBar", () => {
           <CollapseChrome />
           <MotionPhase />
           {showTopBar ? (
-            <NavTopBar
-              onOpenSheet={() => {}}
-              onOpenCommand={() => {}}
-              onOpenAdd={() => {}}
-              paneCount={1}
-            />
+            <MobilePaneBar />
           ) : null}
         </MobileChromeProvider>,
         { initialViewport: "mobile" },
@@ -480,29 +437,23 @@ describe("NavTopBar", () => {
     );
   });
 
-  it("keeps Companion immediately before Options at 390px", () => {
+  it("projects promoted actions and pane options through one overflow menu", () => {
     vi.stubGlobal("innerWidth", 390);
 
     render(
       withRenderEnvironment(
         <MobileChromeProvider>
           <PublishResourceChrome />
-          <NavTopBar
-            onOpenSheet={() => {}}
-            onOpenCommand={() => {}}
-            onOpenAdd={() => {}}
-            paneCount={1}
-          />
+          <MobilePaneBar />
         </MobileChromeProvider>,
         { initialViewport: "mobile" },
       ),
     );
 
-    const companion = screen.getByRole("button", { name: "Companion" });
     const options = screen.getByRole("button", { name: "Pane options" });
-    expect(
-      companion.compareDocumentPosition(options) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Companion" })).toBeNull();
+    fireEvent.click(options);
+    expect(screen.getByRole("menuitem", { name: "Companion" })).toBeVisible();
+    expect(screen.getByRole("menuitem", { name: "Credits" })).toBeVisible();
   });
 });

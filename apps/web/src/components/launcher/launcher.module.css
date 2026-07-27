@@ -233,6 +233,37 @@
   text-align: center;
 }
 
+.retainedBanner {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--edge-subtle);
+}
+
+.retainedBanner h2,
+.retainedBanner p {
+  margin: 0;
+}
+
+.retainedBanner p {
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+.retainedBanner > div {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.retainedBanner button {
+  min-height: var(--size-lg);
+  padding-inline: var(--space-3);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
 /* The pinned omnibox rows (ask / create-note / browse-web / see-all) read as a
    distinct group below the content matches (§4.4.3). */
 .pinnedGroup {

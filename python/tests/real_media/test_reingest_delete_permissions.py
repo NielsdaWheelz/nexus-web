@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -34,6 +34,10 @@ pytestmark = [
     pytest.mark.network,
     pytest.mark.real_media,
 ]
+
+
+def _library_create_body(name: str) -> dict[str, str]:
+    return {"library_id": str(uuid4()), "name": name}
 
 
 def test_real_web_article_reingest_replaces_active_index_and_hides_stale_evidence(
@@ -255,7 +259,7 @@ def test_real_web_article_library_removal_hides_scope_without_deleting_evidence(
 
     library_response = auth_client.post(
         "/libraries",
-        json={"name": "Real media removal"},
+        json=_library_create_body("Real media removal"),
         headers=headers,
     )
     assert library_response.status_code == 201, library_response.text

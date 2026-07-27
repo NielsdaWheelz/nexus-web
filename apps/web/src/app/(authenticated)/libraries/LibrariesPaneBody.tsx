@@ -98,6 +98,10 @@ export default function LibrariesPaneBody() {
     inputProps: newLibraryNameInputProps,
   } = useHydrationPreservedInput();
   const [creating, setCreating] = useState(false);
+  const libraryCreateReplayRef = useRef<{
+    libraryId: string;
+    name: string;
+  } | null>(null);
   const librariesResource = useResource<
     CursorPage<Library>,
     LibraryListResourceParams
@@ -217,11 +221,18 @@ export default function LibrariesPaneBody() {
 
   const handleCreateLibrary = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newLibraryName.trim()) return;
+    const name = newLibraryName.trim();
+    if (!name) return;
+    const replay =
+      libraryCreateReplayRef.current?.name === name
+        ? libraryCreateReplayRef.current
+        : { libraryId: crypto.randomUUID(), name };
+    libraryCreateReplayRef.current = replay;
 
     setCreating(true);
     try {
-      await createLibrary({ name: newLibraryName.trim() });
+      await createLibrary(replay);
+      libraryCreateReplayRef.current = null;
       setNewLibraryName("");
       setFeedback(null);
       refreshLibraries();

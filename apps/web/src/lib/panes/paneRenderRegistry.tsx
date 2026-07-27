@@ -7,6 +7,7 @@ import {
 } from "@/lib/panes/paneRouteModel";
 import { usePaneResolvedBodyReady } from "@/lib/workspace/paneReturnMemento";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import { useReportSwitchboardPaneReady } from "@/lib/switchboard/performance";
 
 type PaneLoader = () => Promise<{ default: ComponentType }>;
 
@@ -67,17 +68,24 @@ export function ResolvedPaneBodyMarker({ children }: { children: ReactNode }) {
   return children;
 }
 
+function PaneBodyPerformanceMarker({ children }: { children: ReactNode }) {
+  useReportSwitchboardPaneReady();
+  return children;
+}
+
 export function renderPane(id: PaneRouteId): ReactNode {
   const Body = PANE_BODIES[id];
   return (
     <Suspense fallback={<PaneLoadingState />}>
-      {SHELL_SCROLL_ROUTE_IDS.has(id) ? (
-        <ResolvedPaneBodyMarker>
+      <PaneBodyPerformanceMarker>
+        {SHELL_SCROLL_ROUTE_IDS.has(id) ? (
+          <ResolvedPaneBodyMarker>
+            <Body />
+          </ResolvedPaneBodyMarker>
+        ) : (
           <Body />
-        </ResolvedPaneBodyMarker>
-      ) : (
-        <Body />
-      )}
+        )}
+      </PaneBodyPerformanceMarker>
     </Suspense>
   );
 }

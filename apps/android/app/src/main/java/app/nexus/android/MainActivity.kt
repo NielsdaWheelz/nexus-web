@@ -217,7 +217,11 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
-        loadUrlFromIntent(intent)
+        val restoredWebViewState =
+            savedInstanceState?.let { webView.restoreState(it) } != null
+        if (!restoredWebViewState) {
+            loadUrlFromIntent(intent)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -240,6 +244,11 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         webView.onResume()
         webView.resumeTimers()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        webView.saveState(outState)
+        super.onSaveInstanceState(outState)
     }
 
     override fun onDestroy() {

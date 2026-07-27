@@ -3,15 +3,18 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import MobileSheet from "@/components/ui/MobileSheet";
+import { MobileViewportProvider } from "@/lib/mobileViewport/MobileViewportProvider";
 
 const noop = () => {};
 
 function sheet(props: Partial<ComponentProps<typeof MobileSheet>> = {}) {
   return withRenderEnvironment(
-    <MobileSheet active onDismiss={noop} ariaLabel="Test sheet" {...props}>
-      <button type="button">First</button>
-      <button type="button">Last</button>
-    </MobileSheet>,
+    <MobileViewportProvider>
+      <MobileSheet active onDismiss={noop} ariaLabel="Test sheet" {...props}>
+        <button type="button">First</button>
+        <button type="button">Last</button>
+      </MobileSheet>
+    </MobileViewportProvider>,
     { initialViewport: "mobile" },
   );
 }
@@ -139,10 +142,12 @@ describe("MobileSheet", () => {
     const onInnerDismiss = vi.fn();
     render(
       withRenderEnvironment(
-        <NestedSheets
-          onOuterDismiss={onOuterDismiss}
-          onInnerDismiss={onInnerDismiss}
-        />,
+        <MobileViewportProvider>
+          <NestedSheets
+            onOuterDismiss={onOuterDismiss}
+            onInnerDismiss={onInnerDismiss}
+          />
+        </MobileViewportProvider>,
         { initialViewport: "mobile" },
       ),
     );
@@ -187,6 +192,40 @@ describe("MobileSheet", () => {
 
     fireEvent.keyDown(document, { key: "Escape" });
     expect(onOuterDismiss).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the outer sheet keyboard inset when the inner sheet closes", async () => {
+    installFakeViewport(window.innerHeight - 300);
+    render(
+      withRenderEnvironment(
+        <MobileViewportProvider>
+          <NestedSheets onOuterDismiss={noop} onInnerDismiss={noop} />
+        </MobileViewportProvider>,
+        { initialViewport: "mobile" },
+      ),
+    );
+
+    expect(
+      document.documentElement.style.getPropertyValue(
+        "--mobile-overlay-keyboard-inset",
+      ),
+    ).toBe("300px");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open inner sheet" }),
+    );
+    await screen.findByRole("dialog", { name: "Inner sheet" });
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Inner sheet" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      document.documentElement.style.getPropertyValue(
+        "--mobile-overlay-keyboard-inset",
+      ),
+    ).toBe("300px");
   });
 
   it("locks body overflow while active and restores the prior value on deactivate", async () => {
@@ -308,6 +347,31 @@ describe("MobileSheet", () => {
     expect(dialog().style.transform).toBe("");
   });
 
+  it("pointer cancellation snaps back without dismissing", () => {
+    const onDismiss = vi.fn();
+    render(sheet({ onDismiss }));
+    const handle = grabber()!;
+
+    fireEvent.pointerDown(handle, {
+      clientY: 100,
+      pointerId: 1,
+      bubbles: true,
+    });
+    fireEvent.pointerMove(handle, {
+      clientY: 240,
+      pointerId: 1,
+      bubbles: true,
+    });
+    fireEvent.pointerCancel(handle, {
+      clientY: 240,
+      pointerId: 1,
+      bubbles: true,
+    });
+
+    expect(onDismiss).not.toHaveBeenCalled();
+    expect(dialog().style.transform).toBe("");
+  });
+
   it("reduced motion disables drag dismissal", () => {
     vi.spyOn(window, "matchMedia").mockImplementation(
       (query: string) =>
@@ -345,13 +409,47 @@ describe("MobileSheet", () => {
     const vv = installFakeViewport(layoutHeight - 300);
     render(sheet());
 
-    expect(dialog().style.getPropertyValue("--keyboard-inset")).toBe("300px");
+    expect(dialog().style.getPropertyValue("--keyboard-inset")).toBe(
+      "var(--mobile-overlay-keyboard-inset)",
+    );
+    expect(
+      document.documentElement.style.getPropertyValue(
+        "--mobile-overlay-keyboard-inset",
+      ),
+    ).toBe("300px");
 
     resizeViewport(vv, layoutHeight - 60); // at threshold → reported
-    expect(dialog().style.getPropertyValue("--keyboard-inset")).toBe("60px");
+    expect(dialog().style.getPropertyValue("--keyboard-inset")).toBe(
+      "var(--mobile-overlay-keyboard-inset)",
+    );
 
     resizeViewport(vv, layoutHeight - 59); // below threshold (chrome noise / stale residue) → zeroed
-    expect(dialog().style.getPropertyValue("--keyboard-inset")).toBe("0px");
+    expect(dialog().style.getPropertyValue("--keyboard-inset")).toBe(
+      "var(--mobile-overlay-keyboard-inset)",
+    );
+    expect(
+      document.documentElement.style.getPropertyValue(
+        "--mobile-overlay-keyboard-inset",
+      ),
+    ).toBe("0px");
+  });
+
+  it("reports zero when an active sheet becomes inactive", () => {
+    const layoutHeight = window.innerHeight;
+    installFakeViewport(layoutHeight - 300);
+    const { rerender } = render(sheet());
+    expect(
+      document.documentElement.style.getPropertyValue(
+        "--mobile-overlay-keyboard-inset",
+      ),
+    ).toBe("300px");
+
+    rerender(sheet({ active: false }));
+    expect(
+      document.documentElement.style.getPropertyValue(
+        "--mobile-overlay-keyboard-inset",
+      ),
+    ).toBe("0px");
   });
 
   it("panel bottom lifts and max-height shrinks by the keyboard inset (AC-1/AC-2)", () => {

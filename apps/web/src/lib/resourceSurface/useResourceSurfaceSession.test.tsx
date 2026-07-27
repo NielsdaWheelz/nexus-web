@@ -1,12 +1,19 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useResourceSurfaceSession } from "./useResourceSurfaceSession";
-import type { ResourceSurface } from "@/lib/resources/resourceItems";
+import type {
+  ResourceItem,
+  ResourceSurface,
+} from "@/lib/resources/resourceItems";
 
 const PAGE = "page:11111111-1111-4111-8111-111111111111";
 const NOTE = "note_block:22222222-2222-4222-8222-222222222222";
 
-function item(ref: string, scheme: string, id: string) {
+function item(
+  ref: string,
+  scheme: ResourceItem["scheme"],
+  id: string,
+): ResourceItem {
   return { ref, scheme, id, label: "", summary: "", route: null, activation: { resourceRef: ref, kind: "none" as const, href: null, unresolvedReason: null }, missing: false, capabilities: { userRelation: { userLinkSource: false, userLinkTarget: "none" as const, noteReferenceTarget: false }, sharing: "None" as const, libraryPlacement: "None" as const, attachable: false, chatSubject: "none" as const, readable: "none" as const, inspectable: "none" as const, citableResultType: null, citationOutputSource: false, appSearchScope: false, conversationSearchScope: false, promptRender: "none" as const, expansionPolicy: "none" as const, expandable: false, adjacencySource: true, adjacencyTarget: true }, versionByLane: { title: 1, body: 1, outgoing_edges: 1 } };
 }
 

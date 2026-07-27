@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
+import { MobileViewportProvider } from "@/lib/mobileViewport/MobileViewportProvider";
 import { WorkspaceTestProvider } from "@/__tests__/helpers/WorkspaceTestProvider";
 import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
@@ -82,7 +83,9 @@ function Harness() {
       <button type="button" onClick={() => playAudio(DESCRIPTOR_B)}>Load episode B</button>
       <PersistenceProbe />
       <LecternReadyProbe />
-      <GlobalPlayerFooter />
+      <MobileViewportProvider>
+        <GlobalPlayerFooter />
+      </MobileViewportProvider>
     </>
   );
 }
@@ -317,7 +320,9 @@ describe("GlobalPlayer listening heartbeat", () => {
             Reset progress
           </button>
           <LecternReadyProbe />
-          <GlobalPlayerFooter />
+          <MobileViewportProvider>
+            <GlobalPlayerFooter />
+          </MobileViewportProvider>
         </>
       );
     }

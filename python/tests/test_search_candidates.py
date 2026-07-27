@@ -22,6 +22,7 @@ from nexus.db.models import (
     ArtifactBuild,
     ArtifactRevision,
     Contributor,
+    ContributorAlias,
     ContributorCredit,
     NoteBlock,
     OracleReading,
@@ -173,24 +174,38 @@ class TestReferenceProfile:
             ContributorCredit(
                 contributor_id=credited.id,
                 media_id=media_id,
-                credited_name=credited.display_name,
-                normalized_credited_name=credited.display_name.lower(),
+                credited_name="Findable Penname",
+                normalized_credited_name="findable penname",
                 role="author",
                 ordinal=0,
                 source="epub_opf",
             )
         )
+        db_session.add(
+            ContributorAlias(
+                contributor_id=credited.id,
+                alias="Findable Byname",
+                normalized_alias="findable byname",
+                resolves_identity=False,
+            )
+        )
         db_session.flush()
 
-        results = reference_candidates(
-            db_session, bootstrapped_user, q="gatecheck", schemes={"contributor"}
-        )
+        for query in ("gatecheck", "penname", "byname"):
+            results = reference_candidates(
+                db_session,
+                bootstrapped_user,
+                q=query,
+                schemes={"contributor"},
+            )
 
-        ids = {c.id for c in results}
-        assert credited.id in ids, "a credited-visible contributor must surface"
-        assert hidden.id not in ids, (
-            "a zero-visible-credit contributor must stay hidden from the picker (D-8)"
-        )
+            ids = {c.id for c in results}
+            assert credited.id in ids, (
+                "a credited-visible contributor must match display, credited, and alias names"
+            )
+            assert hidden.id not in ids, (
+                "a zero-visible-credit contributor must stay hidden from the picker (D-8)"
+            )
 
     def test_library_artifact_head_requires_membership_and_current_revision(
         self, db_session: Session, bootstrapped_user, monkeypatch

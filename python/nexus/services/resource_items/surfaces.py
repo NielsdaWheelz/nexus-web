@@ -64,7 +64,7 @@ def get_surface(db: Session, *, viewer_id: UUID, source: ResourceRef) -> Resourc
 
     edges = graph_adjacency.ordered_edges(db, user_id=viewer_id, source=source)
     refs = [source, *[_edge_target_ref(edge) for edge in edges]]
-    items = _resource_items_outs(db, viewer_id=viewer_id, refs=refs)
+    items = resource_items_out(db, viewer_id=viewer_id, refs=refs)
     items_by_ref = {item.ref: item for item in items}
     note_rows = _note_rows(db, viewer_id=viewer_id, refs=refs)
     source_item = items_by_ref[source.uri]
@@ -442,7 +442,7 @@ def _target_content(
     )
 
 
-def _resource_items_outs(
+def resource_items_out(
     db: Session, *, viewer_id: UUID, refs: Sequence[ResourceRef]
 ) -> list[ResourceItemOut]:
     resolved = resolve_refs(db, viewer_id=viewer_id, refs=refs)

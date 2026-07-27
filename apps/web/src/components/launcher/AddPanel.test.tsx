@@ -54,7 +54,9 @@ function Harness({
 }) {
   const session = useAddContentSession();
   const { start } = session;
-  useEffect(() => start(seed), [seed, start]);
+  useEffect(() => {
+    start(seed);
+  }, [seed, start]);
   return (
     <AddPanel
       session={session}

@@ -31,7 +31,10 @@ function isValidSource(value: unknown): value is SearchSourceMetadata {
     typeof source.media_id === "string" &&
     typeof source.media_kind === "string" &&
     typeof source.title === "string" &&
-    Array.isArray(source.contributors)
+    Array.isArray(source.contributors) &&
+    (source.published_date === null ||
+      typeof source.published_date === "string") &&
+    (source.summary_md === null || typeof source.summary_md === "string")
   );
 }
 
@@ -75,6 +78,84 @@ function locatorMatchesSearchType(
   if (type === "message") return locator.type === "message_offsets";
   if (type === "web_result") return locator.type === "external_url";
   return false;
+}
+
+const OCCURRENCE_SCHEME_BY_TYPE = {
+  media: "media",
+  episode: "media",
+  video: "media",
+  podcast: "podcast",
+  contributor: "contributor",
+  content_chunk: "content_chunk",
+  fragment: "fragment",
+  page: "page",
+  note_block: "note_block",
+  highlight: "highlight",
+  message: "message",
+  evidence_span: "evidence_span",
+  conversation: "conversation",
+  artifact: "artifact_revision",
+  web_result: "external_snapshot",
+  reader_apparatus_item: "reader_apparatus_item",
+} as const satisfies Record<SearchType, string>;
+
+function ownerMatchesOccurrence(
+  type: SearchType,
+  occurrenceRef: string,
+  ownerRef: string,
+  row: Record<string, unknown>,
+): boolean {
+  const occurrence = parseResourceRef(occurrenceRef);
+  const owner = parseResourceRef(ownerRef);
+  if (
+    occurrence === null ||
+    owner === null ||
+    occurrence.scheme !== OCCURRENCE_SCHEME_BY_TYPE[type]
+  ) {
+    return false;
+  }
+
+  switch (type) {
+    case "media":
+    case "episode":
+    case "video":
+    case "podcast":
+    case "contributor":
+    case "page":
+    case "note_block":
+    case "conversation":
+    case "web_result":
+      return ownerRef === occurrenceRef;
+    case "content_chunk":
+    case "fragment":
+    case "highlight":
+    case "evidence_span":
+    case "reader_apparatus_item": {
+      if (owner.scheme !== "media") return false;
+      const source = resolveSource(row);
+      const canonicalSourceRef =
+        source === null ? null : parseResourceRef(`media:${source.media_id}`);
+      return canonicalSourceRef === null || canonicalSourceRef.id === owner.id;
+    }
+    case "message": {
+      if (owner.scheme !== "conversation") return false;
+      const conversationId = stringField(row, "conversation_id");
+      const canonicalConversationRef = parseResourceRef(
+        `conversation:${conversationId}`,
+      );
+      return (
+        canonicalConversationRef === null ||
+        canonicalConversationRef.id === owner.id
+      );
+    }
+    case "artifact":
+      return (
+        owner.scheme === "conversation" &&
+        typeof row.subject_ref === "string" &&
+        parseResourceRef(row.subject_ref)?.scheme === "conversation" &&
+        row.subject_ref === ownerRef
+      );
+  }
 }
 
 function decodeSearchActivation(raw: unknown): ResourceActivation {
@@ -152,12 +233,21 @@ function normalizeContributorCredits(
   return credits;
 }
 
-export function normalizeSearchResult(result: unknown): SearchApiResult | null {
+function normalizeSearchResultOrNull(
+  result: unknown,
+): SearchApiResult | null {
   if (typeof result !== "object" || result === null) {
     return null;
   }
 
   const row = result as Record<string, unknown>;
+  if (
+    typeof row.type !== "string" ||
+    !RESULT_TYPE_VALUES.includes(row.type as SearchType)
+  ) {
+    return null;
+  }
+  const resultType = row.type as SearchType;
   if (typeof row.id !== "string") {
     return null;
   }
@@ -170,7 +260,17 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
   if (typeof row.title !== "string") {
     return null;
   }
+  if (
+    (row.source_label !== null && typeof row.source_label !== "string") ||
+    (row.media_id !== null && typeof row.media_id !== "string") ||
+    (row.media_kind !== null && typeof row.media_kind !== "string")
+  ) {
+    return null;
+  }
   if (typeof row.resource_ref !== "string") {
+    return null;
+  }
+  if (typeof row.owner_resource_ref !== "string") {
     return null;
   }
   const activation = decodeSearchActivation(row.activation);
@@ -191,7 +291,22 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
   if (actionTarget.activation.kind === "none") {
     return null;
   }
-  if (row.citation_target !== null && typeof row.citation_target !== "string") {
+  if (
+    (row.citation_target !== null &&
+      typeof row.citation_target !== "string") ||
+    (typeof row.citation_target === "string" &&
+      row.citation_target !== row.resource_ref)
+  ) {
+    return null;
+  }
+  if (
+    !ownerMatchesOccurrence(
+      resultType,
+      row.resource_ref,
+      row.owner_resource_ref,
+      row,
+    )
+  ) {
     return null;
   }
   if (typeof row.context_ref !== "object" || row.context_ref === null) {
@@ -223,11 +338,11 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
     score: row.score,
     snippet: row.snippet,
     title: row.title,
-    source_label:
-      typeof row.source_label === "string" ? row.source_label : null,
-    media_id: typeof row.media_id === "string" ? row.media_id : null,
-    media_kind: typeof row.media_kind === "string" ? row.media_kind : null,
+    source_label: row.source_label,
+    media_id: row.media_id,
+    media_kind: row.media_kind,
     resource_ref: row.resource_ref,
+    owner_resource_ref: row.owner_resource_ref,
     activation: actionTarget.activation,
     actionTarget,
     citation_target: row.citation_target,
@@ -381,6 +496,12 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
     case "note_block":
       if (
         typeof row.body_text !== "string" ||
+        (row.note_origin !== "note" &&
+          row.note_origin !== "highlight_note") ||
+        (row.highlight_excerpt !== null &&
+          typeof row.highlight_excerpt !== "string") ||
+        (row.note_origin === "highlight_note") !==
+          (typeof row.highlight_excerpt === "string") ||
         !isRetrievalLocator(row.locator) ||
         !locatorMatchesSearchType("note_block", row.locator)
       ) {
@@ -390,10 +511,8 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
         ...base,
         type: "note_block",
         body_text: row.body_text,
-        highlight_excerpt:
-          typeof row.highlight_excerpt === "string"
-            ? row.highlight_excerpt
-            : null,
+        highlight_excerpt: row.highlight_excerpt,
+        note_origin: row.note_origin,
         locator: row.locator,
       };
     case "highlight": {
@@ -557,4 +676,14 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
     default:
       return null;
   }
+}
+
+export function normalizeSearchResult(result: unknown): SearchApiResult {
+  const normalized = normalizeSearchResultOrNull(result);
+  if (normalized === null) {
+    // justify-defect: canonical /search is an owned same-system boundary.
+    // Shape or identity drift must be visible instead of becoming an empty UI.
+    throw new TypeError("Search API returned an invalid result row");
+  }
+  return normalized;
 }

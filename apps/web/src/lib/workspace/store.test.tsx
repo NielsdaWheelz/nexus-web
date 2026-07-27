@@ -6,6 +6,7 @@ import {
   createDefaultWorkspaceState,
   createWorkspaceStateFromPrimaryPanes,
   getWorkspacePrimaryPanes,
+  MAX_RECENTLY_CLOSED_PANES,
   MAX_PANE_HISTORY_STACK_LENGTH,
   MAX_PANES,
   MAX_TOTAL_PANE_HISTORY_ENTRIES,
@@ -1373,9 +1374,10 @@ describe("WorkspaceStoreProvider", () => {
     flushWorkspaceSession();
   });
 
-  it("falls back to the default pane when closing the last pane", async () => {
+  it("records close-last and atomically restores its exact pane identity", async () => {
     const workspace = await mountWorkspaceStore("/settings");
     const paneId = workspace().state.activePrimaryPaneId;
+    const visit = primaryPanes(workspace().state)[0]!.currentVisit;
 
     act(() => {
       workspace().closePane(paneId);
@@ -1386,7 +1388,202 @@ describe("WorkspaceStoreProvider", () => {
       expect(primaryPanes(workspace().state)[0]?.currentVisit.href).toBe(
         "/lectern",
       );
+      expect(workspace().recentlyClosedPanes).toEqual([
+        {
+          pane: expect.objectContaining({
+            id: paneId,
+            currentVisit: visit,
+          }),
+          secondaryPane: { kind: "Absent" },
+          orderIndex: 0,
+        },
+      ]);
     });
+
+    let restoreResult: ReturnType<WorkspaceStore["restoreClosedPane"]> | null =
+      null;
+    act(() => {
+      restoreResult = workspace().restoreClosedPane(paneId);
+    });
+    expect(restoreResult).toEqual({ kind: "Restored", paneId });
+    await waitFor(() => {
+      expect(workspace().state.primaryPaneOrder).toEqual([
+        paneId,
+        expect.not.stringMatching(new RegExp(`^${paneId}$`)),
+      ]);
+      expect(workspace().state.activePrimaryPaneId).toBe(paneId);
+      expect(workspace().state.primaryPanesById[paneId]?.currentVisit).toBe(
+        visit,
+      );
+      expect(workspace().recentlyClosedPanes).toEqual([]);
+    });
+    flushWorkspaceSession();
+  });
+
+  it("retains a dynamic label through close and restore but prunes pending secondary activation", async () => {
+    const workspace = await mountWorkspaceStore("/libraries");
+    const href = "/media/11111111-1111-4111-8111-111111111111";
+    const routeKey = resolvePaneRouteKey(href);
+    const activation = {
+      kind: "DossierRevision",
+      surfaceId: "resource-dossier",
+      revisionRef:
+        "artifact_revision:22222222-2222-4222-8222-222222222222",
+    } as const;
+
+    act(() => {
+      workspace().activateWorkspaceTarget({
+        originPaneId: workspace().state.activePrimaryPaneId,
+        target: { href, secondaryActivation: activation },
+        disposition: { kind: "Adopt" },
+        modality: "Programmatic",
+      });
+    });
+    await waitFor(() => expect(activeHref(workspace())).toBe(href));
+    const paneId = workspace().state.activePrimaryPaneId;
+    act(() => {
+      workspace().publishPaneLabel({
+        paneId,
+        routeKey,
+        label: "A Wizard of Earthsea",
+      });
+    });
+    await waitFor(() => {
+      expect(workspace().runtimeLabelByPaneId.get(paneId)?.label).toBe(
+        "A Wizard of Earthsea",
+      );
+      expect(
+        workspace().pendingSecondaryActivationByPaneId.has(paneId),
+      ).toBe(true);
+    });
+
+    act(() => workspace().closePane(paneId));
+    await waitFor(() => {
+      const snapshot = workspace().recentlyClosedPanes[0];
+      expect(snapshot?.pane.id).toBe(paneId);
+      expect(
+        resolveWorkspacePaneLabel(
+          snapshot!.pane,
+          workspace().runtimeLabelByPaneId,
+        ),
+      ).toMatchObject({
+        label: "A Wizard of Earthsea",
+        labelState: "resolved",
+        labelSource: "runtime",
+      });
+      expect(
+        workspace().pendingSecondaryActivationByPaneId.has(paneId),
+      ).toBe(false);
+    });
+
+    act(() => {
+      workspace().restoreClosedPane(paneId);
+    });
+    await waitFor(() => {
+      const restored = workspace().state.primaryPanesById[paneId];
+      expect(restored).toBeDefined();
+      expect(
+        resolveWorkspacePaneLabel(
+          restored!,
+          workspace().runtimeLabelByPaneId,
+        ),
+      ).toMatchObject({
+        label: "A Wizard of Earthsea",
+        labelState: "resolved",
+        labelSource: "runtime",
+      });
+    });
+    flushWorkspaceSession();
+  });
+
+  it("keeps the five newest closed panes and replaces an older snapshot by pane id", async () => {
+    const initialPanes = Array.from(
+      { length: MAX_RECENTLY_CLOSED_PANES + 2 },
+      (_, index) => pane(`pane-${index}`, index === 0 ? "/libraries" : "/notes"),
+    );
+    const { workspace } = renderSeeded(
+      workspaceState({
+        activePrimaryPaneId: initialPanes[0]!.id,
+        primaryPanes: initialPanes,
+      }),
+      "/libraries",
+    );
+    act(() => {
+      workspace().publishPaneLabel({
+        paneId: "pane-1",
+        routeKey: resolvePaneRouteKey("/notes"),
+        label: "Evicted pane label",
+      });
+    });
+    await waitFor(() => {
+      expect(workspace().runtimeLabelByPaneId.has("pane-1")).toBe(true);
+    });
+
+    for (const item of initialPanes.slice(1)) {
+      act(() => workspace().closePane(item.id));
+      await waitFor(() => {
+        expect(workspace().state.primaryPanesById[item.id]).toBeUndefined();
+      });
+    }
+
+    expect(workspace().recentlyClosedPanes).toHaveLength(
+      MAX_RECENTLY_CLOSED_PANES,
+    );
+    expect(
+      workspace().recentlyClosedPanes.map((snapshot) => snapshot.pane.id),
+    ).toEqual(["pane-6", "pane-5", "pane-4", "pane-3", "pane-2"]);
+    expect(workspace().runtimeLabelByPaneId.has("pane-1")).toBe(false);
+
+    act(() => {
+      workspace().restoreClosedPane("pane-4");
+    });
+    await waitFor(() => {
+      expect(workspace().state.primaryPanesById["pane-4"]).toBeDefined();
+    });
+    act(() => workspace().closePane("pane-4"));
+    await waitFor(() => {
+      expect(workspace().recentlyClosedPanes[0]?.pane.id).toBe("pane-4");
+    });
+    expect(
+      workspace()
+        .recentlyClosedPanes.filter(
+          (snapshot) => snapshot.pane.id === "pane-4",
+        ),
+    ).toHaveLength(1);
+    flushWorkspaceSession();
+  });
+
+  it("retains a closed snapshot when restore is rejected at the pane cap", async () => {
+    const initialPanes = Array.from({ length: MAX_PANES }, (_, index) =>
+      pane(`pane-${index}`, index === 0 ? "/libraries" : "/notes"),
+    );
+    const { workspace } = renderSeeded(
+      workspaceState({
+        activePrimaryPaneId: "pane-0",
+        primaryPanes: initialPanes,
+      }),
+      "/libraries",
+    );
+    act(() => workspace().closePane("pane-11"));
+    await waitFor(() => {
+      expect(primaryPanes(workspace().state)).toHaveLength(MAX_PANES - 1);
+    });
+    act(() => {
+      activateTarget(workspace(), {
+        target: { href: "/conversations/new" },
+        disposition: { kind: "Fork" },
+      });
+    });
+    await waitFor(() => {
+      expect(primaryPanes(workspace().state)).toHaveLength(MAX_PANES);
+    });
+
+    expect(workspace().restoreClosedPane("pane-11")).toEqual({
+      kind: "Rejected",
+      reason: "PaneLimitReached",
+    });
+    expect(workspace().recentlyClosedPanes[0]?.pane.id).toBe("pane-11");
+    expect(workspace().state.primaryPanesById["pane-11"]).toBeUndefined();
     flushWorkspaceSession();
   });
 

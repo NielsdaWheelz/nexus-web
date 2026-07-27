@@ -14,6 +14,7 @@ import {
 } from "@/lib/panes/paneRuntime";
 import type { PaneSecondaryPublication } from "@/lib/panes/panePublications";
 import type { ResourceItem } from "@/lib/resources/resourceItems";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { assumePaneVisitId } from "@/lib/workspace/schema";
 import {
   PaneReturnMementoProvider,
@@ -512,11 +513,12 @@ function AuthorSecondaryHarness({ children }: { children: ReactNode }) {
 }
 
 function paneResourceItem(ref: string): ResourceItem {
-  const [scheme = "", id = ""] = ref.split(":", 2);
+  const parsed = parseResourceRef(ref);
+  if (parsed === null) throw new TypeError("test resource ref must be canonical");
   return {
     ref,
-    scheme,
-    id,
+    scheme: parsed.scheme,
+    id: parsed.id,
     label: CANONICAL,
     summary: "",
     route: `/authors/${HANDLE}`,

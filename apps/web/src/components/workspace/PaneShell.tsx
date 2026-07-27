@@ -25,6 +25,7 @@ import {
   usePaneRuntime,
   useRecordPaneNavigationModality,
 } from "@/lib/panes/paneRuntime";
+import { resolveWorkspaceActivationRouteId } from "@/lib/panes/paneIdentity";
 import {
   activateTargetAnchor,
   type TargetLinkMouseEvent,
@@ -77,6 +78,7 @@ import {
 } from "@/lib/panes/paneSecondaryModel";
 import type { WorkspaceAttachedSecondaryPaneState } from "@/lib/workspace/schema";
 import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
+import { SwitchboardPanePerformanceContext } from "@/lib/switchboard/performance";
 import styles from "./PaneShell.module.css";
 
 const noopResizeSecondaryPane = () => {};
@@ -151,6 +153,13 @@ export default function PaneShell({
     throw new Error("PaneShell must be used inside PaneRuntimeProvider");
   }
   const feedback = useFeedback();
+  const panePerformance = useMemo(
+    () => ({
+      activationRouteId: resolveWorkspaceActivationRouteId(paneRuntime.href),
+      isActive,
+    }),
+    [isActive, paneRuntime.href],
+  );
   const recordNavigationModality = useRecordPaneNavigationModality();
   const activateTarget = paneRuntime.activateTarget;
   const activateIdentityAnchor = useCallback(
@@ -622,9 +631,13 @@ export default function PaneShell({
             data-pane-content="true"
             style={bodyStyle}
           >
-            <PanePrimaryChromeProvider publish={publishPrimaryChrome}>
-              {children}
-            </PanePrimaryChromeProvider>
+            <SwitchboardPanePerformanceContext.Provider
+              value={panePerformance}
+            >
+              <PanePrimaryChromeProvider publish={publishPrimaryChrome}>
+                {children}
+              </PanePrimaryChromeProvider>
+            </SwitchboardPanePerformanceContext.Provider>
           </div>
           {visibleFixedChrome ? (
             <div className={styles.fixedChrome} data-testid="pane-fixed-chrome">

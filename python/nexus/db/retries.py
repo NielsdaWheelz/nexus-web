@@ -46,6 +46,8 @@ RETRYABLE_UNIQUE_CONSTRAINTS = frozenset(
         "uq_resource_edges_user_context_link_pair",
         "uq_resource_edges_user_stance_directed_pair",
         "highlights_pkey",
+        "pages_pkey",
+        "libraries_pkey",
         "uq_artifacts_subject_audience",
         "uq_media_summaries_media",
         "uix_media_canonical_url",

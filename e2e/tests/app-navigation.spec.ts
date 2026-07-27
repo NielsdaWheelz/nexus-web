@@ -6,6 +6,7 @@ import {
   gotoWithWorkspaceSession,
   makeWorkspacePane,
   makeWorkspaceState,
+  makeWorkspaceVisit,
   workspaceE2eDeviceId,
   workspacePaneButton,
 } from "./workspace";
@@ -164,37 +165,68 @@ test.describe("app navigation", () => {
 test.describe("mobile app navigation", () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
 
-  test("projects the desktop destination order and mobile active-pane contract", async ({
+  test("renders pane-only chrome and routes every global job through Nexus", async ({
     page,
   }, testInfo) => {
-    await gotoSinglePaneWorkspace(
+    await gotoWithWorkspaceSession(
       page,
       workspaceE2eDeviceId(testInfo, "e2e-app-nav-mobile"),
+      makeWorkspaceState(
+        [
+          makeWorkspacePane("pane-libraries", "/libraries", {
+            history: {
+              back: [makeWorkspaceVisit("/notes")],
+              forward: [makeWorkspaceVisit("/search")],
+            },
+          }),
+          makeWorkspacePane("pane-podcasts", "/podcasts"),
+        ],
+        { activePrimaryPaneId: "pane-libraries" },
+      ),
       "/libraries",
     );
 
-    await page.getByRole("button", { name: "Open navigation" }).click();
-    const sheet = page.getByRole("dialog", { name: "Navigation" });
-    await expect(sheet).toBeVisible();
-    expect(
-      await sheet
-        .getByRole("link")
-        .evaluateAll((links) => links.map((link) => link.textContent?.trim())),
-    ).toEqual(["Nexus", ...FIXED_DESTINATION_LABELS, "Settings"]);
+    await expect(primaryNavigation(page)).toBeHidden();
+    await expect(page.getByRole("button", { name: "Go back" })).toBeVisible();
     await expect(
-      sheet.getByRole("link", { name: "Libraries" }),
-    ).toHaveAttribute("aria-current", "page");
+      page.getByRole("button", { name: "Go forward" }),
+    ).toHaveCount(0);
+    await page.getByRole("button", { name: "Pane options" }).tap();
+    await expect(
+      page.getByRole("menuitem", { name: "Go forward" }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
 
-    await sheet.getByRole("link", { name: "Chats" }).click();
+    await expect(
+      page.getByRole("button", { name: /^Add/ }),
+    ).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Open Nexus, 2 tabs" }).tap();
+    const sheet = page.getByRole("dialog", { name: "Nexus" });
+    const places = sheet.getByRole("region", { name: "Places" });
+    expect(
+      await places
+        .getByRole("button")
+        .evaluateAll((buttons) =>
+          buttons.map((button) => button.textContent?.trim()),
+        ),
+    ).toEqual(["Lectern", "Libraries", "Podcasts", "Chats", "Notes"]);
+    await expect(places.getByRole("button", { name: "Stats" })).toHaveCount(0);
+    await expect(places.getByRole("button", { name: "Atlas" })).toHaveCount(0);
+    await expect(places.getByRole("button", { name: "Oracle" })).toHaveCount(0);
+
+    await places.getByRole("button", { name: "Chats" }).tap();
     await expect(sheet).toBeHidden();
     await expect(page).toHaveURL(/\/conversations$/);
-    const activeMobilePane = page.locator("[data-pane-id]");
+    const activeMobilePane = page.locator(
+      '[data-pane-id][data-active="true"]',
+    );
     await expect(activeMobilePane).toHaveCount(1);
     await expect(activeMobilePane).toHaveAttribute("data-active", "true");
     await expect(activeMobilePane).toHaveAttribute("data-mobile", "true");
     await expect(
       page.getByRole("button", {
-        name: "Search or ask anything (2 open tabs)",
+        name: "Open Nexus, 3 tabs",
       }),
     ).toBeVisible();
   });

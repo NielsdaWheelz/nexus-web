@@ -29,6 +29,7 @@ from nexus.errors import (
     NotFoundError,
 )
 from nexus.schemas.library import (
+    CreateLibraryRequest,
     LibraryDestinationOut,
     LibraryGovernancePageInfo,
     LibraryMemberOut,
@@ -238,49 +239,88 @@ def _lock_memberships_and_repair_owner(db: Session, library_id: UUID, owner_user
     _repair_owner_admin_invariant(db, library_id, owner_user_id)
 
 
-def create_library(db: Session, viewer_id: UUID, name: str) -> LibraryOut:
+def create_library(
+    db: Session,
+    viewer_id: UUID,
+    request: CreateLibraryRequest,
+) -> LibraryOut:
     """Create a new non-default library with the creator as owner-admin."""
-    name = name.strip()
+    name = request.name.strip()
     if not name or len(name) > 100:
         raise InvalidRequestError(ApiErrorCode.E_NAME_INVALID, "Name must be 1-100 characters")
 
-    with transaction(db):
-        row = (
-            db.execute(
-                text("""
-                INSERT INTO libraries (name, color, owner_user_id, is_default)
-                VALUES (:name, NULL, :viewer_id, false)
-                RETURNING id, name, color, owner_user_id, is_default, created_at, updated_at
-            """),
-                {"name": name, "viewer_id": viewer_id},
+    def op():
+        with transaction(db):
+            row = (
+                db.execute(
+                    text(
+                        """
+                        SELECT
+                            l.id, l.name, l.color, l.owner_user_id, l.is_default,
+                            l.system_key, l.created_at, l.updated_at, m.role
+                        FROM libraries l
+                        LEFT JOIN memberships m
+                          ON m.library_id = l.id AND m.user_id = :viewer_id
+                        WHERE l.id = :library_id
+                        """
+                    ),
+                    {
+                        "library_id": request.library_id,
+                        "viewer_id": viewer_id,
+                    },
+                )
+                .mappings()
+                .fetchone()
             )
-            .mappings()
-            .fetchone()
-        )
-        db.execute(
-            text("""
-                INSERT INTO memberships (library_id, user_id, role)
-                VALUES (:library_id, :user_id, 'admin')
-            """),
-            {"library_id": row["id"], "user_id": viewer_id},
-        )
+            if row is not None:
+                if (
+                    row["owner_user_id"] != viewer_id
+                    or row["name"] != name
+                    or row["is_default"]
+                    or row["system_key"] is not None
+                    or row["role"] != "admin"
+                ):
+                    raise ConflictError(
+                        ApiErrorCode.E_RESOURCE_CONFLICT,
+                        "Library create id is already bound to a different resource",
+                    )
+                return row
 
-    return LibraryOut(
-        id=row["id"],
-        name=row["name"],
-        color=row["color"],
-        owner_user_handle=seal_user(row["owner_user_id"]),
-        is_default=row["is_default"],
-        role="admin",
-        system_key=None,
-        can_rename=True,
-        can_delete=True,
-        can_edit_entries=True,
-        can_manage_members=True,
-        can_transfer_ownership=True,
-        created_at=row["created_at"],
-        updated_at=row["updated_at"],
-    )
+            row = (
+                db.execute(
+                    text(
+                        """
+                        INSERT INTO libraries (
+                            id, name, color, owner_user_id, is_default
+                        )
+                        VALUES (:library_id, :name, NULL, :viewer_id, false)
+                        RETURNING
+                            id, name, color, owner_user_id, is_default,
+                            system_key, created_at, updated_at
+                        """
+                    ),
+                    {
+                        "library_id": request.library_id,
+                        "name": name,
+                        "viewer_id": viewer_id,
+                    },
+                )
+                .mappings()
+                .one()
+            )
+            db.execute(
+                text(
+                    """
+                    INSERT INTO memberships (library_id, user_id, role)
+                    VALUES (:library_id, :user_id, 'admin')
+                    """
+                ),
+                {"library_id": request.library_id, "user_id": viewer_id},
+            )
+            return {**row, "role": "admin"}
+
+    row = retry_serializable(db, "create_library", op)
+    return _library_out_from_row(row, viewer_user_id=viewer_id)
 
 
 def ensure_system_library(db: Session, *, system_key: str, name: str, owner_user_id: UUID) -> UUID:

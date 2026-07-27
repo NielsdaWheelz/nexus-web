@@ -39,10 +39,7 @@ from nexus.auth.permissions import (
     visible_podcast_ids_cte_sql,
 )
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.services.contributor_credits import (
-    contributor_fts_text_sql,
-    visible_credit_rows_sql,
-)
+from nexus.services.contributor_credits import visible_credit_rows_sql
 from nexus.services.contributors import resolve_contributor_ids_by_handles
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.search.constants import CANDIDATES_PER_TYPE
@@ -186,6 +183,7 @@ def discovery_candidates(
     contributor_handles: list[str],
     roles: list[str],
     content_kinds: list[str],
+    highlight_notes_only: bool,
     transaction_active_at_entry: bool,
 ) -> list[InternalSearchResult]:
     """Ranked candidates for the ordinary hybrid ``/search`` profile.
@@ -197,9 +195,17 @@ def discovery_candidates(
     # Hybrid invariant: build the query embedding once for any semantic-capable kind
     # (content_chunk via Documents, page/note_block via Notes), regardless of filters.
     semantic_query_embedding: tuple[str, list[float]] | None = None
-    if has_query and any(rt in _SEMANTIC_RESULT_TYPES for rt in result_types):
+    embedding_result_types = (
+        (*result_types, "note_block")
+        if highlight_notes_only and "note_block" not in result_types
+        else result_types
+    )
+    if has_query and any(rt in _SEMANTIC_RESULT_TYPES for rt in embedding_result_types):
         semantic_query_embedding = build_query_embedding(
-            db, q, list(result_types), transaction_active_at_entry=transaction_active_at_entry
+            db,
+            q,
+            list(embedding_result_types),
+            transaction_active_at_entry=transaction_active_at_entry,
         )
 
     # None = no contributor filter requested; an empty list = requested handles
@@ -226,6 +232,19 @@ def discovery_candidates(
                 roles,
                 content_kinds,
                 CANDIDATES_PER_TYPE,
+            )
+        )
+    if highlight_notes_only:
+        all_results.extend(
+            _search_note_chunks(
+                db,
+                viewer_id,
+                q,
+                semantic_query_embedding,
+                scope_type,
+                scope_id,
+                CANDIDATES_PER_TYPE,
+                required_origin="highlight_note",
             )
         )
     return rank_candidates(all_results)
@@ -477,16 +496,50 @@ def _reference_contributors(
         text(
             f"""
             WITH
-                visible_credits AS ({visible_credit_rows_sql()}),
-                visible_gate AS (SELECT DISTINCT contributor_id FROM visible_credits),
-                contributor_fts AS ({contributor_fts_text_sql()})
-            SELECT c.id, c.handle, c.display_name,
-                   {_tier_score_sql("c.display_name", "fts.search_text")} AS score
-            FROM contributors c
-            JOIN visible_gate cv ON cv.contributor_id = c.id
-            JOIN contributor_fts fts ON fts.contributor_id = c.id
-            WHERE {_lexical_match_sql("fts.search_text")}
-            ORDER BY score DESC, c.display_name ASC, c.id ASC
+                visible_credits AS MATERIALIZED (
+                    SELECT contributor_id, credited_name
+                    FROM ({visible_credit_rows_sql()}) visible_credit
+                ),
+                visible_credit_text AS MATERIALIZED (
+                    SELECT
+                        contributor_id,
+                        string_agg(
+                            DISTINCT credited_name,
+                            ' ' ORDER BY credited_name
+                        ) AS credited_names
+                    FROM visible_credits
+                    GROUP BY contributor_id
+                ),
+                alias_text AS MATERIALIZED (
+                    SELECT
+                        alias.contributor_id,
+                        string_agg(alias.alias, ' ' ORDER BY alias.alias) AS aliases
+                    FROM contributor_aliases alias
+                    JOIN visible_credit_text credit
+                      ON credit.contributor_id = alias.contributor_id
+                    GROUP BY alias.contributor_id
+                ),
+                candidate_text AS MATERIALIZED (
+                    SELECT
+                        contributor.id,
+                        contributor.handle,
+                        contributor.display_name,
+                        concat_ws(
+                            ' ',
+                            contributor.display_name,
+                            aliases.aliases,
+                            credit.credited_names
+                        ) AS search_text
+                    FROM visible_credit_text credit
+                    JOIN contributors contributor ON contributor.id = credit.contributor_id
+                    LEFT JOIN alias_text aliases
+                      ON aliases.contributor_id = contributor.id
+                )
+            SELECT candidate.id, candidate.handle, candidate.display_name,
+                   {_tier_score_sql("candidate.display_name", "candidate.search_text")} AS score
+            FROM candidate_text candidate
+            WHERE {_lexical_match_sql("candidate.search_text")}
+            ORDER BY score DESC, candidate.display_name ASC, candidate.id ASC
             LIMIT :limit
             """
         ),

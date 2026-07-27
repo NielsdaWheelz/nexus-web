@@ -12,6 +12,10 @@ from tests.utils.db import DirectSessionManager
 pytestmark = pytest.mark.integration
 
 
+def _library_create_body(name: str) -> dict[str, str]:
+    return {"library_id": str(uuid4()), "name": name}
+
+
 def _bootstrap_default_library(auth_client, user_id: UUID) -> UUID:
     response = auth_client.get("/me", headers=auth_headers(user_id))
     assert response.status_code == 200, response.text
@@ -19,7 +23,9 @@ def _bootstrap_default_library(auth_client, user_id: UUID) -> UUID:
 
 
 def _create_library(auth_client, user_id: UUID, name: str) -> UUID:
-    response = auth_client.post("/libraries", headers=auth_headers(user_id), json={"name": name})
+    response = auth_client.post(
+        "/libraries", headers=auth_headers(user_id), json=_library_create_body(name)
+    )
     assert response.status_code == 201, response.text
     return UUID(response.json()["data"]["id"])
 

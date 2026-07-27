@@ -5,6 +5,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session, aliased
 
+from nexus.auth.permissions import highlight_readability_filter
 from nexus.db.models import Highlight, NoteBlock, ResourceEdge
 
 
@@ -150,6 +151,7 @@ def highlight_excerpts_for_note_blocks(
             ResourceEdge.origin == "highlight_note",
             ResourceEdge.target_scheme == "note_block",
             ResourceEdge.target_id.in_(note_ids),
+            highlight_readability_filter(viewer_id),
         )
         .order_by(ResourceEdge.created_at.asc(), ResourceEdge.id.asc())
     ):

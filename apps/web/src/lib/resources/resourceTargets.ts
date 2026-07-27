@@ -19,7 +19,10 @@ import {
   normalizeResourceActivation,
   type ResourceActivation,
 } from "@/lib/resources/activation";
-import { normalizeResourceItem, type ResourceItem } from "@/lib/resources/resourceItems";
+import {
+  decodeResourceItem,
+  type ResourceItem,
+} from "@/lib/resources/resourceItems";
 import { isRecord } from "@/lib/validation";
 
 export type ResourceTargetSearchPurpose = "link" | "reference";
@@ -69,7 +72,7 @@ function normalizeResourceTarget(raw: unknown): ResourceTarget {
   if (record.kind === "resource") {
     return {
       kind: "resource",
-      item: normalizeResourceItem(requiredRecord(record.item, "resource target item")),
+      item: decodeResourceItem(requiredRecord(record.item, "resource target item")),
       existingLinkId,
     };
   }
@@ -84,7 +87,7 @@ function normalizeResourceTarget(raw: unknown): ResourceTarget {
         record.candidateRef ?? record.candidate_ref,
         "candidate ref",
       ),
-      source: normalizeResourceItem(requiredRecord(record.source, "resource target source")),
+      source: decodeResourceItem(requiredRecord(record.source, "resource target source")),
       label: String(record.label ?? ""),
       excerpt: String(record.excerpt ?? ""),
       activation,

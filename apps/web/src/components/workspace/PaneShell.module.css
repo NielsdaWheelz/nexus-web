@@ -122,6 +122,11 @@
   padding-top: var(--mobile-pane-content-offset);
 }
 
+.paneShell[data-mobile="true"] .body[data-body-mode="standard"] {
+  padding-bottom: var(--mobile-content-bottom-clearance);
+  scroll-padding-bottom: var(--mobile-content-bottom-clearance);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .paneShell[data-mobile="true"] .chrome {
     transition: none;

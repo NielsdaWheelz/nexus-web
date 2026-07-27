@@ -48,6 +48,10 @@ from tests.utils.db import DirectSessionManager
 pytestmark = pytest.mark.integration
 
 
+def _library_create_body(name: str) -> dict[str, str]:
+    return {"library_id": str(uuid4()), "name": name}
+
+
 def _seed_default_library_reachability(
     direct_db: DirectSessionManager, user_id: UUID, media_id: UUID
 ) -> None:
@@ -143,7 +147,7 @@ def test_delete_document_hides_shared_member_copy(auth_client, direct_db: Direct
 
     library_id = auth_client.post(
         "/libraries",
-        json={"name": "Shared"},
+        json=_library_create_body("Shared"),
         headers=auth_headers(owner_id),
     ).json()["data"]["id"]
 
@@ -260,7 +264,7 @@ def test_delete_document_removes_default_and_administered_libraries(
     auth_client.get("/me", headers=auth_headers(user_id))
     work_id = auth_client.post(
         "/libraries",
-        json={"name": "Work"},
+        json=_library_create_body("Work"),
         headers=auth_headers(user_id),
     ).json()["data"]["id"]
 

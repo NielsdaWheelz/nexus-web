@@ -3,6 +3,7 @@ import {
   hasSamePaneRoute,
   hasSamePaneResource,
   resolvePaneRouteIdentity,
+  resolveWorkspaceActivationRouteId,
 } from "@/lib/panes/paneIdentity";
 
 const MEDIA_ID_1 = "11111111-1111-4111-8111-111111111111";
@@ -86,5 +87,36 @@ describe("pane route identity", () => {
       kind: "contributor_handle",
       handle: "ursula-k-le-guin",
     });
+  });
+
+  it("derives locator-independent activation identities for owning resources", () => {
+    expect(
+      resolveWorkspaceActivationRouteId(`/media/${MEDIA_ID_1}`),
+    ).toBe(
+      resolveWorkspaceActivationRouteId(
+        `/media/${MEDIA_ID_1}?loc=chapter-2#highlight-h1`,
+      ),
+    );
+    expect(
+      resolveWorkspaceActivationRouteId(
+        `/libraries/${LIBRARY_ID_1}?filter=recent`,
+      ),
+    ).toBe(
+      resolveWorkspaceActivationRouteId(
+        `/libraries/${LIBRARY_ID_1}?view=items`,
+      ),
+    );
+    expect(
+      resolveWorkspaceActivationRouteId(`/media/${MEDIA_ID_1}`),
+    ).not.toBe(resolveWorkspaceActivationRouteId(`/media/${MEDIA_ID_2}`));
+  });
+
+  it("retains route-owned query state for non-resource activation identities", () => {
+    expect(resolveWorkspaceActivationRouteId("/stats?period=day")).not.toBe(
+      resolveWorkspaceActivationRouteId("/stats?period=month"),
+    );
+    expect(resolveWorkspaceActivationRouteId("/stats?period=day#detail")).toBe(
+      resolveWorkspaceActivationRouteId("/stats?period=day"),
+    );
   });
 });

@@ -15,12 +15,15 @@ import { createRandomId } from "@/lib/createRandomId";
 import { parseMediaId } from "@/lib/lectern/contract";
 import type { LecternCapability } from "@/lib/lectern/LecternProvider";
 import { addMediaFromUrl } from "@/lib/media/ingestionClient";
-import { createNotePage, quickCaptureDailyNote } from "@/lib/notes/api";
-import { openTodayPage } from "@/lib/notes/openToday";
-import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
+import { fetchDailyNotePage, quickCaptureDailyNote } from "@/lib/notes/api";
 import { paragraphFromText } from "@/lib/notes/prosemirror/schema";
-import { requestWorkspaceTargetActivation } from "@/lib/workspace/workspaceTargetActivationIngress";
-import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
+import { todayLocalDate } from "@/lib/localDate";
+import type {
+  WorkspaceTarget,
+  WorkspaceTargetActivationRequest,
+  WorkspaceTargetActivationResult,
+  WorkspaceTargetDisposition,
+} from "@/lib/workspace/targetActivation";
 import type { PaneNavigationModality } from "@/lib/workspace/paneReturnMemento";
 import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";
 import {
@@ -60,15 +63,40 @@ export const KEYBOARD_LAUNCHER_TARGET_ACTIVATION: LauncherTargetActivation = {
   modality: "Keyboard",
 };
 
+export type DispatchOutcome =
+  | { kind: "Stayed" }
+  | { kind: "NavigationAccepted" }
+  | {
+      kind: "NavigationRejected";
+      reason: "PaneLimitReached";
+      target: WorkspaceTarget;
+    };
+
 function activateLauncherTarget(
   target: { href: string; labelHint?: string },
+  ctx: LauncherDispatchCtx,
   activation: LauncherTargetActivation,
-): void {
-  requestWorkspaceTargetActivation({
+): DispatchOutcome {
+  const result = ctx.activateWorkspaceTarget({
+    originPaneId: ctx.activePaneId,
     target,
     disposition: activation.disposition,
     modality: activation.modality,
   });
+  return activationOutcome(target, result);
+}
+
+function activationOutcome(
+  target: WorkspaceTarget,
+  result: WorkspaceTargetActivationResult,
+): DispatchOutcome {
+  return result.kind === "Rejected"
+    ? {
+        kind: "NavigationRejected",
+        reason: result.reason,
+        target,
+      }
+    : { kind: "NavigationAccepted" };
 }
 
 // True when dispatching `target` moves the workspace to a new/other surface (opens or
@@ -85,7 +113,6 @@ export function targetNavigates(target: LauncherActionTarget): boolean {
     case "add-url":
     case "browse-acquire":
     case "new-conversation":
-    case "create-page":
     case "open-today":
     case "create-note":
     case "pane-open":
@@ -106,6 +133,10 @@ export function targetNavigates(target: LauncherActionTarget): boolean {
 export interface LauncherDispatchCtx {
   androidShell: boolean;
   feedback: ReturnType<typeof useFeedback>;
+  activePaneId: string;
+  activateWorkspaceTarget(
+    request: WorkspaceTargetActivationRequest,
+  ): WorkspaceTargetActivationResult;
   defaultLibraryIds: string[];
   // The one Lectern capability, threaded from the controller (which holds the React
   // context) so this plain-function owner appends media without its own hook access.
@@ -122,7 +153,7 @@ export async function dispatchTarget(
   target: LauncherActionTarget,
   ctx: LauncherDispatchCtx,
   activation: LauncherTargetActivation,
-): Promise<void> {
+): Promise<DispatchOutcome> {
   const { feedback } = ctx;
   // Centralized Local Vault guard: true (and toasts) when the in-app route is
   // Android-restricted. External-shell hrefs and external resources leave the app
@@ -142,18 +173,18 @@ export async function dispatchTarget(
     case "href":
       if (target.externalShell) {
         if (typeof window !== "undefined") window.location.assign(target.href);
-        return;
+        return { kind: "NavigationAccepted" };
       }
-      if (blockedByAndroid(target.href)) return;
+      if (blockedByAndroid(target.href)) return { kind: "Stayed" };
       // Navigating to the search surface (Go to Authors / Search) declares intent to
       // type: ask that pane to focus its box on arrival. SearchPaneBody enforces the
       // blank-query gate, so a search href carrying a query never grabs focus.
       if (resolvePaneRoute(target.href).id === "search") requestSearchInputFocus();
-      activateLauncherTarget(
+      return activateLauncherTarget(
         { href: target.href, labelHint: target.labelHint },
+        ctx,
         activation,
       );
-      return;
     case "ResourceOpen":
       // The shared executor owns route/external activation; Launcher only
       // supplies its workspace navigation boundary and Android preflight.
@@ -162,31 +193,37 @@ export async function dispatchTarget(
         target.subject.activation.href &&
         blockedByAndroid(target.subject.activation.href)
       ) {
-        return;
+        return { kind: "Stayed" };
       }
+      let resourceOutcome: DispatchOutcome = { kind: "Stayed" };
       executeResourceOpen({
         target: target.subject,
         resourceNavigation: {
           labelHint: target.labelHint,
           activateTarget: ({ target, disposition }) => {
-            requestWorkspaceTargetActivation({
-              target,
+            const result = ctx.activateWorkspaceTarget({
+              originPaneId: ctx.activePaneId,
+              target: target,
               disposition,
               modality: activation.modality,
             });
+            resourceOutcome = activationOutcome(target, result);
           },
           disposition: activation.disposition,
         },
       });
-      return;
+      return target.subject.activation.kind === "external"
+        ? { kind: "NavigationAccepted" }
+        : resourceOutcome;
     case "ResourceShare":
       executeResourceShare({
         subject: target.subject,
         openShare: ctx.openShare,
         options: ctx.shareOptions(),
       });
-      return;
+      return { kind: "NavigationAccepted" };
     case "ResourceChat": {
+      let chatOutcome: DispatchOutcome = { kind: "Stayed" };
       await executeResourceChat({
         ref: target.ref,
         openConversation: (conversationId) => {
@@ -197,43 +234,66 @@ export async function dispatchTarget(
             activation.disposition.kind === "Fork"
               ? activation.disposition
               : { kind: "Adopt" as const };
-          requestWorkspaceTargetActivation({
-            target: { href: `/conversations/${conversationId}`, labelHint: "Chat" },
+          const workspaceTarget = {
+            href: `/conversations/${conversationId}`,
+            labelHint: "Chat",
+          };
+          const result = ctx.activateWorkspaceTarget({
+            originPaneId: ctx.activePaneId,
+            target: workspaceTarget,
             disposition,
             modality: activation.modality,
           });
+          chatOutcome = activationOutcome(workspaceTarget, result);
         },
       });
-      return;
+      return chatOutcome;
     }
     case "Ask":
-      activateLauncherTarget({
-        href: `/conversations/new?draft=${encodeURIComponent(target.text)}`,
-        labelHint: "New chat",
-      }, activation);
-      return;
+      return activateLauncherTarget(
+        {
+          href: `/conversations/new?draft=${encodeURIComponent(target.text)}`,
+          labelHint: "New chat",
+        },
+        ctx,
+        activation,
+      );
     case "queue-add":
       await ctx.placeItems({ mediaIds: [parseMediaId(target.mediaId)], placement: { kind: "Last" } });
       feedback.show({ severity: "success", title: "Added to Lectern" });
-      return;
+      return { kind: "Stayed" };
     case "add-url": {
       const res = await addMediaFromUrl({ url: target.url, libraryIds: ctx.defaultLibraryIds });
-      activateLauncherTarget({
-        href: res.duplicate ? `/media/${res.mediaId}?duplicate=true` : `/media/${res.mediaId}`,
-      }, activation);
-      return;
+      return activateLauncherTarget(
+        {
+          href: res.duplicate
+            ? `/media/${res.mediaId}?duplicate=true`
+            : `/media/${res.mediaId}`,
+        },
+        ctx,
+        activation,
+      );
     }
-    case "open-today":
-      await openTodayPage(activation);
-      return;
+    case "open-today": {
+      const page = await fetchDailyNotePage(todayLocalDate());
+      return activateLauncherTarget(
+        { href: `/pages/${page.id}`, labelHint: page.title },
+        ctx,
+        activation,
+      );
+    }
     case "create-note":
       await quickCaptureDailyNote({
         blockId: createRandomId(),
         clientMutationId: createRandomId("quick-note"),
         bodyPmJson: paragraphFromText(target.text).toJSON() as Record<string, unknown>,
       });
-      await openTodayPage(activation);
-      return;
+      const page = await fetchDailyNotePage(todayLocalDate());
+      return activateLauncherTarget(
+        { href: `/pages/${page.id}`, labelHint: page.title },
+        ctx,
+        activation,
+      );
     case "browse-acquire": {
       // Documents/videos become owned media; podcasts/episodes subscribe to a podcast.
       // Exhaustive over BrowseResult["type"] so a new browse kind is a compile error here.
@@ -242,20 +302,32 @@ export async function dispatchTarget(
         case "documents":
         case "videos": {
           if (result.media_id) {
-            activateLauncherTarget({ href: `/media/${result.media_id}`, labelHint: result.title }, activation);
-            return;
+            return activateLauncherTarget(
+              { href: `/media/${result.media_id}`, labelHint: result.title },
+              ctx,
+              activation,
+            );
           }
           const added = await addMediaFromUrl({
             url: result.type === "documents" ? result.url : result.watch_url,
             libraryIds: ctx.defaultLibraryIds,
           });
-          activateLauncherTarget({ href: `/media/${added.mediaId}`, labelHint: result.title }, activation);
-          return;
+          return activateLauncherTarget(
+            { href: `/media/${added.mediaId}`, labelHint: result.title },
+            ctx,
+            activation,
+          );
         }
         case "podcasts": {
           if (result.podcast_id) {
-            activateLauncherTarget({ href: `/podcasts/${result.podcast_id}`, labelHint: result.title }, activation);
-            return;
+            return activateLauncherTarget(
+              {
+                href: `/podcasts/${result.podcast_id}`,
+                labelHint: result.title,
+              },
+              ctx,
+              activation,
+            );
           }
           const subscribed = await subscribeToPodcast({
             provider_podcast_id: result.provider_podcast_id,
@@ -267,13 +339,25 @@ export async function dispatchTarget(
             description: result.description,
             library_ids: ctx.defaultLibraryIds,
           });
-          activateLauncherTarget({ href: `/podcasts/${subscribed.podcast_id}`, labelHint: result.title }, activation);
-          return;
+          return activateLauncherTarget(
+            {
+              href: `/podcasts/${subscribed.podcast_id}`,
+              labelHint: result.title,
+            },
+            ctx,
+            activation,
+          );
         }
         case "podcast_episodes": {
           if (result.podcast_id) {
-            activateLauncherTarget({ href: `/podcasts/${result.podcast_id}`, labelHint: result.podcast_title }, activation);
-            return;
+            return activateLauncherTarget(
+              {
+                href: `/podcasts/${result.podcast_id}`,
+                labelHint: result.podcast_title,
+              },
+              ctx,
+              activation,
+            );
           }
           const subscribed = await subscribeToPodcast({
             provider_podcast_id: result.provider_podcast_id,
@@ -285,8 +369,14 @@ export async function dispatchTarget(
             description: null,
             library_ids: ctx.defaultLibraryIds,
           });
-          activateLauncherTarget({ href: `/podcasts/${subscribed.podcast_id}`, labelHint: result.podcast_title }, activation);
-          return;
+          return activateLauncherTarget(
+            {
+              href: `/podcasts/${subscribed.podcast_id}`,
+              labelHint: result.podcast_title,
+            },
+            ctx,
+            activation,
+          );
         }
         default: {
           const exhaustive: never = result;
@@ -295,37 +385,36 @@ export async function dispatchTarget(
       }
     }
     case "new-conversation":
-      activateLauncherTarget({ href: "/conversations/new", labelHint: "New chat" }, activation);
-      return;
-    case "create-page": {
-      const created = await createNotePage({ title: "Untitled" });
-      setPendingNoteFocus({ pageId: created.id, target: "title" });
-      activateLauncherTarget({ href: `/pages/${created.id}`, labelHint: created.title }, activation);
-      return;
-    }
+      return activateLauncherTarget(
+        { href: "/conversations/new", labelHint: "New chat" },
+        ctx,
+        activation,
+      );
     case "share":
       ctx.openShare(target.target, ctx.shareOptions());
-      return;
+      return { kind: "NavigationAccepted" };
     case "copy-external-link":
       if (typeof window !== "undefined") {
         await copyText(target.href);
       }
       feedback.show({ severity: "success", title: "External link copied" });
-      return;
+      return { kind: "Stayed" };
     case "pane-open": {
       const pane = ctx.panes.find((entry) => entry.id === target.paneId);
-      if (pane && blockedByAndroid(pane.href)) return;
+      if (pane && blockedByAndroid(pane.href)) return { kind: "Stayed" };
       if (pane?.visibility === "minimized") ctx.restorePane(target.paneId);
       else ctx.activatePane(target.paneId);
-      return;
+      return pane
+        ? { kind: "NavigationAccepted" }
+        : { kind: "Stayed" };
     }
     case "pane-close":
       ctx.closePane(target.paneId);
-      return;
+      return { kind: "Stayed" };
     case "set-lane":
       // The controller intercepts set-lane before dispatch is called; this case
       // exists only for TypeScript exhaustiveness.
-      return;
+      return { kind: "Stayed" };
     default: {
       const exhaustive: never = target;
       return exhaustive;

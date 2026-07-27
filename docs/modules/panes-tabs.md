@@ -24,3 +24,9 @@ desktop pane-strip controls are absent.
 Mobile pane shells do not mount desktop resize handles, fixed primary chrome, or
 desktop-attached secondary columns. Secondary content is presented by the
 workspace mobile secondary sheet.
+
+Open-pane management belongs to the Nexus Switchboard Root. It renders all
+primary panes in stable workspace order, activates or restores an exact pane,
+closes panes without dismissing, and exposes the workspace provider's bounded
+session-local recently-closed stack. Mobile never recreates the desktop pane
+strip or mounts inactive pane columns.
