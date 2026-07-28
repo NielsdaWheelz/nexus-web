@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
 import {
   fetchCallsForPath,
@@ -17,7 +17,10 @@ import { ShareControllerProvider } from "@/lib/sharing/controller";
 import { assumePaneVisitId } from "@/lib/workspace/schema";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
-import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
+import {
+  publishLibraryPlacementChange,
+  resetLibraryPlacementRevisionForTest,
+} from "@/lib/libraries/placementRevision";
 import { decodeLibraryReadingTimeEntry } from "@/lib/libraries/readingTime";
 import LibraryPaneBody from "./LibraryPaneBody";
 
@@ -177,6 +180,13 @@ function lecternGetResponse(input: unknown): Response | null {
   }
   return null;
 }
+
+// The placement/consumption revision stores are module-global and vitest shares
+// module state across a file's tests, so reset placement before each test: the
+// pane only claims the bootstrap seed at process revision zero.
+beforeEach(() => {
+  resetLibraryPlacementRevisionForTest();
+});
 
 afterEach(() => {
   vi.useRealTimers();

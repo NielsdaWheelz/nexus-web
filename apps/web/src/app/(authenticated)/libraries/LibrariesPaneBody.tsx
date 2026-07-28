@@ -308,6 +308,7 @@ export default function LibrariesPaneBody() {
     await apiFetch(`/api/libraries/${settingsLibrary.id}`, {
       method: "DELETE",
     });
+    publishLibraryPlacementChange("Unknown");
     const deletedId = settingsLibrary.id;
     setSettingsLibrary(null);
     setController((current) =>

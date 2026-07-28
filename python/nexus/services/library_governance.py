@@ -7,6 +7,7 @@ invitations are owned by their own modules.
 """
 
 import base64
+import binascii
 import json
 import logging
 from collections.abc import Sequence
@@ -555,6 +556,7 @@ def _encode_destination_cursor(row, *, viewer_id: UUID) -> str:
         "name": str(row["name"]),
         "id": str(row["id"]),
     }
+    # justify-base64url-over-base64: cursor rides in a URL query parameter.
     encoded = base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
     return encoded.rstrip("=")
 
@@ -579,7 +581,14 @@ def _decode_destination_cursor(
             str(payload["name"]),
             UUID(str(payload["id"])),
         )
-    except Exception:
+    except (
+        ValueError,
+        TypeError,
+        KeyError,
+        UnicodeDecodeError,
+        binascii.Error,
+        json.JSONDecodeError,
+    ):
         # justify-ignore-error: malformed cursor input is an expected API error path.
         raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
 
@@ -714,6 +723,7 @@ def _encode_library_member_cursor(
         "library_id": str(library_id),
         "after_user": str(seal_user(row["user_id"])),
     }
+    # justify-base64url-over-base64: cursor rides in a URL query parameter.
     encoded = base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
     return encoded.rstrip("=")
 
@@ -729,6 +739,7 @@ def _decode_library_member_cursor(
             raise ValueError
         padded = cursor + "=" * (-len(cursor) % 4)
         decoded = base64.b64decode(padded, altchars=b"-_", validate=True)
+        # justify-base64url-over-base64: cursor rides in a URL query parameter.
         if base64.urlsafe_b64encode(decoded).rstrip(b"=").decode("ascii") != cursor:
             raise ValueError
         raw_payload: Any = json.loads(decoded.decode("utf-8"))
@@ -744,7 +755,14 @@ def _decode_library_member_cursor(
         ):
             raise ValueError
         return unseal_user(str(payload["after_user"]))
-    except Exception:
+    except (
+        ValueError,
+        TypeError,
+        KeyError,
+        UnicodeDecodeError,
+        binascii.Error,
+        json.JSONDecodeError,
+    ):
         # justify-ignore-error: malformed cursor input is an expected API error path.
         raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
 

@@ -505,12 +505,8 @@ export function useAddContentSession(): AddContentSessionController {
     outcomes.forEach((outcome, index) => {
       const item = requireIndexedItem(items, index);
       if (outcome.kind === "Fulfilled") {
-        // One acknowledged create-with-placement unit. Publish this unit's
-        // destination ids so panes reconcile; the create call in ingestionClient
-        // stays decoupled and never republishes.
-        publishLibraryPlacementChange(
-          item.destinations.map((destination) => destination.id),
-        );
+        // The create-with-placement publish lives in the ingestionClient
+        // creation helper, which fires once per acknowledged create.
         return;
       }
       if (signal.aborted || isAbortError(outcome.error)) return;
@@ -628,7 +624,6 @@ export function useAddContentSession(): AddContentSessionController {
               kind: "ResolveItem",
               item: acceptedItem(item.id, item.intent, result),
             });
-            publishLibraryPlacementChange(libraryIds);
           }
         } else {
           const result = await uploadIngestFile({
@@ -664,7 +659,6 @@ export function useAddContentSession(): AddContentSessionController {
                     result,
                   ),
           });
-          publishLibraryPlacementChange(libraryIds);
         }
       } catch (error) {
         if (
@@ -1037,11 +1031,15 @@ export function useAddContentSession(): AddContentSessionController {
             ? target?.isInLibrary === true
             : !target?.isInLibrary;
         if (desired) {
+          // The command failed ambiguously but the authoritative re-read confirms
+          // the intended placement was applied; publish so panes reconcile (the
+          // failed command helper never reached its own success publish).
           apply({
             kind: "SetPlacement",
             mediaId: work.mediaId,
             placement: { kind: "Ready", libraries: outcome.value },
           });
+          publishLibraryPlacementChange([command.libraryId]);
           if (placementErrorMessage(work.error) === null) {
             defects.push(work.error);
           }
