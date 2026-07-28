@@ -63,10 +63,11 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
-        with:
-          distribution: jetbrains
-          java-version: "21"
+      - name: Select preinstalled JDK 21
+        run: |
+          test -x "$JAVA_HOME_21_X64/bin/java"
+          echo "JAVA_HOME=$JAVA_HOME_21_X64" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME_21_X64/bin" >> "$GITHUB_PATH"
 
       - name: Decode release keystore
         env:
