@@ -1,6 +1,7 @@
 # Mobile Reader Unified Scroll Chrome Hard Cutover
 
-Status: APPROVED SPEC; type: hard cutover; date: 2026-07-28
+Status: IMPLEMENTED IN WORKTREE; focused automated proof complete; real-stack
+E2E and primary Android smoke pending; type: hard cutover; date: 2026-07-28
 
 ## Decision and authority
 
@@ -305,10 +306,7 @@ Modify:
 - `apps/web/src/lib/workspace/mobileChrome.tsx`
 - `apps/web/src/lib/workspace/mobileChrome.test.tsx`
 - `apps/web/src/components/appnav/MobilePaneBar.tsx`
-- `apps/web/src/components/appnav/MobilePaneBar.test.tsx`
-- `apps/web/src/components/appnav/AppNav.module.css`
 - `apps/web/src/components/workspace/PaneShell.tsx`
-- `apps/web/src/components/workspace/PaneShell.module.css`
 - `apps/web/src/__tests__/components/PaneShell.test.tsx`
 - `apps/web/src/components/workspace/WorkspaceHost.test.tsx`
 - `apps/web/src/components/switchboard/NexusButton.tsx`
@@ -322,6 +320,12 @@ Modify:
 - `docs/modules/workspace.md`
 - `docs/modules/reader-implementation.md`
 - `docs/cutovers/mobile-reader-scroll-linked-chrome-hard-cutover.md`
+
+Verify unchanged:
+
+- `apps/web/src/components/appnav/MobilePaneBar.test.tsx`
+- `apps/web/src/components/appnav/AppNav.module.css`
+- `apps/web/src/components/workspace/PaneShell.module.css`
 
 `docs/architecture.md` receives only the three-surface/stable-wrapper ownership
 sentence. Do not modify `mobileChromeMotion.ts`, reader progress/completion,

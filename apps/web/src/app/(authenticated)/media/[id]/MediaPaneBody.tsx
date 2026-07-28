@@ -6897,6 +6897,11 @@ export default function MediaPaneBody() {
         data-focus-mode={focusModeForRoot}
         data-chrome-revealed={chromeRevealed ? "true" : undefined}
         data-view-transition-part="reader"
+        onPointerDownCapture={(event) => {
+          if (event.isPrimary) {
+            paneMobileChrome.beginReaderPointerInteraction();
+          }
+        }}
       >
         {mediaReaderViewTransition ? (
           <div className={styles.readerTransitionHeader} aria-hidden="true">

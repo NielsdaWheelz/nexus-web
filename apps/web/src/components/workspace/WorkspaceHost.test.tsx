@@ -588,8 +588,8 @@ vi.mock("@/lib/renderEnvironment/provider", () => ({
   }),
   useAndroidShell: () => false,
   useViewportState: () => ({
-    kind: "desktop",
-    isMobile: false,
+    kind: hostMocks.isMobile ? "mobile" : "desktop",
+    isMobile: hostMocks.isMobile,
     hydrated: true,
   }),
 }));
@@ -839,6 +839,59 @@ describe("WorkspaceHost pane route lifecycle", () => {
 
     expect(screen.getByTestId("pane-shell-body")).toBe(scrollport);
     expect(scrollport.scrollTop).toBe(180);
+  });
+
+  it("registers only focused active pane chrome when desktop panes become mobile", async () => {
+    setTwoPaneHrefs(MEDIA_HREF_1, MEDIA_HREF_2);
+    hostMocks.useActualPaneShell = true;
+    hostMocks.primaryChromePublicationByPaneId = new Map([
+      [
+        "pane-1",
+        {
+          toolbar: <button type="button">First reader controls</button>,
+        },
+      ],
+      [
+        "pane-2",
+        {
+          toolbar: <button type="button">Second reader controls</button>,
+        },
+      ],
+    ]);
+    const view = render(
+      <MobileChromeProvider>
+        <WorkspaceHost />
+      </MobileChromeProvider>,
+    );
+
+    await screen.findByRole("button", { name: "Second reader controls" });
+    const activeChrome = screen.getAllByTestId("pane-shell-chrome").at(-1);
+    if (!activeChrome) {
+      throw new Error("Expected active desktop pane chrome");
+    }
+    activeChrome.focus();
+    expect(activeChrome).toHaveFocus();
+
+    hostMocks.isMobile = true;
+    view.rerender(
+      <MobileChromeProvider>
+        <WorkspaceHost />
+      </MobileChromeProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("route-body")).toHaveAttribute(
+        "data-runtime-pane-id",
+        "pane-2",
+      );
+      expect(screen.getByTestId("pane-shell-chrome")).toHaveAttribute(
+        "data-mobile-chrome-phase",
+        "Pinned",
+      );
+    });
+    expect(
+      screen.queryByRole("button", { name: "First reader controls" }),
+    ).toBeNull();
   });
 
   it.each([

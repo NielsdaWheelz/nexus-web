@@ -2,7 +2,6 @@
 
 import {
   useCallback,
-  useEffect,
   useId,
   useLayoutEffect,
   useMemo,
@@ -218,15 +217,7 @@ export default function PaneShell({
     readonly routeKey: string;
     readonly publication: PanePrimaryChromePublication;
   } | null>(null);
-  const { motionPhase, setPaneChrome, acquireVisibleLock } = useMobileChrome();
-  const releaseFocusLockRef = useRef<(() => void) | null>(null);
-  useMobileChromeSurface(chromeRef, "PaneToolbar");
-  useEffect(
-    () => () => {
-      releaseFocusLockRef.current?.();
-    },
-    [],
-  );
+  const { motionPhase, setPaneChrome } = useMobileChrome();
   const identityId = useId();
   const landmarkLabelId = useId();
 
@@ -278,6 +269,11 @@ export default function PaneShell({
   );
   const accessibleName = paneHeaderAccessibleName(header);
   const effectiveToolbar = acceptedPrimaryChrome?.toolbar;
+  useMobileChromeSurface(
+    chromeRef,
+    "PaneToolbar",
+    isMobile && isActive && Boolean(effectiveToolbar),
+  );
   const effectiveActions =
     acceptedPrimaryChrome?.actions ?? EMPTY_HEADER_ACTIONS;
   const effectiveMenu = acceptedPrimaryChrome?.menu;
@@ -582,15 +578,6 @@ export default function PaneShell({
           data-mobile-chrome-phase={motionPhase.kind}
           tabIndex={-1}
           onMouseDown={onChromeMouseDown}
-          onFocusCapture={() => {
-            if (releaseFocusLockRef.current) return;
-            releaseFocusLockRef.current = acquireVisibleLock("chrome-focus");
-          }}
-          onBlurCapture={(event) => {
-            if (event.currentTarget.contains(event.relatedTarget)) return;
-            releaseFocusLockRef.current?.();
-            releaseFocusLockRef.current = null;
-          }}
         >
           {!isMobile ? (
             <SurfaceHeader
