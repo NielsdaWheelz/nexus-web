@@ -886,10 +886,9 @@ test.describe("pane chrome", () => {
     );
     await expectMobilePaneShellInvariants(page);
     const pdfViewport = activePane.getByLabel("PDF document");
+    const nextPage = activePane.getByRole("button", { name: "Next page" });
     await expect(pdfViewport).toBeVisible();
-    await expect(
-      activePane.getByRole("button", { name: "Next page" }),
-    ).toBeVisible();
+    await expect(nextPage).toBeVisible();
     await expect(
       activePane.locator('[data-testid^="pdf-page-surface-"]').first(),
     ).toBeVisible({
@@ -907,7 +906,11 @@ test.describe("pane chrome", () => {
     await setScrollTop(pdfViewport, 0);
     await expectScrollTop(pdfViewport, 0);
     await waitForMobileChromeFrame(page);
+    await nextPage.focus();
+    await expect(nextPage).toBeFocused();
+    await expectMobileChrome(page, { phase: "Pinned", progress: 0 });
     await beginReaderPointerInteraction(pdfViewport);
+    await expect(nextPage).not.toBeFocused();
     await expectMobileChrome(page, { phase: "Visible", progress: 0 });
     await setScrollTopAndExpectTracking(pdfViewport, 40, {
       phase: "Tracking",

@@ -17,6 +17,7 @@ import {
 } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useLayoutEffect, useRef } from "react";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 
 // preloadPane dynamically imports the real pane body; stub that chunk-warm side effect
@@ -42,6 +43,7 @@ import {
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
 import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
+import { useMobileViewport } from "@/lib/mobileViewport/MobileViewportProvider";
 import {
   MobileChromeProvider,
   useMobileChrome,
@@ -224,14 +226,41 @@ function NexusChromeDriver() {
   );
 }
 
+function FixedPlayerObstruction() {
+  const ref = useRef<HTMLDivElement>(null);
+  const mobileViewport = useMobileViewport();
+  useLayoutEffect(() => {
+    if (!ref.current) return;
+    return mobileViewport.registerFixedObstruction("Player", ref.current);
+  }, [mobileViewport]);
+  return (
+    <div
+      ref={ref}
+      data-testid="fixed-player-obstruction"
+      style={{
+        position: "fixed",
+        right: 0,
+        bottom: 0,
+        left: 0,
+        height: 80,
+      }}
+    />
+  );
+}
+
 function renderLauncher(
   initialState?: WorkspaceState,
-  withChromeDriver = false,
+  withMobileChromeTestDrivers = false,
 ) {
   return render(
     withRenderEnvironment(
       <MobileChromeProvider>
-        {withChromeDriver ? <NexusChromeDriver /> : null}
+        {withMobileChromeTestDrivers ? (
+          <>
+            <NexusChromeDriver />
+            <FixedPlayerObstruction />
+          </>
+        ) : null}
         <KeybindingsProvider>
           <FeedbackProvider>
             <PaneReturnMementoProvider>
@@ -1233,10 +1262,23 @@ describe("Launcher — mobile Switchboard Find", () => {
     expect(nexus).not.toHaveAttribute("aria-hidden");
 
     const wrapper = screen.getByTestId("nexus-wrapper");
+    const player = screen.getByTestId("fixed-player-obstruction");
+    const playerRect = player.getBoundingClientRect();
+    const playerBottomClearancePx = Math.ceil(
+      window.innerHeight - playerRect.top,
+    );
+    expect(playerBottomClearancePx).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(
+        document.documentElement.style.getPropertyValue(
+          "--mobile-nexus-bottom-offset",
+        ),
+      ).toContain(`${playerBottomClearancePx}px`),
+    );
     Object.assign(wrapper.style, {
       position: "fixed",
       right: "16px",
-      bottom: "16px",
+      bottom: `${playerBottomClearancePx + 16}px`,
       width: "56px",
       height: "56px",
     });
@@ -1255,6 +1297,9 @@ describe("Launcher — mobile Switchboard Find", () => {
     const visibleRect = wrapper.getBoundingClientRect();
     const visibleClearance = document.documentElement.style.getPropertyValue(
       "--mobile-content-bottom-clearance",
+    );
+    const visiblePlayerOffset = document.documentElement.style.getPropertyValue(
+      "--mobile-nexus-bottom-offset",
     );
 
     fireEvent.click(screen.getByTestId("nexus-scroll-start"));
@@ -1281,6 +1326,18 @@ describe("Launcher — mobile Switchboard Find", () => {
     fireEvent(window, new Event("resize"));
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     const hiddenRect = wrapper.getBoundingClientRect();
+    const hiddenPlayerRect = player.getBoundingClientRect();
+    expect({
+      top: hiddenPlayerRect.top,
+      bottom: hiddenPlayerRect.bottom,
+      width: hiddenPlayerRect.width,
+      height: hiddenPlayerRect.height,
+    }).toEqual({
+      top: playerRect.top,
+      bottom: playerRect.bottom,
+      width: playerRect.width,
+      height: playerRect.height,
+    });
     expect({
       top: hiddenRect.top,
       bottom: hiddenRect.bottom,
@@ -1297,6 +1354,11 @@ describe("Launcher — mobile Switchboard Find", () => {
         "--mobile-content-bottom-clearance",
       ),
     ).toBe(visibleClearance);
+    expect(
+      document.documentElement.style.getPropertyValue(
+        "--mobile-nexus-bottom-offset",
+      ),
+    ).toBe(visiblePlayerOffset);
 
     fireEvent.click(screen.getByTestId("nexus-scroll-start"));
     await waitFor(() =>
