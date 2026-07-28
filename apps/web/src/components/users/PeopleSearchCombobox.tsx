@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  useEffect,
   useId,
   useMemo,
   useRef,
@@ -10,6 +9,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import Input from "@/components/ui/Input";
+import { nextRovingIndexForKey } from "@/lib/ui/rovingIndex";
 import type { UserSearchResult } from "@/lib/users/search";
 import styles from "./PeopleSearchCombobox.module.css";
 
@@ -19,6 +19,11 @@ function labelFor(person: UserSearchResult): string {
     : person.email.kind === "Present"
       ? person.email.value
       : person.userHandle;
+}
+
+function normalizedActiveIndex(index: number, itemCount: number): number {
+  if (itemCount === 0) return -1;
+  return Math.min(Math.max(index, 0), itemCount - 1);
 }
 
 export default function PeopleSearchCombobox({
@@ -58,22 +63,12 @@ export default function PeopleSearchCombobox({
     () => results.map((_, index) => `${reactId}-option-${index}`),
     [reactId, results],
   );
+  const effectiveActiveIndex = normalizedActiveIndex(activeIndex, results.length);
 
-  const setActiveIndex = (next: number | ((current: number) => number)) => {
-    const resolved =
-      typeof next === "function" ? next(activeIndexRef.current) : next;
-    activeIndexRef.current = resolved;
-    setRenderedActiveIndex(resolved);
-  };
-
-  useEffect(() => {
-    const next =
-      results.length === 0
-        ? -1
-        : Math.min(Math.max(activeIndexRef.current, 0), results.length - 1);
+  const setActiveIndex = (next: number) => {
     activeIndexRef.current = next;
     setRenderedActiveIndex(next);
-  }, [results]);
+  };
 
   const selectIndex = (index: number) => {
     if (disabled) return;
@@ -95,17 +90,23 @@ export default function PeopleSearchCombobox({
       if (results.length === 0) return;
       event.preventDefault();
       setOpen(true);
-      setActiveIndex((current) => {
-        if (event.key === "Home") return 0;
-        if (event.key === "End") return results.length - 1;
-        if (event.key === "ArrowDown") {
-          return current < 0 ? 0 : (current + 1) % results.length;
-        }
-        return current <= 0 ? results.length - 1 : current - 1;
+      const next = nextRovingIndexForKey({
+        key: event.key,
+        currentIndex: normalizedActiveIndex(
+          activeIndexRef.current,
+          results.length,
+        ),
+        itemCount: results.length,
+        orientation: "vertical",
+        wrap: true,
       });
+      if (next !== null) setActiveIndex(next);
       return;
     }
-    const currentActiveIndex = activeIndexRef.current;
+    const currentActiveIndex = normalizedActiveIndex(
+      activeIndexRef.current,
+      results.length,
+    );
     if (event.key === "Enter" && expanded && currentActiveIndex >= 0) {
       event.preventDefault();
       selectIndex(currentActiveIndex);
@@ -136,7 +137,9 @@ export default function PeopleSearchCombobox({
         aria-busy={searching || undefined}
         disabled={disabled}
         aria-activedescendant={
-          expanded && activeIndex >= 0 ? optionIds[activeIndex] : undefined
+          expanded && effectiveActiveIndex >= 0
+            ? optionIds[effectiveActiveIndex]
+            : undefined
         }
         onFocus={() => {
           if (!disabled) setOpen(true);
@@ -170,7 +173,7 @@ export default function PeopleSearchCombobox({
               key={person.userHandle}
               role="option"
               className={styles.option}
-              aria-selected={index === activeIndex}
+              aria-selected={index === effectiveActiveIndex}
               onMouseDown={(event) => event.preventDefault()}
               onMouseEnter={() => setActiveIndex(index)}
               onClick={() => selectIndex(index)}

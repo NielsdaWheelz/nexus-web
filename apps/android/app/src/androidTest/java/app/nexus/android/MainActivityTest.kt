@@ -415,8 +415,7 @@ class MainActivityTest {
                 )
                 assertEquals(ActivityInfo.LAUNCH_SINGLE_TASK, activityInfo.launchMode)
 
-                InstrumentationRegistry.getInstrumentation().callActivityOnNewIntent(
-                    activity,
+                activity.handleNewIntent(
                     Intent(Intent.ACTION_MAIN).apply {
                         setClass(activity, MainActivity::class.java)
                         addCategory(Intent.CATEGORY_LAUNCHER)
@@ -667,56 +666,29 @@ class MainActivityTest {
         scenario: ActivityScenario<MainActivity>
     ) {
         val switchboardUrl = "${BuildConfig.NEXUS_BASE_URL}/android-test-switchboard"
-        val document =
-            """
-            <!doctype html>
-            <meta charset="utf-8">
-            <title>Switchboard Root</title>
-            <body>Root</body>
-            """.trimIndent()
-
-        scenario.onActivity { activity ->
-            activity.webView.loadDataWithBaseURL(
-                switchboardUrl,
-                document,
-                "text/html",
-                "utf-8",
-                switchboardUrl
+        listOf(
+            "Root" to "#root",
+            "Find" to "#find",
+            "Workflow" to "#workflow"
+        ).forEach { (page, fragment) ->
+            val pageUrl = "$switchboardUrl$fragment"
+            scenario.onActivity { activity ->
+                activity.webView.loadDataWithBaseURL(
+                    switchboardUrl,
+                    "<!doctype html><meta charset=\"utf-8\">" +
+                        "<title>Switchboard $page</title><body>$page</body>",
+                    "text/html",
+                    "utf-8",
+                    pageUrl
+                )
+            }
+            waitForSwitchboardPage(
+                scenario,
+                page = page,
+                fragment = fragment,
+                message = "Expected nested Switchboard test history to reach $page."
             )
         }
-        waitForSwitchboardPage(
-            scenario,
-            page = "Root",
-            fragment = switchboardUrl,
-            message = "Expected the Switchboard test document to finish loading."
-        )
-        scenario.onActivity { activity ->
-            activity.webView.evaluateJavascript(
-                """
-                (function () {
-                  function render(state) {
-                    var page = state && state.page ? state.page : "Root";
-                    document.title = "Switchboard " + page;
-                    document.body.textContent = page;
-                  }
-                  window.addEventListener("popstate", function (event) {
-                    render(event.state);
-                  });
-                  history.replaceState({ page: "Root" }, "", "#root");
-                  history.pushState({ page: "Find" }, "", "#find");
-                  history.pushState({ page: "Workflow" }, "", "#workflow");
-                  render(history.state);
-                })();
-                """.trimIndent(),
-                null
-            )
-        }
-        waitForSwitchboardPage(
-            scenario,
-            page = "Workflow",
-            fragment = "#workflow",
-            message = "Expected nested Switchboard test history to reach Workflow."
-        )
     }
 
     // Local WebView documents must not race the default debug-server navigation.
