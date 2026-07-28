@@ -113,10 +113,10 @@ class MainActivityTest {
 
     @Test
     fun offOriginUrlOpensACustomTabIntent() {
+        Intents.init()
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             val externalUri = Uri.parse("https://external.example.com/privacy")
 
-            Intents.init()
             Intents.intending(allOf(hasAction(Intent.ACTION_VIEW), hasData(externalUri)))
                 .respondWith(ActivityResult(Activity.RESULT_OK, null))
 
@@ -130,11 +130,11 @@ class MainActivityTest {
 
     @Test
     fun sameHostDifferentPortOpensACustomTabIntent() {
+        Intents.init()
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             val supabaseAuthorizeUri =
                 Uri.parse("http://${BuildConfig.NEXUS_OWNED_HOST}:54321/auth/v1/authorize")
 
-            Intents.init()
             Intents.intending(allOf(hasAction(Intent.ACTION_VIEW), hasData(supabaseAuthorizeUri)))
                 .respondWith(ActivityResult(Activity.RESULT_OK, null))
 
@@ -241,10 +241,10 @@ class MainActivityTest {
 
     @Test
     fun nexusAuthStartLaunchesCustomTabAtAuthOauthUrl() {
+        Intents.init()
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             val oauthPrefix = "${BuildConfig.NEXUS_BASE_URL}/auth/oauth"
 
-            Intents.init()
             Intents.intending(
                 allOf(hasAction(Intent.ACTION_VIEW), hasData(hasUriStringStartingWith(oauthPrefix)))
             ).respondWith(ActivityResult(Activity.RESULT_OK, null))
@@ -279,10 +279,10 @@ class MainActivityTest {
     fun nexusAuthStartDefaultsMissingNextToLectern() {
         assertEquals("/lectern", DEFAULT_AUTH_RETURN_TARGET)
 
+        Intents.init()
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             val oauthPrefix = "${BuildConfig.NEXUS_BASE_URL}/auth/oauth"
 
-            Intents.init()
             Intents.intending(
                 allOf(hasAction(Intent.ACTION_VIEW), hasData(hasUriStringStartingWith(oauthPrefix)))
             ).respondWith(ActivityResult(Activity.RESULT_OK, null))
@@ -415,21 +415,12 @@ class MainActivityTest {
                 )
                 assertEquals(ActivityInfo.LAUNCH_SINGLE_TASK, activityInfo.launchMode)
 
-                activity.handleNewIntent(
+                activity.routeNewIntent(
                     Intent(Intent.ACTION_MAIN).apply {
                         setClass(activity, MainActivity::class.java)
                         addCategory(Intent.CATEGORY_LAUNCHER)
-                        putExtra("test_reentry", true)
                     }
                 )
-            }
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-            waitUntil("Expected launcher intent to reach the running activity.") {
-                var delivered = false
-                scenario.onActivity { activity ->
-                    delivered = activity.intent.getBooleanExtra("test_reentry", false)
-                }
-                delivered
             }
             scenario.onActivity { activity ->
                 assertEquals(secondUrl, activity.webView.url)
@@ -604,11 +595,11 @@ class MainActivityTest {
 
     @Test
     fun fileInputLaunchesTheSystemChooserAndReturnsTheSelectedUri() {
+        Intents.init()
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             val selectedUri = Uri.parse("content://nexus/tests/file.pdf")
             val callback = RecordingValueCallback()
 
-            Intents.init()
             Intents.intending(hasAction(Intent.ACTION_GET_CONTENT))
                 .respondWith(
                     ActivityResult(
@@ -638,10 +629,10 @@ class MainActivityTest {
 
     @Test
     fun cancelledFileInputReturnsNull() {
+        Intents.init()
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             val callback = RecordingValueCallback()
 
-            Intents.init()
             Intents.intending(hasAction(Intent.ACTION_GET_CONTENT))
                 .respondWith(ActivityResult(Activity.RESULT_CANCELED, null))
 

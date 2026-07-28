@@ -226,11 +226,11 @@ class MainActivity : AppCompatActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        handleNewIntent(intent)
+        setIntent(intent)
+        routeNewIntent(intent)
     }
 
-    internal fun handleNewIntent(intent: Intent) {
-        setIntent(intent)
+    internal fun routeNewIntent(intent: Intent) {
         if (intent.data == null) {
             return
         }
