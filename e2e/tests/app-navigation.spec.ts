@@ -141,8 +141,9 @@ test.describe("app navigation", () => {
         .getByRole("link", { name: "Notes" })
         .click({ modifiers: ["Control"] }),
     ]);
-    await nativePage.waitForLoadState("domcontentloaded");
-    await expect(nativePage).toHaveURL(/\/notes$/);
+    await nativePage.waitForURL(/\/notes$/, {
+      waitUntil: "domcontentloaded",
+    });
     await expect(page).toHaveURL(/\/libraries$/);
     await expect(paneWraps).toHaveCount(3);
     await nativePage.close();
