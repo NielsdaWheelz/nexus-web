@@ -2,7 +2,9 @@ package app.nexus.android
 
 import android.app.Activity
 import android.app.Instrumentation.ActivityResult
+import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.net.Uri
@@ -407,7 +409,14 @@ class MainActivityTest {
             }
 
             scenario.onActivity { activity ->
-                activity.startActivity(
+                val activityInfo = activity.packageManager.getActivityInfo(
+                    ComponentName(activity, MainActivity::class.java),
+                    0
+                )
+                assertEquals(ActivityInfo.LAUNCH_SINGLE_TASK, activityInfo.launchMode)
+
+                InstrumentationRegistry.getInstrumentation().callActivityOnNewIntent(
+                    activity,
                     Intent(Intent.ACTION_MAIN).apply {
                         setClass(activity, MainActivity::class.java)
                         addCategory(Intent.CATEGORY_LAUNCHER)
@@ -663,19 +672,7 @@ class MainActivityTest {
             <!doctype html>
             <meta charset="utf-8">
             <title>Switchboard Root</title>
-            <body></body>
-            <script>
-              const render = (state) => {
-                const page = state?.page ?? "Root";
-                document.title = `Switchboard ${'$'}{page}`;
-                document.body.textContent = page;
-              };
-              window.addEventListener("popstate", (event) => render(event.state));
-              history.replaceState({ page: "Root" }, "", "#root");
-              history.pushState({ page: "Find" }, "", "#find");
-              history.pushState({ page: "Workflow" }, "", "#workflow");
-              render(history.state);
-            </script>
+            <body>Root</body>
             """.trimIndent()
 
         scenario.onActivity { activity ->
@@ -685,6 +682,33 @@ class MainActivityTest {
                 "text/html",
                 "utf-8",
                 switchboardUrl
+            )
+        }
+        waitForSwitchboardPage(
+            scenario,
+            page = "Root",
+            fragment = switchboardUrl,
+            message = "Expected the Switchboard test document to finish loading."
+        )
+        scenario.onActivity { activity ->
+            activity.webView.evaluateJavascript(
+                """
+                (function () {
+                  function render(state) {
+                    var page = state && state.page ? state.page : "Root";
+                    document.title = "Switchboard " + page;
+                    document.body.textContent = page;
+                  }
+                  window.addEventListener("popstate", function (event) {
+                    render(event.state);
+                  });
+                  history.replaceState({ page: "Root" }, "", "#root");
+                  history.pushState({ page: "Find" }, "", "#find");
+                  history.pushState({ page: "Workflow" }, "", "#workflow");
+                  render(history.state);
+                })();
+                """.trimIndent(),
+                null
             )
         }
         waitForSwitchboardPage(

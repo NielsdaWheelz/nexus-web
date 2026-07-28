@@ -4,6 +4,7 @@ import {
   useEffect,
   useId,
   useMemo,
+  useRef,
   useState,
   type CompositionEvent,
   type KeyboardEvent,
@@ -49,7 +50,8 @@ export default function PeopleSearchCombobox({
   const descriptionId = description ? `${reactId}-description` : undefined;
   const statusId = status || searching ? `${reactId}-status` : undefined;
   const [open, setOpen] = useState(true);
-  const [activeIndex, setActiveIndex] = useState(-1);
+  const [activeIndex, setRenderedActiveIndex] = useState(-1);
+  const activeIndexRef = useRef(-1);
   const [composing, setComposing] = useState(false);
   const expanded = !disabled && open && results.length > 0;
   const optionIds = useMemo(
@@ -57,10 +59,20 @@ export default function PeopleSearchCombobox({
     [reactId, results],
   );
 
+  const setActiveIndex = (next: number | ((current: number) => number)) => {
+    const resolved =
+      typeof next === "function" ? next(activeIndexRef.current) : next;
+    activeIndexRef.current = resolved;
+    setRenderedActiveIndex(resolved);
+  };
+
   useEffect(() => {
-    setActiveIndex((current) =>
-      results.length === 0 ? -1 : Math.min(Math.max(current, 0), results.length - 1),
-    );
+    const next =
+      results.length === 0
+        ? -1
+        : Math.min(Math.max(activeIndexRef.current, 0), results.length - 1);
+    activeIndexRef.current = next;
+    setRenderedActiveIndex(next);
   }, [results]);
 
   const selectIndex = (index: number) => {
@@ -93,9 +105,10 @@ export default function PeopleSearchCombobox({
       });
       return;
     }
-    if (event.key === "Enter" && expanded && activeIndex >= 0) {
+    const currentActiveIndex = activeIndexRef.current;
+    if (event.key === "Enter" && expanded && currentActiveIndex >= 0) {
       event.preventDefault();
-      selectIndex(activeIndex);
+      selectIndex(currentActiveIndex);
       return;
     }
     if (event.key === "Escape" && expanded) {
