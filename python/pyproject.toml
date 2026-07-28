@@ -193,6 +193,7 @@ filterwarnings = [
 markers = [
     "unit: pure logic tests, no DB/network",
     "integration: DB/API-backed tests",
+    "migration_ci_late: late migration-file shard used only to parallelize CI",
     "artifact: checked-in artifact and fixture contract tests with local file I/O",
     "slow: tests that are materially slower than normal local feedback loops",
     "supabase: requires Supabase local Auth services",

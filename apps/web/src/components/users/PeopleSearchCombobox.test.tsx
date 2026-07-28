@@ -46,7 +46,17 @@ describe("PeopleSearchCombobox", () => {
     expect(input).toHaveAccessibleDescription(
       "Find an existing account. 2 results",
     );
-    await user.keyboard("{Home}{ArrowDown}{Enter}");
+    await user.keyboard("{Home}");
+    expect(input).toHaveAttribute(
+      "aria-activedescendant",
+      screen.getAllByRole("option")[0]?.id,
+    );
+    await user.keyboard("{ArrowDown}");
+    expect(input).toHaveAttribute(
+      "aria-activedescendant",
+      screen.getAllByRole("option")[1]?.id,
+    );
+    await user.keyboard("{Enter}");
     expect(onSelect).toHaveBeenCalledWith(people[1]);
 
     await user.click(input);

@@ -21,6 +21,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
 
 pytestmark = pytest.mark.integration
+MIGRATION_CI_LATE = pytest.mark.migration_ci_late
 
 
 def get_test_database_url() -> str:
@@ -19440,6 +19441,7 @@ class TestMigration0183DefaultLibraryVirtualization:
             run_alembic_command("upgrade head")
 
 
+@MIGRATION_CI_LATE
 class TestMigration0188LlmProviderRuntimeHardCutover:
     """0188: chat_runs gains profile_id/reasoning_option_id + resolved
     provider/model_name/reasoning_effort/error_origin/support_id, backfilled
@@ -20156,6 +20158,7 @@ def _load_migration_0184():
     return module
 
 
+@MIGRATION_CI_LATE
 class TestMigration0184InlineHelperParity:
     """PLAN decision 8: 0184 inlines quote normalization/anchor-key/matching
     (no service imports); the frozen copies must equal the runtime
@@ -20230,6 +20233,7 @@ class TestMigration0184InlineHelperParity:
             )
 
 
+@MIGRATION_CI_LATE
 class TestMigration0184UniversalLinkAuthoring:
     """0184 materializes passage anchors for derived Link/stance/note-body
     endpoints, deletes already-lost refs with an exact report, canonicalizes
@@ -21156,6 +21160,7 @@ class TestMigration0184UniversalLinkAuthoring:
             engine.dispose()
 
 
+@MIGRATION_CI_LATE
 class TestMigration0189ReaderHighlightQuoteChat:
     """0189: adds ``messages.reader_selection_snapshot`` (+ shallow object CHECK),
     preflights every selection-bearing turn context grouped by its run's user
@@ -21720,6 +21725,7 @@ class TestMigration0189ReaderHighlightQuoteChat:
             run_alembic_command("upgrade head")
 
 
+@MIGRATION_CI_LATE
 class TestMigration0190ResourceInspectorAndUniversalDossiers:
     """0190: the Resource-Inspector + Universal-Dossiers hard cutover.
 
@@ -24013,6 +24019,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
             engine.dispose()
 
 
+@MIGRATION_CI_LATE
 class TestMigration0192PaneVisitWorkspaceSessionPurge:
     def test_0192_purges_every_session_and_blocks_downgrade(self):
         reset_test_schema()
@@ -24067,6 +24074,7 @@ class TestMigration0192PaneVisitWorkspaceSessionPurge:
             engine.dispose()
 
 
+@MIGRATION_CI_LATE
 class TestUniversalResourceSharingMigration:
     def test_0188_to_0191_upgrade_downgrade_upgrade_contract(self):
         reset_test_schema()
@@ -24158,6 +24166,7 @@ class TestUniversalResourceSharingMigration:
             assert checks == 0
 
 
+@MIGRATION_CI_LATE
 class TestMigration0193MediaPipelineReliability:
     INDEXES = (
         (
@@ -24554,6 +24563,7 @@ class TestMigration0193MediaPipelineReliability:
             engine.dispose()
 
 
+@MIGRATION_CI_LATE
 class TestMigration0194ConsumptionActivityFacts:
     """0194 creates only the two empty, non-cascading Consumption fact tables."""
 
@@ -24694,6 +24704,7 @@ class TestMigration0194ConsumptionActivityFacts:
             engine.dispose()
 
 
+@MIGRATION_CI_LATE
 class TestMigration0196ChatPublicationThinSpine:
     def test_0196_adds_publication_facts_and_backfills_known_candidates(self):
         reset_test_schema()
@@ -24924,6 +24935,7 @@ class TestMigration0196ChatPublicationThinSpine:
             engine.dispose()
 
 
+@MIGRATION_CI_LATE
 class TestMigration0197XPostSourceAttemptProvenance:
     def test_0197_repairs_missing_attempt_and_blocks_downgrade(self):
         reset_test_schema()

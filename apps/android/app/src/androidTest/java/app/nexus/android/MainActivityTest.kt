@@ -124,7 +124,10 @@ class MainActivityTest {
                 activity.routeUrl(externalUri)
             }
 
-            Intents.intended(allOf(hasAction(Intent.ACTION_VIEW), hasData(externalUri)))
+            assertIntentRecorded(
+                allOf(hasAction(Intent.ACTION_VIEW), hasData(externalUri)),
+                "Expected off-origin URL to launch an ACTION_VIEW intent."
+            )
         }
     }
 
@@ -142,7 +145,10 @@ class MainActivityTest {
                 activity.routeUrl(supabaseAuthorizeUri)
             }
 
-            Intents.intended(allOf(hasAction(Intent.ACTION_VIEW), hasData(supabaseAuthorizeUri)))
+            assertIntentRecorded(
+                allOf(hasAction(Intent.ACTION_VIEW), hasData(supabaseAuthorizeUri)),
+                "Expected the different-port URL to launch an ACTION_VIEW intent."
+            )
         }
     }
 
@@ -255,7 +261,7 @@ class MainActivityTest {
                 )
             }
 
-            Intents.intended(
+            assertIntentRecorded(
                 allOf(
                     hasAction(Intent.ACTION_VIEW),
                     hasData(
@@ -270,7 +276,8 @@ class MainActivityTest {
                             hexParam = "hc"
                         )
                     )
-                )
+                ),
+                "Expected the auth start route to launch its OAuth handoff intent."
             )
         }
     }
@@ -291,7 +298,7 @@ class MainActivityTest {
                 activity.startAuthFlow(Uri.parse("nexus://auth/start?provider=github&mode=signin"))
             }
 
-            Intents.intended(
+            assertIntentRecorded(
                 allOf(
                     hasAction(Intent.ACTION_VIEW),
                     hasData(
@@ -306,7 +313,8 @@ class MainActivityTest {
                             hexParam = "hc"
                         )
                     )
-                )
+                ),
+                "Expected the auth start route to launch its default-return OAuth handoff intent."
             )
         }
     }
@@ -617,7 +625,10 @@ class MainActivityTest {
                 assertTrue(handled)
             }
 
-            Intents.intended(hasAction(Intent.ACTION_GET_CONTENT))
+            assertIntentRecorded(
+                hasAction(Intent.ACTION_GET_CONTENT),
+                "Expected the file input to launch the system content chooser."
+            )
 
             waitUntil("Expected file chooser callback to receive the selected URI.") {
                 callback.called
@@ -721,6 +732,12 @@ class MainActivityTest {
             Thread.sleep(50)
         }
         throw AssertionError(message)
+    }
+
+    private fun assertIntentRecorded(matcher: Matcher<Intent>, message: String) {
+        waitUntil(message) {
+            Intents.getIntents().any(matcher::matches)
+        }
     }
 
     private fun hasUriStringStartingWith(prefix: String): Matcher<Uri> =
