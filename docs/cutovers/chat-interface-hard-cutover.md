@@ -21,8 +21,7 @@ reader-selection, or pane-routing semantics.
 
 1. Assistant prose uses the normal sans text register in chat. `MachineText`
    remains the owner for dossiers, Synapse, Dawn, and other machine artifacts.
-2. Standard provider retention moves behind a compact `Privacy` disclosure.
-   Exceptional retention remains visible beside the selected profile.
+2. Provider privacy and retention metadata has no composer chrome.
 3. Conversation-row activation is fixed in shared `ResourceRow`; no
    conversation-only click handler or nested interactive row is added.
 4. Inline citations remain. The repeated source list and run diagnostics become
@@ -104,8 +103,7 @@ fork strip, only when forks exist
 - A blocked Enter/send attempt does not clear the draft or move focus.
 - The blocked reason is available to assistive technology through one polite
   live region; surrounding visible state supplies the sighted explanation.
-- Standard profile privacy copy appears only when the user opens `Privacy`.
-- `ExceptionalRetention` copy is always visible while that profile is selected.
+- Profiles render no privacy or retention copy in the composer.
 - Profile and reasoning selectors remain native `Select` controls.
 
 ### 5.3 Quote
@@ -181,8 +179,8 @@ ConversationMessage
 | Collection row hit target | `ResourceRow` | every collection row |
 | Conversation title/count/time copy | `lib/conversations/presentation.ts` | list, destination picker |
 
-Use native `<details>/<summary>` for the three small disclosure surfaces. Do not
-add a generic disclosure framework; their visual contracts differ.
+Use native `<details>/<summary>` for the retained disclosure surfaces. Do not add
+a generic disclosure framework; their visual contracts differ.
 
 ## 7. Capability contracts
 
@@ -314,8 +312,7 @@ No slice may leave old and new contracts live together.
   remains available, and no red “wait” banner renders.
 - **AC-6:** Real composer errors remain visible and distinct from capability
   state.
-- **AC-7:** Standard privacy copy is user-invoked; exceptional retention copy is
-  visible whenever selected.
+- **AC-7:** Profiles render no privacy or retention chrome in the composer.
 - **AC-8:** `privacy_notice`, `sendDisabledReason`, and
   `ChatComposer.disabledReason` have zero production or test references.
 - **AC-9:** A pending or sent quote with a long source name and unbroken content

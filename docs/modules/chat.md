@@ -172,10 +172,9 @@ error }`. `ChatProfilePicker` is a controlled component
 default selection whenever the current value isn't valid against the loaded
 profiles. Each profile carries a required `privacy` union:
 `{ kind: "Standard"; notice } | { kind: "ExceptionalRetention"; notice }`.
-`ChatProfilePicker` exposes standard copy through a compact `Privacy`
-disclosure and renders exceptional-retention copy while that profile is
-selected. The browser owns no provider/model/reasoning enum, ordering, default,
-capability, key, privacy classification, or availability policy — see
+`ChatProfilePicker` renders no privacy or retention copy for any profile. The
+browser owns no provider/model/reasoning enum, ordering, default, capability,
+key, privacy classification, or availability policy — see
 [modules/llms.md](llms.md).
 
 `useConversation` is the sole owner of caller-level send availability. It

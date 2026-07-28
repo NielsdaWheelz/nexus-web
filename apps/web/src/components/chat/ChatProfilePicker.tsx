@@ -4,10 +4,10 @@
  * ChatProfilePicker — the composer's product-facing LLM selector.
  *
  * Renders the GET /llm-profiles catalog (via useChatProfiles): a profile
- * chooser, that profile's reasoning options, and its privacy disclosure. It owns NO
- * provider/model/reasoning policy — it renders exactly what the endpoint returns
- * and reports a `{ profileId, reasoningOptionId }` selection up to the composer
- * (controlled). It replaces the old model + reasoning + key-mode controls.
+ * chooser and that profile's reasoning options. It owns NO provider/model/reasoning
+ * policy — it renders exactly what the endpoint returns and reports a
+ * `{ profileId, reasoningOptionId }` selection up to the composer (controlled).
+ * It replaces the old model + reasoning + key-mode controls.
  *
  * Defaulting: once the catalog loads, if the controlled value is empty or no
  * longer valid, it emits the server default profile + that profile's default
@@ -17,7 +17,7 @@
 import { useEffect } from "react";
 import Select from "@/components/ui/Select";
 import { useChatProfiles } from "@/components/chat/useChatProfiles";
-import type { LlmProfile, LlmProfilePrivacy } from "@/lib/conversations/types";
+import type { LlmProfile } from "@/lib/conversations/types";
 import styles from "./ChatProfilePicker.module.css";
 
 export interface ProfileSelection {
@@ -54,26 +54,6 @@ function defaultSelection(
     profileId: profile.id,
     reasoningOptionId: profile.default_reasoning_option_id,
   };
-}
-
-function assertNever(value: never): never {
-  throw new Error(`Unexpected profile privacy: ${JSON.stringify(value)}`);
-}
-
-function ProfilePrivacy({ privacy }: { privacy: LlmProfilePrivacy }) {
-  switch (privacy.kind) {
-    case "Standard":
-      return (
-        <details className={styles.privacyDisclosure}>
-          <summary>Privacy</summary>
-          <p>{privacy.notice}</p>
-        </details>
-      );
-    case "ExceptionalRetention":
-      return <p className={styles.exceptionalPrivacy}>{privacy.notice}</p>;
-    default:
-      return assertNever(privacy);
-  }
 }
 
 export default function ChatProfilePicker({
@@ -164,8 +144,6 @@ export default function ChatProfilePicker({
           </Select>
         </label>
       ) : null}
-
-      {selectedProfile ? <ProfilePrivacy privacy={selectedProfile.privacy} /> : null}
     </div>
   );
 }

@@ -817,20 +817,20 @@ describe("ChatComposer", () => {
     expect(screen.queryByText(/^scope/i)).not.toBeInTheDocument();
   });
 
-  it("keeps standard retention behind Privacy and shows exceptional retention immediately", async () => {
+  it("omits privacy chrome for every profile", async () => {
     const user = userEvent.setup();
     installChatComposerFetchMock();
 
     render(<ChatComposer conversationId="conversation-1" />);
 
-    expect(await screen.findByText("Privacy")).toBeVisible();
-    expect(screen.queryByText("Processed by Nexus AI.")).not.toBeVisible();
-
-    await user.click(screen.getByText("Privacy"));
-    expect(screen.getByText("Processed by Nexus AI.")).toBeVisible();
+    expect(
+      await screen.findByRole("combobox", { name: "AI profile" }),
+    ).toBeVisible();
+    expect(screen.queryByText("Privacy")).not.toBeInTheDocument();
+    expect(screen.queryByText("Processed by Nexus AI.")).not.toBeInTheDocument();
 
     await user.selectOptions(screen.getByRole("combobox", { name: "AI profile" }), "fast");
-    expect(screen.getByText("Retained for 30 days.")).toBeVisible();
+    expect(screen.queryByText("Retained for 30 days.")).not.toBeInTheDocument();
     expect(screen.queryByText("Privacy")).not.toBeInTheDocument();
   });
 
