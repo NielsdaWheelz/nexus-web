@@ -363,7 +363,7 @@ class MainActivityTest {
         val firstUrl = "${BuildConfig.NEXUS_BASE_URL}/first"
         val secondUrl = "${BuildConfig.NEXUS_BASE_URL}/second"
 
-        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+        launchWithoutInitialNavigation().use { scenario ->
             scenario.onActivity { activity ->
                 activity.webView.loadDataWithBaseURL(
                     firstUrl,
@@ -444,7 +444,7 @@ class MainActivityTest {
 
     @Test
     fun hardwareBackPopsNestedSwitchboardPagesBeforeRoot() {
-        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+        launchWithoutInitialNavigation().use { scenario ->
             loadNestedSwitchboardHistory(scenario)
 
             scenario.onActivity { activity ->
@@ -471,7 +471,7 @@ class MainActivityTest {
 
     @Test
     fun orientationRecreationPreservesNestedSwitchboardHistory() {
-        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+        launchWithoutInitialNavigation().use { scenario ->
             loadNestedSwitchboardHistory(scenario)
 
             // ActivityScenario recreation exercises the saved-instance path used
@@ -693,6 +693,18 @@ class MainActivityTest {
             fragment = "#workflow",
             message = "Expected nested Switchboard test history to reach Workflow."
         )
+    }
+
+    // Local WebView documents must not race the default debug-server navigation.
+    // An unsupported explicit URI exercises MainActivity's existing no-op intent contract.
+    private fun launchWithoutInitialNavigation(): ActivityScenario<MainActivity> {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("about:blank")).apply {
+            setClass(
+                ApplicationProvider.getApplicationContext(),
+                MainActivity::class.java
+            )
+        }
+        return ActivityScenario.launch(intent)
     }
 
     private fun waitForSwitchboardPage(
