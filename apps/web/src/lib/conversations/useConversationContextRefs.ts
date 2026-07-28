@@ -22,7 +22,7 @@ export function useConversationContextRefs(conversationId: string | null) {
     cacheKey:
       conversationId === null
         ? null
-        : `conversation-context-refs:${conversationId}`,
+        : `resource-graph:context:${conversationId}`,
     load: async (signal) => ({
       data: await listContextRefs(conversationIdRef.current ?? "", { signal }),
     }),
