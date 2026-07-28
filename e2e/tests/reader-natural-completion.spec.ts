@@ -123,8 +123,13 @@ function deviceId(testInfo: TestInfo): string {
 test.describe("reader natural completion", () => {
   test.describe.configure({ mode: "serial" });
 
-  const articleId = seedValue("reader-resume-media.json", "web_media_id");
-  const nextId = seedValue("non-pdf-media.json", "media_id");
+  let articleId: string;
+  let nextId: string;
+
+  test.beforeAll(() => {
+    articleId = seedValue("reader-resume-media.json", "web_media_id");
+    nextId = seedValue("non-pdf-media.json", "media_id");
+  });
 
   test.beforeEach(async ({ request }) => {
     await clearLectern(request);
