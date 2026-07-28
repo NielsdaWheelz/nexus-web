@@ -104,6 +104,77 @@ async function expectScrollTop(
     .toBe(scrollTop);
 }
 
+interface ReaderContentGeometry {
+  scrollport: {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+    clientWidth: number;
+    clientHeight: number;
+    scrollWidth: number;
+    scrollHeight: number;
+    paddingTop: number;
+    paddingBottom: number;
+    scrollPaddingTop: number;
+    scrollPaddingBottom: number;
+  };
+  content: {
+    offsetLeft: number;
+    offsetTop: number;
+    width: number;
+    height: number;
+  };
+}
+
+async function readReaderContentGeometry(
+  target: Locator,
+): Promise<ReaderContentGeometry> {
+  return target.evaluate((element) => {
+    const scrollport = element.closest<HTMLElement>(
+      '[data-testid="document-viewport"], [aria-label="PDF document"]',
+    );
+    if (!scrollport) {
+      throw new Error("Reader content target has no reader scroll owner");
+    }
+    const scrollportRect = scrollport.getBoundingClientRect();
+    const contentRect = element.getBoundingClientRect();
+    const scrollportStyle = getComputedStyle(scrollport);
+    return {
+      scrollport: {
+        left: scrollportRect.left,
+        top: scrollportRect.top,
+        width: scrollportRect.width,
+        height: scrollportRect.height,
+        clientWidth: scrollport.clientWidth,
+        clientHeight: scrollport.clientHeight,
+        scrollWidth: scrollport.scrollWidth,
+        scrollHeight: scrollport.scrollHeight,
+        paddingTop: Number.parseFloat(scrollportStyle.paddingTop),
+        paddingBottom: Number.parseFloat(scrollportStyle.paddingBottom),
+        scrollPaddingTop: Number.parseFloat(scrollportStyle.scrollPaddingTop),
+        scrollPaddingBottom: Number.parseFloat(
+          scrollportStyle.scrollPaddingBottom,
+        ),
+      },
+      content: {
+        offsetLeft:
+          contentRect.left - scrollportRect.left + scrollport.scrollLeft,
+        offsetTop: contentRect.top - scrollportRect.top + scrollport.scrollTop,
+        width: contentRect.width,
+        height: contentRect.height,
+      },
+    };
+  });
+}
+
+async function expectReaderContentGeometry(
+  target: Locator,
+  expected: ReaderContentGeometry,
+): Promise<void> {
+  await expect.poll(() => readReaderContentGeometry(target)).toEqual(expected);
+}
+
 async function mobileTopBarHeight(page: Page): Promise<number> {
   return page
     .getByRole("banner")
@@ -367,6 +438,10 @@ function paneShell(page: Page) {
   return activeWorkspacePane(page).locator('[data-pane-shell="true"]');
 }
 
+function nexusButton(page: Page) {
+  return page.locator('button[aria-label^="Open Nexus,"]');
+}
+
 async function expectMobilePaneShellInvariants(page: Page): Promise<void> {
   const shell = paneShell(page);
   await expect(shell).toHaveAttribute("data-mobile", "true");
@@ -403,6 +478,7 @@ async function readMobileChrome(page: Page) {
     paneToolbar: await readSurface(
       paneShell(page).getByTestId("pane-shell-chrome"),
     ),
+    nexus: await readSurface(nexusButton(page)),
   };
 }
 
@@ -423,11 +499,16 @@ async function expectMobileChrome(
           phase: chrome.paneToolbar.phase,
           progress: Math.round(chrome.paneToolbar.progress * 1_000) / 1_000,
         },
+        nexus: {
+          phase: chrome.nexus.phase,
+          progress: Math.round(chrome.nexus.progress * 1_000) / 1_000,
+        },
       };
     })
     .toEqual({
       appBar: { phase: expected.phase, progress: roundedProgress },
       paneToolbar: { phase: expected.phase, progress: roundedProgress },
+      nexus: { phase: expected.phase, progress: roundedProgress },
     });
 }
 
@@ -469,12 +550,16 @@ async function setScrollTopAndExpectTracking(
           '[data-pane-shell="true"] [data-testid="pane-shell-chrome"]',
         ),
       ),
+      nexus: readSurface(
+        document.querySelector('button[aria-label^="Open Nexus,"]'),
+      ),
     };
   }, scrollTop);
   const progress = Math.round(expected.progress * 1_000) / 1_000;
   expect(chrome).toEqual({
     appBar: { phase: expected.phase, progress },
     paneToolbar: { phase: expected.phase, progress },
+    nexus: { phase: expected.phase, progress },
   });
   await expectScrollTop(locator, scrollTop);
 }
@@ -497,19 +582,27 @@ async function expectFullyRetreatedChrome(page: Page): Promise<void> {
     const paneToolbar = document.querySelector<HTMLElement>(
       '[data-pane-shell="true"] [data-testid="pane-shell-chrome"]',
     );
-    if (!appBar || !paneToolbar) {
+    const nexus = document.querySelector<HTMLElement>(
+      'button[aria-label^="Open Nexus,"]',
+    );
+    if (!appBar || !paneToolbar || !nexus) {
       return null;
     }
     return {
       appBarBottom: appBar.getBoundingClientRect().bottom,
       paneToolbarBottom: paneToolbar.getBoundingClientRect().bottom,
       paneToolbarHeight: paneToolbar.getBoundingClientRect().height,
+      nexusTop: nexus.getBoundingClientRect().top,
+      viewportBottom: window.innerHeight,
     };
   });
   expect(metrics).not.toBeNull();
   expect(metrics?.paneToolbarHeight).toBeGreaterThan(0);
   expect(metrics?.appBarBottom).toBeLessThanOrEqual(1);
   expect(metrics?.paneToolbarBottom).toBeLessThanOrEqual(1);
+  expect(metrics?.nexusTop).toBeGreaterThanOrEqual(
+    (metrics?.viewportBottom ?? 0) - 1,
+  );
 }
 
 async function waitForMobileChromeFrame(page: Page): Promise<void> {
@@ -521,11 +614,13 @@ async function waitForMobileChromeFrame(page: Page): Promise<void> {
   );
 }
 
-async function releaseMobileChromeFocus(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    if (document.activeElement instanceof HTMLElement) {
-      document.activeElement.blur();
-    }
+async function beginReaderPointerInteraction(
+  readerSurface: Locator,
+): Promise<void> {
+  await readerSurface.dispatchEvent("pointerdown", {
+    button: 0,
+    isPrimary: true,
+    pointerType: "touch",
   });
 }
 
@@ -760,11 +855,21 @@ test.describe("pane chrome", () => {
         documentViewport.evaluate(
           (element) => element.scrollHeight - element.clientHeight,
         ),
-      )
+    )
       .toBeGreaterThan(200);
     await setScrollTop(documentViewport, 0);
     await waitForMobileChromeFrame(page);
-    await releaseMobileChromeFocus(page);
+    const documentContent = documentViewport.locator(
+      ":scope > [data-focus-mode]",
+    );
+    await expect(documentContent).toBeVisible();
+    const visibleContentGeometry =
+      await readReaderContentGeometry(documentContent);
+    const appBar = page.getByRole("banner");
+    await expect(appBar).toBeFocused();
+    await expectMobileChrome(page, { phase: "Pinned", progress: 0 });
+    await beginReaderPointerInteraction(documentViewport);
+    await expect(appBar).not.toBeFocused();
     await expectMobileChrome(page, { phase: "Visible", progress: 0 });
 
     await page.evaluate(() => {
@@ -790,7 +895,12 @@ test.describe("pane chrome", () => {
     await setScrollTop(documentViewport, 72);
     await waitForMobileChromeFrame(page);
     await expectMobileChrome(page, { phase: "Hidden", progress: 1 });
+    await expectFullyRetreatedChrome(page);
     await expectScrollTop(documentViewport, 72);
+    await expectReaderContentGeometry(
+      documentContent,
+      visibleContentGeometry,
+    );
     await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
     await expect(
       page.getByRole("button", { name: "Pane options", exact: true }),
@@ -830,7 +940,7 @@ test.describe("pane chrome", () => {
     await page.keyboard.press("Escape");
     await expect(page.getByRole("menu")).toHaveCount(0);
     await waitForMobileChromeFrame(page);
-    await releaseMobileChromeFocus(page);
+    await beginReaderPointerInteraction(documentViewport);
     await expectMobileChrome(page, { phase: "Visible", progress: 0 });
     await setScrollTopAndExpectTracking(documentViewport, 140, {
       phase: "Tracking",
@@ -853,13 +963,14 @@ test.describe("pane chrome", () => {
     );
     await expectMobilePaneShellInvariants(page);
     const pdfViewport = activePane.getByLabel("PDF document");
+    const nextPage = activePane.getByRole("button", { name: "Next page" });
+    const paneToolbar = activePane.getByTestId("pane-shell-chrome");
+    const firstPdfPage = activePane
+      .locator('[data-testid^="pdf-page-surface-"]')
+      .first();
     await expect(pdfViewport).toBeVisible();
-    await expect(
-      activePane.getByRole("button", { name: "Next page" }),
-    ).toBeVisible();
-    await expect(
-      activePane.locator('[data-testid^="pdf-page-surface-"]').first(),
-    ).toBeVisible({
+    await expect(nextPage).toBeVisible();
+    await expect(firstPdfPage).toBeVisible({
       timeout: 20_000,
     });
     await expect
@@ -874,7 +985,15 @@ test.describe("pane chrome", () => {
     await setScrollTop(pdfViewport, 0);
     await expectScrollTop(pdfViewport, 0);
     await waitForMobileChromeFrame(page);
-    await releaseMobileChromeFocus(page);
+    const visibleContentGeometry =
+      await readReaderContentGeometry(firstPdfPage);
+    await expect(page.getByRole("banner")).toBeFocused();
+    await expectMobileChrome(page, { phase: "Pinned", progress: 0 });
+    await paneToolbar.focus();
+    await expect(paneToolbar).toBeFocused();
+    await expectMobileChrome(page, { phase: "Pinned", progress: 0 });
+    await beginReaderPointerInteraction(pdfViewport);
+    await expect(paneToolbar).not.toBeFocused();
     await expectMobileChrome(page, { phase: "Visible", progress: 0 });
     await setScrollTopAndExpectTracking(pdfViewport, 40, {
       phase: "Tracking",
@@ -887,10 +1006,8 @@ test.describe("pane chrome", () => {
     await expectMobileChrome(page, { phase: "Hidden", progress: 1 });
     await expectScrollTop(pdfViewport, 72);
     await expectFullyRetreatedChrome(page);
-    await expectMobileScrollerOffset(
-      pdfViewport,
-      activePane.locator('[data-testid^="pdf-page-surface-"]').first(),
-    );
+    await expectReaderContentGeometry(firstPdfPage, visibleContentGeometry);
+    await expectMobileScrollerOffset(pdfViewport, firstPdfPage);
 
     await setScrollTop(pdfViewport, 0);
     await waitForMobileChromeFrame(page);
@@ -928,7 +1045,7 @@ test.describe("pane chrome", () => {
 
       await setScrollTop(viewport, 0);
       await waitForMobileChromeFrame(page);
-      await releaseMobileChromeFocus(page);
+      await beginReaderPointerInteraction(viewport);
       await expectMobileChrome(page, { phase: "Visible", progress: 0 });
       await setScrollTopAndExpectTracking(viewport, 40, {
         phase: "Tracking",
@@ -938,7 +1055,7 @@ test.describe("pane chrome", () => {
     }
   });
 
-  test("mobile PDF chrome clears a nonzero safe-area inset without moving content", async ({
+  test("mobile PDF chrome clears nonzero safe-area insets without moving content", async ({
     page,
   }, testInfo) => {
     await useMobileViewport(page);
@@ -950,8 +1067,8 @@ test.describe("pane chrome", () => {
           topMax: 24,
           left: 0,
           leftMax: 0,
-          bottom: 0,
-          bottomMax: 0,
+          bottom: 18,
+          bottomMax: 18,
           right: 0,
           rightMax: 0,
         },
@@ -979,12 +1096,17 @@ test.describe("pane chrome", () => {
         .toBeGreaterThan(72);
 
       await setScrollTop(pdfViewport, 0);
-      await releaseMobileChromeFocus(page);
+      await expectScrollTop(pdfViewport, 0);
+      await waitForMobileChromeFrame(page);
+      const visibleContentGeometry =
+        await readReaderContentGeometry(firstPdfPage);
+      await beginReaderPointerInteraction(pdfViewport);
       await setScrollTop(pdfViewport, 72);
       await waitForMobileChromeFrame(page);
       await expectMobileChrome(page, { phase: "Hidden", progress: 1 });
       await expectScrollTop(pdfViewport, 72);
       await expectFullyRetreatedChrome(page);
+      await expectReaderContentGeometry(firstPdfPage, visibleContentGeometry);
       await expectMobileScrollerOffset(pdfViewport, firstPdfPage);
     } finally {
       await cdp.send("Emulation.setSafeAreaInsetsOverride", {

@@ -1,5 +1,9 @@
 # Mobile Reader Scroll-Linked Chrome Hard Cutover
 
+> **Superseded (2026-07-28):**
+> `mobile-reader-unified-scroll-chrome-hard-cutover.md` is the sole final
+> implementation contract. This document is historical evidence only.
+
 Status: IMPLEMENTED IN WORKTREE; focused automated and physical Android proof
 complete; type: hard cutover; date: 2026-07-26
 

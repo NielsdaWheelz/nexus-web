@@ -104,11 +104,13 @@ publish snapshots from their actual scrollports; window, workspace, and
 non-reader pane scroll never participate.
 
 The provider reduces reader scroll to one normalized collapse progress. The app
-top bar and optional reader toolbar consume that progress in the same animation
-frame through compositor-only transforms. Content offset and reader
-`scrollTop` remain fixed. Downward scroll collapses, upward scroll reveals after
-the direction dead zone, and idle partial progress settles to the nearest
-endpoint.
+top bar, optional active reader toolbar, and inner Nexus control consume that
+progress in the same animation frame through compositor-only transforms. Top
+chrome retreats upward and Nexus retreats downward. The untransformed outer
+Nexus wrapper remains the fixed-obstruction measurement surface, so content
+clearance, content offset, and reader `scrollTop` remain fixed. Downward scroll
+collapses, upward scroll reveals after the direction dead zone, and idle partial
+progress settles to the nearest endpoint.
 
 The provider resets fully shown when the active `(paneId, routeKey)` changes or
 a reader source mounts, preventing reader motion from leaking into another
@@ -116,10 +118,12 @@ route.
 
 The provider pins chrome fully visible at the document top, for reduced motion,
 and while reader restore, selection, navigation, secondary-surface, library
-picker, menu, or chrome-focus locks are held. `MobilePaneBar` and the pane
-toolbar register explicitly as `AppBar` and `PaneToolbar`; only those two
-presentation roles consume the shared progress. Only the fully hidden endpoint removes
-chrome controls from focus and the accessibility tree. Desktop chrome is
+picker, menu, or chrome-focus locks are held. Enabled mobile surfaces register
+as `AppBar`, `PaneToolbar`, or `NexusControl`; only the active pane toolbar
+registers. Registration centrally owns chrome-focus locks. Primary reader
+pointer intent releases stale registered-chrome focus before scrolling. Only
+the fully hidden endpoint removes control clusters from focus and the
+accessibility tree; pane identity remains represented. Desktop chrome is
 unaffected.
 
 ## Mobile Secondary Panes

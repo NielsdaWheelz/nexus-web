@@ -8,7 +8,7 @@ import type {
   VisibleForkRow,
 } from "@/lib/conversations/forkTree";
 import type { ForkOption } from "@/lib/conversations/types";
-import { treeItemDomId, toForkOption } from "./forkNodeRow";
+import { treeItemDomId, toForkOption } from "./forkNodePresentation";
 
 const ROW_CONTROL_SELECTOR = [
   "button",

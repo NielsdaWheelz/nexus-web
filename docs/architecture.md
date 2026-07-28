@@ -1358,10 +1358,11 @@ they open over Resume and never become panes.
   `usePanePrimaryChrome`; `usePaneRuntime().isActive` exposes the
   host's pane-activity capability, which reader progress uses for
   adoption-versus-handoff arbitration. `MobileViewportProvider` composes safe
-  area, the
-  measured Nexus control and player, and the `MobileSheet` keyboard inset into
-  one shared mobile content-clearance value. Every eligible resource pane
-  publishes one
+  area, the measured outer Nexus wrapper and player, and the `MobileSheet`
+  keyboard inset into one shared mobile content-clearance value.
+  `MobileChromeProvider` projects reader collapse to AppBar, the active
+  PaneToolbar, and the inner NexusControl without moving that wrapper. Every
+  eligible resource pane publishes one
   `resource-inspector` secondary group through `useResourceInspector`: Media
   (`Contents | Evidence | Dossier`), Conversation
   (`Context | Forks | Dossier`), Library

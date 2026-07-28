@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { useEffect, useRef, type MutableRefObject } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  type MutableRefObject,
+} from "react";
 import {
   MobileChromeProvider,
   useMobileChrome,
@@ -21,10 +26,25 @@ const snapshot = (scrollTop: number) => ({
   clientHeight: 500,
 });
 
-function RegisteredSurface({ role }: { role: MobileChromeSurfaceRole }) {
+function RegisteredSurface({
+  role,
+  focusOnMount = false,
+}: {
+  role: MobileChromeSurfaceRole;
+  focusOnMount?: boolean;
+}) {
   const ref = useRef<HTMLDivElement>(null);
-  useMobileChromeSurface(ref, role);
-  return <div ref={ref} data-testid={role} />;
+  const firstControlRef = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    if (focusOnMount) firstControlRef.current?.focus();
+  }, [focusOnMount]);
+  useMobileChromeSurface(ref, role, true);
+  return (
+    <div ref={ref} data-testid={role}>
+      <button ref={firstControlRef} type="button" data-testid={`${role}-first`} />
+      <button type="button" data-testid={`${role}-second`} />
+    </div>
+  );
 }
 
 function paneChrome(paneId: string, routeKey = `${paneId}:route-a`) {
@@ -64,11 +84,15 @@ function Surface({
   renders,
   startOnMount = false,
   updateOnMount = false,
+  focusAppBarOnMount = false,
+  showAppBar = true,
 }: {
   reversed?: boolean;
   renders?: MutableRefObject<number>;
   startOnMount?: boolean;
   updateOnMount?: boolean;
+  focusAppBarOnMount?: boolean;
+  showAppBar?: boolean;
 }) {
   if (renders) renders.current += 1;
   const {
@@ -76,6 +100,7 @@ function Surface({
     startReaderScroll,
     updateReaderScroll,
     acquireVisibleLock,
+    beginReaderPointerInteraction,
     finishSettle,
     setPaneChrome,
   } = useMobileChrome();
@@ -83,14 +108,21 @@ function Surface({
   const releaseSecondRef = useRef<(() => void) | null>(null);
   const surfaces = (
     <>
-      <RegisteredSurface role="AppBar" />
+      {showAppBar ? (
+        <RegisteredSurface
+          role="AppBar"
+          focusOnMount={focusAppBarOnMount}
+        />
+      ) : null}
       <RegisteredSurface role="PaneToolbar" />
+      <RegisteredSurface role="NexusControl" />
     </>
   );
   const reversedSurfaces = (
     <>
       <RegisteredSurface role="PaneToolbar" />
-      <RegisteredSurface role="AppBar" />
+      <RegisteredSurface role="NexusControl" />
+      {showAppBar ? <RegisteredSurface role="AppBar" /> : null}
     </>
   );
   return (
@@ -173,6 +205,11 @@ function Surface({
         onClick={() => releaseSecondRef.current?.()}
       />
       <button type="button" data-testid="finish" onClick={finishSettle} />
+      <button
+        type="button"
+        data-testid="reader-pointer"
+        onClick={beginReaderPointerInteraction}
+      />
     </div>
   );
 }
@@ -183,6 +220,8 @@ function renderSurface(
     renders?: MutableRefObject<number>;
     startOnMount?: boolean;
     updateOnMount?: boolean;
+    focusAppBarOnMount?: boolean;
+    showAppBar?: boolean;
   } = {},
 ) {
   return render(
@@ -251,7 +290,7 @@ describe("MobileChromeProvider", () => {
       .style.getPropertyValue("--mobile-chrome-collapse");
   }
 
-  it("initializes both surfaces together and coalesces tracking writes", () => {
+  it("initializes all three surfaces together and coalesces tracking writes", () => {
     renderSurface();
     click("start");
     flushFrame();
@@ -262,6 +301,123 @@ describe("MobileChromeProvider", () => {
     flushFrame();
     expect(progress("AppBar")).toBe("0.375");
     expect(progress("PaneToolbar")).toBe("0.375");
+    expect(progress("NexusControl")).toBe("0.375");
+  });
+
+  it("defects when more than one enabled surface claims a role", () => {
+    function DuplicateAppBar() {
+      return (
+        <>
+          <RegisteredSurface role="AppBar" />
+          <RegisteredSurface role="AppBar" />
+        </>
+      );
+    }
+
+    expect(() =>
+      render(
+        <MobileChromeProvider>
+          <DuplicateAppBar />
+        </MobileChromeProvider>,
+      ),
+    ).toThrow("Mobile chrome already has an enabled AppBar surface");
+  });
+
+  it("pins and releases chrome from registered native focus lifecycle", () => {
+    renderSurface();
+    const first = screen.getByTestId("AppBar-first");
+    const second = screen.getByTestId("AppBar-second");
+
+    act(() => first.focus());
+    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
+    act(() => second.focus());
+    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
+    act(() => screen.getByTestId("reader-pointer").focus());
+
+    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
+  });
+
+  it("reconciles chrome focus that exists when a surface registers", () => {
+    renderSurface({ focusAppBarOnMount: true });
+
+    expect(screen.getByTestId("AppBar-first")).toHaveFocus();
+    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
+  });
+
+  it("reconciles existing chrome focus when mobile mode enters", () => {
+    viewport.mobile = false;
+    const view = renderSurface();
+    act(() => screen.getByTestId("AppBar-first").focus());
+    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
+
+    viewport.mobile = true;
+    view.rerender(
+      <MobileChromeProvider>
+        <Surface />
+      </MobileChromeProvider>,
+    );
+
+    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
+  });
+
+  it("hands primary reader pointer intent to the document from registered chrome", () => {
+    renderSurface();
+    const focusedControl = screen.getByTestId("NexusControl-first");
+    act(() => focusedControl.focus());
+    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
+
+    click("reader-pointer");
+
+    expect(focusedControl).not.toHaveFocus();
+    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
+  });
+
+  it("does not blur focus outside registered chrome", () => {
+    renderSurface();
+    const readerPointer = screen.getByTestId("reader-pointer");
+    act(() => readerPointer.focus());
+
+    click("reader-pointer");
+
+    expect(readerPointer).toHaveFocus();
+  });
+
+  it("does not hand focus off outside mobile mode", () => {
+    viewport.mobile = false;
+    renderSurface();
+    const focusedControl = screen.getByTestId("AppBar-first");
+    act(() => focusedControl.focus());
+
+    click("reader-pointer");
+
+    expect(focusedControl).toHaveFocus();
+  });
+
+  it("keeps non-focus locks while reader pointer intent releases chrome focus", () => {
+    renderSurface();
+    click("lock-first");
+    act(() => screen.getByTestId("NexusControl-first").focus());
+    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
+
+    click("reader-pointer");
+
+    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
+    click("release-first");
+    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
+  });
+
+  it("releases its owned focus lock when a surface unregisters", () => {
+    const view = renderSurface();
+    act(() => screen.getByTestId("AppBar-first").focus());
+    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
+
+    view.rerender(
+      <MobileChromeProvider>
+        <Surface showAppBar={false} />
+      </MobileChromeProvider>,
+    );
+
+    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
   });
 
   it("does not erase a child source baseline while registering initial motion preference", () => {
@@ -371,10 +527,22 @@ describe("MobileChromeProvider", () => {
       cancelledBeforeUnmount,
     );
     expect(clearTimer.mock.calls.length).toBeGreaterThan(clearedBeforeUnmount);
+    expect(frames.size).toBe(0);
     expect(removeMediaListener).toHaveBeenCalledWith(
       "change",
       expect.any(Function),
     );
+  });
+
+  it("cancels a focus-lock release write when the provider unmounts", () => {
+    const view = renderSurface();
+    act(() => screen.getByTestId("AppBar-first").focus());
+    flushFrame();
+    expect(frames.size).toBe(0);
+
+    view.unmount();
+
+    expect(frames.size).toBe(0);
   });
 
   it("lets source start establish the final baseline after a pane change", () => {

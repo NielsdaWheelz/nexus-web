@@ -300,11 +300,17 @@
   opacity: 0.55;
 }
 
-.nexusButton {
+.nexusWrapper {
   position: fixed;
   z-index: var(--z-overlay);
   right: max(var(--space-4), env(safe-area-inset-right));
   bottom: calc(var(--mobile-nexus-bottom-offset, env(safe-area-inset-bottom)) + var(--space-3));
+  display: inline-flex;
+  pointer-events: none;
+}
+
+.nexusButton {
+  --mobile-chrome-collapse: 0;
   display: inline-flex;
   min-width: 56px;
   min-height: 56px;
@@ -318,6 +324,18 @@
   color: var(--ink-on-accent);
   box-shadow: var(--shadow-4);
   font-weight: var(--weight-semibold);
+  pointer-events: auto;
+  transform: translateY(
+    calc(
+      var(--mobile-chrome-collapse) *
+        (100% + var(--mobile-nexus-bottom-offset, env(safe-area-inset-bottom)) + var(--space-3))
+    )
+  );
+  will-change: transform;
+}
+
+.nexusButton[data-mobile-chrome-phase="Settling"] {
+  transition: --mobile-chrome-collapse var(--duration-fast) var(--ease-glide);
 }
 
 @media (hover: hover) {
