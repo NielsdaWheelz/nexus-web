@@ -43,6 +43,7 @@ import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
+import MobilePaneBar from "@/components/appnav/MobilePaneBar";
 
 const LIBRARY_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const MEDIA_ID_1 = "11111111-1111-4111-8111-111111111111";
@@ -619,6 +620,10 @@ function WorkspaceHost() {
   );
 }
 
+function TestAppNav() {
+  return hostMocks.isMobile ? <MobilePaneBar /> : null;
+}
+
 function setPaneHref(
   href: string,
   history: WorkspacePaneHistory = { back: [], forward: [] },
@@ -841,6 +846,72 @@ describe("WorkspaceHost pane route lifecycle", () => {
     expect(scrollport.scrollTop).toBe(180);
   });
 
+  it.each([
+    [
+      "without a PaneToolbar",
+      {
+        menu: {
+          kind: "FlatMenu" as const,
+          actions: [
+            {
+              kind: "command" as const,
+              id: "reader-option",
+              label: "Reader option",
+              onSelect: () => {},
+            },
+          ],
+        },
+      },
+    ],
+    [
+      "with a PaneToolbar",
+      { toolbar: <button type="button">PDF reader controls</button> },
+    ],
+  ])(
+    "normal mobile activation %s focuses the registered AppBar",
+    async (_case, publication) => {
+      hostMocks.isMobile = true;
+      hostMocks.useActualPaneShell = true;
+      hostMocks.primaryChromePublicationByPaneId.set("pane-1", publication);
+      render(
+        <MobileChromeProvider>
+          <MobilePaneBar />
+          <WorkspaceHost />
+        </MobileChromeProvider>,
+      );
+
+      await waitFor(() => expect(screen.getByRole("banner")).toHaveFocus());
+      expect(screen.getByTestId("pane-shell-chrome")).toHaveAttribute(
+        "data-mobile-chrome-phase",
+        "Pinned",
+      );
+    },
+  );
+
+  it("restores active PaneShell focus when mobile mode exits", async () => {
+    hostMocks.isMobile = true;
+    hostMocks.useActualPaneShell = true;
+    const view = render(
+      <MobileChromeProvider>
+        <TestAppNav />
+        <WorkspaceHost />
+      </MobileChromeProvider>,
+    );
+    await waitFor(() => expect(screen.getByRole("banner")).toHaveFocus());
+
+    hostMocks.isMobile = false;
+    view.rerender(
+      <MobileChromeProvider>
+        <TestAppNav />
+        <WorkspaceHost />
+      </MobileChromeProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("pane-shell-chrome")).toHaveFocus(),
+    );
+  });
+
   it("registers only focused active pane chrome when desktop panes become mobile", async () => {
     setTwoPaneHrefs(MEDIA_HREF_1, MEDIA_HREF_2);
     hostMocks.useActualPaneShell = true;
@@ -889,6 +960,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
         "Pinned",
       );
     });
+    expect(activeChrome).toHaveFocus();
     expect(
       screen.queryByRole("button", { name: "First reader controls" }),
     ).toBeNull();

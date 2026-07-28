@@ -1312,6 +1312,8 @@ describe("Launcher — mobile Switchboard Find", () => {
     await waitFor(() => {
       expect(nexus).toHaveStyle("--mobile-chrome-collapse: 0.375");
     });
+    expect(nexus).not.toHaveAttribute("aria-hidden");
+    expect(nexus).not.toHaveAttribute("inert");
 
     fireEvent.click(screen.getByTestId("nexus-scroll-hidden"));
     await waitFor(() => {
@@ -1366,8 +1368,21 @@ describe("Launcher — mobile Switchboard Find", () => {
         "Visible",
       ),
     );
+    fireEvent.click(screen.getByTestId("nexus-scroll-partial"));
+    await waitFor(() => {
+      expect(screen.getByTestId("nexus-motion-phase")).toHaveTextContent(
+        "Tracking",
+      );
+      expect(nexus).toHaveStyle("--mobile-chrome-collapse: 0.375");
+    });
+    expect(
+      screen.getByRole("button", { name: "Open Nexus, 1 tab" }),
+    ).toBe(nexus);
     await userEvent.click(nexus);
-    await screen.findByRole("dialog", { name: "Nexus" });
+    expect(await screen.findByRole("dialog", { name: "Nexus" })).toHaveAttribute(
+      "id",
+      "nexus-switchboard",
+    );
     expect(nexus).toHaveAttribute("aria-hidden", "true");
     expect(nexus).toHaveAttribute("inert");
   });

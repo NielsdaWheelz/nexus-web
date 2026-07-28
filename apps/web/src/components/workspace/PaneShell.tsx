@@ -574,7 +574,9 @@ export default function PaneShell({
           ref={chromeRef}
           className={styles.chrome}
           data-testid="pane-shell-chrome"
-          data-pane-chrome-focus="true"
+          data-pane-chrome-focus={
+            !isMobile || effectiveToolbar ? "true" : undefined
+          }
           data-mobile-chrome-phase={motionPhase.kind}
           tabIndex={-1}
           onMouseDown={onChromeMouseDown}

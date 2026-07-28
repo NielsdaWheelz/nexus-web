@@ -5,6 +5,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -713,6 +714,7 @@ function WorkspaceHost() {
   const layoutMode = isMobile ? "mobile" : "desktop";
   const paneWrapRefById = useRef<Map<string, HTMLDivElement>>(new Map());
   const pendingPaneChromeFocusPaneIdRef = useRef<string | null>(null);
+  const previousIsMobileRef = useRef(isMobile);
   const secondaryReturnFocusByPaneIdRef = useRef<Map<string, HTMLElement>>(
     new Map(),
   );
@@ -1281,26 +1283,46 @@ function WorkspaceHost() {
   const renderedPanes = isMobile ? (activePane ? [activePane] : []) : panes;
 
   // --- Pane chrome focus management ---
-  const focusPaneChrome = useCallback((targetPaneId: string) => {
-    const paneWrap = paneWrapRefById.current.get(targetPaneId);
-    if (!paneWrap) {
-      return false;
-    }
-    const chrome = paneWrap.querySelector<HTMLElement>(
-      '[data-pane-chrome-focus="true"]',
-    );
-    if (!chrome) {
-      return false;
-    }
-    chrome.focus({ preventScroll: true });
-    pendingPaneChromeFocusPaneIdRef.current = null;
-    return true;
-  }, []);
+  const focusPaneChrome = useCallback(
+    (targetPaneId: string) => {
+      const paneWrap = paneWrapRefById.current.get(targetPaneId);
+      if (!paneWrap) {
+        return false;
+      }
+      const paneChrome = paneWrap.querySelector<HTMLElement>(
+        '[data-pane-chrome-focus="true"]',
+      );
+      const activeElement = document.activeElement;
+      if (
+        isMobile &&
+        paneChrome &&
+        activeElement instanceof HTMLElement &&
+        paneChrome.contains(activeElement)
+      ) {
+        pendingPaneChromeFocusPaneIdRef.current = null;
+        return true;
+      }
+      const chrome = isMobile
+        ? document.querySelector<HTMLElement>(
+            '[data-mobile-chrome-focus="true"]',
+          )
+        : paneChrome;
+      if (!chrome) {
+        return false;
+      }
+      chrome.focus({ preventScroll: true });
+      pendingPaneChromeFocusPaneIdRef.current = null;
+      return true;
+    },
+    [isMobile],
+  );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const previousIsMobile = previousIsMobileRef.current;
+    previousIsMobileRef.current = isMobile;
     const targetPaneId =
       pendingPaneChromeFocusPaneIdRef.current ??
-      (isMobile ? state.activePrimaryPaneId : null);
+      (isMobile || previousIsMobile ? state.activePrimaryPaneId : null);
     if (!targetPaneId) {
       return;
     }

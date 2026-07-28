@@ -1,7 +1,19 @@
 # Mobile Reader Unified Scroll Chrome Hard Cutover
 
-Status: IMPLEMENTED IN WORKTREE; focused automated proof complete; real-stack
-E2E and primary Android smoke pending; type: hard cutover; date: 2026-07-28
+Status: IMPLEMENTED AND VERIFIED (owner-approved runtime-gate waiver); type:
+hard cutover; date: 2026-07-28
+
+## Verification evidence
+
+- Pure reducer: 11/11 passed.
+- Focused composed browser proof: 213/213 passed.
+- Web typecheck, scoped ESLint, CSS-token lint, E2E TypeScript, residue gates,
+  and `git diff --check`: passed.
+- Android: physical Samsung SM-S906W, Android 16/API 36; focused
+  `statusBarHasDarkNativeProtectionWithLightIcons` instrumentation: 1/1 passed.
+- Exact production E2E and physical real-reader manual smoke: waived by the
+  owner on 2026-07-28 because Docker's external data disk was unavailable;
+  neither waived gate is represented as a pass.
 
 ## Decision and authority
 
