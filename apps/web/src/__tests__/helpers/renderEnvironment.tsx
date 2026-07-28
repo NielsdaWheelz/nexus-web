@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { RenderEnvironmentProvider } from "@/lib/renderEnvironment/provider";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
+import { MobileViewportProvider } from "@/lib/mobileViewport/MobileViewportProvider";
 
 export const DEFAULT_RENDER_ENVIRONMENT: RenderEnvironment = {
   androidShell: false,
@@ -18,7 +19,7 @@ export function withRenderEnvironment(
 ) {
   return (
     <RenderEnvironmentProvider value={{ ...DEFAULT_RENDER_ENVIRONMENT, ...overrides }}>
-      {children}
+      <MobileViewportProvider>{children}</MobileViewportProvider>
     </RenderEnvironmentProvider>
   );
 }

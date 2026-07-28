@@ -154,12 +154,12 @@ test("@real-media owner can refresh and delete real-media documents", async ({
     );
 
     await gotoRealMediaSinglePane(page, `/media/${deletedMediaId}`);
-    await openActivePaneOptions(page, /Delete document/);
+    await openActivePaneOptions(page, /Remove media/);
     page.once("dialog", async (dialog) => {
       expect(dialog.message()).toContain("Delete");
       await dialog.accept();
     });
-    await page.getByRole("menuitem", { name: /Delete document/ }).click();
+    await page.getByRole("menuitem", { name: /Remove media/ }).click();
     await expect(page).toHaveURL(/\/libraries/, { timeout: 15_000 });
     const deletedMedia = await page.request.get(`/api/media/${deletedMediaId}`);
     deletedMediaStatus = deletedMedia.status();

@@ -61,9 +61,7 @@ def _attach_link_note(db: Session, user_id: UUID, note: ResourceRef, *endpoints:
         )
 
 
-def _dossier_artifact_with_revision(
-    db: Session, user_id: UUID
-) -> tuple[ResourceRef, ResourceRef]:
+def _dossier_artifact_with_revision(db: Session, user_id: UUID) -> tuple[ResourceRef, ResourceRef]:
     library_id = create_test_library(db, user_id, "Connection Intelligence")
     artifact_id, revision_id = create_test_library_artifact(
         db,

@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
-import HoverPreview, { HOVER_PREVIEW_DELAY_MS } from "@/components/ui/HoverPreview";
+import HoverPreview, {
+  HOVER_PREVIEW_DELAY_MS,
+} from "@/components/ui/HoverPreview";
 import { truncateText } from "@/lib/conversations/display";
 import type { ReaderCitationPreview } from "@/lib/conversations/readerCitation";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
@@ -41,7 +43,8 @@ export default function ReaderCitation({
   const hoverTimerRef = useRef<number | null>(null);
   const citationRef = useRef<HTMLElement | null>(null);
   const activationTarget = useMemo(
-    () => (target && href && target.href !== href ? { ...target, href } : target),
+    () =>
+      target && href && target.href !== href ? { ...target, href } : target,
     [href, target],
   );
 
@@ -75,7 +78,8 @@ export default function ReaderCitation({
 
   const copyText = preview.copyText;
   const hasPreviewActions = Boolean(activationTarget || href || copyText);
-  const externalHref = href?.startsWith("http://") || href?.startsWith("https://");
+  const externalHref =
+    href?.startsWith("http://") || href?.startsWith("https://");
 
   const previewBody =
     preview.title ||
@@ -84,9 +88,15 @@ export default function ReaderCitation({
     (preview.meta && preview.meta.length > 0) ||
     hasPreviewActions ? (
       <>
-        {preview.title ? <div className={styles.previewTitle}>{truncateText(preview.title, 96)}</div> : null}
+        {preview.title ? (
+          <div className={styles.previewTitle}>
+            {truncateText(preview.title, 96)}
+          </div>
+        ) : null}
         {preview.summary ? (
-          <div className={styles.previewSummary}>{truncateText(preview.summary, 140)}</div>
+          <div className={styles.previewSummary}>
+            {truncateText(preview.summary, 140)}
+          </div>
         ) : null}
         {preview.excerpt ? (
           <div className={styles.previewExcerpt}>{preview.excerpt}</div>
@@ -181,15 +191,16 @@ export default function ReaderCitation({
           onPointerLeave={cancelHoverTimer}
           onFocus={openWithDelay}
           onClick={(event) => {
-            const handled = activateTargetLink({
+            onActivate(activation, null, event);
+            if (event.defaultPrevented) return;
+            activateTargetLink({
               event,
               runtime: paneRuntime,
               href,
-              secondaryActivation: secondaryActivationForResource(activation) ?? undefined,
+              secondaryActivation:
+                secondaryActivationForResource(activation) ?? undefined,
               sourceAnchor: event.currentTarget,
             });
-            if (handled === "unhandled") return;
-            onActivate(activation, null, event);
           }}
           data-workspace-rich-target="true"
         >
@@ -238,16 +249,17 @@ export default function ReaderCitation({
           onPointerLeave={cancelHoverTimer}
           onFocus={openWithDelay}
           onClick={(event) => {
-            const handled = activateTargetLink({
+            onActivate(activation, activationTarget, event);
+            if (event.defaultPrevented) return;
+            activateTargetLink({
               event,
               runtime: paneRuntime,
               href: targetHref,
               labelHint: activationTarget.label,
-              secondaryActivation: secondaryActivationForResource(activation) ?? undefined,
+              secondaryActivation:
+                secondaryActivationForResource(activation) ?? undefined,
               sourceAnchor: event.currentTarget,
             });
-            if (handled === "unhandled") return;
-            onActivate(activation, activationTarget, event);
           }}
           data-workspace-rich-target="true"
         >

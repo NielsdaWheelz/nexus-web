@@ -45,9 +45,9 @@ import {
 import type { SSEContextRefAddedEvent } from "@/lib/api/sse/events";
 import { messageUpdateReducer } from "@/lib/conversations/messageUpdateReducer";
 import {
-  decodeMessagesReaderSelection,
-  decodeRunDataReaderSelection,
-  decodeTreeReaderSelection,
+  decodeChatRunData,
+  decodeConversationMessages,
+  decodeConversationTree,
 } from "@/lib/conversations/messageWire";
 import {
   toFeedback,
@@ -318,7 +318,7 @@ export function useConversation(
             (visibleMessageIds.has(runData.user_message.id) ||
               visibleMessageIds.has(runData.assistant_message.id)),
         )
-        .map(decodeRunDataReaderSelection);
+        .map(decodeChatRunData);
     },
     [],
   );
@@ -387,7 +387,7 @@ export function useConversation(
       try {
         const response = await loadConversationTree(id);
         if (conversationIdRef.current !== id) return false;
-        applyConversationTree(decodeTreeReaderSelection(response.data));
+        applyConversationTree(decodeConversationTree(response.data));
         setError(null);
         return true;
       } catch (err) {
@@ -430,7 +430,7 @@ export function useConversation(
         return {
           kind: "branching",
           conversationId: id,
-          tree: decodeTreeReaderSelection(response.data),
+          tree: decodeConversationTree(response.data),
           activeRuns,
         };
       }
@@ -445,7 +445,7 @@ export function useConversation(
       return {
         kind: "linear",
         conversationId: id,
-        messages: decodeMessagesReaderSelection(history.data),
+        messages: decodeConversationMessages(history.data),
         olderCursor: history.page.before_cursor ?? null,
       };
     },
@@ -616,7 +616,7 @@ export function useConversation(
       scrollRef.current?.captureAnchor(null);
       dispatchMessages({
         type: "prepend_older",
-        messages: decodeMessagesReaderSelection(response.data),
+        messages: decodeConversationMessages(response.data),
       });
       setOlderCursor(response.page.before_cursor ?? null);
     } catch (err) {
@@ -687,7 +687,7 @@ export function useConversation(
             headers: { "Idempotency-Key": createRandomId() },
           },
         );
-        onChatRunCreated(decodeRunDataReaderSelection(response.data));
+        onChatRunCreated(decodeChatRunData(response.data));
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
         setError(toFeedback(err, { fallback: "Failed to run again" }));
@@ -774,7 +774,7 @@ export function useConversation(
         );
         if (activePathSwitchSeqRef.current !== switchSeq) return false;
         scrollRef.current?.captureAnchor(anchorMessageId);
-        applyConversationTree(decodeTreeReaderSelection(response.data));
+        applyConversationTree(decodeConversationTree(response.data));
         void tailVisibleActiveRuns(
           messageIdsForPath(
             response.data.selected_path,

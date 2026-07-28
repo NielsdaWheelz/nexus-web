@@ -12,6 +12,7 @@ from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.errors import NotFoundError
 from nexus.services.contributor_credits import credit_target_filter_exists_sql
 from nexus.services.locator_resolver import locator_from_resolution, resolve_evidence_span
+from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.search.constants import (
     CONTENT_CHUNK_ANN_CANDIDATE_MULTIPLIER,
     CONTENT_CHUNK_MIN_ANN_CANDIDATES,
@@ -457,6 +458,7 @@ def _search_evidence_spans(
                 locator=locator,
                 source=_build_search_source(row[1], row[4], row[5], row[7], row[6]),
                 score=_build_search_score(row[8]),
+                owner_ref=ResourceRef(scheme="media", id=row[1]),
             )
         )
     return results

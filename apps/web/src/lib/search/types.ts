@@ -34,6 +34,7 @@ export interface SearchSourceMetadata {
   title: string;
   contributors: ContributorCredit[];
   published_date: string | null;
+  summary_md: string | null;
 }
 
 export interface SearchBaseResult {
@@ -45,6 +46,7 @@ export interface SearchBaseResult {
   media_id: string | null;
   media_kind: string | null;
   resource_ref: string;
+  owner_resource_ref: string;
   activation: ResourceActivation;
   actionTarget: ResourceActionSubject;
   citation_target: string | null;
@@ -95,6 +97,7 @@ export interface SearchNoteBlockResult extends SearchBaseResult {
   type: "note_block";
   body_text: string;
   highlight_excerpt: string | null;
+  note_origin: "note" | "highlight_note";
   locator: RetrievalLocator;
 }
 
@@ -175,16 +178,10 @@ export type SearchApiResult =
   | SearchArtifactResult
   | SearchWebResult;
 
-export interface SearchResponseShape {
-  results: unknown[];
-  page?: {
-    next_cursor?: string | null;
-  } | null;
-}
-
 export interface SearchResultRowViewModel {
   key: string;
   resourceRef: string;
+  ownerResourceRef: string;
   activation: ResourceActivation;
   actionTarget: ResourceActionSubject;
   citationTarget: string | null;
@@ -207,6 +204,7 @@ export interface SearchResultRowViewModel {
   publicationDate: Presence<PublicationDate>;
   contributorCredits: ContributorCredit[];
   noteBody: string | null;
+  noteOrigin: "note" | "highlight_note" | null;
 }
 
 export interface SearchResultPage {

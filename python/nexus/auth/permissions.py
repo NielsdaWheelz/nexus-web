@@ -34,7 +34,7 @@ Highlight Visibility (can_read_highlight):
 
 from uuid import UUID
 
-from sqlalchemy import exists, literal, or_, select
+from sqlalchemy import ColumnExpressionArgument, exists, literal, or_, select
 from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from nexus.db.models import (
@@ -52,10 +52,12 @@ from nexus.db.models import (
 )
 from nexus.services import resource_grants
 
+MediaIdExpression = UUID | ColumnExpressionArgument[UUID | None]
+
 
 def _media_membership_path_exists(
     viewer_user_id: UUID,
-    media_id: UUID | InstrumentedAttribute[UUID],
+    media_id: MediaIdExpression,
 ):
     """Core exists() expression: a current membership reaches a physical
     library_entries row for this media in any library the viewer belongs to
@@ -73,7 +75,7 @@ def _media_membership_path_exists(
 
 def _media_readability_predicate(
     viewer_user_id: UUID,
-    media_id: UUID | InstrumentedAttribute[UUID],
+    media_id: MediaIdExpression,
     *,
     include_tearing_down: bool,
 ):
@@ -220,6 +222,17 @@ def visible_podcast_ids_cte_sql() -> str:
                           AND m.user_id = :viewer_id
         WHERE le.podcast_id IS NOT NULL
     """
+
+
+def active_podcast_subscription_exists_sql(podcast_id_expr: str = "p.id") -> str:
+    """Active-subscription predicate for an outer Podcast row. Binds ``:viewer_id``."""
+    return f"""EXISTS (
+        SELECT 1
+        FROM podcast_subscriptions ps
+        WHERE ps.podcast_id = {podcast_id_expr}
+          AND ps.user_id = :viewer_id
+          AND ps.status = 'active'
+    )"""
 
 
 def visible_content_credit_rows_sql() -> str:
@@ -369,7 +382,7 @@ def can_read_conversation(session: Session, viewer_user_id: UUID, conversation_i
 def highlight_library_intersection_exists(
     viewer_user_id: UUID,
     author_user_id_expr: UUID | InstrumentedAttribute[UUID],
-    media_id: UUID,
+    media_id: MediaIdExpression,
 ):
     """Core SQL exists expression for highlight library intersection check.
 
@@ -422,7 +435,41 @@ def highlight_visibility_sql(highlight_alias: str = "h") -> str:
     )"""
 
 
-def highlight_visibility_filter(viewer_user_id: UUID, media_id: UUID):
+def highlight_readability_sql(highlight_alias: str = "h") -> str:
+    """Complete text-SQL highlight-readability rule. Binds ``:viewer_id``."""
+    return f"""(
+        {highlight_alias}.anchor_media_id IN ({visible_media_ids_cte_sql()})
+        AND (
+            (
+                {highlight_alias}.anchor_kind = 'fragment_offsets'
+                AND EXISTS (
+                    SELECT 1
+                    FROM highlight_fragment_anchors hfa
+                    WHERE hfa.highlight_id = {highlight_alias}.id
+                )
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM highlight_fragment_anchors hfa
+                    JOIN fragments f ON f.id = hfa.fragment_id
+                    WHERE hfa.highlight_id = {highlight_alias}.id
+                      AND f.media_id != {highlight_alias}.anchor_media_id
+                )
+            )
+            OR (
+                {highlight_alias}.anchor_kind = 'pdf_page_geometry'
+                AND EXISTS (
+                    SELECT 1
+                    FROM highlight_pdf_anchors hpa
+                    WHERE hpa.highlight_id = {highlight_alias}.id
+                      AND hpa.media_id = {highlight_alias}.anchor_media_id
+                )
+            )
+        )
+        AND {highlight_visibility_sql(highlight_alias)}
+    )"""
+
+
+def highlight_visibility_filter(viewer_user_id: UUID, media_id: MediaIdExpression):
     """SQL filter expression for visible highlights in list queries.
 
     Evaluates to True when the viewer is the author, shares a library containing
@@ -448,18 +495,8 @@ def highlight_visibility_filter(viewer_user_id: UUID, media_id: UUID):
     )
 
 
-def can_read_highlight(session: Session, viewer_user_id: UUID, highlight_id: UUID) -> bool:
-    """Check if viewer can read a highlight under visibility rules.
-
-    True iff the typed anchor is valid, the viewer can read its parent media,
-    and the viewer is its author, shares the existing library-intersection path
-    with the author, or has an exact incoming/creator grant.
-
-    Returns False if highlight_id does not exist (no existence leak).
-    Returns False on irreconcilable typed-anchor state.
-
-    Evaluates the complete rule in one statement.
-    """
+def highlight_readability_filter(viewer_user_id: UUID):
+    """Complete ORM highlight-readability rule correlated to ``Highlight``."""
     fragment_anchor_exists = exists().where(
         HighlightFragmentAnchor.highlight_id == Highlight.id,
     )
@@ -476,26 +513,42 @@ def can_read_highlight(session: Session, viewer_user_id: UUID, highlight_id: UUI
         HighlightPdfAnchor.highlight_id == Highlight.id,
         HighlightPdfAnchor.media_id == Highlight.anchor_media_id,
     )
-    typed_anchor_exists = or_(
-        (Highlight.anchor_kind == "fragment_offsets")
-        & fragment_anchor_exists
-        & ~fragment_anchor_media_mismatch_exists,
-        (Highlight.anchor_kind == "pdf_page_geometry") & pdf_anchor_exists,
+    return (
+        or_(
+            (Highlight.anchor_kind == "fragment_offsets")
+            & fragment_anchor_exists
+            & ~fragment_anchor_media_mismatch_exists,
+            (Highlight.anchor_kind == "pdf_page_geometry") & pdf_anchor_exists,
+        )
+        & _media_readability_predicate(
+            viewer_user_id,
+            Highlight.anchor_media_id,
+            include_tearing_down=False,
+        )
+        & highlight_visibility_filter(
+            viewer_user_id,
+            Highlight.anchor_media_id,
+        )
     )
+
+
+def can_read_highlight(session: Session, viewer_user_id: UUID, highlight_id: UUID) -> bool:
+    """Check if viewer can read a highlight under visibility rules.
+
+    True iff the typed anchor is valid, the viewer can read its parent media,
+    and the viewer is its author, shares the existing library-intersection path
+    with the author, or has an exact incoming/creator grant.
+
+    Returns False if highlight_id does not exist (no existence leak).
+    Returns False on irreconcilable typed-anchor state.
+
+    Evaluates the complete rule in one statement.
+    """
     readable = session.scalar(
         select(
             exists().where(
                 Highlight.id == highlight_id,
-                typed_anchor_exists,
-                _media_readability_predicate(
-                    viewer_user_id,
-                    Highlight.anchor_media_id,
-                    include_tearing_down=False,
-                ),
-                highlight_visibility_filter(
-                    viewer_user_id,
-                    Highlight.anchor_media_id,
-                ),
+                highlight_readability_filter(viewer_user_id),
             )
         )
     )

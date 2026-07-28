@@ -162,10 +162,10 @@ def get_highlight_reader_target(
     highlight_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-) -> dict:
+) -> ResolvedHighlightReaderTargetResponse:
     """Resolve one authenticated highlight to its current reader target."""
-    return ok(
-        highlights_service.get_highlight_reader_target(
+    return ResolvedHighlightReaderTargetResponse(
+        data=highlights_service.get_highlight_reader_target(
             db,
             viewer_id=viewer.user_id,
             highlight_id=highlight_id,

@@ -25,8 +25,7 @@ import {
   type NavItem,
 } from "./navModel";
 import NavRail from "./NavRail";
-import NavSheet from "./NavSheet";
-import NavTopBar from "./NavTopBar";
+import MobilePaneBar from "./MobilePaneBar";
 
 const COLLAPSE_KEY = "nexus.nav.collapsed";
 
@@ -49,7 +48,6 @@ export default function AppNav() {
   const { state, activateWorkspaceTarget } = useWorkspaceStore();
 
   const [collapsed, setCollapsed] = useState(false);
-  const [sheetOpen, setSheetOpen] = useState(false);
   const commandCombo =
     useKeybinding("open-launcher") ?? DEFAULT_KEYBINDINGS["open-launcher"];
   const commandHint = useKeybindingLabel("open-launcher") ?? commandCombo;
@@ -64,8 +62,6 @@ export default function AppNav() {
       return next;
     });
   }, []);
-  const closeSheet = useCallback(() => setSheetOpen(false), []);
-
   const primaryPanes = useMemo(() => getWorkspacePrimaryPanes(state), [state]);
   const activePane = useMemo(
     () => primaryPanes.find((p) => p.id === state.activePrimaryPaneId) ?? null,
@@ -124,30 +120,7 @@ export default function AppNav() {
   );
 
   if (isMobile) {
-    return (
-      <>
-        <NavTopBar
-          onOpenSheet={() => setSheetOpen(true)}
-          onOpenCommand={openCommand}
-          onOpenAdd={openAdd}
-          paneCount={primaryPanes.length}
-        />
-        <NavSheet
-          open={sheetOpen}
-          onClose={closeSheet}
-          items={NAV_ITEMS}
-          home={NAV_HOME_ITEM}
-          activeId={activeId}
-          activeHref={activePane?.currentVisit.href ?? null}
-          account={NAV_ACCOUNT_ITEM}
-          settingsActive={settingsActive}
-          commandHint={commandHint}
-          onOpenCommand={openCommand}
-          onOpenAdd={openAdd}
-          onNavigate={onNavigate}
-        />
-      </>
-    );
+    return <MobilePaneBar />;
   }
 
   return (

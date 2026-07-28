@@ -63,19 +63,16 @@ class TestYoutubeTranscriptBoundary:
             f"expected E_TRANSCRIPT_UNAVAILABLE for empty video id, got {result}"
         )
 
-    def test_missing_dependency_maps_to_transcription_failed(self, monkeypatch):
+    def test_missing_dependency_defects(self, monkeypatch):
         monkeypatch.setitem(
             sys.modules, "youtube_transcript_api", types.ModuleType("youtube_transcript_api")
         )
 
-        result = fetch_youtube_transcript("dQw4w9WgXcQ")
-
-        assert result["status"] == "failed", (
-            f"expected failed status when provider class is missing, got {result}"
-        )
-        assert result["error_code"] == "E_TRANSCRIPTION_FAILED", (
-            f"expected E_TRANSCRIPTION_FAILED when provider class is missing, got {result}"
-        )
+        with pytest.raises(
+            RuntimeError,
+            match="YouTube transcript dependency is unavailable",
+        ):
+            fetch_youtube_transcript("dQw4w9WgXcQ")
 
     def test_known_unavailable_provider_error_maps_to_transcript_unavailable(self, monkeypatch):
         class NoTranscriptFound(Exception):
@@ -94,7 +91,7 @@ class TestYoutubeTranscriptBoundary:
             f"expected E_TRANSCRIPT_UNAVAILABLE for unavailable transcript, got {result}"
         )
 
-    def test_timeout_provider_error_maps_to_transcription_timeout(self, monkeypatch):
+    def test_timeout_provider_error_propagates(self, monkeypatch):
         class ProviderTimeout(Exception):
             pass
 
@@ -102,14 +99,8 @@ class TestYoutubeTranscriptBoundary:
             raise ProviderTimeout("timeout")
 
         _install_fake_provider(monkeypatch, _raise_timeout)
-        result = fetch_youtube_transcript("dQw4w9WgXcQ")
-
-        assert result["status"] == "failed", (
-            f"expected failed status for provider timeout, got {result}"
-        )
-        assert result["error_code"] == "E_TRANSCRIPTION_TIMEOUT", (
-            f"expected E_TRANSCRIPTION_TIMEOUT for provider timeout, got {result}"
-        )
+        with pytest.raises(ProviderTimeout, match="timeout"):
+            fetch_youtube_transcript("dQw4w9WgXcQ")
 
     def test_provider_http_client_uses_configured_timeout(self, monkeypatch):
         monkeypatch.setenv("YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS", "12.5")
@@ -172,42 +163,43 @@ class TestYoutubeTranscriptBoundary:
             "RequestBlocked",
             "IpBlocked",
             "PoTokenRequired",
-            "InvalidVideoId",
-            "VideoUnplayable",
         ],
     )
-    def test_new_unavailable_provider_errors_map_to_transcript_unavailable(
-        self, monkeypatch, error_class_name: str
-    ):
+    def test_provider_dependency_errors_propagate(self, monkeypatch, error_class_name: str):
         provider_error = type(error_class_name, (Exception,), {})
 
         def _raise_blocked(_video_id: str):
             raise provider_error("blocked")
 
         _install_fake_provider(monkeypatch, _raise_blocked)
+        with pytest.raises(provider_error, match="blocked"):
+            fetch_youtube_transcript("dQw4w9WgXcQ")
+
+    @pytest.mark.parametrize("error_class_name", ["InvalidVideoId", "VideoUnplayable"])
+    def test_terminal_video_errors_map_to_transcript_unavailable(
+        self, monkeypatch, error_class_name: str
+    ):
+        provider_error = type(error_class_name, (Exception,), {})
+
+        def _raise_unavailable(_video_id: str):
+            raise provider_error("unavailable")
+
+        _install_fake_provider(monkeypatch, _raise_unavailable)
         result = fetch_youtube_transcript("dQw4w9WgXcQ")
 
-        assert result["status"] == "failed", (
-            f"{error_class_name}: expected failed status for blocked provider request, got {result}"
-        )
-        assert result["error_code"] == "E_TRANSCRIPT_UNAVAILABLE", (
-            f"{error_class_name}: expected E_TRANSCRIPT_UNAVAILABLE for blocked provider request, "
-            f"got {result}"
-        )
+        assert result["status"] == "failed"
+        assert result["error_code"] == "E_TRANSCRIPT_UNAVAILABLE"
 
     def test_dict_segment_rows_without_provider_attributes_are_rejected(self, monkeypatch):
         def _fetch_dict_rows(_video_id: str):
             return [{"start": 0.5, "duration": 1.0, "text": "dict row snippet"}]
 
         _install_fake_provider(monkeypatch, _fetch_dict_rows)
-        result = fetch_youtube_transcript("dQw4w9WgXcQ")
-
-        assert result["status"] == "failed", (
-            f"expected failed status for dict rows without provider attributes, got {result}"
-        )
-        assert result["error_code"] == "E_TRANSCRIPT_UNAVAILABLE", (
-            f"expected E_TRANSCRIPT_UNAVAILABLE for dict rows without provider attributes, got {result}"
-        )
+        with pytest.raises(
+            RuntimeError,
+            match="YouTube transcript provider returned malformed segments",
+        ):
+            fetch_youtube_transcript("dQw4w9WgXcQ")
 
     def test_successful_fetch_normalizes_and_sorts_segments(self, monkeypatch):
         def _ok_fetch(_video_id: str):

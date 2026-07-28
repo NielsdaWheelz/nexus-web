@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
@@ -36,6 +37,7 @@ import { transcribeAudio } from "@/lib/walknotes/transcribeAudio";
 import MediaImage from "@/components/ui/MediaImage";
 import MobileSheet from "@/components/ui/MobileSheet";
 import { useWorkspaceStore } from "@/lib/workspace/store";
+import { useMobileViewport } from "@/lib/mobileViewport/MobileViewportProvider";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import WalknoteReviewPanel from "@/components/walknotes/WalknoteReviewPanel";
 import Button from "@/components/ui/Button";
@@ -210,6 +212,7 @@ function nextPreviewText(preview: ReturnType<typeof useGlobalPlayer>["nextPrevie
 
 export default function GlobalPlayerFooter() {
   const workspace = useWorkspaceStore();
+  const mobileViewport = useMobileViewport();
   const activateMediaTarget = useCallback(
     (event: ReactMouseEvent<HTMLAnchorElement>, href: string) => {
       activateTargetLink({
@@ -236,6 +239,7 @@ export default function GlobalPlayerFooter() {
   const [walknoteReviewOpen, setWalknoteReviewOpen] = useState(false);
   const [nowPlaying, setNowPlaying] = useState("");
   const morePopoverRef = useRef<HTMLDivElement>(null);
+  const footerRef = useRef<HTMLElement>(null);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const miniExpandButtonRef = useRef<HTMLButtonElement>(null);
   const markButtonDesktopRef = useRef<HTMLButtonElement>(null);
@@ -269,6 +273,14 @@ export default function GlobalPlayerFooter() {
   const retryPlayback = state.kind === "PlaybackFailed" ? state.retry : () => {};
   // Session-replacing transport is disabled while a completion is in flight/failed.
   const transportLocked = state.kind === "Completing" || state.kind === "CompletionFailed";
+
+  useLayoutEffect(() => {
+    const footer = footerRef.current;
+    if (!isMobile || descriptor === null || footer === null) {
+      return;
+    }
+    return mobileViewport.registerFixedObstruction("Player", footer);
+  }, [descriptor, isMobile, mobileViewport]);
 
   const currentTimeSeconds = presentation.positionMs / 1000;
   const durationSeconds = presentation.durationMs / 1000;
@@ -510,6 +522,7 @@ export default function GlobalPlayerFooter() {
 
   return (
     <footer
+      ref={footerRef}
       className={styles.footer}
       role="region"
       aria-label="Media player"

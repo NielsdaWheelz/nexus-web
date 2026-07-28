@@ -2,8 +2,9 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { ArrowLeft, FileText, Link, Plus, Upload, X } from "lucide-react";
-import LibraryDestinationDisclosure from "@/components/LibraryDestinationDisclosure";
-import LibraryEntryPanel from "@/components/libraries/LibraryEntryPanel";
+import LibraryChooserSurface from "@/components/libraries/LibraryChooserSurface";
+import LibraryDestinationField from "@/components/libraries/LibraryDestinationField";
+import LibraryEntryEditor from "@/components/libraries/LibraryEntryEditor";
 import OpmlImportPanel from "@/components/OpmlImportPanel";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
@@ -95,6 +96,8 @@ type PlacementEditorIntent =
 interface PlacementPresentation {
   libraries: LibraryPlacementOption[];
   loading: boolean;
+  busy: boolean;
+  pendingLibraryId: string | null;
   error: ReturnType<typeof feedbackForItem>;
   retryCommand: PlacementCommand | null;
 }
@@ -326,8 +329,6 @@ export default function AddPanel({
   const [sourceExpanded, setSourceExpanded] = useState(
     state.items.length === 0 || state.urlInput.text.trim() !== "",
   );
-  const [defaultDestinationsOpen, setDefaultDestinationsOpen] = useState(false);
-  const [rowDestinationId, setRowDestinationId] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [placementEditor, setPlacementEditor] =
     useState<PlacementEditor | null>(null);
@@ -349,6 +350,8 @@ export default function AddPanel({
       return {
         libraries: [],
         loading: false,
+        busy: false,
+        pendingLibraryId: null,
         error: null,
         retryCommand: null,
       };
@@ -380,7 +383,23 @@ export default function AddPanel({
           );
     const retryCommand =
       failure?.kind === "CommandFailed" ? failure.command : null;
-    return { libraries, loading, error, retryCommand };
+    const activeWork = placements.find(
+      (placement) =>
+        placement?.kind === "Updating" || placement?.kind === "Reconciling",
+    );
+    const pendingLibraryId =
+      activeWork &&
+      (activeWork.kind === "Updating" || activeWork.kind === "Reconciling")
+        ? activeWork.command.libraryId
+        : null;
+    return {
+      libraries,
+      loading,
+      busy: activeWork !== undefined,
+      pendingLibraryId,
+      error,
+      retryCommand,
+    };
   }, [placementEditor, state.placementByMediaId]);
 
   function focusQueue() {
@@ -539,10 +558,9 @@ export default function AddPanel({
       </div>
 
       {state.items.length === 0 || drafts.length === 0 ? (
-        <LibraryDestinationDisclosure
+        <LibraryDestinationField
           label="Libraries"
-          open={defaultDestinationsOpen}
-          onOpenChange={setDefaultDestinationsOpen}
+          emptyLabel="No additional libraries"
           selected={state.defaultDestinations}
           onChange={session.setDefaultDestinations}
           interaction={
@@ -553,6 +571,7 @@ export default function AddPanel({
                 : { kind: "Enabled" }
           }
           onCreateDestination={createDestination}
+          layer="palette"
         />
       ) : null}
 
@@ -652,10 +671,9 @@ export default function AddPanel({
                 className={styles.draftToolbar}
                 aria-label="Draft filing"
               >
-                <LibraryDestinationDisclosure
+                <LibraryDestinationField
                   label={`Libraries for all ${drafts.length} ${drafts.length === 1 ? "draft" : "drafts"}`}
-                  open={defaultDestinationsOpen}
-                  onOpenChange={setDefaultDestinationsOpen}
+                  emptyLabel="No additional libraries"
                   selected={state.defaultDestinations}
                   onChange={session.setDefaultDestinations}
                   interaction={
@@ -666,6 +684,7 @@ export default function AddPanel({
                         : { kind: "Enabled" }
                   }
                   onCreateDestination={createDestination}
+                  layer="palette"
                 />
               </section>
             ) : null}
@@ -745,12 +764,9 @@ export default function AddPanel({
                       </div>
                       <div className={styles.itemActions}>
                         {item.kind === "Draft" ? (
-                          <LibraryDestinationDisclosure
+                          <LibraryDestinationField
                             label="Libraries"
-                            open={rowDestinationId === item.id}
-                            onOpenChange={(open) =>
-                              setRowDestinationId(open ? item.id : null)
-                            }
+                            emptyLabel="No additional libraries"
                             selected={item.destinations}
                             onChange={(next) =>
                               session.setItemDestinations(item.id, next)
@@ -763,6 +779,7 @@ export default function AddPanel({
                                   : { kind: "Enabled" }
                             }
                             onCreateDestination={createDestination}
+                            layer="palette"
                           />
                         ) : null}
                         {item.kind === "Rejected" ? (
@@ -986,58 +1003,69 @@ export default function AddPanel({
         ) : null}
       </Dialog>
 
-      <LibraryEntryPanel
-        open={placementEditor !== null}
-        title={placementEditor?.title ?? "Libraries"}
-        returnFocusTo={() => placementEditor?.anchorEl ?? null}
-        returnFocusFallback={() => headingRef.current}
-        libraries={placementPresentation.libraries}
-        loading={placementPresentation.loading}
-        busy={
-          state.mutation.kind === "Running" &&
-          state.mutation.operation.kind === "Placement"
-        }
-        error={placementPresentation.error}
-        emptyMessage="No eligible libraries."
-        onRetry={
-          placementPresentation.error && placementEditor
-            ? () => {
-                const retryCommand = placementPresentation.retryCommand;
-                if (retryCommand) {
-                  runSessionCommand(() =>
-                    session.runPlacement({
-                      mediaIds: placementEditor.mediaIds,
-                      command: retryCommand,
-                    }),
-                  );
-                  return;
-                }
-                runSessionCommand(() =>
-                  session.refreshPlacements(placementEditor.mediaIds),
-                );
-              }
-            : undefined
-        }
+      <LibraryChooserSurface
+        active={placementEditor !== null}
         onClose={() => setPlacementEditor(null)}
-        onAddToLibrary={(libraryId) => {
-          if (!placementEditor) return;
-          runSessionCommand(() =>
-            session.runPlacement({
-              mediaIds: placementEditor.mediaIds,
-              command: { kind: "Add", libraryId },
-            }),
-          );
-        }}
-        onRemoveFromLibrary={(libraryId) => {
-          if (!placementEditor) return;
-          runSessionCommand(() =>
-            session.runPlacement({
-              mediaIds: placementEditor.mediaIds,
-              command: { kind: "Remove", libraryId },
-            }),
-          );
-        }}
-      />
+        layer="palette"
+        anchor={() => placementEditor?.anchorEl ?? null}
+        returnFocusFallback={() => headingRef.current}
+        title={placementEditor?.title ?? "Libraries"}
+        focusKey={placementEditor?.anchorEl}
+        panelTestId="add-placement-sheet"
+      >
+        {placementEditor ? (
+          <LibraryEntryEditor
+            libraries={placementPresentation.libraries}
+            loading={placementPresentation.loading}
+            busy={placementPresentation.busy}
+            pendingLibraryId={placementPresentation.pendingLibraryId}
+            error={
+              placementPresentation.error
+                ? {
+                    message: placementPresentation.error.title,
+                    onRetry: () => {
+                      const retryCommand = placementPresentation.retryCommand;
+                      if (retryCommand) {
+                        runSessionCommand(() =>
+                          session.runPlacement({
+                            mediaIds: placementEditor.mediaIds,
+                            command: retryCommand,
+                          }),
+                        );
+                        return;
+                      }
+                      runSessionCommand(() =>
+                        session.refreshPlacements(placementEditor.mediaIds),
+                      );
+                    },
+                  }
+                : null
+            }
+            onAddToLibrary={(libraryId) =>
+              runSessionCommand(() =>
+                session.runPlacement({
+                  mediaIds: placementEditor.mediaIds,
+                  command: { kind: "Add", libraryId },
+                }),
+              )
+            }
+            onRemoveFromLibrary={(libraryId) =>
+              runSessionCommand(() =>
+                session.runPlacement({
+                  mediaIds: placementEditor.mediaIds,
+                  command: { kind: "Remove", libraryId },
+                }),
+              )
+            }
+            selectedGroupLabel="In these libraries"
+            otherGroupLabel="Other libraries"
+            searchLabel="Search libraries"
+            searchPlaceholder="Search libraries"
+            listLabel="Library options"
+            emptyInventory="No eligible libraries."
+          />
+        ) : null}
+      </LibraryChooserSurface>
     </div>
   );
 }

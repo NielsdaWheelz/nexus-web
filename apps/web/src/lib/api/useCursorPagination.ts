@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { ApiError, apiFetch, isApiError, type ApiPath } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { AsyncResource } from "@/lib/api/useResource";
@@ -71,7 +78,7 @@ export function useCursorPagination<T>(args: {
   const generationRef = useRef(0);
   useEffect(() => () => abortRef.current?.abort(), []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     generationRef.current += 1;
     abortRef.current?.abort();
     abortRef.current = null;

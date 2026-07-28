@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 
 export function usePanePublication<Publication>(input: {
   readonly publish: ((publication: Publication | null) => void) | null;
@@ -16,7 +16,10 @@ export function usePanePublication<Publication>(input: {
     readonly publication: Publication | null;
   } | null>(null);
 
-  useEffect(() => {
+  // Publications and the controls derived from them are one UI contract. Commit
+  // the owner record before paint so a control can never become actionable one
+  // frame before its host-side publication is ready to accept the command.
+  useLayoutEffect(() => {
     if (!publish) return;
     const previous = lastPublishedRef.current;
     if (
@@ -29,7 +32,7 @@ export function usePanePublication<Publication>(input: {
     lastPublishedRef.current = { publish, publication };
   }, [equals, publication, publish]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!publish) return;
     return () => {
       lastPublishedRef.current = null;

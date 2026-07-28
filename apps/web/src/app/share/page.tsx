@@ -1,6 +1,8 @@
 import { cookies, headers } from "next/headers";
 import { isAndroidShellUserAgent } from "@/lib/androidShell";
 import { readSupabaseSessionCookie } from "@/lib/auth/session-cookie";
+import { RenderEnvironmentProvider } from "@/lib/renderEnvironment/provider";
+import { loadRenderEnvironment } from "@/lib/renderEnvironment/server";
 import ShareCapture from "./ShareCapture";
 import styles from "./share.module.css";
 
@@ -19,6 +21,7 @@ export default async function SharePage({
   const isShell = isAndroidShellUserAgent(
     (await headers()).get("user-agent") ?? "",
   );
+  const renderEnvironment = await loadRenderEnvironment();
 
   let content: React.ReactNode;
   if (isEmptyShare) {
@@ -36,7 +39,8 @@ export default async function SharePage({
           <>
             <h1 className={styles.heading}>Sign in to save this</h1>
             <p className={styles.body}>
-              Open Nexus, sign in, then share again to save this to your library.
+              Open Nexus, sign in, then share again to save this to your
+              library.
             </p>
             <div className={styles.actions}>
               <a
@@ -56,7 +60,11 @@ export default async function SharePage({
 
   return (
     <div className={styles.backdrop}>
-      <main className={styles.card}>{content}</main>
+      <main className={styles.card}>
+        <RenderEnvironmentProvider value={renderEnvironment}>
+          {content}
+        </RenderEnvironmentProvider>
+      </main>
     </div>
   );
 }

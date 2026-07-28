@@ -23,6 +23,7 @@ describe("pane sizing", () => {
       runtimeLayout: {
         primaryWidth: { kind: "workspace" },
       },
+      runtimeLayoutResolved: true,
       fixedChromeWidthPx: 0,
       isMobile: false,
     });
@@ -47,6 +48,7 @@ describe("pane sizing", () => {
       runtimeLayout: {
         primaryWidth: { kind: "workspace" },
       },
+      runtimeLayoutResolved: true,
       fixedChromeWidthPx: 28,
       isMobile: false,
     });
@@ -70,6 +72,7 @@ describe("pane sizing", () => {
       runtimeLayout: {
         primaryWidth: { kind: "intrinsic", widthPx: 2600 },
       },
+      runtimeLayoutResolved: true,
       fixedChromeWidthPx: 28,
       isMobile: false,
     });
@@ -89,6 +92,7 @@ describe("pane sizing", () => {
       runtimeLayout: {
         primaryWidth: { kind: "intrinsic", widthPx: 900 },
       },
+      runtimeLayoutResolved: true,
       fixedChromeWidthPx: 28,
       isMobile: true,
     });
@@ -98,6 +102,26 @@ describe("pane sizing", () => {
       primaryMinWidthPx: 684,
       renderedPrimarySlotWidthPx: 684,
       fixedChromeWidthPx: 0,
+      storedWidthCorrectionPx: null,
+    });
+  });
+
+  it("renders a provisional media floor without persisting it before runtime publication", () => {
+    const sizing = resolveEffectivePaneSizing({
+      storedWidthPx: 320,
+      workspacePrimaryMetrics,
+      routeWidth: resolvePaneRouteWidthContract("/media/media-1"),
+      runtimeLayout: {
+        primaryWidth: { kind: "workspace" },
+      },
+      runtimeLayoutResolved: false,
+      fixedChromeWidthPx: 0,
+      isMobile: false,
+    });
+
+    expect(sizing).toMatchObject({
+      primaryWidthPx: 684,
+      primaryMinWidthPx: 684,
       storedWidthCorrectionPx: null,
     });
   });

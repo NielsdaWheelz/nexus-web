@@ -8,10 +8,14 @@ import {
   createWorkspaceStateFromPrimaryPanes,
   getWorkspacePrimaryPanes,
   parsePersistedWorkspaceState,
+  restoreClosedPaneSnapshot,
   trimWorkspacePaneHistory,
+  type ClosedPaneSnapshot,
   type PaneVisit,
+  type WorkspaceAttachedSecondaryPaneState,
   type WorkspacePrimaryPaneState,
 } from "@/lib/workspace/schema";
+import { present } from "@/lib/api/presence";
 import {
   MAX_STANDARD_PANE_WIDTH_PX,
   resolvePaneRouteWidthContract,
@@ -457,5 +461,199 @@ describe("workspace schema", () => {
     expect(panes[0]?.history.back).toHaveLength(MAX_PANE_HISTORY_STACK_LENGTH);
     expect(panes[0]?.history.forward).toHaveLength(MAX_PANE_HISTORY_STACK_LENGTH);
     expect(panes[1]?.history).toEqual({ back: [], forward: [] });
+  });
+
+  it("atomically restores a closed pane at its former order with normalized geometry", () => {
+    const existing = createWorkspaceStateFromPrimaryPanes({
+      activePrimaryPaneId: "pane-1",
+      primaryPanes: [
+        primary("pane-1", "/libraries"),
+        primary("pane-3", "/notes"),
+      ],
+    });
+    const closedPane = primary(
+      "pane-2",
+      "/media/11111111-1111-4111-8111-111111111111",
+      {
+        primaryWidthPx: 120,
+        visibility: "minimized",
+        attachedSecondaryPaneId: "secondary-2",
+      },
+    );
+    const secondaryPane: WorkspaceAttachedSecondaryPaneState = {
+      id: "secondary-2",
+      parentPrimaryPaneId: "stale-parent",
+      groupId: "resource-inspector",
+      activeSurfaceId: "resource-contents",
+      widthPx: 9_999,
+      visibility: "collapsed",
+    };
+    const snapshot: ClosedPaneSnapshot = {
+      pane: closedPane,
+      secondaryPane: present(secondaryPane),
+      orderIndex: 1,
+    };
+
+    const result = restoreClosedPaneSnapshot({
+      state: existing,
+      snapshot,
+      workspacePrimaryMetrics,
+    });
+
+    expect(result.kind).toBe("Restored");
+    if (result.kind !== "Restored") {
+      throw new Error("Expected the closed pane to restore");
+    }
+    expect(result.state.primaryPaneOrder).toEqual([
+      "pane-1",
+      "pane-2",
+      "pane-3",
+    ]);
+    expect(result.state.activePrimaryPaneId).toBe("pane-2");
+    expect(result.state.primaryPanesById["pane-2"]).toMatchObject({
+      id: "pane-2",
+      currentVisit: closedPane.currentVisit,
+      primaryWidthPx: workspacePrimaryMetrics.primaryMinWidthPx,
+      visibility: "visible",
+      attachedSecondaryPaneId: "secondary-2",
+    });
+    expect(result.state.secondaryPanesById["secondary-2"]).toEqual({
+      ...secondaryPane,
+      parentPrimaryPaneId: "pane-2",
+      widthPx: 720,
+    });
+  });
+
+  it("reapplies per-pane and workspace-wide history budgets while restoring", () => {
+    const history = (base: number, prefix: string) => ({
+      back: Array.from({ length: 16 }, (_, index) =>
+        visit(base + index, `/media/${prefix}-back-${index}`),
+      ),
+      forward: Array.from({ length: 16 }, (_, index) =>
+        visit(base + 100 + index, `/media/${prefix}-forward-${index}`),
+      ),
+    });
+    const existing = createWorkspaceStateFromPrimaryPanes({
+      activePrimaryPaneId: "pane-1",
+      primaryPanes: [
+        primary("pane-1", "/libraries", {
+          history: {
+            back: history(1_000, "existing").back.slice(0, 12),
+            forward: history(2_000, "existing").forward.slice(0, 12),
+          },
+        }),
+        primary("pane-2", "/notes", {
+          history: {
+            back: history(3_000, "second").back.slice(0, 12),
+            forward: history(4_000, "second").forward.slice(0, 12),
+          },
+        }),
+      ],
+    });
+    const result = restoreClosedPaneSnapshot({
+      state: existing,
+      snapshot: {
+        pane: primary("pane-3", "/media/33333333-3333-4333-8333-333333333333", {
+          history: history(5_000, "restored"),
+        }),
+        secondaryPane: { kind: "Absent" },
+        orderIndex: 99,
+      },
+      workspacePrimaryMetrics,
+    });
+
+    expect(result.kind).toBe("Restored");
+    if (result.kind !== "Restored") {
+      throw new Error("Expected the closed pane to restore");
+    }
+    const restored = result.state.primaryPanesById["pane-3"]!;
+    expect(restored.history.back).toHaveLength(MAX_PANE_HISTORY_STACK_LENGTH);
+    expect(restored.history.forward).toHaveLength(MAX_PANE_HISTORY_STACK_LENGTH);
+    expect(result.state.primaryPaneOrder.at(-1)).toBe("pane-3");
+    expect(
+      getWorkspacePrimaryPanes(result.state).reduce(
+        (count, pane) =>
+          count + pane.history.back.length + pane.history.forward.length,
+        0,
+      ),
+    ).toBe(MAX_TOTAL_PANE_HISTORY_ENTRIES);
+  });
+
+  it("rejects pane-cap restore before mutation", () => {
+    const existing = createWorkspaceStateFromPrimaryPanes({
+      activePrimaryPaneId: "pane-0",
+      primaryPanes: Array.from({ length: MAX_PANES }, (_, index) =>
+        primary(`pane-${index}`, "/libraries", { visitIndex: 7_000 + index }),
+      ),
+    });
+    const result = restoreClosedPaneSnapshot({
+      state: existing,
+      snapshot: {
+        pane: primary("pane-closed", "/notes", { visitIndex: 8_000 }),
+        secondaryPane: { kind: "Absent" },
+        orderIndex: 0,
+      },
+      workspacePrimaryMetrics,
+    });
+
+    expect(result).toEqual({ kind: "Rejected", reason: "PaneLimitReached" });
+    expect(existing.primaryPaneOrder).toHaveLength(MAX_PANES);
+  });
+
+  it("defects without changing state for duplicate primary or secondary identity", () => {
+    const attached: WorkspaceAttachedSecondaryPaneState = {
+      id: "secondary-1",
+      parentPrimaryPaneId: "pane-1",
+      groupId: "resource-inspector",
+      activeSurfaceId: "resource-contents",
+      widthPx: 360,
+      visibility: "visible",
+    };
+    const existing = createWorkspaceStateFromPrimaryPanes({
+      activePrimaryPaneId: "pane-1",
+      primaryPanes: [
+        primary(
+          "pane-1",
+          "/media/11111111-1111-4111-8111-111111111111",
+          { attachedSecondaryPaneId: attached.id },
+        ),
+      ],
+      secondaryPanesById: { [attached.id]: attached },
+    });
+
+    expect(() =>
+      restoreClosedPaneSnapshot({
+        state: existing,
+        snapshot: {
+          pane: primary("pane-1", "/notes", { visitIndex: 9_000 }),
+          secondaryPane: { kind: "Absent" },
+          orderIndex: 0,
+        },
+        workspacePrimaryMetrics,
+      }),
+    ).toThrow("duplicate primary pane identity");
+    expect(() =>
+      restoreClosedPaneSnapshot({
+        state: existing,
+        snapshot: {
+          pane: primary(
+            "pane-2",
+            "/media/22222222-2222-4222-8222-222222222222",
+            {
+              visitIndex: 9_100,
+              attachedSecondaryPaneId: attached.id,
+            },
+          ),
+          secondaryPane: present({
+            ...attached,
+            parentPrimaryPaneId: "pane-2",
+          }),
+          orderIndex: 1,
+        },
+        workspacePrimaryMetrics,
+      }),
+    ).toThrow("duplicate secondary pane identity");
+    expect(existing.primaryPaneOrder).toEqual(["pane-1"]);
+    expect(existing.secondaryPanesById).toEqual({ [attached.id]: attached });
   });
 });

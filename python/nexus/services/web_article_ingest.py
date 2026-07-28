@@ -37,7 +37,10 @@ from nexus.services.source_publication import (
 )
 from nexus.services.url_normalize import normalize_url_for_display
 from nexus.services.web_article_artifacts import delete_web_article_artifacts
-from nexus.services.web_article_structure import prepare_web_article_fragment
+from nexus.services.web_article_structure import (
+    document_embed_artifact_occurrences,
+    prepare_web_article_fragment,
+)
 
 logger = get_logger(__name__)
 
@@ -190,7 +193,6 @@ def materialize_web_article_source(
             owner_user_id = media.created_by_user_id or actor_user_id
             delete_web_article_artifacts(
                 db,
-                owner_user_id=owner_user_id,
                 media_id=media_id,
                 include_content_index=False,
             )
@@ -209,8 +211,10 @@ def materialize_web_article_source(
                 owner_user_id=owner_user_id,
                 media_id=media_id,
                 source_attempt_id=source_attempt_id,
-                fragment_id=fragment.id,
-                document_embeds=prepared.document_embeds,
+                occurrences=document_embed_artifact_occurrences(
+                    fragment_id=fragment.id,
+                    document_embeds=prepared.document_embeds,
+                ),
                 extraction_error_code=prepared.document_embed_extraction_error_code,
                 extraction_error_message=prepared.document_embed_extraction_error_message,
                 request_id=request_id,

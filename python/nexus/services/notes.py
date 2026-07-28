@@ -19,6 +19,7 @@ from nexus.db.models import (
     Page,
 )
 from nexus.db.retries import retry_serializable
+from nexus.db.session import transaction
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
 from nexus.schemas.notes import (
     CreatePageRequest,
@@ -161,13 +162,35 @@ def list_pages(db: Session, viewer_id: UUID) -> list[NotePageSummaryOut]:
 
 
 def create_page(db: Session, viewer_id: UUID, request: CreatePageRequest) -> NotePageOut:
-    page = Page(user_id=viewer_id, title=request.title)
-    db.add(page)
-    db.flush()
-    versions.ensure_version(db, viewer_id=viewer_id, ref=_page_ref(page.id), lane="title")
-    versions.ensure_version(db, viewer_id=viewer_id, ref=_page_ref(page.id), lane="outgoing_edges")
-    db.commit()
-    db.refresh(page)
+    def op() -> UUID:
+        with transaction(db):
+            page = db.get(Page, request.page_id)
+            if page is not None:
+                if page.user_id != viewer_id or page.title != request.title:
+                    raise ConflictError(
+                        ApiErrorCode.E_RESOURCE_CONFLICT,
+                        "Page create id is already bound to a different resource",
+                    )
+            else:
+                page = Page(id=request.page_id, user_id=viewer_id, title=request.title)
+                db.add(page)
+                db.flush()
+            versions.ensure_version(
+                db,
+                viewer_id=viewer_id,
+                ref=_page_ref(page.id),
+                lane="title",
+            )
+            versions.ensure_version(
+                db,
+                viewer_id=viewer_id,
+                ref=_page_ref(page.id),
+                lane="outgoing_edges",
+            )
+            return page.id
+
+    page_id = retry_serializable(db, "create_page", op)
+    page = get_page_for_owner_or_404(db, viewer_id, page_id)
     return _page_out(db, viewer_id, page)
 
 

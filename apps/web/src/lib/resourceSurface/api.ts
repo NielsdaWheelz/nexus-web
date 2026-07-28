@@ -1,7 +1,7 @@
 import { apiFetch } from "@/lib/api/client";
 import { requiredRecord } from "@/lib/notes/normalize";
 import {
-  normalizeResourceItem,
+  decodeResourceItem,
   normalizeResourceSurface,
   type ResourceItem,
   type ResourceSurface,
@@ -136,7 +136,7 @@ export async function updateResourceSurfaceTitle(input: {
       }),
     },
   );
-  return normalizeResourceItem(
+  return decodeResourceItem(
     requiredRecord(requiredRecord(response.data, "title response").item, "title item"),
   );
 }
@@ -162,7 +162,7 @@ export async function updateResourceSurfaceNoteBody(input: {
   );
   const data = requiredRecord(response.data, "note body response");
   return {
-    item: normalizeResourceItem(requiredRecord(data.item, "note body item")),
+    item: decodeResourceItem(requiredRecord(data.item, "note body item")),
     bodyText: String(data.bodyText ?? ""),
   };
 }

@@ -2,7 +2,8 @@
 
 import { useCallback, useState } from "react";
 import { useViewportState } from "@/lib/renderEnvironment/provider";
-import LauncherSheet from "./LauncherSheet";
+import NexusButton from "@/components/switchboard/NexusButton";
+import SwitchboardSheet from "@/components/switchboard/SwitchboardSheet";
 import LauncherSurface from "./LauncherSurface";
 import {
   useLauncherController,
@@ -28,13 +29,20 @@ function LauncherSubtree({
     <>
       {/* Stays mounted, gated by `active` (MobileSheet mount contract): its
           history wiring must observe every close path. */}
-      <LauncherSheet
+      <SwitchboardSheet
         controller={controller}
         active={controller.open && isMobile}
         activeAddDefect={activeAddDefect}
         onAddDefect={onAddDefect}
         onClearAddDefect={onClearAddDefect}
       />
+      {isMobile && !waitingForViewport ? (
+        <NexusButton
+          paneCount={controller.paneCount}
+          switchboardOpen={controller.open}
+          onOpen={controller.openRoot}
+        />
+      ) : null}
       {controller.open && !isMobile && !waitingForViewport ? (
         <LauncherSurface
           controller={controller}

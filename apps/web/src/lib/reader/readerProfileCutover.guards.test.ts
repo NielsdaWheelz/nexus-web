@@ -130,7 +130,7 @@ describe("reader-profile persistence cutover gates", () => {
   // and the retryable-constraint set is owner-neutral with the profile pkey.
   it("the private no-store middleware and retryable constraints cover the profile", () => {
     const app = repoText("python/nexus/app.py");
-    expect(app).toContain("READER_PRIVATE_NO_STORE_PATH_RE");
+    expect(app).toContain("PRIVATE_NO_STORE_PATH_RE");
     expect(app).toContain("/media/[^/]+/reader-state|/me/reader-profile");
     expect(app).not.toContain("READER_STATE_PATH_RE");
 

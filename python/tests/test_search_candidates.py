@@ -22,6 +22,7 @@ from nexus.db.models import (
     ArtifactBuild,
     ArtifactRevision,
     Contributor,
+    ContributorAlias,
     ContributorCredit,
     NoteBlock,
     OracleReading,
@@ -41,8 +42,13 @@ from nexus.services.search.retrievers.resource_metadata import (
     LibraryDossierCandidate,
     OracleReadingCandidate,
     PassageAnchorCandidate,
+    retrieve_library_candidates,
 )
-from tests.factories import create_searchable_media, create_test_library
+from tests.factories import (
+    create_searchable_media,
+    create_test_library,
+    get_user_default_library,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -173,24 +179,38 @@ class TestReferenceProfile:
             ContributorCredit(
                 contributor_id=credited.id,
                 media_id=media_id,
-                credited_name=credited.display_name,
-                normalized_credited_name=credited.display_name.lower(),
+                credited_name="Findable Penname",
+                normalized_credited_name="findable penname",
                 role="author",
                 ordinal=0,
                 source="epub_opf",
             )
         )
+        db_session.add(
+            ContributorAlias(
+                contributor_id=credited.id,
+                alias="Findable Byname",
+                normalized_alias="findable byname",
+                resolves_identity=False,
+            )
+        )
         db_session.flush()
 
-        results = reference_candidates(
-            db_session, bootstrapped_user, q="gatecheck", schemes={"contributor"}
-        )
+        for query in ("gatecheck", "penname", "byname"):
+            results = reference_candidates(
+                db_session,
+                bootstrapped_user,
+                q=query,
+                schemes={"contributor"},
+            )
 
-        ids = {c.id for c in results}
-        assert credited.id in ids, "a credited-visible contributor must surface"
-        assert hidden.id not in ids, (
-            "a zero-visible-credit contributor must stay hidden from the picker (D-8)"
-        )
+            ids = {c.id for c in results}
+            assert credited.id in ids, (
+                "a credited-visible contributor must match display, credited, and alias names"
+            )
+            assert hidden.id not in ids, (
+                "a zero-visible-credit contributor must stay hidden from the picker (D-8)"
+            )
 
     def test_library_artifact_head_requires_membership_and_current_revision(
         self, db_session: Session, bootstrapped_user, monkeypatch
@@ -319,6 +339,44 @@ class TestLinkProfile:
         assert candidate_resource_ref(lib).scheme == "library"
         assert candidate_resource_ref(reading).scheme == "oracle_reading"
         assert candidate_resource_ref(anchor).scheme == "passage_anchor"
+
+
+class TestLibraryDisplayNameAlias:
+    def test_default_library_matches_and_labels_all(
+        self, db_session: Session, bootstrapped_user
+    ) -> None:
+        """AC1: the Default library candidate matches the token "All" and carries
+        "All" as its name and snippet; its stored seeded name no longer matches
+        or labels it."""
+        default_library_id = get_user_default_library(db_session, bootstrapped_user)
+        assert default_library_id is not None
+
+        matched = retrieve_library_candidates(
+            db_session, viewer_id=bootstrapped_user, q="All", limit=20
+        )
+        by_id = {c.id: c for c in matched}
+        assert default_library_id in by_id, "querying All must match the Default library"
+        assert by_id[default_library_id].name == "All"
+        assert by_id[default_library_id].snippet == "All"
+
+        stored = retrieve_library_candidates(
+            db_session, viewer_id=bootstrapped_user, q="My Library", limit=20
+        )
+        assert default_library_id not in {c.id for c in stored}, (
+            "the stored seeded name must not match the Default library"
+        )
+
+    def test_named_library_matches_and_labels_its_authored_name(
+        self, db_session: Session, bootstrapped_user
+    ) -> None:
+        library_id = create_test_library(db_session, bootstrapped_user, name="Verdant Shelf")
+
+        matched = retrieve_library_candidates(
+            db_session, viewer_id=bootstrapped_user, q="Verdant", limit=20
+        )
+        by_id = {c.id: c for c in matched}
+        assert library_id in by_id
+        assert by_id[library_id].name == "Verdant Shelf"
 
 
 def _score() -> _SearchScore:

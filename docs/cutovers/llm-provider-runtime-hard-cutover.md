@@ -137,7 +137,7 @@ Rules:
   not ZDR-eligible. This records informed acceptance; it is not an availability
   toggle, and Nexus does not build a content classifier.
 - OpenRouter has one hidden `moonshotai/kimi-k3` operator candidate, pinned to
-  endpoint `moonshotai/int4`; the catalog records canonical revision
+  endpoint `moonshotai/mxfp4`; the catalog records canonical revision
   `moonshotai/kimi-k3-20260715`. It is absent from `/llm-profiles` and cannot be
   selected by chat. It becomes a usable operator target only after the release
   certification proves `low | high | max`, the pinned upstream, and a billed
@@ -317,7 +317,7 @@ the identical provider/model/codec. A mismatch fails before network.
 | Anthropic Messages | Omit sampling; explicit 5m breakpoint at the stable prefix, optionally plus top-level automatic caching for append-only chat; emit native effort; replay thinking/redacted blocks unchanged; Fable thinking is always on; HTTP-200 `stop_reason=refusal` is terminal `refused`, not provider failure, and invalidates any partial Fable output |
 | Gemini `generateContent` | Stable `gemini-3.5-flash`; native `thinkingLevel`; implicit caching; preserve thought signatures for tool continuation |
 | Moonshot Chat Completions | `reasoning_effort=low|high|max`; omit fixed sampling fields; use `max_completion_tokens`; replay the complete assistant message unchanged; use stable hashed `prompt_cache_key` affinity with automatic cache management |
-| OpenRouter Chat Completions | Dedicated `moonshotai/kimi-k3` contract; `provider.only=["moonshotai/int4"]`, `provider.order=["moonshotai/int4"]`, `allow_fallbacks=false`, `require_parameters=true`, `data_collection=deny`, `zdr=true`, hashed `session_id`; `reasoning:{effort,exclude:false}`; use routed `max_tokens`, not direct-only `max_completion_tokens`; send `X-OpenRouter-Cache: false` and `X-OpenRouter-Metadata: enabled`; preserve full `reasoning_details`; runtime `max_attempts=1` |
+| OpenRouter Chat Completions | Dedicated `moonshotai/kimi-k3` contract; `provider.only=["moonshotai/mxfp4"]`, `provider.order=["moonshotai/mxfp4"]`, `allow_fallbacks=false`, `require_parameters=true`, `data_collection=deny`, `zdr=true`, hashed `session_id`; `reasoning:{effort,exclude:false}`; use routed `max_tokens`, not direct-only `max_completion_tokens`; send `X-OpenRouter-Cache: false` and `X-OpenRouter-Metadata: enabled`; preserve full `reasoning_details`; runtime `max_attempts=1` |
 
 Moonshot and OpenRouter may share private, syntax-only Chat Completions wire
 parsers. They do not inherit a generic provider-branching client.

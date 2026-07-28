@@ -5,23 +5,30 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import perf_counter
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.config import get_settings
-from nexus.db.errors import integrity_constraint_name
-from nexus.db.models import Fragment, Media, MediaKind, ProcessingStatus
+from nexus.db.models import Fragment, Media, ProcessingStatus
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.logging import get_logger
 from nexus.services import library_entries
+from nexus.services import media_source_types as source_types
 from nexus.services.contributor_taxonomy import (
     ContributorObservationBatch,
     RawCreditEntry,
     RawIdentityClaim,
     build_observation,
+)
+from nexus.services.document_embeds import (
+    DocumentEmbedArtifactOccurrence,
+    DocumentEmbedTargetMaterialized,
+    DocumentEmbedTargetTerminal,
+    delete_document_embed_artifacts,
+    reconcile_document_embed_edges_for_viewer,
+    replace_document_embed_artifact,
+    resolved_document_embed_target_media_ids,
 )
 from nexus.services.fragment_blocks import FragmentBlockSpec, insert_fragment_blocks
 from nexus.services.media_author_observation_seam import attach_author_observation
@@ -43,7 +50,9 @@ from nexus.services.web_article_structure import (
 )
 from nexus.services.x_client import fetch_author_thread_snapshot, fetch_single_post_snapshot
 from nexus.services.x_identity import canonical_x_post_url
+from nexus.services.x_provider_lock import lock_x_provider_identity
 from nexus.services.x_rendering import (
+    RenderedXQuoteOccurrence,
     post_description,
     post_title,
     render_author_thread_fragment_html,
@@ -53,10 +62,11 @@ from nexus.services.x_rendering import (
 )
 from nexus.services.x_types import (
     XAuthorThreadSnapshot,
-    XPostSnapshot,
     XProviderError,
     XProviderErrorCode,
+    XResolvedQuoteReference,
     XSinglePostSnapshot,
+    XUnavailableQuoteReference,
     x_author_thread_provider_id,
     x_post_provider_id,
 )
@@ -76,6 +86,14 @@ class _PreparedXFragment:
     fragment_blocks: list[FragmentBlockSpec]
     apparatus_items: list[dict[str, object]]
     apparatus_edges: list[dict[str, object]]
+    quote_occurrences: tuple[_PreparedXQuoteOccurrence, ...]
+
+
+@dataclass(frozen=True)
+class _PreparedXQuoteOccurrence:
+    rendered: RenderedXQuoteOccurrence
+    canonical_start_offset: int
+    canonical_end_offset: int
 
 
 def _build_x_author_observation(display_name: str, x_user_id: str) -> ContributorObservationBatch:
@@ -106,7 +124,7 @@ def materialize_x_author_thread_media(
     viewer_id: UUID,
     media_id: UUID,
     post_id: str,
-    source_attempt_id: UUID | None,
+    source_attempt_id: UUID,
     request_id: str | None,
     publication_fence: SourcePublicationFence,
 ) -> dict[str, object]:
@@ -128,7 +146,7 @@ def materialize_x_post_media(
     viewer_id: UUID,
     media_id: UUID,
     post_id: str,
-    source_attempt_id: UUID | None,
+    source_attempt_id: UUID,
     request_id: str | None,
     publication_fence: SourcePublicationFence,
 ) -> dict[str, object]:
@@ -150,7 +168,7 @@ def _refresh_x_author_thread_media_for_viewer(
     *,
     media_id: UUID,
     post_id: str,
-    source_attempt_id: UUID | None = None,
+    source_attempt_id: UUID,
     request_id: str | None,
     publication_fence: SourcePublicationFence,
 ) -> dict[str, object]:
@@ -183,8 +201,12 @@ def _refresh_x_author_thread_media_for_viewer(
         raise ApiError(ApiErrorCode.E_INGEST_FAILED, "X API returned no thread posts.")
 
     provider_id = x_author_thread_provider_id(snapshot.author.id, snapshot.conversation_id)
+    resolved_quote_posts = {
+        post_id: reference.post
+        for post_id, reference in snapshot.quote_references.items()
+        if isinstance(reference, XResolvedQuoteReference)
+    }
     planned_thread_winner_id: UUID | None = None
-    planned_quote_media_ids = {quoted_id: uuid4() for quoted_id in snapshot.quoted_posts}
     locked_existing_quote_ids: set[UUID] = set()
 
     for _lock_set_attempt in range(3):
@@ -205,7 +227,7 @@ def _refresh_x_author_thread_media_for_viewer(
             )
             if discovered_thread_id is not None:
                 planned_thread_winner_id = UUID(str(discovered_thread_id))
-            for quoted_id, quoted_post in snapshot.quoted_posts.items():
+            for quoted_post in resolved_quote_posts.values():
                 quote_provider_id = x_post_provider_id(quoted_post.id)
                 discovered_quote_id = discovery.scalar(
                     text(
@@ -220,7 +242,6 @@ def _refresh_x_author_thread_media_for_viewer(
                 )
                 if discovered_quote_id is not None:
                     quote_uuid = UUID(str(discovered_quote_id))
-                    planned_quote_media_ids[quoted_id] = quote_uuid
                     locked_existing_quote_ids.add(quote_uuid)
             discovery.rollback()
         finally:
@@ -230,14 +251,14 @@ def _refresh_x_author_thread_media_for_viewer(
             db: Session,
             _attempt: object,
             planned_winner_id: UUID | None = planned_thread_winner_id,
-        ) -> tuple[UUID | None, str, list[UUID]]:
+        ) -> tuple[UUID | None, str, dict[str, UUID], list[UUID]]:
             for lock_provider_id in sorted(
                 {
                     provider_id,
-                    *(x_post_provider_id(post.id) for post in snapshot.quoted_posts.values()),
+                    *(x_post_provider_id(post.id) for post in resolved_quote_posts.values()),
                 }
             ):
-                _lock_x_provider_id(db, lock_provider_id)
+                lock_x_provider_identity(db, lock_provider_id)
 
             durable_thread_id = db.scalar(
                 text(
@@ -267,6 +288,21 @@ def _refresh_x_author_thread_media_for_viewer(
                     winner_id,
                     source_library_ids,
                 )
+                resolved_target_ids = resolved_document_embed_target_media_ids(
+                    db, media_id=winner_id
+                )
+                for target_media_id in resolved_target_ids:
+                    library_entries.assign_libraries_for_media_in_current_transaction(
+                        db,
+                        viewer_id,
+                        target_media_id,
+                        source_library_ids,
+                    )
+                reconcile_document_embed_edges_for_viewer(
+                    db,
+                    viewer_id=viewer_id,
+                    media_id=winner_id,
+                )
                 winner = db.get(Media, winner_id)
                 if winner is None:
                     raise AssertionError("planned X thread media disappeared while locked")
@@ -280,7 +316,12 @@ def _refresh_x_author_thread_media_for_viewer(
                     duration_ms=_duration_ms(started_at),
                     snapshot=snapshot,
                 )
-                return winner_id, _status_to_str(winner.processing_status), []
+                return (
+                    winner_id,
+                    _status_to_str(winner.processing_status),
+                    {},
+                    resolved_target_ids,
+                )
 
             media = db.get(Media, media_id)
             if media is None:
@@ -292,36 +333,77 @@ def _refresh_x_author_thread_media_for_viewer(
             )
             now = datetime.now(UTC)
             durable_quote_ids: dict[str, UUID] = {}
-            for quoted_id, quoted_post in snapshot.quoted_posts.items():
-                quote_media, _quote_fragment, _quote_created = (
-                    _create_or_reuse_x_snapshot_post_media(
-                        db,
-                        viewer_id,
-                        post=quoted_post,
-                        snapshot=snapshot,
-                        library_ids=source_library_ids,
-                        now=now,
-                        planned_media_id=planned_quote_media_ids[quoted_id],
-                        locked_existing_media_ids=frozenset(locked_existing_quote_ids),
-                    )
+            for quoted_id, quoted_post in resolved_quote_posts.items():
+                from nexus.services.media_source_ingest import accept_embedded_source
+
+                accepted = accept_embedded_source(
+                    db=db,
+                    viewer_id=viewer_id,
+                    url=canonical_x_post_url(quoted_id),
+                    parent_media_id=media.id,
+                    document_embed_key=f"x-quote-post:{quoted_id}",
+                    library_ids=source_library_ids,
+                    request_id=request_id,
                 )
+                _require_x_quote_source_identity(
+                    source_type=accepted.source_type,
+                    provider_target_ref=accepted.provider_target_ref,
+                    post_id=quoted_id,
+                )
+                if (
+                    not accepted.needs_enqueue
+                    and accepted.media_id not in locked_existing_quote_ids
+                ):
+                    raise _XMediaLockSetChanged(accepted.media_id)
+                quote_media = db.get(Media, accepted.media_id)
+                if quote_media is None:
+                    # justify-defect: embedded-source acceptance published this
+                    # child identity in the current transaction.
+                    raise AssertionError("accepted X quote media disappeared")
+                if not (
+                    quote_media.processing_status == ProcessingStatus.ready_for_reading
+                    and accepted.source_attempt_status == "succeeded"
+                ):
+                    _replace_x_post_snapshot_artifacts(
+                        db,
+                        viewer_id=viewer_id,
+                        media=quote_media,
+                        snapshot=XSinglePostSnapshot(
+                            requested_post_id=quoted_post.id,
+                            canonical_url=canonical_x_post_url(quoted_post.id),
+                            post=quoted_post,
+                            users=snapshot.users,
+                            media=snapshot.media,
+                        ),
+                        now=now,
+                    )
+                    mark_ready_for_reading(db, quote_media)
+                    from nexus.services.media_source_ingest import (
+                        complete_x_post_snapshot_attempt,
+                    )
+
+                    complete_x_post_snapshot_attempt(
+                        db,
+                        media=quote_media,
+                        source_attempt_id=accepted.source_attempt_id,
+                        viewer_id=viewer_id,
+                        post_id=quoted_post.id,
+                        canonical_url=canonical_x_post_url(quoted_post.id),
+                        request_id=request_id,
+                    )
                 durable_quote_ids[quoted_id] = quote_media.id
 
+            rendered_fragments = render_author_thread_fragment_html(snapshot)
             prepared_fragments = [
                 _build_x_fragment(
                     media_id=media.id,
                     idx=idx,
-                    html=fragment_html,
-                    base_url=post.permalink,
+                    html=rendered.html,
+                    base_url=rendered.post.permalink,
                     created_at=now,
+                    quote_occurrences=rendered.quote_occurrences,
                 )
-                for idx, (post, fragment_html) in enumerate(
-                    render_author_thread_fragment_html(
-                        snapshot,
-                        quoted_media_ids=durable_quote_ids,
-                        app_public_url=get_settings().app_public_url,
-                    )
-                )
+                for idx, rendered in enumerate(rendered_fragments)
             ]
             fragments = [prepared.fragment for prepared in prepared_fragments]
             if not "\n\n".join(fragment.canonical_text for fragment in fragments).strip():
@@ -331,7 +413,6 @@ def _refresh_x_author_thread_media_for_viewer(
                 )
             delete_web_article_artifacts(
                 db,
-                owner_user_id=media.created_by_user_id or viewer_id,
                 media_id=media.id,
                 include_content_index=False,
             )
@@ -351,6 +432,25 @@ def _refresh_x_author_thread_media_for_viewer(
                     prepared_fragment.fragment.id,
                     prepared_fragment.fragment_blocks,
                 )
+            replace_document_embed_artifact(
+                db,
+                owner_user_id=media.created_by_user_id or viewer_id,
+                media_id=media.id,
+                source_attempt_id=source_attempt_id,
+                occurrences=[
+                    _document_embed_occurrence(
+                        prepared=occurrence,
+                        fragment_id=prepared.fragment.id,
+                        target_media_ids=durable_quote_ids,
+                    )
+                    for prepared in prepared_fragments
+                    for occurrence in prepared.quote_occurrences
+                ],
+                extraction_error_code=None,
+                extraction_error_message=None,
+                request_id=request_id,
+                locked_existing_target_media_ids=frozenset(locked_existing_quote_ids),
+            )
             replace_media_apparatus(
                 db,
                 media_id=media.id,
@@ -389,7 +489,8 @@ def _refresh_x_author_thread_media_for_viewer(
             return (
                 None,
                 ProcessingStatus.ready_for_reading.value,
-                list(durable_quote_ids.values()),
+                durable_quote_ids,
+                sorted(set(durable_quote_ids.values()), key=str),
             )
 
         try:
@@ -399,19 +500,21 @@ def _refresh_x_author_thread_media_for_viewer(
             }
             if planned_thread_winner_id is not None:
                 affected_existing_ids.add(planned_thread_winner_id)
-            winner_id, processing_status, quoted_media_ids = run_source_publication_phase(
-                session_factory=session_factory,
-                label="publish_x_thread_artifacts",
-                fence=publication_fence,
-                media_ids=tuple(affected_existing_ids),
-                mutate=publish_x_thread,
+            winner_id, processing_status, quoted_media_ids, reindex_quote_ids = (
+                run_source_publication_phase(
+                    session_factory=session_factory,
+                    label="publish_x_thread_artifacts",
+                    fence=publication_fence,
+                    media_ids=tuple(affected_existing_ids),
+                    mutate=publish_x_thread,
+                )
             )
             result: dict[str, object] = {
                 "processing_status": processing_status,
                 "ingest_enqueued": False,
                 "idempotency_outcome": "reused" if winner_id else "refreshed",
                 "metadata_enrichment": True,
-                "additional_reindex_media_ids": [str(value) for value in quoted_media_ids],
+                "additional_reindex_media_ids": [str(value) for value in reindex_quote_ids],
             }
             if winner_id is not None:
                 result["superseded_by_media_id"] = str(winner_id)
@@ -434,12 +537,12 @@ def _refresh_x_author_thread_media_for_viewer(
                     ),
                     source="x_api_author_thread",
                 )
-                for quoted_id, quoted_post in snapshot.quoted_posts.items():
+                for quoted_id, quoted_post in resolved_quote_posts.items():
                     quoted_author = snapshot.users.get(quoted_post.author_id)
                     if quoted_author is not None:
                         attach_author_observation(
                             result,
-                            media_id=planned_quote_media_ids[quoted_id],
+                            media_id=quoted_media_ids[quoted_id],
                             observation=_build_x_author_observation(
                                 quoted_author.name,
                                 quoted_author.id,
@@ -448,11 +551,6 @@ def _refresh_x_author_thread_media_for_viewer(
                         )
             return result
         except _XMediaLockSetChanged as exc:
-            planned_thread_winner_id = (
-                exc.media_id
-                if exc.media_id not in set(planned_quote_media_ids.values())
-                else planned_thread_winner_id
-            )
             locked_existing_quote_ids.add(exc.media_id)
     raise AssertionError("X thread media lock set did not stabilize")
 
@@ -463,7 +561,7 @@ def _refresh_x_post_media_for_viewer(
     *,
     media_id: UUID,
     post_id: str,
-    source_attempt_id: UUID | None = None,
+    source_attempt_id: UUID,
     request_id: str | None,
     publication_fence: SourcePublicationFence,
 ) -> dict[str, object]:
@@ -525,7 +623,7 @@ def _refresh_x_post_media_for_viewer(
             _attempt: object,
             planned_winner_id: UUID | None = planned_existing_id,
         ) -> tuple[UUID | None, str]:
-            _lock_x_provider_id(db, provider_id)
+            lock_x_provider_identity(db, provider_id)
             durable_existing_id = db.scalar(
                 text(
                     """
@@ -573,55 +671,12 @@ def _refresh_x_post_media_for_viewer(
             media = db.get(Media, media_id)
             if media is None:
                 raise ApiError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-            prepared_fragment = _build_x_fragment(
-                media_id=media.id,
-                idx=0,
-                html=render_single_post_html(
-                    snapshot.post,
-                    users=snapshot.users,
-                    media=snapshot.media,
-                ),
-                base_url=snapshot.canonical_url,
-                created_at=datetime.now(UTC),
-            )
-            delete_web_article_artifacts(
+            _replace_x_post_snapshot_artifacts(
                 db,
-                owner_user_id=media.created_by_user_id or viewer_id,
-                media_id=media.id,
-                include_content_index=False,
-            )
-            media.title = post_title(snapshot.post, snapshot.users)[:255]
-            media.canonical_url = snapshot.canonical_url
-            media.canonical_source_url = snapshot.canonical_url
-            media.provider = "x"
-            media.provider_id = provider_id
-            media.publisher = "X"
-            media.description = post_description(snapshot.post)
-            db.add(prepared_fragment.fragment)
-            db.flush()
-            insert_fragment_blocks(
-                db,
-                prepared_fragment.fragment.id,
-                prepared_fragment.fragment_blocks,
-            )
-            replace_media_apparatus(
-                db,
-                media_id=media.id,
-                media_kind="web_article",
-                source_fingerprint_value=source_fingerprint(
-                    "x_post",
-                    snapshot.canonical_url,
-                    prepared_fragment.fragment.html_sanitized,
-                    prepared_fragment.fragment.canonical_text,
-                ),
-                items=attach_fragment_locators(
-                    media_id=media.id,
-                    fragment_id=prepared_fragment.fragment.id,
-                    media_kind="web_article",
-                    canonical_text=prepared_fragment.fragment.canonical_text,
-                    items=prepared_fragment.apparatus_items,
-                ),
-                edges=prepared_fragment.apparatus_edges,
+                viewer_id=viewer_id,
+                media=media,
+                snapshot=snapshot,
+                now=datetime.now(UTC),
             )
             _record_x_post_provider_success(
                 db,
@@ -666,59 +721,54 @@ def _refresh_x_post_media_for_viewer(
     raise AssertionError("X post media lock set did not stabilize")
 
 
-def _create_or_reuse_x_snapshot_post_media(
-    db: Session,
-    viewer_id: UUID,
+def _require_x_quote_source_identity(
     *,
-    post: XPostSnapshot,
-    snapshot: XAuthorThreadSnapshot,
-    library_ids: list[UUID],
+    source_type: str,
+    provider_target_ref: str | None,
+    post_id: str,
+) -> None:
+    if source_type != source_types.X_POST or provider_target_ref != post_id:
+        # justify-defect: embedded X quote acceptance must return the exact
+        # canonical X-post source identity requested by this provider snapshot.
+        raise AssertionError("accepted X quote source identity changed")
+
+
+def _replace_x_post_snapshot_artifacts(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media: Media,
+    snapshot: XSinglePostSnapshot,
     now: datetime,
-    planned_media_id: UUID,
-    locked_existing_media_ids: frozenset[UUID],
-) -> tuple[Media, _PreparedXFragment | None, bool]:
-    provider_id = x_post_provider_id(post.id)
-    media = (
-        db.query(Media)
-        .filter(Media.provider == "x", Media.provider_id == provider_id)
-        .limit(1)
-        .one_or_none()
-    )
-    if media is not None:
-        if media.id not in locked_existing_media_ids:
-            raise _XMediaLockSetChanged(media.id)
-        library_entries.assign_libraries_for_media_in_current_transaction(
-            db, viewer_id, media.id, library_ids
-        )
-        return media, None, False
-
+) -> None:
     prepared_fragment = _build_x_fragment(
-        media_id=None,
+        media_id=media.id,
         idx=0,
-        html=render_single_post_html(post, users=snapshot.users, media=snapshot.media),
-        base_url=canonical_x_post_url(post.id),
+        html=render_single_post_html(
+            snapshot.post,
+            users=snapshot.users,
+            media=snapshot.media,
+        ),
+        base_url=snapshot.canonical_url,
         created_at=now,
     )
-    media = Media(
-        id=planned_media_id,
-        kind=MediaKind.web_article.value,
-        title=post_title(post, snapshot.users)[:255],
-        requested_url=canonical_x_post_url(post.id),
-        canonical_url=canonical_x_post_url(post.id),
-        canonical_source_url=canonical_x_post_url(post.id),
-        provider="x",
-        provider_id=provider_id,
-        created_by_user_id=viewer_id,
-        created_at=now,
-        updated_at=now,
-        publisher="X",
-        description=post_description(post),
+    delete_document_embed_artifacts(
+        db,
+        owner_user_id=media.created_by_user_id or viewer_id,
+        media_id=media.id,
     )
-    db.add(media)
-    db.flush()
-    mark_ready_for_reading(db, media)
-
-    prepared_fragment.fragment.media_id = media.id
+    delete_web_article_artifacts(
+        db,
+        media_id=media.id,
+        include_content_index=False,
+    )
+    media.title = post_title(snapshot.post, snapshot.users)[:255]
+    media.canonical_url = snapshot.canonical_url
+    media.canonical_source_url = snapshot.canonical_url
+    media.provider = "x"
+    media.provider_id = x_post_provider_id(snapshot.post.id)
+    media.publisher = "X"
+    media.description = post_description(snapshot.post)
     db.add(prepared_fragment.fragment)
     db.flush()
     insert_fragment_blocks(
@@ -726,16 +776,13 @@ def _create_or_reuse_x_snapshot_post_media(
         prepared_fragment.fragment.id,
         prepared_fragment.fragment_blocks,
     )
-    # The author observation for this quoted-post media (created OR reused) is
-    # built by the thread-refresh caller and applied through the shared source
-    # publication seam; no credit is written in this transaction.
     replace_media_apparatus(
         db,
         media_id=media.id,
         media_kind="web_article",
         source_fingerprint_value=source_fingerprint(
             "x_post",
-            canonical_x_post_url(post.id),
+            snapshot.canonical_url,
             prepared_fragment.fragment.html_sanitized,
             prepared_fragment.fragment.canonical_text,
         ),
@@ -748,10 +795,6 @@ def _create_or_reuse_x_snapshot_post_media(
         ),
         edges=prepared_fragment.apparatus_edges,
     )
-    library_entries.assign_libraries_for_media_in_current_transaction(
-        db, viewer_id, media.id, library_ids
-    )
-    return media, prepared_fragment, True
 
 
 def _build_x_fragment(
@@ -761,6 +804,7 @@ def _build_x_fragment(
     html: str,
     base_url: str,
     created_at: datetime,
+    quote_occurrences: tuple[RenderedXQuoteOccurrence, ...] = (),
 ) -> _PreparedXFragment:
     if len(html.encode("utf-8")) > WEB_ARTICLE_HTML_MAX_BYTES:
         raise InvalidRequestError(ApiErrorCode.E_CAPTURE_TOO_LARGE, "X thread HTML is too large")
@@ -770,6 +814,7 @@ def _build_x_fragment(
             base_url=base_url,
             fragment_idx=idx,
             media_title=None,
+            extract_embeds=bool(quote_occurrences),
         )
     except ValueError as exc:
         raise ApiError(
@@ -778,6 +823,25 @@ def _build_x_fragment(
     canonical_text = prepared.canonical_text
     if not canonical_text.strip():
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "X post has no readable text")
+    if len(quote_occurrences) > 1:
+        # justify-defect: the X provider contract permits one direct quoted
+        # post per containing post and therefore one marker per fragment.
+        raise AssertionError("X fragment returned multiple quote occurrences")
+    prepared_quote_occurrences: list[_PreparedXQuoteOccurrence] = []
+    for occurrence in quote_occurrences:
+        start = canonical_text.rfind(occurrence.placeholder_text)
+        if start < 0:
+            # justify-defect: the X renderer emitted this exact placeholder in
+            # the sanitized fragment whose canonical text is bound here.
+            raise AssertionError("X quote placeholder is missing from canonical text")
+        end = start + len(occurrence.placeholder_text)
+        prepared_quote_occurrences.append(
+            _PreparedXQuoteOccurrence(
+                rendered=occurrence,
+                canonical_start_offset=start,
+                canonical_end_offset=end,
+            )
+        )
     fragment = Fragment(
         media_id=media_id,
         idx=idx,
@@ -790,6 +854,50 @@ def _build_x_fragment(
         fragment_blocks=prepared.fragment_blocks,
         apparatus_items=prepared.apparatus_items,
         apparatus_edges=prepared.apparatus_edges,
+        quote_occurrences=tuple(prepared_quote_occurrences),
+    )
+
+
+def _document_embed_occurrence(
+    *,
+    prepared: _PreparedXQuoteOccurrence,
+    fragment_id: UUID,
+    target_media_ids: dict[str, UUID],
+) -> DocumentEmbedArtifactOccurrence:
+    rendered = prepared.rendered
+    reference = rendered.reference
+    if isinstance(reference, XResolvedQuoteReference):
+        target_media_id = target_media_ids.get(rendered.post_id)
+        if target_media_id is None:
+            # justify-defect: every resolved quote is synchronously published
+            # before the complete parent artifact is replaced.
+            raise AssertionError("resolved X quote has no materialized media")
+        target = DocumentEmbedTargetMaterialized(media_id=target_media_id)
+    elif isinstance(reference, XUnavailableQuoteReference):
+        target = DocumentEmbedTargetTerminal(
+            status="failed",
+            error_code=ApiErrorCode.E_X_POST_UNAVAILABLE.value,
+            error_message="Quoted X post is unavailable.",
+        )
+    else:
+        # justify-defect: X quote references are a closed owned union.
+        raise AssertionError("unknown X quote reference variant")
+    return DocumentEmbedArtifactOccurrence(
+        fragment_id=fragment_id,
+        ordinal=rendered.ordinal,
+        occurrence_key=rendered.occurrence_key,
+        provider="x",
+        embed_kind="post",
+        source_shape="provider_json",
+        source_url=canonical_x_post_url(rendered.post_id),
+        canonical_source_url=canonical_x_post_url(rendered.post_id),
+        provider_target_ref=x_post_provider_id(rendered.post_id),
+        title=None,
+        authored_text=None,
+        placeholder_text=rendered.placeholder_text,
+        canonical_start_offset=prepared.canonical_start_offset,
+        canonical_end_offset=prepared.canonical_end_offset,
+        target=target,
     )
 
 
@@ -800,13 +908,6 @@ def _status_to_str(value: object) -> str:
     if isinstance(enum_value, str):
         return enum_value
     return str(value)
-
-
-def _lock_x_provider_id(db: Session, provider_id: str) -> None:
-    db.execute(
-        text("SELECT pg_advisory_xact_lock(hashtextextended(:provider_id, 0))"),
-        {"provider_id": provider_id},
-    )
 
 
 def _api_error_from_x_provider_error(error: XProviderError) -> ApiError:
@@ -906,7 +1007,7 @@ def _record_x_provider_success(
             "conversation_id": snapshot.conversation_id,
             "canonical_anchor_post_id": snapshot.canonical_anchor_post_id,
             "post_count": len(snapshot.posts),
-            "quote_post_count": len(snapshot.quoted_posts),
+            "quote_post_count": len(snapshot.quote_references),
         },
     )
 
@@ -943,17 +1044,3 @@ def _record_x_post_provider_success(
 
 def _duration_ms(started_at: float) -> int:
     return max(0, int((perf_counter() - started_at) * 1000))
-
-
-def _is_media_provider_conflict(exc: IntegrityError) -> bool:
-    constraint_name = integrity_constraint_name(exc)
-    if constraint_name:
-        return constraint_name == "uix_media_x_provider_id"
-    return "uix_media_x_provider_id" in str(exc)
-
-
-def _is_media_canonical_url_conflict(exc: IntegrityError) -> bool:
-    constraint_name = integrity_constraint_name(exc)
-    if constraint_name:
-        return constraint_name == "uix_media_canonical_url"
-    return "uix_media_canonical_url" in str(exc)

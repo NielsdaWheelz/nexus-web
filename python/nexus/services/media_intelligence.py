@@ -612,9 +612,7 @@ def ensure_current_many(
                 )
             )
         elif isinstance(unit, MediaUnit) or not _load_candidates(db, media_id=media_id):
-            results.append(
-                MediaOmission(media_id=media_id, reason=MediaOmissionReason.NoReadyUnit)
-            )
+            results.append(MediaOmission(media_id=media_id, reason=MediaOmissionReason.NoReadyUnit))
         elif unit is NotReady.Failed:
             results.append(
                 MediaOmission(media_id=media_id, reason=MediaOmissionReason.ProjectionFailed)
@@ -823,23 +821,15 @@ def reconcile_uncertain_media_unit(
             if state.request_fingerprint.value != request_fingerprint:
                 raise invalid("Media Intelligence inputs changed since provider dispatch")
             if isinstance(normalized, _CompletedSuccess):
-                candidate_ids = {
-                    candidate.evidence_span_id
-                    for candidate in candidates
-                }
-                if any(
-                    claim.evidence_span_id not in candidate_ids
-                    for claim in normalized.claims
-                ):
+                candidate_ids = {candidate.evidence_span_id for candidate in candidates}
+                if any(claim.evidence_span_id not in candidate_ids for claim in normalized.claims):
                     raise invalid(
                         "Recovered Media Intelligence claims must use offered evidence spans"
                     )
                 if [claim.ordinal for claim in normalized.claims] != list(
                     range(len(normalized.claims))
                 ):
-                    raise invalid(
-                        "Recovered Media Intelligence claim ordinals must be dense"
-                    )
+                    raise invalid("Recovered Media Intelligence claim ordinals must be dense")
             terminal_result = _COMPLETED_RESULT_ADAPTER.dump_json(normalized).decode("utf-8")
             next_state = state.model_copy(
                 update={
@@ -1353,9 +1343,7 @@ def current_content_fingerprint(db: Session, *, media_id: UUID) -> str:
         "active_embedding_provider": provider,
         "active_embedding_model": model,
         "active_index_generation": (
-            index_generation.isoformat()
-            if index_generation is not None
-            else None
+            index_generation.isoformat() if index_generation is not None else None
         ),
         "chunks": [
             [

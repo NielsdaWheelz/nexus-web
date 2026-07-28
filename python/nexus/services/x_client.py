@@ -18,7 +18,9 @@ from nexus.services.x_types import (
     XPostSnapshot,
     XProviderError,
     XProviderErrorCode,
+    XResolvedQuoteReference,
     XSinglePostSnapshot,
+    XUnavailableQuoteReference,
     XUrlEntity,
     XUserSnapshot,
     canonical_x_post_url,
@@ -109,18 +111,25 @@ def fetch_author_thread_snapshot(post_id: str) -> XAuthorThreadSnapshot:
             if not next_token:
                 break
 
-        quote_ids = _quoted_post_ids(accumulator.posts, thread_candidate_ids)
+        thread_posts = _select_author_thread_posts(
+            accumulator.posts,
+            root=root,
+            candidate_ids=thread_candidate_ids,
+            max_posts=max_posts,
+        )
+        quote_ids = _quoted_post_ids({post.id: post for post in thread_posts})
         missing_quote_ids = sorted(qid for qid in quote_ids if qid not in accumulator.posts)
+        unavailable_quote_ids: set[str] = set()
         for chunk in _chunks(missing_quote_ids, 100):
-            accumulator.add(
-                _get_json(
-                    client,
-                    f"{config.base_url}/tweets",
-                    params={**_post_lookup_params(), "ids": ",".join(chunk)},
-                    operation="lookup_quotes",
-                    deadline=config.deadline,
-                )
+            quote_payload = _get_json(
+                client,
+                f"{config.base_url}/tweets",
+                params={**_post_lookup_params(), "ids": ",".join(chunk)},
+                operation="lookup_quotes",
+                deadline=config.deadline,
             )
+            accumulator.add(quote_payload)
+            unavailable_quote_ids.update(_unavailable_post_ids(quote_payload))
 
     root = accumulator.posts.get(post_id)
     if root is None:
@@ -129,18 +138,28 @@ def fetch_author_thread_snapshot(post_id: str) -> XAuthorThreadSnapshot:
     if root_author is None:
         raise _provider_unavailable("X API returned no author data.", "lookup_post")
 
-    thread_posts = _select_author_thread_posts(
-        accumulator.posts,
-        root=root,
-        candidate_ids=thread_candidate_ids,
-        max_posts=max_posts,
-    )
     canonical_anchor_post_id = thread_posts[0].id if thread_posts else root.id
-    quoted_posts = {
-        quote_id: accumulator.posts[quote_id]
-        for quote_id in _quoted_post_ids(dict((post.id, post) for post in thread_posts))
-        if quote_id in accumulator.posts
-    }
+    quote_references = {}
+    for quote_id in _quoted_post_ids({post.id: post for post in thread_posts}):
+        quoted_post = accumulator.posts.get(quote_id)
+        if quoted_post is not None:
+            quoted_author = accumulator.users.get(quoted_post.author_id)
+            if quoted_author is None or not normalize_x_username(quoted_author.username):
+                raise _provider_unavailable(
+                    f"X API returned no author data for quoted post {quote_id}.",
+                    "lookup_quotes",
+                )
+            quote_references[quote_id] = XResolvedQuoteReference(post=quoted_post)
+        elif quote_id in unavailable_quote_ids:
+            quote_references[quote_id] = XUnavailableQuoteReference(
+                post_id=quote_id,
+                canonical_url=canonical_x_post_url(quote_id),
+            )
+        else:
+            raise _provider_unavailable(
+                f"X API returned neither post data nor a terminal error for quoted post {quote_id}.",
+                "lookup_quotes",
+            )
 
     return XAuthorThreadSnapshot(
         requested_post_id=root.id,
@@ -149,7 +168,7 @@ def fetch_author_thread_snapshot(post_id: str) -> XAuthorThreadSnapshot:
         canonical_url=canonical_x_post_url(canonical_anchor_post_id),
         author=root_author,
         posts=tuple(thread_posts),
-        quoted_posts=quoted_posts,
+        quote_references=quote_references,
         users=accumulator.users,
         media=accumulator.media,
     )
@@ -449,16 +468,22 @@ def _parse_post(value: object) -> XPostSnapshot | None:
     if post_id is None or author_id is None:
         return None
     note_tweet = value.get("note_tweet")
-    text = _string(note_tweet.get("text")) if isinstance(note_tweet, dict) else None
+    note_text = _string(note_tweet.get("text")) if isinstance(note_tweet, dict) else None
+    if note_text and isinstance(note_tweet, dict):
+        post_text = note_text
+        entities = note_tweet.get("entities")
+    else:
+        post_text = _string(value.get("text")) or ""
+        entities = value.get("entities")
     return XPostSnapshot(
         id=post_id,
         author_id=author_id,
-        text=text or _string(value.get("text")) or "",
+        text=post_text,
         created_at=_string(value.get("created_at")),
         conversation_id=_string(value.get("conversation_id")),
         referenced_tweets=tuple(_parse_references(value.get("referenced_tweets"))),
         media_keys=tuple(_parse_media_keys(value.get("attachments"))),
-        urls=tuple(_parse_url_entities(value.get("entities"))),
+        urls=tuple(_parse_url_entities(entities)),
     )
 
 
@@ -549,6 +574,23 @@ def _parse_media(value: object) -> list[XMediaSnapshot]:
                 )
             )
     return media
+
+
+def _unavailable_post_ids(payload: Mapping[str, object]) -> set[str]:
+    errors = payload.get("errors")
+    if not isinstance(errors, list):
+        return set()
+    post_ids: set[str] = set()
+    for item in errors:
+        if not isinstance(item, dict):
+            continue
+        error_type = _string(item.get("type")) or ""
+        if not error_type.endswith(("/resource-not-found", "/not-authorized-for-resource")):
+            continue
+        post_id = _string(item.get("resource_id")) or _string(item.get("value"))
+        if post_id:
+            post_ids.add(post_id)
+    return post_ids
 
 
 def _quoted_post_ids(

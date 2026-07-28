@@ -1,4 +1,5 @@
 import { test, expect, type Page, type Request } from "@playwright/test";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { openAddContentPanel } from "./add-content";
@@ -138,7 +139,7 @@ test.describe("web articles", () => {
 
     try {
       const createLibrary = await page.request.post("/api/libraries", {
-        data: { name: libraryName },
+        data: { library_id: randomUUID(), name: libraryName },
         headers: stateChangingApiHeaders(),
       });
       if (!createLibrary.ok()) {
@@ -282,33 +283,35 @@ test.describe("web articles", () => {
       await firstRow
         .getByRole("button", { name: "Libraries", exact: true })
         .click();
-      const rowLibraries = page.getByRole("dialog", {
-        name: `Libraries for ${firstUrl}`,
+      const rowLibraries = page.getByLabel(`Libraries for ${firstUrl}`, {
+        exact: true,
       });
-      const rowLibraryButton = rowLibraries
-        .getByRole("button")
+      const rowLibraryOption = rowLibraries
+        .getByRole("option")
         .filter({ hasText: libraryName });
-      await expect(rowLibraryButton).toBeVisible();
+      await expect(rowLibraryOption).toBeVisible();
+      await expect(rowLibraryOption).toHaveAttribute("aria-selected", "false");
       const rowAddResponse = page.waitForResponse(
         (response) =>
           response.request().method() === "POST" &&
           new URL(response.url()).pathname ===
             `/api/media/${firstMediaId}/libraries`,
       );
-      await rowLibraryButton.click();
+      await rowLibraryOption.click();
       const completedRowAdd = await rowAddResponse;
       expect(completedRowAdd.ok()).toBeTruthy();
       expect(completedRowAdd.request().postDataJSON()).toEqual({
         library_ids: [filingLibraryId],
       });
-      await expect(rowLibraryButton).toContainText("Remove from this library");
+      await expect(rowLibraryOption).toHaveAttribute("aria-selected", "true");
       await expect
         .poll(() => isMediaInLibrary(page, firstMediaId, filingLibraryId))
         .toBe(true);
       await expect
         .poll(() => isMediaInLibrary(page, secondMediaId, filingLibraryId))
         .toBe(false);
-      await rowLibraries.getByRole("button", { name: "Close dialog" }).click();
+      await page.keyboard.press("Escape");
+      await expect(rowLibraries).toHaveCount(0);
 
       const bulkAddRequests: Array<{ mediaId: string; body: unknown }> = [];
       const captureBulkAdd = (request: Request) => {
@@ -322,13 +325,13 @@ test.describe("web articles", () => {
         }
       };
       await add.getByRole("button", { name: "Add all to…" }).click();
-      const bulkAdd = page.getByRole("dialog", {
-        name: "Add all to libraries",
+      const bulkAdd = page.getByLabel("Add all to libraries", {
+        exact: true,
       });
-      const bulkAddButton = bulkAdd
-        .getByRole("button")
+      const bulkAddOption = bulkAdd
+        .getByRole("option")
         .filter({ hasText: libraryName });
-      await expect(bulkAddButton).toContainText("Add to library");
+      await expect(bulkAddOption).toHaveAttribute("aria-selected", "false");
       const completedBulkAdd = page.waitForResponse(
         (response) =>
           response.request().method() === "POST" &&
@@ -337,7 +340,7 @@ test.describe("web articles", () => {
       );
       page.on("request", captureBulkAdd);
       try {
-        await bulkAddButton.click();
+        await bulkAddOption.click();
         expect((await completedBulkAdd).ok()).toBeTruthy();
         await expect(bulkAdd.getByText("No eligible libraries.")).toBeVisible();
       } finally {
@@ -352,7 +355,8 @@ test.describe("web articles", () => {
       await expect
         .poll(() => isMediaInLibrary(page, secondMediaId, filingLibraryId))
         .toBe(true);
-      await bulkAdd.getByRole("button", { name: "Close dialog" }).click();
+      await page.keyboard.press("Escape");
+      await expect(bulkAdd).toHaveCount(0);
 
       const bulkRemovePaths: string[] = [];
       const captureBulkRemove = (request: Request) => {
@@ -363,13 +367,13 @@ test.describe("web articles", () => {
         }
       };
       await add.getByRole("button", { name: "Remove all from…" }).click();
-      const bulkRemove = page.getByRole("dialog", {
-        name: "Remove all from libraries",
+      const bulkRemove = page.getByLabel("Remove all from libraries", {
+        exact: true,
       });
-      const bulkRemoveButton = bulkRemove
-        .getByRole("button")
+      const bulkRemoveOption = bulkRemove
+        .getByRole("option")
         .filter({ hasText: libraryName });
-      await expect(bulkRemoveButton).toContainText("Remove from this library");
+      await expect(bulkRemoveOption).toHaveAttribute("aria-selected", "true");
       const removalResponses = [firstMediaId, secondMediaId].map((mediaId) =>
         page.waitForResponse(
           (response) =>
@@ -380,7 +384,7 @@ test.describe("web articles", () => {
       );
       page.on("request", captureBulkRemove);
       try {
-        await bulkRemoveButton.click();
+        await bulkRemoveOption.click();
         for (const response of await Promise.all(removalResponses)) {
           expect(response.status()).toBe(204);
         }
@@ -402,6 +406,8 @@ test.describe("web articles", () => {
       await expect
         .poll(() => isMediaInLibrary(page, secondMediaId, filingLibraryId))
         .toBe(false);
+      await page.keyboard.press("Escape");
+      await expect(bulkRemove).toHaveCount(0);
       await expect(add.getByText("2 items added")).toBeVisible();
       await expect(
         rejectedRow.getByText("Not added", { exact: true }),

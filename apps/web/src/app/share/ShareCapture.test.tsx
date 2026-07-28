@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Component, type ReactNode } from "react";
+import { page } from "vitest/browser";
 import ShareCapture from "./ShareCapture";
 
 class DefectBoundary extends Component<
@@ -64,6 +65,32 @@ function noteBlock() {
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const OWNER_USER_HANDLE =
+  "nus1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB";
+
+function createdLibraryResponse(body: Record<string, unknown>): Response {
+  return jsonResponse(
+    {
+      data: {
+        id: body.library_id,
+        name: String(body.name),
+        color: null,
+        ownerUserHandle: OWNER_USER_HANDLE,
+        isDefault: false,
+        role: "admin",
+        systemKey: null,
+        canRename: true,
+        canDelete: true,
+        canEditEntries: true,
+        canManageMembers: true,
+        canTransferOwnership: true,
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+      },
+    },
+    201,
+  );
+}
 
 function installShareFetch({
   fromUrl,
@@ -101,18 +128,7 @@ function installShareFetch({
       if (url.pathname === "/api/libraries" && method === "POST") {
         const body = parseJsonBody(init);
         if (createLibrary) return createLibrary(body);
-        return jsonResponse(
-          {
-            data: {
-              id: "lib-created",
-              name: String(body.name),
-              color: null,
-              created_at: "2026-01-01T00:00:00Z",
-              updated_at: "2026-01-01T00:00:00Z",
-            },
-          },
-          201,
-        );
+        return createdLibraryResponse(body);
       }
 
       if (url.pathname === "/api/media/from-url" && method === "POST") {
@@ -163,9 +179,22 @@ function quickCaptureBodies(fetchMock: ReturnType<typeof installShareFetch>) {
     .map(([, init]) => parseJsonBody(init));
 }
 
+function libraryCreateBodies(
+  fetchMock: ReturnType<typeof installShareFetch>,
+) {
+  return fetchMock.mock.calls
+    .filter(
+      ([input, init]) =>
+        new URL(pathFor(input), "http://localhost").pathname ===
+          "/api/libraries" && init?.method === "POST",
+    )
+    .map(([, init]) => parseJsonBody(init));
+}
+
 describe("ShareCapture", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.unstubAllGlobals();
+    await page.viewport(1024, 768);
   });
 
   it("does not ingest URL shares on mount", async () => {
@@ -191,13 +220,24 @@ describe("ShareCapture", () => {
     expect(fromUrlBodies(fetchMock)).toEqual([]);
   });
 
+  it("labels the empty destination selection with no default library copy", async () => {
+    installShareFetch();
+
+    renderShareCapture("https://example.com/article");
+
+    expect(
+      await screen.findByText("No additional libraries"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("My Library only")).not.toBeInTheDocument();
+  });
+
   it("saves selected library ids in the initial from-url call", async () => {
     const fetchMock = installShareFetch();
 
     renderShareCapture("https://example.com/article");
 
-    fireEvent.focus(
-      screen.getByRole("combobox", { name: "Library destinations" }),
+    fireEvent.click(
+      screen.getByRole("button", { name: /^Library destinations:/ }),
     );
     const option = await screen.findByRole("option", { name: "Research" });
     fireEvent.click(option);
@@ -215,21 +255,23 @@ describe("ShareCapture", () => {
 
     renderShareCapture("https://example.com/article");
 
-    const input = screen.getByRole("combobox", {
-      name: "Library destinations",
-    });
-    fireEvent.focus(input);
-    fireEvent.change(input, { target: { value: "Created" } });
     fireEvent.click(
-      await screen.findByRole("option", { name: "Create “Created”" }),
+      screen.getByRole("button", { name: /^Library destinations:/ }),
     );
-    await screen.findByRole("button", { name: "Remove Created" });
+    const input = await screen.findByRole("combobox", {
+      name: "Search or create a library",
+    });
+    fireEvent.change(input, { target: { value: "Created" } });
+    fireEvent.click(await screen.findByText("Create “Created”"));
+    await screen.findByRole("option", { name: "Created" });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
+      const createdId = libraryCreateBodies(fetchMock)[0]?.library_id;
+      expect(createdId).toMatch(UUID_RE);
       expect(fromUrlBodies(fetchMock)).toContainEqual({
         url: "https://example.com/article",
-        library_ids: ["lib-created"],
+        library_ids: [createdId],
       });
     });
   });
@@ -241,14 +283,14 @@ describe("ShareCapture", () => {
 
     renderShareCapture("https://example.com/article");
 
-    const input = screen.getByRole("combobox", {
-      name: "Library destinations",
-    });
-    fireEvent.focus(input);
-    fireEvent.change(input, { target: { value: "Created" } });
     fireEvent.click(
-      await screen.findByRole("option", { name: "Create “Created”" }),
+      screen.getByRole("button", { name: /^Library destinations:/ }),
     );
+    const input = await screen.findByRole("combobox", {
+      name: "Search or create a library",
+    });
+    fireEvent.change(input, { target: { value: "Created" } });
+    fireEvent.click(await screen.findByText("Create “Created”"));
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
@@ -279,8 +321,8 @@ describe("ShareCapture", () => {
 
     renderShareCapture("https://example.com/one https://example.com/two");
 
-    fireEvent.focus(
-      screen.getByRole("combobox", { name: "Library destinations" }),
+    fireEvent.click(
+      screen.getByRole("button", { name: /^Library destinations:/ }),
     );
     fireEvent.click(await screen.findByRole("option", { name: "Research" }));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -323,8 +365,8 @@ describe("ShareCapture", () => {
 
     renderShareCapture("https://example.com/article");
 
-    fireEvent.focus(
-      screen.getByRole("combobox", { name: "Library destinations" }),
+    fireEvent.click(
+      screen.getByRole("button", { name: /^Library destinations:/ }),
     );
     fireEvent.click(await screen.findByRole("option", { name: "Research" }));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -549,7 +591,7 @@ describe("ShareCapture", () => {
       }),
     );
     expect(
-      screen.queryByRole("combobox", { name: "Library destinations" }),
+      screen.queryByRole("button", { name: /^Library destinations:/ }),
     ).toBeNull();
   });
 

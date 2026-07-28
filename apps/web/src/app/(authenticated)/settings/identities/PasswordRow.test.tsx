@@ -1,7 +1,17 @@
+import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
 import type { LinkedIdentity } from "@/lib/auth/identities";
+import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
+import { ShareControllerProvider } from "@/lib/sharing/controller";
+import {
+  PaneReturnMementoProvider,
+  PaneReturnVisitScope,
+} from "@/lib/workspace/paneReturnMemento";
+import { assumePaneVisitId } from "@/lib/workspace/schema";
 
 const setPasswordAction = vi.hoisted(() => vi.fn());
 const changePasswordAction = vi.hoisted(() => vi.fn());
@@ -14,6 +24,29 @@ vi.mock("@/lib/auth/password-actions", () => ({
 }));
 
 import { PasswordRow } from "./PasswordRow";
+
+const TEST_VISIT_ID = assumePaneVisitId(
+  "00000000-0000-4000-8000-000000000014",
+);
+
+function renderPasswordRow(node: ReactNode) {
+  return render(
+    withRenderEnvironment(
+      <FeedbackProvider>
+        <PaneReturnMementoProvider>
+          <PaneReturnVisitScope
+            visitId={TEST_VISIT_ID}
+            routeKey="/settings/identities"
+          >
+            <LibraryPlacementControllerProvider>
+              <ShareControllerProvider>{node}</ShareControllerProvider>
+            </LibraryPlacementControllerProvider>
+          </PaneReturnVisitScope>
+        </PaneReturnMementoProvider>
+      </FeedbackProvider>,
+    ),
+  );
+}
 
 function googleIdentity(): LinkedIdentity {
   return {
@@ -36,7 +69,9 @@ function emailIdentity(): LinkedIdentity {
 describe("PasswordRow", () => {
   it("renders a Set password button and opens a dialog with a password input when no email identity exists", async () => {
     const user = userEvent.setup();
-    render(<PasswordRow identities={[googleIdentity()]} onChanged={vi.fn()} />);
+    renderPasswordRow(
+      <PasswordRow identities={[googleIdentity()]} onChanged={vi.fn()} />,
+    );
 
     const setButton = screen.getByRole("button", { name: /set password/i });
     expect(setButton).toBeInTheDocument();
@@ -61,11 +96,11 @@ describe("PasswordRow", () => {
 
   it("renders the email support line, primary Change action, and overflow Remove action", async () => {
     const user = userEvent.setup();
-    render(
+    renderPasswordRow(
       <PasswordRow
         identities={[emailIdentity(), googleIdentity()]}
         onChanged={vi.fn()}
-      />
+      />,
     );
 
     expect(
@@ -85,7 +120,9 @@ describe("PasswordRow", () => {
   });
 
   it("does not expose Remove password when the email identity is the only one", () => {
-    render(<PasswordRow identities={[emailIdentity()]} onChanged={vi.fn()} />);
+    renderPasswordRow(
+      <PasswordRow identities={[emailIdentity()]} onChanged={vi.fn()} />,
+    );
 
     expect(
       screen.queryByRole("button", { name: "More actions for Password" })

@@ -1,6 +1,6 @@
 /**
- * The conversation-message wire boundary: decode the immutable reader-quote
- * snapshot once, where server messages enter the client.
+ * The conversation-message wire boundary: decode nested transport values once,
+ * where server messages enter the client.
  *
  * A `ConversationMessage` arrives from several transports (the messages GET, the
  * conversation tree, and the `POST /chat-runs` family — create, rerun, reconcile,
@@ -20,7 +20,13 @@ import {
   decodeReaderSelectionOut,
   type ReaderSelectionOut,
 } from "@/lib/conversations/readerSelection";
+import {
+  decodeCitationOut,
+  type CitationOut,
+} from "@/lib/conversations/citationOut";
+import { normalizeResourceActivation } from "@/lib/resources/activation";
 import type {
+  AssistantTrustTrail,
   ChatRunResponse,
   ConversationMessage,
   ConversationTreeResponse,
@@ -42,21 +48,59 @@ export function decodeReaderSelectionPresence(
   });
 }
 
-/** Decode one wire message's reader-quote snapshot, preserving every other field. */
-export function decodeMessageReaderSelection(
+function decodeCitations(raw: unknown): CitationOut[] | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) {
+    throw new Error("Invalid message citations wire value");
+  }
+  return raw.map((entry) => {
+    const citation = decodeCitationOut(entry);
+    if (!citation) throw new Error("Invalid message citation wire value");
+    return citation;
+  });
+}
+
+function decodeTrustTrail(
+  trail: AssistantTrustTrail | null,
+): AssistantTrustTrail | null {
+  if (trail === null) return null;
+  return {
+    ...trail,
+    citations: trail.citations.map((entry) => {
+      const citation = decodeCitationOut(entry.citation);
+      if (!citation) {
+        throw new Error("Invalid trust-trail citation wire value");
+      }
+      return { ...entry, citation };
+    }),
+    context_refs_added: trail.context_refs_added.map((entry) => {
+      const activation = normalizeResourceActivation(entry.activation);
+      if (!activation) {
+        throw new Error("Invalid trust-trail context activation wire value");
+      }
+      return { ...entry, activation };
+    }),
+  };
+}
+
+/** Decode one wire message, preserving already-owned scalar fields. */
+export function decodeConversationMessage(
   message: ConversationMessage,
 ): ConversationMessage {
+  const citations = decodeCitations(message.citations);
   return {
     ...message,
+    ...(citations === undefined ? {} : { citations }),
+    trust_trail: decodeTrustTrail(message.trust_trail),
     reader_selection: decodeReaderSelectionPresence(message.reader_selection),
   };
 }
 
-/** Decode the reader-quote snapshot on each message of a wire list. */
-export function decodeMessagesReaderSelection(
+/** Decode each message of a wire list. */
+export function decodeConversationMessages(
   messages: ConversationMessage[],
 ): ConversationMessage[] {
-  return messages.map(decodeMessageReaderSelection);
+  return messages.map(decodeConversationMessage);
 }
 
 /**
@@ -64,13 +108,13 @@ export function decodeMessagesReaderSelection(
  * `POST /chat-runs` response (`ChatRunData`), preserving the run, conversation,
  * and stream-state fields.
  */
-export function decodeRunDataReaderSelection(
+export function decodeChatRunData(
   data: ChatRunResponse["data"],
 ): ChatRunResponse["data"] {
   return {
     ...data,
-    user_message: decodeMessageReaderSelection(data.user_message),
-    assistant_message: decodeMessageReaderSelection(data.assistant_message),
+    user_message: decodeConversationMessage(data.user_message),
+    assistant_message: decodeConversationMessage(data.assistant_message),
   };
 }
 
@@ -79,16 +123,16 @@ export function decodeRunDataReaderSelection(
  * the selected path plus each cached fork path. Run at the fetch boundary so the
  * cached, decoded tree is applied to state idempotently.
  */
-export function decodeTreeReaderSelection(
+export function decodeConversationTree(
   tree: ConversationTreeResponse,
 ): ConversationTreeResponse {
   const pathCacheByLeafId: Record<string, ConversationMessage[]> = {};
   for (const [leafId, path] of Object.entries(tree.path_cache_by_leaf_id)) {
-    pathCacheByLeafId[leafId] = decodeMessagesReaderSelection(path);
+    pathCacheByLeafId[leafId] = decodeConversationMessages(path);
   }
   return {
     ...tree,
-    selected_path: decodeMessagesReaderSelection(tree.selected_path),
+    selected_path: decodeConversationMessages(tree.selected_path),
     path_cache_by_leaf_id: pathCacheByLeafId,
   };
 }

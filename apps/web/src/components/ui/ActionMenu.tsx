@@ -18,6 +18,7 @@ import {
   projectActionControlState,
   type ActionDescriptor,
 } from "@/lib/ui/actionDescriptor";
+import { resolveTransientPortalContainer } from "@/lib/ui/transientPortalContainer";
 import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
 import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
 import { useHistoryDismiss } from "@/lib/ui/useHistoryDismiss";
@@ -69,6 +70,9 @@ interface ActionMenuProps {
 const MENU_ITEM_SELECTOR =
   '[role="menuitem"]:not([disabled]), ' +
   '[role="menuitemcheckbox"]:not([disabled])';
+const ENABLED_MENU_ITEM_SELECTOR =
+  '[role="menuitem"]:not([disabled]):not([aria-disabled="true"]), ' +
+  '[role="menuitemcheckbox"]:not([disabled]):not([aria-disabled="true"])';
 const TABBABLE_SELECTOR = [
   'a[href]:not([aria-disabled="true"])',
   "button:not([disabled])",
@@ -77,20 +81,6 @@ const TABBABLE_SELECTOR = [
   "select:not([disabled])",
   '[tabindex]:not([tabindex="-1"])',
 ].join(",");
-
-function resolvePortalContainer(
-  trigger: HTMLButtonElement | null,
-  modalOwned: boolean,
-): HTMLElement {
-  if (!modalOwned) return document.body;
-  const modal = trigger?.closest<HTMLElement>('[role="dialog"]');
-  if (!modal) {
-    throw new Error(
-      "A modal-owned ActionMenu requires a containing dialog element.",
-    );
-  }
-  return modal;
-}
 
 export default function ActionMenu({
   options,
@@ -133,6 +123,15 @@ export default function ActionMenu({
     if (!menuRef.current) return [];
     return Array.from(
       menuRef.current.querySelectorAll<HTMLElement>(MENU_ITEM_SELECTOR),
+    );
+  }, [menuRef]);
+
+  const getEnabledMenuItems = useCallback((): HTMLElement[] => {
+    if (!menuRef.current) return [];
+    return Array.from(
+      menuRef.current.querySelectorAll<HTMLElement>(
+        ENABLED_MENU_ITEM_SELECTOR,
+      ),
     );
   }, [menuRef]);
 
@@ -186,15 +185,24 @@ export default function ActionMenu({
 
     requestAnimationFrame(() => {
       const menuItems = getMenuItems();
+      const enabledMenuItems = getEnabledMenuItems();
       const tabbableItems = getTabbableItems();
-      const focusable = menuItems.length ? menuItems : tabbableItems;
+      const focusable =
+        enabledMenuItems.length > 0 ? menuItems : tabbableItems;
       const target =
         initialFocus === "last"
           ? focusable[focusable.length - 1]
           : focusable[0];
       target?.focus();
     });
-  }, [getMenuItems, getTabbableItems, initialFocus, menuOpen, anchorRect]);
+  }, [
+    getEnabledMenuItems,
+    getMenuItems,
+    getTabbableItems,
+    initialFocus,
+    menuOpen,
+    anchorRect,
+  ]);
 
   const handleMenuKeyDown = (event: ReactKeyboardEvent<HTMLUListElement>) => {
     event.stopPropagation();
@@ -445,7 +453,10 @@ export default function ActionMenu({
       {menu && typeof document !== "undefined"
         ? createPortal(
             menu,
-            resolvePortalContainer(toggleRef.current, modalToken !== null),
+            resolveTransientPortalContainer(
+              toggleRef.current,
+              modalToken !== null,
+            ),
           )
         : null}
     </div>

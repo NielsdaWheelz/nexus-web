@@ -14,6 +14,7 @@
 import { useRef } from "react";
 import { useSyncExternalStore } from "react";
 import { isApiError } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
 import {
   cancelDossierBuild,
@@ -178,6 +179,7 @@ export function createDossierControllerStore(
       }
     } catch (error) {
       if (disposed || requestId !== headRequestId) return;
+      if (handleUnauthenticatedApiError(error)) return;
       // A background refresh over an existing Ready must not blank the reader.
       if (state.head.kind !== "Ready") {
         set({ head: { kind: "Failed", error: toDossierErrorInfo(error) } });
@@ -198,8 +200,9 @@ export function createDossierControllerStore(
       const summaries = await fetchDossierRevisions(artifactRef);
       if (disposed || requestId !== historyRequestId) return;
       setReady((ready) => ({ ...ready, history: summaries, historyStatus: "ready" }));
-    } catch {
+    } catch (error) {
       if (disposed || requestId !== historyRequestId) return;
+      if (handleUnauthenticatedApiError(error)) return;
       setReady((ready) => ({ ...ready, historyStatus: "failed" }));
     }
   }
@@ -269,8 +272,9 @@ export function createDossierControllerStore(
         return;
       }
       stopStream = stop;
-    } catch {
+    } catch (error) {
       if (disposed || connectingHandle !== handle) return;
+      if (handleUnauthenticatedApiError(error)) return;
       set({ stream: { kind: "Disconnected" } });
       connectingHandle = null;
     }
@@ -397,6 +401,7 @@ export function createDossierControllerStore(
         syncStream();
         return;
       } catch (error) {
+        if (handleUnauthenticatedApiError(error)) return;
         lastError = error;
         if (!isTransientTransport(error)) break;
       }
@@ -422,6 +427,7 @@ export function createDossierControllerStore(
     } catch (error) {
       // BuildNotActive (already terminal) is benign — the refetch reconciles.
       if (disposed) return;
+      if (handleUnauthenticatedApiError(error)) return;
       if (!isBuildNotActive(error)) {
         set({ pendingAction: null, actionError: toDossierErrorInfo(error) });
         return;
@@ -455,6 +461,7 @@ export function createDossierControllerStore(
       await makeDossierRevisionCurrent(revisionRef);
     } catch (error) {
       if (disposed) return;
+      if (handleUnauthenticatedApiError(error)) return;
       set({ pendingAction: null, actionError: toDossierErrorInfo(error) });
       return;
     }
@@ -481,6 +488,7 @@ export function createDossierControllerStore(
       set({ historicalRevision: { kind: "Ready", revision } });
     } catch (error) {
       if (disposed || requestId !== historicalRequestId) return;
+      if (handleUnauthenticatedApiError(error)) return;
       set({ historicalRevision: { kind: "Failed", error: toDossierErrorInfo(error) } });
     }
   }

@@ -8,11 +8,14 @@ the table under an explicit allowlist (see the cutover spec).
 """
 
 import base64
+import binascii
+import hashlib
+import hmac
 import json
 import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal, assert_never, cast
 from uuid import UUID
 
@@ -21,11 +24,13 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import (
+    active_podcast_subscription_exists_sql,
     can_read_media,
     can_restore_media,
     visible_media_ids_cte_sql,
     visible_podcast_ids_cte_sql,
 )
+from nexus.config import get_settings
 from nexus.db.retries import retry_read_committed
 from nexus.db.session import transaction
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
@@ -61,13 +66,9 @@ _READING_WORDS_PER_MINUTE = 240
 _READING_MINUTES_FINE_LIMIT = 10
 _READING_MINUTES_COARSE_LIMIT = 60
 
-# The one entry-view cursor kind. Bound to the exact view (order + completion)
-# and (viewer, library); every pre-cutover cursor kind fails the `k` check.
-_VIEW_CURSOR_KIND = "library_entries:view:v1"
-
 
 # ---------------------------------------------------------------------------
-# Library view lenses — closed order/completion types and strict query parsing
+# Library view lenses — closed order/projection types and strict query parsing
 # ---------------------------------------------------------------------------
 
 type Direction = Literal["asc", "desc"]
@@ -103,12 +104,37 @@ type Completion = Literal["all", "unfinished"]
 
 
 @dataclass(frozen=True, slots=True)
-class LibraryEntryView:
-    order: LibraryEntryOrder
+class AllItems:
+    """The complete current entry set, optionally hiding finished media."""
+
     completion: Completion
 
 
-_ALLOWED_QUERY_KEYS = frozenset({"sort", "direction", "completion", "cursor", "limit"})
+@dataclass(frozen=True, slots=True)
+class Unfiled:
+    """Default-only: direct-Default media with no other non-system placement."""
+
+    completion: Completion
+
+
+@dataclass(frozen=True, slots=True)
+class InProgress:
+    """Media whose canonical read_state is InProgress. The absence of a
+    ``completion`` field makes ``InProgress + Unfinished`` unrepresentable."""
+
+
+type LibraryEntryProjection = AllItems | Unfiled | InProgress
+
+
+@dataclass(frozen=True, slots=True)
+class LibraryEntryView:
+    order: LibraryEntryOrder
+    projection: LibraryEntryProjection
+
+
+_ALLOWED_QUERY_KEYS = frozenset(
+    {"sort", "direction", "completion", "projection", "cursor", "limit"}
+)
 _FACTUAL_SORTS: dict[str, type[Title | Creator | Published | Added]] = {
     "title": Title,
     "creator": Creator,
@@ -141,8 +167,28 @@ def parse_entries_query(
 
     order = _parse_order(seen.get("sort"), seen.get("direction"))
     completion = _parse_completion(seen.get("completion"))
+    projection = _parse_projection(seen.get("projection"), completion)
     limit = _parse_limit(seen.get("limit"))
-    return LibraryEntryView(order=order, completion=completion), limit, seen.get("cursor")
+    return LibraryEntryView(order=order, projection=projection), limit, seen.get("cursor")
+
+
+def _parse_projection(value: str | None, completion: Completion) -> LibraryEntryProjection:
+    """Build the projection from the raw ``projection`` value and the already
+    parsed completion. Omitted projection means ``AllItems``. ``in-progress``
+    cannot carry completion (the union makes ``InProgress + Unfinished``
+    unrepresentable). The Unfiled-only-for-Default rule needs viewer/library
+    context and is enforced by the service, not here."""
+    if value is None:
+        return AllItems(completion)
+    if value == "unfiled":
+        return Unfiled(completion)
+    if value == "in-progress":
+        if completion == "unfinished":
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "In Progress cannot filter completion"
+            )
+        return InProgress()
+    raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported projection")
 
 
 def _parse_order(sort: str | None, direction: str | None) -> LibraryEntryOrder:
@@ -1043,14 +1089,8 @@ def list_item_libraries(
     elif target.kind == "podcast":
         podcast = (
             db.execute(
-                text("""
-                    SELECT EXISTS(
-                        SELECT 1
-                        FROM podcast_subscriptions ps
-                        WHERE ps.podcast_id = p.id
-                          AND ps.user_id = :viewer_id
-                          AND ps.status = 'active'
-                    ) AS has_active_subscription
+                text(f"""
+                    SELECT {active_podcast_subscription_exists_sql()} AS has_active_subscription
                     FROM podcasts p
                     WHERE p.id = :podcast_id
                 """),
@@ -1080,7 +1120,7 @@ def list_item_libraries(
             JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
             WHERE l.is_default = false
               AND l.system_key IS NULL
-            ORDER BY l.created_at ASC, l.id ASC
+            ORDER BY lower(l.name) ASC, l.name ASC, l.id ASC
         """),
             {"viewer_id": viewer_id, "target_id": target.id},
         )
@@ -1444,14 +1484,59 @@ def _order_json(order: LibraryEntryOrder) -> dict[str, str]:
             assert_never(order)
 
 
-def _encode_key_value(value: Any, kind: _SortValue) -> Any:
+# ---------------------------------------------------------------------------
+# View cursor v2 — authenticated, viewer/library/view-bound, tagged keyset codec
+# ---------------------------------------------------------------------------
+
+_VIEW_CURSOR_DOMAIN = b"library-entries-view-cursor-v2"
+
+
+def _view_cursor_key() -> bytes:
+    """Domain-separated HMAC key derived from the effective stream-token signing
+    root, exactly as the consumption-session cursor derives its own key."""
+    return hashlib.sha256(
+        base64.b64decode(get_settings().effective_stream_token_signing_key, validate=True)
+        + _VIEW_CURSOR_DOMAIN
+    ).digest()
+
+
+def _projection_json(projection: LibraryEntryProjection) -> dict[str, str]:
+    match projection:
+        case AllItems(completion):
+            return {"completion": completion, "kind": "all-items"}
+        case Unfiled(completion):
+            return {"completion": completion, "kind": "unfiled"}
+        case InProgress():
+            return {"kind": "in-progress"}
+        case _:
+            assert_never(projection)
+
+
+def _view_json(view: LibraryEntryView) -> dict[str, Any]:
+    return {"order": _order_json(view.order), "projection": _projection_json(view.projection)}
+
+
+def _view_digest(*, viewer_id: UUID, library_id: UUID, view: LibraryEntryView) -> str:
+    """64 lowercase hex chars binding the exact viewer, library, and view. The
+    viewer UUID enters the cursor only through this digest (and the MAC over it);
+    it is never serialized into the cursor body."""
+    return hashlib.sha256(
+        json.dumps(
+            {"libraryId": str(library_id), "view": _view_json(view), "viewerId": str(viewer_id)},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+
+
+def _encode_after_value(value: Any, kind: _SortValue) -> Any:
     match kind:
         case "int":
             return int(value)
         case "datetime":
-            return value.isoformat()
+            return value.astimezone(UTC).isoformat()
         case "uuid":
-            return str(value)
+            return str(value).lower()
         case "text":
             return str(value)
         case "text_or_null":
@@ -1460,18 +1545,33 @@ def _encode_key_value(value: Any, kind: _SortValue) -> Any:
             assert_never(kind)
 
 
-def _decode_key_value(value: Any, kind: _SortValue) -> Any:
+def _decode_after_value(value: Any, kind: _SortValue) -> Any:
+    """Strict, non-coercing decode of one tagged ``after`` value. Any type or
+    shape drift raises; the caller maps that to E_INVALID_CURSOR."""
     match kind:
         case "int":
-            return int(value)
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise ValueError
+            return value
         case "datetime":
-            return datetime.fromisoformat(str(value))
+            if not isinstance(value, str):
+                raise ValueError
+            parsed = datetime.fromisoformat(value)
+            if parsed.tzinfo is None:
+                raise ValueError
+            return parsed
         case "uuid":
-            return UUID(str(value))
+            if not isinstance(value, str) or value != str(UUID(value)).lower():
+                raise ValueError
+            return UUID(value)
         case "text":
-            return str(value)
+            if not isinstance(value, str):
+                raise ValueError
+            return value
         case "text_or_null":
-            return None if value is None else str(value)
+            if value is not None and not isinstance(value, str):
+                raise ValueError
+            return value
         case _:
             assert_never(kind)
 
@@ -1479,19 +1579,18 @@ def _decode_key_value(value: Any, kind: _SortValue) -> Any:
 def _encode_view_cursor(
     *, viewer_id: UUID, library_id: UUID, view: LibraryEntryView, plan: Sequence[_SortKey], row: Any
 ) -> str:
-    """Encode the exact-view cursor from a raw facts row. justify-base64url: the
-    cursor rides in a URL query parameter, so URL-safe base64 (with padding
-    stripped) avoids percent-encoding `+`/`/`/`=`."""
-    payload = {
-        "k": _VIEW_CURSOR_KIND,
-        "viewer_id": str(viewer_id),
-        "library_id": str(library_id),
-        "order": _order_json(view.order),
-        "completion": view.completion,
-        "after": {key.column: _encode_key_value(row[key.column], key.value) for key in plan},
+    """Encode the exact-view v2 cursor from a raw facts row: a canonical-JSON body
+    authenticated with a domain-separated full HMAC-SHA256 tag.
+    justify-base64url-over-base64: the cursor rides in a URL query parameter, so
+    URL-safe base64 (padding stripped) avoids percent-encoding `+`/`/`/`=`."""
+    body = {
+        "after": [[key.value, _encode_after_value(row[key.column], key.value)] for key in plan],
+        "q": _view_digest(viewer_id=viewer_id, library_id=library_id, view=view),
+        "v": 2,
     }
-    encoded = base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
-    return encoded.rstrip("=")
+    raw = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+    tag = hmac.new(_view_cursor_key(), raw, hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(raw + tag).rstrip(b"=").decode()
 
 
 def _decode_view_cursor(
@@ -1502,26 +1601,50 @@ def _decode_view_cursor(
     view: LibraryEntryView,
     plan: Sequence[_SortKey],
 ) -> dict[str, object]:
-    """Decode a cursor into ``:ks_<column>`` keyset binds. Any mismatch — a
-    non-view `k` (every legacy default/position/resonance cursor), a different
-    viewer/library, or a different order/completion (cross-sort, cross-direction,
-    cross-filter reuse) — is E_INVALID_CURSOR."""
+    """Decode a v2 cursor into ``:ks_<column>`` keyset binds, or raise
+    E_INVALID_CURSOR. Every check is exact: byte-for-byte base64url round-trip, a
+    constant-time full-digest MAC, the canonical body shape, the exact
+    viewer/library/view digest, and a strict positional tagged ``after`` list
+    matching the plan. No value is coerced; the viewer UUID is authenticated
+    through the digest but is never read from the body. Any mismatch — wrong
+    viewer, library, order, projection, completion, tag, or a noncanonical body —
+    fails identically."""
     try:
-        padded = cursor + "=" * (-len(cursor) % 4)
-        payload: dict[str, Any] = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+        packed = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
+        if base64.urlsafe_b64encode(packed).rstrip(b"=").decode() != cursor:
+            raise ValueError
+        if len(packed) <= 32:
+            raise ValueError
+        raw, tag = packed[:-32], packed[-32:]
+        if not hmac.compare_digest(tag, hmac.new(_view_cursor_key(), raw, hashlib.sha256).digest()):
+            raise ValueError
+        body = json.loads(raw)
         if (
-            payload["k"] != _VIEW_CURSOR_KIND
-            or UUID(str(payload["viewer_id"])) != viewer_id
-            or UUID(str(payload["library_id"])) != library_id
-            or payload["order"] != _order_json(view.order)
-            or payload["completion"] != view.completion
+            not isinstance(body, dict)
+            or set(body) != {"after", "q", "v"}
+            or body["v"] != 2
+            or body["q"] != _view_digest(viewer_id=viewer_id, library_id=library_id, view=view)
         ):
             raise ValueError
-        after = payload["after"]
-        return {f"ks_{key.column}": _decode_key_value(after[key.column], key.value) for key in plan}
-    except Exception:
+        after = body["after"]
+        if not isinstance(after, list) or len(after) != len(plan):
+            raise ValueError
+        binds: dict[str, object] = {}
+        for element, key in zip(after, plan, strict=True):
+            if not isinstance(element, list) or len(element) != 2 or element[0] != key.value:
+                raise ValueError
+            binds[f"ks_{key.column}"] = _decode_after_value(element[1], key.value)
+        return binds
+    except (
+        ValueError,
+        TypeError,
+        KeyError,
+        UnicodeDecodeError,
+        binascii.Error,
+        json.JSONDecodeError,
+    ) as exc:
         # justify-ignore-error: malformed cursor input is an expected API error path.
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from exc
 
 
 def _finish_entry_page(
@@ -1544,11 +1667,19 @@ def _finish_entry_page(
     return page_entries, LibraryPageInfo(has_more=has_more, next_cursor=next_cursor)
 
 
-def _membership_cte_sql(*, is_default: bool) -> str:
+def _membership_cte_sql(*, is_default: bool, unfiled: bool) -> str:
     """The final ``membership`` CTE (plus its inner CTEs when Default): complete,
     already viewer-visibility-scoped physical rows exposing the canonical entry
     columns. Non-default is one CTE; Default assembles the two-stage
-    media-deduplication before it."""
+    media-deduplication before it.
+
+    ``unfiled`` (Default only — the service rejects it elsewhere) restricts the
+    Default set to media whose only viewer non-system membership entry is the
+    direct-Default one: ``bool_and(is_direct_default)`` over each media's
+    candidate group is true exactly when it has a direct-Default entry AND no
+    other non-system membership entry. Shared-only media never enter the group
+    with ``is_direct_default`` true, so they are excluded; system and
+    inaccessible-foreign libraries are already outside ``candidate_entries``."""
     entry_cols = "le.id, le.library_id, le.media_id, le.podcast_id, le.created_at, le.position"
     if not is_default:
         return f"""
@@ -1560,6 +1691,15 @@ def _membership_cte_sql(*, is_default: bool) -> str:
                        OR le.media_id IN ({visible_media_ids_cte_sql()}))
             )
         """
+    unfiled_cte = (
+        """unfiled_media AS (
+            SELECT media_id FROM candidate_entries
+            GROUP BY media_id HAVING bool_and(is_direct_default)
+        ),"""
+        if unfiled
+        else ""
+    )
+    unfiled_restrict = "WHERE media_id IN (SELECT media_id FROM unfiled_media)" if unfiled else ""
     return f"""
         default_media AS (
             {library_media_ids_cte_sql()}
@@ -1575,9 +1715,11 @@ def _membership_cte_sql(*, is_default: bool) -> str:
             JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
             WHERE le.media_id IN (SELECT media_id FROM default_media)
         ),
+        {unfiled_cte}
         ranked AS (
             SELECT DISTINCT ON (media_id) entry_id
             FROM candidate_entries
+            {unfiled_restrict}
             ORDER BY media_id, is_direct_default DESC, entry_created_at ASC, entry_id ASC
         ),
         membership AS (
@@ -1599,19 +1741,36 @@ def _query_view_page(
     after: dict[str, object] | None,
 ) -> tuple[list[LibraryEntryOut], LibraryPageInfo]:
     """The single view query (spec backend architecture): one statement with a
-    single top-level ``WITH`` — membership (branched default vs non-default), a
-    uniform ``facts`` CTE, completion filter, generic keyset, plan-driven ORDER
-    BY, LIMIT+1 — then the shared hydration tail."""
+    single top-level ``WITH`` — membership (branched default vs non-default,
+    Unfiled-restricted when requested), a uniform ``facts`` CTE, the projection
+    predicate, generic keyset, plan-driven ORDER BY, LIMIT+1 — then the shared
+    hydration tail. The projection is applied before completion, ordering,
+    keyset, and limit+1 (spec AC8)."""
     plan = _plan(view.order, is_default=is_default)
     needs_creator = isinstance(view.order, Creator)
-    unfinished = view.completion == "unfinished"
+    match view.projection:
+        case AllItems(completion):
+            unfinished = completion == "unfinished"
+            in_progress = False
+            unfiled = False
+        case Unfiled(completion):
+            unfinished = completion == "unfinished"
+            in_progress = False
+            unfiled = True
+        case InProgress():
+            unfinished = False
+            in_progress = True
+            unfiled = False
+        case _:
+            assert_never(view.projection)
+    needs_eng = unfinished or in_progress
 
     creator_name_expr = (
         "COALESCE(mc.primary_name, pc.primary_name)" if needs_creator else "NULL::text"
     )
     added_at_expr = "md.created_at" if is_default else "membership.created_at"
     sort_identity_expr = "membership.media_id" if is_default else "membership.id"
-    read_state_expr = "eng.read_state" if unfinished else "NULL::text"
+    read_state_expr = "eng.read_state" if needs_eng else "NULL::text"
 
     facts_joins = [
         "LEFT JOIN media md ON md.id = membership.media_id",
@@ -1626,17 +1785,23 @@ def _query_view_page(
             f"LEFT JOIN ({primary_creator_rows_sql('podcast_id')}) pc"
             " ON pc.owner_id = membership.podcast_id"
         )
-    if unfinished:
+    if needs_eng:
         facts_joins.append(
             f"LEFT JOIN ({consumption_service.engagement_fact_rows_sql()}) eng"
             " ON eng.media_id = membership.media_id"
         )
 
-    completion_clause = (
-        "AND (facts.podcast_id IS NOT NULL OR facts.read_state IS DISTINCT FROM 'Finished')"
-        if unfinished
-        else ""
-    )
+    # In Progress matches the canonical 'InProgress' read_state; a NULL read_state
+    # (podcasts, shows, and media with no engagement fact) never matches, so
+    # podcast-show rows are excluded (spec AC7).
+    if unfinished:
+        projection_clause = (
+            "AND (facts.podcast_id IS NOT NULL OR facts.read_state IS DISTINCT FROM 'Finished')"
+        )
+    elif in_progress:
+        projection_clause = "AND facts.read_state = 'InProgress'"
+    else:
+        projection_clause = ""
     keyset_clause = _keyset_clause(plan) if after is not None else ""
     order_by = ", ".join(f"facts.{key.column} {key.direction.upper()}" for key in plan)
 
@@ -1651,7 +1816,7 @@ def _query_view_page(
     rows = (
         db.execute(
             text(f"""
-                WITH {_membership_cte_sql(is_default=is_default)},
+                WITH {_membership_cte_sql(is_default=is_default, unfiled=unfiled)},
                 facts AS (
                     SELECT
                         membership.id,
@@ -1678,7 +1843,7 @@ def _query_view_page(
                     published_date, published_missing, sort_identity
                 FROM facts
                 WHERE 1 = 1
-                  {completion_clause}
+                  {projection_clause}
                   {keyset_clause}
                 ORDER BY {order_by}
                 LIMIT :limit
@@ -1712,12 +1877,18 @@ def list_library_entries(
     """List a library's hydrated entries under a view lens. Member-only.
 
     The view's ``order`` selects Canonical (Default's `media.created_at DESC`,
-    else the physical position order) or one of the factual sorts; ``completion``
-    optionally excludes finished media (podcast shows always remain). Every page
-    is a true keyset over the view's total order; the returned cursor is bound to
-    this exact view.
+    else the physical position order) or one of the factual sorts; the
+    ``projection`` (AllItems/Unfiled/In Progress, with completion where it carries
+    one) filters the set before ordering. Unfiled is valid only for the viewer's
+    own Default. Every page is a true keyset over the view's total order; the
+    returned cursor is bound to this exact viewer/library/view.
     """
     ctx = governance.lock_library_for_member(db, viewer_id, library_id, lock=False)
+
+    if isinstance(view.projection, Unfiled) and not ctx.is_default:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, "Unfiled is only available for the default library"
+        )
 
     after: dict[str, object] | None = None
     if cursor is not None:

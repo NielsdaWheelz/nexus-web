@@ -54,6 +54,14 @@ export default function ResourceRow({
   );
   const row = (
     <>
+      {primaryIsInteractive ? (
+        <ResourceActivation
+          primary={primary}
+          className={cx(styles.primary, styles.interactivePrimary)}
+        >
+          {titleContent}
+        </ResourceActivation>
+      ) : null}
       {!primaryIsInteractive ? (
         <div className={styles.titleCell} data-view-transition-part="title">
           <ResourceActivation primary={primary} className={styles.primary}>
@@ -90,14 +98,6 @@ export default function ResourceRow({
       ) : null}
       {actions ? <div className={styles.actions}>{actions}</div> : null}
       {expanded ? <div className={styles.expanded}>{expanded}</div> : null}
-      {primaryIsInteractive ? (
-        <ResourceActivation
-          primary={primary}
-          className={cx(styles.primary, styles.interactivePrimary)}
-        >
-          {titleContent}
-        </ResourceActivation>
-      ) : null}
     </>
   );
 

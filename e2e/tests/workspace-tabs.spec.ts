@@ -69,7 +69,9 @@ function workspacePaneButton(page: Page, name: RegExp | string): Locator {
 }
 
 function activeWorkspacePaneButton(page: Page): Locator {
-  return workspacePaneStrip(page).locator('button[aria-current="page"]').first();
+  return workspacePaneStrip(page)
+    .locator('button[aria-current="page"]')
+    .first();
 }
 
 async function paneButtonLabel(button: Locator): Promise<string> {
@@ -151,6 +153,7 @@ test.describe("workspace tabs", () => {
     }
 
     const libraryHref = `/libraries/${defaultLibrary.id}`;
+    const libraryLabel = "All";
     await gotoWithWorkspaceSession(
       page,
       workspaceTabsDeviceId(testInfo),
@@ -178,14 +181,14 @@ test.describe("workspace tabs", () => {
       workspacePaneButton(
         page,
         new RegExp(
-          `^${escapeRegExp(defaultLibrary.name)}\\b.*Minimized\\. Restore\\.`,
+          `^${escapeRegExp(libraryLabel)}\\b.*Minimized\\. Restore\\.`,
         ),
       ),
     ).toBeVisible();
 
     const librariesPane = page.locator('[data-pane-id="pane-libraries"]');
     const libraryLink = librariesPane
-      .getByRole("link", { name: defaultLibrary.name })
+      .getByRole("link", { name: libraryLabel })
       .first();
     await expect(libraryLink).toBeVisible();
 
@@ -195,7 +198,7 @@ test.describe("workspace tabs", () => {
     await expect(
       workspacePaneButton(
         page,
-        new RegExp(`^${escapeRegExp(defaultLibrary.name)}\\b`),
+        new RegExp(`^${escapeRegExp(libraryLabel)}\\b`),
       ),
     ).toHaveAttribute("aria-current", "page");
     await expect(workspacePaneButton(page, /^Libraries\b/)).toBeVisible();
@@ -216,7 +219,7 @@ test.describe("workspace tabs", () => {
     await expect(
       workspacePaneButton(
         page,
-        new RegExp(`^${escapeRegExp(defaultLibrary.name)}\\b`),
+        new RegExp(`^${escapeRegExp(libraryLabel)}\\b`),
       ),
     ).toHaveCount(2);
   });
@@ -315,7 +318,9 @@ test.describe("workspace tabs", () => {
 
     // The activator should carry aria-busy while pending and drop it once
     // resolved. Assert the final state is not busy.
-    await expect(activator).not.toHaveAttribute("aria-busy", { timeout: 15_000 });
+    await expect(activator).not.toHaveAttribute("aria-busy", {
+      timeout: 15_000,
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -325,7 +330,7 @@ test.describe("workspace tabs", () => {
   // while waiting for a non-"Media" resolved label.
   // -------------------------------------------------------------------------
 
-  test("desktop: epub tab eventually carries a real book title, not \"Media\"", async ({
+  test('desktop: epub tab eventually carries a real book title, not "Media"', async ({
     page,
   }, testInfo) => {
     const epub = readSeed<SeededEpubMedia>("epub-media.json");
@@ -382,7 +387,9 @@ test.describe("workspace tabs", () => {
 
     const activator = activeWorkspacePaneButton(page);
     await expect(activator).toBeVisible({ timeout: 15_000 });
-    await expect(activator).not.toHaveAttribute("aria-busy", { timeout: 20_000 });
+    await expect(activator).not.toHaveAttribute("aria-busy", {
+      timeout: 20_000,
+    });
 
     await expect
       .poll(
@@ -399,12 +406,16 @@ test.describe("workspace tabs", () => {
       `/api/media/${epub.media_id}/navigation`,
     );
     expect(navigationResponse.ok()).toBeTruthy();
-    const navigation = (await navigationResponse.json()) as EpubNavigationResponse;
+    const navigation =
+      (await navigationResponse.json()) as EpubNavigationResponse;
     const firstSection =
-      navigation.data.sections.find((section) => section.label === epub.chapter_titles[0]) ??
-      navigation.data.sections[0];
+      navigation.data.sections.find(
+        (section) => section.label === epub.chapter_titles[0],
+      ) ?? navigation.data.sections[0];
     if (!firstSection) {
-      throw new Error(`No EPUB navigation sections seeded for ${epub.media_id}`);
+      throw new Error(
+        `No EPUB navigation sections seeded for ${epub.media_id}`,
+      );
     }
 
     await gotoSinglePaneWorkspace(
@@ -412,10 +423,14 @@ test.describe("workspace tabs", () => {
       workspaceTabsDeviceId(testInfo),
       `/media/${epub.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`,
     );
-    expect(new URL(page.url()).searchParams.get("loc")).toBe(firstSection.section_id);
+    expect(new URL(page.url()).searchParams.get("loc")).toBe(
+      firstSection.section_id,
+    );
 
     await expect(
-      activeWorkspacePane(page).getByRole("heading", { name: epub.chapter_titles[0] }),
+      activeWorkspacePane(page).getByRole("heading", {
+        name: epub.chapter_titles[0],
+      }),
     ).toBeVisible({ timeout: 20_000 });
 
     await expect(activator).not.toHaveAttribute("aria-busy");

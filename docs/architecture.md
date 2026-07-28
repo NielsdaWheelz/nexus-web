@@ -429,14 +429,13 @@ branch pointers), `conversation_branches`, `conversation_active_paths`
 (per-viewer), `conversation_shares`; plus the **chat-run** machinery: `chat_runs`
 (carries product selection snapshots `profile_id`/`reasoning_option_id` and
 resolved trust-trail snapshots `provider`/`model_name`/`reasoning_effort`,
-`error_origin`, `support_id`, `publication_warning_code` — no
-`models`/`user_api_keys` FK, both tables are gone),
+`error_origin`, `support_id` — no `models`/`user_api_keys` FK, both tables are
+gone),
 `chat_run_events` (append-only SSE log), `chat_prompt_assemblies`; and the
 **retrieval/citation** ledger: `message_tool_calls`, `message_retrievals` — the
-sole durable per-result record (telemetry; carries the model-facing
-`citation_candidate_ordinal` and, only after final publication, `cited_edge_id`
-pointing back at the citation edge). Candidate generation and rerank/selection
-are transient, in-memory passes over a tool call's results; only the
+sole durable per-result record (telemetry; carries `cited_edge_id` pointing
+back at the citation edge). Candidate generation and rerank/selection are
+transient, in-memory passes over a tool call's results; only the
 selected/included outcome is ever written. Conversation
 context refs are `resource_edges` with `source_scheme='conversation'`. Assistant
 message API responses include a
@@ -668,8 +667,9 @@ Other identity surfaces:
 ### 7.6 Search, retrieval & the embedding pipeline
 
 One core `search(db, viewer, SearchQuery)` (the `services/search/` package) serves
-two public surfaces: the in-app search page and the chat `app_search` agent tool
-(RAG). The request is a single typed `SearchQuery` value object parsed at the
+the in-app search page, mobile Switchboard, desktop Launcher, and chat
+`app_search` agent tool (RAG). The request is a single typed `SearchQuery` value
+object parsed at the
 edge; the user-facing taxonomy is **six kinds** (Documents, Notes, Highlights,
 Conversations, People, Web) folding the internal result types, with
 operator-backed filter chips (`format:`/`author:`/`role:`/`in:`) — not the raw
@@ -678,16 +678,27 @@ result-type grid. The package owns one concern per module (`kinds`, `query`, `sc
 Ranking/retrieval is extracted below that public projection into one internal
 pre-projection candidate seam (`search/candidates.py`); **resource target
 search** (`services/resource_items/targets.py`, `POST
-/resource-items/targets/search`) is a second projection over the same
-candidate engine, not a second search engine, and never introduces a new
-public `SearchKind` or `GET /search` result type. Its `purpose=link` profile
+/resource-items/targets/search`) and route-only **openable-resource search**
+(`services/resource_items/openables.py`, `POST
+/resource-items/openables/search`) are projections over the same candidate
+engine, not second search engines, and never introduce new public `SearchKind`
+or `GET /search` result types. The target service's `purpose=link` profile
 is the full hybrid retrieval and may surface passage candidates (`kind:
 "passage"`, transient `candidate_ref`); its `purpose=reference` profile is a
 one-character-capable lexical fast path (exact/prefix/substring/FTS,
 including note-body substrings) restricted to direct targets, and never calls
 `build_query_embedding`. Both profiles apply target capability, visibility,
 canonical dedupe, and exclusions before per-source caps, and refill a sparse
-filtered page rather than under-filling it.
+filtered page rather than under-filling it. Openable search performs one
+bounded lexical candidate pass, admits only visible direct resources with
+internal route activation, applies scheme filtering and canonical dedupe before
+its top-20 limit, and has no cursor, refill, mutation, or history write.
+
+Canonical `/search` results expose both the occurrence `resource_ref` and the
+owning `owner_resource_ref`. The Highlights profile retrieves saved highlights
+plus only note blocks classified by a visible `resource_edges.origin =
+"highlight_note"` edge before ranking and limiting. Clients never infer owner
+identity or highlight-note origin from result type or URL.
 
 - **Indexing** (`services/content_indexing.py`, `semantic_chunks.py`): text-bearing
   media flows `fragment → content_blocks → chunks → embeddings`; note bodies
@@ -705,9 +716,8 @@ filtered page rather than under-filling it.
   selected under a context-char budget; candidate/rerank/selection is a transient in-memory
   pass and `message_retrievals` is the sole durable per-result record. Selected rows become
   `message_retrievals` telemetry rows via the single validated writer
-  `retrieval_citation.insert_retrieval_row`. Citable rows exposed to chat receive
-  a candidate ordinal; cited rows link back to their final citation edge through
-  `cited_edge_id` (§7.7).
+  `retrieval_citation.insert_retrieval_row` (the cited ones link back to their
+  citation edge through `cited_edge_id`, §7.7).
 - **The `ResourceRef` grammar** (`services/resource_graph/refs.py`): a
   `<scheme>:<uuid>` ref over a closed scheme set (`media`, `library`,
   `evidence_span`, `content_chunk`, `highlight`, `page`, `note_block`, `fragment`,
@@ -748,25 +758,16 @@ The chat/oracle LLM can call four tools (`services/agent_tools/`):
 - **`inspect_resource`** — returns a navigable document map of a `media:` ref;
   navigation only, never cited.
 
-Chat candidate `[N]` is a **dense, turn-global model-facing ordinal** assigned
-across citable evidence exposed during the whole turn (attached context first,
-then tool results). It lives on `message_retrievals`; it is not yet a citation.
-After generation, the backend canonicalizes only the markers actually used to
-dense final ordinals by first appearance. A final citation **is an edge**: its
-reader-facing `[N]` is the `ordinal` on an `origin='citation'` `resource_edge`
-whose source is the assistant message and whose target is the cited resource.
-No marker is valid and produces no edges. Invalid linked or unknown marker
-syntax publishes usable prose without markers as a complete degraded run with
-`CitationsUnavailable`; graph and database defects fail.
-
-The backend builds the `CitationOut` read-model from final edges via
+Citation `[N]` is a **dense, turn-global ordinal** assigned across the whole turn
+(attached context refs first, then each tool's selected results). A citation **is an
+edge**: `[N]` is the `ordinal` on an `origin='citation'` `resource_edge` whose
+source is the assistant message and whose target is the cited resource. The
+backend builds the `CitationOut` read-model from those edges via
 `resource_graph.citations.build_citation_outs` (uniformly for chat, Oracle, and
 Universal Dossiers), reconstructing the in-reader jump from the target's own
 anchoring. `message_retrievals` stays chat-owned **telemetry**, pointing back at
-the final edge through `cited_edge_id`. Final markdown, edges, back-pointers,
-context refs, warning state, and terminal `done` commit atomically. The frontend
-maps final `[N]` → a `CitationOut` → resource activation plus an optional
-reader-internal focus target.
+the edge through `cited_edge_id`; the frontend maps `[N]` → a `CitationOut` →
+resource activation plus an optional reader-internal focus target.
 
 ### 7.8 Resource Inspector, Universal Dossiers & Media Intelligence
 
@@ -1037,8 +1038,9 @@ Content organization + access control, split into three owned modules:
 roles, ownership transfer, membership guards, ingest access checks),
 `services/library_entries.py` (the **sole writer** of `library_entries` — the
 `EntryTarget` media|podcast union, the locked append, canonical position
-ordering, and all item-in-library commands; it also composes the temporary
-factual view lenses and hide-finished completion filter for reads — no DML on
+ordering, and all item-in-library commands; it also composes the URL-only
+factual view lenses, the fixed `Unfiled`/`In Progress` entry projections, and
+the hide-finished completion filter for reads — no DML on
 alternate views, positions unchanged), and `services/library_invitations.py` (the
 `library_invitations` table). Visibility itself is enforced by the boolean
 predicates in `auth/permissions.py`; the search/object readers read
@@ -1086,16 +1088,33 @@ predicates in `auth/permissions.py`; the search/object readers read
   — always inserts (or idempotently keeps) a physical `library_entries` row
   there; a work already visible virtually through another membership can
   still be explicitly filed, and that direct entry is what a later
-  membership loss cannot take away. Pagination over any library — default or
-  not — is stateless keyset pagination with one cursor family,
-  `library_entries:view:v1`, scoped to `(viewer_id, library_id, view)` where
-  `view` is the exact order plus completion filter in effect; any mismatch —
-  including every pre-cutover cursor kind — is a clean `400 E_INVALID_CURSOR`,
-  never a silent reinterpretation. Canonical order is the durable authored
-  order (non-default position order; Default media-recency). Factual view
-  lenses (Title/Creator/Published/Added, each ascending or descending) and a
-  hide-finished completion filter are temporary and URL-only: they are never
-  persisted and never write `library_entries.position`.
+  membership loss cannot take away. The browser presents the Default library
+  as **All** ("Across your libraries") on the closed alias boundary — library
+  row, pane title/label, resource-target results, Dossier and Atlas labels —
+  while the domain object, storage row, and API fields keep their internal
+  Default identity; `All` is a reserved library name (`400 E_NAME_INVALID` on
+  any non-default create/rename). Pagination over any library — default or
+  not — is stateless keyset pagination with one authenticated cursor family,
+  `library_entries:view:v2`: canonical-JSON `{v, q, after}` bodies signed with
+  a domain-separated HMAC-SHA256 key derived from the stream-token signing
+  root, where `q` binds the exact `(viewer, library, view)` without
+  serializing the viewer UUID; any mismatch — wrong viewer, library, order,
+  projection, completion, or a pre-cutover cursor — is a clean
+  `400 E_INVALID_CURSOR`, never a silent reinterpretation. Canonical order is
+  the durable authored order (non-default position order; Default
+  media-recency). A `view` is the order plus a fixed entry projection:
+  `All items` (optionally hide-finished), `Unfiled` (Default only — direct
+  Default media with no other current, non-system placement), or
+  `In Progress` (canonical consumption `read_state = 'InProgress'`; podcast
+  show rows never match, and the completion filter is unrepresentable with
+  it). Factual view lenses (Title/Creator/Published/Added, each ascending or
+  descending), projections, and the hide-finished completion filter are
+  URL-only: they are never persisted and never write
+  `library_entries.position`. In the browser, two process-local monotonic
+  revision seams — `lib/libraries/placementRevision.ts` and
+  `lib/consumption/projectionRevision.ts` — are published by every definitive
+  placement/consumption writer after each acknowledged write, and the Library
+  pane refetches its exact requested view when a captured revision advances.
 - **Library reading-time is a list projection, not shared media state.**
   `services/media_document_metrics.py` batch-aggregates only the STORED integer
   source counts for ready, quotable web/EPUB/PDF media; `library_entries.py`
@@ -1271,19 +1290,26 @@ the visible embedded-video pane; it never exposes the raw `nx_device` value.
 breakdowns, derived sessions, and a deterministic Year in Reading view. The
 full contract is [`modules/consumption-activity.md`](modules/consumption-activity.md).
 
-### 8.10 Search surfaces & Launcher
+### 8.10 Search, desktop Launcher, and mobile Switchboard
 
-The same `search()` backs the `/search` results page (`SearchPaneBody`), inline
-Launcher results, and the chat `app_search` tool — the page and the Launcher `@` lane
-share one frontend query model (`lib/search`: `parseSearchInput` → `SearchQuery` →
-`fetchSearchResultPage`), so an identical input yields identical results and "See
-all" round-trips through the URL. The **Launcher**
-(`components/launcher/`, `lib/launcher/`) aggregates open tabs, frecency-ranked recents
-(`command_palette` service), static nav/create commands, and live search results,
-ranked by the Launcher ranking pipeline and dispatched through the workspace pane
-contract. The
-**browse** surface (`services/browse.py`) is a global acquisition search across
-documents (incl. Gutenberg), videos (YouTube Data API), and podcasts.
+The same `search()` backs the `/search` results page, mobile Switchboard deep
+results, desktop Launcher results, and the chat `app_search` tool. All consume
+the canonical frontend `SearchQuery` model. The desktop **Launcher**
+(`components/launcher/`, `lib/launcher/`) retains its omnibox, lanes, ranking,
+frecency, keybinding, and direct Add behavior.
+
+Mobile uses the **Nexus Switchboard** (`components/switchboard/`,
+`lib/switchboard/`) instead of the Launcher palette or app-navigation drawer.
+Its Root paints synchronously from workspace state and fixed Place/Quick
+projections. Find merges local pane/destination matches, one-character
+route-only openable resources, and two-character canonical search results while
+preserving pane, destination, occurrence-resource, owner-resource, and
+activation-route identities. All owned-resource opens use workspace `Adopt`;
+external discovery remains in explicit acquisition workflows.
+
+The **browse** service is a global acquisition search across documents,
+videos, and podcasts. Switchboard uses its extracted frontend client only for
+the explicit Podcast acquisition workflow.
 
 ---
 
@@ -1306,9 +1332,9 @@ Authenticated entry is classified once by `loadWorkspaceBootstrap`: pathname
 `/` is Resume and preserves the selected saved workspace exactly; every other
 protected href is Navigate and uses the existing deep-link merge. With no usable
 saved session, Resume creates the existing one-pane Lectern empty state.
-`/lectern` remains explicit Home. Launcher root query intents are consumed in a
-layout effect before the workspace's passive state-to-URL projection, so they
-open over Resume and never become panes.
+`/lectern` remains explicit Home. Shell global-access query intents are consumed
+in a layout effect before the workspace's passive state-to-URL projection, so
+they open over Resume and never become panes.
 
 - **Workspace shell** (`lib/workspace/*`, `components/workspace/*`): a tabbed,
   multi-pane canvas. Durable state (`WorkspaceState`: primary panes with
@@ -1322,14 +1348,20 @@ open over Resume and never become panes.
   A pane is identified by a stable pane id; its resolved `routeKey` gates
   route-scoped labels, layout, secondary/fixed chrome, primary-chrome
   publication, and return data so stale cleanup cannot mutate a newer route
-  instance.
+  instance. `WorkspaceStoreProvider` separately owns a bounded ephemeral
+  recently-closed stack and atomic normalized restoration; it is intentionally
+  absent from persistence codecs.
   Routes resolve via a pure model (`paneRouteModel.ts`) plus metadata table
   (`paneRouteTable.ts`) bound to React bodies (`paneRenderRegistry.tsx`). Bodies talk
   to the shell only through `paneRuntime.tsx` hooks (`usePaneRouter`, `usePaneParam`,
   `useSetPaneLabel`, `usePaneSecondary`) and route-keyed
   `usePanePrimaryChrome`; `usePaneRuntime().isActive` exposes the
-  host's pane-activity capability, which reader progress uses for adoption-versus-
-  handoff arbitration). Every eligible resource pane publishes one
+  host's pane-activity capability, which reader progress uses for
+  adoption-versus-handoff arbitration. `MobileViewportProvider` composes safe
+  area, the
+  measured Nexus control and player, and the `MobileSheet` keyboard inset into
+  one shared mobile content-clearance value. Every eligible resource pane
+  publishes one
   `resource-inspector` secondary group through `useResourceInspector`: Media
   (`Contents | Evidence | Dossier`), Conversation
   (`Context | Forks | Dossier`), Library
@@ -1347,19 +1379,20 @@ open over Resume and never become panes.
   body failures without replacing sibling panes or the workspace.
 - **App navigation is a curated projection, not a feature directory.**
   `lib/navigation/destinations.ts` owns destination identity;
-  `components/appnav/navModel.ts` independently owns the flat fixed order
-  Lectern → Libraries → Podcasts → Chats → Notes → Atlas → Oracle for both rail
-  and mobile sheet. Section routes derive semantic navigation ownership from
+  `components/appnav/navModel.ts` independently owns the flat desktop rail and
+  mobile Places projections. Mobile global access is the bottom Nexus control
+  plus Switchboard, not a navigation drawer or Launcher palette. Section routes
+  derive semantic navigation ownership from
   `header.destinationId`; resource routes (notably `/media/{id}`) declare one
   `sectionDestinationId`, with no duplicate field or prefix map. All cross-pane
   product targets dispatch through `activateWorkspaceTarget`: plain click and
   Enter follow an exact open pane or navigate the origin pane, Shift+click
   always forks a fresh pane, and named source-preserving workflows adopt an
   exact pane or create one. Meta/Ctrl/Alt/non-primary gestures remain native.
-  The activation result assigns focus to the source only for unchanged/rejected
-  activation and to the destination for a real handoff, so closing
-  mobile/account surfaces do not strand or steal focus. Lectern is the brand
-  and authenticated-home target.
+  The activation result assigns focus to the source only for
+  unchanged/rejected activation and to the destination for a real handoff, so
+  closing global/account surfaces does not strand or steal focus. Lectern is
+  the brand and authenticated-home target.
   Pinning is intentionally absent; personalized retrieval lives in the Lectern
   Reading Slate and Launcher ranking. See
   [`modules/app-navigation.md`](modules/app-navigation.md).
@@ -1565,11 +1598,10 @@ The things most likely to bite you, distilled:
 7. **One send = one durable `ChatRun`**; HTTP never calls the provider; the worker
    does; the client only tails SSE and reconciles.
 8. **Active conversation path is per-viewer**; only path messages enter context.
-9. **Chat candidate `[N]` and final citation `[N]` are different facts.**
-   Candidate ordinals are dense and turn-global on `message_retrievals`; only
-   markers used in the answer become dense, first-use-ordered
-   `origin='citation'` edges. `cited_edge_id` is null until that final
-   publication transaction.
+9. **Citation `[N]` is a dense, turn-global ordinal carried on an
+   `origin='citation'` `resource_edge`**, not a per-tool index and not a column on
+   `message_retrievals` (which is telemetry pointing back via `cited_edge_id`); the
+   attached-reference citation regression came from breaking this density.
 10. **Assistant trust trails are read models, not new truth.** They are assembled
     when assistant messages are read from chat runs, prompt assemblies, tool calls,
     retrieval ledgers, citation edges, and context-ref-added events. Message
@@ -1603,7 +1635,7 @@ The things most likely to bite you, distilled:
 | Reader/highlights backend                                         | `python/nexus/services/{reader,epub_*,pdf_*,fragment_blocks,highlights,passage_anchors,locator_resolver,text_quote,pdf_quote_match}.py`                                                                |
 | Chat / conversations                                              | `python/nexus/services/chat_runs.py` + `chat_run_*`, `context_assembler.py`, `conversations.py`                                                                                                        |
 | Oracle                                                            | `python/nexus/services/oracle.py`, `python/nexus/services/oracle_corpus.py`, `python/nexus/services/oracle_plates.py`                                                                                  |
-| Search / retrieval / indexing / Link target search                | `python/nexus/services/{search,content_indexing,semantic_chunks,retrieval_citation}.py`, `python/nexus/services/search/candidates.py`, `python/nexus/services/resource_items/targets.py`               |
+| Search / retrieval / indexing / resource target/openable search   | `python/nexus/services/{search,content_indexing,semantic_chunks,retrieval_citation}.py`, `python/nexus/services/search/candidates.py`, `python/nexus/services/resource_items/{targets,openables}.py`   |
 | Resource graph (edges, refs, citations, connections, Link/stance) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `connections`, `context`, `citations`, `cleanup`, `user_relations`, `policy`)                                                     |
 | Universal Dossiers / Media Intelligence                           | `python/nexus/services/artifacts/`, `python/nexus/services/media_intelligence.py`, `python/nexus/api/routes/dossiers.py`                                                                               |
 | Agent tools                                                       | `python/nexus/services/agent_tools/`                                                                                                                                                                   |
@@ -1612,7 +1644,8 @@ The things most likely to bite you, distilled:
 | Podcasts / playback                                               | `python/nexus/services/podcasts/`, `python/nexus/services/consumption/`, `python/nexus/api/routes/{lectern,listening_state}.py`                                                                        |
 | Auth / billing / keys / rate limit                                | `python/nexus/services/{user_keys,billing,billing_entitlements,rate_limit}.py`, `python/nexus/auth/`                                                                                                   |
 | Frontend BFF / auth / SSE                                         | `apps/web/src/lib/{api,auth,supabase}/`                                                                                                                                                                |
-| Workspace / panes                                                 | `apps/web/src/lib/{workspace,panes}/`, `apps/web/src/components/workspace/`                                                                                                                            |
+| Workspace / panes / mobile viewport                               | `apps/web/src/lib/{workspace,panes,mobileViewport}/`, `apps/web/src/components/workspace/`                                                                                                             |
+| Desktop Launcher / mobile Switchboard                             | `apps/web/src/components/{launcher,switchboard}/`, `apps/web/src/lib/{launcher,switchboard}/`                                                                                                          |
 | Reader / chat / player UI                                         | `apps/web/src/components/{reader,chat}/`, `apps/web/src/lib/{reader,highlights,conversations,player,lectern}/`                                                                                         |
 | Android shell                                                     | `apps/android/app/src/main/`                                                                                                                                                                           |
 | Browser extension                                                 | `apps/extension/`                                                                                                                                                                                      |

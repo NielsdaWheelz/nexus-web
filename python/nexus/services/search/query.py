@@ -65,6 +65,12 @@ class SearchQuery:
         """Storage-kind values the retrievers filter on, derived from public formats."""
         return kinds.storage_for_formats(self.formats)
 
+    @property
+    def highlight_notes_only(self) -> bool:
+        """Whether Highlights must add the semantically classified note profile."""
+        effective = self.effective_kinds
+        return "highlights" in effective and "notes" not in effective
+
 
 def build_search_query(
     *,

@@ -1,4 +1,5 @@
 import { apiFetch } from "@/lib/api/client";
+import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
 import { decodePodcastOpmlBytes } from "@/lib/podcasts/opmlEncoding";
 import { isRecord } from "@/lib/validation";
 
@@ -41,6 +42,40 @@ export function getPodcastOpmlFileError(file: File): string | null {
   return null;
 }
 
+export async function podcastOpmlReplayIdentity({
+  file,
+  libraryIds,
+  signal,
+}: {
+  file: File;
+  libraryIds: readonly string[];
+  signal?: AbortSignal;
+}): Promise<string> {
+  const error = getPodcastOpmlFileError(file);
+  if (error) throw new Error(error);
+  signal?.throwIfAborted();
+  const bytes = await file.arrayBuffer();
+  signal?.throwIfAborted();
+  const normalizedOpml = decodePodcastOpmlBytes(bytes)
+    .replace(/\r\n?/g, "\n")
+    .trim();
+  const normalizedLibraryIds = [...new Set(libraryIds)].sort();
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(
+      JSON.stringify({
+        opml: normalizedOpml,
+        library_ids: normalizedLibraryIds,
+      }),
+    ),
+  );
+  signal?.throwIfAborted();
+  const hex = [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  return `opml-sha256:${hex}`;
+}
+
 export async function importPodcastOpml({
   file,
   libraryIds,
@@ -65,7 +100,9 @@ export async function importPodcastOpml({
     }),
     signal,
   });
-  return decodePodcastOpmlImportResponse(response);
+  const result = decodePodcastOpmlImportResponse(response);
+  publishLibraryPlacementChange("Unknown");
+  return result;
 }
 
 export function decodePodcastOpmlImportResponse(

@@ -45,9 +45,7 @@ import { ShareControllerProvider } from "@/lib/sharing/controller";
 import MediaPaneBody from "./MediaPaneBody";
 import styles from "./page.module.css";
 
-const TEST_VISIT_ID = assumePaneVisitId(
-  "00000000-0000-4000-8000-000000000001",
-);
+const TEST_VISIT_ID = assumePaneVisitId("00000000-0000-4000-8000-000000000001");
 const SOURCE_CHANGE_MEDIA_ID = "00000000-0000-4000-8000-000000000002";
 
 const testState = vi.hoisted(() => ({
@@ -63,11 +61,7 @@ const testState = vi.hoisted(() => ({
   canRead: true,
   canPlay: false,
   processingStatus: "ready_for_reading" as
-    | "pending"
-    | "extracting"
-    | "ready_for_reading"
-    | "failed"
-    | "suspended",
+    "pending" | "extracting" | "ready_for_reading" | "failed" | "suspended",
   retrievalStatus: "ready",
   lastErrorCode: null as string | null,
   sourceUrl: null as string | null,
@@ -172,9 +166,7 @@ vi.mock("@/lib/reader/ReaderContext", () => ({
 }));
 
 vi.mock("@/lib/media/useDocumentActions", () => ({
-  useDocumentActions: (options: {
-    onMetadataRetryEnqueued: () => void;
-  }) => {
+  useDocumentActions: (options: { onMetadataRetryEnqueued: () => void }) => {
     testState.onMetadataRetryEnqueued = options.onMetadataRetryEnqueued;
     return {
       deleteBusy: false,
@@ -748,7 +740,10 @@ function readableLecternItem({
     href: `/media/${mediaId}`,
     consumption: {
       state,
-      progress: state === "Finished" ? { kind: "Present", value: 1 } : { kind: "Absent" },
+      progress:
+        state === "Finished"
+          ? { kind: "Present", value: 1 }
+          : { kind: "Absent" },
       progressResettable: state !== "Unread",
     },
     activation: { kind: "Readable" },
@@ -874,7 +869,8 @@ async function getReadyPrimaryChrome(): Promise<PanePrimaryChromePublication> {
     });
   });
   const publication = latestPrimaryChrome();
-  if (!publication) throw new Error("Expected ready primary chrome publication");
+  if (!publication)
+    throw new Error("Expected ready primary chrome publication");
   return publication;
 }
 
@@ -972,7 +968,10 @@ function renderMediaPane(
   const onNavigatePane = vi.fn();
   const onRequestSecondarySurface = vi.fn();
   const onCloseSecondaryPane = vi.fn();
-  const onActivateWorkspaceTarget = vi.fn(() => ({ kind: "ActivatedExisting" as const, paneId: "pane-1" }));
+  const onActivateWorkspaceTarget = vi.fn(() => ({
+    kind: "ActivatedExisting" as const,
+    paneId: "pane-1",
+  }));
   const onSetFixedChrome = vi.fn();
   const onSetPaneSecondary = vi.fn();
 
@@ -1182,7 +1181,10 @@ describe("MediaPaneBody pane sizing", () => {
           }
           return jsonResponse(mediaResponse());
         }
-        if (path === "/api/media/00000000-0000-4000-8000-000000000001/reader-state") {
+        if (
+          path ===
+          "/api/media/00000000-0000-4000-8000-000000000001/reader-state"
+        ) {
           if (init?.method === "PUT") {
             const body = init.body ? JSON.parse(String(init.body)) : {};
             if (testState.readerStateConflictOnce) {
@@ -1221,7 +1223,9 @@ describe("MediaPaneBody pane sizing", () => {
           }
           return jsonResponse({ state: "Empty", revision: 0 });
         }
-        if (path === "/api/media/00000000-0000-4000-8000-000000000001/fragments") {
+        if (
+          path === "/api/media/00000000-0000-4000-8000-000000000001/fragments"
+        ) {
           if (testState.fragmentFailure) {
             throw {
               ...testState.fragmentFailure,
@@ -1230,7 +1234,9 @@ describe("MediaPaneBody pane sizing", () => {
           }
           return jsonResponse(fragmentResponse());
         }
-        if (path === "/api/media/00000000-0000-4000-8000-000000000001/navigation") {
+        if (
+          path === "/api/media/00000000-0000-4000-8000-000000000001/navigation"
+        ) {
           return jsonResponse({
             media_id: "00000000-0000-4000-8000-000000000001",
             kind: testState.mediaKind,
@@ -1275,10 +1281,16 @@ describe("MediaPaneBody pane sizing", () => {
             page_list: [],
           });
         }
-        if (path === "/api/media/00000000-0000-4000-8000-000000000001/document-map") {
+        if (
+          path ===
+          "/api/media/00000000-0000-4000-8000-000000000001/document-map"
+        ) {
           return jsonResponse(readerDocumentMapResponse());
         }
-        if (path === "/api/media/00000000-0000-4000-8000-000000000001/sections/section-1") {
+        if (
+          path ===
+          "/api/media/00000000-0000-4000-8000-000000000001/sections/section-1"
+        ) {
           return jsonResponse({
             section_id: "section-1",
             label: "Section 1",
@@ -1298,7 +1310,10 @@ describe("MediaPaneBody pane sizing", () => {
             created_at: "2026-01-01T00:00:00Z",
           });
         }
-        if (path === "/api/media/00000000-0000-4000-8000-000000000001/sections/section-2") {
+        if (
+          path ===
+          "/api/media/00000000-0000-4000-8000-000000000001/sections/section-2"
+        ) {
           return jsonResponse({
             section_id: "section-2",
             label: "Section 2",
@@ -1318,7 +1333,9 @@ describe("MediaPaneBody pane sizing", () => {
             created_at: "2026-01-01T00:00:00Z",
           });
         }
-        if (path === "/api/media/00000000-0000-4000-8000-000000000001/highlights") {
+        if (
+          path === "/api/media/00000000-0000-4000-8000-000000000001/highlights"
+        ) {
           return jsonResponse({ highlights: [] });
         }
         if (path === "/api/fragments/fragment-1/highlights") {
@@ -1447,8 +1464,8 @@ describe("MediaPaneBody pane sizing", () => {
 
     await screen.findByText("End of article");
     const viewport = setTextViewportGeometry({
-      atEnd: true,
-      scrollHeight: 100,
+      atEnd: false,
+      scrollHeight: 200,
     });
     await waitFor(() =>
       expect(
@@ -1457,6 +1474,10 @@ describe("MediaPaneBody pane sizing", () => {
         ),
       ).not.toHaveLength(0),
     );
+
+    fireEvent.scroll(viewport);
+    await new Promise((resolve) => window.requestAnimationFrame(resolve));
+    setTextViewportGeometry({ atEnd: true, scrollHeight: 100 });
 
     const user = userEvent.setup();
     await user.click(viewport);
@@ -1593,6 +1614,13 @@ describe("MediaPaneBody pane sizing", () => {
           primaryWidth: { kind: "intrinsic", widthPx: PDF_INTRINSIC_WIDTH_PX },
         },
       });
+    });
+    expect(
+      onSetPaneLayout.mock.calls.find(
+        ([publication]) => publication.layout !== null,
+      )?.[0].layout,
+    ).toEqual({
+      primaryWidth: { kind: "intrinsic", widthPx: PDF_INTRINSIC_WIDTH_PX },
     });
     await waitFor(() => {
       expect(onSetFixedChrome).toHaveBeenCalledWith(
@@ -1924,7 +1952,9 @@ describe("MediaPaneBody pane sizing", () => {
 
       await waitFor(() => {
         expect(
-          apiCallsForPath("/api/media/00000000-0000-4000-8000-000000000001/sections/section-2"),
+          apiCallsForPath(
+            "/api/media/00000000-0000-4000-8000-000000000001/sections/section-2",
+          ),
         ).toHaveLength(1);
         expect(pulseHandler).toHaveBeenCalledTimes(1);
       });
@@ -1959,19 +1989,19 @@ describe("MediaPaneBody pane sizing", () => {
       detail: 1,
     });
 
-    expect(onActivateWorkspaceTarget).toHaveBeenCalledWith(
-      {
-        originPaneId: "pane-1",
-        target: {
-          href: "/media/00000000-0000-4000-8000-000000000001?apparatus=target",
-          labelHint: "Target note",
-        },
-        disposition: { kind: "Fork" },
-        modality: "Programmatic",
+    expect(onActivateWorkspaceTarget).toHaveBeenCalledWith({
+      originPaneId: "pane-1",
+      target: {
+        href: "/media/00000000-0000-4000-8000-000000000001?apparatus=target",
+        labelHint: "Target note",
       },
-    );
+      disposition: { kind: "Fork" },
+      modality: "Programmatic",
+    });
     expect(
-      apiCallsForPath("/api/media/00000000-0000-4000-8000-000000000001/sections/section-2"),
+      apiCallsForPath(
+        "/api/media/00000000-0000-4000-8000-000000000001/sections/section-2",
+      ),
     ).toHaveLength(0);
   });
 
@@ -1989,7 +2019,9 @@ describe("MediaPaneBody pane sizing", () => {
 
       await waitFor(() => {
         expect(
-          apiCallsForPath("/api/media/00000000-0000-4000-8000-000000000001/sections/section-2"),
+          apiCallsForPath(
+            "/api/media/00000000-0000-4000-8000-000000000001/sections/section-2",
+          ),
         ).toHaveLength(1);
         expect(pulseHandler).toHaveBeenCalledTimes(1);
       });
@@ -2052,14 +2084,13 @@ describe("MediaPaneBody pane sizing", () => {
     const { onSetPaneLabel, routeKey } = renderMediaPane();
 
     const publication = await getReadyPrimaryChrome();
-    const creditOptionLabels =
-      publishedMenuActions(publication)
-        .filter(
-          (option) =>
-            option.id === "ViewAction.Resource.Credits" ||
-            option.id === "ResourceOperation.Media.EditAuthors",
-        )
-        .map((option) => option.label);
+    const creditOptionLabels = publishedMenuActions(publication)
+      .filter(
+        (option) =>
+          option.id === "ViewAction.Resource.Credits" ||
+          option.id === "ResourceOperation.Media.EditAuthors",
+      )
+      .map((option) => option.label);
     expect(creditOptionLabels).toEqual(testCase.expected);
     await waitFor(() => {
       expect(onSetPaneLabel).toHaveBeenCalledWith({
@@ -2078,7 +2109,9 @@ describe("MediaPaneBody pane sizing", () => {
 
     expect(
       testState.apiFetch.mock.calls.filter(
-        ([input]) => pathOf(input) === "/api/media/00000000-0000-4000-8000-000000000001/fragments",
+        ([input]) =>
+          pathOf(input) ===
+          "/api/media/00000000-0000-4000-8000-000000000001/fragments",
       ),
     ).toHaveLength(1);
   });
@@ -2117,6 +2150,7 @@ describe("MediaPaneBody pane sizing", () => {
         occurrence_key: "embed:000000:youtube:dQw4w9WgXcQ",
         provider: "youtube",
         kind: "video",
+        source_shape: "iframe",
         source_url: {
           status: "present",
           value: "https://youtu.be/dQw4w9WgXcQ",
@@ -2125,7 +2159,11 @@ describe("MediaPaneBody pane sizing", () => {
           status: "present",
           value: "https://youtu.be/dQw4w9WgXcQ",
         },
-        locator: { canonical_start_offset: 8, canonical_end_offset: 36 },
+        locator: {
+          canonical_start_offset: 8,
+          canonical_end_offset: 36,
+          placeholder_text: "Embedded video: Launch video",
+        },
         display: {
           mode: "resolved",
           label: "Embedded video: Launch video",
@@ -2135,6 +2173,7 @@ describe("MediaPaneBody pane sizing", () => {
         target: {
           status: "exact",
           media_id: "child-1",
+          href: "/media/child-1",
           kind: "video",
           title: "Launch video",
           thumbnail_url: null,
@@ -2436,7 +2475,8 @@ describe("MediaPaneBody pane sizing", () => {
       expect(
         testState.apiFetch.mock.calls.some(
           ([input, init]) =>
-            pathOf(input) === "/api/media/00000000-0000-4000-8000-000000000001/pdf-highlights" &&
+            pathOf(input) ===
+              "/api/media/00000000-0000-4000-8000-000000000001/pdf-highlights" &&
             init?.method === "POST",
         ),
       ).toBe(false);
@@ -2601,9 +2641,15 @@ describe("MediaPaneBody pane sizing", () => {
         ),
       ).toEqual(["resource-evidence", "resource-dossier"]);
       if (kind === "future_kind") {
-        expect(apiCallsForPath("/api/media/00000000-0000-4000-8000-000000000001/document-map")).toHaveLength(0);
         expect(
-          onSetFixedChrome.mock.calls.some(([publication]) => publication !== null),
+          apiCallsForPath(
+            "/api/media/00000000-0000-4000-8000-000000000001/document-map",
+          ),
+        ).toHaveLength(0);
+        expect(
+          onSetFixedChrome.mock.calls.some(
+            ([publication]) => publication !== null,
+          ),
         ).toBe(false);
         expect(screen.queryByTestId("margin-rail")).not.toBeInTheDocument();
       }
@@ -2637,8 +2683,7 @@ describe("MediaPaneBody pane sizing", () => {
   it("coalesces rapid Shift+G resource Chat requests", async () => {
     testState.mediaKind = "web_article";
     let resolveConversation:
-      | ((response: { data: { id: string } }) => void)
-      | undefined;
+      ((response: { data: { id: string } }) => void) | undefined;
     testState.conversationResponse = new Promise((resolve) => {
       resolveConversation = resolve;
     });
@@ -2657,14 +2702,12 @@ describe("MediaPaneBody pane sizing", () => {
     }
     resolveConversation({ data: { id: "conversation-1" } });
     await waitFor(() => {
-      expect(onActivateWorkspaceTarget).toHaveBeenCalledWith(
-        {
-          originPaneId: "pane-1",
-          target: { href: "/conversations/conversation-1", labelHint: "Chat" },
-          disposition: { kind: "Adopt" },
-          modality: "Programmatic",
-        },
-      );
+      expect(onActivateWorkspaceTarget).toHaveBeenCalledWith({
+        originPaneId: "pane-1",
+        target: { href: "/conversations/conversation-1", labelHint: "Chat" },
+        disposition: { kind: "Adopt" },
+        modality: "Programmatic",
+      });
     });
   });
 
@@ -2687,7 +2730,7 @@ describe("MediaPaneBody pane sizing", () => {
     fireEvent.keyDown(document, { key: "g" });
     await waitFor(
       () => {
-      expect(onCloseSecondaryPane).toHaveBeenCalledWith("secondary-1");
+        expect(onCloseSecondaryPane).toHaveBeenCalledWith("secondary-1");
       },
       { timeout: 1_500 },
     );
@@ -2828,9 +2871,11 @@ describe("MediaPaneBody pane sizing", () => {
   it("keeps Companion expanded while reconciling a retained unpublished surface", async () => {
     testState.mediaKind = "video";
     testState.canRead = true;
-    const { onCloseSecondaryPane, onRequestSecondarySurface } = renderMediaPane({
-      secondaryPane: readerContentsSecondaryPane(),
-    });
+    const { onCloseSecondaryPane, onRequestSecondarySurface } = renderMediaPane(
+      {
+        secondaryPane: readerContentsSecondaryPane(),
+      },
+    );
 
     const action = await getHeaderAction("resource-inspector-companion");
     expect(action.state).toEqual({

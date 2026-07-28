@@ -34,7 +34,7 @@ from nexus.schemas.media import (
     MediaOut,
     PodcastEpisodeChapterOut,
 )
-from nexus.schemas.presence import Absent, Present, absent, presence_from_nullable, present
+from nexus.schemas.presence import Absent, Present, absent, presence_from_nullable
 from nexus.services.capabilities import derive_capabilities, is_text_document_ready
 from nexus.services.consumption import service as consumption_service
 from nexus.services.contributor_credits import (
@@ -695,10 +695,23 @@ def _apply_consumption_state(
         descriptors = consumption_service.player_descriptors(
             db, viewer_id=viewer_id, media_ids=episode_media_ids
         )
-        for media in media_outs:
+        for index, media in enumerate(media_outs):
             descriptor = descriptors.get(media.id)
             if descriptor is not None:
-                media.player_descriptor = present(descriptor)
+                # Revalidate the complete DTO after installing its derived
+                # descriptor. A raw post-validation assignment can leave a
+                # Pydantic generic variant specialized under a different schema
+                # compilation order; that value then warns when MediaOut is
+                # nested inside LibraryEntryOut even though direct MediaOut
+                # serialization succeeds.
+                values = {
+                    field_name: getattr(media, field_name) for field_name in MediaOut.model_fields
+                }
+                values["player_descriptor"] = {
+                    "kind": "Present",
+                    "value": descriptor,
+                }
+                media_outs[index] = MediaOut.model_validate(values)
 
 
 def refresh_source_for_viewer(

@@ -1,0 +1,459 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { useEffect } from "react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import MobilePaneBar from "./MobilePaneBar";
+import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
+import {
+  MobileChromeProvider,
+  useMobileChrome,
+} from "@/lib/workspace/mobileChrome";
+import type { TargetLinkMouseEvent } from "@/lib/panes/targetLinkActivation";
+
+const noopActivateIdentityAnchor = () => {};
+
+function PublishChrome() {
+  const { setPaneChrome } = useMobileChrome();
+  useEffect(() => {
+    setPaneChrome({
+      paneId: "pane-a",
+      routeKey: "libraries:/libraries",
+      identityId: "pane-a-identity",
+      header: {
+        kind: "section",
+        standingHead: "Libraries",
+        folio: { kind: "count", value: 37, unit: "source" },
+        pending: false,
+      },
+      activateIdentityAnchor: noopActivateIdentityAnchor,
+      navigation: {
+        canGoBack: false,
+        canGoForward: false,
+        onBack: () => {},
+        onForward: () => {},
+      },
+      actions: [],
+      options: [],
+    });
+    return () => setPaneChrome(null);
+  }, [setPaneChrome]);
+  return null;
+}
+
+function PublishResourceChrome({
+  activateIdentityAnchor = noopActivateIdentityAnchor,
+}: {
+  activateIdentityAnchor?: (
+    event: TargetLinkMouseEvent,
+    anchor: HTMLAnchorElement,
+  ) => void;
+}) {
+  const { setPaneChrome } = useMobileChrome();
+  useEffect(() => {
+    setPaneChrome({
+      paneId: "pane-media",
+      routeKey: "media:/media/media-a",
+      identityId: "pane-media-identity",
+      header: {
+        kind: "resource",
+        resource: {
+          status: "ready",
+          title: "The Left Hand of Darkness",
+          creditGroups: [
+            {
+              kind: "authors",
+              credits: [
+                {
+                  label: "Ursula K. Le Guin",
+                  href: "/authors/ursula-k-le-guin",
+                },
+              ],
+            },
+          ],
+        },
+      },
+      activateIdentityAnchor,
+      navigation: {
+        canGoBack: false,
+        canGoForward: false,
+        onBack: () => {},
+        onForward: () => {},
+      },
+      actions: [
+        {
+          kind: "command",
+          id: "resource-inspector-companion",
+          label: "Companion",
+          icon: <span aria-hidden="true">panel</span>,
+          onSelect: () => {},
+        },
+      ],
+      options: [
+        {
+          kind: "command",
+          id: "credits",
+          label: "Credits",
+          onSelect: () => {},
+        },
+      ],
+    });
+    return () => setPaneChrome(null);
+  }, [activateIdentityAnchor, setPaneChrome]);
+  return null;
+}
+
+function PublishNavigationChrome({
+  onBack,
+  onForward,
+}: {
+  onBack: (modality: "Keyboard" | "Pointer") => void;
+  onForward: (modality: "Keyboard" | "Pointer") => void;
+}) {
+  const { setPaneChrome } = useMobileChrome();
+  useEffect(() => {
+    setPaneChrome({
+      paneId: "pane-a",
+      routeKey: "libraries:/libraries",
+      identityId: "pane-a-identity",
+      header: {
+        kind: "section",
+        standingHead: "Libraries",
+        folio: { kind: "none" },
+        pending: false,
+      },
+      activateIdentityAnchor: noopActivateIdentityAnchor,
+      navigation: {
+        canGoBack: true,
+        canGoForward: true,
+        onBack,
+        onForward,
+      },
+      actions: [],
+      options: [],
+    });
+    return () => setPaneChrome(null);
+  }, [onBack, onForward, setPaneChrome]);
+  return null;
+}
+
+function CollapseChrome() {
+  const { startReaderScroll, updateReaderScroll } = useMobileChrome();
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        startReaderScroll({
+          scrollTop: 9,
+          scrollHeight: 1000,
+          clientHeight: 400,
+        });
+        updateReaderScroll({
+          scrollTop: 100,
+          scrollHeight: 1000,
+          clientHeight: 400,
+        });
+      }}
+    >
+      Collapse chrome
+    </button>
+  );
+}
+
+function TrackChrome() {
+  const { startReaderScroll, updateReaderScroll } = useMobileChrome();
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        startReaderScroll({
+          scrollTop: 9,
+          scrollHeight: 1000,
+          clientHeight: 400,
+        });
+        updateReaderScroll({
+          scrollTop: 40,
+          scrollHeight: 1000,
+          clientHeight: 400,
+        });
+      }}
+    >
+      Track chrome
+    </button>
+  );
+}
+
+function MotionPhase() {
+  const { motionPhase } = useMobileChrome();
+  return <output data-testid="motion-phase">{motionPhase.kind}</output>;
+}
+
+describe("MobilePaneBar", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("renders the active pane's running head (standing head + folio)", () => {
+    render(
+      <MobileChromeProvider>
+        <PublishChrome />
+        <MobilePaneBar />
+      </MobileChromeProvider>,
+    );
+
+    expect(screen.getByText("Libraries")).toBeInTheDocument();
+    expect(screen.getByText("37 sources")).toBeInTheDocument();
+  });
+
+  it("keeps Back in chrome and moves Forward into the pane menu", () => {
+    const onBack = vi.fn();
+    const onForward = vi.fn();
+    render(
+      <MobileChromeProvider>
+        <PublishNavigationChrome onBack={onBack} onForward={onForward} />
+        <MobilePaneBar />
+      </MobileChromeProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Go back" }), {
+      detail: 1,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Pane options" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Go forward" }));
+    expect(onBack).toHaveBeenCalledWith("Pointer");
+    expect(onForward).toHaveBeenCalledWith("Pointer");
+  });
+
+  it("renders the active pane's resource identity from the shared model", () => {
+    render(
+      <MobileChromeProvider>
+        <PublishResourceChrome />
+        <MobilePaneBar />
+      </MobileChromeProvider>,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "The Left Hand of Darkness" }),
+    ).toHaveAttribute("id", "pane-media-identity");
+    const bar = screen.getByRole("banner");
+    expect(bar).toHaveAttribute("data-header-kind", "resource");
+    expect(bar).toHaveAttribute("data-pane-chrome-for", "pane-media");
+  });
+
+  it("delegates identity-link activation to the active pane", () => {
+    const activateIdentityAnchor = vi.fn(
+      (event: TargetLinkMouseEvent, anchor: HTMLAnchorElement) => {
+        event.preventDefault();
+        return anchor;
+      },
+    );
+    render(
+      <MobileChromeProvider>
+        <PublishResourceChrome
+          activateIdentityAnchor={activateIdentityAnchor}
+        />
+        <MobilePaneBar />
+      </MobileChromeProvider>,
+    );
+
+    const link = screen.getByRole("link", { name: "Ursula K. Le Guin" });
+    fireEvent.click(link, { detail: 1 });
+
+    expect(activateIdentityAnchor).toHaveBeenCalledOnce();
+    expect(activateIdentityAnchor.mock.calls[0]?.[1]).toBe(link);
+  });
+
+  it("keeps the route heading available while only fully hidden controls leave the accessibility tree", async () => {
+    vi.stubGlobal("innerWidth", 390);
+    vi.spyOn(window, "matchMedia").mockImplementation(
+      (query: string) =>
+        ({
+          matches: query.includes("max-width"),
+          media: query,
+          onchange: null,
+          addEventListener() {},
+          removeEventListener() {},
+          addListener() {},
+          removeListener() {},
+          dispatchEvent: () => false,
+        }) as MediaQueryList,
+    );
+
+    render(
+      withRenderEnvironment(
+        <MobileChromeProvider>
+          <PublishResourceChrome />
+          <CollapseChrome />
+          <MobilePaneBar />
+        </MobileChromeProvider>,
+        { initialViewport: "mobile" },
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Collapse chrome" }));
+    const navigation = screen.getByRole("banner");
+    await waitFor(() =>
+      expect(navigation).toHaveAttribute("data-mobile-chrome-phase", "Hidden"),
+    );
+    expect(navigation).not.toHaveAttribute("aria-hidden");
+    expect(navigation).not.toHaveAttribute("inert");
+    expect(
+      screen.getByRole("heading", {
+        level: 1,
+        name: "The Left Hand of Darkness",
+      }),
+    ).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Pane options" })).toBeNull();
+    for (const controls of screen.getAllByTestId("top-bar-controls")) {
+      expect(controls).toHaveAttribute("aria-hidden", "true");
+      expect(controls).toHaveAttribute("inert");
+    }
+  });
+
+  it("keeps controls available while chrome tracks and settles", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("innerWidth", 390);
+    vi.spyOn(window, "matchMedia").mockImplementation(
+      (query: string) =>
+        ({
+          matches: query.includes("max-width"),
+          media: query,
+          onchange: null,
+          addEventListener() {},
+          removeEventListener() {},
+          addListener() {},
+          removeListener() {},
+          dispatchEvent: () => false,
+        }) as MediaQueryList,
+    );
+
+    render(
+      withRenderEnvironment(
+        <MobileChromeProvider>
+          <PublishChrome />
+          <TrackChrome />
+          <MobilePaneBar />
+        </MobileChromeProvider>,
+        { initialViewport: "mobile" },
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Track chrome" }));
+    const navigation = screen.getByRole("banner");
+    expect(navigation).toHaveAttribute("data-mobile-chrome-phase", "Tracking");
+    for (const controls of screen.getAllByTestId("top-bar-controls")) {
+      expect(controls).not.toHaveAttribute("aria-hidden");
+      expect(controls).not.toHaveAttribute("inert");
+    }
+
+    act(() => vi.advanceTimersByTime(120));
+
+    expect(navigation).toHaveAttribute("data-mobile-chrome-phase", "Settling");
+    for (const controls of screen.getAllByTestId("top-bar-controls")) {
+      expect(controls).not.toHaveAttribute("aria-hidden");
+      expect(controls).not.toHaveAttribute("inert");
+    }
+  });
+
+  it("pins visible controls while focus remains in the chrome", async () => {
+    vi.stubGlobal("innerWidth", 390);
+    vi.spyOn(window, "matchMedia").mockImplementation(
+      (query: string) =>
+        ({
+          matches: query.includes("max-width"),
+          media: query,
+          onchange: null,
+          addEventListener() {},
+          removeEventListener() {},
+          addListener() {},
+          removeListener() {},
+          dispatchEvent: () => false,
+        }) as MediaQueryList,
+    );
+
+    render(
+      withRenderEnvironment(
+        <MobileChromeProvider>
+          <PublishResourceChrome />
+          <CollapseChrome />
+          <MobilePaneBar />
+        </MobileChromeProvider>,
+        { initialViewport: "mobile" },
+      ),
+    );
+
+    const navigation = screen.getByRole("banner");
+    const options = screen.getByRole("button", { name: "Pane options" });
+    fireEvent.focus(options);
+
+    await waitFor(() =>
+      expect(navigation).toHaveAttribute("data-mobile-chrome-phase", "Pinned"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Collapse chrome" }));
+    expect(navigation).toHaveAttribute("data-mobile-chrome-phase", "Pinned");
+    expect(options).toBeVisible();
+
+    fireEvent.blur(options);
+    await waitFor(() =>
+      expect(navigation).toHaveAttribute("data-mobile-chrome-phase", "Visible"),
+    );
+  });
+
+  it("releases an open action-menu lock when the top bar unmounts", async () => {
+    vi.stubGlobal("innerWidth", 390);
+    const tree = (showTopBar: boolean) =>
+      withRenderEnvironment(
+        <MobileChromeProvider>
+          <PublishResourceChrome />
+          <CollapseChrome />
+          <MotionPhase />
+          {showTopBar ? (
+            <MobilePaneBar />
+          ) : null}
+        </MobileChromeProvider>,
+        { initialViewport: "mobile" },
+      );
+    const view = render(tree(true));
+
+    fireEvent.click(screen.getByRole("button", { name: "Pane options" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("motion-phase")).toHaveTextContent("Pinned"),
+    );
+
+    view.rerender(tree(false));
+    await waitFor(() =>
+      expect(screen.getByTestId("motion-phase")).toHaveTextContent("Visible"),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Collapse chrome" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("motion-phase")).toHaveTextContent("Hidden"),
+    );
+  });
+
+  it("projects promoted actions and pane options through one overflow menu", () => {
+    vi.stubGlobal("innerWidth", 390);
+
+    render(
+      withRenderEnvironment(
+        <MobileChromeProvider>
+          <PublishResourceChrome />
+          <MobilePaneBar />
+        </MobileChromeProvider>,
+        { initialViewport: "mobile" },
+      ),
+    );
+
+    const options = screen.getByRole("button", { name: "Pane options" });
+    expect(screen.queryByRole("button", { name: "Companion" })).toBeNull();
+    fireEvent.click(options);
+    expect(screen.getByRole("menuitem", { name: "Companion" })).toBeVisible();
+    expect(screen.getByRole("menuitem", { name: "Credits" })).toBeVisible();
+  });
+});

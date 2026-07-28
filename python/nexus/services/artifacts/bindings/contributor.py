@@ -7,7 +7,6 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.errors import NotFoundError
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services import contributors
@@ -29,6 +28,7 @@ from nexus.services.artifacts.manifests import (
     MediaManifestEntry,
 )
 from nexus.services.artifacts.subject_policy import ResolvedSubject
+from nexus.services.contributor_credits import load_visible_contributor_media_ids
 from nexus.services.contributor_taxonomy import (
     ContributorHandle,
     assume_contributor_handle,
@@ -178,34 +178,11 @@ def resolve_contributor_media_ids(
     Media-backed work lanes. Project Gutenberg catalog-only credits remain Works
     in the author UI but have no MediaUnit and therefore are not Dossier inputs.
     """
-    rows = db.execute(
-        text(
-            f"""
-            WITH visible_media AS ({visible_media_ids_cte_sql()}),
-            credited_media AS (
-                SELECT cc.media_id
-                FROM contributor_credits cc
-                WHERE cc.contributor_id = :contributor_id
-                  AND cc.media_id IS NOT NULL
-
-                UNION
-
-                SELECT pe.media_id
-                FROM contributor_credits cc
-                JOIN podcast_episodes pe ON pe.podcast_id = cc.podcast_id
-                WHERE cc.contributor_id = :contributor_id
-                  AND cc.podcast_id IS NOT NULL
-            )
-            SELECT DISTINCT cm.media_id, m.published_date, m.title
-            FROM credited_media cm
-            JOIN visible_media vm ON vm.media_id = cm.media_id
-            JOIN media m ON m.id = cm.media_id
-            ORDER BY m.published_date DESC NULLS LAST, m.title, cm.media_id
-            """
-        ),
-        {"viewer_id": viewer_id, "contributor_id": contributor_id},
+    return load_visible_contributor_media_ids(
+        db,
+        contributor_id=contributor_id,
+        viewer_id=viewer_id,
     )
-    return [UUID(str(row[0])) for row in rows]
 
 
 def _with_handle(db: Session, resolved: ResolvedSubject) -> ResolvedSubject:

@@ -1,4 +1,5 @@
 import { apiFetch } from "@/lib/api/client";
+import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
 import { isRecord } from "@/lib/validation";
 
 export class MediaLibraryContractDefect extends Error {
@@ -91,7 +92,12 @@ async function deleteMedia(mediaId: string): Promise<MediaDeleteResult> {
   const response = await apiFetch<unknown>(`/api/media/${mediaId}`, {
     method: "DELETE",
   });
-  return decodeMediaDeleteResult(response);
+  const result = decodeMediaDeleteResult(response);
+  // Deletion removes placements across libraries (Removed/Hidden report the
+  // affected ids; Deleting will remove them asynchronously); the exact set is
+  // not enumerated here, so publish Unknown so every mounted pane reconciles.
+  publishLibraryPlacementChange("Unknown");
+  return result;
 }
 
 export async function confirmAndDeleteMedia({
@@ -105,7 +111,7 @@ export async function confirmAndDeleteMedia({
 }): Promise<MediaRemovalOutcome> {
   if (
     !confirmRemoval(
-      `Delete "${mediaTitle}" from My Library and libraries you manage? This cannot be undone.`,
+      `Delete "${mediaTitle}" from All and libraries you manage? This cannot be undone.`,
     )
   ) {
     return { kind: "Cancelled" };

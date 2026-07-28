@@ -129,9 +129,7 @@ def compute_reader_selection_revision(snapshot: ReaderSelectionSnapshot) -> str:
     serialize lowercase-hyphenated and keys are sorted, so equal snapshots always
     digest equal.
     """
-    canonical = json.dumps(
-        snapshot.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
-    )
+    canonical = json.dumps(snapshot.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 

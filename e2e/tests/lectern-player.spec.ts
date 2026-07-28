@@ -186,9 +186,15 @@ test.describe("lectern + global player lifecycle", () => {
   // rows, so they run in order and each restores a clean baseline.
   test.describe.configure({ mode: "serial" });
 
-  const articleId = readSeedMediaId(READABLE_ARTICLE);
-  const resumeId = readSeedMediaId(READABLE_RESUME);
-  const videoId = readSeedMediaId(VIDEO_OPENPANE);
+  let articleId: string;
+  let resumeId: string;
+  let videoId: string;
+
+  test.beforeAll(() => {
+    articleId = readSeedMediaId(READABLE_ARTICLE);
+    resumeId = readSeedMediaId(READABLE_RESUME);
+    videoId = readSeedMediaId(VIDEO_OPENPANE);
+  });
 
   test.beforeEach(async ({ request }) => {
     await clearLectern(request);

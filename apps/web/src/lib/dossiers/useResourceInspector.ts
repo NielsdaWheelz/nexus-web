@@ -101,7 +101,13 @@ export function useResourceInspector({
   // --- Subject-keyed store: lazy create, dispose the PRIOR in an effect ------
   const [storeBox, setStoreBox] = useState<StoreBox | null>(() =>
     subjectKey !== null
-      ? { key: subjectKey, store: createDossierControllerStore({ scheme, handle: handle as string }) }
+      ? {
+          key: subjectKey,
+          store: createDossierControllerStore({
+            scheme,
+            handle: handle as string,
+          }),
+        }
       : null,
   );
   if ((storeBox?.key ?? null) !== subjectKey) {
@@ -109,7 +115,13 @@ export function useResourceInspector({
     // disposal of the prior happens in the effect below — never during render).
     setStoreBox(
       subjectKey !== null
-        ? { key: subjectKey, store: createDossierControllerStore({ scheme, handle: handle as string }) }
+        ? {
+            key: subjectKey,
+            store: createDossierControllerStore({
+              scheme,
+              handle: handle as string,
+            }),
+          }
         : null,
     );
   }
@@ -164,33 +176,32 @@ export function useResourceInspector({
         ? workspaceTargetClickIntent(event).disposition
         : { kind: "Follow" as const };
       if (disposition.kind === "Fork") {
-        activateResource(activation, {
+        const activated = activateResource(activation, {
           labelHint: target?.label,
           activateTarget: runtime.activateTarget,
           disposition,
         });
+        if (activated) event?.preventDefault();
         return;
       }
       const isSecondaryActivation =
         secondaryActivationForResource(activation) !== null;
       if (
         !isSecondaryActivation &&
-        (
-          runtime?.resourceRef === activation.resourceRef ||
-          (
-            runtime &&
+        (runtime?.resourceRef === activation.resourceRef ||
+          (runtime &&
             activation.href &&
-            hasSamePaneResource(runtime.href, activation.href)
-          )
-        )
+            hasSamePaneResource(runtime.href, activation.href)))
       ) {
+        event?.preventDefault();
         return;
       }
-      activateResource(activation, {
+      const activated = activateResource(activation, {
         labelHint: target?.label,
         activateTarget: runtime.activateTarget,
         disposition,
       });
+      if (activated) event?.preventDefault();
     },
     [],
   );
@@ -284,14 +295,27 @@ export function useResourceInspector({
             onClose,
           })
         : null,
-    [eligible, publication, paneId, inspectorVisible, regionId, onOpen, onClose],
+    [
+      eligible,
+      publication,
+      paneId,
+      inspectorVisible,
+      regionId,
+      onOpen,
+      onClose,
+    ],
   );
 
   // --- Render-time stale-surface reconciliation (pre-paint; no stale frame) --
   const setSecondarySurface = paneRuntime?.setSecondarySurface;
   const defaultSurfaceId = publication?.defaultSurfaceId ?? null;
   useLayoutEffect(() => {
-    if (!publication || !inspectorVisible || !storedActive || !setSecondarySurface) {
+    if (
+      !publication ||
+      !inspectorVisible ||
+      !storedActive ||
+      !setSecondarySurface
+    ) {
       return;
     }
     if (

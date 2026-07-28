@@ -42,7 +42,9 @@ from nexus.services import (
 )
 from nexus.services.consumption import service as consumption_service
 from nexus.services.content_indexing import IndexOwner, delete_content_index
-from nexus.services.document_embeds import detach_document_embed_targets_for_owner
+from nexus.services.document_embeds import (
+    reconcile_document_embed_parent_edges_for_viewer,
+)
 from nexus.services.reader_apparatus import delete_media_apparatus
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
@@ -233,14 +235,6 @@ def remove_media_for_viewer(
             claim_media_teardown(db, media_id)
             result: MediaDeleteResult = MediaDeletingResult()
         else:
-            # The viewer's own document embeds targeting this media now point at a
-            # media they can no longer resolve — mark them unavailable regardless of
-            # whether the outcome is Hidden or Removed (owner-scoped cleanup, not a
-            # tombstone concern).
-            detach_document_embed_targets_for_owner(
-                db, owner_user_id=viewer_id, target_media_id=media_id
-            )
-
             # Branch on canonical post-removal readability. A system-library
             # membership is still an authenticated access path, even though the
             # viewer cannot remove that physical entry. If any such path remains,
@@ -275,6 +269,23 @@ def remove_media_for_viewer(
                     remaining_reference_count=remaining_reference_count,
                 )
 
+        # Document-embed rows are global source artifacts. Reconcile after the
+        # final Removed/Hidden visibility state so only this viewer's source and
+        # target projections disappear.
+        reconcile_document_embed_parent_edges_for_viewer(
+            db,
+            viewer_id=viewer_id,
+            target_media_id=media_id,
+        )
+        from nexus.services.document_embeds import (
+            reconcile_document_embed_edges_for_viewer,
+        )
+
+        reconcile_document_embed_edges_for_viewer(
+            db,
+            viewer_id=viewer_id,
+            media_id=media_id,
+        )
         artifact_engine.on_audience_visibility_changed(
             db,
             audience=AudienceUser(user_id=viewer_id),

@@ -7,8 +7,10 @@
 
 import { absent, present } from "@/lib/api/presence";
 import { emptyResourceMenuGroups } from "@/lib/actions/resourceActions";
-import type { ResourceRowPrimary } from "@/components/ui/ResourceRow";
-import type { CollectionRowView } from "@/lib/collections/types";
+import type {
+  CollectionRowView,
+  ResourceRowPrimary,
+} from "@/lib/collections/types";
 import type { ContributorWorkItem } from "@/lib/contributors/types";
 import { hrefForResourceActivation } from "@/lib/resources/activation";
 

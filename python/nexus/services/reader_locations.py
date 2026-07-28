@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, cast
 from uuid import UUID
 
@@ -177,7 +177,7 @@ def resolved_highlight_reader_target(
     page_count: int | None = None,
     page_width: float | None = None,
     page_height: float | None = None,
-    pdf_quads: list[Mapping[str, object]] | None = None,
+    pdf_quads: Sequence[Mapping[str, object]] | None = None,
 ) -> ResolvedHighlightReaderTarget | None:
     """Map current owner facts to the one closed highlight reader target.
 

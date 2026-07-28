@@ -2,7 +2,9 @@ package app.nexus.android
 
 import android.app.Activity
 import android.app.Instrumentation.ActivityResult
+import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.net.Uri
@@ -111,10 +113,10 @@ class MainActivityTest {
 
     @Test
     fun offOriginUrlOpensACustomTabIntent() {
+        Intents.init()
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             val externalUri = Uri.parse("https://external.example.com/privacy")
 
-            Intents.init()
             Intents.intending(allOf(hasAction(Intent.ACTION_VIEW), hasData(externalUri)))
                 .respondWith(ActivityResult(Activity.RESULT_OK, null))
 
@@ -122,17 +124,20 @@ class MainActivityTest {
                 activity.routeUrl(externalUri)
             }
 
-            Intents.intended(allOf(hasAction(Intent.ACTION_VIEW), hasData(externalUri)))
+            assertIntentRecorded(
+                allOf(hasAction(Intent.ACTION_VIEW), hasData(externalUri)),
+                "Expected off-origin URL to launch an ACTION_VIEW intent."
+            )
         }
     }
 
     @Test
     fun sameHostDifferentPortOpensACustomTabIntent() {
+        Intents.init()
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             val supabaseAuthorizeUri =
                 Uri.parse("http://${BuildConfig.NEXUS_OWNED_HOST}:54321/auth/v1/authorize")
 
-            Intents.init()
             Intents.intending(allOf(hasAction(Intent.ACTION_VIEW), hasData(supabaseAuthorizeUri)))
                 .respondWith(ActivityResult(Activity.RESULT_OK, null))
 
@@ -140,7 +145,10 @@ class MainActivityTest {
                 activity.routeUrl(supabaseAuthorizeUri)
             }
 
-            Intents.intended(allOf(hasAction(Intent.ACTION_VIEW), hasData(supabaseAuthorizeUri)))
+            assertIntentRecorded(
+                allOf(hasAction(Intent.ACTION_VIEW), hasData(supabaseAuthorizeUri)),
+                "Expected the different-port URL to launch an ACTION_VIEW intent."
+            )
         }
     }
 
@@ -239,10 +247,10 @@ class MainActivityTest {
 
     @Test
     fun nexusAuthStartLaunchesCustomTabAtAuthOauthUrl() {
+        Intents.init()
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             val oauthPrefix = "${BuildConfig.NEXUS_BASE_URL}/auth/oauth"
 
-            Intents.init()
             Intents.intending(
                 allOf(hasAction(Intent.ACTION_VIEW), hasData(hasUriStringStartingWith(oauthPrefix)))
             ).respondWith(ActivityResult(Activity.RESULT_OK, null))
@@ -253,7 +261,7 @@ class MainActivityTest {
                 )
             }
 
-            Intents.intended(
+            assertIntentRecorded(
                 allOf(
                     hasAction(Intent.ACTION_VIEW),
                     hasData(
@@ -268,7 +276,8 @@ class MainActivityTest {
                             hexParam = "hc"
                         )
                     )
-                )
+                ),
+                "Expected the auth start route to launch its OAuth handoff intent."
             )
         }
     }
@@ -277,10 +286,10 @@ class MainActivityTest {
     fun nexusAuthStartDefaultsMissingNextToLectern() {
         assertEquals("/lectern", DEFAULT_AUTH_RETURN_TARGET)
 
+        Intents.init()
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             val oauthPrefix = "${BuildConfig.NEXUS_BASE_URL}/auth/oauth"
 
-            Intents.init()
             Intents.intending(
                 allOf(hasAction(Intent.ACTION_VIEW), hasData(hasUriStringStartingWith(oauthPrefix)))
             ).respondWith(ActivityResult(Activity.RESULT_OK, null))
@@ -289,7 +298,7 @@ class MainActivityTest {
                 activity.startAuthFlow(Uri.parse("nexus://auth/start?provider=github&mode=signin"))
             }
 
-            Intents.intended(
+            assertIntentRecorded(
                 allOf(
                     hasAction(Intent.ACTION_VIEW),
                     hasData(
@@ -304,7 +313,8 @@ class MainActivityTest {
                             hexParam = "hc"
                         )
                     )
-                )
+                ),
+                "Expected the auth start route to launch its default-return OAuth handoff intent."
             )
         }
     }
@@ -363,7 +373,7 @@ class MainActivityTest {
         val firstUrl = "${BuildConfig.NEXUS_BASE_URL}/first"
         val secondUrl = "${BuildConfig.NEXUS_BASE_URL}/second"
 
-        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+        launchWithoutInitialNavigation().use { scenario ->
             scenario.onActivity { activity ->
                 activity.webView.loadDataWithBaseURL(
                     firstUrl,
@@ -407,21 +417,18 @@ class MainActivityTest {
             }
 
             scenario.onActivity { activity ->
-                activity.startActivity(
+                val activityInfo = activity.packageManager.getActivityInfo(
+                    ComponentName(activity, MainActivity::class.java),
+                    0
+                )
+                assertEquals(ActivityInfo.LAUNCH_SINGLE_TASK, activityInfo.launchMode)
+
+                activity.routeNewIntent(
                     Intent(Intent.ACTION_MAIN).apply {
                         setClass(activity, MainActivity::class.java)
                         addCategory(Intent.CATEGORY_LAUNCHER)
-                        putExtra("test_reentry", true)
                     }
                 )
-            }
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-            waitUntil("Expected launcher intent to reach the running activity.") {
-                var delivered = false
-                scenario.onActivity { activity ->
-                    delivered = activity.intent.getBooleanExtra("test_reentry", false)
-                }
-                delivered
             }
             scenario.onActivity { activity ->
                 assertEquals(secondUrl, activity.webView.url)
@@ -439,6 +446,65 @@ class MainActivityTest {
                 }
                 currentUrl == firstUrl
             }
+        }
+    }
+
+    @Test
+    fun hardwareBackPopsNestedSwitchboardPagesBeforeRoot() {
+        launchWithoutInitialNavigation().use { scenario ->
+            loadNestedSwitchboardHistory(scenario)
+
+            scenario.onActivity { activity ->
+                activity.onBackPressedDispatcher.onBackPressed()
+            }
+            waitForSwitchboardPage(
+                scenario,
+                page = "Find",
+                fragment = "#find",
+                message = "Expected Android back to pop Workflow to Switchboard Find."
+            )
+
+            scenario.onActivity { activity ->
+                activity.onBackPressedDispatcher.onBackPressed()
+            }
+            waitForSwitchboardPage(
+                scenario,
+                page = "Root",
+                fragment = "#root",
+                message = "Expected Android back to pop Find to Switchboard Root."
+            )
+        }
+    }
+
+    @Test
+    fun orientationRecreationPreservesNestedSwitchboardHistory() {
+        launchWithoutInitialNavigation().use { scenario ->
+            loadNestedSwitchboardHistory(scenario)
+
+            // ActivityScenario recreation exercises the saved-instance path used
+            // by an orientation configuration change without relying on a
+            // device/emulator rotation lock.
+            scenario.recreate()
+
+            waitForSwitchboardPage(
+                scenario,
+                page = "Workflow",
+                fragment = "#workflow",
+                message = "Expected orientation recreation to keep the active Switchboard workflow."
+            )
+            scenario.onActivity { activity ->
+                assertTrue(
+                    "Expected restored Switchboard workflow to retain nested back history.",
+                    activity.webView.canGoBack()
+                )
+                activity.onBackPressedDispatcher.onBackPressed()
+            }
+            waitForSwitchboardPage(
+                scenario,
+                page = "Find",
+                fragment = "#find",
+                message = "Expected restored Switchboard history to pop Workflow to Find."
+            )
         }
     }
 
@@ -537,11 +603,11 @@ class MainActivityTest {
 
     @Test
     fun fileInputLaunchesTheSystemChooserAndReturnsTheSelectedUri() {
+        Intents.init()
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             val selectedUri = Uri.parse("content://nexus/tests/file.pdf")
             val callback = RecordingValueCallback()
 
-            Intents.init()
             Intents.intending(hasAction(Intent.ACTION_GET_CONTENT))
                 .respondWith(
                     ActivityResult(
@@ -559,7 +625,10 @@ class MainActivityTest {
                 assertTrue(handled)
             }
 
-            Intents.intended(hasAction(Intent.ACTION_GET_CONTENT))
+            assertIntentRecorded(
+                hasAction(Intent.ACTION_GET_CONTENT),
+                "Expected the file input to launch the system content chooser."
+            )
 
             waitUntil("Expected file chooser callback to receive the selected URI.") {
                 callback.called
@@ -571,10 +640,10 @@ class MainActivityTest {
 
     @Test
     fun cancelledFileInputReturnsNull() {
+        Intents.init()
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             val callback = RecordingValueCallback()
 
-            Intents.init()
             Intents.intending(hasAction(Intent.ACTION_GET_CONTENT))
                 .respondWith(ActivityResult(Activity.RESULT_CANCELED, null))
 
@@ -595,6 +664,64 @@ class MainActivityTest {
         }
     }
 
+    private fun loadNestedSwitchboardHistory(
+        scenario: ActivityScenario<MainActivity>
+    ) {
+        val switchboardUrl = "${BuildConfig.NEXUS_BASE_URL}/android-test-switchboard"
+        listOf(
+            "Root" to "#root",
+            "Find" to "#find",
+            "Workflow" to "#workflow"
+        ).forEach { (page, fragment) ->
+            val pageUrl = "$switchboardUrl$fragment"
+            scenario.onActivity { activity ->
+                activity.webView.loadDataWithBaseURL(
+                    switchboardUrl,
+                    "<!doctype html><meta charset=\"utf-8\">" +
+                        "<title>Switchboard $page</title><body>$page</body>",
+                    "text/html",
+                    "utf-8",
+                    pageUrl
+                )
+            }
+            waitForSwitchboardPage(
+                scenario,
+                page = page,
+                fragment = fragment,
+                message = "Expected nested Switchboard test history to reach $page."
+            )
+        }
+    }
+
+    // Local WebView documents must not race the default debug-server navigation.
+    // An unsupported explicit URI exercises MainActivity's existing no-op intent contract.
+    private fun launchWithoutInitialNavigation(): ActivityScenario<MainActivity> {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("about:blank")).apply {
+            setClass(
+                ApplicationProvider.getApplicationContext(),
+                MainActivity::class.java
+            )
+        }
+        return ActivityScenario.launch(intent)
+    }
+
+    private fun waitForSwitchboardPage(
+        scenario: ActivityScenario<MainActivity>,
+        page: String,
+        fragment: String,
+        message: String
+    ) {
+        waitUntil(message) {
+            var title: String? = null
+            var currentUrl: String? = null
+            scenario.onActivity { activity ->
+                title = activity.webView.title
+                currentUrl = activity.webView.url
+            }
+            title == "Switchboard $page" && currentUrl?.endsWith(fragment) == true
+        }
+    }
+
     private fun waitUntil(message: String, condition: () -> Boolean) {
         val deadline = SystemClock.elapsedRealtime() + 5_000
         while (SystemClock.elapsedRealtime() < deadline) {
@@ -605,6 +732,12 @@ class MainActivityTest {
             Thread.sleep(50)
         }
         throw AssertionError(message)
+    }
+
+    private fun assertIntentRecorded(matcher: Matcher<Intent>, message: String) {
+        waitUntil(message) {
+            Intents.getIntents().any(matcher::matches)
+        }
     }
 
     private fun hasUriStringStartingWith(prefix: String): Matcher<Uri> =

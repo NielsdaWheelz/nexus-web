@@ -134,14 +134,14 @@ def test_activity_capture_rejects_replay_payload_mismatch(
 
 
 @pytest.mark.parametrize(
-    "occurred_at",
+    "occurred_at_delta",
     [
-        datetime.now(UTC) - timedelta(days=2),
-        datetime.now(UTC) + timedelta(minutes=6),
+        -timedelta(days=2),
+        timedelta(minutes=6),
     ],
 )
 def test_activity_capture_rejects_out_of_window_spans(
-    auth_client, direct_db: DirectSessionManager, occurred_at: datetime
+    auth_client, direct_db: DirectSessionManager, occurred_at_delta: timedelta
 ):
     user_id = create_test_user_id()
     library_id = _bootstrap(auth_client, user_id)
@@ -150,7 +150,7 @@ def test_activity_capture_rejects_out_of_window_spans(
     response = auth_client.post(
         "/consumption/activity",
         headers=auth_headers(user_id),
-        json=_body(media_id, uuid4(), occurred_at=occurred_at),
+        json=_body(media_id, uuid4(), occurred_at=datetime.now(UTC) + occurred_at_delta),
     )
     assert response.status_code == 400, response.text
     assert _span_count(direct_db, user_id=user_id, media_id=media_id) == 0

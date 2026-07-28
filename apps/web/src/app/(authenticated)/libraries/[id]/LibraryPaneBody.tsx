@@ -112,16 +112,32 @@ import type { LibraryOut } from "@/lib/libraries/contract";
 import { useLibraryMembers } from "@/lib/libraries/useLibraryMembers";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import {
+  completionOf,
   decodeLibraryView,
   encodeLibraryView,
+  formatLibraryView,
   orderPresetIdsFor,
   orderToPresetId,
   presetIdToOrder,
   presetLabel,
+  projectionOptionLabel,
+  projectionOptionOf,
+  projectionOptionsFor,
+  projectionSupportsCompletion,
+  withCompletion,
+  withProjectionOption,
   type DecodedLibraryView,
   type LibraryEntryView,
   type LibraryOrderPresetId,
+  type ProjectionOptionId,
 } from "@/lib/libraries/libraryView";
+import { libraryPresentation } from "@/lib/libraries/presentation";
+import {
+  libraryPlacementAffectedSince,
+  publishLibraryPlacementChange,
+  useLibraryPlacementRevision,
+} from "@/lib/libraries/placementRevision";
+import { useConsumptionProjectionRevision } from "@/lib/consumption/projectionRevision";
 import type { ContributorCredit, MediaAuthors } from "@/lib/contributors/types";
 import type {
   ActionDescriptor,
@@ -255,10 +271,22 @@ interface LibraryEntryPageWire {
   page: LibraryPageInfo;
 }
 
+// The two process-local fact revisions the pane binds every entry request to.
+// A committed page records the revisions it was fetched at; a later advance
+// (that this pane reacts to) drives one reconciliation of the current view.
+interface LibraryRevisions {
+  placement: number;
+  consumption: number;
+}
+
 interface EntryReconciliationRequest {
   ownerId: string;
   view: LibraryEntryView;
   serial: number;
+  // The revisions captured when this reconciliation was requested. On commit
+  // they become the committed baseline, so a mutation that landed while the
+  // reconciliation was in flight surfaces as exactly one coalesced follow-up.
+  revisions: LibraryRevisions;
 }
 
 interface EntryReconciliationResult {
@@ -268,8 +296,10 @@ interface EntryReconciliationResult {
 
 interface LibraryEntryPageResult {
   requestKey: string;
+  requestedViewKey: string;
   view: LibraryEntryView;
   page: LibraryEntryPage;
+  revisions: LibraryRevisions;
 }
 
 function decodeLibraryEntryPage(page: LibraryEntryPageWire): LibraryEntryPage {
@@ -285,15 +315,18 @@ interface LibraryPaneResource {
   entriesPage: LibraryPageInfo;
 }
 
-interface LibraryEntryPageSnapshot {
+interface CommittedLibraryView {
   readonly view: LibraryEntryView;
   readonly entries: readonly LibraryEntry[];
   readonly nextCursor: string | null;
+  // The fact revisions this committed page was fetched at; a later reacted-to
+  // advance reconciles the current view against fresh authoritative truth.
+  readonly revisions: LibraryRevisions;
 }
 
 interface LibrarySnapshot {
   readonly library: Library;
-  readonly entries: LibraryEntryPageSnapshot;
+  readonly entries: CommittedLibraryView;
 }
 
 type LibraryEntriesState =
@@ -303,17 +336,17 @@ type LibraryEntriesState =
     }
   | {
       kind: "Ready";
-      committed: LibraryEntryPageSnapshot;
+      committed: CommittedLibraryView;
     }
   | {
       kind: "Refreshing";
       requestedView: LibraryEntryView;
-      committed: LibraryEntryPageSnapshot;
+      committed: CommittedLibraryView;
     }
   | {
       kind: "RefreshFailed";
       requestedView: LibraryEntryView;
-      committed: LibraryEntryPageSnapshot;
+      committed: CommittedLibraryView;
       error: ApiError;
     };
 
@@ -370,10 +403,24 @@ function formatAdded(iso: string): string {
 }
 
 // A canonical/all view is exactly the server's default order that the bootstrap
-// `libraryResource` already seeded; any factual order or an unfinished filter is
-// a different first page fetched from the entries endpoint.
+// `libraryResource` already seeded; any factual order, projection, or unfinished
+// filter is a different first page fetched from the entries endpoint.
 function isInitialLibraryView(view: LibraryEntryView): boolean {
-  return view.order.kind === "Canonical" && view.completion === "all";
+  return (
+    view.order.kind === "Canonical" &&
+    view.projection.kind === "AllItems" &&
+    view.projection.completion === "all"
+  );
+}
+
+// A view whose row membership depends on canonical consumption facts: In
+// Progress (only InProgress rows) or any Unfinished completion (Finished rows
+// drop out). An unfiltered All-items view is consumption-insensitive, so a bare
+// heartbeat never refetches it — the immediate local media patch suffices.
+function viewIsConsumptionSensitive(view: LibraryEntryView): boolean {
+  return (
+    view.projection.kind === "InProgress" || completionOf(view) === "unfinished"
+  );
 }
 
 // The one code that turns an entry fetch error into the "Invalid library view"
@@ -387,7 +434,7 @@ function isInvalidViewError(error: unknown): boolean {
 
 const CANONICAL_VIEW: LibraryEntryView = {
   order: { kind: "Canonical" },
-  completion: "all",
+  projection: { kind: "AllItems", completion: "all" },
 };
 
 export default function LibraryPaneBody() {
@@ -397,11 +444,27 @@ export default function LibraryPaneBody() {
   }
   const router = usePaneRouter();
   const paneRuntime = usePaneRuntime();
+  const activateTarget = requirePaneRuntime(
+    paneRuntime,
+    "LibraryPaneBody",
+  ).activateTarget;
   const isPaneActive = paneRuntime?.isActive ?? true;
   const paneId = paneRuntime?.paneId ?? `library-${id}`;
   const feedback = useFeedback();
   const lectern = useLectern();
   const offerCompletionUndo = useCompletionUndo();
+
+  // The two process-local fact revisions. A placement advance can change which
+  // media are filed (and whether Unfiled qualifies); a consumption advance can
+  // change which media are InProgress/Unfinished. The revision values never
+  // enter an API query — they are the pane's local request identity and the
+  // trigger for reconciling the current view against fresh authoritative truth.
+  const placementChange = useLibraryPlacementRevision();
+  const consumptionChange = useConsumptionProjectionRevision();
+  const placementRevisionRef = useRef(placementChange.revision);
+  placementRevisionRef.current = placementChange.revision;
+  const consumptionRevisionRef = useRef(consumptionChange.revision);
+  consumptionRevisionRef.current = consumptionChange.revision;
 
   // The pane URL owns the library view (order + completion) via a strict, total
   // codec; `decodedView` is a discriminated result and `view` is null only when
@@ -422,6 +485,7 @@ export default function LibraryPaneBody() {
         next.delete("sort");
         next.delete("direction");
         next.delete("completion");
+        next.delete("projection");
         return next;
       },
     }),
@@ -450,6 +514,9 @@ export default function LibraryPaneBody() {
   const [controller, setController] = useState<LibrarySnapshot | null>(
     initialRestored,
   );
+  const [observedUnavailableLibraryId, setObservedUnavailableLibraryId] =
+    useState<string | null>(null);
+  const observedLibraryUnavailable = observedUnavailableLibraryId === id;
   const clearAllVisitData = useClearAllPaneVisitData();
   const allowInitialAdoptionRef = useRef(initialRestored === null);
   const entries = useMemo(
@@ -465,9 +532,7 @@ export default function LibraryPaneBody() {
       setController((current) => {
         if (current === null) return current;
         const library =
-          typeof update === "function"
-            ? update(current.library)
-            : update;
+          typeof update === "function" ? update(current.library) : update;
         return library === null ? null : { ...current, library };
       });
     },
@@ -524,10 +589,26 @@ export default function LibraryPaneBody() {
   const unsubscribingPodcastIds = useStringIdSet();
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [reorderBusy, setReorderBusy] = useState(false);
-  const libraryEntriesStaleRef = useRef(false);
-  const entryReconciliationOwnerIdRef = useRef(id);
-  const paneActiveAtRenderRef = useRef(isPaneActive);
-  paneActiveAtRenderRef.current = isPaneActive;
+  // A stale/deployment-era continuation cursor: Load More is never reinterpreted
+  // as an invalid view. Instead the list can no longer continue and offers
+  // Refresh list, which discards the cursor and reloads the same view's first page.
+  const [loadMoreCursorInvalid, setLoadMoreCursorInvalid] = useState(false);
+  // The revisions the committed page was fetched at. A reacted-to advance beyond
+  // this baseline drives one reconciliation of the current view. When the pane is
+  // seeded from a restored visit snapshot, the baseline is the snapshot's captured
+  // revisions — NOT the current stores — so a mutation between capture and remount
+  // reads as stale and reconciles, instead of being silently absorbed.
+  const committedRevisionsRef = useRef<LibraryRevisions>(
+    initialRestored
+      ? initialRestored.entries.revisions
+      : {
+          placement: placementChange.revision,
+          consumption: consumptionChange.revision,
+        },
+  );
+  // Bumped when a first-page result is revision-stale so the exact same
+  // requested view refetches once against current truth (coalesced follow-up).
+  const [firstPageNonce, setFirstPageNonce] = useState(0);
   const entryReconciliationSerialRef = useRef(0);
   const [entryReconciliationRequest, setEntryReconciliationRequest] =
     useState<EntryReconciliationRequest | null>(null);
@@ -579,9 +660,27 @@ export default function LibraryPaneBody() {
     [],
   );
   // Focus continuity: when an action removes the focused row, move focus to the
-  // next visible row, else the previous, else the "Sort by" select.
+  // next visible row, else the previous, else the "View" select, then "Sort by".
   const listRegionRef = useRef<HTMLDivElement | null>(null);
+  const viewSelectRef = useRef<HTMLSelectElement | null>(null);
   const sortSelectRef = useRef<HTMLSelectElement | null>(null);
+  const hideFinishedInputId = `library-hide-finished-${id}`;
+  // A control to focus once the view/reconciliation it initiated commits. A
+  // recovery action (Show all items, Clear filters, Show finished, Retry,
+  // Refresh list) sets it; the matching commit applies and clears it.
+  const pendingCommitFocusRef = useRef<"View" | "HideFinished" | null>(null);
+  const focusPendingControl = useCallback(() => {
+    const target = pendingCommitFocusRef.current;
+    if (target === null) return;
+    pendingCommitFocusRef.current = null;
+    const element =
+      target === "View"
+        ? viewSelectRef.current
+        : document.getElementById(hideFinishedInputId);
+    if (element instanceof HTMLElement) {
+      requestAnimationFrame(() => element.focus());
+    }
+  }, [hideFinishedInputId]);
   const pendingFocusNeighborRef = useRef<string | null | undefined>(undefined);
   const pendingFocusRafRef = useRef(0);
   const captureFocusNeighbor = useCallback((removedKey: string) => {
@@ -657,9 +756,7 @@ export default function LibraryPaneBody() {
       ) as Promise<LibraryPaneResource>,
   });
   const requestedViewKey =
-    view === null
-      ? null
-      : libraryEntriesResource.cacheKey({ id, view });
+    view === null ? null : libraryEntriesResource.cacheKey({ id, view });
   const committedViewKey =
     controller === null
       ? null
@@ -669,8 +766,21 @@ export default function LibraryPaneBody() {
   const committedView = controller?.entries.view ?? null;
   const currentLibrary =
     controller?.library.id === id ? controller.library : null;
+  // The Library metadata can be known from the route resource before any entry
+  // page commits (a factual/projection deep link, or a non-zero-revision mount
+  // that cannot claim the bootstrap seed). In that state the pane still renders
+  // its toolbar and the polite status node; only a total absence of metadata
+  // keeps the pane-level spinner.
+  const knownLibrary =
+    currentLibrary ??
+    (!observedLibraryUnavailable &&
+    libraryResource.status === "ready" &&
+    libraryResource.data.library.id === id
+      ? libraryResource.data.library
+      : null);
   const adoptLibrary = useCallback(
     (next: LibraryOut | null) => {
+      setObservedUnavailableLibraryId(next === null ? id : null);
       setLibrary((current) =>
         next === null
           ? null
@@ -701,7 +811,7 @@ export default function LibraryPaneBody() {
     membersActive,
     announceAuthorityLoss: announceLibraryAuthorityLoss,
   });
-  const isDefaultLibrary = currentLibrary?.isDefault === true;
+  const isDefaultLibrary = knownLibrary?.isDefault === true;
   // Entry mutation (add content, reorder, remove) is hidden for system-protected
   // libraries (e.g. the Oracle Corpus), which report canEditEntries === false.
   const canEditEntries =
@@ -718,16 +828,52 @@ export default function LibraryPaneBody() {
     ),
   );
 
+  // The route bootstrap seeds only Canonical + AllItems(All) at process revision
+  // zero. The client claims that seed only while BOTH process revisions are still
+  // zero; otherwise the exact first page loads through the entries endpoint.
+  const bootstrapSeedClaimable =
+    placementChange.revision === 0 && consumptionChange.revision === 0;
+  // Whether a committed/requested page fetched at `captured` is stale relative to
+  // the current process revisions this pane reacts to. The All (default) pane is
+  // stale on any placement mismatch; a named/system pane is stale only when a
+  // change SINCE its captured revision actually affected it (or was Unknown) —
+  // judged across every intermediate change, not just the latest scope. Consumption
+  // matters only for a consumption-sensitive view.
+  const revisionsAreStale = useCallback(
+    (captured: LibraryRevisions, view: LibraryEntryView): boolean => {
+      const placementStale =
+        placementChange.revision !== captured.placement &&
+        (isDefaultLibrary ||
+          libraryPlacementAffectedSince(captured.placement, id));
+      const consumptionStale =
+        consumptionChange.revision !== captured.consumption &&
+        viewIsConsumptionSensitive(view);
+      return placementStale || consumptionStale;
+    },
+    [
+      consumptionChange.revision,
+      placementChange.revision,
+      id,
+      isDefaultLibrary,
+    ],
+  );
+
   // The bootstrap page is adopted only for the initial Canonical + All view.
   // Every requested/committed mismatch, including a return to Canonical, owns
   // one exact-view entries request.
   const requestsFirstPage =
     view !== null &&
     (controller === null
-      ? !isInitialView || !allowInitialAdoptionRef.current
-      : !committedMatchesRequested ||
-        committedViewInvalidatedRef.current);
-  const firstPageRequestKey = requestsFirstPage ? requestedViewKey : null;
+      ? !isInitialView ||
+        !allowInitialAdoptionRef.current ||
+        !bootstrapSeedClaimable
+      : !committedMatchesRequested || committedViewInvalidatedRef.current);
+  // The resource identity carries the requested view AND a nonce so a
+  // revision-stale result refetches the same view against current truth.
+  const firstPageRequestKey =
+    requestsFirstPage && requestedViewKey !== null
+      ? `${requestedViewKey}#${firstPageNonce}`
+      : null;
   const firstPageRequestPath =
     requestsFirstPage && view !== null
       ? libraryEntriesResource.clientPath({ id, view })
@@ -740,8 +886,18 @@ export default function LibraryPaneBody() {
     load: async (signal) => {
       const requestKey = firstPageRequestKey;
       const requestedView = view;
+      const requestedKey = requestedViewKey;
       const path = firstPageRequestPath;
-      if (requestKey === null || requestedView === null || path === null) {
+      const revisions: LibraryRevisions = {
+        placement: placementRevisionRef.current,
+        consumption: consumptionRevisionRef.current,
+      };
+      if (
+        requestKey === null ||
+        requestedView === null ||
+        requestedKey === null ||
+        path === null
+      ) {
         // justify-defect: a non-null resource key is built from this request.
         throw new Error("Library entry-view request lost its identity");
       }
@@ -761,8 +917,10 @@ export default function LibraryPaneBody() {
       try {
         return {
           requestKey,
+          requestedViewKey: requestedKey,
           view: requestedView,
           page: decodeLibraryEntryPage(page),
+          revisions,
         };
       } catch (decodeError) {
         if (
@@ -796,8 +954,7 @@ export default function LibraryPaneBody() {
       ? null
       : controller === null
         ? { kind: "InitialLoading", requestedView: view }
-        : committedMatchesRequested &&
-            !committedViewInvalidatedRef.current
+        : committedMatchesRequested && !committedViewInvalidatedRef.current
           ? { kind: "Ready", committed: controller.entries }
           : failedFirstPage === null
             ? {
@@ -833,10 +990,9 @@ export default function LibraryPaneBody() {
 
   const { clear: clearRemovedEntryIds } = removedEntryIds;
   const requestEntryReconciliation = useCallback(
-    (requestedView: LibraryEntryView) => {
+    (requestedView: LibraryEntryView, revisions: LibraryRevisions) => {
       cancelEntryLoadMore();
       committedSnapshotRef.current = null;
-      libraryEntriesStaleRef.current = false;
       clearAllVisitData();
       const serial = entryReconciliationSerialRef.current + 1;
       entryReconciliationSerialRef.current = serial;
@@ -844,27 +1000,11 @@ export default function LibraryPaneBody() {
         ownerId: id,
         view: requestedView,
         serial,
+        revisions,
       });
     },
     [cancelEntryLoadMore, clearAllVisitData, id],
   );
-  const markLibraryEntriesStale = useCallback(() => {
-    libraryEntriesStaleRef.current = true;
-    committedSnapshotRef.current = null;
-    clearAllVisitData();
-  }, [clearAllVisitData]);
-  const requestCurrentEntryReconciliation = useCallback(() => {
-    const readySnapshot = committedSnapshotRef.current;
-    if (
-      !paneActiveAtRenderRef.current ||
-      readySnapshot === null ||
-      readySnapshot.library.id !== id
-    ) {
-      markLibraryEntriesStale();
-      return;
-    }
-    requestEntryReconciliation(readySnapshot.entries.view);
-  }, [id, markLibraryEntriesStale, requestEntryReconciliation]);
   const entryReconciliationParams: LibraryEntriesResourceParams | null =
     entryReconciliationRequest
       ? {
@@ -923,7 +1063,9 @@ export default function LibraryPaneBody() {
       requestViewKey !== requestedViewKey ||
       requestViewKey !== committedViewKey
     ) {
-      markLibraryEntriesStale();
+      // The requested view moved on: the first-page path owns the new view. Drop
+      // this result; the revision trigger re-fires if the current view is still
+      // behind its committed baseline.
       setEntryReconciliationRequest(null);
       return;
     }
@@ -942,47 +1084,62 @@ export default function LibraryPaneBody() {
               view: result.request.view,
               entries: result.page.data,
               nextCursor: result.page.page.next_cursor,
+              revisions: result.request.revisions,
             },
           },
     );
+    // The committed baseline advances to the revisions captured when this
+    // reconciliation was requested, so a mutation that landed while it was in
+    // flight surfaces as exactly one coalesced follow-up.
+    committedRevisionsRef.current = result.request.revisions;
+    setLoadMoreCursorInvalid(false);
     setLoadMoreError(null);
     setEntryReconciliationRequest(null);
+    focusPendingControl();
   }, [
     cancelEntryLoadMore,
     clearRemovedEntryIds,
     committedViewKey,
     entryReconciliationFetch.data,
     entryReconciliationRequest,
+    focusPendingControl,
     id,
-    markLibraryEntriesStale,
     requestedViewKey,
     viewIsCommitted,
   ]);
 
+  // Revision-driven reconciliation: while the committed view is showing and a
+  // reacted-to placement/consumption advance has moved past its baseline,
+  // reconcile the current view. One reconciliation is in flight at a time; the
+  // commit re-bases to the request's captured revisions, so a mutation during
+  // flight yields exactly one follow-up.
   useEffect(() => {
-    if (entryReconciliationOwnerIdRef.current !== id) return;
+    if (!isPaneActive) return;
+    if (!viewIsCommitted || controller === null) return;
+    if (entryReconciliationRequest !== null) return;
+    const current: LibraryRevisions = {
+      placement: placementChange.revision,
+      consumption: consumptionChange.revision,
+    };
     if (
-      isPaneActive &&
-      libraryEntriesStaleRef.current &&
-      viewIsCommitted &&
-      controller !== null &&
-      entryReconciliationRequest === null
+      !revisionsAreStale(committedRevisionsRef.current, controller.entries.view)
     ) {
-      requestEntryReconciliation(controller.entries.view);
+      return;
     }
+    requestEntryReconciliation(controller.entries.view, current);
   }, [
+    consumptionChange.revision,
     controller,
     entryReconciliationRequest,
-    id,
     isPaneActive,
+    placementChange.revision,
     requestEntryReconciliation,
+    revisionsAreStale,
     viewIsCommitted,
   ]);
 
   useEffect(() => {
-    entryReconciliationOwnerIdRef.current = id;
     entryReconciliationSerialRef.current += 1;
-    libraryEntriesStaleRef.current = false;
     setEntryReconciliationRequest(null);
   }, [id]);
 
@@ -993,14 +1150,22 @@ export default function LibraryPaneBody() {
     if (libraryResource.status === "ready") {
       if (!allowInitialAdoptionRef.current) return;
       allowInitialAdoptionRef.current = false;
-      if (isInitialView || view === null) {
+      if ((isInitialView || view === null) && bootstrapSeedClaimable) {
         committedViewInvalidatedRef.current = false;
+        // The bootstrap seed is only claimed at process revision zero, so its
+        // committed baseline is exactly {0, 0}. A later advance reconciles it.
+        const seedRevisions: LibraryRevisions = {
+          placement: 0,
+          consumption: 0,
+        };
+        committedRevisionsRef.current = seedRevisions;
         setController({
           library: libraryResource.data.library,
           entries: {
             view: view ?? CANONICAL_VIEW,
             entries: libraryResource.data.entries,
             nextCursor: libraryResource.data.entriesPage.next_cursor,
+            revisions: seedRevisions,
           },
         });
       }
@@ -1026,6 +1191,7 @@ export default function LibraryPaneBody() {
       setLoadMoreError(null);
     }
   }, [
+    bootstrapSeedClaimable,
     cancelEntryLoadMore,
     id,
     isInitialView,
@@ -1034,8 +1200,8 @@ export default function LibraryPaneBody() {
     view,
   ]);
 
-  // A view request invalidates view-sensitive work but preserves the committed
-  // page until its exact replacement is ready.
+  // A view request (or a revision-stale refetch) invalidates view-sensitive work
+  // but preserves the committed page until its exact replacement is ready.
   useEffect(() => {
     if (firstPageRequestKey === null) return;
     committedViewInvalidatedRef.current = true;
@@ -1045,8 +1211,8 @@ export default function LibraryPaneBody() {
     clearRemovedEntryIds();
     clearAllVisitData();
     setLoadMoreError(null);
+    setLoadMoreCursorInvalid(false);
     setViewInvalid(false);
-    libraryEntriesStaleRef.current = false;
     entryReconciliationSerialRef.current += 1;
     setEntryReconciliationRequest(null);
   }, [
@@ -1056,14 +1222,25 @@ export default function LibraryPaneBody() {
     firstPageRequestKey,
   ]);
 
-  // Install only the response associated with the current requested view.
+  // Install only the response for the current requested view whose captured
+  // revisions still match; a revision that advanced mid-request means the result
+  // is stale, so refetch the same view once against current truth.
   useEffect(() => {
     if (
       firstPageResource.status !== "ready" ||
       firstPageRequestKey === null ||
       firstPageResource.data.requestKey !== firstPageRequestKey ||
-      requestedViewKey !== firstPageResource.data.requestKey
+      requestedViewKey !== firstPageResource.data.requestedViewKey
     ) {
+      return;
+    }
+    if (
+      revisionsAreStale(
+        firstPageResource.data.revisions,
+        firstPageResource.data.view,
+      )
+    ) {
+      setFirstPageNonce((nonce) => nonce + 1);
       return;
     }
     const library =
@@ -1075,39 +1252,60 @@ export default function LibraryPaneBody() {
     cancelEntryLoadMore();
     clearRemovedEntryIds();
     committedViewInvalidatedRef.current = false;
+    const committedRevisions: LibraryRevisions = {
+      placement: placementRevisionRef.current,
+      consumption: consumptionRevisionRef.current,
+    };
+    committedRevisionsRef.current = committedRevisions;
     setController({
       library,
       entries: {
         view: firstPageResource.data.view,
         entries: firstPageResource.data.page.data,
         nextCursor: firstPageResource.data.page.page.next_cursor,
+        revisions: committedRevisions,
       },
     });
     setLoadMoreError(null);
+    setLoadMoreCursorInvalid(false);
     setViewInvalid(false);
-    const scrollport =
-      listRegionRef.current?.closest<HTMLElement>("[data-pane-content]");
+    const scrollport = listRegionRef.current?.closest<HTMLElement>(
+      "[data-pane-content]",
+    );
     if (scrollport) scrollport.scrollTop = 0;
+    focusPendingControl();
   }, [
     cancelEntryLoadMore,
     clearRemovedEntryIds,
     controller?.library,
     firstPageRequestKey,
     firstPageResource,
+    focusPendingControl,
     libraryResource,
     requestedViewKey,
+    revisionsAreStale,
   ]);
 
   const firstPageDefect =
     firstPageError !== null && isSameSystemApiDefect(firstPageError)
       ? firstPageError
       : null;
+  // The pane-level spinner is reserved for the pre-metadata state: no committed
+  // page AND no route-resource metadata yet. Once metadata is known the pane
+  // renders its toolbar and the polite status node instead.
   const loading =
-    currentLibrary === null &&
+    knownLibrary === null &&
+    !observedLibraryUnavailable &&
     error === null &&
     (libraryResource.status === "loading" ||
       (firstPageRequestKey !== null && firstPageError === null));
-  useSetPaneLabel(currentLibrary?.name ?? (loading ? null : "Library"));
+  useSetPaneLabel(
+    knownLibrary
+      ? libraryPresentation(knownLibrary).name
+      : loading
+        ? null
+        : "Library",
+  );
 
   useEffect(() => {
     if (isInvalidViewError(firstPageError)) {
@@ -1117,9 +1315,7 @@ export default function LibraryPaneBody() {
 
   useLayoutEffect(() => {
     committedSnapshotRef.current =
-      entriesState?.kind === "Ready" &&
-      entryReconciliationRequest === null &&
-      !libraryEntriesStaleRef.current
+      entriesState?.kind === "Ready" && entryReconciliationRequest === null
         ? controller
         : null;
   }, [controller, entriesState?.kind, entryReconciliationRequest]);
@@ -1160,10 +1356,16 @@ export default function LibraryPaneBody() {
               if (!observing) return;
               observing = false;
               options.signal.removeEventListener("abort", abandon);
-              requestCurrentEntryReconciliation();
+              // The placement writer already published to the placement
+              // revision store; the revision-driven trigger reconciles the
+              // current view. No explicit reconciliation call here.
               feedback.show({
                 severity: "success",
-                title: `Added to ${currentLibrary?.name ?? "library"}`,
+                title: `Added to ${
+                  currentLibrary
+                    ? libraryPresentation(currentLibrary).name
+                    : "library"
+                }`,
               });
               resolve({ kind: "Accepted" });
             },
@@ -1199,14 +1401,7 @@ export default function LibraryPaneBody() {
         runAttempt();
       });
     },
-    [
-      committedView,
-      currentLibrary?.name,
-      feedback,
-      id,
-      requestCurrentEntryReconciliation,
-      viewIsCommitted,
-    ],
+    [committedView, currentLibrary, feedback, id, viewIsCommitted],
   );
 
   const runMediaProcessingMutation = useCallback(
@@ -1458,12 +1653,20 @@ export default function LibraryPaneBody() {
           resetProgress: lectern.resetProgress,
         });
         if (outcome.kind === "Cancelled") return;
-        requestCurrentEntryReconciliation();
+        // Immediate local patch: Reset removes the row from an In Progress view.
+        // lectern.resetProgress already published the consumption revision, so a
+        // consumption-sensitive view reconciles against fresh truth.
+        patchMediaInViews(mediaId, (media) => ({
+          ...media,
+          read_state: "unread",
+        }));
         feedback.show({ severity: "success", title: "Progress reset." });
       } catch (error) {
         if (handleUnauthenticatedApiError(error)) return;
         if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-        feedback.show(toFeedback(error, { fallback: "Failed to reset progress" }));
+        feedback.show(
+          toFeedback(error, { fallback: "Failed to reset progress" }),
+        );
       } finally {
         resettingProgressMediaIds.remove(mediaId);
       }
@@ -1472,7 +1675,7 @@ export default function LibraryPaneBody() {
       committedView,
       feedback,
       lectern.resetProgress,
-      requestCurrentEntryReconciliation,
+      patchMediaInViews,
       resettingProgressMediaIds,
       updatingConsumptionMediaIds,
       viewIsCommitted,
@@ -1646,6 +1849,9 @@ export default function LibraryPaneBody() {
       await apiFetch(`/api/libraries/${currentLibrary.id}`, {
         method: "DELETE",
       });
+      // Deletion can change visible membership and many placements: publish an
+      // Unknown-scope placement advance so every mounted pane reconciles.
+      publishLibraryPlacementChange("Unknown");
       committedSnapshotRef.current = null;
       clearAllVisitData();
       router.push("/libraries");
@@ -1681,6 +1887,7 @@ export default function LibraryPaneBody() {
     await apiFetch(`/api/libraries/${currentLibrary.id}`, {
       method: "DELETE",
     });
+    publishLibraryPlacementChange("Unknown");
     committedSnapshotRef.current = null;
     clearAllVisitData();
     setSettingsOpen(false);
@@ -1736,8 +1943,11 @@ export default function LibraryPaneBody() {
           return;
         }
         if (handleUnauthenticatedApiError(err)) return;
-        if (isInvalidViewError(err)) {
-          setViewInvalid(true);
+        // A stale/deployment-era continuation cursor is never reinterpreted as
+        // an invalid view: the list can no longer continue and offers Refresh
+        // list, which reloads the same view's first page.
+        if (isApiError(err) && err.code === "E_INVALID_CURSOR") {
+          setLoadMoreCursorInvalid(true);
           return;
         }
         setLoadMoreError(
@@ -1764,6 +1974,21 @@ export default function LibraryPaneBody() {
     setEntryCursor,
     viewIsCommitted,
   ]);
+
+  // Recover from a stale/deployment-era continuation cursor: discard it and
+  // reload the same exact view's first page. On success focus the View select.
+  const handleRefreshList = useCallback(() => {
+    if (committedView === null) return;
+    // Keep "This list can no longer continue." + "Refresh list" mounted until the
+    // replacement first page COMMITS: the commit path clears loadMoreCursorInvalid
+    // and focuses View; a failed refresh leaves the same notice and focused button
+    // in place (never a generic Retry state that unmounts the button).
+    pendingCommitFocusRef.current = "View";
+    requestEntryReconciliation(committedView, {
+      placement: placementRevisionRef.current,
+      consumption: consumptionRevisionRef.current,
+    });
+  }, [committedView, requestEntryReconciliation]);
 
   const handleReorderEntries = (nextEntries: LibraryEntry[]) => {
     if (!viewIsCommitted || !canReorder || entryCursor !== null) {
@@ -1856,47 +2081,29 @@ export default function LibraryPaneBody() {
         ]
       : [];
 
-  const hideFinished = committedView?.completion === "unfinished";
-  // Under the unfinished filter the client also drops a row the moment it is
-  // marked finished, so Mark Finished visibly removes it from the filtered view.
+  const hideFinished =
+    committedView !== null && completionOf(committedView) === "unfinished";
+  const isInProgressView = committedView?.projection.kind === "InProgress";
+  // Immediate local filtering mirrors the committed projection so a consumption
+  // mutation removes a row before its reconciliation lands: under the unfinished
+  // filter a newly-finished media row drops out; under In Progress a media row
+  // that is no longer in_progress (Mark Finished/Unread/Reset) drops out.
   const isVisibleEntry = useCallback(
     (entry: LibraryEntry): boolean => {
       if (removedEntryIds.ids.has(entry.id)) return false;
-      if (
-        hideFinished &&
-        entry.kind === "media" &&
-        entry.media.read_state === "finished"
-      ) {
+      if (entry.kind !== "media") return true;
+      if (hideFinished && entry.media.read_state === "finished") {
+        return false;
+      }
+      if (isInProgressView && entry.media.read_state !== "in_progress") {
         return false;
       }
       return true;
     },
-    [hideFinished, removedEntryIds.ids],
+    [hideFinished, isInProgressView, removedEntryIds.ids],
   );
   const visibleEntries = entries.filter(isVisibleEntry);
   const entryFolioCount = visibleEntries.length;
-  // Client-side filtering (hide finished, optimistic removal) can empty the
-  // visible page while more entries remain server-side. Advance until an
-  // eligible row appears or the cursor is exhausted, so the empty notice never
-  // lies and a real next page is never stranded behind a hidden footer (AC3/AC8).
-  useEffect(() => {
-    if (
-      viewIsCommitted &&
-      entryCursor !== null &&
-      visibleEntries.length === 0 &&
-      !loadingMore &&
-      loadMoreError === null
-    ) {
-      handleLoadMoreEntries();
-    }
-  }, [
-    viewIsCommitted,
-    entryCursor,
-    visibleEntries.length,
-    loadingMore,
-    loadMoreError,
-    handleLoadMoreEntries,
-  ]);
   const connectionsComposerController = useConnectionsComposerController({
     scheme: "library",
     id,
@@ -1906,10 +2113,10 @@ export default function LibraryPaneBody() {
       <ConnectionsSurface
         resourceRef={{ scheme: "library", id }}
         composerController={connectionsComposerController}
-        activateTarget={requirePaneRuntime(paneRuntime, "LibraryPaneBody").activateTarget}
+        activateTarget={activateTarget}
       />
     ),
-    [connectionsComposerController, id, paneRuntime],
+    [activateTarget, connectionsComposerController, id],
   );
   const membersBody = useMemo(
     () =>
@@ -1980,6 +2187,10 @@ export default function LibraryPaneBody() {
         return false;
       };
       if (neighborKey !== null && focusInRow(neighborKey)) return;
+      if (viewSelectRef.current) {
+        viewSelectRef.current.focus();
+        return;
+      }
       sortSelectRef.current?.focus();
     };
     // Defer past the menu's own focus-restore and the row-removal reflow so the
@@ -2000,7 +2211,10 @@ export default function LibraryPaneBody() {
     return <PaneLoadingState />;
   }
 
-  if (!currentLibrary) {
+  // Pre-metadata only: no committed page AND no route-resource metadata. Once
+  // metadata is known (knownLibrary), the pane falls through to render its
+  // toolbar plus the polite status node — even before the first page commits.
+  if (!knownLibrary) {
     if (viewInvalid) {
       return (
         <FeedbackNotice severity="error" title="Invalid library view">
@@ -2023,11 +2237,7 @@ export default function LibraryPaneBody() {
             fallback: "Failed to load library entries",
           })}
         >
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={failedFirstPage.retry}
-          >
+          <Button variant="secondary" size="sm" onClick={failedFirstPage.retry}>
             Retry
           </Button>
         </FeedbackNotice>
@@ -2041,13 +2251,26 @@ export default function LibraryPaneBody() {
   }
 
   const invalidView = decodedView.kind === "Invalid" || viewInvalid;
+  const entryRegionId = `library-entry-region-${id}`;
+  // Reorder exists only for a fully loaded editable non-default
+  // Canonical + AllItems(All) list.
   const canReorderVisibleEntries =
     viewIsCommitted &&
     canReorder &&
     committedView?.order.kind === "Canonical" &&
-    committedView.completion === "all" &&
+    committedView.projection.kind === "AllItems" &&
+    committedView.projection.completion === "all" &&
     entryCursor === null;
-  const entryFooter = (
+  const entryFooter = loadMoreCursorInvalid ? (
+    <FeedbackNotice
+      severity="neutral"
+      title="This list can no longer continue."
+    >
+      <Button variant="secondary" size="sm" onClick={handleRefreshList}>
+        Refresh list
+      </Button>
+    </FeedbackNotice>
+  ) : (
     <>
       {loadMoreError ? <FeedbackNotice {...loadMoreError} /> : null}
       <LoadMoreFooter
@@ -2062,59 +2285,110 @@ export default function LibraryPaneBody() {
       />
     </>
   );
-  const entryReconciliationNotice = entryReconciliationRequest ? (
-    entryReconciliationFetch.error === null ? (
-      <FeedbackNotice severity="neutral" title="Refreshing library entries…" />
-    ) : (
-      <FeedbackNotice
-        feedback={toFeedback(
-          toLibraryAddError(entryReconciliationFetch.error),
-          {
-            fallback: "Failed to refresh library entries",
-          },
-        )}
-      >
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() =>
-            requestEntryReconciliation(entryReconciliationRequest.view)
-          }
+  // While the stale-cursor recovery is mounted, the Refresh-list reconciliation
+  // is surfaced by that notice/button (kept until the replacement page commits),
+  // not by a second "Refreshing…" notice.
+  const entryReconciliationNotice =
+    entryReconciliationRequest && !loadMoreCursorInvalid ? (
+      entryReconciliationFetch.error === null ? (
+        <FeedbackNotice
+          severity="neutral"
+          title="Refreshing library entries…"
+        />
+      ) : (
+        <FeedbackNotice
+          feedback={toFeedback(
+            toLibraryAddError(entryReconciliationFetch.error),
+            {
+              fallback: "Failed to refresh library entries",
+            },
+          )}
         >
-          Retry
-        </Button>
-      </FeedbackNotice>
-    )
-  ) : null;
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() =>
+              requestEntryReconciliation(entryReconciliationRequest.view, {
+                placement: placementRevisionRef.current,
+                consumption: consumptionRevisionRef.current,
+              })
+            }
+          >
+            Retry
+          </Button>
+        </FeedbackNotice>
+      )
+    ) : null;
+  // The single polite status node lives OUTSIDE the busy collection and points
+  // at it via aria-controls. Requested/committed labels are the one formatter.
   const requestedViewLabel =
-    view === null
-      ? ""
-      : `${presetLabel(orderToPresetId(view.order), isDefaultLibrary)}${
-          view.completion === "unfinished" ? ", unfinished only" : ""
-        }`;
+    view === null ? "" : formatLibraryView(view, isDefaultLibrary);
   const committedViewLabel =
     committedView === null
       ? ""
-      : `${presetLabel(orderToPresetId(committedView.order), isDefaultLibrary)}${
-          committedView.completion === "unfinished" ? ", unfinished only" : ""
-        }`;
-  const entryViewNotice =
+      : formatLibraryView(committedView, isDefaultLibrary);
+  // Metadata is known but no page has ever committed (a factual/projection deep
+  // link, or a non-zero-revision mount): the same single status node carries the
+  // initial "Loading {requested}." / "Could not load {requested}." (no committed
+  // view to show), with the controls retained around it.
+  const initialLoadFailed =
+    entriesState?.kind === "InitialLoading" && failedFirstPage !== null;
+  const entryStatusNode =
     !invalidView && entriesState?.kind === "Refreshing" ? (
-      <div className={styles.entryViewStatus} role="status">
-        <span>
-          {`Updating to ${requestedViewLabel}. Showing ${committedViewLabel} until it arrives.`}
-        </span>
+      <div
+        className={styles.entryViewStatus}
+        role="status"
+        aria-controls={entryRegionId}
+      >
+        <span>{`Loading ${requestedViewLabel}. Showing ${committedViewLabel}.`}</span>
       </div>
     ) : !invalidView && entriesState?.kind === "RefreshFailed" ? (
-      <div className={styles.entryViewStatus} role="status">
-        <span>
-          {`Could not load ${requestedViewLabel}. Showing ${committedViewLabel}.`}
-        </span>
+      <div
+        className={styles.entryViewStatus}
+        role="status"
+        aria-controls={entryRegionId}
+      >
+        <span>{`Could not load ${requestedViewLabel}. Showing ${committedViewLabel}.`}</span>
         {failedFirstPage !== null ? (
-          <Button variant="ghost" size="sm" onClick={failedFirstPage.retry}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              pendingCommitFocusRef.current = "View";
+              failedFirstPage.retry();
+            }}
+          >
             Retry
           </Button>
         ) : null}
+      </div>
+    ) : !invalidView && initialLoadFailed ? (
+      <div
+        className={styles.entryViewStatus}
+        role="status"
+        aria-controls={entryRegionId}
+      >
+        <span>{`Could not load ${requestedViewLabel}.`}</span>
+        {failedFirstPage !== null ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              pendingCommitFocusRef.current = "View";
+              failedFirstPage.retry();
+            }}
+          >
+            Retry
+          </Button>
+        ) : null}
+      </div>
+    ) : !invalidView && entriesState?.kind === "InitialLoading" ? (
+      <div
+        className={styles.entryViewStatus}
+        role="status"
+        aria-controls={entryRegionId}
+      >
+        <span>{`Loading ${requestedViewLabel}.`}</span>
       </div>
     ) : null;
 
@@ -2197,64 +2471,77 @@ export default function LibraryPaneBody() {
       connectionSummary: connectionSummaries.get(`media:${item.media.id}`),
       retryProcessing:
         viewIsCommitted && item.media.capabilities.can_retry
-        ? {
-            kind: "Available",
-            execute: () => handleRetryProcessing(item.media.id),
-          }
-        : { kind: "Unavailable" },
+          ? {
+              kind: "Available",
+              execute: () => handleRetryProcessing(item.media.id),
+            }
+          : { kind: "Unavailable" },
       refreshSource:
         viewIsCommitted && item.media.capabilities.can_refresh_source
-        ? {
-            kind: "Available",
-            execute: () => handleRefreshSource(item.media.id),
-          }
-        : { kind: "Unavailable" },
+          ? {
+              kind: "Available",
+              execute: () => handleRefreshSource(item.media.id),
+            }
+          : { kind: "Unavailable" },
       retryMetadata:
         viewIsCommitted && item.media.capabilities.can_retry_metadata
-        ? {
-            kind: "Available",
-            execute: () => handleRetryMetadata(item.media.id),
-          }
-        : { kind: "Unavailable" },
+          ? {
+              kind: "Available",
+              execute: () => handleRetryMetadata(item.media.id),
+            }
+          : { kind: "Unavailable" },
       editAuthors:
         viewIsCommitted && item.media.capabilities.can_edit_authors
-        ? {
-            kind: "Available",
-            execute: (detail) => openAuthorsEditor(item.media.id, detail),
-          }
-        : { kind: "Unavailable" },
+          ? {
+              kind: "Available",
+              execute: (detail) => openAuthorsEditor(item.media.id, detail),
+            }
+          : { kind: "Unavailable" },
       removeMedia:
         viewIsCommitted && item.media.capabilities.can_delete
-        ? {
-            kind: "Available",
-            execute: () => handleDeleteMedia(item),
-          }
-        : { kind: "Unavailable" },
+          ? {
+              kind: "Available",
+              execute: () => handleDeleteMedia(item),
+            }
+          : { kind: "Unavailable" },
       progressReset:
         viewIsCommitted &&
         item.media.progress_resettable &&
         !updatingConsumptionMediaIds.has(item.media.id)
           ? {
               kind: "Available",
-              execute: () =>
-                handleResetProgress(
+              execute: () => {
+                // Reset drops the row from an In Progress view (read_state ->
+                // unread); capture the focus neighbor before it leaves.
+                if (isInProgressView) {
+                  captureFocusNeighbor(libraryRowKey(item, isDefaultLibrary));
+                }
+                return handleResetProgress(
                   item.media.id,
                   item.media.kind === "video",
-                ),
+                );
+              },
             }
           : { kind: "Unavailable" },
-      readState:
-        !viewIsCommitted
-          ? { kind: "Unavailable" }
-          : item.media.read_state === "finished"
+      readState: !viewIsCommitted
+        ? { kind: "Unavailable" }
+        : item.media.read_state === "finished"
           ? {
               kind: "MarkUnread",
-              execute: () => handleSetConsumption(item.media.id, "unread"),
+              execute: () => {
+                // Mark Unread drops the row from an In Progress view.
+                if (isInProgressView) {
+                  captureFocusNeighbor(libraryRowKey(item, isDefaultLibrary));
+                }
+                return handleSetConsumption(item.media.id, "unread");
+              },
             }
           : {
               kind: "MarkFinished",
               execute: () => {
-                if (hideFinished) {
+                // Mark Finished drops the row under the unfinished filter OR from
+                // an In Progress view.
+                if (hideFinished || isInProgressView) {
                   captureFocusNeighbor(libraryRowKey(item, isDefaultLibrary));
                 }
                 return handleSetConsumption(item.media.id, "finished");
@@ -2313,24 +2600,48 @@ export default function LibraryPaneBody() {
   const visibleEntryRows = visibleEntries.map(entryRowView);
 
   const orderPresetIds = orderPresetIdsFor(isDefaultLibrary);
+  const projectionOptions = projectionOptionsFor(isDefaultLibrary);
   const toolbar =
     invalidView || view === null ? undefined : (
       <PaneToolbar
         filters={
           <>
             <label className={styles.selectField}>
+              <span>View</span>
+              <Select
+                ref={viewSelectRef}
+                value={projectionOptionOf(view)}
+                onChange={(event) => {
+                  pendingCommitFocusRef.current = null;
+                  setView(
+                    withProjectionOption(
+                      view,
+                      event.target.value as ProjectionOptionId,
+                    ),
+                  );
+                }}
+              >
+                {projectionOptions.map((optionId) => (
+                  <option key={optionId} value={optionId}>
+                    {projectionOptionLabel(optionId)}
+                  </option>
+                ))}
+              </Select>
+            </label>
+            <label className={styles.selectField}>
               <span>Sort by</span>
               <Select
                 ref={sortSelectRef}
                 value={orderToPresetId(view.order)}
-                onChange={(event) =>
+                onChange={(event) => {
+                  pendingCommitFocusRef.current = null;
                   setView({
                     order: presetIdToOrder(
                       event.target.value as LibraryOrderPresetId,
                     ),
-                    completion: view.completion,
-                  })
-                }
+                    projection: view.projection,
+                  });
+                }}
               >
                 {orderPresetIds.map((presetId) => (
                   <option key={presetId} value={presetId}>
@@ -2339,21 +2650,82 @@ export default function LibraryPaneBody() {
                 ))}
               </Select>
             </label>
-            <Toggle
-              checked={view.completion === "unfinished"}
-              onCheckedChange={(checked) =>
-                setView({
-                  order: view.order,
-                  completion: checked ? "unfinished" : "all",
-                })
-              }
-              label="Hide finished"
-            />
+            {projectionSupportsCompletion(view) ? (
+              <Toggle
+                id={hideFinishedInputId}
+                checked={completionOf(view) === "unfinished"}
+                onCheckedChange={(checked) => {
+                  pendingCommitFocusRef.current = null;
+                  setView(withCompletion(view, checked ? "unfinished" : "all"));
+                }}
+                label="Hide finished"
+              />
+            ) : null}
           </>
         }
       />
     );
 
+  const entriesAccessibleName = libraryPresentation(knownLibrary).name;
+  // Both recoveries request AllItems(All) preserving order and focus View; the
+  // completion-only "Show finished" recovery focuses the Hide-finished checkbox.
+  const recoverToAllItems = () => {
+    if (committedView === null) return;
+    pendingCommitFocusRef.current = "View";
+    setView({
+      order: committedView.order,
+      projection: { kind: "AllItems", completion: "all" },
+    });
+  };
+  const recoverShowFinished = () => {
+    if (committedView === null) return;
+    pendingCommitFocusRef.current = "HideFinished";
+    setView(withCompletion(committedView, "all"));
+  };
+  // Closed-union empty-state precedence (never inferred from counts).
+  const emptyStateNotice = (() => {
+    const projection = committedView?.projection ?? CANONICAL_VIEW.projection;
+    if (projection.kind === "InProgress") {
+      return (
+        <FeedbackNotice severity="neutral" title="Nothing in progress.">
+          <Button variant="secondary" size="sm" onClick={recoverToAllItems}>
+            Show all items
+          </Button>
+        </FeedbackNotice>
+      );
+    }
+    if (projection.kind === "Unfiled") {
+      return projection.completion === "all" ? (
+        <FeedbackNotice severity="neutral" title="Everything is filed.">
+          <Button variant="secondary" size="sm" onClick={recoverToAllItems}>
+            Show all items
+          </Button>
+        </FeedbackNotice>
+      ) : (
+        <FeedbackNotice severity="neutral" title="No unfinished unfiled items.">
+          <Button variant="secondary" size="sm" onClick={recoverToAllItems}>
+            Clear filters
+          </Button>
+        </FeedbackNotice>
+      );
+    }
+    return projection.completion === "all" ? (
+      <FeedbackNotice
+        severity="neutral"
+        title={
+          isDefaultLibrary
+            ? "No media yet."
+            : "No podcasts or media in this library yet."
+        }
+      />
+    ) : (
+      <FeedbackNotice severity="neutral" title="No unfinished items.">
+        <Button variant="secondary" size="sm" onClick={recoverShowFinished}>
+          Show finished
+        </Button>
+      </FeedbackNotice>
+    );
+  })();
   const mainBody = invalidView ? (
     <FeedbackNotice severity="error" title="Invalid library view">
       <Button
@@ -2369,7 +2741,7 @@ export default function LibraryPaneBody() {
       returnScope="Library.Entries"
       rows={visibleEntryRows}
       status="ready"
-      ariaLabel="Library entries"
+      ariaLabel={entriesAccessibleName}
       rowActionsAvailable={viewIsCommitted}
       footer={entryFooter}
       surface={false}
@@ -2394,25 +2766,17 @@ export default function LibraryPaneBody() {
           : undefined
       }
     />
-  ) : entryCursor !== null ? (
-    // Empty after filtering but more pages remain: the auto-advance effect is
-    // fetching them; surface its progress/error instead of a false empty state.
+  ) : currentLibrary ===
+    null ? // Metadata known but no page has committed yet: the busy region stays empty
+  // (rows/empty-state only); the polite status node carries "Loading …" /
+  // "Could not load …". No false empty-state notice before the first commit.
+  null : entryCursor !== null ? (
+    // Empty after local filtering while the server still has another page:
+    // keep the explicit continuation control visible instead of publishing a
+    // false empty state or initiating an effect-owned GET.
     entryFooter
-  ) : hideFinished ? (
-    <FeedbackNotice severity="neutral" title="No unfinished items">
-      <Button
-        variant="secondary"
-        size="sm"
-        onClick={() => setView({ order: view!.order, completion: "all" })}
-      >
-        Show finished
-      </Button>
-    </FeedbackNotice>
   ) : (
-    <FeedbackNotice
-      severity="neutral"
-      title="No podcasts or media in this library yet."
-    />
+    emptyStateNotice
   );
   const podcastSettingsEntry = entries.find(
     (entry) =>
@@ -2427,7 +2791,7 @@ export default function LibraryPaneBody() {
   return (
     <>
       <PaneSurface
-        opener={<SectionOpener heading={currentLibrary.name} scale="title" />}
+        opener={<SectionOpener heading={entriesAccessibleName} scale="title" />}
         toolbar={toolbar}
         state={
           error || entryReconciliationNotice ? (
@@ -2438,31 +2802,39 @@ export default function LibraryPaneBody() {
           ) : null
         }
       >
+        {entryStatusNode}
         <div
+          id={entryRegionId}
           ref={listRegionRef}
           role="region"
-          aria-label="Library entries"
+          aria-label={entriesAccessibleName}
           aria-busy={
-            entriesState?.kind === "Refreshing" ? true : undefined
+            entriesState?.kind === "Refreshing" ||
+            (entriesState?.kind === "InitialLoading" &&
+              !invalidView &&
+              failedFirstPage === null)
+              ? true
+              : undefined
           }
         >
-          {entryViewNotice}
           {mainBody}
         </div>
-        <ReadingSlateSection
-          returnScope="Library.ReadingSlate"
-          destination={{
-            kind: "Library",
-            id: currentLibrary.id,
-            name: currentLibrary.name,
-          }}
-          paneId={paneId}
-          isActive={isPaneActive}
-          accept={acceptSlateTarget}
-        />
+        {currentLibrary !== null ? (
+          <ReadingSlateSection
+            returnScope="Library.ReadingSlate"
+            destination={{
+              kind: "Library",
+              id: currentLibrary.id,
+              name: libraryPresentation(currentLibrary).name,
+            }}
+            paneId={paneId}
+            isActive={isPaneActive}
+            accept={acceptSlateTarget}
+          />
+        ) : null}
       </PaneSurface>
 
-      {settingsOpen ? (
+      {settingsOpen && currentLibrary ? (
         <LibrarySettingsDialog
           open
           onClose={() => setSettingsOpen(false)}

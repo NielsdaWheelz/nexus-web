@@ -8,6 +8,7 @@ import LecternPaneBody from "@/app/(authenticated)/lectern/LecternPaneBody";
 import LecternMutationNotice from "@/components/LecternMutationNotice";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
+import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
@@ -29,7 +30,11 @@ interface WireItem {
   title: string;
   subtitle: { kind: "Absent" };
   href: string;
-  consumption: { state: "Unread"; progress: { kind: "Absent" } };
+  consumption: {
+    state: "Unread";
+    progress: { kind: "Absent" };
+    progressResettable: false;
+  };
   activation: { kind: "Readable" };
 }
 
@@ -41,7 +46,11 @@ function wireItem(itemId: string, mediaId: string, title: string): WireItem {
     title,
     subtitle: { kind: "Absent" },
     href: `/media/${mediaId}`,
-    consumption: { state: "Unread", progress: { kind: "Absent" } },
+    consumption: {
+      state: "Unread",
+      progress: { kind: "Absent" },
+      progressResettable: false,
+    },
     activation: { kind: "Readable" },
   };
 }
@@ -141,10 +150,11 @@ function withProviders(node: ReactNode) {
   return withRenderEnvironment(
     <PaneReturnMementoProvider>
       <FeedbackProvider>
-        <ShareControllerProvider>
-          <LecternProvider>
-            <GlobalPlayerProvider>
-              <PaneRuntimeProvider
+        <LibraryPlacementControllerProvider>
+          <ShareControllerProvider>
+            <LecternProvider>
+              <GlobalPlayerProvider>
+                <PaneRuntimeProvider
                 paneId="pane-1"
                 visitId={TEST_VISIT_ID}
                 isActive
@@ -159,13 +169,14 @@ function withProviders(node: ReactNode) {
                 onReplacePane={vi.fn()}
                 onActivateWorkspaceTarget={vi.fn(() => ({ kind: "ActivatedExisting" as const, paneId: "pane" }))}
                 onSetPaneLabel={vi.fn()}
-              >
-                <LecternMutationNotice />
-                {node}
-              </PaneRuntimeProvider>
-            </GlobalPlayerProvider>
-          </LecternProvider>
-        </ShareControllerProvider>
+                >
+                  <LecternMutationNotice />
+                  {node}
+                </PaneRuntimeProvider>
+              </GlobalPlayerProvider>
+            </LecternProvider>
+          </ShareControllerProvider>
+        </LibraryPlacementControllerProvider>
       </FeedbackProvider>
     </PaneReturnMementoProvider>,
   );
@@ -208,8 +219,12 @@ describe("LecternPaneBody Slate host", () => {
     const user = userEvent.setup();
     render(withProviders(<LecternPaneBody />));
 
-    expect(await screen.findByText("Queued article")).toBeVisible();
-    expect(await screen.findByText("Suggested article")).toBeVisible();
+    expect(
+      await screen.findByRole("link", { name: "Queued article" }),
+    ).toBeVisible();
+    expect(
+      await screen.findByRole("link", { name: "Suggested article" }),
+    ).toBeVisible();
     await user.click(
       screen.getByRole("button", {
         name: "Add Suggested article to Lectern",
@@ -218,8 +233,9 @@ describe("LecternPaneBody Slate host", () => {
 
     await waitFor(() =>
       expect(
-        within(screen.getByRole("list", { name: "On the lectern" })).getByText(
-          "Suggested article",
+        within(screen.getByRole("list", { name: "On the lectern" })).getByRole(
+          "link",
+          { name: "Suggested article" },
         ),
       ).toBeVisible(),
     );

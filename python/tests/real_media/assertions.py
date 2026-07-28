@@ -421,29 +421,9 @@ def assert_pdf_ocr_required_trace(
         assert row["plain_text"] is None, row
         assert row["status"] == "ocr_required", row
         assert row["status_reason"] == "ocr_required", row
-        assert row["block_count"] > 0, row
+        assert row["block_count"] == 0, row
         assert row["chunk_count"] == 0, row
         assert row["embedding_count"] == 0, row
-
-        block = (
-            session.execute(
-                text(
-                    """
-                    SELECT canonical_text, locator, selector
-                    FROM content_blocks
-                    WHERE owner_kind = 'media' AND owner_id = :media_id
-                    ORDER BY block_idx ASC
-                    LIMIT 1
-                    """
-                ),
-                {"media_id": media_id},
-            )
-            .mappings()
-            .one()
-        )
-        assert block["canonical_text"] == "", block
-        assert isinstance(block["locator"], dict) and block["locator"], block
-        assert isinstance(block["selector"], dict) and block["selector"], block
 
     return {
         "media_id": str(media_id),

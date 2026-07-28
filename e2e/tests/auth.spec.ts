@@ -6,17 +6,14 @@ import {
 } from "./provider-roundtrip";
 import { bootstrapMagicLinkSession } from "./auth-bootstrap";
 import { signOutViaAccountMenu } from "./app-nav";
-import {
-  AUTHENTICATED_HOME_PATH,
-  isAuthenticatedHome,
-} from "./app-routes";
+import { AUTHENTICATED_HOME_PATH, isAuthenticatedHome } from "./app-routes";
 
 async function expectLoginControls(page: Page) {
   await expect(
-    page.getByRole("button", { name: /continue with google/i })
+    page.getByRole("button", { name: /continue with google/i }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: /continue with github/i })
+    page.getByRole("button", { name: /continue with github/i }),
   ).toBeVisible();
   await expect(page.getByLabel(/email/i)).toBeVisible();
   await expect(page.getByLabel(/password/i)).toBeVisible();
@@ -24,9 +21,11 @@ async function expectLoginControls(page: Page) {
 }
 
 test.describe("authentication", () => {
-  test("authenticated user lands in the app", async ({ page }) => {
+  test("authenticated bare root resumes the saved workspace", async ({
+    page,
+  }) => {
     await page.goto("/");
-    await expect(page).toHaveURL(isAuthenticatedHome);
+    await expect(page).toHaveURL(/\/libraries$/);
     await expect(page.getByRole("link", { name: /lectern/i })).toBeVisible();
   });
 
@@ -44,7 +43,9 @@ test.describe("authentication", () => {
     await expect(page.getByRole("link", { name: /libraries/i })).toBeVisible();
   });
 
-  test("logout returns the browser to the OAuth login screen", async ({ browser }) => {
+  test("logout returns the browser to the OAuth login screen", async ({
+    browser,
+  }) => {
     const context = await browser.newContext({
       storageState: { cookies: [], origins: [] },
     });
@@ -55,10 +56,10 @@ test.describe("authentication", () => {
       await signOutViaAccountMenu(page);
       await expect(page).toHaveURL(/\/login/);
       await expect(
-        page.getByRole("button", { name: /continue with google/i })
+        page.getByRole("button", { name: /continue with google/i }),
       ).toBeVisible();
       await expect(
-        page.getByRole("button", { name: /continue with github/i })
+        page.getByRole("button", { name: /continue with github/i }),
       ).toBeVisible();
     } finally {
       await context.close();
@@ -108,7 +109,7 @@ test.describe("authentication", () => {
   }) => {
     test.skip(
       !canRunGitHubProviderRoundTrip(),
-      gitHubProviderRoundTripSkipReason()
+      gitHubProviderRoundTripSkipReason(),
     );
 
     const context = await browser.newContext({
@@ -123,7 +124,7 @@ test.describe("authentication", () => {
 
     const cookies = await context.cookies();
     expect(cookies.some((cookie) => cookie.name.includes("-auth-token"))).toBe(
-      true
+      true,
     );
     await context.close();
   });

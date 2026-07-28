@@ -11,6 +11,8 @@ import {
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
+import { MobileViewportProvider } from "@/lib/mobileViewport/MobileViewportProvider";
+import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
 import { assumePaneVisitId } from "@/lib/workspace/schema";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
@@ -61,11 +63,13 @@ export function renderHydratedPane({
   const onSetPaneFixedChrome = vi.fn();
 
   const view = render(
-    <PaneReturnMementoProvider>
-      <FeedbackProvider>
-        <ResourceCacheProvider value={resources}>
-          <ShareControllerProvider>
-            <PaneRuntimeProvider
+    <MobileViewportProvider>
+      <PaneReturnMementoProvider>
+        <FeedbackProvider>
+          <ResourceCacheProvider value={resources}>
+            <LibraryPlacementControllerProvider>
+              <ShareControllerProvider>
+                <PaneRuntimeProvider
               paneId={paneId}
               visitId={TEST_VISIT_ID}
               isActive={true}
@@ -83,17 +87,19 @@ export function renderHydratedPane({
               onGoForwardPane={onGoForwardPane}
               onSetPaneLabel={onSetPaneLabel}
               onSetPaneLayout={onSetPaneLayout}
-            >
-              <PaneSecondaryContext.Provider value={onSetPaneSecondary}>
-                <PaneFixedChromeContext.Provider value={onSetPaneFixedChrome}>
-                  {children}
-                </PaneFixedChromeContext.Provider>
-              </PaneSecondaryContext.Provider>
-            </PaneRuntimeProvider>
-          </ShareControllerProvider>
-        </ResourceCacheProvider>
-      </FeedbackProvider>
-    </PaneReturnMementoProvider>,
+              >
+                <PaneSecondaryContext.Provider value={onSetPaneSecondary}>
+                  <PaneFixedChromeContext.Provider value={onSetPaneFixedChrome}>
+                    {children}
+                  </PaneFixedChromeContext.Provider>
+                </PaneSecondaryContext.Provider>
+                </PaneRuntimeProvider>
+              </ShareControllerProvider>
+            </LibraryPlacementControllerProvider>
+          </ResourceCacheProvider>
+        </FeedbackProvider>
+      </PaneReturnMementoProvider>
+    </MobileViewportProvider>,
   );
 
   return {

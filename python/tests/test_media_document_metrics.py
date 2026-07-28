@@ -18,9 +18,7 @@ from nexus.services.media_document_metrics import (
 )
 
 pytestmark = pytest.mark.integration
-_WORD_POLICY_CASES = (
-    Path(__file__).parents[2] / "testdata/consumption/canonical_word_policy.json"
-)
+_WORD_POLICY_CASES = Path(__file__).parents[2] / "testdata/consumption/canonical_word_policy.json"
 
 
 def _add_media(
@@ -65,9 +63,7 @@ def test_canonical_word_policy_matches_stored_postgres_expression(db_session: Se
         )
         assert stored_count == case["wordCount"], case["name"]
         for offset, expected in case["boundaries"]:
-            assert (
-                canonical_word_boundary_ordinal(case["text"], offset) == expected
-            ), case["name"]
+            assert canonical_word_boundary_ordinal(case["text"], offset) == expected, case["name"]
 
 
 def test_word_count_batch_deduplicates_and_reads_mixed_document_counts_once(

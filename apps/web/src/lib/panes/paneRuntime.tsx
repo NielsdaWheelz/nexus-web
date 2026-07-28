@@ -71,7 +71,7 @@ export interface PaneScopedRouter {
 export interface PaneRuntimeLayoutPublication {
   paneId: string;
   routeKey: string;
-  layout: PaneRuntimeLayout;
+  layout: PaneRuntimeLayout | null;
 }
 
 export type PaneResourceStatus =
@@ -115,7 +115,7 @@ export interface PaneRuntimeContextValue {
     disposition: WorkspaceTargetDisposition;
   }) => WorkspaceTargetActivationResult;
   setPaneLabel: (label: string | null) => void;
-  setPaneLayout: (layout: PaneRuntimeLayout) => void;
+  setPaneLayout: (layout: PaneRuntimeLayout | null) => void;
   requestSecondarySurface: (
     surfaceId: WorkspaceSecondarySurfaceId,
     options?: PaneSecondarySurfaceRequestOptions,
@@ -215,7 +215,9 @@ function resourceKeyForItem(resourceItem: ResourceItem | null): string | null {
   return resourceItem ? `resource:${resourceItem.ref}` : null;
 }
 
-function panePreloadForHref(href: string): (() => Promise<unknown>) | undefined {
+function panePreloadForHref(
+  href: string,
+): (() => Promise<unknown>) | undefined {
   const route = resolvePaneRoute(href);
   if (route.id === "unsupported") return undefined;
   const routeId: PaneRouteId = route.id;
@@ -405,27 +407,23 @@ export function PaneRuntimeProvider({
     },
     [consumeNavigationModality],
   );
-  const setPaneLabel = useCallback(
-    (label: string | null) => {
-      const current = commandsRef.current;
-      current.onSetPaneLabel?.({
-        paneId: current.paneId,
-        routeKey: current.routeKey,
-        label,
-      });
-    },
-    [],
-  );
+  const setPaneLabel = useCallback((label: string | null) => {
+    const current = commandsRef.current;
+    current.onSetPaneLabel?.({
+      paneId: current.paneId,
+      routeKey: current.routeKey,
+      label,
+    });
+  }, []);
   const setPaneLayout = useCallback(
-    (layout: PaneRuntimeLayout) => {
-      const current = commandsRef.current;
-      current.onSetPaneLayout?.({
-        paneId: current.paneId,
-        routeKey: current.routeKey,
+    (layout: PaneRuntimeLayout | null) => {
+      onSetPaneLayout?.({
+        paneId,
+        routeKey,
         layout,
       });
     },
-    [],
+    [onSetPaneLayout, paneId, routeKey],
   );
   const requestSecondarySurface = useCallback(
     (
@@ -518,7 +516,7 @@ export function PaneRuntimeProvider({
       secondaryActivation,
       routeKey,
       routeId,
-    ]
+    ],
   );
 
   return (
@@ -588,7 +586,9 @@ export function usePaneSearchParams(): URLSearchParams {
   const paneRuntime = usePaneRuntime();
   const paneSearch = paneRuntime?.searchParams.toString() ?? "";
   if (!paneRuntime) {
-    throw new Error("usePaneSearchParams must be used inside PaneRuntimeProvider");
+    throw new Error(
+      "usePaneSearchParams must be used inside PaneRuntimeProvider",
+    );
   }
   return useMemo(() => new URLSearchParams(paneSearch), [paneSearch]);
 }
@@ -640,6 +640,10 @@ export function useSetPaneLabel(label: string | null | undefined): void {
       return;
     }
     setPaneLabel(normalizedLabel);
-    lastPublishedLabelRef.current = { paneId, routeKey, label: normalizedLabel };
+    lastPublishedLabelRef.current = {
+      paneId,
+      routeKey,
+      label: normalizedLabel,
+    };
   }, [normalizedLabel, paneId, routeKey, setPaneLabel]);
 }

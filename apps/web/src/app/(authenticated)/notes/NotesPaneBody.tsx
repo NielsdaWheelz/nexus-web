@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -29,7 +29,10 @@ import { useHydrationPreservedInput } from "@/lib/ui/useHydrationPreservedInput"
 import styles from "./notes.module.css";
 
 export default function NotesPaneBody() {
-  const paneRuntime = usePaneRuntime();
+  const activateTarget = requirePaneRuntime(
+    usePaneRuntime(),
+    "NotesPaneBody",
+  ).activateTarget;
   const [localPages, setLocalPages] = useState<NotePageSummary[] | null>(null);
   const {
     value: title,
@@ -37,6 +40,10 @@ export default function NotesPaneBody() {
     inputProps: titleInputProps,
   } = useHydrationPreservedInput();
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
+  const pageCreateReplayRef = useRef<{
+    pageId: string;
+    title: string;
+  } | null>(null);
   const pagesResource = useResource<NotePageSummary[], NoResourceParams>({
     descriptor: notePagesResource,
     params: {},
@@ -86,18 +93,21 @@ export default function NotesPaneBody() {
   const createPage = useCallback(async () => {
     const trimmedTitle = title.trim();
     const nextTitle = trimmedTitle || "Untitled";
+    const replay =
+      pageCreateReplayRef.current?.title === nextTitle
+        ? pageCreateReplayRef.current
+        : { pageId: crypto.randomUUID(), title: nextTitle };
+    pageCreateReplayRef.current = replay;
     try {
-      const page = await createNotePage({ title: nextTitle });
+      const page = await createNotePage(replay);
+      pageCreateReplayRef.current = null;
       setLocalPages((current) => [
         page,
         ...(current ?? resourcePages ?? []),
       ]);
       setTitle("");
       setPendingNoteFocus({ pageId: page.id, target: trimmedTitle ? "body" : "title" });
-      requirePaneRuntime(
-        paneRuntime,
-        "Notes created-page target activation",
-      ).activateTarget({
+      activateTarget({
         target: { href: `/pages/${page.id}`, labelHint: page.title },
         disposition: { kind: "Follow" },
       });
@@ -105,7 +115,7 @@ export default function NotesPaneBody() {
       if (handleUnauthenticatedApiError(error)) return;
       setFeedback(toFeedback(error, { fallback: "Page could not be created." }));
     }
-  }, [paneRuntime, resourcePages, setTitle, title]);
+  }, [activateTarget, resourcePages, setTitle, title]);
 
   return (
     <CollectionView

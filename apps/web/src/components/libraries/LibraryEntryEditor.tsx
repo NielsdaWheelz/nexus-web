@@ -1,140 +1,130 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Check } from "lucide-react";
-import {
-  FeedbackNotice,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
-import LibraryColorDot from "@/components/LibraryColorDot";
-import Button from "@/components/ui/Button";
-import Input from "@/components/ui/Input";
+import LibraryChooser, {
+  type LibraryChooserItem,
+} from "@/components/libraries/LibraryChooser";
 import type { LibraryPlacementOption } from "@/lib/libraries/libraryPlacement";
-import styles from "./LibraryEntryEditor.module.css";
+
+const READ_ONLY_REASON =
+  "Only this library’s owners and editors can change what’s in it.";
 
 export interface LibraryEntryEditorProps {
   libraries: readonly LibraryPlacementOption[];
-  loading?: boolean;
-  busy?: boolean;
-  busyLibraryId?: string | null;
-  error?: string | FeedbackContent | null;
-  emptyMessage?: string;
-  onRetry?: () => void;
+  /** A read is in flight → chooser `loading`. */
+  loading: boolean;
+  /** Commands disabled → chooser `busy`. */
+  busy: boolean;
+  pendingLibraryId: string | null;
+  error: { message: string; onRetry: (() => void) | null } | null;
   onAddToLibrary: (libraryId: string) => void;
   onRemoveFromLibrary: (libraryId: string) => void;
+  selectedGroupLabel: string;
+  otherGroupLabel: string;
+  searchLabel: string;
+  searchPlaceholder: string;
+  listLabel: string;
+  emptyInventory: string;
 }
 
+/**
+ * The shared placement adapter (docs/cutovers/library-chooser-interaction-hard-
+ * cutover.md §2): it owns the search query for client-side substring filtering of
+ * the complete inventory, projects LibraryPlacementOption[] into chooser groups,
+ * and renders LibraryChooser. It neither fetches nor mutates — those belong to
+ * useLibraryPlacement and the caller.
+ */
 export default function LibraryEntryEditor({
   libraries,
-  loading = false,
-  busy = false,
-  busyLibraryId = null,
-  error = null,
-  emptyMessage = "No additional libraries available.",
-  onRetry,
+  loading,
+  busy,
+  pendingLibraryId,
+  error,
   onAddToLibrary,
   onRemoveFromLibrary,
+  selectedGroupLabel,
+  otherGroupLabel,
+  searchLabel,
+  searchPlaceholder,
+  listLabel,
+  emptyInventory,
 }: LibraryEntryEditorProps) {
   const [query, setQuery] = useState("");
-  const filteredLibraries = useMemo(() => {
-    const normalized = query.trim().toLocaleLowerCase();
-    if (!normalized) return libraries;
-    return libraries.filter((library) =>
-      library.name.toLocaleLowerCase().includes(normalized),
-    );
-  }, [libraries, query]);
-  const isBusy = busy || busyLibraryId !== null;
+
+  const { selectedItems, otherItems } = useMemo(() => {
+    const toItem = (library: LibraryPlacementOption): LibraryChooserItem => {
+      const actionable = library.isInLibrary
+        ? library.canRemove
+        : library.canAdd;
+      const interaction: LibraryChooserItem["interaction"] =
+        pendingLibraryId === library.id
+          ? { kind: "Pending" }
+          : actionable
+            ? { kind: "Enabled" }
+            : { kind: "ReadOnly", reason: READ_ONLY_REASON };
+      return {
+        id: library.id,
+        name: library.name,
+        color: library.color,
+        selected: library.isInLibrary,
+        interaction,
+      };
+    };
+
+    const q = query.trim().toLocaleLowerCase();
+    const selected: LibraryChooserItem[] = [];
+    const other: LibraryChooserItem[] = [];
+    for (const library of libraries) {
+      // Selected rows are always visible; only the other group is filtered.
+      if (library.isInLibrary) {
+        selected.push(toItem(library));
+      } else if (q === "" || library.name.toLocaleLowerCase().includes(q)) {
+        other.push(toItem(library));
+      }
+    }
+    return { selectedItems: selected, otherItems: other };
+  }, [libraries, query, pendingLibraryId]);
+
+  const status =
+    loading && libraries.length === 0
+      ? "Loading libraries…"
+      : busy || loading
+        ? "Updating libraries…"
+        : libraries.length === 1
+          ? "1 library"
+          : `${libraries.length} libraries`;
+
+  const emptyState =
+    selectedItems.length === 0 && otherItems.length === 0
+      ? libraries.length === 0
+        ? emptyInventory
+        : "No libraries match your search."
+      : null;
+
+  function onToggle(id: string) {
+    const library = libraries.find((candidate) => candidate.id === id);
+    if (!library) return;
+    if (library.isInLibrary) onRemoveFromLibrary(id);
+    else onAddToLibrary(id);
+  }
 
   return (
-    <div className={styles.content}>
-      <Input
-        type="search"
-        value={query}
-        placeholder="Search libraries…"
-        aria-label="Search libraries"
-        onChange={(event) => setQuery(event.target.value)}
-      />
-
-      {error ? (
-        <div className={styles.feedback}>
-          {typeof error === "string" ? (
-            <p role="alert">{error}</p>
-          ) : (
-            <FeedbackNotice feedback={error} />
-          )}
-          {onRetry ? (
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={isBusy}
-              onClick={onRetry}
-            >
-              Retry
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
-
-      {loading ? (
-        <p className={styles.empty} role="status">
-          {libraries.length === 0
-            ? "Loading libraries…"
-            : "Updating libraries…"}
-        </p>
-      ) : null}
-
-      <div className={styles.list}>
-        {!loading && !error && libraries.length === 0 ? (
-          <p className={styles.empty}>{emptyMessage}</p>
-        ) : libraries.length > 0 && filteredLibraries.length === 0 ? (
-          <p className={styles.empty}>No matching libraries.</p>
-        ) : (
-          filteredLibraries.map((library) => {
-            const actionable = library.isInLibrary
-              ? library.canRemove
-              : library.canAdd;
-            const rowBusy = busyLibraryId === library.id;
-            const disabled = !actionable || (isBusy && !rowBusy);
-            return (
-              <button
-                key={library.id}
-                type="button"
-                className={styles.item}
-                disabled={disabled}
-                aria-label={library.name}
-                aria-pressed={library.isInLibrary}
-                aria-busy={rowBusy || undefined}
-                aria-disabled={rowBusy || undefined}
-                onClick={() => {
-                  if (isBusy || !actionable) return;
-                  if (library.isInLibrary) {
-                    onRemoveFromLibrary(library.id);
-                  } else {
-                    onAddToLibrary(library.id);
-                  }
-                }}
-              >
-                <span className={styles.itemText}>
-                  <span className={styles.itemName}>
-                    <LibraryColorDot color={library.color} />
-                    {library.name}
-                  </span>
-                  <span className={styles.itemMeta} aria-hidden="true">
-                    {!actionable
-                      ? "You can’t change this library."
-                      : library.isInLibrary
-                        ? "Included in this library"
-                        : "Not in this library"}
-                  </span>
-                </span>
-                {library.isInLibrary ? (
-                  <Check size={16} aria-hidden="true" />
-                ) : null}
-              </button>
-            );
-          })
-        )}
-      </div>
-    </div>
+    <LibraryChooser
+      query={query}
+      onQueryChange={setQuery}
+      searchPlaceholder={searchPlaceholder}
+      searchLabel={searchLabel}
+      listLabel={listLabel}
+      selectedGroup={{ label: selectedGroupLabel, items: selectedItems }}
+      otherGroup={{ label: otherGroupLabel, items: otherItems }}
+      onToggle={onToggle}
+      busy={busy}
+      loading={loading}
+      status={status}
+      emptyState={emptyState}
+      error={error}
+      create={null}
+      loadMore={null}
+    />
   );
 }

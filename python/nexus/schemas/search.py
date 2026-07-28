@@ -98,6 +98,7 @@ class SearchResultBaseOut(BaseModel):
     media_id: UUID | None = None
     media_kind: str | None = None
     resource_ref: str
+    owner_resource_ref: str
     activation: ResourceActivationOut
     citation_target: str | None
     context_ref: SearchResultContextRefOut
@@ -200,6 +201,7 @@ class SearchResultNoteBlockOut(SearchResultBaseOut):
     id: UUID
     body_text: str
     highlight_excerpt: str | None = None
+    note_origin: Literal["note", "highlight_note"]
     locator: RetrievalLocator
 
     @model_validator(mode="after")

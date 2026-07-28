@@ -31,7 +31,7 @@ import {
 import { useChatMessageUpdates } from "@/components/chat/useChatMessageUpdates";
 import { PerRunStreamContext } from "@/components/chat/perRunStreamContext";
 import { upsertForkOptionForRun } from "@/lib/conversations/branching";
-import { decodeRunDataReaderSelection } from "@/lib/conversations/messageWire";
+import { decodeChatRunData } from "@/lib/conversations/messageWire";
 
 type ChatRunData = ChatRunResponse["data"];
 type TerminalRunStatus = "complete" | "error" | "cancelled";
@@ -74,7 +74,9 @@ function mergeStreamToolCalls(
     return preview ? { ...call, input_preview: preview } : call;
   });
   for (const item of live) {
-    if (!existing.some((call) => call.tool_call_index === item.tool_call_index)) {
+    if (
+      !existing.some((call) => call.tool_call_index === item.tool_call_index)
+    ) {
       merged.push(item);
     }
   }
@@ -93,7 +95,9 @@ export function useChatRunTail({
   shouldApplyRun,
 }: {
   dispatch: (action: MessageUpdateAction) => void;
-  setForkOptionsByParentId?: Dispatch<SetStateAction<Record<string, ForkOption[]>>>;
+  setForkOptionsByParentId?: Dispatch<
+    SetStateAction<Record<string, ForkOption[]>>
+  >;
   onRunFinished?: (runId: string) => void;
   onFirstDelta?: (runId: string) => void;
   onRunDone?: (runId: string, status: TerminalRunStatus) => void;
@@ -152,37 +156,36 @@ export function useChatRunTail({
         !runData.stream_state.terminal &&
         (runData.stream_state.assistant_current_text ||
           runData.stream_state.tool_calls.length > 0);
-      const displayRunData =
-        hasStreamSnapshot
-          ? {
-              ...runData,
-              assistant_message: {
-                ...runData.assistant_message,
-                message_document: {
-                  type: "message_document" as const,
-                  blocks: runData.stream_state.assistant_current_text
-                    ? [
-                        {
-                          type: "text" as const,
-                          format: "markdown" as const,
-                          text: runData.stream_state.assistant_current_text,
-                        },
-                      ]
-                    : [],
-                },
-                trust_trail: runData.assistant_message.trust_trail
-                  ? {
-                      ...runData.assistant_message.trust_trail,
-                      status: "running" as const,
-                      tool_calls: mergeStreamToolCalls(
-                        runData.assistant_message.trust_trail.tool_calls,
-                        runData.stream_state.tool_calls,
-                      ),
-                    }
-                  : runData.assistant_message.trust_trail,
+      const displayRunData = hasStreamSnapshot
+        ? {
+            ...runData,
+            assistant_message: {
+              ...runData.assistant_message,
+              message_document: {
+                type: "message_document" as const,
+                blocks: runData.stream_state.assistant_current_text
+                  ? [
+                      {
+                        type: "text" as const,
+                        format: "markdown" as const,
+                        text: runData.stream_state.assistant_current_text,
+                      },
+                    ]
+                  : [],
               },
-            }
-          : runData;
+              trust_trail: runData.assistant_message.trust_trail
+                ? {
+                    ...runData.assistant_message.trust_trail,
+                    status: "running" as const,
+                    tool_calls: mergeStreamToolCalls(
+                      runData.assistant_message.trust_trail.tool_calls,
+                      runData.stream_state.tool_calls,
+                    ),
+                  }
+                : runData.assistant_message.trust_trail,
+            },
+          }
+        : runData;
       // The transcript merge is owned by the reducer (merge_run_pair →
       // selectedPathAfterRun). The fork-options index is a separate state, not
       // the transcript, so it stays its own setState.
@@ -344,10 +347,12 @@ export function useChatRunTail({
 
       const reconcile = async () => {
         try {
-          const response = await apiFetch<ChatRunResponse>(`/api/chat-runs/${runId}`);
+          const response = await apiFetch<ChatRunResponse>(
+            `/api/chat-runs/${runId}`,
+          );
           if (streamCtx.isSuperseded(runId, token)) return null;
           flushDeltas();
-          mergeRunMessagesIfVisible(decodeRunDataReaderSelection(response.data), [
+          mergeRunMessagesIfVisible(decodeChatRunData(response.data), [
             originalUserId,
             originalAssistantId,
             currentUserId,
@@ -565,7 +570,7 @@ export function useChatRunTail({
         const response = await apiFetch<ChatRunResponse>(
           `/api/chat-runs/${entry.run_id}`,
         );
-        await tailChatRun(decodeRunDataReaderSelection(response.data));
+        await tailChatRun(decodeChatRunData(response.data));
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
         console.error("Failed to reconnect chat run:", err);

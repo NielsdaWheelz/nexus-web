@@ -110,15 +110,29 @@ def _lexical_match_sql(blob_sql: str) -> str:
     )"""
 
 
+# The viewer's own Default library presents as "All" everywhere it is named;
+# target search matches and labels that alias, never the stored seeded name.
+_LIBRARY_DISPLAY_NAME_SQL = "CASE WHEN l.is_default THEN 'All' ELSE l.name END"
+
+
 def retrieve_library_candidates(
     db: Session, *, viewer_id: UUID, q: str, limit: int
 ) -> list[LibraryCandidate]:
-    """Membership-visible libraries matched on name."""
+    """Membership-visible libraries matched on their display name.
+
+    The Default library projects "All": it matches the query token "All" and
+    is labelled "All", and no longer matches or surfaces its stored seeded name.
+    Projecting the alias once in the subselect makes every downstream ``l.name``
+    reference — match, score, order, and returned label — the display name.
+    """
     rows = db.execute(
         text(
             f"""
             SELECT l.id, l.name, {_tier_score_sql("l.name", "l.name")} AS score
-            FROM libraries l
+            FROM (
+                SELECT id, CASE WHEN is_default THEN 'All' ELSE name END AS name
+                FROM libraries
+            ) l
             JOIN memberships mem ON mem.library_id = l.id AND mem.user_id = :viewer_id
             WHERE {_lexical_match_sql("l.name")}
             ORDER BY score DESC, l.name ASC, l.id ASC
@@ -193,9 +207,9 @@ def retrieve_library_artifact_candidates(
             SELECT
                 a.id,
                 a.subject_id AS library_id,
-                l.name,
+                {_LIBRARY_DISPLAY_NAME_SQL} AS library_name,
                 r.content_md,
-                {_tier_score_sql("l.name", "r.content_md")} AS score
+                {_tier_score_sql(_LIBRARY_DISPLAY_NAME_SQL, "r.content_md")} AS score
             FROM artifacts a
             JOIN libraries l ON l.id = a.subject_id
             JOIN memberships mem ON mem.library_id = l.id AND mem.user_id = :viewer_id

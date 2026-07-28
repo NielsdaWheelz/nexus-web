@@ -21,6 +21,7 @@ const {
 } = supabaseEnv;
 
 const MODULE_PATH = fileURLToPath(new URL("./supabase-env.cjs", import.meta.url));
+const PROJECT_ROOT = path.resolve(path.dirname(MODULE_PATH), "..");
 
 function makeRoot() {
   const root = mkdtempSync(path.join(tmpdir(), "nexus-e2e-supabase-env-"));
@@ -93,6 +94,39 @@ test("requires admin from local Supabase status SECRET_KEY", () => {
     assert.equal(env.SUPABASE_AUTH_ADMIN_KEY, "secret-key");
     assert.equal(env.SUPABASE_ISSUER, "http://127.0.0.1:54321/auth/v1");
   });
+});
+
+test("reserves adjacent Supabase ports from one shared namespace", () => {
+  const lockRoot = mkdtempSync(
+    path.join(tmpdir(), "nexus-e2e-supabase-port-locks-"),
+  );
+  const output = execFileSync(
+    "bash",
+    [
+      "-c",
+      `
+set -euo pipefail
+source "$1/scripts/test_env.sh"
+test_env_resolve_port api API_PORT 54400 54410 nexus-test-supabase-port-locks API_LOCK
+test_env_resolve_port database DB_PORT 54400 54410 nexus-test-supabase-port-locks DB_LOCK
+printf '%s:%s\\n' "$API_PORT" "$DB_PORT"
+`,
+      "supabase-port-test",
+      PROJECT_ROOT,
+    ],
+    {
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        TMPDIR: lockRoot,
+      },
+    },
+  );
+
+  const [apiPort, databasePort] = output.trim().split(":").map(Number);
+  assert.ok(apiPort >= 54400 && apiPort <= 54410);
+  assert.ok(databasePort >= 54400 && databasePort <= 54410);
+  assert.notEqual(apiPort, databasePort);
 });
 
 test("does not accept SERVICE_ROLE_KEY from local Supabase status", () => {

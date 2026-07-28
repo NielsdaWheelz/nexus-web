@@ -3,19 +3,33 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass, field
+from typing import Literal, assert_never, cast
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
-from nexus.db.models import DocumentEmbed, DocumentEmbedArtifactState, Media, ProcessingStatus
+from nexus.db.models import (
+    DocumentEmbed,
+    DocumentEmbedArtifactState,
+    Media,
+    ProcessingStatus,
+    ResourceEdge,
+)
+from nexus.errors import InvalidRequestError
 from nexus.schemas.media import (
+    DocumentEmbedAggregateStatus,
     DocumentEmbedDisplayActionOut,
     DocumentEmbedDisplayOut,
+    DocumentEmbedKind,
     DocumentEmbedLocatorOut,
     DocumentEmbedOut,
+    DocumentEmbedProvider,
     DocumentEmbedProviderRefOut,
+    DocumentEmbedResolutionStatus,
+    DocumentEmbedSourceShape,
     DocumentEmbedSummaryOut,
     DocumentEmbedTargetOut,
     DocumentEmbedTextOut,
@@ -26,7 +40,50 @@ from nexus.services.playback_source import derive_playback_source
 from nexus.services.resource_graph.edges import replace_edges_for_origin
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.schemas import EdgeCreate
-from nexus.services.web_article_structure import WebArticleDocumentEmbed
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentEmbedTargetAcceptSource:
+    canonical_url: str
+    kind: Literal["accept_source"] = field(default="accept_source", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentEmbedTargetMaterialized:
+    media_id: UUID
+    kind: Literal["materialized"] = field(default="materialized", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentEmbedTargetTerminal:
+    status: Literal["unsupported", "failed"]
+    error_code: str | None
+    error_message: str | None
+    kind: Literal["terminal"] = field(default="terminal", init=False)
+
+
+type DocumentEmbedTargetOutcome = (
+    DocumentEmbedTargetAcceptSource | DocumentEmbedTargetMaterialized | DocumentEmbedTargetTerminal
+)
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentEmbedArtifactOccurrence:
+    fragment_id: UUID
+    ordinal: int
+    occurrence_key: str
+    provider: DocumentEmbedProvider
+    embed_kind: DocumentEmbedKind
+    source_shape: DocumentEmbedSourceShape
+    source_url: str | None
+    canonical_source_url: str | None
+    provider_target_ref: str | None
+    title: str | None
+    authored_text: str | None
+    placeholder_text: str
+    canonical_start_offset: int | None
+    canonical_end_offset: int | None
+    target: DocumentEmbedTargetOutcome
 
 
 class DocumentEmbedLockSetChanged(Exception):
@@ -38,16 +95,28 @@ class DocumentEmbedLockSetChanged(Exception):
 
 
 def delete_document_embed_artifacts(db: Session, *, owner_user_id: UUID, media_id: UUID) -> None:
-    replace_edges_for_origin(
-        db,
-        viewer_id=owner_user_id,
-        source=ResourceRef(scheme="media", id=media_id),
-        origin="document_embed",
-        edges=[],
-    )
+    viewer_ids = {*_document_embed_edge_viewer_ids(db, media_id=media_id), owner_user_id}
+    for viewer_id in sorted(viewer_ids):
+        _replace_graph_edges(db, viewer_id=viewer_id, media_id=media_id, rows=[])
     db.execute(delete(DocumentEmbed).where(DocumentEmbed.media_id == media_id))
     db.execute(
         delete(DocumentEmbedArtifactState).where(DocumentEmbedArtifactState.media_id == media_id)
+    )
+    db.flush()
+
+
+def prepare_document_embed_artifacts_for_fragment_replacement(
+    db: Session,
+    *,
+    media_id: UUID,
+) -> None:
+    """Release old fragment FKs while preserving the artifact and its audience.
+
+    A web-article refresh must complete this preparation and the subsequent
+    document-embed replace or delete in the same transaction.
+    """
+    db.execute(
+        update(DocumentEmbed).where(DocumentEmbed.media_id == media_id).values(fragment_id=None)
     )
     db.flush()
 
@@ -57,43 +126,49 @@ def replace_document_embed_artifact(
     *,
     owner_user_id: UUID,
     media_id: UUID,
-    source_attempt_id: UUID | None,
-    fragment_id: UUID,
-    document_embeds: Sequence[WebArticleDocumentEmbed],
+    source_attempt_id: UUID,
+    occurrences: Sequence[DocumentEmbedArtifactOccurrence],
     extraction_error_code: str | None,
     extraction_error_message: str | None,
     request_id: str | None,
-    locked_existing_target_media_ids: frozenset[UUID] = frozenset(),
+    locked_existing_target_media_ids: frozenset[UUID],
 ) -> list[tuple[UUID, UUID]]:
+    edge_viewer_ids = {*_document_embed_edge_viewer_ids(db, media_id=media_id), owner_user_id}
     delete_document_embed_artifacts(db, owner_user_id=owner_user_id, media_id=media_id)
     queued_children: list[tuple[UUID, UUID]] = []
+    accepted_target_media_ids: set[UUID] = set()
     library_ids = library_entries.admin_non_default_library_ids_for_media(
         db, viewer_id=owner_user_id, media_id=media_id
     )
     rows: list[DocumentEmbed] = []
-    for prepared_embed in document_embeds:
-        detected = prepared_embed.detected
+    for occurrence in occurrences:
         target_media_id: UUID | None = None
-        resolution_status = detected.resolution_status
-        error_code = detected.error_code
-        error_message = detected.error_message
+        error_code: str | None = None
+        error_message: str | None = None
         diagnostics: dict[str, object] = {}
-        if detected.resolution_status == "pending" and detected.canonical_source_url:
-            try:
-                from nexus.services.media_source_ingest import accept_embedded_source
+        target = occurrence.target
+        if isinstance(target, DocumentEmbedTargetAcceptSource):
+            from nexus.services.media_source_ingest import accept_embedded_source
 
+            try:
                 accepted = accept_embedded_source(
                     db=db,
                     viewer_id=owner_user_id,
-                    url=detected.canonical_source_url,
+                    url=target.canonical_url,
                     parent_media_id=media_id,
-                    document_embed_key=detected.occurrence_key,
+                    document_embed_key=occurrence.occurrence_key,
                     library_ids=library_ids,
                     request_id=request_id,
                 )
+            except InvalidRequestError as exc:
+                resolution_status = "failed"
+                error_code = exc.code.value
+                error_message = exc.message
+            else:
                 target_media_id = accepted.media_id
                 if (
                     not accepted.needs_enqueue
+                    and target_media_id not in accepted_target_media_ids
                     and target_media_id not in locked_existing_target_media_ids
                 ):
                     raise DocumentEmbedLockSetChanged(target_media_id)
@@ -102,35 +177,41 @@ def replace_document_embed_artifact(
                     accepted.processing_status, accepted.source_attempt_status
                 )
                 if accepted.needs_enqueue:
+                    accepted_target_media_ids.add(accepted.media_id)
                     queued_children.append((accepted.media_id, accepted.source_attempt_id))
-            except DocumentEmbedLockSetChanged:
-                raise
-            except Exception as exc:  # child source failure must not fail parent publication
-                error_code = getattr(getattr(exc, "code", None), "value", None) or "E_INGEST_FAILED"
-                error_message = str(getattr(exc, "message", None) or exc)[:1000]
-                resolution_status = "failed"
+        elif isinstance(target, DocumentEmbedTargetMaterialized):
+            target_media_id = target.media_id
+            resolution_status = "resolved"
+            error_code = None
+            error_message = None
+        elif isinstance(target, DocumentEmbedTargetTerminal):
+            resolution_status = target.status
+            error_code = target.error_code
+            error_message = target.error_message
+        else:
+            assert_never(target)
 
         rows.append(
             DocumentEmbed(
                 media_id=media_id,
-                fragment_id=fragment_id,
+                fragment_id=occurrence.fragment_id,
                 source_attempt_id=source_attempt_id,
-                ordinal=detected.ordinal,
-                occurrence_key=detected.occurrence_key,
-                provider=detected.provider,
-                embed_kind=detected.embed_kind,
-                source_shape=detected.source_shape,
+                ordinal=occurrence.ordinal,
+                occurrence_key=occurrence.occurrence_key,
+                provider=occurrence.provider,
+                embed_kind=occurrence.embed_kind,
+                source_shape=occurrence.source_shape,
                 resolution_status=resolution_status,
-                source_url=detected.source_url,
-                canonical_source_url=detected.canonical_source_url,
-                provider_target_ref=detected.provider_target_ref,
+                source_url=occurrence.source_url,
+                canonical_source_url=occurrence.canonical_source_url,
+                provider_target_ref=occurrence.provider_target_ref,
                 target_media_id=target_media_id,
-                title=detected.title,
-                authored_text=detected.authored_text,
-                placeholder_text=detected.placeholder_text,
-                canonical_start_offset=prepared_embed.canonical_start_offset,
-                canonical_end_offset=prepared_embed.canonical_end_offset,
-                document_order_key=f"{detected.ordinal:06d}",
+                title=occurrence.title,
+                authored_text=occurrence.authored_text,
+                placeholder_text=occurrence.placeholder_text,
+                canonical_start_offset=occurrence.canonical_start_offset,
+                canonical_end_offset=occurrence.canonical_end_offset,
+                document_order_key=f"{occurrence.ordinal:06d}",
                 error_code=error_code,
                 error_message=error_message,
                 diagnostics=diagnostics,
@@ -146,7 +227,8 @@ def replace_document_embed_artifact(
         extraction_error_code=extraction_error_code,
         extraction_error_message=extraction_error_message,
     )
-    _replace_graph_edges(db, owner_user_id=owner_user_id, media_id=media_id, rows=rows)
+    for viewer_id in sorted(edge_viewer_ids):
+        _replace_graph_edges(db, viewer_id=viewer_id, media_id=media_id, rows=rows)
     return queued_children
 
 
@@ -176,49 +258,29 @@ def document_embed_summary_for_media(
     return _summary_out(row) if row is not None else None
 
 
-def detach_document_embed_targets_for_owner(
-    db: Session, *, owner_user_id: UUID, target_media_id: UUID
+def reconcile_document_embed_parent_edges_for_viewer(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    target_media_id: UUID,
 ) -> bool:
-    rows = (
-        db.execute(
-            select(DocumentEmbed)
-            .join(Media, Media.id == DocumentEmbed.media_id)
-            .where(
-                Media.created_by_user_id == owner_user_id,
-                DocumentEmbed.target_media_id == target_media_id,
-            )
-            .order_by(DocumentEmbed.media_id.asc(), DocumentEmbed.ordinal.asc())
+    """Reproject parents after one viewer loses access to an embed target."""
+    parent_media_ids = set(
+        db.scalars(
+            select(DocumentEmbed.media_id)
+            .where(DocumentEmbed.target_media_id == target_media_id)
+            .distinct()
+            .order_by(DocumentEmbed.media_id)
         )
-        .scalars()
-        .all()
     )
-    if not rows:
+    if not parent_media_ids:
         return False
-    media_ids = {row.media_id for row in rows}
-    for row in rows:
-        row.target_media_id = None
-        row.resolution_status = "failed"
-        row.error_code = "E_MEDIA_HIDDEN"
-        row.error_message = "Embedded media target is no longer in this workspace."
-    db.flush()
-    for media_id in media_ids:
-        current = (
-            db.execute(
-                select(DocumentEmbed)
-                .where(DocumentEmbed.media_id == media_id)
-                .order_by(DocumentEmbed.ordinal.asc(), DocumentEmbed.id.asc())
-            )
-            .scalars()
-            .all()
+    for media_id in parent_media_ids:
+        reconcile_document_embed_edges_for_viewer(
+            db,
+            viewer_id=viewer_id,
+            media_id=media_id,
         )
-        state = db.execute(
-            select(DocumentEmbedArtifactState).where(
-                DocumentEmbedArtifactState.media_id == media_id
-            )
-        ).scalar_one_or_none()
-        if state is not None:
-            _set_state_counts(state, current)
-        _replace_graph_edges(db, owner_user_id=owner_user_id, media_id=media_id, rows=current)
     db.flush()
     return True
 
@@ -264,6 +326,42 @@ def list_document_embeds_for_media(
     return [_embed_out(db, viewer_id=viewer_id, row=row) for row in rows]
 
 
+def resolved_document_embed_target_media_ids(db: Session, *, media_id: UUID) -> list[UUID]:
+    return [
+        target_media_id
+        for target_media_id in db.scalars(
+            select(DocumentEmbed.target_media_id)
+            .where(
+                DocumentEmbed.media_id == media_id,
+                DocumentEmbed.resolution_status == "resolved",
+                DocumentEmbed.target_media_id.is_not(None),
+            )
+            .distinct()
+            .order_by(DocumentEmbed.target_media_id)
+        )
+        if target_media_id is not None
+    ]
+
+
+def reconcile_document_embed_edges_for_viewer(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_id: UUID,
+) -> None:
+    """Project the current document-embed targets visible to one viewer."""
+    rows = (
+        db.execute(
+            select(DocumentEmbed)
+            .where(DocumentEmbed.media_id == media_id)
+            .order_by(DocumentEmbed.ordinal.asc(), DocumentEmbed.id.asc())
+        )
+        .scalars()
+        .all()
+    )
+    _replace_graph_edges(db, viewer_id=viewer_id, media_id=media_id, rows=rows)
+
+
 def sync_document_embed_targets_for_media(db: Session, *, target_media_id: UUID) -> bool:
     rows = (
         db.execute(
@@ -276,6 +374,7 @@ def sync_document_embed_targets_for_media(db: Session, *, target_media_id: UUID)
     )
     if not rows:
         return False
+    status: Literal["resolving", "resolved", "failed"]
     target = db.get(Media, target_media_id)
     if target is None:
         status = "failed"
@@ -283,18 +382,18 @@ def sync_document_embed_targets_for_media(db: Session, *, target_media_id: UUID)
         error_message = "Embedded media target was removed."
     else:
         target_status = getattr(target.processing_status, "value", target.processing_status)
-    if target is not None and target_status == ProcessingStatus.ready_for_reading.value:
-        status = "resolved"
-        error_code = None
-        error_message = None
-    elif target is not None and target_status == ProcessingStatus.failed.value:
-        status = "failed"
-        error_code = target.last_error_code
-        error_message = target.last_error_message
-    elif target is not None:
-        status = "resolving"
-        error_code = None
-        error_message = None
+        if target_status == ProcessingStatus.ready_for_reading.value:
+            status = "resolved"
+            error_code = None
+            error_message = None
+        elif target_status == ProcessingStatus.failed.value:
+            status = "failed"
+            error_code = target.last_error_code
+            error_message = target.last_error_message
+        else:
+            status = "resolving"
+            error_code = None
+            error_message = None
     media_ids = {row.media_id for row in rows}
     for row in rows:
         row.resolution_status = status
@@ -364,10 +463,14 @@ def _set_state_counts(state: DocumentEmbedArtifactState, rows: Sequence[Document
     )
 
 
-def _aggregate_status(total: int, resolved: int, unsupported: int, failed: int) -> str:
+def _aggregate_status(
+    total: int, resolved: int, unsupported: int, failed: int
+) -> DocumentEmbedAggregateStatus:
     if total == 0:
         return "empty"
     terminal = resolved + unsupported + failed
+    if unsupported == total:
+        return "unsupported"
     if resolved + unsupported == total:
         return "ready"
     if failed == total:
@@ -380,30 +483,56 @@ def _aggregate_status(total: int, resolved: int, unsupported: int, failed: int) 
 def _replace_graph_edges(
     db: Session,
     *,
-    owner_user_id: UUID,
+    viewer_id: UUID,
     media_id: UUID,
     rows: Sequence[DocumentEmbed],
 ) -> None:
     source = ResourceRef(scheme="media", id=media_id)
+    target_media_ids: list[UUID] = []
+    if can_read_media(db, viewer_id, media_id):
+        target_media_ids = sorted(
+            {
+                row.target_media_id
+                for row in rows
+                if row.target_media_id is not None
+                and can_read_media(db, viewer_id, row.target_media_id)
+            }
+        )
     replace_edges_for_origin(
         db,
-        viewer_id=owner_user_id,
+        viewer_id=viewer_id,
         source=source,
         origin="document_embed",
         edges=[
             EdgeCreate(
                 source=source,
-                target=ResourceRef(scheme="media", id=row.target_media_id),
+                target=ResourceRef(scheme="media", id=target_media_id),
                 kind="context",
                 origin="document_embed",
             )
-            for row in rows
-            if row.target_media_id is not None
+            for target_media_id in target_media_ids
         ],
     )
 
 
-def _resolution_from_child(processing_status: str, source_attempt_status: str) -> str:
+def _document_embed_edge_viewer_ids(db: Session, *, media_id: UUID) -> set[UUID]:
+    return set(
+        db.scalars(
+            select(ResourceEdge.user_id)
+            .where(
+                ResourceEdge.source_scheme == "media",
+                ResourceEdge.source_id == media_id,
+                ResourceEdge.origin == "document_embed",
+            )
+            .distinct()
+            .order_by(ResourceEdge.user_id)
+        )
+    )
+
+
+def _resolution_from_child(
+    processing_status: str, source_attempt_status: str
+) -> Literal["resolving", "resolved", "failed"]:
     if processing_status == "ready_for_reading":
         return "resolved"
     if processing_status == "failed" or source_attempt_status == "failed":
@@ -413,7 +542,7 @@ def _resolution_from_child(processing_status: str, source_attempt_status: str) -
 
 def _summary_out(row: DocumentEmbedArtifactState) -> DocumentEmbedSummaryOut:
     return DocumentEmbedSummaryOut(
-        status=row.status,
+        status=cast(DocumentEmbedAggregateStatus, row.status),
         total_count=row.total_count,
         resolved_count=row.resolved_count,
         unsupported_count=row.unsupported_count,
@@ -429,10 +558,10 @@ def _embed_out(db: Session, *, viewer_id: UUID, row: DocumentEmbed) -> DocumentE
         fragment_id=row.fragment_id,
         occurrence_key=row.occurrence_key,
         ordinal=row.ordinal,
-        provider=row.provider,
-        kind=row.embed_kind,
-        source_shape=row.source_shape,
-        resolution_status=row.resolution_status,
+        provider=cast(DocumentEmbedProvider, row.provider),
+        kind=cast(DocumentEmbedKind, row.embed_kind),
+        source_shape=cast(DocumentEmbedSourceShape, row.source_shape),
+        resolution_status=cast(DocumentEmbedResolutionStatus, row.resolution_status),
         source_url=_url(
             row.source_url,
             malformed=row.error_code in {"missing_src", "unsafe_url"},

@@ -7,10 +7,18 @@ never a key.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
 from nexus.services.contributor_taxonomy import ObservedRoleSlices
-from nexus.services.x_ingest import _build_x_author_observation
+from nexus.services.x_ingest import (
+    _build_x_author_observation,
+    _build_x_fragment,
+    _require_x_quote_source_identity,
+)
+from nexus.services.x_rendering import RenderedXQuoteOccurrence
+from nexus.services.x_types import XUnavailableQuoteReference
 
 pytestmark = pytest.mark.unit
 
@@ -42,3 +50,56 @@ class TestBuildXAuthorObservation:
         assert credit.credited_name == "Ada Lovelace"
         assert credit.identity_key is not None
         assert credit.identity_key.key == "42"
+
+
+def test_quote_source_identity_requires_exact_x_post_attempt():
+    _require_x_quote_source_identity(
+        source_type="x_post",
+        provider_target_ref="4444444444",
+        post_id="4444444444",
+    )
+
+    with pytest.raises(AssertionError, match="source identity changed"):
+        _require_x_quote_source_identity(
+            source_type="x_author_thread",
+            provider_target_ref="4444444444",
+            post_id="4444444444",
+        )
+    with pytest.raises(AssertionError, match="source identity changed"):
+        _require_x_quote_source_identity(
+            source_type="x_post",
+            provider_target_ref="5555555555",
+            post_id="4444444444",
+        )
+
+
+def test_quote_locator_uses_appended_marker_when_authored_text_matches_label():
+    label = "Quoted X post unavailable — Open on X"
+    occurrence = RenderedXQuoteOccurrence(
+        ordinal=0,
+        occurrence_key="x-quote:1234567890:4444444444",
+        post_id="4444444444",
+        placeholder_text=label,
+        reference=XUnavailableQuoteReference(
+            post_id="4444444444",
+            canonical_url="https://x.com/i/status/4444444444",
+        ),
+    )
+
+    prepared = _build_x_fragment(
+        media_id=None,
+        idx=0,
+        html=(
+            f"<article><p>{label}</p>"
+            '<figure data-nexus-document-embed-id="x-quote:1234567890:4444444444">'
+            f"<figcaption>{label}</figcaption></figure></article>"
+        ),
+        base_url="https://x.com/i/status/1234567890",
+        created_at=datetime.now(UTC),
+        quote_occurrences=(occurrence,),
+    )
+
+    locator = prepared.quote_occurrences[0]
+    assert prepared.fragment.canonical_text.count(label) == 2
+    assert locator.canonical_start_offset == prepared.fragment.canonical_text.rfind(label)
+    assert locator.canonical_start_offset != prepared.fragment.canonical_text.find(label)

@@ -94,7 +94,11 @@ export interface ReadingDetail {
   status: "pending" | "streaming" | "complete" | "failed";
   image: ApiImagePayload | null;
   passages: PassagePayload[];
-  events: { seq: number; event_type: string; payload: Record<string, unknown> }[];
+  events: {
+    seq: number;
+    event_type: string;
+    payload: Record<string, unknown>;
+  }[];
   created_at: string;
   error_code: string | null;
 }
@@ -165,7 +169,9 @@ function isPhase(value: unknown): value is Phase {
   return value === "descent" || value === "ordeal" || value === "ascent";
 }
 
-function parseImagePayload(payload: Record<string, unknown>): ImagePayload | null {
+function parseImagePayload(
+  payload: Record<string, unknown>,
+): ImagePayload | null {
   const url = stringPayloadValue(payload, "url");
   const attributionText = stringPayloadValue(payload, "attribution_text");
   const artist = stringPayloadValue(payload, "artist");
@@ -197,7 +203,9 @@ function parseImagePayload(payload: Record<string, unknown>): ImagePayload | nul
   };
 }
 
-function normalizeDetailImagePayload(image: ApiImagePayload | null): ImagePayload | null {
+function normalizeDetailImagePayload(
+  image: ApiImagePayload | null,
+): ImagePayload | null {
   if (image === null) return null;
   return {
     ...image,
@@ -205,7 +213,9 @@ function normalizeDetailImagePayload(image: ApiImagePayload | null): ImagePayloa
   };
 }
 
-function parsePassagePayload(payload: Record<string, unknown>): PassagePayload | null {
+function parsePassagePayload(
+  payload: Record<string, unknown>,
+): PassagePayload | null {
   const phase = payload.phase;
   const sourceKind = payload.source_kind;
   const exactSnippet = stringPayloadValue(payload, "exact_snippet");
@@ -273,22 +283,34 @@ function applyEvent(
     case "meta": {
       const question = String(event.payload.question ?? state.question);
       const rawFolio = event.payload.folio_number;
-      const folioNumber = typeof rawFolio === "number" ? rawFolio : state.folioNumber;
+      const folioNumber =
+        typeof rawFolio === "number" ? rawFolio : state.folioNumber;
       return { ...state, cursor, question, folioNumber, status: "streaming" };
     }
     case "bind":
       return {
         ...state,
         cursor,
-        folioMotto: typeof event.payload.folio_motto === "string" ? event.payload.folio_motto : state.folioMotto,
-        folioMottoGloss: typeof event.payload.folio_motto_gloss === "string" ? event.payload.folio_motto_gloss : null,
-        folioTheme: typeof event.payload.folio_theme === "string" ? event.payload.folio_theme : state.folioTheme,
+        folioMotto:
+          typeof event.payload.folio_motto === "string"
+            ? event.payload.folio_motto
+            : state.folioMotto,
+        folioMottoGloss:
+          typeof event.payload.folio_motto_gloss === "string"
+            ? event.payload.folio_motto_gloss
+            : null,
+        folioTheme:
+          typeof event.payload.folio_theme === "string"
+            ? event.payload.folio_theme
+            : state.folioTheme,
       };
     case "argument":
       return { ...state, cursor, argument: String(event.payload.text ?? "") };
     case "plate": {
       const image = parseImagePayload(event.payload);
-      return image === null ? { ...state, cursor } : { ...state, cursor, image };
+      return image === null
+        ? { ...state, cursor }
+        : { ...state, cursor, image };
     }
     case "passage": {
       const incoming = parsePassagePayload(event.payload);
@@ -296,7 +318,9 @@ function applyEvent(
       const next = state.passages
         .filter((p) => p.phase !== incoming.phase)
         .concat(incoming);
-      next.sort((a, b) => PHASE_ORDER.indexOf(a.phase) - PHASE_ORDER.indexOf(b.phase));
+      next.sort(
+        (a, b) => PHASE_ORDER.indexOf(a.phase) - PHASE_ORDER.indexOf(b.phase),
+      );
       return { ...state, cursor, passages: next };
     }
     case "delta":
@@ -313,7 +337,8 @@ function applyEvent(
           ...state,
           cursor,
           status: "failed",
-          errorCode: stringPayloadValue(event.payload, "error_code") ?? "E_UNKNOWN",
+          errorCode:
+            stringPayloadValue(event.payload, "error_code") ?? "E_UNKNOWN",
         };
       }
       return { ...state, cursor, status: "complete" };
@@ -352,18 +377,44 @@ async function loadReadingDetail(
 }
 
 const MONTHS = [
-  "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December",
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
 ];
 
 const ORDINAL_ONES = [
-  "zeroth", "first", "second", "third", "fourth",
-  "fifth", "sixth", "seventh", "eighth", "ninth",
+  "zeroth",
+  "first",
+  "second",
+  "third",
+  "fourth",
+  "fifth",
+  "sixth",
+  "seventh",
+  "eighth",
+  "ninth",
 ];
 
 const ORDINAL_TEENS = [
-  "tenth", "eleventh", "twelfth", "thirteenth", "fourteenth",
-  "fifteenth", "sixteenth", "seventeenth", "eighteenth", "nineteenth",
+  "tenth",
+  "eleventh",
+  "twelfth",
+  "thirteenth",
+  "fourteenth",
+  "fifteenth",
+  "sixteenth",
+  "seventeenth",
+  "eighteenth",
+  "nineteenth",
 ];
 
 function ordinalEnglish(day: number): string {
@@ -374,7 +425,6 @@ function ordinalEnglish(day: number): string {
   const tens = day < 30 ? "twenty" : "thirty";
   return `${tens}-${ORDINAL_ONES[day % 10]!}`;
 }
-
 
 function FleuronBreak() {
   return (
@@ -388,16 +438,20 @@ function oracleFailureFeedback(errorCode: string | null): FeedbackContent {
   let message: string;
   switch (errorCode) {
     case "E_LLM_INVALID_KEY":
-      message = "Add or fix a model API key before the oracle can complete a reading.";
+      message =
+        "Add or fix a model API key before the oracle can complete a reading.";
       break;
     case "E_BILLING_REQUIRED":
-      message = "Platform model access requires an AI tier — add an API key or upgrade.";
+      message =
+        "Platform model access requires an AI tier — add an API key or upgrade.";
       break;
     case "E_LLM_BAD_REQUEST":
-      message = "The reading could not be completed. Start a new reading with a simpler question.";
+      message =
+        "The reading could not be completed. Start a new reading with a simpler question.";
       break;
     default:
-      message = "The reading could not be completed. Please start a new reading.";
+      message =
+        "The reading could not be completed. Please start a new reading.";
   }
   return {
     severity: "error",
@@ -412,7 +466,8 @@ export default function OracleReadingPaneBody() {
     usePaneRuntime(),
     "OracleReadingPaneBody",
   );
-  if (!readingId) throw new Error("OracleReadingPaneBody: readingId param is required");
+  if (!readingId)
+    throw new Error("OracleReadingPaneBody: readingId param is required");
 
   const [state, setState] = useState<ReadingState>(initialState);
   const [loadError, setLoadError] = useState<FeedbackContent | null>(null);
@@ -435,9 +490,7 @@ export default function OracleReadingPaneBody() {
     }
     return null;
   }, [detailResource, readingId]);
-  usePaneReturnReady(
-    committedReadingId === readingId || loadError !== null,
-  );
+  usePaneReturnReady(committedReadingId === readingId || loadError !== null);
 
   const retryLoad = useCallback(() => {
     setLoadError(null);
@@ -515,7 +568,10 @@ export default function OracleReadingPaneBody() {
     isTerminal: (event) => event.event_type === "done",
     onEvent: (event) => setState((current) => applyEvent(current, event)),
     resume: shouldStream
-      ? { lastEventId: streamSeed.cursor > 0 ? String(streamSeed.cursor) : undefined }
+      ? {
+          lastEventId:
+            streamSeed.cursor > 0 ? String(streamSeed.cursor) : undefined,
+        }
       : undefined,
     reconnect: { max: ORACLE_RECONNECT_MAX_ATTEMPTS },
   });
@@ -527,16 +583,21 @@ export default function OracleReadingPaneBody() {
   }, [streamPhase]);
 
   const activateCitation = useCallback(
-    (activation: ResourceActivation, target: ReaderSourceTarget | null, event?: React.MouseEvent) => {
+    (
+      activation: ResourceActivation,
+      target: ReaderSourceTarget | null,
+      event?: React.MouseEvent,
+    ) => {
       if (target) dispatchReaderSourceActivation(target);
       if (event?.defaultPrevented) return;
-      activateResource(activation, {
+      const activated = activateResource(activation, {
         labelHint: target?.label,
         activateTarget: paneRuntime.activateTarget,
         disposition: event
           ? workspaceTargetClickIntent(event).disposition
           : { kind: "Follow" },
       });
+      if (activated) event?.preventDefault();
     },
     [paneRuntime],
   );
@@ -580,22 +641,22 @@ export default function OracleReadingPaneBody() {
           <header className={styles.readingHeader}>
             <div className={styles.foliumHeader}>
               <span className={styles.foliumNumber}>
-                {state.folioNumber !== null ? `Folio ${toRoman(state.folioNumber)}` : "Folio"}
+                {state.folioNumber !== null
+                  ? `Folio ${toRoman(state.folioNumber)}`
+                  : "Folio"}
               </span>
               <span className={styles.foliumDot}>·</span>
-              <span className={styles.foliumTheme}>{state.folioTheme ?? ""}</span>
+              <span className={styles.foliumTheme}>
+                {state.folioTheme ?? ""}
+              </span>
             </div>
             {state.folioMotto !== null && (
-              <div className={styles.foliumMotto}>
-                {state.folioMotto}
-              </div>
+              <div className={styles.foliumMotto}>{state.folioMotto}</div>
             )}
             {state.folioMottoGloss !== null && (
               <div className={styles.foliumGloss}>{state.folioMottoGloss}</div>
             )}
-            <h1 className={styles.readingQuestion}>
-              {state.question || "…"}
-            </h1>
+            <h1 className={styles.readingQuestion}>{state.question || "…"}</h1>
             {state.argument !== null && state.argument.length > 0 && (
               <p className={styles.argument}>{state.argument}</p>
             )}
@@ -632,14 +693,18 @@ export default function OracleReadingPaneBody() {
             <div key={passage.phase}>
               {index > 0 && <FleuronBreak />}
               <section className={styles.passageBlock}>
-                <p className={styles.passagePhase}>{PHASE_LABEL[passage.phase]}</p>
+                <p className={styles.passagePhase}>
+                  {PHASE_LABEL[passage.phase]}
+                </p>
                 <div className={styles.passage}>
                   <blockquote className={styles.quote}>
                     <p>{passage.exact_snippet}</p>
                   </blockquote>
                   <p className={styles.attribution}>
                     {passage.attribution_text}{" "}
-                    <span className={styles.locator}>{passage.locator_label}</span>
+                    <span className={styles.locator}>
+                      {passage.locator_label}
+                    </span>
                     {passage.citation !== null && (
                       <span className={styles.passageCitation}>
                         <ReaderCitation
@@ -701,8 +766,8 @@ export default function OracleReadingPaneBody() {
               <FleuronBreak />
               <p className={styles.colophon}>
                 Composed on the {colophonDate}.
-                {state.image !== null && ` Plate after ${state.image.artist}.`}
-                {" "}Set in EB Garamond, IM Fell English, and UnifrakturMaguntia.
+                {state.image !== null && ` Plate after ${state.image.artist}.`}{" "}
+                Set in EB Garamond, IM Fell English, and UnifrakturMaguntia.
               </p>
             </>
           )}
@@ -714,7 +779,10 @@ export default function OracleReadingPaneBody() {
                 className={styles.oracleFeedback}
               />
               {retryError !== null && (
-                <FeedbackNotice feedback={retryError} className={styles.oracleFeedback} />
+                <FeedbackNotice
+                  feedback={retryError}
+                  className={styles.oracleFeedback}
+                />
               )}
               <button
                 type="button"

@@ -7,7 +7,12 @@ import pytest
 import respx
 
 from nexus.services import x_client
-from nexus.services.x_types import XProviderError, XProviderErrorCode
+from nexus.services.x_types import (
+    XProviderError,
+    XProviderErrorCode,
+    XResolvedQuoteReference,
+    XUnavailableQuoteReference,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -166,6 +171,73 @@ def test_single_post_fetch_uses_post_lookup_without_thread_search(monkeypatch):
     assert search_route.call_count == 0
 
 
+def test_post_parser_pairs_note_tweet_text_with_its_url_entities():
+    post = x_client._parse_posts(
+        {
+            "id": "1234567890",
+            "author_id": "10",
+            "text": "Truncated post https://t.co/top-level",
+            "entities": {
+                "urls": [
+                    {
+                        "url": "https://t.co/top-level",
+                        "expanded_url": "https://example.com/truncated",
+                    }
+                ]
+            },
+            "note_tweet": {
+                "text": "Complete long post https://t.co/quoted",
+                "entities": {
+                    "urls": [
+                        {
+                            "url": "https://t.co/quoted",
+                            "expanded_url": "https://x.com/grace/status/4444444444",
+                            "display_url": "x.com/grace/status/4444444444",
+                        }
+                    ]
+                },
+            },
+            "referenced_tweets": [{"type": "quoted", "id": "4444444444"}],
+        }
+    )[0]
+
+    assert post.text == "Complete long post https://t.co/quoted"
+    assert [entity.url for entity in post.urls] == ["https://t.co/quoted"]
+    assert post.urls[0].expanded_url == "https://x.com/grace/status/4444444444"
+
+
+def test_post_parser_keeps_top_level_entities_when_note_tweet_text_is_empty():
+    post = x_client._parse_posts(
+        {
+            "id": "1234567890",
+            "author_id": "10",
+            "text": "Top-level post https://t.co/top-level",
+            "entities": {
+                "urls": [
+                    {
+                        "url": "https://t.co/top-level",
+                        "expanded_url": "https://example.com/top-level",
+                    }
+                ]
+            },
+            "note_tweet": {
+                "text": " ",
+                "entities": {
+                    "urls": [
+                        {
+                            "url": "https://t.co/note",
+                            "expanded_url": "https://example.com/note",
+                        }
+                    ]
+                },
+            },
+        }
+    )[0]
+
+    assert post.text == "Top-level post https://t.co/top-level"
+    assert [entity.url for entity in post.urls] == ["https://t.co/top-level"]
+
+
 def test_author_thread_fetch_paginates_and_fetches_missing_quotes(monkeypatch):
     _patch_x_api_settings(monkeypatch)
 
@@ -251,7 +323,103 @@ def test_author_thread_fetch_paginates_and_fetches_missing_quotes(monkeypatch):
     assert dict(search_route.calls[1].request.url.params)["next_token"] == "page-2"
     assert dict(quote_route.calls.last.request.url.params)["ids"] == "4444444444"
     assert [post.id for post in snapshot.posts] == ["1234567890", "1234567891"]
-    assert set(snapshot.quoted_posts) == {"4444444444"}
+    assert set(snapshot.quote_references) == {"4444444444"}
+    quote = snapshot.quote_references["4444444444"]
+    assert isinstance(quote, XResolvedQuoteReference)
+    assert quote.post.text == "Quoted post."
+
+
+def test_author_thread_fetch_classifies_missing_direct_quote(monkeypatch):
+    _patch_x_api_settings(monkeypatch)
+
+    with respx.mock(assert_all_called=True) as remote:
+        remote.get("https://api.x.com/2/tweets/1234567890").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "id": "1234567890",
+                        "author_id": "10",
+                        "text": "Root post.",
+                        "conversation_id": "1234567890",
+                        "referenced_tweets": [{"type": "quoted", "id": "4444444444"}],
+                    },
+                    "includes": {
+                        "users": [{"id": "10", "name": "Ada Lovelace", "username": "ada"}]
+                    },
+                },
+            )
+        )
+        remote.get("https://api.x.com/2/tweets/search/all").mock(
+            return_value=httpx.Response(200, json={"data": [], "meta": {"result_count": 0}})
+        )
+        remote.get("https://api.x.com/2/tweets").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "errors": [
+                        {
+                            "resource_id": "4444444444",
+                            "resource_type": "tweet",
+                            "title": "Not Found Error",
+                            "type": "https://api.x.com/2/problems/resource-not-found",
+                        }
+                    ]
+                },
+            )
+        )
+
+        snapshot = x_client.fetch_author_thread_snapshot("1234567890")
+
+    quote = snapshot.quote_references["4444444444"]
+    assert isinstance(quote, XUnavailableQuoteReference)
+    assert quote.canonical_url == "https://x.com/i/status/4444444444"
+
+
+def test_author_thread_fetch_rejects_unclassified_missing_direct_quote(monkeypatch):
+    _patch_x_api_settings(monkeypatch)
+
+    with respx.mock(assert_all_called=True) as remote:
+        remote.get("https://api.x.com/2/tweets/1234567890").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "id": "1234567890",
+                        "author_id": "10",
+                        "text": "Root post.",
+                        "conversation_id": "1234567890",
+                        "referenced_tweets": [{"type": "quoted", "id": "4444444444"}],
+                    },
+                    "includes": {
+                        "users": [{"id": "10", "name": "Ada Lovelace", "username": "ada"}]
+                    },
+                },
+            )
+        )
+        remote.get("https://api.x.com/2/tweets/search/all").mock(
+            return_value=httpx.Response(200, json={"data": [], "meta": {"result_count": 0}})
+        )
+        remote.get("https://api.x.com/2/tweets").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "errors": [
+                        {
+                            "resource_id": "4444444444",
+                            "title": "Unexpected Error",
+                            "type": "https://api.x.com/2/problems/unexpected",
+                        }
+                    ]
+                },
+            )
+        )
+
+        with pytest.raises(XProviderError) as exc:
+            x_client.fetch_author_thread_snapshot("1234567890")
+
+    assert exc.value.code == XProviderErrorCode.UNAVAILABLE
+    assert exc.value.operation == "lookup_quotes"
 
 
 @pytest.mark.parametrize(

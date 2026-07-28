@@ -5,6 +5,22 @@
 Implemented on 2026-06-04. This document records the final behavior, owner
 contracts, and verification scope for the hard cutover.
 
+> Destination copy in this document is superseded by
+> [`library-all-and-smart-views-hard-cutover.md`](library-all-and-smart-views-hard-cutover.md):
+> empty Media intake/Android Share selection reads **No additional libraries**,
+> empty podcast/OPML selection reads **No libraries selected**, and the Default
+> library presents as **All** — no user-facing surface says "My Library".
+
+> **Superseded (2026-07-27):**
+> [`library-chooser-interaction-hard-cutover.md`](library-chooser-interaction-hard-cutover.md)
+> supersedes this document's picker component/presentation rules and its
+> writable-destination ordering, cursor grammar, and cursor-error semantics.
+> The writable-destination cursor is now the alphabetical/ranked
+> `library_destinations:v2` keyset (rank + `lower(name)` + name + id); only
+> `:v2` is accepted, and a pre-cutover or malformed cursor returns
+> `400 E_INVALID_CURSOR`. This document's ingest, capability, route, request,
+> and response contracts remain normative.
+
 ## Summary
 
 Android share-to-Nexus must become a destination-first capture flow for URL
@@ -159,7 +175,8 @@ Responsibilities after the cutover:
 4. The web share card shows:
    - a concise preview of the URLs to be saved,
    - a destination picker labeled as library destinations,
-   - an implicit "My Library" default destination indicator,
+   - an empty-selection label reading **No additional libraries** (the
+     Default library remains implicit),
    - actions: `Save`, `Cancel`.
 5. The destination picker:
    - starts with recent or first writable destinations,
@@ -239,8 +256,8 @@ text. Browser `/share?text=` continues to render the compact empty-state card.
 - Delete the old `/share` behavior that calls `addMediaFromUrl({ libraryIds: [] })`
   before the user confirms destinations.
 - Delete the post-save `LibraryMultiSelectPicker` modal from `ShareCapture`.
-- Do not keep a hidden fallback where failed destination load silently saves to
-  My Library.
+- Do not keep a hidden fallback where failed destination load silently saves
+  only to the Default library.
 - Do not keep `fetchNonDefaultLibraries` as the destination source for ingest
   pickers.
 - Do not silently accept default library IDs in destination arrays.
@@ -283,7 +300,7 @@ library IDs. It does not mean all accessible libraries.
 
 Rules:
 
-- omitted or empty means "My Library only",
+- omitted or empty means no additional libraries (Default-only filing),
 - default library ID is invalid,
 - duplicate IDs are invalid,
 - inaccessible IDs are forbidden,
@@ -513,7 +530,8 @@ Behavior:
 - inserts and selects created library,
 - does not close on create,
 - works with zero existing destinations,
-- supports empty selection as "My Library only",
+- supports empty selection with the caller-supplied **No additional
+  libraries** label,
 - announces loading, no matches, and result counts,
 - uses CSS modules, not runtime `<style>` injection.
 
@@ -778,7 +796,8 @@ does not require that.
 - Cancelling URL share before Save creates no media.
 - Creating a library from the share picker creates a non-default library and
   selects it.
-- Saving a URL with a newly created library files the media into My Library and
+- Saving a URL with a newly created library files the media into the Default
+  library and
   that library.
 - Sharing multiple URLs applies the same selected destinations to each URL.
 - Retrying failed URL saves reuses the same selected destinations.

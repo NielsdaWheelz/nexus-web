@@ -402,11 +402,15 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     });
     expect(subscribeButton).toBeInTheDocument();
 
-    const picker = screen.getByRole("combobox", { name: "Libraries" });
-    fireEvent.focus(picker);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Libraries: No libraries selected" }),
+    );
     fireEvent.click(await screen.findByRole("option", { name: "Research" }));
     fireEvent.click(await screen.findByRole("option", { name: "Books" }));
-    fireEvent.keyDown(picker, { key: "Escape" });
+    fireEvent.keyDown(
+      screen.getByRole("combobox", { name: "Search or create a library" }),
+      { key: "Escape" },
+    );
 
     fireEvent.click(subscribeButton);
 
@@ -489,11 +493,8 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
           },
         });
       }
-      if (url.pathname === "/api/libraries/writable-destinations") {
-        return jsonResponse({
-          data: [],
-          page: { has_more: false, next_cursor: null },
-        });
+      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
+        return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/lectern") {
         return jsonResponse({ data: { items: [] } });
@@ -524,7 +525,9 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     );
     const view = render(journey());
 
-    expect(await screen.findByText("Before refresh episode")).toBeVisible();
+    expect(
+      await screen.findByRole("link", { name: "Before refresh episode" }),
+    ).toBeVisible();
     await waitFor(() => expect(commands).toBeDefined());
     const refreshSync = panePrimaryChromeState.options.find(
       (option) => option.id === "ResourceOperation.Podcast.Refresh",
@@ -545,7 +548,9 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     resourceGeneration += 1;
     view.rerender(journey());
 
-    expect(await screen.findByText("After refresh episode")).toBeVisible();
+    expect(
+      await screen.findByRole("link", { name: "After refresh episode" }),
+    ).toBeVisible();
     expect(detailCalls).toBe(3);
     expect(episodeCalls).toBe(3);
   });
@@ -564,11 +569,8 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
       ) {
         return jsonResponse({ data: [episodeMedia()] });
       }
-      if (url.pathname === "/api/libraries/writable-destinations") {
-        return jsonResponse({
-          data: [],
-          page: { has_more: false, next_cursor: null },
-        });
+      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
+        return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/media/transcript/forecasts") {
         return jsonResponse({ data: [] });
@@ -581,7 +583,9 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
 
     render(<Wrapped />);
 
-    expect(await screen.findByText("Episode 1")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Episode 1" }),
+    ).toBeInTheDocument();
     await waitFor(() => {
       const publication = primaryChromeMock.publish.mock.calls.at(-1)?.[0] as
         | {
@@ -632,11 +636,8 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
       ) {
         return jsonResponse({ data: [] });
       }
-      if (url.pathname === "/api/libraries/writable-destinations") {
-        return jsonResponse({
-          data: [],
-          page: { has_more: false, next_cursor: null },
-        });
+      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
+        return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/lectern") {
         return jsonResponse({ data: { items: [] } });
@@ -684,11 +685,8 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
           ],
         });
       }
-      if (url.pathname === "/api/libraries/writable-destinations") {
-        return jsonResponse({
-          data: [],
-          page: { has_more: false, next_cursor: null },
-        });
+      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
+        return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/lectern") {
         return jsonResponse({ data: { items: [] } });
@@ -748,11 +746,8 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
       ) {
         return jsonResponse({ data: [episodeMedia()] });
       }
-      if (url.pathname === "/api/libraries/writable-destinations") {
-        return jsonResponse({
-          data: [],
-          page: { has_more: false, next_cursor: null },
-        });
+      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
+        return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/lectern") {
         return jsonResponse({ data: { items: [] } });
@@ -857,11 +852,8 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
           ],
         });
       }
-      if (url.pathname === "/api/libraries/writable-destinations") {
-        return jsonResponse({
-          data: [],
-          page: { has_more: false, next_cursor: null },
-        });
+      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
+        return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/lectern") {
         return jsonResponse({ data: { items: [] } });
@@ -904,7 +896,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
 
     render(<Wrapped />);
 
-    await screen.findByText("Episode 1");
+    await screen.findByRole("link", { name: "Episode 1" });
     fireEvent.click(
       screen.getByRole("button", { name: "More actions for Episode 1" }),
     );
@@ -926,12 +918,14 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "More actions for Episode 1" }),
     );
-    expect(
-      screen.queryByRole("menuitem", { name: "Reset progress" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("menuitem", { name: "Mark as played" }),
-    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("menuitem", { name: "Reset progress" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("menuitem", { name: "Mark as played" }),
+      ).toBeInTheDocument();
+    });
   });
 
   it("re-enriches metadata from a capable episode row without consuming the server capability", async () => {
@@ -957,11 +951,8 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
       ) {
         return jsonResponse({ data: { accepted: true } });
       }
-      if (url.pathname === "/api/libraries/writable-destinations") {
-        return jsonResponse({
-          data: [],
-          page: { has_more: false, next_cursor: null },
-        });
+      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
+        return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/lectern") {
         return jsonResponse({ data: { items: [] } });
@@ -1024,11 +1015,8 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
       ) {
         return metadataResponse.promise;
       }
-      if (url.pathname === "/api/libraries/writable-destinations") {
-        return jsonResponse({
-          data: [],
-          page: { has_more: false, next_cursor: null },
-        });
+      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
+        return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/lectern") {
         return jsonResponse({ data: { items: [] } });
@@ -1087,11 +1075,8 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
           data: [episodeMedia({ canEditAuthors: true })],
         });
       }
-      if (url.pathname === "/api/libraries/writable-destinations") {
-        return jsonResponse({
-          data: [],
-          page: { has_more: false, next_cursor: null },
-        });
+      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
+        return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/lectern") {
         return jsonResponse({ data: { items: [] } });
@@ -1134,11 +1119,8 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
           data: [episodeMedia()],
         });
       }
-      if (url.pathname === "/api/libraries/writable-destinations") {
-        return jsonResponse({
-          data: [],
-          page: { has_more: false, next_cursor: null },
-        });
+      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
+        return jsonResponse({ data: [] });
       }
       if (
         url.pathname === "/api/lectern" &&
@@ -1268,11 +1250,8 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
                 ),
         });
       }
-      if (url.pathname === "/api/libraries/writable-destinations") {
-        return jsonResponse({
-          data: [],
-          page: { has_more: false, next_cursor: null },
-        });
+      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
+        return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/lectern") {
         return jsonResponse({ data: { items: [] } });
@@ -1303,10 +1282,14 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
       </PaneReturnJourneyHarness>
     );
     const view = render(journey());
-    expect(await screen.findByText("Restored Episode First")).toBeVisible();
+    expect(
+      await screen.findByRole("link", { name: "Restored Episode First" }),
+    ).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Load more episodes" }));
     expect(
-      await screen.findByText("Restored Episode Second Page"),
+      await screen.findByRole("link", {
+        name: "Restored Episode Second Page",
+      }),
     ).toBeVisible();
     commands.capturePane({
       paneId: "pane-1",
@@ -1320,8 +1303,12 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     resourceGeneration += 1;
     view.rerender(journey());
 
-    expect(screen.getAllByText("Restored Episode First")).toHaveLength(1);
-    expect(screen.getAllByText("Restored Episode Second Page")).toHaveLength(1);
+    expect(
+      screen.getAllByRole("link", { name: "Restored Episode First" }),
+    ).toHaveLength(1);
+    expect(
+      screen.getAllByRole("link", { name: "Restored Episode Second Page" }),
+    ).toHaveLength(1);
     await waitFor(() => {
       expect(episodeRequests).toEqual([
         { offset: "0", sort: "newest" },
@@ -1389,11 +1376,8 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
           ],
         });
       }
-      if (url.pathname === "/api/libraries/writable-destinations") {
-        return jsonResponse({
-          data: [],
-          page: { has_more: false, next_cursor: null },
-        });
+      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
+        return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/lectern") {
         return jsonResponse({ data: { items: [] } });
@@ -1411,7 +1395,9 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     currentPodcastId = "00000000-0000-4000-8000-000000000022";
     rerender(<Wrapped />);
 
-    expect(await screen.findByText("Current Episode")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Current Episode" }),
+    ).toBeInTheDocument();
 
     await act(async () => {
       oldDetail.resolve(jsonResponse(podcastDetailResponse()));
@@ -1428,9 +1414,13 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     });
 
     await waitFor(() => {
-      expect(screen.queryByText("Old Episode")).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("link", { name: "Old Episode" }),
+      ).not.toBeInTheDocument();
     });
-    expect(screen.getByText("Current Episode")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Current Episode" }),
+    ).toBeInTheDocument();
   });
 
   it("keeps transcript forecast reservations until the POST settles", async () => {
@@ -1458,11 +1448,8 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
           ],
         });
       }
-      if (url.pathname === "/api/libraries/writable-destinations") {
-        return jsonResponse({
-          data: [],
-          page: { has_more: false, next_cursor: null },
-        });
+      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
+        return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/media/transcript/forecasts") {
         forecastCalls += 1;

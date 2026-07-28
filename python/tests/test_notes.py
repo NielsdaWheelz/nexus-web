@@ -102,7 +102,11 @@ def test_delete_page_leaves_linked_note_alive(
     db_session: Session,
     bootstrapped_user: UUID,
 ) -> None:
-    page = notes.create_page(db_session, bootstrapped_user, CreatePageRequest(title="Page"))
+    page = notes.create_page(
+        db_session,
+        bootstrapped_user,
+        CreatePageRequest(page_id=uuid4(), title="Page"),
+    )
     block_id = uuid4()
     notes.quick_capture(
         db_session,
@@ -143,7 +147,11 @@ def test_delete_page_deletes_its_dossier_head(
     db_session: Session,
     bootstrapped_user: UUID,
 ) -> None:
-    page = notes.create_page(db_session, bootstrapped_user, CreatePageRequest(title="Page"))
+    page = notes.create_page(
+        db_session,
+        bootstrapped_user,
+        CreatePageRequest(page_id=uuid4(), title="Page"),
+    )
     ticket = create_build(
         db_session,
         locator=SubjectResource(ref=ResourceRef(scheme="page", id=page.id)),
@@ -154,10 +162,13 @@ def test_delete_page_deletes_its_dossier_head(
 
     notes.delete_page(db_session, bootstrapped_user, page.id)
 
-    assert db_session.execute(
-        text("SELECT count(*) FROM artifacts WHERE id = :artifact_id"),
-        {"artifact_id": ticket.artifact_id},
-    ).scalar_one() == 0
+    assert (
+        db_session.execute(
+            text("SELECT count(*) FROM artifacts WHERE id = :artifact_id"),
+            {"artifact_id": ticket.artifact_id},
+        ).scalar_one()
+        == 0
+    )
 
 
 @pytest.mark.integration

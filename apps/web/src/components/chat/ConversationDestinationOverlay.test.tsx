@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ConversationDestinationOverlay, {
   type ConversationDestinationOverlayProps,
 } from "./ConversationDestinationOverlay";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import type { ConversationListItem } from "@/lib/conversations/types";
+import { MobileViewportProvider } from "@/lib/mobileViewport/MobileViewportProvider";
 
 // The render-environment `currentInstant` (2026-06-03T12:00:00Z) is the clock the
 // relative-time cells are formatted against, so these fixtures are deterministic.
@@ -86,7 +87,9 @@ function renderOverlay(
   };
   const utils = render(
     withRenderEnvironment(
-      <ConversationDestinationOverlay {...props} />,
+      <MobileViewportProvider>
+        <ConversationDestinationOverlay {...props} />
+      </MobileViewportProvider>,
       viewport === "mobile" ? { initialViewport: "mobile" } : {},
     ),
   );
@@ -259,9 +262,6 @@ describe("ConversationDestinationOverlay", () => {
     });
     renderOverlay();
     await screen.findByRole("option", { name: /Newer chat/ });
-    // Let the pagination hook's post-render effects (generation bump + cursor
-    // adoption) flush before paging, so loadMore runs against the settled cursor.
-    await act(async () => {});
     fireEvent.click(screen.getByRole("button", { name: "Load more chats" }));
     expect(await screen.findByRole("option", { name: /Older chat/ })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Newer chat/ })).toBeInTheDocument();
@@ -321,7 +321,12 @@ describe("ConversationDestinationOverlay", () => {
       trigger.focus();
       fireEvent.click(trigger);
       const dialog = await screen.findByRole("dialog", { name: "Ask in existing chat" });
-      fireEvent.click(await within(dialog).findByRole("option", { name: /Picked chat/ }));
+      await waitFor(() =>
+        expect(within(dialog).getByRole("combobox")).toHaveFocus(),
+      );
+      fireEvent.click(
+        await within(dialog).findByRole("option", { name: /Picked chat/ }),
+      );
 
       await waitFor(() => expect(onSelectConversation).toHaveBeenCalledWith("cx"));
       expect(trigger).not.toHaveFocus();

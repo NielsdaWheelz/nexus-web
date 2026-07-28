@@ -36,6 +36,8 @@ Mobile mode:
 - renders no fixed primary chrome
 - renders no pane resize handle
 - presents secondary content only through `MobileSecondaryPaneHost`
+- presents global pane switching and recently closed restoration through the
+  shell-mounted Nexus Switchboard
 
 Mobile mode is not a narrow desktop canvas. It is a different composition
 contract.
@@ -114,9 +116,9 @@ route.
 
 The provider pins chrome fully visible at the document top, for reduced motion,
 and while reader restore, selection, navigation, secondary-surface, library
-picker, menu, or chrome-focus locks are held. `NavTopBar` and the pane toolbar
-register explicitly as `AppBar` and `PaneToolbar`; only those two presentation
-roles consume the shared progress. Only the fully hidden endpoint removes
+picker, menu, or chrome-focus locks are held. `MobilePaneBar` and the pane
+toolbar register explicitly as `AppBar` and `PaneToolbar`; only those two
+presentation roles consume the shared progress. Only the fully hidden endpoint removes
 chrome controls from focus and the accessibility tree. Desktop chrome is
 unaffected.
 
@@ -174,6 +176,31 @@ downloads, external links, `_blank`, fragments, and already-prevented events
 remain browser- or route-owned. Anchors retain real hrefs. Route-local reader
 location, sort/filter, and pagination controls keep their feature-owned
 push/replace/no-write policy.
+
+## Recently Closed Panes
+
+`WorkspaceStoreProvider` owns a session-local, newest-first stack of at most
+five valid closed-pane snapshots outside persisted `WorkspaceState`. A snapshot
+contains the primary pane, its attached secondary pane when present, and its
+former order index.
+
+Close snapshots before removal, including close-last fallback. Restore is one
+atomic workspace transition: reject before mutation at the pane cap, reject
+duplicate primary or secondary identity as a defect, normalize secondary
+attachment and parent identity, clamp current widths, make the restored pane
+visible and active at the clamped former index, and reapply the per-pane and
+global history budgets. Remove the snapshot only after successful restore.
+Reload clears the stack.
+
+## Mobile Viewport And Fixed Obstructions
+
+`MobileViewportProvider` is the shell owner for safe-area, fixed Nexus control,
+active player, and active `MobileSheet` keyboard obstruction. Fixed controls
+register measured rectangles; `MobileSheet` alone reports keyboard inset through
+scoped, ordered reports so nested-sheet release restores the prior inset. The
+provider publishes `--mobile-content-bottom-clearance`, and every authenticated
+mobile primary scroll owner consumes it. Components do not independently
+recalculate safe area, player, Nexus, or keyboard geometry.
 
 ## Fixed Chrome
 

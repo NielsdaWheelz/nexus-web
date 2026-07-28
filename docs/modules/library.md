@@ -151,14 +151,33 @@ contribution the moment it is gone, on the very next read.
   another membership can still be explicitly filed; that direct row is what
   survives a later membership loss that would otherwise have removed it from
   view.
-- **Stateless keyset pagination, one cursor family.** Listing any library
-  never touches a snapshot table. Every listing — default or non-default —
-  paginates with the single `library_entries:view:v1` cursor family, opaque
-  and self-describing, scoped to the exact `(viewer_id, library_id, view)` it
-  was minted for, where `view` is the order (canonical or a factual lens) plus
-  the completion filter in effect. A cursor from the wrong viewer, library, or
-  view — including every pre-cutover cursor kind — is a clean
+- **Stateless keyset pagination, one authenticated cursor family.** Listing any
+  library never touches a snapshot table. Every listing — default or
+  non-default — paginates with the single `library_entries:view:v2` cursor
+  family: an unpadded-base64url token over a canonical-JSON `{v, q, after}`
+  body plus a full HMAC-SHA256 tag under a domain-separated key derived from
+  the effective stream-token signing root. `q` is the SHA-256 digest binding
+  the exact `(viewer, library, view)` — the viewer UUID is bound through `q`
+  and the MAC but never serialized — and `after` is the exact tagged keyset,
+  decoded strictly with no coercion. `view` is the order (canonical or a
+  factual lens) plus the entry projection and, where the projection carries
+  one, the completion filter. A cursor from the wrong viewer, library, or
+  view — malformed, tampered, or from any pre-cutover kind — is a clean
   `400 E_INVALID_CURSOR`, never silently reinterpreted.
+- **Fixed entry projections.** `GET /libraries/{id}/entries` accepts
+  `projection=unfiled|in-progress` (omitted means All items). `Unfiled` is
+  valid only for the viewer's own Default library: direct-Default media with
+  no other current, non-system membership placement visible to the viewer
+  (read-only shared libraries count as filing; system and inaccessible foreign
+  libraries do not). `In Progress` is exactly the canonical consumption
+  relation's `read_state = 'InProgress'` (composed from
+  `consumption.service.engagement_fact_rows_sql()`; podcast-show rows never
+  match), and combining it with `completion=unfinished` is
+  `400 E_INVALID_REQUEST` — the projection union makes that state
+  unrepresentable. Projection applies before completion, ordering, keyset, and
+  `limit + 1`. These are URL-owned query projections — not Libraries, saved
+  searches, or persisted collections — and there is deliberately no generic
+  smart-view platform behind them.
 - **Media deletion counts physical references only.** Whether a document
   media has any reference left — the question that gates last-reference
   teardown — is answered by counting physical `library_entries` rows for
@@ -193,24 +212,69 @@ media with the consumption projection's monotonic whole-document progression.
 PDF is total-only. Nested `media` is the sole entry consumption owner; root entry
 read-state/progress fields do not exist.
 
+## Presentation: Default is presented as All
+
+`apps/web/src/lib/libraries/presentation.ts` is the single frontend owner of
+the Default display alias: `libraryPresentation(library)` yields
+`{name: "All", context: "Across your libraries"}` when `isDefault`, else the
+authored name and viewer role. No component independently derives the Default
+display name. Server-owned label surfaces project the same alias when
+`is_default` — resource-target search candidates (which match the token `All`
+and never the stored seeded name), Library and Dossier labels in
+`resource_graph/resolve.py`, and Atlas constellation labels. The stored seeded
+name is neither displayed nor retained as a search alias, and `All`
+(trimmed, Unicode-casefolded) is a reserved name: create and rename of any
+non-default library reject it with `400 E_NAME_INVALID`
+(`library_governance._validate_library_name`).
+
+Writable destination selection describes selected, additional, non-default
+Libraries only. `LibraryDestinationField` requires a caller-supplied
+`emptyLabel` and defines no semantic default: Media intake and Android Share
+pass **No additional libraries**; podcast subscription and OPML pass **No
+libraries selected**.
+
 ## Frontend entry-view lifecycle
 
-The pane URL owns the requested `LibraryEntryView`; the Library controller owns
-one committed exact page `{view, entries, nextCursor}`. A same-visit query
-replacement is in-place: pane chrome, controls, focus, live ShellScroll
-position, Slate, and Companion stay mounted while the exact first page loads.
-The full query remains runtime/history identity.
+The pane URL owns the requested `LibraryEntryView` (order + projection); the
+Library controller owns one committed exact page `{view, entries, nextCursor}`.
+A same-visit query replacement is in-place: pane chrome, controls, focus, live
+ShellScroll position, Slate, and Companion stay mounted while the exact first
+page loads. The full query remains runtime/history identity.
+`lib/libraries/libraryView.ts` is the sole owner of the closed view types, the
+strict URL codec, API query construction, projection/order option
+availability, and the exact `{projection label} · {order label}[ · unfinished
+only]` view formatting.
 
 - A keyed `useResource` request is latest-wins; only a result associated with
   the current requested view commits.
+- Every first-page and continuation request captures the current placement and
+  consumption revisions (`lib/libraries/placementRevision.ts`,
+  `lib/consumption/projectionRevision.ts`); a result whose requested view or
+  captured revision is stale never commits — the pane instead requests the
+  current requested view, coalescing repeated advances. Every definitive
+  same-process placement/consumption writer publishes its seam exactly once
+  after each acknowledged write.
+- A mounted All pane reacts to every placement revision; a named/system pane
+  reacts when its id is affected or the scope is `Unknown`. A consumption
+  advance reconciles In Progress and unfinished views (an absent row may newly
+  qualify); an unfiltered All-items view keeps the immediate local media patch
+  and does not refetch for it.
 - While requested and committed views differ, prior rows and row navigation
-  remain available; pagination, reorder, and entry mutations do not.
-- Failure retains and labels the prior committed page and exposes Retry.
+  remain available; pagination, reorder, and entry mutations do not. Reorder
+  exists only for a fully loaded, editable, non-default
+  `Canonical + All items (all)` view.
+- Failure retains and labels the prior committed page and exposes Retry. A
+  stale or deployment-era continuation cursor is never reinterpreted: Load
+  More presents **This list can no longer continue.** with **Refresh list**,
+  which discards the cursor and requests the first page of the same view.
 - Pane return captures only a ready snapshot whose committed view equals the
   URL view, and restores Library plus page as one coherent value.
 - A matching commit atomically swaps view, rows, and cursor, resets the
   collection region, and lets `CollectionView` own the single row transition;
   reduced motion performs the same commit without animation.
+- The route bootstrap seeds only `Canonical + All items (all)` at revision
+  zero; the client claims that seed only while both process revisions remain
+  zero.
 
 See
 [library-entry-view-continuity-hard-cutover.md](../cutovers/library-entry-view-continuity-hard-cutover.md).
@@ -253,9 +317,19 @@ non-default libraries where the viewer can write entries. It does not mean every
 library the viewer can read.
 
 - **Search/list.** `GET /libraries/writable-destinations` is the sole backend
-  list contract for destination pickers. It excludes the default library and
-  member-only libraries, performs server-side search, and pages with an opaque
-  cursor.
+  list contract for destination pickers (`LibraryDestinationField` +
+  `LibraryChooserSurface` + `LibraryDestinationPicker` adapter on the
+  frontend). It excludes the default library and member-only libraries,
+  performs server-side search, and pages with the opaque `library_destinations:v2`
+  keyset cursor (rank + `lower(name)` + name + id, ascending). A blank query is
+  alphabetical; a non-empty query ranks exact → prefix → contains matches, then
+  alphabetically within each rank. Only `:v2` is accepted — a pre-cutover or
+  malformed cursor returns `400 E_INVALID_CURSOR`; there is no compatibility
+  decoder for the old unversioned/timestamp cursor.
+- **Standing placement ordering.** `library_entries.list_item_libraries` (the
+  `Libraries…` resource-action listing) orders `lower(name) ASC, name ASC, id
+  ASC`; the `LibraryChooser` client filters that complete inventory by
+  substring locally rather than re-querying.
 - **Validation.** Write paths call
   `validate_writable_library_destinations` or
   `resolve_writable_non_default_library_ids`; default IDs, duplicate IDs,

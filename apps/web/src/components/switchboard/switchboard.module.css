@@ -1,0 +1,356 @@
+.sheet {
+  --mobile-sheet-max-size: min(90dvh, 760px);
+}
+
+.page {
+  display: grid;
+  flex: 1 1 auto;
+  min-height: 0;
+  align-content: start;
+  gap: var(--space-4);
+  padding: 0 var(--space-4) var(--space-4);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.rootPage {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.rootPage > .header {
+  flex: 0 0 auto;
+  padding-inline: var(--space-4);
+}
+
+.rootScroll {
+  display: grid;
+  flex: 1 1 auto;
+  min-height: 0;
+  align-content: start;
+  gap: var(--space-4);
+  padding: 0 var(--space-4) var(--space-4);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.header {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  background: var(--surface-canvas);
+}
+
+.header h2,
+.section h3,
+.recoveryBanner h3 {
+  margin: 0;
+}
+
+.header h2 {
+  font-size: var(--text-lg);
+  letter-spacing: var(--tracking-tight);
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.textButton,
+.iconButton,
+.compactAction,
+.findButton,
+.rowMain,
+.rowMenu,
+.scopes button,
+.sourceStatus button,
+.recoveryBanner button,
+.form button {
+  min-height: 48px;
+}
+
+.textButton,
+.iconButton,
+.rowMenu {
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+}
+
+.iconButton,
+.rowMenu {
+  min-width: 48px;
+  display: inline-grid;
+  place-items: center;
+}
+
+.section {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.section h3 {
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  letter-spacing: var(--tracking-wider);
+  text-transform: uppercase;
+}
+
+.compactGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.compactAction {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-weight: var(--weight-medium);
+  text-align: start;
+}
+
+.compactAction span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rows {
+  display: grid;
+  gap: 1px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--edge-subtle);
+  overflow: hidden;
+}
+
+.row {
+  display: flex;
+  min-width: 0;
+  background: var(--surface-2);
+}
+
+.row[data-current="true"] {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.row[data-nested="true"] {
+  padding-inline-start: var(--space-4);
+}
+
+.rowMain {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  justify-items: start;
+  align-content: center;
+  gap: 2px;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: start;
+}
+
+.rowLabel,
+.rowMeta {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.rowLabel {
+  font-weight: 600;
+}
+
+.rowMeta {
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+.findButton {
+  flex: 0 0 auto;
+  width: auto;
+  margin: 0 var(--space-4) var(--space-4);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--edge-strong);
+  border-radius: var(--radius-full);
+  background: var(--surface-1);
+  color: var(--ink-muted);
+  text-align: start;
+  box-shadow: var(--shadow-2);
+}
+
+.findInput input,
+.form input {
+  width: 100%;
+  min-height: 48px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--edge-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  color: var(--ink);
+  font: inherit;
+}
+
+.scopes {
+  display: flex;
+  gap: var(--space-2);
+  overflow-x: auto;
+  padding-block: 1px;
+}
+
+.scopes button {
+  flex: 0 0 auto;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.scopes button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.sourceStatus {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.sourceStatus p,
+.empty,
+.recoveryBanner p,
+.form p {
+  margin: 0;
+  color: var(--ink-muted);
+}
+
+.sourceStatus button {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+}
+
+.liveRegion {
+  min-height: 1.25rem;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+.recoveryBanner {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-lg);
+  background: var(--accent-muted);
+}
+
+.form {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.form label {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.recoveryActions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.page > button,
+.recoveryActions button,
+.recoveryBanner button,
+.form button {
+  min-height: 48px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-weight: var(--weight-medium);
+}
+
+.page button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.nexusButton {
+  position: fixed;
+  z-index: var(--z-overlay);
+  right: max(var(--space-4), env(safe-area-inset-right));
+  bottom: calc(var(--mobile-nexus-bottom-offset, env(safe-area-inset-bottom)) + var(--space-3));
+  display: inline-flex;
+  min-width: 56px;
+  min-height: 56px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--edge-strong);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--ink-on-accent);
+  box-shadow: var(--shadow-4);
+  font-weight: var(--weight-semibold);
+}
+
+@media (hover: hover) {
+  .textButton:hover,
+  .iconButton:hover,
+  .rowMain:hover,
+  .rowMenu:hover,
+  .compactAction:hover,
+  .findButton:hover,
+  .scopes button:hover,
+  .recoveryActions button:hover,
+  .recoveryBanner button:hover,
+  .form button:hover {
+    background: var(--surface-hover);
+    color: var(--ink);
+  }
+}
+
+@media (max-width: 360px) {
+  .compactGrid,
+  .recoveryActions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

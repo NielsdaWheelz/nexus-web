@@ -177,9 +177,7 @@ def assemble_chat_context(
         # the immutable snapshot, never the live Highlight. The selection
         # Highlight is excluded (via subject_uri) from generic resource
         # rendering so the canonical quote text appears exactly once.
-        subject_uri = ResourceRef(
-            scheme="highlight", id=current_snapshot.key.highlight_id
-        ).uri
+        subject_uri = ResourceRef(scheme="highlight", id=current_snapshot.key.highlight_id).uri
         subject_source_ref = {"role": "subject", "resource_uri": subject_uri}
         mandatory_blocks.append(
             (
@@ -749,11 +747,7 @@ def load_recent_history_units(
             )
             index += 2
             continue
-        content = (
-            _history_user_content(row)
-            if row[2] == "user"
-            else row[3]
-        )
+        content = _history_user_content(row) if row[2] == "user" else row[3]
         units.append(
             HistoryUnit(
                 key=f"history_single:{row[1]}",

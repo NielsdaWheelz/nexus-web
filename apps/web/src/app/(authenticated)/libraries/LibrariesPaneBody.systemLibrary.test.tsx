@@ -8,6 +8,7 @@ import {
   RETURN_JOURNEY_VISIT_ID,
 } from "@/__tests__/helpers/paneReturnJourney";
 import LibrariesPaneBody from "./LibrariesPaneBody";
+import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { stubFetch } from "@/__tests__/helpers/fetch";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import type { PaneReturnMementoCommands } from "@/lib/workspace/paneReturnMemento";
@@ -41,7 +42,7 @@ describe("LibrariesPaneBody (system library protection)", () => {
         "libraries:0": {
           data: [
             {
-              id: "lib-oracle",
+              id: "10000000-0000-4000-8000-000000000001",
               name: "Oracle Corpus",
               color: null,
               ownerUserHandle: OWNER_USER_HANDLE,
@@ -57,7 +58,7 @@ describe("LibrariesPaneBody (system library protection)", () => {
               canTransferOwnership: false,
             },
             {
-              id: "lib-user",
+              id: "10000000-0000-4000-8000-000000000002",
               name: "Reading Room",
               color: null,
               ownerUserHandle: OWNER_USER_HANDLE,
@@ -76,12 +77,20 @@ describe("LibrariesPaneBody (system library protection)", () => {
           page: { has_more: false, next_cursor: null },
         },
       },
-      children: <LibrariesPaneBody />,
+      children: (
+        <LibraryPlacementControllerProvider>
+          <LibrariesPaneBody />
+        </LibraryPlacementControllerProvider>
+      ),
     });
 
     // The system library lists normally.
-    expect(await screen.findByText("Oracle Corpus")).toBeInTheDocument();
-    expect(screen.getByText("Reading Room")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Oracle Corpus" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Reading Room" }),
+    ).toBeInTheDocument();
 
     const systemActionButton = screen.getByRole("button", {
       name: "More actions for Oracle Corpus",
@@ -119,9 +128,18 @@ describe("LibrariesPaneBody (system library protection)", () => {
 
   it("restores both loaded pages without another page-one request", async () => {
     const user = userEvent.setup();
-    const firstPage = library("lib-first", "First-page library");
-    const secondPage = library("lib-second", "Second-page library");
-    const replacement = library("lib-replacement", "Replacement first page");
+    const firstPage = library(
+      "10000000-0000-4000-8000-000000000003",
+      "First-page library",
+    );
+    const secondPage = library(
+      "10000000-0000-4000-8000-000000000004",
+      "Second-page library",
+    );
+    const replacement = library(
+      "10000000-0000-4000-8000-000000000005",
+      "Replacement first page",
+    );
     let firstPageRequestCount = 0;
     stubFetch(async (input) => {
       const url = new URL(
@@ -169,21 +187,27 @@ describe("LibrariesPaneBody (system library protection)", () => {
         resourceGeneration={resourceGeneration}
         publishCommands={publishCommands}
       >
-        <LibrariesPaneBody />
+        <LibraryPlacementControllerProvider>
+          <LibrariesPaneBody />
+        </LibraryPlacementControllerProvider>
       </PaneReturnJourneyHarness>
     );
     const view = render(journey(0));
 
-    expect(await screen.findByText(firstPage.name)).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: firstPage.name }),
+    ).toBeInTheDocument();
     await user.click(
       screen.getByRole("button", { name: "Load more libraries" }),
     );
-    expect(await screen.findByText(secondPage.name)).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: secondPage.name }),
+    ).toBeInTheDocument();
     await waitFor(() => expect(commands).not.toBeNull());
     const sourceScrollport = screen.getByTestId("return-journey-scrollport");
     definePaneReturnGeometry(sourceScrollport, {
-      "lib-first": 0,
-      "lib-second": 120,
+      "10000000-0000-4000-8000-000000000003": 0,
+      "10000000-0000-4000-8000-000000000004": 120,
     });
     act(() => {
       sourceScrollport.scrollTop = 100;
@@ -199,20 +223,26 @@ describe("LibrariesPaneBody (system library protection)", () => {
 
     const restoredScrollport = screen.getByTestId("return-journey-scrollport");
     definePaneReturnGeometry(restoredScrollport, {
-      "lib-first": 0,
-      "lib-second": 120,
+      "10000000-0000-4000-8000-000000000003": 0,
+      "10000000-0000-4000-8000-000000000004": 120,
     });
-    expect(screen.getByText(firstPage.name)).toBeInTheDocument();
-    expect(screen.getByText(secondPage.name)).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: firstPage.name }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: secondPage.name }),
+    ).toBeInTheDocument();
     await waitFor(() => expect(restoredScrollport.scrollTop).toBe(100));
-    const restoredSecondTitle = screen.getByText(secondPage.name);
+    const restoredSecondTitle = screen.getByRole("link", {
+      name: secondPage.name,
+    });
     // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: the scoped semantic-anchor attributes are the observable restoration contract under test.
     const restoredSecondRow = restoredSecondTitle.closest<HTMLElement>(
       "[data-collection-row-id]",
     );
     expect(restoredSecondRow).toHaveAttribute(
       "data-collection-row-id",
-      "lib-second",
+      "10000000-0000-4000-8000-000000000004",
     );
     // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: row ids are collision-safe only together with their nearest published scope.
     expect(restoredSecondRow?.closest("[data-pane-return-scope]")).toHaveAttribute(
@@ -221,21 +251,34 @@ describe("LibrariesPaneBody (system library protection)", () => {
     );
     expect(restoredSecondRow?.getBoundingClientRect().top).toBe(20);
     await waitFor(() => expect(firstPageRequestCount).toBe(0));
-    expect(screen.queryByText(replacement.name)).not.toBeInTheDocument();
-    expect(screen.getAllByText(firstPage.name)).toHaveLength(1);
-    expect(screen.getAllByText(secondPage.name)).toHaveLength(1);
+    expect(
+      screen.queryByRole("link", { name: replacement.name }),
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: firstPage.name })).toHaveLength(
+      1,
+    );
+    expect(screen.getAllByRole("link", { name: secondPage.name })).toHaveLength(
+      1,
+    );
   });
 
   it("does not recapture stale libraries while create reconciliation is pending", async () => {
     const user = userEvent.setup();
-    const staleLibrary = library("lib-stale", "Stale library");
-    const freshLibrary = library("lib-fresh", "Fresh library");
+    const staleLibrary = library(
+      "10000000-0000-4000-8000-000000000006",
+      "Stale library",
+    );
+    const freshLibrary = library(
+      "10000000-0000-4000-8000-000000000007",
+      "Fresh library",
+    );
     let resolveCreate!: (response: Response) => void;
     const pendingCreate = new Promise<Response>((resolve) => {
       resolveCreate = resolve;
     });
     const unresolvedRefresh = new Promise<Response>(() => {});
     let refreshRequestCount = 0;
+    let createdLibraryId = "";
     stubFetch(async (input, init) => {
       const url = new URL(
         input instanceof Request ? input.url : String(input),
@@ -248,6 +291,11 @@ describe("LibrariesPaneBody (system library protection)", () => {
         throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
       }
       if (init?.method === "POST") {
+        if (typeof init.body === "string") {
+          createdLibraryId = (
+            JSON.parse(init.body) as { library_id: string }
+          ).library_id;
+        }
         return pendingCreate;
       }
       refreshRequestCount += 1;
@@ -282,12 +330,16 @@ describe("LibrariesPaneBody (system library protection)", () => {
         resourceGeneration={resourceGeneration}
         publishCommands={publishCommands}
       >
-        <LibrariesPaneBody />
+        <LibraryPlacementControllerProvider>
+          <LibrariesPaneBody />
+        </LibraryPlacementControllerProvider>
       </PaneReturnJourneyHarness>
     );
     const view = render(journey(0));
 
-    expect(await screen.findByText(staleLibrary.name)).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: staleLibrary.name }),
+    ).toBeInTheDocument();
     await user.type(
       screen.getByPlaceholderText("New library name..."),
       "Created library",
@@ -298,7 +350,7 @@ describe("LibrariesPaneBody (system library protection)", () => {
     await act(async () => {
       resolveCreate(
         Response.json({
-          data: library("lib-created", "Created library"),
+          data: library(createdLibraryId, "Created library"),
         }),
       );
       await Promise.resolve();
@@ -313,9 +365,13 @@ describe("LibrariesPaneBody (system library protection)", () => {
 
     view.rerender(journey(1));
 
-    expect(await screen.findByText(freshLibrary.name)).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: freshLibrary.name }),
+    ).toBeInTheDocument();
     expect(refreshRequestCount).toBe(2);
-    expect(screen.queryByText(staleLibrary.name)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: staleLibrary.name }),
+    ).not.toBeInTheDocument();
   });
 });
 

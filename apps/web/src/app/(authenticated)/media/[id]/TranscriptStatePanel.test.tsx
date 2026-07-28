@@ -48,9 +48,10 @@ const { apiFetchMock, mockBillingState } = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/api/client", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/api/client")>(
-    "@/lib/api/client",
-  );
+  const actual =
+    await vi.importActual<typeof import("@/lib/api/client")>(
+      "@/lib/api/client",
+    );
   return {
     ...actual,
     apiFetch: (...args: unknown[]) => apiFetchMock(...args),
@@ -104,7 +105,9 @@ describe("TranscriptStatePanel", () => {
     render(<Harness />);
 
     expect(
-      await screen.findByText("Monthly transcription quota was exceeded for this episode."),
+      await screen.findByText(
+        "Monthly transcription quota was exceeded for this episode.",
+      ),
     ).toBeInTheDocument();
     await waitFor(() => expect(apiFetchMock).toHaveBeenCalledTimes(1));
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -117,5 +120,32 @@ describe("TranscriptStatePanel", () => {
         signal: expect.any(AbortSignal),
       }),
     );
+  });
+
+  it("presents the plan gate before transcript state to an account without transcription", () => {
+    mockBillingState.account.can_transcribe = false;
+
+    render(
+      <TranscriptStatePanel
+        mediaId="media-locked"
+        transcriptState="unavailable"
+        transcriptCoverage="none"
+        onTranscriptStateChange={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByText("Transcription is included with AI Plus and AI Pro."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Current plan: Plus.")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Upgrade in Settings, then come back here to request this transcript.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Transcript unavailable for this episode."),
+    ).not.toBeInTheDocument();
+    expect(apiFetchMock).not.toHaveBeenCalled();
   });
 });

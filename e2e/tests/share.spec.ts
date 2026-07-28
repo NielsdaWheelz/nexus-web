@@ -50,7 +50,7 @@ test.describe("share to Nexus", () => {
       page.getByRole("heading", { name: "Save to Nexus" }),
     ).toBeVisible();
     await expect(
-      page.getByRole("combobox", { name: "Library destinations" }),
+      page.getByRole("button", { name: /^Library destinations:/ }),
     ).toBeVisible();
     expect(fromUrlRequests).toHaveLength(0);
 
@@ -86,8 +86,11 @@ test.describe("share to Nexus", () => {
         page.getByRole("heading", { name: "Save to Nexus" }),
       ).toBeVisible();
 
+      await page
+        .getByRole("button", { name: /^Library destinations:/ })
+        .click();
       const picker = page.getByRole("combobox", {
-        name: "Library destinations",
+        name: "Search or create a library",
       });
       await picker.fill(libraryName);
 
@@ -108,7 +111,13 @@ test.describe("share to Nexus", () => {
       expect(createPayload.data.name).toBe(libraryName);
 
       await expect(
-        page.getByRole("button", { name: `Remove ${libraryName}` }),
+        page.getByRole("option", { name: libraryName, exact: true }),
+      ).toHaveAttribute("aria-selected", "true");
+      await page.keyboard.press("Escape");
+      await expect(
+        page.getByRole("button", {
+          name: `Library destinations: ${libraryName}`,
+        }),
       ).toBeVisible();
 
       const fromUrlResponsePromise = page.waitForResponse(

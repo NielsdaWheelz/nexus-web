@@ -14,11 +14,14 @@ import {
 } from "@/lib/panes/paneRuntime";
 import type { PaneSecondaryPublication } from "@/lib/panes/panePublications";
 import type { ResourceItem } from "@/lib/resources/resourceItems";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { assumePaneVisitId } from "@/lib/workspace/schema";
 import {
   PaneReturnMementoProvider,
   type PaneReturnMementoCommands,
 } from "@/lib/workspace/paneReturnMemento";
+import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
+import { ShareControllerProvider } from "@/lib/sharing/controller";
 import AuthorPaneBody from "./AuthorPaneBody";
 
 const HANDLE = "ursula-le-guin";
@@ -146,9 +149,7 @@ describe("AuthorPaneBody", () => {
 
     view.rerender(
       <AuthorSecondaryHarness>
-        {authorPane({
-          resourceItem: paneResourceItem("contributor:not-a-uuid"),
-        })}
+        {authorPane({ resourceStatus: "invalid" })}
       </AuthorSecondaryHarness>,
     );
     expect(await screen.findByText("Connections unavailable")).toBeVisible();
@@ -472,7 +473,9 @@ function authorPane({
   return (
     <PaneReturnMementoProvider>
       <FeedbackProvider>
-        <PaneRuntimeProvider
+        <LibraryPlacementControllerProvider>
+          <ShareControllerProvider>
+            <PaneRuntimeProvider
         paneId="pane-1"
         visitId={TEST_VISIT_ID}
         isActive={true}
@@ -490,8 +493,10 @@ function authorPane({
         onReplacePane={() => {}}
         onActivateWorkspaceTarget={vi.fn(() => ({ kind: "Unchanged" as const, paneId: "pane-1" }))}
         >
-          <AuthorPaneBody />
-        </PaneRuntimeProvider>
+              <AuthorPaneBody />
+            </PaneRuntimeProvider>
+          </ShareControllerProvider>
+        </LibraryPlacementControllerProvider>
       </FeedbackProvider>
     </PaneReturnMementoProvider>
   );
@@ -512,11 +517,12 @@ function AuthorSecondaryHarness({ children }: { children: ReactNode }) {
 }
 
 function paneResourceItem(ref: string): ResourceItem {
-  const [scheme = "", id = ""] = ref.split(":", 2);
+  const parsed = parseResourceRef(ref);
+  if (parsed === null) throw new TypeError("test resource ref must be canonical");
   return {
     ref,
-    scheme,
-    id,
+    scheme: parsed.scheme,
+    id: parsed.id,
     label: CANONICAL,
     summary: "",
     route: `/authors/${HANDLE}`,

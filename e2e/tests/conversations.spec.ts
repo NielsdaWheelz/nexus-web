@@ -95,11 +95,12 @@ async function selectTextInMessage(
 async function openForksPanel(page: Page) {
   await activeWorkspacePane(page)
     .getByTestId("pane-shell-chrome")
-    .getByRole("button", { name: "Forks" })
+    .getByRole("button", { name: "Companion" })
     .click();
 
   const panel = page.getByTestId("workspace-secondary-pane");
   await expect(panel).toBeVisible();
+  await panel.getByRole("tab", { name: "Forks" }).click();
   await expect(
     panel.getByRole("tree", { name: "Conversation forks" }),
   ).toBeVisible();
@@ -150,16 +151,15 @@ test.describe("conversations", () => {
       await expect(metadata).toBeVisible();
       const metadataBox = await metadata.boundingBox();
       if (!metadataBox) {
-        throw new Error("Conversation metadata has no visible hit-test bounds.");
+        throw new Error(
+          "Conversation metadata has no visible hit-test bounds.",
+        );
       }
       const clickPoint = {
         x: metadataBox.x + metadataBox.width / 2,
         y: metadataBox.y + metadataBox.height / 2,
       };
-      await page.mouse.click(
-        clickPoint.x,
-        clickPoint.y,
-      );
+      await page.mouse.click(clickPoint.x, clickPoint.y);
 
       await expect(
         activeWorkspacePane(page).getByRole("region", {
@@ -400,9 +400,7 @@ test.describe("conversations", () => {
       ).toContainText("Scroll fixture message 50", { timeout: 10_000 });
       await expect
         .poll(() =>
-          scrollport.evaluate(
-            (node) => node.scrollHeight > node.clientHeight,
-          ),
+          scrollport.evaluate((node) => node.scrollHeight > node.clientHeight),
         )
         .toBe(true);
       await expectPaneShellContainedByViewport(activePane);
@@ -435,7 +433,9 @@ test.describe("conversations", () => {
         conversationPane.getByRole("log", { name: "Chat messages" }),
       ).toContainText("Linear branch answer keeps the original path active.");
       await expect(
-        conversationPane.locator(`[data-message-id="${seed.root_assistant_id}"]`),
+        conversationPane.locator(
+          `[data-message-id="${seed.root_assistant_id}"]`,
+        ),
       ).toContainText(seed.root_assistant_content);
 
       const rootAssistant = conversationPane.locator(
@@ -458,7 +458,9 @@ test.describe("conversations", () => {
       await page.getByRole("button", { name: "Fork from selection" }).click();
       await expect(branchPreview).toContainText(seed.quote_exact);
 
-      const input = conversationPane.getByRole("textbox", { name: "Ask anything" });
+      const input = conversationPane.getByRole("textbox", {
+        name: "Ask anything",
+      });
       await input.fill("E2E selected quote follow-up");
       const sendButton = conversationPane.getByRole("button", {
         name: "SEND",
@@ -549,7 +551,9 @@ test.describe("conversations", () => {
         .fill("Renamed quote fork");
       const renameResponsePromise = page.waitForResponse(
         (response) =>
-          response.url().includes(`/api/conversations/${conversationId}/forks/`) &&
+          response
+            .url()
+            .includes(`/api/conversations/${conversationId}/forks/`) &&
           response.request().method() === "PATCH",
       );
       await panel
@@ -614,11 +618,10 @@ test.describe("conversations", () => {
       await expect(page.getByTestId("workspace-secondary-pane")).toHaveCount(0);
       await expect(page.getByTestId("mobile-secondary-host")).toHaveCount(0);
 
-      await activeWorkspacePane(page)
-        .getByTestId("pane-shell-chrome")
-        .getByRole("button", { name: "Forks" })
-        .click();
-
+      await page.getByRole("button", { name: "Pane options" }).click();
+      await page.getByRole("menuitem", { name: "Show Companion" }).click();
+      const companion = page.getByTestId("mobile-secondary-host");
+      await companion.getByRole("tab", { name: "Forks" }).click();
       const secondary = page.getByRole("dialog", { name: "Forks" });
       await expect(secondary).toBeVisible();
       await expect(page.getByTestId("workspace-secondary-pane")).toHaveCount(0);

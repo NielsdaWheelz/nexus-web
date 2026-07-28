@@ -18,6 +18,7 @@
 
 import { ApiError, apiFetch, apiKeepaliveJson, isApiError, type ApiPath } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { publishConsumptionProjectionChange } from "@/lib/consumption/projectionRevision";
 import type { Presence } from "@/lib/api/presence";
 import {
   decodeListeningState,
@@ -232,6 +233,8 @@ export function createListeningHeartbeat(config: ListeningHeartbeatConfig): List
       throw new Error("Heartbeat response generation/sequence echo mismatch (defect).");
     }
     installState(result.listeningState);
+    // An accepted heartbeat install can advance read_state/InProgress.
+    publishConsumptionProjectionChange();
     maybeResend();
   }
 

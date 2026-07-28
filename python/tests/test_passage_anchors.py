@@ -526,7 +526,6 @@ class TestRefreshPreservation:
 
         delete_web_article_artifacts(
             db_session,
-            owner_user_id=bootstrapped_user,
             media_id=media_id,
             include_content_index=True,
         )

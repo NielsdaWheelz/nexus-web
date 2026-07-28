@@ -1,35 +1,37 @@
 # App navigation
 
-The app navigation is a small, fixed projection of Nexus's highest-frequency
-destinations. It is not a directory of every feature and it is not a second
-Launcher. Its job is to keep the daily loop—resume, find, listen, think, and
-reflect—one gesture away on desktop and mobile.
+App navigation has two projections with distinct jobs:
+
+- the desktop rail is a small, fixed projection of Nexus's highest-frequency
+  destinations;
+- mobile has one Nexus Switchboard entrance whose Places projection exposes the
+  bounded destination subset defined below.
+
+Neither is a directory of every feature.
 
 ## Product contract
 
 - **Lectern is home.** `/lectern` is the canonical authenticated home, the brand
   destination, and the first visible navigation item.
-- **The order is exact and flat:** Lectern, Libraries, Podcasts, Chats, Notes,
-  Stats, Atlas, Oracle. There are no “Library” or “Tools” headings. Stats
-  follows Notes because it is the feedback leg of the daily consume → think →
-  reflect loop, not a feature-directory entry.
 - **Podcasts and Chats remain primary.** Atlas and Oracle are present but do not
   displace the frequent listening and conversation tasks.
-- **Desktop and mobile share one model.** The rail and sheet differ only where
-  their containers require different interaction mechanics.
+- **Desktop rail order is exact and flat:** Lectern, Libraries, Podcasts, Chats,
+  Notes, Stats, Atlas, Oracle.
+- **Mobile Places order is exact and flat:** Lectern, Libraries, Podcasts,
+  Chats, Notes. Stats, Atlas, and Oracle remain retrievable through Find.
 - **Fixed navigation is not customizable.** Pinning is not part of this
   contract. Personalized retrieval belongs in the Lectern Reading Slate and the
   Launcher, where it can scale without destabilizing spatial memory.
 
-Account, Add, and Launcher controls are shell actions outside the ordered
-destination list. Search, Authors, settings subpages, and other valid
-destinations remain available through the Launcher and keybindings without
-becoming permanent rail items.
+On desktop, Account, Add, and Launcher controls are rail actions outside the
+ordered destination list. On mobile, Account, Find, Add/Create, open panes, and
+recently closed panes live inside Switchboard. Search, Authors, settings
+subpages, and other valid destinations remain retrievable without becoming
+permanent navigation items.
 
-Add is a direct Launcher detail, not a Launcher lane or mode chooser. The `+`
-opens the source-first Add workbench immediately; an editable non-default
-Library may seed its full destination object, while general Add/My Library seed
-no non-default destination.
+Desktop Add is a direct Launcher detail, not a Launcher lane or mode chooser.
+Mobile Import opens the same source-first Add workbench from Switchboard Quick;
+an editable non-default Library may still seed its full destination object.
 
 ## Ownership
 
@@ -38,12 +40,15 @@ no non-default destination.
 | Authenticated home href                                           | `apps/web/src/lib/routes/defaults.ts`                                                                             |
 | Destination identity (`id`, label, href, keywords, optional icon) | `apps/web/src/lib/navigation/destinations.ts`                                                                     |
 | Fixed-nav membership, order, and decoration                       | `apps/web/src/components/appnav/navModel.ts`                                                                      |
+| Mobile Places membership and order                               | `SWITCHBOARD_PLACE_IDS` in `apps/web/src/lib/switchboard/places.ts`                                                |
 | Route-to-semantic-section ownership                               | section `header.destinationId`, or resource `sectionDestinationId`, in `apps/web/src/lib/panes/paneRouteModel.ts` |
-| Rail/sheet projection and pane dispatch                           | `apps/web/src/components/appnav/AppNav.tsx`                                                                       |
+| Desktop rail projection and pane dispatch                         | `apps/web/src/components/appnav/AppNav.tsx`                                                                       |
+| Mobile global-access projection                                  | `apps/web/src/components/switchboard/*`                                                                           |
 | Internal-link gesture policy                                      | `apps/web/src/lib/panes/targetLinkActivation.ts`                                                                  |
 | Target selection, restoration, creation, and activation           | `activateWorkspaceTarget` in `apps/web/src/lib/workspace/store.tsx`                                               |
 | Server-restored deep-link merge                                   | `apps/web/src/lib/workspace/workspaceRestore.ts`                                                                  |
-| Launcher projection                                               | `apps/web/src/lib/launcher/providers.ts`                                                                          |
+| Desktop Launcher projection                                      | `apps/web/src/lib/launcher/providers.ts`                                                                          |
+| Mobile quick-action projection                                   | `apps/web/src/lib/launcher/quickActions.ts`                                                                        |
 | Direct Add intent/session                                         | `apps/web/src/lib/launcher/launcherEvents.ts` and `apps/web/src/components/launcher/useAddContentSession.ts`      |
 | Keybinding projection                                             | `apps/web/src/app/(authenticated)/settings/keybindings/KeybindingsPaneBody.tsx`                                   |
 | Palette-history href allowlist                                    | `python/nexus/services/command_palette.py`                                                                        |
@@ -96,11 +101,10 @@ related link gestures still work. The rendered anchor always retains a real
 `href` for semantics, copy-link behavior, and no-JavaScript fallback. Touch and
 `Enter` use `Follow`.
 
-The mobile sheet closes only after the workspace claims a navigation event. A
-real destination handoff and Launcher/Add handoffs suppress return-focus; an
-already-active destination restores the sheet opener. The desktop Account menu
-uses the same result, restoring its trigger only for already-active Settings.
-Escape, backdrop, history, and close-button dismissal also restore focus.
+Switchboard closes only after the workspace accepts navigation. A real
+destination handoff suppresses return focus; nonnavigating dismissal restores
+the Nexus trigger. Pane-cap rejection keeps the target in the shell-owned
+recovery state. The desktop Account menu retains its existing focus contract.
 
 In the collapsed desktop rail, the brand and Expand control remain separate,
 non-overlapping hit targets. The expand control must never be stretched over the
@@ -137,8 +141,10 @@ When adding or changing a destination:
    `sectionDestinationId`.
 4. If the backend records Launcher history for the href, update its canonical
    allowlist and integration coverage.
-5. Keep desktop and mobile projections sourced from the same `NAV_MODEL`.
-6. Verify flat order, semantic detail-route activity, native modified clicks,
+5. Add a destination to mobile Places only by changing
+   `SWITCHBOARD_PLACE_IDS`; do not duplicate its identity.
+6. Verify desktop and mobile projection membership separately, semantic
+   detail-route activity, native modified clicks,
    exact-pane reuse, minimized-pane restoration, and focus handoff.
 
 This is the production-shaped 80/20 solution: a typed identity registry, one

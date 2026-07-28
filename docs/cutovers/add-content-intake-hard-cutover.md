@@ -3,6 +3,21 @@
 **Status:** IMPLEMENTED · 2026-07-21
 **Type:** Hard cutover — no legacy path, fallback, dual behavior, feature flag, or backward compatibility.
 
+> Destination copy in this document is superseded by
+> [`library-all-and-smart-views-hard-cutover.md`](library-all-and-smart-views-hard-cutover.md):
+> empty Media intake/Android Share selection reads **No additional libraries**,
+> empty podcast/OPML selection reads **No libraries selected**, and the Default
+> library presents as **All** — no user-facing surface says "My Library".
+
+> **Superseded (2026-07-27):**
+> [`library-chooser-interaction-hard-cutover.md`](library-chooser-interaction-hard-cutover.md)
+> supersedes §3.6's picker/disclosure residue clauses: `LibraryDestinationDisclosure`
+> is deleted, replaced by `LibraryDestinationField` opening the shared
+> `LibraryChooserSurface`/`LibraryChooser`, and the nested mobile placement
+> Dialog it describes in the Escape order no longer exists. This document's
+> ingest, capability, route, request, and response contracts remain
+> normative.
+
 ## 0. Decision
 
 Explicit Add becomes one source-first workbench inside the existing Launcher:
@@ -92,7 +107,7 @@ policy; the removal-kind mismatch was an API capability gap.
 | Entry        | Navigation `+` opens Add content directly. Matching non-empty queries expose URL/file/OPML aliases. No Add lane/menu/query sigil exists.       |
 | Intake       | Links first, compact choose/drop PDF/EPUB second, closed optional Libraries third, OPML last.                                                  |
 | Staging      | Review/file selection creates local rows only. The session cap is atomic; overflow never truncates silently.                                   |
-| Draft filing | My Library is implicit. One movable all-drafts control plus per-row controls remain available until submission.                                |
+| Draft filing | The Default library is implicit. One movable all-drafts control plus per-row controls remain available until submission.                                |
 | Submission   | `Add N items` freezes valid row intent and runs at concurrency `2`; invalid rows are excluded.                                                 |
 | Outcomes     | No automatic navigation. Settled Accepted rows retain status, Open, and authoritative individual/bulk placement editing.                       |
 | OPML         | Secondary branch; OPML/XML ≤1,000,000 bytes and ≤200 RSS outlines; one destination set; aggregate result.                                      |
@@ -104,9 +119,9 @@ policy; the removal-kind mismatch was an API capability gap.
 
 - Navigation Add opens Content: Links focused on desktop, heading on mobile. URL/file
   aliases focus that control; OPML aliases open OPML. Editable non-default library context
-  seeds full `id/name/color`; general Add/My Library seed none.
+  seeds full `id/name/color`; general Add and the All pane seed none.
 - Empty order: Links + `Review links`; compact PDF/EPUB choose/drop + exact limits; closed
-  `Libraries · My Library only · Change`; subdued OPML link.
+  `Libraries · No additional libraries · Change`; subdued OPML link.
 - Non-empty Add is one ordered mixed-state queue. Source entry collapses behind `Add more`.
   Show one movable all-Drafts toolbar iff Drafts exist; show result summary and explicit
   `Add all to…` / `Remove all from…` iff settled Accepted rows exist.
@@ -126,7 +141,7 @@ policy; the removal-kind mismatch was an API capability gap.
   focused removal chooses next, previous, then Add more/source.
 - Drafts own destination objects. All-Drafts overwrites current Drafts; row edit affects
   one; new Draft copies the current default. Freeze derives ordered IDs once. Invalid and
-  accepted rows do not change. My Library is implicit and never enters `library_ids`.
+  accepted rows do not change. The Default library is implicit and never enters `library_ids`.
 
 ### 3.3 Submission and outcome truth
 
@@ -198,8 +213,8 @@ confirm, and `sourceUrlCapture` consume it rather than restating local status he
 - Before reading bytes, reject no/empty/unsupported/>1,000,000-byte file. Decode the
   `ArrayBuffer` with fatal UTF-8 locally; server owns XML/root validation and the
   200-RSS-outline cap.
-- Copy is `Libraries for new subscriptions`. Empty is `No libraries selected`: My
-  Library cannot receive podcasts. Send `default_library_ids` and
+- Copy is `Libraries for new subscriptions`. Empty is `No libraries selected`: the
+  Default library cannot receive podcasts. Send `default_library_ids` and
   `per_feed_library_ids: {}`; already-active subscriptions skip without refiling.
 - Strictly reject counters whose classified outcomes exceed Total. Show returned
   Total/Imported/Already subscribed/Invalid; derive `Could not subscribe = total -
@@ -567,7 +582,7 @@ refuses the last reference for every kind. Whole-library teardown retains the ex
 lifecycle boundary: it cleans up zero-reference document media, while video and podcast-
 episode physical lifecycle remains unchanged and outside this cutover.
 
-Add-created media retain My Library, so last-reference refusal is not a normal Add
+Add-created media retain the Default library, so last-reference refusal is not a normal Add
 outcome. `DELETE /media/{id}` stays document resource deletion.
 
 Convergent clients use one-object inputs:

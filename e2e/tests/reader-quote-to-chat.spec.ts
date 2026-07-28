@@ -163,7 +163,7 @@ test.describe("reader quote-to-chat", () => {
 
       // The same quote renders read-only above the sent user message.
       const sentPrompt = activePane
-        .getByRole("group", { name: "User prompt" })
+        .getByRole("group", { name: "Your message" })
         .filter({ hasText: messageText });
       await expect(sentPrompt).toBeVisible({ timeout: 20_000 });
       await expect(
@@ -191,7 +191,7 @@ test.describe("reader quote-to-chat", () => {
         `/conversations/${createdConversationId}`,
       );
       const reopenedPrompt = activeWorkspacePane(page)
-        .getByRole("group", { name: "User prompt" })
+        .getByRole("group", { name: "Your message" })
         .filter({ hasText: messageText });
       await expect(
         reopenedPrompt.getByRole("figure", { name: "Quoted passage" }),
@@ -258,7 +258,7 @@ test.describe("reader quote-to-chat", () => {
         .click();
 
       const sentPrompt = activePane
-        .getByRole("group", { name: "User prompt" })
+        .getByRole("group", { name: "Your message" })
         .filter({ hasText: typed });
       await expect(sentPrompt).toBeVisible({ timeout: 20_000 });
       await expect(
@@ -338,7 +338,16 @@ test.describe("reader quote-to-chat", () => {
           exact: "",
           color: "yellow",
           quads: [
-            { x1: 72, y1: 120, x2: 200, y2: 120, x3: 200, y3: 150, x4: 72, y4: 150 },
+            {
+              x1: 72,
+              y1: 120,
+              x2: 200,
+              y2: 120,
+              x3: 200,
+              y3: 150,
+              x4: 72,
+              y4: 150,
+            },
           ],
         },
         headers: stateChangingApiHeaders(),
@@ -349,8 +358,8 @@ test.describe("reader quote-to-chat", () => {
       createResponse.ok(),
       `POST /api/media/${seed.pdf_media_id}/pdf-highlights (geometry-only) failed: ${createResponse.status()} ${createBody.slice(0, 400)}`,
     ).toBeTruthy();
-    const highlightId = (JSON.parse(createBody) as { data: { id: string } }).data
-      .id;
+    const highlightId = (JSON.parse(createBody) as { data: { id: string } })
+      .data.id;
     try {
       // Launching its intent resolves to an authoritative NonSendable card: the
       // composer names why it can't be sent and keeps SEND disabled — the quote

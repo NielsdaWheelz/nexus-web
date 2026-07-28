@@ -14,7 +14,7 @@ const item: LauncherItem = {
   rank: {},
 };
 
-function renderRow() {
+function mountLauncherRow() {
   const onSelect = vi.fn();
   render(
     <LauncherRow
@@ -31,7 +31,7 @@ function renderRow() {
 
 describe("LauncherRow activation intent", () => {
   it("derives Follow/Pointer from a plain pointer click", () => {
-    const onSelect = renderRow();
+    const onSelect = mountLauncherRow();
 
     fireEvent.click(screen.getByRole("option", { name: "Libraries" }), {
       detail: 1,
@@ -44,7 +44,7 @@ describe("LauncherRow activation intent", () => {
   });
 
   it("derives Fork/Pointer only for Shift pointer clicks", () => {
-    const onSelect = renderRow();
+    const onSelect = mountLauncherRow();
 
     fireEvent.click(screen.getByRole("option", { name: "Libraries" }), {
       detail: 1,
@@ -58,7 +58,7 @@ describe("LauncherRow activation intent", () => {
   });
 
   it("keeps Shift keyboard activation as Follow/Keyboard", () => {
-    const onSelect = renderRow();
+    const onSelect = mountLauncherRow();
 
     fireEvent.click(screen.getByRole("option", { name: "Libraries" }), {
       detail: 0,

@@ -347,8 +347,7 @@ class AggregateMediaBinding(DossierBindingBase):
             )
 
         if any(
-            isinstance(item, MediaOmission)
-            and item.reason is MediaOmissionReason.ProjectionPending
+            isinstance(item, MediaOmission) and item.reason is MediaOmissionReason.ProjectionPending
             for item in ensured
         ):
             raise AggregateDependenciesPending

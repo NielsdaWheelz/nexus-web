@@ -4,6 +4,7 @@ import { absent, present } from "@/lib/api/presence";
 import { libraryResourceOptions } from "@/lib/actions/resourceActions";
 import { publishResourceRowActions } from "@/lib/collections/resourceActionPublication";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { libraryPresentation } from "@/lib/libraries/presentation";
 import type { CollectionRowView } from "@/lib/collections/types";
 
 export interface LibraryPresenterItem {
@@ -24,20 +25,25 @@ export function presentLibrary(
   ctx: LibraryPresenterContext,
 ): CollectionRowView {
   const href = `/libraries/${item.id}`;
+  const presentation = libraryPresentation({
+    isDefault: item.isDefault,
+    name: item.name,
+    role: item.role,
+  });
   return {
     id: item.id,
     kind: "library",
     primary: {
       kind: "link",
       href,
-      paneLabelHint: item.name,
+      paneLabelHint: presentation.name,
     },
-    title: { text: item.name },
+    title: { text: presentation.name },
     contributors: [],
     publicationDate: absent(),
     context: present({
       kind: "Text",
-      text: item.isDefault ? "Default library" : item.role,
+      text: presentation.context,
     }),
     activity: absent(),
     exceptionalStatus: absent(),

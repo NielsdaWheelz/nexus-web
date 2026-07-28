@@ -18,6 +18,7 @@ import styles from "./WorkspaceHost.module.css";
 
 export default function PaneRouteBoundary({ children }: { children: ReactNode }) {
   const paneRuntime = usePaneRuntime();
+  const activateTarget = paneRuntime?.activateTarget ?? null;
   const warmPane = usePaneWarm();
   const recordNavigationModality = useRecordPaneNavigationModality();
   const isActivationTarget = useCallback((target: EventTarget | null) => {
@@ -44,10 +45,14 @@ export default function PaneRouteBoundary({ children }: { children: ReactNode })
       }
       const anchor = target.closest("a[href]");
       if (anchor instanceof HTMLAnchorElement) {
-        activateTargetAnchor({ event, runtime: paneRuntime, anchor });
+        activateTargetAnchor({
+          event,
+          runtime: activateTarget ? { activateTarget } : null,
+          anchor,
+        });
       }
     },
-    [isActivationTarget, paneRuntime, recordNavigationModality],
+    [activateTarget, isActivationTarget, recordNavigationModality],
   );
   const handlePointerDownCapture = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {

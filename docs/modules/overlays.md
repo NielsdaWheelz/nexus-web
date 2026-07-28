@@ -8,6 +8,8 @@ behavior primitives it composes. Owners live under
 `apps/web/src/lib/ui/{useDialogOverlay,useModalLayer,useEscapeKey,useBodyOverflowLock,useHistoryDismiss,useKeyboardInset}.ts`.
 
 Established by `docs/cutovers/mobile-sheet-keyboard-unification-hard-cutover.md`.
+The current mobile application projection is defined by
+`docs/cutovers/mobile-nexus-switchboard-hard-cutover.md`.
 
 ## MobileSheet Capability Contract
 
@@ -18,6 +20,9 @@ sheet it owns:
 - backdrop scrim with tap-to-dismiss
 - grabber + drag-to-dismiss (96 px threshold, inert under reduced motion)
 - keyboard avoidance: shrink + lift via `--keyboard-inset` on the panel
+- reporting of that keyboard inset to the shell-owned mobile viewport
+  capability through a scoped release; the newest active sheet owns the channel
+  and releasing it restores the preceding sheet
 - safe-area bottom padding
 - the `useDialogOverlay` modal contract (body scroll lock, focus trap, initial
   focus, return focus, Escape)
@@ -73,7 +78,8 @@ intervening Dialog is Escape-dismissed before Back can reach its underlay.
 
 `useKeyboardInset` is the single keyboard-occlusion source and is importable
 only by `MobileSheet` (ESLint-enforced). Values below its 60 px threshold
-report 0. Do not add per-component `visualViewport` keyboard listeners.
+report 0. `MobileSheet` publishes the active inset to `MobileViewportProvider`;
+no other component reads `visualViewport` to infer keyboard geometry.
 
 The platform layer is `interactiveWidget: "resizes-content"` in the root
 `viewport` export (`apps/web/src/app/layout.tsx`): Android/Firefox resize the
@@ -90,14 +96,15 @@ Scrim is a two-value semantic choice:
 
 - `soft` (`--overlay-scrim-soft`): in-context companion sheets — workspace
   secondary surfaces, model settings
-- `default` (`--overlay-scrim`): app-level modals — Launcher (including its Add
-  workbench), expanded player
+- `default` (`--overlay-scrim`): app-level modals — Nexus Switchboard
+  (including its embedded workflows), expanded player
 
-## Out Of Family
+## Nexus Switchboard
 
-`NavSheet` is a left-anchored side drawer, not a bottom sheet. It keeps its own
-geometry, uses `useDialogOverlay` directly, and wires `useHistoryDismiss`
-itself. Do not fold it into `MobileSheet`.
+The Nexus Switchboard is the sole mobile global-access overlay. It uses one
+mounted `MobileSheet` while Root, Find, actions, capture, acquisition, and
+recovery pages replace one another inside the sheet. Mobile has no global
+navigation drawer and no stacked workflow sheet.
 
 ## Underlying Primitives
 

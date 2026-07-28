@@ -10,7 +10,9 @@ import {
   type ResourceSurfaceCommand,
 } from "@/lib/resourceSurface/api";
 import { isApiError } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { ResourceItem, ResourceSurface, ResourceSurfaceOccurrence } from "@/lib/resources/resourceItems";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { isRecord } from "@/lib/validation";
 
 const IDLE_DELAY_MS = 1500;
@@ -117,9 +119,12 @@ function optimistic(surface: ResourceSurface, command: ResourceSurfaceCommand): 
     orderedItems.splice(index < 0 ? orderedItems.length : index + 1, 0, localOccurrence(surface, command.noteId, command.rightBodyPmJson));
     return { ...surface, orderedItems };
   }
-  const [scheme, id] = command.targetRef.split(":", 2);
+  const parsedTarget = parseResourceRef(command.targetRef);
+  if (parsedTarget === null) {
+    throw new TypeError("insert_resource targetRef must be canonical");
+  }
   const orderedItems = [...surface.orderedItems];
-  orderedItems.splice(insertIndex(orderedItems, command.position), 0, { occurrenceId: `local:${command.targetRef}`, target: { item: { ...surface.source.item, ref: command.targetRef, scheme, id, label: "Resource", summary: "", route: null, activation: { resourceRef: command.targetRef, kind: "none", href: null, unresolvedReason: null } }, content: { kind: "resource_summary" } } });
+  orderedItems.splice(insertIndex(orderedItems, command.position), 0, { occurrenceId: `local:${command.targetRef}`, target: { item: { ...surface.source.item, ref: command.targetRef, scheme: parsedTarget.scheme, id: parsedTarget.id, label: "Resource", summary: "", route: null, activation: { resourceRef: command.targetRef, kind: "none", href: null, unresolvedReason: null } }, content: { kind: "resource_summary" } } });
   return { ...surface, orderedItems };
 }
 
@@ -311,6 +316,7 @@ export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }
         store();
       }).catch((error) => {
         if (generation !== generationRef.current) return;
+        if (handleUnauthenticatedApiError(error)) return;
         stoppedRef.current = true;
         requiresRebaseRef.current ||= (
           isApiError(error) && error.code === "E_RESOURCE_CONFLICT"
@@ -375,6 +381,7 @@ export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }
         store();
       }).catch((error) => {
         if (generation !== generationRef.current) return;
+        if (handleUnauthenticatedApiError(error)) return;
         stoppedRef.current = true;
         requiresRebaseRef.current ||= (
           isApiError(error) && error.code === "E_RESOURCE_CONFLICT"
@@ -436,6 +443,7 @@ export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }
       pumpRef.current();
     }).catch((error) => {
       if (generation !== generationRef.current) return;
+      if (handleUnauthenticatedApiError(error)) return;
       activeRef.current = false;
       stoppedRef.current = true;
       requiresRebaseRef.current ||= (
@@ -566,6 +574,7 @@ export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }
       next = await fetchResourceSurface(sourceRef);
     } catch (error) {
       if (generation === generationRef.current) {
+        if (handleUnauthenticatedApiError(error)) return;
         setStatus("failed");
         onErrorRef.current?.(error);
       }
@@ -603,6 +612,7 @@ export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }
         settleStatus();
       }).catch((error) => {
         if (generation !== generationRef.current) return;
+        if (handleUnauthenticatedApiError(error)) return;
         setStatus("failed");
         onErrorRef.current?.(error);
       });

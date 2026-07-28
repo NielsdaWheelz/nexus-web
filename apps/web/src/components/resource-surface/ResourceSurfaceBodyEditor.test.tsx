@@ -6,6 +6,7 @@ import type {
   ResourceItem,
   ResourceSurfaceOccurrence,
 } from "@/lib/resources/resourceItems";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import ResourceSurfaceBodyEditor from "./ResourceSurfaceBodyEditor";
 
 describe("ResourceSurfaceBodyEditor", () => {
@@ -236,18 +237,19 @@ function resourceOccurrence(
 }
 
 function resourceItem(ref: string, label: string): ResourceItem {
-  const [scheme, id] = ref.split(":") as [string, string];
+  const parsed = parseResourceRef(ref);
+  if (parsed === null) throw new TypeError("test resource ref must be canonical");
   return {
     ref,
-    scheme,
-    id,
+    scheme: parsed.scheme,
+    id: parsed.id,
     label,
     summary: `${label} summary`,
-    route: `/${scheme}/${id}`,
+    route: `/${parsed.scheme}/${parsed.id}`,
     activation: {
       resourceRef: ref,
       kind: "route",
-      href: `/${scheme}/${id}`,
+      href: `/${parsed.scheme}/${parsed.id}`,
       unresolvedReason: null,
     },
     missing: false,
@@ -270,7 +272,7 @@ function resourceItem(ref: string, label: string): ResourceItem {
       promptRender: "none",
       expansionPolicy: "none",
       expandable: false,
-      adjacencySource: scheme === "note_block",
+      adjacencySource: parsed.scheme === "note_block",
       adjacencyTarget: true,
     },
     versionByLane: {},

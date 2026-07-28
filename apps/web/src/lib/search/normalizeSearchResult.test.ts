@@ -43,7 +43,11 @@ function adapt(row: Record<string, unknown>) {
 }
 
 function normalize(row: Record<string, unknown>) {
-  return normalizeSearchResult(withActivation(row));
+  try {
+    return normalizeSearchResult(withActivation(row));
+  } catch {
+    return null;
+  }
 }
 
 function withActivation(row: Record<string, unknown>) {
@@ -54,6 +58,18 @@ function withActivation(row: Record<string, unknown>) {
     typeof payload.resource_ref === "string"
       ? payload.resource_ref
       : defaultResourceRef(payload.type);
+  const ownerResourceRef =
+    typeof payload.owner_resource_ref === "string"
+      ? payload.owner_resource_ref
+      : payload.type === "content_chunk" ||
+          payload.type === "fragment" ||
+          payload.type === "highlight" ||
+          payload.type === "evidence_span" ||
+          payload.type === "reader_apparatus_item"
+        ? `media:${DEFAULT_RESOURCE_ID}`
+        : payload.type === "message" || payload.type === "artifact"
+          ? `conversation:${DEFAULT_RESOURCE_ID}`
+          : resourceRef;
   const activation =
     payload.activation && typeof payload.activation === "object"
       ? payload.activation
@@ -66,9 +82,23 @@ function withActivation(row: Record<string, unknown>) {
           href,
           unresolved_reason: null,
         };
+  const source =
+    payload.source !== null && typeof payload.source === "object"
+      ? {
+          ...(payload.source as Record<string, unknown>),
+          summary_md:
+            typeof (payload.source as Record<string, unknown>).summary_md ===
+              "string" ||
+            (payload.source as Record<string, unknown>).summary_md === null
+              ? (payload.source as Record<string, unknown>).summary_md
+              : null,
+        }
+      : payload.source;
   return {
     ...payload,
+    ...(source === undefined ? {} : { source }),
     resource_ref: resourceRef,
+    owner_resource_ref: ownerResourceRef,
     activation,
     citation_target:
       typeof row.citation_target === "string"
@@ -514,6 +544,7 @@ describe("normalizeSearchResult happy-path adaptation", () => {
       context_ref: { type: "note_block", id: "note-1" },
       body_text: "note body text",
       highlight_excerpt: null,
+      note_origin: "note",
       locator: {
         type: "note_block_offsets",
         block_id: "note-1",
@@ -527,6 +558,7 @@ describe("normalizeSearchResult happy-path adaptation", () => {
       primaryText: "note body text",
       sourceMeta: "note",
       noteBody: "note body text",
+      noteOrigin: "note",
     });
   });
 });
@@ -603,10 +635,16 @@ describe("normalizeSearchResult artifact handling", () => {
 
 describe("normalizeSearchResult structural rejections", () => {
   it("rejects non-object / missing base-field payloads", () => {
-    expect(normalizeSearchResult(null)).toBeNull();
-    expect(normalizeSearchResult("nope")).toBeNull();
-    expect(normalizeSearchResult({ type: "page", id: 7 })).toBeNull();
-    expect(
+    expect(() => normalizeSearchResult(null)).toThrow(
+      "Search API returned an invalid result row",
+    );
+    expect(() => normalizeSearchResult("nope")).toThrow(
+      "Search API returned an invalid result row",
+    );
+    expect(() =>
+      normalizeSearchResult({ type: "page", id: 7 }),
+    ).toThrow("Search API returned an invalid result row");
+    expect(() =>
       normalizeSearchResult({
         type: "page",
         id: "page-1",
@@ -615,7 +653,7 @@ describe("normalizeSearchResult structural rejections", () => {
         title: "t",
         // missing activation + context_ref
       }),
-    ).toBeNull();
+    ).toThrow("Search API returned an invalid result row");
   });
 
   it("rejects an unknown result type", () => {
@@ -636,7 +674,7 @@ describe("normalizeSearchResult structural rejections", () => {
   });
 
   it("rejects rows without an activatable resource target", () => {
-    expect(
+    expect(() =>
       normalizeSearchResult({
         type: "page",
         id: "page-1",
@@ -647,6 +685,7 @@ describe("normalizeSearchResult structural rejections", () => {
         media_id: null,
         media_kind: null,
         resource_ref: `page:${DEFAULT_RESOURCE_ID}`,
+        owner_resource_ref: `page:${DEFAULT_RESOURCE_ID}`,
         activation: {
           resource_ref: `page:${DEFAULT_RESOURCE_ID}`,
           kind: "none",
@@ -658,7 +697,52 @@ describe("normalizeSearchResult structural rejections", () => {
         context_ref: { type: "page", id: "page-1" },
         description: "Page",
       }),
-    ).toBeNull();
+    ).toThrow("Search API returned an invalid result row");
+  });
+
+  it("defects when the canonical owner identity drifts", () => {
+    expect(() =>
+      normalizeSearchResult(
+        withActivation({
+          type: "page",
+          id: "page-1",
+          score: 0.5,
+          snippet: "s",
+          title: "t",
+          source_label: "page",
+          media_id: null,
+          media_kind: null,
+          owner_resource_ref:
+            "page:22222222-2222-4222-8222-222222222222",
+          context_ref: { type: "page", id: "page-1" },
+        }),
+      ),
+    ).toThrow("Search API returned an invalid result row");
+
+    expect(() =>
+      normalizeSearchResult(
+        withActivation({
+          type: "highlight",
+          id: "highlight-1",
+          score: 0.5,
+          snippet: "s",
+          title: "t",
+          source_label: "source",
+          media_id: DEFAULT_RESOURCE_ID,
+          media_kind: "web_article",
+          owner_resource_ref:
+            "media:22222222-2222-4222-8222-222222222222",
+          context_ref: { type: "highlight", id: "highlight-1" },
+          source: {
+            media_id: DEFAULT_RESOURCE_ID,
+            media_kind: "web_article",
+            title: "Source",
+            contributors: [],
+            published_date: null,
+          },
+        }),
+      ),
+    ).toThrow("Search API returned an invalid result row");
   });
 
   it("defects before filtering a contradictory none activation", () => {
@@ -673,6 +757,7 @@ describe("normalizeSearchResult structural rejections", () => {
         media_id: null,
         media_kind: null,
         resource_ref: `page:${DEFAULT_RESOURCE_ID}`,
+        owner_resource_ref: `page:${DEFAULT_RESOURCE_ID}`,
         activation: {
           resource_ref: `page:${DEFAULT_RESOURCE_ID}`,
           kind: "none",
@@ -699,6 +784,7 @@ describe("normalizeSearchResult structural rejections", () => {
         media_id: null,
         media_kind: null,
         resource_ref: `page:${DEFAULT_RESOURCE_ID}`,
+        owner_resource_ref: `page:${DEFAULT_RESOURCE_ID}`,
         activation: {
           resource_ref: "page:22222222-2222-4222-8222-222222222222",
           kind: "route",
@@ -722,15 +808,16 @@ describe("normalizeSearchResult structural rejections", () => {
         source_label: "page",
         media_id: null,
         media_kind: null,
-        resource_ref: "page:page-1",
+        resource_ref: `page:${DEFAULT_RESOURCE_ID}`,
+        owner_resource_ref: `page:${DEFAULT_RESOURCE_ID}`,
         activation: {
-          resource_ref: "page:page-1",
+          resource_ref: `page:${DEFAULT_RESOURCE_ID}`,
           kind: "missing",
-          href: "/pages/page-1",
+          href: `/pages/${DEFAULT_RESOURCE_ID}`,
           unresolved_reason: null,
         },
-        citation_target: "page:page-1",
-        context_ref: { type: "page", id: "page-1" },
+        citation_target: `page:${DEFAULT_RESOURCE_ID}`,
+        context_ref: { type: "page", id: DEFAULT_RESOURCE_ID },
       }),
     ).toThrow("SearchResult.activation.kind");
   });
@@ -747,6 +834,7 @@ describe("normalizeSearchResult structural rejections", () => {
         media_id: null,
         media_kind: null,
         resource_ref: `page:${DEFAULT_RESOURCE_ID}`,
+        owner_resource_ref: `page:${DEFAULT_RESOURCE_ID}`,
         activation: {
           resourceRef: `page:${DEFAULT_RESOURCE_ID}`,
           kind: "route",
@@ -770,10 +858,11 @@ describe("normalizeSearchResult structural rejections", () => {
         source_label: "page",
         media_id: null,
         media_kind: null,
-        resource_ref: "page:page-1",
-        citation_target: "page:page-1",
-        deep_link: "/pages/page-1",
-        context_ref: { type: "page", id: "page-1" },
+        resource_ref: `page:${DEFAULT_RESOURCE_ID}`,
+        owner_resource_ref: `page:${DEFAULT_RESOURCE_ID}`,
+        citation_target: `page:${DEFAULT_RESOURCE_ID}`,
+        deep_link: `/pages/${DEFAULT_RESOURCE_ID}`,
+        context_ref: { type: "page", id: DEFAULT_RESOURCE_ID },
       }),
     ).toThrow("SearchResult.activation must be an object");
   });
@@ -795,6 +884,7 @@ describe("normalizeSearchResult locator / type-mismatch rejections", () => {
         context_ref: { type: "note_block", id: "note-1" },
         body_text: "note body text",
         highlight_excerpt: null,
+        note_origin: "note",
         locator: {
           type: "web_text_offsets",
           media_id: "media-1",

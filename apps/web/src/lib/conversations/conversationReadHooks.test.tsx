@@ -32,10 +32,10 @@ function contextRef(id: string, conversationId: string) {
     conversation_id: conversationId,
     resource_ref: `media:${mediaId}`,
     activation: {
-      resourceRef: `media:${mediaId}`,
+      resource_ref: `media:${mediaId}`,
       kind: "route",
       href: `/media/${mediaId}`,
-      unresolvedReason: null,
+      unresolved_reason: null,
     },
     label: id,
     summary: "",
@@ -93,6 +93,8 @@ describe("conversation read hooks", () => {
     await act(async () => {
       first.resolve(jsonResponse({ data: [contextRef("ref-a", "conv-a")] }));
     });
-    expect(result.current.contextRefs.map((item) => item.id)).toEqual(["ref-b"]);
+    expect(result.current.contextRefs.map((item) => item.id)).toEqual([
+      "ref-b",
+    ]);
   });
 });

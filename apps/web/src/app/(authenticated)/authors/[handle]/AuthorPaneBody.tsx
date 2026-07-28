@@ -94,6 +94,10 @@ function resolveAuthorConnectionsResource(
 export default function AuthorPaneBody() {
   const handle = usePaneParam("handle");
   const paneRuntime = usePaneRuntime();
+  const activateTarget = requirePaneRuntime(
+    paneRuntime,
+    "AuthorPaneBody",
+  ).activateTarget;
   const committedSnapshotRef = useRef<AuthorPaneSeed | null>(null);
   const captureCommitted = useCallback(
     () => committedSnapshotRef.current,
@@ -186,7 +190,7 @@ export default function AuthorPaneBody() {
         <ConnectionsSurface
           resourceRef={connectionsResource.ref}
           composerController={connectionsComposerController}
-          activateTarget={requirePaneRuntime(paneRuntime, "AuthorPaneBody").activateTarget}
+          activateTarget={activateTarget}
         />
       ) : connectionsResource.kind === "Loading" ? (
         <FeedbackNotice severity="info" title="Loading connections…" />
@@ -195,7 +199,7 @@ export default function AuthorPaneBody() {
           This author’s resource identity could not be resolved.
         </FeedbackNotice>
       ),
-    [connectionsComposerController, connectionsResource, paneRuntime],
+    [activateTarget, connectionsComposerController, connectionsResource],
   );
   const { companionAction } = useResourceInspector({
     scheme: "contributor",

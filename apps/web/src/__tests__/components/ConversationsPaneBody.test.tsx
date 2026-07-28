@@ -38,7 +38,13 @@ function jsonResponse(body: unknown): Response {
   });
 }
 
-function withPaneRuntime(node: ReactNode, onNavigatePane = vi.fn()) {
+function withPaneRuntime(
+  node: ReactNode,
+  onActivateWorkspaceTarget = vi.fn(() => ({
+    kind: "ActivatedExisting" as const,
+    paneId: "pane",
+  })),
+) {
   const href = "/conversations";
   return (
     <PaneReturnMementoProvider>
@@ -55,9 +61,9 @@ function withPaneRuntime(node: ReactNode, onNavigatePane = vi.fn()) {
             canGoForward={false}
             onGoBackPane={vi.fn()}
             onGoForwardPane={vi.fn()}
-            onNavigatePane={onNavigatePane}
+            onNavigatePane={vi.fn()}
             onReplacePane={vi.fn()}
-            onActivateWorkspaceTarget={vi.fn(() => ({ kind: "ActivatedExisting" as const, paneId: "pane" }))}
+            onActivateWorkspaceTarget={onActivateWorkspaceTarget}
             onSetPaneLabel={vi.fn()}
           >
             <LibraryPlacementControllerProvider>
@@ -115,7 +121,10 @@ describe("ConversationsPaneBody", () => {
   });
 
   it("keeps starting a new chat visible when the recent list is empty", async () => {
-    const onNavigatePane = vi.fn();
+    const onActivateWorkspaceTarget = vi.fn(() => ({
+      kind: "ActivatedExisting" as const,
+      paneId: "pane",
+    }));
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -133,7 +142,7 @@ describe("ConversationsPaneBody", () => {
           <PaneRouteBoundary>
             <ConversationsPaneBody />
           </PaneRouteBoundary>,
-          onNavigatePane,
+          onActivateWorkspaceTarget,
         )}
       </div>,
     );
@@ -146,7 +155,10 @@ describe("ConversationsPaneBody", () => {
       "/conversations/new",
     );
     fireEvent.click(newChat);
-    expect(onNavigatePane).toHaveBeenCalledWith("pane-1", "/conversations/new", {
+    expect(onActivateWorkspaceTarget).toHaveBeenCalledWith({
+      originPaneId: "pane-1",
+      target: { href: "/conversations/new" },
+      disposition: { kind: "Follow" },
       modality: "Keyboard",
     });
     const host = screen.getByTestId("mobile-chats-host");

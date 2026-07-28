@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { expect, test, type Locator, type Page } from "@playwright/test";
@@ -82,9 +83,9 @@ async function defaultLibraryId(page: Page): Promise<string> {
   const response = await page.request.get("/api/libraries");
   await expectOk(response, "Read E2E libraries");
   const payload = (await response.json()) as {
-    data: Array<{ id: string; is_default: boolean }>;
+    data: Array<{ id: string; isDefault: boolean }>;
   };
-  const library = payload.data.find((candidate) => candidate.is_default);
+  const library = payload.data.find((candidate) => candidate.isDefault);
   if (!library) throw new Error("Default library missing from E2E seed");
   return library.id;
 }
@@ -92,7 +93,10 @@ async function defaultLibraryId(page: Page): Promise<string> {
 async function createPage(page: Page): Promise<string> {
   const response = await page.request.post("/api/notes/pages", {
     headers: stateChangingApiHeaders(),
-    data: { title: `E2E Resource Inspector ${Date.now()}` },
+    data: {
+      page_id: randomUUID(),
+      title: `E2E Resource Inspector ${Date.now()}`,
+    },
   });
   await expectOk(response, "Create Inspector page");
   return ((await response.json()) as { data: { id: string } }).data.id;
@@ -172,12 +176,18 @@ async function openDossier(page: Page): Promise<Locator> {
   return dossier;
 }
 
-test("all canonical resources share Companion and one real Dossier lifecycle at desktop and 390px", async ({
-  page,
-}, testInfo) => {
-  test.slow();
-  test.setTimeout(180_000);
+interface InspectorScenario {
+  mediaId: string;
+  libraryId: string;
+  pageId: string;
+  conversationId: string;
+  fixture: InspectorFixture;
+}
 
+async function withInspectorFixture(
+  page: Page,
+  run: (scenario: InspectorScenario) => Promise<void>,
+): Promise<void> {
   const mediaId = readMediaSeed().media_id;
   const viewerId = await ownerId(page);
   const libraryId = await defaultLibraryId(page);
@@ -189,100 +199,180 @@ test("all canonical resources share Companion and one real Dossier lifecycle at 
   try {
     pageId = await createPage(page);
     conversationId = await createConversation(page);
-    const seededFixture = runFixture("seed", {
+    fixture = runFixture("seed", {
       ownerId: viewerId,
       mediaId,
       pageId,
     });
-    if (!seededFixture) {
+    if (!fixture) {
       throw new Error("Resource Inspector fixture was not created");
     }
-    fixture = seededFixture;
-
-    const resources: ResourceUnderTest[] = [
-      {
-        name: "Media",
-        href: `/media/${mediaId}`,
-        linkedItemsTab: "Evidence",
-      },
-      {
-        name: "Conversation",
-        href: `/conversations/${conversationId}`,
-        linkedItemsTab: "Context",
-        extraTabs: ["Forks"],
-      },
-      {
-        name: "Library",
-        href: `/libraries/${libraryId}`,
-        linkedItemsTab: "Connections",
-      },
-      {
-        name: "Podcast",
-        href: `/podcasts/${seededFixture.podcast_id}`,
-        linkedItemsTab: "Connections",
-      },
-      {
-        name: "Author",
-        href: `/authors/${seededFixture.contributor_handle}`,
-        linkedItemsTab: "Connections",
-      },
-      {
-        name: "Page",
-        href: `/pages/${pageId}`,
-        linkedItemsTab: "Connections",
-      },
-      {
-        name: "Note",
-        href: `/notes/${seededFixture.note_id}`,
-        linkedItemsTab: "Connections",
-      },
-    ];
-
-    for (const resource of resources) {
-      await test.step(`${resource.name} publishes the shared Companion`, async () => {
-        await page.setViewportSize({ width: 1280, height: 800 });
-        await gotoSinglePaneWorkspace(
-          page,
-          `${workspaceE2eDeviceId(testInfo, "e2e-inspector")}-${resource.name.toLowerCase()}`,
-          resource.href,
-        );
-
-        const companion = activeWorkspacePane(page)
-          .getByTestId("pane-shell-chrome")
-          .getByRole("button", { name: "Companion" })
-          .filter({ visible: true });
-        await expect(companion).toBeVisible({ timeout: 15_000 });
-        await companion.click();
-
-        const inspector = visibleDesktopInspector(page);
-        await expect(inspector).toBeVisible({ timeout: 15_000 });
-        await expect(
-          inspector.getByRole("tab", { name: resource.linkedItemsTab }),
-        ).toBeVisible();
-        for (const tab of resource.extraTabs ?? []) {
-          await expect(inspector.getByRole("tab", { name: tab })).toBeVisible();
-        }
-        const dossier = await openDossier(page);
-        if (resource.name === "Media") {
-          const mediaAbstract = dossier.getByRole("region", {
-            name: "Media abstract",
-          });
-          await expect(mediaAbstract).toContainText(
-            seededFixture.abstract_text,
-          );
-          await mediaAbstract
-            .getByRole("button", { name: "View evidence" })
-            .click();
-          await expect(
-            inspector.getByRole("tab", { name: "Evidence" }),
-          ).toHaveAttribute("aria-selected", "true");
-        }
-
-        await visibleCompanion(page).click();
-        await expect(inspector).toBeHidden();
-      });
+    await run({
+      mediaId,
+      libraryId,
+      pageId,
+      conversationId,
+      fixture,
+    });
+  } catch (error) {
+    productError = error;
+    throw error;
+  } finally {
+    const cleanupErrors: unknown[] = [];
+    if (fixture && pageId) {
+      try {
+        runFixture("cleanup", {
+          ownerId: viewerId,
+          mediaId,
+          pageId,
+          fixture,
+        });
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
     }
+    if (pageId) {
+      try {
+        const response = await page.request.delete(
+          `/api/notes/pages/${pageId}`,
+          {
+            headers: stateChangingApiHeaders(),
+          },
+        );
+        if (!response.ok() && response.status() !== 404) {
+          throw new Error(
+            `Delete Inspector page: ${response.status()} ${await response.text()}`,
+          );
+        }
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    if (conversationId) {
+      try {
+        const response = await page.request.delete(
+          `/api/conversations/${conversationId}`,
+          { headers: stateChangingApiHeaders() },
+        );
+        if (!response.ok() && response.status() !== 404) {
+          throw new Error(
+            `Delete Inspector conversation: ${response.status()} ${await response.text()}`,
+          );
+        }
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(
+        [productError, ...cleanupErrors].filter(
+          (error): error is NonNullable<typeof error> => error != null,
+        ),
+        "Resource Inspector acceptance cleanup failed",
+      );
+    }
+  }
+}
 
+test("all canonical resources publish the shared Companion and Dossier surfaces", async ({
+  page,
+}, testInfo) => {
+  test.slow();
+  await withInspectorFixture(
+    page,
+    async ({ mediaId, libraryId, pageId, conversationId, fixture }) => {
+      const resources: ResourceUnderTest[] = [
+        {
+          name: "Media",
+          href: `/media/${mediaId}`,
+          linkedItemsTab: "Evidence",
+        },
+        {
+          name: "Conversation",
+          href: `/conversations/${conversationId}`,
+          linkedItemsTab: "Context",
+          extraTabs: ["Forks"],
+        },
+        {
+          name: "Library",
+          href: `/libraries/${libraryId}`,
+          linkedItemsTab: "Connections",
+        },
+        {
+          name: "Podcast",
+          href: `/podcasts/${fixture.podcast_id}`,
+          linkedItemsTab: "Connections",
+        },
+        {
+          name: "Author",
+          href: `/authors/${fixture.contributor_handle}`,
+          linkedItemsTab: "Connections",
+        },
+        {
+          name: "Page",
+          href: `/pages/${pageId}`,
+          linkedItemsTab: "Connections",
+        },
+        {
+          name: "Note",
+          href: `/notes/${fixture.note_id}`,
+          linkedItemsTab: "Connections",
+        },
+      ];
+
+      for (const resource of resources) {
+        await test.step(`${resource.name} publishes the shared Companion`, async () => {
+          await page.setViewportSize({ width: 1280, height: 800 });
+          await gotoSinglePaneWorkspace(
+            page,
+            `${workspaceE2eDeviceId(testInfo, "e2e-inspector")}-${resource.name.toLowerCase()}`,
+            resource.href,
+          );
+
+          const companion = activeWorkspacePane(page)
+            .getByTestId("pane-shell-chrome")
+            .getByRole("button", { name: "Companion" })
+            .filter({ visible: true });
+          await expect(companion).toBeVisible({ timeout: 15_000 });
+          await companion.click();
+
+          const inspector = visibleDesktopInspector(page);
+          await expect(inspector).toBeVisible({ timeout: 15_000 });
+          await expect(
+            inspector.getByRole("tab", { name: resource.linkedItemsTab }),
+          ).toBeVisible();
+          for (const tab of resource.extraTabs ?? []) {
+            await expect(
+              inspector.getByRole("tab", { name: tab }),
+            ).toBeVisible();
+          }
+          const dossier = await openDossier(page);
+          if (resource.name === "Media") {
+            const mediaAbstract = dossier.getByRole("region", {
+              name: "Media abstract",
+            });
+            await expect(mediaAbstract).toContainText(fixture.abstract_text);
+            await mediaAbstract
+              .getByRole("button", { name: "View evidence" })
+              .click();
+            await expect(
+              inspector.getByRole("tab", { name: "Evidence" }),
+            ).toHaveAttribute("aria-selected", "true");
+          }
+
+          await visibleCompanion(page).click();
+          await expect(inspector).toBeHidden();
+        });
+      }
+    },
+  );
+});
+
+test("one real Dossier lifecycle reconnects, cancels, activates citations, and projects at 390px", async ({
+  page,
+}, testInfo) => {
+  test.slow();
+  await withInspectorFixture(page, async ({ mediaId, pageId, fixture }) => {
     await test.step("manual regeneration reconnects, cancels, and retains history and citations", async () => {
       await page.setViewportSize({ width: 1280, height: 800 });
       await gotoSinglePaneWorkspace(
@@ -303,7 +393,9 @@ test("all canonical resources share Companion and one real Dossier lifecycle at 
         dossier.getByRole("heading", { name: "Earlier fixture dossier" }),
       ).toBeVisible({ timeout: 15_000 });
       await expect(dossier).toContainText("Viewing a past revision.");
-      await dossier.getByRole("button", { name: "Current", exact: true }).click();
+      await dossier
+        .getByRole("button", { name: "Current", exact: true })
+        .click();
       await expect(
         dossier.getByRole("heading", { name: "Current fixture dossier" }),
       ).toBeVisible({ timeout: 15_000 });
@@ -377,7 +469,14 @@ test("all canonical resources share Companion and one real Dossier lifecycle at 
         `${workspaceE2eDeviceId(testInfo, "e2e-inspector")}-mobile`,
         `/media/${mediaId}`,
       );
-      await visibleCompanion(page).click();
+      const mobilePaneOptions = page.getByRole("button", {
+        name: "Pane options",
+        exact: true,
+      });
+      await mobilePaneOptions.click();
+      await page
+        .getByRole("menuitem", { name: "Show Companion", exact: true })
+        .click();
 
       const sheet = page.getByTestId("mobile-secondary-host");
       await expect(sheet).toBeVisible({ timeout: 15_000 });
@@ -385,7 +484,7 @@ test("all canonical resources share Companion and one real Dossier lifecycle at 
       await expect(sheet).toHaveAttribute("aria-label", "Dossier");
       await expect(
         sheet.getByRole("region", { name: "Media abstract" }),
-      ).toContainText(seededFixture.abstract_text);
+      ).toContainText(fixture.abstract_text);
       await expect
         .poll(() =>
           sheet.evaluate((element) => {
@@ -401,64 +500,7 @@ test("all canonical resources share Companion and one real Dossier lifecycle at 
         .toBe(true);
       await sheet.getByRole("button", { name: "Close Dossier" }).click();
       await expect(sheet).toBeHidden();
-      await expect(visibleCompanion(page)).toBeFocused();
+      await expect(mobilePaneOptions).toBeFocused();
     });
-  } catch (error) {
-    productError = error;
-    throw error;
-  } finally {
-    const cleanupErrors: unknown[] = [];
-    if (fixture && pageId) {
-      try {
-        runFixture("cleanup", {
-          ownerId: viewerId,
-          mediaId,
-          pageId,
-          fixture,
-        });
-      } catch (error) {
-        cleanupErrors.push(error);
-      }
-    }
-    if (pageId) {
-      try {
-        const response = await page.request.delete(
-          `/api/notes/pages/${pageId}`,
-          {
-            headers: stateChangingApiHeaders(),
-          },
-        );
-        if (!response.ok() && response.status() !== 404) {
-          throw new Error(
-            `Delete Inspector page: ${response.status()} ${await response.text()}`,
-          );
-        }
-      } catch (error) {
-        cleanupErrors.push(error);
-      }
-    }
-    if (conversationId) {
-      try {
-        const response = await page.request.delete(
-          `/api/conversations/${conversationId}`,
-          { headers: stateChangingApiHeaders() },
-        );
-        if (!response.ok() && response.status() !== 404) {
-          throw new Error(
-            `Delete Inspector conversation: ${response.status()} ${await response.text()}`,
-          );
-        }
-      } catch (error) {
-        cleanupErrors.push(error);
-      }
-    }
-    if (cleanupErrors.length > 0) {
-      throw new AggregateError(
-        [productError, ...cleanupErrors].filter(
-          (error): error is NonNullable<typeof error> => error != null,
-        ),
-        "Resource Inspector acceptance cleanup failed",
-      );
-    }
-  }
+  });
 });

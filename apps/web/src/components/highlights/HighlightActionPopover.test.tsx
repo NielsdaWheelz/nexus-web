@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import type { AnchoredReaderRow } from "@/components/reader/useAnchoredReaderProjection";
+import { ShareControllerProvider } from "@/lib/sharing/controller";
 import HighlightActionPopover from "./HighlightActionPopover";
 
 const highlight: AnchoredReaderRow = { id: "h1", exact: "hello", color: "yellow" };
@@ -23,13 +24,15 @@ function renderPopover(overrides: Record<string, unknown> = {}) {
   };
   render(
     <FeedbackProvider>
-      <HighlightActionPopover
-        highlight={highlight}
-        anchorRect={new DOMRect(100, 100, 80, 20)}
-        canQuoteToChat
-        isReflowable
-        {...props}
-      />
+      <ShareControllerProvider>
+        <HighlightActionPopover
+          highlight={highlight}
+          anchorRect={new DOMRect(100, 100, 80, 20)}
+          canQuoteToChat
+          isReflowable
+          {...props}
+        />
+      </ShareControllerProvider>
     </FeedbackProvider>,
   );
   return props;

@@ -182,9 +182,9 @@ def _register_run(direct_db: DirectSessionManager, user_id: UUID, run_id: UUID, 
 def _conversation_count(direct_db: DirectSessionManager, user_id: UUID) -> int:
     with direct_db.session() as session:
         return session.scalar(
-            select(func.count()).select_from(Conversation).where(
-                Conversation.owner_user_id == user_id
-            )
+            select(func.count())
+            .select_from(Conversation)
+            .where(Conversation.owner_user_id == user_id)
         )
 
 
@@ -310,9 +310,7 @@ def test_new_present_carries_snapshot_subject_and_companion(
     assert companion_edges == 1
 
 
-def test_stale_revision_is_rejected_and_leaves_no_run(
-    auth_client, direct_db: DirectSessionManager
-):
+def test_stale_revision_is_rejected_and_leaves_no_run(auth_client, direct_db: DirectSessionManager):
     user_id = _bootstrap_user(auth_client, direct_db)
     media_id, highlight_id, revision = _seed_quotable_highlight(direct_db, user_id)
 
@@ -450,9 +448,7 @@ def test_forbidden_present_send_is_nonsendable_and_leaves_no_run(
     author_id = _bootstrap_user(auth_client, direct_db)
     sender_id = _bootstrap_user(auth_client, direct_db)
     # The Highlight lives only in the author's library; the sender cannot read it.
-    media_id, highlight_id, _ = _seed_quotable_highlight(
-        direct_db, author_id, with_revision=False
-    )
+    media_id, highlight_id, _ = _seed_quotable_highlight(direct_db, author_id, with_revision=False)
 
     response = _post_chat_run(
         auth_client,

@@ -56,12 +56,20 @@ function Harness({
               ) : null}
             </header>
             {id === "b" ? (
-              <div
-                data-testid="scrollable"
-                style={{ height: 40, overflowY: "auto" }}
-              >
-                <div style={{ height: 200 }} />
-              </div>
+              <>
+                <div
+                  data-testid="scrollable"
+                  style={{ height: 40, overflowY: "auto" }}
+                >
+                  <div style={{ height: 200 }} />
+                </div>
+                <div
+                  data-testid="clipped-overflow"
+                  style={{ height: 40, overflowY: "hidden" }}
+                >
+                  <div style={{ height: 200 }} />
+                </div>
+              </>
             ) : null}
           </div>
         ))}
@@ -97,6 +105,15 @@ describe("usePaneCanvas", () => {
     fireEvent.wheel(screen.getByTestId("scrollable"), { deltaY: 150 });
 
     expect(canvas.scrollLeft).toBe(before);
+  });
+
+  it("pans past clipped overflow that cannot consume the wheel", () => {
+    render(<Harness mode="desktop" />);
+    const canvas = screen.getByTestId("canvas");
+
+    fireEvent.wheel(screen.getByTestId("clipped-overflow"), { deltaY: 150 });
+
+    expect(canvas.scrollLeft).toBeCloseTo(150, 0);
   });
 
   it("pans the canvas on a header drag past the threshold", () => {

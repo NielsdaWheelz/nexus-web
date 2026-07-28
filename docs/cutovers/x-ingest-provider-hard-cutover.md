@@ -45,10 +45,12 @@ owner:
 - `x_client.py` owns official X API calls and typed provider response/error
   parsing.
 - `x_ingest.py` owns X materialization from a durable source attempt into
-  canonical media, fragments, quote children, provider events, indexing, and
-  metadata enqueue.
-- `x_identity.py`, `x_types.py`, and `x_rendering.py` own narrow identity,
-  type, and rendering concerns.
+  canonical media, fragments, quote children, quote occurrences, provider
+  events, indexing, and metadata enqueue.
+- `document_embeds.py` owns current quote occurrences and deduplicated
+  parent-to-child graph relationships.
+- `x_identity.py`, `x_types.py`, `x_rendering.py`, and `x_provider_lock.py` own
+  narrow identity, type, rendering, and provider-publication locking concerns.
 - `provider_events.py` records safe provider-call evidence.
 
 This is a hard cutover. Runtime legacy lanes are removed instead of preserved as
@@ -158,17 +160,18 @@ dispatches `source_type="x_author_thread"` to
 The X materializer:
 
 1. fetches an official X author-thread snapshot for the requested post,
-2. computes canonical provider identity from provider truth,
-3. locks the canonical X provider ID with a transaction-level advisory lock,
-4. creates or reuses quote-post child media,
-5. renders sanitized author-thread fragments,
-6. resets provisional web-article artifacts,
-7. writes canonical X media fields,
-8. writes contributor credits from provider author truth,
-9. marks the media ready for reading,
-10. rebuilds the web-article content index,
-11. enqueues metadata enrichment,
-12. records a compact success row in `external_provider_events`.
+2. fetches each missing direct quote once and classifies every direct quote as a
+   resolved snapshot or unavailable post,
+3. computes canonical provider identity from provider truth,
+4. locks the canonical X provider IDs with transaction-level advisory locks,
+5. creates or reuses each resolved quote-post child through source acceptance and
+   publishes it from the already-fetched snapshot,
+6. renders sanitized author-thread fragments with compact quote references,
+7. atomically replaces the complete quote occurrence artifact and its distinct
+   `document_embed/context` graph edges,
+8. writes canonical X media fields and contributor credits,
+9. marks the media ready, rebuilds indexes, and enqueues metadata enrichment,
+10. records compact success evidence in `external_provider_events`.
 
 ### Successful Materialized Media
 
@@ -200,9 +203,24 @@ canonical_source_url = "https://x.com/i/status/<post_id>"
 processing_status = "ready_for_reading"
 ```
 
-Quote child creation uses insert/get-or-create with `IntegrityError` recovery.
-A provider-ID or canonical-URL race for the same X post must not abort parent
-thread materialization.
+Each direct quote is one typed result:
+
+- resolved: create or reuse one `x_post` child through `accept_embedded_source`,
+  publish the accepted attempt from the parent snapshot without another X call,
+  and persist a resolved `document_embeds` occurrence;
+- unavailable: persist a failed occurrence with the canonical X URL and create no
+  child or graph edge;
+- unclassified provider failure: fail the parent attempt.
+
+The parent stores only `Quoted X post by @user — Open in Nexus` or
+`Quoted X post unavailable — Open on X`. It never stores the quoted body,
+preview, media, or blockquote. A quote inside the saved child renders
+`Quotes another X post — Open on X` as an external link only. Quote ingestion
+stops after one hop.
+
+Every ready `post:<post_id>` media has a succeeded `x_post` source attempt.
+Existing ready X-post media without one are repaired once by migration `0197`;
+runtime adoption and compatibility branches are forbidden.
 
 ### Provider Failure
 
@@ -361,6 +379,10 @@ Rules:
 - honor `X_API_TIMEOUT_SECONDS` as the total provider deadline for one snapshot,
 - honor `X_API_AUTHOR_THREAD_MAX_POSTS`,
 - retry only transient provider/transport failures inside the provider deadline,
+- batch-fetch missing direct quote IDs once and do not recurse,
+- return a closed resolved/unavailable result for every direct quote,
+- defect when a direct quote has neither provider data nor a classified terminal
+  provider error,
 - preserve final provider status, Retry-After, error type, and title when
   raising `XProviderError`,
 - never log or return bearer tokens or raw provider bodies.
@@ -386,7 +408,9 @@ callers.
 Owns:
 
 - author-thread fragment rendering,
-- single quote-post rendering,
+- single X-post rendering,
+- compact direct-quote placeholders,
+- external-only deeper-quote links,
 - X title and description derivation,
 - HTML escaping.
 
@@ -407,6 +431,8 @@ Owns:
 - provider event recording,
 - canonical X media creation/reuse,
 - quote-post media creation/reuse,
+- snapshot publication for accepted quote-child source attempts,
+- one-hop quote occurrence publication through `document_embeds.py`,
 - fragment creation,
 - contributor credits,
 - content indexing and metadata enqueue calls.
@@ -522,7 +548,9 @@ Backend:
 - `python/nexus/services/x_client.py`
 - `python/nexus/services/x_types.py`
 - `python/nexus/services/x_rendering.py`
+- `python/nexus/services/x_provider_lock.py`
 - `python/nexus/services/x_ingest.py`
+- `python/nexus/services/document_embeds.py`
 - `python/nexus/services/provider_events.py`
 - `python/nexus/services/media_deletion.py`
 - `python/nexus/services/media_ingest.py`
@@ -536,6 +564,7 @@ Database and deploy:
 - `migrations/alembic/versions/0133_media_source_attempts.py`
 - `migrations/alembic/versions/0134_media_source_attempts_job_delete_contract.py`
 - `migrations/alembic/versions/0135_media_source_attempts_user_delete_contract.py`
+- `migrations/alembic/versions/0197_x_post_source_attempt_provenance.py`
 - `.env.example`
 - `deploy/env/env-prod-backend.example`
 - `deploy/env/env-prod-worker.example`
@@ -572,6 +601,16 @@ Functional:
   sources.
 - No X provider call runs before durable acceptance.
 - Successful source job materializes a ready X author-thread web article.
+- Each resolved direct quote creates or reuses one ready `x_post` child and one
+  succeeded child source attempt without another X request.
+- Parent fragments contain one compact quote reference and never the quoted body,
+  media, or blockquote.
+- Unavailable direct quotes remain visible as canonical external X links and
+  create no child or graph edge.
+- Deeper quotes remain visible external links and create no child, attempt,
+  occurrence, or graph edge.
+- Repeated direct-quote occurrences remain ordered occurrences but produce one
+  graph edge per child.
 - Provider 402/401/403/429/timeout/404 after acceptance marks the saved media
   failed and marks the source attempt failed.
 - Failure rows include typed X error codes.
@@ -627,6 +666,8 @@ Deploy:
 - No automatic infinite retry loop.
 - No provider-event retention job in this X-specific cutover.
 - No attempt to make syntactically invalid URLs durable ingest attempts.
+- No recursive quote ingestion, inline quote-body transclusion, or compatibility
+  renderer.
 
 ## Verification
 
@@ -634,9 +675,10 @@ Targeted local checks:
 
 ```bash
 cd python
-uv run ruff check nexus/services/x_client.py nexus/services/x_ingest.py nexus/services/media_source_ingest.py tests/test_x_api.py tests/test_from_url.py tests/live_providers/test_x_author_thread_live.py
+uv run ruff check nexus/services/x_client.py nexus/services/x_types.py nexus/services/x_rendering.py nexus/services/x_ingest.py nexus/services/document_embeds.py nexus/services/media_source_ingest.py tests/test_x_api.py tests/test_from_url.py tests/test_document_embeds.py tests/live_providers/test_x_author_thread_live.py
 uv run pytest -q tests/test_x_api.py
 uv run pytest -q tests/test_from_url.py -k "XPost"
+uv run pytest -q tests/test_document_embeds.py
 uv run pytest -q tests/test_config.py tests/test_hetzner_env_sync_validation.py tests/test_vercel_env_sync_validation.py
 ```
 

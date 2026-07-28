@@ -17,6 +17,10 @@ function paneWrap(page: Page, paneId: string): Locator {
   return page.locator(`[data-pane-id="${paneId}"]`);
 }
 
+function paneHeader(page: Page, paneId: string): Locator {
+  return paneWrap(page, paneId).locator('[data-surface-header="true"]');
+}
+
 function edgeFade(page: Page, side: "start" | "end"): Locator {
   return page.getByTestId(`workspace-edge-fade-${side}`);
 }
@@ -27,13 +31,14 @@ async function paneBoxX(pane: Locator): Promise<number> {
   return box!.x;
 }
 
-// Three same-width panes side by side overflow the 1280px desktop viewport,
-// so the canvas is genuinely scrollable.
+// Four same-width panes side by side overflow the 1280px desktop viewport,
+// so the canvas is genuinely scrollable even at the current workspace width.
 const OVERFLOWING_WORKSPACE_STATE: WorkspaceState = makeWorkspaceState(
   [
     makeWorkspacePane("pane-libraries", "/libraries"),
     makeWorkspacePane("pane-search", "/search"),
     makeWorkspacePane("pane-settings", "/settings"),
+    makeWorkspacePane("pane-notes", "/notes"),
   ],
   { activePrimaryPaneId: "pane-libraries" },
 );
@@ -51,6 +56,7 @@ test.describe("workspace canvas", () => {
     await expect(paneWrap(page, "pane-libraries")).toBeVisible();
     await expect(paneWrap(page, "pane-search")).toBeVisible();
     await expect(paneWrap(page, "pane-settings")).toBeVisible();
+    await expect(paneWrap(page, "pane-notes")).toBeVisible();
     await expect(workspacePaneStrip(page)).toBeVisible();
   });
 
@@ -62,25 +68,21 @@ test.describe("workspace canvas", () => {
 
     // A vertical wheel over header chrome (no vertical scroll there) translates
     // to a horizontal pan.
-    const header = paneWrap(page, "pane-libraries").getByTestId("pane-shell-chrome");
-    const headerBox = await header.boundingBox();
-    expect(headerBox).not.toBeNull();
-    await page.mouse.move(
-      headerBox!.x + headerBox!.width / 2,
-      headerBox!.y + headerBox!.height / 2,
-    );
+    const header = paneHeader(page, "pane-libraries");
+    // Locator hover waits through any initial same-document row transition,
+    // whose top-layer snapshot temporarily owns hit testing.
+    await header.hover();
     await page.mouse.wheel(0, 400);
 
-    await expect
-      .poll(async () => paneBoxX(firstPane))
-      .toBeLessThan(startX);
+    await expect.poll(async () => paneBoxX(firstPane)).toBeLessThan(startX);
   });
 
   test("dragging a pane header pans the canvas", async ({ page }) => {
     const firstPane = paneWrap(page, "pane-libraries");
     const startX = await paneBoxX(firstPane);
 
-    const header = paneWrap(page, "pane-libraries").getByTestId("pane-shell-chrome");
+    const header = paneHeader(page, "pane-libraries");
+    await header.hover();
     const headerBox = await header.boundingBox();
     expect(headerBox).not.toBeNull();
     const grabY = headerBox!.y + headerBox!.height / 2;
@@ -92,9 +94,7 @@ test.describe("workspace canvas", () => {
     await page.mouse.move(grabX - 300, grabY, { steps: 12 });
     await page.mouse.up();
 
-    await expect
-      .poll(async () => paneBoxX(firstPane))
-      .toBeLessThan(startX);
+    await expect.poll(async () => paneBoxX(firstPane)).toBeLessThan(startX);
   });
 
   test("pane-next and pane-previous step the active pane and bring it into view", async ({
@@ -140,13 +140,8 @@ test.describe("workspace canvas", () => {
     await expect(edgeFade(page, "start")).toHaveCount(0);
 
     // Pan right; the leading fade appears once panes sit off the start edge.
-    const header = paneWrap(page, "pane-libraries").getByTestId("pane-shell-chrome");
-    const headerBox = await header.boundingBox();
-    expect(headerBox).not.toBeNull();
-    await page.mouse.move(
-      headerBox!.x + headerBox!.width / 2,
-      headerBox!.y + headerBox!.height / 2,
-    );
+    const header = paneHeader(page, "pane-libraries");
+    await header.hover();
     await page.mouse.wheel(0, 600);
 
     await expect(edgeFade(page, "start")).toBeVisible();
@@ -156,13 +151,8 @@ test.describe("workspace canvas", () => {
     page,
   }) => {
     await expect(edgeFade(page, "end")).toBeVisible();
-    const header = paneWrap(page, "pane-libraries").getByTestId("pane-shell-chrome");
-    const headerBox = await header.boundingBox();
-    expect(headerBox).not.toBeNull();
-    await page.mouse.move(
-      headerBox!.x + headerBox!.width / 2,
-      headerBox!.y + headerBox!.height / 2,
-    );
+    const header = paneHeader(page, "pane-libraries");
+    await header.hover();
     await page.mouse.wheel(0, 600);
     await expect(edgeFade(page, "start")).toBeVisible();
 
@@ -212,8 +202,8 @@ test("mobile-first restored multi-pane workspaces mount only mobile workspace ch
   await expectPaneShellContainedByViewport(paneWrap(page, "pane-libraries"));
   await expect(page.getByTestId("pane-fixed-chrome")).toHaveCount(0);
   await expect(page.getByTestId("workspace-secondary-pane")).toHaveCount(0);
-  await expect(page.getByRole("separator", { name: /^Resize pane / })).toHaveCount(
-    0,
-  );
+  await expect(
+    page.getByRole("separator", { name: /^Resize pane / }),
+  ).toHaveCount(0);
   await expectNoDocumentHorizontalOverflow(page);
 });

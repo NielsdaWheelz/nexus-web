@@ -34,6 +34,7 @@ const REAL_MEDIA_FIXTURE_WORKER_ENV = {
   // Fixture dispatch performs no provider I/O, but the production execution
   // boundary intentionally validates its platform credential first.
   OPENAI_API_KEY: "e2e-real-media-fixture-openai-key",
+  WORKER_LANE: "interactive",
   REAL_MEDIA_PROVIDER_FIXTURES: "1",
   REAL_MEDIA_FIXTURE_DIR:
     process.env.REAL_MEDIA_FIXTURE_DIR ?? REAL_MEDIA_FIXTURE_DIR,
@@ -316,20 +317,36 @@ export async function drainRealMediaWorkerForMediaReady(
 ) {
   assertRealMediaStorageIsLocal();
 
-  // A single long-lived worker subprocess loops run_once() in-process until this
-  // media reaches a terminal ingest state. Scoping the worker to
-  // `ingest_media_source` (see startE2eWorkerUntilMediaReady) means a refresh /
-  // re-ingest job is never starved behind the unrelated LLM side-effect backlog
-  // (enrich_metadata / media_unit_build / synapse_scan) that prior ingests
-  // leave queued, and amortizing
-  // the subprocess spawn removes the per-iteration `uv run` cost that pushed the
-  // wall-clock budget over the edge on a loaded box.
-  const workerResult = await startE2eWorkerUntilMediaReady({
+  // Production readiness crosses the worker-lane boundary: the interactive
+  // source job publishes a durable background content-reindex successor.
+  // Drive one exact interactive iteration first, then let a long-lived
+  // background worker finish the index without consuming the unrelated
+  // interactive queue. This mirrors the deployed two-lane topology.
+  const sourceWorkerResult = await startE2eWorkerUntilMediaReady({
     mediaId,
     allowedNexusEnvs: ["local"],
     extraEnv: REAL_MEDIA_FIXTURE_WORKER_ENV,
+    jobKind: "ingest_media_source",
+    readinessTarget: "source",
     deadlineSeconds: Math.floor(REAL_MEDIA_WORKER_DRAIN_TIMEOUT_MS / 1000),
   });
+  const workerResult =
+    sourceWorkerResult.status === "success"
+      ? await startE2eWorkerUntilMediaReady({
+          mediaId,
+          allowedNexusEnvs: ["local"],
+          extraEnv: {
+            ...REAL_MEDIA_FIXTURE_WORKER_ENV,
+            WORKER_LANE: "background",
+          },
+          jobKind: "media_content_reindex_job",
+          readinessTarget: "full",
+          deadlineSeconds: Math.floor(
+            REAL_MEDIA_WORKER_DRAIN_TIMEOUT_MS / 1000,
+          ),
+        })
+      : sourceWorkerResult;
+  const crossedLaneBoundary = sourceWorkerResult.status === "success";
 
   // Parity check against the public media API the product actually serves:
   // retrieval_status mirrors the content-index status the worker just wrote.
@@ -350,7 +367,9 @@ export async function drainRealMediaWorkerForMediaReady(
     chunk_count: workerResult.chunk_count,
     evidence_count: workerResult.evidence_count,
     embedding_count: workerResult.embedding_count,
-    worker_iterations: workerResult.worker_iterations,
+    worker_iterations:
+      sourceWorkerResult.worker_iterations +
+      (crossedLaneBoundary ? workerResult.worker_iterations : 0),
     last: {
       processing_status: workerResult.processing_status,
       retrieval_status: retrievalStatus,
@@ -359,8 +378,18 @@ export async function drainRealMediaWorkerForMediaReady(
       evidence_count: workerResult.evidence_count,
       embedding_count: workerResult.embedding_count,
     },
-    stdout: workerResult.stdout,
-    stderr: workerResult.stderr,
+    stdout: [
+      sourceWorkerResult.stdout,
+      crossedLaneBoundary ? workerResult.stdout : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    stderr: [
+      sourceWorkerResult.stderr,
+      crossedLaneBoundary ? workerResult.stderr : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
   };
 }
 

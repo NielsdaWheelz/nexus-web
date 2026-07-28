@@ -51,6 +51,8 @@ router = APIRouter(tags=["dossiers"])
 
 _MANIFEST_ADAPTER: TypeAdapter[InputManifestV1] = TypeAdapter(InputManifestV1)
 _COVERAGE_ADAPTER: TypeAdapter[DossierCoverageOut] = TypeAdapter(DossierCoverageOut)
+
+
 def _subject_locator(subject_scheme: str, subject_handle: str) -> DossierSubjectLocator:
     policy = SUBJECT_POLICIES.get(subject_scheme)
     if policy is None:

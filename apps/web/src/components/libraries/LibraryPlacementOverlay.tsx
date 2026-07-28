@@ -1,48 +1,21 @@
 "use client";
 
 import { useEffect } from "react";
+import LibraryChooserSurface from "@/components/libraries/LibraryChooserSurface";
 import LibraryEntryEditor from "@/components/libraries/LibraryEntryEditor";
-import Dialog from "@/components/ui/Dialog";
-import MobileSheet from "@/components/ui/MobileSheet";
 import type { LibraryPlacementSession } from "@/lib/libraries/placementController";
 import { useLibraryPlacement } from "@/lib/libraries/useLibraryPlacement";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { usePaneMobileChromeController } from "@/lib/workspace/mobileChrome";
-import styles from "./LibraryPlacementOverlay.module.css";
 
 interface LibraryPlacementOverlayProps {
   session: LibraryPlacementSession | null;
   onClose: () => void;
 }
 
-function focusSearch(container: HTMLElement) {
-  const activeElement = document.activeElement;
-  if (
-    activeElement instanceof HTMLElement &&
-    container.contains(activeElement)
-  ) {
-    return activeElement;
-  }
-  return container.querySelector<HTMLInputElement>(
-    'input[aria-label="Search libraries"]',
-  );
-}
-
-function focusChrome(container: HTMLElement) {
-  return container;
-}
-
-function returnFocusFallback(session: LibraryPlacementSession | null) {
-  const fallback = session?.options.returnFocusFallback;
-  return fallback?.kind === "Present" ? fallback.value : undefined;
-}
-
 function MobileChromeLock() {
   const { acquireVisibleLock } = usePaneMobileChromeController();
-  useEffect(
-    () => acquireVisibleLock("library-picker"),
-    [acquireVisibleLock],
-  );
+  useEffect(() => acquireVisibleLock("library-picker"), [acquireVisibleLock]);
   return null;
 }
 
@@ -53,48 +26,48 @@ export default function LibraryPlacementOverlay({
   const isMobile = useIsMobileViewport();
   const state = useLibraryPlacement(session);
   const active = session !== null;
-  const editor = session ? (
-    <LibraryEntryEditor
-      key={session.key}
-      libraries={state.libraries}
-      loading={state.loading}
-      busy={state.busy}
-      busyLibraryId={state.busyLibraryId}
-      error={state.error}
-      onRetry={state.retry}
-      onAddToLibrary={state.addToLibrary}
-      onRemoveFromLibrary={state.removeFromLibrary}
-    />
-  ) : null;
+  const fallback = session?.options.returnFocusFallback;
+  const error =
+    state.failure === null
+      ? null
+      : state.failure.kind === "Retry"
+        ? { message: state.failure.message, onRetry: state.failure.retry }
+        : { message: state.failure.message, onRetry: null };
 
   return (
     <>
       {active && isMobile ? <MobileChromeLock /> : null}
-      <Dialog
-        open={active && !isMobile}
+      <LibraryChooserSurface
+        active={active}
         onClose={onClose}
+        layer="modal"
+        anchor={session ? session.options.anchor : () => null}
+        returnFocusFallback={
+          fallback && fallback.kind === "Present" ? fallback.value : undefined
+        }
         title="Libraries"
-        initialFocus={focusSearch}
-        returnFocusTo={session?.options.returnFocusTo}
-        returnFocusFallback={returnFocusFallback(session)}
-      >
-        {editor}
-      </Dialog>
-      <MobileSheet
-        active={active && isMobile}
-        onDismiss={onClose}
-        ariaLabel="Libraries"
-        initialFocus={focusChrome}
         focusKey={session?.key}
-        returnFocusTo={session?.options.returnFocusTo}
-        returnFocusFallback={returnFocusFallback(session)}
         panelTestId="library-placement-sheet"
       >
-        <div className={styles.sheetHeader}>
-          <h2 className={styles.sheetTitle}>Libraries</h2>
-        </div>
-        <div className={styles.sheetBody}>{editor}</div>
-      </MobileSheet>
+        {session ? (
+          <LibraryEntryEditor
+            key={session.key}
+            libraries={state.libraries}
+            loading={state.loading}
+            busy={state.commandsDisabled}
+            pendingLibraryId={state.pendingLibraryId}
+            error={error}
+            onAddToLibrary={state.addToLibrary}
+            onRemoveFromLibrary={state.removeFromLibrary}
+            selectedGroupLabel="In these libraries"
+            otherGroupLabel="Other libraries"
+            searchLabel="Search libraries"
+            searchPlaceholder="Search libraries"
+            listLabel="Library options"
+            emptyInventory="No libraries to place this in."
+          />
+        ) : null}
+      </LibraryChooserSurface>
     </>
   );
 }

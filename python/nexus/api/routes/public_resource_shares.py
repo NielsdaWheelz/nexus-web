@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Never
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
@@ -26,7 +26,7 @@ def _query_items(request: Request) -> list[tuple[str, str]]:
     return list(request.query_params.multi_items())
 
 
-def _raise_validation(exc: public_resource_sharing.PublicRequestValidation) -> None:
+def _raise_validation(exc: public_resource_sharing.PublicRequestValidation) -> Never:
     raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 

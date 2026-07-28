@@ -200,7 +200,11 @@ and no non-PDF pane can shrink below it.
 
 PDF panes are the only primary-width exception. `PdfReader` measures rendered
 PDF page geometry and publishes the widest rendered page as intrinsic primary
-width; the workspace raises the PDF pane floor to that width.
+width; the workspace raises the PDF pane floor to that width. A Media route's
+runtime width is unresolved until its media kind is loaded and, for PDF, that
+measurement exists. During that gap the workspace may render at its text floor
+but must not persist a width correction; persistence starts only after an
+explicit workspace or intrinsic runtime-layout publication.
 
 The Document Map overview rail is fixed primary-adjacent chrome: it changes
 rendered pane width without changing stored primary pane width and contains no
@@ -643,8 +647,14 @@ of its location-target writes uses.
 - once the section is open, epub restores by
   `text_offset` -> quote match -> `progression` ->
   `total_progression` -> `position` -> anchor fallback -> section top
-- epub restore runs once per open/navigation session and is cancelled on
-  user scroll intent
+- text restore runs once per open/navigation session and is cancelled on
+  genuine user scroll intent, including input that arrives while the cursor or
+  layout is still loading and the restore phase is still nominally `idle`;
+  delayed restore inputs cannot reclaim a cancelled viewport
+- a trusted forward scroll capture wins over a coincident layout/reflow
+  generation reset: the new generation retains the intent carried by that
+  exact publication, so resize noise cannot swallow or downgrade the reader's
+  first canonical move (including an exact terminal locator)
 - epub keeps the active section tracked via the in-memory `useReaderTarget`
   target after resolution so intra-pane back/forward describes the active
   section without starting a second restore loop

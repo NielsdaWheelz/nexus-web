@@ -21,6 +21,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
 
 pytestmark = pytest.mark.integration
+MIGRATION_CI_LATE = pytest.mark.migration_ci_late
 
 
 def get_test_database_url() -> str:
@@ -10062,22 +10063,23 @@ class TestMediaIntelligenceUnitsMigration0141:
 
 
 class TestLibraryIntelligenceArtifactRewrite0142:
-    """Head-assertions for the 0142 stable-head + immutable-revisions rewrite."""
+    """Assertions for the immutable-revision shape before 0190 replaces its run model."""
 
     @pytest.fixture(scope="class")
     def li_head_engine(self):
-        """A freshly head-migrated engine for this class.
+        """A freshly 0189-migrated engine for this class.
 
         The module-scoped ``migrated_engine`` is migrated once at module start, but
         earlier classes call ``reset_test_schema()`` in their teardown (e.g. the
         downgrade-blocked test), which drops the public schema for every test that
-        runs afterward. This class sits at the end of the file, so it owns its own
-        reset + upgrade to head rather than inheriting a contaminated schema.
+        runs afterward. Pinning 0189 observes the generalized artifact-revision
+        shape immediately before 0190 intentionally replaces revision events with
+        the artifact-build lifecycle.
         """
         reset_test_schema()
-        result = run_alembic_command("upgrade head")
+        result = run_alembic_command("upgrade 0189")
         if result.returncode != 0:
-            pytest.fail(f"Migration upgrade failed: {result.stderr}")
+            pytest.fail(f"Migration upgrade to 0189 failed: {result.stderr}")
         engine = create_engine(get_test_database_url())
         yield engine
         engine.dispose()
@@ -12196,10 +12198,11 @@ class TestMigration0149SynapseResonance:
         for owner_kind in (
             "chat_run",
             "oracle_reading",
-            "artifact_revision",
+            "artifact_build",
             "media_summary",
             "media_enrichment",
             "synapse_scan",
+            "dawn_write",
         ):
             assert f"'{owner_kind}'" in owner_check, owner_check
 
@@ -13604,8 +13607,8 @@ class TestMigration0163DropUserGraphTags:
             finally:
                 engine.dispose()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade to head failed: {result.stderr}"
+            result = run_alembic_command("upgrade 0163")
+            assert result.returncode == 0, f"upgrade to 0163 failed: {result.stderr}"
 
             engine = create_engine(get_test_database_url())
             try:
@@ -13974,8 +13977,8 @@ class TestMigration0166OracleCorpusLibrary:
             finally:
                 engine.dispose()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade to head failed: {result.stderr}"
+            result = run_alembic_command("upgrade 0166")
+            assert result.returncode == 0, f"upgrade to 0166 failed: {result.stderr}"
 
             engine = create_engine(get_test_database_url())
             try:
@@ -17830,9 +17833,7 @@ class TestMigration0179LightweightAuthorDedup:
 
 
 class TestMigration0180ReaderProgressContinuity:
-    """0180 cuts reader_media_state to one non-null locator plus a revision
-    conflict token, recreates its FKs under stable non-cascading names, and
-    backfills a zero-dwell reading_sessions row for cursors that lack one."""
+    """0180 versions reader cursors; head additionally admits 0195 Empty tombstones."""
 
     @pytest.fixture(scope="class")
     def head_engine(self):
@@ -17845,7 +17846,7 @@ class TestMigration0180ReaderProgressContinuity:
         engine.dispose()
         reset_test_schema()
 
-    def test_head_locator_not_null_revision_default_and_legacy_check_dropped(self, head_engine):
+    def test_head_locator_nullable_revision_default_and_legacy_check_dropped(self, head_engine):
         with Session(head_engine) as session:
             columns = {
                 row[0]: row
@@ -17870,16 +17871,18 @@ class TestMigration0180ReaderProgressContinuity:
                 ).fetchall()
             }
 
-        assert columns["locator"][1] == "NO", columns["locator"]
+        assert columns["locator"][1] == "YES", columns["locator"]
         assert columns["revision"][1] == "NO", columns["revision"]
         assert columns["revision"][2] == "bigint", columns["revision"]
         assert columns["revision"][3] is not None and "1" in columns["revision"][3]
         assert "ck_reader_media_state_locator" not in constraints
 
-        # The NOT NULL is real, not just metadata: a NULL-locator insert is rejected.
+        # 0195 makes a NULL locator the durable Empty tombstone while retaining
+        # the monotonic revision fence introduced by 0180.
         with Session(head_engine) as session:
             user_id = uuid4()
             media_id = uuid4()
+            cursor_id = uuid4()
             session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
             session.execute(
                 text(
@@ -17890,17 +17893,26 @@ class TestMigration0180ReaderProgressContinuity:
             )
             session.commit()
 
-            with pytest.raises(IntegrityError):
-                session.execute(
-                    text(
-                        "INSERT INTO reader_media_state (id, user_id, media_id, locator)"
-                        " VALUES (:id, :user_id, :media_id, NULL)"
-                    ),
-                    {"id": uuid4(), "user_id": user_id, "media_id": media_id},
+            session.execute(
+                text(
+                    "INSERT INTO reader_media_state (id, user_id, media_id, locator)"
+                    " VALUES (:id, :user_id, :media_id, NULL)"
+                ),
+                {"id": cursor_id, "user_id": user_id, "media_id": media_id},
+            )
+            session.commit()
+            assert (
+                session.scalar(
+                    text("SELECT locator FROM reader_media_state WHERE id = :id"),
+                    {"id": cursor_id},
                 )
-                session.commit()
-            session.rollback()
+                is None
+            )
 
+            session.execute(
+                text("DELETE FROM reader_media_state WHERE id = :id"),
+                {"id": cursor_id},
+            )
             session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
             session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
             session.commit()
@@ -19429,6 +19441,7 @@ class TestMigration0183DefaultLibraryVirtualization:
             run_alembic_command("upgrade head")
 
 
+@MIGRATION_CI_LATE
 class TestMigration0188LlmProviderRuntimeHardCutover:
     """0188: chat_runs gains profile_id/reasoning_option_id + resolved
     provider/model_name/reasoning_effort/error_origin/support_id, backfilled
@@ -20145,6 +20158,7 @@ def _load_migration_0184():
     return module
 
 
+@MIGRATION_CI_LATE
 class TestMigration0184InlineHelperParity:
     """PLAN decision 8: 0184 inlines quote normalization/anchor-key/matching
     (no service imports); the frozen copies must equal the runtime
@@ -20219,6 +20233,7 @@ class TestMigration0184InlineHelperParity:
             )
 
 
+@MIGRATION_CI_LATE
 class TestMigration0184UniversalLinkAuthoring:
     """0184 materializes passage anchors for derived Link/stance/note-body
     endpoints, deletes already-lost refs with an exact report, canonicalizes
@@ -21145,6 +21160,7 @@ class TestMigration0184UniversalLinkAuthoring:
             engine.dispose()
 
 
+@MIGRATION_CI_LATE
 class TestMigration0189ReaderHighlightQuoteChat:
     """0189: adds ``messages.reader_selection_snapshot`` (+ shallow object CHECK),
     preflights every selection-bearing turn context grouped by its run's user
@@ -21694,8 +21710,8 @@ class TestMigration0189ReaderHighlightQuoteChat:
     def test_0189_downgrade_is_blocked(self):
         """0189 is a hard cutover: downgrading off it surfaces NotImplementedError."""
         reset_test_schema()
-        result = run_alembic_command("upgrade head")
-        assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+        result = run_alembic_command("upgrade 0189")
+        assert result.returncode == 0, f"upgrade 0189 failed: {result.stderr}"
         try:
             result = run_alembic_command("downgrade 0188")
             assert result.returncode != 0
@@ -21709,6 +21725,7 @@ class TestMigration0189ReaderHighlightQuoteChat:
             run_alembic_command("upgrade head")
 
 
+@MIGRATION_CI_LATE
 class TestMigration0190ResourceInspectorAndUniversalDossiers:
     """0190: the Resource-Inspector + Universal-Dossiers hard cutover.
 
@@ -24002,6 +24019,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
             engine.dispose()
 
 
+@MIGRATION_CI_LATE
 class TestMigration0192PaneVisitWorkspaceSessionPurge:
     def test_0192_purges_every_session_and_blocks_downgrade(self):
         reset_test_schema()
@@ -24056,6 +24074,7 @@ class TestMigration0192PaneVisitWorkspaceSessionPurge:
             engine.dispose()
 
 
+@MIGRATION_CI_LATE
 class TestUniversalResourceSharingMigration:
     def test_0188_to_0191_upgrade_downgrade_upgrade_contract(self):
         reset_test_schema()
@@ -24147,6 +24166,7 @@ class TestUniversalResourceSharingMigration:
             assert checks == 0
 
 
+@MIGRATION_CI_LATE
 class TestMigration0193MediaPipelineReliability:
     INDEXES = (
         (
@@ -24543,6 +24563,7 @@ class TestMigration0193MediaPipelineReliability:
             engine.dispose()
 
 
+@MIGRATION_CI_LATE
 class TestMigration0194ConsumptionActivityFacts:
     """0194 creates only the two empty, non-cascading Consumption fact tables."""
 
@@ -24683,6 +24704,7 @@ class TestMigration0194ConsumptionActivityFacts:
             engine.dispose()
 
 
+@MIGRATION_CI_LATE
 class TestMigration0196ChatPublicationThinSpine:
     def test_0196_adds_publication_facts_and_backfills_known_candidates(self):
         reset_test_schema()
@@ -24907,6 +24929,120 @@ class TestMigration0196ChatPublicationThinSpine:
             assert result.returncode != 0
             with engine.connect() as connection:
                 assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0196"
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+
+@MIGRATION_CI_LATE
+class TestMigration0197XPostSourceAttemptProvenance:
+    def test_0197_repairs_missing_attempt_and_blocks_downgrade(self):
+        reset_test_schema()
+        assert run_alembic_command("upgrade 0196").returncode == 0
+        engine = create_engine(get_test_database_url())
+        user_id = uuid4()
+        media_id = uuid4()
+        canonical_url = "https://x.com/i/status/4444444444"
+        try:
+            with engine.begin() as connection:
+                connection.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                connection.execute(
+                    text("""
+                        INSERT INTO media (
+                            id, kind, title, processing_status, created_by_user_id,
+                            requested_url, canonical_url, canonical_source_url,
+                            provider, provider_id
+                        )
+                        VALUES (
+                            :id, 'web_article', 'Legacy quoted X post',
+                            'ready_for_reading', :user_id, :canonical_url,
+                            :canonical_url, :canonical_url, 'x', 'post:4444444444'
+                        )
+                    """),
+                    {
+                        "id": media_id,
+                        "user_id": user_id,
+                        "canonical_url": canonical_url,
+                    },
+                )
+                connection.execute(
+                    text("""
+                        INSERT INTO media_source_attempts (
+                            media_id, created_by_user_id, source_type, attempt_no,
+                            status, intent_key, provider, provider_target_ref,
+                            source_payload
+                        )
+                        VALUES
+                            (
+                                :media_id, :user_id, 'x_author_thread', 1,
+                                'succeeded', 'legacy-wrong-type', 'x', '4444444444',
+                                '{"post_id": "4444444444"}'::jsonb
+                            ),
+                            (
+                                :media_id, :user_id, 'x_post', 2,
+                                'failed', 'legacy-failed-x-post', 'x', '4444444444',
+                                '{"post_id": "4444444444"}'::jsonb
+                            ),
+                            (
+                                :media_id, :user_id, 'x_post', 3,
+                                'succeeded', 'legacy-wrong-x-post-identity',
+                                NULL, 'wrong-target',
+                                '{"post_id": "wrong-target"}'::jsonb
+                            )
+                    """),
+                    {"media_id": media_id, "user_id": user_id},
+                )
+
+            result = run_alembic_command("upgrade 0197")
+            assert result.returncode == 0, result.stderr
+            with engine.connect() as connection:
+                attempt = connection.execute(
+                    text("""
+                        SELECT source_type, attempt_no, run_count, status,
+                               requested_url, canonical_source_url, provider,
+                               provider_target_ref, source_payload, finished_at
+                        FROM media_source_attempts
+                        WHERE media_id = :media_id
+                          AND source_type = 'x_post'
+                          AND status = 'succeeded'
+                          AND provider = 'x'
+                          AND provider_target_ref = '4444444444'
+                    """),
+                    {"media_id": media_id},
+                ).one()
+                assert tuple(attempt[:9]) == (
+                    "x_post",
+                    4,
+                    1,
+                    "succeeded",
+                    canonical_url,
+                    canonical_url,
+                    "x",
+                    "4444444444",
+                    {"post_id": "4444444444"},
+                )
+                assert attempt.finished_at is not None
+
+            result = run_alembic_command("downgrade 0196")
+            assert result.returncode != 0
+            with engine.connect() as connection:
+                assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0197"
+                assert (
+                    connection.scalar(
+                        text("""
+                            SELECT count(*)
+                            FROM media_source_attempts
+                            WHERE media_id = :media_id
+                              AND source_type = 'x_post'
+                              AND status = 'succeeded'
+                              AND provider = 'x'
+                              AND provider_target_ref = '4444444444'
+                        """),
+                        {"media_id": media_id},
+                    )
+                    == 1
+                )
         finally:
             reset_test_schema()
             run_alembic_command("upgrade head")

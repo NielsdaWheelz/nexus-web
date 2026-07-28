@@ -34,6 +34,10 @@ from nexus.schemas.search import (
 )
 from nexus.services import media_intelligence
 from nexus.services.locator_resolver import locator_from_resolution, resolve_evidence_span
+from nexus.services.resource_graph.highlight_notes import (
+    highlight_excerpts_for_note_blocks,
+)
+from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.search.candidates import discovery_candidates
 from nexus.services.search.constants import (
     MAX_LIMIT,
@@ -155,6 +159,7 @@ def search(db: Session, viewer_id: UUID, query: SearchQuery) -> SearchResponse:
         contributor_handles=contributor_handles,
         roles=roles,
         content_kinds=content_kinds,
+        highlight_notes_only=query.highlight_notes_only,
         transaction_active_at_entry=transaction_active_at_entry,
     )
 
@@ -484,6 +489,13 @@ def get_search_result(
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
         if not str(block.body_text or ""):
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
+        # Mirror the candidate-retrieval highlight-note classification so the
+        # durable-ref re-resolution path reports note_origin/highlight_excerpt
+        # correctly: a block proven by a visible highlight_note edge is a
+        # highlight note, not a plain note.
+        highlight_exact = highlight_excerpts_for_note_blocks(
+            db, viewer_id=viewer_id, note_ids=[block.id]
+        ).get(block.id)
         return _result_to_out(
             db,
             viewer_id,
@@ -492,6 +504,8 @@ def get_search_result(
                 snippet=_truncate_snippet(str(block.body_text or "")),
                 body_text=block.body_text,
                 score=score,
+                highlight_excerpt=_truncate_snippet(highlight_exact) if highlight_exact else None,
+                note_origin="highlight_note" if highlight_exact else "note",
                 locator=retrieval_locator_json(
                     {
                         "type": "note_block_offsets",
@@ -874,6 +888,14 @@ def get_search_result(
         owner_kind = str(row[1])
         source_kind = str(row[5] or "note") if owner_kind == "media" else owner_kind
         source_title = str(row[6] if owner_kind == "media" else "Note")
+        # The span's canonical owner is its owning object: media for a
+        # document span, the note_block for a note-owned span. Carry it
+        # explicitly so the projection does not fabricate a ``media:{id}``
+        # owner from the note_block id parked in ``source.media_id``.
+        owner_ref = ResourceRef(
+            scheme="media" if owner_kind == "media" else "note_block",
+            id=row[2],
+        )
         return _result_to_out(
             db,
             viewer_id,
@@ -894,6 +916,7 @@ def get_search_result(
                     row[7] if owner_kind == "media" else None,
                 ),
                 score=score,
+                owner_ref=owner_ref,
             ),
         )
 

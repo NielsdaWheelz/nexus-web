@@ -16,11 +16,12 @@ from nexus.schemas.resource_items import (
     ResourceSurfaceCommandRequest,
     ResourceTitleMutationRequest,
 )
+from nexus.schemas.resource_openables import ResourceOpenableSearchRequest
 from nexus.schemas.resource_targets import ResourceTargetSearchRequest
 from nexus.services.resource_graph import refs as refs_service
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_items import locators as locator_service
-from nexus.services.resource_items import mutations, surfaces, targets
+from nexus.services.resource_items import mutations, openables, surfaces, targets
 
 router = APIRouter(prefix="/resource-items", tags=["resource-items"])
 
@@ -44,7 +45,9 @@ def resolve_resource_items(
     return success_response(
         {
             "items": [
-                surfaces.resource_item_out(db, viewer_id=viewer.user_id, ref=_parse_ref(ref))
+                surfaces.resource_item_out(
+                    db, viewer_id=viewer.user_id, ref=_parse_ref(ref)
+                ).model_dump(mode="json", by_alias=True)
                 for ref in refs
             ]
         }
@@ -81,6 +84,22 @@ def search_resource_targets(
     )
 
 
+@router.post("/openables/search")
+def search_openable_resources(
+    request: ResourceOpenableSearchRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    return ok(
+        openables.search_openable_resources(
+            db,
+            viewer_id=viewer.user_id,
+            request=request,
+        ),
+        by_alias=True,
+    )
+
+
 @router.get("/{resource_ref}")
 def get_resource_item(
     resource_ref: str,
@@ -88,7 +107,8 @@ def get_resource_item(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     return ok(
-        surfaces.resource_item_out(db, viewer_id=viewer.user_id, ref=_parse_ref(resource_ref))
+        surfaces.resource_item_out(db, viewer_id=viewer.user_id, ref=_parse_ref(resource_ref)),
+        by_alias=True,
     )
 
 
@@ -98,7 +118,10 @@ def get_resource_surface(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    return ok(surfaces.get_surface(db, viewer_id=viewer.user_id, source=_parse_ref(resource_ref)))
+    return ok(
+        surfaces.get_surface(db, viewer_id=viewer.user_id, source=_parse_ref(resource_ref)),
+        by_alias=True,
+    )
 
 
 @router.post("/{resource_ref}/surface/commands")
@@ -114,7 +137,8 @@ def execute_resource_surface_command(
             viewer_id=viewer.user_id,
             source=_parse_ref(resource_ref),
             request=request,
-        )
+        ),
+        by_alias=True,
     )
 
 

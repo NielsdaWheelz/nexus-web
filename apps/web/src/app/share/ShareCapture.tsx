@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import LibraryDestinationPicker from "@/components/LibraryDestinationPicker";
+import LibraryDestinationField from "@/components/libraries/LibraryDestinationField";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { isUnauthenticatedApiError } from "@/lib/api/client";
 import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
@@ -57,6 +57,7 @@ export default function ShareCapture({
   const quickCaptureBlockId = useRef(createRandomId());
   const quickCaptureMutationId = useRef(createRandomId("share-note-mutation"));
   const urlIdempotencyKeys = useRef<Map<string, string>>(new Map());
+  const destinationCreateIds = useRef<Map<string, string>>(new Map());
   const [selectedDestinations, setSelectedDestinations] = useState<
     readonly LibraryDestinationSelection[]
   >([]);
@@ -212,11 +213,11 @@ export default function ShareCapture({
             </div>
           ))}
         </div>
-        <LibraryDestinationPicker
+        <LibraryDestinationField
+          label="Library destinations"
+          emptyLabel="No additional libraries"
           selected={selectedDestinations}
           onChange={setSelectedDestinations}
-          presentation={{ kind: "Inline" }}
-          label="Library destinations"
           interaction={
             creatingDestination
               ? { kind: "Creating" }
@@ -226,12 +227,23 @@ export default function ShareCapture({
           }
           onCreateDestination={async (name) => {
             setCreatingDestination(true);
+            const normalizedName = name.trim();
+            const libraryId =
+              destinationCreateIds.current.get(normalizedName) ??
+              crypto.randomUUID();
+            destinationCreateIds.current.set(normalizedName, libraryId);
             try {
-              return await createLibrary({ name });
+              const library = await createLibrary({
+                libraryId,
+                name: normalizedName,
+              });
+              destinationCreateIds.current.delete(normalizedName);
+              return library;
             } finally {
               setCreatingDestination(false);
             }
           }}
+          layer="modal"
         />
         <div className={styles.actions}>
           <button

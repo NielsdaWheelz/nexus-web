@@ -7,7 +7,8 @@
 	test-android test-migrations test-supabase test-e2e-env test-real-media test-provider-runtime test-live-providers test-e2e test-e2e-ui test-csp \
 	smoke smoke-auth-redirects verify verify-android verify-android-release verify-full \
 	_ensure-node-ingest _ensure-e2e-deps _test-back-db-ready \
-	_test-back-integration-raw _test-migrations-raw _test-provider-runtime-raw \
+	_test-back-integration-raw _test-migrations-raw \
+	_test-migrations-foundation-raw _test-migrations-late-raw _test-provider-runtime-raw \
 	_test-supabase-raw _test-real-media-raw _test-real-media-backend-raw _test-live-providers-raw _test-shared-llm-provider-matrix-raw \
 	certify-llm-providers \
 	_seed-real-media-e2e-raw _test-e2e-raw _test-csp-raw _test-real-media-e2e-raw _test-e2e-ui-raw
@@ -210,6 +211,7 @@ api-e2e:
 	cd apps/api && PYTHONPATH=$$PWD/../../python DATABASE_URL=$(DATABASE_URL) \
 		SUPABASE_AUTH_ADMIN_KEY= \
 		NEXUS_ENV=$${NEXUS_ENV:-test} \
+		PYTHONWARNINGS=$${PYTHONWARNINGS:-error::UserWarning} \
 		STREAM_BASE_URL=$(STREAM_BASE_URL) \
 		STREAM_CORS_ORIGINS=$(STREAM_CORS_ORIGINS) \
 		RATE_LIMIT_RPM=$${RATE_LIMIT_RPM:-240} \
@@ -407,6 +409,14 @@ test-migrations:
 _test-migrations-raw:
 	cd python && DATABASE_URL=$(DATABASE_URL_TEST_MIGRATIONS) NEXUS_ENV=test \
 		uv run pytest -v --tb=short tests/test_migrations.py
+
+_test-migrations-foundation-raw:
+	cd python && DATABASE_URL=$(DATABASE_URL_TEST_MIGRATIONS) NEXUS_ENV=test \
+		uv run pytest -v --tb=short -m "not migration_ci_late" tests/test_migrations.py
+
+_test-migrations-late-raw:
+	cd python && DATABASE_URL=$(DATABASE_URL_TEST_MIGRATIONS) NEXUS_ENV=test \
+		uv run pytest -v --tb=short -m migration_ci_late tests/test_migrations.py
 
 test-supabase:
 	./scripts/with_test_services.sh ./scripts/with_supabase_services.sh make _test-back-db-ready _test-supabase-raw

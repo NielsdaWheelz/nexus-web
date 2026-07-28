@@ -147,3 +147,82 @@ describe("NotesPaneBody (AC-4 hydration hit)", () => {
     expect(fetchedPages).toBe(false);
   });
 });
+
+describe("NotesPaneBody create replay identity", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("retains an id across a response-loss retry and rotates it when the draft changes", async () => {
+    const createBodies: Array<Record<string, unknown>> = [];
+    const fetchMock = stubFetch(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/notes/pages" && init?.method === "POST") {
+        if (typeof init.body !== "string") {
+          throw new Error("Expected a JSON create body");
+        }
+        const body = JSON.parse(init.body) as Record<string, unknown>;
+        createBodies.push(body);
+        if (createBodies.length < 3) {
+          return new Response(
+            JSON.stringify({
+              error: { code: "E_INTERNAL", message: "Response lost" },
+            }),
+            {
+              status: 500,
+              headers: { "Content-Type": "application/json" },
+            },
+          );
+        }
+        return Response.json(
+          {
+            data: {
+              id: body.page_id,
+              title: body.title,
+              updated_at: "2026-07-27T12:00:00Z",
+              daily_note: null,
+            },
+          },
+          { status: 201 },
+        );
+      }
+      throw new Error(`Unexpected fetch: ${url.pathname}`);
+    });
+
+    renderHydratedPane({
+      href: "/notes",
+      resources: { "notes:pages": [] },
+      children: (
+        <ResolvedPaneBodyMarker>
+          <LibraryPlacementControllerProvider>
+            <NotesPaneBody />
+          </LibraryPlacementControllerProvider>
+        </ResolvedPaneBodyMarker>
+      ),
+    });
+
+    const title = screen.getByRole("textbox", { name: "New page title" });
+    const create = screen.getByRole("button", { name: "Create page" });
+    fireEvent.change(title, { target: { value: "First draft" } });
+    fireEvent.click(create);
+    await vi.waitFor(() => expect(createBodies).toHaveLength(1));
+
+    fireEvent.change(title, { target: { value: "Changed draft" } });
+    fireEvent.click(create);
+    await vi.waitFor(() => expect(createBodies).toHaveLength(2));
+    fireEvent.click(create);
+    await vi.waitFor(() => expect(createBodies).toHaveLength(3));
+
+    expect(createBodies.map((body) => body.title)).toEqual([
+      "First draft",
+      "Changed draft",
+      "Changed draft",
+    ]);
+    expect(createBodies[0]?.page_id).not.toBe(createBodies[1]?.page_id);
+    expect(createBodies[1]?.page_id).toBe(createBodies[2]?.page_id);
+    expect(createBodies[2]?.page_id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+    void fetchMock;
+  });
+});

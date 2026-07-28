@@ -1,6 +1,14 @@
 "use client";
 
-import { Component, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Component,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { ResolvedPaneRoute } from "@/lib/panes/paneRouteTable";
 import { renderPane } from "@/lib/panes/paneRenderRegistry";
 import {
@@ -38,7 +46,6 @@ import {
 } from "@/lib/workspace/schema";
 import {
   DEFAULT_PANE_RUNTIME_LAYOUT,
-  isEmptyPaneRuntimeLayout,
   normalizePaneRuntimeLayout,
   resolveEffectivePaneSizing,
   type EffectivePaneSizing,
@@ -156,8 +163,13 @@ class PaneRouteErrorBoundary extends Component<
     return { hasError: true };
   }
 
-  componentDidCatch(): void {
-    // Keep pane host stable even if a routed pane crashes.
+  componentDidCatch(error: unknown): void {
+    // Keep the pane host stable, but never make a routed-pane defect
+    // operationally invisible.
+    console.error(
+      `Workspace pane ${this.props.paneId} failed to render:`,
+      error,
+    );
   }
 
   componentDidUpdate(prevProps: PaneRouteErrorBoundaryProps): void {
@@ -199,7 +211,8 @@ function ResolvedPaneRouteView({ route }: { route: ResolvedPaneRoute }) {
   }
   return (
     <div className={styles.unsupported}>
-      This route is not yet supported in side-by-side pane mode: `{route.pathname}`
+      This route is not yet supported in side-by-side pane mode: `
+      {route.pathname}`
     </div>
   );
 }
@@ -303,7 +316,7 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
         labelHint: options.labelHint,
         modality: options.modality,
       }),
-    [navigatePane]
+    [navigatePane],
   );
   const handlePaneSecondaryPublication = useCallback(
     (publication: PaneSecondaryPublication | null) => {
@@ -346,7 +359,9 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
       onAcknowledgeSecondaryActivation={acknowledgeSecondaryActivation}
     >
       <PaneSecondaryContext.Provider value={handlePaneSecondaryPublication}>
-        <PaneFixedChromeContext.Provider value={handlePaneFixedChromePublication}>
+        <PaneFixedChromeContext.Provider
+          value={handlePaneFixedChromePublication}
+        >
           <PaneRouteBoundary>{children}</PaneRouteBoundary>
         </PaneFixedChromeContext.Provider>
       </PaneSecondaryContext.Provider>
@@ -379,8 +394,8 @@ const PaneContent = memo(function PaneContent({
     route.definition?.queryNavigation === "in-place"
       ? `${visitId}:${route.id}:${route.pathname}`
       : route.definition?.returnMemento.kind === "ShellScroll"
-      ? `${visitId}:${routeKey}`
-      : routeMountKey;
+        ? `${visitId}:${routeKey}`
+        : routeMountKey;
 
   return (
     <div className={styles.routeShell}>
@@ -399,7 +414,7 @@ function upsertOrDeletePaneLayoutRecord(
 ): Map<string, RuntimePaneLayoutRecord> {
   const layout = input.layout;
   const existing = current.get(input.paneId);
-  if (isEmptyPaneRuntimeLayout(layout)) {
+  if (layout === null) {
     if (!existing || existing.routeKey !== input.routeKey) return current;
     const next = new Map(current);
     next.delete(input.paneId);
@@ -409,8 +424,8 @@ function upsertOrDeletePaneLayoutRecord(
     existing?.routeKey === input.routeKey &&
     existing.layout.primaryWidth.kind === layout.primaryWidth.kind &&
     (layout.primaryWidth.kind === "workspace" ||
-      existing.layout.primaryWidth.kind === "intrinsic" &&
-        existing.layout.primaryWidth.widthPx === layout.primaryWidth.widthPx)
+      (existing.layout.primaryWidth.kind === "intrinsic" &&
+        existing.layout.primaryWidth.widthPx === layout.primaryWidth.widthPx))
   ) {
     return current;
   }
@@ -473,15 +488,13 @@ function upsertOrDeletePaneFixedChromePublicationRecord(
   return next;
 }
 
-function getRuntimePaneLayout(
+function getRuntimePaneLayoutRecord(
   records: Map<string, RuntimePaneLayoutRecord>,
   paneId: string,
   routeKey: string,
-): PaneRuntimeLayout {
+): RuntimePaneLayoutRecord | null {
   const record = records.get(paneId);
-  return record?.routeKey === routeKey
-    ? record.layout
-    : DEFAULT_PANE_RUNTIME_LAYOUT;
+  return record?.routeKey === routeKey ? record : null;
 }
 
 function getPaneSecondaryPublication(
@@ -555,6 +568,7 @@ function buildHostPane(input: {
   resourceStatus: PaneResourceStatus;
   isActive: boolean;
   runtimeLayout: PaneRuntimeLayout;
+  runtimeLayoutResolved: boolean;
   secondaryPublication: PaneSecondaryPublication | null;
   fixedChromePublication: PaneFixedChromePublication | null;
   isMobile: boolean;
@@ -620,6 +634,7 @@ function buildHostPane(input: {
       workspacePrimaryMetrics: input.workspacePrimaryMetrics,
       routeWidth,
       runtimeLayout: input.runtimeLayout,
+      runtimeLayoutResolved: input.runtimeLayoutResolved,
       fixedChromeWidthPx: input.fixedChromePublication?.widthPx ?? 0,
       isMobile: input.isMobile,
     }),
@@ -631,7 +646,9 @@ function buildHostPane(input: {
           })
         : null,
     secondaryPublication: input.secondaryPublication,
-    fixedChromePublication: input.isMobile ? null : input.fixedChromePublication,
+    fixedChromePublication: input.isMobile
+      ? null
+      : input.fixedChromePublication,
     isActive: input.isActive,
     visibility: input.pane.visibility,
     content: (
@@ -677,16 +694,15 @@ function WorkspaceHost() {
   const [runtimeLayoutByPaneId, setRuntimeLayoutByPaneId] = useState<
     Map<string, RuntimePaneLayoutRecord>
   >(() => new Map());
-  const [secondaryPublicationByPaneId, setSecondaryPublicationByPaneId] = useState<
-    Map<string, PaneSecondaryPublicationRecord>
-  >(() => new Map());
+  const [secondaryPublicationByPaneId, setSecondaryPublicationByPaneId] =
+    useState<Map<string, PaneSecondaryPublicationRecord>>(() => new Map());
   const [fixedChromePublicationByPaneId, setFixedChromePublicationByPaneId] =
     useState<Map<string, PaneFixedChromePublicationRecord>>(() => new Map());
   const [secondaryActivationByPaneId, setSecondaryActivationByPaneId] =
     useState<Map<string, SecondaryActivationDelivery>>(() => new Map());
-  const [resourceItemByLocatorKey, setResourceItemByLocatorKey] = useState<Map<string, ResourceItem>>(
-    () => new Map(),
-  );
+  const [resourceItemByLocatorKey, setResourceItemByLocatorKey] = useState<
+    Map<string, ResourceItem>
+  >(() => new Map());
   const [resourceStatusByLocatorKey, setResourceStatusByLocatorKey] = useState<
     Map<string, PaneResourceStatus>
   >(() => new Map());
@@ -707,7 +723,7 @@ function WorkspaceHost() {
         pane,
         descriptor: resolveWorkspacePaneLabel(pane, runtimeLabelByPaneId),
       })),
-    [primaryPanes, runtimeLabelByPaneId]
+    [primaryPanes, runtimeLabelByPaneId],
   );
   const currentRouteKeyByPaneId = useMemo(
     () =>
@@ -795,18 +811,23 @@ function WorkspaceHost() {
       });
   }, [resourceItemByLocatorKey, resourceLocatorsByKey]);
 
-  const publishPaneLayout = useCallback((input: PaneRuntimeLayoutPublication) => {
-    if (currentRouteKeyByPaneIdRef.current.get(input.paneId) !== input.routeKey) {
-      return;
-    }
-    const normalizedInput = {
-      ...input,
-      layout: normalizePaneRuntimeLayout(input.layout),
-    };
-    setRuntimeLayoutByPaneId((current) =>
-      upsertOrDeletePaneLayoutRecord(current, normalizedInput),
-    );
-  }, []);
+  const publishPaneLayout = useCallback(
+    (input: PaneRuntimeLayoutPublication) => {
+      if (
+        currentRouteKeyByPaneIdRef.current.get(input.paneId) !== input.routeKey
+      ) {
+        return;
+      }
+      const normalizedInput = {
+        ...input,
+        layout: input.layout ? normalizePaneRuntimeLayout(input.layout) : null,
+      };
+      setRuntimeLayoutByPaneId((current) =>
+        upsertOrDeletePaneLayoutRecord(current, normalizedInput),
+      );
+    },
+    [],
+  );
 
   const publishPaneSecondary = useCallback(
     (input: {
@@ -814,7 +835,9 @@ function WorkspaceHost() {
       routeKey: string;
       publication: PaneSecondaryPublication | null;
     }) => {
-      if (currentRouteKeyByPaneIdRef.current.get(input.paneId) !== input.routeKey) {
+      if (
+        currentRouteKeyByPaneIdRef.current.get(input.paneId) !== input.routeKey
+      ) {
         return;
       }
       const normalizedInput = {
@@ -836,7 +859,9 @@ function WorkspaceHost() {
       routeKey: string;
       publication: PaneFixedChromePublication | null;
     }) => {
-      if (currentRouteKeyByPaneIdRef.current.get(input.paneId) !== input.routeKey) {
+      if (
+        currentRouteKeyByPaneIdRef.current.get(input.paneId) !== input.routeKey
+      ) {
         return;
       }
       const normalizedInput = {
@@ -846,7 +871,10 @@ function WorkspaceHost() {
           : null,
       };
       setFixedChromePublicationByPaneId((current) =>
-        upsertOrDeletePaneFixedChromePublicationRecord(current, normalizedInput),
+        upsertOrDeletePaneFixedChromePublicationRecord(
+          current,
+          normalizedInput,
+        ),
       );
     },
     [],
@@ -925,24 +953,27 @@ function WorkspaceHost() {
         const resourceLocatorKey = paneResourceLocatorKey(
           resolvePaneResourceLocator(descriptor.route),
         );
+        const runtimeLayoutRecord = getRuntimePaneLayoutRecord(
+          runtimeLayoutByPaneId,
+          pane.id,
+          descriptor.routeKey,
+        );
         return buildHostPane({
           pane,
           secondaryPane: pane.attachedSecondaryPaneId
-            ? state.secondaryPanesById[pane.attachedSecondaryPaneId] ?? null
+            ? (state.secondaryPanesById[pane.attachedSecondaryPaneId] ?? null)
             : null,
           descriptor,
           resourceItem: resourceLocatorKey
-            ? resourceItemByLocatorKey.get(resourceLocatorKey) ?? null
+            ? (resourceItemByLocatorKey.get(resourceLocatorKey) ?? null)
             : null,
           resourceStatus: resourceLocatorKey
-            ? resourceStatusByLocatorKey.get(resourceLocatorKey) ?? "pending"
+            ? (resourceStatusByLocatorKey.get(resourceLocatorKey) ?? "pending")
             : "none",
           isActive: pane.id === state.activePrimaryPaneId,
-          runtimeLayout: getRuntimePaneLayout(
-            runtimeLayoutByPaneId,
-            pane.id,
-            descriptor.routeKey,
-          ),
+          runtimeLayout:
+            runtimeLayoutRecord?.layout ?? DEFAULT_PANE_RUNTIME_LAYOUT,
+          runtimeLayoutResolved: runtimeLayoutRecord !== null,
           secondaryPublication: getPaneSecondaryPublication(
             secondaryPublicationByPaneId,
             pane.id,
@@ -968,16 +999,22 @@ function WorkspaceHost() {
       fixedChromePublicationByPaneId,
       isMobile,
       workspacePrimaryMetrics,
-    ]
+    ],
   );
   const panesRef = useRef(panes);
   panesRef.current = panes;
 
-  const { canvasRef, onWheel, edges, inViewPaneIds, handleChromeMouseDown, scrollPaneIntoView } =
-    usePaneCanvas({
-      mode: layoutMode === "desktop" ? "desktop" : "disabled",
-      paneIds: panes.map((pane) => pane.paneId),
-    });
+  const {
+    canvasRef,
+    onWheel,
+    edges,
+    inViewPaneIds,
+    handleChromeMouseDown,
+    scrollPaneIntoView,
+  } = usePaneCanvas({
+    mode: layoutMode === "desktop" ? "desktop" : "disabled",
+    paneIds: panes.map((pane) => pane.paneId),
+  });
 
   useEffect(() => {
     if (pendingSecondaryActivationByPaneId.size === 0) {
@@ -1028,10 +1065,7 @@ function WorkspaceHost() {
             return next;
           });
         }
-        requestSecondarySurface(
-          pane.paneId,
-          request.activation.surfaceId,
-        );
+        requestSecondarySurface(pane.paneId, request.activation.surfaceId);
       }
       acknowledgePendingSecondaryActivation(
         paneId,
@@ -1057,11 +1091,9 @@ function WorkspaceHost() {
         if (
           delivered?.routeKey !== routeKey ||
           delivered.activation.kind !== activation.kind ||
-          (
-            delivered.activation.kind === "DossierRevision" &&
+          (delivered.activation.kind === "DossierRevision" &&
             activation.kind === "DossierRevision" &&
-            delivered.activation.revisionRef !== activation.revisionRef
-          )
+            delivered.activation.revisionRef !== activation.revisionRef)
         ) {
           return current;
         }
@@ -1090,7 +1122,8 @@ function WorkspaceHost() {
       return;
     }
     for (const pane of panes) {
-      const correctionPx = pane.secondarySizing?.storedWidthCorrectionPx ?? null;
+      const correctionPx =
+        pane.secondarySizing?.storedWidthCorrectionPx ?? null;
       if (correctionPx !== null && pane.secondaryPane) {
         resizeSecondaryPane(pane.secondaryPane.id, correctionPx);
       }
@@ -1100,7 +1133,8 @@ function WorkspaceHost() {
   useEffect(() => {
     for (const primaryPane of primaryPanes) {
       const secondaryPane = primaryPane.attachedSecondaryPaneId
-        ? state.secondaryPanesById[primaryPane.attachedSecondaryPaneId] ?? null
+        ? (state.secondaryPanesById[primaryPane.attachedSecondaryPaneId] ??
+          null)
         : null;
       if (!secondaryPane) {
         continue;
@@ -1120,7 +1154,12 @@ function WorkspaceHost() {
         dropSecondaryPane(secondaryPane.id);
         continue;
       }
-      if (!secondaryPublicationIncludesSurface(publication, secondaryPane.activeSurfaceId)) {
+      if (
+        !secondaryPublicationIncludesSurface(
+          publication,
+          secondaryPane.activeSurfaceId,
+        )
+      ) {
         setSecondarySurface(secondaryPane.id, publication.defaultSurfaceId);
       }
     }
@@ -1179,7 +1218,7 @@ function WorkspaceHost() {
       // the fallback is never starved). Mobile return-focus is owned by the
       // MobileSheet, so this only drives desktop.
       const opener = pane
-        ? secondaryReturnFocusByPaneIdRef.current.get(pane.paneId) ?? null
+        ? (secondaryReturnFocusByPaneIdRef.current.get(pane.paneId) ?? null)
         : null;
       const focusTarget =
         !isMobile && pane
@@ -1213,7 +1252,9 @@ function WorkspaceHost() {
     [canUsePublishedSecondarySurface, setSecondarySurface],
   );
 
-  const visiblePaneCount = primaryPanes.filter((pane) => pane.visibility === "visible").length;
+  const visiblePaneCount = primaryPanes.filter(
+    (pane) => pane.visibility === "visible",
+  ).length;
   const stripItems = useMemo(
     () =>
       panes.map((pane) => ({
@@ -1226,13 +1267,14 @@ function WorkspaceHost() {
         canMinimize: pane.visibility === "visible" && visiblePaneCount > 1,
         isInView: inViewPaneIds.has(pane.paneId),
       })),
-    [panes, visiblePaneCount, inViewPaneIds]
+    [panes, visiblePaneCount, inViewPaneIds],
   );
 
   const activePane =
     panes.find(
       (pane) =>
-        pane.paneId === state.activePrimaryPaneId && pane.visibility === "visible"
+        pane.paneId === state.activePrimaryPaneId &&
+        pane.visibility === "visible",
     ) ??
     panes.find((pane) => pane.visibility === "visible") ??
     null;
@@ -1245,7 +1287,7 @@ function WorkspaceHost() {
       return false;
     }
     const chrome = paneWrap.querySelector<HTMLElement>(
-      '[data-pane-chrome-focus="true"]'
+      '[data-pane-chrome-focus="true"]',
     );
     if (!chrome) {
       return false;
@@ -1283,7 +1325,7 @@ function WorkspaceHost() {
         }
       });
     },
-    [activatePane, focusPaneChrome]
+    [activatePane, focusPaneChrome],
   );
 
   useEffect(() => {
@@ -1294,29 +1336,40 @@ function WorkspaceHost() {
       const nextCombo = keybindings["pane-next"];
       const prevCombo = keybindings["pane-previous"];
       const isNext = Boolean(nextCombo) && matchesKeyEvent(nextCombo, event);
-      const isPrevious = Boolean(prevCombo) && matchesKeyEvent(prevCombo, event);
+      const isPrevious =
+        Boolean(prevCombo) && matchesKeyEvent(prevCombo, event);
       if (!isNext && !isPrevious) {
         return;
       }
       event.preventDefault();
-      const visible = primaryPanes.filter((pane) => pane.visibility === "visible");
+      const visible = primaryPanes.filter(
+        (pane) => pane.visibility === "visible",
+      );
       if (visible.length < 2) {
         return;
       }
-      const index = visible.findIndex((pane) => pane.id === state.activePrimaryPaneId);
-      const targetIndex = (index + (isNext ? 1 : -1) + visible.length) % visible.length;
+      const index = visible.findIndex(
+        (pane) => pane.id === state.activePrimaryPaneId,
+      );
+      const targetIndex =
+        (index + (isNext ? 1 : -1) + visible.length) % visible.length;
       handleActivatePane(visible[targetIndex].id);
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [primaryPanes, state.activePrimaryPaneId, keybindings, handleActivatePane]);
+  }, [
+    primaryPanes,
+    state.activePrimaryPaneId,
+    keybindings,
+    handleActivatePane,
+  ]);
 
   // --- Close handler ---
   const handleClosePane = useCallback(
     (paneId: string) => {
       closePane(paneId);
     },
-    [closePane]
+    [closePane],
   );
 
   return (
@@ -1339,7 +1392,9 @@ function WorkspaceHost() {
               data-pane-id={pane.paneId}
               data-active={pane.isActive ? "true" : "false"}
               data-mobile={isMobile ? "true" : "false"}
-              data-minimized={pane.visibility === "minimized" ? "true" : "false"}
+              data-minimized={
+                pane.visibility === "minimized" ? "true" : "false"
+              }
               hidden={pane.visibility === "minimized"}
               inert={pane.visibility === "minimized" ? true : undefined}
               ref={(element) => {
@@ -1440,8 +1495,9 @@ function WorkspaceHost() {
                       secondary={pane.secondaryPane}
                       publication={pane.secondaryPublication}
                       returnFocusTo={() =>
-                        secondaryReturnFocusByPaneIdRef.current.get(pane.paneId) ??
-                        null
+                        secondaryReturnFocusByPaneIdRef.current.get(
+                          pane.paneId,
+                        ) ?? null
                       }
                       onClose={handleCloseSecondaryPane}
                       onActiveSurfaceChange={handleSetSecondarySurface}

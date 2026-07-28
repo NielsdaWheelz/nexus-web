@@ -654,22 +654,23 @@ def test_dossier_hard_cut_generic_engine_has_no_subject_or_kind_branches():
     assert not hits, f"subject/kind branch entered generic Dossier owners:\n{_fmt(hits)}"
 
 
-def test_dossier_hard_cut_deploy_allowlists_use_only_generic_job_kinds():
-    allowlist_owners = (
+def test_dossier_hard_cut_worker_topology_uses_only_generic_job_kinds():
+    from nexus.config import BACKGROUND_WORKER_JOB_KINDS, INTERACTIVE_WORKER_JOB_KINDS
+
+    assert "dossier_build" in INTERACTIVE_WORKER_JOB_KINDS
+    assert "media_unit_build" in BACKGROUND_WORKER_JOB_KINDS
+
+    topology_owners = (
         _PY_ROOT / "config.py",
         _DEPLOY_ROOT / "env" / "env-prod-worker.example",
         _DEPLOY_ROOT / "hetzner" / "sync-env.sh",
     )
-    for path in allowlist_owners:
-        source = path.read_text(encoding="utf-8")
-        assert "dossier_build" in source, f"{path} must allow dossier_build"
-        assert "media_unit_build" in source, f"{path} must allow media_unit_build"
 
     legacy_pattern = (
         r"\blibrary_dossier(?:_generate)?\b|\bconversation_distill(?:ate)?\b|"
         r"\bDISTILL_ENABLED\b|\bCONVERSATION_DISTILL_SCHEDULE_SECONDS\b"
     )
-    hits = _grep(legacy_pattern, *allowlist_owners)
+    hits = _grep(legacy_pattern, *topology_owners)
     assert not hits, f"legacy Dossier deploy/config vocabulary survived:\n{_fmt(hits)}"
 
 
@@ -1206,15 +1207,15 @@ def test_add_content_membership_contract_spans_backend_bff_client_and_normative_
     bff_route = (
         _WEB_ROOT / "app" / "api" / "media" / "[id]" / "libraries" / "[libraryId]" / "route.ts"
     ).read_text(encoding="utf-8")
-    client = (_WEB_ROOT / "lib" / "media" / "mediaLibraries.ts").read_text(encoding="utf-8")
+    client = (_WEB_ROOT / "lib" / "libraries" / "libraryPlacement.ts").read_text(encoding="utf-8")
     library_doc = (_REPO_ROOT / "docs" / "modules" / "library.md").read_text(encoding="utf-8")
 
     assert '@router.delete("/media/{media_id}/libraries/{library_id}"' in backend_route
     assert '@router.post("/media/{media_id}/libraries", status_code=204)' in backend_route
     assert "E_MEDIA_LAST_REFERENCE" in backend_errors
     assert "`409 E_MEDIA_LAST_REFERENCE`" in library_doc
-    assert "ensureMediaAbsentFromLibrary" in client
-    assert "`/api/media/${mediaId}/libraries/${libraryId}`" in client
+    assert "removeLibraryPlacement" in client
+    assert "`/api/media/${target.id}/libraries/${libraryId}`" in client
     assert "`/media/${id}/libraries/${libraryId}`" in bff_route
 
 

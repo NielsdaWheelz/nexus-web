@@ -251,6 +251,43 @@ def _result_resource_ref(result: InternalSearchResult) -> ResourceRef:
     raise AssertionError(f"Unknown search result type: {type(result).__name__}")
 
 
+def search_owner_ref(result: InternalSearchResult) -> ResourceRef:
+    """Canonical primary resource that receives one search occurrence."""
+    if isinstance(result, _RankedWebResult):
+        return _result_resource_ref(result)
+    if isinstance(
+        result,
+        (
+            _RankedMediaResult,
+            _RankedPodcastResult,
+            _RankedContributorResult,
+            _RankedPageResult,
+            _RankedNoteBlockResult,
+            _RankedConversationResult,
+        ),
+    ):
+        return _result_resource_ref(result)
+    if isinstance(result, _RankedEvidenceSpanResult):
+        # A note-owned span's ``source.media_id`` is its note_block id, so the
+        # owner is carried explicitly rather than fabricated as ``media:{id}``.
+        return result.owner_ref
+    if isinstance(
+        result,
+        (
+            _RankedContentChunkResult,
+            _RankedFragmentResult,
+            _RankedHighlightResult,
+            _RankedReaderApparatusItemResult,
+        ),
+    ):
+        return ResourceRef(scheme="media", id=result.source.media_id)
+    if isinstance(result, _RankedMessageResult):
+        return ResourceRef(scheme="conversation", id=result.conversation_id)
+    if isinstance(result, _RankedArtifactResult):
+        return ResourceRef(scheme="conversation", id=result.id)
+    raise AssertionError(f"Unknown search result type: {type(result).__name__}")
+
+
 def _required_locator(
     result_type: str,
     locator: RetrievalLocator | dict[str, Any] | None,
@@ -276,6 +313,7 @@ def _result_model_fields(
         raise AssertionError(f"{result.result_type} search result is not activatable")
     fields = {
         "resource_ref": ref.uri,
+        "owner_resource_ref": search_owner_ref(result).uri,
         "activation": activation,
         "citation_target": ref.uri if resource_citation_result_type(ref) is not None else None,
         "context_ref": context_ref,
@@ -489,6 +527,7 @@ def _result_to_out(db: Session, viewer_id: UUID, result: InternalSearchResult) -
             type="note_block",
             body_text=result.body_text,
             highlight_excerpt=result.highlight_excerpt,
+            note_origin=result.note_origin,
             locator=_required_locator("note_block", result.locator),
             **base_payload,
         )

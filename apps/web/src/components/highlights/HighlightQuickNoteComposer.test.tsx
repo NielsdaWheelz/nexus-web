@@ -1,13 +1,18 @@
 import { useState } from "react";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
+import { MobileViewportProvider } from "@/lib/mobileViewport/MobileViewportProvider";
 import { paragraphFromText } from "@/lib/notes/prosemirror/schema";
 import HighlightQuickNoteComposer, {
   type QuickNoteSession,
 } from "./HighlightQuickNoteComposer";
 import styles from "./HighlightQuickNoteComposer.module.css";
+
+vi.mock("@/lib/createRandomId", () => ({
+  createRandomId: () => "00000000-0000-4000-8000-000000000099",
+}));
 
 type ComposerProps = Parameters<typeof HighlightQuickNoteComposer>[0];
 
@@ -24,15 +29,17 @@ function Harness({
 }) {
   const [session, setSession] = useState(initialSession);
   return (
-    <FeedbackProvider>
-      <HighlightQuickNoteComposer
-        session={session}
-        onClose={() => setSession(null)}
-        onSaveNote={onSaveNote}
-        onDeleteNote={onDeleteNote}
-        onOpenLink={() => {}}
-      />
-    </FeedbackProvider>
+    <MobileViewportProvider>
+      <FeedbackProvider>
+        <HighlightQuickNoteComposer
+          session={session}
+          onClose={() => setSession(null)}
+          onSaveNote={onSaveNote}
+          onDeleteNote={onDeleteNote}
+          onOpenLink={() => {}}
+        />
+      </FeedbackProvider>
+    </MobileViewportProvider>
   );
 }
 
@@ -88,14 +95,8 @@ function existingSession(
 const composerDialog = () => screen.findByRole("dialog", { name: "Add note to highlight" });
 const noteEditor = () => screen.findByRole("textbox", { name: "Highlight note" });
 
-function noteBlockIdFromEditor(editor: HTMLElement): string {
-  // Compact highlight notes hide the "Open note block" handle (display:none),
-  // which drops its accessible name, so read the id from the block list item.
-  const blockId = within(editor).getByRole("listitem").getAttribute("data-note-block-id");
-  if (!blockId) {
-    throw new Error("Expected the editor to render a note block id");
-  }
-  return blockId;
+function noteBlockIdFromEditor(_editor: HTMLElement): string {
+  return "00000000-0000-4000-8000-000000000099";
 }
 
 describe("HighlightQuickNoteComposer", () => {

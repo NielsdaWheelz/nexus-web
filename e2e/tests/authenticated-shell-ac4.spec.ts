@@ -39,13 +39,14 @@ test.describe("authenticated shell AC-4", () => {
     );
 
     const activePane = activeWorkspacePane(page);
+    // The Default library presents as "All" with secondary "Across your libraries".
     const defaultLibraryItem = activePane
       .getByRole("listitem")
-      .filter({ hasText: "Default library" });
-    const defaultLibraryLabel = defaultLibraryItem.getByText(
-      "Default library",
-      { exact: true },
-    );
+      .filter({ hasText: "Across your libraries" });
+    const defaultLibraryLabel = defaultLibraryItem.getByRole("link", {
+      name: "All",
+      exact: true,
+    });
     await expect(defaultLibraryLabel).toBeVisible();
     await expect.poll(() => browserLibraryListFetches).toEqual([]);
 
@@ -53,8 +54,9 @@ test.describe("authenticated shell AC-4", () => {
     await expect(libraryLink).toBeVisible();
     await page.waitForLoadState("networkidle");
     await page.evaluate(() => {
-      (window as typeof window & { __ac4SameDocumentSentinel?: boolean }).__ac4SameDocumentSentinel =
-        true;
+      (
+        window as typeof window & { __ac4SameDocumentSentinel?: boolean }
+      ).__ac4SameDocumentSentinel = true;
     });
     await libraryLink.click();
     await expect(page).toHaveURL(/\/libraries\/[^/]+$/);
@@ -68,6 +70,8 @@ test.describe("authenticated shell AC-4", () => {
       )
       .toBe(true);
     await expect(page.locator("[data-pane-id]:visible")).toHaveCount(1);
-    await expect.poll(() => browserLibraryDetailFetches.length).toBeGreaterThan(0);
+    await expect
+      .poll(() => browserLibraryDetailFetches.length)
+      .toBeGreaterThan(0);
   });
 });

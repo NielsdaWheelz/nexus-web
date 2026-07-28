@@ -86,9 +86,7 @@ function runFixture(
           "postgresql+psycopg://",
         ),
         NEXUS_E2E_LIBRARY_MEMBERS_MODE: mode,
-        ...(input.ownerId
-          ? { NEXUS_E2E_OWNER_USER_ID: input.ownerId }
-          : {}),
+        ...(input.ownerId ? { NEXUS_E2E_OWNER_USER_ID: input.ownerId } : {}),
         ...(input.fixture
           ? {
               NEXUS_E2E_LIBRARY_MEMBERS_FIXTURE: JSON.stringify(input.fixture),
@@ -151,8 +149,7 @@ async function findUser(page: Page, email: string): Promise<SearchUser> {
   const payload = (await response.json()) as { data: SearchUser[] };
   const user = payload.data.find(
     (candidate) =>
-      candidate.email.kind === "Present" &&
-      candidate.email.value === email,
+      candidate.email.kind === "Present" && candidate.email.value === email,
   );
   if (!user) throw new Error(`No exact user-search result for ${email}`);
   return user;
@@ -174,7 +171,7 @@ function grantShareEntitlement(email: string): void {
       "--email",
       email,
       "--plan",
-      "plus",
+      "ai_plus",
       "--reason",
       "Library Members Companion E2E",
       "--actor-label",
@@ -194,13 +191,30 @@ function visibleCompanion(page: Page): Locator {
     .filter({ visible: true });
 }
 
-async function openShare(page: Page): Promise<Locator> {
+async function openShare(page: Page, paneDefects: string[]): Promise<Locator> {
   const options = page
     .getByRole("button", { name: /^(?:Options|Pane options)$/ })
     .filter({ visible: true })
     .first();
   await expect(options).toBeVisible({ timeout: 15_000 });
-  await options.click();
+  try {
+    await options.click({ timeout: 15_000 });
+  } catch (error) {
+    if (
+      await page
+        .getByRole("region", { name: "Pane failed to render" })
+        .isVisible()
+        .catch(() => false)
+    ) {
+      throw new Error(
+        `Library pane crashed while opening Share: ${
+          paneDefects.at(-1) ?? "no browser defect detail was published"
+        }`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
   await page.getByRole("menuitem", { name: "Share…" }).click();
   const share = page
     .getByRole("dialog", { name: "Share" })
@@ -251,6 +265,15 @@ test("Library Members is the sole complete governance surface across desktop and
   let fixture: LibraryMembersFixture | null = null;
   let secondary: Awaited<ReturnType<typeof bootstrapUser>> | null = null;
   let productError: unknown = null;
+  const paneDefects: string[] = [];
+  page.on("console", (message) => {
+    if (
+      message.type() === "error" &&
+      message.text().startsWith("Workspace pane ")
+    ) {
+      paneDefects.push(message.text());
+    }
+  });
 
   try {
     if (!owner.email) throw new Error("E2E owner has no account email");
@@ -270,7 +293,7 @@ test("Library Members is the sole complete governance surface across desktop and
     await test.step("desktop Share opens an authorized, cursor-complete Members Companion", async () => {
       await page.setViewportSize({ width: 1280, height: 800 });
       await openLibrary(page, testInfo, "owner-desktop", fixture!.library_id);
-      const share = await openShare(page);
+      const share = await openShare(page, paneDefects);
       await share.getByRole("button", { name: "Manage members" }).click();
       await expect(share).toBeHidden();
 
@@ -290,11 +313,7 @@ test("Library Members is the sole complete governance surface across desktop and
         companion.getByRole("heading", { name: "Members" }),
       ).toBeVisible();
 
-      await exhaustPagination(
-        companion,
-        "Load more members",
-        /^Member \d{3}$/,
-      );
+      await exhaustPagination(companion, "Load more members", /^Member \d{3}$/);
       await expect(companion.getByText(/^Member \d{3}$/)).toHaveCount(205);
       await exhaustPagination(
         companion,
@@ -331,7 +350,7 @@ test("Library Members is the sole complete governance surface across desktop and
     await test.step("mobile Share activates the same Members surface", async () => {
       await page.setViewportSize({ width: 390, height: 844 });
       await openLibrary(page, testInfo, "owner-mobile", fixture!.library_id);
-      const share = await openShare(page);
+      const share = await openShare(page, paneDefects);
       await share.getByRole("button", { name: "Manage members" }).click();
       await expect(share).toBeHidden();
 
@@ -365,15 +384,19 @@ test("Library Members is the sole complete governance surface across desktop and
         const capabilityResponse = page.waitForResponse(
           (response) =>
             response.request().method() === "GET" &&
-            new URL(response.url()).pathname ===
-              `/api/libraries/${libraryId}`,
+            new URL(response.url()).pathname === `/api/libraries/${libraryId}`,
         );
-        const share = await openShare(page);
-        await expectOk(await capabilityResponse, `Read ${kind} Library capability`);
+        const share = await openShare(page, paneDefects);
+        await expectOk(
+          await capabilityResponse,
+          `Read ${kind} Library capability`,
+        );
         await page.evaluate(
           () =>
             new Promise<void>((resolve) =>
-              requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+              requestAnimationFrame(() =>
+                requestAnimationFrame(() => resolve()),
+              ),
             ),
         );
         await expect(
@@ -416,23 +439,21 @@ test("Library Members is the sole complete governance surface across desktop and
 
       await companion.getByRole("tab", { name: "Dossier" }).click();
       await companion.getByRole("tab", { name: "Members" }).click();
-      await expect(
-        companion.getByRole("tab", { name: "Members" }),
-      ).toHaveCount(0);
+      await expect(companion.getByRole("tab", { name: "Members" })).toHaveCount(
+        0,
+      );
       await expect(
         companion.getByRole("tab", { name: "Dossier" }),
       ).toHaveAttribute("aria-selected", "true");
 
-      const ordinaryShare = await openShare(secondary!.page);
+      const ordinaryShare = await openShare(secondary!.page, paneDefects);
       await expect(ordinaryShare).toContainText(
         "Members are managed by library admins.",
       );
       await expect(
         ordinaryShare.getByRole("button", { name: "Manage members" }),
       ).toHaveCount(0);
-      await ordinaryShare
-        .getByRole("button", { name: "Close dialog" })
-        .click();
+      await ordinaryShare.getByRole("button", { name: "Close dialog" }).click();
 
       runFixture("add-member", {
         fixture: fixture!,

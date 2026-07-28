@@ -2,6 +2,15 @@
 
 Status: IMPLEMENTED AND VERIFIED — 2026-07-24
 
+> **Superseded in part (2026-07-27):**
+> [`library-all-and-smart-views-hard-cutover.md`](library-all-and-smart-views-hard-cutover.md)
+> extends the view with an entry projection, moves the pending/failure status
+> node outside the `aria-busy` collection (with `aria-controls`), replaces the
+> status copy with `Loading {requested}. Showing {committed}.` /
+> `Could not load {requested}. Showing {committed}.`, and binds result commits
+> to placement/consumption revisions. The in-place lifecycle, latest-wins
+> commit, and retained-row rules below otherwise stand.
+
 Type: hard cutover. No feature flag, compatibility branch, legacy lifecycle,
 silent fallback, or released intermediate state.
 

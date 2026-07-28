@@ -10,8 +10,7 @@ import {
 const INITIAL_VIEWPORT = { width: 1_000, height: 300 };
 const RESIZED_VIEWPORT = { width: 390, height: 300 };
 const SETTINGS_SCOPE = '[data-pane-return-scope="Settings.Sections"]';
-const CONVERSATIONS_SCOPE =
-  '[data-pane-return-scope="Conversations.Items"]';
+const CONVERSATIONS_SCOPE = '[data-pane-return-scope="Conversations.Items"]';
 const BILLING_ROW_ID = "/settings/billing";
 const APPEARANCE_ROW_ID = "/settings/appearance";
 const TARGET_OFFSET_PX = -12;
@@ -27,11 +26,7 @@ function settingsRow(page: Page, rowId: string): Locator {
     .locator(`[data-collection-row-id="${rowId}"]`);
 }
 
-function collectionRow(
-  page: Page,
-  scope: string,
-  rowId: string,
-): Locator {
+function collectionRow(page: Page, scope: string, rowId: string): Locator {
   return activeWorkspacePane(page)
     .locator(scope)
     .locator(`[data-collection-row-id="${rowId}"]`);
@@ -42,47 +37,53 @@ function primaryNavigation(page: Page): Locator {
 }
 
 async function placeRowAtOffset(
-  scrollport: Locator,
   row: Locator,
   offsetPx: number,
 ): Promise<void> {
-  await scrollport.evaluate(
-    (element, input) => {
-      const target = element.querySelector<HTMLElement>(input.selector);
-      if (!target) {
-        throw new Error(`Missing pane-return row ${input.selector}`);
-      }
-      const viewport = element.getBoundingClientRect();
-      const targetRect = target.getBoundingClientRect();
-      element.scrollTop += targetRect.top - viewport.top - input.offsetPx;
-    },
-    {
-      selector: `[data-collection-row-id="${await row.getAttribute(
-        "data-collection-row-id",
-      )}"]`,
-      offsetPx,
-    },
-  );
+  await expect
+    .poll(() =>
+      row.evaluate((target, nextOffsetPx) => {
+        if (!target.isConnected) {
+          return false;
+        }
+        const element = target.closest<HTMLElement>(
+          '[data-testid="pane-shell-body"]',
+        );
+        if (!element?.isConnected) {
+          return false;
+        }
+        const viewport = element.getBoundingClientRect();
+        const targetRect = target.getBoundingClientRect();
+        element.scrollTop += targetRect.top - viewport.top - nextOffsetPx;
+        return true;
+      }, offsetPx),
+    )
+    .toBe(true);
 }
 
-async function rowViewportOffset(
-  scrollport: Locator,
-  row: Locator,
-): Promise<number> {
-  const rowId = await row.getAttribute("data-collection-row-id");
-  return scrollport.evaluate(
-    (element, selector) => {
-      const target = element.querySelector<HTMLElement>(selector);
-      if (!target) {
-        throw new Error(`Missing pane-return row ${selector}`);
-      }
-      return (
-        target.getBoundingClientRect().top -
-        element.getBoundingClientRect().top
-      );
-    },
-    `[data-collection-row-id="${rowId}"]`,
-  );
+async function rowViewportOffset(row: Locator): Promise<number> {
+  let resolvedOffset: number | null = null;
+  await expect
+    .poll(async () => {
+      resolvedOffset = await row.evaluate((target) => {
+        if (!target.isConnected) {
+          return null;
+        }
+        const element = target.closest<HTMLElement>(
+          '[data-testid="pane-shell-body"]',
+        );
+        if (!element?.isConnected) {
+          return null;
+        }
+        return (
+          target.getBoundingClientRect().top -
+          element.getBoundingClientRect().top
+        );
+      });
+      return resolvedOffset;
+    })
+    .not.toBeNull();
+  return resolvedOffset!;
 }
 
 async function firstIntersectingRowId(
@@ -114,20 +115,24 @@ async function expectRowRestoredAtClampedOffset(
   expectedRowId: string,
   desiredOffsetPx: number,
 ): Promise<void> {
-  const rowId = await row.getAttribute("data-collection-row-id");
   await expect
     .poll(() =>
-      scrollport.evaluate(
-        (element, input) => {
-          const target = element.querySelector<HTMLElement>(input.selector);
-          if (!target) {
-            throw new Error(`Missing pane-return row ${input.selector}`);
+      row.evaluate(
+        (target, desiredOffsetPx) => {
+          if (!target.isConnected) {
+            return Number.POSITIVE_INFINITY;
+          }
+          const element = target.closest<HTMLElement>(
+            '[data-testid="pane-shell-body"]',
+          );
+          if (!element?.isConnected) {
+            return Number.POSITIVE_INFINITY;
           }
           const viewport = element.getBoundingClientRect();
           const actualOffsetPx =
             target.getBoundingClientRect().top - viewport.top;
           const targetOffsetPx = actualOffsetPx + element.scrollTop;
-          const desiredScrollTop = targetOffsetPx - input.desiredOffsetPx;
+          const desiredScrollTop = targetOffsetPx - desiredOffsetPx;
           const maxScrollTop = Math.max(
             0,
             element.scrollHeight - element.clientHeight,
@@ -136,14 +141,9 @@ async function expectRowRestoredAtClampedOffset(
             Math.max(0, desiredScrollTop),
             maxScrollTop,
           );
-          return Math.abs(
-            actualOffsetPx - (targetOffsetPx - clampedScrollTop),
-          );
+          return Math.abs(actualOffsetPx - (targetOffsetPx - clampedScrollTop));
         },
-        {
-          selector: `[data-collection-row-id="${rowId}"]`,
-          desiredOffsetPx,
-        },
+        desiredOffsetPx,
       ),
     )
     .toBeLessThanOrEqual(OFFSET_TOLERANCE_PX);
@@ -166,17 +166,16 @@ async function expectRowRestoredAtClampedOffset(
 }
 
 async function expectRowRestored(
-  scrollport: Locator,
   row: Locator,
   expectedRowId: string,
   expectedOffsetPx: number,
 ): Promise<void> {
   await expect(row).toHaveAttribute("data-collection-row-id", expectedRowId);
   await expect
-    .poll(() => rowViewportOffset(scrollport, row))
+    .poll(() => rowViewportOffset(row))
     .toBeGreaterThanOrEqual(expectedOffsetPx - OFFSET_TOLERANCE_PX);
   await expect
-    .poll(() => rowViewportOffset(scrollport, row))
+    .poll(() => rowViewportOffset(row))
     .toBeLessThanOrEqual(expectedOffsetPx + OFFSET_TOLERANCE_PX);
 }
 
@@ -184,7 +183,7 @@ async function goBackInPane(
   page: Page,
   expectedPath: RegExp = /\/settings$/,
 ): Promise<void> {
-  const back = activeWorkspacePane(page)
+  const back = page
     .getByRole("button", { name: /^Go back(?: in this pane)?$/ })
     .filter({ visible: true });
   await expect(back).toHaveCount(1);
@@ -213,9 +212,8 @@ async function createConversations(
   for (let start = 0; start < count; start += 5) {
     ids.push(
       ...(await Promise.all(
-        Array.from(
-          { length: Math.min(5, count - start) },
-          () => createConversation(page),
+        Array.from({ length: Math.min(5, count - start) }, () =>
+          createConversation(page),
         ),
       )),
     );
@@ -255,18 +253,16 @@ test.describe("pane return memento", () => {
       "/settings",
     );
 
-    const scrollport = paneScrollport(page);
     const eyeLineRow = settingsRow(page, BILLING_ROW_ID);
     const focusedRowLink = settingsRow(page, APPEARANCE_ROW_ID).locator(
       "[data-row-focusable]",
     );
     await expect(eyeLineRow).toBeVisible();
-    await placeRowAtOffset(scrollport, eyeLineRow, TARGET_OFFSET_PX);
+    await placeRowAtOffset(eyeLineRow, TARGET_OFFSET_PX);
 
-    const capturedOffsetPx = await rowViewportOffset(scrollport, eyeLineRow);
+    const capturedOffsetPx = await rowViewportOffset(eyeLineRow);
     expect(capturedOffsetPx).toBeLessThan(0);
     await expectRowRestored(
-      scrollport,
       eyeLineRow,
       BILLING_ROW_ID,
       capturedOffsetPx,
@@ -307,15 +303,14 @@ test.describe("pane return memento", () => {
       "/settings",
     );
 
-    const scrollport = paneScrollport(page);
     const eyeLineRow = settingsRow(page, BILLING_ROW_ID);
     const pointerTarget = settingsRow(page, APPEARANCE_ROW_ID).locator(
       "[data-row-focusable]",
     );
-    await placeRowAtOffset(scrollport, eyeLineRow, TARGET_OFFSET_PX);
-    const capturedOffsetPx = await rowViewportOffset(scrollport, eyeLineRow);
+    await expect(eyeLineRow).toBeVisible();
+    await placeRowAtOffset(eyeLineRow, TARGET_OFFSET_PX);
+    const capturedOffsetPx = await rowViewportOffset(eyeLineRow);
     await expectRowRestored(
-      scrollport,
       eyeLineRow,
       BILLING_ROW_ID,
       capturedOffsetPx,
@@ -325,10 +320,8 @@ test.describe("pane return memento", () => {
     await expect(page).toHaveURL(/\/settings\/appearance$/);
     await goBackInPane(page);
 
-    const restoredScrollport = paneScrollport(page);
     const restoredEyeLineRow = settingsRow(page, BILLING_ROW_ID);
     await expectRowRestored(
-      restoredScrollport,
       restoredEyeLineRow,
       BILLING_ROW_ID,
       capturedOffsetPx,
@@ -338,9 +331,9 @@ test.describe("pane return memento", () => {
       .poll(() =>
         page.evaluate(
           () =>
-            document.activeElement?.closest("[data-collection-row-id]")?.getAttribute(
-              "data-collection-row-id",
-            ) ?? null,
+            document.activeElement
+              ?.closest("[data-collection-row-id]")
+              ?.getAttribute("data-collection-row-id") ?? null,
         ),
       )
       .toBeNull();
@@ -375,24 +368,26 @@ test.describe("pane return memento", () => {
         target.conversation_id,
       );
       await expect(targetConversation).toBeVisible();
-      await placeRowAtOffset(
-        listScrollport,
-        targetConversation,
-        TARGET_OFFSET_PX,
-      );
+      await placeRowAtOffset(targetConversation, TARGET_OFFSET_PX);
+      const targetLink = targetConversation.locator("[data-row-focusable]");
+      await expect(targetLink).toBeInViewport({ ratio: 1 });
+      // Finish actionability before capturing both the return memento and the
+      // raw pointer target. A same-document view transition temporarily owns
+      // hit testing, and hover can scroll while waiting for that layer to clear.
+      await targetLink.hover();
       const conversationEyeLineId = await firstIntersectingRowId(
         listScrollport,
         CONVERSATIONS_SCOPE,
       );
       const conversationOffset = await rowViewportOffset(
-        listScrollport,
-        collectionRow(
-          page,
-          CONVERSATIONS_SCOPE,
-          conversationEyeLineId,
-        ),
+        collectionRow(page, CONVERSATIONS_SCOPE, conversationEyeLineId),
       );
-      await targetConversation.locator("[data-row-focusable]").click();
+      const targetLinkBox = await targetLink.boundingBox();
+      expect(targetLinkBox).not.toBeNull();
+      await page.mouse.click(
+        targetLinkBox!.x + targetLinkBox!.width / 2,
+        targetLinkBox!.y + targetLinkBox!.height / 2,
+      );
       await expect(page).toHaveURL(
         new RegExp(`/conversations/${target.conversation_id}$`),
       );
@@ -428,26 +423,13 @@ test.describe("pane return memento", () => {
 
       await goBackInPane(page, /\/conversations$/);
       await expect(
-        collectionRow(
-          page,
-          CONVERSATIONS_SCOPE,
-          target.conversation_id,
-        ),
+        collectionRow(page, CONVERSATIONS_SCOPE, target.conversation_id),
       ).toHaveCount(1);
       await expect(
-        collectionRow(
-          page,
-          CONVERSATIONS_SCOPE,
-          firstPageConversationIds[0]!,
-        ),
+        collectionRow(page, CONVERSATIONS_SCOPE, firstPageConversationIds[0]!),
       ).toHaveCount(1);
       await expectRowRestored(
-        paneScrollport(page),
-        collectionRow(
-          page,
-          CONVERSATIONS_SCOPE,
-          conversationEyeLineId,
-        ),
+        collectionRow(page, CONVERSATIONS_SCOPE, conversationEyeLineId),
         conversationEyeLineId,
         conversationOffset,
       );

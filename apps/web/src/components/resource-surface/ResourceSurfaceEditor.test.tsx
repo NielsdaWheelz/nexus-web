@@ -12,20 +12,39 @@ function response(data: unknown) {
 }
 
 function item(ref: string, scheme: string, id: string, label = "") {
+  const href = scheme === "media" ? `/media/${id}` : null;
   return {
-    ref, scheme, id, label, summary: "", route: null,
+    ref, scheme, id, label, summary: "", route: href,
     activation: {
-      resource_ref: ref,
+      resourceRef: ref,
       kind: scheme === "media" ? "route" : "none",
-      href: scheme === "media" ? `/media/${id}` : null,
-      unresolved_reason: null,
+      href,
+      unresolvedReason: null,
     },
     missing: false,
     capabilities: {
-      user_relation: { user_link_source: false, user_link_target: "none", note_reference_target: false },
-      sharing: "None", library_placement: "None", attachable: false, chat_subject: "none", readable: "none", inspectable: "none", citable_result_type: null, citation_output_source: false, app_search_scope: false, conversation_search_scope: false, prompt_render: "none", expansion_policy: "none", expandable: false, adjacency_source: true, adjacency_target: true,
+      userRelation: {
+        userLinkSource: false,
+        userLinkTarget: "none",
+        noteReferenceTarget: false,
+      },
+      sharing: "None",
+      libraryPlacement: "None",
+      attachable: false,
+      chatSubject: "none",
+      readable: "none",
+      inspectable: "none",
+      citableResultType: null,
+      citationOutputSource: false,
+      appSearchScope: false,
+      conversationSearchScope: false,
+      promptRender: "none",
+      expansionPolicy: "none",
+      expandable: false,
+      adjacencySource: true,
+      adjacencyTarget: true,
     },
-    version_by_lane: { title: 1, body: 1, outgoing_edges: 1 },
+    versionByLane: { title: 1, body: 1, outgoing_edges: 1 },
   };
 }
 
@@ -107,7 +126,7 @@ describe("ResourceSurfaceEditor", () => {
             ...firstSurface.source,
             item: {
               ...firstSurface.source.item,
-              version_by_lane: { title: 1, body: 1, outgoing_edges: 2 },
+              versionByLane: { title: 1, body: 1, outgoing_edges: 2 },
             },
           },
           ordered_items: [
@@ -156,8 +175,17 @@ describe("ResourceSurfaceEditor", () => {
         return response({
           resolutions: [{
             locator: { kind: "resource_ref", ref: pageRef },
-            resource_item: { ...item(pageRef, "page", pageId, "Project"), route: `/pages/${pageId}` },
-            canonical_href: `/pages/${pageId}`,
+            resourceItem: {
+              ...item(pageRef, "page", pageId, "Project"),
+              route: `/pages/${pageId}`,
+              activation: {
+                resourceRef: pageRef,
+                kind: "route",
+                href: `/pages/${pageId}`,
+                unresolvedReason: null,
+              },
+            },
+            canonicalHref: `/pages/${pageId}`,
           }],
         });
       }

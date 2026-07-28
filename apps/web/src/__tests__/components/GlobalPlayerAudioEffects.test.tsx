@@ -1,11 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
+import { MobileViewportProvider } from "@/lib/mobileViewport/MobileViewportProvider";
 import { WorkspaceTestProvider } from "@/__tests__/helpers/WorkspaceTestProvider";
 import { present } from "@/lib/api/presence";
 import type { ChapterOut } from "@/lib/lectern/contract";
 import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
-import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer";
+import {
+  GlobalPlayerProvider,
+  useGlobalPlayer,
+} from "@/lib/player/globalPlayer";
 import {
   FOOTER_AUDIO_LABEL,
   buildFooterDescriptor,
@@ -36,7 +40,8 @@ class FakeAnalyserNode extends FakeAudioNode {
   fftSize = 2048;
   private frames: Float32Array[] = [];
   readonly getFloatTimeDomainData = vi.fn((target: Float32Array) => {
-    const source = this.frames.shift() ?? new Float32Array(target.length).fill(0.4);
+    const source =
+      this.frames.shift() ?? new Float32Array(target.length).fill(0.4);
     for (let index = 0; index < target.length; index += 1) {
       target[index] = source[index] ?? 0;
     }
@@ -191,9 +196,11 @@ function installAnimationFrameHarness() {
       return requestId;
     });
 
-  const cancelSpy = vi.spyOn(window, "cancelAnimationFrame").mockImplementation((requestId) => {
-    queued.delete(requestId);
-  });
+  const cancelSpy = vi
+    .spyOn(window, "cancelAnimationFrame")
+    .mockImplementation((requestId) => {
+      queued.delete(requestId);
+    });
 
   function runFrame(deltaMs = 100): void {
     timestampMs += deltaMs;
@@ -232,16 +239,22 @@ function Harness() {
         type="button"
         onClick={() =>
           playAudio(
-            buildFooterDescriptor("11111111-1111-4111-8111-111111111111", "Episode Alpha", {
-              chapters: EPISODE_CHAPTERS,
-              durationMs: 120_000,
-            })
+            buildFooterDescriptor(
+              "11111111-1111-4111-8111-111111111111",
+              "Episode Alpha",
+              {
+                chapters: EPISODE_CHAPTERS,
+                durationMs: 120_000,
+              },
+            ),
           )
         }
       >
         Play episode
       </button>
-      <GlobalPlayerFooter />
+      <MobileViewportProvider>
+        <GlobalPlayerFooter />
+      </MobileViewportProvider>
     </>
   );
 }
@@ -249,7 +262,9 @@ function Harness() {
 // playAudio defects before the Lectern snapshot is Ready (spec §6); wait for the
 // mount GET to resolve before the explicit Play.
 async function play() {
-  await screen.findByText("ready", { selector: '[data-testid="lectern-status"]' });
+  await screen.findByText("ready", {
+    selector: '[data-testid="lectern-status"]',
+  });
   fireEvent.click(screen.getByRole("button", { name: "Play episode" }));
 }
 
@@ -261,7 +276,7 @@ function App() {
     <WorkspaceTestProvider>
       <LecternProvider>
         <GlobalPlayerProvider>
-        <Harness />
+          <Harness />
         </GlobalPlayerProvider>
       </LecternProvider>
     </WorkspaceTestProvider>
@@ -289,35 +304,38 @@ describe("GlobalPlayer audio effects", () => {
     vi.unstubAllGlobals();
   });
 
-  it("creates the AudioContext on first play and persists effect preferences", async () => {
+  it("keeps baseline playback direct and creates Web Audio only when an effect is enabled", async () => {
     const audioContextMock = installAudioContextMock();
 
     let unmount: (() => void) | null = null;
     try {
       ({ unmount } = render(<App />));
-      // `playAudio` starts (and autoplays) the session, which lazily builds the
-      // Web Audio graph — there is no longer a "load without play" phase.
       await play();
-
-      await waitFor(() => {
-        expect(audioContextMock.instances).toHaveLength(1);
-      });
+      expect(audioContextMock.instances).toHaveLength(0);
 
       fireEvent.click(screen.getByRole("button", { name: "More controls" }));
       fireEvent.click(screen.getByRole("button", { name: "Audio effects" }));
-      fireEvent.click(screen.getByRole("checkbox", { name: "Silence trimming" }));
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "Silence trimming" }),
+      );
+      await waitFor(() => {
+        expect(audioContextMock.instances).toHaveLength(1);
+      });
       fireEvent.change(screen.getByRole("combobox", { name: "Volume boost" }), {
         target: { value: "medium" },
       });
       fireEvent.click(screen.getByRole("checkbox", { name: "Mono audio" }));
 
-      expect(window.localStorage.getItem("podcast_effects_silence_trim")).toBe("true");
-      expect(window.localStorage.getItem("podcast_effects_volume_boost")).toBe("medium");
-      expect(window.localStorage.getItem("podcast_effects_mono")).toBe("true");
-      expect(screen.getByRole("button", { name: "Audio effects" })).toHaveAttribute(
-        "data-active",
-        "true"
+      expect(window.localStorage.getItem("podcast_effects_silence_trim")).toBe(
+        "true",
       );
+      expect(window.localStorage.getItem("podcast_effects_volume_boost")).toBe(
+        "medium",
+      );
+      expect(window.localStorage.getItem("podcast_effects_mono")).toBe("true");
+      expect(
+        screen.getByRole("button", { name: "Audio effects" }),
+      ).toHaveAttribute("data-active", "true");
 
       const instance = audioContextMock.instances[0];
       expect(instance.resume).toHaveBeenCalled();
@@ -342,13 +360,18 @@ describe("GlobalPlayer audio effects", () => {
       fireEvent.click(screen.getByRole("button", { name: "More controls" }));
       fireEvent.click(screen.getByRole("button", { name: "Audio effects" }));
 
-      expect(screen.getByRole("checkbox", { name: "Silence trimming" })).toBeChecked();
-      expect(screen.getByRole("combobox", { name: "Volume boost" })).toHaveValue("high");
-      expect(screen.getByRole("checkbox", { name: "Mono audio" })).toBeChecked();
-      expect(screen.getByRole("button", { name: "Audio effects" })).toHaveAttribute(
-        "data-active",
-        "true"
-      );
+      expect(
+        screen.getByRole("checkbox", { name: "Silence trimming" }),
+      ).toBeChecked();
+      expect(
+        screen.getByRole("combobox", { name: "Volume boost" }),
+      ).toHaveValue("high");
+      expect(
+        screen.getByRole("checkbox", { name: "Mono audio" }),
+      ).toBeChecked();
+      expect(
+        screen.getByRole("button", { name: "Audio effects" }),
+      ).toHaveAttribute("data-active", "true");
     } finally {
       unmount?.();
       audioContextMock.restore();
@@ -364,18 +387,24 @@ describe("GlobalPlayer audio effects", () => {
       ({ unmount } = render(<App />));
       await play();
 
-      const audio = screen.getByLabelText(FOOTER_AUDIO_LABEL) as HTMLAudioElement;
+      const audio = screen.getByLabelText(
+        FOOTER_AUDIO_LABEL,
+      ) as HTMLAudioElement;
 
+      fireEvent.click(screen.getByRole("button", { name: "More controls" }));
+      fireEvent.change(
+        screen.getByRole("combobox", { name: "Playback speed" }),
+        {
+          target: { value: "1.5" },
+        },
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Audio effects" }));
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "Silence trimming" }),
+      );
       await waitFor(() => {
         expect(audioContextMock.instances).toHaveLength(1);
       });
-
-      fireEvent.click(screen.getByRole("button", { name: "More controls" }));
-      fireEvent.change(screen.getByRole("combobox", { name: "Playback speed" }), {
-        target: { value: "1.5" },
-      });
-      fireEvent.click(screen.getByRole("button", { name: "Audio effects" }));
-      fireEvent.click(screen.getByRole("checkbox", { name: "Silence trimming" }));
       // The session already autoplayed; the "play" event drives the Playing
       // phase that silence-trimming runs under.
       fireEvent(audio, new Event("play"));
@@ -431,11 +460,9 @@ describe("GlobalPlayer audio effects", () => {
       ({ unmount } = render(<App />));
       await play();
 
-      const audio = screen.getByLabelText(FOOTER_AUDIO_LABEL) as HTMLAudioElement;
-
-      await waitFor(() => {
-        expect(audioContextMock.instances).toHaveLength(1);
-      });
+      const audio = screen.getByLabelText(
+        FOOTER_AUDIO_LABEL,
+      ) as HTMLAudioElement;
       fireEvent(audio, new Event("play"));
 
       // Spy after autoplay so the count reflects only the mono toggle.
@@ -444,11 +471,16 @@ describe("GlobalPlayer audio effects", () => {
       fireEvent.click(screen.getByRole("button", { name: "More controls" }));
       fireEvent.click(screen.getByRole("button", { name: "Audio effects" }));
       fireEvent.click(screen.getByRole("checkbox", { name: "Mono audio" }));
+      await waitFor(() => {
+        expect(audioContextMock.instances).toHaveLength(1);
+      });
 
       const instance = audioContextMock.instances[0];
       // Enabling mono re-routes the graph without pausing/reloading playback.
       expect(pauseSpy).not.toHaveBeenCalled();
-      expect(screen.getByRole("checkbox", { name: "Mono audio" })).toBeChecked();
+      expect(
+        screen.getByRole("checkbox", { name: "Mono audio" }),
+      ).toBeChecked();
       expect(instance.splitterNodes).toHaveLength(1);
       expect(instance.mergerNodes).toHaveLength(1);
     } finally {
@@ -464,17 +496,28 @@ describe("GlobalPlayer audio effects", () => {
     try {
       ({ unmount } = render(<App />));
       await play();
-
-      await waitFor(() => {
-        expect(audioContextMock.instances).toHaveLength(1);
-      });
+      expect(audioContextMock.instances).toHaveLength(0);
 
       fireEvent.click(screen.getByRole("button", { name: "More controls" }));
       fireEvent.click(screen.getByRole("button", { name: "Audio effects" }));
-      expect(screen.getByText("Audio effects unavailable for this source.")).toBeVisible();
-      expect(screen.getByRole("checkbox", { name: "Silence trimming" })).toBeDisabled();
-      expect(screen.getByRole("combobox", { name: "Volume boost" })).toBeDisabled();
-      expect(screen.getByRole("checkbox", { name: "Mono audio" })).toBeDisabled();
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "Silence trimming" }),
+      );
+      await waitFor(() => {
+        expect(audioContextMock.instances).toHaveLength(1);
+      });
+      expect(
+        screen.getByText("Audio effects unavailable for this source."),
+      ).toBeVisible();
+      expect(
+        screen.getByRole("checkbox", { name: "Silence trimming" }),
+      ).toBeDisabled();
+      expect(
+        screen.getByRole("combobox", { name: "Volume boost" }),
+      ).toBeDisabled();
+      expect(
+        screen.getByRole("checkbox", { name: "Mono audio" }),
+      ).toBeDisabled();
     } finally {
       unmount?.();
       audioContextMock.restore();

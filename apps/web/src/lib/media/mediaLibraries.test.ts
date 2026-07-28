@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { libraryPlacementSnapshot } from "@/lib/libraries/placementRevision";
 import {
   confirmAndDeleteMedia,
 } from "./mediaLibraries";
@@ -19,7 +20,7 @@ describe("confirmAndDeleteMedia", () => {
     ).resolves.toEqual({ kind: "Cancelled" });
 
     expect(confirmRemoval).toHaveBeenCalledWith(
-      'Delete "A Work" from My Library and libraries you manage? This cannot be undone.',
+      'Delete "A Work" from All and libraries you manage? This cannot be undone.',
     );
     expect(confirmRemoval).toHaveBeenCalledTimes(1);
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -56,6 +57,31 @@ describe("confirmAndDeleteMedia", () => {
       expect.objectContaining({ method: "DELETE" }),
     );
     expect(confirmRemoval).toHaveBeenCalledTimes(1);
+  });
+
+  it("publishes exactly one Unknown-scope placement revision per acknowledged delete", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        data: {
+          kind: "Removed",
+          removedFromLibraryIds: ["library-1", "library-2"],
+          remainingReferenceCount: 0,
+        },
+      }),
+    );
+    const before = libraryPlacementSnapshot();
+
+    await expect(
+      confirmAndDeleteMedia({
+        mediaId: "media-9",
+        mediaTitle: "A Work",
+        confirmRemoval: () => true,
+      }),
+    ).resolves.toMatchObject({ kind: "Completed" });
+
+    const after = libraryPlacementSnapshot();
+    expect(after.revision - before.revision).toBe(1);
+    expect(after.affectedLibraryIds).toBe("Unknown");
   });
 
   it.each([

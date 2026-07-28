@@ -17,6 +17,7 @@ import {
   type LibraryRole,
   type ViewerLibraryInvitation,
 } from "@/lib/libraries/contract";
+import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
 import {
   expectLibraryInvitationHandle,
   expectUserHandle,
@@ -179,6 +180,7 @@ export async function acceptLibraryInvite(
       "accept invite response projections do not correlate",
     );
   }
+  publishLibraryPlacementChange("Unknown");
   return invitation;
 }
 

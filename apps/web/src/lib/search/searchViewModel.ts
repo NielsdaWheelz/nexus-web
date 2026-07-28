@@ -207,6 +207,7 @@ export function adaptSearchResultRow(
   return {
     key: `${result.type}-${result.id}`,
     resourceRef: result.resource_ref,
+    ownerResourceRef: result.owner_resource_ref,
     activation: result.activation,
     actionTarget: result.actionTarget,
     citationTarget: result.citation_target,
@@ -245,17 +246,14 @@ export function adaptSearchResultRow(
     publicationDate: publicationDateFor(result),
     contributorCredits: getContributorCredits(result),
     noteBody: result.type === "note_block" ? result.body_text : null,
+    noteOrigin: result.type === "note_block" ? result.note_origin : null,
   };
 }
 
 export function adaptSearchResults(
   results: unknown[],
 ): SearchResultRowViewModel[] {
-  return results.map((result) => {
-    const normalized = normalizeSearchResult(result);
-    if (!normalized) {
-      throw new Error("Search API returned an invalid result row");
-    }
-    return adaptSearchResultRow(normalized);
-  });
+  return results.map((result) =>
+    adaptSearchResultRow(normalizeSearchResult(result)),
+  );
 }

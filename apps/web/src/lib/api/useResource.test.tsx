@@ -168,6 +168,27 @@ describe("useResource", () => {
     );
   });
 
+  it("hides ready data from the previous key during a key transition", async () => {
+    const resolvers: Array<(value: string) => void> = [];
+    const load = vi.fn(
+      async (): Promise<string> =>
+        new Promise<string>((resolve) => resolvers.push(resolve)),
+    );
+    const { result, rerender } = renderHook(
+      ({ key }: { key: string }) => useResource({ cacheKey: key, load }),
+      { initialProps: { key: "k1" } },
+    );
+
+    await act(async () => resolvers[0]("first"));
+    expect(result.current).toEqual({ status: "ready", data: "first" });
+
+    rerender({ key: "k2" });
+    expect(result.current).toEqual({ status: "loading" });
+
+    await act(async () => resolvers[1]("second"));
+    expect(result.current).toEqual({ status: "ready", data: "second" });
+  });
+
   it("does not retry a 4xx and surfaces the ApiError", async () => {
     const load = vi.fn(async () => {
       throw new ApiError(404, "E_NOT_FOUND", "missing");

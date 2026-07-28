@@ -48,6 +48,10 @@ from tests.utils.db import DirectSessionManager
 pytestmark = pytest.mark.integration
 
 
+def _library_create_body(name: str) -> dict[str, str]:
+    return {"library_id": str(uuid4()), "name": name}
+
+
 def _seed_default_library_reachability(
     direct_db: DirectSessionManager, user_id: UUID, media_id: UUID
 ) -> None:
@@ -143,7 +147,7 @@ def test_delete_document_hides_shared_member_copy(auth_client, direct_db: Direct
 
     library_id = auth_client.post(
         "/libraries",
-        json={"name": "Shared"},
+        json=_library_create_body("Shared"),
         headers=auth_headers(owner_id),
     ).json()["data"]["id"]
 
@@ -260,7 +264,7 @@ def test_delete_document_removes_default_and_administered_libraries(
     auth_client.get("/me", headers=auth_headers(user_id))
     work_id = auth_client.post(
         "/libraries",
-        json={"name": "Work"},
+        json=_library_create_body("Work"),
         headers=auth_headers(user_id),
     ).json()["data"]["id"]
 
@@ -786,7 +790,13 @@ def test_delete_document_detaches_document_embed_target_rows(
             text(
                 """
                 INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
-                VALUES (:fragment_id, :parent_id, 0, '<p>Parent</p>', 'Parent')
+                VALUES (
+                    :fragment_id,
+                    :parent_id,
+                    0,
+                    '<p>Quoted X post by @grace — Open in Nexus</p>',
+                    'Quoted X post by @grace — Open in Nexus'
+                )
                 """
             ),
             {"fragment_id": fragment_id, "parent_id": parent_id},
@@ -808,11 +818,14 @@ def test_delete_document_detaches_document_embed_target_rows(
                 INSERT INTO document_embeds (
                     media_id, fragment_id, ordinal, occurrence_key, provider, embed_kind,
                     source_shape, resolution_status, target_media_id, placeholder_text,
-                    canonical_start_offset, canonical_end_offset, document_order_key
+                    canonical_start_offset, canonical_end_offset, document_order_key,
+                    canonical_source_url, provider_target_ref
                 )
                 VALUES (
                     :parent_id, :fragment_id, 0, 'embed:delete-child', 'x', 'post',
-                    'blockquote', 'resolved', :child_id, 'Embedded X post', 0, 15, '000000'
+                    'provider_json', 'resolved', :child_id,
+                    'Quoted X post by @grace — Open in Nexus', 0, 39, '000000',
+                    'https://x.com/i/status/4444444444', 'post:4444444444'
                 )
                 """
             ),
@@ -848,7 +861,9 @@ def test_delete_document_detaches_document_embed_target_rows(
         row = session.execute(
             text(
                 """
-                SELECT target_media_id, resolution_status, error_code
+                SELECT target_media_id, resolution_status, error_code,
+                       source_shape, canonical_source_url, provider_target_ref,
+                       placeholder_text
                 FROM document_embeds
                 WHERE media_id = :parent_id
                 """
@@ -877,12 +892,20 @@ def test_delete_document_detaches_document_embed_target_rows(
             ),
             {"parent_id": parent_id, "child_id": child_id},
         )
-    assert row == (None, "failed", "E_MEDIA_DELETED")
+    assert row == (
+        None,
+        "failed",
+        "E_MEDIA_DELETED",
+        "provider_json",
+        "https://x.com/i/status/4444444444",
+        "post:4444444444",
+        "Quoted X post by @grace — Open in Nexus",
+    )
     assert state == ("failed", 1, 0, 1)
     assert edge_count == 0
 
 
-def test_delete_document_hides_shared_document_embed_target_for_owner(
+def test_delete_shared_document_embed_target_preserves_global_occurrence(
     auth_client, direct_db: DirectSessionManager
 ):
     user_id = create_test_user_id()
@@ -981,8 +1004,8 @@ def test_delete_document_hides_shared_document_embed_target_for_owner(
     assert delete_response.status_code == 200, delete_response.json()
     # The viewer's only reachable reference was their own default library, so
     # after removal they can no longer reach the child (it survives solely in
-    # the other user's private default) — a truthful Removed, no tombstone —
-    # while the viewer's own embed targeting it is still marked unavailable.
+    # the other user's private default). The source occurrence remains global;
+    # only this viewer's graph projection disappears.
     assert delete_response.json()["data"]["kind"] == "Removed"
     with direct_db.session() as session:
         row = session.execute(
@@ -1020,8 +1043,8 @@ def test_delete_document_hides_shared_document_embed_target_for_owner(
         child_exists = session.scalar(
             text("SELECT count(*) FROM media WHERE id = :child_id"), {"child_id": child_id}
         )
-    assert row == (None, "failed", "E_MEDIA_HIDDEN")
-    assert state == ("failed", 1, 0, 1)
+    assert row == (child_id, "resolved", None)
+    assert state == ("ready", 1, 1, 0)
     assert edge_count == 0
     assert child_exists == 1
 

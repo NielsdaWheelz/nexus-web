@@ -410,7 +410,9 @@ class TestCaptureAuthorStepGatesReady:
             raise RuntimeError("simulated author-step failure")
 
         monkeypatch.setattr(
-            media_source_ingest_module, "replace_observed_role_slices", _fail_author_step
+            media_source_ingest_module,
+            "replace_source_observed_role_slices",
+            _fail_author_step,
         )
         first_result = _run_attempt_result(direct_db, media_id, user_id)
         assert first_result["status"] == "failed"
@@ -429,13 +431,15 @@ class TestCaptureAuthorStepGatesReady:
             auth_client, direct_db, monkeypatch, slug="author-step-crash-resume"
         )
 
-        real_replace = media_source_ingest_module.replace_observed_role_slices
+        real_replace = media_source_ingest_module.replace_source_observed_role_slices
 
         def _crash_in_author_step(**kwargs) -> None:
             raise _SimulatedCrash
 
         monkeypatch.setattr(
-            media_source_ingest_module, "replace_observed_role_slices", _crash_in_author_step
+            media_source_ingest_module,
+            "replace_source_observed_role_slices",
+            _crash_in_author_step,
         )
         with pytest.raises(_SimulatedCrash):
             _run_attempt_result(direct_db, media_id, user_id)
@@ -451,8 +455,30 @@ class TestCaptureAuthorStepGatesReady:
         # Lease-expiry re-run of the SAME attempt: source work re-runs from the
         # stored capture markup, the observation is re-attached via the seam,
         # the real author op applies it, and only then ready is crossed.
+        with direct_db.session() as db:
+            expired = db.execute(
+                text(
+                    """
+                    UPDATE background_jobs
+                    SET lease_expires_at = now() - interval '1 second'
+                    WHERE id = (
+                        SELECT job_id
+                        FROM media_source_attempts
+                        WHERE media_id = :media_id
+                        ORDER BY attempt_no DESC, created_at DESC, id DESC
+                        LIMIT 1
+                    )
+                      AND status = 'running'
+                    """
+                ),
+                {"media_id": media_id},
+            )
+            assert expired.rowcount == 1
+            db.commit()
         monkeypatch.setattr(
-            media_source_ingest_module, "replace_observed_role_slices", real_replace
+            media_source_ingest_module,
+            "replace_source_observed_role_slices",
+            real_replace,
         )
         resume_result = _run_attempt_result(direct_db, media_id, user_id)
         assert resume_result["status"] == "success", resume_result

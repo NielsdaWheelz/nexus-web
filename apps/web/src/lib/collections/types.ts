@@ -20,6 +20,8 @@ import type {
   ProgressFraction,
 } from "@/lib/consumption/activityFacts";
 
+export type { ResourceRowPrimary };
+
 export type CollectionItemKind =
   | "media"
   | "podcast"

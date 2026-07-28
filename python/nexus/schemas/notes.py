@@ -79,6 +79,7 @@ class DailyNotePageOut(BaseModel):
 
 
 class CreatePageRequest(BaseModel):
+    page_id: UUID
     title: str = Field(..., min_length=1, max_length=200)
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")

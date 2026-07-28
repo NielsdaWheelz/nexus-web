@@ -86,7 +86,7 @@ export function useChatProfiles(): UseChatProfiles {
   );
 
   const profilesResource = useResource<LlmProfilesOut>({
-    cacheKey: cachedProfiles ? null : `chat-composer-profiles:${cacheEpoch}`,
+    cacheKey: `chat-composer-profiles:${cacheEpoch}`,
     load: () => loadChatProfiles(),
   });
 

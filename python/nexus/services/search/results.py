@@ -9,6 +9,7 @@ from uuid import UUID
 from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.retrieval import retrieval_result_ref_json
 from nexus.schemas.search import SearchResultSourceOut
+from nexus.services.resource_graph.refs import ResourceRef
 
 
 @dataclass(slots=True)
@@ -44,6 +45,7 @@ class _RankedNoteBlockResult:
     body_text: str
     score: _SearchScore
     highlight_excerpt: str | None = None
+    note_origin: Literal["note", "highlight_note"] = "note"
     locator: dict[str, Any] | None = None
     result_type: Literal["note_block"] = "note_block"
 
@@ -103,6 +105,10 @@ class _RankedEvidenceSpanResult:
     locator: dict[str, Any]
     source: SearchResultSourceOut
     score: _SearchScore
+    # Canonical owner of the span. Media-owned spans carry the media ref; a
+    # note-owned span carries its note_block ref (its ``source.media_id`` holds
+    # the note_block id, so the owner cannot be inferred by scheme).
+    owner_ref: ResourceRef
     result_type: Literal["evidence_span"] = "evidence_span"
 
 

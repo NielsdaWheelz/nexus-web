@@ -40,6 +40,7 @@ def _conversation_result(result_id: UUID, score: float) -> SearchResultOut:
         snippet="snippet",
         title="title",
         resource_ref=resource_ref,
+        owner_resource_ref=resource_ref,
         activation={
             "resourceRef": resource_ref,
             "kind": "route",

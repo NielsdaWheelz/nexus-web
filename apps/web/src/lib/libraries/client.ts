@@ -4,7 +4,6 @@ import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { librariesResource } from "@/lib/api/resource";
 import {
   expectLibraryOut,
-  expectLibraryOutEnvelope,
   expectLibraryOutEnvelopeForId,
   isLibraryContractDefect,
   type LibraryOut,
@@ -113,18 +112,24 @@ export async function searchWritableLibraryDestinations({
 }
 
 export async function createLibrary({
+  libraryId,
   name,
   signal,
 }: {
+  libraryId: string;
   name: string;
   signal?: AbortSignal;
 }): Promise<MemberLibrary> {
   const response = await apiFetch<unknown>("/api/libraries", {
     method: "POST",
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ library_id: libraryId, name }),
     signal,
   });
-  return expectLibraryOutEnvelope(response, "create Library response");
+  return expectLibraryOutEnvelopeForId(
+    response,
+    libraryId,
+    "create Library response",
+  );
 }
 
 export async function getMemberLibrary(

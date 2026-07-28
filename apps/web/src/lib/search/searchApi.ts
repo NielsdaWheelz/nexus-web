@@ -1,8 +1,13 @@
 import { apiFetch } from "@/lib/api/client";
+import {
+  expectBoolean,
+  expectExactRecord,
+  expectNullableString,
+} from "@/lib/validation";
 import type { SearchQuery } from "./query";
 import { searchQueryToParams } from "./searchParams";
 import { adaptSearchResults } from "./searchViewModel";
-import type { SearchResponseShape, SearchResultPage } from "./types";
+import type { SearchResultPage } from "./types";
 
 export interface FetchSearchOptions {
   limit: number;
@@ -10,11 +15,11 @@ export interface FetchSearchOptions {
   signal?: AbortSignal;
 }
 
-function requireSearchResults(results: unknown): unknown[] {
-  if (!Array.isArray(results)) {
-    throw new Error("Search API response is missing results");
+export class SearchContractDefect extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SearchContractDefect";
   }
-  return results;
 }
 
 export async function fetchSearchResultPage(
@@ -27,16 +32,37 @@ export async function fetchSearchResultPage(
     params.set("cursor", cursor);
   }
 
-  const response = await apiFetch<SearchResponseShape>(
+  const raw = await apiFetch<unknown>(
     `/api/search?${params.toString()}`,
     { signal },
   );
+  try {
+    const response = expectExactRecord(
+      raw,
+      ["results", "page"],
+      "SearchResponse",
+    );
+    if (!Array.isArray(response.results)) {
+      throw new TypeError("SearchResponse.results must be an array");
+    }
+    const page = expectExactRecord(
+      response.page,
+      ["has_more", "next_cursor"],
+      "SearchResponse.page",
+    );
+    expectBoolean(page.has_more, "SearchResponse.page.has_more");
 
-  return {
-    rows: adaptSearchResults(requireSearchResults(response.results)),
-    nextCursor:
-      typeof response.page?.next_cursor === "string"
-        ? response.page.next_cursor
-        : null,
-  };
+    return {
+      rows: adaptSearchResults(response.results),
+      nextCursor: expectNullableString(
+        page.next_cursor,
+        "SearchResponse.page.next_cursor",
+      ),
+    };
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new SearchContractDefect(error.message);
+    }
+    throw error;
+  }
 }

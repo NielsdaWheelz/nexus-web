@@ -248,9 +248,12 @@ def test_reconciler_dispatches_existing_transcript_semantic_job(db_session: Sess
             """
             INSERT INTO media_transcript_states (
                 media_id, transcript_state, transcript_coverage,
-                semantic_status, last_request_reason
+                semantic_status, last_request_reason, updated_at
             )
-            VALUES (:media_id, 'ready', 'full', 'pending', 'episode_open')
+            VALUES (
+                :media_id, 'ready', 'full', 'pending', 'episode_open',
+                '-infinity'::timestamptz
+            )
             """
         ),
         {"media_id": media_id},

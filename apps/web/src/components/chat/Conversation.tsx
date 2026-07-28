@@ -34,6 +34,7 @@ import {
 } from "@/lib/actions/resourceActions";
 import { chatDraftKeyFor } from "@/lib/conversations/chatDraftKey";
 import {
+  ApiError,
   apiFetch,
   isApiError,
   isSameSystemApiDefect,
@@ -41,6 +42,7 @@ import {
 } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { absent, present, type Presence } from "@/lib/api/presence";
+import { useResource } from "@/lib/api/useResource";
 import type { PendingTurnContext } from "@/lib/conversations/pendingTurnContext";
 import {
   chatDestinationFromConversationId,
@@ -95,11 +97,20 @@ function mapHydrationError(
   if (isApiError(err)) {
     switch (err.code) {
       case "E_READER_SELECTION_FORBIDDEN":
-        return { context: { kind: "NonSendable", intent, reason: "Forbidden" }, defect: null };
+        return {
+          context: { kind: "NonSendable", intent, reason: "Forbidden" },
+          defect: null,
+        };
       case "E_READER_SELECTION_GEOMETRY_ONLY":
-        return { context: { kind: "NonSendable", intent, reason: "GeometryOnly" }, defect: null };
+        return {
+          context: { kind: "NonSendable", intent, reason: "GeometryOnly" },
+          defect: null,
+        };
       case "E_READER_SELECTION_TOO_LARGE":
-        return { context: { kind: "NonSendable", intent, reason: "TooLarge" }, defect: null };
+        return {
+          context: { kind: "NonSendable", intent, reason: "TooLarge" },
+          defect: null,
+        };
       case "E_READER_SELECTION_NOT_FOUND": {
         // justify-ignore-error: a not-found for a client-accepted launch is a
         // reported invariant defect (projection drift), never a NonSendable.
@@ -110,9 +121,29 @@ function mapHydrationError(
         const defect: FeedbackContent = {
           severity: "error",
           title: "This quote is temporarily unavailable.",
-          message: "Its highlight hasn't finished syncing yet. Retry the quote to try again.",
+          message:
+            "Its highlight hasn't finished syncing yet. Retry the quote to try again.",
         };
-        return { context: { kind: "LoadFailed", intent, error: defect }, defect };
+        return {
+          context: { kind: "LoadFailed", intent, error: defect },
+          defect,
+        };
+      }
+      case "E_INVALID_RESPONSE": {
+        // justify-ignore-error: a malformed trusted preview is a reported
+        // same-system contract defect, never a missing quote.
+        console.error(
+          "Invalid reader-selection preview payload",
+          intent.selection,
+        );
+        const defect: FeedbackContent = {
+          severity: "error",
+          title: "This quote could not be read.",
+        };
+        return {
+          context: { kind: "LoadFailed", intent, error: defect },
+          defect,
+        };
       }
     }
   }
@@ -140,62 +171,82 @@ interface PendingReaderSelection {
 function usePendingReaderSelection(
   intent: ReaderHighlightChatIntent | null,
 ): PendingReaderSelection {
-  const [pendingContext, setPendingContext] = useState<Presence<PendingTurnContext>>(
-    () => (intent ? present<PendingTurnContext>({ kind: "Loading", intent }) : absent()),
-  );
-  const [defect, setDefect] = useState<FeedbackContent | null>(null);
-  const [nonce, setNonce] = useState(0);
-
-  useEffect(() => {
-    if (!intent) {
-      setPendingContext(absent());
-      setDefect(null);
-      return;
-    }
-    let cancelled = false;
-    setPendingContext(present<PendingTurnContext>({ kind: "Loading", intent }));
-    setDefect(null);
-    void (async () => {
-      try {
-        const response = await apiFetch<{ data: unknown }>(
-          `/api/chat-reader-selections/highlights/${intent.selection.highlightId}?${new URLSearchParams(
-            { media_id: intent.selection.mediaId },
-          )}` as ApiPath,
-        );
-        if (cancelled) return;
-        const preview = decodeReaderSelectionPreview(response.data);
-        if (preview === null) {
-          // justify-ignore-error: a malformed trusted preview is a reported defect.
-          console.error("Invalid reader-selection preview payload", response.data);
-          const defectContent: FeedbackContent = {
-            severity: "error",
-            title: "This quote could not be read.",
-          };
-          setPendingContext(
-            present<PendingTurnContext>({ kind: "LoadFailed", intent, error: defectContent }),
-          );
-          setDefect(defectContent);
-          return;
-        }
-        setPendingContext(present<PendingTurnContext>({ kind: "ReaderHighlight", preview }));
-      } catch (err) {
-        if (cancelled) return;
-        if (handleUnauthenticatedApiError(err)) return;
-        const mapped = mapHydrationError(err, intent);
-        setPendingContext(present(mapped.context));
-        setDefect(mapped.defect);
+  const selectionResource = useResource<ReaderSelectionPreview>({
+    cacheKey: intent
+      ? `chat-reader-selection:${intent.selection.mediaId}:${intent.selection.highlightId}`
+      : null,
+    load: async (signal) => {
+      if (intent === null) {
+        throw new Error("Cannot load a reader selection without an intent");
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [intent, nonce]);
+      const response = await apiFetch<{ data: unknown }>(
+        `/api/chat-reader-selections/highlights/${intent.selection.highlightId}?${new URLSearchParams(
+          { media_id: intent.selection.mediaId },
+        )}` as ApiPath,
+        { signal },
+      );
+      const preview = decodeReaderSelectionPreview(response.data);
+      if (preview === null) {
+        throw new ApiError(
+          200,
+          "E_INVALID_RESPONSE",
+          "Reader-selection preview response is invalid",
+        );
+      }
+      return preview;
+    },
+  });
+  const [replacement, setReplacement] = useState<{
+    intent: ReaderHighlightChatIntent;
+    preview: ReaderSelectionPreview;
+  } | null>(null);
 
-  const retryHydration = useCallback(() => setNonce((n) => n + 1), []);
+  let pendingContext: Presence<PendingTurnContext>;
+  let defect: FeedbackContent | null = null;
+  if (intent === null) {
+    pendingContext = absent();
+  } else if (replacement?.intent === intent) {
+    pendingContext = present({
+      kind: "ReaderHighlight",
+      preview: replacement.preview,
+    });
+  } else {
+    switch (selectionResource.status) {
+      case "idle":
+      case "loading":
+        pendingContext = present({ kind: "Loading", intent });
+        break;
+      case "ready":
+        pendingContext = present({
+          kind: "ReaderHighlight",
+          preview: selectionResource.data,
+        });
+        break;
+      case "error": {
+        const mapped = mapHydrationError(selectionResource.error, intent);
+        pendingContext = present(mapped.context);
+        defect = mapped.defect;
+        break;
+      }
+      default: {
+        const exhaustive: never = selectionResource;
+        throw new Error(`Unexpected reader selection resource: ${exhaustive}`);
+      }
+    }
+  }
+
+  const retryHydration = useCallback(() => {
+    if (selectionResource.status === "error") {
+      selectionResource.retry();
+    }
+  }, [selectionResource]);
   const replaceWithPreview = useCallback(
-    (preview: ReaderSelectionPreview) =>
-      setPendingContext(present<PendingTurnContext>({ kind: "ReaderHighlight", preview })),
-    [],
+    (preview: ReaderSelectionPreview) => {
+      if (intent !== null) {
+        setReplacement({ intent, preview });
+      }
+    },
+    [intent],
   );
 
   return { pendingContext, defect, retryHydration, replaceWithPreview };
@@ -217,7 +268,10 @@ export default function Conversation() {
   // selection key, combine it with the pane path (New / Existing) into one typed
   // intent, and hydrate one canonical pending preview from it.
   const paneHash = usePaneHash();
-  const hashResult = useMemo(() => parseReaderSelectionHash(paneHash), [paneHash]);
+  const hashResult = useMemo(
+    () => parseReaderSelectionHash(paneHash),
+    [paneHash],
+  );
   // A non-empty hash that is not a canonical intent is a route error — it must
   // be reported, never silently degraded to generic chat.
   const readerIntentHashInvalid = hashResult.kind === "invalid";
@@ -485,14 +539,18 @@ export default function Conversation() {
     ) => {
       if (target) dispatchReaderSourceActivation(target);
       if (event?.defaultPrevented) return;
-      if (resourceRef === activation.resourceRef) return;
-      activateResource(activation, {
+      if (resourceRef === activation.resourceRef) {
+        event?.preventDefault();
+        return;
+      }
+      const activated = activateResource(activation, {
         labelHint: target?.label,
         activateTarget: paneRuntime.activateTarget,
         disposition: event
           ? workspaceTargetClickIntent(event).disposition
           : { kind: "Follow" },
       });
+      if (activated) event?.preventDefault();
     },
     [paneRuntime, resourceRef],
   );
@@ -592,11 +650,7 @@ export default function Conversation() {
               : new Set<ResourceActionId>(),
           })
         : null,
-    [
-      convo.conversationId,
-      deleting,
-      handleDeleteConversation,
-    ],
+    [convo.conversationId, deleting, handleDeleteConversation],
   );
   const contextBody = useMemo(
     () => (
@@ -637,11 +691,7 @@ export default function Conversation() {
         )}
       </div>
     ),
-    [
-      branch,
-      convo.conversationId,
-      handleSelectFork,
-    ],
+    [branch, convo.conversationId, handleSelectFork],
   );
   const { companionAction } = useResourceInspector({
     scheme: "conversation",
@@ -655,11 +705,7 @@ export default function Conversation() {
       convo.conversationId &&
       paneOptions &&
       !convo.loading &&
-      !(
-        conversationId !== null &&
-        convo.messages.length === 0 &&
-        convo.error
-      )
+      !(conversationId !== null && convo.messages.length === 0 && convo.error)
         ? {
             kind: "ResourceMenu",
             target: routeResourceActionSubject({
@@ -727,7 +773,8 @@ export default function Conversation() {
               feedback={{
                 severity: "error",
                 title: "This quote link is malformed",
-                message: "The passage couldn't be attached. Reopen it from the reader.",
+                message:
+                  "The passage couldn't be attached. Reopen it from the reader.",
               }}
             />
           ) : null}
@@ -762,7 +809,9 @@ export default function Conversation() {
             onSelectFork={branch ? handleSelectFork : undefined}
             onReplyToAssistant={branch ? handleReplyToAssistant : undefined}
             onRerunAssistantResponse={convo.rerunAssistantResponse}
-            rerunningAssistantMessageIds={convo.rerunningAssistantMessageIds.ids}
+            rerunningAssistantMessageIds={
+              convo.rerunningAssistantMessageIds.ids
+            }
             connectionLostAssistantIds={convo.connectionLostAssistantIds}
             onReconnectAssistant={convo.reconnectAssistantResponse}
             composer={

@@ -961,9 +961,7 @@ export default function MediaPaneBody() {
       const canonical = await apiFetch<{ data: Media }>(
         mediaResource.clientPath({ id }),
       );
-      setMedia((current) =>
-        current?.id === id ? canonical.data : current,
-      );
+      setMedia((current) => (current?.id === id ? canonical.data : current));
     } catch (reconciliationError) {
       if (handleUnauthenticatedApiError(reconciliationError)) return;
       if (
@@ -1024,6 +1022,7 @@ export default function MediaPaneBody() {
 
   const isEpub = media?.kind === "epub";
   const isPdf = media?.kind === "pdf";
+  const loadedMediaId = media?.id ?? null;
   const isTranscriptMedia =
     media?.kind === "podcast_episode" || media?.kind === "video";
   const canRead = media
@@ -1981,7 +1980,10 @@ export default function MediaPaneBody() {
     isPdf,
   ]);
   const isFinalTextUnit = useMemo(() => {
-    if (!activeContent || canonicalCpLength(activeContent.canonicalText) === 0) {
+    if (
+      !activeContent ||
+      canonicalCpLength(activeContent.canonicalText) === 0
+    ) {
       return false;
     }
     if (isEpub) {
@@ -2547,6 +2549,13 @@ export default function MediaPaneBody() {
       textRestoreSettledRef.current = false;
       return;
     }
+    if (restorePhase === "cancelled") {
+      // Genuine input can arrive while the canonical cursor or reader layout
+      // is still loading, before a restore has advanced out of `idle`. Keep
+      // that early cancellation authoritative when the deferred inputs arrive.
+      textRestoreSettledRef.current = true;
+      return;
+    }
     if (targetStatus === "pending" || targetStatus === "active") {
       // Hash/pulse target drives the scroll; resume is suppressed for this load.
       return;
@@ -2750,6 +2759,7 @@ export default function MediaPaneBody() {
     readerResumeTotalProgression,
     readerResumePosition,
     readerLayoutReady,
+    restorePhase,
     isMobileViewport,
     paneMobileChrome,
     settleRestoreSession,
@@ -2774,18 +2784,16 @@ export default function MediaPaneBody() {
         isFinalTextUnit && anchorOffset === activeLength;
       const locations = {
         text_offset: anchorOffset,
-        progression:
-          isTerminalLocator
-            ? 1
-            : activeLength > 0
-              ? Math.min(1, anchorOffset / activeLength)
-              : 0,
-        total_progression:
-          isTerminalLocator
-            ? 1
-            : totalTextLength > 0
-              ? Math.min(1, absoluteOffset / totalTextLength)
-              : 0,
+        progression: isTerminalLocator
+          ? 1
+          : activeLength > 0
+            ? Math.min(1, anchorOffset / activeLength)
+            : 0,
+        total_progression: isTerminalLocator
+          ? 1
+          : totalTextLength > 0
+            ? Math.min(1, absoluteOffset / totalTextLength)
+            : 0,
         position: Math.floor(absoluteOffset / READER_POSITION_BUCKET_CP) + 1,
       };
       const text = {
@@ -3055,9 +3063,7 @@ export default function MediaPaneBody() {
       }
     });
     const unsubscribeDrain = lectern.registerBeforeProgressReset((mediaId) =>
-      mediaId === id
-        ? drainReaderProgressForReset()
-        : Promise.resolve(),
+      mediaId === id ? drainReaderProgressForReset() : Promise.resolve(),
     );
     return () => {
       unsubscribeInstall();
@@ -4326,7 +4332,10 @@ export default function MediaPaneBody() {
         }).ref,
         openConversation: (conversationId) => {
           paneRuntime.activateTarget({
-            target: { href: `/conversations/${conversationId}`, labelHint: "Chat" },
+            target: {
+              href: `/conversations/${conversationId}`,
+              labelHint: "Chat",
+            },
             disposition: { kind: "Adopt" },
           });
         },
@@ -4354,19 +4363,39 @@ export default function MediaPaneBody() {
         (item) => item.section_id === sectionId,
       );
       if (!section) return;
+      const restoreRequest = buildManualSectionRestoreRequest(
+        sectionId,
+        anchorId,
+      );
+      if (section.href_path) {
+        reportReaderMovement({
+          kind: "epub",
+          target: {
+            section_id: section.section_id,
+            href_path: section.href_path,
+            anchor_id: anchorId,
+          },
+          locations: restoreRequest.locations,
+          text: restoreRequest.text,
+        });
+      }
       appliedRequestedReaderLocRef.current = sectionId;
       replaceReaderLocation({ loc: sectionId });
       beginRestoreSession("opening_target");
-      setEpubRestoreRequest(
-        buildManualSectionRestoreRequest(sectionId, anchorId),
-      );
+      setEpubRestoreRequest(restoreRequest);
       if (sectionId === activeSectionId) {
         return;
       }
       setActiveSectionId(sectionId);
       setActiveEpubSection(null);
     },
-    [activeSectionId, beginRestoreSession, epubSections, replaceReaderLocation],
+    [
+      activeSectionId,
+      beginRestoreSession,
+      epubSections,
+      replaceReaderLocation,
+      reportReaderMovement,
+    ],
   );
 
   const navigateToWebSection = useCallback(
@@ -4559,18 +4588,29 @@ export default function MediaPaneBody() {
     renderedHtml,
   );
   useEffect(() => {
+    if (loadedMediaId === null) {
+      setPaneLayout(null);
+      return;
+    }
+    if (isPdf) {
+      if (pdfIntrinsicWidthPx === null) {
+        setPaneLayout(null);
+        return;
+      }
+      setPaneLayout({
+        primaryWidth: { kind: "intrinsic", widthPx: pdfIntrinsicWidthPx },
+      });
+      return () => {
+        setPaneLayout(null);
+      };
+    }
     setPaneLayout({
-      primaryWidth:
-        isPdf && pdfIntrinsicWidthPx !== null
-          ? { kind: "intrinsic", widthPx: pdfIntrinsicWidthPx }
-          : { kind: "workspace" },
+      primaryWidth: { kind: "workspace" },
     });
     return () => {
-      setPaneLayout({
-        primaryWidth: { kind: "workspace" },
-      });
+      setPaneLayout(null);
     };
-  }, [isMobileViewport, isPdf, pdfIntrinsicWidthPx, setPaneLayout]);
+  }, [isPdf, loadedMediaId, pdfIntrinsicWidthPx, setPaneLayout]);
 
   // Cmd/Ctrl+Shift+F cycles focus mode; Esc dismisses an active target;
   // Shift+Esc returns focus mode to off.
@@ -4881,10 +4921,20 @@ export default function MediaPaneBody() {
               previousDimensions.height !== dimensions.height ||
               previousDimensions.scrollHeight !== dimensions.scrollHeight)
           ) {
+            const preserveTrustedForwardIntent =
+              publication.trustedIntent &&
+              hasTrustedForwardTextScrollIntentRef.current;
             if (!publication.trustedIntent) {
               suppressNextTextCaptureRef.current = true;
             }
             resetTextProgressGeneration();
+            // A real forward input can share the frame that first observes a
+            // reflow. The reflow owns a new progress generation, but it must
+            // not erase the trusted intent already carried by this exact
+            // publication or downgrade a terminal capture to offset zero.
+            if (preserveTrustedForwardIntent) {
+              hasTrustedForwardTextScrollIntentRef.current = true;
+            }
           }
           textViewportDimensionsRef.current = dimensions;
         }
@@ -4901,9 +4951,7 @@ export default function MediaPaneBody() {
             ? findFirstVisibleCanonicalOffset(container, cursor)
             : null;
         let locator =
-          anchorOffset === null
-            ? null
-            : buildTextLocatorAtOffset(anchorOffset);
+          anchorOffset === null ? null : buildTextLocatorAtOffset(anchorOffset);
 
         const activeLength = activeContent
           ? canonicalCpLength(activeContent.canonicalText)
@@ -4976,8 +5024,10 @@ export default function MediaPaneBody() {
         }
         if (suppressNextTextCaptureRef.current) {
           suppressNextTextCaptureRef.current = false;
-          lastSavedTextAnchorOffsetRef.current = anchorOffset;
-          return;
+          if (!publication.trustedIntent) {
+            lastSavedTextAnchorOffsetRef.current = anchorOffset;
+            return;
+          }
         }
         lastSavedTextAnchorOffsetRef.current = anchorOffset;
         reportReaderMovement(locator);
@@ -5020,9 +5070,10 @@ export default function MediaPaneBody() {
       noteGenuineReaderInput();
       noteGenuineReaderActivityInput();
       if (
-        restorePhase !== "idle" &&
-        restorePhase !== "settled" &&
-        restorePhase !== "cancelled"
+        !textRestoreSettledRef.current ||
+        (restorePhase !== "idle" &&
+          restorePhase !== "settled" &&
+          restorePhase !== "cancelled")
       ) {
         cancelRestoreSession();
       }
@@ -5050,6 +5101,29 @@ export default function MediaPaneBody() {
       scheduleTextViewportCapture,
     ],
   );
+
+  // Child effects publish TextDocumentReader's first viewport before this
+  // parent's canonical-cursor effect runs. Re-publish once the cursor-backed
+  // content is committed so the first genuine input starts from a measurable
+  // document position instead of an irreversible Absent span boundary.
+  useEffect(() => {
+    if (isPdf || !activeContent || !cursorRef.current) {
+      return;
+    }
+    const viewport = textViewportRef.current;
+    if (!viewport) {
+      return;
+    }
+    scheduleTextViewportCapture(
+      {
+        scrollTop: viewport.scrollTop,
+        scrollHeight: viewport.scrollHeight,
+        clientHeight: viewport.clientHeight,
+      },
+      false,
+      false,
+    );
+  }, [activeContent, isPdf, renderedHtml, scheduleTextViewportCapture]);
 
   useEffect(() => {
     resetTextProgressGeneration();
@@ -5130,12 +5204,7 @@ export default function MediaPaneBody() {
     const publishScroll = () => updateReaderScroll(snapshot());
     viewport.addEventListener("scroll", publishScroll, { passive: true });
     return () => viewport.removeEventListener("scroll", publishScroll);
-  }, [
-    id,
-    isTranscriptMedia,
-    startReaderScroll,
-    updateReaderScroll,
-  ]);
+  }, [id, isTranscriptMedia, startReaderScroll, updateReaderScroll]);
 
   // The highlight whose quote is awaiting an "Ask in existing chat…" destination
   // pick. The overlay is hosted below; a non-null id opens it. Selecting a row
@@ -6433,10 +6502,7 @@ export default function MediaPaneBody() {
         labelHint: object.label,
         activateTarget: paneRuntime.activateTarget,
         disposition: {
-          kind:
-            object.kind === "Chat"
-              ? "Adopt"
-              : disposition.kind,
+          kind: object.kind === "Chat" ? "Adopt" : disposition.kind,
         },
       });
       if (activated) closeSecondaryOnMobile();
@@ -6445,8 +6511,14 @@ export default function MediaPaneBody() {
   );
 
   const handleActivateEvidenceSourceTarget = useCallback(
-    (target: ReaderEvidenceSourceTarget, disposition: WorkspaceTargetDisposition) => {
-      if (disposition.kind === "Follow" && target.resolution.kind === "Resolved") {
+    (
+      target: ReaderEvidenceSourceTarget,
+      disposition: WorkspaceTargetDisposition,
+    ) => {
+      if (
+        disposition.kind === "Follow" &&
+        target.resolution.kind === "Resolved"
+      ) {
         activateEvidenceSourceTargetResolution(target);
         return;
       }

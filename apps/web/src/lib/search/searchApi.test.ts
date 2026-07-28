@@ -32,6 +32,7 @@ const NOTE_ROW = {
   media_id: null,
   media_kind: null,
   resource_ref: NOTE_REF,
+  owner_resource_ref: NOTE_REF,
   activation: {
     resource_ref: NOTE_REF,
     kind: "route",
@@ -42,6 +43,7 @@ const NOTE_ROW = {
   context_ref: { type: "note_block", id: "note-1" },
   body_text: "note body text",
   highlight_excerpt: null,
+  note_origin: "note",
   locator: {
     type: "note_block_offsets",
     block_id: "note-1",
@@ -56,7 +58,10 @@ describe("fetchSearchResultPage URL contract", () => {
   });
 
   it("sends q and omits the kinds param when requestedKinds is null (⇒ all)", async () => {
-    const fetchMock = mockFetch({ results: [], page: { next_cursor: null } });
+    const fetchMock = mockFetch({
+      results: [],
+      page: { has_more: false, next_cursor: null },
+    });
 
     const query: SearchQuery = { ...emptySearchQuery(), text: "  needle  " };
     await fetchSearchResultPage(query, { limit: 20 });
@@ -74,7 +79,10 @@ describe("fetchSearchResultPage URL contract", () => {
   });
 
   it("emits an explicit empty kinds param when the requested set is empty (⇒ none)", async () => {
-    const fetchMock = mockFetch({ results: [], page: { next_cursor: null } });
+    const fetchMock = mockFetch({
+      results: [],
+      page: { has_more: false, next_cursor: null },
+    });
 
     const query: SearchQuery = {
       ...emptySearchQuery(),
@@ -88,7 +96,10 @@ describe("fetchSearchResultPage URL contract", () => {
   });
 
   it("serializes a kind subset in canonical order alongside formats, authors, roles, and scope", async () => {
-    const fetchMock = mockFetch({ results: [], page: { next_cursor: null } });
+    const fetchMock = mockFetch({
+      results: [],
+      page: { has_more: false, next_cursor: null },
+    });
 
     const query: SearchQuery = {
       text: "systems",
@@ -110,7 +121,10 @@ describe("fetchSearchResultPage URL contract", () => {
   });
 
   it("serializes the full kind set as every kind (not an omitted param)", async () => {
-    const fetchMock = mockFetch({ results: [], page: { next_cursor: null } });
+    const fetchMock = mockFetch({
+      results: [],
+      page: { has_more: false, next_cursor: null },
+    });
 
     await fetchSearchResultPage(
       {
@@ -126,7 +140,10 @@ describe("fetchSearchResultPage URL contract", () => {
   });
 
   it("omits the scope param for the default 'all' scope", async () => {
-    const fetchMock = mockFetch({ results: [], page: { next_cursor: null } });
+    const fetchMock = mockFetch({
+      results: [],
+      page: { has_more: false, next_cursor: null },
+    });
 
     await fetchSearchResultPage(
       { ...emptySearchQuery(), text: "x" },
@@ -137,7 +154,10 @@ describe("fetchSearchResultPage URL contract", () => {
   });
 
   it("appends the cursor param when paginating", async () => {
-    const fetchMock = mockFetch({ results: [], page: { next_cursor: null } });
+    const fetchMock = mockFetch({
+      results: [],
+      page: { has_more: false, next_cursor: null },
+    });
 
     await fetchSearchResultPage(
       { ...emptySearchQuery(), text: "x" },
@@ -156,7 +176,10 @@ describe("fetchSearchResultPage page shape", () => {
   });
 
   it("returns adapted rows and the page cursor", async () => {
-    mockFetch({ results: [NOTE_ROW], page: { next_cursor: "cursor-next" } });
+    mockFetch({
+      results: [NOTE_ROW],
+      page: { has_more: true, next_cursor: "cursor-next" },
+    });
 
     const page = await fetchSearchResultPage(
       { ...emptySearchQuery(), text: "needle" },
@@ -178,29 +201,34 @@ describe("fetchSearchResultPage page shape", () => {
       paneLabelHint: "note body text",
       primaryText: "note body text",
       noteBody: "note body text",
+      noteOrigin: "note",
+      ownerResourceRef: NOTE_REF,
     });
   });
 
-  it("normalizes a missing or non-string page cursor to null", async () => {
+  it("defects when the canonical page envelope is missing", async () => {
     mockFetch({ results: [NOTE_ROW], page: null });
 
-    const page = await fetchSearchResultPage(
-      { ...emptySearchQuery(), text: "needle" },
-      { limit: 20 },
-    );
-
-    expect(page.nextCursor).toBeNull();
+    await expect(
+      fetchSearchResultPage(
+        { ...emptySearchQuery(), text: "needle" },
+        { limit: 20 },
+      ),
+    ).rejects.toThrow("SearchResponse.page must be an object");
   });
 
   it("throws when the results payload is not an array", async () => {
-    mockFetch({ results: null, page: { next_cursor: null } });
+    mockFetch({
+      results: null,
+      page: { has_more: false, next_cursor: null },
+    });
 
     await expect(
       fetchSearchResultPage(
         { ...emptySearchQuery(), text: "x" },
         { limit: 20 },
       ),
-    ).rejects.toThrow("Search API response is missing results");
+    ).rejects.toThrow("SearchResponse.results must be an array");
   });
 
   it("throws when a page contains an invalid row (drives normalizeSearchResult)", async () => {
@@ -215,7 +243,27 @@ describe("fetchSearchResultPage page shape", () => {
           snippet: "invalid",
         },
       ],
-      page: { next_cursor: null },
+      page: { has_more: false, next_cursor: null },
+    });
+
+    await expect(
+      fetchSearchResultPage(
+        { ...emptySearchQuery(), text: "x" },
+        { limit: 20 },
+      ),
+    ).rejects.toThrow("Search API returned an invalid result row");
+  });
+
+  it("surfaces canonical owner identity drift instead of dropping the row", async () => {
+    mockFetch({
+      results: [
+        {
+          ...NOTE_ROW,
+          owner_resource_ref:
+            "note_block:22222222-2222-4222-8222-222222222222",
+        },
+      ],
+      page: { has_more: false, next_cursor: null },
     });
 
     await expect(

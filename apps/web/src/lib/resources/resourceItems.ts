@@ -1,4 +1,3 @@
-import { requiredRecord, requiredString } from "@/lib/notes/normalize";
 import type {
   LibraryPlacementMode,
   ResourceChatSubjectMode,
@@ -10,11 +9,21 @@ import type {
 } from "@/lib/resources/resourceCapabilities";
 import { isLibraryPlacementMode } from "@/lib/resources/resourceCapabilities";
 import { isShareMode, type ShareMode } from "@/lib/sharing/types";
+import type { ResourceActivation } from "@/lib/resources/activation";
 import {
-  normalizeResourceActivation,
-  type ResourceActivation,
-} from "@/lib/resources/activation";
-import { isRecord } from "@/lib/validation";
+  isResourceScheme,
+  parseResourceRef,
+  type ResourceScheme,
+} from "@/lib/resourceGraph/resourceRef";
+import {
+  expectBoolean,
+  expectExactRecord,
+  expectInteger,
+  expectNullableString,
+  expectOneOf,
+  expectRecord,
+  expectString,
+} from "@/lib/validation";
 
 // Wire shape of `ResourceUserRelationPolicyOut`
 // (python/nexus/schemas/resource_items.py) — replaces the scalar `linkable`
@@ -46,7 +55,7 @@ export interface ResourceItemCapabilities {
 
 export interface ResourceItem {
   ref: string;
-  scheme: string;
+  scheme: ResourceScheme;
   id: string;
   label: string;
   summary: string;
@@ -85,115 +94,261 @@ export type SurfacePosition =
   | { kind: "start" }
   | { kind: "after"; occurrenceId: string };
 
-function normalizeUserRelation(raw: unknown): ResourceUserRelation {
-  const record = requiredRecord(raw, "resource user relation");
+const RESOURCE_ITEM_KEYS = [
+  "ref",
+  "scheme",
+  "id",
+  "label",
+  "summary",
+  "route",
+  "activation",
+  "missing",
+  "capabilities",
+  "versionByLane",
+] as const;
+const RESOURCE_ACTIVATION_KEYS = [
+  "resourceRef",
+  "kind",
+  "href",
+  "unresolvedReason",
+] as const;
+const RESOURCE_CAPABILITY_KEYS = [
+  "userRelation",
+  "sharing",
+  "libraryPlacement",
+  "attachable",
+  "chatSubject",
+  "readable",
+  "inspectable",
+  "citableResultType",
+  "citationOutputSource",
+  "appSearchScope",
+  "conversationSearchScope",
+  "promptRender",
+  "expansionPolicy",
+  "expandable",
+  "adjacencySource",
+  "adjacencyTarget",
+] as const;
+const RESOURCE_USER_RELATION_KEYS = [
+  "userLinkSource",
+  "userLinkTarget",
+  "noteReferenceTarget",
+] as const;
+
+function decodeUserRelation(raw: unknown): ResourceUserRelation {
+  const record = expectExactRecord(
+    raw,
+    RESOURCE_USER_RELATION_KEYS,
+    "resource user relation",
+  );
   return {
-    userLinkSource: Boolean(record.userLinkSource ?? record.user_link_source),
-    userLinkTarget: String(
-      record.userLinkTarget ?? record.user_link_target ?? "none",
-    ) as UserLinkTargetMode,
-    noteReferenceTarget: Boolean(
-      record.noteReferenceTarget ?? record.note_reference_target,
+    userLinkSource: expectBoolean(
+      record.userLinkSource,
+      "resource user relation.userLinkSource",
+    ),
+    userLinkTarget: expectOneOf(
+      record.userLinkTarget,
+      ["none", "direct", "materialize_passage"] as const,
+      "resource user relation.userLinkTarget",
+    ),
+    noteReferenceTarget: expectBoolean(
+      record.noteReferenceTarget,
+      "resource user relation.noteReferenceTarget",
     ),
   };
 }
 
-export function normalizeResourceItem(
-  raw: Record<string, unknown>,
-): ResourceItem {
-  const capabilities = requiredRecord(
-    raw.capabilities,
+function decodeActivation(raw: unknown, ref: string): ResourceActivation {
+  const activation = expectExactRecord(
+    raw,
+    RESOURCE_ACTIVATION_KEYS,
+    "resource activation",
+  );
+  const resourceRef = expectString(
+    activation.resourceRef,
+    "resource activation.resourceRef",
+  );
+  if (resourceRef !== ref) {
+    throw new TypeError("resource activation.resourceRef must match resource ref");
+  }
+  const kind = expectOneOf(
+    activation.kind,
+    ["route", "external", "none"] as const,
+    "resource activation.kind",
+  );
+  const href = expectNullableString(
+    activation.href,
+    "resource activation.href",
+  );
+  const unresolvedReason = expectNullableString(
+    activation.unresolvedReason,
+    "resource activation.unresolvedReason",
+  );
+  if ((kind === "route" || kind === "external") && href === null) {
+    throw new TypeError(`${kind} resource activation requires href`);
+  }
+  if (kind === "none" && href !== null) {
+    throw new TypeError("none resource activation requires null href");
+  }
+  return { resourceRef, kind, href, unresolvedReason };
+}
+
+/**
+ * Sole strict decoder for the canonical by-alias camel-case ResourceItemOut
+ * wire. Same-system shape drift is a defect: alternate casing, missing/defaulted
+ * fields, extra fields, and identity mismatches all throw at this boundary.
+ */
+export function decodeResourceItem(raw: unknown): ResourceItem {
+  const item = expectExactRecord(raw, RESOURCE_ITEM_KEYS, "resource item");
+  const ref = expectString(item.ref, "resource item.ref");
+  const parsedRef = parseResourceRef(ref);
+  if (parsedRef === null) {
+    throw new TypeError("resource item.ref must be a canonical ResourceRef");
+  }
+  const scheme = expectString(item.scheme, "resource item.scheme");
+  if (!isResourceScheme(scheme) || scheme !== parsedRef.scheme) {
+    throw new TypeError("resource item.scheme must match resource item.ref");
+  }
+  const id = expectString(item.id, "resource item.id");
+  if (id !== parsedRef.id) {
+    throw new TypeError("resource item.id must match resource item.ref");
+  }
+  const capabilities = expectExactRecord(
+    item.capabilities,
+    RESOURCE_CAPABILITY_KEYS,
     "resource capabilities",
   );
-  const activation = normalizeResourceActivation(raw.activation);
-  if (!activation) {
-    throw new Error("Invalid resource activation");
-  }
   if (!isShareMode(capabilities.sharing)) {
-    throw new Error("Invalid resource sharing capability");
+    throw new TypeError("resource capabilities.sharing is invalid");
   }
-  const libraryPlacement =
-    capabilities.libraryPlacement ?? capabilities.library_placement;
+  const libraryPlacement = capabilities.libraryPlacement;
   if (!isLibraryPlacementMode(libraryPlacement)) {
-    throw new Error("Invalid resource library placement capability");
+    throw new TypeError("resource capabilities.libraryPlacement is invalid");
   }
-  const versionByLane = isRecord(raw.versionByLane)
-    ? raw.versionByLane
-    : isRecord(raw.version_by_lane)
-      ? raw.version_by_lane
-      : {};
+  const versionRecord = expectRecord(
+    item.versionByLane,
+    "resource item.versionByLane",
+  );
+  const versionByLane = Object.fromEntries(
+    Object.entries(versionRecord).map(([lane, rawVersion]) => {
+      const version = expectInteger(
+        rawVersion,
+        `resource item.versionByLane.${lane}`,
+      );
+      if (version < 1) {
+        throw new TypeError(
+          `resource item.versionByLane.${lane} must be positive`,
+        );
+      }
+      return [lane, version];
+    }),
+  );
+  const route = expectNullableString(item.route, "resource item.route");
+  const activation = decodeActivation(item.activation, ref);
+  if (
+    (activation.kind === "route" && route !== activation.href) ||
+    (activation.kind !== "route" && route !== null)
+  ) {
+    throw new TypeError("resource item.route must match route activation");
+  }
   return {
-    ref: requiredString(raw.ref, "resource ref"),
-    scheme: String(raw.scheme ?? ""),
-    id: requiredString(raw.id, "resource id"),
-    label: String(raw.label ?? ""),
-    summary: String(raw.summary ?? ""),
-    route: typeof raw.route === "string" ? raw.route : null,
+    ref,
+    scheme,
+    id,
+    label: expectString(item.label, "resource item.label"),
+    summary: expectString(item.summary, "resource item.summary"),
+    route,
     activation,
-    missing: Boolean(raw.missing),
+    missing: expectBoolean(item.missing, "resource item.missing"),
     capabilities: {
-      userRelation: normalizeUserRelation(
-        capabilities.userRelation ?? capabilities.user_relation,
-      ),
+      userRelation: decodeUserRelation(capabilities.userRelation),
       sharing: capabilities.sharing,
       libraryPlacement,
-      attachable: Boolean(capabilities.attachable),
-      chatSubject: String(
-        capabilities.chatSubject ?? capabilities.chat_subject ?? "none",
-      ) as ResourceChatSubjectMode,
-      readable: String(capabilities.readable ?? "none") as ResourceReadMode,
-      inspectable: String(
-        capabilities.inspectable ?? "none",
-      ) as ResourceInspectMode,
-      citableResultType:
-        typeof capabilities.citableResultType === "string"
-          ? capabilities.citableResultType
-          : typeof capabilities.citable_result_type === "string"
-            ? capabilities.citable_result_type
-            : null,
-      citationOutputSource: Boolean(
-        capabilities.citationOutputSource ??
-        capabilities.citation_output_source,
+      attachable: expectBoolean(
+        capabilities.attachable,
+        "resource capabilities.attachable",
       ),
-      appSearchScope: Boolean(
-        capabilities.appSearchScope ?? capabilities.app_search_scope,
+      chatSubject: expectOneOf(
+        capabilities.chatSubject,
+        [
+          "none",
+          "label",
+          "scope",
+          "readable",
+          "quote",
+          "generated_output",
+        ] as const,
+        "resource capabilities.chatSubject",
       ),
-      conversationSearchScope: Boolean(
-        capabilities.conversationSearchScope ??
-        capabilities.conversation_search_scope,
+      readable: expectOneOf(
+        capabilities.readable,
+        ["none", "scope", "body", "media"] as const,
+        "resource capabilities.readable",
       ),
-      promptRender: String(
-        capabilities.promptRender ?? capabilities.prompt_render ?? "none",
-      ) as ResourcePromptRenderMode,
-      expansionPolicy: String(
-        capabilities.expansionPolicy ?? capabilities.expansion_policy ?? "none",
-      ) as ResourceExpansionPolicy,
-      expandable: Boolean(capabilities.expandable),
-      adjacencySource: Boolean(
-        capabilities.adjacencySource ?? capabilities.adjacency_source,
+      inspectable: expectOneOf(
+        capabilities.inspectable,
+        ["none", "media_document_map"] as const,
+        "resource capabilities.inspectable",
       ),
-      adjacencyTarget: Boolean(
-        capabilities.adjacencyTarget ?? capabilities.adjacency_target,
+      citableResultType: expectNullableString(
+        capabilities.citableResultType,
+        "resource capabilities.citableResultType",
+      ),
+      citationOutputSource: expectBoolean(
+        capabilities.citationOutputSource,
+        "resource capabilities.citationOutputSource",
+      ),
+      appSearchScope: expectBoolean(
+        capabilities.appSearchScope,
+        "resource capabilities.appSearchScope",
+      ),
+      conversationSearchScope: expectBoolean(
+        capabilities.conversationSearchScope,
+        "resource capabilities.conversationSearchScope",
+      ),
+      promptRender: expectOneOf(
+        capabilities.promptRender,
+        ["none", "label", "inline_body", "quote"] as const,
+        "resource capabilities.promptRender",
+      ),
+      expansionPolicy: expectOneOf(
+        capabilities.expansionPolicy,
+        [
+          "none",
+          "media_owned_reader_children",
+          "page_note_blocks",
+          "note_block_owned_evidence",
+          "artifact_revisions",
+        ] as const,
+        "resource capabilities.expansionPolicy",
+      ),
+      expandable: expectBoolean(
+        capabilities.expandable,
+        "resource capabilities.expandable",
+      ),
+      adjacencySource: expectBoolean(
+        capabilities.adjacencySource,
+        "resource capabilities.adjacencySource",
+      ),
+      adjacencyTarget: expectBoolean(
+        capabilities.adjacencyTarget,
+        "resource capabilities.adjacencyTarget",
       ),
     },
-    versionByLane: Object.fromEntries(
-      Object.entries(versionByLane).map(([lane, version]) => [
-        lane,
-        Number(version),
-      ]),
-    ),
+    versionByLane,
   };
 }
 
 function normalizeResourceSurfaceContent(raw: unknown): ResourceSurfaceContent {
-  const content = requiredRecord(raw, "surface content");
-  switch (requiredString(content.kind, "surface content kind")) {
+  const content = expectRecord(raw, "surface content");
+  switch (expectString(content.kind, "surface content kind")) {
     case "page_title":
       return { kind: "page_title", title: String(content.title ?? "") };
     case "note_body":
       return {
         kind: "note_body",
-        bodyPmJson: requiredRecord(content.body_pm_json, "note body JSON"),
+        bodyPmJson: expectRecord(content.body_pm_json, "note body JSON"),
         bodyText: String(content.body_text ?? ""),
       };
     case "resource_summary":
@@ -204,25 +359,25 @@ function normalizeResourceSurfaceContent(raw: unknown): ResourceSurfaceContent {
 }
 
 function normalizeResourceSurfaceNode(raw: unknown): ResourceSurfaceNode {
-  const node = requiredRecord(raw, "surface node");
+  const node = expectRecord(raw, "surface node");
   return {
-    item: normalizeResourceItem(requiredRecord(node.item, "surface item")),
+    item: decodeResourceItem(node.item),
     content: normalizeResourceSurfaceContent(node.content),
   };
 }
 
 /** Decodes only the canonical snake_case resource-surface wire contract. */
 export function normalizeResourceSurface(raw: unknown): ResourceSurface {
-  const surface = requiredRecord(raw, "resource surface");
+  const surface = expectRecord(raw, "resource surface");
   if (!Array.isArray(surface.ordered_items)) {
     throw new Error("Resource surface is missing ordered_items");
   }
   return {
     source: normalizeResourceSurfaceNode(surface.source),
     orderedItems: surface.ordered_items.map((rawOccurrence) => {
-      const occurrence = requiredRecord(rawOccurrence, "surface occurrence");
+      const occurrence = expectRecord(rawOccurrence, "surface occurrence");
       return {
-        occurrenceId: requiredString(
+        occurrenceId: expectString(
           occurrence.occurrence_id,
           "surface occurrence id",
         ),
