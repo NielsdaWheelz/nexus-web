@@ -1,7 +1,7 @@
 import { type ReactNode } from "react";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   PaneReturnJourneyHarness,
   RETURN_JOURNEY_VISIT_ID,
@@ -12,6 +12,7 @@ import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { ResourceCacheProvider } from "@/lib/api/resourceCache";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
+import { resetLibraryPlacementRevisionForTest } from "@/lib/libraries/placementRevision";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { decodeLibraryReadingTimeEntry } from "@/lib/libraries/readingTime";
@@ -257,128 +258,19 @@ function Harness({
   );
 }
 
+// Reset the module-global placement store between tests: the pane claims the
+// bootstrap seed only at process revision zero, and Slate-accept publishes
+// placement revisions that would otherwise leak across a file's tests.
+beforeEach(() => {
+  resetLibraryPlacementRevisionForTest();
+});
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
 describe("LibraryPaneBody Reading Slate host", () => {
-  it("does not capture a controller commit while reconciliation is unresolved", async () => {
-    const user = userEvent.setup();
-    let reconciliationRequests = 0;
-    let slateReads = 0;
-    const unresolvedReconciliation = new Promise<Response>(() => {});
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const path = pathWithSearch(input);
-        const method = (init?.method ?? "GET").toUpperCase();
-        if (path === "/api/lectern" && method === "GET") {
-          return response({ data: { items: [] } });
-        }
-        if (path === `/api/libraries/${LIBRARY_ID}/slate` && method === "GET") {
-          slateReads += 1;
-          return response({
-            data: { items: slateReads === 1 ? [slateItem()] : [] },
-          });
-        }
-        if (
-          path === `/api/media/${SUGGESTED_MEDIA_ID}/libraries` &&
-          method === "POST"
-        ) {
-          return new Response(null, { status: 204 });
-        }
-        if (
-          path === `/api/libraries/${LIBRARY_ID}/entries` &&
-          method === "GET"
-        ) {
-          reconciliationRequests += 1;
-          return unresolvedReconciliation;
-        }
-        if (path === "/api/consumption/commands" && method === "POST") {
-          return response({
-            data: {
-              outcome: { kind: "StateOnly" },
-              lectern: { items: [] },
-              nextItem: { kind: "Absent" },
-              progressState: { kind: "Absent" },
-              completionHandle: { kind: "Absent" },
-            },
-          });
-        }
-        throw new Error(`Unexpected fetch: ${method} ${path}`);
-      }),
-    );
-
-    let commands: PaneReturnMementoCommands | null = null;
-    const href = `/libraries/${LIBRARY_ID}`;
-    const routeKey = resolvePaneRouteIdentity(href).routeKey;
-    const journey = (
-      resourceGeneration: number,
-      initialEntries: ReturnType<typeof entry>[],
-    ) => (
-      <PaneReturnJourneyHarness
-        href={href}
-        resources={{
-          [LIBRARY_ID]: {
-            library: library(),
-            entries: initialEntries,
-            entriesPage: { has_more: false, next_cursor: null },
-          },
-        }}
-        resourceGeneration={resourceGeneration}
-        publishCommands={(next) => {
-          commands = next;
-        }}
-      >
-        <LecternProvider>
-          <LibraryPlacementControllerProvider>
-            <LibraryPaneBody />
-          </LibraryPlacementControllerProvider>
-        </LecternProvider>
-      </PaneReturnJourneyHarness>
-    );
-    const view = render(
-      journey(0, [entry("entry-1", EXISTING_MEDIA_ID, "Existing work")]),
-    );
-
-    await user.click(
-      await screen.findByRole("button", {
-        name: "Add Suggested work to Research",
-      }),
-    );
-    await waitFor(() => expect(reconciliationRequests).toBe(1));
-    expect(
-      screen.getByText("Refreshing library entries…"),
-    ).toBeInTheDocument();
-
-    await user.click(
-      screen.getByRole("button", { name: "More actions for Existing work" }),
-    );
-    await user.click(
-      await screen.findByRole("menuitem", { name: "Mark as finished" }),
-    );
-    expect(await screen.findByText("Finished")).toBeInTheDocument();
-    await waitFor(() => expect(commands).not.toBeNull());
-
-    act(() => {
-      commands?.capturePane({
-        paneId: "pane-return-journey",
-        visitId: RETURN_JOURNEY_VISIT_ID,
-        routeKey,
-        modality: "Programmatic",
-      });
-    });
-
-    view.rerender(
-      journey(1, [entry("entry-fresh", SECOND_MEDIA_ID, "Fresh server work")]),
-    );
-
-    expect(await screen.findByRole("link", { name: "Fresh server work" })).toBeInTheDocument();
-    expect(screen.queryByText("Existing work")).not.toBeInTheDocument();
-    expect(reconciliationRequests).toBe(1);
-  });
-
   it("clears destination-stale reconciliation state when the library id changes", async () => {
     let firstSlateReads = 0;
     let secondEntryReads = 0;
@@ -447,7 +339,10 @@ describe("LibraryPaneBody Reading Slate host", () => {
       </SwitchingHarness>,
     );
     expect(await screen.findByRole("link", { name: "Archived work" })).toBeVisible();
-    expect(secondEntryReads).toBe(0);
+    // The earlier Add advanced the process placement revision, so the SECOND
+    // library cannot claim its bootstrap seed: it loads its exact first page once
+    // through the entries endpoint (not the FIRST library's stale reconciliation).
+    expect(secondEntryReads).toBe(1);
 
     view.rerender(
       <SwitchingHarness libraryId={SECOND_LIBRARY_ID} isActive={false}>
@@ -470,8 +365,9 @@ describe("LibraryPaneBody Reading Slate host", () => {
     );
     // The production visitId + routeKey render key remounts the owner at the
     // destination, so the old library's stale marker cannot trigger a new
-    // library reconciliation.
-    expect(secondEntryReads).toBe(0);
+    // library reconciliation: SECOND loaded its first page exactly once and never
+    // reconciled again.
+    expect(secondEntryReads).toBe(1);
   });
 
   it("renders the main empty notice independently from a non-empty Slate", async () => {
@@ -878,5 +774,135 @@ describe("LibraryPaneBody Reading Slate host", () => {
     await user.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(entryReads).toBe(3));
     expect(await within(rankedList).findByRole("link", { name: "Suggested work" })).toBeVisible();
+  });
+
+  // Relocated last: this test publishes a consumption revision (Mark finished),
+  // which is module-global; running it last keeps every seed-adoption test above
+  // it at process revision zero.
+  it("does not capture a controller commit while reconciliation is unresolved", async () => {
+    const user = userEvent.setup();
+    let reconciliationRequests = 0;
+    let slateReads = 0;
+    const unresolvedReconciliation = new Promise<Response>(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathWithSearch(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (path === "/api/lectern" && method === "GET") {
+          return response({ data: { items: [] } });
+        }
+        if (path === `/api/libraries/${LIBRARY_ID}/slate` && method === "GET") {
+          slateReads += 1;
+          return response({
+            data: { items: slateReads === 1 ? [slateItem()] : [] },
+          });
+        }
+        if (
+          path === `/api/media/${SUGGESTED_MEDIA_ID}/libraries` &&
+          method === "POST"
+        ) {
+          return new Response(null, { status: 204 });
+        }
+        if (
+          path === `/api/libraries/${LIBRARY_ID}/entries` &&
+          method === "GET"
+        ) {
+          reconciliationRequests += 1;
+          // First call: the gen-0 reconcile that stays unresolved while we
+          // capture. Second call: the gen-1 remount's exact first page — the Add
+          // + Mark-finished advanced both process revisions, so the fresh owner
+          // cannot claim its bootstrap seed and loads through the endpoint.
+          if (reconciliationRequests === 1) return unresolvedReconciliation;
+          return response({
+            data: [entryWire("entry-fresh", SECOND_MEDIA_ID, "Fresh server work")],
+            page: { has_more: false, next_cursor: null },
+          });
+        }
+        if (path === "/api/consumption/commands" && method === "POST") {
+          return response({
+            data: {
+              outcome: { kind: "StateOnly" },
+              lectern: { items: [] },
+              nextItem: { kind: "Absent" },
+              progressState: { kind: "Absent" },
+              completionHandle: { kind: "Absent" },
+            },
+          });
+        }
+        throw new Error(`Unexpected fetch: ${method} ${path}`);
+      }),
+    );
+
+    let commands: PaneReturnMementoCommands | null = null;
+    const href = `/libraries/${LIBRARY_ID}`;
+    const routeKey = resolvePaneRouteIdentity(href).routeKey;
+    const journey = (
+      resourceGeneration: number,
+      initialEntries: ReturnType<typeof entry>[],
+    ) => (
+      <PaneReturnJourneyHarness
+        href={href}
+        resources={{
+          [LIBRARY_ID]: {
+            library: library(),
+            entries: initialEntries,
+            entriesPage: { has_more: false, next_cursor: null },
+          },
+        }}
+        resourceGeneration={resourceGeneration}
+        publishCommands={(next) => {
+          commands = next;
+        }}
+      >
+        <LecternProvider>
+          <LibraryPlacementControllerProvider>
+            <LibraryPaneBody />
+          </LibraryPlacementControllerProvider>
+        </LecternProvider>
+      </PaneReturnJourneyHarness>
+    );
+    const view = render(
+      journey(0, [entry("entry-1", EXISTING_MEDIA_ID, "Existing work")]),
+    );
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Add Suggested work to Research",
+      }),
+    );
+    await waitFor(() => expect(reconciliationRequests).toBe(1));
+    expect(
+      screen.getByText("Refreshing library entries…"),
+    ).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: "More actions for Existing work" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Mark as finished" }),
+    );
+    expect(await screen.findByText("Finished")).toBeInTheDocument();
+    await waitFor(() => expect(commands).not.toBeNull());
+
+    act(() => {
+      commands?.capturePane({
+        paneId: "pane-return-journey",
+        visitId: RETURN_JOURNEY_VISIT_ID,
+        routeKey,
+        modality: "Programmatic",
+      });
+    });
+
+    view.rerender(
+      journey(1, [entry("entry-fresh", SECOND_MEDIA_ID, "Fresh server work")]),
+    );
+
+    expect(await screen.findByRole("link", { name: "Fresh server work" })).toBeInTheDocument();
+    expect(screen.queryByText("Existing work")).not.toBeInTheDocument();
+    // The capture during the unresolved reconcile stored no committed snapshot,
+    // so gen 1 restored nothing and loaded fresh server truth: exactly the gen-0
+    // reconcile plus the gen-1 first page, never a stale restored snapshot.
+    expect(reconciliationRequests).toBe(2);
   });
 });

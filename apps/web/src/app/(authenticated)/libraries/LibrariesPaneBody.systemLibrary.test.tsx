@@ -278,6 +278,7 @@ describe("LibrariesPaneBody (system library protection)", () => {
     });
     const unresolvedRefresh = new Promise<Response>(() => {});
     let refreshRequestCount = 0;
+    let createdLibraryId = "";
     stubFetch(async (input, init) => {
       const url = new URL(
         input instanceof Request ? input.url : String(input),
@@ -290,6 +291,11 @@ describe("LibrariesPaneBody (system library protection)", () => {
         throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
       }
       if (init?.method === "POST") {
+        if (typeof init.body === "string") {
+          createdLibraryId = (
+            JSON.parse(init.body) as { library_id: string }
+          ).library_id;
+        }
         return pendingCreate;
       }
       refreshRequestCount += 1;
@@ -344,10 +350,7 @@ describe("LibrariesPaneBody (system library protection)", () => {
     await act(async () => {
       resolveCreate(
         Response.json({
-          data: library(
-            "10000000-0000-4000-8000-000000000008",
-            "Created library",
-          ),
+          data: library(createdLibraryId, "Created library"),
         }),
       );
       await Promise.resolve();

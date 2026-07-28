@@ -362,9 +362,11 @@ def list_library_entries(
 
     Returns one mixed list of podcasts and media. Canonical order (sort omitted)
     is Default's `media.created_at DESC` or the physical position order;
-    ``sort=title|creator|published|added`` with a ``direction`` and an optional
-    ``completion=unfinished`` select a factual view. The whole query is parsed
-    strictly (see ``library_entries.parse_entries_query``).
+    ``sort=title|creator|published|added`` with a ``direction`` selects a factual
+    order. ``projection=unfiled|in-progress`` selects a fixed entry projection
+    (omitted means all items; ``unfiled`` is Default-only) and an optional
+    ``completion=unfinished`` composes with all-items/unfiled projections only.
+    The whole query is parsed strictly (see ``library_entries.parse_entries_query``).
     """
     view, limit, cursor = library_entries.parse_entries_query(request.query_params.multi_items())
     result, page = library_entries.list_library_entries(

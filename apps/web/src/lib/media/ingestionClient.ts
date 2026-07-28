@@ -10,6 +10,7 @@ import {
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { createRandomId } from "@/lib/createRandomId";
 import { isAbortError } from "@/lib/errors";
+import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
 import { toMediaCaptureFeedback } from "@/lib/media/captureFeedback";
 import { type DocumentProcessingStatus } from "@/lib/media/documentReadiness";
 import { isRecord } from "@/lib/validation";
@@ -193,7 +194,22 @@ export function getFileUploadError(file: File): string | null {
   return null;
 }
 
-export async function uploadIngestFile({
+export async function uploadIngestFile(args: {
+  file: File;
+  libraryIds: readonly string[];
+  idempotencyKey?: string;
+  signal?: AbortSignal;
+  onAcceptedIdentity?(identity: AcceptedUploadIdentity): void;
+}): Promise<UploadIngestResult> {
+  const result = await ingestUploadedFile(args);
+  // Every terminal outcome is exactly one acknowledged create-with-placement
+  // (the upload-init identity is durable); publish once so a mounted All pane
+  // reconciles. Aborts and defects throw past this point and never publish.
+  publishLibraryPlacementChange([...args.libraryIds]);
+  return result;
+}
+
+async function ingestUploadedFile({
   file,
   libraryIds,
   idempotencyKey = createRandomId("media-upload"),
@@ -522,7 +538,11 @@ export async function addMediaFromUrl({
     signal,
   });
 
-  return decodeFromUrlResponse(response);
+  const result = decodeFromUrlResponse(response);
+  // One acknowledged create-with-placement: publish this request's destinations
+  // (an empty list still lands in Default) so a mounted All pane reconciles.
+  publishLibraryPlacementChange([...libraryIds]);
+  return result;
 }
 
 export async function retryMediaSource(

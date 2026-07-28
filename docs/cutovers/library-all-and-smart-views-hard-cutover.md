@@ -1,6 +1,28 @@
 # Library All And Smart Views Hard Cutover
 
-Status: PROPOSED — 2026-07-27
+Status: IMPLEMENTED — 2026-07-27 (source cutover complete and focus-verified;
+the production preflight, production-fixture query-plan comparison, and the
+backend-first Hetzner/Vercel release in §Production Release remain release-time
+operational steps)
+
+Verification record — 2026-07-27:
+
+- Backend: focused integration suites green — `test_libraries.py` +
+  `test_atlas.py` + `test_resource_graph_resolve.py` + `test_resource_targets.py`
+  + `test_search_candidates.py` (290 passed; one pre-existing unrelated teardown
+  error in `TestListLibraryMedia::test_list_media_projects_document_reading_time_policy`
+  reproduces at the pre-cutover HEAD). Local plan gate
+  `test_library_entry_plans.py` green (12 EXPLAIN ANALYZE cases, no spill /
+  correlated scan; no index added). Reserved-name preflight: zero conflicting
+  rows.
+- Frontend: `tsc --noEmit` clean; focused unit + browser suites green across the
+  view codec (111), presentation/revision stores, pane (60), libraries list,
+  destination components, publishers, and the placement residue enumeration.
+- Adversarial review: multi-agent review over the full diff; six confirmed
+  findings (four major pane revision races, two minor) and eight
+  verifier-starved claims all fixed and re-tested.
+- E2E: both specs updated (All/Unfiled/In Progress journey authored,
+  statically typechecked); real-stack run deferred to the release window.
 
 Type: hard cutover. No feature flag, legacy view shape, compatibility cursor,
 fallback parser, dual product copy, or released intermediate state.

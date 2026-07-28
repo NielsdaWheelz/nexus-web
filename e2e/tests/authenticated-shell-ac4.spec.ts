@@ -39,13 +39,13 @@ test.describe("authenticated shell AC-4", () => {
     );
 
     const activePane = activeWorkspacePane(page);
+    // The Default library presents as "All" with secondary "Across your libraries".
     const defaultLibraryItem = activePane
       .getByRole("listitem")
-      .filter({ hasText: "Default library" });
-    const defaultLibraryLabel = defaultLibraryItem.getByText(
-      "Default library",
-      { exact: true },
-    );
+      .filter({ hasText: "Across your libraries" });
+    const defaultLibraryLabel = defaultLibraryItem.getByText("All", {
+      exact: true,
+    });
     await expect(defaultLibraryLabel).toBeVisible();
     await expect.poll(() => browserLibraryListFetches).toEqual([]);
 

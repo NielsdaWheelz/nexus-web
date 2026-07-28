@@ -1,12 +1,15 @@
 import {
   Component,
   useLayoutEffect,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
+import { ResolvedPaneBodyMarker } from "@/lib/panes/paneRenderRegistry";
+import { usePaneReturnScrollport } from "@/lib/workspace/paneReturnMemento";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
 import { horizontallyScrollableElements } from "@/__tests__/helpers/horizontalOverflow";
 import {
@@ -25,6 +28,10 @@ import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
+import {
+  publishLibraryPlacementChange,
+  resetLibraryPlacementRevisionForTest,
+} from "@/lib/libraries/placementRevision";
 import {
   OPEN_LAUNCHER_EVENT,
   type OpenLauncherDetail,
@@ -344,6 +351,78 @@ const paneWithLectern = (
   </LecternProvider>
 );
 
+// A capture/restore host that exposes `isActive`, so a test can deactivate the
+// source pane before advancing a revision (an inactive pane never reconciles,
+// which is what keeps the captured visit snapshot intact) and then remount at a
+// new resource generation to model Back. The transient memento provider lives
+// above the generation-keyed resource cache, so it persists across the remount.
+function RestoreScrollport({
+  paneId,
+  children,
+}: {
+  paneId: string;
+  children: ReactNode;
+}) {
+  const scrollportRef = useRef<HTMLDivElement>(null);
+  usePaneReturnScrollport({ paneId, enabled: true, scrollportRef });
+  return (
+    <div ref={scrollportRef} data-testid="return-journey-scrollport">
+      <div>
+        <ResolvedPaneBodyMarker>{children}</ResolvedPaneBodyMarker>
+      </div>
+    </div>
+  );
+}
+
+function RestorePane({
+  resourceGeneration,
+  isActive,
+  resources,
+  publishCommands,
+}: {
+  resourceGeneration: number;
+  isActive: boolean;
+  resources: Record<string, unknown>;
+  publishCommands: (commands: PaneReturnMementoCommands) => void;
+}) {
+  const href = `/libraries/${LIBRARY_ID}`;
+  const identity = resolvePaneRouteIdentity(href);
+  return (
+    <PaneReturnMementoProvider>
+      <PaneReturnCommandsProbe publish={publishCommands} />
+      <FeedbackProvider>
+        <ShareControllerProvider>
+          <ResourceCacheProvider key={resourceGeneration} value={resources}>
+            <PaneRuntimeProvider
+              paneId="pane-return-journey"
+              visitId={RETURN_JOURNEY_VISIT_ID}
+              isActive={isActive}
+              href={href}
+              routeId={identity.routeId}
+              routeKey={identity.routeKey}
+              pathParams={{ id: LIBRARY_ID }}
+              canGoBack
+              canGoForward
+              onNavigatePane={vi.fn()}
+              onReplacePane={vi.fn()}
+              onActivateWorkspaceTarget={vi.fn(() => ({
+                kind: "Unchanged" as const,
+                paneId: "pane-return-journey",
+              }))}
+              onGoBackPane={vi.fn()}
+              onGoForwardPane={vi.fn()}
+            >
+              <RestoreScrollport paneId="pane-return-journey">
+                {paneWithLectern}
+              </RestoreScrollport>
+            </PaneRuntimeProvider>
+          </ResourceCacheProvider>
+        </ShareControllerProvider>
+      </FeedbackProvider>
+    </PaneReturnMementoProvider>
+  );
+}
+
 function lecternGetResponse(input: unknown): Response | null {
   const path = fetchInputPath(input);
   if (
@@ -366,6 +445,15 @@ function consumptionSuccessResponse(): Response {
     },
   });
 }
+
+// The placement/consumption revision stores are module-global and vitest shares
+// module state across a file's tests. Reset placement before each test so the
+// pane can claim its bootstrap seed (only at process revision zero); the
+// consumption store has no reset export, so the consumption-publishing tests are
+// grouped LAST in this file to keep every seed-adoption test above them at zero.
+beforeEach(() => {
+  resetLibraryPlacementRevisionForTest();
+});
 
 afterEach(() => {
   vi.useRealTimers();
@@ -954,8 +1042,11 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     });
 
     view.rerender(journey(factualHref, 1, {}));
+    // Metadata is known (route resource) but no page committed and the exact
+    // first page failed: the single status node carries the initial failure copy
+    // with no committed view to "show".
     expect(
-      await screen.findByText("You do not have access"),
+      await screen.findByText("Could not load All items · Title — A–Z."),
     ).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByTestId("lectern-status")).toHaveTextContent("ready"),
@@ -1452,111 +1543,6 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     );
     expect(
       await screen.findByRole("menuitem", { name: "Mark as finished" }),
-    ).toBeInTheDocument();
-  });
-
-  it("keeps the local patch and does not refetch an AllItems(all) view on a reset", async () => {
-    const user = userEvent.setup();
-    const mediaId = "11111111-1111-4111-8111-111111111111";
-    const commands: Array<Record<string, unknown>> = [];
-    const confirmReset = vi.spyOn(window, "confirm").mockReturnValue(true);
-    let entriesRequests = 0;
-    stubFetch(async (input, init) => {
-      const lectern = lecternGetResponse(input);
-      if (lectern) return lectern;
-      if (fetchInputPath(input) === `/api/libraries/${LIBRARY_ID}/entries`) {
-        entriesRequests += 1;
-        return Response.json({
-          data: [],
-          page: { has_more: false, next_cursor: null },
-        });
-      }
-      if (fetchInputPath(input) === "/api/consumption/commands") {
-        const command = JSON.parse(String(init?.body)) as Record<string, unknown>;
-        commands.push(command);
-        return Response.json({
-          data: {
-            outcome: { kind: "StateOnly" },
-            lectern: { items: [] },
-            nextItem: { kind: "Absent" },
-            progressState: {
-              kind: "Present",
-              value: {
-                mediaId,
-                readerCursor: { state: "Empty", revision: 1 },
-                listeningState: {
-                  kind: "Present",
-                  value: {
-                    positionMs: 59_000,
-                    durationMs: { kind: "Present", value: 60_000 },
-                    playbackSpeed: 1,
-                    writeRevision: 1,
-                    resetEpoch: 1,
-                  },
-                },
-              },
-            },
-            completionHandle: { kind: "Absent" },
-          },
-        });
-      }
-      throw new Error(`Unexpected fetch: ${fetchInputPath(input)}`);
-    });
-
-    renderHydratedPane({
-      href: `/libraries/${LIBRARY_ID}`,
-      resources: {
-        [LIBRARY_ID]: {
-          library: seededLibrary(),
-          entries: [
-            seededMediaEntry("entry-episode", mediaId, "Resettable Episode", {
-              kind: "podcast_episode",
-              readState: "in_progress",
-              progressFraction: 0.5,
-              progressResettable: true,
-            }),
-          ],
-          entriesPage: { has_more: false, next_cursor: null },
-        },
-      },
-      children: paneWithLectern,
-    });
-
-    await waitFor(() =>
-      expect(screen.getByTestId("lectern-status")).toHaveTextContent("ready"),
-    );
-    await user.click(
-      screen.getByRole("button", { name: "More actions for Resettable Episode" }),
-    );
-    await user.click(
-      await screen.findByRole("menuitem", { name: "Reset progress" }),
-    );
-
-    await waitFor(() => {
-      expect(commands).toEqual([
-        expect.objectContaining({ kind: "ResetProgress", mediaId }),
-      ]);
-    });
-    expect(confirmReset).toHaveBeenCalledWith(
-      "Reset progress? This starts the item from the beginning. Notes and activity history are kept.",
-    );
-    expect(await screen.findByText("Progress reset.")).toBeInTheDocument();
-
-    // The consumption revision advanced, but an unfiltered AllItems(all) view is
-    // consumption-insensitive: it keeps the immediate local patch and never
-    // refetches. The row stays; reset remains available.
-    await waitFor(() =>
-      expect(screen.getByTestId("lectern-mutation")).toHaveTextContent("Idle"),
-    );
-    expect(entriesRequests).toBe(0);
-    expect(
-      screen.getByRole("link", { name: "Resettable Episode" }),
-    ).toBeInTheDocument();
-    await user.click(
-      screen.getByRole("button", { name: "More actions for Resettable Episode" }),
-    );
-    expect(
-      screen.getByRole("menuitem", { name: "Reset progress" }),
     ).toBeInTheDocument();
   });
 
@@ -2509,215 +2495,6 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("moves focus to a sibling row after Mark Finished removes it under the unfinished filter", async () => {
-    const user = userEvent.setup();
-    let unfinishedReads = 0;
-    stubFetch(async (input) => {
-      const lectern = lecternGetResponse(input);
-      if (lectern) return lectern;
-      const path = fetchInputPathWithSearch(input);
-      if (
-        path === `/api/libraries/${LIBRARY_ID}/entries?completion=unfinished`
-      ) {
-        unfinishedReads += 1;
-        // The consumption reconcile after Mark Finished refetches the unfinished
-        // view, which the server now returns without the finished row.
-        const rows =
-          unfinishedReads === 1
-            ? [
-                mediaEntryWire("entry-1", ACTION_MEDIA_ID, "First Work", {
-                  readState: "in_progress",
-                  progressFraction: 0.5,
-                  remainingMinutes: 5,
-                }),
-                mediaEntryWire(
-                  "entry-2",
-                  "22222222-2222-4222-8222-222222222222",
-                  "Second Work",
-                ),
-              ]
-            : [
-                mediaEntryWire(
-                  "entry-2",
-                  "22222222-2222-4222-8222-222222222222",
-                  "Second Work",
-                ),
-              ];
-        return Response.json({
-          data: rows,
-          page: { has_more: false, next_cursor: null },
-        });
-      }
-      if (path === "/api/consumption/commands") {
-        return consumptionSuccessResponse();
-      }
-      return new Response("{}", {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    });
-
-    renderHydratedPane({
-      href: `/libraries/${LIBRARY_ID}?completion=unfinished`,
-      resources: {
-        [LIBRARY_ID]: {
-          library: seededLibrary(),
-          entries: [
-            seededMediaEntry(
-              "entry-0",
-              "00000000-0000-4000-8000-000000000010",
-              "Canonical Seed",
-            ),
-          ],
-          entriesPage: { has_more: false, next_cursor: null },
-        },
-      },
-      children: paneWithLectern,
-    });
-
-    expect(await screen.findByRole("link", { name: "First Work" })).toBeInTheDocument();
-    await waitFor(() =>
-      expect(screen.getByTestId("lectern-status")).toHaveTextContent("ready"),
-    );
-    await user.click(
-      screen.getByRole("button", { name: "More actions for First Work" }),
-    );
-    await user.click(
-      await screen.findByRole("menuitem", { name: "Mark as finished" }),
-    );
-
-    // The finished row leaves the filtered view and focus lands on the sibling
-    // row (its first focusable control).
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("link", { name: "First Work" }),
-      ).not.toBeInTheDocument(),
-    );
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "More actions for Second Work" }),
-      ).toHaveFocus(),
-    );
-    await waitFor(() =>
-      expect(screen.getByTestId("lectern-mutation")).toHaveTextContent("Idle"),
-    );
-  });
-
-  // Under the unfinished (consumption-sensitive) view, Mark Finished is a
-  // definitive mutation: it removes the row locally AND reconciles the view's
-  // first page against fresh server truth (never reinterpreting a continuation
-  // cursor), and only shows "No unfinished items." once the server truly returns
-  // an empty unfinished page.
-  it("reconciles the unfinished view's first page after Mark Finished until empty", async () => {
-    const user = userEvent.setup();
-    const firstPagePath = `/api/libraries/${LIBRARY_ID}/entries?completion=unfinished`;
-    const continuationPath = `${firstPagePath}&cursor=cursor-p2`;
-    // parseMediaId requires a canonical UUID; these are the media ids that get
-    // a real "Mark as finished" click (which calls lectern.ensureMediaFinished).
-    const PAGE1_MEDIA_ID = "11111111-1111-4111-8111-222222222221";
-    const PAGE2_MEDIA_ID = "11111111-1111-4111-8111-222222222222";
-    let firstPageReads = 0;
-    stubFetch(async (input) => {
-      const lectern = lecternGetResponse(input);
-      if (lectern) return lectern;
-      const path = fetchInputPathWithSearch(input);
-      if (path === firstPagePath) {
-        firstPageReads += 1;
-        // 1: initial page; 2: reconcile after the first row is finished;
-        // 3: reconcile after the second row is finished (now empty).
-        const data =
-          firstPageReads === 1
-            ? [mediaEntryWire("entry-p1", PAGE1_MEDIA_ID, "First Unfinished")]
-            : firstPageReads === 2
-              ? [mediaEntryWire("entry-p2", PAGE2_MEDIA_ID, "Second Unfinished")]
-              : [];
-        return Response.json({
-          data,
-          page: {
-            has_more: firstPageReads === 1,
-            next_cursor: firstPageReads === 1 ? "cursor-p2" : null,
-          },
-        });
-      }
-      if (path === continuationPath) {
-        // The client may briefly auto-advance on the client-emptied page; the
-        // definitive reconcile then cancels it and reloads the first page.
-        return Response.json({
-          data: [],
-          page: { has_more: false, next_cursor: null },
-        });
-      }
-      if (fetchInputPath(input) === "/api/consumption/commands") {
-        return consumptionSuccessResponse();
-      }
-      return new Response("{}", {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    });
-
-    renderHydratedPane({
-      href: `/libraries/${LIBRARY_ID}?completion=unfinished`,
-      resources: {
-        [LIBRARY_ID]: {
-          library: seededLibrary(),
-          entries: [
-            seededMediaEntry(
-              "entry-0",
-              "00000000-0000-4000-8000-000000000010",
-              "Canonical Seed",
-            ),
-          ],
-          entriesPage: { has_more: false, next_cursor: null },
-        },
-      },
-      children: paneWithLectern,
-    });
-
-    expect(
-      await screen.findByRole("link", { name: "First Unfinished" }),
-    ).toBeInTheDocument();
-    await waitFor(() =>
-      expect(screen.getByTestId("lectern-status")).toHaveTextContent("ready"),
-    );
-
-    await user.click(
-      screen.getByRole("button", { name: "More actions for First Unfinished" }),
-    );
-    await user.click(
-      await screen.findByRole("menuitem", { name: "Mark as finished" }),
-    );
-
-    // The reconcile refetches the unfinished first page, never the continuation
-    // cursor, and surfaces the next unfinished row.
-    expect(
-      await screen.findByRole("link", { name: "Second Unfinished" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("link", { name: "First Unfinished" }),
-    ).not.toBeInTheDocument();
-    // The reconcile refetched the first page (reads >= 2), not a stale
-    // continuation as an authoritative result.
-    expect(firstPageReads).toBeGreaterThanOrEqual(2);
-
-    await user.click(
-      screen.getByRole("button", { name: "More actions for Second Unfinished" }),
-    );
-    await user.click(
-      await screen.findByRole("menuitem", { name: "Mark as finished" }),
-    );
-
-    // The reconcile now returns an empty unfinished page: the real empty state
-    // renders with its recovery.
-    expect(await screen.findByText("No unfinished items.")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Show finished" }),
-    ).toBeInTheDocument();
-    await waitFor(() =>
-      expect(screen.getByTestId("lectern-mutation")).toHaveTextContent("Idle"),
-    );
-  });
-
   it("aborts a superseded view and ignores its late response", async () => {
     const user = userEvent.setup();
     let resolveTitle!: (response: Response) => void;
@@ -3152,5 +2929,812 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     await waitFor(() =>
       expect(screen.getByRole("combobox", { name: "View" })).toHaveFocus(),
     );
+  });
+
+  it("reconciles a named pane when a change to it is followed by one to another library", async () => {
+    let entriesReads = 0;
+    stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      if (fetchInputPath(input) === `/api/libraries/${LIBRARY_ID}/entries`) {
+        entriesReads += 1;
+        return Response.json({
+          data: [
+            mediaEntryWire(
+              "entry-new",
+              "22222222-2222-4222-8222-222222222291",
+              "Newly Filed",
+            ),
+          ],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    renderHydratedPane({
+      href: `/libraries/${LIBRARY_ID}`,
+      resources: {
+        [LIBRARY_ID]: {
+          library: seededLibrary(),
+          entries: [seededMediaEntry("entry-1", ACTION_MEDIA_ID, "Seed Work")],
+          entriesPage: { has_more: false, next_cursor: null },
+        },
+      },
+      children: paneWithLectern,
+    });
+
+    expect(
+      await screen.findByRole("link", { name: "Seed Work" }),
+    ).toBeInTheDocument();
+
+    // A change affecting THIS library, immediately followed by one affecting a
+    // DIFFERENT library (Add-Content publishes per unit synchronously). Judging
+    // staleness by the latest scope alone would mask the earlier change; the pane
+    // must still reconcile.
+    act(() => {
+      publishLibraryPlacementChange([LIBRARY_ID]);
+      publishLibraryPlacementChange(["some-other-library"]);
+    });
+
+    expect(
+      await screen.findByRole("link", { name: "Newly Filed" }),
+    ).toBeInTheDocument();
+    expect(entriesReads).toBe(1);
+  });
+
+  it("loads the exact first page through the endpoint when a revision is non-zero at mount", async () => {
+    let entriesReads = 0;
+    stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      if (fetchInputPath(input) === `/api/libraries/${LIBRARY_ID}/entries`) {
+        entriesReads += 1;
+        return Response.json({
+          data: [
+            mediaEntryWire(
+              "entry-fresh",
+              "22222222-2222-4222-8222-222222222292",
+              "Endpoint First Page",
+            ),
+          ],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    // A process revision advanced before this pane mounts: the bootstrap seed can
+    // no longer be claimed, so the canonical first page loads through the endpoint.
+    publishLibraryPlacementChange(["unrelated-library"]);
+
+    renderHydratedPane({
+      href: `/libraries/${LIBRARY_ID}`,
+      resources: {
+        [LIBRARY_ID]: {
+          library: seededLibrary(),
+          entries: [
+            seededMediaEntry("entry-seed", ACTION_MEDIA_ID, "Bootstrap Seed Row"),
+          ],
+          entriesPage: { has_more: false, next_cursor: null },
+        },
+      },
+      children: paneWithLectern,
+    });
+
+    expect(
+      await screen.findByRole("link", { name: "Endpoint First Page" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Bootstrap Seed Row")).not.toBeInTheDocument();
+    expect(entriesReads).toBe(1);
+  });
+
+  it("reconciles a restored pane whose snapshot revision is behind the advanced store", async () => {
+    let entriesReads = 0;
+    stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      if (fetchInputPath(input) === `/api/libraries/${LIBRARY_ID}/entries`) {
+        entriesReads += 1;
+        return Response.json({
+          data: [
+            mediaEntryWire(
+              "entry-reconciled",
+              "22222222-2222-4222-8222-222222222293",
+              "Reconciled Work",
+            ),
+          ],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    let commands: PaneReturnMementoCommands | null = null;
+    const publishCommands = (next: PaneReturnMementoCommands) => {
+      commands = next;
+    };
+    const routeKey = resolvePaneRouteIdentity(`/libraries/${LIBRARY_ID}`).routeKey;
+    const seededResources = {
+      [LIBRARY_ID]: {
+        library: seededLibrary(),
+        entries: [
+          seededMediaEntry("entry-existing", ACTION_MEDIA_ID, "Existing Work"),
+        ],
+        entriesPage: { has_more: false, next_cursor: null },
+      },
+    };
+    const view = render(
+      <RestorePane
+        resourceGeneration={0}
+        isActive
+        resources={seededResources}
+        publishCommands={publishCommands}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("link", { name: "Existing Work" }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId("lectern-status")).toHaveTextContent("ready"),
+    );
+    await waitFor(() => expect(commands).not.toBeNull());
+    act(() => {
+      commands?.capturePane({
+        paneId: "pane-return-journey",
+        visitId: RETURN_JOURNEY_VISIT_ID,
+        routeKey,
+        modality: "Programmatic",
+      });
+    });
+
+    // Deactivate the source pane, THEN advance placement affecting this library.
+    // An inactive pane never reconciles, so the captured snapshot (at revision
+    // zero) survives while the store moves ahead of it.
+    view.rerender(
+      <RestorePane
+        resourceGeneration={0}
+        isActive={false}
+        resources={seededResources}
+        publishCommands={publishCommands}
+      />,
+    );
+    act(() => publishLibraryPlacementChange([LIBRARY_ID]));
+
+    // Return: remount from the snapshot while still inactive, then re-activate
+    // (the real Back path). The committed baseline is the snapshot's captured
+    // revisions — behind the store — so on activation the pane is stale and
+    // reconciles, rather than silently absorbing the advance.
+    view.rerender(
+      <RestorePane
+        resourceGeneration={1}
+        isActive={false}
+        resources={{}}
+        publishCommands={publishCommands}
+      />,
+    );
+    expect(
+      await screen.findByRole("link", { name: "Existing Work" }),
+    ).toBeInTheDocument();
+    view.rerender(
+      <RestorePane
+        resourceGeneration={1}
+        isActive
+        resources={{}}
+        publishCommands={publishCommands}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("link", { name: "Reconciled Work" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Existing Work")).not.toBeInTheDocument();
+    expect(entriesReads).toBe(1);
+  });
+
+  it("shows the initial pending, then failure, keeps controls, and Retry focuses View", async () => {
+    const user = userEvent.setup();
+    let resolveTitle!: (response: Response) => void;
+    const pendingTitle = new Promise<Response>((resolve) => {
+      resolveTitle = resolve;
+    });
+    let titleAttempts = 0;
+    const titlePath = `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`;
+    stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      if (fetchInputPathWithSearch(input) === titlePath) {
+        titleAttempts += 1;
+        if (titleAttempts === 1) return pendingTitle;
+        return Response.json({
+          data: [
+            mediaEntryWire(
+              "entry-ok",
+              "22222222-2222-4222-8222-222222222294",
+              "Loaded Work",
+            ),
+          ],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    render(
+      <StatefulLibraryPane
+        initialHref={`/libraries/${LIBRARY_ID}?sort=title&direction=asc`}
+        resources={{
+          [LIBRARY_ID]: {
+            library: seededLibrary(),
+            entries: [
+              seededMediaEntry("entry-seed", ACTION_MEDIA_ID, "Canonical Seed"),
+            ],
+            entriesPage: { has_more: false, next_cursor: null },
+          },
+        }}
+      />,
+    );
+
+    // Metadata known, no page committed yet: the single polite status node shows
+    // EXACTLY "Loading {requested}." (no committed view to "show"), and the
+    // View / Sort by / Hide finished controls are rendered around the busy region.
+    const pending = await screen.findByRole("status");
+    expect(pending).toHaveTextContent("Loading All items · Title — A–Z.");
+    expect(pending).not.toHaveTextContent("Showing");
+    expect(screen.getByRole("combobox", { name: "View" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Sort by" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("checkbox", { name: "Hide finished" }),
+    ).toBeInTheDocument();
+    const region = screen.getByRole("region", { name: LIBRARY_NAME });
+    expect(pending).toHaveAttribute("aria-controls", region.id);
+    expect(region.contains(pending)).toBe(false);
+
+    resolveTitle(
+      Response.json(
+        { error: { code: "E_FORBIDDEN", message: "no access" } },
+        { status: 403 },
+      ),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Could not load All items · Title — A–Z.",
+      ),
+    );
+    expect(screen.getByRole("status")).not.toHaveTextContent("Showing");
+    // Controls survive the failure.
+    expect(screen.getByRole("combobox", { name: "View" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Sort by" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(
+      await screen.findByRole("link", { name: "Loaded Work" }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "View" })).toHaveFocus(),
+    );
+  });
+
+  it("retains the stale-cursor recovery when Refresh list fails", async () => {
+    const user = userEvent.setup();
+    let firstPageReads = 0;
+    stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      const path = fetchInputPathWithSearch(input);
+      if (path === `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-stale`) {
+        return Response.json(
+          { error: { code: "E_INVALID_CURSOR", message: "Invalid cursor" } },
+          { status: 400 },
+        );
+      }
+      if (path === `/api/libraries/${LIBRARY_ID}/entries`) {
+        firstPageReads += 1;
+        return Response.json(
+          { error: { code: "E_UPSTREAM", message: "Refresh failed" } },
+          { status: 503 },
+        );
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    render(
+      <StatefulLibraryPane
+        initialHref={`/libraries/${LIBRARY_ID}`}
+        resources={{
+          [LIBRARY_ID]: {
+            library: seededLibrary(),
+            entries: [
+              seededMediaEntry(
+                "entry-1",
+                "22222222-2222-4222-8222-222222222295",
+                "Seed Work",
+              ),
+            ],
+            entriesPage: { has_more: true, next_cursor: "cursor-stale" },
+          },
+        }}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("link", { name: "Seed Work" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Load more entries" }));
+    expect(
+      await screen.findByText("This list can no longer continue."),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Refresh list" }));
+
+    // The replacement first page fails: the SAME recovery notice and button stay
+    // mounted (never a generic "Retry" state), and focus remains on Refresh list.
+    await waitFor(() => expect(firstPageReads).toBe(1));
+    expect(
+      screen.getByText("This list can no longer continue."),
+    ).toBeInTheDocument();
+    const refresh = screen.getByRole("button", { name: "Refresh list" });
+    await waitFor(() => expect(refresh).toHaveFocus());
+    expect(
+      screen.queryByText("Failed to refresh library entries"),
+    ).not.toBeInTheDocument();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Consumption-publishing tests (relocated LAST). Each advances the module-global
+  // consumption revision, which has no reset export; keeping them below every
+  // seed-adoption test keeps those at process revision zero. The reset test runs
+  // first here so it adopts its seed before publishing.
+  // ---------------------------------------------------------------------------
+
+  it("keeps the local patch and does not refetch an AllItems(all) view on a reset", async () => {
+    const user = userEvent.setup();
+    const mediaId = "11111111-1111-4111-8111-111111111111";
+    const commands: Array<Record<string, unknown>> = [];
+    const confirmReset = vi.spyOn(window, "confirm").mockReturnValue(true);
+    let entriesRequests = 0;
+    stubFetch(async (input, init) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      if (fetchInputPath(input) === `/api/libraries/${LIBRARY_ID}/entries`) {
+        entriesRequests += 1;
+        return Response.json({
+          data: [],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      if (fetchInputPath(input) === "/api/consumption/commands") {
+        const command = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        commands.push(command);
+        return Response.json({
+          data: {
+            outcome: { kind: "StateOnly" },
+            lectern: { items: [] },
+            nextItem: { kind: "Absent" },
+            progressState: {
+              kind: "Present",
+              value: {
+                mediaId,
+                readerCursor: { state: "Empty", revision: 1 },
+                listeningState: {
+                  kind: "Present",
+                  value: {
+                    positionMs: 59_000,
+                    durationMs: { kind: "Present", value: 60_000 },
+                    playbackSpeed: 1,
+                    writeRevision: 1,
+                    resetEpoch: 1,
+                  },
+                },
+              },
+            },
+            completionHandle: { kind: "Absent" },
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch: ${fetchInputPath(input)}`);
+    });
+
+    renderHydratedPane({
+      href: `/libraries/${LIBRARY_ID}`,
+      resources: {
+        [LIBRARY_ID]: {
+          library: seededLibrary(),
+          entries: [
+            seededMediaEntry("entry-episode", mediaId, "Resettable Episode", {
+              kind: "podcast_episode",
+              readState: "in_progress",
+              progressFraction: 0.5,
+              progressResettable: true,
+            }),
+          ],
+          entriesPage: { has_more: false, next_cursor: null },
+        },
+      },
+      children: paneWithLectern,
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("lectern-status")).toHaveTextContent("ready"),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "More actions for Resettable Episode" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Reset progress" }),
+    );
+
+    await waitFor(() => {
+      expect(commands).toEqual([
+        expect.objectContaining({ kind: "ResetProgress", mediaId }),
+      ]);
+    });
+    expect(confirmReset).toHaveBeenCalledWith(
+      "Reset progress? This starts the item from the beginning. Notes and activity history are kept.",
+    );
+    expect(await screen.findByText("Progress reset.")).toBeInTheDocument();
+
+    // The consumption revision advanced, but an unfiltered AllItems(all) view is
+    // consumption-insensitive: it keeps the immediate local patch and never
+    // refetches. The row stays; reset remains available.
+    await waitFor(() =>
+      expect(screen.getByTestId("lectern-mutation")).toHaveTextContent("Idle"),
+    );
+    expect(entriesRequests).toBe(0);
+    expect(
+      screen.getByRole("link", { name: "Resettable Episode" }),
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "More actions for Resettable Episode" }),
+    );
+    expect(
+      screen.getByRole("menuitem", { name: "Reset progress" }),
+    ).toBeInTheDocument();
+  });
+
+  it("moves focus to a sibling row after Mark Finished removes it under the unfinished filter", async () => {
+    const user = userEvent.setup();
+    let unfinishedReads = 0;
+    stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      const path = fetchInputPathWithSearch(input);
+      if (
+        path === `/api/libraries/${LIBRARY_ID}/entries?completion=unfinished`
+      ) {
+        unfinishedReads += 1;
+        // The consumption reconcile after Mark Finished refetches the unfinished
+        // view, which the server now returns without the finished row.
+        const rows =
+          unfinishedReads === 1
+            ? [
+                mediaEntryWire("entry-1", ACTION_MEDIA_ID, "First Work", {
+                  readState: "in_progress",
+                  progressFraction: 0.5,
+                  remainingMinutes: 5,
+                }),
+                mediaEntryWire(
+                  "entry-2",
+                  "22222222-2222-4222-8222-222222222222",
+                  "Second Work",
+                ),
+              ]
+            : [
+                mediaEntryWire(
+                  "entry-2",
+                  "22222222-2222-4222-8222-222222222222",
+                  "Second Work",
+                ),
+              ];
+        return Response.json({
+          data: rows,
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      if (path === "/api/consumption/commands") {
+        return consumptionSuccessResponse();
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    renderHydratedPane({
+      href: `/libraries/${LIBRARY_ID}?completion=unfinished`,
+      resources: {
+        [LIBRARY_ID]: {
+          library: seededLibrary(),
+          entries: [
+            seededMediaEntry(
+              "entry-0",
+              "00000000-0000-4000-8000-000000000010",
+              "Canonical Seed",
+            ),
+          ],
+          entriesPage: { has_more: false, next_cursor: null },
+        },
+      },
+      children: paneWithLectern,
+    });
+
+    expect(await screen.findByRole("link", { name: "First Work" })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId("lectern-status")).toHaveTextContent("ready"),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "More actions for First Work" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Mark as finished" }),
+    );
+
+    // The finished row leaves the filtered view and focus lands on the sibling
+    // row (its first focusable control).
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("link", { name: "First Work" }),
+      ).not.toBeInTheDocument(),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "More actions for Second Work" }),
+      ).toHaveFocus(),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("lectern-mutation")).toHaveTextContent("Idle"),
+    );
+  });
+
+  // Under the unfinished (consumption-sensitive) view, Mark Finished is a
+  // definitive mutation: it removes the row locally AND reconciles the view's
+  // first page against fresh server truth (never reinterpreting a continuation
+  // cursor), and only shows "No unfinished items." once the server truly returns
+  // an empty unfinished page.
+  it("reconciles the unfinished view's first page after Mark Finished until empty", async () => {
+    const user = userEvent.setup();
+    const firstPagePath = `/api/libraries/${LIBRARY_ID}/entries?completion=unfinished`;
+    const continuationPath = `${firstPagePath}&cursor=cursor-p2`;
+    // parseMediaId requires a canonical UUID; these are the media ids that get
+    // a real "Mark as finished" click (which calls lectern.ensureMediaFinished).
+    const PAGE1_MEDIA_ID = "11111111-1111-4111-8111-222222222221";
+    const PAGE2_MEDIA_ID = "11111111-1111-4111-8111-222222222222";
+    let firstPageReads = 0;
+    stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      const path = fetchInputPathWithSearch(input);
+      if (path === firstPagePath) {
+        firstPageReads += 1;
+        // 1: initial page; 2: reconcile after the first row is finished;
+        // 3: reconcile after the second row is finished (now empty).
+        const data =
+          firstPageReads === 1
+            ? [mediaEntryWire("entry-p1", PAGE1_MEDIA_ID, "First Unfinished")]
+            : firstPageReads === 2
+              ? [mediaEntryWire("entry-p2", PAGE2_MEDIA_ID, "Second Unfinished")]
+              : [];
+        return Response.json({
+          data,
+          page: {
+            has_more: firstPageReads === 1,
+            next_cursor: firstPageReads === 1 ? "cursor-p2" : null,
+          },
+        });
+      }
+      if (path === continuationPath) {
+        // The client may briefly auto-advance on the client-emptied page; the
+        // definitive reconcile then cancels it and reloads the first page.
+        return Response.json({
+          data: [],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      if (fetchInputPath(input) === "/api/consumption/commands") {
+        return consumptionSuccessResponse();
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    renderHydratedPane({
+      href: `/libraries/${LIBRARY_ID}?completion=unfinished`,
+      resources: {
+        [LIBRARY_ID]: {
+          library: seededLibrary(),
+          entries: [
+            seededMediaEntry(
+              "entry-0",
+              "00000000-0000-4000-8000-000000000010",
+              "Canonical Seed",
+            ),
+          ],
+          entriesPage: { has_more: false, next_cursor: null },
+        },
+      },
+      children: paneWithLectern,
+    });
+
+    expect(
+      await screen.findByRole("link", { name: "First Unfinished" }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId("lectern-status")).toHaveTextContent("ready"),
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "More actions for First Unfinished" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Mark as finished" }),
+    );
+
+    // The reconcile refetches the unfinished first page, never the continuation
+    // cursor, and surfaces the next unfinished row.
+    expect(
+      await screen.findByRole("link", { name: "Second Unfinished" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "First Unfinished" }),
+    ).not.toBeInTheDocument();
+    // The reconcile refetched the first page (reads >= 2), not a stale
+    // continuation as an authoritative result.
+    expect(firstPageReads).toBeGreaterThanOrEqual(2);
+
+    await user.click(
+      screen.getByRole("button", { name: "More actions for Second Unfinished" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Mark as finished" }),
+    );
+
+    // The reconcile now returns an empty unfinished page: the real empty state
+    // renders with its recovery.
+    expect(await screen.findByText("No unfinished items.")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Show finished" }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId("lectern-mutation")).toHaveTextContent("Idle"),
+    );
+  });
+
+  // Reset Progress removes the focused row from an In Progress view (read_state ->
+  // unread); the removed-row focus chain must land on the sibling. Mark Unread is
+  // the same removal + capture path but is unreachable in In Progress (finished
+  // rows are filtered out), so Reset Progress exercises it.
+  it("moves focus to a sibling row after Reset Progress removes it from the In Progress view", async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const RESET_MEDIA_ID = "11111111-1111-4111-8111-333333333331";
+    const SIBLING_MEDIA_ID = "11111111-1111-4111-8111-333333333332";
+    const inProgressPath = `/api/libraries/${LIBRARY_ID}/entries?projection=in-progress`;
+    let inProgressReads = 0;
+    stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      const path = fetchInputPathWithSearch(input);
+      if (path === inProgressPath) {
+        inProgressReads += 1;
+        const rows =
+          inProgressReads === 1
+            ? [
+                mediaEntryWire("entry-1", RESET_MEDIA_ID, "Resettable Row", {
+                  readState: "in_progress",
+                  progressFraction: 0.5,
+                  remainingMinutes: 5,
+                  progressResettable: true,
+                }),
+                mediaEntryWire("entry-2", SIBLING_MEDIA_ID, "Sibling Row", {
+                  readState: "in_progress",
+                  progressFraction: 0.3,
+                  remainingMinutes: 7,
+                  progressResettable: true,
+                }),
+              ]
+            : [
+                mediaEntryWire("entry-2", SIBLING_MEDIA_ID, "Sibling Row", {
+                  readState: "in_progress",
+                  progressFraction: 0.3,
+                  remainingMinutes: 7,
+                  progressResettable: true,
+                }),
+              ];
+        return Response.json({
+          data: rows,
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      if (path === "/api/consumption/commands") {
+        return Response.json({
+          data: {
+            outcome: { kind: "StateOnly" },
+            lectern: { items: [] },
+            nextItem: { kind: "Absent" },
+            progressState: {
+              kind: "Present",
+              value: {
+                mediaId: RESET_MEDIA_ID,
+                readerCursor: { state: "Empty", revision: 1 },
+                listeningState: {
+                  kind: "Present",
+                  value: {
+                    positionMs: 0,
+                    durationMs: { kind: "Present", value: 60_000 },
+                    playbackSpeed: 1,
+                    writeRevision: 1,
+                    resetEpoch: 1,
+                  },
+                },
+              },
+            },
+            completionHandle: { kind: "Absent" },
+          },
+        });
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    renderHydratedPane({
+      href: `/libraries/${LIBRARY_ID}?projection=in-progress`,
+      resources: {
+        [LIBRARY_ID]: {
+          library: seededLibrary(),
+          entries: [
+            seededMediaEntry("entry-seed", ACTION_MEDIA_ID, "Canonical Seed"),
+          ],
+          entriesPage: { has_more: false, next_cursor: null },
+        },
+      },
+      children: paneWithLectern,
+    });
+
+    expect(
+      await screen.findByRole("link", { name: "Resettable Row" }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId("lectern-status")).toHaveTextContent("ready"),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "More actions for Resettable Row" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Reset progress" }),
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("link", { name: "Resettable Row" }),
+      ).not.toBeInTheDocument(),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "More actions for Sibling Row" }),
+      ).toHaveFocus(),
+    );
+    confirmSpy.mockRestore();
   });
 });
