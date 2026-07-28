@@ -64,7 +64,7 @@ describe("pane route table", () => {
     );
   });
 
-  it("resolves page routes as document panes", () => {
+  it("resolves page routes as standard shell-scroll panes", () => {
     const route = resolvePaneRoute(`/pages/${PAGE_ID}`);
 
     expect(route.id).toBe("page");
@@ -73,7 +73,7 @@ describe("pane route table", () => {
       kind: "resource_ref",
       ref: `page:${PAGE_ID}`,
     });
-    expect(route.definition?.bodyMode).toBe("document");
+    expect(route.definition?.bodyMode).toBe("standard");
     expect(route.definition?.secondaryGroups).toEqual(["resource-inspector"]);
   });
 
@@ -91,7 +91,7 @@ describe("pane route table", () => {
       kind: "resource_ref",
       ref: `note_block:${BLOCK_ID}`,
     });
-    expect(noteRoute.definition?.bodyMode).toBe("document");
+    expect(noteRoute.definition?.bodyMode).toBe("standard");
     expect(noteRoute.definition?.secondaryGroups).toEqual([
       "resource-inspector",
     ]);

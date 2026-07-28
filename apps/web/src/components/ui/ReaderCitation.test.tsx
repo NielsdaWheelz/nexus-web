@@ -11,7 +11,10 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 
-const activateWorkspaceTarget = vi.fn(() => ({ kind: "CreatedPane" as const, paneId: "pane-2" }));
+const activateWorkspaceTarget = vi.fn(() => ({
+  kind: "CreatedPane" as const,
+  paneId: "pane-2",
+}));
 
 function renderCitation(
   preview: ReaderCitationPreview,
@@ -27,23 +30,39 @@ function renderCitation(
 ) {
   const onActivate = options.onActivate ?? vi.fn();
   const view = render(
-    <PaneReturnMementoProvider><FeedbackProvider><PaneRuntimeProvider
-      paneId="pane-1" visitId={assumePaneVisitId("00000000-0000-4000-8000-000000000001")}
-      isActive href="/libraries" routeId="libraries" canGoBack={false} canGoForward={false}
-      onNavigatePane={vi.fn()} onReplacePane={vi.fn()} onActivateWorkspaceTarget={activateWorkspaceTarget}
-      onGoBackPane={vi.fn()} onGoForwardPane={vi.fn()}
-    ><ReaderCitation
-      index={1}
-      preview={preview}
-      activation={options.activation ?? {
-        resourceRef: "media:media-1",
-        kind: "route",
-        href: "/media/media-1",
-        unresolvedReason: null,
-      }}
-      target={options.target ?? null}
-      onActivate={onActivate}
-    /></PaneRuntimeProvider></FeedbackProvider></PaneReturnMementoProvider>,
+    <PaneReturnMementoProvider>
+      <FeedbackProvider>
+        <PaneRuntimeProvider
+          paneId="pane-1"
+          visitId={assumePaneVisitId("00000000-0000-4000-8000-000000000001")}
+          isActive
+          href="/libraries"
+          routeId="libraries"
+          canGoBack={false}
+          canGoForward={false}
+          onNavigatePane={vi.fn()}
+          onReplacePane={vi.fn()}
+          onActivateWorkspaceTarget={activateWorkspaceTarget}
+          onGoBackPane={vi.fn()}
+          onGoForwardPane={vi.fn()}
+        >
+          <ReaderCitation
+            index={1}
+            preview={preview}
+            activation={
+              options.activation ?? {
+                resourceRef: "media:media-1",
+                kind: "route",
+                href: "/media/media-1",
+                unresolvedReason: null,
+              }
+            }
+            target={options.target ?? null}
+            onActivate={onActivate}
+          />
+        </PaneRuntimeProvider>
+      </FeedbackProvider>
+    </PaneReturnMementoProvider>,
   );
   return { ...view, onActivate };
 }
@@ -67,6 +86,56 @@ describe("ReaderCitation summary abstract", () => {
     expect(onActivate).toHaveBeenCalledOnce();
   });
 
+  it("preserves pointer Shift as a sibling-pane activation", () => {
+    const { onActivate } = renderCitation({ title: "Source title" });
+
+    fireEvent.click(screen.getByRole("link", { name: "Open citation 1" }), {
+      detail: 1,
+      shiftKey: true,
+    });
+
+    expect(activateWorkspaceTarget).toHaveBeenCalledWith({
+      originPaneId: "pane-1",
+      target: { href: "/media/media-1" },
+      disposition: { kind: "Fork" },
+      modality: "Programmatic",
+    });
+    expect(onActivate).toHaveBeenCalledOnce();
+  });
+
+  it("delegates to its activation owner when no pane runtime is available", () => {
+    const onActivate = vi.fn(
+      (
+        _activation: ResourceActivation,
+        _target: ReaderSourceTarget | null,
+        event?: ReactMouseEvent,
+      ) => event?.preventDefault(),
+    );
+    render(
+      <FeedbackProvider>
+        <ReaderCitation
+          index={1}
+          preview={{ title: "Source title" }}
+          activation={{
+            resourceRef: "media:media-1",
+            kind: "route",
+            href: "/media/media-1",
+            unresolvedReason: null,
+          }}
+          target={null}
+          onActivate={onActivate}
+        />
+      </FeedbackProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "Open citation 1" }), {
+      detail: 1,
+      shiftKey: true,
+    });
+
+    expect(onActivate).toHaveBeenCalledOnce();
+  });
+
   it("carries an artifact revision dossier activation once", () => {
     renderCitation(
       { title: "Revision source" },
@@ -83,45 +152,54 @@ describe("ReaderCitation summary abstract", () => {
     fireEvent.click(screen.getByRole("link", { name: "Open citation 1" }));
 
     expect(activateWorkspaceTarget).toHaveBeenCalledOnce();
-    expect(activateWorkspaceTarget).toHaveBeenCalledWith(expect.objectContaining({
-      target: {
-        href: "/notes/note-1",
-        secondaryActivation: {
-          kind: "DossierRevision",
-          surfaceId: "resource-dossier",
-          revisionRef: "artifact_revision:44444444-4444-4444-8444-444444444444",
+    expect(activateWorkspaceTarget).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: {
+          href: "/notes/note-1",
+          secondaryActivation: {
+            kind: "DossierRevision",
+            surfaceId: "resource-dossier",
+            revisionRef:
+              "artifact_revision:44444444-4444-4444-8444-444444444444",
+          },
         },
-      },
-    }));
+      }),
+    );
   });
 
   it.each([
     ["external", "https://example.com/source"],
     ["unsupported", "/api/podcasts/export/opml"],
-  ])("leaves a %s citation native with no workspace activation", (_kind, href) => {
-    let browserOwned = false;
-    const recordBrowserOwnership = (event: MouseEvent) => {
-      browserOwned = !event.defaultPrevented;
-      event.preventDefault();
-    };
-    document.addEventListener("click", recordBrowserOwnership);
-    try {
-      renderCitation({ title: "Native source" }, {
-        activation: {
-          resourceRef: "media:media-1",
-          kind: "route",
-          href,
-          unresolvedReason: null,
-        },
-      });
-      fireEvent.click(screen.getByRole("link", { name: "Open citation 1" }));
-    } finally {
-      document.removeEventListener("click", recordBrowserOwnership);
-    }
+  ])(
+    "leaves a %s citation native with no workspace activation",
+    (_kind, href) => {
+      let browserOwned = false;
+      const recordBrowserOwnership = (event: MouseEvent) => {
+        browserOwned = !event.defaultPrevented;
+        event.preventDefault();
+      };
+      document.addEventListener("click", recordBrowserOwnership);
+      try {
+        renderCitation(
+          { title: "Native source" },
+          {
+            activation: {
+              resourceRef: "media:media-1",
+              kind: "route",
+              href,
+              unresolvedReason: null,
+            },
+          },
+        );
+        fireEvent.click(screen.getByRole("link", { name: "Open citation 1" }));
+      } finally {
+        document.removeEventListener("click", recordBrowserOwnership);
+      }
 
-    expect(browserOwned).toBe(true);
-    expect(activateWorkspaceTarget).not.toHaveBeenCalled();
-  });
+      expect(browserOwned).toBe(true);
+      expect(activateWorkspaceTarget).not.toHaveBeenCalled();
+    },
+  );
   it("shows the per-media summary abstract on hover when present", async () => {
     const user = userEvent.setup();
     renderCitation({

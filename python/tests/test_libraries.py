@@ -1467,6 +1467,7 @@ class TestListLibraryMedia:
             direct_db.register_cleanup("reader_media_state", "media_id", media_id)
         direct_db.register_cleanup("consumption_overrides", "media_id", finished_id)
         direct_db.register_cleanup("consumption_overrides", "media_id", override_unread_id)
+        direct_db.register_cleanup("consumption_completion_facts", "media_id", finished_id)
 
         fragment_ids: dict[UUID, UUID] = {}
         for media_id in (
@@ -2401,9 +2402,7 @@ class TestDefaultLibraryVirtualView:
         assert after.status_code == 200
         assert _library_entry_media_ids(after.json()["data"]).count(str(media_id)) == 1
 
-    def test_default_cursor_rejects_cross_scope(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
+    def test_default_cursor_rejects_cross_scope(self, auth_client, direct_db: DirectSessionManager):
         """A Default v2 cursor is bound to the exact (viewer, library, view);
         replaying it against a different library the viewer also belongs to fails
         E_INVALID_CURSOR, and a foreign viewer is masked as not-found before the
@@ -6602,7 +6601,9 @@ class TestLibraryEntryProjectionPagination:
             session.commit()
         direct_db.register_cleanup("libraries", "id", named_id)
 
-        unfiled = {t: _create_default_media(direct_db, default_id, title=t) for t in ("A", "C", "E")}
+        unfiled = {
+            t: _create_default_media(direct_db, default_id, title=t) for t in ("A", "C", "E")
+        }
         for title in ("B", "D"):
             filed = _create_default_media(direct_db, default_id, title=title)
             with direct_db.session() as session:

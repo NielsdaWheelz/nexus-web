@@ -61,6 +61,7 @@ describe("Library pane resource loader", () => {
       kind: "web_article",
       processing_status: "ready_for_reading",
       read_state: "unread",
+      progress_resettable: false,
       progress_fraction: null,
       published_date: null,
       canonical_source_url: "https://example.test/article",

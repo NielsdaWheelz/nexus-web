@@ -59,13 +59,14 @@ class TestTranscribeRawAudio:
         assert result.segments[0]["t_start_ms"] == 0
         assert result.segments[0]["t_end_ms"] == 3200
 
-    def test_returns_failure_when_no_api_key(self):
+    def test_missing_api_key_defects(self):
         client = _client(api_key=None)
 
-        result = client.transcribe_raw_audio(b"fake-audio", "audio/webm;codecs=opus")
-
-        assert result.status == "failed"
-        assert result.error_code == ApiErrorCode.E_TRANSCRIPTION_FAILED.value
+        with pytest.raises(
+            RuntimeError,
+            match="Transcription provider credentials are not configured",
+        ):
+            client.transcribe_raw_audio(b"fake-audio", "audio/webm;codecs=opus")
 
     def test_posts_raw_bytes_without_json_body(self, monkeypatch: pytest.MonkeyPatch):
         client = _client()

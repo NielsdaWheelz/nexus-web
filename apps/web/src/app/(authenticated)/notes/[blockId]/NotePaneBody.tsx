@@ -15,7 +15,10 @@ import { requirePaneRuntime, usePaneParam, usePaneReturnReady, usePaneRuntime, u
 export default function NotePaneBody() {
   const blockId = usePaneParam("blockId");
   if (!blockId) throw new Error("note route requires a block id");
-  const runtime = usePaneRuntime();
+  const activateTarget = requirePaneRuntime(
+    usePaneRuntime(),
+    "NotePaneBody",
+  ).activateTarget;
   const [label, setLabel] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [pulse, setPulse] = useState<NotePulseTarget & { pulseId: number } | null>(null);
@@ -34,8 +37,8 @@ export default function NotePaneBody() {
   }, [blockId, setPulseTarget]);
   const composer = useConnectionsComposerController({ scheme: "note_block", id: blockId });
   const connections = useMemo(
-    () => <ConnectionsSurface resourceRef={{ scheme: "note_block", id: blockId }} composerController={composer} activateTarget={requirePaneRuntime(runtime, "Note connections activation").activateTarget} />,
-    [blockId, composer, runtime],
+    () => <ConnectionsSurface resourceRef={{ scheme: "note_block", id: blockId }} composerController={composer} activateTarget={activateTarget} />,
+    [activateTarget, blockId, composer],
   );
   const { companionAction } = useResourceInspector({ scheme: "note_block", handle: blockId, bodies: { linkedItems: connections } });
   usePanePrimaryChrome({
@@ -48,7 +51,7 @@ export default function NotePaneBody() {
       setReady(true);
       if (surface.source.content.kind === "note_body") setLabel(surface.source.content.bodyText.trim() || "Note");
     }}
-    activateTarget={requirePaneRuntime(runtime, "Note target activation").activateTarget}
+    activateTarget={activateTarget}
     notePulseTarget={pulse}
   />;
 }

@@ -14,7 +14,9 @@ import {
   expectBoolean,
   expectExactRecord,
   expectString,
+  isRecord,
 } from "@/lib/validation";
+import { normalizeResourceActivation } from "@/lib/resources/activation";
 import { formatResourceRef, type ResourceRef } from "./resourceRef";
 
 export interface ContextRefOut {
@@ -47,16 +49,31 @@ export function decodeContextRef(
     ],
     name,
   );
-  const resourceRef = expectString(
-    value.resource_ref,
-    `${name}.resource_ref`,
-  );
+  const resourceRef = expectString(value.resource_ref, `${name}.resource_ref`);
   const missing = expectBoolean(value.missing, `${name}.missing`);
+  const rawActivation = value.activation;
+  const activationRecord =
+    isRecord(rawActivation) &&
+    ("resource_ref" in rawActivation || "unresolved_reason" in rawActivation)
+      ? expectExactRecord(
+          rawActivation,
+          ["resource_ref", "kind", "href", "unresolved_reason"],
+          `${name}.activation`,
+        )
+      : expectExactRecord(
+          rawActivation,
+          ["resourceRef", "kind", "href", "unresolvedReason"],
+          `${name}.activation`,
+        );
+  const activation = normalizeResourceActivation(activationRecord);
+  if (activation === null) {
+    throw new TypeError(`${name}.activation must be a resource activation`);
+  }
   const target = decodeStandingActionTarget(
     {
       kind: "Resource",
       ref: resourceRef,
-      activation: value.activation,
+      activation,
       missing,
     },
     `${name}.actionTarget`,
@@ -113,7 +130,10 @@ export async function removeContextRef(
   conversationId: string,
   edgeId: string,
 ): Promise<void> {
-  await apiFetch(`/api/conversations/${conversationId}/context-refs/${edgeId}`, {
-    method: "DELETE",
-  });
+  await apiFetch(
+    `/api/conversations/${conversationId}/context-refs/${edgeId}`,
+    {
+      method: "DELETE",
+    },
+  );
 }

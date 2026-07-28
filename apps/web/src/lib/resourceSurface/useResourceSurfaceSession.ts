@@ -10,6 +10,7 @@ import {
   type ResourceSurfaceCommand,
 } from "@/lib/resourceSurface/api";
 import { isApiError } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { ResourceItem, ResourceSurface, ResourceSurfaceOccurrence } from "@/lib/resources/resourceItems";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { isRecord } from "@/lib/validation";
@@ -315,6 +316,7 @@ export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }
         store();
       }).catch((error) => {
         if (generation !== generationRef.current) return;
+        if (handleUnauthenticatedApiError(error)) return;
         stoppedRef.current = true;
         requiresRebaseRef.current ||= (
           isApiError(error) && error.code === "E_RESOURCE_CONFLICT"
@@ -379,6 +381,7 @@ export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }
         store();
       }).catch((error) => {
         if (generation !== generationRef.current) return;
+        if (handleUnauthenticatedApiError(error)) return;
         stoppedRef.current = true;
         requiresRebaseRef.current ||= (
           isApiError(error) && error.code === "E_RESOURCE_CONFLICT"
@@ -440,6 +443,7 @@ export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }
       pumpRef.current();
     }).catch((error) => {
       if (generation !== generationRef.current) return;
+      if (handleUnauthenticatedApiError(error)) return;
       activeRef.current = false;
       stoppedRef.current = true;
       requiresRebaseRef.current ||= (
@@ -570,6 +574,7 @@ export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }
       next = await fetchResourceSurface(sourceRef);
     } catch (error) {
       if (generation === generationRef.current) {
+        if (handleUnauthenticatedApiError(error)) return;
         setStatus("failed");
         onErrorRef.current?.(error);
       }
@@ -607,6 +612,7 @@ export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }
         settleStatus();
       }).catch((error) => {
         if (generation !== generationRef.current) return;
+        if (handleUnauthenticatedApiError(error)) return;
         setStatus("failed");
         onErrorRef.current?.(error);
       });

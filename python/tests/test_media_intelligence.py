@@ -365,10 +365,7 @@ class TestEnsureMediaUnit:
                 requester_user_id=owner_user_id,
             )[0]
             assert isinstance(omission, media_intelligence.MediaOmission)
-            assert (
-                omission.reason
-                is media_intelligence.MediaOmissionReason.ProjectionSuspended
-            )
+            assert omission.reason is media_intelligence.MediaOmissionReason.ProjectionSuspended
         assert _job_count(db_session, media_id) == expected_job_count
 
     def test_reingest_changes_fingerprint_and_clears_claims(self, db_session: Session) -> None:
@@ -466,13 +463,13 @@ class TestEnsureMediaUnit:
         rebuilt = ensure_media_unit(db_session, media_id=media_id)
         assert rebuilt.content_fingerprint != ref.content_fingerprint
         assert rebuilt.status == "building"
-        assert db_session.execute(
-            text(
-                "SELECT count(*) FROM media_claims "
-                "WHERE summary_id = :summary_id"
-            ),
-            {"summary_id": ref.summary_id},
-        ).scalar_one() == 0
+        assert (
+            db_session.execute(
+                text("SELECT count(*) FROM media_claims WHERE summary_id = :summary_id"),
+                {"summary_id": ref.summary_id},
+            ).scalar_one()
+            == 0
+        )
 
     def test_reensure_after_failure_at_same_fingerprint_enqueues_fresh_job(
         self, db_session: Session

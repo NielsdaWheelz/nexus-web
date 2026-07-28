@@ -351,7 +351,10 @@ function drawNebulaLabel(d: DrawContext): void {
 // ---- component -------------------------------------------------------------
 
 export default function GrandAtlasPaneBody() {
-  const paneRuntime = usePaneRuntime();
+  const activateTarget = requirePaneRuntime(
+    usePaneRuntime(),
+    "GrandAtlasPaneBody",
+  ).activateTarget;
   const searchParams = usePaneSearchParams();
   const readingsHighlighted = searchParams.get("layer") === "readings";
 
@@ -642,10 +645,7 @@ export default function GrandAtlasPaneBody() {
   const onSelectStar = useCallback(
     (star: HitStar) => {
       if (star.layer === "corpus") {
-        requirePaneRuntime(
-          paneRuntime,
-          "Atlas corpus target activation",
-        ).activateTarget({
+        activateTarget({
           target: { href: `/media/${star.id}` },
           disposition: { kind: "Follow" },
         });
@@ -655,10 +655,7 @@ export default function GrandAtlasPaneBody() {
       // the current selection from the ref so back-to-back taps aren't served a
       // stale closure.
       if (selectedReadingIdRef.current === star.id) {
-        requirePaneRuntime(
-          paneRuntime,
-          "Atlas reading target activation",
-        ).activateTarget({
+        activateTarget({
           target: { href: `/oracle/${star.id}` },
           disposition: { kind: "Follow" },
         });
@@ -670,7 +667,7 @@ export default function GrandAtlasPaneBody() {
       setSelectedReadingId(star.id);
       setPeerIds([]);
     },
-    [paneRuntime],
+    [activateTarget],
   );
 
   const onPointerDown = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {

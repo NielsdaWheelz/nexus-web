@@ -42,7 +42,9 @@ function readSeededYoutubeMedia(): SeededYoutubeMedia {
   for (const field of requiredStringFields) {
     const value = parsed[field];
     if (typeof value !== "string" || value.trim().length === 0) {
-      throw new Error(`Invalid seeded YouTube metadata field "${field}" at ${seedPath}`);
+      throw new Error(
+        `Invalid seeded YouTube metadata field "${field}" at ${seedPath}`,
+      );
     }
   }
   if (
@@ -80,12 +82,14 @@ test.describe("youtube transcript media", () => {
     await expect(playerFrame).toBeVisible({ timeout: 10_000 });
     await expect(activePane.locator("video")).toHaveCount(0);
 
-    await expect(activePane.getByRole("link", { name: /open in source/i })).toHaveAttribute(
-      "href",
-      seed.watch_url
-    );
+    await expect(
+      activePane.getByRole("link", { name: /open in source/i }),
+    ).toHaveAttribute("href", seed.watch_url);
 
-    const seekSegmentButton = transcriptSegmentButton(activePane, seed.seek_segment_text);
+    const seekSegmentButton = transcriptSegmentButton(
+      activePane,
+      seed.seek_segment_text,
+    );
     await expect(seekSegmentButton).toBeVisible({ timeout: 10_000 });
     await seekSegmentButton.click();
 
@@ -114,16 +118,23 @@ test.describe("youtube transcript media", () => {
     );
 
     const activePane = activeWorkspacePane(page);
-    const seekSegmentButton = transcriptSegmentButton(activePane, seed.seek_segment_text);
+    const seekSegmentButton = transcriptSegmentButton(
+      activePane,
+      seed.seek_segment_text,
+    );
     await expect(seekSegmentButton).toBeVisible({ timeout: 10_000 });
     await seekSegmentButton.click();
 
     const transcriptContent = activePane.locator(
-      '[data-testid="document-viewport"] [data-testid="html-renderer"]'
+      '[data-testid="document-viewport"] [data-testid="html-renderer"]',
     );
-    await expect(transcriptContent).toContainText(seed.seek_segment_text, { timeout: 10_000 });
+    await expect(transcriptContent).toContainText(seed.seek_segment_text, {
+      timeout: 10_000,
+    });
 
-    const fragmentsResponse = await page.request.get(`/api/media/${seed.media_id}/fragments`);
+    const fragmentsResponse = await page.request.get(
+      `/api/media/${seed.media_id}/fragments`,
+    );
     expect(fragmentsResponse.ok()).toBeTruthy();
     const fragmentsPayload = (await fragmentsResponse.json()) as {
       data: Array<{ id: string; canonical_text: string }>;
@@ -131,24 +142,31 @@ test.describe("youtube transcript media", () => {
     const targetFragment = fragmentsPayload.data.find(
       (fragment) =>
         fragment.canonical_text === seed.seek_segment_text ||
-        fragment.canonical_text.includes(seed.seek_segment_text)
+        fragment.canonical_text.includes(seed.seek_segment_text),
     );
     expect(targetFragment).toBeTruthy();
     if (!targetFragment) {
-      throw new Error(`Expected transcript fragment for "${seed.seek_segment_text}".`);
+      throw new Error(
+        `Expected transcript fragment for "${seed.seek_segment_text}".`,
+      );
     }
 
     const existingHighlightsResponse = await page.request.get(
-      `/api/fragments/${targetFragment.id}/highlights`
+      `/api/fragments/${targetFragment.id}/highlights`,
     );
     expect(existingHighlightsResponse.ok()).toBeTruthy();
-    const existingHighlightsPayload = (await existingHighlightsResponse.json()) as {
-      data: { highlights: Array<{ exact: string }> };
-    };
-    const existingExacts = existingHighlightsPayload.data.highlights.map((highlight) => highlight.exact);
+    const existingHighlightsPayload =
+      (await existingHighlightsResponse.json()) as {
+        data: { highlights: Array<{ exact: string }> };
+      };
+    const existingExacts = existingHighlightsPayload.data.highlights.map(
+      (highlight) => highlight.exact,
+    );
 
     const evidencePane = await openEvidencePane(page);
-    const highlightedSegments = transcriptContent.locator("[data-active-highlight-ids]");
+    const highlightedSegments = transcriptContent.locator(
+      "[data-active-highlight-ids]",
+    );
     const beforeHighlightedCount = await highlightedSegments.count();
     // The video embed + capped segment list push the transcript reader surface
     // below the initial fold; bring it into view so the selection helper (which
@@ -157,20 +175,26 @@ test.describe("youtube transcript media", () => {
     const selectedText = await selectFreshVisibleTextSnippet(
       page,
       activePaneSelector(
-        '[data-testid="document-viewport"] [data-testid="html-renderer"]'
+        '[data-testid="document-viewport"] [data-testid="html-renderer"]',
       ),
-      existingExacts
+      existingExacts,
     );
 
-    const highlightActions = page.getByRole("group", { name: /selection actions/i });
+    const highlightActions = page.getByRole("group", {
+      name: /selection actions/i,
+    });
     await expect(highlightActions).toBeVisible({ timeout: 5_000 });
 
     const createHighlightResponse = page.waitForResponse(
       (response) =>
         response.request().method() === "POST" &&
-        response.url().includes(`/api/fragments/${targetFragment.id}/highlights`)
+        response
+          .url()
+          .includes(`/api/fragments/${targetFragment.id}/highlights`),
     );
-    await highlightActions.getByRole("button", { name: "Highlight color" }).click();
+    await highlightActions
+      .getByRole("button", { name: "Highlight color" })
+      .click();
     await page
       .getByRole("button", { name: /^Green$/ })
       .first()
@@ -187,11 +211,14 @@ test.describe("youtube transcript media", () => {
       .poll(async () => highlightedSegments.count(), { timeout: 10_000 })
       .toBeGreaterThan(beforeHighlightedCount);
     await expect(
-      transcriptContent.locator("[data-active-highlight-ids]").filter({ hasText: selectedText }).first()
+      transcriptContent
+        .locator("[data-active-highlight-ids]")
+        .filter({ hasText: selectedText })
+        .first(),
     ).toBeVisible();
   });
 
-  test("playback-only youtube media shows explicit transcript-unavailable gating", async ({
+  test("playback-only youtube media shows its terminal transcript-unavailable state", async ({
     page,
   }, testInfo) => {
     const seed = readSeededYoutubeMedia();
@@ -206,15 +233,17 @@ test.describe("youtube transcript media", () => {
       timeout: 10_000,
     });
     await expect(
-      activePane.getByText("Transcript unavailable for this episode.")
+      activePane.getByText("Transcript unavailable for this episode."),
     ).toBeVisible();
     await expect(
-      transcriptSegmentButton(activePane, seed.seek_segment_text)
+      activePane.getByText("Error: E_TRANSCRIPT_UNAVAILABLE"),
+    ).toBeVisible();
+    await expect(
+      transcriptSegmentButton(activePane, seed.seek_segment_text),
     ).toHaveCount(0);
-    await expect(activePane.getByRole("link", { name: /open in source/i })).toHaveAttribute(
-      "href",
-      /youtube\.com\/watch\?v=/
-    );
+    await expect(
+      activePane.getByRole("link", { name: /open in source/i }),
+    ).toHaveAttribute("href", /youtube\.com\/watch\?v=/);
   });
 
   // AC-6: Reader Theme completes the boundary for transcript content
@@ -240,7 +269,9 @@ test.describe("youtube transcript media", () => {
         seed.media_id,
       );
       const activePane = activeWorkspacePane(page);
-      const documentViewport = activePane.locator('[data-testid="document-viewport"]');
+      const documentViewport = activePane.locator(
+        '[data-testid="document-viewport"]',
+      );
       await expect(documentViewport).toBeVisible({ timeout: 10_000 });
       const playerFrame = activePane.locator("iframe").first();
       await expect(playerFrame).toBeVisible({ timeout: 10_000 });
@@ -251,21 +282,30 @@ test.describe("youtube transcript media", () => {
       );
       const playerBackgroundBefore = await playerFrame.evaluate(
         (el) =>
-          getComputedStyle(el.closest('[class*="playerPanel"]') ?? el).backgroundColor,
+          getComputedStyle(el.closest('[class*="playerPanel"]') ?? el)
+            .backgroundColor,
       );
 
-      const optionsTrigger = activePane.getByRole("button", { name: "Options" }).first();
+      const optionsTrigger = activePane
+        .getByRole("button", { name: "Options" })
+        .first();
       await expect(optionsTrigger).toBeVisible();
       await optionsTrigger.click();
-      await page.getByRole("menuitem", { name: "Dark theme", exact: true }).click();
+      await page
+        .getByRole("menuitem", { name: "Dark theme", exact: true })
+        .click();
 
       // The transcript content root (segments/timeline/active prose share the
       // one themed root per the transcript theme-composition cutover) reflects
       // the dark reader theme.
-      const themedRoot = documentViewport.locator('[class*="readerThemeDark"]').first();
+      const themedRoot = documentViewport
+        .locator('[class*="readerThemeDark"]')
+        .first();
       await expect(themedRoot).toBeVisible({ timeout: 10_000 });
       await expect
-        .poll(() => themedRoot.evaluate((el) => getComputedStyle(el).backgroundColor))
+        .poll(() =>
+          themedRoot.evaluate((el) => getComputedStyle(el).backgroundColor),
+        )
         .toBe("rgb(21, 20, 15)");
 
       // The playback panel (player/chapters/show notes) is a sibling of the
@@ -277,7 +317,8 @@ test.describe("youtube transcript media", () => {
       expect(playerAncestorIsThemed).toBe(false);
       const playerBackgroundAfter = await playerFrame.evaluate(
         (el) =>
-          getComputedStyle(el.closest('[class*="playerPanel"]') ?? el).backgroundColor,
+          getComputedStyle(el.closest('[class*="playerPanel"]') ?? el)
+            .backgroundColor,
       );
       expect(playerBackgroundAfter).toBe(playerBackgroundBefore);
 
@@ -290,11 +331,17 @@ test.describe("youtube transcript media", () => {
       // Reduced motion: toggling the theme back applies with no transition.
       await page.emulateMedia({ reducedMotion: "reduce" });
       await optionsTrigger.click();
-      await page.getByRole("menuitem", { name: "Light theme", exact: true }).click();
-      const lightRoot = documentViewport.locator('[class*="readerThemeLight"]').first();
+      await page
+        .getByRole("menuitem", { name: "Light theme", exact: true })
+        .click();
+      const lightRoot = documentViewport
+        .locator('[class*="readerThemeLight"]')
+        .first();
       await expect(lightRoot).toBeVisible({ timeout: 10_000 });
       const transitionDurations = await lightRoot.evaluate((el) =>
-        getComputedStyle(el).transitionDuration.split(",").map((value) => value.trim()),
+        getComputedStyle(el)
+          .transitionDuration.split(",")
+          .map((value) => value.trim()),
       );
       // One entry per transitioned property (background-color, color) — every
       // one must resolve to 0s under reduced motion.

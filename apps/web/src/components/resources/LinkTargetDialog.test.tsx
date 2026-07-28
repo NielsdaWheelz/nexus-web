@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import LinkTargetDialog from "./LinkTargetDialog";
@@ -30,6 +30,8 @@ function rawResourceTarget(overrides: Partial<Record<string, unknown>> = {}) {
       missing: false,
       capabilities: {
         userRelation: { userLinkSource: true, userLinkTarget: "direct", noteReferenceTarget: true },
+        sharing: "ResourceGrants",
+        libraryPlacement: "ManageEntries",
         attachable: true,
         chatSubject: "label",
         readable: "body",
@@ -208,7 +210,7 @@ describe("LinkTargetDialog", () => {
     );
 
     // The caller flips busy once its createLink is in flight.
-    await user.click(option);
+    await act(() => user.click(option));
 
     // The dialog advertises its busy state and refuses further picks.
     expect(screen.getByRole("dialog", { name: "Link" })).toHaveAttribute(
@@ -224,14 +226,24 @@ describe("LinkTargetDialog", () => {
   });
 
   it("navigates and picks with the keyboard, and closes on Escape", async () => {
+    const secondId = "33333333-3333-4333-8333-333333333333";
+    const secondRef = `media:${secondId}`;
+    const secondRoute = `/media/${secondId}`;
     stubSearch([
       rawResourceTarget(),
       rawResourceTarget({
         item: {
           ...rawResourceTarget().item,
-          ref: "media:33333333-3333-4333-8333-333333333333",
-          id: "33333333-3333-4333-8333-333333333333",
+          ref: secondRef,
+          id: secondId,
           label: "Left Hand of Darkness",
+          route: secondRoute,
+          activation: {
+            resourceRef: secondRef,
+            kind: "route",
+            href: secondRoute,
+            unresolvedReason: null,
+          },
         },
       }),
     ]);
@@ -247,7 +259,7 @@ describe("LinkTargetDialog", () => {
     expect(onPick).toHaveBeenLastCalledWith(
       {
         kind: "resource",
-        ref: "media:33333333-3333-4333-8333-333333333333",
+        ref: secondRef,
       },
       "Left Hand of Darkness",
     );

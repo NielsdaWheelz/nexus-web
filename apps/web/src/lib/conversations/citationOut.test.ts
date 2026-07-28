@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isCitationOut } from "./citationOut";
+import { decodeCitationOut } from "./citationOut";
 
 const citationOut = {
   ordinal: 1,
@@ -26,32 +26,46 @@ const citationOut = {
   },
 };
 
-describe("isCitationOut", () => {
+describe("decodeCitationOut", () => {
   it("accepts backend CitationSnapshot summary_md", () => {
-    expect(isCitationOut(citationOut)).toBe(true);
+    expect(decodeCitationOut(citationOut)).toEqual(citationOut);
+  });
+
+  it("normalizes the REST activation transport shape", () => {
+    expect(
+      decodeCitationOut({
+        ...citationOut,
+        activation: {
+          resource_ref: citationOut.activation.resourceRef,
+          kind: citationOut.activation.kind,
+          href: citationOut.activation.href,
+          unresolved_reason: citationOut.activation.unresolvedReason,
+        },
+      }),
+    ).toEqual(citationOut);
   });
 
   it("rejects extra snapshot fields", () => {
     expect(
-      isCitationOut({
+      decodeCitationOut({
         ...citationOut,
         snapshot: {
           ...citationOut.snapshot,
           page_id: "22222222-2222-4222-8222-222222222222",
         },
       }),
-    ).toBe(false);
+    ).toBeNull();
   });
 
   it("rejects malformed activation instead of coercing it", () => {
     expect(
-      isCitationOut({
+      decodeCitationOut({
         ...citationOut,
         activation: {
           ...citationOut.activation,
           kind: "missing",
         },
       }),
-    ).toBe(false);
+    ).toBeNull();
   });
 });

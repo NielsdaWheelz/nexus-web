@@ -3042,15 +3042,18 @@ class TestFromUrlXPost:
 
         real_apply = source_ingest_module.replace_source_observed_role_slices
 
+        class _SimulatedCrash(BaseException):
+            pass
+
         def _crash_before_author_ops(*_args, **_kwargs) -> None:
-            raise RuntimeError("simulated crash before the author step")
+            raise _SimulatedCrash
 
         monkeypatch.setattr(
             source_ingest_module,
             "replace_source_observed_role_slices",
             _crash_before_author_ops,
         )
-        with pytest.raises(RuntimeError, match="simulated crash before the author step"):
+        with pytest.raises(_SimulatedCrash):
             _run_source_attempt_for_media(direct_db, media_id)
 
         with direct_db.session() as session:
@@ -3082,7 +3085,8 @@ class TestFromUrlXPost:
                 text(
                     """
                     UPDATE background_jobs
-                    SET available_at = now()
+                    SET available_at = now(),
+                        lease_expires_at = now() - interval '1 second'
                     WHERE id = (
                         SELECT job_id
                         FROM media_source_attempts

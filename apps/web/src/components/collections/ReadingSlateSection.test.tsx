@@ -20,6 +20,7 @@ import {
   stubFetch,
 } from "@/__tests__/helpers/fetch";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { ApiError } from "@/lib/api/client";
 import {
   decodeSlateEnvelope,
@@ -30,6 +31,8 @@ import type {
   AcceptResult,
   ReadingSlateAccept,
 } from "@/lib/resonance/useReadingSlate";
+import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
+import { ShareControllerProvider } from "@/lib/sharing/controller";
 import {
   PaneReturnMementoProvider,
   PaneReturnVisitScope,
@@ -54,12 +57,16 @@ const OTHER_VISIT_ID = assumePaneVisitId(
 const TEST_ROUTE_KEY = "/test";
 
 function PaneReturnTestHarness({ children }: { children: ReactNode }) {
-  return (
+  return withRenderEnvironment(
     <PaneReturnMementoProvider>
       <PaneReturnVisitScope visitId={TEST_VISIT_ID} routeKey={TEST_ROUTE_KEY}>
-        {children}
+        <FeedbackProvider>
+          <LibraryPlacementControllerProvider>
+            <ShareControllerProvider>{children}</ShareControllerProvider>
+          </LibraryPlacementControllerProvider>
+        </FeedbackProvider>
       </PaneReturnVisitScope>
-    </PaneReturnMementoProvider>
+    </PaneReturnMementoProvider>,
   );
 }
 
@@ -77,7 +84,33 @@ async function slateHttpResponse(
   response: Promise<SlateSnapshot>,
 ): Promise<Response> {
   try {
-    return jsonResponse({ data: await response });
+    const snapshot = await response;
+    return jsonResponse({
+      data: {
+        items: snapshot.items.map((item) => ({
+          target:
+            item.target.kind === "Media"
+              ? {
+                  kind: item.target.kind,
+                  ref: item.target.ref,
+                  mediaKind: item.target.mediaKind,
+                  title: item.target.title,
+                  subtitle: item.target.subtitle,
+                  imageUrl: item.target.imageUrl,
+                  href: item.target.href,
+                }
+              : {
+                  kind: item.target.kind,
+                  ref: item.target.ref,
+                  title: item.target.title,
+                  subtitle: item.target.subtitle,
+                  imageUrl: item.target.imageUrl,
+                  href: item.target.href,
+                },
+          reason: item.reason,
+        })),
+      },
+    });
   } catch (error) {
     if (
       error instanceof ApiError &&
@@ -149,7 +182,7 @@ function slateItem(index: number): SlateItem {
 }
 
 function lecternNode(accept: ReadingSlateAccept, isActive = true) {
-  return withRenderEnvironment(
+  return (
     <>
       <div data-pane-id="pane-1">
         <button data-pane-chrome-focus="true">Pane chrome</button>
@@ -161,7 +194,7 @@ function lecternNode(accept: ReadingSlateAccept, isActive = true) {
         isActive={isActive}
         accept={accept}
       />
-    </>,
+    </>
   );
 }
 
@@ -230,15 +263,19 @@ function ReadingSlateReturnFixture({
   accept: ReadingSlateAccept;
   publish: (commands: PaneReturnMementoCommands) => void;
 }) {
-  return (
+  return withRenderEnvironment(
     <PaneReturnMementoProvider>
       <CommandsProbe publish={publish} />
       <PaneReturnVisitScope visitId={visitId} routeKey={TEST_ROUTE_KEY}>
-        {withRenderEnvironment(
-          <ReadingSlateReturnRoute visitId={visitId} accept={accept} />,
-        )}
+        <FeedbackProvider>
+          <LibraryPlacementControllerProvider>
+            <ShareControllerProvider>
+              <ReadingSlateReturnRoute visitId={visitId} accept={accept} />
+            </ShareControllerProvider>
+          </LibraryPlacementControllerProvider>
+        </FeedbackProvider>
       </PaneReturnVisitScope>
-    </PaneReturnMementoProvider>
+    </PaneReturnMementoProvider>,
   );
 }
 

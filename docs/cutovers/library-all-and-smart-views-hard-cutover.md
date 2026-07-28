@@ -502,8 +502,10 @@ The existing local media patch remains immediate:
 
 - Mark Finished removes a row from Unfinished or In Progress.
 - Mark Unread or Reset Progress removes a row from In Progress.
-- Undo or reader/listening activity can add a previously absent qualifying row
-  through revision reconciliation.
+- Completion Undo establishes explicit Unread and therefore keeps the row out
+  of In Progress. Reader/listening activity on media without an explicit
+  override can add a previously absent qualifying row through revision
+  reconciliation.
 - Auto-pagination continues until a matching row appears or the cursor ends.
 
 These guarantees cover definitive writes in the current browser process only.
@@ -735,7 +737,8 @@ emit projections.
   stale-cursor recovery, and responsive wrapping.
 - Real-stack E2E: open All → Unfiled → file one item through Libraries… → row
   disappears → reader/listening activity creates an In Progress row → completion
-  removes it → Undo restores it → reload preserves the exact URL view.
+  removes it → Undo establishes explicit Unread and keeps it absent → reload
+  preserves the exact URL view.
 - Query-plan matrix and production smokes from the gates above.
 - Residue scan for v1 cursor code/tests, old view shape, direct placement writers
   without publication, result adoption without revisions, duplicate display

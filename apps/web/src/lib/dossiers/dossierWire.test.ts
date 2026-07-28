@@ -24,6 +24,43 @@ function revisionWire(inputManifest: Record<string, unknown>) {
 }
 
 describe("dossierWire", () => {
+  it("normalizes nested citation activations from the REST transport", () => {
+    const decoded = decodeDossierRevision({
+      ...revisionWire({
+        version: "v1",
+        kind: "page",
+        page_ref: "page:p1",
+        input_fingerprint: "fp",
+        block_refs: [],
+        connection_refs: [],
+      }),
+      citations: [
+        {
+          ordinal: 1,
+          role: "supports",
+          target_ref: { type: "media", id: "m1" },
+          activation: {
+            resource_ref: "media:m1",
+            kind: "route",
+            href: "/media/m1",
+            unresolved_reason: null,
+          },
+          media_id: "m1",
+          locator: null,
+          deep_link: "/media/m1",
+          snapshot: null,
+        },
+      ],
+    });
+
+    expect(decoded.citations[0]?.activation).toEqual({
+      resourceRef: "media:m1",
+      kind: "route",
+      href: "/media/m1",
+      unresolvedReason: null,
+    });
+  });
+
   it.each([
     [
       "media",
@@ -184,9 +221,7 @@ describe("dossierWire", () => {
       totalTokens: { kind: "Present", value: 1234 },
     });
     expect(() =>
-      decodeDossierRevision(
-        revisionWire({ version: "v1", kind: "unknown" }),
-      ),
+      decodeDossierRevision(revisionWire({ version: "v1", kind: "unknown" })),
     ).toThrow(/unknown input_manifest kind/);
   });
 });

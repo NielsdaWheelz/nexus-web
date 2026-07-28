@@ -255,10 +255,10 @@ def test_idempotency_hash_uses_selection_key_but_never_revision():
 
     none_hash = compute_payload_hash(**common, reader_selection_key=None)
     key_hash = compute_payload_hash(**common, reader_selection_key=key)
-    same_key_hash = compute_payload_hash(**common, reader_selection_key=_key(media_id, highlight_id))
-    other_key_hash = compute_payload_hash(
-        **common, reader_selection_key=_key(media_id, uuid4())
+    same_key_hash = compute_payload_hash(
+        **common, reader_selection_key=_key(media_id, highlight_id)
     )
+    other_key_hash = compute_payload_hash(**common, reader_selection_key=_key(media_id, uuid4()))
 
     assert none_hash != key_hash, "A selection must change the idempotency identity"
     assert key_hash == same_key_hash, "An equal ReaderSelectionKey must replay, not conflict"
@@ -451,9 +451,7 @@ def test_historical_quoted_turn_prefixes_historical_reader_selection(
         parent_message_id=quoted_user_id,
     )
 
-    units = load_recent_history_units(
-        db_session, conversation_id=conversation_id, before_seq=99
-    )
+    units = load_recent_history_units(db_session, conversation_id=conversation_id, before_seq=99)
 
     assert len(units) == 1
     user_turn = units[0].turns[0]

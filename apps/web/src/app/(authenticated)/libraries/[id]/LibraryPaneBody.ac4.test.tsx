@@ -3488,7 +3488,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     );
 
     // The finished row leaves the filtered view and focus lands on the sibling
-    // row (its first focusable control).
+    // row's title, its first control in native Tab order.
     await waitFor(() =>
       expect(
         screen.queryByRole("link", { name: "First Work" }),
@@ -3496,7 +3496,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     );
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "More actions for Second Work" }),
+        screen.getByRole("link", { name: "Second Work" }),
       ).toHaveFocus(),
     );
     await waitFor(() =>
@@ -3732,7 +3732,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     );
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "More actions for Sibling Row" }),
+        screen.getByRole("link", { name: "Sibling Row" }),
       ).toHaveFocus(),
     );
     confirmSpy.mockRestore();

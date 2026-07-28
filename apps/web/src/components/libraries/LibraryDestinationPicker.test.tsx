@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
+import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import LibraryDestinationPicker from "./LibraryDestinationPicker";
 import type { LibraryDestinationSelection } from "@/lib/libraries/client";
 
@@ -83,6 +84,10 @@ function Harness({
   );
 }
 
+function renderPicker(node: ReactNode) {
+  return render(withRenderEnvironment(node));
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -98,7 +103,7 @@ describe("LibraryDestinationPicker", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<Harness />);
+    renderPicker(<Harness />);
     fireEvent.click(screen.getByRole("button", { name: "Toggle" }));
 
     expect(await screen.findByRole("option", { name: "Reading" })).toBeInTheDocument();
@@ -119,7 +124,7 @@ describe("LibraryDestinationPicker", () => {
       ),
     );
 
-    render(
+    renderPicker(
       <Harness initialSelected={[{ id: "a", name: "Reading", color: null }]} />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Toggle" }));
@@ -140,7 +145,7 @@ describe("LibraryDestinationPicker", () => {
       vi.fn(async () => pageOf([destinationRow("b", "Watchlist")])),
     );
 
-    render(<Harness />);
+    renderPicker(<Harness />);
     fireEvent.click(screen.getByRole("button", { name: "Toggle" }));
 
     const option = await screen.findByRole("option", { name: "Watchlist" });
@@ -167,7 +172,7 @@ describe("LibraryDestinationPicker", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<Harness onCreate={onCreate} />);
+    renderPicker(<Harness onCreate={onCreate} />);
     fireEvent.click(screen.getByRole("button", { name: "Toggle" }));
     await screen.findByRole("option", { name: "Reading" });
 
@@ -188,7 +193,7 @@ describe("LibraryDestinationPicker", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<Harness />);
+    renderPicker(<Harness />);
     fireEvent.click(screen.getByRole("button", { name: "Toggle" }));
     await screen.findByRole("option", { name: "Reading" });
 
@@ -202,7 +207,7 @@ describe("LibraryDestinationPicker", () => {
       vi.fn(async () => pageOf([destinationRow("a", "Reading")])),
     );
 
-    render(<Harness />);
+    renderPicker(<Harness />);
     const toggle = screen.getByRole("button", { name: "Toggle" });
     fireEvent.click(toggle);
     await screen.findByRole("option", { name: "Reading" });

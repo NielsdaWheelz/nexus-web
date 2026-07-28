@@ -47,7 +47,7 @@ test("media Libraries… placement adds, removes, and returns focus without shar
 
   try {
     const createSourceLibrary = await page.request.post("/api/libraries", {
-      data: { name: sourceLibraryName },
+      data: { library_id: randomUUID(), name: sourceLibraryName },
       headers: stateChangingApiHeaders(),
     });
     if (!createSourceLibrary.ok()) {
@@ -61,7 +61,7 @@ test("media Libraries… placement adds, removes, and returns focus without shar
     sourceLibraryId = sourceLibraryPayload.data.id;
 
     const createDestinationLibrary = await page.request.post("/api/libraries", {
-      data: { name: destinationLibraryName },
+      data: { library_id: randomUUID(), name: destinationLibraryName },
       headers: stateChangingApiHeaders(),
     });
     if (!createDestinationLibrary.ok()) {
@@ -99,7 +99,7 @@ test("media Libraries… placement adds, removes, and returns focus without shar
     );
     const pane = activeWorkspacePane(page);
     const mediaRow = pane
-      .getByRole("list", { name: "Library entries" })
+      .getByRole("list", { name: sourceLibraryName })
       .locator("[data-collection-row-id]");
     await expect(mediaRow).toHaveCount(1, { timeout: 15_000 });
     await expect(mediaRow).toBeVisible({ timeout: 15_000 });

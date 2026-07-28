@@ -19,7 +19,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import visible_content_credit_rows_sql
+from nexus.auth.permissions import visible_content_credit_rows_sql, visible_media_ids_cte_sql
 from nexus.schemas.contributors import ContributorCreditOut, ContributorRole
 
 
@@ -70,6 +70,105 @@ def current_media_contributor_rows_sql() -> str:
         ) targets
         JOIN contributors c ON c.id = targets.contributor_id
     """
+
+
+def load_visible_contributor_media_ids(
+    db: Session,
+    *,
+    contributor_id: UUID,
+    viewer_id: UUID,
+) -> list[UUID]:
+    """Load visible Media works credited directly or through a Podcast.
+
+    Project Gutenberg catalog-only credits have no Media identity and are
+    intentionally absent. Results are deduplicated and ordered for stable
+    aggregate manifests.
+    """
+    rows = db.execute(
+        text(
+            f"""
+            WITH visible_media AS ({visible_media_ids_cte_sql()}),
+            credited_media AS (
+                SELECT cc.media_id
+                FROM contributor_credits cc
+                WHERE cc.contributor_id = :contributor_id
+                  AND cc.media_id IS NOT NULL
+
+                UNION
+
+                SELECT pe.media_id
+                FROM contributor_credits cc
+                JOIN podcast_episodes pe ON pe.podcast_id = cc.podcast_id
+                WHERE cc.contributor_id = :contributor_id
+                  AND cc.podcast_id IS NOT NULL
+            )
+            SELECT DISTINCT cm.media_id, m.published_date, m.title
+            FROM credited_media cm
+            JOIN visible_media vm ON vm.media_id = cm.media_id
+            JOIN media m ON m.id = cm.media_id
+            ORDER BY m.published_date DESC NULLS LAST, m.title, cm.media_id
+            """
+        ),
+        {"viewer_id": viewer_id, "contributor_id": contributor_id},
+    )
+    return [UUID(str(row[0])) for row in rows]
+
+
+def load_current_source_author_bylines(
+    db: Session,
+    *,
+    media_id: UUID,
+) -> list[str]:
+    """Load ordered author bylines supported by the Media's current source."""
+    rows = db.execute(
+        text(
+            """
+            WITH current_source AS (
+                SELECT source_type
+                FROM media_source_attempts
+                WHERE media_id = :media_id
+                  AND status = 'succeeded'
+                ORDER BY attempt_no DESC, id DESC
+                LIMIT 1
+            )
+            SELECT cc.credited_name
+            FROM contributor_credits cc
+            CROSS JOIN current_source source
+            WHERE cc.media_id = :media_id
+              AND cc.role = 'author'
+              AND (
+                (source.source_type = 'generic_web_url'
+                 AND cc.source = 'web_article_byline')
+                OR (source.source_type = 'browser_article_capture'
+                    AND cc.source = 'web_article_capture')
+                OR (source.source_type IN ('x_author_thread', 'x_post')
+                    AND cc.source IN (
+                      'x_api_author_thread',
+                      'x_api_post',
+                      'x_api_quoted_post'
+                    ))
+                OR (source.source_type IN ('youtube_video', 'video_transcript')
+                    AND cc.source = 'youtube_metadata')
+                OR (source.source_type IN (
+                      'remote_pdf_url',
+                      'uploaded_pdf_file',
+                      'browser_pdf_capture'
+                    ) AND cc.source = 'pdf_metadata')
+                OR (source.source_type IN (
+                      'remote_epub_url',
+                      'uploaded_epub_file',
+                      'browser_epub_capture'
+                    ) AND cc.source = 'epub_opf')
+                OR (source.source_type = 'podcast_episode_transcript'
+                    AND cc.source = 'rss')
+              )
+            ORDER BY cc.ordinal ASC
+            LIMIT 33
+            """
+        ),
+        {"media_id": media_id},
+    ).scalars()
+    return [str(value).strip() for value in rows if str(value).strip()]
 
 
 def visible_author_credit_rows_sql() -> str:

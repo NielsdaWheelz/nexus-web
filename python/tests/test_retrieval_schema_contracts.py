@@ -621,6 +621,7 @@ def _search_base(result_type: str) -> dict[str, object]:
         "snippet": "Exact match",
         "title": "Result",
         "resource_ref": resource_ref,
+        "owner_resource_ref": resource_ref,
         "activation": {
             "resourceRef": resource_ref,
             "kind": "route",
@@ -667,6 +668,7 @@ def _search_source(media_id: str | None = None) -> dict[str, object]:
         {
             **_search_base("note_block"),
             "body_text": "Note body",
+            "note_origin": "note",
             "locator": _note_block_locator(),
         },
         {
@@ -708,6 +710,7 @@ def test_search_result_out_requires_locator_for_locatable_rows(
             {
                 **_search_base("note_block"),
                 "body_text": "Note body",
+                "note_origin": "note",
                 "locator": _note_block_locator(),
             },
             _web_offsets_locator(),
@@ -752,6 +755,7 @@ def test_search_result_out_requires_web_result_context_and_external_url_locator(
         "result_ref": "web:example",
         "title": "External source",
         "resource_ref": f"external_snapshot:{snapshot_id}",
+        "owner_resource_ref": f"external_snapshot:{snapshot_id}",
         "activation": {
             "resourceRef": f"external_snapshot:{snapshot_id}",
             "kind": "external",

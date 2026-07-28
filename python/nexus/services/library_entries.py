@@ -24,6 +24,7 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import (
+    active_podcast_subscription_exists_sql,
     can_read_media,
     can_restore_media,
     visible_media_ids_cte_sql,
@@ -1088,14 +1089,8 @@ def list_item_libraries(
     elif target.kind == "podcast":
         podcast = (
             db.execute(
-                text("""
-                    SELECT EXISTS(
-                        SELECT 1
-                        FROM podcast_subscriptions ps
-                        WHERE ps.podcast_id = p.id
-                          AND ps.user_id = :viewer_id
-                          AND ps.status = 'active'
-                    ) AS has_active_subscription
+                text(f"""
+                    SELECT {active_podcast_subscription_exists_sql()} AS has_active_subscription
                     FROM podcasts p
                     WHERE p.id = :podcast_id
                 """),
@@ -1621,9 +1616,7 @@ def _decode_view_cursor(
         if len(packed) <= 32:
             raise ValueError
         raw, tag = packed[:-32], packed[-32:]
-        if not hmac.compare_digest(
-            tag, hmac.new(_view_cursor_key(), raw, hashlib.sha256).digest()
-        ):
+        if not hmac.compare_digest(tag, hmac.new(_view_cursor_key(), raw, hashlib.sha256).digest()):
             raise ValueError
         body = json.loads(raw)
         if (

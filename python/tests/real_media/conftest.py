@@ -22,7 +22,7 @@ from nexus.storage.paths import (
     get_file_extension,
 )
 from tests.real_media.assertions import assert_fragment_content_contains
-from tests.support.source_jobs import run_queued_source_attempt
+from tests.support.source_jobs import run_queued_source_pipeline
 from tests.utils.db import DirectSessionManager
 
 REAL_MEDIA_FIXTURES_DIR = Path(__file__).parents[1] / "fixtures" / "real_media"
@@ -200,7 +200,7 @@ def run_source_attempt_for_media(
     media_id: UUID,
 ) -> dict[str, object]:
     with direct_db.session() as session:
-        return run_queued_source_attempt(
+        return run_queued_source_pipeline(
             session,
             media_id=media_id,
             request_id="real-media-source-attempt",
@@ -359,13 +359,13 @@ def create_nasa_podcast_episode(
     assert transcript_request.status_code in {200, 202}, transcript_request.text
 
     with direct_db.session() as session:
-        transcription_result = run_queued_source_attempt(
+        transcription_result = run_queued_source_pipeline(
             session,
             media_id=media_id,
             actor_user_id=user_id,
             request_id="real-media-podcast-transcript-fixture",
         )
-    assert transcription_result["status"] == "success", transcription_result
+    assert transcription_result["status"] == "completed", transcription_result
 
     assert_fragment_content_contains(direct_db, media_id, "International Space Station")
     register_media_cleanup(direct_db, media_id)

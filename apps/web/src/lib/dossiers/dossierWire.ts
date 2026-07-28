@@ -6,7 +6,10 @@
 // repository-wide `decodePresence`; unexpected shapes throw rather than coerce.
 import { isRecord } from "@/lib/validation";
 import { decodePresence, type Presence } from "@/lib/api/presence";
-import { isCitationOut, type CitationOut } from "@/lib/conversations/citationOut";
+import {
+  decodeCitationOut,
+  type CitationOut,
+} from "@/lib/conversations/citationOut";
 import {
   DOSSIER_BUILD_FAILURE_CODES,
   type DossierBuildFailureCode,
@@ -74,8 +77,9 @@ function decodeFreshness(value: unknown): DossierFreshness {
 function decodeCitations(value: unknown): readonly CitationOut[] {
   if (!Array.isArray(value)) fail("citations must be an array");
   return value.map((entry) => {
-    if (!isCitationOut(entry)) fail("citation entry did not match CitationOut");
-    return entry;
+    const citation = decodeCitationOut(entry);
+    if (!citation) fail("citation entry did not match CitationOut");
+    return citation;
   });
 }
 
@@ -84,9 +88,7 @@ function decodeStringArray(value: unknown, field: string): string[] {
   return value.map((entry) => decodeString(entry, field));
 }
 
-function decodeMediaDisposition(
-  value: unknown,
-): DossierMediaDisposition {
+function decodeMediaDisposition(value: unknown): DossierMediaDisposition {
   if (
     value === "Included" ||
     value === "OmittedNoReadyUnit" ||
@@ -140,7 +142,8 @@ function decodeInputManifest(value: unknown): DossierInputManifest {
           "offered_claim_count",
         ),
         omittedEvidenceRefs: value.omitted_evidence.map((entry) => {
-          if (!isRecord(entry)) fail("omitted_evidence entry must be an object");
+          if (!isRecord(entry))
+            fail("omitted_evidence entry must be an object");
           return decodeString(entry.evidence_ref, "evidence_ref");
         }),
       };
@@ -168,8 +171,9 @@ function decodeInputManifest(value: unknown): DossierInputManifest {
         ),
         messageRefs: decodeStringArray(value.message_refs, "message_refs"),
         contextRefs: decodeStringArray(value.context_refs, "context_refs"),
-        topologyFingerprint: decodePresence(value.topology_fingerprint, (entry) =>
-          decodeString(entry, "topology_fingerprint"),
+        topologyFingerprint: decodePresence(
+          value.topology_fingerprint,
+          (entry) => decodeString(entry, "topology_fingerprint"),
         ),
         completeness,
       };
@@ -355,9 +359,15 @@ export function decodeMediaAbstract(raw: unknown): MediaAbstract {
     case "Building":
       return { kind: "Building" };
     case "Ready":
-      return { kind: "Ready", summaryMd: decodeString(raw.summary_md, "summary_md") };
+      return {
+        kind: "Ready",
+        summaryMd: decodeString(raw.summary_md, "summary_md"),
+      };
     case "Stale":
-      return { kind: "Stale", summaryMd: decodeString(raw.summary_md, "summary_md") };
+      return {
+        kind: "Stale",
+        summaryMd: decodeString(raw.summary_md, "summary_md"),
+      };
     case "Failed":
       return { kind: "Failed" };
     case "NotAvailable":
@@ -389,7 +399,10 @@ export function decodeDossierHead(raw: unknown): DecodedDossierHead {
     artifactRef: decodePresence(raw.artifact_ref, (v) =>
       decodeString(v, "artifact_ref"),
     ),
-    currentRevision: decodePresence(raw.current_revision, decodeDossierRevision),
+    currentRevision: decodePresence(
+      raw.current_revision,
+      decodeDossierRevision,
+    ),
     freshness: decodePresence(raw.freshness, decodeFreshness),
     activeBuild: decodePresence(raw.active_build, decodeDossierBuildSummary),
     latestUnsuccessfulBuild: decodePresence(

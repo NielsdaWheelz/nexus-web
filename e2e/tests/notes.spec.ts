@@ -8,6 +8,7 @@ import {
   type Response as PlaywrightResponse,
 } from "@playwright/test";
 import { readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { stateChangingApiHeaders } from "./api";
 import { deleteE2eResource, throwE2eCleanupFailures } from "./cleanup";
@@ -107,7 +108,9 @@ interface ResourceGraphConnectionsPayload {
 
 function readSeededNonPdfMedia(): SeededNonPdfMedia {
   const seedPath = path.join(__dirname, "..", ".seed", "non-pdf-media.json");
-  const parsed = JSON.parse(readFileSync(seedPath, "utf-8")) as SeededNonPdfMedia;
+  const parsed = JSON.parse(
+    readFileSync(seedPath, "utf-8"),
+  ) as SeededNonPdfMedia;
   if (!parsed.media_id || !parsed.fragment_id) {
     throw new Error(`Invalid seeded non-PDF metadata at ${seedPath}`);
   }
@@ -117,64 +120,98 @@ function readSeededNonPdfMedia(): SeededNonPdfMedia {
 async function createFreshHighlight(
   request: APIRequestContext,
   mediaId: string,
-  fallbackFragmentId: string
+  fallbackFragmentId: string,
 ): Promise<{ id: string; exact: string; fragmentId: string }> {
-  const fragmentsResponse = await request.get(`/api/media/${mediaId}/fragments`);
+  const fragmentsResponse = await request.get(
+    `/api/media/${mediaId}/fragments`,
+  );
   await expectOk(fragmentsResponse, "Fetch seeded media fragments");
   const fragmentsPayload = (await fragmentsResponse.json()) as FragmentPayload;
   const fragment =
-    fragmentsPayload.data.find((item) => item.canonical_text.trim().length >= 80) ??
-    fragmentsPayload.data.find((item) => item.id === fallbackFragmentId);
-  expect(fragment, `Expected a seed fragment with enough text for note coverage`).toBeTruthy();
+    fragmentsPayload.data.find(
+      (item) => item.canonical_text.trim().length >= 80,
+    ) ?? fragmentsPayload.data.find((item) => item.id === fallbackFragmentId);
+  expect(
+    fragment,
+    `Expected a seed fragment with enough text for note coverage`,
+  ).toBeTruthy();
   if (!fragment) throw new Error("Missing seed fragment");
 
-  const existingResponse = await request.get(`/api/fragments/${fragment.id}/highlights`);
+  const existingResponse = await request.get(
+    `/api/fragments/${fragment.id}/highlights`,
+  );
   await expectOk(existingResponse, "Fetch existing fragment highlights");
   const existingPayload = (await existingResponse.json()) as HighlightsPayload;
   const existingRanges = new Set(
     existingPayload.data.highlights.map(
-      (highlight) => `${highlight.anchor.start_offset}:${highlight.anchor.end_offset}`
-    )
+      (highlight) =>
+        `${highlight.anchor.start_offset}:${highlight.anchor.end_offset}`,
+    ),
   );
 
-  const length = Math.min(24, Math.max(12, Math.floor(fragment.canonical_text.length / 4)));
+  const length = Math.min(
+    24,
+    Math.max(12, Math.floor(fragment.canonical_text.length / 4)),
+  );
   let startOffset = -1;
-  for (let candidate = 0; candidate + length < fragment.canonical_text.length; candidate += 7) {
-    const exact = fragment.canonical_text.slice(candidate, candidate + length).trim();
-    if (exact.length >= 12 && !existingRanges.has(`${candidate}:${candidate + length}`)) {
+  for (
+    let candidate = 0;
+    candidate + length < fragment.canonical_text.length;
+    candidate += 7
+  ) {
+    const exact = fragment.canonical_text
+      .slice(candidate, candidate + length)
+      .trim();
+    if (
+      exact.length >= 12 &&
+      !existingRanges.has(`${candidate}:${candidate + length}`)
+    ) {
       startOffset = candidate;
       break;
     }
   }
   expect(
     startOffset,
-    "Expected an unused highlight range in the seeded fragment"
+    "Expected an unused highlight range in the seeded fragment",
   ).toBeGreaterThanOrEqual(0);
 
-  const createResponse = await request.post(`/api/fragments/${fragment.id}/highlights`, {
-    data: {
-      start_offset: startOffset,
-      end_offset: startOffset + length,
-      color: "green",
+  const createResponse = await request.post(
+    `/api/fragments/${fragment.id}/highlights`,
+    {
+      data: {
+        start_offset: startOffset,
+        end_offset: startOffset + length,
+        color: "green",
+      },
+      headers: stateChangingApiHeaders(),
     },
-    headers: stateChangingApiHeaders(),
-  });
+  );
   await expectOk(createResponse, "Create fresh fragment highlight");
   const payload = (await createResponse.json()) as HighlightPayload;
-  return { id: payload.data.id, exact: payload.data.exact, fragmentId: fragment.id };
+  return {
+    id: payload.data.id,
+    exact: payload.data.exact,
+    fragmentId: fragment.id,
+  };
 }
 
 async function linkedNoteForHighlight(
   page: Page,
   fragmentId: string,
-  highlightId: string
+  highlightId: string,
 ): Promise<{ noteBlockId: string; bodyText: string } | null> {
-  const response = await page.request.get(`/api/fragments/${fragmentId}/highlights`);
+  const response = await page.request.get(
+    `/api/fragments/${fragmentId}/highlights`,
+  );
   await expectOk(response, "Fetch linked note for highlight");
   const payload = (await response.json()) as HighlightsPayload;
-  const highlight = payload.data.highlights.find((item) => item.id === highlightId);
+  const highlight = payload.data.highlights.find(
+    (item) => item.id === highlightId,
+  );
   const note = highlight?.linked_note_blocks?.[0];
-  return note ? { noteBlockId: note.note_block_id, bodyText: note.body_text } : null;
+  return note
+    ? { noteBlockId: note.note_block_id, bodyText: note.body_text }
+    : null;
 }
 
 async function expectOk(response: APIResponse, label: string): Promise<void> {
@@ -186,11 +223,12 @@ async function expectOk(response: APIResponse, label: string): Promise<void> {
 
 async function waitForHighlightNoteSave(
   page: Page,
-  highlightId: string
+  highlightId: string,
 ): Promise<PlaywrightResponse> {
   return page.waitForResponse((response) => {
     return (
-      new URL(response.url()).pathname === `/api/highlights/${highlightId}/note` &&
+      new URL(response.url()).pathname ===
+        `/api/highlights/${highlightId}/note` &&
       response.request().method() === "PUT"
     );
   });
@@ -198,9 +236,11 @@ async function waitForHighlightNoteSave(
 
 async function blockedExactsForFragment(
   page: Page,
-  fragmentId: string
+  fragmentId: string,
 ): Promise<string[]> {
-  const response = await page.request.get(`/api/fragments/${fragmentId}/highlights`);
+  const response = await page.request.get(
+    `/api/fragments/${fragmentId}/highlights`,
+  );
   await expectOk(response, "Fetch existing fragment highlights");
   const payload = (await response.json()) as HighlightsPayload;
   return payload.data.highlights.map((highlight) => highlight.exact);
@@ -208,24 +248,32 @@ async function blockedExactsForFragment(
 
 async function readResourceSurface(page: Page, ref: string) {
   const response = await page.request.get(
-    `/api/resource-items/${encodeURIComponent(ref)}/surface`
+    `/api/resource-items/${encodeURIComponent(ref)}/surface`,
   );
   await expectOk(response, `Fetch resource surface ${ref}`);
   return ((await response.json()) as ResourceSurfacePayload).data;
 }
 
-async function readResourceGraphEdges(page: Page, ref: string, origin = "user") {
-  const response = await page.request.post("/api/resource-graph/connections/query", {
-    data: {
-      refs: [ref],
-      direction: "both",
-      filters: { origins: [origin] },
-      limit: 100,
+async function readResourceGraphEdges(
+  page: Page,
+  ref: string,
+  origin = "user",
+) {
+  const response = await page.request.post(
+    "/api/resource-graph/connections/query",
+    {
+      data: {
+        refs: [ref],
+        direction: "both",
+        filters: { origins: [origin] },
+        limit: 100,
+      },
+      headers: stateChangingApiHeaders(),
     },
-    headers: stateChangingApiHeaders(),
-  });
+  );
   await expectOk(response, `Fetch ${origin} edges`);
-  return ((await response.json()) as ResourceGraphConnectionsPayload).data.items;
+  return ((await response.json()) as ResourceGraphConnectionsPayload).data
+    .items;
 }
 
 /**
@@ -235,30 +283,43 @@ async function readResourceGraphEdges(page: Page, ref: string, origin = "user") 
  */
 async function nextCreatedHighlight(
   page: Page,
-  action: () => Promise<void>
+  action: () => Promise<void>,
 ): Promise<{ id: string; exact: string; fragmentId: string }> {
   const responsePromise = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
-      /\/api\/fragments\/[^/]+\/highlights/.test(response.url())
+      /\/api\/fragments\/[^/]+\/highlights/.test(response.url()),
   );
   await action();
   const response = await responsePromise;
   expect(
     response.ok(),
-    `Create highlight via note verb: status=${response.status()}`
+    `Create highlight via note verb: status=${response.status()}`,
   ).toBeTruthy();
   const payload = (await response.json()) as HighlightPayload;
-  const fragmentId = /\/api\/fragments\/([^/]+)\/highlights/.exec(response.url())?.[1];
-  if (!fragmentId) throw new Error(`No fragment id in highlight create URL: ${response.url()}`);
+  const fragmentId = /\/api\/fragments\/([^/]+)\/highlights/.exec(
+    response.url(),
+  )?.[1];
+  if (!fragmentId)
+    throw new Error(
+      `No fragment id in highlight create URL: ${response.url()}`,
+    );
   return { id: payload.data.id, exact: payload.data.exact, fragmentId };
 }
 
-async function scrollHighlightIntoView(contentPane: Locator, highlightId: string): Promise<void> {
-  const segment = contentPane.locator(`[data-active-highlight-ids~="${highlightId}"]`).first();
+async function scrollHighlightIntoView(
+  contentPane: Locator,
+  highlightId: string,
+): Promise<void> {
+  const segment = contentPane
+    .locator(`[data-active-highlight-ids~="${highlightId}"]`)
+    .first();
   await expect(segment).toBeAttached({ timeout: 10_000 });
   await segment.evaluate((element) => {
-    (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
+    (element as HTMLElement).scrollIntoView({
+      block: "center",
+      inline: "nearest",
+    });
   });
   await expect(segment).toBeVisible({ timeout: 10_000 });
 }
@@ -278,7 +339,7 @@ test.describe("notes cutover", () => {
 
     try {
       const createResponse = await page.request.post("/api/notes/pages", {
-        data: { title },
+        data: { page_id: randomUUID(), title },
         headers: stateChangingApiHeaders(),
       });
       await expectOk(createResponse, "Create notes page");
@@ -291,11 +352,15 @@ test.describe("notes cutover", () => {
       await expect(pageTitle).toBeVisible({ timeout: 15_000 });
       await pageTitle.press("Enter");
 
-      const firstNote = activePane.getByRole("textbox", { name: "Edit note 1" });
+      const firstNote = activePane.getByRole("textbox", {
+        name: "Edit note 1",
+      });
       await expect(firstNote).toBeFocused({ timeout: 10_000 });
       await page.keyboard.insertText(firstText);
       await page.keyboard.press("Enter");
-      const secondNote = activePane.getByRole("textbox", { name: "Edit note 2" });
+      const secondNote = activePane.getByRole("textbox", {
+        name: "Edit note 2",
+      });
       await expect(secondNote).toBeFocused({ timeout: 10_000 });
       await page.keyboard.insertText(secondFirstLine);
       await page.keyboard.press("Shift+Enter");
@@ -316,12 +381,14 @@ test.describe("notes cutover", () => {
                 `${secondFirstLine}\n${secondSecondLine}`
             );
           },
-          { timeout: 20_000 }
+          { timeout: 20_000 },
         )
         .toBe(true);
 
       const beforeMove = await readResourceSurface(page, `page:${pageId}`);
-      const occurrenceIds = beforeMove.ordered_items.map((item) => item.occurrence_id);
+      const occurrenceIds = beforeMove.ordered_items.map(
+        (item) => item.occurrence_id,
+      );
       expect(occurrenceIds).toHaveLength(2);
 
       await secondNote.click();
@@ -349,19 +416,21 @@ test.describe("notes cutover", () => {
             target_ref: beforeMove.ordered_items[0]?.target.item.ref,
             source_order_key: "0000000002",
           }),
-        ])
+        ]),
       );
 
       await page.reload({ waitUntil: "domcontentloaded" });
       const reloadedSurface = activeWorkspacePane(page).getByRole("region", {
         name: "Ordered resources",
       });
-      await expect(reloadedSurface).toContainText(firstText, { timeout: 15_000 });
+      await expect(reloadedSurface).toContainText(firstText, {
+        timeout: 15_000,
+      });
       await expect(reloadedSurface).toContainText(secondFirstLine, {
         timeout: 15_000,
       });
       await expect(
-        reloadedSurface.getByRole("textbox", { name: "Edit note 1" })
+        reloadedSurface.getByRole("textbox", { name: "Edit note 1" }),
       ).toContainText(secondFirstLine);
     } catch (error) {
       productError = error;
@@ -373,13 +442,17 @@ test.describe("notes cutover", () => {
           await deleteE2eResource(
             page.request,
             `/api/notes/pages/${pageId}`,
-            `Notes page ${pageId}`
+            `Notes page ${pageId}`,
           );
         } catch (error) {
           cleanupErrors.push(error);
         }
       }
-      throwE2eCleanupFailures("Flat page resource surface", productError, cleanupErrors);
+      throwE2eCleanupFailures(
+        "Flat page resource surface",
+        productError,
+        cleanupErrors,
+      );
     }
   });
 
@@ -401,26 +474,41 @@ test.describe("notes cutover", () => {
       const highlight = await createFreshHighlight(
         page.request,
         seeded.media_id,
-        seeded.fragment_id
+        seeded.fragment_id,
       );
       highlightId = highlight.id;
       highlightFragmentId = highlight.fragmentId;
 
-      await gotoSinglePaneWorkspace(page, deviceId, `/media/${seeded.media_id}`);
-      const contentPane = activeWorkspacePane(page).locator('div[class*="fragments"]');
+      await gotoSinglePaneWorkspace(
+        page,
+        deviceId,
+        `/media/${seeded.media_id}`,
+      );
+      const contentPane = activeWorkspacePane(page).locator(
+        'div[class*="fragments"]',
+      );
       await expect(contentPane).toBeVisible({ timeout: 10_000 });
       await scrollHighlightIntoView(contentPane, highlight.id);
       const highlightsPane = await openEvidencePane(page);
-      const linkedRow = evidenceHighlightArticle(highlightsPane, highlight.exact);
+      const linkedRow = evidenceHighlightArticle(
+        highlightsPane,
+        highlight.exact,
+      );
       await expect(linkedRow).toBeVisible({ timeout: 20_000 });
       await expect(linkedRow).toContainText(highlight.exact);
 
       await expect(
         linkedRow.getByRole("textbox", { name: "Highlight note" }),
       ).toHaveCount(0);
-      await linkedRow.getByRole("button", { name: "Highlight actions" }).click();
-      await page.getByRole("menuitem", { name: "Add note", exact: true }).click();
-      const noteEditor = linkedRow.getByRole("textbox", { name: "Highlight note" });
+      await linkedRow
+        .getByRole("button", { name: "Highlight actions" })
+        .click();
+      await page
+        .getByRole("menuitem", { name: "Add note", exact: true })
+        .click();
+      const noteEditor = linkedRow.getByRole("textbox", {
+        name: "Highlight note",
+      });
       await expect(noteEditor).toBeVisible({ timeout: 10_000 });
       await noteEditor.scrollIntoViewIfNeeded();
       await expect(noteEditor).toBeEditable();
@@ -428,21 +516,32 @@ test.describe("notes cutover", () => {
       const saveResponsePromise = waitForHighlightNoteSave(page, highlight.id);
       await page.keyboard.insertText(`${noteText} ${mediaRefText}`);
       const saveResponse = await saveResponsePromise;
-      expect(saveResponse.ok(), `Save linked highlight note: ${await saveResponse.text()}`).toBe(
-        true
-      );
+      expect(
+        saveResponse.ok(),
+        `Save linked highlight note: ${await saveResponse.text()}`,
+      ).toBe(true);
 
       await expect
-        .poll(() => linkedNoteForHighlight(page, highlight.fragmentId, highlight.id), {
-          timeout: 15_000,
-        })
+        .poll(
+          () =>
+            linkedNoteForHighlight(page, highlight.fragmentId, highlight.id),
+          {
+            timeout: 15_000,
+          },
+        )
         .not.toBeNull();
-      const linkedNote = await linkedNoteForHighlight(page, highlight.fragmentId, highlight.id);
+      const linkedNote = await linkedNoteForHighlight(
+        page,
+        highlight.fragmentId,
+        highlight.id,
+      );
       expect(linkedNote).not.toBeNull();
       if (!linkedNote) throw new Error("Expected linked note after save");
       noteBlockId = linkedNote.noteBlockId;
       expect(linkedNote.bodyText).toContain(noteText);
-      await linkedRow.getByRole("button", { name: "Done editing note" }).click();
+      await linkedRow
+        .getByRole("button", { name: "Done editing note" })
+        .click();
       await expect(noteEditor).toHaveCount(0);
       await expect(linkedRow).toContainText(noteText, { timeout: 10_000 });
 
@@ -451,24 +550,24 @@ test.describe("notes cutover", () => {
       const notePane = activeWorkspacePane(page);
       const noteBody = notePane.getByRole("textbox", { name: "Note content" });
       await expect(noteBody).toContainText(noteText, { timeout: 10_000 });
-      await expect(noteBody.locator(`[data-object-id="${seeded.media_id}"]`)).toHaveText(
-        "Source media"
-      );
+      await expect(
+        noteBody.locator(`[data-object-id="${seeded.media_id}"]`),
+      ).toHaveText("Source media");
       await expect
         .poll(
           async () => {
             const edges = await readResourceGraphEdges(
               page,
               `note_block:${noteBlockId}`,
-              "note_body"
+              "note_body",
             );
             return edges.some(
               (edge) =>
                 edge.source_ref === `note_block:${noteBlockId}` &&
-                edge.target_ref === `media:${seeded.media_id}`
+                edge.target_ref === `media:${seeded.media_id}`,
             );
           },
-          { timeout: 10_000 }
+          { timeout: 10_000 },
         )
         .toBe(true);
       await notePane
@@ -481,31 +580,83 @@ test.describe("notes cutover", () => {
         .filter({ visible: true });
       await expect(connectionsPane).toBeVisible({ timeout: 10_000 });
       await connectionsPane.getByRole("tab", { name: "Connections" }).click();
-      await expect(connectionsPane).toContainText("E2E linked-items web article seed", {
-        timeout: 10_000,
-      });
+      await expect(connectionsPane).toContainText(
+        "E2E linked-items web article seed",
+        {
+          timeout: 10_000,
+        },
+      );
 
-      const conversationResponse = await page.request.post("/api/conversations", {
-        data: { initial_context_refs: [`note_block:${noteBlockId}`] },
-        headers: stateChangingApiHeaders(),
-      });
+      const conversationResponse = await page.request.post(
+        "/api/conversations",
+        {
+          data: { initial_context_refs: [`note_block:${noteBlockId}`] },
+          headers: stateChangingApiHeaders(),
+        },
+      );
       await expectOk(conversationResponse, "Create note-backed conversation");
       const conversationPayload = (await conversationResponse.json()) as {
         data: { id: string };
       };
       conversationId = conversationPayload.data.id;
-      await gotoSinglePaneWorkspace(page, deviceId, `/conversations/${conversationId}`);
+      const storedContextResponse = await page.request.get(
+        `/api/conversations/${conversationId}/context-refs`,
+      );
+      await expectOk(storedContextResponse, "Read note-backed context");
+      const storedContext = (await storedContextResponse.json()) as {
+        data: Array<{ resource_ref: string }>;
+      };
+      expect(storedContext.data).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            resource_ref: `note_block:${noteBlockId}`,
+          }),
+        ]),
+      );
+      const browserContextResponse = page.waitForResponse(
+        (response) =>
+          response.request().method() === "GET" &&
+          new URL(response.url()).pathname ===
+            `/api/conversations/${conversationId}/context-refs`,
+      );
+      await gotoSinglePaneWorkspace(
+        page,
+        deviceId,
+        `/conversations/${conversationId}`,
+      );
+      const loadedContextResponse = await browserContextResponse;
+      const loadedContextBody = await loadedContextResponse.text();
+      expect(
+        loadedContextResponse.ok(),
+        `Load note-backed context in the conversation: ${loadedContextResponse.status()} ${loadedContextBody.slice(0, 400)}`,
+      ).toBe(true);
+      const loadedContext = JSON.parse(loadedContextBody) as {
+        data: Array<{ resource_ref: string }>;
+      };
+      expect(loadedContext.data).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            resource_ref: `note_block:${noteBlockId}`,
+          }),
+        ]),
+      );
       const activeConversationPane = activeWorkspacePane(page);
       await activeConversationPane
         .getByTestId("pane-shell-chrome")
-        .getByRole("button", { name: "Context" })
+        .getByRole("button", { name: "Companion" })
         .click();
-      const referencesPane = activeConversationPane.getByTestId("workspace-secondary-pane");
+      const referencesPane = activeConversationPane.getByTestId(
+        "workspace-secondary-pane",
+      );
       await expect(referencesPane).toBeVisible({ timeout: 10_000 });
+      await referencesPane.getByRole("tab", { name: "Context" }).click();
       await expect(referencesPane).toHaveAttribute("aria-label", "Context");
-      await expect(referencesPane).toContainText(noteText, {
-        timeout: 10_000,
-      });
+      await expect
+        .poll(() => referencesPane.textContent(), {
+          timeout: 10_000,
+          message: `render context response ${JSON.stringify(loadedContext)}`,
+        })
+        .toContain(noteText);
     } catch (error) {
       productError = error;
       throw error;
@@ -524,7 +675,11 @@ test.describe("notes cutover", () => {
       }
       if (!noteBlockId && highlightId && highlightFragmentId) {
         try {
-          const linkedNote = await linkedNoteForHighlight(page, highlightFragmentId, highlightId);
+          const linkedNote = await linkedNoteForHighlight(
+            page,
+            highlightFragmentId,
+            highlightId,
+          );
           noteBlockId = linkedNote?.noteBlockId ?? null;
         } catch (error) {
           cleanupErrors.push(error);
@@ -557,7 +712,11 @@ test.describe("notes cutover", () => {
           cleanupErrors.push(error);
         }
       }
-      throwE2eCleanupFailures("Linked highlight note", productError, cleanupErrors);
+      throwE2eCleanupFailures(
+        "Linked highlight note",
+        productError,
+        cleanupErrors,
+      );
     }
   });
 
@@ -578,34 +737,51 @@ test.describe("notes cutover", () => {
     let productError: unknown = null;
 
     try {
-      await gotoSinglePaneWorkspace(page, deviceId, `/media/${seeded.media_id}`);
+      await gotoSinglePaneWorkspace(
+        page,
+        deviceId,
+        `/media/${seeded.media_id}`,
+      );
       const activePane = activeWorkspacePane(page);
       const contentPane = activePane.locator('div[class*="fragments"]');
       await expect(contentPane).toBeVisible({ timeout: 10_000 });
 
-      const blockedExacts = await blockedExactsForFragment(page, seeded.fragment_id);
+      const blockedExacts = await blockedExactsForFragment(
+        page,
+        seeded.fragment_id,
+      );
       await selectFreshVisibleTextSnippet(
         page,
         activePaneSelector('div[class*="fragments"]'),
         blockedExacts,
-        { method: "range" }
+        { method: "range" },
       );
 
       // AC-1: the selection popover offers the note verb.
-      const selectionPopover = page.getByRole("group", { name: "Selection actions" });
+      const selectionPopover = page.getByRole("group", {
+        name: "Selection actions",
+      });
       await expect(selectionPopover).toBeVisible({ timeout: 5_000 });
-      const addNoteButton = selectionPopover.getByRole("button", { name: "Add note" });
+      const addNoteButton = selectionPopover.getByRole("button", {
+        name: "Add note",
+      });
       await expect(addNoteButton).toBeVisible();
 
-      const created = await nextCreatedHighlight(page, () => addNoteButton.click());
+      const created = await nextCreatedHighlight(page, () =>
+        addNoteButton.click(),
+      );
       highlightId = created.id;
       highlightFragmentId = created.fragmentId;
 
       // The composer replaces the selection popover, editor focused.
-      const composer = page.getByRole("dialog", { name: "Add note to highlight" });
+      const composer = page.getByRole("dialog", {
+        name: "Add note to highlight",
+      });
       await expect(composer).toBeVisible({ timeout: 5_000 });
       await expect(selectionPopover).toBeHidden();
-      const composerEditor = composer.getByRole("textbox", { name: "Highlight note" });
+      const composerEditor = composer.getByRole("textbox", {
+        name: "Highlight note",
+      });
       await expect(composerEditor).toBeFocused({ timeout: 5_000 });
 
       const saveResponsePromise = waitForHighlightNoteSave(page, created.id);
@@ -615,17 +791,26 @@ test.describe("notes cutover", () => {
       await page.keyboard.press("Escape");
       await expect(composer).toBeHidden({ timeout: 5_000 });
       const saveResponse = await saveResponsePromise;
-      expect(saveResponse.ok(), `Save quick highlight note: ${await saveResponse.text()}`).toBe(
-        true
-      );
+      expect(
+        saveResponse.ok(),
+        `Save quick highlight note: ${await saveResponse.text()}`,
+      ).toBe(true);
 
       await expect
-        .poll(() => linkedNoteForHighlight(page, created.fragmentId, created.id), {
-          timeout: 15_000,
-        })
+        .poll(
+          () => linkedNoteForHighlight(page, created.fragmentId, created.id),
+          {
+            timeout: 15_000,
+          },
+        )
         .not.toBeNull();
-      const linkedNote = await linkedNoteForHighlight(page, created.fragmentId, created.id);
-      if (!linkedNote) throw new Error("Expected linked note after composer save");
+      const linkedNote = await linkedNoteForHighlight(
+        page,
+        created.fragmentId,
+        created.id,
+      );
+      if (!linkedNote)
+        throw new Error("Expected linked note after composer save");
       noteBlockId = linkedNote.noteBlockId;
       expect(linkedNote.bodyText).toContain(noteText);
 
@@ -636,16 +821,19 @@ test.describe("notes cutover", () => {
         .locator(`[data-active-highlight-ids~="${created.id}"]`)
         .first();
       await segment.click();
-      const actionPopover = page.getByRole("group", { name: "Highlight actions" });
+      const actionPopover = page.getByRole("group", {
+        name: "Highlight actions",
+      });
       await expect(actionPopover).toBeVisible({ timeout: 5_000 });
-      const editNoteButton = actionPopover.getByRole("button", { name: "Edit note" });
+      const editNoteButton = actionPopover.getByRole("button", {
+        name: "Edit note",
+      });
       await expect(editNoteButton).toBeVisible();
       await editNoteButton.click();
       await expect(composer).toBeVisible({ timeout: 5_000 });
-      await expect(composer.getByRole("textbox", { name: "Highlight note" })).toContainText(
-        noteText,
-        { timeout: 10_000 }
-      );
+      await expect(
+        composer.getByRole("textbox", { name: "Highlight note" }),
+      ).toContainText(noteText, { timeout: 10_000 });
       await page.keyboard.press("Escape");
       await expect(composer).toBeHidden({ timeout: 5_000 });
 
@@ -670,7 +858,11 @@ test.describe("notes cutover", () => {
       const cleanupErrors: unknown[] = [];
       if (!noteBlockId && highlightId && highlightFragmentId) {
         try {
-          const linkedNote = await linkedNoteForHighlight(page, highlightFragmentId, highlightId);
+          const linkedNote = await linkedNoteForHighlight(
+            page,
+            highlightFragmentId,
+            highlightId,
+          );
           noteBlockId = linkedNote?.noteBlockId ?? null;
         } catch (error) {
           cleanupErrors.push(error);
@@ -703,7 +895,11 @@ test.describe("notes cutover", () => {
           cleanupErrors.push(error);
         }
       }
-      throwE2eCleanupFailures("Quick-note composer", productError, cleanupErrors);
+      throwE2eCleanupFailures(
+        "Quick-note composer",
+        productError,
+        cleanupErrors,
+      );
     }
   });
 
@@ -719,39 +915,59 @@ test.describe("notes cutover", () => {
     let productError: unknown = null;
 
     try {
-      await gotoSinglePaneWorkspace(page, deviceId, `/media/${seeded.media_id}`);
-      const contentPane = activeWorkspacePane(page).locator('div[class*="fragments"]');
+      await gotoSinglePaneWorkspace(
+        page,
+        deviceId,
+        `/media/${seeded.media_id}`,
+      );
+      const contentPane = activeWorkspacePane(page).locator(
+        'div[class*="fragments"]',
+      );
       await expect(contentPane).toBeVisible({ timeout: 10_000 });
 
-      const blockedExacts = await blockedExactsForFragment(page, seeded.fragment_id);
+      const blockedExacts = await blockedExactsForFragment(
+        page,
+        seeded.fragment_id,
+      );
       await selectFreshVisibleTextSnippet(
         page,
         activePaneSelector('div[class*="fragments"]'),
         blockedExacts,
-        { method: "range" }
+        { method: "range" },
       );
       await expect(
-        page.getByRole("group", { name: "Selection actions" })
+        page.getByRole("group", { name: "Selection actions" }),
       ).toBeVisible({ timeout: 5_000 });
 
-      const created = await nextCreatedHighlight(page, () => page.keyboard.press("n"));
+      const created = await nextCreatedHighlight(page, () =>
+        page.keyboard.press("n"),
+      );
       highlightId = created.id;
 
-      const composer = page.getByRole("dialog", { name: "Add note to highlight" });
+      const composer = page.getByRole("dialog", {
+        name: "Add note to highlight",
+      });
       await expect(composer).toBeVisible({ timeout: 5_000 });
       await expect(
-        composer.getByRole("textbox", { name: "Highlight note" })
+        composer.getByRole("textbox", { name: "Highlight note" }),
       ).toBeFocused({ timeout: 5_000 });
 
       await page.keyboard.press("Escape");
       await expect(composer).toBeHidden({ timeout: 5_000 });
 
       // Highlight persists; no note was created for the untouched composer.
-      const response = await page.request.get(`/api/fragments/${created.fragmentId}/highlights`);
+      const response = await page.request.get(
+        `/api/fragments/${created.fragmentId}/highlights`,
+      );
       await expectOk(response, "Fetch highlights after chord dismiss");
       const payload = (await response.json()) as HighlightsPayload;
-      const highlight = payload.data.highlights.find((item) => item.id === created.id);
-      expect(highlight, "Highlight should survive an abandoned composer").toBeTruthy();
+      const highlight = payload.data.highlights.find(
+        (item) => item.id === created.id,
+      );
+      expect(
+        highlight,
+        "Highlight should survive an abandoned composer",
+      ).toBeTruthy();
       expect(highlight?.linked_note_blocks ?? []).toHaveLength(0);
     } catch (error) {
       productError = error;

@@ -403,12 +403,23 @@ describe("MobileSecondaryPaneHost", () => {
     );
 
     const panel = screen.getByTestId("mobile-secondary-host");
-    expect(panel.style.getPropertyValue("--keyboard-inset")).toBe("300px");
+    expect(panel.style.getPropertyValue("--keyboard-inset")).toBe(
+      "var(--mobile-overlay-keyboard-inset)",
+    );
+    expect(
+      document.documentElement.style.getPropertyValue(
+        "--mobile-overlay-keyboard-inset",
+      ),
+    ).toBe("300px");
 
     act(() => {
       vv.height = window.innerHeight;
       vv.dispatchEvent(new Event("resize"));
     });
-    expect(panel.style.getPropertyValue("--keyboard-inset")).toBe("0px");
+    expect(
+      document.documentElement.style.getPropertyValue(
+        "--mobile-overlay-keyboard-inset",
+      ),
+    ).toBe("0px");
   });
 });

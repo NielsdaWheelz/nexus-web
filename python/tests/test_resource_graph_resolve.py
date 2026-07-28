@@ -695,9 +695,7 @@ def test_resolve_default_library_presents_as_all_not_stored_name(
     assert "My Library" not in (resolved.summary or "")
 
 
-def test_resolve_default_library_dossier_labels_all(
-    db_session: Session, bootstrapped_user: UUID
-):
+def test_resolve_default_library_dossier_labels_all(db_session: Session, bootstrapped_user: UUID):
     """AC1: a Dossier whose subject is the viewer's own Default library labels
     that subject "All", never the stored seeded name."""
     default_library_id = get_user_default_library(db_session, bootstrapped_user)
@@ -964,8 +962,7 @@ def test_user_audience_dossier_resources_fail_closed_when_subject_is_missing(
         "audience ownership cannot expose a Dossier whose canonical subject is gone"
     )
     assert all(
-        route_for_ref(db_session, viewer_id=bootstrapped_user, ref=ref) is None
-        for ref in refs
+        route_for_ref(db_session, viewer_id=bootstrapped_user, ref=ref) is None for ref in refs
     ), "a hidden Dossier head or revision has no canonical activation route"
 
 

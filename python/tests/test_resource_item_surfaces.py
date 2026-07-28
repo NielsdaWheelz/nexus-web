@@ -259,7 +259,7 @@ def test_surface_command_route_is_post_only_and_snake_case(authenticated_client)
                 {
                     "ref": initial["source"]["item"]["ref"],
                     "lane": "outgoing_edges",
-                    "version": initial["source"]["item"]["version_by_lane"]["outgoing_edges"],
+                    "version": initial["source"]["item"]["versionByLane"]["outgoing_edges"],
                 }
             ],
             "command": {

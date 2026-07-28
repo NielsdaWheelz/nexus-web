@@ -163,6 +163,7 @@ function rawResourceTarget(overrides: Partial<Record<string, unknown>> = {}) {
       missing: false,
       capabilities: {
         sharing: "ResourceGrants",
+        libraryPlacement: "ManageEntries",
         userRelation: {
           userLinkSource: true,
           userLinkTarget: "direct",

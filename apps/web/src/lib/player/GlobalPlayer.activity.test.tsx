@@ -99,6 +99,12 @@ describe("GlobalPlayer activity adapter", () => {
     fireEvent(audio, new Event("playing"));
     await waitFor(() => expect(latestListeningRegistration().eligible).toBe(true));
     audio.currentTime = 12.25;
+    fireEvent(audio, new Event("timeupdate"));
+    await waitFor(() =>
+      expect(
+        latestListeningRegistration().measurement?.mediaPositionMs,
+      ).toBe(12_250),
+    );
 
     document.dispatchEvent(new Event("visibilitychange"));
     window.dispatchEvent(new Event("blur"));

@@ -1,4 +1,10 @@
-import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type Page,
+} from "@playwright/test";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { openAddContentPanel } from "./add-content";
@@ -85,7 +91,12 @@ function escapeRegExp(value: string): string {
 }
 
 async function expectOk(
-  response: { ok(): boolean; status(): number; statusText(): string; text(): Promise<string> },
+  response: {
+    ok(): boolean;
+    status(): number;
+    statusText(): string;
+    text(): Promise<string>;
+  },
   label: string,
 ): Promise<void> {
   if (response.ok()) return;
@@ -132,16 +143,21 @@ async function getSlate(
   return (await response.json()) as SlateEnvelopeWire;
 }
 
-async function visibleSlateHrefs(page: Page, ariaLabel: string): Promise<string[]> {
+async function visibleSlateHrefs(
+  page: Page,
+  ariaLabel: string,
+): Promise<string[]> {
   return activeWorkspacePane(page)
     .getByRole("list", { name: ariaLabel })
     .getByRole("link")
     .evaluateAll((links) =>
-      links.map((link) => link.getAttribute("href")).filter((href): href is string => href !== null),
+      links
+        .map((link) => link.getAttribute("href"))
+        .filter((href): href is string => href !== null),
     );
 }
 
-test("Reading Slate acceptance preserves survivors, excludes the accepted target, and reconciles on library reactivation", async ({
+test("Reading Slate acceptance preserves survivors, excludes the accepted target, and reconciles the active library through reactivation", async ({
   page,
 }, testInfo) => {
   test.slow();
@@ -160,10 +176,11 @@ test("Reading Slate acceptance preserves survivors, excludes the accepted target
     const libraryName = `Slate E2E ${Date.now()}`;
     const createLibrary = await page.request.post("/api/libraries", {
       headers: stateChangingApiHeaders(),
-      data: { name: libraryName },
+      data: { library_id: randomUUID(), name: libraryName },
     });
     await expectOk(createLibrary, "Create Slate E2E library");
-    libraryId = ((await createLibrary.json()) as { data: { id: string } }).data.id;
+    libraryId = ((await createLibrary.json()) as { data: { id: string } }).data
+      .id;
 
     const anchorMediaId = uploadedMediaIds[0];
     const candidateMediaIds = [...seededMediaIds(), uploadedMediaIds[1]];
@@ -198,14 +215,19 @@ test("Reading Slate acceptance preserves survivors, excludes the accepted target
     }
 
     await expect
-      .poll(async () => (await getSlate(page.request, libraryId!)).data.items.length, {
-        timeout: 15_000,
-      })
+      .poll(
+        async () =>
+          (await getSlate(page.request, libraryId!)).data.items.length,
+        {
+          timeout: 15_000,
+        },
+      )
       .toBe(10);
     const initialServerSlate = await getSlate(page.request, libraryId);
-    expect(new Set(initialServerSlate.data.items.map((item) => item.target.ref)).size).toBe(
-      10,
-    );
+    expect(
+      new Set(initialServerSlate.data.items.map((item) => item.target.ref))
+        .size,
+    ).toBe(10);
 
     const libraryPath = `/libraries/${libraryId}`;
     await gotoWithWorkspaceSession(
@@ -226,26 +248,32 @@ test("Reading Slate acceptance preserves survivors, excludes the accepted target
       name: slateAriaLabel,
     });
     await expect(slate).toBeVisible({ timeout: 15_000 });
-    await expect(slate.getByRole("button", { name: /Add .+ to Slate E2E / })).toHaveCount(
-      10,
-    );
+    await expect(
+      slate.getByRole("button", { name: /Add .+ to Slate E2E / }),
+    ).toHaveCount(10);
     const initialHrefs = await visibleSlateHrefs(page, slateAriaLabel);
     expect(initialHrefs).toHaveLength(10);
     const acceptedHref = initialHrefs[0];
     const acceptedMediaId = mediaIdFromUrl(`http://localhost${acceptedHref}`);
 
-    await slate.getByRole("button", { name: /Add .+ to Slate E2E / }).first().click();
+    await slate
+      .getByRole("button", { name: /Add .+ to Slate E2E / })
+      .first()
+      .click();
     await expect(page.getByText(`Added to ${libraryName}`)).toBeVisible();
     const expectedSurvivors = initialHrefs.slice(1);
     await expect
-      .poll(async () => {
-        const hrefs = await visibleSlateHrefs(page, slateAriaLabel);
-        return (
-          hrefs.length === 10 &&
-          expectedSurvivors.every((href, index) => hrefs[index] === href) &&
-          !initialHrefs.includes(hrefs[9] ?? "")
-        );
-      }, { timeout: 15_000 })
+      .poll(
+        async () => {
+          const hrefs = await visibleSlateHrefs(page, slateAriaLabel);
+          return (
+            hrefs.length === 10 &&
+            expectedSurvivors.every((href, index) => hrefs[index] === href) &&
+            !initialHrefs.includes(hrefs[9] ?? "")
+          );
+        },
+        { timeout: 15_000 },
+      )
       .toBe(true);
     const refilledHrefs = await visibleSlateHrefs(page, slateAriaLabel);
     expect(refilledHrefs.slice(0, 9)).toEqual(expectedSurvivors);
@@ -260,19 +288,24 @@ test("Reading Slate acceptance preserves survivors, excludes the accepted target
       .toBe(false);
     await expect
       .poll(async () => {
-        const response = await page.request.get(`/api/libraries/${libraryId}/entries`);
+        const response = await page.request.get(
+          `/api/libraries/${libraryId}/entries`,
+        );
         await expectOk(response, "Read committed destination entries");
         const entries = (await response.json()) as LibraryEntriesWire;
         return entries.data.some(
-          (entry) => entry.kind === "media" && entry.media?.id === acceptedMediaId,
+          (entry) =>
+            entry.kind === "media" && entry.media?.id === acceptedMediaId,
         );
       })
       .toBe(true);
 
     const destinationEntries = activeWorkspacePane(page).getByRole("list", {
-      name: "Library entries",
+      name: libraryName,
     });
-    await expect(destinationEntries.locator(`a[href="${acceptedHref}"]`)).toHaveCount(0);
+    await expect(
+      destinationEntries.locator(`a[href="${acceptedHref}"]`),
+    ).toBeVisible({ timeout: 15_000 });
     const librariesTab = workspacePaneButton(page, /^Libraries\b/);
     const libraryTab = workspacePaneButton(
       page,
@@ -284,7 +317,7 @@ test("Reading Slate acceptance preserves survivors, excludes the accepted target
     await expect(libraryTab).toHaveAttribute("aria-current", "page");
     await expect(
       activeWorkspacePane(page)
-        .getByRole("list", { name: "Library entries" })
+        .getByRole("list", { name: libraryName })
         .locator(`a[href="${acceptedHref}"]`),
     ).toBeVisible({ timeout: 15_000 });
   } catch (error) {
@@ -325,6 +358,10 @@ test("Reading Slate acceptance preserves survivors, excludes the accepted target
         cleanupErrors.push(error);
       }
     }
-    throwE2eCleanupFailures("Reading Slate acceptance", productError, cleanupErrors);
+    throwE2eCleanupFailures(
+      "Reading Slate acceptance",
+      productError,
+      cleanupErrors,
+    );
   }
 });

@@ -315,7 +315,7 @@ interface LibraryPaneResource {
   entriesPage: LibraryPageInfo;
 }
 
-interface LibraryEntryPageSnapshot {
+interface CommittedLibraryView {
   readonly view: LibraryEntryView;
   readonly entries: readonly LibraryEntry[];
   readonly nextCursor: string | null;
@@ -326,7 +326,7 @@ interface LibraryEntryPageSnapshot {
 
 interface LibrarySnapshot {
   readonly library: Library;
-  readonly entries: LibraryEntryPageSnapshot;
+  readonly entries: CommittedLibraryView;
 }
 
 type LibraryEntriesState =
@@ -336,17 +336,17 @@ type LibraryEntriesState =
     }
   | {
       kind: "Ready";
-      committed: LibraryEntryPageSnapshot;
+      committed: CommittedLibraryView;
     }
   | {
       kind: "Refreshing";
       requestedView: LibraryEntryView;
-      committed: LibraryEntryPageSnapshot;
+      committed: CommittedLibraryView;
     }
   | {
       kind: "RefreshFailed";
       requestedView: LibraryEntryView;
-      committed: LibraryEntryPageSnapshot;
+      committed: CommittedLibraryView;
       error: ApiError;
     };
 
@@ -444,6 +444,10 @@ export default function LibraryPaneBody() {
   }
   const router = usePaneRouter();
   const paneRuntime = usePaneRuntime();
+  const activateTarget = requirePaneRuntime(
+    paneRuntime,
+    "LibraryPaneBody",
+  ).activateTarget;
   const isPaneActive = paneRuntime?.isActive ?? true;
   const paneId = paneRuntime?.paneId ?? `library-${id}`;
   const feedback = useFeedback();
@@ -510,6 +514,9 @@ export default function LibraryPaneBody() {
   const [controller, setController] = useState<LibrarySnapshot | null>(
     initialRestored,
   );
+  const [observedUnavailableLibraryId, setObservedUnavailableLibraryId] =
+    useState<string | null>(null);
+  const observedLibraryUnavailable = observedUnavailableLibraryId === id;
   const clearAllVisitData = useClearAllPaneVisitData();
   const allowInitialAdoptionRef = useRef(initialRestored === null);
   const entries = useMemo(
@@ -525,9 +532,7 @@ export default function LibraryPaneBody() {
       setController((current) => {
         if (current === null) return current;
         const library =
-          typeof update === "function"
-            ? update(current.library)
-            : update;
+          typeof update === "function" ? update(current.library) : update;
         return library === null ? null : { ...current, library };
       });
     },
@@ -751,9 +756,7 @@ export default function LibraryPaneBody() {
       ) as Promise<LibraryPaneResource>,
   });
   const requestedViewKey =
-    view === null
-      ? null
-      : libraryEntriesResource.cacheKey({ id, view });
+    view === null ? null : libraryEntriesResource.cacheKey({ id, view });
   const committedViewKey =
     controller === null
       ? null
@@ -770,12 +773,14 @@ export default function LibraryPaneBody() {
   // keeps the pane-level spinner.
   const knownLibrary =
     currentLibrary ??
-    (libraryResource.status === "ready" &&
+    (!observedLibraryUnavailable &&
+    libraryResource.status === "ready" &&
     libraryResource.data.library.id === id
       ? libraryResource.data.library
       : null);
   const adoptLibrary = useCallback(
     (next: LibraryOut | null) => {
+      setObservedUnavailableLibraryId(next === null ? id : null);
       setLibrary((current) =>
         next === null
           ? null
@@ -845,7 +850,12 @@ export default function LibraryPaneBody() {
         viewIsConsumptionSensitive(view);
       return placementStale || consumptionStale;
     },
-    [consumptionChange.revision, placementChange.revision, id, isDefaultLibrary],
+    [
+      consumptionChange.revision,
+      placementChange.revision,
+      id,
+      isDefaultLibrary,
+    ],
   );
 
   // The bootstrap page is adopted only for the initial Canonical + All view.
@@ -857,8 +867,7 @@ export default function LibraryPaneBody() {
       ? !isInitialView ||
         !allowInitialAdoptionRef.current ||
         !bootstrapSeedClaimable
-      : !committedMatchesRequested ||
-        committedViewInvalidatedRef.current);
+      : !committedMatchesRequested || committedViewInvalidatedRef.current);
   // The resource identity carries the requested view AND a nonce so a
   // revision-stale result refetches the same view against current truth.
   const firstPageRequestKey =
@@ -945,8 +954,7 @@ export default function LibraryPaneBody() {
       ? null
       : controller === null
         ? { kind: "InitialLoading", requestedView: view }
-        : committedMatchesRequested &&
-            !committedViewInvalidatedRef.current
+        : committedMatchesRequested && !committedViewInvalidatedRef.current
           ? { kind: "Ready", committed: controller.entries }
           : failedFirstPage === null
             ? {
@@ -1261,8 +1269,9 @@ export default function LibraryPaneBody() {
     setLoadMoreError(null);
     setLoadMoreCursorInvalid(false);
     setViewInvalid(false);
-    const scrollport =
-      listRegionRef.current?.closest<HTMLElement>("[data-pane-content]");
+    const scrollport = listRegionRef.current?.closest<HTMLElement>(
+      "[data-pane-content]",
+    );
     if (scrollport) scrollport.scrollTop = 0;
     focusPendingControl();
   }, [
@@ -1286,6 +1295,7 @@ export default function LibraryPaneBody() {
   // renders its toolbar and the polite status node instead.
   const loading =
     knownLibrary === null &&
+    !observedLibraryUnavailable &&
     error === null &&
     (libraryResource.status === "loading" ||
       (firstPageRequestKey !== null && firstPageError === null));
@@ -1654,7 +1664,9 @@ export default function LibraryPaneBody() {
       } catch (error) {
         if (handleUnauthenticatedApiError(error)) return;
         if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-        feedback.show(toFeedback(error, { fallback: "Failed to reset progress" }));
+        feedback.show(
+          toFeedback(error, { fallback: "Failed to reset progress" }),
+        );
       } finally {
         resettingProgressMediaIds.remove(mediaId);
       }
@@ -2092,28 +2104,6 @@ export default function LibraryPaneBody() {
   );
   const visibleEntries = entries.filter(isVisibleEntry);
   const entryFolioCount = visibleEntries.length;
-  // Client-side filtering (hide finished, optimistic removal) can empty the
-  // visible page while more entries remain server-side. Advance until an
-  // eligible row appears or the cursor is exhausted, so the empty notice never
-  // lies and a real next page is never stranded behind a hidden footer (AC3/AC8).
-  useEffect(() => {
-    if (
-      viewIsCommitted &&
-      entryCursor !== null &&
-      visibleEntries.length === 0 &&
-      !loadingMore &&
-      loadMoreError === null
-    ) {
-      handleLoadMoreEntries();
-    }
-  }, [
-    viewIsCommitted,
-    entryCursor,
-    visibleEntries.length,
-    loadingMore,
-    loadMoreError,
-    handleLoadMoreEntries,
-  ]);
   const connectionsComposerController = useConnectionsComposerController({
     scheme: "library",
     id,
@@ -2123,10 +2113,10 @@ export default function LibraryPaneBody() {
       <ConnectionsSurface
         resourceRef={{ scheme: "library", id }}
         composerController={connectionsComposerController}
-        activateTarget={requirePaneRuntime(paneRuntime, "LibraryPaneBody").activateTarget}
+        activateTarget={activateTarget}
       />
     ),
-    [connectionsComposerController, id, paneRuntime],
+    [activateTarget, connectionsComposerController, id],
   );
   const membersBody = useMemo(
     () =>
@@ -2247,11 +2237,7 @@ export default function LibraryPaneBody() {
             fallback: "Failed to load library entries",
           })}
         >
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={failedFirstPage.retry}
-          >
+          <Button variant="secondary" size="sm" onClick={failedFirstPage.retry}>
             Retry
           </Button>
         </FeedbackNotice>
@@ -2304,32 +2290,35 @@ export default function LibraryPaneBody() {
   // not by a second "Refreshing…" notice.
   const entryReconciliationNotice =
     entryReconciliationRequest && !loadMoreCursorInvalid ? (
-    entryReconciliationFetch.error === null ? (
-      <FeedbackNotice severity="neutral" title="Refreshing library entries…" />
-    ) : (
-      <FeedbackNotice
-        feedback={toFeedback(
-          toLibraryAddError(entryReconciliationFetch.error),
-          {
-            fallback: "Failed to refresh library entries",
-          },
-        )}
-      >
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() =>
-            requestEntryReconciliation(entryReconciliationRequest.view, {
-              placement: placementRevisionRef.current,
-              consumption: consumptionRevisionRef.current,
-            })
-          }
+      entryReconciliationFetch.error === null ? (
+        <FeedbackNotice
+          severity="neutral"
+          title="Refreshing library entries…"
+        />
+      ) : (
+        <FeedbackNotice
+          feedback={toFeedback(
+            toLibraryAddError(entryReconciliationFetch.error),
+            {
+              fallback: "Failed to refresh library entries",
+            },
+          )}
         >
-          Retry
-        </Button>
-      </FeedbackNotice>
-    )
-  ) : null;
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() =>
+              requestEntryReconciliation(entryReconciliationRequest.view, {
+                placement: placementRevisionRef.current,
+                consumption: consumptionRevisionRef.current,
+              })
+            }
+          >
+            Retry
+          </Button>
+        </FeedbackNotice>
+      )
+    ) : null;
   // The single polite status node lives OUTSIDE the busy collection and points
   // at it via aria-controls. Requested/committed labels are the one formatter.
   const requestedViewLabel =
@@ -2482,39 +2471,39 @@ export default function LibraryPaneBody() {
       connectionSummary: connectionSummaries.get(`media:${item.media.id}`),
       retryProcessing:
         viewIsCommitted && item.media.capabilities.can_retry
-        ? {
-            kind: "Available",
-            execute: () => handleRetryProcessing(item.media.id),
-          }
-        : { kind: "Unavailable" },
+          ? {
+              kind: "Available",
+              execute: () => handleRetryProcessing(item.media.id),
+            }
+          : { kind: "Unavailable" },
       refreshSource:
         viewIsCommitted && item.media.capabilities.can_refresh_source
-        ? {
-            kind: "Available",
-            execute: () => handleRefreshSource(item.media.id),
-          }
-        : { kind: "Unavailable" },
+          ? {
+              kind: "Available",
+              execute: () => handleRefreshSource(item.media.id),
+            }
+          : { kind: "Unavailable" },
       retryMetadata:
         viewIsCommitted && item.media.capabilities.can_retry_metadata
-        ? {
-            kind: "Available",
-            execute: () => handleRetryMetadata(item.media.id),
-          }
-        : { kind: "Unavailable" },
+          ? {
+              kind: "Available",
+              execute: () => handleRetryMetadata(item.media.id),
+            }
+          : { kind: "Unavailable" },
       editAuthors:
         viewIsCommitted && item.media.capabilities.can_edit_authors
-        ? {
-            kind: "Available",
-            execute: (detail) => openAuthorsEditor(item.media.id, detail),
-          }
-        : { kind: "Unavailable" },
+          ? {
+              kind: "Available",
+              execute: (detail) => openAuthorsEditor(item.media.id, detail),
+            }
+          : { kind: "Unavailable" },
       removeMedia:
         viewIsCommitted && item.media.capabilities.can_delete
-        ? {
-            kind: "Available",
-            execute: () => handleDeleteMedia(item),
-          }
-        : { kind: "Unavailable" },
+          ? {
+              kind: "Available",
+              execute: () => handleDeleteMedia(item),
+            }
+          : { kind: "Unavailable" },
       progressReset:
         viewIsCommitted &&
         item.media.progress_resettable &&
@@ -2534,10 +2523,9 @@ export default function LibraryPaneBody() {
               },
             }
           : { kind: "Unavailable" },
-      readState:
-        !viewIsCommitted
-          ? { kind: "Unavailable" }
-          : item.media.read_state === "finished"
+      readState: !viewIsCommitted
+        ? { kind: "Unavailable" }
+        : item.media.read_state === "finished"
           ? {
               kind: "MarkUnread",
               execute: () => {
@@ -2714,10 +2702,7 @@ export default function LibraryPaneBody() {
           </Button>
         </FeedbackNotice>
       ) : (
-        <FeedbackNotice
-          severity="neutral"
-          title="No unfinished unfiled items."
-        >
+        <FeedbackNotice severity="neutral" title="No unfinished unfiled items.">
           <Button variant="secondary" size="sm" onClick={recoverToAllItems}>
             Clear filters
           </Button>
@@ -2781,14 +2766,14 @@ export default function LibraryPaneBody() {
           : undefined
       }
     />
-  ) : currentLibrary === null ? (
-    // Metadata known but no page has committed yet: the busy region stays empty
-    // (rows/empty-state only); the polite status node carries "Loading …" /
-    // "Could not load …". No false empty-state notice before the first commit.
-    null
-  ) : entryCursor !== null ? (
-    // Empty after filtering but more pages remain: the auto-advance effect is
-    // fetching them; surface its progress/error instead of a false empty state.
+  ) : currentLibrary ===
+    null ? // Metadata known but no page has committed yet: the busy region stays empty
+  // (rows/empty-state only); the polite status node carries "Loading …" /
+  // "Could not load …". No false empty-state notice before the first commit.
+  null : entryCursor !== null ? (
+    // Empty after local filtering while the server still has another page:
+    // keep the explicit continuation control visible instead of publishing a
+    // false empty state or initiating an effect-owned GET.
     entryFooter
   ) : (
     emptyStateNotice
@@ -2806,9 +2791,7 @@ export default function LibraryPaneBody() {
   return (
     <>
       <PaneSurface
-        opener={
-          <SectionOpener heading={entriesAccessibleName} scale="title" />
-        }
+        opener={<SectionOpener heading={entriesAccessibleName} scale="title" />}
         toolbar={toolbar}
         state={
           error || entryReconciliationNotice ? (

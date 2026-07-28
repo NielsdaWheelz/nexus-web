@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ComponentProps, ReactNode } from "react";
+import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import { useConversationContextRefs } from "@/lib/conversations/useConversationContextRefs";
 import {
   consumePendingWorkspaceTargetActivationRequests,
@@ -51,7 +52,9 @@ function contextRef(overrides: Partial<ContextRefOut> = {}): ContextRefOut {
 
 function renderWithShare(node: ReactNode) {
   return render(
-    <ShareControllerProvider>{node}</ShareControllerProvider>,
+    withRenderEnvironment(
+      <ShareControllerProvider>{node}</ShareControllerProvider>,
+    ),
   );
 }
 
@@ -66,10 +69,10 @@ function renderSurface(
   },
 ) {
   return renderWithShare(
-      <ConversationContextRefsSurface
-        {...props}
-        onOpenResource={props.onOpenResource ?? (() => {})}
-      />,
+    <ConversationContextRefsSurface
+      {...props}
+      onOpenResource={props.onOpenResource ?? (() => {})}
+    />,
   );
 }
 
@@ -85,7 +88,12 @@ function contextRefWire(item = contextRef()) {
     id: item.id,
     conversation_id: item.conversation_id,
     resource_ref: item.resource_ref,
-    activation: item.activation,
+    activation: {
+      resource_ref: item.activation.resourceRef,
+      kind: item.activation.kind,
+      href: item.activation.href,
+      unresolved_reason: item.activation.unresolvedReason,
+    },
     label: item.label,
     summary: item.summary,
     missing: item.missing,
@@ -266,7 +274,10 @@ describe("ConversationContextRefsSurface", () => {
       await waitFor(() =>
         expect(panes.details).toEqual([
           {
-            target: { href: `/conversations/${CONVERSATION_ID}`, labelHint: "Chat" },
+            target: {
+              href: `/conversations/${CONVERSATION_ID}`,
+              labelHint: "Chat",
+            },
             disposition: { kind: "Adopt" },
             modality: "Programmatic",
           },
@@ -327,18 +338,14 @@ describe("ConversationContextRefsSurface", () => {
     await user.click(screen.getByRole("button", { name: "Actions" }));
     await user.click(screen.getByRole("menuitem", { name: "Share…" }));
 
-    expect(
-      await screen.findByRole("dialog", { name: "Share" }),
-    ).toBeVisible();
+    expect(await screen.findByRole("dialog", { name: "Share" })).toBeVisible();
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         sharePath,
         expect.objectContaining({ signal: expect.any(AbortSignal) }),
       ),
     );
-    expect(
-      screen.getByRole("button", { name: "Copy link" }),
-    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Copy link" })).toBeEnabled();
     expect(screen.getByText("page link")).toBeVisible();
   });
 
@@ -351,21 +358,17 @@ describe("ConversationContextRefsSurface", () => {
             ? new URL(input.url).pathname
             : new URL(String(input), "http://localhost").pathname;
         if (
-          path ===
-            `/api/conversations/${CONVERSATION_ID}/context-refs` &&
+          path === `/api/conversations/${CONVERSATION_ID}/context-refs` &&
           (init?.method ?? "GET") === "GET"
         ) {
           return jsonResponse({
             data: [
-              contextRefWire(
-                contextRef({ conversation_id: CONVERSATION_ID }),
-              ),
+              contextRefWire(contextRef({ conversation_id: CONVERSATION_ID })),
             ],
           });
         }
         if (
-          path ===
-            `/api/conversations/${CONVERSATION_ID}/context-refs/ref-1` &&
+          path === `/api/conversations/${CONVERSATION_ID}/context-refs/ref-1` &&
           init?.method === "DELETE"
         ) {
           return new Response(null, { status: 204 });

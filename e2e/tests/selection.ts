@@ -14,6 +14,10 @@ type SelectionCandidate = DragSelectionCandidate & {
   endOffset: number;
 };
 
+class PointerSelectionMismatchError extends Error {
+  override readonly name = "PointerSelectionMismatchError";
+}
+
 export async function selectFreshVisibleTextSnippet(
   page: Page,
   containerSelector: string,
@@ -78,7 +82,10 @@ export async function selectFreshVisibleTextSnippet(
       };
 
       for (const [containerIndex, container] of containers.entries()) {
-        const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+        const walker = document.createTreeWalker(
+          container,
+          NodeFilter.SHOW_TEXT,
+        );
         const textNodes: Array<{
           node: Text;
           index: number;
@@ -98,8 +105,8 @@ export async function selectFreshVisibleTextSnippet(
             rawText: textNode.textContent ?? "",
             selectable: Boolean(
               style &&
-                style.display !== "none" &&
-                style.visibility !== "hidden",
+              style.display !== "none" &&
+              style.visibility !== "hidden",
             ),
           });
         }
@@ -348,52 +355,101 @@ export async function selectExactVisibleText(
   containerSelector: string,
   exact: string,
 ): Promise<string> {
-  const candidate = await page.evaluate(
-    ({ selector, exact }) => {
-      const container = document.querySelector(selector);
-      if (!(container instanceof HTMLElement)) {
-        return null;
-      }
+  const container = page.locator(containerSelector);
+  let lastMismatch: PointerSelectionMismatchError | null = null;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    // Clear any prior browser range before actionability and coordinate
+    // sampling: dismissing a selection-owned surface after sampling would make
+    // otherwise-correct viewport coordinates stale.
+    await page.evaluate(() => window.getSelection()?.removeAllRanges());
+    await container.hover();
+    const candidate = await container.evaluate(async (element, targetText) => {
       const visibleRectForRange = (range: Range): DOMRect | null => {
         const rect = range.getBoundingClientRect();
         return rect.width > 0 && rect.height > 0 ? rect : null;
       };
-      const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-      while (walker.nextNode()) {
-        const textNode = walker.currentNode;
-        const text = textNode.textContent ?? "";
-        const start = text.indexOf(exact);
-        if (start < 0) {
-          continue;
+
+      const readCandidate = (): DragSelectionCandidate | null => {
+        const walker = document.createTreeWalker(
+          element,
+          NodeFilter.SHOW_TEXT,
+        );
+        while (walker.nextNode()) {
+          const textNode = walker.currentNode;
+          const text = textNode.textContent ?? "";
+          const start = text.indexOf(targetText);
+          if (start < 0) {
+            continue;
+          }
+          const end = start + targetText.length;
+          const startRange = document.createRange();
+          startRange.setStart(textNode, start);
+          startRange.setEnd(textNode, Math.min(start + 1, end));
+          const startRect = visibleRectForRange(startRange);
+          startRange.detach();
+          const endRange = document.createRange();
+          endRange.setStart(textNode, Math.max(start, end - 1));
+          endRange.setEnd(textNode, end);
+          const endRect = visibleRectForRange(endRange);
+          endRange.detach();
+          if (!startRect || !endRect) {
+            continue;
+          }
+          return {
+            text: targetText,
+            start: {
+              x: startRect.left + 1,
+              y: startRect.top + startRect.height / 2,
+            },
+            end: {
+              x: endRect.right - 1,
+              y: endRect.top + endRect.height / 2,
+            },
+          };
         }
-        const end = start + exact.length;
-        const startRange = document.createRange();
-        startRange.setStart(textNode, start);
-        startRange.setEnd(textNode, Math.min(start + 1, end));
-        const startRect = visibleRectForRange(startRange);
-        startRange.detach();
-        const endRange = document.createRange();
-        endRange.setStart(textNode, Math.max(start, end - 1));
-        endRange.setEnd(textNode, end);
-        const endRect = visibleRectForRange(endRange);
-        endRange.detach();
-        if (!startRect || !endRect) {
-          continue;
-        }
-        return {
-          text: exact,
-          start: { x: startRect.left + 1, y: startRect.top + startRect.height / 2 },
-          end: { x: endRect.right - 1, y: endRect.top + endRect.height / 2 },
-        };
+        return null;
+      };
+
+      let candidate = readCandidate();
+      if (!candidate) {
+        return null;
       }
-      return null;
-    },
-    { selector: containerSelector, exact },
-  );
-  if (!candidate) {
-    throw new Error(`Could not find selected text: ${exact}`);
+      let stableFrames = 0;
+      for (let frame = 0; frame < 30; frame += 1) {
+        await new Promise<void>((resolve) => {
+          requestAnimationFrame(() => resolve());
+        });
+        const next = readCandidate();
+        if (!next) {
+          return null;
+        }
+        const stable =
+          Math.abs(next.start.x - candidate.start.x) < 0.5 &&
+          Math.abs(next.start.y - candidate.start.y) < 0.5 &&
+          Math.abs(next.end.x - candidate.end.x) < 0.5 &&
+          Math.abs(next.end.y - candidate.end.y) < 0.5;
+        candidate = next;
+        stableFrames = stable ? stableFrames + 1 : 0;
+        if (stableFrames >= 2) {
+          return candidate;
+        }
+      }
+      return candidate;
+    }, exact);
+    if (!candidate) {
+      throw new Error(`Could not find selected text: ${exact}`);
+    }
+    try {
+      return await dragSelection(page, candidate);
+    } catch (error) {
+      if (!(error instanceof PointerSelectionMismatchError)) {
+        throw error;
+      }
+      lastMismatch = error;
+    }
   }
-  return dragSelection(page, candidate);
+  throw lastMismatch ?? new Error(`Could not select exact text: ${exact}`);
 }
 
 async function dragSelection(
@@ -427,7 +483,25 @@ async function dragSelection(
     !selected.includes(candidate.text) &&
     !candidate.text.includes(selected)
   ) {
-    throw new Error(`Selected text did not match candidate text: ${selected}`);
+    const hitTest = await page.evaluate(({ start, end }) => {
+      const describePoint = ({ x, y }: SelectionPoint) => {
+        const caret = document.caretPositionFromPoint?.(x, y);
+        return {
+          element:
+            document.elementFromPoint(x, y)?.closest("[data-message-id]")
+              ?.getAttribute("data-message-id") ?? null,
+          text: caret?.offsetNode.textContent ?? null,
+          offset: caret?.offset ?? null,
+        };
+      };
+      return {
+        start: describePoint(start),
+        end: describePoint(end),
+      };
+    }, candidate);
+    throw new PointerSelectionMismatchError(
+      `Selected text did not match candidate text: ${selected}; hit-test=${JSON.stringify(hitTest)}; candidate=${JSON.stringify(candidate)}`,
+    );
   }
   return selected;
 }

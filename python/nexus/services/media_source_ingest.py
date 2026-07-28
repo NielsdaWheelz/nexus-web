@@ -146,6 +146,61 @@ _NON_REACQUIRABLE_FILE_ERROR_CODES = {
     ApiErrorCode.E_STORAGE_MISSING.value,
     ApiErrorCode.E_STORAGE_ERROR.value,
 }
+_TERMINAL_SOURCE_FAILURE_CODES = frozenset(
+    {
+        ApiErrorCode.E_SOURCE_ACCESS_DENIED,
+        ApiErrorCode.E_SOURCE_TOO_LARGE,
+        ApiErrorCode.E_SOURCE_NOT_READABLE,
+        ApiErrorCode.E_SSRF_BLOCKED,
+        ApiErrorCode.E_INVALID_FILE_TYPE,
+        ApiErrorCode.E_INVALID_CONTENT_TYPE,
+        ApiErrorCode.E_FILE_TOO_LARGE,
+        ApiErrorCode.E_CAPTURE_TOO_LARGE,
+        ApiErrorCode.E_ARCHIVE_UNSAFE,
+        ApiErrorCode.E_INVALID_REQUEST,
+        ApiErrorCode.E_PDF_PASSWORD_REQUIRED,
+        ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE,
+        ApiErrorCode.E_X_POST_UNAVAILABLE,
+        ApiErrorCode.E_X_PROVIDER_CREDITS_DEPLETED,
+        ApiErrorCode.E_X_PROVIDER_AUTH_REJECTED,
+        ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED,
+        ApiErrorCode.E_BILLING_REQUIRED,
+    }
+)
+_UPLOAD_CONFIRM_FAILURE_CODES = frozenset(
+    {
+        ApiErrorCode.E_ARCHIVE_UNSAFE,
+        ApiErrorCode.E_BILLING_REQUIRED,
+        ApiErrorCode.E_CAPTURE_TOO_LARGE,
+        ApiErrorCode.E_FILE_TOO_LARGE,
+        ApiErrorCode.E_INGEST_FAILED,
+        ApiErrorCode.E_INGEST_TIMEOUT,
+        ApiErrorCode.E_INVALID_CONTENT_TYPE,
+        ApiErrorCode.E_INVALID_FILE_TYPE,
+        ApiErrorCode.E_INVALID_REQUEST,
+        ApiErrorCode.E_PDF_PASSWORD_REQUIRED,
+        ApiErrorCode.E_PODCAST_PROVIDER_UNAVAILABLE,
+        ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED,
+        ApiErrorCode.E_SANITIZATION_FAILED,
+        ApiErrorCode.E_SIGN_UPLOAD_FAILED,
+        ApiErrorCode.E_SOURCE_ACCESS_DENIED,
+        ApiErrorCode.E_SOURCE_FETCH_FAILED,
+        ApiErrorCode.E_SOURCE_NOT_READABLE,
+        ApiErrorCode.E_SOURCE_TOO_LARGE,
+        ApiErrorCode.E_SSRF_BLOCKED,
+        ApiErrorCode.E_STORAGE_ERROR,
+        ApiErrorCode.E_STORAGE_MISSING,
+        ApiErrorCode.E_TRANSCRIPTION_FAILED,
+        ApiErrorCode.E_TRANSCRIPTION_TIMEOUT,
+        ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE,
+        ApiErrorCode.E_X_POST_UNAVAILABLE,
+        ApiErrorCode.E_X_PROVIDER_AUTH_REJECTED,
+        ApiErrorCode.E_X_PROVIDER_CREDITS_DEPLETED,
+        ApiErrorCode.E_X_PROVIDER_RATE_LIMITED,
+        ApiErrorCode.E_X_PROVIDER_TIMEOUT,
+        ApiErrorCode.E_X_PROVIDER_UNAVAILABLE,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -1268,7 +1323,7 @@ def _run_claimed_source_attempt(
         return {"status": "superseded"}
     except Exception as exc:
         db.rollback()
-        if not _is_post_acceptance_source_failure(exc):
+        if not _is_terminal_source_failure(exc, source_type=attempt.source_type):
             raise
         try:
             source_failure = exc
@@ -1371,8 +1426,6 @@ def _run_claimed_source_attempt(
             return {"status": "superseded"}
         except Exception as exc:
             db.rollback()
-            if not _is_post_acceptance_source_failure(exc):
-                raise
             author_failure = exc
 
             def publish_author_failure(
@@ -1862,8 +1915,9 @@ def confirm_uploaded_source(
     try:
         result = upload_service.confirm_ingest(db, viewer_id, media_id)
     except Exception as exc:
-        if _is_post_acceptance_source_failure(exc):
+        if _is_upload_confirm_failure(exc):
             _fail_latest_attempt_and_media(db, media_id, exc, stage="upload")
+            db.commit()
         raise
 
     actual_media_id = UUID(result["media_id"])
@@ -3791,28 +3845,23 @@ def _source_retry_after_seconds(exc: Exception) -> int | None:
     return max(0, retry_after_int)
 
 
-def _is_post_acceptance_source_failure(exc: Exception) -> bool:
+def _is_terminal_source_failure(exc: Exception, *, source_type: str) -> bool:
     if not isinstance(exc, ApiError):
         return False
-    return exc.code in {
-        ApiErrorCode.E_SOURCE_ACCESS_DENIED,
-        ApiErrorCode.E_SOURCE_TOO_LARGE,
-        ApiErrorCode.E_SOURCE_NOT_READABLE,
-        ApiErrorCode.E_SSRF_BLOCKED,
-        ApiErrorCode.E_INVALID_FILE_TYPE,
-        ApiErrorCode.E_INVALID_CONTENT_TYPE,
-        ApiErrorCode.E_FILE_TOO_LARGE,
-        ApiErrorCode.E_CAPTURE_TOO_LARGE,
-        ApiErrorCode.E_ARCHIVE_UNSAFE,
-        ApiErrorCode.E_INVALID_REQUEST,
-        ApiErrorCode.E_PDF_PASSWORD_REQUIRED,
-        ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE,
-        ApiErrorCode.E_X_POST_UNAVAILABLE,
-        ApiErrorCode.E_X_PROVIDER_CREDITS_DEPLETED,
-        ApiErrorCode.E_X_PROVIDER_AUTH_REJECTED,
-        ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED,
-        ApiErrorCode.E_BILLING_REQUIRED,
-    }
+    if (
+        source_type == source_types.GENERIC_WEB_URL
+        and exc.code is ApiErrorCode.E_SOURCE_FETCH_FAILED
+    ):
+        return True
+    return exc.code in _TERMINAL_SOURCE_FAILURE_CODES
+
+
+def _is_upload_confirm_failure(exc: Exception) -> bool:
+    if isinstance(exc, StorageError):
+        return True
+    if not isinstance(exc, ApiError):
+        return False
+    return exc.code in _UPLOAD_CONFIRM_FAILURE_CODES
 
 
 def _find_idempotent_attempt(
@@ -4036,6 +4085,7 @@ def _upload_init_response(
                 error_code=ApiErrorCode.E_SIGN_UPLOAD_FAILED.value,
                 error_message="Failed to initialize upload",
             )
+            db.commit()
             db.expire_all()
             media = db.get(Media, media.id) or media
             attempt = db.get(MediaSourceAttempt, attempt.id) or attempt

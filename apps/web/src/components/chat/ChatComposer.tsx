@@ -22,7 +22,7 @@ import { toFeedback } from "@/components/feedback/Feedback";
 import { absent, type Presence } from "@/lib/api/presence";
 import type { ReaderSelectionInput } from "@/lib/api/sse/requests";
 import { buildChatRunBody } from "@/lib/conversations/chatRunBody";
-import { decodeRunDataReaderSelection } from "@/lib/conversations/messageWire";
+import { decodeChatRunData } from "@/lib/conversations/messageWire";
 import type { PendingTurnContext } from "@/lib/conversations/pendingTurnContext";
 import {
   decodeReaderSelectionPreview,
@@ -179,9 +179,12 @@ export default function ChatComposer({
 
   // The pending turn context resolves to one of four kinds; only a hydrated
   // `ReaderHighlight` is sendable. Loading / LoadFailed / NonSendable block send.
-  const pending = pendingContext.kind === "Present" ? pendingContext.value : null;
-  const readerHighlight = pending?.kind === "ReaderHighlight" ? pending.preview : null;
-  const pendingBlocksSend = pending !== null && pending.kind !== "ReaderHighlight";
+  const pending =
+    pendingContext.kind === "Present" ? pendingContext.value : null;
+  const readerHighlight =
+    pending?.kind === "ReaderHighlight" ? pending.preview : null;
+  const pendingBlocksSend =
+    pending !== null && pending.kind !== "ReaderHighlight";
 
   // --------------------------------------------------------------------------
   // Send handler (owns the durable idempotent send attempt)
@@ -223,7 +226,10 @@ export default function ChatComposer({
       readerSelectionKey: readerHighlight?.key ?? null,
     });
 
-    const attempt = beginSendAttempt(payloadIdentity, readerSelection?.revision ?? null);
+    const attempt = beginSendAttempt(
+      payloadIdentity,
+      readerSelection?.revision ?? null,
+    );
 
     try {
       const body = buildChatRunBody({
@@ -243,7 +249,7 @@ export default function ChatComposer({
       });
 
       resolveSuccess();
-      onChatRunCreated?.(decodeRunDataReaderSelection(runResponse.data));
+      onChatRunCreated?.(decodeChatRunData(runResponse.data));
       onIntentConsumed?.();
       onMessageSent?.();
       onClearBranchDraft?.();
@@ -266,17 +272,23 @@ export default function ChatComposer({
             setError("The quoted passage changed — review it and send again.");
           } else {
             resolveKnownFailure();
-            setError(toFeedback(err, { fallback: "Failed to start chat run" }).title);
+            setError(
+              toFeedback(err, { fallback: "Failed to start chat run" }).title,
+            );
           }
         } else if (err.code === "E_CONVERSATION_NO_LONGER_EMPTY") {
           // Another tab created the first message: refresh so the next send
           // replies to the active leaf — a new insertion mints a new key.
           resolveKnownFailure();
           onConversationRefresh?.();
-          setError("This chat already has messages — send again to continue it.");
+          setError(
+            "This chat already has messages — send again to continue it.",
+          );
         } else {
           resolveKnownFailure();
-          setError(toFeedback(err, { fallback: "Failed to start chat run" }).title);
+          setError(
+            toFeedback(err, { fallback: "Failed to start chat run" }).title,
+          );
         }
       } else {
         // A network reject carries no status: the send may or may not have
@@ -376,7 +388,9 @@ export default function ChatComposer({
             <QuotedPassageCard
               mode="pending"
               context={pending}
-              onRemove={reconciling ? () => {} : () => onRemovePendingContext?.()}
+              onRemove={
+                reconciling ? () => {} : () => onRemovePendingContext?.()
+              }
               onRetry={() => onRetryHydration?.()}
               onActivateSource={(selection) => onActivateSource?.(selection)}
             />

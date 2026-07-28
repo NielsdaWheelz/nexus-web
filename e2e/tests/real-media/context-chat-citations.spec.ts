@@ -26,14 +26,13 @@ function conversationWorkspacePane(page: Page) {
 async function openConversationReferencesPane(conversationPane: Locator) {
   await conversationPane
     .getByTestId("pane-shell-chrome")
-    .getByRole("button", { name: "Context" })
+    .getByRole("button", { name: "Companion" })
     .click();
   const secondary = conversationPane.getByTestId("workspace-secondary-pane");
   await expect(secondary).toBeVisible({ timeout: 10_000 });
-  await expect(secondary.getByRole("tab", { name: "Context" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
+  const contextTab = secondary.getByRole("tab", { name: "Context" });
+  await contextTab.click();
+  await expect(contextTab).toHaveAttribute("aria-selected", "true");
   return secondary;
 }
 
@@ -130,10 +129,7 @@ test("@real-media search evidence chat citations open each media reader", async 
         (item: { type: string; source: { media_id: string } }) =>
           item.type === "content_chunk" && item.source.media_id === mediaId,
       );
-      expect(
-        result,
-        `${kind} should return attachable evidence`,
-      ).toBeTruthy();
+      expect(result, `${kind} should return attachable evidence`).toBeTruthy();
       if (!result) {
         throw new Error(`${kind} visible search did not return ${mediaId}`);
       }
@@ -240,10 +236,7 @@ test("@real-media search evidence chat citations open each media reader", async 
       await expectActivePaneHasNoLoadError(page);
       if (contentKind === "pdf") {
         await expectVisiblePdfEvidenceHighlight(page, evidenceSpanId);
-      } else if (
-        contentKind === "video" ||
-        contentKind === "podcast_episode"
-      ) {
+      } else if (contentKind === "video" || contentKind === "podcast_episode") {
         await openTranscriptEvidenceSegment(page, query, citationUrl);
         await expectVisibleTextEvidenceHighlight(page, evidenceSpanId);
       } else {

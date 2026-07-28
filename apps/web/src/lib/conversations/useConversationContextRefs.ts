@@ -19,48 +19,50 @@ export function useConversationContextRefs(conversationId: string | null) {
   const ignoreResourceForConversationRef = useRef<string | null>(null);
   conversationIdRef.current = conversationId;
   const contextRefsResource = useResource<{ data: ContextRefOut[] }>({
-    cacheKey: conversationId,
-    load: async (signal) => ({ data: await listContextRefs(conversationIdRef.current ?? "", { signal }) }),
+    cacheKey:
+      conversationId === null
+        ? null
+        : `conversation-context-refs:${conversationId}`,
+    load: async (signal) => ({
+      data: await listContextRefs(conversationIdRef.current ?? "", { signal }),
+    }),
   });
 
-  const refreshContextRefs = useCallback(
-    async (nextConversationId: string) => {
-      const refreshSeq = refreshSeqRef.current + 1;
-      refreshSeqRef.current = refreshSeq;
-      refreshControllerRef.current?.abort();
-      const controller = new AbortController();
-      refreshControllerRef.current = controller;
-      ignoreResourceForConversationRef.current = nextConversationId;
-      try {
-        const data = await listContextRefs(nextConversationId, {
-          signal: controller.signal,
-        });
-        if (
-          controller.signal.aborted ||
-          refreshSeqRef.current !== refreshSeq ||
-          conversationIdRef.current !== nextConversationId
-        ) {
-          return;
-        }
-        setContextRefs(data);
-      } catch (err) {
-        if (
-          isAbortError(err) ||
-          controller.signal.aborted ||
-          refreshSeqRef.current !== refreshSeq ||
-          conversationIdRef.current !== nextConversationId
-        ) {
-          return;
-        }
-        handleUnauthenticatedApiError(err);
-      } finally {
-        if (refreshControllerRef.current === controller) {
-          refreshControllerRef.current = null;
-        }
+  const refreshContextRefs = useCallback(async (nextConversationId: string) => {
+    const refreshSeq = refreshSeqRef.current + 1;
+    refreshSeqRef.current = refreshSeq;
+    refreshControllerRef.current?.abort();
+    const controller = new AbortController();
+    refreshControllerRef.current = controller;
+    ignoreResourceForConversationRef.current = nextConversationId;
+    try {
+      const data = await listContextRefs(nextConversationId, {
+        signal: controller.signal,
+      });
+      if (
+        controller.signal.aborted ||
+        refreshSeqRef.current !== refreshSeq ||
+        conversationIdRef.current !== nextConversationId
+      ) {
+        return;
       }
-    },
-    [],
-  );
+      setContextRefs(data);
+    } catch (err) {
+      if (
+        isAbortError(err) ||
+        controller.signal.aborted ||
+        refreshSeqRef.current !== refreshSeq ||
+        conversationIdRef.current !== nextConversationId
+      ) {
+        return;
+      }
+      handleUnauthenticatedApiError(err);
+    } finally {
+      if (refreshControllerRef.current === controller) {
+        refreshControllerRef.current = null;
+      }
+    }
+  }, []);
 
   const mutate = useCallback(async () => {
     if (!conversationId) return;

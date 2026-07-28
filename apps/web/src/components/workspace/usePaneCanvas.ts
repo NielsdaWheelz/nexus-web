@@ -19,6 +19,14 @@ function wheelTargetElement(target: EventTarget | null): HTMLElement | null {
   return null;
 }
 
+function hasScrollableVerticalOverflow(element: HTMLElement): boolean {
+  const overflowY = window.getComputedStyle(element).overflowY;
+  return (
+    (overflowY === "auto" || overflowY === "scroll") &&
+    element.scrollHeight > element.clientHeight
+  );
+}
+
 export function usePaneCanvas({
   mode,
   paneIds,
@@ -44,7 +52,7 @@ export function usePaneCanvas({
     () => () => {
       cleanupRef.current?.();
     },
-    []
+    [],
   );
 
   const onWheel = useCallback(
@@ -67,14 +75,14 @@ export function usePaneCanvas({
       }
       let node = wheelTargetElement(event.target);
       while (node && node !== canvas) {
-        if (node.scrollHeight > node.clientHeight) {
+        if (hasScrollableVerticalOverflow(node)) {
           return;
         }
         node = node.parentElement;
       }
       canvas.scrollLeft += event.deltaY;
     },
-    [enabled]
+    [enabled],
   );
 
   const handleChromeMouseDown = useCallback(
@@ -88,7 +96,7 @@ export function usePaneCanvas({
       if (
         event.target instanceof Element &&
         event.target.closest(
-          "button, a, input, select, textarea, [role='button'], [contenteditable]"
+          "button, a, input, select, textarea, [role='button'], [contenteditable]",
         )
       ) {
         return;
@@ -130,7 +138,7 @@ export function usePaneCanvas({
       doc.addEventListener("mouseup", handleMouseUp);
       cleanupRef.current = cleanup;
     },
-    [enabled]
+    [enabled],
   );
 
   const measureEdges = useCallback(() => {
@@ -216,7 +224,7 @@ export function usePaneCanvas({
           }
         }
       },
-      { root: canvas, threshold: 0 }
+      { root: canvas, threshold: 0 },
     );
     for (const wrap of canvas.querySelectorAll("[data-pane-id]")) {
       observer.observe(wrap);
@@ -224,18 +232,21 @@ export function usePaneCanvas({
     return () => observer.disconnect();
   }, [enabled, paneIdsKey, markPaneInView, markPaneOutOfView]);
 
-  const scrollPaneIntoView = useCallback((paneId: string) => {
-    if (!enabled) {
-      return;
-    }
-    canvasRef.current
-      ?.querySelector('[data-pane-id="' + CSS.escape(paneId) + '"]')
-      ?.scrollIntoView({
-        inline: "center",
-        block: "nearest",
-        behavior: preferredScrollBehavior(),
-      });
-  }, [enabled]);
+  const scrollPaneIntoView = useCallback(
+    (paneId: string) => {
+      if (!enabled) {
+        return;
+      }
+      canvasRef.current
+        ?.querySelector('[data-pane-id="' + CSS.escape(paneId) + '"]')
+        ?.scrollIntoView({
+          inline: "center",
+          block: "nearest",
+          behavior: preferredScrollBehavior(),
+        });
+    },
+    [enabled],
+  );
 
   return {
     canvasRef,

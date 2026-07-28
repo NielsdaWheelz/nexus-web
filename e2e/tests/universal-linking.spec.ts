@@ -94,6 +94,20 @@ async function dismissToast(toast: Locator): Promise<void> {
   await expect(toast).toBeHidden();
 }
 
+async function openUnlinkConnectionAction(
+  page: Page,
+  relationshipRow: Locator,
+): Promise<Locator> {
+  const actions = relationshipRow.getByRole("button", {
+    name: /^Actions for /,
+  });
+  await expect(actions).toBeVisible({ timeout: 10_000 });
+  await actions.click();
+  const unlink = page.getByRole("menuitem", { name: "Unlink connection" });
+  await expect(unlink).toBeVisible();
+  return unlink;
+}
+
 /** The Link action lives in the reader selection popup / highlight action bar as
  * a plain button whose accessible name is the "Link…" descriptor
  * (highlightActions.tsx). */
@@ -122,7 +136,10 @@ async function searchExactTarget(page: Page, ref: string): Promise<Locator> {
  * returning the parsed CreateLinkOut so the caller can assert `created`, harvest
  * `created_source_ref` (the materialized Highlight), and drive Undo by
  * `connection.edge_id`. */
-async function confirmTarget(page: Page, option: Locator): Promise<{
+async function confirmTarget(
+  page: Page,
+  option: Locator,
+): Promise<{
   created: boolean;
   createdSourceRef: string | null;
   linkId: string;
@@ -170,7 +187,10 @@ async function navigateToPdfSelectionPage(page: Page): Promise<number> {
   const readCurrentPage = async () => {
     const label = (await status.getAttribute("aria-label")) ?? "";
     const match = /^Page (\d+) of (\d+)$/.exec(label);
-    expect(match, `Expected a PDF page status, received "${label}"`).toBeTruthy();
+    expect(
+      match,
+      `Expected a PDF page status, received "${label}"`,
+    ).toBeTruthy();
     return Number(match?.[1] ?? 0);
   };
 
@@ -251,7 +271,8 @@ async function pdfHighlightIds(
 }
 
 function refId(ref: string | null): string {
-  if (!ref) throw new Error("Expected a created_source_ref for a fresh selection");
+  if (!ref)
+    throw new Error("Expected a created_source_ref for a fresh selection");
   return ref.slice(ref.indexOf(":") + 1);
 }
 
@@ -280,7 +301,9 @@ test("@real-media PDF text-layer drag links to a target, undo keeps the highligh
   try {
     await gotoRealMediaSinglePane(page, `/media/${mediaId}`);
     const targetTitle = (
-      (await (await page.request.get(`/api/media/${targetMediaId}`)).json()) as {
+      (await (
+        await page.request.get(`/api/media/${targetMediaId}`)
+      ).json()) as {
         data: { title: string };
       }
     ).data.title;
@@ -306,20 +329,23 @@ test("@real-media PDF text-layer drag links to a target, undo keeps the highligh
       "a created Link surfaces the Linked toast with Undo",
     ).toBeVisible({ timeout: 10_000 });
     const linkedToast = toastByTitle(page, /Linked to /);
-    await expect(linkedToast.getByRole("button", { name: "Undo" })).toBeVisible();
+    await expect(
+      linkedToast.getByRole("button", { name: "Undo" }),
+    ).toBeVisible();
 
     // The fresh selection materialized exactly one durable Highlight (invariant 6:
     // it is written only because the Link confirmed).
-    expect(
-      await pdfHighlightIds(page, mediaId, selectionPageNumber),
-    ).toContain(materializedHighlightId);
+    expect(await pdfHighlightIds(page, mediaId, selectionPageNumber)).toContain(
+      materializedHighlightId,
+    );
 
     // --- Undo removes only the Link; the Highlight survives (AC10, invariant 8) --
     const [undoResponse] = await Promise.all([
       page.waitForResponse(
         (res) =>
           res.request().method() === "DELETE" &&
-          new URL(res.url()).pathname === `${LINKS_PATHNAME}/${firstLink.linkId}`,
+          new URL(res.url()).pathname ===
+            `${LINKS_PATHNAME}/${firstLink.linkId}`,
         { timeout: 15_000 },
       ),
       linkedToast.getByRole("button", { name: "Undo" }).click(),
@@ -355,13 +381,9 @@ test("@real-media PDF text-layer drag links to a target, undo keeps the highligh
     const targetButton = secondHighlightRow.getByRole("button", {
       name: `Open target in reader for ${targetTitle}`,
     });
-    const removeButton = secondHighlightRow.getByRole("button", {
-      name: `Remove connection to ${targetTitle}`,
-    });
-    await expect(
-      removeButton,
-      "the confirmed Link renders one Connections row with a Remove control",
-    ).toBeVisible({ timeout: 10_000 });
+    const unlink = await openUnlinkConnectionAction(page, secondHighlightRow);
+    await page.keyboard.press("Escape");
+    await expect(unlink).toBeHidden();
 
     // Opposite-end activation opens the target document in the reader (AC16/AC17:
     // each reader row activates the opposite endpoint).
@@ -381,10 +403,10 @@ test("@real-media PDF text-layer drag links to a target, undo keeps the highligh
     await secondHighlightRowAgain
       .getByRole("button", { name: "1 linked object" })
       .click();
-    const removeAgain = secondHighlightRowAgain.getByRole("button", {
-      name: `Remove connection to ${targetTitle}`,
-    });
-    await expect(removeAgain).toBeVisible({ timeout: 10_000 });
+    const unlinkAgain = await openUnlinkConnectionAction(
+      page,
+      secondHighlightRowAgain,
+    );
     const [removeResponse] = await Promise.all([
       page.waitForResponse(
         (res) =>
@@ -392,14 +414,18 @@ test("@real-media PDF text-layer drag links to a target, undo keeps the highligh
           new URL(res.url()).pathname.startsWith(`${LINKS_PATHNAME}/`),
         { timeout: 15_000 },
       ),
-      removeAgain.click(),
+      unlinkAgain.click(),
     ]);
     expect(removeResponse.ok()).toBeTruthy();
-    await expect(removeAgain).toHaveCount(0, { timeout: 10_000 });
+    await expect(
+      secondHighlightRowAgain.getByRole("button", {
+        name: "1 linked object",
+      }),
+    ).toHaveCount(0, { timeout: 10_000 });
     // Removing the Link never touches the authored Highlights.
-    expect(
-      await pdfHighlightIds(page, mediaId, selectionPageNumber),
-    ).toContain(materializedHighlightId);
+    expect(await pdfHighlightIds(page, mediaId, selectionPageNumber)).toContain(
+      materializedHighlightId,
+    );
   } catch (error) {
     productError = error;
     throw error;
@@ -417,7 +443,11 @@ test("@real-media PDF text-layer drag links to a target, undo keeps the highligh
     } catch (error) {
       cleanupErrors.push(error);
     }
-    throwE2eCleanupFailures("universal-linking PDF", productError, cleanupErrors);
+    throwE2eCleanupFailures(
+      "universal-linking PDF",
+      productError,
+      cleanupErrors,
+    );
   }
 });
 
@@ -444,11 +474,6 @@ test("@real-media reflowable Link: cancel writes nothing, a Connections row appe
   let productError: unknown = null;
   try {
     await gotoRealMediaSinglePane(page, `/media/${mediaId}`);
-    const targetTitle = (
-      (await (await page.request.get(`/api/media/${targetMediaId}`)).json()) as {
-        data: { title: string };
-      }
-    ).data.title;
     // The EPUB's first spine entry is intentionally a cover-only section. Use
     // the reader's public navigation control to enter the fixture's stable prose
     // chapter before exercising text selection; a cover is a valid cold-open
@@ -525,12 +550,9 @@ test("@real-media reflowable Link: cancel writes nothing, a Connections row appe
     await linkedHighlightRow
       .getByRole("button", { name: "1 linked object" })
       .click();
-    await expect(
-      linkedHighlightRow.getByRole("button", {
-        name: `Remove connection to ${targetTitle}`,
-      }),
-      "the confirmed neutral Link folds into one Connections row",
-    ).toBeVisible({ timeout: 10_000 });
+    const unlink = await openUnlinkConnectionAction(page, linkedHighlightRow);
+    await page.keyboard.press("Escape");
+    await expect(unlink).toBeHidden();
 
     // --- Duplicate from the now-existing Highlight is Already linked (AC15) ---
     // The durable Highlight must paint without a reload, and its canonical
@@ -583,6 +605,10 @@ test("@real-media reflowable Link: cancel writes nothing, a Connections row appe
     } catch (error) {
       cleanupErrors.push(error);
     }
-    throwE2eCleanupFailures("universal-linking reflowable", productError, cleanupErrors);
+    throwE2eCleanupFailures(
+      "universal-linking reflowable",
+      productError,
+      cleanupErrors,
+    );
   }
 });

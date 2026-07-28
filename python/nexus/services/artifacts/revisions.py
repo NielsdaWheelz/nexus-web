@@ -266,12 +266,15 @@ def _assert_subject_and_audience_viewer(
 ) -> None:
     subject_scheme = str(row["subject_scheme"])
     subject_id = UUID(str(row["subject_id"]))
-    if visible_persisted_subject(
-        db,
-        subject_scheme=subject_scheme,
-        subject_id=subject_id,
-        audience_scheme=str(row["audience_scheme"]),
-        audience_id=str(row["audience_id"]),
-        viewer_id=viewer_id,
-    ) is None:
+    if (
+        visible_persisted_subject(
+            db,
+            subject_scheme=subject_scheme,
+            subject_id=subject_id,
+            audience_scheme=str(row["audience_scheme"]),
+            audience_id=str(row["audience_id"]),
+            viewer_id=viewer_id,
+        )
+        is None
+    ):
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, message)

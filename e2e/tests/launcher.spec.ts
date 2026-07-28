@@ -85,10 +85,9 @@ test.describe("launcher", () => {
     const dialog = launcherDialog(page);
     await expect(dialog).toBeVisible();
     await expect(launcherInput(dialog)).toHaveValue("kafka");
-    await expect(dialog.getByRole("button", { name: "Browse" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    await expect(
+      dialog.getByRole("button", { name: "Browse" }),
+    ).toHaveAttribute("aria-pressed", "true");
 
     await expect(workspacePaneButton(page, /^Notes\b/)).toHaveAttribute(
       "aria-current",
@@ -176,14 +175,28 @@ test.describe("launcher", () => {
     const keybindingsOption = keyboardShortcutsOption(dialog);
     await expect(keybindingsOption).toBeVisible();
 
-    // Drive the active option onto the Keyboard Shortcuts row, then Enter runs it.
-    for (let step = 0; step < 12; step += 1) {
-      if ((await keybindingsOption.getAttribute("aria-selected")) === "true") {
-        break;
-      }
+    // Drive the active descendant one committed option at a time. React owns
+    // the selection state, so a burst of ArrowDown events can all observe the
+    // same render and must not be used as a keyboard-navigation oracle.
+    const options = listbox.getByRole("option");
+    const optionIds = await options.evaluateAll((elements) =>
+      elements.map((element) => element.id),
+    );
+    const keybindingsOptionId = await keybindingsOption.getAttribute("id");
+    const keybindingsOptionIndex = optionIds.indexOf(keybindingsOptionId ?? "");
+    expect(keybindingsOptionIndex).toBeGreaterThanOrEqual(0);
+
+    await input.press("Home");
+    await expect(input).toHaveAttribute("aria-activedescendant", optionIds[0]!);
+    for (let step = 0; step < keybindingsOptionIndex; step += 1) {
       await input.press("ArrowDown");
+      await expect(input).toHaveAttribute(
+        "aria-activedescendant",
+        optionIds[step + 1]!,
+      );
     }
 
+    await expect(keybindingsOption).toHaveAttribute("aria-selected", "true");
     await input.press("Enter");
 
     // Enter executes the active command: the launcher closes and the target opens.
@@ -245,7 +258,9 @@ function nexusDialog(page: Page): Locator {
 
 function p95(samples: readonly number[]): number {
   const ordered = [...samples].sort((left, right) => left - right);
-  return ordered[Math.ceil(ordered.length * 0.95) - 1] ?? Number.POSITIVE_INFINITY;
+  return (
+    ordered[Math.ceil(ordered.length * 0.95) - 1] ?? Number.POSITIVE_INFINITY
+  );
 }
 
 async function measureCount(page: Page, name: string): Promise<number> {
@@ -268,10 +283,7 @@ async function waitForMeasureCount(
     .toBe(count);
 }
 
-async function measureDurations(
-  page: Page,
-  name: string,
-): Promise<number[]> {
+async function measureDurations(page: Page, name: string): Promise<number[]> {
   return page.evaluate(
     (measureName) =>
       performance
@@ -336,9 +348,7 @@ test.describe("mobile Nexus Switchboard", () => {
       page.getByRole("button", { name: "Open Nexus, 1 tab" }),
     ).toBeHidden();
 
-    await openDialog
-      .getByRole("button", { name: "Search Closed tab" })
-      .tap();
+    await openDialog.getByRole("button", { name: "Search Closed tab" }).tap();
     await expect(openDialog).toBeHidden();
     await expect(page).toHaveURL(/\/search$/);
     await expect(
@@ -411,11 +421,7 @@ test.describe("mobile Nexus Switchboard", () => {
       }
       await page.evaluate(() => performance.clearMeasures("nexus-open"));
 
-      for (
-        let sample = 1;
-        sample <= PERFORMANCE_SAMPLE_COUNT;
-        sample += 1
-      ) {
+      for (let sample = 1; sample <= PERFORMANCE_SAMPLE_COUNT; sample += 1) {
         await trigger.tap();
         await expect(nexusDialog(page)).toBeVisible();
         await waitForMeasureCount(page, "nexus-open", sample);
@@ -434,36 +440,21 @@ test.describe("mobile Nexus Switchboard", () => {
         iteration += 1
       ) {
         await input.fill(iteration % 2 === 0 ? "notes" : "libraries");
-        await waitForMeasureCount(
-          page,
-          "nexus-local-find",
-          iteration + 1,
-        );
+        await waitForMeasureCount(page, "nexus-local-find", iteration + 1);
       }
-      await page.evaluate(() =>
-        performance.clearMeasures("nexus-local-find"),
-      );
-      for (
-        let sample = 1;
-        sample <= PERFORMANCE_SAMPLE_COUNT;
-        sample += 1
-      ) {
+      await page.evaluate(() => performance.clearMeasures("nexus-local-find"));
+      for (let sample = 1; sample <= PERFORMANCE_SAMPLE_COUNT; sample += 1) {
         await input.fill(sample % 2 === 0 ? "notes" : "libraries");
         await waitForMeasureCount(page, "nexus-local-find", sample);
       }
-      const findSamples = await measureDurations(
-        page,
-        "nexus-local-find",
-      );
+      const findSamples = await measureDurations(page, "nexus-local-find");
 
       await expect
         .poll(() => measureCount(page, "nexus-openables"), {
           message: "expected the warm openables request to commit",
         })
         .toBeGreaterThan(0);
-      await page.evaluate(() =>
-        performance.clearMeasures("nexus-openables"),
-      );
+      await page.evaluate(() => performance.clearMeasures("nexus-openables"));
       for (
         let iteration = 0;
         iteration < PERFORMANCE_SETUP_ITERATIONS;
@@ -472,25 +463,14 @@ test.describe("mobile Nexus Switchboard", () => {
         await input.fill(iteration % 2 === 0 ? "n" : "l");
         await waitForMeasureCount(page, "nexus-openables", iteration + 1);
       }
-      await page.evaluate(() =>
-        performance.clearMeasures("nexus-openables"),
-      );
-      for (
-        let sample = 1;
-        sample <= OPENABLES_SAMPLE_COUNT;
-        sample += 1
-      ) {
+      await page.evaluate(() => performance.clearMeasures("nexus-openables"));
+      for (let sample = 1; sample <= OPENABLES_SAMPLE_COUNT; sample += 1) {
         await input.fill(sample % 2 === 0 ? "n" : "l");
         await waitForMeasureCount(page, "nexus-openables", sample);
       }
-      const openablesSamples = await measureDurations(
-        page,
-        "nexus-openables",
-      );
+      const openablesSamples = await measureDurations(page, "nexus-openables");
 
-      await dialog
-        .getByRole("button", { name: "Back", exact: true })
-        .tap();
+      await dialog.getByRole("button", { name: "Back", exact: true }).tap();
       await dialog.getByRole("button", { name: "Done" }).tap();
 
       for (
@@ -503,20 +483,12 @@ test.describe("mobile Nexus Switchboard", () => {
           .getByRole("button", { name: /^(Notes|Libraries) Open tab$/ })
           .tap();
         await expect(nexusDialog(page)).toBeHidden();
-        await waitForMeasureCount(
-          page,
-          "nexus-pane-activate",
-          iteration + 1,
-        );
+        await waitForMeasureCount(page, "nexus-pane-activate", iteration + 1);
       }
       await page.evaluate(() =>
         performance.clearMeasures("nexus-pane-activate"),
       );
-      for (
-        let sample = 1;
-        sample <= PERFORMANCE_SAMPLE_COUNT;
-        sample += 1
-      ) {
+      for (let sample = 1; sample <= PERFORMANCE_SAMPLE_COUNT; sample += 1) {
         await trigger.tap();
         await nexusDialog(page)
           .getByRole("button", { name: /^(Notes|Libraries) Open tab$/ })

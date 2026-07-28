@@ -51,6 +51,8 @@ interface StartE2eWorkerUntilChatRunTerminalOptions extends RunE2eWorkerOnceOpti
 interface StartE2eWorkerUntilMediaReadyOptions extends RunE2eWorkerOnceOptions {
   mediaId: string;
   deadlineSeconds?: number;
+  jobKind?: string;
+  readinessTarget?: "source" | "full";
 }
 
 export interface E2eWorkerMediaReadyResult {
@@ -366,6 +368,8 @@ export function startE2eWorkerUntilMediaReady({
   allowedNexusEnvs = ["local", "test"],
   extraEnv = {},
   deadlineSeconds = 110,
+  jobKind,
+  readinessTarget = "full",
 }: StartE2eWorkerUntilMediaReadyOptions): Promise<E2eWorkerMediaReadyResult> {
   const databaseUrl = assertLocalDatabaseUrl();
   const nexusEnv = assertAllowedNexusEnv(allowedNexusEnvs);
@@ -374,20 +378,17 @@ export function startE2eWorkerUntilMediaReady({
     ...buildE2eAppRuntimeEnv(process.env),
     DATABASE_URL: databaseUrl,
     NEXUS_ENV: nexusEnv,
-    // Media readiness — ready_for_reading with a ready content index carrying
-    // chunks, evidence spans, and embeddings — is produced entirely inside the
-    // `ingest_media_source` job handler (extract -> chunk -> embed -> index all
-    // run in-handler). Scope this drain worker to that single kind so it does
-    // not spend its budget claiming the older, unrelated LLM side-effect backlog
-    // (enrich_metadata / media_unit_build / synapse_scan) that ingest leaves
-    // queued and that the media-ready drains never run to completion. Under
-    // the full config
-    // allowlist the newest refresh/re-ingest row sits behind dozens of those
-    // older jobs and is never reached before the drain budget expires.
+    // The caller selects the exact production lane for the phase it is
+    // awaiting. Interactive owns source completion; background owns the
+    // durable content-index successor. Keeping each drain on its deployed
+    // allowlist prevents unrelated work in the other lane from consuming the
+    // phase budget.
     WORKER_LANE: "interactive",
     ...extraEnv,
     NEXUS_E2E_WORKER_MEDIA_ID: mediaId,
     NEXUS_E2E_WORKER_DEADLINE_SECONDS: String(deadline),
+    NEXUS_E2E_WORKER_READINESS_TARGET: readinessTarget,
+    ...(jobKind ? { NEXUS_E2E_WORKER_JOB_KIND: jobKind } : {}),
   };
   assertLocalStorageEndpoint(workerEnv);
 
@@ -411,7 +412,18 @@ from apps.worker.main import create_worker
 database_url = os.environ["DATABASE_URL"].replace("postgresql+psycopg://", "postgresql://", 1)
 media_id = os.environ["NEXUS_E2E_WORKER_MEDIA_ID"]
 deadline = time.monotonic() + float(os.environ["NEXUS_E2E_WORKER_DEADLINE_SECONDS"])
+readiness_target = os.environ["NEXUS_E2E_WORKER_READINESS_TARGET"]
 worker = create_worker()
+job_kind = os.environ.get("NEXUS_E2E_WORKER_JOB_KIND")
+if job_kind is not None:
+    if worker.allowed_kinds is None or job_kind not in worker.allowed_kinds:
+        raise RuntimeError(
+            f"E2E worker kind {job_kind!r} does not belong to "
+            f"WORKER_LANE={os.environ.get('WORKER_LANE')!r}"
+        )
+    # Keep the production lane and registry construction, but scope queue
+    # claiming to the exact durable successor this acceptance wait owns.
+    worker.allowed_kinds = (job_kind,)
 conn = psycopg.connect(database_url, autocommit=True)
 iterations = 0
 state = None
@@ -423,14 +435,22 @@ state_sql = """
         COALESCE(mcis.status, 'pending'),
         count(DISTINCT cc.id),
         count(DISTINCT es.id),
-        count(DISTINCT ce.id)
+        count(DISTINCT ce.id),
+        (
+            SELECT source_job.status
+            FROM media_source_attempts source_attempt
+            JOIN background_jobs source_job ON source_job.id = source_attempt.job_id
+            WHERE source_attempt.media_id = m.id
+            ORDER BY source_attempt.attempt_no DESC, source_attempt.created_at DESC
+            LIMIT 1
+        ) AS source_job_status
     FROM media m
     LEFT JOIN content_index_states mcis ON mcis.owner_kind = 'media' AND mcis.owner_id = m.id
     LEFT JOIN content_chunks cc ON cc.owner_kind = 'media' AND cc.owner_id = m.id
     LEFT JOIN evidence_spans es ON es.owner_kind = 'media' AND es.owner_id = m.id
     LEFT JOIN content_embeddings ce ON ce.chunk_id = cc.id
     WHERE m.id = %s::uuid
-    GROUP BY m.processing_status, mcis.status
+    GROUP BY m.id, m.processing_status, mcis.status
 """
 
 
@@ -446,6 +466,7 @@ def read_state():
         "chunk_count": row[2],
         "evidence_count": row[3],
         "embedding_count": row[4],
+        "source_job_status": row[5],
     }
 
 
@@ -455,17 +476,24 @@ while time.monotonic() < deadline:
         iterations += 1
     state = read_state()
     if state is not None:
-        ready = (
-            state["index_status"] == "ready"
-            and state["processing_status"] == "ready_for_reading"
-            and state["chunk_count"] > 0
-            and state["evidence_count"] > 0
-            and state["embedding_count"] > 0
-        )
-        failed = (
-            state["processing_status"] == "failed"
-            or state["index_status"] in ("failed", "no_text", "ocr_required")
-        )
+        if readiness_target == "source":
+            ready = (
+                state["source_job_status"] == "succeeded"
+                and state["processing_status"] == "ready_for_reading"
+            )
+            failed = state["processing_status"] == "failed"
+        else:
+            ready = (
+                state["index_status"] == "ready"
+                and state["processing_status"] == "ready_for_reading"
+                and state["chunk_count"] > 0
+                and state["evidence_count"] > 0
+                and state["embedding_count"] > 0
+            )
+            failed = (
+                state["processing_status"] == "failed"
+                or state["index_status"] in ("failed", "no_text", "ocr_required")
+            )
         if ready:
             status = "success"
             break
@@ -484,6 +512,7 @@ result.update(
         "chunk_count": 0,
         "evidence_count": 0,
         "embedding_count": 0,
+        "source_job_status": None,
     }
 )
 print(json.dumps(result, sort_keys=True))
@@ -493,10 +522,7 @@ print(json.dumps(result, sort_keys=True))
   );
   let stdout = "";
   let stderr = "";
-  const timer = setTimeout(
-    () => child.kill("SIGKILL"),
-    (deadline + 15) * 1000,
-  );
+  const timer = setTimeout(() => child.kill("SIGKILL"), (deadline + 15) * 1000);
 
   return new Promise((resolve, reject) => {
     child.stdout.on("data", (chunk: unknown) => {

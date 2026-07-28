@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
 
 interface IdentityRecord {
   identity_id: string;
@@ -59,6 +60,14 @@ vi.mock("@supabase/ssr", () => ({
 
 import SettingsIdentitiesPaneBody from "./SettingsIdentitiesPaneBody";
 
+function renderIdentities() {
+  return renderHydratedPane({
+    href: "/settings/identities",
+    resources: {},
+    children: <SettingsIdentitiesPaneBody />,
+  });
+}
+
 function identity(
   provider: string,
   overrides: Partial<IdentityRecord> = {}
@@ -86,7 +95,7 @@ describe("SettingsIdentitiesPaneBody", () => {
   it("loads linked identities server-side and renders them", async () => {
     getUserIdentitiesOutcomes.push({ identities: [identity("github")] });
 
-    render(<SettingsIdentitiesPaneBody />);
+    renderIdentities();
 
     expect(
       await screen.findByText(/^owner\+github@example\.com · linked /)
@@ -96,7 +105,7 @@ describe("SettingsIdentitiesPaneBody", () => {
   it("offers a connect control for each not-yet-linked provider", async () => {
     getUserIdentitiesOutcomes.push({ identities: [identity("github")] });
 
-    render(<SettingsIdentitiesPaneBody />);
+    renderIdentities();
 
     // Wait for the linked identity to load before asserting connectable state.
     await screen.findByText(/^owner\+github@example\.com · linked /);
@@ -113,7 +122,7 @@ describe("SettingsIdentitiesPaneBody", () => {
   it("shows an error notice when identity loading fails", async () => {
     getUserIdentitiesOutcomes.push({ error: { message: "boom" } });
 
-    render(<SettingsIdentitiesPaneBody />);
+    renderIdentities();
 
     expect(
       await screen.findByText(/failed to load identities/i)
@@ -127,7 +136,7 @@ describe("SettingsIdentitiesPaneBody", () => {
     getUserIdentitiesOutcomes.push({ identities: beforeUnlink });
     getUserIdentitiesOutcomes.push({ identities: [identity("google")] });
 
-    render(<SettingsIdentitiesPaneBody />);
+    renderIdentities();
 
     await screen.findByText(/^owner\+github@example\.com · linked /);
     await screen.findByText(/^owner\+google@example\.com · linked /);
@@ -154,7 +163,7 @@ describe("SettingsIdentitiesPaneBody", () => {
     getUserIdentitiesOutcomes.push({ identities: beforeUnlink });
     unlinkOutcome = { error: { message: "unlink failed" } };
 
-    render(<SettingsIdentitiesPaneBody />);
+    renderIdentities();
 
     await screen.findByText(/^owner\+github@example\.com · linked /);
     await user.click(

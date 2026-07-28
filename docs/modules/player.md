@@ -162,7 +162,11 @@ GET) above `GlobalPlayerProvider` (one `PlayerSession`), which wraps
   Podcast episode, Lectern, and Media surfaces only when the canonical
   projection says `progressResettable`. `LecternProvider` emits the singular
   returned `progressState`; the active player installs its listening tokens and
-  pauses, while the mounted reader installs the returned cursor snapshot.
+  pauses, while the mounted reader installs the returned cursor snapshot. A
+  Podcast episode collection immediately projects that returned canonical
+  zero-position state as Unplayed and no longer resettable, then reconciles its
+  full row from the owning Podcast read; it does not leave the pre-reset action
+  capability interactive while that read is pending.
 - `apps/web/src/app/(authenticated)/lectern/LecternPaneBody.tsx` renders the
   canonical **On the lectern** collection followed by the shared **At hand**
   Slate. The Slate consumes an optional server first-paint seed, otherwise

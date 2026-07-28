@@ -504,9 +504,7 @@ def get_search_result(
                 snippet=_truncate_snippet(str(block.body_text or "")),
                 body_text=block.body_text,
                 score=score,
-                highlight_excerpt=_truncate_snippet(highlight_exact)
-                if highlight_exact
-                else None,
+                highlight_excerpt=_truncate_snippet(highlight_exact) if highlight_exact else None,
                 note_origin="highlight_note" if highlight_exact else "note",
                 locator=retrieval_locator_json(
                     {

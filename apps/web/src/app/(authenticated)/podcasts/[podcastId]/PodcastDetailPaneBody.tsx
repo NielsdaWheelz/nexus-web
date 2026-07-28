@@ -129,7 +129,10 @@ const EMPTY_PODCAST_LIBRARIES: LibraryPlacementOption[] = [];
 export default function PodcastDetailPaneBody() {
   const podcastId = usePaneParam("podcastId");
   const paneRouter = usePaneRouter();
-  const paneRuntime = usePaneRuntime();
+  const activateTarget = requirePaneRuntime(
+    usePaneRuntime(),
+    "PodcastDetailPaneBody",
+  ).activateTarget;
   const paneSearchParams = usePaneSearchParams();
   const { account: billingAccount } = useBillingAccount();
   const player = useGlobalPlayer();
@@ -932,6 +935,34 @@ export default function PodcastDetailPaneBody() {
         if (listeningState.kind === "Absent") {
           throw new Error("Podcast reset must return listening state");
         }
+        const canonicalListeningState = listeningState.value;
+        setEpisodes((current) =>
+          current.flatMap((episode) => {
+            if (episode.id !== mediaId) {
+              return [episode];
+            }
+            const resetEpisode: PodcastEpisodeMedia = {
+              ...episode,
+              listening_state: {
+                position_ms: canonicalListeningState.positionMs,
+                duration_ms:
+                  canonicalListeningState.durationMs.kind === "Present"
+                    ? canonicalListeningState.durationMs.value
+                    : null,
+                playback_speed: canonicalListeningState.playbackSpeed,
+                is_completed: false,
+              },
+              episode_state: "unplayed",
+              progress_resettable: false,
+            };
+            return episodeMatchesFilter(
+              deriveEpisodeState(resetEpisode),
+              episodeStateFilter,
+            )
+              ? [resetEpisode]
+              : [];
+          }),
+        );
         reconciliationSuccessRef.current = "Progress reset.";
         reload();
       } catch (error) {
@@ -944,9 +975,11 @@ export default function PodcastDetailPaneBody() {
     },
     [
       beginEpisodeAction,
+      episodeStateFilter,
       finishEpisodeAction,
       lectern.resetProgress,
       reload,
+      setEpisodes,
     ],
   );
 
@@ -1163,10 +1196,10 @@ export default function PodcastDetailPaneBody() {
       <ConnectionsSurface
         resourceRef={{ scheme: "podcast", id: podcastId ?? "" }}
         composerController={connectionsComposerController}
-        activateTarget={requirePaneRuntime(paneRuntime, "PodcastDetailPaneBody").activateTarget}
+        activateTarget={activateTarget}
       />
     ),
-    [connectionsComposerController, paneRuntime, podcastId],
+    [activateTarget, connectionsComposerController, podcastId],
   );
   const { companionAction } = useResourceInspector({
     scheme: "podcast",

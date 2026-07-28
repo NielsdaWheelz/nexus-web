@@ -8,9 +8,8 @@ from datetime import datetime
 from typing import Literal, cast
 from uuid import UUID
 
-from sqlalchemy import delete, exists, func, literal, or_, select, text
+from sqlalchemy import ColumnExpressionArgument, delete, exists, func, literal, or_, select, text
 from sqlalchemy.orm import Session
-from sqlalchemy.sql.elements import ColumnElement
 
 from nexus.db.models import Highlight, Media, MediaTeardownIntent, ResourceGrant
 from nexus.db.retries import retry_read_committed, retry_serializable
@@ -127,7 +126,7 @@ def _record_from_row(row: ResourceGrant) -> ResourceGrantRecord:
 
 def media_grant_path_exists_expr(
     viewer_user_id: UUID,
-    media_id_expr: UUID | ColumnElement[UUID],
+    media_id_expr: UUID | ColumnExpressionArgument[UUID | None],
 ):
     """SQLAlchemy predicate for a direct-media or child-highlight grant path."""
 
@@ -160,7 +159,7 @@ def media_grant_path_exists_expr(
 
 def highlight_grant_path_exists_expr(
     viewer_user_id: UUID,
-    highlight_id_expr: UUID | ColumnElement[UUID],
+    highlight_id_expr: UUID | ColumnExpressionArgument[UUID],
 ):
     """SQLAlchemy predicate for an exact-highlight grant path."""
 

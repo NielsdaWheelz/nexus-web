@@ -533,7 +533,7 @@ projection.
 | Destination standing head | `destinations.ts`, resolved by `paneHeaderModel.ts` |
 | Header types/resolution | `paneHeaderModel.ts` |
 | Publication normalization/equality | `panePublications.ts` |
-| Publication lifecycle | `usePanePublication.ts`, bound by the three semantic hooks |
+| Publication lifecycle | `usePanePublication.ts`, bound by the three semantic hooks; layout-phase publication makes controls and their host records actionable in the same paint |
 | Primary React transport | `PanePrimaryChrome.tsx` |
 | Responsive placement | `PaneShell.tsx` |
 | Identity DOM | `PaneHeaderIdentity`, `RunningHead`, `ResourceHead` |

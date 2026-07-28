@@ -45,14 +45,19 @@ describe("toChatSSEEvent", () => {
       profile_id: "balanced",
       reasoning_option_id: "medium",
       chat_subject: {
-        requested_resource_ref: "highlight:66666666-6666-4666-8666-666666666666",
+        requested_resource_ref:
+          "highlight:66666666-6666-4666-8666-666666666666",
         resource_ref: "note_block:77777777-7777-4777-8777-777777777777",
         context_edge_id: "88888888-8888-4888-8888-888888888888",
         companions: ["media:99999999-9999-4999-8999-999999999999"],
       },
     };
 
-    expect(toChatSSEEvent("meta", data)).toEqual({ seq: 0, type: "meta", data });
+    expect(toChatSSEEvent("meta", data)).toEqual({
+      seq: 0,
+      type: "meta",
+      data,
+    });
     expect(toChatSSEEvent("meta", { ...data, chat_subject: null })).toEqual({
       seq: 0,
       type: "meta",
@@ -136,6 +141,31 @@ describe("toChatSSEEvent", () => {
       type: "citation_index",
       data: { assistant_message_id: "msg-1", citations: [item] },
     });
+  });
+
+  it("normalizes REST-shaped citation activations on the shared event boundary", () => {
+    const wireItem = {
+      ...item,
+      citation: {
+        ...citation,
+        activation: {
+          resource_ref: citation.activation.resourceRef,
+          kind: citation.activation.kind,
+          href: citation.activation.href,
+          unresolved_reason: citation.activation.unresolvedReason,
+        },
+      },
+    };
+    const event = toChatSSEEvent("citation_index", {
+      assistant_message_id: "msg-1",
+      citations: [wireItem],
+    });
+    if (event.type !== "citation_index") {
+      throw new Error("Expected citation_index event");
+    }
+    expect(event.data.citations[0]?.citation.activation).toEqual(
+      citation.activation,
+    );
   });
 
   it("rejects an old entries payload", () => {
@@ -299,8 +329,8 @@ describe("toChatSSEEvent", () => {
         tool_name: "app_search",
         tool_call_index: 1,
         provider_tool_call_id: "provider-tool-1",
-        input_delta: "{\"query\":\"ne",
-        input_preview: "{\"query\":\"nexus\"}",
+        input_delta: '{"query":"ne',
+        input_preview: '{"query":"nexus"}',
         provider_event_seq_start: 5,
         provider_event_seq_end: 5,
       }),
@@ -313,8 +343,8 @@ describe("toChatSSEEvent", () => {
         tool_name: "app_search",
         tool_call_index: 1,
         provider_tool_call_id: "provider-tool-1",
-        input_delta: "{\"query\":\"ne",
-        input_preview: "{\"query\":\"nexus\"}",
+        input_delta: '{"query":"ne',
+        input_preview: '{"query":"nexus"}',
         provider_event_seq_start: 5,
         provider_event_seq_end: 5,
       },

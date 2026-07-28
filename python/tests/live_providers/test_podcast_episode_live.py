@@ -169,17 +169,17 @@ def test_live_podcast_episode_transcribes_and_indexes_real_episode(
     )
     assert transcript_request.status_code in {200, 202}, transcript_request.text
 
-    from tests.support.source_jobs import run_queued_source_attempt
+    from tests.support.source_jobs import run_queued_source_pipeline
 
     with direct_db.session() as session:
-        transcription_result = run_queued_source_attempt(
+        transcription_result = run_queued_source_pipeline(
             session,
             media_id=media_id,
             actor_user_id=user_id,
             request_id="live-provider-podcast-transcribe",
         )
 
-    assert transcription_result["status"] == "success", transcription_result
+    assert transcription_result["status"] == "completed", transcription_result
     register_background_job_cleanup(direct_db, media_id)
     media_trace = assert_media_ready(auth_client, headers, media_id)
     evidence_trace = assert_complete_evidence_trace(direct_db, media_id, "transcript", "transcript")

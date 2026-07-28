@@ -1,6 +1,12 @@
 import type { ComponentProps, ReactNode } from "react";
 import { useContext, useEffect, useMemo, useRef } from "react";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ResourceItem } from "@/lib/resources/resourceItems";
 import type { ResourceLocatorResolution } from "@/lib/resources/resourceLocators";
@@ -761,10 +767,14 @@ describe("WorkspaceHost pane route lifecycle", () => {
       "data-instance-id",
       firstInstance,
     );
-    expect(screen.getByRole("textbox", { name: "Pane body control" })).toHaveFocus();
+    expect(
+      screen.getByRole("textbox", { name: "Pane body control" }),
+    ).toHaveFocus();
     expect(screen.getByTestId("route-body-scrollport").scrollTop).toBe(180);
     expect(
-      screen.queryByText(/This route is not yet supported in side-by-side pane mode/),
+      screen.queryByText(
+        /This route is not yet supported in side-by-side pane mode/,
+      ),
     ).not.toBeInTheDocument();
     expect(hostMocks.mountedBodyIds).toHaveLength(1);
     expect(hostMocks.unmountedBodyIds).toEqual([]);
@@ -796,7 +806,9 @@ describe("WorkspaceHost pane route lifecycle", () => {
       "data-instance-id",
       firstInstance,
     );
-    expect(screen.getByRole("textbox", { name: "Pane body control" })).toHaveFocus();
+    expect(
+      screen.getByRole("textbox", { name: "Pane body control" }),
+    ).toHaveFocus();
     expect(screen.getByTestId("route-body-scrollport").scrollTop).toBe(180);
     expect(hostMocks.mountedBodyIds).toHaveLength(1);
     expect(hostMocks.unmountedBodyIds).toEqual([]);
@@ -832,21 +844,24 @@ describe("WorkspaceHost pane route lifecycle", () => {
   it.each([
     ["Library", `/libraries/${LIBRARY_ID}?sort=title&direction=asc`],
     ["Stats", "/stats?view=year&year=2026"],
-  ])("remounts the %s route body for a new visit occurrence", (_route, href) => {
-    setPaneHref(href);
-    const { rerender } = render(<WorkspaceHost />);
-    const firstInstance = screen.getByTestId("route-body").dataset.instanceId;
+  ])(
+    "remounts the %s route body for a new visit occurrence",
+    (_route, href) => {
+      setPaneHref(href);
+      const { rerender } = render(<WorkspaceHost />);
+      const firstInstance = screen.getByTestId("route-body").dataset.instanceId;
 
-    setPaneHref(href);
-    rerender(<WorkspaceHost />);
+      setPaneHref(href);
+      rerender(<WorkspaceHost />);
 
-    expect(screen.getByTestId("route-body")).not.toHaveAttribute(
-      "data-instance-id",
-      firstInstance,
-    );
-    expect(hostMocks.mountedBodyIds).toHaveLength(2);
-    expect(hostMocks.unmountedBodyIds).toEqual([Number(firstInstance)]);
-  });
+      expect(screen.getByTestId("route-body")).not.toHaveAttribute(
+        "data-instance-id",
+        firstInstance,
+      );
+      expect(hostMocks.mountedBodyIds).toHaveLength(2);
+      expect(hostMocks.unmountedBodyIds).toEqual([Number(firstInstance)]);
+    },
+  );
 
   it("remounts a ShellScroll route body for a new visit occurrence", () => {
     setPaneHref("/libraries");
@@ -1016,7 +1031,9 @@ describe("WorkspaceHost pane route lifecycle", () => {
     const view = render(<WorkspaceHost />);
     await waitFor(() => {
       expect(hostMocks.secondaryPublisherByPaneId.get("pane-1")).toBeDefined();
-      expect(hostMocks.fixedChromePublisherByPaneId.get("pane-1")).toBeDefined();
+      expect(
+        hostMocks.fixedChromePublisherByPaneId.get("pane-1"),
+      ).toBeDefined();
     });
     const staleSecondaryPublisher =
       hostMocks.secondaryPublisherByPaneId.get("pane-1");
@@ -1126,9 +1143,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
   });
 
   it("resolves a Library resource locator once across query replacements", async () => {
-    let resolveLocator!: (
-      resolutions: ResourceLocatorResolution[],
-    ) => void;
+    let resolveLocator!: (resolutions: ResourceLocatorResolution[]) => void;
     hostMocks.resolveResourceLocators.mockImplementation(
       () =>
         new Promise((resolve) => {
@@ -1194,6 +1209,9 @@ describe("WorkspaceHost pane route lifecycle", () => {
         900,
       );
     });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
 
     hostMocks.store.resizePrimaryPane.mockClear();
     hostMocks.runtimeLayout = null;
@@ -1208,10 +1226,25 @@ describe("WorkspaceHost pane route lifecycle", () => {
       "data-fixed-chrome-width-px",
       "0",
     );
-    expect(hostMocks.store.resizePrimaryPane).toHaveBeenCalledWith(
-      "pane-1",
-      684,
-    );
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+    expect(hostMocks.store.resizePrimaryPane).not.toHaveBeenCalled();
+  });
+
+  it("persists the workspace floor after intrinsic-capable content resolves to workspace sizing", async () => {
+    hostMocks.runtimeLayout = {
+      primaryWidth: { kind: "workspace" },
+    };
+
+    render(<WorkspaceHost />);
+
+    await waitFor(() => {
+      expect(hostMocks.store.resizePrimaryPane).toHaveBeenCalledWith(
+        "pane-1",
+        684,
+      );
+    });
   });
 
   it("routes pane chrome internal links through the current pane", () => {
@@ -1292,8 +1325,7 @@ const RESOURCE_INSPECTOR_EVIDENCE_ONLY: PaneSecondaryPublication = {
   surfaces: [{ id: "resource-evidence", body: <div>Evidence</div> }],
 };
 
-const RESOURCE_INSPECTOR_HIGHLIGHTS_ONLY =
-  RESOURCE_INSPECTOR_EVIDENCE_ONLY;
+const RESOURCE_INSPECTOR_HIGHLIGHTS_ONLY = RESOURCE_INSPECTOR_EVIDENCE_ONLY;
 
 const RESOURCE_INSPECTOR_WITH_CONTENTS: PaneSecondaryPublication = {
   groupId: "resource-inspector",
@@ -1654,8 +1686,7 @@ describe("WorkspaceHost secondary publication validation", () => {
     const activation = {
       kind: "DossierRevision",
       surfaceId: "resource-dossier",
-      revisionRef:
-        "artifact_revision:44444444-4444-4444-8444-444444444444",
+      revisionRef: "artifact_revision:44444444-4444-4444-8444-444444444444",
     } as const;
     hostMocks.targetActivationRequest = {
       href: MEDIA_HREF_1,
@@ -1681,7 +1712,10 @@ describe("WorkspaceHost secondary publication validation", () => {
 
   it("launches a pending cross-pane secondary request once the target publishes the surface", async () => {
     hostMocks.secondaryPublication = RESOURCE_INSPECTOR_WITH_CONTENTS;
-    const activation = { kind: "Surface", surfaceId: "resource-evidence" } as const;
+    const activation = {
+      kind: "Surface",
+      surfaceId: "resource-evidence",
+    } as const;
     hostMocks.store.pendingSecondaryActivationByPaneId = new Map([
       ["pane-1", { routeKey: `media:${MEDIA_HREF_1}`, activation }],
     ]);
@@ -1701,7 +1735,10 @@ describe("WorkspaceHost secondary publication validation", () => {
 
   it("discards a pending cross-pane secondary request when the target publishes without the surface", async () => {
     hostMocks.secondaryPublication = RESOURCE_INSPECTOR_EVIDENCE_ONLY;
-    const activation = { kind: "Surface", surfaceId: "resource-contents" } as const;
+    const activation = {
+      kind: "Surface",
+      surfaceId: "resource-contents",
+    } as const;
     hostMocks.store.pendingSecondaryActivationByPaneId = new Map([
       ["pane-1", { routeKey: `media:${MEDIA_HREF_1}`, activation }],
     ]);
@@ -1725,10 +1762,10 @@ describe("WorkspaceHost secondary publication validation", () => {
       "artifact_revision:44444444-4444-4444-8444-444444444444";
     hostMocks.secondaryPublication = RESOURCE_DOSSIER_PUBLICATION;
     const activation = {
-        kind: "DossierRevision",
-        surfaceId: "resource-dossier",
-        revisionRef,
-      } as const;
+      kind: "DossierRevision",
+      surfaceId: "resource-dossier",
+      revisionRef,
+    } as const;
     hostMocks.store.pendingSecondaryActivationByPaneId = new Map([
       ["pane-1", { routeKey: `media:${MEDIA_HREF_1}`, activation }],
     ]);
@@ -1763,9 +1800,9 @@ describe("WorkspaceHost secondary publication validation", () => {
   it("delivers and acknowledges the canonical current Dossier for an artifact head", async () => {
     hostMocks.secondaryPublication = RESOURCE_DOSSIER_PUBLICATION;
     const activation = {
-        kind: "DossierCurrent",
-        surfaceId: "resource-dossier",
-      } as const;
+      kind: "DossierCurrent",
+      surfaceId: "resource-dossier",
+    } as const;
     hostMocks.store.pendingSecondaryActivationByPaneId = new Map([
       ["pane-1", { routeKey: `media:${MEDIA_HREF_1}`, activation }],
     ]);

@@ -215,12 +215,12 @@ contribute no Semantic evidence in this cutover.
 
 Context contracts:
 
-| Consumer | Candidate set | Qualification and ordering |
-| --- | --- | --- |
-| Related | Visible media outside one readable media anchor | Existing semantic and shared-author relation only. Similarity peers first by distance, then shared-author-only peers by author count, then target ref. Preserve default limit 8 and range 1..20. |
-| Library Resonance | Every visible physical member of a non-default library | Existing 14-day recency decay, graph count, shared-author cohesion, and existing semantic term. Score all members before keyset pagination. |
-| Lectern slate | Visible, placeable media outside the complete queue | Continuity, Arrival, Graph Thread, or Rediscovery. |
-| Library slate | Destination-addable visible resources outside complete membership | Relation to a representative library anchor. After relation tier/strength, recent engagement and exact arrival are secondary keys; neither can qualify or become the primary reason. |
+| Consumer          | Candidate set                                                     | Qualification and ordering                                                                                                                                                                       |
+| ----------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Related           | Visible media outside one readable media anchor                   | Existing semantic and shared-author relation only. Similarity peers first by distance, then shared-author-only peers by author count, then target ref. Preserve default limit 8 and range 1..20. |
+| Library Resonance | Every visible physical member of a non-default library            | Existing 14-day recency decay, graph count, shared-author cohesion, and existing semantic term. Score all members before keyset pagination.                                                      |
+| Lectern slate     | Visible, placeable media outside the complete queue               | Continuity, Arrival, Graph Thread, or Rediscovery.                                                                                                                                               |
+| Library slate     | Destination-addable visible resources outside complete membership | Relation to a representative library anchor. After relation tier/strength, recent engagement and exact arrival are secondary keys; neither can qualify or become the primary reason.             |
 
 Library Resonance preserves the current weights and keyset while moving its
 owner and removing false partial-date instants:
@@ -556,11 +556,11 @@ The Slate creates no second Lectern lane or recovery action; if it unmounts, the
 shell owner remains available.
 
 Library acceptance calls the existing media/podcast filing command, announces
-`Added to {library}`, and marks the main entry projection stale. It does not
-synthesize or optimistically insert a `LibraryEntry` from slate data and does
-not reset a loaded paginated collection immediately. The next pane activation
-canonically reloads the current library sort and resets its paging state.
-Failure of that later read never reclassifies the committed Add as failed.
+`Added to {library}`, and publishes through the canonical placement-revision
+seam. It does not synthesize or optimistically insert a `LibraryEntry` from
+slate data. An active pane canonically reconciles its current sort through the
+revision consumer; an inactive pane waits until its next activation. Failure of
+that authoritative read never reclassifies the committed Add as failed.
 
 There is no refill endpoint, client exclusions parameter, slate cursor, or
 client-supplied limit.

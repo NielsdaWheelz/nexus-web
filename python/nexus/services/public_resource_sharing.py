@@ -52,6 +52,7 @@ from nexus.schemas.reader import (
 )
 from nexus.services import locator_resolver
 from nexus.services.capabilities import is_text_document_ready
+from nexus.services.contributor_credits import load_current_source_author_bylines
 from nexus.services.epub_assets import list_public_epub_asset_sources
 from nexus.services.epub_read import (
     get_epub_section_source,
@@ -1235,55 +1236,7 @@ def _load_bylines_if_supported(
     *,
     media_id: UUID,
 ) -> list[str] | None:
-    rows = db.execute(
-        text(
-            """
-            WITH current_source AS (
-                SELECT source_type
-                FROM media_source_attempts
-                WHERE media_id = :media_id
-                  AND status = 'succeeded'
-                ORDER BY attempt_no DESC, id DESC
-                LIMIT 1
-            )
-            SELECT cc.credited_name
-            FROM contributor_credits cc
-            CROSS JOIN current_source source
-            WHERE cc.media_id = :media_id
-              AND cc.role = 'author'
-              AND (
-                (source.source_type = 'generic_web_url'
-                 AND cc.source = 'web_article_byline')
-                OR (source.source_type = 'browser_article_capture'
-                    AND cc.source = 'web_article_capture')
-                OR (source.source_type IN ('x_author_thread', 'x_post')
-                    AND cc.source IN (
-                      'x_api_author_thread',
-                      'x_api_post',
-                      'x_api_quoted_post'
-                    ))
-                OR (source.source_type IN ('youtube_video', 'video_transcript')
-                    AND cc.source = 'youtube_metadata')
-                OR (source.source_type IN (
-                      'remote_pdf_url',
-                      'uploaded_pdf_file',
-                      'browser_pdf_capture'
-                    ) AND cc.source = 'pdf_metadata')
-                OR (source.source_type IN (
-                      'remote_epub_url',
-                      'uploaded_epub_file',
-                      'browser_epub_capture'
-                    ) AND cc.source = 'epub_opf')
-                OR (source.source_type = 'podcast_episode_transcript'
-                    AND cc.source = 'rss')
-              )
-            ORDER BY cc.ordinal ASC
-            LIMIT 33
-            """
-        ),
-        {"media_id": media_id},
-    ).scalars()
-    bylines = [str(value).strip() for value in rows if str(value).strip()]
+    bylines = load_current_source_author_bylines(db, media_id=media_id)
     if len(bylines) > 32 or any(len(value) > 512 for value in bylines):
         return None
     return bylines

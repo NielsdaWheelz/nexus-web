@@ -70,6 +70,9 @@ interface ActionMenuProps {
 const MENU_ITEM_SELECTOR =
   '[role="menuitem"]:not([disabled]), ' +
   '[role="menuitemcheckbox"]:not([disabled])';
+const ENABLED_MENU_ITEM_SELECTOR =
+  '[role="menuitem"]:not([disabled]):not([aria-disabled="true"]), ' +
+  '[role="menuitemcheckbox"]:not([disabled]):not([aria-disabled="true"])';
 const TABBABLE_SELECTOR = [
   'a[href]:not([aria-disabled="true"])',
   "button:not([disabled])",
@@ -123,6 +126,15 @@ export default function ActionMenu({
     );
   }, [menuRef]);
 
+  const getEnabledMenuItems = useCallback((): HTMLElement[] => {
+    if (!menuRef.current) return [];
+    return Array.from(
+      menuRef.current.querySelectorAll<HTMLElement>(
+        ENABLED_MENU_ITEM_SELECTOR,
+      ),
+    );
+  }, [menuRef]);
+
   const getTabbableItems = useCallback((): HTMLElement[] => {
     if (!menuRef.current) return [];
     return Array.from(menuRef.current.querySelectorAll<HTMLElement>(TABBABLE_SELECTOR)).filter(
@@ -173,15 +185,24 @@ export default function ActionMenu({
 
     requestAnimationFrame(() => {
       const menuItems = getMenuItems();
+      const enabledMenuItems = getEnabledMenuItems();
       const tabbableItems = getTabbableItems();
-      const focusable = menuItems.length ? menuItems : tabbableItems;
+      const focusable =
+        enabledMenuItems.length > 0 ? menuItems : tabbableItems;
       const target =
         initialFocus === "last"
           ? focusable[focusable.length - 1]
           : focusable[0];
       target?.focus();
     });
-  }, [getMenuItems, getTabbableItems, initialFocus, menuOpen, anchorRect]);
+  }, [
+    getEnabledMenuItems,
+    getMenuItems,
+    getTabbableItems,
+    initialFocus,
+    menuOpen,
+    anchorRect,
+  ]);
 
   const handleMenuKeyDown = (event: ReactKeyboardEvent<HTMLUListElement>) => {
     event.stopPropagation();

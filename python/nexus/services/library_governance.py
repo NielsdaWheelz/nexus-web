@@ -608,8 +608,7 @@ def _decode_destination_cursor(
         padded = cursor + "=" * (-len(cursor) % 4)
         payload: dict[str, Any] = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
         if (
-            set(payload)
-            != {"k", "viewer_id", "q", "rank", "normalized_name", "name", "id"}
+            set(payload) != {"k", "viewer_id", "q", "rank", "normalized_name", "name", "id"}
             or payload["k"] != "library_destinations:v2"
             or UUID(str(payload["viewer_id"])) != viewer_id
             or payload["q"] != q

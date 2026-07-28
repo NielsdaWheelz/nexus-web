@@ -25,6 +25,8 @@ const TEST_VISIT_ID = assumePaneVisitId(
 );
 const SEARCH_HREF = "/search?q=return";
 const SEARCH_ROUTE_KEY = resolvePaneRouteIdentity(SEARCH_HREF).routeKey;
+const FIRST_NOTE_ID = "11111111-1111-4111-8111-111111111111";
+const SECOND_NOTE_ID = "22222222-2222-4222-8222-222222222222";
 
 function pathOf(input: RequestInfo | URL): string {
   if (input instanceof Request) {
@@ -89,16 +91,18 @@ function searchNote(id: string, bodyText: string) {
     media_id: null,
     media_kind: null,
     resource_ref: `note_block:${id}`,
+    owner_resource_ref: `note_block:${id}`,
     activation: {
-      resourceRef: `note_block:${id}`,
+      resource_ref: `note_block:${id}`,
       kind: "route",
       href: `/notes/${id}`,
-      unresolvedReason: null,
+      unresolved_reason: null,
     },
     citation_target: `note_block:${id}`,
     context_ref: { type: "note_block", id },
     body_text: bodyText,
     highlight_excerpt: null,
+    note_origin: "note",
     locator: {
       type: "note_block_offsets",
       block_id: id,
@@ -114,7 +118,10 @@ function stubEmptySearch() {
     vi.fn(async (input: RequestInfo | URL) => {
       const path = pathOf(input);
       if (path === "/api/search") {
-        return jsonResponse({ results: [], page: { next_cursor: null } });
+        return jsonResponse({
+          results: [],
+          page: { has_more: false, next_cursor: null },
+        });
       }
       // ContributorFilter etc. — tolerate any incidental contributor lookups.
       if (path.startsWith("/api/contributors")) {
@@ -148,12 +155,14 @@ describe("SearchPaneBody filter chips", () => {
           return jsonResponse(
             cursor === "cursor-2"
               ? {
-                  results: [searchNote("second", "Restored second page")],
-                  page: { next_cursor: null },
+                  results: [
+                    searchNote(SECOND_NOTE_ID, "Restored second page"),
+                  ],
+                  page: { has_more: false, next_cursor: null },
                 }
               : {
-                  results: [searchNote("first", "Restored first page")],
-                  page: { next_cursor: "cursor-2" },
+                  results: [searchNote(FIRST_NOTE_ID, "Restored first page")],
+                  page: { has_more: true, next_cursor: "cursor-2" },
                 },
           );
         }

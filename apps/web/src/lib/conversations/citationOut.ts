@@ -98,15 +98,32 @@ function isCitationSnapshot(value: unknown): value is CitationSnapshot {
   );
 }
 
+function decodeCitationActivation(value: unknown): ResourceActivation | null {
+  if (!isRecord(value)) return null;
+  const transportShape =
+    hasOnlyKeys(value, ["resource_ref", "kind", "href", "unresolved_reason"]) &&
+    typeof value.resource_ref === "string" &&
+    (value.unresolved_reason === null ||
+      typeof value.unresolved_reason === "string");
+  const normalizedShape =
+    hasOnlyKeys(value, ["resourceRef", "kind", "href", "unresolvedReason"]) &&
+    typeof value.resourceRef === "string" &&
+    (value.unresolvedReason === null ||
+      typeof value.unresolvedReason === "string");
+  if (!transportShape && !normalizedShape) return null;
+  return normalizeResourceActivation(value);
+}
+
 /**
- * Type guard for a server-built `CitationOut` (the chat `citation_index` event
- * now carries `CitationOut[]`; the backend is the sole producer). Mirrors the
- * Pydantic `extra="forbid"` shape.
+ * Decode one server-built citation into the owned frontend value. REST uses
+ * snake_case inside `activation`; SSE and already-decoded values may carry the
+ * normalized camelCase form. Both enter through this one strict boundary and
+ * downstream code sees only `ResourceActivation`.
  */
-export function isCitationOut(value: unknown): value is CitationOut {
-  return (
-    isRecord(value) &&
-    hasOnlyKeys(value, [
+export function decodeCitationOut(value: unknown): CitationOut | null {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, [
       "ordinal",
       "role",
       "target_ref",
@@ -115,16 +132,29 @@ export function isCitationOut(value: unknown): value is CitationOut {
       "locator",
       "deep_link",
       "snapshot",
-    ]) &&
-    typeof value.ordinal === "number" &&
-    Number.isInteger(value.ordinal) &&
-    typeof value.role === "string" &&
-    CITATION_ROLES.has(value.role as CitationRole) &&
-    isCitationTargetRef(value.target_ref) &&
-    normalizeResourceActivation(value.activation) !== null &&
-    (value.media_id === null || typeof value.media_id === "string") &&
-    (value.locator === null || isRetrievalLocator(value.locator)) &&
-    (value.deep_link === null || typeof value.deep_link === "string") &&
-    (value.snapshot === null || isCitationSnapshot(value.snapshot))
-  );
+    ]) ||
+    typeof value.ordinal !== "number" ||
+    !Number.isInteger(value.ordinal) ||
+    typeof value.role !== "string" ||
+    !CITATION_ROLES.has(value.role as CitationRole) ||
+    !isCitationTargetRef(value.target_ref) ||
+    (value.media_id !== null && typeof value.media_id !== "string") ||
+    (value.locator !== null && !isRetrievalLocator(value.locator)) ||
+    (value.deep_link !== null && typeof value.deep_link !== "string") ||
+    (value.snapshot !== null && !isCitationSnapshot(value.snapshot))
+  ) {
+    return null;
+  }
+  const activation = decodeCitationActivation(value.activation);
+  if (activation === null) return null;
+  return {
+    ordinal: value.ordinal,
+    role: value.role as CitationRole,
+    target_ref: value.target_ref,
+    activation,
+    media_id: value.media_id as string | null,
+    locator: value.locator as RetrievalLocator | null,
+    deep_link: value.deep_link as string | null,
+    snapshot: value.snapshot as CitationSnapshot | null,
+  };
 }

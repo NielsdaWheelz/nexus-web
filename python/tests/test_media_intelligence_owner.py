@@ -284,10 +284,13 @@ def test_ensure_current_many_records_items_beyond_fanout_budget(
     assert [item.media_id for item in results] == [first, second]
     assert isinstance(results[1], media_intelligence.MediaOmission)
     assert results[1].reason is media_intelligence.MediaOmissionReason.Budget
-    assert db_session.execute(
-        text("SELECT status FROM media_summaries WHERE media_id = :media_id"),
-        {"media_id": second},
-    ).scalar_one() == "failed"
+    assert (
+        db_session.execute(
+            text("SELECT status FROM media_summaries WHERE media_id = :media_id"),
+            {"media_id": second},
+        ).scalar_one()
+        == "failed"
+    )
 
 
 def test_ready_with_claim_projection_is_usable(db_session: Session) -> None:
@@ -307,9 +310,7 @@ def test_ready_but_claimless_media_is_not_usable_for_aggregate(db_session: Sessi
     lib = create_test_library(db_session, uid)
     media_id = create_searchable_media_in_library(db_session, uid, lib, title="Claimless")
     _coerce_projection(db_session, media_id, status="ready", with_claim=False)
-    assert (
-        _library_build_failure(db_session, uid, lib) == DossierBuildFailureCode.NoSourceMaterial
-    )
+    assert _library_build_failure(db_session, uid, lib) == DossierBuildFailureCode.NoSourceMaterial
 
 
 def test_no_usable_projection_when_media_is_contentless(db_session: Session) -> None:
@@ -331,9 +332,7 @@ def test_no_usable_projection_when_media_is_contentless(db_session: Session) -> 
     db_session.flush()
     add_media_to_library(db_session, lib, media.id)
     db_session.commit()
-    assert (
-        _library_build_failure(db_session, uid, lib) == DossierBuildFailureCode.NoSourceMaterial
-    )
+    assert _library_build_failure(db_session, uid, lib) == DossierBuildFailureCode.NoSourceMaterial
 
 
 # --- residue: no direct media-table reads outside the owner ------------------

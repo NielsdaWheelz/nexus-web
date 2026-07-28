@@ -19,9 +19,7 @@ import type { ResourceItem } from "@/lib/resources/resourceItems";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import { assumePaneVisitId } from "@/lib/workspace/schema";
 
-const TEST_VISIT_ID = assumePaneVisitId(
-  "00000000-0000-4000-8000-000000000001",
-);
+const TEST_VISIT_ID = assumePaneVisitId("00000000-0000-4000-8000-000000000001");
 
 const controller = vi.hoisted(() => ({
   subscribe: vi.fn(() => () => undefined),
@@ -108,7 +106,10 @@ function InspectorVisibilityHarness({
       canGoForward={false}
       onNavigatePane={vi.fn()}
       onReplacePane={vi.fn()}
-      onActivateWorkspaceTarget={vi.fn(() => ({ kind: "Unchanged" as const, paneId: "pane-1" }))}
+      onActivateWorkspaceTarget={vi.fn(() => ({
+        kind: "Unchanged" as const,
+        paneId: "pane-1",
+      }))}
       onGoBackPane={vi.fn()}
       onGoForwardPane={vi.fn()}
       onSetPaneLayout={vi.fn<(input: PaneRuntimeLayoutPublication) => void>()}
@@ -160,7 +161,10 @@ function renderInspector(
       canGoForward={false}
       onNavigatePane={options.onNavigatePane ?? vi.fn()}
       onReplacePane={vi.fn()}
-      onActivateWorkspaceTarget={options.onActivateWorkspaceTarget ?? vi.fn(() => ({ kind: "Unchanged" as const, paneId: "pane-1" }))}
+      onActivateWorkspaceTarget={
+        options.onActivateWorkspaceTarget ??
+        vi.fn(() => ({ kind: "Unchanged" as const, paneId: "pane-1" }))
+      }
       onGoBackPane={vi.fn()}
       onGoForwardPane={vi.fn()}
       onSetPaneLayout={vi.fn<(input: PaneRuntimeLayoutPublication) => void>()}
@@ -175,9 +179,7 @@ function renderInspector(
   return { acknowledge, publishSecondary };
 }
 
-function dossierBodyProps(
-  publishSecondary: ReturnType<typeof vi.fn>,
-): {
+function dossierBodyProps(publishSecondary: ReturnType<typeof vi.fn>): {
   onCitationActivate: DossierCitationActivate;
   onViewMediaEvidence: () => void;
 } {
@@ -255,8 +257,7 @@ describe("useResourceInspector workspace activation", () => {
     const activation = {
       kind: "DossierRevision",
       surfaceId: "resource-dossier",
-      revisionRef:
-        "artifact_revision:22222222-2222-4222-8222-222222222222",
+      revisionRef: "artifact_revision:22222222-2222-4222-8222-222222222222",
     } as const;
     const { acknowledge } = renderInspector(activation);
 
@@ -275,10 +276,14 @@ describe("useResourceInspector workspace activation", () => {
 
   it("opens a Dossier citation on its exact artifact revision through the pane runtime", async () => {
     const onActivateWorkspaceTarget =
-      vi.fn<ComponentProps<typeof PaneRuntimeProvider>["onActivateWorkspaceTarget"]>();
+      vi.fn<
+        ComponentProps<typeof PaneRuntimeProvider>["onActivateWorkspaceTarget"]
+      >();
     const revisionRef =
       "artifact_revision:33333333-3333-4333-8333-333333333333";
-    const { publishSecondary } = renderInspector(null, { onActivateWorkspaceTarget });
+    const { publishSecondary } = renderInspector(null, {
+      onActivateWorkspaceTarget,
+    });
 
     await waitFor(() => {
       expect(publishSecondary).toHaveBeenCalled();
@@ -312,7 +317,9 @@ describe("useResourceInspector workspace activation", () => {
     const onNavigatePane =
       vi.fn<ComponentProps<typeof PaneRuntimeProvider>["onNavigatePane"]>();
     const onActivateWorkspaceTarget =
-      vi.fn<ComponentProps<typeof PaneRuntimeProvider>["onActivateWorkspaceTarget"]>();
+      vi.fn<
+        ComponentProps<typeof PaneRuntimeProvider>["onActivateWorkspaceTarget"]
+      >();
     const target: ReaderSourceTarget = {
       kind: "media",
       source: "message_retrieval",
@@ -340,8 +347,7 @@ describe("useResourceInspector workspace activation", () => {
     });
     dossierCitationActivate(publishSecondary)(
       {
-        resourceRef:
-          "content_chunk:66666666-6666-4666-8666-666666666666",
+        resourceRef: "content_chunk:66666666-6666-4666-8666-666666666666",
         kind: "route",
         href: MEDIA_HREF,
         unresolvedReason: null,
@@ -358,7 +364,9 @@ describe("useResourceInspector workspace activation", () => {
     const onNavigatePane =
       vi.fn<ComponentProps<typeof PaneRuntimeProvider>["onNavigatePane"]>();
     const onActivateWorkspaceTarget =
-      vi.fn<ComponentProps<typeof PaneRuntimeProvider>["onActivateWorkspaceTarget"]>();
+      vi.fn<
+        ComponentProps<typeof PaneRuntimeProvider>["onActivateWorkspaceTarget"]
+      >();
     const href = "/pages/55555555-5555-4555-8555-555555555555";
     const { publishSecondary } = renderInspector(null, {
       onNavigatePane,
@@ -368,6 +376,7 @@ describe("useResourceInspector workspace activation", () => {
     await waitFor(() => {
       expect(publishSecondary).toHaveBeenCalled();
     });
+    const preventDefault = vi.fn();
     dossierCitationActivate(publishSecondary)(
       {
         resourceRef: "page:55555555-5555-4555-8555-555555555555",
@@ -376,7 +385,12 @@ describe("useResourceInspector workspace activation", () => {
         unresolvedReason: null,
       },
       null,
-      { shiftKey: true } as ReactMouseEvent,
+      {
+        defaultPrevented: false,
+        detail: 1,
+        preventDefault,
+        shiftKey: true,
+      } as unknown as ReactMouseEvent,
     );
 
     expect(onActivateWorkspaceTarget).toHaveBeenCalledWith({
@@ -386,6 +400,7 @@ describe("useResourceInspector workspace activation", () => {
       modality: "Programmatic",
     });
     expect(onNavigatePane).not.toHaveBeenCalled();
+    expect(preventDefault).toHaveBeenCalledOnce();
   });
 
   it("routes Media Abstract evidence through the shared inspector surface command", async () => {

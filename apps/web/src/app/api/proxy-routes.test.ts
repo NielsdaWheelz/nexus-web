@@ -25,6 +25,14 @@ const REQUIRED_PROXY_ROUTES = new Set([
 // from public pages) and returns a local 204; it has no backend counterpart by design.
 // See docs/cutovers/csp-and-security-headers-hardening.md.
 const LOCAL_ROUTES = new Set(["src/app/api/csp-report/route.ts"]);
+// Consumption-history reads have a server-owned device-id contract and private
+// no-store response policy. Their thin route entrypoints delegate to the one
+// BFF owner that applies those invariants before invoking the ordinary app
+// proxy; keeping that owner out of each route prevents policy drift.
+const DELEGATED_APP_PROXY_ROUTES = new Set([
+  "src/app/api/consumption/sessions/route.ts",
+  "src/app/api/consumption/stats/route.ts",
+]);
 
 function routeFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -49,9 +57,14 @@ describe("BFF API route shape", () => {
     for (const route of routes) {
       const source = readFileSync(route, "utf8");
       const relativePath = relative(process.cwd(), route).split(sep).join("/");
-      const usesAppProxy = source.includes("proxyToFastAPI");
+      const usesAppProxy =
+        source.includes("proxyToFastAPI") ||
+        (DELEGATED_APP_PROXY_ROUTES.has(relativePath) &&
+          source.includes("proxyConsumptionRead"));
       const usesExtensionProxy = source.includes("proxyExtensionToFastAPI");
-      const usesPublicProxy = source.includes("proxyPublicToFastAPI");
+      const usesPublicProxy =
+        source.includes("proxyPublicToFastAPI") ||
+        source.includes("proxyResourceShareToFastAPI");
 
       if (LOCAL_ROUTES.has(relativePath)) {
         // Local sink: must handle the request in Next, never proxy to FastAPI.

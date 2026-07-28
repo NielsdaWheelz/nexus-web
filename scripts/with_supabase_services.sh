@@ -103,8 +103,7 @@ resolve_supabase_port() {
     local override_var="$3"
     local preferred_port="${!override_var:-$4}"
     local max_port
-    local lock_namespace="$5"
-    local lock_var="$6"
+    local lock_var="$5"
     local runtime_active="${TEST_RUNTIME_ACTIVE:-}"
 
     test_env_validate_port "$preferred_port" "$override_var"
@@ -120,7 +119,7 @@ resolve_supabase_port() {
         "$output_var" \
         "$preferred_port" \
         "$max_port" \
-        "$lock_namespace" \
+        "nexus-test-supabase-port-locks" \
         "$lock_var"
     if [ -n "$runtime_active" ]; then
         export TEST_RUNTIME_ACTIVE="$runtime_active"
@@ -132,35 +131,30 @@ resolve_supabase_port \
     SUPABASE_API_PORT \
     TEST_SUPABASE_API_PORT \
     54321 \
-    "nexus-test-supabase-api-port-locks" \
     TEST_SUPABASE_API_PORT_LOCK_DIR
 resolve_supabase_port \
     "Supabase database" \
     SUPABASE_DB_PORT \
     TEST_SUPABASE_DB_PORT \
     54322 \
-    "nexus-test-supabase-db-port-locks" \
     TEST_SUPABASE_DB_PORT_LOCK_DIR
 resolve_supabase_port \
     "Supabase Studio" \
     SUPABASE_STUDIO_PORT \
     TEST_SUPABASE_STUDIO_PORT \
     54323 \
-    "nexus-test-supabase-studio-port-locks" \
     TEST_SUPABASE_STUDIO_PORT_LOCK_DIR
 resolve_supabase_port \
     "Supabase inbucket" \
     SUPABASE_INBUCKET_PORT \
     TEST_SUPABASE_INBUCKET_PORT \
     54324 \
-    "nexus-test-supabase-inbucket-port-locks" \
     TEST_SUPABASE_INBUCKET_PORT_LOCK_DIR
 resolve_supabase_port \
     "Supabase shadow database" \
     SUPABASE_DB_SHADOW_PORT \
     TEST_SUPABASE_DB_SHADOW_PORT \
     54325 \
-    "nexus-test-supabase-shadow-port-locks" \
     TEST_SUPABASE_DB_SHADOW_PORT_LOCK_DIR
 
 export SUPABASE_PROJECT_ID="$supabase_project_id" SUPABASE_WORKDIR="$supabase_workdir"

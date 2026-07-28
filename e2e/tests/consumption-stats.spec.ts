@@ -42,8 +42,7 @@ interface ResetProgressState {
   mediaId: string;
   readerCursor: { state: string; revision: number };
   listeningState:
-    | { kind: "Absent" }
-    | { kind: "Present"; value: ListeningState };
+    { kind: "Absent" } | { kind: "Present"; value: ListeningState };
 }
 
 interface StatsEnvelope {
@@ -96,10 +95,10 @@ function seededAudio(): SeededAudio {
   ) as SeededAudio;
 }
 
-function silentWav(durationSeconds: number): Buffer {
+function toneWav(durationSeconds: number): Buffer {
   const sampleRate = 8_000;
   const dataSize = sampleRate * durationSeconds;
-  const bytes = Buffer.alloc(44 + dataSize, 128);
+  const bytes = Buffer.alloc(44 + dataSize);
   bytes.write("RIFF", 0, "ascii");
   bytes.writeUInt32LE(36 + dataSize, 4);
   bytes.write("WAVE", 8, "ascii");
@@ -113,6 +112,11 @@ function silentWav(durationSeconds: number): Buffer {
   bytes.writeUInt16LE(8, 34);
   bytes.write("data", 36, "ascii");
   bytes.writeUInt32LE(dataSize, 40);
+  for (let sample = 0; sample < dataSize; sample += 1) {
+    bytes[44 + sample] =
+      128 +
+      Math.round(Math.sin((2 * Math.PI * 440 * sample) / sampleRate) * 48);
+  }
   return bytes;
 }
 
@@ -280,7 +284,7 @@ test("records private activity through the BFF and renders filtered Stats", asyn
     route.fulfill({
       status: 200,
       contentType: "audio/wav",
-      body: silentWav(audio.duration_seconds),
+      body: toneWav(audio.duration_seconds),
     }),
   );
   await gotoSinglePaneWorkspace(page, rawDeviceId, `/media/${mediaId}`);
@@ -305,21 +309,70 @@ test("records private activity through the BFF and renders filtered Stats", asyn
       batch.spans?.some((span) => (span.durationMs ?? 0) > 5_000) === true
     );
   });
-  const readerSurface = activeWorkspacePane(page)
-    .getByTestId("document-viewport")
-    .locator("[data-focus-mode]");
+  const readerViewport =
+    activeWorkspacePane(page).getByTestId("document-viewport");
+  const readerSurface = readerViewport.locator("[data-focus-mode]");
   await expect(readerSurface).toBeVisible();
   await page.bringToFront();
   await readerSurface.click({ position: { x: 20, y: 20 } });
   await readerSurface.hover();
-  await page.mouse.wheel(0, 240);
+  const initialScrollTop = await readerViewport.evaluate(
+    (element) => element.scrollTop,
+  );
+  await page.mouse.wheel(0, 1_200);
+  await expect
+    .poll(() => readerViewport.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(initialScrollTop + 100);
+  const forwardScrollTop = await readerViewport.evaluate(
+    (element) => element.scrollTop,
+  );
   expect(await page.evaluate(() => document.hasFocus())).toBe(true);
   await page.waitForTimeout(10_500);
+  expect(
+    await readerViewport.evaluate((element) => element.scrollTop),
+    "A deferred canonical restore overrode genuine forward reading input.",
+  ).toBeGreaterThanOrEqual(forwardScrollTop);
   await page
     .getByRole("navigation", { name: "Primary" })
     .getByRole("link", { name: "Libraries" })
     .click();
-  await postActivity(readingCapture);
+  const readingResponse = await readingCapture;
+  await postActivity(Promise.resolve(readingResponse));
+  const readingBatch = (
+    readingResponse.request().postDataJSON() as {
+      batch: {
+        spans: Array<{
+          durationMs: number;
+          wordStart: { kind: string; value?: number };
+          wordEnd: { kind: string; value?: number };
+        }>;
+      };
+    }
+  ).batch;
+  const organicReadingSpan = readingBatch.spans.find(
+    (span) => span.durationMs > 5_000,
+  );
+  expect(
+    organicReadingSpan,
+    `No organic reading span exceeded five seconds: ${JSON.stringify(readingBatch.spans)}`,
+  ).toBeDefined();
+  expect(
+    organicReadingSpan,
+    `Organic reading omitted canonical word positions: ${JSON.stringify(organicReadingSpan)}`,
+  ).toMatchObject({
+    wordStart: { kind: "Present" },
+    wordEnd: { kind: "Present" },
+  });
+  const forwardReadingSpan = readingBatch.spans.find(
+    (span) =>
+      span.wordStart.kind === "Present" &&
+      span.wordEnd.kind === "Present" &&
+      (span.wordEnd.value ?? 0) > (span.wordStart.value ?? Number.MAX_VALUE),
+  );
+  expect(
+    forwardReadingSpan,
+    `Organic reading never moved forward: ${JSON.stringify(readingBatch.spans)}`,
+  ).toBeDefined();
 
   await gotoSinglePaneWorkspace(page, rawDeviceId, `/media/${videoMediaId}`);
   const viewingCapture = page.waitForResponse((response) => {
@@ -381,11 +434,31 @@ test("records private activity through the BFF and renders filtered Stats", asyn
   await expect(
     page.getByRole("region", { name: "Media player" }),
   ).toBeVisible();
+  const audioElement = page.locator('audio[aria-label="Media player audio"]');
+  await expect(audioElement).toHaveJSProperty("paused", false);
+  await expect
+    .poll(
+      () =>
+        audioElement.evaluate(
+          (element) => (element as HTMLAudioElement).currentTime,
+        ),
+      { timeout: 10_000 },
+    )
+    .toBeGreaterThan(1);
   await page
     .getByRole("navigation", { name: "Primary" })
     .getByRole("link", { name: "Libraries" })
     .click();
   await page.waitForTimeout(10_500);
+  await expect
+    .poll(
+      () =>
+        audioElement.evaluate(
+          (element) => (element as HTMLAudioElement).currentTime,
+        ),
+      { timeout: 10_000 },
+    )
+    .toBeGreaterThan(10);
   await page.getByRole("button", { name: "Pause media player" }).click();
   await postActivity(listeningCapture);
 
@@ -482,9 +555,9 @@ test("records private activity through the BFF and renders filtered Stats", asyn
   const filteredBody = (await filteredResponse.json()) as StatsEnvelope;
   expect(JSON.stringify(filteredBody)).not.toContain(rawDeviceId);
   expect(filteredBody.data.activity.totals.sessionCount).toBe(3);
-  expect(
-    filteredBody.data.activity.totals.forwardWordPosition,
-  ).toBeGreaterThan(30);
+  expect(filteredBody.data.activity.totals.forwardWordPosition).toBeGreaterThan(
+    30,
+  );
   expect(
     filteredBody.data.activity.totals.forwardWordPosition,
   ).toBeLessThanOrEqual(500);

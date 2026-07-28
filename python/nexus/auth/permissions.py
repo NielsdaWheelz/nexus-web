@@ -34,7 +34,7 @@ Highlight Visibility (can_read_highlight):
 
 from uuid import UUID
 
-from sqlalchemy import exists, literal, or_, select
+from sqlalchemy import ColumnExpressionArgument, exists, literal, or_, select
 from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from nexus.db.models import (
@@ -52,10 +52,12 @@ from nexus.db.models import (
 )
 from nexus.services import resource_grants
 
+MediaIdExpression = UUID | ColumnExpressionArgument[UUID | None]
+
 
 def _media_membership_path_exists(
     viewer_user_id: UUID,
-    media_id: UUID | InstrumentedAttribute[UUID],
+    media_id: MediaIdExpression,
 ):
     """Core exists() expression: a current membership reaches a physical
     library_entries row for this media in any library the viewer belongs to
@@ -73,7 +75,7 @@ def _media_membership_path_exists(
 
 def _media_readability_predicate(
     viewer_user_id: UUID,
-    media_id: UUID | InstrumentedAttribute[UUID],
+    media_id: MediaIdExpression,
     *,
     include_tearing_down: bool,
 ):
@@ -220,6 +222,17 @@ def visible_podcast_ids_cte_sql() -> str:
                           AND m.user_id = :viewer_id
         WHERE le.podcast_id IS NOT NULL
     """
+
+
+def active_podcast_subscription_exists_sql(podcast_id_expr: str = "p.id") -> str:
+    """Active-subscription predicate for an outer Podcast row. Binds ``:viewer_id``."""
+    return f"""EXISTS (
+        SELECT 1
+        FROM podcast_subscriptions ps
+        WHERE ps.podcast_id = {podcast_id_expr}
+          AND ps.user_id = :viewer_id
+          AND ps.status = 'active'
+    )"""
 
 
 def visible_content_credit_rows_sql() -> str:
@@ -369,7 +382,7 @@ def can_read_conversation(session: Session, viewer_user_id: UUID, conversation_i
 def highlight_library_intersection_exists(
     viewer_user_id: UUID,
     author_user_id_expr: UUID | InstrumentedAttribute[UUID],
-    media_id: UUID,
+    media_id: MediaIdExpression,
 ):
     """Core SQL exists expression for highlight library intersection check.
 
@@ -456,7 +469,7 @@ def highlight_readability_sql(highlight_alias: str = "h") -> str:
     )"""
 
 
-def highlight_visibility_filter(viewer_user_id: UUID, media_id: UUID):
+def highlight_visibility_filter(viewer_user_id: UUID, media_id: MediaIdExpression):
     """SQL filter expression for visible highlights in list queries.
 
     Evaluates to True when the viewer is the author, shares a library containing

@@ -35,8 +35,10 @@ def _is_canonical_word_separator(character: str) -> bool:
 
 def canonical_word_boundary_ordinal(canonical_text: str, offset: int) -> int:
     """Count canonical token starts before a Unicode-code-point boundary."""
-    if isinstance(offset, bool) or not isinstance(offset, int) or not 0 <= offset <= len(
-        canonical_text
+    if (
+        isinstance(offset, bool)
+        or not isinstance(offset, int)
+        or not 0 <= offset <= len(canonical_text)
     ):
         raise ValueError(f"offset must be an integer in 0..{len(canonical_text)}")
     ordinal = 0

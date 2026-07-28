@@ -29,7 +29,10 @@ import { useHydrationPreservedInput } from "@/lib/ui/useHydrationPreservedInput"
 import styles from "./notes.module.css";
 
 export default function NotesPaneBody() {
-  const paneRuntime = usePaneRuntime();
+  const activateTarget = requirePaneRuntime(
+    usePaneRuntime(),
+    "NotesPaneBody",
+  ).activateTarget;
   const [localPages, setLocalPages] = useState<NotePageSummary[] | null>(null);
   const {
     value: title,
@@ -104,10 +107,7 @@ export default function NotesPaneBody() {
       ]);
       setTitle("");
       setPendingNoteFocus({ pageId: page.id, target: trimmedTitle ? "body" : "title" });
-      requirePaneRuntime(
-        paneRuntime,
-        "Notes created-page target activation",
-      ).activateTarget({
+      activateTarget({
         target: { href: `/pages/${page.id}`, labelHint: page.title },
         disposition: { kind: "Follow" },
       });
@@ -115,7 +115,7 @@ export default function NotesPaneBody() {
       if (handleUnauthenticatedApiError(error)) return;
       setFeedback(toFeedback(error, { fallback: "Page could not be created." }));
     }
-  }, [paneRuntime, resourcePages, setTitle, title]);
+  }, [activateTarget, resourcePages, setTitle, title]);
 
   return (
     <CollectionView

@@ -187,19 +187,22 @@ test.describe("mobile app navigation", () => {
     );
 
     await expect(primaryNavigation(page)).toBeHidden();
-    await expect(page.getByRole("button", { name: "Go back" })).toBeVisible();
+    const activeMobilePane = page.locator('[data-pane-id][data-active="true"]');
+    await expect(activeMobilePane).toHaveCount(1);
+    await expect(activeMobilePane).toHaveAttribute("data-mobile", "true");
     await expect(
-      page.getByRole("button", { name: "Go forward" }),
-    ).toHaveCount(0);
+      page.getByRole("button", { name: "Go back" }),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Go forward" })).toHaveCount(
+      0,
+    );
     await page.getByRole("button", { name: "Pane options" }).tap();
     await expect(
       page.getByRole("menuitem", { name: "Go forward" }),
     ).toBeVisible();
     await page.keyboard.press("Escape");
 
-    await expect(
-      page.getByRole("button", { name: /^Add/ }),
-    ).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /^Add/ })).toHaveCount(0);
 
     await page.getByRole("button", { name: "Open Nexus, 2 tabs" }).tap();
     const sheet = page.getByRole("dialog", { name: "Nexus" });
@@ -218,9 +221,6 @@ test.describe("mobile app navigation", () => {
     await places.getByRole("button", { name: "Chats" }).tap();
     await expect(sheet).toBeHidden();
     await expect(page).toHaveURL(/\/conversations$/);
-    const activeMobilePane = page.locator(
-      '[data-pane-id][data-active="true"]',
-    );
     await expect(activeMobilePane).toHaveCount(1);
     await expect(activeMobilePane).toHaveAttribute("data-active", "true");
     await expect(activeMobilePane).toHaveAttribute("data-mobile", "true");

@@ -482,6 +482,18 @@ test.describe("reader progress continuity", () => {
 
       const anchor = activePane.getByText(seed.web_anchor_text).first();
       await anchor.scrollIntoViewIfNeeded();
+      const viewport = activePane.getByTestId("document-viewport");
+      await viewport.hover();
+      const positionedScrollTop = await viewport.evaluate(
+        (element) => element.scrollTop,
+      );
+      // The contract under test is a genuine reading move, not a test-only DOM
+      // scroll. A trusted wheel also proves that late canonical restoration
+      // cannot reclaim the viewport after the reader takes control.
+      await page.mouse.wheel(0, 4);
+      await expect
+        .poll(() => viewport.evaluate((element) => element.scrollTop))
+        .toBeGreaterThan(positionedScrollTop);
 
       await expect
         .poll(async () => {

@@ -19,7 +19,7 @@ from tests.real_media.conftest import (
     register_media_cleanup,
     write_trace,
 )
-from tests.support.source_jobs import run_queued_source_attempt
+from tests.support.source_jobs import run_queued_source_pipeline
 
 pytestmark = [
     pytest.mark.integration,
@@ -31,7 +31,7 @@ pytestmark = [
 
 def _run_source_attempt_for_media(direct_db, media_id: UUID) -> dict[str, object]:
     with direct_db.session() as session:
-        return run_queued_source_attempt(
+        return run_queued_source_pipeline(
             session,
             media_id=media_id,
             request_id="live-provider-video-source",

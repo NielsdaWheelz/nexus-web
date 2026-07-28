@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
+import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import SettingsPaneBody from "@/app/(authenticated)/settings/SettingsPaneBody";
 
 describe("SettingsPaneBody", () => {
   it("includes linked identities management entrypoint", () => {
-    render(withRenderEnvironment(<SettingsPaneBody />));
+    renderHydratedPane({
+      href: "/settings",
+      resources: {},
+      children: withRenderEnvironment(<SettingsPaneBody />),
+    });
 
     const billingLink = screen.getByRole("link", {
       name: /billing/i,
@@ -24,7 +29,13 @@ describe("SettingsPaneBody", () => {
   });
 
   it("hides Local Vault in the Android shell without hiding Billing", () => {
-    render(withRenderEnvironment(<SettingsPaneBody />, { androidShell: true }));
+    renderHydratedPane({
+      href: "/settings",
+      resources: {},
+      children: withRenderEnvironment(<SettingsPaneBody />, {
+        androidShell: true,
+      }),
+    });
 
     expect(screen.getByRole("link", { name: /billing/i })).toHaveAttribute(
       "href",

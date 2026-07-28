@@ -26,7 +26,10 @@ export default function PagePaneBody({
   const routePageId = usePaneParam("pageId");
   const pageId = pageIdOverride ?? routePageId;
   if (!pageId) throw new Error("page route requires a page id");
-  const paneRuntime = usePaneRuntime();
+  const activateTarget = requirePaneRuntime(
+    usePaneRuntime(),
+    "PagePaneBody",
+  ).activateTarget;
   const [page, setPage] = useState<NotePage | null>(
     initialPage?.id === pageId ? initialPage : null,
   );
@@ -61,19 +64,19 @@ export default function PagePaneBody({
   const dailyLocalDate = page?.dailyNote?.localDate ?? null;
   const openDatedPage = useCallback(async (localDate: string) => {
     const next = await fetchDailyNotePage(localDate);
-    requirePaneRuntime(paneRuntime, "Page dated-page activation").activateTarget({
+    activateTarget({
       target: { href: `/pages/${next.id}`, labelHint: next.title },
       disposition: { kind: "Follow" },
     });
-  }, [paneRuntime]);
+  }, [activateTarget]);
   const viewActions = useMemo<ActionDescriptor[]>(() => dailyLocalDate ? [
     { kind: "command", id: "ViewAction.Page.OpenYesterday", label: "Open yesterday", onSelect: () => void openDatedPage(shiftLocalDate(dailyLocalDate, -1)) },
     { kind: "command", id: "ViewAction.Page.OpenTomorrow", label: "Open tomorrow", onSelect: () => void openDatedPage(shiftLocalDate(dailyLocalDate, 1)) },
   ] : [], [dailyLocalDate, openDatedPage]);
   const composer = useConnectionsComposerController({ scheme: "page", id: pageId });
   const connections = useMemo(
-    () => <ConnectionsSurface resourceRef={{ scheme: "page", id: pageId }} composerController={composer} activateTarget={requirePaneRuntime(paneRuntime, "Page connections activation").activateTarget} />,
-    [composer, pageId, paneRuntime],
+    () => <ConnectionsSurface resourceRef={{ scheme: "page", id: pageId }} composerController={composer} activateTarget={activateTarget} />,
+    [activateTarget, composer, pageId],
   );
   const { companionAction } = useResourceInspector({ scheme: "page", handle: pageId, bodies: { linkedItems: connections } });
   usePanePrimaryChrome({
@@ -100,7 +103,7 @@ export default function PagePaneBody({
         const { title } = surface.source.content;
         setPage((current) => current ? { ...current, title } : current);
       }}
-      activateTarget={requirePaneRuntime(paneRuntime, "Page target activation").activateTarget}
+      activateTarget={activateTarget}
     />
   </>;
 }

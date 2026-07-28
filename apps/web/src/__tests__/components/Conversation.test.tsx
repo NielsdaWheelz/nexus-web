@@ -19,7 +19,7 @@ import {
   type WorkspaceAttachedSecondaryPaneState,
 } from "@/lib/workspace/schema";
 import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
-import { decodeRunDataReaderSelection } from "@/lib/conversations/messageWire";
+import { decodeChatRunData } from "@/lib/conversations/messageWire";
 import type {
   ChatRunResponse,
   ConversationMessage,
@@ -638,7 +638,7 @@ describe("Conversation", () => {
       // The engine decodes the run's reader-selection snapshot at the boundary
       // before tailing it.
       expect(tailMocks.tailChatRun).toHaveBeenCalledWith(
-        decodeRunDataReaderSelection(rerunData),
+        decodeChatRunData(rerunData),
       );
     });
     const rerunCall = fetchMock.mock.calls.find(
@@ -1079,7 +1079,7 @@ describe("Conversation", () => {
 
     await waitFor(() => {
       expect(tailMocks.tailChatRun).toHaveBeenCalledWith(
-        decodeRunDataReaderSelection(activeBranchBRun()),
+        decodeChatRunData(activeBranchBRun()),
       );
     });
     expect(scrollport.scrollTop).toBe(60);
@@ -1566,7 +1566,10 @@ describe("Conversation", () => {
                 }}
                 onNavigatePane={vi.fn()}
                 onReplacePane={vi.fn()}
-                onActivateWorkspaceTarget={vi.fn(() => ({ kind: "ActivatedExisting" as const, paneId: "pane" }))}
+                onActivateWorkspaceTarget={vi.fn(() => ({
+                  kind: "ActivatedExisting" as const,
+                  paneId: "pane",
+                }))}
                 onSetPaneLabel={vi.fn()}
                 secondaryPane={secondaryPane}
                 onRequestSecondarySurface={onRequestSecondarySurface}

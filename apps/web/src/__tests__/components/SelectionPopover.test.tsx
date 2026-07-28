@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createEvent, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { RefObject } from "react";
+import type { ReactNode, RefObject } from "react";
 import SelectionPopover from "@/components/SelectionPopover";
+import { ShareControllerProvider } from "@/lib/sharing/controller";
+
+function renderSelectionPopover(node: ReactNode) {
+  return render(<ShareControllerProvider>{node}</ShareControllerProvider>);
+}
 
 function createContainerRef(
   rect: DOMRect = new DOMRect(0, 0, 1280, 900)
@@ -142,7 +147,7 @@ describe("SelectionPopover", () => {
     const onQuoteToNewChat = vi.fn();
     const onQuoteToExistingChat = vi.fn();
 
-    render(
+    renderSelectionPopover(
       <SelectionPopover
         selectionRect={new DOMRect(120, 120, 80, 24)}
         containerRef={createContainerRef()}
@@ -174,7 +179,7 @@ describe("SelectionPopover", () => {
     const onCreateHighlight = vi.fn(async () => highlight);
     const onQuoteToNewChat = vi.fn();
 
-    render(
+    renderSelectionPopover(
       <SelectionPopover
         selectionRect={new DOMRect(120, 120, 80, 24)}
         containerRef={createContainerRef()}
@@ -201,7 +206,7 @@ describe("SelectionPopover", () => {
     const onCreateHighlight = vi.fn(async () => highlight);
     const onQuoteToNewChat = vi.fn();
 
-    render(
+    renderSelectionPopover(
       <SelectionPopover
         selectionRect={new DOMRect(120, 120, 80, 24)}
         containerRef={createContainerRef()}
@@ -224,7 +229,7 @@ describe("SelectionPopover", () => {
     const onCreateHighlight = vi.fn(async () => null);
     const onQuoteToNewChat = vi.fn();
 
-    render(
+    renderSelectionPopover(
       <SelectionPopover
         selectionRect={new DOMRect(120, 120, 80, 24)}
         containerRef={createContainerRef()}
@@ -244,7 +249,7 @@ describe("SelectionPopover", () => {
   });
 
   it("hides chat destination actions when callbacks are not provided", () => {
-    render(
+    renderSelectionPopover(
       <SelectionPopover
         selectionRect={new DOMRect(120, 120, 80, 24)}
         containerRef={createContainerRef()}
@@ -262,7 +267,7 @@ describe("SelectionPopover", () => {
   });
 
   it("shows the add-note action only when onAddNote is provided", () => {
-    const { unmount } = render(
+    const { unmount } = renderSelectionPopover(
       <SelectionPopover
         selectionRect={new DOMRect(120, 120, 80, 24)}
         containerRef={createContainerRef()}
@@ -275,7 +280,7 @@ describe("SelectionPopover", () => {
     expect(screen.getByRole("button", { name: "Add note" })).toBeInTheDocument();
     unmount();
 
-    render(
+    renderSelectionPopover(
       <SelectionPopover
         selectionRect={new DOMRect(120, 120, 80, 24)}
         containerRef={createContainerRef()}
@@ -291,7 +296,7 @@ describe("SelectionPopover", () => {
     const onCreateHighlight = vi.fn(async () => ({ id: "h1" }));
     const onAddNote = vi.fn();
 
-    render(
+    renderSelectionPopover(
       <SelectionPopover
         selectionRect={new DOMRect(120, 120, 80, 24)}
         containerRef={createContainerRef()}
@@ -310,7 +315,7 @@ describe("SelectionPopover", () => {
   it("dismisses on pointerdown outside the popup", async () => {
     const onDismiss = vi.fn();
 
-    render(
+    renderSelectionPopover(
       <SelectionPopover
         selectionRect={new DOMRect(120, 120, 80, 24)}
         containerRef={createContainerRef()}
@@ -327,7 +332,7 @@ describe("SelectionPopover", () => {
   });
 
   it("prevents pointerdown default inside the popup so text selection stays intact", () => {
-    render(
+    renderSelectionPopover(
       <SelectionPopover
         selectionRect={new DOMRect(120, 120, 80, 24)}
         containerRef={createContainerRef()}
@@ -351,7 +356,7 @@ describe("SelectionPopover", () => {
     mockVisualViewport({ width: 390, height: 780 });
     mockPopoverRect(new DOMRect(0, 0, popoverRect.width, popoverRect.height));
 
-    render(
+    renderSelectionPopover(
       <SelectionPopover
         selectionRect={new DOMRect(96, 180, 120, 44)}
         selectionLineRects={[new DOMRect(96, 180, 120, 18), new DOMRect(102, 206, 102, 18)]}
@@ -378,7 +383,7 @@ describe("SelectionPopover", () => {
     mockVisualViewport({ width: 390, height: 300 });
     mockPopoverRect(new DOMRect(0, 0, popoverRect.width, popoverRect.height));
 
-    render(
+    renderSelectionPopover(
       <SelectionPopover
         selectionRect={new DOMRect(120, 244, 80, 32)}
         selectionLineRects={[new DOMRect(120, 244, 80, 16), new DOMRect(120, 260, 80, 16)]}
@@ -405,7 +410,7 @@ describe("SelectionPopover", () => {
     mockVisualViewport({ width: 390, height: 140 });
     mockPopoverRect(new DOMRect(0, 0, popoverRect.width, popoverRect.height));
 
-    render(
+    renderSelectionPopover(
       <SelectionPopover
         selectionRect={new DOMRect(120, 60, 40, 20)}
         selectionLineRects={[new DOMRect(120, 60, 40, 20)]}
@@ -432,7 +437,7 @@ describe("SelectionPopover", () => {
     mockVisualViewport({ offsetLeft: 24, offsetTop: 120, width: 220, height: 260 });
     mockPopoverRect(new DOMRect(0, 0, popoverRect.width, popoverRect.height));
 
-    render(
+    renderSelectionPopover(
       <SelectionPopover
         selectionRect={new DOMRect(210, 180, 110, 20)}
         selectionLineRects={[new DOMRect(210, 180, 110, 20)]}
@@ -462,7 +467,7 @@ describe("SelectionPopover", () => {
     mockVisualViewport({ width: 160, height: 120 });
     mockPopoverRect(new DOMRect(0, 0, popoverRect.width, popoverRect.height));
 
-    render(
+    renderSelectionPopover(
       <SelectionPopover
         selectionRect={new DOMRect(40, 20, 40, 20)}
         selectionLineRects={[new DOMRect(40, 20, 40, 20)]}

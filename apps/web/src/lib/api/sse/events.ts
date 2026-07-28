@@ -12,7 +12,7 @@
 import { isRecord } from "@/lib/validation";
 import { decodePresence, type Presence } from "@/lib/api/presence";
 import {
-  isCitationOut,
+  decodeCitationOut,
   type CitationOut,
 } from "@/lib/conversations/citationOut";
 import type { ChatPublicationWarning } from "@/lib/conversations/types";
@@ -21,10 +21,7 @@ import {
   type ContextRefOut,
 } from "@/lib/resourceGraph/contextRefs";
 import { hasOnlyKeys, isOptionalString } from "./guards";
-import {
-  isCitationEventData,
-  type CitationEventData,
-} from "./citations";
+import { isCitationEventData, type CitationEventData } from "./citations";
 
 /** Meta event: initial IDs and product-selection snapshot (profile_id/
  * reasoning_option_id). Resolved provider/model are operator facts filled in
@@ -92,11 +89,7 @@ interface SSEDoneEvent {
 }
 
 export type ChatToolStatus =
-  | "pending"
-  | "running"
-  | "complete"
-  | "error"
-  | "cancelled";
+  "pending" | "running" | "complete" | "error" | "cancelled";
 
 export interface SSEToolCallEvent {
   type: "tool_call_start";
@@ -250,7 +243,9 @@ function isAssistantActivityPhase(
   );
 }
 
-function parseAssistantActivityData(data: unknown): SSEAssistantActivityEvent["data"] {
+function parseAssistantActivityData(
+  data: unknown,
+): SSEAssistantActivityEvent["data"] {
   if (
     !isRecord(data) ||
     !hasOnlyKeys(data, [
@@ -271,7 +266,9 @@ function parseAssistantActivityData(data: unknown): SSEAssistantActivityEvent["d
   return data as SSEAssistantActivityEvent["data"];
 }
 
-function parseAssistantTextDeltaData(data: unknown): SSEAssistantTextDeltaEvent["data"] {
+function parseAssistantTextDeltaData(
+  data: unknown,
+): SSEAssistantTextDeltaEvent["data"] {
   if (
     !isRecord(data) ||
     !hasOnlyKeys(data, [
@@ -444,9 +441,7 @@ function parseToolCallDoneData(data: unknown): SSEToolCallDoneEvent["data"] {
   };
 }
 
-function parseToolResultData(
-  data: unknown,
-): SSEToolResultEvent["data"] {
+function parseToolResultData(data: unknown): SSEToolResultEvent["data"] {
   if (
     !isRecord(data) ||
     !hasOnlyKeys(data, [
@@ -487,7 +482,9 @@ function parseToolResultData(
         data.latency_ms < 0)) ||
     (data.provider_request_ids !== undefined &&
       (!Array.isArray(data.provider_request_ids) ||
-        !data.provider_request_ids.every((item) => typeof item === "string"))) ||
+        !data.provider_request_ids.every(
+          (item) => typeof item === "string",
+        ))) ||
     !isRecord(data.filters) ||
     !Array.isArray(data.results) ||
     !data.results.every(isCitationEventData)
@@ -523,18 +520,22 @@ function parseCitationIndexData(data: unknown): SSECitationIndexEvent["data"] {
 }
 
 function parseCitationIndexItem(item: unknown): SSECitationIndexItem {
+  const citation =
+    isRecord(item) && "citation" in item
+      ? decodeCitationOut(item.citation)
+      : null;
   if (
     !isRecord(item) ||
     !hasOnlyKeys(item, ["citation_edge_id", "citation"]) ||
     typeof item.citation_edge_id !== "string" ||
-    !isCitationOut(item.citation) ||
-    item.citation.ordinal < 1
+    citation === null ||
+    citation.ordinal < 1
   ) {
     throw new Error("Invalid SSE payload for citation_index");
   }
   return {
     citation_edge_id: item.citation_edge_id,
-    citation: item.citation,
+    citation,
   };
 }
 
@@ -555,21 +556,25 @@ function parseContextRefAddedData(
       "citation_edge_id",
     ]) ||
     !("citation_edge_id" in data) ||
-    !(typeof data.citation_edge_id === "string" || data.citation_edge_id === null)
+    !(
+      typeof data.citation_edge_id === "string" ||
+      data.citation_edge_id === null
+    )
   ) {
     throw new Error("Invalid SSE payload for context_ref_added");
   }
-  const {
-    citation_edge_id,
-    ...contextRef
-  } = data;
+  const { citation_edge_id, ...contextRef } = data;
   return {
     ...decodeContextRef(contextRef, "context_ref_added.data"),
     citation_edge_id,
   };
 }
 
-export function toChatSSEEvent(eventType: string, data: unknown, id = "0"): SSEEvent {
+export function toChatSSEEvent(
+  eventType: string,
+  data: unknown,
+  id = "0",
+): SSEEvent {
   const seq = Number(id || 0);
   if (!Number.isInteger(seq) || seq < 0) {
     throw new Error("Invalid SSE event id");
@@ -578,23 +583,47 @@ export function toChatSSEEvent(eventType: string, data: unknown, id = "0"): SSEE
     case "meta":
       return { seq, type: "meta", data: parseMetaData(data) };
     case "assistant_activity":
-      return { seq, type: "assistant_activity", data: parseAssistantActivityData(data) };
+      return {
+        seq,
+        type: "assistant_activity",
+        data: parseAssistantActivityData(data),
+      };
     case "assistant_text_delta":
-      return { seq, type: "assistant_text_delta", data: parseAssistantTextDeltaData(data) };
+      return {
+        seq,
+        type: "assistant_text_delta",
+        data: parseAssistantTextDeltaData(data),
+      };
     case "done":
       return { seq, type: "done", data: parseDoneData(data) };
     case "tool_call_start":
-      return { seq, type: "tool_call_start", data: parseToolCallStartData(data) };
+      return {
+        seq,
+        type: "tool_call_start",
+        data: parseToolCallStartData(data),
+      };
     case "tool_call_delta":
-      return { seq, type: "tool_call_delta", data: parseToolCallDeltaData(data) };
+      return {
+        seq,
+        type: "tool_call_delta",
+        data: parseToolCallDeltaData(data),
+      };
     case "tool_call_done":
       return { seq, type: "tool_call_done", data: parseToolCallDoneData(data) };
     case "tool_result":
       return { seq, type: "tool_result", data: parseToolResultData(data) };
     case "citation_index":
-      return { seq, type: "citation_index", data: parseCitationIndexData(data) };
+      return {
+        seq,
+        type: "citation_index",
+        data: parseCitationIndexData(data),
+      };
     case "context_ref_added":
-      return { seq, type: "context_ref_added", data: parseContextRefAddedData(data) };
+      return {
+        seq,
+        type: "context_ref_added",
+        data: parseContextRefAddedData(data),
+      };
     default:
       throw new Error(`Unknown SSE event type: ${eventType || "message"}`);
   }

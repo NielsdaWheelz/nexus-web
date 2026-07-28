@@ -280,14 +280,14 @@ def _collect(
         viewer_id=owner_id,
         conversation_id=resolved.subject_id,
     )
-    if sum(
-        len(
-            context.resolved.inline_body
-            or context.resolved.summary
-            or context.resolved.label
+    if (
+        sum(
+            len(context.resolved.inline_body or context.resolved.summary or context.resolved.label)
+            for context in contexts
         )
-        for context in contexts
-    ) + sum(len(str(row["content"] or "")) for row in rows) > _INPUT_CHAR_BUDGET:
+        + sum(len(str(row["content"] or "")) for row in rows)
+        > _INPUT_CHAR_BUDGET
+    ):
         raise DossierInputTooLarge
     context_rows: list[dict[str, str]] = []
     for context in contexts:

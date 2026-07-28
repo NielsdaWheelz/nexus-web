@@ -97,12 +97,28 @@ export function useResource<T, P>(
 
   const skipKeyRef = useRef(seeded !== null ? seeded.key : null);
 
-  const [resource, setResource] = useState<AsyncResource<T>>(() => {
+  const [resourceState, setResourceState] = useState<{
+    key: string | null;
+    resource: AsyncResource<T>;
+  }>(() => {
     if (seeded !== null && seeded.entry.status === "ready") {
-      return { status: "ready", data: seeded.entry.data as T };
+      return {
+        key: cacheKey,
+        resource: { status: "ready", data: seeded.entry.data as T },
+      };
     }
-    return cacheKey === null ? { status: "idle" } : { status: "loading" };
+    return {
+      key: cacheKey,
+      resource:
+        cacheKey === null ? { status: "idle" } : { status: "loading" },
+    };
   });
+  const resource: AsyncResource<T> =
+    resourceState.key === cacheKey
+      ? resourceState.resource
+      : cacheKey === null
+        ? { status: "idle" }
+        : { status: "loading" };
 
   useEffect(() => {
     if (claimSeed && seeded !== null && cache !== null) {
@@ -112,7 +128,7 @@ export function useResource<T, P>(
 
   useEffect(() => {
     if (cacheKey === null) {
-      setResource({ status: "idle" });
+      setResourceState({ key: null, resource: { status: "idle" } });
       return;
     }
     if (skipKeyRef.current === cacheKey) {
@@ -128,7 +144,12 @@ export function useResource<T, P>(
         let cancelled = false;
         promise.then(
           (data) => {
-            if (!cancelled) setResource({ status: "ready", data: data as T });
+            if (!cancelled) {
+              setResourceState({
+                key: cacheKey,
+                resource: { status: "ready", data: data as T },
+              });
+            }
           },
           () => {
             if (!cancelled) retry();
@@ -145,13 +166,19 @@ export function useResource<T, P>(
     const controller = new AbortController();
     let delayTimer: ReturnType<typeof setTimeout> | null = null;
     let attempt = 1;
-    setResource({ status: "loading" });
+    setResourceState({
+      key: cacheKey,
+      resource: { status: "loading" },
+    });
 
     const run = async () => {
       try {
         const data = await loadRef.current(controller.signal);
         if (controller.signal.aborted) return;
-        setResource({ status: "ready", data });
+        setResourceState({
+          key: cacheKey,
+          resource: { status: "ready", data },
+        });
       } catch (err) {
         if (isAbortError(err) || controller.signal.aborted) return;
         if (handleUnauthenticatedApiError(err)) return;
@@ -173,7 +200,10 @@ export function useResource<T, P>(
               "E_NETWORK",
               err instanceof Error ? err.message : "Request failed",
             );
-        setResource({ status: "error", error: apiError, retry });
+        setResourceState({
+          key: cacheKey,
+          resource: { status: "error", error: apiError, retry },
+        });
       }
     };
     run();

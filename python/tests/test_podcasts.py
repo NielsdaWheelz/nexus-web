@@ -5761,6 +5761,7 @@ class TestPodcastSubscriptionLifecycleClosure:
         initial position so the DESC/DESC tie-break is observable.
         """
         from nexus.services.library_entries import (
+            AllItems,
             Canonical,
             LibraryEntryView,
             list_library_entries,
@@ -5883,7 +5884,10 @@ class TestPodcastSubscriptionLifecycleClosure:
                 session,
                 viewer_id=user_id,
                 library_id=affected_library_id,
-                view=LibraryEntryView(order=Canonical(), completion="all"),
+                view=LibraryEntryView(
+                    order=Canonical(),
+                    projection=AllItems("all"),
+                ),
                 limit=200,
             )
         canonical_entry_ids = [entry.id for entry in canonical_entries]

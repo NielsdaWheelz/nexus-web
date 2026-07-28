@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { absent, present } from "@/lib/api/presence";
 import {
-  decodeMessageReaderSelection,
+  decodeChatRunData,
+  decodeConversationMessage,
   decodeReaderSelectionPresence,
-  decodeRunDataReaderSelection,
 } from "@/lib/conversations/messageWire";
 import type { ReaderSelectionOut } from "@/lib/conversations/readerSelection";
-import type { ChatRunResponse, ConversationMessage } from "@/lib/conversations/types";
+import type {
+  ChatRunResponse,
+  ConversationMessage,
+} from "@/lib/conversations/types";
 
 // The snake_case snapshot exactly as the server wire speaks it.
 const wireSnapshot = {
@@ -66,10 +69,31 @@ const userMessageBase = {
   trust_trail: null,
 };
 
+const wireCitation = {
+  ordinal: 1,
+  role: "supports",
+  target_ref: {
+    type: "media",
+    id: "22222222-2222-4222-8222-222222222222",
+  },
+  activation: {
+    resource_ref: "media:22222222-2222-4222-8222-222222222222",
+    kind: "route",
+    href: "/media/22222222-2222-4222-8222-222222222222",
+    unresolved_reason: null,
+  },
+  media_id: "22222222-2222-4222-8222-222222222222",
+  locator: null,
+  deep_link: "/media/22222222-2222-4222-8222-222222222222",
+  snapshot: null,
+};
+
 describe("decodeReaderSelectionPresence", () => {
   it("decodes a Present wire snapshot into the owned camelCase value", () => {
     const raw = { kind: "Present", value: wireSnapshot };
-    expect(decodeReaderSelectionPresence(raw)).toEqual(present(decodedSnapshot));
+    expect(decodeReaderSelectionPresence(raw)).toEqual(
+      present(decodedSnapshot),
+    );
   });
 
   it("passes an explicit Absent through", () => {
@@ -88,25 +112,40 @@ describe("decodeReaderSelectionPresence", () => {
   });
 });
 
-describe("decodeMessageReaderSelection", () => {
+describe("decodeConversationMessage", () => {
   it("decodes a quoted user message's reader_selection and preserves other fields", () => {
     const wire = {
       ...userMessageBase,
       id: "u1",
       reader_selection: { kind: "Present", value: wireSnapshot },
     } as unknown as ConversationMessage;
-    const decoded = decodeMessageReaderSelection(wire);
+    const decoded = decodeConversationMessage(wire);
     expect(decoded.reader_selection).toEqual(present(decodedSnapshot));
     expect(decoded.id).toBe("u1");
   });
 
   it("sets Absent when the field is missing from the wire", () => {
     const wire = { ...userMessageBase, id: "u1" } as ConversationMessage;
-    expect(decodeMessageReaderSelection(wire).reader_selection).toEqual(absent());
+    expect(decodeConversationMessage(wire).reader_selection).toEqual(absent());
+  });
+
+  it("normalizes nested citation activations at the message boundary", () => {
+    const wire = {
+      ...userMessageBase,
+      id: "a1",
+      role: "assistant",
+      citations: [wireCitation],
+    } as unknown as ConversationMessage;
+    expect(decodeConversationMessage(wire).citations?.[0]?.activation).toEqual({
+      resourceRef: "media:22222222-2222-4222-8222-222222222222",
+      kind: "route",
+      href: "/media/22222222-2222-4222-8222-222222222222",
+      unresolvedReason: null,
+    });
   });
 });
 
-describe("decodeRunDataReaderSelection", () => {
+describe("decodeChatRunData", () => {
   it("decodes the user_message snapshot and leaves the assistant Absent", () => {
     const runData = {
       run: {},
@@ -123,8 +162,10 @@ describe("decodeRunDataReaderSelection", () => {
       },
       stream_state: {},
     } as unknown as ChatRunResponse["data"];
-    const decoded = decodeRunDataReaderSelection(runData);
-    expect(decoded.user_message.reader_selection).toEqual(present(decodedSnapshot));
+    const decoded = decodeChatRunData(runData);
+    expect(decoded.user_message.reader_selection).toEqual(
+      present(decodedSnapshot),
+    );
     expect(decoded.assistant_message.reader_selection).toEqual(absent());
   });
 });

@@ -100,7 +100,11 @@ export default defineConfig({
       command: `cd .. && make web-e2e`,
       url: `http://localhost:${WEB_PORT}`,
       reuseExistingServer: false,
-      timeout: 180_000,
+      // `web-e2e` performs a clean production build before starting Next. Type
+      // checking and route collection can legitimately exceed three minutes on
+      // constrained CI runners, so keep the readiness deadline above the build
+      // budget instead of terminating a healthy build with SIGTERM.
+      timeout: 600_000,
       env: {
         ...appRuntimeEnv,
         NEXUS_ENV: RUNTIME_ENV,

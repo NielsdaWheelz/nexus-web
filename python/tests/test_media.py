@@ -864,10 +864,10 @@ class TestEpubFragmentContentStableAcrossIndexStatusTransition:
                 )
 
 
-class TestRetryEpubFailedClearsPersistedEpubArtifactsBeforeDispatch:
-    """Scenarios 6/12: retry cleanup clears all extraction artifacts."""
+class TestRetryEpubPreservesPersistedArtifactsUntilPublication:
+    """A requeue keeps the current artifact readable until replacement publishes."""
 
-    def test_retry_epub_failed_clears_persisted_epub_artifacts_before_dispatch(
+    def test_retry_epub_failed_preserves_persisted_artifacts_before_dispatch(
         self,
         auth_client,
         direct_db: DirectSessionManager,
@@ -889,7 +889,8 @@ class TestRetryEpubFailedClearsPersistedEpubArtifactsBeforeDispatch:
         stale_asset_path = build_epub_asset_storage_path(media_id, "images/stale.png")
         fake_storage.put_object(stale_asset_path, b"stale-image", "image/png")
 
-        # Seed extraction artifacts that should be cleaned up on retry
+        # Seed the current extraction artifact. Requeueing must not create a
+        # reader-visible gap before the replacement worker publishes.
         with direct_db.session() as session:
             frag_id = uuid4()
             frag = Fragment(
@@ -964,21 +965,21 @@ class TestRetryEpubFailedClearsPersistedEpubArtifactsBeforeDispatch:
         assert data["capabilities"]["can_retry"] is False
         assert data["capabilities"]["can_refresh_source"] is False
         assert _count_jobs_for_media(direct_db, kind="ingest_media_source", media_id=media_id) == 1
-        assert fake_storage.get_object(stale_asset_path) is None
+        assert fake_storage.get_object(stale_asset_path) == b"stale-image"
 
-        # Artifacts must be gone after retry reset
+        # Artifact replacement belongs to the source worker's publication
+        # transaction, not the retry command.
         with direct_db.session() as session:
             frag_count = session.query(Fragment).filter(Fragment.media_id == media_id).count()
-            assert frag_count == 0, "fragments not cleaned up"
+            assert frag_count == 1
 
             toc_count = session.query(EpubTocNode).filter(EpubTocNode.media_id == media_id).count()
-            assert toc_count == 0, "epub_toc_nodes not cleaned up"
+            assert toc_count == 1
             resource_count = (
                 session.query(EpubResource).filter(EpubResource.media_id == media_id).count()
             )
-            assert resource_count == 0, "epub_resources not cleaned up"
+            assert resource_count == 1
 
-            # fragment_blocks implicitly gone since fragments deleted
             media_row = session.get(Media, media_id)
             assert media_row is not None
             assert media_row.processing_status == ProcessingStatus.extracting
@@ -2078,7 +2079,7 @@ class TestRetryEpubEndpoint:
 class TestRetryWebArticleEndpoint:
     """POST /media/{id}/retry for failed web articles."""
 
-    def test_retry_failed_web_article_resets_and_dispatches(
+    def test_retry_failed_web_article_preserves_current_artifact_and_dispatches(
         self,
         auth_client,
         direct_db: DirectSessionManager,
@@ -2219,7 +2220,7 @@ class TestRetryWebArticleEndpoint:
                 """),
                 {"media_id": media_id, "fragment_id": fragment_id},
             ).one()
-            assert tuple(artifact_counts) == (0, 0, 0, 0, 0, 0)
+            assert tuple(artifact_counts) == (1, 1, 1, 1, 1, 1)
 
             # Author credits are NOT rewriteable artifacts: a refresh/re-ingest
             # keeps the prior author slice until the post-commit observation
@@ -4192,7 +4193,7 @@ class TestPdfRetry:
     def test_retry_pdf_embed_failure_uses_source_attempt_retry_contract(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Hard cutover: source retry rebuilds source artifacts for every failure_stage."""
+        """Source retry defers current-artifact replacement to the worker."""
         with direct_db.session() as session:
             media_id, user_id = _create_pdf_media_with_state(
                 session,
@@ -4265,7 +4266,7 @@ class TestPdfRetry:
                 ),
                 {"id": media_id},
             ).one()
-            assert row == (None, None, "extracting", None, None, 0)
+            assert row == ("Existing text", 1, "extracting", None, None, 1)
 
     def test_retry_pdf_transcribe_failure_stage_uses_source_attempt_retry_contract(
         self, auth_client, direct_db: DirectSessionManager
@@ -4300,10 +4301,10 @@ class TestPdfRetry:
         assert data["processing_status"] == "extracting"
         assert data["ingest_enqueued"] is True
 
-    def test_retry_pdf_source_retry_rebuild_path_deletes_text_artifacts(
+    def test_retry_pdf_source_retry_preserves_text_artifacts_until_publication(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Source retry deletes stale PDF text artifacts before dispatch."""
+        """Source retry keeps PDF text readable until replacement publishes."""
         with direct_db.session() as session:
             media_id, user_id = _create_pdf_media_with_state(
                 session,
@@ -4351,7 +4352,7 @@ class TestPdfRetry:
                 ),
                 {"id": media_id},
             ).one()
-            assert row == (None, None, 0)
+            assert row == ("Preserved text content", 1, 1)
 
     def test_retry_pdf_text_rebuild_path_invalidates_before_rewrite(self, db_session: Session):
         """Text rebuild clears text while preserving apparatus for reconciliation."""

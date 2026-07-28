@@ -10062,22 +10062,23 @@ class TestMediaIntelligenceUnitsMigration0141:
 
 
 class TestLibraryIntelligenceArtifactRewrite0142:
-    """Head-assertions for the 0142 stable-head + immutable-revisions rewrite."""
+    """Assertions for the immutable-revision shape before 0190 replaces its run model."""
 
     @pytest.fixture(scope="class")
     def li_head_engine(self):
-        """A freshly head-migrated engine for this class.
+        """A freshly 0189-migrated engine for this class.
 
         The module-scoped ``migrated_engine`` is migrated once at module start, but
         earlier classes call ``reset_test_schema()`` in their teardown (e.g. the
         downgrade-blocked test), which drops the public schema for every test that
-        runs afterward. This class sits at the end of the file, so it owns its own
-        reset + upgrade to head rather than inheriting a contaminated schema.
+        runs afterward. Pinning 0189 observes the generalized artifact-revision
+        shape immediately before 0190 intentionally replaces revision events with
+        the artifact-build lifecycle.
         """
         reset_test_schema()
-        result = run_alembic_command("upgrade head")
+        result = run_alembic_command("upgrade 0189")
         if result.returncode != 0:
-            pytest.fail(f"Migration upgrade failed: {result.stderr}")
+            pytest.fail(f"Migration upgrade to 0189 failed: {result.stderr}")
         engine = create_engine(get_test_database_url())
         yield engine
         engine.dispose()
@@ -12196,10 +12197,11 @@ class TestMigration0149SynapseResonance:
         for owner_kind in (
             "chat_run",
             "oracle_reading",
-            "artifact_revision",
+            "artifact_build",
             "media_summary",
             "media_enrichment",
             "synapse_scan",
+            "dawn_write",
         ):
             assert f"'{owner_kind}'" in owner_check, owner_check
 
@@ -13604,8 +13606,8 @@ class TestMigration0163DropUserGraphTags:
             finally:
                 engine.dispose()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade to head failed: {result.stderr}"
+            result = run_alembic_command("upgrade 0163")
+            assert result.returncode == 0, f"upgrade to 0163 failed: {result.stderr}"
 
             engine = create_engine(get_test_database_url())
             try:
@@ -13974,8 +13976,8 @@ class TestMigration0166OracleCorpusLibrary:
             finally:
                 engine.dispose()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade to head failed: {result.stderr}"
+            result = run_alembic_command("upgrade 0166")
+            assert result.returncode == 0, f"upgrade to 0166 failed: {result.stderr}"
 
             engine = create_engine(get_test_database_url())
             try:
@@ -17830,9 +17832,7 @@ class TestMigration0179LightweightAuthorDedup:
 
 
 class TestMigration0180ReaderProgressContinuity:
-    """0180 cuts reader_media_state to one non-null locator plus a revision
-    conflict token, recreates its FKs under stable non-cascading names, and
-    backfills a zero-dwell reading_sessions row for cursors that lack one."""
+    """0180 versions reader cursors; head additionally admits 0195 Empty tombstones."""
 
     @pytest.fixture(scope="class")
     def head_engine(self):
@@ -17845,7 +17845,7 @@ class TestMigration0180ReaderProgressContinuity:
         engine.dispose()
         reset_test_schema()
 
-    def test_head_locator_not_null_revision_default_and_legacy_check_dropped(self, head_engine):
+    def test_head_locator_nullable_revision_default_and_legacy_check_dropped(self, head_engine):
         with Session(head_engine) as session:
             columns = {
                 row[0]: row
@@ -17870,16 +17870,18 @@ class TestMigration0180ReaderProgressContinuity:
                 ).fetchall()
             }
 
-        assert columns["locator"][1] == "NO", columns["locator"]
+        assert columns["locator"][1] == "YES", columns["locator"]
         assert columns["revision"][1] == "NO", columns["revision"]
         assert columns["revision"][2] == "bigint", columns["revision"]
         assert columns["revision"][3] is not None and "1" in columns["revision"][3]
         assert "ck_reader_media_state_locator" not in constraints
 
-        # The NOT NULL is real, not just metadata: a NULL-locator insert is rejected.
+        # 0195 makes a NULL locator the durable Empty tombstone while retaining
+        # the monotonic revision fence introduced by 0180.
         with Session(head_engine) as session:
             user_id = uuid4()
             media_id = uuid4()
+            cursor_id = uuid4()
             session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
             session.execute(
                 text(
@@ -17890,17 +17892,26 @@ class TestMigration0180ReaderProgressContinuity:
             )
             session.commit()
 
-            with pytest.raises(IntegrityError):
-                session.execute(
-                    text(
-                        "INSERT INTO reader_media_state (id, user_id, media_id, locator)"
-                        " VALUES (:id, :user_id, :media_id, NULL)"
-                    ),
-                    {"id": uuid4(), "user_id": user_id, "media_id": media_id},
+            session.execute(
+                text(
+                    "INSERT INTO reader_media_state (id, user_id, media_id, locator)"
+                    " VALUES (:id, :user_id, :media_id, NULL)"
+                ),
+                {"id": cursor_id, "user_id": user_id, "media_id": media_id},
+            )
+            session.commit()
+            assert (
+                session.scalar(
+                    text("SELECT locator FROM reader_media_state WHERE id = :id"),
+                    {"id": cursor_id},
                 )
-                session.commit()
-            session.rollback()
+                is None
+            )
 
+            session.execute(
+                text("DELETE FROM reader_media_state WHERE id = :id"),
+                {"id": cursor_id},
+            )
             session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
             session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
             session.commit()
@@ -21694,8 +21705,8 @@ class TestMigration0189ReaderHighlightQuoteChat:
     def test_0189_downgrade_is_blocked(self):
         """0189 is a hard cutover: downgrading off it surfaces NotImplementedError."""
         reset_test_schema()
-        result = run_alembic_command("upgrade head")
-        assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+        result = run_alembic_command("upgrade 0189")
+        assert result.returncode == 0, f"upgrade 0189 failed: {result.stderr}"
         try:
             result = run_alembic_command("downgrade 0188")
             assert result.returncode != 0

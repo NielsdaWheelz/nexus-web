@@ -103,7 +103,9 @@ async function resetReaderStateToDocumentStart(
   mediaId: string,
   fragmentId: string,
 ): Promise<void> {
-  const currentResponse = await page.request.get(`/api/media/${mediaId}/reader-state`);
+  const currentResponse = await page.request.get(
+    `/api/media/${mediaId}/reader-state`,
+  );
   expect(currentResponse.ok()).toBeTruthy();
   const current = ((await currentResponse.json()) as ReaderStateResponse).data;
   const baseRevision = current.state === "Empty" ? 0 : current.revision;
@@ -120,10 +122,13 @@ async function resetReaderStateToDocumentStart(
     text: { quote: null, quote_prefix: null, quote_suffix: null },
   };
 
-  const resetResponse = await page.request.put(`/api/media/${mediaId}/reader-state`, {
-    data: { locator, base_revision: baseRevision },
-    headers: stateChangingApiHeaders(),
-  });
+  const resetResponse = await page.request.put(
+    `/api/media/${mediaId}/reader-state`,
+    {
+      data: { locator, base_revision: baseRevision },
+      headers: stateChangingApiHeaders(),
+    },
+  );
   expect(resetResponse.ok()).toBeTruthy();
 }
 
@@ -155,7 +160,7 @@ test.describe("reader Document Map overview rail", () => {
     await expect(inlineHighlight(page, seed.far_highlight_id)).toHaveCount(0);
 
     // The overview rail is present on desktop but owns no generic opener. The
-    // pane header is the single generic Document Map projection for this pane.
+    // pane header's shared Companion is the single secondary-surface opener.
     const rail = activePane.getByTestId("reader-document-map-overview-rail");
     await expect(rail).toBeVisible();
     await expect(
@@ -167,19 +172,21 @@ test.describe("reader Document Map overview rail", () => {
         exact: true,
       }),
     ).toHaveCount(0);
-    const documentMapAction = activePane.getByRole("button", {
-      name: "Document Map",
+    const companionAction = activePane.getByRole("button", {
+      name: "Companion",
       exact: true,
     });
-    await expect(documentMapAction).toHaveCount(1);
-    await expect(documentMapAction).toHaveAttribute("aria-expanded", "false");
-    await expect(documentMapAction).not.toHaveAttribute("aria-controls");
+    await expect(companionAction).toHaveCount(1);
+    await expect(companionAction).toHaveAttribute("aria-expanded", "false");
+    await expect(companionAction).not.toHaveAttribute("aria-controls");
 
-    await documentMapAction.click();
-    await expect(documentMapAction).toHaveAttribute("aria-expanded", "true");
+    await companionAction.click();
+    await expect(companionAction).toHaveAttribute("aria-expanded", "true");
     const controlledRegionId =
-      await documentMapAction.getAttribute("aria-controls");
-    expect(controlledRegionId).toBe(`pane-${paneId}-secondary-reader-tools`);
+      await companionAction.getAttribute("aria-controls");
+    expect(controlledRegionId).toBe(
+      `pane-${paneId}-secondary-resource-inspector`,
+    );
     const controlledRegion = activePane.locator(
       `aside[id="${controlledRegionId}"]`,
     );
@@ -192,9 +199,9 @@ test.describe("reader Document Map overview rail", () => {
       }),
     ).toHaveCount(1);
     await expect(page.locator(`[id="${controlledRegionId}"]`)).toHaveCount(1);
-    await documentMapAction.click();
-    await expect(documentMapAction).toHaveAttribute("aria-expanded", "false");
-    await expect(documentMapAction).not.toHaveAttribute("aria-controls");
+    await companionAction.click();
+    await expect(companionAction).toHaveAttribute("aria-expanded", "false");
+    await expect(companionAction).not.toHaveAttribute("aria-controls");
     await expect(
       activePane.locator(`aside[id="${controlledRegionId}"]`),
     ).toHaveCount(0);

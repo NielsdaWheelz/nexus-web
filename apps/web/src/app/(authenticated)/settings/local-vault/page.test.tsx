@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 
 const {
@@ -66,9 +67,13 @@ vi.mock("@/lib/api/client", async () => {
 import SettingsLocalVaultPaneBody from "./SettingsLocalVaultPaneBody";
 
 function renderLocalVault(androidShell = false) {
-  return render(
-    withRenderEnvironment(<SettingsLocalVaultPaneBody />, { androidShell }),
-  );
+  return renderHydratedPane({
+    href: "/settings/local-vault",
+    resources: {},
+    children: withRenderEnvironment(<SettingsLocalVaultPaneBody />, {
+      androidShell,
+    }),
+  });
 }
 
 describe("SettingsLocalVaultPaneBody", () => {

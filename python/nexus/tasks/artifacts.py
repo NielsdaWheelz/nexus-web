@@ -50,9 +50,7 @@ def dossier_build(
     async def _handler(
         db: Session, runtime: ExecutionRuntime, _client: httpx.AsyncClient
     ) -> Mapping[str, Any] | RescheduleRequested:
-        reschedule = await engine.run_build(
-            db, build_id=build_id, ctx=context, runtime=runtime
-        )
+        reschedule = await engine.run_build(db, build_id=build_id, ctx=context, runtime=runtime)
         if reschedule is not None:
             return reschedule
         return {"status": "ok", "build_id": str(build_id)}

@@ -402,7 +402,7 @@ export default function PaneShell({
             await executeResourceChat({
               ref: subject.ref,
               openConversation: (conversationId) => {
-                void paneRuntime.activateTarget({
+                void activateTarget({
                   target: {
                     href: `/conversations/${conversationId}`,
                     labelHint: "Chat",
@@ -459,7 +459,7 @@ export default function PaneShell({
     openLibraryPlacement,
     openShare,
     paneId,
-    paneRuntime,
+    activateTarget,
     routeShareIdentity,
   ]);
   useLayoutEffect(() => {

@@ -10,7 +10,13 @@ const RAW_FETCH_FILES = new Set([
   "src/lib/api/sse-client.ts",
   "src/lib/auth/SessionRefresher.tsx",
   "src/lib/auth/internal-fetch.ts",
+  // Recorder transport owns lifecycle keepalive and maps transport outcomes
+  // into the activity protocol; the ordinary API client does neither.
+  "src/lib/consumption/activityContract.ts",
   "src/lib/media/ingestionClient.ts",
+  // Public shares deliberately omit credentials and authenticate with their
+  // scoped share token, so they cannot travel through the authenticated client.
+  "src/lib/sharing/publicClient.ts",
   "src/lib/supabase/client-config.ts",
   // transcribeAudio uses raw fetch to send multipart FormData without Content-Type override
   "src/lib/walknotes/transcribeAudio.ts",
@@ -104,6 +110,83 @@ function isRawFetchCall(node: ts.Node): node is ts.CallExpression {
     ((ts.isIdentifier(node.expression) && node.expression.text === "fetch") ||
       (ts.isPropertyAccessExpression(node.expression) &&
         node.expression.name.text === "fetch"))
+  );
+}
+
+const CLIENT_API_TRANSPORTS = new Set([
+  "apiFetch",
+  "apiPostFormData",
+  "apiKeepaliveJson",
+]);
+
+function containsClientApiTransport(node: ts.Node): boolean {
+  let found = false;
+  function visit(child: ts.Node) {
+    if (
+      ts.isCallExpression(child) &&
+      ts.isIdentifier(child.expression) &&
+      CLIENT_API_TRANSPORTS.has(child.expression.text)
+    ) {
+      found = true;
+      return;
+    }
+    if (!found) ts.forEachChild(child, visit);
+  }
+  visit(node);
+  return found;
+}
+
+function catchRethrowsCaughtValue(catchClause: ts.CatchClause): boolean {
+  const caughtName =
+    catchClause.variableDeclaration &&
+    ts.isIdentifier(catchClause.variableDeclaration.name)
+      ? catchClause.variableDeclaration.name.text
+      : null;
+  const last =
+    catchClause.block.statements[catchClause.block.statements.length - 1];
+  return (
+    caughtName !== null &&
+    last !== undefined &&
+    ts.isThrowStatement(last) &&
+    last.expression !== undefined &&
+    ts.isIdentifier(last.expression) &&
+    last.expression.text === caughtName
+  );
+}
+
+function directlyConsumesClientApiError(source: Source): boolean {
+  let found = false;
+  function visit(node: ts.Node) {
+    if (
+      ts.isTryStatement(node) &&
+      node.catchClause &&
+      containsClientApiTransport(node.tryBlock) &&
+      !catchRethrowsCaughtValue(node.catchClause)
+    ) {
+      found = true;
+      return;
+    }
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === "catch" &&
+      containsClientApiTransport(node.expression.expression)
+    ) {
+      found = true;
+      return;
+    }
+    if (!found) ts.forEachChild(node, visit);
+  }
+  visit(source.ast);
+  return found;
+}
+
+function importsServerOnly(source: Source): boolean {
+  return source.ast.statements.some(
+    (statement) =>
+      ts.isImportDeclaration(statement) &&
+      ts.isStringLiteral(statement.moduleSpecifier) &&
+      statement.moduleSpecifier.text === "server-only",
   );
 }
 
@@ -339,16 +422,19 @@ describe("effect discipline source shape", () => {
     const catchPattern = /\bcatch\s*(?:\(|\{)|\.catch\s*\(/;
     const authHandlerPattern =
       /handleUnauthenticatedApiError|isUnauthenticatedApiError|useUnauthenticatedApiHandler/;
-    const offenders = sourceFiles(join(process.cwd(), "src"))
-      .map((path) => ({ path: repoPath(path), text: readFileSync(path, "utf8") }))
-      .filter((source) => source.path !== "src/lib/api/server.ts")
-      .filter((source) => catchPattern.test(source.text))
-      .filter((source) =>
-        /from "@\/lib\/api\/client"|apiFetch\(|apiPostFormData\(|apiKeepaliveJson\(/.test(
-          source.text,
-        ),
-      )
-      .filter((source) => !authHandlerPattern.test(source.text))
+    const offenders = readSources()
+      .filter((source) => !importsServerOnly(source))
+      .filter((source) => {
+        const text = source.ast.getFullText();
+        const catchesClassifiedApiError =
+          catchPattern.test(text) &&
+          /\bisApiError\b/.test(text) &&
+          /from "@\/lib\/api\/client"/.test(text);
+        return (
+          catchesClassifiedApiError || directlyConsumesClientApiError(source)
+        );
+      })
+      .filter((source) => !authHandlerPattern.test(source.ast.getFullText()))
       .map((source) => source.path);
 
     expect(offenders).toEqual([]);

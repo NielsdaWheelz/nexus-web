@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
 import {
   DISPLAY_NAME_CHANGE_FAILURE_MESSAGE,
   DISPLAY_NAME_CHANGE_SUCCESS_MESSAGE,
@@ -47,6 +48,14 @@ vi.mock("@/lib/api/client", async () => {
 
 import SettingsAccountPaneBody from "./SettingsAccountPaneBody";
 
+function renderAccount() {
+  return renderHydratedPane({
+    href: "/settings/account",
+    resources: {},
+    children: <SettingsAccountPaneBody />,
+  });
+}
+
 describe("SettingsAccountPaneBody", () => {
   it("renders the Email and Display name forms with the loaded email and display name", async () => {
     apiFetch.mockReset();
@@ -54,7 +63,7 @@ describe("SettingsAccountPaneBody", () => {
       data: { email: "ada@example.com", display_name: "Ada Lovelace" },
     });
 
-    render(<SettingsAccountPaneBody />);
+    renderAccount();
 
     expect(
       await screen.findByText(/current: ada@example\.com/i)
@@ -82,7 +91,7 @@ describe("SettingsAccountPaneBody", () => {
     });
     const user = userEvent.setup();
 
-    render(<SettingsAccountPaneBody />);
+    renderAccount();
 
     const nameInput = await screen.findByDisplayValue("Ada");
     expect(apiFetch).toHaveBeenCalledTimes(1);
@@ -101,7 +110,7 @@ describe("SettingsAccountPaneBody", () => {
     changeEmailAction.mockResolvedValue({ ok: true });
     const user = userEvent.setup();
 
-    render(<SettingsAccountPaneBody />);
+    renderAccount();
 
     const emailInput = await screen.findByDisplayValue("ada@example.com");
     await user.clear(emailInput);
@@ -130,7 +139,7 @@ describe("SettingsAccountPaneBody", () => {
     });
     const user = userEvent.setup();
 
-    render(<SettingsAccountPaneBody />);
+    renderAccount();
 
     const emailInput = await screen.findByDisplayValue("ada@example.com");
     await user.clear(emailInput);
@@ -152,7 +161,7 @@ describe("SettingsAccountPaneBody", () => {
     });
     const user = userEvent.setup();
 
-    render(<SettingsAccountPaneBody />);
+    renderAccount();
 
     const nameInput = await screen.findByDisplayValue("Ada");
     await user.clear(nameInput);
@@ -180,7 +189,7 @@ describe("SettingsAccountPaneBody", () => {
     apiFetch.mockRejectedValueOnce(new Error("patch failed"));
     const user = userEvent.setup();
 
-    render(<SettingsAccountPaneBody />);
+    renderAccount();
 
     const nameInput = await screen.findByDisplayValue("Ada");
     await user.clear(nameInput);
@@ -206,7 +215,7 @@ describe("SettingsAccountPaneBody", () => {
       },
     });
 
-    render(<SettingsAccountPaneBody />);
+    renderAccount();
 
     expect(
       await screen.findByText("letters-abc@mail.example.com")
@@ -229,7 +238,7 @@ describe("SettingsAccountPaneBody", () => {
       },
     });
 
-    render(<SettingsAccountPaneBody />);
+    renderAccount();
 
     expect(
       await screen.findByText(/the post room is not configured/i)
@@ -253,7 +262,7 @@ describe("SettingsAccountPaneBody", () => {
       .mockResolvedValue(undefined);
     const user = userEvent.setup();
 
-    render(<SettingsAccountPaneBody />);
+    renderAccount();
 
     const button = await screen.findByRole("button", {
       name: /copy address/i,

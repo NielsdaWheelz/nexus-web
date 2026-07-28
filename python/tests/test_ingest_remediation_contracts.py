@@ -14,6 +14,7 @@ def test_registry_job_kinds_match_task_catalog_contract():
         "enrich_metadata",
         "chat_run",
         "dossier_build",
+        "media_content_reindex_job",
         "media_unit_build",
         "podcast_sync_subscription_job",
         "podcast_reindex_semantic_job",

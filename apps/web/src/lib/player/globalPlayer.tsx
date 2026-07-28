@@ -33,11 +33,19 @@ import {
   type ReactNode,
 } from "react";
 import { ApiError, isApiError } from "@/lib/api/client";
-import { absent, present, presenceValueOr, type Presence } from "@/lib/api/presence";
+import {
+  absent,
+  present,
+  presenceValueOr,
+  type Presence,
+} from "@/lib/api/presence";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { clamp } from "@/lib/clamp";
 import { isAbortError } from "@/lib/errors";
-import { useLectern, type CanonicalInstallEvent } from "@/lib/lectern/LecternProvider";
+import {
+  useLectern,
+  type CanonicalInstallEvent,
+} from "@/lib/lectern/LecternProvider";
 import type {
   ChapterOut,
   LecternSnapshot,
@@ -52,6 +60,7 @@ import {
   SILENCE_TRIM_PLAYBACK_RATE,
   SILENCE_TRIM_THRESHOLD_DB,
   VOLUME_BOOST_GAIN_BY_LEVEL,
+  areAudioEffectsActive,
   calculateRmsDb,
   normalizeVolumeBoostLevel,
   readAudioEffectsFromStorage,
@@ -121,12 +130,22 @@ export type GlobalPlayerState =
       error: ApiError;
       retry: () => void;
     }
-  | { kind: "PlaybackFailed"; session: AudioSession; error: PlayerError; retry: () => void }
+  | {
+      kind: "PlaybackFailed";
+      session: AudioSession;
+      error: PlayerError;
+      retry: () => void;
+    }
   | { kind: "PausedAtEnd"; session: AudioSession };
 
 export type PlayerPersistence =
   | { kind: "Ready" }
-  | { kind: "Suspended"; mediaId: MediaId; error: ApiError; retryGet: () => void };
+  | {
+      kind: "Suspended";
+      mediaId: MediaId;
+      error: ApiError;
+      retryGet: () => void;
+    };
 
 export interface PlayerPresentation {
   positionMs: number;
@@ -165,7 +184,11 @@ const GlobalPlayerContext = createContext<GlobalPlayerCapability | null>(null);
 function clampSeconds(value: number, durationSeconds: number | null): number {
   if (!Number.isFinite(value)) return 0;
   const lowerBounded = Math.max(0, value);
-  if (durationSeconds == null || !Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+  if (
+    durationSeconds == null ||
+    !Number.isFinite(durationSeconds) ||
+    durationSeconds <= 0
+  ) {
     return lowerBounded;
   }
   return Math.min(lowerBounded, durationSeconds);
@@ -210,17 +233,25 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   const lecternMutation = lectern.mutation;
 
   // --- Session / history / presentation state --------------------------------
-  const [sessionState, setSessionState] = useState<PlayerSessionState>({ kind: "Absent" });
+  const [sessionState, setSessionState] = useState<PlayerSessionState>({
+    kind: "Absent",
+  });
   const [history, setHistory] = useState<PlayerHistory>(EMPTY_HISTORY);
-  const [persistence, setPersistence] = useState<PlayerPersistence>({ kind: "Ready" });
+  const [persistence, setPersistence] = useState<PlayerPersistence>({
+    kind: "Ready",
+  });
 
-  const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
+  const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(
+    null,
+  );
   const [currentTimeSeconds, setCurrentTimeSeconds] = useState(0);
   const [durationSeconds, setDurationSeconds] = useState(0);
   const [bufferedSeconds, setBufferedSeconds] = useState(0);
   const [playbackRate, setPlaybackRateState] = useState(DEFAULT_PLAYBACK_RATE);
   const [volume, setVolumeState] = useState(DEFAULT_VOLUME);
-  const [audioEffects, setAudioEffectsState] = useState<AudioEffectsState>(AUDIO_EFFECTS_DEFAULTS);
+  const [audioEffects, setAudioEffectsState] = useState<AudioEffectsState>(
+    AUDIO_EFFECTS_DEFAULTS,
+  );
   const [audioEffectsAvailable, setAudioEffectsAvailable] = useState(true);
   const [isSilenceTrimming, setIsSilenceTrimming] = useState(false);
   const [silenceTimeSavedSeconds, setSilenceTimeSavedSeconds] = useState(0);
@@ -255,7 +286,9 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   const silenceTrimFrameIdRef = useRef<number | null>(null);
   const silenceTrimLastTimestampRef = useRef<number | null>(null);
   const silenceBelowThresholdMsRef = useRef(0);
-  const silenceAnalyserBufferRef = useRef<Float32Array<ArrayBuffer> | null>(null);
+  const silenceAnalyserBufferRef = useRef<Float32Array<ArrayBuffer> | null>(
+    null,
+  );
   const isPlayingRef = useRef(false);
 
   // Session-machine side data.
@@ -266,11 +299,16 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     writeRevision: 0,
     resetEpoch: 0,
   });
-  const pendingStartRef = useRef<{ startSeconds: number; playbackRate: number } | null>(null);
+  const pendingStartRef = useRef<{
+    startSeconds: number;
+    playbackRate: number;
+  } | null>(null);
   const completionInFlightRef = useRef(false);
 
   const latestSnapshot = useCallback((): LecternSnapshot => {
-    return lecternResource.status === "ready" ? lecternResource.data : { items: [] };
+    return lecternResource.status === "ready"
+      ? lecternResource.data
+      : { items: [] };
   }, [lecternResource]);
 
   // --- Audio-effects graph (kept verbatim from the pre-cutover player) --------
@@ -336,7 +374,8 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     }
 
     analyserNode.fftSize = SILENCE_TRIM_ANALYSER_FFT_SIZE;
-    gainNode.gain.value = VOLUME_BOOST_GAIN_BY_LEVEL[audioEffectsRef.current.volumeBoost];
+    gainNode.gain.value =
+      VOLUME_BOOST_GAIN_BY_LEVEL[audioEffectsRef.current.volumeBoost];
     compressorNode.threshold.value = COMPRESSOR_DEFAULTS.threshold;
     compressorNode.knee.value = COMPRESSOR_DEFAULTS.knee;
     compressorNode.ratio.value = COMPRESSOR_DEFAULTS.ratio;
@@ -410,19 +449,44 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    if (!analyserNodeRef.current) analyserNodeRef.current = context.createAnalyser();
+    if (!analyserNodeRef.current)
+      analyserNodeRef.current = context.createAnalyser();
     if (!gainNodeRef.current) gainNodeRef.current = context.createGain();
-    if (!compressorNodeRef.current) compressorNodeRef.current = context.createDynamicsCompressor();
-    if (!splitterNodeRef.current) splitterNodeRef.current = context.createChannelSplitter(2);
-    if (!monoLeftGainNodeRef.current) monoLeftGainNodeRef.current = context.createGain();
-    if (!monoRightGainNodeRef.current) monoRightGainNodeRef.current = context.createGain();
-    if (!mergerNodeRef.current) mergerNodeRef.current = context.createChannelMerger(2);
+    if (!compressorNodeRef.current)
+      compressorNodeRef.current = context.createDynamicsCompressor();
+    if (!splitterNodeRef.current)
+      splitterNodeRef.current = context.createChannelSplitter(2);
+    if (!monoLeftGainNodeRef.current)
+      monoLeftGainNodeRef.current = context.createGain();
+    if (!monoRightGainNodeRef.current)
+      monoRightGainNodeRef.current = context.createGain();
+    if (!mergerNodeRef.current)
+      mergerNodeRef.current = context.createChannelMerger(2);
 
     setAudioEffectsAvailable(true);
     audioEffectsAvailableRef.current = true;
     configureAudioEffectsGraph();
     return context;
-  }, [configureAudioEffectsGraph, markAudioEffectsUnavailable, resetAudioGraphNodes]);
+  }, [
+    configureAudioEffectsGraph,
+    markAudioEffectsUnavailable,
+    resetAudioGraphNodes,
+  ]);
+
+  const resumeAudioEffectsGraphIfRequired =
+    useCallback((): AudioContext | null => {
+      if (
+        audioContextRef.current === null &&
+        !areAudioEffectsActive(audioEffectsRef.current)
+      ) {
+        return null;
+      }
+      const context = ensureAudioEffectsGraph();
+      if (context?.state === "suspended") {
+        void context.resume().catch(() => {});
+      }
+      return context;
+    }, [ensureAudioEffectsGraph]);
 
   const startSilenceTrimming = useCallback(() => {
     if (silenceTrimFrameIdRef.current != null) return;
@@ -445,13 +509,16 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
         !silenceAnalyserBufferRef.current ||
         silenceAnalyserBufferRef.current.length !== analyserNode.fftSize
       ) {
-        silenceAnalyserBufferRef.current = new Float32Array(analyserNode.fftSize);
+        silenceAnalyserBufferRef.current = new Float32Array(
+          analyserNode.fftSize,
+        );
       }
       const frame = silenceAnalyserBufferRef.current;
       analyserNode.getFloatTimeDomainData(frame);
       const levelDb = calculateRmsDb(frame);
 
-      const previousTimestamp = silenceTrimLastTimestampRef.current ?? timestampMs;
+      const previousTimestamp =
+        silenceTrimLastTimestampRef.current ?? timestampMs;
       const elapsedMs = Math.max(0, timestampMs - previousTimestamp);
       silenceTrimLastTimestampRef.current = timestampMs;
 
@@ -463,7 +530,8 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       }
 
       const shouldTrim =
-        isBelowThreshold && silenceBelowThresholdMsRef.current >= SILENCE_TRIM_MIN_DURATION_MS;
+        isBelowThreshold &&
+        silenceBelowThresholdMsRef.current >= SILENCE_TRIM_MIN_DURATION_MS;
       if (shouldTrim && !isSilenceTrimmingRef.current) {
         isSilenceTrimmingRef.current = true;
         setIsSilenceTrimming(true);
@@ -477,7 +545,10 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       if (isSilenceTrimmingRef.current && elapsedMs > 0) {
         const savedSeconds =
           (elapsedMs / 1000) *
-          Math.max(0, 1 - userPlaybackRateRef.current / SILENCE_TRIM_PLAYBACK_RATE);
+          Math.max(
+            0,
+            1 - userPlaybackRateRef.current / SILENCE_TRIM_PLAYBACK_RATE,
+          );
         if (savedSeconds > 0) {
           setSilenceTimeSavedSeconds((previous) => previous + savedSeconds);
         }
@@ -494,19 +565,29 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
 
   const readSample = useCallback((): HeartbeatSample => {
     const audio = audioElementRef.current;
-    const positionMs = Math.max(0, Math.round((audio?.currentTime ?? 0) * 1000));
-    const durationValue = audio && Number.isFinite(audio.duration) ? audio.duration : null;
+    const positionMs = Math.max(
+      0,
+      Math.round((audio?.currentTime ?? 0) * 1000),
+    );
+    const durationValue =
+      audio && Number.isFinite(audio.duration) ? audio.duration : null;
     const durationMs: Presence<number> =
       durationValue !== null && durationValue >= 0
         ? present(Math.round(durationValue * 1000))
         : absent();
-    return { positionMs, durationMs, playbackSpeed: userPlaybackRateRef.current };
+    return {
+      positionMs,
+      durationMs,
+      playbackSpeed: userPlaybackRateRef.current,
+    };
   }, []);
 
   const seekToSecondsInternal = useCallback((seconds: number) => {
     const audio = audioElementRef.current;
     if (!audio) return;
-    const safeDuration = Number.isFinite(audio.duration) ? audio.duration : null;
+    const safeDuration = Number.isFinite(audio.duration)
+      ? audio.duration
+      : null;
     const target = clampSeconds(seconds, safeDuration);
     try {
       audio.currentTime = target;
@@ -555,7 +636,12 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
           if (seek) seekToSecondsInternal(state.positionMs / 1000);
         },
         onPersistenceSuspended: (error, retryGet) => {
-          setPersistence({ kind: "Suspended", mediaId: descriptor.mediaId, error, retryGet });
+          setPersistence({
+            kind: "Suspended",
+            mediaId: descriptor.mediaId,
+            error,
+            retryGet,
+          });
         },
         onPersistenceResumed: () => setPersistence({ kind: "Ready" }),
         onOverlayUpdate: (entry) => {
@@ -584,7 +670,9 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
         const session = sessionOfState(transition.state);
         if (session === undefined) return;
         const { descriptor } = session;
-        const finishedOverride = finishedOverridesRef.current.has(descriptor.mediaId);
+        const finishedOverride = finishedOverridesRef.current.has(
+          descriptor.mediaId,
+        );
         const snapshot = latestSnapshot();
         // Resume authority (spec §6): Finished→0; overlay; snapshot/media-DTO
         // position. `getStartPositionMs` covers Finished/overlay/snapshot; when the
@@ -594,7 +682,9 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
           finishedOverride ||
           overlayRef.current.has(descriptor.mediaId) ||
           snapshot.items.some(
-            (row) => row.mediaId === descriptor.mediaId && row.activation.kind === "FooterAudio",
+            (row) =>
+              row.mediaId === descriptor.mediaId &&
+              row.activation.kind === "FooterAudio",
           );
         const startPositionMs = hasResumeSource
           ? getStartPositionMs(
@@ -604,7 +694,9 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
               snapshot,
             )
           : descriptor.activation.positionMs;
-        const startRate = normalizePlaybackRate(descriptor.activation.playbackSpeed);
+        const startRate = normalizePlaybackRate(
+          descriptor.activation.playbackSpeed,
+        );
         userPlaybackRateRef.current = startRate;
         setPlaybackRateState(startRate);
         pendingStartRef.current = {
@@ -641,7 +733,12 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
         audioElementRef.current?.pause();
       }
     },
-    [latestSnapshot, seekToSecondsInternal, startHeartbeat, stopSilenceTrimming],
+    [
+      latestSnapshot,
+      seekToSecondsInternal,
+      startHeartbeat,
+      stopSilenceTrimming,
+    ],
   );
 
   const recordFinishedOverride = useCallback((mediaId: MediaId) => {
@@ -657,7 +754,11 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
         origin: { kind: "Direct" },
       };
       setSessionState({ kind: "Completing", session: downgraded, attempt });
-      sessionStateRef.current = { kind: "Completing", session: downgraded, attempt };
+      sessionStateRef.current = {
+        kind: "Completing",
+        session: downgraded,
+        attempt,
+      };
       try {
         await lectern.ensureMediaFinished(session.descriptor.mediaId, {
           clientMutationId: attempt.fallbackStateOnlyId,
@@ -699,7 +800,9 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
           recordFinishedOverride(session.descriptor.mediaId);
           // The provider installed the response snapshot before resolving, so
           // origin/resume resolve against canonical state.
-          applyTransition(naturalEndAdvance(session, historyRef.current, result.nextItem));
+          applyTransition(
+            naturalEndAdvance(session, historyRef.current, result.nextItem),
+          );
           completionInFlightRef.current = false;
         } else {
           await lectern.ensureMediaFinished(session.descriptor.mediaId, {
@@ -750,7 +853,9 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     if (completionInFlightRef.current) return;
     completionInFlightRef.current = true;
     heartbeatRef.current?.tick();
-    const attempt = mintCompletionAttempt(state.session, () => crypto.randomUUID());
+    const attempt = mintCompletionAttempt(state.session, () =>
+      crypto.randomUUID(),
+    );
     void runCompletion(state.session, attempt);
   }, [runCompletion, stopSilenceTrimming]);
 
@@ -764,13 +869,15 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   const resume = useCallback(() => {
     const audio = audioElementRef.current;
     if (!audio) return;
-    const context = ensureAudioEffectsGraph();
-    if (context && context.state === "suspended") void context.resume().catch(() => {});
-    if (audioEffectsRef.current.silenceTrim && audioEffectsAvailableRef.current) {
+    resumeAudioEffectsGraphIfRequired();
+    if (
+      audioEffectsRef.current.silenceTrim &&
+      audioEffectsAvailableRef.current
+    ) {
       startSilenceTrimming();
     }
     void audio.play().catch(() => {});
-  }, [ensureAudioEffectsGraph, startSilenceTrimming]);
+  }, [resumeAudioEffectsGraphIfRequired, startSilenceTrimming]);
 
   const pause = useCallback(() => {
     stopSilenceTrimming();
@@ -782,20 +889,24 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     const audio = audioElementRef.current;
     if (!audio) return;
     setSessionState((prev) =>
-      prev.kind === "PlaybackFailed" ? { kind: "Active", session: prev.session, phase: "Buffering" } : prev,
+      prev.kind === "PlaybackFailed"
+        ? { kind: "Active", session: prev.session, phase: "Buffering" }
+        : prev,
     );
-    const context = ensureAudioEffectsGraph();
-    if (context && context.state === "suspended") void context.resume().catch(() => {});
+    resumeAudioEffectsGraphIfRequired();
     try {
       audio.load();
     } catch {
       // Ignore transient load failures and still attempt play.
     }
-    if (audioEffectsRef.current.silenceTrim && audioEffectsAvailableRef.current) {
+    if (
+      audioEffectsRef.current.silenceTrim &&
+      audioEffectsAvailableRef.current
+    ) {
       startSilenceTrimming();
     }
     void audio.play().catch(() => {});
-  }, [ensureAudioEffectsGraph, startSilenceTrimming]);
+  }, [resumeAudioEffectsGraphIfRequired, startSilenceTrimming]);
 
   const playAudio = useCallback(
     (descriptor: PlayerDescriptor) => {
@@ -804,28 +915,52 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       // Affordances are gated disabled-until-Ready; reaching here regardless is a
       // defect, mirroring the mutation lane's `requireReadySnapshot`.
       if (lecternResource.status !== "ready") {
-        throw new Error("playAudio invoked before the Lectern snapshot is Ready (defect).");
+        throw new Error(
+          "playAudio invoked before the Lectern snapshot is Ready (defect).",
+        );
       }
       if (transportLocked()) return;
+      resumeAudioEffectsGraphIfRequired();
       pendingStartRef.current = null;
       applyTransition(
-        playExplicit(sessionStateRef.current, historyRef.current, descriptor, latestSnapshot()),
+        playExplicit(
+          sessionStateRef.current,
+          historyRef.current,
+          descriptor,
+          latestSnapshot(),
+        ),
       );
     },
-    [applyTransition, latestSnapshot, transportLocked, lecternResource.status],
+    [
+      applyTransition,
+      latestSnapshot,
+      resumeAudioEffectsGraphIfRequired,
+      transportLocked,
+      lecternResource.status,
+    ],
   );
 
   const previous = useCallback(() => {
     if (transportLocked()) return;
-    const positionMs = Math.max(0, Math.round((audioElementRef.current?.currentTime ?? 0) * 1000));
+    const positionMs = Math.max(
+      0,
+      Math.round((audioElementRef.current?.currentTime ?? 0) * 1000),
+    );
     applyTransition(
-      previousTransition(sessionStateRef.current, historyRef.current, positionMs, latestSnapshot()),
+      previousTransition(
+        sessionStateRef.current,
+        historyRef.current,
+        positionMs,
+        latestSnapshot(),
+      ),
     );
   }, [applyTransition, latestSnapshot, transportLocked]);
 
   const next = useCallback(() => {
     if (transportLocked()) return;
-    applyTransition(manualNext(sessionStateRef.current, historyRef.current, latestSnapshot()));
+    applyTransition(
+      manualNext(sessionStateRef.current, historyRef.current, latestSnapshot()),
+    );
   }, [applyTransition, latestSnapshot, transportLocked]);
 
   const seekTo = useCallback(
@@ -847,25 +982,25 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     [seekToSecondsInternal],
   );
 
-  const setVolume = useCallback(
-    (nextVolume: number) => {
-      const normalized = normalizeVolume(nextVolume);
-      setVolumeState(normalized);
-      if (audioElementRef.current) audioElementRef.current.volume = normalized;
-      try {
-        window.localStorage.setItem(VOLUME_STORAGE_KEY, normalized.toString());
-      } catch {
-        // Ignore storage failures (private mode / quota).
-      }
-    },
-    [],
-  );
+  const setVolume = useCallback((nextVolume: number) => {
+    const normalized = normalizeVolume(nextVolume);
+    setVolumeState(normalized);
+    if (audioElementRef.current) audioElementRef.current.volume = normalized;
+    try {
+      window.localStorage.setItem(VOLUME_STORAGE_KEY, normalized.toString());
+    } catch {
+      // Ignore storage failures (private mode / quota).
+    }
+  }, []);
 
-  const setAudioEffects = useCallback((partial: Partial<AudioEffectsState>) => {
-    setAudioEffectsState((previous) => {
+  const setAudioEffects = useCallback(
+    (partial: Partial<AudioEffectsState>) => {
+      const previous = audioEffectsRef.current;
       const nextState: AudioEffectsState = {
         silenceTrim:
-          typeof partial.silenceTrim === "boolean" ? partial.silenceTrim : previous.silenceTrim,
+          typeof partial.silenceTrim === "boolean"
+            ? partial.silenceTrim
+            : previous.silenceTrim,
         volumeBoost:
           partial.volumeBoost != null
             ? normalizeVolumeBoostLevel(partial.volumeBoost)
@@ -873,14 +1008,18 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
         mono: typeof partial.mono === "boolean" ? partial.mono : previous.mono,
       };
       audioEffectsRef.current = nextState;
+      setAudioEffectsState(nextState);
+      if (areAudioEffectsActive(nextState)) {
+        resumeAudioEffectsGraphIfRequired();
+      }
       try {
         writeAudioEffectsToStorage(window.localStorage, nextState);
       } catch {
         // Ignore storage failures (private mode / quota).
       }
-      return nextState;
-    });
-  }, []);
+    },
+    [resumeAudioEffectsGraphIfRequired],
+  );
 
   const bindAudioElement = useCallback(
     (node: HTMLAudioElement | null) => {
@@ -910,13 +1049,20 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       currentSession
         ? {
             title: currentSession.descriptor.title,
-            podcast_title: presenceValueOr(currentSession.descriptor.subtitle, null),
-            image_url: presenceValueOr(currentSession.descriptor.activation.artworkUrl, null),
+            podcast_title: presenceValueOr(
+              currentSession.descriptor.subtitle,
+              null,
+            ),
+            image_url: presenceValueOr(
+              currentSession.descriptor.activation.artworkUrl,
+              null,
+            ),
           }
         : null,
     [currentSession],
   );
-  const isPlaying = sessionState.kind === "Active" && sessionState.phase === "Playing";
+  const isPlaying =
+    sessionState.kind === "Active" && sessionState.phase === "Playing";
   isPlayingRef.current = isPlaying;
   const activityMediaId = currentSession?.descriptor.mediaId;
   const listeningActivityObservation = useCallback(
@@ -960,11 +1106,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       if (closing) recorder.observe(key, closing);
       unregister();
     };
-  }, [
-    activityMediaId,
-    listeningActivityObservation,
-    viewport.hydrated,
-  ]);
+  }, [activityMediaId, listeningActivityObservation, viewport.hydrated]);
 
   useEffect(() => {
     if (!viewport.hydrated || !activityMediaId) return;
@@ -974,25 +1116,27 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   }, [
     activityAudioPlaying,
     activityMediaId,
+    currentTimeSeconds,
     listeningActivityObservation,
     viewport.hydrated,
   ]);
 
-  const { updatePositionState: updateMediaSessionPositionState } = useMediaSessionAdapter({
-    track: mediaSessionTrack,
-    isPlaying,
-    audioElement,
-    playbackRateRef: userPlaybackRateRef,
-    handlers: {
-      play: resume,
-      pause,
-      skipBackward: () => skipBy(-PLAYER_SKIP_BACK_SECONDS * 1000),
-      skipForward: () => skipBy(PLAYER_SKIP_FORWARD_SECONDS * 1000),
-      previous,
-      next,
-      seekToSeconds: (seconds) => seekTo(seconds * 1000),
-    },
-  });
+  const { updatePositionState: updateMediaSessionPositionState } =
+    useMediaSessionAdapter({
+      track: mediaSessionTrack,
+      isPlaying,
+      audioElement,
+      playbackRateRef: userPlaybackRateRef,
+      handlers: {
+        play: resume,
+        pause,
+        skipBackward: () => skipBy(-PLAYER_SKIP_BACK_SECONDS * 1000),
+        skipForward: () => skipBy(PLAYER_SKIP_FORWARD_SECONDS * 1000),
+        previous,
+        next,
+        seekToSeconds: (seconds) => seekTo(seconds * 1000),
+      },
+    });
 
   const setPlaybackRate = useCallback(
     (nextRate: number) => {
@@ -1030,7 +1174,11 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!audioContextRef.current || !sourceNodeRef.current || !audioEffectsAvailableRef.current) {
+    if (
+      !audioContextRef.current ||
+      !sourceNodeRef.current ||
+      !audioEffectsAvailableRef.current
+    ) {
       if (!audioEffects.silenceTrim) stopSilenceTrimming();
       return;
     }
@@ -1040,14 +1188,22 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       return;
     }
     stopSilenceTrimming();
-  }, [audioEffects, configureAudioEffectsGraph, startSilenceTrimming, stopSilenceTrimming]);
+  }, [
+    audioEffects,
+    configureAudioEffectsGraph,
+    startSilenceTrimming,
+    stopSilenceTrimming,
+  ]);
 
   useEffect(() => {
     const context = audioContextRef.current;
     if (!context) return;
     if (isPlaying) {
       void context.resume().catch(() => {});
-      if (audioEffectsRef.current.silenceTrim && audioEffectsAvailableRef.current) {
+      if (
+        audioEffectsRef.current.silenceTrim &&
+        audioEffectsAvailableRef.current
+      ) {
         startSilenceTrimming();
       }
       return;
@@ -1061,7 +1217,11 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       stopSilenceTrimming();
       stopHeartbeat(false);
       const context = audioContextRef.current;
-      if (context && context.state !== "closed" && typeof context.close === "function") {
+      if (
+        context &&
+        context.state !== "closed" &&
+        typeof context.close === "function"
+      ) {
         void context.close().catch(() => {});
       }
     },
@@ -1071,7 +1231,9 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   // --- Audio element events --------------------------------------------------
 
   const setPhase = useCallback((phase: PlaybackPhase) => {
-    setSessionState((prev) => (prev.kind === "Active" ? { ...prev, phase } : prev));
+    setSessionState((prev) =>
+      prev.kind === "Active" ? { ...prev, phase } : prev,
+    );
   }, []);
 
   useEffect(() => {
@@ -1079,7 +1241,10 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
 
     const handlePlay = () => {
       setPhase("Playing");
-      if (audioEffectsRef.current.silenceTrim && audioEffectsAvailableRef.current) {
+      if (
+        audioEffectsRef.current.silenceTrim &&
+        audioEffectsAvailableRef.current
+      ) {
         startSilenceTrimming();
       }
     };
@@ -1161,7 +1326,10 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
         setSessionState({
           kind: "PlaybackFailed",
           session: state.session,
-          error: { code: String(errorCode), message: mapPlaybackErrorMessage(errorCode) },
+          error: {
+            code: String(errorCode),
+            message: mapPlaybackErrorMessage(errorCode),
+          },
         });
       }
     };
@@ -1230,9 +1398,11 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     userPlaybackRateRef.current = pending.playbackRate;
     setPlaybackRateState(pending.playbackRate);
     applyUserPlaybackRateToAudio();
-    const context = ensureAudioEffectsGraph();
-    if (context && context.state === "suspended") void context.resume().catch(() => {});
-    if (audioEffectsRef.current.silenceTrim && audioEffectsAvailableRef.current) {
+    resumeAudioEffectsGraphIfRequired();
+    if (
+      audioEffectsRef.current.silenceTrim &&
+      audioEffectsAvailableRef.current
+    ) {
       startSilenceTrimming();
     }
     void audio.play().catch(() => {});
@@ -1297,14 +1467,19 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     };
     // Pre-command drain: close an active heartbeat generation before the reset
     // command runs. A timed-out old write remains harmless: the server fences it.
-    const handleBeforeProgressReset = async (mediaId: MediaId): Promise<void> => {
-      const activeMedia = sessionOfState(sessionStateRef.current)?.descriptor.mediaId;
+    const handleBeforeProgressReset = async (
+      mediaId: MediaId,
+    ): Promise<void> => {
+      const activeMedia = sessionOfState(sessionStateRef.current)?.descriptor
+        .mediaId;
       if (mediaId === activeMedia && heartbeatRef.current) {
         await heartbeatRef.current.drainAndStop(HEARTBEAT_DEADLINE_MS);
       }
     };
     const unsubscribeInstall = lectern.onCanonicalInstall(handleEvent);
-    const unsubscribeDrain = lectern.registerBeforeProgressReset(handleBeforeProgressReset);
+    const unsubscribeDrain = lectern.registerBeforeProgressReset(
+      handleBeforeProgressReset,
+    );
     return () => {
       unsubscribeInstall();
       unsubscribeDrain();
@@ -1347,7 +1522,10 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
         // Derive CompletionFailed from a same-id command failure the FIFO parked.
         if (
           lecternMutation.kind === "RetryableFailure" &&
-          mutationMatchesAttempt(lecternMutation.attempt.clientMutationId, state.attempt)
+          mutationMatchesAttempt(
+            lecternMutation.attempt.clientMutationId,
+            state.attempt,
+          )
         ) {
           return {
             kind: "CompletionFailed",
@@ -1359,7 +1537,10 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
         }
         if (
           lecternMutation.kind === "ReconciliationFailed" &&
-          mutationMatchesAttempt(lecternMutation.attempt.clientMutationId, state.attempt)
+          mutationMatchesAttempt(
+            lecternMutation.attempt.clientMutationId,
+            state.attempt,
+          )
         ) {
           return {
             kind: "CompletionFailed",
@@ -1391,7 +1572,9 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   const presentation = useMemo<PlayerPresentation>(
     () => ({
       positionMs: Math.max(0, Math.round(currentTimeSeconds * 1000)),
-      durationMs: Number.isFinite(durationSeconds) ? Math.max(0, Math.round(durationSeconds * 1000)) : 0,
+      durationMs: Number.isFinite(durationSeconds)
+        ? Math.max(0, Math.round(durationSeconds * 1000))
+        : 0,
       bufferedMs: Math.max(0, Math.round(bufferedSeconds * 1000)),
       volume,
       playbackRate,
@@ -1399,7 +1582,10 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       audioEffects,
       audioEffectsAvailable,
       isSilenceTrimming,
-      silenceTimeSavedMs: Math.max(0, Math.round(silenceTimeSavedSeconds * 1000)),
+      silenceTimeSavedMs: Math.max(
+        0,
+        Math.round(silenceTimeSavedSeconds * 1000),
+      ),
     }),
     [
       currentTimeSeconds,
@@ -1452,7 +1638,11 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     ],
   );
 
-  return <GlobalPlayerContext.Provider value={value}>{children}</GlobalPlayerContext.Provider>;
+  return (
+    <GlobalPlayerContext.Provider value={value}>
+      {children}
+    </GlobalPlayerContext.Provider>
+  );
 }
 
 export function useGlobalPlayer(): GlobalPlayerCapability {

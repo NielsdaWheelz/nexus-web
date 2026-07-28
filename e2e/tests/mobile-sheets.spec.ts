@@ -16,11 +16,18 @@ test.describe("mobile sheets", () => {
 
   test("browser back closes the chat drawer and stays on the conversation", async ({
     page,
-  }) => {
+  }, testInfo) => {
     test.slow();
     const seed = await seedBranchingConversation(page);
     const conversationId = seed.conversation_id;
-    await page.goto(`/conversations/${conversationId}`);
+    await gotoSinglePaneWorkspace(
+      page,
+      workspaceE2eDeviceId(testInfo, "e2e-mobile-chat-sheet"),
+      `/conversations/${conversationId}`,
+    );
+    const activePane = page.locator('[data-pane-id][data-active="true"]');
+    await expect(activePane).toHaveAttribute("data-mobile", "true");
+    await expect(activePane).toContainText(seed.root_assistant_content);
     await expect(page.getByTestId("workspace-secondary-pane")).toHaveCount(0);
     await expect(page.getByTestId("mobile-secondary-host")).toHaveCount(0);
 

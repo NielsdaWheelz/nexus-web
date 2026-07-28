@@ -10,7 +10,7 @@ import {
 
 async function createLibraryViaUi(
   page: Page,
-  prefix: string
+  prefix: string,
 ): Promise<{ id: string; name: string; role: string }> {
   const activePane = activeWorkspacePane(page);
   // The Default library row presents as "All" with secondary "Across your
@@ -31,7 +31,7 @@ async function createLibraryViaUi(
     (response) =>
       new URL(response.url()).pathname === "/api/libraries" &&
       response.request().method() === "POST" &&
-      response.status() === 201
+      response.status() === 201,
   );
   await createButton.click();
   const createResponse = await createResponsePromise;
@@ -40,7 +40,11 @@ async function createLibraryViaUi(
     data: { id: string; name: string; role: string };
   };
 
-  return { id: payload.data.id, name: payload.data.name, role: payload.data.role };
+  return {
+    id: payload.data.id,
+    name: payload.data.name,
+    role: payload.data.role,
+  };
 }
 
 // Create media that lands in the viewer's Default library only. `library_ids: []`
@@ -75,23 +79,26 @@ async function markMediaInProgress(page: Page, mediaId: string): Promise<void> {
   const baseRevision = (
     (await current.json()) as { data: { revision: number } }
   ).data.revision;
-  const response = await page.request.put(`/api/media/${mediaId}/reader-state`, {
-    headers: stateChangingApiHeaders(),
-    data: {
-      base_revision: baseRevision,
-      locator: {
-        kind: "web",
-        target: { fragment_id: randomUUID() },
-        locations: {
-          text_offset: 0,
-          progression: 0,
-          total_progression: 0.1,
-          position: null,
+  const response = await page.request.put(
+    `/api/media/${mediaId}/reader-state`,
+    {
+      headers: stateChangingApiHeaders(),
+      data: {
+        base_revision: baseRevision,
+        locator: {
+          kind: "web",
+          target: { fragment_id: randomUUID() },
+          locations: {
+            text_offset: 0,
+            progression: 0,
+            total_progression: 0.1,
+            position: null,
+          },
+          text: { quote: null, quote_prefix: null, quote_suffix: null },
         },
-        text: { quote: null, quote_prefix: null, quote_suffix: null },
       },
     },
-  });
+  );
   const body = await response.text();
   expect(
     response.ok(),
@@ -112,7 +119,9 @@ test.describe("libraries", () => {
       createdId = created.id;
       expect(created.role).toBe("admin");
 
-      const getResponse = await page.request.get(`/api/libraries/${created.id}`);
+      const getResponse = await page.request.get(
+        `/api/libraries/${created.id}`,
+      );
       expect(getResponse.ok()).toBeTruthy();
     } finally {
       if (createdId) {
@@ -135,7 +144,7 @@ test.describe("libraries", () => {
       .getByRole("listitem")
       .filter({ hasText: "Across your libraries" });
     await expect(
-      defaultLibraryItem.getByText("All", { exact: true }),
+      defaultLibraryItem.getByRole("link", { name: "All", exact: true }),
     ).toBeVisible();
     const libraryLink = defaultLibraryItem.getByRole("link");
     await expect(libraryLink).toBeVisible();
@@ -237,7 +246,9 @@ test.describe("libraries", () => {
     }
     const entriesRegionElement = await entriesRegion.elementHandle();
     if (!entriesRegionElement) {
-      throw new Error("Library entries region did not resolve to a DOM element");
+      throw new Error(
+        "Library entries region did not resolve to a DOM element",
+      );
     }
     const sortElement = await sortSelect.elementHandle();
     if (!sortElement) {
@@ -284,14 +295,10 @@ test.describe("libraries", () => {
         const url = new URL(page.url());
         return `${url.pathname}${url.search}`;
       })
-      .toBe(
-        `${libraryHref}?sort=title&direction=${factualSort.direction}`,
-      );
+      .toBe(`${libraryHref}?sort=title&direction=${factualSort.direction}`);
     const response = await factualEntriesResponse;
     expect(response.ok()).toBeTruthy();
-    const returnedTitle = firstTitle(
-      (await response.json()) as EntriesPayload,
-    );
+    const returnedTitle = firstTitle((await response.json()) as EntriesPayload);
     if (!returnedTitle) {
       throw new Error(
         "Title-sorted Default library response had no titled entry",
@@ -304,7 +311,7 @@ test.describe("libraries", () => {
       entriesList
         .getByRole("listitem")
         .first()
-        .getByText(returnedTitle, { exact: true }),
+        .getByRole("link", { name: returnedTitle, exact: true }),
     ).toBeVisible();
     await page.waitForLoadState("networkidle");
     await expect(sortSelect).toHaveValue(factualSort.option);
@@ -344,18 +351,27 @@ test.describe("libraries", () => {
       const created = await createLibraryViaUi(page, "Mgmt Test");
       createdId = created.id;
 
-      const detailsResponse = await page.request.get(`/api/libraries/${created.id}`);
+      const detailsResponse = await page.request.get(
+        `/api/libraries/${created.id}`,
+      );
       expect(detailsResponse.ok()).toBeTruthy();
-      const details = (await detailsResponse.json()) as { data: { role: string } };
+      const details = (await detailsResponse.json()) as {
+        data: { role: string };
+      };
       expect(details.data.role).toBe("admin");
 
       const renamed = `${created.name} Renamed`;
-      const renameResponse = await page.request.patch(`/api/libraries/${created.id}`, {
-        data: { name: renamed },
-        headers: stateChangingApiHeaders(),
-      });
+      const renameResponse = await page.request.patch(
+        `/api/libraries/${created.id}`,
+        {
+          data: { name: renamed },
+          headers: stateChangingApiHeaders(),
+        },
+      );
       expect(renameResponse.ok()).toBeTruthy();
-      const renamedPayload = (await renameResponse.json()) as { data: { name: string } };
+      const renamedPayload = (await renameResponse.json()) as {
+        data: { name: string };
+      };
       expect(renamedPayload.data.name).toBe(renamed);
     } finally {
       if (createdId) {
@@ -390,7 +406,10 @@ test.describe("libraries", () => {
 
     try {
       const createDestination = await page.request.post("/api/libraries", {
-        data: { name: destinationLibraryName },
+        data: {
+          library_id: randomUUID(),
+          name: destinationLibraryName,
+        },
         headers: stateChangingApiHeaders(),
       });
       expect(createDestination.ok()).toBeTruthy();
@@ -502,10 +521,36 @@ test.describe("libraries", () => {
         .click();
       await expect(inProgressRow).toHaveCount(0, { timeout: 15_000 });
 
-      // Undo the completion → the media returns to In Progress through consumption
-      // reconciliation (absent-row entry).
+      // Completion Undo establishes the canonical explicit Unread override. It
+      // preserves the reader cursor, but explicit Unread wins the projection,
+      // so the media must remain absent from In Progress.
+      const undoCommand = page.waitForResponse((response) => {
+        if (
+          response.request().method() !== "POST" ||
+          new URL(response.url()).pathname !== "/api/consumption/commands"
+        ) {
+          return false;
+        }
+        const body: unknown = response.request().postDataJSON();
+        return (
+          typeof body === "object" &&
+          body !== null &&
+          "kind" in body &&
+          body.kind === "UndoCompletion"
+        );
+      });
+      const undoEntries = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return (
+          response.request().method() === "GET" &&
+          url.pathname === entriesPath &&
+          url.searchParams.get("projection") === "in-progress"
+        );
+      });
       await page.getByRole("button", { name: "Undo", exact: true }).click();
-      await expect(inProgressRow).toBeVisible({ timeout: 15_000 });
+      expect((await undoCommand).ok()).toBeTruthy();
+      expect((await undoEntries).ok()).toBeTruthy();
+      await expect(inProgressRow).toHaveCount(0);
 
       // A factual sort composes with the projection; the exact view is URL-owned.
       const sortSelect = pane.getByRole("combobox", { name: "Sort by" });
@@ -536,6 +581,9 @@ test.describe("libraries", () => {
       expect(reloadedUrl.searchParams.get("projection")).toBe("in-progress");
       expect(reloadedUrl.searchParams.get("sort")).toBe("title");
       expect(reloadedUrl.searchParams.get("direction")).toBe("asc");
+      await expect(
+        reloadedPane.locator(`[data-collection-row-id="${inProgressMediaId}"]`),
+      ).toHaveCount(0);
     } catch (error) {
       productError = error;
       throw error;
@@ -543,7 +591,10 @@ test.describe("libraries", () => {
       const cleanupErrors: unknown[] = [];
       const cleanupTargets = [
         unfiledMediaId
-          ? { path: `/api/media/${unfiledMediaId}`, label: `unfiled media ${unfiledMediaId}` }
+          ? {
+              path: `/api/media/${unfiledMediaId}`,
+              label: `unfiled media ${unfiledMediaId}`,
+            }
           : null,
         inProgressMediaId
           ? {

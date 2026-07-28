@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
 import SettingsBillingPaneBody from "./SettingsBillingPaneBody";
 
 const mockBillingState = vi.hoisted(() => ({
@@ -41,6 +42,14 @@ const mockBillingState = vi.hoisted(() => ({
 }));
 
 const mockApiFetch = vi.fn();
+
+function renderBilling() {
+  return renderHydratedPane({
+    href: "/settings/billing",
+    resources: {},
+    children: <SettingsBillingPaneBody />,
+  });
+}
 
 vi.mock("@/lib/billing/useBillingAccount", () => ({
   useBillingAccount: () => mockBillingState,
@@ -86,7 +95,7 @@ describe("SettingsBillingPaneBody", () => {
     const user = userEvent.setup();
     mockApiFetch.mockRejectedValue(new Error("checkout unavailable"));
 
-    render(<SettingsBillingPaneBody />);
+    renderBilling();
 
     // The section opener now renders the surface title as the body <h1>.
     expect(screen.getByRole("heading", { name: "Billing" })).toBeInTheDocument();
@@ -120,7 +129,7 @@ describe("SettingsBillingPaneBody", () => {
     mockBillingState.account.can_share = true;
     mockApiFetch.mockRejectedValue(new Error("portal unavailable"));
 
-    render(<SettingsBillingPaneBody />);
+    renderBilling();
 
     expect(screen.queryByRole("button", { name: "Upgrade to AI Plus" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Upgrade to AI Pro" })).not.toBeInTheDocument();
@@ -143,7 +152,7 @@ describe("SettingsBillingPaneBody", () => {
     mockBillingState.account.entitlement_source = "subscription";
     mockBillingState.account.can_share = true;
 
-    render(<SettingsBillingPaneBody />);
+    renderBilling();
 
     expect(
       screen.getByText(
@@ -164,7 +173,7 @@ describe("SettingsBillingPaneBody", () => {
     mockBillingState.account.subscription_current_period_end = "2026-05-30T23:59:59Z";
     mockBillingState.account.can_share = true;
 
-    render(<SettingsBillingPaneBody />);
+    renderBilling();
 
     expect(screen.getByText(/^Ends /)).toBeInTheDocument();
     expect(screen.queryByText(/^Renews /)).not.toBeInTheDocument();
@@ -181,7 +190,7 @@ describe("SettingsBillingPaneBody", () => {
     mockBillingState.account.transcription_usage.limit = null;
     mockBillingState.account.transcription_usage.remaining = null;
 
-    render(<SettingsBillingPaneBody />);
+    renderBilling();
 
     expect(screen.getByText("AI Pro")).toBeInTheDocument();
     expect(screen.getByText("Internal grant")).toBeInTheDocument();

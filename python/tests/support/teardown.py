@@ -22,8 +22,6 @@ from nexus.jobs.worker import JobWorker
 
 SessionFactory = Callable[[], Session]
 
-_TEARDOWN_KINDS = ("media_teardown", "storage_object_cleanup")
-
 
 def zero_media_teardown_grace(monkeypatch) -> None:
     """Zero the teardown cleanup grace so ``DeletionCommitted`` does not sleep on
@@ -95,17 +93,26 @@ def drive_media_teardown(
     Returns the terminal status (``succeeded`` or ``dead``). Raises if it does not
     terminate within ``max_iterations``.
     """
-    worker = JobWorker(
+    teardown_worker = JobWorker(
         session_factory=session_factory,
         worker_id="test-teardown-worker",
         registry=get_default_registry(),
-        allowed_kinds=_TEARDOWN_KINDS,
+        allowed_kinds=("media_teardown",),
+    )
+    cleanup_worker = JobWorker(
+        session_factory=session_factory,
+        worker_id="test-storage-cleanup-worker",
+        registry=get_default_registry(),
+        allowed_kinds=("storage_object_cleanup",),
     )
     for _ in range(max_iterations):
         status = _latest_teardown_status(session_factory, media_id)
         if status in ("succeeded", "dead"):
             return status
         _fast_forward_deletion_committed(session_factory, media_id)
-        worker.run_once()
+        # Claim the teardown kind independently so a media with many earlier
+        # storage reservations cannot starve its own deletion checkpoint.
+        teardown_worker.run_once()
+        cleanup_worker.run_once()
     final = _latest_teardown_status(session_factory, media_id)
     raise AssertionError(f"media {media_id} teardown did not terminate (last status={final!r})")

@@ -23,7 +23,10 @@ import styles from "./oracle.module.css";
 const QUESTION_MAX = 280;
 
 export default function OracleLandingPaneBody() {
-  const paneRuntime = usePaneRuntime();
+  const activateTarget = requirePaneRuntime(
+    usePaneRuntime(),
+    "OracleLandingPaneBody",
+  ).activateTarget;
   usePaneReturnReady(true);
 
   const [question, setQuestion] = useState("");
@@ -61,10 +64,7 @@ export default function OracleLandingPaneBody() {
           headers: { "Idempotency-Key": createRandomId("oracle-read") },
           body: JSON.stringify({ question: cleaned }),
         });
-        requirePaneRuntime(
-          paneRuntime,
-          "Oracle created-reading target activation",
-        ).activateTarget({
+        activateTarget({
           target: { href: `/oracle/${body.data.reading_id}` },
           disposition: { kind: "Follow" },
         });
@@ -78,7 +78,7 @@ export default function OracleLandingPaneBody() {
         setSubmitting(false);
       }
     },
-    [question, paneRuntime],
+    [activateTarget, question],
   );
 
   const remaining = QUESTION_MAX - question.length;

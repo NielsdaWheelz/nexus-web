@@ -1070,7 +1070,7 @@ test.describe("epub", () => {
     });
     await expect(paneOptions).toHaveCount(1);
     await expect(
-      activePane.getByRole("button", { name: "Document Map", exact: true }),
+      activePane.getByRole("button", { name: "Companion", exact: true }),
     ).toHaveCount(0);
     await expect(
       page.getByTestId("reader-document-map-overview-rail"),
@@ -1078,7 +1078,7 @@ test.describe("epub", () => {
 
     await paneOptions.click();
     const contentsButton = page.getByRole("menuitem", {
-      name: "Show Document Map",
+      name: "Show Companion",
       exact: true,
     });
     await expect(contentsButton).toHaveCount(1);
@@ -1092,7 +1092,7 @@ test.describe("epub", () => {
     await expect(contentsDialog).toHaveCount(1);
     await expect(contentsDialog).toHaveAttribute(
       "id",
-      `pane-${paneId}-secondary-reader-tools`,
+      `pane-${paneId}-secondary-resource-inspector`,
     );
     const selectedContentsTab = contentsDialog.getByRole("tab", {
       name: "Contents",
@@ -1106,13 +1106,12 @@ test.describe("epub", () => {
     });
     await expect(sheetOptions).toHaveCount(1);
     await sheetOptions.click();
-    const hideDocumentMap = contentsDialog.getByRole("menuitem", {
-      name: "Hide Document Map",
-      exact: true,
-    });
-    await expect(hideDocumentMap).toHaveCount(1);
-    await expect(hideDocumentMap).not.toHaveAttribute("aria-expanded");
-    await expect(hideDocumentMap).not.toHaveAttribute("aria-controls");
+    await expect(
+      contentsDialog.getByRole("menuitem", {
+        name: "Hide Companion",
+        exact: true,
+      }),
+    ).toHaveCount(0);
 
     const creditsItem = contentsDialog.getByRole("menuitem", {
       name: "Credits…",
@@ -1143,20 +1142,25 @@ test.describe("epub", () => {
     await expect(contentsDialog).not.toHaveAttribute("inert");
 
     await sheetOptions.click();
-    await expect(hideDocumentMap).toBeVisible();
-    await hideDocumentMap.focus();
+    await expect(creditsItem).toBeVisible();
+    await creditsItem.focus();
     await page.keyboard.press("g");
     await page.waitForTimeout(550);
-    await expect(hideDocumentMap).toBeVisible();
+    await expect(creditsItem).toBeVisible();
     await expect(contentsDialog).toBeVisible();
 
-    await hideDocumentMap.click();
+    await page.keyboard.press("Escape");
+    const closeContents = contentsDialog.getByRole("button", {
+      name: "Close Contents",
+      exact: true,
+    });
+    await closeContents.click();
     await expect(contentsDialog).toBeHidden();
     await expect(paneOptions).toBeFocused();
 
     await paneOptions.click();
     await page
-      .getByRole("menuitem", { name: "Show Document Map", exact: true })
+      .getByRole("menuitem", { name: "Show Companion", exact: true })
       .click();
     await expect(contentsDialog).toHaveCount(1);
     await expect(selectedContentsTab).toBeFocused();
@@ -1168,9 +1172,8 @@ test.describe("epub", () => {
     await anchorLeaf.click();
     await expect(contentsDialog).toBeHidden();
     await expect(
-      page.locator(`[id="pane-${paneId}-secondary-reader-tools"]`),
+      page.locator(`[id="pane-${paneId}-secondary-resource-inspector"]`),
     ).toHaveCount(0);
-    await expect(paneOptions).toBeFocused();
 
     await expect(
       activePane.getByRole("heading", { name: seed.toc_anchor_heading }),

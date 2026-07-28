@@ -136,6 +136,104 @@ def run_queued_source_attempt(
     return result
 
 
+def run_queued_source_pipeline(
+    db: Session,
+    *,
+    media_id: UUID,
+    actor_user_id: UUID | None = None,
+    request_id: str | None = None,
+) -> dict[str, object]:
+    """Execute one source operation and every durable indexing successor it creates."""
+    result = run_queued_source_attempt(
+        db,
+        media_id=media_id,
+        actor_user_id=actor_user_id,
+        request_id=request_id,
+    )
+    while True:
+        pending_kinds = set(
+            db.execute(
+                text(
+                    """
+                    SELECT kind
+                    FROM background_jobs
+                    WHERE payload->>'media_id' = :media_id
+                      AND status IN ('pending', 'failed')
+                      AND kind IN (
+                        'media_content_reindex_job',
+                        'podcast_reindex_semantic_job'
+                      )
+                    """
+                ),
+                {"media_id": str(media_id)},
+            )
+            .scalars()
+            .all()
+        )
+        if "media_content_reindex_job" in pending_kinds:
+            run_queued_media_content_reindex(db, media_id=media_id)
+            continue
+        if "podcast_reindex_semantic_job" in pending_kinds:
+            run_queued_transcript_semantic_reindex(db, media_id=media_id)
+            continue
+        return result
+
+
+def run_queued_media_content_reindex(
+    db: Session,
+    *,
+    media_id: UUID,
+) -> dict[str, object]:
+    """Execute the newest durable document-index job through its production task."""
+    job_id = db.execute(
+        text(
+            """
+            SELECT id
+            FROM background_jobs
+            WHERE kind = 'media_content_reindex_job'
+              AND payload->>'media_id' = :media_id
+              AND status IN ('pending', 'failed')
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            """
+        ),
+        {"media_id": str(media_id)},
+    ).scalar_one()
+    db.commit()
+
+    worker_id = f"media-content-reindex-test:{media_id}"
+    claimed = claim_job(
+        db,
+        job_id=job_id,
+        worker_id=worker_id,
+        lease_seconds=900,
+        allowed_kinds=("media_content_reindex_job",),
+    )
+    if claimed is None:
+        raise AssertionError("test did not claim the expected media content-reindex operation")
+    db.commit()
+
+    from nexus.tasks.media_content_reindex import media_content_reindex_job
+
+    result = media_content_reindex_job(
+        payload=claimed.payload,
+        context=JobExecutionContext(
+            job_id=claimed.id,
+            worker_id=worker_id,
+            attempt_no=claimed.attempts,
+        ),
+    )
+    if not complete_job(
+        db,
+        job_id=claimed.id,
+        worker_id=worker_id,
+        result_payload=result,
+    ):
+        raise AssertionError("test media content-reindex operation lost its queue claim")
+    db.commit()
+    return result
+
+
 def run_queued_transcript_semantic_reindex(
     db: Session,
     *,

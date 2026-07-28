@@ -21,6 +21,8 @@ import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { createDefaultWorkspaceState } from "@/lib/workspace/schema";
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
+import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
+import { ShareControllerProvider } from "@/lib/sharing/controller";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 
 // ---------------------------------------------------------------------------
@@ -76,16 +78,23 @@ function renderLauncher() {
   return render(
     withRenderEnvironment(
       <KeybindingsProvider>
-        <FeedbackProvider>
-          <LecternProvider>
-            <WorkspaceStoreProvider
-              workspacePrimaryMetrics={workspacePrimaryMetrics}
-              initialState={createDefaultWorkspaceState("/libraries", workspacePrimaryMetrics)}
-            >
-              <Launcher />
-            </WorkspaceStoreProvider>
-          </LecternProvider>
-        </FeedbackProvider>
+        <PaneReturnMementoProvider>
+          <FeedbackProvider>
+            <ShareControllerProvider>
+              <LecternProvider>
+                <WorkspaceStoreProvider
+                  workspacePrimaryMetrics={workspacePrimaryMetrics}
+                  initialState={createDefaultWorkspaceState(
+                    "/libraries",
+                    workspacePrimaryMetrics,
+                  )}
+                >
+                  <Launcher />
+                </WorkspaceStoreProvider>
+              </LecternProvider>
+            </ShareControllerProvider>
+          </FeedbackProvider>
+        </PaneReturnMementoProvider>
       </KeybindingsProvider>,
       { androidShell: true },
     ),

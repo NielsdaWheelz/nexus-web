@@ -24,8 +24,6 @@ export default function MobilePaneBar() {
     useMobileChrome();
   const warmPane = usePaneWarm();
   const navigation = paneChrome?.navigation;
-  const actions = paneChrome?.actions ?? [];
-  const options = paneChrome?.options ?? [];
   const releaseLockRef = useRef<(() => void) | null>(null);
   const releaseFocusLockRef = useRef<(() => void) | null>(null);
   const topBarRef = useRef<HTMLElement>(null);
@@ -53,8 +51,12 @@ export default function MobilePaneBar() {
           },
         ]
       : [];
-    return [...forward, ...actions, ...options];
-  }, [actions, navigation, options]);
+    return [
+      ...forward,
+      ...(paneChrome?.actions ?? []),
+      ...(paneChrome?.options ?? []),
+    ];
+  }, [navigation, paneChrome?.actions, paneChrome?.options]);
   const controlsHidden = motionPhase.kind === "Hidden";
   const handleActionMenuOpenChange = useCallback(
     (open: boolean) => {
