@@ -91,7 +91,7 @@ describe("AddPanel source-first workbench", () => {
     const links = await screen.findByRole("textbox", { name: "Links" });
     const file = screen.getByRole("button", { name: "Choose PDF or EPUB" });
     const libraries = screen.getByRole("button", {
-      name: /Libraries My Library only Change/,
+      name: "Libraries: No additional libraries",
     });
     const opml = screen.getByRole("button", {
       name: "Import podcast subscriptions from OPML",
@@ -189,7 +189,7 @@ describe("AddPanel source-first workbench", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", {
-        name: /Libraries for new subscriptions No libraries selected Change/,
+        name: "Libraries for new subscriptions: No libraries selected",
       }),
     ).toBeInTheDocument();
 

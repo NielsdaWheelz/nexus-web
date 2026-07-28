@@ -122,19 +122,19 @@ test("media Libraries… placement adds, removes, and returns focus without shar
     );
     await openPlacement.click();
 
-    const dialog = page.getByRole("dialog", { name: "Libraries" });
-    await expect(dialog).toBeVisible();
+    const chooser = page.getByRole("listbox", { name: "Library options" });
+    await expect(chooser).toBeVisible();
     await expect(
-      dialog.getByRole("searchbox", { name: "Search libraries" }),
+      page.getByRole("combobox", { name: "Search libraries" }),
     ).toBeFocused();
     const initialResponse = await initialList;
     await expectLibraryState(initialResponse, destinationLibraryId, false);
 
-    const libraryToggle = dialog.getByRole("button", {
+    const libraryOption = chooser.getByRole("option", {
       name: destinationLibraryName,
       exact: true,
     });
-    await expect(libraryToggle).toHaveAttribute("aria-pressed", "false");
+    await expect(libraryOption).toHaveAttribute("aria-selected", "false");
 
     const addResponse = page.waitForResponse(
       (response) =>
@@ -146,10 +146,12 @@ test("media Libraries… placement adds, removes, and returns focus without shar
         response.request().method() === "GET" &&
         new URL(response.url()).pathname === `/api/media/${mediaId}/libraries`,
     );
-    await libraryToggle.click();
+    await libraryOption.click();
     expect((await addResponse).status()).toBe(204);
     await expectLibraryState(await addedList, destinationLibraryId, true);
-    await expect(libraryToggle).toHaveAttribute("aria-pressed", "true");
+    await expect(
+      page.getByRole("option", { name: destinationLibraryName, exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
 
     const removeResponse = page.waitForResponse(
       (response) =>
@@ -162,13 +164,17 @@ test("media Libraries… placement adds, removes, and returns focus without shar
         response.request().method() === "GET" &&
         new URL(response.url()).pathname === `/api/media/${mediaId}/libraries`,
     );
-    await libraryToggle.click();
+    await libraryOption.click();
     expect((await removeResponse).status()).toBe(204);
     await expectLibraryState(await removedList, destinationLibraryId, false);
-    await expect(libraryToggle).toHaveAttribute("aria-pressed", "false");
+    await expect(
+      page.getByRole("option", { name: destinationLibraryName, exact: true }),
+    ).toHaveAttribute("aria-selected", "false");
 
     await page.keyboard.press("Escape");
-    await expect(dialog).toBeHidden();
+    await expect(
+      page.getByRole("listbox", { name: "Library options" }),
+    ).toBeHidden();
     await expect(optionsTrigger).toBeFocused();
     expect(shareRequests).toEqual([]);
   } catch (error) {

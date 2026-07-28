@@ -52,7 +52,7 @@ import { useStringIdSet } from "@/lib/useStringIdSet";
 import PodcastSummaryCard from "./PodcastSummaryCard";
 import PodcastEpisodeList from "./PodcastEpisodeList";
 import PodcastSubscriptionSettingsModal from "../PodcastSubscriptionSettingsModal";
-import LibraryDestinationPicker from "@/components/LibraryDestinationPicker";
+import LibraryDestinationField from "@/components/libraries/LibraryDestinationField";
 import {
   createLibrary,
   type LibraryDestinationSelection,
@@ -1265,11 +1265,11 @@ export default function PodcastDetailPaneBody() {
           <div className={styles.headerButtons}>
             {activeSubscription ? null : (
               <div className={styles.subscriptionActions}>
-                <LibraryDestinationPicker
+                <LibraryDestinationField
+                  label="Libraries"
+                  emptyLabel="No libraries selected"
                   selected={selectedDestinations}
                   onChange={setSelectedDestinations}
-                  presentation={{ kind: "Inline" }}
-                  label="Libraries"
                   interaction={
                     creatingDestination
                       ? { kind: "Creating" }
@@ -1299,6 +1299,7 @@ export default function PodcastDetailPaneBody() {
                       setCreatingDestination(false);
                     }
                   }}
+                  layer="modal"
                 />
                 <Button
                   variant="primary"

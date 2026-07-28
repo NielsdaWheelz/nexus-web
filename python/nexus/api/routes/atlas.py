@@ -155,7 +155,8 @@ def read_atlas(
         constellations.append(
             ConstellationOut(
                 library_id=lib_row.library_id,
-                name=lib_row.name,
+                # The viewer's own Default constellation presents as "All".
+                name="All" if bool(lib_row.is_default) else lib_row.name,
                 member_media_ids=member_media_ids,
             )
         )

@@ -1,4 +1,5 @@
-import { screen } from "@testing-library/react";
+import { useState } from "react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
@@ -7,12 +8,73 @@ import {
   fetchInputPath,
   stubFetch,
 } from "@/__tests__/helpers/fetch";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
+import { ResourceCacheProvider } from "@/lib/api/resourceCache";
+import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
+import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
+import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
+import { ShareControllerProvider } from "@/lib/sharing/controller";
+import { assumePaneVisitId } from "@/lib/workspace/schema";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
+import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
 import { decodeLibraryReadingTimeEntry } from "@/lib/libraries/readingTime";
 import LibraryPaneBody from "./LibraryPaneBody";
 
-// Default-library ("My Library") coverage per the 00000000-0000-4000-8000-000000000204-virtualization
+const TEST_VISIT_ID = assumePaneVisitId("00000000-0000-4000-8000-000000000005");
+
+// A pane host whose href is real state, so a pane-router replace re-decodes the
+// view and drives the entries endpoint exactly as production does.
+function StatefulDefaultPane({
+  initialHref,
+  resources,
+}: {
+  initialHref: string;
+  resources: Record<string, unknown>;
+}) {
+  const [href, setHref] = useState(initialHref);
+  const identity = resolvePaneRouteIdentity(href);
+  return (
+    <PaneReturnMementoProvider>
+      <FeedbackProvider>
+        <ResourceCacheProvider value={resources}>
+          <ShareControllerProvider>
+            <PaneRuntimeProvider
+              paneId="pane-1"
+              visitId={TEST_VISIT_ID}
+              isActive
+              href={href}
+              routeId={identity.routeId}
+              routeKey={identity.routeKey}
+              pathParams={{ id: LIBRARY_ID }}
+              canGoBack={false}
+              canGoForward={false}
+              onNavigatePane={(_paneId: string, next: string) => setHref(next)}
+              onReplacePane={(_paneId: string, next: string) => setHref(next)}
+              onActivateWorkspaceTarget={vi.fn(() => ({
+                kind: "Unchanged" as const,
+                paneId: "pane-1",
+              }))}
+              onGoBackPane={vi.fn()}
+              onGoForwardPane={vi.fn()}
+            >
+              <LecternProvider>
+                <LibraryPlacementControllerProvider>
+                  <div data-testid="default-pane-href" hidden>
+                    {href}
+                  </div>
+                  <LibraryPaneBody />
+                </LibraryPlacementControllerProvider>
+              </LecternProvider>
+            </PaneRuntimeProvider>
+          </ShareControllerProvider>
+        </ResourceCacheProvider>
+      </FeedbackProvider>
+    </PaneReturnMementoProvider>
+  );
+}
+
+// Default-library coverage per the default-library-virtualization
 // cutover contract: no reorder UX (no drag handles, no reorder PATCH), no
 // resonance sort offered/forced, and pagination merges are deduped by media id
 // (the server may hand back a different representative entry id for the same
@@ -147,12 +209,32 @@ describe("LibraryPaneBody (Default library)", () => {
       children: paneWithLectern,
     });
 
-    expect(await screen.findByText("First Default Work")).toBeInTheDocument();
-    expect(await screen.findByText("Second Default Work")).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "First Default Work" })).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "Second Default Work" })).toBeInTheDocument();
 
-    // No reorder UX: canReorder = canEditEntries && !library.isDefault is
-    // false, so no per-row Move up/down renders even though canEditEntries is
-    // true here.
+    // The default library presents as "All" — the stored "My Library" name is
+    // never displayed. ("Across your libraries" is the Libraries list row, not
+    // here.)
+    expect(
+      screen.getByRole("heading", { name: "All", level: 1 }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("My Library")).not.toBeInTheDocument();
+    expect(screen.queryByText("Across your libraries")).not.toBeInTheDocument();
+
+    // The View select offers All's three projections; every other library omits
+    // Unfiled.
+    expect(screen.getByRole("combobox", { name: "View" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "All items" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Unfiled" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "In Progress" }),
+    ).toBeInTheDocument();
+
+    // No reorder UX: reorder is gated to editable non-default Canonical +
+    // AllItems(all), so no per-row Move up/down renders even though
+    // canEditEntries is true here.
     await userEvent
       .setup()
       .click(
@@ -225,10 +307,55 @@ describe("LibraryPaneBody (Default library)", () => {
       children: paneWithLectern,
     });
 
-    expect(await screen.findByText("Titled Default Work")).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "Titled Default Work" })).toBeInTheDocument();
     expect(
       fetchCallsForPath(fetchMock, `/api/libraries/${LIBRARY_ID}/entries`),
     ).toHaveLength(1);
+  });
+
+  it("loads the default library's Unfiled projection via the projection query", async () => {
+    const fetchMock = stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      if (
+        fetchInputPathWithSearch(input) ===
+        `/api/libraries/${LIBRARY_ID}/entries?projection=unfiled`
+      ) {
+        return Response.json({
+          data: [mediaEntryWire("entry-uf", TITLED_MEDIA_ID, "Unfiled Work")],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    renderHydratedPane({
+      href: `/libraries/${LIBRARY_ID}?projection=unfiled`,
+      resources: {
+        [LIBRARY_ID]: {
+          library: seededDefaultLibrary(),
+          entries: [
+            seededMediaEntry("entry-1", FIRST_MEDIA_ID, "Canonical Seed"),
+          ],
+          entriesPage: { has_more: false, next_cursor: null },
+        },
+      },
+      children: paneWithLectern,
+    });
+
+    // The Unfiled first page comes from the endpoint, not the canonical seed.
+    expect(await screen.findByRole("link", { name: "Unfiled Work" })).toBeInTheDocument();
+    expect(screen.queryByText("Canonical Seed")).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "View" })).toHaveValue(
+      "unfiled",
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/libraries/${LIBRARY_ID}/entries?projection=unfiled`,
+      expect.objectContaining({ method: "GET" }),
+    );
   });
 
   it("dedupes an appended 00000000-0000-4000-8000-000000000204 page by media id, not entry id", async () => {
@@ -275,14 +402,14 @@ describe("LibraryPaneBody (Default library)", () => {
       children: paneWithLectern,
     });
 
-    expect(await screen.findByText("First Default Work")).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "First Default Work" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Load more entries" }));
 
-    expect(await screen.findByText("Second Default Work")).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "Second Default Work" })).toBeInTheDocument();
 
     // Exactly one row for media-1: the media-keyed dedupe collapsed
     // entry-1/entry-1b into a single row rather than rendering both.
-    expect(screen.getAllByText("First Default Work")).toHaveLength(1);
+    expect(screen.getAllByRole("link", { name: "First Default Work" })).toHaveLength(1);
   });
 
   // Regression: the default library's "Added" row line must be dated by
@@ -335,7 +462,7 @@ describe("LibraryPaneBody (Default library)", () => {
     });
 
     expect(
-      await screen.findByText("Oldest Default Work"),
+      await screen.findByRole("link", { name: "Oldest Default Work" }),
     ).toBeInTheDocument();
     expect(screen.getByText(expectedAddedToNexus)).toBeInTheDocument();
     unmount();
@@ -366,7 +493,165 @@ describe("LibraryPaneBody (Default library)", () => {
       children: paneWithLectern,
     });
 
-    expect(await screen.findByText("Canonical Seed")).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "Canonical Seed" })).toBeInTheDocument();
     expect(screen.queryByText(/Added to Nexus/)).not.toBeInTheDocument();
+  });
+
+  it("reconciles the All pane on every placement revision advance", async () => {
+    let entriesReads = 0;
+    stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      if (fetchInputPath(input) === `/api/libraries/${LIBRARY_ID}/entries`) {
+        entriesReads += 1;
+        return Response.json({
+          data: [mediaEntryWire("entry-new", SECOND_MEDIA_ID, "Newly Filed")],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    renderHydratedPane({
+      href: `/libraries/${LIBRARY_ID}`,
+      resources: {
+        [LIBRARY_ID]: {
+          library: seededDefaultLibrary(),
+          entries: [
+            seededMediaEntry("entry-1", FIRST_MEDIA_ID, "Seed Work"),
+          ],
+          entriesPage: { has_more: false, next_cursor: null },
+        },
+      },
+      children: paneWithLectern,
+    });
+
+    expect(
+      await screen.findByRole("link", { name: "Seed Work" }),
+    ).toBeInTheDocument();
+
+    // The All pane reacts to every placement advance, even one scoped to a
+    // different library, and reconciles its current view.
+    act(() => publishLibraryPlacementChange(["some-other-library"]));
+
+    expect(
+      await screen.findByRole("link", { name: "Newly Filed" }),
+    ).toBeInTheDocument();
+    expect(entriesReads).toBe(1);
+  });
+
+  it("renders the Unfiled empty state with a Show all items recovery", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      const path = fetchInputPathWithSearch(input);
+      if (path === `/api/libraries/${LIBRARY_ID}/entries?projection=unfiled`) {
+        return Response.json({
+          data: [],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      if (path === `/api/libraries/${LIBRARY_ID}/entries`) {
+        return Response.json({
+          data: [mediaEntryWire("entry-all", TITLED_MEDIA_ID, "All Items Work")],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    render(
+      <StatefulDefaultPane
+        initialHref={`/libraries/${LIBRARY_ID}?projection=unfiled`}
+        resources={{
+          [LIBRARY_ID]: {
+            library: seededDefaultLibrary(),
+            entries: [
+              seededMediaEntry("entry-1", FIRST_MEDIA_ID, "Canonical Seed"),
+            ],
+            entriesPage: { has_more: false, next_cursor: null },
+          },
+        }}
+      />,
+    );
+
+    expect(await screen.findByText("Everything is filed.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Show all items" }));
+
+    expect(
+      await screen.findByRole("link", { name: "All Items Work" }),
+    ).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/libraries/${LIBRARY_ID}/entries`,
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(screen.getByRole("combobox", { name: "View" })).toHaveValue(
+      "all-items",
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "View" })).toHaveFocus(),
+    );
+  });
+
+  it("renders the Unfiled unfinished empty state with a Clear filters recovery", async () => {
+    const user = userEvent.setup();
+    stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      const path = fetchInputPathWithSearch(input);
+      if (
+        path ===
+        `/api/libraries/${LIBRARY_ID}/entries?projection=unfiled&completion=unfinished`
+      ) {
+        return Response.json({
+          data: [],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      if (path === `/api/libraries/${LIBRARY_ID}/entries`) {
+        return Response.json({
+          data: [mediaEntryWire("entry-all", TITLED_MEDIA_ID, "All Items Work")],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    render(
+      <StatefulDefaultPane
+        initialHref={`/libraries/${LIBRARY_ID}?projection=unfiled&completion=unfinished`}
+        resources={{
+          [LIBRARY_ID]: {
+            library: seededDefaultLibrary(),
+            entries: [
+              seededMediaEntry("entry-1", FIRST_MEDIA_ID, "Canonical Seed"),
+            ],
+            entriesPage: { has_more: false, next_cursor: null },
+          },
+        }}
+      />,
+    );
+
+    expect(
+      await screen.findByText("No unfinished unfiled items."),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+
+    expect(
+      await screen.findByRole("link", { name: "All Items Work" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "View" })).toHaveValue(
+      "all-items",
+    );
   });
 });

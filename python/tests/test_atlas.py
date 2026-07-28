@@ -167,6 +167,10 @@ class TestAtlasReadModel:
             {UUID(m) for m in constellations[default_lib]["member_media_ids"]}
         )
         assert [UUID(m) for m in constellations[second_lib]["member_media_ids"]] == [m_other]
+        # AC1: the Default constellation presents as "All"; named libraries keep
+        # their authored name.
+        assert constellations[default_lib]["name"] == "All"
+        assert constellations[second_lib]["name"] == "Second Shelf"
 
         assert len(data["edges"]) == 1
         edge = data["edges"][0]

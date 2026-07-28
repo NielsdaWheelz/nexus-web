@@ -7,6 +7,7 @@ import {
   patchLibraryPlacement,
   removeLibraryPlacement,
 } from "./libraryPlacement";
+import { libraryPlacementSnapshot } from "./placementRevision";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -201,6 +202,55 @@ describe("library placement commands", () => {
       ),
     ).rejects.toMatchObject({ code: "E_INVALID_RESPONSE", status });
   });
+
+  it.each([
+    {
+      name: "addMediaToLibraries",
+      run: () => addMediaToLibraries("media-1", ["library-1", "library-2"]),
+      affected: ["library-1", "library-2"] as string[] | "Unknown",
+    },
+    {
+      name: "addLibraryPlacement(Podcast)",
+      run: () =>
+        addLibraryPlacement({ kind: "Podcast", id: "podcast-1" }, "library-1"),
+      affected: ["library-1"] as string[] | "Unknown",
+    },
+    {
+      name: "addLibraryPlacement(Media) via addMediaToLibraries delegate",
+      run: () =>
+        addLibraryPlacement({ kind: "Media", id: "media-1" }, "library-1"),
+      affected: ["library-1"] as string[] | "Unknown",
+    },
+    {
+      name: "removeLibraryPlacement(Media)",
+      run: () =>
+        removeLibraryPlacement({ kind: "Media", id: "media-1" }, "library-1"),
+      affected: ["library-1"] as string[] | "Unknown",
+    },
+    {
+      name: "removeLibraryPlacement(Podcast)",
+      run: () =>
+        removeLibraryPlacement(
+          { kind: "Podcast", id: "podcast-1" },
+          "library-1",
+        ),
+      affected: ["library-1"] as string[] | "Unknown",
+    },
+  ])(
+    "$name publishes exactly one placement revision with its scope",
+    async ({ run, affected }) => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(null, { status: 204 }),
+      );
+      const before = libraryPlacementSnapshot().revision;
+
+      await run();
+
+      const after = libraryPlacementSnapshot();
+      expect(after.revision).toBe(before + 1);
+      expect(after.affectedLibraryIds).toEqual(affected);
+    },
+  );
 
   it("patches only Add Content's selected local projection", () => {
     expect(

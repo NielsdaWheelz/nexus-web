@@ -1,4 +1,5 @@
 import { apiFetch } from "@/lib/api/client";
+import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
 import { decodePodcastOpmlBytes } from "@/lib/podcasts/opmlEncoding";
 import { isRecord } from "@/lib/validation";
 
@@ -99,7 +100,9 @@ export async function importPodcastOpml({
     }),
     signal,
   });
-  return decodePodcastOpmlImportResponse(response);
+  const result = decodePodcastOpmlImportResponse(response);
+  publishLibraryPlacementChange("Unknown");
+  return result;
 }
 
 export function decodePodcastOpmlImportResponse(

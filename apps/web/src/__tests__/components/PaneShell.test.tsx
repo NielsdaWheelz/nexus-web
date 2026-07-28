@@ -564,7 +564,7 @@ describe("PaneShell", () => {
         id: "00000000-0000-4000-8000-000000000001",
       },
       expect.objectContaining({
-        returnFocusTo: expect.any(Function),
+        anchor: expect.any(Function),
         returnFocusFallback: expect.objectContaining({ kind: "Present" }),
       }),
     );

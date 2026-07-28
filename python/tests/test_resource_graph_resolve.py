@@ -679,6 +679,45 @@ def test_resolve_library_non_member_returns_missing(db_session: Session, bootstr
     assert resolved.missing, "Non-member must see library as missing"
 
 
+def test_resolve_default_library_presents_as_all_not_stored_name(
+    db_session: Session, bootstrapped_user: UUID
+):
+    """AC1: the viewer's own Default library resolves with the display label
+    "All"; its stored seeded name ("My Library") is never surfaced."""
+    default_library_id = get_user_default_library(db_session, bootstrapped_user)
+    assert default_library_id is not None
+
+    resolved = _resolve(db_session, f"library:{default_library_id}", viewer_id=bootstrapped_user)
+
+    assert not resolved.missing
+    assert resolved.label == "All", f"Default library must present as All; got {resolved.label!r}"
+    assert "My Library" not in (resolved.label or ""), "the stored seeded name must never surface"
+    assert "My Library" not in (resolved.summary or "")
+
+
+def test_resolve_default_library_dossier_labels_all(
+    db_session: Session, bootstrapped_user: UUID
+):
+    """AC1: a Dossier whose subject is the viewer's own Default library labels
+    that subject "All", never the stored seeded name."""
+    default_library_id = get_user_default_library(db_session, bootstrapped_user)
+    assert default_library_id is not None
+    artifact_id = _make_library_artifact(
+        db_session,
+        default_library_id,
+        bootstrapped_user,
+        content_md="Overview of everything.",
+    )
+
+    resolved = _resolve(db_session, f"artifact:{artifact_id}", viewer_id=bootstrapped_user)
+
+    assert not resolved.missing
+    assert resolved.label == "Dossier — All", (
+        f"Default-library Dossier must label the subject All; got {resolved.label!r}"
+    )
+    assert "My Library" not in (resolved.label or "")
+
+
 def test_resolve_default_library_counts_distinct_virtual_media(
     db_session: Session, bootstrapped_user: UUID
 ):

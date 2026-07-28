@@ -1,4 +1,5 @@
 import { apiFetch } from "@/lib/api/client";
+import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import type { Presence } from "@/lib/api/presence";
 import type { PositiveCount } from "@/lib/consumption/activityFacts";
@@ -245,6 +246,7 @@ export async function unsubscribeFromPodcast(podcastId: string): Promise<void> {
   await apiFetch(`/api/podcasts/subscriptions/${podcastId}`, {
     method: "DELETE",
   });
+  publishLibraryPlacementChange("Unknown");
 }
 
 export async function subscribeToPodcast(
@@ -260,6 +262,7 @@ export async function subscribeToPodcast(
       }),
     },
   );
+  publishLibraryPlacementChange([...input.library_ids]);
   return response.data;
 }
 

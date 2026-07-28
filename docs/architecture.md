@@ -429,14 +429,13 @@ branch pointers), `conversation_branches`, `conversation_active_paths`
 (per-viewer), `conversation_shares`; plus the **chat-run** machinery: `chat_runs`
 (carries product selection snapshots `profile_id`/`reasoning_option_id` and
 resolved trust-trail snapshots `provider`/`model_name`/`reasoning_effort`,
-`error_origin`, `support_id`, `publication_warning_code` — no
-`models`/`user_api_keys` FK, both tables are gone),
+`error_origin`, `support_id` — no `models`/`user_api_keys` FK, both tables are
+gone),
 `chat_run_events` (append-only SSE log), `chat_prompt_assemblies`; and the
 **retrieval/citation** ledger: `message_tool_calls`, `message_retrievals` — the
-sole durable per-result record (telemetry; carries the model-facing
-`citation_candidate_ordinal` and, only after final publication, `cited_edge_id`
-pointing back at the citation edge). Candidate generation and rerank/selection
-are transient, in-memory passes over a tool call's results; only the
+sole durable per-result record (telemetry; carries `cited_edge_id` pointing
+back at the citation edge). Candidate generation and rerank/selection are
+transient, in-memory passes over a tool call's results; only the
 selected/included outcome is ever written. Conversation
 context refs are `resource_edges` with `source_scheme='conversation'`. Assistant
 message API responses include a
@@ -717,9 +716,8 @@ identity or highlight-note origin from result type or URL.
   selected under a context-char budget; candidate/rerank/selection is a transient in-memory
   pass and `message_retrievals` is the sole durable per-result record. Selected rows become
   `message_retrievals` telemetry rows via the single validated writer
-  `retrieval_citation.insert_retrieval_row`. Citable rows exposed to chat receive
-  a candidate ordinal; cited rows link back to their final citation edge through
-  `cited_edge_id` (§7.7).
+  `retrieval_citation.insert_retrieval_row` (the cited ones link back to their
+  citation edge through `cited_edge_id`, §7.7).
 - **The `ResourceRef` grammar** (`services/resource_graph/refs.py`): a
   `<scheme>:<uuid>` ref over a closed scheme set (`media`, `library`,
   `evidence_span`, `content_chunk`, `highlight`, `page`, `note_block`, `fragment`,
@@ -760,25 +758,16 @@ The chat/oracle LLM can call four tools (`services/agent_tools/`):
 - **`inspect_resource`** — returns a navigable document map of a `media:` ref;
   navigation only, never cited.
 
-Chat candidate `[N]` is a **dense, turn-global model-facing ordinal** assigned
-across citable evidence exposed during the whole turn (attached context first,
-then tool results). It lives on `message_retrievals`; it is not yet a citation.
-After generation, the backend canonicalizes only the markers actually used to
-dense final ordinals by first appearance. A final citation **is an edge**: its
-reader-facing `[N]` is the `ordinal` on an `origin='citation'` `resource_edge`
-whose source is the assistant message and whose target is the cited resource.
-No marker is valid and produces no edges. Invalid linked or unknown marker
-syntax publishes usable prose without markers as a complete degraded run with
-`CitationsUnavailable`; graph and database defects fail.
-
-The backend builds the `CitationOut` read-model from final edges via
+Citation `[N]` is a **dense, turn-global ordinal** assigned across the whole turn
+(attached context refs first, then each tool's selected results). A citation **is an
+edge**: `[N]` is the `ordinal` on an `origin='citation'` `resource_edge` whose
+source is the assistant message and whose target is the cited resource. The
+backend builds the `CitationOut` read-model from those edges via
 `resource_graph.citations.build_citation_outs` (uniformly for chat, Oracle, and
 Universal Dossiers), reconstructing the in-reader jump from the target's own
 anchoring. `message_retrievals` stays chat-owned **telemetry**, pointing back at
-the final edge through `cited_edge_id`. Final markdown, edges, back-pointers,
-context refs, warning state, and terminal `done` commit atomically. The frontend
-maps final `[N]` → a `CitationOut` → resource activation plus an optional
-reader-internal focus target.
+the edge through `cited_edge_id`; the frontend maps `[N]` → a `CitationOut` →
+resource activation plus an optional reader-internal focus target.
 
 ### 7.8 Resource Inspector, Universal Dossiers & Media Intelligence
 
@@ -1049,8 +1038,9 @@ Content organization + access control, split into three owned modules:
 roles, ownership transfer, membership guards, ingest access checks),
 `services/library_entries.py` (the **sole writer** of `library_entries` — the
 `EntryTarget` media|podcast union, the locked append, canonical position
-ordering, and all item-in-library commands; it also composes the temporary
-factual view lenses and hide-finished completion filter for reads — no DML on
+ordering, and all item-in-library commands; it also composes the URL-only
+factual view lenses, the fixed `Unfiled`/`In Progress` entry projections, and
+the hide-finished completion filter for reads — no DML on
 alternate views, positions unchanged), and `services/library_invitations.py` (the
 `library_invitations` table). Visibility itself is enforced by the boolean
 predicates in `auth/permissions.py`; the search/object readers read
@@ -1098,16 +1088,33 @@ predicates in `auth/permissions.py`; the search/object readers read
   — always inserts (or idempotently keeps) a physical `library_entries` row
   there; a work already visible virtually through another membership can
   still be explicitly filed, and that direct entry is what a later
-  membership loss cannot take away. Pagination over any library — default or
-  not — is stateless keyset pagination with one cursor family,
-  `library_entries:view:v1`, scoped to `(viewer_id, library_id, view)` where
-  `view` is the exact order plus completion filter in effect; any mismatch —
-  including every pre-cutover cursor kind — is a clean `400 E_INVALID_CURSOR`,
-  never a silent reinterpretation. Canonical order is the durable authored
-  order (non-default position order; Default media-recency). Factual view
-  lenses (Title/Creator/Published/Added, each ascending or descending) and a
-  hide-finished completion filter are temporary and URL-only: they are never
-  persisted and never write `library_entries.position`.
+  membership loss cannot take away. The browser presents the Default library
+  as **All** ("Across your libraries") on the closed alias boundary — library
+  row, pane title/label, resource-target results, Dossier and Atlas labels —
+  while the domain object, storage row, and API fields keep their internal
+  Default identity; `All` is a reserved library name (`400 E_NAME_INVALID` on
+  any non-default create/rename). Pagination over any library — default or
+  not — is stateless keyset pagination with one authenticated cursor family,
+  `library_entries:view:v2`: canonical-JSON `{v, q, after}` bodies signed with
+  a domain-separated HMAC-SHA256 key derived from the stream-token signing
+  root, where `q` binds the exact `(viewer, library, view)` without
+  serializing the viewer UUID; any mismatch — wrong viewer, library, order,
+  projection, completion, or a pre-cutover cursor — is a clean
+  `400 E_INVALID_CURSOR`, never a silent reinterpretation. Canonical order is
+  the durable authored order (non-default position order; Default
+  media-recency). A `view` is the order plus a fixed entry projection:
+  `All items` (optionally hide-finished), `Unfiled` (Default only — direct
+  Default media with no other current, non-system placement), or
+  `In Progress` (canonical consumption `read_state = 'InProgress'`; podcast
+  show rows never match, and the completion filter is unrepresentable with
+  it). Factual view lenses (Title/Creator/Published/Added, each ascending or
+  descending), projections, and the hide-finished completion filter are
+  URL-only: they are never persisted and never write
+  `library_entries.position`. In the browser, two process-local monotonic
+  revision seams — `lib/libraries/placementRevision.ts` and
+  `lib/consumption/projectionRevision.ts` — are published by every definitive
+  placement/consumption writer after each acknowledged write, and the Library
+  pane refetches its exact requested view when a captured revision advances.
 - **Library reading-time is a list projection, not shared media state.**
   `services/media_document_metrics.py` batch-aggregates only the STORED integer
   source counts for ready, quotable web/EPUB/PDF media; `library_entries.py`
@@ -1591,11 +1598,10 @@ The things most likely to bite you, distilled:
 7. **One send = one durable `ChatRun`**; HTTP never calls the provider; the worker
    does; the client only tails SSE and reconciles.
 8. **Active conversation path is per-viewer**; only path messages enter context.
-9. **Chat candidate `[N]` and final citation `[N]` are different facts.**
-   Candidate ordinals are dense and turn-global on `message_retrievals`; only
-   markers used in the answer become dense, first-use-ordered
-   `origin='citation'` edges. `cited_edge_id` is null until that final
-   publication transaction.
+9. **Citation `[N]` is a dense, turn-global ordinal carried on an
+   `origin='citation'` `resource_edge`**, not a per-tool index and not a column on
+   `message_retrievals` (which is telemetry pointing back via `cited_edge_id`); the
+   attached-reference citation regression came from breaking this density.
 10. **Assistant trust trails are read models, not new truth.** They are assembled
     when assistant messages are read from chat runs, prompt assemblies, tool calls,
     retrieval ledgers, citation edges, and context-ref-added events. Message

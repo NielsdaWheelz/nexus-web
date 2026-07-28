@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { publishConsumptionProjectionChange } from "@/lib/consumption/projectionRevision";
 import {
   canScheduleSave,
   initialReaderProgressState,
@@ -185,6 +186,8 @@ export function useReaderProgress(options: UseReaderProgressOptions): ReaderProg
             throw new Error("Cursor write returned an Empty snapshot");
           }
           apply({ type: "save_succeeded", snapshot });
+          // A durable reader-state write can change read_state/InProgress.
+          publishConsumptionProjectionChange();
           if (
             isTerminalReaderLocator(locator) &&
             isTerminalReaderLocator(snapshot.locator) &&

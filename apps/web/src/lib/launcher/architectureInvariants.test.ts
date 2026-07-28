@@ -215,7 +215,9 @@ describe("Add content intake architecture invariants", () => {
   });
 
   it("keeps destination state object-based with no legacy cache or ID-only picker", () => {
-    const picker = sourceText("src/components/LibraryDestinationPicker.tsx");
+    const picker = sourceText(
+      "src/components/libraries/LibraryDestinationPicker.tsx",
+    );
     const libraryClient = sourceText("src/lib/libraries/client.ts");
     const production = appAndComponentAndLib().map(sourceText).join("\n");
 

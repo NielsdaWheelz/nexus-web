@@ -62,19 +62,17 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
         },
       },
       children: (
-        <PanePrimaryChromeProvider publish={publish}>
-          <LibraryPlacementControllerProvider>
+        <LibraryPlacementControllerProvider>
+          <PanePrimaryChromeProvider publish={publish}>
             <LibrariesPaneBody />
-          </LibraryPlacementControllerProvider>
-        </PanePrimaryChromeProvider>
+          </PanePrimaryChromeProvider>
+        </LibraryPlacementControllerProvider>
       ),
     });
 
     // (a) The seeded library's name renders from the hydration cache.
     expect(
-      await screen.findByRole("link", {
-        name: "Bootstrapped Reading Room",
-      }),
+      await screen.findByRole("link", { name: "Bootstrapped Reading Room" }),
     ).toBeInTheDocument();
 
     // (b) No client fetch to the libraries list endpoint — the seed was the source.
@@ -177,6 +175,89 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
     );
     void fetchSpy;
+  });
+
+  it("presents the default library as the All view", async () => {
+    stubFetch(async (input) => {
+      if (fetchInputPathWithSearch(input) === "/api/libraries/invites") {
+        return Response.json({ data: [] });
+      }
+      throw new Error("unexpected client fetch on a hydration hit");
+    });
+
+    renderHydratedPane({
+      href: "/libraries",
+      resources: {
+        "libraries:0": {
+          data: [
+            {
+              id: "00000000-0000-4000-8000-000000000200",
+              name: "My Library",
+              color: null,
+              ownerUserHandle: OWNER_USER_HANDLE,
+              isDefault: true,
+              role: "admin",
+              createdAt: "2026-01-01T00:00:00Z",
+              updatedAt: "2026-01-01T00:00:00Z",
+              systemKey: null,
+              canRename: false,
+              canDelete: false,
+              canEditEntries: true,
+              canManageMembers: true,
+              canTransferOwnership: true,
+            },
+          ],
+          page: { has_more: false, next_cursor: null },
+        },
+      },
+      children: (
+        <LibraryPlacementControllerProvider>
+          <LibrariesPaneBody />
+        </LibraryPlacementControllerProvider>
+      ),
+    });
+
+    // The default library surfaces as the "All" view with its cross-library
+    // secondary; the stored seed name "My Library" never reaches the surface.
+    expect(await screen.findByRole("link", { name: "All" })).toBeInTheDocument();
+    expect(screen.getByText("Across your libraries")).toBeInTheDocument();
+    expect(screen.queryByText("My Library")).not.toBeInTheDocument();
+  });
+
+  it("blocks creating a library named All and explains why", async () => {
+    const user = userEvent.setup();
+    stubFetch(async (input) => {
+      if (fetchInputPathWithSearch(input) === "/api/libraries/invites") {
+        return Response.json({ data: [] });
+      }
+      throw new Error("unexpected client fetch; the create must be suppressed");
+    });
+
+    renderHydratedPane({
+      href: "/libraries",
+      resources: {
+        "libraries:0": {
+          data: [],
+          page: { has_more: false, next_cursor: null },
+        },
+      },
+      children: (
+        <LibraryPlacementControllerProvider>
+          <LibrariesPaneBody />
+        </LibraryPlacementControllerProvider>
+      ),
+    });
+
+    // Casing is irrelevant: "All" is reserved for the All view regardless of case.
+    await user.type(
+      await screen.findByPlaceholderText("New library name..."),
+      "aLL",
+    );
+
+    expect(screen.getByRole("button", { name: "Create" })).toBeDisabled();
+    expect(
+      screen.getByText("All is reserved for the All view."),
+    ).toBeInTheDocument();
   });
 
   it("loads another library page from the hydrated first page cursor", async () => {

@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api/client";
+import { consumptionProjectionSnapshot } from "@/lib/consumption/projectionRevision";
 import { useReaderProgress } from "./useReaderProgress";
 import type { ReaderCursorPositioned } from "./readerProgress";
 import type { ReaderResumeState, WebReaderResumeState } from "./types";
@@ -198,6 +199,7 @@ describe("useReaderProgress: save scheduling", () => {
 
     vi.useFakeTimers();
     scripted.pushPutJson({ state: "Positioned", revision: 2, locator: A });
+    const beforeRevision = consumptionProjectionSnapshot().revision;
 
     act(() => {
       result.current.reportMovement(A);
@@ -214,6 +216,8 @@ describe("useReaderProgress: save scheduling", () => {
       locator: A,
       base_revision: 1,
     });
+    // The durable save_succeeded write publishes exactly one consumption revision.
+    expect(consumptionProjectionSnapshot().revision).toBe(beforeRevision + 1);
 
     vi.useRealTimers();
   });

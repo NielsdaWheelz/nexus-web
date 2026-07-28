@@ -174,6 +174,52 @@ class TestAdmission:
         assert admitted == [as_media]
 
 
+class TestDefaultLibraryAllAlias:
+    def test_default_library_matches_all_and_surfaces_all_label(
+        self, db_session: Session, bootstrapped_user
+    ) -> None:
+        """AC1: a target search for "All" surfaces the viewer's own Default
+        library labelled "All"; its stored seeded name is not a search alias."""
+        default_library_id = get_user_default_library(db_session, bootstrapped_user)
+        assert default_library_id is not None
+        db_session.commit()
+
+        matched = search_targets(
+            db_session,
+            viewer_id=bootstrapped_user,
+            request=_request(q="All", limit=20),
+        )
+        by_ref = {t.item.ref: t for t in matched.targets if t.kind == "resource"}
+        assert f"library:{default_library_id}" in by_ref, (
+            "querying All must surface the Default library as a target"
+        )
+        assert by_ref[f"library:{default_library_id}"].item.label == "All"
+
+        stored = search_targets(
+            db_session,
+            viewer_id=bootstrapped_user,
+            request=_request(q="My Library", limit=20),
+        )
+        assert f"library:{default_library_id}" not in {
+            t.item.ref for t in stored.targets if t.kind == "resource"
+        }, "the stored seeded name must not match the Default library"
+
+    def test_named_library_still_matches_its_authored_name(
+        self, db_session: Session, bootstrapped_user
+    ) -> None:
+        library_id = create_test_library(db_session, bootstrapped_user, name="Zephyr Shelf")
+        db_session.commit()
+
+        response = search_targets(
+            db_session,
+            viewer_id=bootstrapped_user,
+            request=_request(q="Zephyr", limit=20),
+        )
+        by_ref = {t.item.ref: t for t in response.targets if t.kind == "resource"}
+        assert f"library:{library_id}" in by_ref
+        assert by_ref[f"library:{library_id}"].item.label == "Zephyr Shelf"
+
+
 class TestRefill:
     def test_exclusions_apply_before_caps_and_pool_refills(
         self, db_session: Session, bootstrapped_user, monkeypatch

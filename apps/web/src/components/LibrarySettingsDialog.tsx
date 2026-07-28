@@ -4,6 +4,10 @@ import { useEffect, useState } from "react";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
+import {
+  isReservedLibraryName,
+  RESERVED_LIBRARY_NAME_MESSAGE,
+} from "@/lib/libraries/presentation";
 import styles from "./LibrarySettingsDialog.module.css";
 
 export interface LibraryForSettings {
@@ -45,7 +49,9 @@ export default function LibrarySettingsDialog({
   }, [library.name, open]);
 
   const trimmedName = draftName.trim();
+  const nameReserved = isReservedLibraryName(trimmedName);
   const nameChanged = trimmedName.length > 0 && trimmedName !== library.name;
+  const nameErrorId = `library-name-error-${library.id}`;
 
   return (
     <Dialog open={open} onClose={onClose} title="Library settings">
@@ -57,6 +63,8 @@ export default function LibrarySettingsDialog({
               id={`library-name-${library.id}`}
               value={draftName}
               disabled={!library.canRename || saving}
+              aria-invalid={nameReserved || undefined}
+              aria-describedby={nameReserved ? nameErrorId : undefined}
               onChange={(event) => setDraftName(event.target.value)}
             />
             {library.canRename ? (
@@ -64,7 +72,7 @@ export default function LibrarySettingsDialog({
                 variant="secondary"
                 size="sm"
                 loading={saving}
-                disabled={!nameChanged}
+                disabled={!nameChanged || nameReserved}
                 onClick={async () => {
                   setSaving(true);
                   try {
@@ -78,6 +86,11 @@ export default function LibrarySettingsDialog({
               </Button>
             ) : null}
           </div>
+          {nameReserved ? (
+            <p id={nameErrorId} className={styles.error} role="alert">
+              {RESERVED_LIBRARY_NAME_MESSAGE}
+            </p>
+          ) : null}
         </section>
 
         {library.canDelete ? (

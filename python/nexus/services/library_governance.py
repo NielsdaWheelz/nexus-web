@@ -239,15 +239,25 @@ def _lock_memberships_and_repair_owner(db: Session, library_id: UUID, owner_user
     _repair_owner_admin_invariant(db, library_id, owner_user_id)
 
 
+def _validate_library_name(name: str) -> str:
+    """Normalize and validate a non-default library name. ``All`` (any trimmed,
+    Unicode-casefolded spelling) is reserved for the All view alias, so it is
+    rejected for every user-authored create/rename."""
+    name = name.strip()
+    if not name or len(name) > 100:
+        raise InvalidRequestError(ApiErrorCode.E_NAME_INVALID, "Name must be 1-100 characters")
+    if name.casefold() == "all":
+        raise InvalidRequestError(ApiErrorCode.E_NAME_INVALID, "All is reserved for the All view.")
+    return name
+
+
 def create_library(
     db: Session,
     viewer_id: UUID,
     request: CreateLibraryRequest,
 ) -> LibraryOut:
     """Create a new non-default library with the creator as owner-admin."""
-    name = request.name.strip()
-    if not name or len(name) > 100:
-        raise InvalidRequestError(ApiErrorCode.E_NAME_INVALID, "Name must be 1-100 characters")
+    name = _validate_library_name(request.name)
 
     def op():
         with transaction(db):
@@ -359,9 +369,7 @@ def ensure_system_library(db: Session, *, system_key: str, name: str, owner_user
 
 def rename_library(db: Session, viewer_id: UUID, library_id: UUID, name: str) -> LibraryOut:
     """Rename a non-default library. Admin-only; default library forbidden."""
-    name = name.strip()
-    if not name or len(name) > 100:
-        raise InvalidRequestError(ApiErrorCode.E_NAME_INVALID, "Name must be 1-100 characters")
+    name = _validate_library_name(name)
 
     with transaction(db):
         ctx = lock_library_for_member(db, viewer_id, library_id)
@@ -579,13 +587,13 @@ def _escape_like(value: str) -> str:
 
 def _encode_destination_cursor(row, *, viewer_id: UUID) -> str:
     payload = {
-        "k": "library_destinations",
+        "k": "library_destinations:v2",
         "viewer_id": str(viewer_id),
-        "rank": int(row["match_rank"]),
-        "updated_at": row["updated_at"].isoformat(),
-        "created_at": row["created_at"].isoformat(),
-        "id": str(row["id"]),
         "q": str(row["cursor_q"]),
+        "rank": int(row["match_rank"]),
+        "normalized_name": str(row["normalized_name"]),
+        "name": str(row["name"]),
+        "id": str(row["id"]),
     }
     encoded = base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
     return encoded.rstrip("=")
@@ -593,20 +601,22 @@ def _encode_destination_cursor(row, *, viewer_id: UUID) -> str:
 
 def _decode_destination_cursor(
     cursor: str, q: str, *, viewer_id: UUID
-) -> tuple[int, datetime, datetime, UUID]:
+) -> tuple[int, str, str, UUID]:
     try:
         padded = cursor + "=" * (-len(cursor) % 4)
         payload: dict[str, Any] = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
         if (
-            payload.get("k") != "library_destinations"
+            set(payload)
+            != {"k", "viewer_id", "q", "rank", "normalized_name", "name", "id"}
+            or payload["k"] != "library_destinations:v2"
             or UUID(str(payload["viewer_id"])) != viewer_id
             or payload["q"] != q
         ):
             raise ValueError
         return (
             int(payload["rank"]),
-            datetime.fromisoformat(str(payload["updated_at"])),
-            datetime.fromisoformat(str(payload["created_at"])),
+            str(payload["normalized_name"]),
+            str(payload["name"]),
             UUID(str(payload["id"])),
         )
     except Exception:
@@ -635,22 +645,22 @@ def list_writable_library_destinations(
         "limit": limit + 1,
     }
     if cursor is not None:
-        rank, updated_at, created_at, library_id = _decode_destination_cursor(
+        rank, normalized_name, name, library_id = _decode_destination_cursor(
             cursor, query, viewer_id=viewer_id
         )
         cursor_clause = """
           AND (
             ranked.match_rank > :cursor_rank
-            OR (ranked.match_rank = :cursor_rank AND ranked.updated_at < :cursor_updated_at)
+            OR (ranked.match_rank = :cursor_rank AND ranked.normalized_name > :cursor_normalized_name)
             OR (
               ranked.match_rank = :cursor_rank
-              AND ranked.updated_at = :cursor_updated_at
-              AND ranked.created_at < :cursor_created_at
+              AND ranked.normalized_name = :cursor_normalized_name
+              AND ranked.name > :cursor_name
             )
             OR (
               ranked.match_rank = :cursor_rank
-              AND ranked.updated_at = :cursor_updated_at
-              AND ranked.created_at = :cursor_created_at
+              AND ranked.normalized_name = :cursor_normalized_name
+              AND ranked.name = :cursor_name
               AND ranked.id > :cursor_id
             )
           )
@@ -658,8 +668,8 @@ def list_writable_library_destinations(
         params.update(
             {
                 "cursor_rank": rank,
-                "cursor_updated_at": updated_at,
-                "cursor_created_at": created_at,
+                "cursor_normalized_name": normalized_name,
+                "cursor_name": name,
                 "cursor_id": library_id,
             }
         )
@@ -674,6 +684,7 @@ def list_writable_library_destinations(
                     l.color,
                     l.created_at,
                     l.updated_at,
+                    lower(l.name) AS normalized_name,
                     :q AS cursor_q,
                     CASE
                         WHEN :q = '' THEN 3
@@ -693,7 +704,7 @@ def list_writable_library_destinations(
             FROM ranked
             WHERE 1 = 1
               {cursor_clause}
-            ORDER BY match_rank ASC, updated_at DESC, created_at DESC, id ASC
+            ORDER BY match_rank ASC, ranked.normalized_name ASC, ranked.name ASC, ranked.id ASC
             LIMIT :limit
         """),
             params,
