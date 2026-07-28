@@ -55,9 +55,7 @@ _RETRYABLE_PLATE_FETCH_STATUSES = (
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Seed the Oracle Corpus library.")
-    parser.add_argument(
-        "--owner-user", required=True, type=UUID, help="bootstrap/owner user id"
-    )
+    parser.add_argument("--owner-user", required=True, type=UUID, help="bootstrap/owner user id")
     parser.add_argument(
         "--drain",
         action="store_true",
@@ -77,9 +75,7 @@ def main() -> int:
     storage_client = get_storage_client()
 
     with session_factory() as db:
-        library_id = oracle_corpus.ensure_oracle_corpus_library(
-            db, owner_user_id=args.owner_user
-        )
+        library_id = oracle_corpus.ensure_oracle_corpus_library(db, owner_user_id=args.owner_user)
         db.commit()
         for work in works:
             result = retry_serializable(
@@ -99,9 +95,7 @@ def main() -> int:
             )
 
     if plates:
-        with httpx.Client(
-            timeout=30.0, headers={"User-Agent": "nexus-oracle-seed"}
-        ) as client:
+        with httpx.Client(timeout=30.0, headers={"User-Agent": "nexus-oracle-seed"}) as client:
             with session_factory() as db:
                 _seed_plates(db, client, storage_client, plates)
                 db.commit()
@@ -167,6 +161,39 @@ def _seed_plates(
         print(f"  pruned {pruned} stale plate row{'s' if pruned != 1 else ''}")
     for entry in manifest:
         resolved = entry["resolved_source_url"]
+        reusable = oracle_plates.get_valid_oracle_plate_asset(
+            db,
+            storage_client=storage,
+            source_url=resolved,
+        )
+        if reusable is not None:
+            expected_storage_key = _plate_storage_key(
+                entry,
+                content_type=reusable.content_type,
+            )
+            if reusable.storage_key == expected_storage_key:
+                plate = oracle_plates.upsert_oracle_plate(
+                    db,
+                    source_repository=entry["source_repository"],
+                    source_page_url=entry["source_url"],
+                    source_url=resolved,
+                    license_text=str(entry.get("license_text") or "public domain"),
+                    artist=entry["artist"],
+                    work_title=entry["work_title"],
+                    year=entry.get("year"),
+                    attribution_text=entry["attribution_text"],
+                    width=reusable.width,
+                    height=reusable.height,
+                    storage_key=reusable.storage_key,
+                    content_type=reusable.content_type,
+                    byte_size=reusable.byte_size,
+                    tags=list(entry.get("tags") or []),
+                )
+                print(
+                    f"  plate {entry['work_title']!r}: {plate.storage_key} "
+                    f"({plate.id}, object present)"
+                )
+                continue
         validated = _fetch_plate_image(resolved, client)
         storage_key = _plate_storage_key(entry, content_type=validated.content_type)
         result = oracle_plates.ensure_oracle_plate_asset(
@@ -209,8 +236,7 @@ def _preflight_plate_manifest(manifest: list[dict[str, Any]]) -> None:
     duplicate_slugs = _duplicates(slugs)
     if duplicate_slugs:
         raise RuntimeError(
-            "Oracle plate manifest contains duplicate storage slugs: "
-            + ", ".join(duplicate_slugs)
+            "Oracle plate manifest contains duplicate storage slugs: " + ", ".join(duplicate_slugs)
         )
 
 
@@ -229,10 +255,7 @@ def _fetch_plate_image(resolved_source_url: str, client: httpx.Client):
         try:
             return fetch_validated_image(resolved_source_url, client)
         except ApiError as exc:
-            if (
-                not _is_retryable_plate_fetch_error(exc)
-                or attempt >= PLATE_FETCH_MAX_ATTEMPTS
-            ):
+            if not _is_retryable_plate_fetch_error(exc) or attempt >= PLATE_FETCH_MAX_ATTEMPTS:
                 raise
             delay = _plate_fetch_retry_delay(exc, attempt=attempt)
             print(
@@ -267,9 +290,7 @@ def _plate_storage_slug(entry: dict[str, Any]) -> str:
     stem = source_name.rsplit(".", 1)[0] or str(entry["work_title"])
     slug = re.sub(r"[^a-z0-9]+", "-", stem.lower()).strip("-")
     if not slug:
-        raise RuntimeError(
-            f"Could not derive Oracle plate storage key for {entry['source_url']}"
-        )
+        raise RuntimeError(f"Could not derive Oracle plate storage key for {entry['source_url']}")
     return slug
 
 

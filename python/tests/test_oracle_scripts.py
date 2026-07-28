@@ -167,6 +167,11 @@ def test_seed_plates_retries_transient_source_throttling(monkeypatch):
     monkeypatch.setattr(script, "fetch_validated_image", fetch)
     monkeypatch.setattr(script.time, "sleep", lambda seconds: sleeps.append(seconds))
     monkeypatch.setattr(script.oracle_plates, "prune_oracle_plates_except_source_urls", prune)
+    monkeypatch.setattr(
+        script.oracle_plates,
+        "get_valid_oracle_plate_asset",
+        lambda *_args, **_kwargs: None,
+    )
     monkeypatch.setattr(script.oracle_plates, "ensure_oracle_plate_asset", ensure)
 
     script._seed_plates(object(), object(), storage, [entry])
@@ -181,6 +186,85 @@ def test_seed_plates_retries_transient_source_throttling(monkeypatch):
     assert ensured[0]["source_url"] == entry["resolved_source_url"]
     assert ensured[0]["storage_key"] == "oracle/plates/plate.jpg"
     assert ensured[0]["data"] == b"image"
+
+
+def test_seed_plates_reuses_valid_owned_asset_without_source_fetch(monkeypatch):
+    script = _load_script(
+        "oracle_seed_corpus_library_reuse_test",
+        "scripts/oracle/seed_corpus_library.py",
+    )
+    entry = {
+        "source_repository": "wikimedia_commons",
+        "source_url": "https://commons.wikimedia.org/wiki/File:Plate.jpg",
+        "resolved_source_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/a/aa/Plate.jpg/1920px-Plate.jpg",
+        "license_text": "public domain",
+        "artist": "Updated Artist",
+        "work_title": "Updated Plate",
+        "year": "1901",
+        "attribution_text": "Updated attribution",
+        "tags": ["night"],
+    }
+    existing = SimpleNamespace(
+        id="plate-1",
+        storage_key="oracle/plates/plate.jpg",
+        content_type="image/jpeg",
+        byte_size=123,
+        width=1920,
+        height=1200,
+    )
+    upserts: list[dict] = []
+
+    monkeypatch.setattr(
+        script.oracle_plates,
+        "prune_oracle_plates_except_source_urls",
+        lambda *_args, **_kwargs: 0,
+    )
+    monkeypatch.setattr(
+        script.oracle_plates,
+        "get_valid_oracle_plate_asset",
+        lambda *_args, **_kwargs: existing,
+    )
+    monkeypatch.setattr(
+        script.oracle_plates,
+        "upsert_oracle_plate",
+        lambda _db, **kwargs: upserts.append(kwargs) or existing,
+    )
+    monkeypatch.setattr(
+        script,
+        "fetch_validated_image",
+        lambda *_args, **_kwargs: pytest.fail("valid owned asset must not be fetched"),
+    )
+    monkeypatch.setattr(
+        script.oracle_plates,
+        "ensure_oracle_plate_asset",
+        lambda *_args, **_kwargs: pytest.fail("valid owned asset must not be rewritten"),
+    )
+    monkeypatch.setattr(
+        script.time,
+        "sleep",
+        lambda _seconds: pytest.fail("valid owned asset must not be throttled"),
+    )
+
+    script._seed_plates(object(), object(), object(), [entry])
+
+    assert upserts == [
+        {
+            "source_repository": "wikimedia_commons",
+            "source_page_url": entry["source_url"],
+            "source_url": entry["resolved_source_url"],
+            "license_text": "public domain",
+            "artist": "Updated Artist",
+            "work_title": "Updated Plate",
+            "year": "1901",
+            "attribution_text": "Updated attribution",
+            "width": 1920,
+            "height": 1200,
+            "storage_key": "oracle/plates/plate.jpg",
+            "content_type": "image/jpeg",
+            "byte_size": 123,
+            "tags": ["night"],
+        }
+    ]
 
 
 def test_seed_plates_rejects_duplicate_manifest_sources_before_side_effects(monkeypatch):

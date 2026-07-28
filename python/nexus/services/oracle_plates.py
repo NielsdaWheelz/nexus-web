@@ -116,6 +116,28 @@ def ensure_oracle_plate_asset(
     return OraclePlateAssetResult(plate=plate, object_written=object_written)
 
 
+def get_valid_oracle_plate_asset(
+    db: Session,
+    *,
+    storage_client: StorageClientBase,
+    source_url: str,
+) -> OraclePlate | None:
+    """Return an existing plate only when its owned object is still valid."""
+    existing = db.query(OraclePlate).filter(OraclePlate.source_url == source_url).one_or_none()
+    if existing is None:
+        return None
+    invalid_reason = _oracle_plate_storage_invalid_reason(existing, storage_client)
+    if invalid_reason is not None:
+        logger.warning(
+            "oracle_plate_owned_asset_invalid",
+            image_id=str(existing.id),
+            storage_key=existing.storage_key,
+            reason=invalid_reason,
+        )
+        return None
+    return existing
+
+
 def prune_oracle_plates_except_source_urls(db: Session, *, source_urls: Collection[str]) -> int:
     """Delete unreferenced plate rows outside the current manifest source set."""
     intended = {url.strip() for url in source_urls if url and url.strip()}
@@ -301,37 +323,43 @@ def validate_oracle_plate_storage_objects(
     invalid: list[str] = []
     valid = 0
     for row in rows:
-        try:
-            _validate_plate_metadata(
-                image_id=row.id,
-                storage_key=row.storage_key,
-                byte_size=row.byte_size,
-                content_type=row.content_type,
-                width=row.width,
-                height=row.height,
-            )
-            object_metadata = sc.head_object(row.storage_key)
-        except (ApiError, StorageError) as exc:
-            invalid.append(f"{row.id}: {exc}")
-            continue
-        if object_metadata is None:
-            invalid.append(f"{row.id}: missing object {row.storage_key}")
-            continue
-        if object_metadata.size_bytes != row.byte_size:
-            invalid.append(
-                f"{row.id}: size mismatch for {row.storage_key} "
-                f"({object_metadata.size_bytes} != {row.byte_size})"
-            )
-            continue
-        object_content_type = _normalize_content_type(object_metadata.content_type)
-        if object_content_type != row.content_type:
-            invalid.append(
-                f"{row.id}: content-type mismatch for {row.storage_key} "
-                f"({object_content_type} != {row.content_type})"
-            )
+        invalid_reason = _oracle_plate_storage_invalid_reason(row, sc)
+        if invalid_reason is not None:
+            invalid.append(f"{row.id}: {invalid_reason}")
             continue
         valid += 1
     return OraclePlateStorageReadiness(total=len(rows), valid=valid, invalid=tuple(invalid))
+
+
+def _oracle_plate_storage_invalid_reason(
+    row: OraclePlate,
+    storage_client: StorageClientBase,
+) -> str | None:
+    try:
+        _validate_plate_metadata(
+            image_id=row.id,
+            storage_key=row.storage_key,
+            byte_size=row.byte_size,
+            content_type=row.content_type,
+            width=row.width,
+            height=row.height,
+        )
+        object_metadata = storage_client.head_object(row.storage_key)
+    except (ApiError, StorageError) as exc:
+        return str(exc)
+    if object_metadata is None:
+        return f"missing object {row.storage_key}"
+    if object_metadata.size_bytes != row.byte_size:
+        return (
+            f"size mismatch for {row.storage_key} ({object_metadata.size_bytes} != {row.byte_size})"
+        )
+    object_content_type = _normalize_content_type(object_metadata.content_type)
+    if object_content_type != row.content_type:
+        return (
+            f"content-type mismatch for {row.storage_key} "
+            f"({object_content_type} != {row.content_type})"
+        )
+    return None
 
 
 def _ensure_plate_object(

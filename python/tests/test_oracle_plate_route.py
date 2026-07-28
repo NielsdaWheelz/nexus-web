@@ -26,6 +26,7 @@ from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.services.oracle_plates import (
     ensure_oracle_plate_asset,
     get_oracle_plate_bytes,
+    get_valid_oracle_plate_asset,
     oracle_plate_url,
     prune_oracle_plates_except_source_urls,
     validate_oracle_plate_storage_objects,
@@ -247,6 +248,14 @@ def test_validate_oracle_plate_storage_objects_checks_object_metadata(
     fake = FakeStorageClient()
     with direct_db.session() as session:
         missing = validate_oracle_plate_storage_objects(session, storage_client=fake)
+        assert (
+            get_valid_oracle_plate_asset(
+                session,
+                storage_client=fake,
+                source_url=session.get(OraclePlate, image_id).source_url,
+            )
+            is None
+        )
 
     assert missing.total >= 1
     assert not missing.ready
@@ -255,9 +264,16 @@ def test_validate_oracle_plate_storage_objects_checks_object_metadata(
     fake.put_object(storage_key, data, content_type)
     with direct_db.session() as session:
         after_put = validate_oracle_plate_storage_objects(session, storage_client=fake)
+        valid = get_valid_oracle_plate_asset(
+            session,
+            storage_client=fake,
+            source_url=session.get(OraclePlate, image_id).source_url,
+        )
 
     assert after_put.valid == missing.valid + 1
     assert not any(str(image_id) in reason for reason in after_put.invalid)
+    assert valid is not None
+    assert valid.id == image_id
 
 
 @pytest.mark.integration
