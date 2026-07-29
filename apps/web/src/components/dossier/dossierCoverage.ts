@@ -20,9 +20,7 @@ export function dossierCoverageLabel(manifest: DossierInputManifest): string {
     case "media":
       return `${pluralize(manifest.offeredClaimCount, "claim")} offered · ${pluralize(manifest.omittedEvidenceRefs.length, "evidence item")} omitted`;
     case "conversation":
-      return `${pluralize(manifest.messageRefs.length, "message")} · ${pluralize(manifest.contextRefs.length, "context item")} · ${
-        manifest.completeness.kind === "Complete" ? "complete" : "incomplete"
-      }`;
+      return `${pluralize(manifest.messageRefs.length, "message")} · ${pluralize(manifest.contextRefs.length, "context item")} · complete`;
     case "library":
       return aggregateCoverage("media item", manifest.media);
     case "podcast":

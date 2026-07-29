@@ -785,10 +785,12 @@ async def _run_idea_resolution_step(
             settings=get_settings(),
         )
     except BaseException:
-        _expire_learn_resolver_lease(db, request_id=request.request_id)
+        if not _expire_learn_resolver_lease(db, request_id=request.request_id):
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Highlight not found") from None
         raise
     if not isinstance(call.outcome, Succeeded):
-        _expire_learn_resolver_lease(db, request_id=request.request_id)
+        if not _expire_learn_resolver_lease(db, request_id=request.request_id):
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Highlight not found")
         failure_code, detail = outcome_failure_facts(call.outcome)
         raise _ProviderDefect(
             f"Idea resolution provider outcome {failure_code}: {detail or 'no detail'}"
@@ -886,19 +888,20 @@ async def _await_uncertain_idea_resolution(
         await asyncio.sleep(min(0.1, max(0.01, remaining)))
 
 
-def _expire_learn_resolver_lease(db: Session, *, request_id: UUID) -> None:
-    """Release live ownership after a known local/provider defect."""
+def _expire_learn_resolver_lease(db: Session, *, request_id: UUID) -> bool:
+    """Release live ownership, returning false when explicit teardown won."""
 
     db.rollback()
-    db.execute(
+    updated = db.execute(
         text(
             "UPDATE artifact_learn_requests "
             "SET resolver_lease_expires_at = clock_timestamp() "
-            "WHERE id = :id"
+            "WHERE id = :id RETURNING id"
         ),
         {"id": request_id},
-    )
+    ).scalar_one_or_none()
     db.commit()
+    return updated is not None
 
 
 def _learn_step_state(

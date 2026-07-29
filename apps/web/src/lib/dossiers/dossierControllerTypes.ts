@@ -89,9 +89,7 @@ export type DossierInputManifest =
       messageRefs: readonly string[];
       contextRefs: readonly string[];
       topologyFingerprint: Presence<string>;
-      completeness:
-        | { kind: "Complete" }
-        | { kind: "Incomplete"; reason: "MigratedCoverageGap" };
+      completeness: { kind: "Complete" };
     }
   | {
       version: "v1";

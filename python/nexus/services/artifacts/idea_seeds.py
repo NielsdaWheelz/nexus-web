@@ -223,19 +223,32 @@ def delete_artifact_idea_rows_before_head(
             SynthesisArtifact.subject_scheme == "idea",
         )
     )
-    request_ids = list(
+    request_ids = set(
         db.scalars(
             select(ArtifactLearnSuccess.request_id).where(
                 ArtifactLearnSuccess.artifact_id == artifact_id
             )
         )
     )
+    if idea_subject_id is not None:
+        request_ids.update(
+            db.scalars(
+                select(ArtifactLearnRequest.id).where(
+                    ArtifactLearnRequest.highlight_id.in_(
+                        select(ArtifactIdeaResolution.highlight_id).where(
+                            ArtifactIdeaResolution.idea_subject_id == idea_subject_id
+                        )
+                    )
+                )
+            )
+        )
     if request_ids:
         db.execute(
             delete(ArtifactLearnFailure).where(ArtifactLearnFailure.request_id.in_(request_ids))
         )
-    db.execute(delete(ArtifactLearnSuccess).where(ArtifactLearnSuccess.artifact_id == artifact_id))
-    if request_ids:
+        db.execute(
+            delete(ArtifactLearnSuccess).where(ArtifactLearnSuccess.request_id.in_(request_ids))
+        )
         db.execute(delete(ArtifactLearnRequest).where(ArtifactLearnRequest.id.in_(request_ids)))
     db.execute(delete(ArtifactIdeaSeed).where(ArtifactIdeaSeed.artifact_id == artifact_id))
     return idea_subject_id

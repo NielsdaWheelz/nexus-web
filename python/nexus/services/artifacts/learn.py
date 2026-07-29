@@ -23,8 +23,8 @@ from nexus.db.models import (
 )
 from nexus.errors import ApiErrorCode, ConflictError, NotFoundError
 from nexus.ids import new_uuid7
-from nexus.services.artifacts.dossier_types import DossierIdeaUnresolved
 from nexus.schemas.presence import Presence, absent, present
+from nexus.services.artifacts.dossier_types import DossierIdeaUnresolved
 from nexus.services.artifacts.idea_identity import (
     IdeaKey,
     InvalidIdeaText,

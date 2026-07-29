@@ -4,7 +4,7 @@
 // into the owned `dossierControllerTypes` values, then pass those through the
 // store/view-model unchanged. Every `Presence[T]` field is decoded with the
 // repository-wide `decodePresence`; unexpected shapes throw rather than coerce.
-import { isRecord } from "@/lib/validation";
+import { expectExactRecord, expectRecord } from "@/lib/validation";
 import { decodePresence, type Presence } from "@/lib/api/presence";
 import {
   decodeCitationOut,
@@ -111,154 +111,243 @@ function decodeMediaManifestEntries(
 ): DossierMediaManifestEntry[] {
   if (!Array.isArray(value)) fail(`${field} must be an array`);
   return value.map((entry) => {
-    if (!isRecord(entry)) fail(`${field} entry must be an object`);
+    const item = expectExactRecord(
+      entry,
+      ["media_ref", "content_fingerprint", "disposition"],
+      `${field} entry`,
+    );
     return {
-      mediaRef: decodeString(entry.media_ref, `${field}.media_ref`),
+      mediaRef: decodeString(item.media_ref, `${field}.media_ref`),
       contentFingerprint: decodeString(
-        entry.content_fingerprint,
+        item.content_fingerprint,
         `${field}.content_fingerprint`,
       ),
-      disposition: decodeMediaDisposition(entry.disposition),
+      disposition: decodeMediaDisposition(item.disposition),
     };
   });
 }
 
 function decodeInputManifest(value: unknown): DossierInputManifest {
-  if (!isRecord(value)) fail("input_manifest must be an object");
-  if (value.version !== "v1") {
-    fail(`unknown input_manifest version ${JSON.stringify(value.version)}`);
+  const discriminated = expectRecord(value, "input_manifest");
+  if (discriminated.version !== "v1") {
+    fail(
+      `unknown input_manifest version ${JSON.stringify(discriminated.version)}`,
+    );
   }
-  switch (value.kind) {
+  switch (discriminated.kind) {
     case "media": {
-      if (!Array.isArray(value.omitted_evidence)) {
+      const manifest = expectExactRecord(
+        discriminated,
+        [
+          "version",
+          "kind",
+          "media_ref",
+          "content_fingerprint",
+          "offered_claim_count",
+          "omitted_evidence",
+        ],
+        "media input_manifest",
+      );
+      if (!Array.isArray(manifest.omitted_evidence)) {
         fail("omitted_evidence must be an array");
       }
       return {
         version: "v1",
         kind: "media",
-        mediaRef: decodeString(value.media_ref, "media_ref"),
+        mediaRef: decodeString(manifest.media_ref, "media_ref"),
         contentFingerprint: decodeString(
-          value.content_fingerprint,
+          manifest.content_fingerprint,
           "content_fingerprint",
         ),
         offeredClaimCount: decodeInteger(
-          value.offered_claim_count,
+          manifest.offered_claim_count,
           "offered_claim_count",
         ),
-        omittedEvidenceRefs: value.omitted_evidence.map((entry) => {
-          if (!isRecord(entry))
-            fail("omitted_evidence entry must be an object");
-          return decodeString(entry.evidence_ref, "evidence_ref");
+        omittedEvidenceRefs: manifest.omitted_evidence.map((entry) => {
+          const omission = expectExactRecord(
+            entry,
+            ["evidence_ref"],
+            "omitted_evidence entry",
+          );
+          return decodeString(omission.evidence_ref, "evidence_ref");
         }),
       };
     }
     case "conversation": {
-      if (!isRecord(value.completeness)) {
-        fail("conversation completeness must be an object");
+      const manifest = expectExactRecord(
+        discriminated,
+        [
+          "version",
+          "kind",
+          "conversation_ref",
+          "message_refs",
+          "context_refs",
+          "topology_fingerprint",
+          "completeness",
+        ],
+        "conversation input_manifest",
+      );
+      const completeness = expectExactRecord(
+        manifest.completeness,
+        ["kind"],
+        "conversation completeness",
+      );
+      if (completeness.kind !== "Complete") {
+        fail("unknown conversation completeness");
       }
-      const completeness =
-        value.completeness.kind === "Complete"
-          ? ({ kind: "Complete" } as const)
-          : value.completeness.kind === "Incomplete" &&
-              value.completeness.reason === "MigratedCoverageGap"
-            ? ({
-                kind: "Incomplete",
-                reason: "MigratedCoverageGap",
-              } as const)
-            : fail("unknown conversation completeness");
       return {
         version: "v1",
         kind: "conversation",
         conversationRef: decodeString(
-          value.conversation_ref,
+          manifest.conversation_ref,
           "conversation_ref",
         ),
-        messageRefs: decodeStringArray(value.message_refs, "message_refs"),
-        contextRefs: decodeStringArray(value.context_refs, "context_refs"),
+        messageRefs: decodeStringArray(manifest.message_refs, "message_refs"),
+        contextRefs: decodeStringArray(manifest.context_refs, "context_refs"),
         topologyFingerprint: decodePresence(
-          value.topology_fingerprint,
+          manifest.topology_fingerprint,
           (entry) => decodeString(entry, "topology_fingerprint"),
         ),
-        completeness,
+        completeness: { kind: "Complete" },
       };
     }
-    case "library":
+    case "library": {
+      const manifest = expectExactRecord(
+        discriminated,
+        ["version", "kind", "library_ref", "media"],
+        "library input_manifest",
+      );
       return {
         version: "v1",
         kind: "library",
-        libraryRef: decodeString(value.library_ref, "library_ref"),
-        media: decodeMediaManifestEntries(value.media, "media"),
+        libraryRef: decodeString(manifest.library_ref, "library_ref"),
+        media: decodeMediaManifestEntries(manifest.media, "media"),
       };
-    case "podcast":
+    }
+    case "podcast": {
+      const manifest = expectExactRecord(
+        discriminated,
+        ["version", "kind", "podcast_ref", "episodes"],
+        "podcast input_manifest",
+      );
       return {
         version: "v1",
         kind: "podcast",
-        podcastRef: decodeString(value.podcast_ref, "podcast_ref"),
-        episodes: decodeMediaManifestEntries(value.episodes, "episodes"),
+        podcastRef: decodeString(manifest.podcast_ref, "podcast_ref"),
+        episodes: decodeMediaManifestEntries(manifest.episodes, "episodes"),
       };
-    case "contributor":
+    }
+    case "contributor": {
+      const manifest = expectExactRecord(
+        discriminated,
+        ["version", "kind", "contributor_handle", "works"],
+        "contributor input_manifest",
+      );
       return {
         version: "v1",
         kind: "contributor",
         contributorHandle: decodeString(
-          value.contributor_handle,
+          manifest.contributor_handle,
           "contributor_handle",
         ),
-        works: decodeMediaManifestEntries(value.works, "works"),
+        works: decodeMediaManifestEntries(manifest.works, "works"),
       };
-    case "page":
+    }
+    case "page": {
+      const manifest = expectExactRecord(
+        discriminated,
+        [
+          "version",
+          "kind",
+          "page_ref",
+          "input_fingerprint",
+          "block_refs",
+          "connection_refs",
+        ],
+        "page input_manifest",
+      );
       return {
         version: "v1",
         kind: "page",
-        pageRef: decodeString(value.page_ref, "page_ref"),
+        pageRef: decodeString(manifest.page_ref, "page_ref"),
         inputFingerprint: decodeString(
-          value.input_fingerprint,
+          manifest.input_fingerprint,
           "input_fingerprint",
         ),
-        blockRefs: decodeStringArray(value.block_refs, "block_refs"),
+        blockRefs: decodeStringArray(manifest.block_refs, "block_refs"),
         connectionRefs: decodeStringArray(
-          value.connection_refs,
+          manifest.connection_refs,
           "connection_refs",
         ),
       };
-    case "note":
+    }
+    case "note": {
+      const manifest = expectExactRecord(
+        discriminated,
+        [
+          "version",
+          "kind",
+          "note_ref",
+          "input_fingerprint",
+          "body_fingerprint",
+          "connection_refs",
+        ],
+        "note input_manifest",
+      );
       return {
         version: "v1",
         kind: "note",
-        noteRef: decodeString(value.note_ref, "note_ref"),
+        noteRef: decodeString(manifest.note_ref, "note_ref"),
         inputFingerprint: decodeString(
-          value.input_fingerprint,
+          manifest.input_fingerprint,
           "input_fingerprint",
         ),
-        bodyFingerprint: decodePresence(value.body_fingerprint, (entry) =>
+        bodyFingerprint: decodePresence(manifest.body_fingerprint, (entry) =>
           decodeString(entry, "body_fingerprint"),
         ),
         connectionRefs: decodeStringArray(
-          value.connection_refs,
+          manifest.connection_refs,
           "connection_refs",
         ),
       };
-    case "idea":
+    }
+    case "idea": {
+      const manifest = expectExactRecord(
+        discriminated,
+        [
+          "version",
+          "kind",
+          "included_seed_refs",
+          "nexus_query_fingerprints",
+          "web_query_fingerprints",
+          "included_sources",
+          "omitted_sources",
+        ],
+        "idea input_manifest",
+      );
       return {
         version: "v1",
         kind: "idea",
         includedSeedRefs: decodeStringArray(
-          value.included_seed_refs,
+          manifest.included_seed_refs,
           "included_seed_refs",
         ),
         nexusQueryFingerprints: decodeStringArray(
-          value.nexus_query_fingerprints,
+          manifest.nexus_query_fingerprints,
           "nexus_query_fingerprints",
         ),
         webQueryFingerprints: decodeStringArray(
-          value.web_query_fingerprints,
+          manifest.web_query_fingerprints,
           "web_query_fingerprints",
         ),
-        includedSources: decodeIdeaIncludedSources(value.included_sources),
-        omittedSources: decodeIdeaOmittedSources(value.omitted_sources),
+        includedSources: decodeIdeaIncludedSources(manifest.included_sources),
+        omittedSources: decodeIdeaOmittedSources(manifest.omitted_sources),
       };
+    }
     default:
-      return fail(`unknown input_manifest kind ${JSON.stringify(value.kind)}`);
+      return fail(
+        `unknown input_manifest kind ${JSON.stringify(discriminated.kind)}`,
+      );
   }
 }
 
@@ -271,21 +360,25 @@ function decodeIdeaIncludedSources(
 }> {
   if (!Array.isArray(value)) fail("included_sources must be an array");
   return value.map((entry) => {
-    if (!isRecord(entry)) fail("included_sources entry must be an object");
+    const source = expectExactRecord(
+      entry,
+      ["ref", "content_fingerprint", "role"],
+      "included_sources entry",
+    );
     if (
-      entry.role !== "seed" &&
-      entry.role !== "nexus" &&
-      entry.role !== "web"
+      source.role !== "seed" &&
+      source.role !== "nexus" &&
+      source.role !== "web"
     ) {
-      fail(`unknown included_sources.role ${JSON.stringify(entry.role)}`);
+      fail(`unknown included_sources.role ${JSON.stringify(source.role)}`);
     }
     return {
-      ref: decodeString(entry.ref, "included_sources.ref"),
+      ref: decodeString(source.ref, "included_sources.ref"),
       contentFingerprint: decodeString(
-        entry.content_fingerprint,
+        source.content_fingerprint,
         "included_sources.content_fingerprint",
       ),
-      role: entry.role,
+      role: source.role,
     };
   });
 }
@@ -295,48 +388,184 @@ function decodeIdeaOmittedSources(
 ): Array<{ locator: string; reason: string }> {
   if (!Array.isArray(value)) fail("omitted_sources must be an array");
   return value.map((entry) => {
-    if (!isRecord(entry)) fail("omitted_sources entry must be an object");
+    const source = expectExactRecord(
+      entry,
+      ["locator", "reason"],
+      "omitted_sources entry",
+    );
     return {
-      locator: decodeString(entry.locator, "omitted_sources.locator"),
-      reason: decodeString(entry.reason, "omitted_sources.reason"),
+      locator: decodeString(source.locator, "omitted_sources.locator"),
+      reason: decodeString(source.reason, "omitted_sources.reason"),
     };
   });
 }
 
 function decodeSupport(value: unknown): Record<string, unknown> {
-  if (!isRecord(value)) fail("failure support must be an object");
-  return value;
+  // Failure support is intentionally an opaque code-owned JSON object.
+  return expectRecord(value, "failure support");
+}
+
+function decodeOmittedCoverage(
+  value: unknown,
+  field: string,
+  decodeReason: (value: unknown) => unknown,
+): void {
+  if (!Array.isArray(value)) fail(`${field} must be an array`);
+  value.forEach((entry) => {
+    if (!Array.isArray(entry) || entry.length !== 2) {
+      fail(`${field} entry must be a two-item tuple`);
+    }
+    decodeString(entry[0], `${field}.ref`);
+    decodeReason(entry[1]);
+  });
+}
+
+function decodeDossierCoverage(
+  value: unknown,
+  manifestKind: DossierInputManifest["kind"],
+): void {
+  const discriminated = expectRecord(value, "coverage");
+  if (discriminated.kind !== manifestKind) {
+    fail("coverage kind must match input_manifest kind");
+  }
+  switch (discriminated.kind) {
+    case "media": {
+      const coverage = expectExactRecord(
+        discriminated,
+        ["kind", "offered_claim_count", "omitted_evidence_refs"],
+        "media coverage",
+      );
+      decodeInteger(coverage.offered_claim_count, "offered_claim_count");
+      decodeStringArray(
+        coverage.omitted_evidence_refs,
+        "omitted_evidence_refs",
+      );
+      return;
+    }
+    case "conversation": {
+      const coverage = expectExactRecord(
+        discriminated,
+        ["kind", "message_refs", "context_refs"],
+        "conversation coverage",
+      );
+      decodeStringArray(coverage.message_refs, "message_refs");
+      decodeStringArray(coverage.context_refs, "context_refs");
+      return;
+    }
+    case "library":
+    case "podcast":
+    case "contributor": {
+      const coverage = expectExactRecord(
+        discriminated,
+        ["kind", "included", "omitted"],
+        `${discriminated.kind} coverage`,
+      );
+      decodeStringArray(coverage.included, "included");
+      decodeOmittedCoverage(coverage.omitted, "omitted", (entry) =>
+        decodeMediaDisposition(entry),
+      );
+      return;
+    }
+    case "page": {
+      const coverage = expectExactRecord(
+        discriminated,
+        ["kind", "block_refs", "connection_refs"],
+        "page coverage",
+      );
+      decodeStringArray(coverage.block_refs, "block_refs");
+      decodeStringArray(coverage.connection_refs, "connection_refs");
+      return;
+    }
+    case "note": {
+      const coverage = expectExactRecord(
+        discriminated,
+        ["kind", "body_present", "connection_refs"],
+        "note coverage",
+      );
+      decodeBoolean(coverage.body_present, "body_present");
+      decodeStringArray(coverage.connection_refs, "connection_refs");
+      return;
+    }
+    case "idea": {
+      const coverage = expectExactRecord(
+        discriminated,
+        [
+          "kind",
+          "seed_count",
+          "nexus_source_count",
+          "web_source_count",
+          "omitted_sources",
+        ],
+        "idea coverage",
+      );
+      decodeInteger(coverage.seed_count, "seed_count");
+      decodeInteger(coverage.nexus_source_count, "nexus_source_count");
+      decodeInteger(coverage.web_source_count, "web_source_count");
+      decodeOmittedCoverage(coverage.omitted_sources, "omitted_sources", (entry) =>
+        decodeString(entry, "omitted_sources.reason"),
+      );
+      return;
+    }
+    default:
+      return fail(
+        `unknown coverage kind ${JSON.stringify(discriminated.kind)}`,
+      );
+  }
 }
 
 export function decodeDossierRevision(raw: unknown): DossierRevision {
-  if (!isRecord(raw)) fail("revision must be an object");
+  const revision = expectExactRecord(
+    raw,
+    [
+      "artifact_id",
+      "artifact_ref",
+      "revision_id",
+      "revision_ref",
+      "is_current",
+      "content_html",
+      "content_text",
+      "citations",
+      "input_manifest",
+      "coverage",
+      "instruction",
+      "creator_user_id",
+      "model_provider",
+      "model_name",
+      "total_tokens",
+      "created_at",
+      "promoted_at",
+    ],
+    "revision",
+  );
+  const inputManifest = decodeInputManifest(revision.input_manifest);
+  decodeDossierCoverage(revision.coverage, inputManifest.kind);
   return {
-    artifactId: decodeString(raw.artifact_id, "artifact_id"),
-    artifactRef: decodeString(raw.artifact_ref, "artifact_ref"),
-    revisionId: decodeString(raw.revision_id, "revision_id"),
-    revisionRef: decodeString(raw.revision_ref, "revision_ref"),
-    isCurrent: decodeBoolean(raw.is_current, "is_current"),
-    contentHtml: decodeString(raw.content_html, "content_html"),
-    contentText: decodeString(raw.content_text, "content_text"),
-    citations: decodeCitations(raw.citations),
-    inputManifest: decodeInputManifest(raw.input_manifest),
-    instruction: decodePresence(raw.instruction, (v) =>
+    artifactId: decodeString(revision.artifact_id, "artifact_id"),
+    artifactRef: decodeString(revision.artifact_ref, "artifact_ref"),
+    revisionId: decodeString(revision.revision_id, "revision_id"),
+    revisionRef: decodeString(revision.revision_ref, "revision_ref"),
+    isCurrent: decodeBoolean(revision.is_current, "is_current"),
+    contentHtml: decodeString(revision.content_html, "content_html"),
+    contentText: decodeString(revision.content_text, "content_text"),
+    citations: decodeCitations(revision.citations),
+    inputManifest,
+    instruction: decodePresence(revision.instruction, (v) =>
       decodeString(v, "instruction"),
     ),
-    creatorUserId: decodePresence(raw.creator_user_id, (v) =>
+    creatorUserId: decodePresence(revision.creator_user_id, (v) =>
       decodeString(v, "creator_user_id"),
     ),
-    modelProvider: decodePresence(raw.model_provider, (v) =>
+    modelProvider: decodePresence(revision.model_provider, (v) =>
       decodeString(v, "model_provider"),
     ),
-    modelName: decodePresence(raw.model_name, (v) =>
+    modelName: decodePresence(revision.model_name, (v) =>
       decodeString(v, "model_name"),
     ),
-    totalTokens: decodePresence(raw.total_tokens, (v) =>
+    totalTokens: decodePresence(revision.total_tokens, (v) =>
       decodeInteger(v, "total_tokens"),
     ),
-    createdAt: decodeString(raw.created_at, "created_at"),
-    promotedAt: decodePresence(raw.promoted_at, (v) =>
+    createdAt: decodeString(revision.created_at, "created_at"),
+    promotedAt: decodePresence(revision.promoted_at, (v) =>
       decodeString(v, "promoted_at"),
     ),
   };
@@ -345,30 +574,50 @@ export function decodeDossierRevision(raw: unknown): DossierRevision {
 export function decodeDossierRevisionSummary(
   raw: unknown,
 ): DossierRevisionSummary {
-  if (!isRecord(raw)) fail("revision summary must be an object");
+  const revision = expectExactRecord(
+    raw,
+    [
+      "revision_id",
+      "revision_ref",
+      "is_current",
+      "citation_count",
+      "input_manifest",
+      "coverage",
+      "instruction",
+      "creator_user_id",
+      "model_provider",
+      "model_name",
+      "total_tokens",
+      "created_at",
+      "promoted_at",
+    ],
+    "revision summary",
+  );
+  const inputManifest = decodeInputManifest(revision.input_manifest);
+  decodeDossierCoverage(revision.coverage, inputManifest.kind);
   return {
-    revisionId: decodeString(raw.revision_id, "revision_id"),
-    revisionRef: decodeString(raw.revision_ref, "revision_ref"),
-    isCurrent: decodeBoolean(raw.is_current, "is_current"),
-    citationCount: decodeInteger(raw.citation_count, "citation_count"),
-    inputManifest: decodeInputManifest(raw.input_manifest),
-    instruction: decodePresence(raw.instruction, (v) =>
+    revisionId: decodeString(revision.revision_id, "revision_id"),
+    revisionRef: decodeString(revision.revision_ref, "revision_ref"),
+    isCurrent: decodeBoolean(revision.is_current, "is_current"),
+    citationCount: decodeInteger(revision.citation_count, "citation_count"),
+    inputManifest,
+    instruction: decodePresence(revision.instruction, (v) =>
       decodeString(v, "instruction"),
     ),
-    creatorUserId: decodePresence(raw.creator_user_id, (v) =>
+    creatorUserId: decodePresence(revision.creator_user_id, (v) =>
       decodeString(v, "creator_user_id"),
     ),
-    modelProvider: decodePresence(raw.model_provider, (v) =>
+    modelProvider: decodePresence(revision.model_provider, (v) =>
       decodeString(v, "model_provider"),
     ),
-    modelName: decodePresence(raw.model_name, (v) =>
+    modelName: decodePresence(revision.model_name, (v) =>
       decodeString(v, "model_name"),
     ),
-    totalTokens: decodePresence(raw.total_tokens, (v) =>
+    totalTokens: decodePresence(revision.total_tokens, (v) =>
       decodeInteger(v, "total_tokens"),
     ),
-    createdAt: decodeString(raw.created_at, "created_at"),
-    promotedAt: decodePresence(raw.promoted_at, (v) =>
+    createdAt: decodeString(revision.created_at, "created_at"),
+    promotedAt: decodePresence(revision.promoted_at, (v) =>
       decodeString(v, "promoted_at"),
     ),
   };
@@ -382,63 +631,107 @@ export function decodeDossierRevisionSummaries(
 }
 
 function decodeFailedFacts(raw: unknown): DossierFailedFacts {
-  if (!isRecord(raw)) fail("failure facts must be an object");
+  const failure = expectExactRecord(
+    raw,
+    ["failure_code", "detail", "support"],
+    "failure facts",
+  );
   return {
-    failureCode: decodeFailureCode(raw.failure_code),
-    detail: decodePresence(raw.detail, (v) => decodeString(v, "detail")),
-    support: decodePresence(raw.support, decodeSupport),
+    failureCode: decodeFailureCode(failure.failure_code),
+    detail: decodePresence(failure.detail, (v) => decodeString(v, "detail")),
+    support: decodePresence(failure.support, decodeSupport),
   };
 }
 
 function decodeCancelledFacts(raw: unknown): DossierCancelledFacts {
-  if (!isRecord(raw)) fail("cancellation facts must be an object");
+  const cancellation = expectExactRecord(
+    raw,
+    ["actor", "at"],
+    "cancellation facts",
+  );
   return {
-    actor: decodePresence(raw.actor, (v) => decodeString(v, "actor")),
-    at: decodeString(raw.at, "at"),
+    actor: decodePresence(cancellation.actor, (v) => decodeString(v, "actor")),
+    at: decodeString(cancellation.at, "at"),
   };
 }
 
 export function decodeDossierBuildSummary(raw: unknown): DossierBuildSummary {
-  if (!isRecord(raw)) fail("build summary must be an object");
+  const build = expectExactRecord(
+    raw,
+    [
+      "handle",
+      "requester_user_id",
+      "instruction",
+      "created_at",
+      "execution",
+      "failure",
+      "cancellation",
+    ],
+    "build summary",
+  );
   return {
-    handle: decodeString(raw.handle, "handle"),
-    requesterUserId: decodePresence(raw.requester_user_id, (v) =>
+    handle: decodeString(build.handle, "handle"),
+    requesterUserId: decodePresence(build.requester_user_id, (v) =>
       decodeString(v, "requester_user_id"),
     ),
-    instruction: decodePresence(raw.instruction, (v) =>
+    instruction: decodePresence(build.instruction, (v) =>
       decodeString(v, "instruction"),
     ),
-    createdAt: decodeString(raw.created_at, "created_at"),
-    execution: decodePresence(raw.execution, (v) => {
-      if (!isRecord(v)) fail("execution must be an object");
-      return { phase: decodeExecutionPhase(v.phase) };
+    createdAt: decodeString(build.created_at, "created_at"),
+    execution: decodePresence(build.execution, (v) => {
+      const execution = expectExactRecord(v, ["phase"], "execution");
+      return { phase: decodeExecutionPhase(execution.phase) };
     }),
-    failure: decodePresence(raw.failure, decodeFailedFacts),
-    cancellation: decodePresence(raw.cancellation, decodeCancelledFacts),
+    failure: decodePresence(build.failure, decodeFailedFacts),
+    cancellation: decodePresence(build.cancellation, decodeCancelledFacts),
   };
 }
 
 export function decodeMediaAbstract(raw: unknown): MediaAbstract {
-  if (!isRecord(raw)) fail("media abstract must be an object");
-  switch (raw.kind) {
-    case "Building":
+  const discriminated = expectRecord(raw, "media abstract");
+  switch (discriminated.kind) {
+    case "Building": {
+      expectExactRecord(discriminated, ["kind"], "Building media abstract");
       return { kind: "Building" };
-    case "Ready":
+    }
+    case "Ready": {
+      const abstract = expectExactRecord(
+        discriminated,
+        ["kind", "summary_md"],
+        "Ready media abstract",
+      );
       return {
         kind: "Ready",
-        summaryMd: decodeString(raw.summary_md, "summary_md"),
+        summaryMd: decodeString(abstract.summary_md, "summary_md"),
       };
-    case "Stale":
+    }
+    case "Stale": {
+      const abstract = expectExactRecord(
+        discriminated,
+        ["kind", "summary_md"],
+        "Stale media abstract",
+      );
       return {
         kind: "Stale",
-        summaryMd: decodeString(raw.summary_md, "summary_md"),
+        summaryMd: decodeString(abstract.summary_md, "summary_md"),
       };
-    case "Failed":
+    }
+    case "Failed": {
+      expectExactRecord(discriminated, ["kind"], "Failed media abstract");
       return { kind: "Failed" };
-    case "NotAvailable":
+    }
+    case "NotAvailable": {
+      expectExactRecord(
+        discriminated,
+        ["kind"],
+        "NotAvailable media abstract",
+      );
       return { kind: "NotAvailable" };
+    }
     default:
-      return fail(`unknown media abstract kind ${JSON.stringify(raw.kind)}`);
+      return fail(
+        `unknown media abstract kind ${JSON.stringify(discriminated.kind)}`,
+      );
   }
 }
 
@@ -464,43 +757,72 @@ function decodeDossierIdentity(
 ):
   | { kind: "Resource"; title: string; activation: ResourceActivation }
   | { kind: "Idea"; title: string } {
-  if (!isRecord(raw)) fail("identity must be an object");
-  if (raw.kind === "Idea") {
-    return { kind: "Idea", title: decodeString(raw.title, "identity.title") };
+  const discriminated = expectRecord(raw, "identity");
+  if (discriminated.kind === "Idea") {
+    const identity = expectExactRecord(
+      discriminated,
+      ["kind", "title"],
+      "Idea identity",
+    );
+    return {
+      kind: "Idea",
+      title: decodeString(identity.title, "identity.title"),
+    };
   }
-  if (raw.kind === "Resource") {
-    const activation = normalizeResourceActivation(raw.activation);
+  if (discriminated.kind === "Resource") {
+    const identity = expectExactRecord(
+      discriminated,
+      ["kind", "title", "activation"],
+      "Resource identity",
+    );
+    const activation = normalizeResourceActivation(identity.activation);
     if (activation === null) fail("identity.activation must be valid");
     return {
       kind: "Resource",
-      title: decodeString(raw.title, "identity.title"),
+      title: decodeString(identity.title, "identity.title"),
       activation,
     };
   }
-  return fail(`unknown identity kind ${JSON.stringify(raw.kind)}`);
+  return fail(
+    `unknown identity kind ${JSON.stringify(discriminated.kind)}`,
+  );
 }
 
 export function decodeDossierHead(raw: unknown): DecodedDossierHead {
-  if (!isRecord(raw)) fail("head must be an object");
+  const head = expectExactRecord(
+    raw,
+    [
+      "artifact_id",
+      "artifact_ref",
+      "identity",
+      "current_revision",
+      "freshness",
+      "active_build",
+      "latest_unsuccessful_build",
+      "revision_count",
+      "media_abstract",
+    ],
+    "head",
+  );
   return {
-    artifactId: decodePresence(raw.artifact_id, (v) =>
+    artifactId: decodePresence(head.artifact_id, (v) =>
       decodeString(v, "artifact_id"),
     ),
-    artifactRef: decodePresence(raw.artifact_ref, (v) =>
+    artifactRef: decodePresence(head.artifact_ref, (v) =>
       decodeString(v, "artifact_ref"),
     ),
     currentRevision: decodePresence(
-      raw.current_revision,
+      head.current_revision,
       decodeDossierRevision,
     ),
-    freshness: decodePresence(raw.freshness, decodeFreshness),
-    activeBuild: decodePresence(raw.active_build, decodeDossierBuildSummary),
+    freshness: decodePresence(head.freshness, decodeFreshness),
+    activeBuild: decodePresence(head.active_build, decodeDossierBuildSummary),
     latestUnsuccessfulBuild: decodePresence(
-      raw.latest_unsuccessful_build,
+      head.latest_unsuccessful_build,
       decodeDossierBuildSummary,
     ),
-    revisionCount: decodeInteger(raw.revision_count, "revision_count"),
-    mediaAbstract: decodePresence(raw.media_abstract, decodeMediaAbstract),
-    identity: decodePresence(raw.identity, decodeDossierIdentity),
+    revisionCount: decodeInteger(head.revision_count, "revision_count"),
+    mediaAbstract: decodePresence(head.media_abstract, decodeMediaAbstract),
+    identity: decodePresence(head.identity, decodeDossierIdentity),
   };
 }

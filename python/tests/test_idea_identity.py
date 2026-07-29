@@ -120,7 +120,12 @@ def test_resolver_decoder_rejects_every_mixed_field_combination() -> None:
     key = {"version": "v1", "title_key": "entropy", "disambiguator_key": None}
     mixed_shapes = [
         # Existing must carry only the offered id.
-        {"kind": "Existing", "idea_subject_id": some_id, "display_title": "Entropy", "idea_key": None},
+        {
+            "kind": "Existing",
+            "idea_subject_id": some_id,
+            "display_title": "Entropy",
+            "idea_key": None,
+        },
         {"kind": "Existing", "idea_subject_id": some_id, "display_title": None, "idea_key": key},
         {"kind": "Existing", "idea_subject_id": None, "display_title": None, "idea_key": None},
         # New must carry a title and key but never an id.
@@ -128,7 +133,12 @@ def test_resolver_decoder_rejects_every_mixed_field_combination() -> None:
         {"kind": "New", "idea_subject_id": None, "display_title": None, "idea_key": key},
         {"kind": "New", "idea_subject_id": None, "display_title": "Entropy", "idea_key": None},
         # Unresolved carries no data regardless of populated fields.
-        {"kind": "Unresolved", "idea_subject_id": some_id, "display_title": "Entropy", "idea_key": key},
+        {
+            "kind": "Unresolved",
+            "idea_subject_id": some_id,
+            "display_title": "Entropy",
+            "idea_key": key,
+        },
     ]
     for shape in mixed_shapes:
         assert isinstance(

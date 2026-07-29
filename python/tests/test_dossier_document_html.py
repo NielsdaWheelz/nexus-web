@@ -182,9 +182,7 @@ def test_rejects_reparse_shape_divergence(monkeypatch: pytest.MonkeyPatch) -> No
 
     monkeypatch.setattr(document_html, "_serialize", diverging_serialize)
     with pytest.raises(DocumentHtmlError, match="changes shape when reparsed"):
-        accept_model_article(
-            '<article><section id="s"><h2>H</h2><p>A</p></section></article>'
-        )
+        accept_model_article('<article><section id="s"><h2>H</h2><p>A</p></section></article>')
 
 
 def test_compile_requires_exact_citation_order() -> None:

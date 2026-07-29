@@ -25,7 +25,6 @@ note). Structured synthesis is a pure decode/scaffold module: it never calls a
 provider, so these tests need no DB and no LLM stub.
 """
 
-
 import pytest
 from provider_runtime import (
     Absent,
