@@ -12,7 +12,7 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.config import Settings, get_settings
 from nexus.db.session import get_db
 from nexus.responses import ok, success_response
-from nexus.schemas.command_palette import CommandPaletteSelectionRecordRequest
+from nexus.schemas.nexus_history import NexusSelectionRecordRequest
 from nexus.schemas.reader import ReaderProfilePatch
 from nexus.schemas.user import UpdateProfileRequest
 from nexus.schemas.workspace_session import (
@@ -21,7 +21,7 @@ from nexus.schemas.workspace_session import (
     WorkspaceSessionOut,
     WorkspaceSessionPutRequest,
 )
-from nexus.services import command_palette as command_palette_service
+from nexus.services import nexus_history as nexus_history_service
 from nexus.services import reader as reader_service
 from nexus.services import users as users_service
 from nexus.services import workspace_sessions as workspace_sessions_service
@@ -95,33 +95,28 @@ def patch_reader_profile(
     return ok(result)
 
 
-@router.get("/me/palette-history")
-def get_palette_history(
+@router.get("/me/nexus-history")
+def get_nexus_history(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
     query: Annotated[str | None, Query(max_length=500)] = None,
 ) -> dict:
-    """Get command palette usage history for the current viewer."""
-    result = command_palette_service.get_history_for_viewer(db, viewer.user_id, query=query)
+    """Get Nexus usage history for the current viewer."""
+    result = nexus_history_service.get_history_for_viewer(db, viewer.user_id, query=query)
     return ok(result)
 
 
-@router.post("/me/palette-selections")
-def post_palette_selection(
-    body: CommandPaletteSelectionRecordRequest,
+@router.post("/me/nexus-selections")
+def post_nexus_selection(
+    body: NexusSelectionRecordRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Record one accepted command palette selection for the current viewer."""
-    result = command_palette_service.record_selection_for_viewer(
+    """Record one accepted internal Nexus selection for the current viewer."""
+    result = nexus_history_service.record_selection_for_viewer(
         db,
         viewer.user_id,
-        query=body.query,
-        target_key=body.target_key,
-        target_kind=body.target_kind,
-        target_href=body.target_href,
-        title_snapshot=body.title_snapshot,
-        source=body.source,
+        request=body,
     )
     return ok(result)
 

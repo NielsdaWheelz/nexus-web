@@ -14,7 +14,7 @@ import type { BranchAnchor, BranchDraft } from "@/lib/conversations/types";
  * The destination is the send target: a null conversation is a fresh `New`
  * conversation (created atomically by the send — no pre-create); an existing
  * conversation with no reply parent is the still-`Empty` conversation of the
- * generic resource-context launcher; otherwise it is a `Reply` to the active
+ * generic resource-context creator; otherwise it is a `Reply` to the active
  * leaf. Insertion precedence: an explicit branch-reply (fork) wins; then a plain
  * continuation reply; the reader quote is orthogonal and rides in `reader_selection`.
  */

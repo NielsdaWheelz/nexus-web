@@ -3,12 +3,11 @@
 import { ArrowLeft, CopyPlus, RotateCw } from "lucide-react";
 import { useLayoutEffect } from "react";
 import type {
-  SwitchboardFindScope,
   SwitchboardItem,
   SwitchboardRowModel,
 } from "@/lib/switchboard/model";
 import { SWITCHBOARD_FIND_SCOPES } from "@/lib/switchboard/model";
-import type { LauncherAction } from "@/lib/launcher/model";
+import type { NexusAction, NexusFindScope } from "@/lib/nexus/model";
 import {
   beginSwitchboardPerformance,
   completeSwitchboardPerformance,
@@ -38,7 +37,7 @@ export default function SwitchboardFind({
   onRetryDeep,
 }: {
   query: string;
-  scope: SwitchboardFindScope;
+  scope: NexusFindScope;
   rows: readonly SwitchboardRowModel[];
   activeId: string | null;
   busy: boolean;
@@ -47,12 +46,12 @@ export default function SwitchboardFind({
   deepFailed: boolean;
   onBack: () => void;
   onQuery: (query: string) => void;
-  onScope: (scope: SwitchboardFindScope) => void;
+  onScope: (scope: NexusFindScope) => void;
   onActive: (id: string) => void;
   onSelect: (row: SwitchboardRowModel) => void;
   onFork: (row: SwitchboardRowModel) => void;
-  actionsFor: (item: SwitchboardItem) => readonly LauncherAction[];
-  onAction: (action: LauncherAction) => void;
+  actionsFor: (item: SwitchboardItem) => readonly NexusAction[];
+  onAction: (action: NexusAction) => void;
   onRetryOpenables: () => void;
   onRetryDeep: () => void;
 }) {

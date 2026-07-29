@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   getQuickAction,
   SWITCHBOARD_QUICK_ACTION_IDS,
-} from "@/lib/launcher/quickActions";
+} from "@/lib/nexus/quickActions";
 import { resolveWorkspaceActivationRouteId } from "@/lib/panes/paneIdentity";
 import { SWITCHBOARD_PLACES } from "@/lib/switchboard/places";
 import SwitchboardRoot from "./SwitchboardRoot";

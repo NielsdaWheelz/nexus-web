@@ -115,7 +115,7 @@ In order:
 
 ## The subtraction ledger
 
-- **Browse dies** — Launcher Add workbench + Search already own it (523 lines).
+- **Browse dies** — Nexus Add workbench + Search already own it (523 lines).
   → spec `cutovers/browse-surface-deletion-hard-cutover.md`
 - **Today dies as a surface** — a 119-line date-lookup wrapper around Notes;
   keep `daily_note_pages`, move "jump to today" into the Notes pane.

@@ -496,11 +496,11 @@ test("records private activity through the BFF and renders filtered Stats", asyn
       response.request().method() === "GET" &&
       new URL(response.url()).pathname === "/api/consumption/stats",
   );
-  const launcher = page.getByRole("dialog", { name: "Launcher" });
-  await launcher
-    .getByRole("combobox", { name: "Search, add, or ask" })
+  const nexus = page.getByRole("dialog", { name: "Nexus" });
+  await nexus
+    .getByRole("combobox", { name: "Find anything" })
     .fill("stats");
-  await launcher.getByRole("option", { name: /^Stats\b/ }).click();
+  await nexus.getByRole("option", { name: /^Stats\b/ }).click();
 
   const initialResponse = await Promise.race([
     initialStats,
@@ -601,7 +601,7 @@ test("records private activity through the BFF and renders filtered Stats", asyn
   await expect
     .poll(async () => {
       const response = await page.request.get(
-        "/api/me/palette-history?query=stats",
+        "/api/me/nexus-history?query=stats",
       );
       if (!response.ok()) return false;
       const body = (await response.json()) as {

@@ -1,7 +1,7 @@
 /**
- * PodcastsPaneBody — focused browser tests for the Browse launcher integration (spec §14).
+ * PodcastsPaneBody — focused browser tests for the Nexus podcast entry point.
  * Renders the full pane body with stubbed fetch and asserts that the Browse toolbar button
- * dispatches OPEN_LAUNCHER_EVENT with lane:'browse'.
+ * requests the registered podcast discovery action.
  */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -10,8 +10,8 @@ import {
   PaneReturnJourneyHarness,
   RETURN_JOURNEY_VISIT_ID,
 } from "@/__tests__/helpers/paneReturnJourney";
-import { OPEN_LAUNCHER_EVENT } from "@/lib/launcher/launcherEvents";
-import type { OpenLauncherDetail } from "@/lib/launcher/launcherEvents";
+import { NEXUS_OPEN_REQUESTED_EVENT } from "@/lib/nexus/events";
+import type { NexusOpenIntent } from "@/lib/nexus/model";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import type { PaneReturnMementoCommands } from "@/lib/workspace/paneReturnMemento";
 import PodcastsPaneBody from "./PodcastsPaneBody";
@@ -93,7 +93,7 @@ function podcastSubscription(index: number) {
   };
 }
 
-describe("PodcastsPaneBody — Browse launcher integration", () => {
+describe("PodcastsPaneBody — Nexus podcast integration", () => {
   beforeEach(() => {
     window.history.replaceState({}, "", "/podcasts");
     stubFetch();
@@ -103,12 +103,12 @@ describe("PodcastsPaneBody — Browse launcher integration", () => {
     vi.unstubAllGlobals();
   });
 
-  it("Browse toolbar button dispatches OPEN_LAUNCHER_EVENT with lane:'browse'", async () => {
-    const dispatched: OpenLauncherDetail[] = [];
+  it("Browse toolbar button requests podcast discovery", async () => {
+    const dispatched: NexusOpenIntent[] = [];
     const handler = (event: Event) => {
-      dispatched.push((event as CustomEvent<OpenLauncherDetail>).detail);
+      dispatched.push((event as CustomEvent<NexusOpenIntent>).detail);
     };
-    window.addEventListener(OPEN_LAUNCHER_EVENT, handler);
+    window.addEventListener(NEXUS_OPEN_REQUESTED_EVENT, handler);
 
     try {
       renderPodcastsPane();
@@ -119,9 +119,12 @@ describe("PodcastsPaneBody — Browse launcher integration", () => {
       await waitFor(() => {
         expect(dispatched).toHaveLength(1);
       });
-      expect(dispatched[0]).toMatchObject({ lane: "browse" });
+      expect(dispatched[0]).toEqual({
+        kind: "QuickAction",
+        actionId: "Nexus.Quick.Podcast",
+      });
     } finally {
-      window.removeEventListener(OPEN_LAUNCHER_EVENT, handler);
+      window.removeEventListener(NEXUS_OPEN_REQUESTED_EVENT, handler);
     }
   });
 

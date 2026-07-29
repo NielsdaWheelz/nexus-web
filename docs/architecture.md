@@ -334,7 +334,7 @@ The tables group into these domains:
 **Identity / auth / sessions** — `users` (PK = Supabase `sub`),
 `billing_accounts`, `billing_entitlement_overrides` (+events),
 `stripe_webhook_events`, `extension_sessions`, `auth_handoff_codes`,
-`reader_profiles`, `workspace_sessions`, `command_palette_usages`. LLM access
+`reader_profiles`, `workspace_sessions`, `nexus_usages`. LLM access
 runs on platform credentials only — there is no per-user key table.
 
 **Media / ingestion** — `media` (the central readable entity; PDF `plain_text`
@@ -668,7 +668,7 @@ Other identity surfaces:
 ### 7.6 Search, retrieval & the embedding pipeline
 
 One core `search(db, viewer, SearchQuery)` (the `services/search/` package) serves
-the in-app search page, mobile Switchboard, desktop Launcher, and chat
+the in-app search page, mobile Switchboard, desktop Nexus, and chat
 `app_search` agent tool (RAG). The request is a single typed `SearchQuery` value
 object parsed at the
 edge; the user-facing taxonomy is **six kinds** (Documents, Notes, Highlights,
@@ -1180,7 +1180,7 @@ table, or merge contract (§ job registry, below). Visibility predicates
 (`visible_podcast_ids_cte_sql`, `visible_content_credit_rows_sql`,
 `visible_contributor_ids_cte_sql`) live solely in `auth/permissions.py`;
 persisted-chat-ref checks live in `chat_context_refs.py`. There is no `/authors`
-directory or root Authors pane; author search lives in the universal Launcher
+directory or root Authors pane; author search lives in desktop Nexus
 at `/search?kinds=people`, and author chips link to the `/authors/{handle}`
 detail-only pane (works list, curator-gated rename).
 
@@ -1234,7 +1234,7 @@ stale/reclaimed sync worker's lease check rolls the whole step back rather than
 double-inserting.
 
 The **Lectern** is the one ordered, mixed-media list of outstanding intentions
-(podcast, video, reader, agent, and Launcher actions all address it); **Now
+(podcast, video, reader, agent, and Nexus actions all address it); **Now
 Playing** is one device-local audio session, not a second durable list.
 `services/consumption/` is the sole backend consumption owner, split by table:
 `_lectern_store.py` (`consumption_queue_items` membership/order + the
@@ -1299,16 +1299,20 @@ the visible embedded-video pane; it never exposes the raw `nx_device` value.
 breakdowns, derived sessions, and a deterministic Year in Reading view. The
 full contract is [`modules/consumption-activity.md`](modules/consumption-activity.md).
 
-### 8.10 Search, desktop Launcher, and mobile Switchboard
+### 8.10 Search, desktop Nexus, and mobile Switchboard
 
 The same `search()` backs the `/search` results page, mobile Switchboard deep
-results, desktop Launcher results, and the chat `app_search` tool. All consume
-the canonical frontend `SearchQuery` model. The desktop **Launcher**
-(`components/launcher/`, `lib/launcher/`) retains its omnibox, lanes, ranking,
-frecency, keybinding, and direct Add behavior.
+results, desktop Nexus results, and the chat `app_search` tool. All consume
+the canonical frontend `SearchQuery` model. Desktop **Nexus**
+(`components/nexus/`, `lib/nexus/`) is a controlled switchboard presentation
+over explicit result projections, not a second search model: its zero state is
+existing opens plus New Chat, New Note, New Page, and Import; Find consumes
+the canonical search projection; Web Search is an explicit Import-URL
+candidate. Enter/click follows the selected identity and Shift+Enter/Shift+click
+forks it.
 
 Mobile uses the **Nexus Switchboard** (`components/switchboard/`,
-`lib/switchboard/`) instead of the Launcher palette or app-navigation drawer.
+`lib/switchboard/`) instead of an app-navigation drawer.
 Its Root paints synchronously from workspace state and fixed Place/Quick
 projections. Find merges local pane/destination matches, one-character
 route-only openable resources, and two-character canonical search results while
@@ -1391,7 +1395,7 @@ they open over Resume and never become panes.
   `lib/navigation/destinations.ts` owns destination identity;
   `components/appnav/navModel.ts` independently owns the flat desktop rail and
   mobile Places projections. Mobile global access is the bottom Nexus control
-  plus Switchboard, not a navigation drawer or Launcher palette. Section routes
+  plus Switchboard, not a navigation drawer or a second desktop palette. Section routes
   derive semantic navigation ownership from
   `header.destinationId`; resource routes (notably `/media/{id}`) declare one
   `sectionDestinationId`, with no duplicate field or prefix map. All cross-pane
@@ -1404,7 +1408,7 @@ they open over Resume and never become panes.
   closing global/account surfaces does not strand or steal focus. Lectern is
   the brand and authenticated-home target.
   Pinning is intentionally absent; personalized retrieval lives in the Lectern
-  Reading Slate and Launcher ranking. See
+  Reading Slate and Nexus ranking. See
   [`modules/app-navigation.md`](modules/app-navigation.md).
 - **First paint: stream, don't gate.** The `(authenticated)` layout runs only
   **local** work (`verifySession`, header-derived `loadRenderEnvironment`) above a
@@ -1459,7 +1463,7 @@ they open over Resume and never become panes.
   `verifySession()` is the one verified-session boundary for protected pages/
   actions; the SSE client mints fresh single-use tokens per connect.
 - **Surfaces** (`components/*`, `app/(authenticated)/**/*PaneBody.tsx`): reader,
-  chat, player, notes editor, command palette, search, contributors, libraries/
+  chat, player, notes editor, Nexus, search, contributors, libraries/
   items, billing/settings — all rendered as pane bodies. UI primitives live in
   `components/ui/*`; cross-cutting hooks in `lib/ui/*`; theming via a `nx-theme`
   cookie; keybindings in `lib/keybindings.ts`; Android-shell adaptation in
@@ -1655,7 +1659,7 @@ The things most likely to bite you, distilled:
 | Auth / billing / keys / rate limit                                | `python/nexus/services/{user_keys,billing,billing_entitlements,rate_limit}.py`, `python/nexus/auth/`                                                                                                   |
 | Frontend BFF / auth / SSE                                         | `apps/web/src/lib/{api,auth,supabase}/`                                                                                                                                                                |
 | Workspace / panes / mobile viewport                               | `apps/web/src/lib/{workspace,panes,mobileViewport}/`, `apps/web/src/components/workspace/`                                                                                                             |
-| Desktop Launcher / mobile Switchboard                             | `apps/web/src/components/{launcher,switchboard}/`, `apps/web/src/lib/{launcher,switchboard}/`                                                                                                          |
+| Desktop Nexus / mobile Switchboard                                | `apps/web/src/components/{nexus,switchboard}/`, `apps/web/src/lib/{nexus,switchboard}/`                                                                                                                |
 | Reader / chat / player UI                                         | `apps/web/src/components/{reader,chat}/`, `apps/web/src/lib/{reader,highlights,conversations,player,lectern}/`                                                                                         |
 | Android shell                                                     | `apps/android/app/src/main/`                                                                                                                                                                           |
 | Browser extension                                                 | `apps/extension/`                                                                                                                                                                                      |

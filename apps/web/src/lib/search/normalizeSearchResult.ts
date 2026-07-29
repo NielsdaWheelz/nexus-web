@@ -251,7 +251,12 @@ function normalizeSearchResultOrNull(
   if (typeof row.id !== "string") {
     return null;
   }
-  if (typeof row.score !== "number") {
+  if (
+    typeof row.score !== "number" ||
+    !Number.isFinite(row.score) ||
+    row.score < 0 ||
+    row.score > 1
+  ) {
     return null;
   }
   if (typeof row.snippet !== "string") {

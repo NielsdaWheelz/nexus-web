@@ -11,7 +11,7 @@ import {
 
 // The lightweight author-deduplication cutover (§7 / AC 21, 29, 30) removes the
 // `/authors` directory root and the fixed Authors nav peer: "Go to Authors" now
-// lives slot-less in the Launcher/keybindings and lands on `/search?kinds=people`.
+// lives slot-less in Nexus/keybindings and lands on `/search?kinds=people`.
 // These journeys assert that surface, the retained author detail page, the
 // media-author editor, and the hard 404s left behind by the removed routes.
 
@@ -190,18 +190,18 @@ test.describe("author journeys", () => {
       await route.continue();
     });
 
-    // Reach the destination the way the product does: the Launcher "Go to
+    // Reach the destination the way the product does: the Nexus "Go to
     // Authors" command (derived slot-less from the shared destination registry).
-    await page.goto("/libraries?launcher=1");
-    const launcher = page.getByRole("dialog", { name: "Launcher" });
-    await expect(launcher).toBeVisible();
-    const launcherInput = launcher.getByRole("combobox", {
-      name: "Search, add, or ask",
+    await page.goto("/libraries?nexus=1&intent=Root");
+    const nexus = page.getByRole("dialog", { name: "Nexus" });
+    await expect(nexus).toBeVisible();
+    const nexusInput = nexus.getByRole("combobox", {
+      name: "Find anything",
     });
-    await launcherInput.fill("Authors");
-    const authorsCommand = launcher
+    await nexusInput.fill("Authors");
+    const authorsCommand = nexus
       .getByRole("listbox")
-      .getByRole("option", { name: "Authors", exact: true });
+      .getByRole("option", { name: /^Authors\b/ });
     await expect(authorsCommand).toBeVisible();
     await authorsCommand.click();
 
@@ -212,8 +212,8 @@ test.describe("author journeys", () => {
       );
     });
 
-    // Everything recorded so far was the Launcher's OWN typeahead: `fill("Authors")`
-    // drives the palette's `/api/search` query, which is not the landing behavior AC 29
+    // Everything recorded so far was Nexus's own typeahead: `fill("Authors")`
+    // drives Nexus search, which is not the landing behavior AC 29
     // constrains. Reset the recorder now that we have navigated so the assertion below
     // scopes strictly to the blank People surface. A regressed landing fetches from a
     // post-mount effect that runs after this navigation commit, so it is still caught.
@@ -231,7 +231,7 @@ test.describe("author journeys", () => {
     // The search box is present, usable, and owns focus on this landing (AC 29). The
     // SSR input renders `disabled` until hydration (so its `autoFocus` is inert); the
     // fix is coordinated — SearchPaneBody focuses the box on the mount flip in response
-    // to a Launcher-set request, and the Launcher suppresses its own return-focus on a
+    // to a Nexus-set request, and Nexus suppresses its own return-focus on a
     // navigating close so it doesn't yank focus back to <body>.
     const searchInput = searchPane.getByLabel("Search content");
     await expect(searchInput).toBeEnabled();

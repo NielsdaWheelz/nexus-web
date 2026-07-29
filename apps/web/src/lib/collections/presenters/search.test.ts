@@ -9,6 +9,7 @@ function viewModel(
   const resourceRef = "content_chunk:c1b2c3d4-e5f6-7890-abcd-ef1234567890";
   return {
     key: "content_chunk-chunk-1",
+    score: 0.5,
     resourceRef,
     ownerResourceRef: "media:b1b2c3d4-e5f6-7890-abcd-ef1234567890",
     activation: {

@@ -45,18 +45,18 @@ test.describe("hydration determinism", () => {
     });
   }
 
-  test("desktop launcher cold-load", async ({ page }, testInfo) => {
+  test("desktop Nexus cold-load", async ({ page }, testInfo) => {
     const sentry = await installHydrationSentry(page);
     try {
       await gotoSinglePaneWorkspace(
         page,
         workspaceE2eDeviceId(testInfo, "e2e-hydration"),
-        "/libraries?launcher=1",
+        "/libraries?nexus=1&intent=Root",
       );
-      await expect(page.getByRole("dialog", { name: "Launcher" })).toBeVisible({
+      await expect(page.getByRole("dialog", { name: "Nexus" })).toBeVisible({
         timeout: 15_000,
       });
-      await sentry.expectClean("desktop launcher");
+      await sentry.expectClean("desktop Nexus");
     } finally {
       sentry.dispose();
     }
@@ -100,13 +100,13 @@ test.describe("hydration determinism mobile", () => {
     await coldLoad(page, testInfo, "/libraries");
   });
 
-  test("mobile launcher cold-load", async ({ page }, testInfo) => {
+  test("mobile Nexus cold-load", async ({ page }, testInfo) => {
     const sentry = await installHydrationSentry(page);
     try {
       await gotoSinglePaneWorkspace(
         page,
         workspaceE2eDeviceId(testInfo, "e2e-hydration"),
-        "/libraries?launcher=1",
+        "/libraries?nexus=1&intent=Root",
       );
       await expect(page.getByRole("dialog", { name: "Nexus" })).toBeVisible({
         timeout: 15_000,
@@ -127,9 +127,9 @@ test.describe("hydration determinism Mac", () => {
       await gotoSinglePaneWorkspace(
         page,
         workspaceE2eDeviceId(testInfo, "e2e-hydration"),
-        "/libraries?launcher=1",
+        "/libraries?nexus=1&intent=Root",
       );
-      await expect(page.getByText(/\u2318K/).first()).toBeVisible({
+      await expect(page.getByRole("button", { name: /Open Nexus/i })).toBeVisible({
         timeout: 15_000,
       });
       await sentry.expectClean("Mac shortcut labels");

@@ -180,6 +180,7 @@ export type SearchApiResult =
 
 export interface SearchResultRowViewModel {
   key: string;
+  score: number;
   resourceRef: string;
   ownerResourceRef: string;
   activation: ResourceActivation;

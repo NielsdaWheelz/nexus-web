@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from sqlalchemy import event, func, select, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import CommandPaletteUsage, Page, PassageAnchor, ResourceEdge
+from nexus.db.models import NexusUsage, Page, PassageAnchor, ResourceEdge
 from nexus.schemas.presence import Absent, Present
 from nexus.schemas.resource_openables import ResourceOpenableSearchRequest
 from nexus.services.bootstrap import ensure_user_and_default_library
@@ -108,7 +108,7 @@ def test_openables_calls_candidate_owner_exactly_once(
         {
             "q": "s",
             "schemes": {"page"},
-            "limit_per_source": 50,
+            "limit_per_source": OPENABLE_SEARCH_RESULT_LIMIT,
         }
     ]
 
@@ -230,7 +230,7 @@ def test_search_performs_no_resource_history_or_passage_writes(
     before = (
         db_session.scalar(select(func.count()).select_from(ResourceEdge)),
         db_session.scalar(select(func.count()).select_from(PassageAnchor)),
-        db_session.scalar(select(func.count()).select_from(CommandPaletteUsage)),
+        db_session.scalar(select(func.count()).select_from(NexusUsage)),
     )
 
     search_openable_resources(
@@ -242,7 +242,7 @@ def test_search_performs_no_resource_history_or_passage_writes(
     after = (
         db_session.scalar(select(func.count()).select_from(ResourceEdge)),
         db_session.scalar(select(func.count()).select_from(PassageAnchor)),
-        db_session.scalar(select(func.count()).select_from(CommandPaletteUsage)),
+        db_session.scalar(select(func.count()).select_from(NexusUsage)),
     )
     assert after == before
 

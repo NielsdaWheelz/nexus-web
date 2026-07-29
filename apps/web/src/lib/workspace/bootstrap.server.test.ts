@@ -235,7 +235,10 @@ describe("loadWorkspaceBootstrap", () => {
   });
 
   it("treats a root shell query as Resume instead of a pane href", async () => {
-    requestHeaders.set(REQUEST_PATH_HEADER, "/?launcher=1&lane=browse&q=kafka");
+    requestHeaders.set(
+      REQUEST_PATH_HEADER,
+      "/?nexus=1&intent=WebSearch&q=kafka",
+    );
     requestCookies.set(DEVICE_COOKIE_NAME, "dev-1");
     const ownState = workspace({
       primaryPanes: [primary("pane-notes", "/notes")],
@@ -250,7 +253,7 @@ describe("loadWorkspaceBootstrap", () => {
 
     expect(visibleHrefs(result.initialState)).toEqual(["/notes"]);
     expect(mockCallFastAPI).not.toHaveBeenCalledWith(
-      "/?launcher=1&lane=browse&q=kafka",
+      "/?nexus=1&intent=WebSearch&q=kafka",
       expect.anything(),
     );
   });

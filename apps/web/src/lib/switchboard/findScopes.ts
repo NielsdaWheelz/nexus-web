@@ -5,14 +5,14 @@ import {
   emptySearchQuery,
   type SearchQuery,
 } from "@/lib/search/query";
-import type { SwitchboardFindScope } from "./model";
+import type { NexusFindScope } from "@/lib/nexus/model";
 
 interface SwitchboardFindProfile {
   schemes: Presence<ResourceScheme[]>;
   searchKinds: readonly SearchKind[] | null;
 }
 
-const FIND_PROFILES: Record<SwitchboardFindScope, SwitchboardFindProfile> = {
+const FIND_PROFILES: Record<NexusFindScope, SwitchboardFindProfile> = {
   All: {
     schemes: absent(),
     searchKinds: [
@@ -55,13 +55,13 @@ const FIND_PROFILES: Record<SwitchboardFindScope, SwitchboardFindProfile> = {
 };
 
 export function switchboardOpenableSchemes(
-  scope: SwitchboardFindScope,
+  scope: NexusFindScope,
 ): Presence<ResourceScheme[]> {
   return FIND_PROFILES[scope].schemes;
 }
 
 export function switchboardSearchQuery(
-  scope: SwitchboardFindScope,
+  scope: NexusFindScope,
   rawQuery: string,
 ): SearchQuery | null {
   const kinds = FIND_PROFILES[scope].searchKinds;

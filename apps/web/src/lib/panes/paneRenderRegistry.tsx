@@ -8,6 +8,7 @@ import {
 import { usePaneResolvedBodyReady } from "@/lib/workspace/paneReturnMemento";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { useReportSwitchboardPaneReady } from "@/lib/switchboard/performance";
+import { useReportNexusDesktopPaneReady } from "@/lib/nexus/performance";
 
 type PaneLoader = () => Promise<{ default: ComponentType }>;
 
@@ -72,6 +73,7 @@ export function ResolvedPaneBodyMarker({ children }: { children: ReactNode }) {
 
 function PaneBodyPerformanceMarker({ children }: { children: ReactNode }) {
   useReportSwitchboardPaneReady();
+  useReportNexusDesktopPaneReady();
   return children;
 }
 

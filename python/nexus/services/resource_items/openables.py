@@ -14,13 +14,13 @@ from nexus.schemas.resource_openables import (
 from nexus.services.resource_graph.refs import ResourceRef, parse_resource_ref
 from nexus.services.resource_items.surfaces import resource_items_out
 from nexus.services.search.candidates import (
-    REFERENCE_CANDIDATES_PER_SOURCE,
     TargetCandidate,
     candidate_resource_ref,
     reference_candidates,
 )
 
 OPENABLE_SEARCH_RESULT_LIMIT = 20
+OPENABLE_PROJECTION_BATCH_SIZE = OPENABLE_SEARCH_RESULT_LIMIT
 
 
 def search_openable_resources(
@@ -35,7 +35,7 @@ def search_openable_resources(
         viewer_id,
         q=request.q,
         schemes=schemes,
-        limit_per_source=REFERENCE_CANDIDATES_PER_SOURCE,
+        limit_per_source=OPENABLE_SEARCH_RESULT_LIMIT,
     )
 
     exact_ref = parse_resource_ref(request.q)
@@ -44,8 +44,18 @@ def search_openable_resources(
     else:
         refs = _dedupe_candidate_refs(candidates)
 
-    items = resource_items_out(db, viewer_id=viewer_id, refs=refs) if refs else []
-    admitted = [item for item in items if not item.missing and item.activation.kind == "route"]
+    admitted = []
+    for offset in range(0, len(refs), OPENABLE_PROJECTION_BATCH_SIZE):
+        items = resource_items_out(
+            db,
+            viewer_id=viewer_id,
+            refs=refs[offset : offset + OPENABLE_PROJECTION_BATCH_SIZE],
+        )
+        admitted.extend(
+            item for item in items if not item.missing and item.activation.kind == "route"
+        )
+        if len(admitted) >= OPENABLE_SEARCH_RESULT_LIMIT:
+            break
     return ResourceOpenableSearchResponse(items=admitted[:OPENABLE_SEARCH_RESULT_LIMIT])
 
 

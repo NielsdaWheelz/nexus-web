@@ -13,7 +13,7 @@ Backend owners live under `python/nexus/services/podcasts/*`, the media-level
 `python/nexus/services/youtube_video_ingest.py` and
 `python/nexus/services/youtube_transcripts.py`, and the egress helpers under
 `python/nexus/services/net/*`. Frontend podcast-management owners live under
-`apps/web/src/app/(authenticated)/podcasts/*`. The Launcher Add session composes
+`apps/web/src/app/(authenticated)/podcasts/*`. The Nexus Import session composes
 the OPML import boundary from `apps/web/src/lib/podcasts/opmlImport.ts`; it owns
 local file admission, one destination set, and aggregate result presentation,
 while the podcast backend remains the sole XML/feed/import policy owner.

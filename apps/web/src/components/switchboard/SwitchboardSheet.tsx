@@ -1,21 +1,23 @@
 "use client";
 
+import { PanelsTopLeft } from "lucide-react";
 import type { MouseEvent, ReactNode } from "react";
 import MobileSheet from "@/components/ui/MobileSheet";
 import AccountMenu from "@/components/appnav/AccountMenu";
-import AddPanel from "@/components/launcher/AddPanel";
-import AddPanelBoundary from "@/components/launcher/AddPanelBoundary";
-import TodayCapturePanel from "@/components/launcher/TodayCapturePanel";
+import AddPanel from "@/components/nexus/AddPanel";
+import AddPanelBoundary from "@/components/nexus/AddPanelBoundary";
+import TodayCapturePanel from "@/components/nexus/TodayCapturePanel";
 import { getDestination } from "@/lib/navigation/destinations";
 import { getPaneRouteIcon } from "@/lib/panes/paneRouteTable";
 import type { AppNavActivationResult } from "@/lib/panes/targetLinkActivation";
-import type { LauncherController } from "@/components/launcher/useLauncherController";
+import type { NexusController } from "@/components/nexus/useNexusController";
 import CreateLibraryPanel from "./CreateLibraryPanel";
 import SwitchboardActions from "./SwitchboardActions";
 import SwitchboardFind from "./SwitchboardFind";
 import SwitchboardPodcastPanel from "./SwitchboardPodcastPanel";
 import SwitchboardRecovery from "./SwitchboardRecovery";
 import SwitchboardRoot from "./SwitchboardRoot";
+import SwitchboardRow from "./SwitchboardRow";
 import { useSwitchboardController } from "./useSwitchboardController";
 import styles from "./switchboard.module.css";
 
@@ -56,7 +58,7 @@ export default function SwitchboardSheet({
   onAddDefect,
   onClearAddDefect,
 }: {
-  controller: LauncherController;
+  controller: NexusController;
   active: boolean;
   activeAddDefect: boolean;
   onAddDefect(error: unknown): void;
@@ -139,7 +141,7 @@ export default function SwitchboardSheet({
     />
   );
 
-  // One exhaustive switch over the page union: a new LauncherPage variant is a
+  // One exhaustive switch over the page union: a new NexusPage variant is a
   // compile error here instead of silently falling through to the Root render.
   const renderPage = (): ReactNode => {
     const page = controller.page;
@@ -180,12 +182,83 @@ export default function SwitchboardSheet({
       case "Actions":
         return (
           <SwitchboardActions
-            label={page.item.title}
+            label={page.entry.label}
             actions={page.actions}
             onBack={controller.back}
             onSelect={controller.runAction}
           />
         );
+      case "WebSearch": {
+        if (controller.webSearch === null) {
+          throw new Error("Nexus Web Search projection is unavailable");
+        }
+        const webSearch = controller.webSearch;
+        return (
+          <div className={styles.page}>
+            <header className={styles.header}>
+              <button
+                type="button"
+                className={styles.textButton}
+                onClick={controller.back}
+              >
+                Back
+              </button>
+              <h2 tabIndex={-1} data-switchboard-heading>
+                Web search
+              </h2>
+            </header>
+            <label className={styles.findInput}>
+              <span className={styles.srOnly}>Search the web</span>
+              <input
+                type="search"
+                value={webSearch.query}
+                onChange={(event) =>
+                  controller.setWebQuery(event.currentTarget.value)
+                }
+              />
+            </label>
+            {webSearch.status === "RetryableFailure" ? (
+              <p role="status">
+                Couldn’t search the web.{" "}
+                <button
+                  type="button"
+                  onClick={controller.retryWebSearch}
+                >
+                  Retry
+                </button>
+              </p>
+            ) : null}
+            <ul className={styles.rows}>
+              {webSearch.results.map((result) => (
+                <SwitchboardRow
+                  key={result.id}
+                  id={`WebResult:${result.id}`}
+                  label={result.title}
+                  metadata={result.source}
+                  onSelect={() =>
+                    controller.selectMobileWebResult(result.id, false)
+                  }
+                  actions={[
+                    {
+                      kind: "command",
+                      id: `fork-${result.id}`,
+                      label: "Open another tab",
+                      icon: <PanelsTopLeft size={16} aria-hidden="true" />,
+                      onSelect: () =>
+                        controller.selectMobileWebResult(result.id, true),
+                    },
+                  ]}
+                />
+              ))}
+            </ul>
+            <div className={styles.liveRegion} aria-live="polite">
+              {webSearch.status === "Loading"
+                ? "Searching the web…"
+                : ""}
+            </div>
+          </div>
+        );
+      }
       case "TodayCapture":
         return (
           <TodayCapturePanel

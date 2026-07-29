@@ -204,9 +204,7 @@ class User(Base):
     podcast_listening_states: Mapped[list["PodcastListeningState"]] = relationship(
         "PodcastListeningState", back_populates="user", cascade="all, delete-orphan"
     )
-    command_palette_usages: Mapped[list["CommandPaletteUsage"]] = relationship(
-        "CommandPaletteUsage", back_populates="user"
-    )
+    nexus_usages: Mapped[list["NexusUsage"]] = relationship("NexusUsage", back_populates="user")
 
 
 class Page(Base):
@@ -6164,10 +6162,10 @@ class ReaderProfile(Base):
     user: Mapped["User"] = relationship("User")
 
 
-class CommandPaletteUsage(Base):
-    """Per-user command palette usage history."""
+class NexusUsage(Base):
+    """Per-user Nexus usage history."""
 
-    __tablename__ = "command_palette_usages"
+    __tablename__ = "nexus_usages"
 
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -6180,10 +6178,8 @@ class CommandPaletteUsage(Base):
         nullable=False,
     )
     query_normalized: Mapped[str] = mapped_column(Text, nullable=False)
-    target_key: Mapped[str] = mapped_column(Text, nullable=False)
-    target_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    target_href: Mapped[str | None] = mapped_column(Text, nullable=True)
-    title_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    target_href: Mapped[str] = mapped_column(Text, nullable=False)
+    label_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
     source: Mapped[str] = mapped_column(Text, nullable=False)
     use_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
     visit_timestamps: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
@@ -6207,38 +6203,25 @@ class CommandPaletteUsage(Base):
         UniqueConstraint(
             "user_id",
             "query_normalized",
-            "target_key",
-            name="uq_command_palette_usages_user_query_target",
+            "target_href",
+            name="uq_nexus_usages_user_query_href",
         ),
-        CheckConstraint("use_count >= 1", name="ck_command_palette_usages_use_count"),
-        CheckConstraint(
-            "target_kind IN ('href', 'action', 'prefill')",
-            name="ck_command_palette_usages_target_kind",
-        ),
-        CheckConstraint(
-            "source IN ('static', 'workspace', 'recent', 'oracle', 'search', 'ai')",
-            name="ck_command_palette_usages_source",
-        ),
-        CheckConstraint(
-            "(target_kind = 'href' AND target_href IS NOT NULL) OR "
-            "(target_kind <> 'href' AND target_href IS NULL)",
-            name="ck_command_palette_usages_target_href",
-        ),
+        CheckConstraint("use_count >= 1", name="ck_nexus_usages_use_count"),
         Index(
-            "ix_command_palette_usages_user_last_used_at_id",
+            "ix_nexus_usages_user_last_used_at_id",
             "user_id",
             text("last_used_at DESC"),
             text("id DESC"),
         ),
         Index(
-            "ix_command_palette_usages_user_query_last_used_at",
+            "ix_nexus_usages_user_query_last_used_at",
             "user_id",
             "query_normalized",
             text("last_used_at DESC"),
         ),
     )
 
-    user: Mapped["User"] = relationship("User", back_populates="command_palette_usages")
+    user: Mapped["User"] = relationship("User", back_populates="nexus_usages")
 
 
 class ReaderMediaState(Base):

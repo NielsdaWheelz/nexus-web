@@ -1,18 +1,7 @@
-import type { Presence } from "@/lib/api/presence";
 import type { DestinationId } from "@/lib/navigation/destinations";
+import type { NexusFindScope } from "@/lib/nexus/model";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
-import type { WorkspaceTarget } from "@/lib/workspace/targetActivation";
 import type { WorkspaceActivationRouteId } from "@/lib/panes/paneIdentity";
-import type { LauncherAction, LauncherItem } from "@/lib/launcher/model";
-
-export type SwitchboardFindScope =
-  | "All"
-  | "Media"
-  | "Notes"
-  | "Highlights"
-  | "Chats"
-  | "Libraries"
-  | "People";
 
 export const SWITCHBOARD_FIND_SCOPES = [
   "All",
@@ -22,7 +11,7 @@ export const SWITCHBOARD_FIND_SCOPES = [
   "Chats",
   "Libraries",
   "People",
-] as const satisfies readonly SwitchboardFindScope[];
+] as const satisfies readonly NexusFindScope[];
 
 export type SwitchboardItem =
   | {
@@ -42,56 +31,6 @@ export type SwitchboardItem =
       summary: string;
       match: "Exact" | "Metadata" | "Deep";
     };
-
-export type ReplayableSubmitState =
-  | { kind: "Ready" }
-  | { kind: "Running" }
-  | { kind: "Retryable"; message: string };
-
-export type CommittedWorkflow =
-  | { kind: "TodayCapture"; replayId: string }
-  | { kind: "Page"; replayId: string }
-  | { kind: "Library"; replayId: string }
-  | { kind: "Import"; replayId: string }
-  | { kind: "PodcastSubscription"; replayId: string };
-
-export interface RetainedActivation {
-  target: WorkspaceTarget;
-  source:
-    | "Find"
-    | "Place"
-    | "TodayCapture"
-    | "Page"
-    | "Chat"
-    | "Library"
-    | "Import"
-    | "Podcast";
-  completion: Presence<CommittedWorkflow>;
-  returnTo:
-    | { kind: "Root" }
-    | { kind: "Find"; query: string; scope: SwitchboardFindScope };
-}
-
-export type LauncherPage =
-  | { kind: "Root" }
-  | { kind: "Find"; query: string; scope: SwitchboardFindScope }
-  | {
-      kind: "Actions";
-      item: LauncherItem;
-      actions: LauncherAction[];
-    }
-  | { kind: "TodayCapture"; sessionId: string }
-  | { kind: "CreatePage"; pageId: string; submit: ReplayableSubmitState }
-  | {
-      kind: "CreateLibrary";
-      nameDraft: string;
-      libraryId: string;
-      submit: ReplayableSubmitState;
-    }
-  | { kind: "Add"; sessionId: string }
-  | { kind: "PodcastDiscovery"; query: string; sessionId: string }
-  | { kind: "ActivationBlocked"; retained: RetainedActivation }
-  | { kind: "ManageTabs"; retained: RetainedActivation };
 
 export interface SwitchboardRowModel {
   id: string;

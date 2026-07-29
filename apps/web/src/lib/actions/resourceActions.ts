@@ -485,7 +485,7 @@ function validatedResourceActionRef(target: ResourceActionSubject) {
 
 /**
  * The projection-independent policy for resource core membership and order.
- * Menu and Launcher projections consume these catalog keys instead of
+ * Menu and Nexus projections consume these catalog keys instead of
  * independently re-deriving visibility from scheme capabilities.
  */
 export function resolveResourceCoreCatalogKeys(

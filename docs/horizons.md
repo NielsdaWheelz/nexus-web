@@ -7,7 +7,7 @@ Status: VISION — written 2026-06-10, alongside `docs/cutovers/synapse-resonanc
 
 Nexus today is a superb **pull** system: everything flows in (ingest → index →
 embeddings → units → graph), and nothing flows back out unless the user asks
-(search, chat, palette). Knowledge goes in; it only comes out on demand. The
+(search, chat, Nexus). Knowledge goes in; it only comes out on demand. The
 2026-06 audit of the codebase found, concretely: a provenance graph written by
 every subsystem but readable on exactly one pane; media intelligence computed
 per-document but invisible on the document; **zero** scheduled intelligence

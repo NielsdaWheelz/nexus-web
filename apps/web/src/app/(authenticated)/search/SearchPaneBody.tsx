@@ -164,7 +164,7 @@ export default function SearchPaneBody() {
   // Focus the box on the freshly-navigated-to blank landing. `mounted` flips the
   // input from its SSR-disabled state to enabled (the browser can only skip a
   // disabled autofocus, so autofocus is inert here); we focus it on that flip.
-  // Gated on a Launcher-set request so ordinary arrivals — first-paint pane
+  // Gated on a Nexus-set request so ordinary arrivals — first-paint pane
   // restore, Back/Forward, a results URL — do not steal focus, and skipped when the
   // landing carries a query so a text navigation never yanks focus into the box.
   useEffect(() => {

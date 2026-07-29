@@ -2,7 +2,7 @@
 
 import { ArrowLeft } from "lucide-react";
 import type { FormEvent } from "react";
-import type { ReplayableSubmitState } from "@/lib/switchboard/model";
+import type { ReplayableSubmitState } from "@/lib/nexus/model";
 import styles from "./switchboard.module.css";
 
 export default function CreateLibraryPanel({

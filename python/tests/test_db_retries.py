@@ -227,6 +227,21 @@ def test_retry_serializable_defect_wraps_integrity_exhaustion() -> None:
     assert isinstance(excinfo.value.__cause__, IntegrityError)
 
 
+def test_retry_serializable_retries_nexus_usage_first_insert_race() -> None:
+    db = _FakeSession()
+    attempts = {"n": 0}
+
+    def op():
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise _integrity_error("uq_nexus_usages_user_query_href")
+        return "winner-observed"
+
+    assert retry_serializable(db, "record_nexus_selection", op) == "winner-observed"  # type: ignore[arg-type]
+    assert attempts["n"] == 2
+    assert db.rollbacks == 1
+
+
 @pytest.mark.parametrize(
     "constraint_name",
     [

@@ -18,7 +18,7 @@
 }
 
 .backdrop[data-layer="palette"] {
-  z-index: var(--z-palette);
+  z-index: var(--z-nexus);
 }
 
 .backdrop[data-scrim="default"] {

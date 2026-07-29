@@ -1,10 +1,10 @@
 import { isRecord } from "@/lib/validation";
 import type { PlatformKind } from "@/lib/renderEnvironment/types";
 
-const STORAGE_KEY = "nexus.keybindings.v1";
+const STORAGE_KEY = "nexus.keybindings";
 
 export const DEFAULT_KEYBINDINGS: Record<string, string> = {
-  "open-launcher": "Meta+k",
+  "Nexus.Open": "Meta+k",
   "pane-next": "Meta+Shift+arrowright",
   "pane-previous": "Meta+Shift+arrowleft",
 };

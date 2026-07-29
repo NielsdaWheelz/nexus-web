@@ -31,7 +31,7 @@ import {
 } from "@/lib/panes/paneRouteModel";
 
 // Per-pane icon metadata. Deliberately holds NO pane-body imports so the
-// always-loaded shell (nav, launcher, store) can resolve a route icon without
+// always-loaded shell (nav, Nexus, store) can resolve a route icon without
 // dragging pane code into first-load JS. Pane bodies are reached only through
 // `paneRenderRegistry` (lazy).
 interface PaneRouteMeta {

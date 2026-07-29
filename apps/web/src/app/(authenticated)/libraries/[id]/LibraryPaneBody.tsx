@@ -12,7 +12,7 @@ import {
   type Dispatch,
   type SetStateAction,
 } from "react";
-import { dispatchOpenLauncher } from "@/lib/launcher/launcherEvents";
+import { requestNexusOpen } from "@/lib/nexus/events";
 import {
   ApiError,
   apiFetch,
@@ -2061,7 +2061,7 @@ export default function LibraryPaneBody() {
             label: "Add content",
             restoreFocusOnClose: false,
             onSelect: () =>
-              dispatchOpenLauncher({
+              requestNexusOpen({
                 kind: "Add",
                 seed: {
                   kind: "Content",

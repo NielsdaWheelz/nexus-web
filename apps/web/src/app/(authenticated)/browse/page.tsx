@@ -11,7 +11,7 @@ export default async function BrowsePage({
   const q =
     typeof params.q === "string" && params.q.trim() ? params.q.trim() : null;
   const dest = q
-    ? `/?launcher=1&lane=browse&q=${encodeURIComponent(q)}`
-    : "/?launcher=1&lane=browse";
+    ? `/?nexus=1&intent=WebSearch&q=${encodeURIComponent(q)}`
+    : "/?nexus=1&intent=Root";
   permanentRedirect(dest);
 }

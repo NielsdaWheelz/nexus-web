@@ -47,11 +47,11 @@ const DELEGATED_WRITERS: Readonly<Record<string, string>> = {
   // acknowledged create; callers never re-issue the URL literal.
   // (none of these currently inline a write URL literal — listed for the day
   // one does, so the reviewer keeps the publish at the ingestionClient helper.)
-  "src/lib/launcher/dispatch.ts": "@/lib/media/ingestionClient",
+  "src/lib/nexus/dispatch.ts": "@/lib/media/ingestionClient",
   "src/components/notes/NoteBodyEditor.tsx": "@/lib/media/ingestionClient",
   "src/components/connections/ConnectionsSurface.tsx":
     "@/lib/media/ingestionClient",
-  "src/components/launcher/useAddContentSession.ts": "@/lib/media/ingestionClient",
+  "src/components/nexus/useAddContentSession.ts": "@/lib/media/ingestionClient",
 };
 
 const EXCLUDED_PATHS = new Set([

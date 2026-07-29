@@ -6,7 +6,7 @@ import Button from "@/components/ui/Button";
 import {
   couldNotSubscribeCount,
   type OpmlImportState,
-} from "@/components/launcher/addContentSessionModel";
+} from "@/components/nexus/addContentSessionModel";
 import type { LibraryDestinationSelection } from "@/lib/libraries/client";
 import styles from "./OpmlImportPanel.module.css";
 
