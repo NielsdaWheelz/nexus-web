@@ -4,6 +4,10 @@ import { useLayoutEffect, useRef } from "react";
 import AsterismMark from "@/components/AsterismMark";
 import { useMobileViewport } from "@/lib/mobileViewport/MobileViewportProvider";
 import {
+  useMobileChrome,
+  useMobileChromeSurface,
+} from "@/lib/workspace/mobileChrome";
+import {
   beginSwitchboardPerformance,
   NEXUS_OPEN_PERFORMANCE,
 } from "@/lib/switchboard/performance";
@@ -18,31 +22,42 @@ export default function NexusButton({
   switchboardOpen: boolean;
   onOpen: () => void;
 }) {
-  const ref = useRef<HTMLButtonElement>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
   const mobileViewport = useMobileViewport();
+  const { motionPhase } = useMobileChrome();
+  useMobileChromeSurface(buttonRef, "NexusControl", true);
   useLayoutEffect(() => {
-    const element = ref.current;
+    const element = wrapperRef.current;
     if (switchboardOpen || !element) return;
     return mobileViewport.registerFixedObstruction("Nexus", element);
   }, [mobileViewport, switchboardOpen]);
   const label =
     paneCount === 1 ? "Open Nexus, 1 tab" : `Open Nexus, ${paneCount} tabs`;
+  const hidden = motionPhase.kind === "Hidden";
   return (
-    <button
-      ref={ref}
-      type="button"
-      className={styles.nexusButton}
-      aria-label={label}
-      aria-haspopup="dialog"
-      aria-hidden={switchboardOpen || undefined}
-      inert={switchboardOpen || undefined}
-      onClick={() => {
-        beginSwitchboardPerformance(NEXUS_OPEN_PERFORMANCE);
-        onOpen();
-      }}
+    <div
+      ref={wrapperRef}
+      className={styles.nexusWrapper}
+      data-testid="nexus-wrapper"
     >
-      <AsterismMark size={22} />
-      <span aria-hidden="true">{paneCount}</span>
-    </button>
+      <button
+        ref={buttonRef}
+        type="button"
+        className={styles.nexusButton}
+        aria-label={label}
+        aria-haspopup="dialog"
+        aria-hidden={hidden || switchboardOpen || undefined}
+        inert={hidden || switchboardOpen || undefined}
+        data-mobile-chrome-phase={motionPhase.kind}
+        onClick={() => {
+          beginSwitchboardPerformance(NEXUS_OPEN_PERFORMANCE);
+          onOpen();
+        }}
+      >
+        <AsterismMark size={22} />
+        <span aria-hidden="true">{paneCount}</span>
+      </button>
+    </div>
   );
 }

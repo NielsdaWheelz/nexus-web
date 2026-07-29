@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from nexus.db.models import (
@@ -91,6 +92,34 @@ def add_branch(
     )
 
 
+def add_completed_run(
+    db,
+    owner_user_id: UUID,
+    conversation_id: UUID,
+    user_message: Message,
+    assistant_message: Message,
+    profile_id: str,
+    reasoning_option_id: str,
+) -> None:
+    completed_at = datetime.now(UTC)
+    db.add(
+        ChatRun(
+            id=uuid4(),
+            owner_user_id=owner_user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message.id,
+            assistant_message_id=assistant_message.id,
+            idempotency_key=f"e2e-complete-{assistant_message.id}",
+            payload_hash=f"e2e-complete-{assistant_message.id}",
+            status="complete",
+            profile_id=profile_id,
+            reasoning_option_id=reasoning_option_id,
+            started_at=completed_at,
+            completed_at=completed_at,
+        )
+    )
+
+
 def seed_scroll(owner_user_id: UUID, message_count: int) -> dict[str, object]:
     if message_count < 2:
         raise RuntimeError("NEXUS_E2E_MESSAGE_COUNT must be at least 2")
@@ -121,7 +150,10 @@ def seed_scroll(owner_user_id: UUID, message_count: int) -> dict[str, object]:
                 conversation.id,
                 seq,
                 role,
-                (f"Scroll fixture message {seq}: " + ("bounded chat scroll ownership " * 8)),
+                (
+                    f"Scroll fixture message {seq}: "
+                    + ("bounded chat scroll ownership " * 8)
+                ),
                 parent_message_id=parent_id,
                 branch_anchor_kind=branch_anchor_kind,
                 branch_anchor=branch_anchor,
@@ -180,6 +212,15 @@ def seed_branching(owner_user_id: UUID) -> dict[str, object]:
             root_assistant_content,
             parent_message_id=root_user.id,
         )
+        add_completed_run(
+            db,
+            owner_user_id,
+            conversation.id,
+            root_user,
+            root_assistant,
+            "balanced",
+            "medium",
+        )
 
         linear_user = add_message(
             db,
@@ -198,6 +239,15 @@ def seed_branching(owner_user_id: UUID) -> dict[str, object]:
             "assistant",
             "Linear branch answer keeps the original path active.",
             parent_message_id=linear_user.id,
+        )
+        add_completed_run(
+            db,
+            owner_user_id,
+            conversation.id,
+            linear_user,
+            linear_assistant,
+            "deep",
+            "high",
         )
         add_branch(db, conversation.id, linear_user, "Linear branch")
 
@@ -229,6 +279,15 @@ def seed_branching(owner_user_id: UUID) -> dict[str, object]:
             "assistant",
             "Quote branch answer highlights the selected source phrase.",
             parent_message_id=quote_user.id,
+        )
+        add_completed_run(
+            db,
+            owner_user_id,
+            conversation.id,
+            quote_user,
+            quote_assistant,
+            "fast",
+            "low",
         )
         add_branch(db, conversation.id, quote_user, "Quote branch")
 
@@ -284,6 +343,15 @@ def seed_branching(owner_user_id: UUID) -> dict[str, object]:
             "assistant",
             "Disposable branch answer can be switched to from the graph.",
             parent_message_id=disposable_user.id,
+        )
+        add_completed_run(
+            db,
+            owner_user_id,
+            conversation.id,
+            disposable_user,
+            disposable_assistant,
+            "claude",
+            "medium",
         )
         add_branch(db, conversation.id, disposable_user, "Disposable branch")
 

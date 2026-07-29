@@ -286,6 +286,8 @@ def test_trust_trail_links_run_prompt_retrieval_citation_and_reference(
     assert trail.citations[0].retrieval_id == retrieval_id
     assert len(trail.context_refs_added) == 1
     assert trail.context_refs_added[0].citation_edge_id == edge_id
+    assert trail.context_refs_added[0].activation.resource_ref.startswith("media:")
+    assert trail.context_refs_added[0].activation.kind == "route"
     assert trail.integrity_notices == []
 
 

@@ -191,6 +191,7 @@ def build_assistant_trust_trails(
                     id=payload.id,
                     conversation_id=payload.conversation_id,
                     resource_ref=payload.resource_ref,
+                    activation=payload.activation,
                     label=payload.label,
                     summary=payload.summary,
                     missing=payload.missing,

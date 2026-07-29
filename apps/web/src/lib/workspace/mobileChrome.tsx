@@ -41,11 +41,15 @@ export type PaneMobileChromeLockReason =
   | "action-menu"
   | "chrome-focus";
 
-export type MobileChromeSurfaceRole = "AppBar" | "PaneToolbar";
+export type MobileChromeSurfaceRole =
+  | "AppBar"
+  | "PaneToolbar"
+  | "NexusControl";
 
 export interface PaneMobileChromeController {
   startReaderScroll: (snapshot: MobileChromeScrollSnapshot) => void;
   updateReaderScroll: (snapshot: MobileChromeScrollSnapshot) => void;
+  beginReaderPointerInteraction: () => void;
   acquireVisibleLock: (reason: PaneMobileChromeLockReason) => () => void;
 }
 
@@ -76,6 +80,12 @@ interface VolatileChromeState {
   motionPhase: MobileChromeMotionPhase;
   paneChrome: MobilePaneChrome | null;
   finishSettle: () => void;
+}
+
+interface MobileChromeSurfaceRegistration {
+  surface: HTMLElement;
+  releaseFocusLock: (() => void) | null;
+  unregister: (() => void) | null;
 }
 
 const StableControllerContext = createContext<StableController | null>(null);
@@ -134,7 +144,9 @@ export function MobileChromeProvider({ children }: { children: ReactNode }) {
     new Map(),
   );
   const nextLockIdRef = useRef(0);
-  const surfacesRef = useRef(new Map<MobileChromeSurfaceRole, HTMLElement>());
+  const surfacesRef = useRef(
+    new Map<MobileChromeSurfaceRole, MobileChromeSurfaceRegistration>(),
+  );
   const frameRef = useRef<number | null>(null);
   const pendingProgressRef = useRef(0);
   const settleTimerRef = useRef<number | null>(null);
@@ -148,7 +160,7 @@ export function MobileChromeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const writeProgress = useCallback((progress: number) => {
-    for (const surface of surfacesRef.current.values()) {
+    for (const { surface } of surfacesRef.current.values()) {
       surface.style.setProperty(COLLAPSE_PROPERTY, String(progress));
     }
   }, []);
@@ -202,11 +214,13 @@ export function MobileChromeProvider({ children }: { children: ReactNode }) {
     const state = motionRef.current;
     if (state.phase.kind !== "Settling") return state;
     cancelFrame();
-    const surface = surfacesRef.current.get("AppBar");
-    if (!surface)
+    const registration = surfacesRef.current.get("AppBar");
+    if (!registration)
       throw new Error("Mobile chrome settling requires an AppBar surface");
     const progress = Number.parseFloat(
-      window.getComputedStyle(surface).getPropertyValue(COLLAPSE_PROPERTY),
+      window
+        .getComputedStyle(registration.surface)
+        .getPropertyValue(COLLAPSE_PROPERTY),
     );
     if (!Number.isFinite(progress)) {
       throw new Error(
@@ -320,6 +334,44 @@ export function MobileChromeProvider({ children }: { children: ReactNode }) {
     [cancelFrame, cancelSettleTimer, commit],
   );
 
+  const releaseSurfaceFocusLock = useCallback(
+    (registration: MobileChromeSurfaceRegistration) => {
+      const release = registration.releaseFocusLock;
+      if (!release) return;
+      registration.releaseFocusLock = null;
+      release();
+    },
+    [],
+  );
+
+  const acquireSurfaceFocusLock = useCallback(
+    (registration: MobileChromeSurfaceRegistration) => {
+      if (!isMobileRef.current || registration.releaseFocusLock) return;
+      registration.releaseFocusLock = acquireVisibleLock("chrome-focus");
+    },
+    [acquireVisibleLock],
+  );
+
+  const reconcileSurfaceFocus = useCallback(
+    (registration: MobileChromeSurfaceRegistration) => {
+      if (
+        !isMobileRef.current ||
+        registration.releaseFocusLock ||
+        !(document.activeElement instanceof HTMLElement) ||
+        !registration.surface.contains(document.activeElement)
+      )
+        return;
+      acquireSurfaceFocusLock(registration);
+    },
+    [acquireSurfaceFocusLock],
+  );
+
+  const releaseSurfaceFocusLocks = useCallback(() => {
+    for (const registration of surfacesRef.current.values()) {
+      releaseSurfaceFocusLock(registration);
+    }
+  }, [releaseSurfaceFocusLock]);
+
   const setPaneChrome = useCallback(
     (chrome: MobilePaneChrome | null) => {
       const active = activePaneRouteRef.current;
@@ -345,27 +397,77 @@ export function MobileChromeProvider({ children }: { children: ReactNode }) {
 
   const registerSurface = useCallback(
     (surface: HTMLElement, role: MobileChromeSurfaceRole) => {
-      surfacesRef.current.set(role, surface);
+      if (surfacesRef.current.has(role)) {
+        throw new Error(`Mobile chrome already has an enabled ${role} surface`);
+      }
+      const registration: MobileChromeSurfaceRegistration = {
+        surface,
+        releaseFocusLock: null,
+        unregister: null,
+      };
+      const onFocusIn = () => acquireSurfaceFocusLock(registration);
+      const onFocusOut = (event: FocusEvent) => {
+        if (
+          event.relatedTarget instanceof Node &&
+          registration.surface.contains(event.relatedTarget)
+        )
+          return;
+        releaseSurfaceFocusLock(registration);
+      };
+      surface.addEventListener("focusin", onFocusIn);
+      surface.addEventListener("focusout", onFocusOut);
+      surfacesRef.current.set(role, registration);
+      reconcileSurfaceFocus(registration);
       scheduleProgressWrite(
         mobileChromePresentationProgress(motionRef.current),
       );
-      return () => {
-        if (surfacesRef.current.get(role) === surface)
+      let unregistered = false;
+      const unregister = () => {
+        if (unregistered) return;
+        unregistered = true;
+        surface.removeEventListener("focusin", onFocusIn);
+        surface.removeEventListener("focusout", onFocusOut);
+        releaseSurfaceFocusLock(registration);
+        if (surfacesRef.current.get(role) === registration)
           surfacesRef.current.delete(role);
       };
+      registration.unregister = unregister;
+      return unregister;
     },
-    [scheduleProgressWrite],
+    [
+      acquireSurfaceFocusLock,
+      reconcileSurfaceFocus,
+      releaseSurfaceFocusLock,
+      scheduleProgressWrite,
+    ],
   );
+
+  const beginReaderPointerInteraction = useCallback(() => {
+    if (!isMobileRef.current) return;
+    const activeElement = document.activeElement;
+    if (!(activeElement instanceof HTMLElement)) return;
+    for (const { surface } of surfacesRef.current.values()) {
+      if (!surface.contains(activeElement)) continue;
+      activeElement.blur();
+      return;
+    }
+  }, []);
 
   useEffect(() => {
     if (previousIsMobileRef.current === isMobile) return;
     previousIsMobileRef.current = isMobile;
+    if (!isMobile) releaseSurfaceFocusLocks();
     reset(
       !isMobile ||
         prefersReducedMotionRef.current ||
         visibleLocksRef.current.size > 0,
     );
-  }, [isMobile, reset]);
+    if (isMobile) {
+      for (const registration of surfacesRef.current.values()) {
+        reconcileSurfaceFocus(registration);
+      }
+    }
+  }, [isMobile, reconcileSurfaceFocus, releaseSurfaceFocusLocks, reset]);
 
   useEffect(() => {
     if (
@@ -390,9 +492,11 @@ export function MobileChromeProvider({ children }: { children: ReactNode }) {
 
   useEffect(
     () => () => {
+      for (const registration of [...surfacesRef.current.values()]) {
+        registration.unregister?.();
+      }
       cancelFrame();
       cancelSettleTimer();
-      surfacesRef.current.clear();
     },
     [cancelFrame, cancelSettleTimer],
   );
@@ -401,12 +505,14 @@ export function MobileChromeProvider({ children }: { children: ReactNode }) {
     () => ({
       startReaderScroll,
       updateReaderScroll,
+      beginReaderPointerInteraction,
       acquireVisibleLock,
       setPaneChrome,
       registerSurface,
     }),
     [
       acquireVisibleLock,
+      beginReaderPointerInteraction,
       registerSurface,
       setPaneChrome,
       startReaderScroll,
@@ -448,6 +554,7 @@ export function usePaneMobileChromeController(): PaneMobileChromeController {
 export function useMobileChromeSurface(
   ref: RefObject<HTMLElement | null>,
   role: MobileChromeSurfaceRole,
+  enabled: boolean,
 ) {
   const stable = useContext(StableControllerContext);
   if (!stable)
@@ -455,8 +562,9 @@ export function useMobileChromeSurface(
       "useMobileChromeSurface must be used within MobileChromeProvider",
     );
   useEffect(() => {
+    if (!enabled) return;
     const surface = ref.current;
     if (!surface) return;
     return stable.registerSurface(surface, role);
-  }, [ref, role, stable]);
+  }, [enabled, ref, role, stable]);
 }

@@ -15,7 +15,7 @@ import ActionBar from "@/components/ui/ActionBar";
 import Button from "@/components/ui/Button";
 import Textarea from "@/components/ui/Textarea";
 import { buildForkNodeActions } from "./forkNodeActions";
-import { treeItemDomId, toForkOption } from "./forkNodeRow";
+import { treeItemDomId, toForkOption } from "./forkNodePresentation";
 import styles from "./ConversationForksPanel.module.css";
 
 interface ForkNodeRowProps {

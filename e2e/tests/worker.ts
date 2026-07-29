@@ -22,6 +22,19 @@ const LOCAL_STORAGE_HOSTS = new Set([
 const WORKER_ITERATION_TIMEOUT_MS = 30_000;
 const STARTED_WORKER_TIMEOUT_MS = 120_000;
 
+export const CHAT_FIXTURE_WORKER_ENV = {
+  // The fixture runtime makes no provider network call, but closed platform-
+  // credential validation intentionally runs before fixture dispatch.
+  OPENAI_API_KEY: "e2e-fixture-openai-key",
+  REAL_MEDIA_PROVIDER_FIXTURES: "1",
+  REAL_MEDIA_FIXTURE_DIR: path.resolve(
+    __dirname,
+    "../../python/tests/fixtures/real_media",
+  ),
+  REAL_MEDIA_FIXTURE_STREAM_DELAY_MS: "700",
+  WORKER_LANE: "interactive",
+};
+
 export interface E2eWorkerIterationIndex {
   processing_status?: string | null;
   index_status?: string | null;

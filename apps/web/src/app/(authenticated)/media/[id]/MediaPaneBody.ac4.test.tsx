@@ -75,6 +75,7 @@ vi.mock("@/lib/workspace/mobileChrome", () => ({
   usePaneMobileChromeController: () => ({
     startReaderScroll: () => {},
     updateReaderScroll: () => {},
+    beginReaderPointerInteraction: () => {},
     acquireVisibleLock: () => () => {},
   }),
 }));

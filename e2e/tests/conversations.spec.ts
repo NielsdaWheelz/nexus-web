@@ -4,7 +4,6 @@ import {
   seedScrollConversation,
 } from "./conversation-tree-seed";
 import { stateChangingApiHeaders } from "./api";
-import { requireRunnableChatComposer } from "./chatReadiness";
 import { selectExactVisibleText } from "./selection";
 import {
   expectNoDocumentHorizontalOverflow,
@@ -13,6 +12,11 @@ import {
   gotoSinglePaneWorkspace,
   workspaceE2eDeviceId,
 } from "./workspace";
+import {
+  CHAT_FIXTURE_WORKER_ENV,
+  startE2eWorkerUntilChatRunTerminal,
+  type E2eWorkerIterationResult,
+} from "./worker";
 
 async function ensureAppContext(page: Page) {
   if (page.url() === "about:blank") {
@@ -185,8 +189,13 @@ test.describe("conversations", () => {
     }
   });
 
-  test("send message", async ({ page }, testInfo) => {
+  test("non-default selection survives send, completion, and reload", async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(120_000);
     const conversationId = await createConversationViaApi(page);
+    let worker: Promise<E2eWorkerIterationResult> | null = null;
+    let workerError: unknown = null;
     try {
       await gotoSinglePaneWorkspace(
         page,
@@ -203,37 +212,98 @@ test.describe("conversations", () => {
       });
 
       await expect(input).toBeVisible({ timeout: 30_000 });
-      await requireRunnableChatComposer({
-        page,
-        profilePicker,
-        skipReason:
-          "No runnable chat model in the e2e environment; cannot send a conversation message.",
+      await profilePicker.selectOption("deep");
+      const reasoningPicker = activePane.getByRole("combobox", {
+        name: "Reasoning",
+      });
+      await reasoningPicker.selectOption("high");
+      await input.fill(
+        "Reply with one short sentence about durable continuity.",
+      );
+      const runResponsePromise = page.waitForResponse(
+        (response) =>
+          response.url().includes("/api/chat-runs") &&
+          response.request().method() === "POST",
+        { timeout: 30_000 },
+      );
+      await activePane
+        .getByRole("button", { name: "SEND", exact: true })
+        .click();
+      const runResponse = await runResponsePromise;
+      const runBody = await runResponse.text();
+      expect(runResponse.ok(), runBody).toBeTruthy();
+      const runId = (JSON.parse(runBody) as { data: { run: { id: string } } })
+        .data.run.id;
+      worker = startE2eWorkerUntilChatRunTerminal({
+        chatRunId: runId,
+        extraEnv: CHAT_FIXTURE_WORKER_ENV,
       });
 
-      await expect(input).toBeVisible();
-      await input.fill("Hello, this is a test message");
-      await input.press("Enter");
-
       const optimisticUserMessage = page
-        .getByText("Hello, this is a test message")
+        .getByText("Reply with one short sentence about durable continuity.")
         .first();
 
-      await expect
-        .poll(
-          async () => {
-            if (await optimisticUserMessage.isVisible().catch(() => false)) {
-              return "done";
-            }
-
-            return "pending";
-          },
-          { timeout: 10_000 },
-        )
-        .not.toBe("pending");
-
       await expect(optimisticUserMessage).toBeVisible();
+      await expect(profilePicker).toHaveValue("deep");
+      await expect(reasoningPicker).toHaveValue("high");
+
+      const workerResult = await worker;
+      worker = null;
+      expect(workerResult.chatRunStatus, JSON.stringify(workerResult)).toBe(
+        "complete",
+      );
+
+      const treeResponse = await page.request.get(
+        `/api/conversations/${conversationId}/tree`,
+      );
+      const treeBody = await treeResponse.text();
+      expect(treeResponse.ok(), treeBody).toBeTruthy();
+      const tree = JSON.parse(treeBody) as {
+        data: {
+          active_leaf_message_id: string | null;
+          selected_path: Array<{
+            id: string;
+            trust_trail: {
+              run: {
+                profile_id: string | null;
+                reasoning_option_id: string | null;
+              } | null;
+            } | null;
+          }>;
+        };
+      };
+      const persistedAssistant = tree.data.selected_path.at(-1);
+      expect(tree.data.active_leaf_message_id).toBe(persistedAssistant?.id);
+      expect(persistedAssistant?.trust_trail?.run?.profile_id).toBe("deep");
+      expect(persistedAssistant?.trust_trail?.run?.reasoning_option_id).toBe(
+        "high",
+      );
+
+      await page.reload();
+      const reloadedAssistant = activePane
+        .getByRole("group", { name: "Assistant response" })
+        .last();
+      await expect(reloadedAssistant).toBeVisible({ timeout: 30_000 });
+      await reloadedAssistant.getByText("Details", { exact: true }).click();
+      await expect(
+        reloadedAssistant.getByText("complete", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        reloadedAssistant.getByText("high", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        reloadedAssistant.getByText("deep", { exact: true }),
+      ).toBeVisible();
+      await expect(profilePicker).toHaveValue("deep");
+      await expect(reasoningPicker).toHaveValue("high");
     } finally {
+      if (worker) {
+        await worker.catch((error: unknown) => {
+          workerError = error;
+        });
+      }
       await deleteConversationViaApi(page, conversationId);
+      if (workerError) throw workerError;
     }
   });
 
@@ -431,7 +501,17 @@ test.describe("conversations", () => {
 
       await expect(
         conversationPane.getByRole("log", { name: "Chat messages" }),
-      ).toContainText("Linear branch answer keeps the original path active.");
+      ).toContainText("Linear branch answer keeps the original path active.", {
+        timeout: 30_000,
+      });
+      const profilePicker = conversationPane.getByRole("combobox", {
+        name: "AI profile",
+      });
+      const reasoningPicker = conversationPane.getByRole("combobox", {
+        name: "Reasoning",
+      });
+      await expect(profilePicker).toHaveValue("deep");
+      await expect(reasoningPicker).toHaveValue("high");
       await expect(
         conversationPane.locator(
           `[data-message-id="${seed.root_assistant_id}"]`,
@@ -449,14 +529,20 @@ test.describe("conversations", () => {
       );
       await expect(branchPreview).toContainText("Parent message 2");
       await expect(branchPreview).toContainText("selected source phrase");
+      await expect(profilePicker).toHaveValue("balanced");
+      await expect(reasoningPicker).toHaveValue("medium");
       await conversationPane
         .getByRole("button", { name: "Cancel branch reply" })
         .click();
       await expect(branchPreview).toHaveCount(0);
+      await expect(profilePicker).toHaveValue("deep");
+      await expect(reasoningPicker).toHaveValue("high");
 
       await selectTextInMessage(page, seed.root_assistant_id, seed.quote_exact);
       await page.getByRole("button", { name: "Fork from selection" }).click();
       await expect(branchPreview).toContainText(seed.quote_exact);
+      await expect(profilePicker).toHaveValue("balanced");
+      await expect(reasoningPicker).toHaveValue("medium");
 
       const input = conversationPane.getByRole("textbox", {
         name: "Ask anything",
@@ -516,6 +602,8 @@ test.describe("conversations", () => {
           "Quote branch answer highlights the selected source phrase.",
         ),
       ).toBeVisible();
+      await expect(profilePicker).toHaveValue("fast");
+      await expect(reasoningPicker).toHaveValue("low");
       await expect
         .poll(() => chatScrollport.evaluate((node) => node.scrollTop))
         .toBeGreaterThan(0);
@@ -536,6 +624,8 @@ test.describe("conversations", () => {
           "Quote branch answer highlights the selected source phrase.",
         ),
       ).toBeVisible();
+      await expect(profilePicker).toHaveValue("fast");
+      await expect(reasoningPicker).toHaveValue("low");
 
       const panel = await openForksPanel(page);
       await panel

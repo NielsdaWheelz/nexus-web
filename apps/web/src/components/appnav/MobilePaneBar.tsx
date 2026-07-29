@@ -25,16 +25,13 @@ export default function MobilePaneBar() {
   const warmPane = usePaneWarm();
   const navigation = paneChrome?.navigation;
   const releaseLockRef = useRef<(() => void) | null>(null);
-  const releaseFocusLockRef = useRef<(() => void) | null>(null);
   const topBarRef = useRef<HTMLElement>(null);
-  useMobileChromeSurface(topBarRef, "AppBar");
+  useMobileChromeSurface(topBarRef, "AppBar", true);
 
   useEffect(
     () => () => {
       releaseLockRef.current?.();
       releaseLockRef.current = null;
-      releaseFocusLockRef.current?.();
-      releaseFocusLockRef.current = null;
     },
     [],
   );
@@ -97,18 +94,11 @@ export default function MobilePaneBar() {
     <header
       ref={topBarRef}
       className={styles.topBar}
+      data-mobile-chrome-focus="true"
       data-mobile-chrome-phase={motionPhase.kind}
       data-header-kind={paneChrome?.header.kind}
       data-pane-chrome-for={paneChrome?.paneId}
-      onFocusCapture={() => {
-        if (releaseFocusLockRef.current) return;
-        releaseFocusLockRef.current = acquireVisibleLock("chrome-focus");
-      }}
-      onBlurCapture={(event) => {
-        if (event.currentTarget.contains(event.relatedTarget)) return;
-        releaseFocusLockRef.current?.();
-        releaseFocusLockRef.current = null;
-      }}
+      tabIndex={-1}
       onTransitionEnd={(event) => {
         if (
           event.target === event.currentTarget &&

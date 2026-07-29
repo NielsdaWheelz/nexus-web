@@ -19,6 +19,7 @@ import {
   type WorkspaceAttachedSecondaryPaneState,
 } from "@/lib/workspace/schema";
 import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
+import type { MessageUpdateAction } from "@/lib/conversations/messageUpdateReducer";
 import { decodeChatRunData } from "@/lib/conversations/messageWire";
 import type {
   ChatRunResponse,
@@ -158,6 +159,42 @@ function message(
     can_rerun: false,
     created_at: timestamp,
     updated_at: timestamp,
+  };
+}
+
+function assistantWithProfileSelection(
+  assistant: ConversationMessage,
+  selection: { profileId: string; reasoningOptionId: string },
+  runId = `run-${assistant.id}`,
+): ConversationMessage {
+  if (assistant.role !== "assistant" || assistant.trust_trail === null) {
+    throw new Error("Expected an assistant message with a trust trail");
+  }
+  return {
+    ...assistant,
+    trust_trail: {
+      ...assistant.trust_trail,
+      chat_run_id: runId,
+      run: {
+        run_id: runId,
+        profile_id: selection.profileId,
+        reasoning_option_id: selection.reasoningOptionId,
+        provider: "Not a selection source",
+        model_name: "Not a selection source",
+        status: assistant.status,
+        usage: null,
+        error_code: null,
+        error_origin: null,
+        failure: null,
+        reasoning_effort: { kind: "Absent" },
+        support_id: { kind: "Absent" },
+        publication_warning: { kind: "Absent" },
+        final_chars: null,
+        started_at: timestamp,
+        completed_at: timestamp,
+        total_cost_usd_micros: null,
+      },
+    },
   };
 }
 
@@ -1220,8 +1257,74 @@ describe("Conversation", () => {
     expect(onActivateWorkspaceTarget).not.toHaveBeenCalled();
   });
 
-  it("sends an existing non-empty conversation with the complete assistant leaf as parent", async () => {
+  it("uses the causal leaf selection and makes the new run the next source", async () => {
     const user = userEvent.setup();
+    tailMocks.useChatRunTail.mockImplementation(
+      (options: {
+        dispatch: (action: MessageUpdateAction) => void;
+        onConversationAvailable?: (
+          conversationId: string,
+          runId: string,
+        ) => void;
+      }) => ({
+        tailChatRun: tailMocks.tailChatRun.mockImplementation(
+          (runData: ChatRunResponse["data"]) => {
+            options.dispatch({
+              type: "merge_run_pair",
+              run: runData,
+              idsToReplace: [
+                runData.user_message.id,
+                runData.assistant_message.id,
+              ],
+            });
+            options.onConversationAvailable?.(
+              runData.conversation.id,
+              runData.run.id,
+            );
+          },
+        ),
+        abortAll: tailMocks.abortAll,
+        cancelRun: tailMocks.cancelRun,
+        activeRunId: null,
+        lostConnections: {},
+        reconnectRun: vi.fn(),
+      }),
+    );
+    const inheritedLeaf = assistantWithProfileSelection(branchAAssistant, {
+      profileId: "balanced",
+      reasoningOptionId: "default",
+    });
+    const inheritedTree = treeResponse();
+    inheritedTree.selected_path = [
+      rootUser,
+      rootAssistant,
+      branchAUser,
+      inheritedLeaf,
+    ];
+    inheritedTree.path_cache_by_leaf_id["branch-a-assistant"] =
+      inheritedTree.selected_path;
+    const profiles = {
+      ...LLM_PROFILES,
+      profiles: [
+        ...LLM_PROFILES.profiles,
+        {
+          id: "deep",
+          label: "Deep",
+          description: "Deep profile",
+          provider_label: "Nexus AI",
+          model_label: "Sonnet",
+          reasoning_options: [
+            { id: "medium", label: "Medium" },
+            { id: "high", label: "High" },
+          ],
+          default_reasoning_option_id: "high",
+          privacy: {
+            kind: "Standard" as const,
+            notice: "Processed by Nexus AI.",
+          },
+        },
+      ],
+    };
     const fetchMock = vi.fn(
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = pathOf(input);
@@ -1230,7 +1333,7 @@ describe("Conversation", () => {
           path ===
           "/api/conversations/00000000-0000-4000-8000-000000000101/tree"
         ) {
-          return jsonResponse({ data: treeResponse() });
+          return jsonResponse({ data: inheritedTree });
         }
         if (
           path ===
@@ -1239,7 +1342,7 @@ describe("Conversation", () => {
           return jsonResponse({ data: [] });
         }
         if (path === "/api/llm-profiles") {
-          return jsonResponse({ data: LLM_PROFILES });
+          return jsonResponse({ data: profiles });
         }
         if (path === "/api/chat-runs" && method === "GET") {
           return jsonResponse({ data: [] });
@@ -1271,6 +1374,14 @@ describe("Conversation", () => {
             followUpUser.id,
             "pending",
           );
+          const followUpAssistantWithSelection = assistantWithProfileSelection(
+            followUpAssistant,
+            {
+              profileId: body.profile_id,
+              reasoningOptionId: body.reasoning_option_id,
+            },
+            "follow-up-run",
+          );
           return jsonResponse({
             data: {
               run: {
@@ -1290,7 +1401,7 @@ describe("Conversation", () => {
               },
               conversation: treeResponse().conversation,
               user_message: followUpUser,
-              assistant_message: followUpAssistant,
+              assistant_message: followUpAssistantWithSelection,
             },
           });
         }
@@ -1302,9 +1413,20 @@ describe("Conversation", () => {
     renderPane();
 
     expect(await screen.findByText("Answer A")).toBeVisible();
+    const profilePicker = await screen.findByRole("combobox", {
+      name: "AI profile",
+    });
+    expect(profilePicker).toHaveValue("balanced");
     expect(
-      await screen.findByRole("combobox", { name: "AI profile" }),
-    ).toBeInTheDocument();
+      screen.queryByRole("combobox", { name: "Reasoning" }),
+    ).not.toBeInTheDocument();
+
+    await user.selectOptions(profilePicker, "deep");
+    const reasoningPicker = screen.getByRole("combobox", {
+      name: "Reasoning",
+    });
+    expect(profilePicker).toHaveValue("deep");
+    expect(reasoningPicker).toHaveValue("high");
 
     const input = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(input);
@@ -1329,6 +1451,8 @@ describe("Conversation", () => {
       String(chatRunCall?.[1]?.body),
     ) as ChatRunCreateRequest;
     expect(body.content).toBe("Continue from the leaf");
+    expect(body.profile_id).toBe("deep");
+    expect(body.reasoning_option_id).toBe("high");
     expect(body.destination).toMatchObject({
       kind: "Existing",
       conversation_id: "00000000-0000-4000-8000-000000000101",
@@ -1340,6 +1464,10 @@ describe("Conversation", () => {
           message_id: "branch-a-assistant",
         },
       },
+    });
+    await waitFor(() => {
+      expect(profilePicker).toHaveValue("deep");
+      expect(reasoningPicker).toHaveValue("high");
     });
   });
 

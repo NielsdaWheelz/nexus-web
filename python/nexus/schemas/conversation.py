@@ -518,6 +518,7 @@ class TrustContextRefAddedOut(BaseModel):
     id: UUID
     conversation_id: UUID
     resource_ref: str
+    activation: ResourceActivationOut
     label: str
     summary: str
     missing: bool

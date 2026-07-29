@@ -1,4 +1,3 @@
-import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { stateChangingApiHeaders } from "./api";
 import { requireRunnableChatComposer } from "./chatReadiness";
@@ -8,22 +7,10 @@ import {
   workspaceE2eDeviceId,
 } from "./workspace";
 import {
+  CHAT_FIXTURE_WORKER_ENV,
   startE2eWorkerUntilChatRunTerminal,
   type E2eWorkerIterationResult,
 } from "./worker";
-
-const FIXTURE_WORKER_ENV = {
-  // The fixture runtime makes no provider network call, but closed platform-
-  // credential validation intentionally runs before fixture dispatch.
-  OPENAI_API_KEY: "e2e-fixture-openai-key",
-  REAL_MEDIA_PROVIDER_FIXTURES: "1",
-  REAL_MEDIA_FIXTURE_DIR: path.resolve(
-    __dirname,
-    "../../python/tests/fixtures/real_media",
-  ),
-  REAL_MEDIA_FIXTURE_STREAM_DELAY_MS: "700",
-  WORKER_LANE: "interactive",
-};
 
 async function createConversation(page: Page): Promise<string> {
   const response = await page.request.post("/api/conversations", {
@@ -114,7 +101,7 @@ test.describe("chat streaming", () => {
       );
       worker = startE2eWorkerUntilChatRunTerminal({
         chatRunId: runId,
-        extraEnv: FIXTURE_WORKER_ENV,
+        extraEnv: CHAT_FIXTURE_WORKER_ENV,
       });
       worker = expectWorkerStatus(worker, "complete");
 
@@ -198,7 +185,7 @@ test.describe("chat streaming", () => {
       );
       worker = startE2eWorkerUntilChatRunTerminal({
         chatRunId: runId,
-        extraEnv: FIXTURE_WORKER_ENV,
+        extraEnv: CHAT_FIXTURE_WORKER_ENV,
       });
       worker = expectWorkerStatus(worker, "cancelled");
 

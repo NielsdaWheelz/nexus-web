@@ -121,6 +121,7 @@ const paneChromeMocks = vi.hoisted(() => ({
   usePaneMobileChromeController: vi.fn(),
   startReaderScroll: vi.fn(),
   updateReaderScroll: vi.fn(),
+  beginReaderPointerInteraction: vi.fn(),
   acquireVisibleLock: vi.fn(() => () => {}),
 }));
 
@@ -1116,11 +1117,14 @@ describe("MediaPaneBody pane sizing", () => {
     paneChromeMocks.usePaneMobileChromeController.mockClear();
     paneChromeMocks.startReaderScroll.mockReset();
     paneChromeMocks.updateReaderScroll.mockReset();
+    paneChromeMocks.beginReaderPointerInteraction.mockReset();
     paneChromeMocks.acquireVisibleLock.mockClear();
     learnMocks.learnDossierFromHighlight.mockReset();
     paneChromeMocks.usePaneMobileChromeController.mockReturnValue({
       startReaderScroll: paneChromeMocks.startReaderScroll,
       updateReaderScroll: paneChromeMocks.updateReaderScroll,
+      beginReaderPointerInteraction:
+        paneChromeMocks.beginReaderPointerInteraction,
       acquireVisibleLock: paneChromeMocks.acquireVisibleLock,
     });
     for (const fn of Object.values(testState.readerContextFns)) {
@@ -1941,6 +1945,25 @@ describe("MediaPaneBody pane sizing", () => {
           clientHeight: 400,
         });
       });
+    },
+  );
+
+  it(
+    "hands primary reader pointer intent to mobile chrome but ignores secondary pointers",
+    async () => {
+      testState.mediaKind = "web_article";
+      renderMediaPane();
+
+      const viewport = await screen.findByTestId("document-viewport");
+      fireEvent.pointerDown(viewport, { isPrimary: false });
+      expect(
+        paneChromeMocks.beginReaderPointerInteraction,
+      ).not.toHaveBeenCalled();
+
+      fireEvent.pointerDown(viewport, { isPrimary: true });
+      expect(
+        paneChromeMocks.beginReaderPointerInteraction,
+      ).toHaveBeenCalledOnce();
     },
   );
 

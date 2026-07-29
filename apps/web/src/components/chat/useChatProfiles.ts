@@ -4,7 +4,7 @@
  * The browser owns NO provider/model/reasoning enum, ordering, default,
  * capability, key, or availability policy (§10) — this hook renders exactly
  * what the endpoint returns; it does not derive a selection or auto-pick
- * logic. That belongs to the composer/ChatProfilePicker consuming this data.
+ * logic. That belongs to ChatComposer.
  *
  * The profile list is cached at module scope (`cachedProfiles`/
  * `profilesLoadPromise`) so it survives composer remounts across surfaces —

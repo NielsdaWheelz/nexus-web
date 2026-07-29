@@ -55,6 +55,9 @@ Hard-cutover specs that govern chat work. Each owns one axis; they compose.
 - `docs/cutovers/chat-interface-hard-cutover.md` — readable transcript
   hierarchy, progressive disclosure, typed send/privacy state, quote reflow,
   and shared conversation-row activation. IMPLEMENTED.
+- `docs/cutovers/chat-continuation-selection-hard-cutover.md` — causal,
+  branch-correct profile/reasoning inheritance with explicit draft precedence.
+  IMPLEMENTED.
 
 ## Engine, View, Adapter Split
 
@@ -165,22 +168,34 @@ jumps. See `docs/cutovers/chat-scroll-anchoring-hard-cutover.md`.
 
 ## Send Path
 
-`ChatComposer` owns user input, the `ChatProfilePicker` (profile + reasoning
-option controls), and send action wiring. It does not construct API branch
-semantics directly.
+`ChatComposer` owns user input, the profile catalog, next-turn selection
+resolution, the `ChatProfilePicker` (profile + reasoning option controls), and
+send action wiring. It does not construct API branch semantics directly.
 
 `useChatProfiles` fetches `GET /api/llm-profiles` (module-scope cached across
 mounted composers) and exposes `{ profiles, defaultProfileId, isLoading,
-error }`. `ChatProfilePicker` is a controlled component
-(`{ value: ProfileSelection | null; onChange; disabled? }` where
-`ProfileSelection = { profileId, reasoningOptionId }`); it emits a corrected
-default selection whenever the current value isn't valid against the loaded
-profiles. Each profile carries a required `privacy` union:
+error }`. Once the catalog is ready, `resolveChatProfileSelection` derives one
+effective `{ profileId, reasoningOptionId }`: an explicit unsent draft choice
+wins, otherwise the causal assistant run wins, otherwise the exact server
+default wins. An unavailable draft or inherited pair is explicitly replaced by
+the current server default and reported beside the picker. A malformed server
+default is a defect; there is no first-profile substitute.
+
+`useConversation` derives the inherited candidate from the exact branch-draft
+parent when branching, otherwise from the selected-path assistant leaf. It
+reads only the run's product `profile_id` and `reasoning_option_id`; it never
+scans backward or infers product intent from provider, model, effort, or
+timestamps. `useChatDraft.profile` stores only an explicit unsent choice.
+Inherited and default selections are derived and never persisted as draft
+preferences.
+
+`ChatProfilePicker` is a pure controlled renderer of the ready catalog and
+effective selection. User changes write the explicit draft choice. Each profile
+carries a required `privacy` union:
 `{ kind: "Standard"; notice } | { kind: "ExceptionalRetention"; notice }`.
-`ChatProfilePicker` exposes standard copy through a compact `Privacy`
-disclosure and renders exceptional-retention copy while that profile is
-selected. The browser owns no provider/model/reasoning enum, ordering, default,
-capability, key, privacy classification, or availability policy — see
+`ChatProfilePicker` renders no privacy or retention copy for any profile. The
+browser owns no provider/model/reasoning enum, ordering, default, capability,
+key, privacy classification, or availability policy — see
 [modules/llms.md](llms.md).
 
 `useConversation` is the sole owner of caller-level send availability. It
@@ -365,10 +380,14 @@ pending (above the composer, removable) and sent (read-only, above the user
 body). Both modes use the same three-line preview and explicit in-place
 expansion. The semantic figure has zero outer margin and cannot exceed its
 containing pane. `ConversationDestinationOverlay` is the "Ask in existing chat…" picker
-(title search over `GET /conversations?q=`). `useChatDraft` persists text,
-`ProfileSelection`, and the active send attempt (idempotency key, payload
-identity, revision) in `sessionStorage`; an unknown-status ambiguous failure
-locks reconciliation and replays the same key, and success clears the record.
+(title search over `GET /conversations?q=`). `useChatDraft` persists text, an
+explicit `ChatProfileSelection`, and the active send attempt (idempotency key,
+payload identity, exact sent profile selection, revision) in `sessionStorage`;
+an unknown-status ambiguous failure locks reconciliation and replays the same
+key, profile pair, and quote revision even if the catalog changed, and success
+clears the record. The picker is hidden behind one locked retry status during
+that reconciliation, so current catalog choices cannot misrepresent or mutate
+the replay.
 
 ## Citation Candidates And Final Edges
 

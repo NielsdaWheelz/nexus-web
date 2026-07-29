@@ -17,6 +17,7 @@ import {
 } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useLayoutEffect, useRef } from "react";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 
 // preloadPane dynamically imports the real pane body; stub that chunk-warm side effect
@@ -42,7 +43,11 @@ import {
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
 import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
-import { MobileViewportProvider } from "@/lib/mobileViewport/MobileViewportProvider";
+import { useMobileViewport } from "@/lib/mobileViewport/MobileViewportProvider";
+import {
+  MobileChromeProvider,
+  useMobileChrome,
+} from "@/lib/workspace/mobileChrome";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 
 const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
@@ -191,10 +196,71 @@ function mockApi() {
     });
 }
 
-function renderLauncher(initialState?: WorkspaceState) {
+function NexusChromeDriver() {
+  const { motionPhase, startReaderScroll, updateReaderScroll } =
+    useMobileChrome();
+  const snapshot = (scrollTop: number) => ({
+    scrollTop,
+    scrollHeight: 1_000,
+    clientHeight: 100,
+  });
+  return (
+    <>
+      <output data-testid="nexus-motion-phase">{motionPhase.kind}</output>
+      <button
+        type="button"
+        data-testid="nexus-scroll-start"
+        onClick={() => startReaderScroll(snapshot(9))}
+      />
+      <button
+        type="button"
+        data-testid="nexus-scroll-partial"
+        onClick={() => updateReaderScroll(snapshot(41))}
+      />
+      <button
+        type="button"
+        data-testid="nexus-scroll-hidden"
+        onClick={() => updateReaderScroll(snapshot(105))}
+      />
+    </>
+  );
+}
+
+function FixedPlayerObstruction() {
+  const ref = useRef<HTMLDivElement>(null);
+  const mobileViewport = useMobileViewport();
+  useLayoutEffect(() => {
+    if (!ref.current) return;
+    return mobileViewport.registerFixedObstruction("Player", ref.current);
+  }, [mobileViewport]);
+  return (
+    <div
+      ref={ref}
+      data-testid="fixed-player-obstruction"
+      style={{
+        position: "fixed",
+        right: 0,
+        bottom: 0,
+        left: 0,
+        height: 80,
+      }}
+    />
+  );
+}
+
+function renderLauncher(
+  initialState?: WorkspaceState,
+  withMobileChromeTestDrivers = false,
+) {
   return render(
     withRenderEnvironment(
-      <MobileViewportProvider>
+      <MobileChromeProvider>
+        {withMobileChromeTestDrivers ? (
+          <>
+            <NexusChromeDriver />
+            <FixedPlayerObstruction />
+          </>
+        ) : null}
         <KeybindingsProvider>
           <FeedbackProvider>
             <PaneReturnMementoProvider>
@@ -217,7 +283,7 @@ function renderLauncher(initialState?: WorkspaceState) {
             </PaneReturnMementoProvider>
           </FeedbackProvider>
         </KeybindingsProvider>
-      </MobileViewportProvider>,
+      </MobileChromeProvider>,
     ),
   );
 }
@@ -227,7 +293,7 @@ function renderLauncher(initialState?: WorkspaceState) {
 function renderLauncherWithOpener() {
   return render(
     withRenderEnvironment(
-      <MobileViewportProvider>
+      <MobileChromeProvider>
         <KeybindingsProvider>
           <FeedbackProvider>
             <PaneReturnMementoProvider>
@@ -250,7 +316,7 @@ function renderLauncherWithOpener() {
             </PaneReturnMementoProvider>
           </FeedbackProvider>
         </KeybindingsProvider>
-      </MobileViewportProvider>,
+      </MobileChromeProvider>,
     ),
   );
 }
@@ -1182,6 +1248,145 @@ describe("Launcher — URL-param lane seed", () => {
 });
 
 describe("Launcher — mobile Switchboard Find", () => {
+  it("shares reader chrome progress while preserving hidden accessibility and stable Nexus clearance", async () => {
+    viewport.setMobile(true);
+    vi.spyOn(window, "innerHeight", "get").mockReturnValue(900);
+    renderLauncher(undefined, true);
+
+    const nexus = await screen.findByRole("button", {
+      name: "Open Nexus, 1 tab",
+    });
+    expect(screen.getByTestId("nexus-motion-phase")).toHaveTextContent(
+      "Visible",
+    );
+    expect(nexus).not.toHaveAttribute("aria-hidden");
+
+    const wrapper = screen.getByTestId("nexus-wrapper");
+    const player = screen.getByTestId("fixed-player-obstruction");
+    const playerRect = player.getBoundingClientRect();
+    const playerBottomClearancePx = Math.ceil(
+      window.innerHeight - playerRect.top,
+    );
+    expect(playerBottomClearancePx).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(
+        document.documentElement.style.getPropertyValue(
+          "--mobile-nexus-bottom-offset",
+        ),
+      ).toContain(`${playerBottomClearancePx}px`),
+    );
+    Object.assign(wrapper.style, {
+      position: "fixed",
+      right: "16px",
+      bottom: `${playerBottomClearancePx + 16}px`,
+      width: "56px",
+      height: "56px",
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    fireEvent(window, new Event("resize"));
+    await waitFor(() => {
+      const rect = wrapper.getBoundingClientRect();
+      expect(rect.width).toBeGreaterThan(0);
+      expect(rect.height).toBeGreaterThan(0);
+      expect(
+        document.documentElement.style.getPropertyValue(
+          "--mobile-content-bottom-clearance",
+        ),
+      ).toMatch(/,\s*[1-9]\d*px\)/);
+    });
+    const visibleRect = wrapper.getBoundingClientRect();
+    const visibleClearance = document.documentElement.style.getPropertyValue(
+      "--mobile-content-bottom-clearance",
+    );
+    const visiblePlayerOffset = document.documentElement.style.getPropertyValue(
+      "--mobile-nexus-bottom-offset",
+    );
+
+    fireEvent.click(screen.getByTestId("nexus-scroll-start"));
+    fireEvent.click(screen.getByTestId("nexus-scroll-partial"));
+    await waitFor(() => {
+      expect(screen.getByTestId("nexus-motion-phase")).toHaveTextContent(
+        "Tracking",
+      );
+    });
+    await waitFor(() => {
+      expect(nexus).toHaveStyle("--mobile-chrome-collapse: 0.375");
+    });
+    expect(nexus).not.toHaveAttribute("aria-hidden");
+    expect(nexus).not.toHaveAttribute("inert");
+
+    fireEvent.click(screen.getByTestId("nexus-scroll-hidden"));
+    await waitFor(() => {
+      expect(screen.getByTestId("nexus-motion-phase")).toHaveTextContent(
+        "Hidden",
+      );
+      expect(nexus).toHaveStyle("--mobile-chrome-collapse: 1");
+    });
+    expect(nexus).toHaveAttribute("aria-hidden", "true");
+    expect(nexus).toHaveAttribute("inert");
+
+    fireEvent(window, new Event("resize"));
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const hiddenRect = wrapper.getBoundingClientRect();
+    const hiddenPlayerRect = player.getBoundingClientRect();
+    expect({
+      top: hiddenPlayerRect.top,
+      bottom: hiddenPlayerRect.bottom,
+      width: hiddenPlayerRect.width,
+      height: hiddenPlayerRect.height,
+    }).toEqual({
+      top: playerRect.top,
+      bottom: playerRect.bottom,
+      width: playerRect.width,
+      height: playerRect.height,
+    });
+    expect({
+      top: hiddenRect.top,
+      bottom: hiddenRect.bottom,
+      width: hiddenRect.width,
+      height: hiddenRect.height,
+    }).toEqual({
+      top: visibleRect.top,
+      bottom: visibleRect.bottom,
+      width: visibleRect.width,
+      height: visibleRect.height,
+    });
+    expect(
+      document.documentElement.style.getPropertyValue(
+        "--mobile-content-bottom-clearance",
+      ),
+    ).toBe(visibleClearance);
+    expect(
+      document.documentElement.style.getPropertyValue(
+        "--mobile-nexus-bottom-offset",
+      ),
+    ).toBe(visiblePlayerOffset);
+
+    fireEvent.click(screen.getByTestId("nexus-scroll-start"));
+    await waitFor(() =>
+      expect(screen.getByTestId("nexus-motion-phase")).toHaveTextContent(
+        "Visible",
+      ),
+    );
+    fireEvent.click(screen.getByTestId("nexus-scroll-partial"));
+    await waitFor(() => {
+      expect(screen.getByTestId("nexus-motion-phase")).toHaveTextContent(
+        "Tracking",
+      );
+      expect(nexus).toHaveStyle("--mobile-chrome-collapse: 0.375");
+    });
+    expect(
+      screen.getByRole("button", { name: "Open Nexus, 1 tab" }),
+    ).toBe(nexus);
+    await userEvent.click(nexus);
+    expect(await screen.findByRole("dialog", { name: "Nexus" })).toHaveAttribute(
+      "id",
+      "nexus-switchboard",
+    );
+    expect(nexus).toHaveAttribute("aria-hidden", "true");
+    expect(nexus).toHaveAttribute("inert");
+  });
+
   it("keeps the explicit Find page open when its query is cleared", async () => {
     viewport.setMobile(true);
     renderLauncher();

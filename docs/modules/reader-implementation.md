@@ -46,13 +46,16 @@ Mobile document readers publish their own scroll state to the workspace
   updates from that same scrollport.
 - The provider alone owns collapse progress, direction reversal, idle settle,
   visibility locks, and reduced-motion pinning.
-- The app bar and optional format toolbar are presentation consumers; they
-  never infer scroll policy.
+- The app bar, optional active format toolbar, and inner Nexus control are
+  presentation consumers; they never infer scroll policy.
+- The shared reader-layout pointer boundary releases stale registered-chrome
+  focus before a primary pointer scroll.
 
 Chrome motion is transform-only and never changes reader padding, selection,
-resume state, or scroll position. Non-reader and window scroll are outside this
-contract. See [workspace.md](workspace.md#mobile-reader-chrome) for the workspace
-composition contract.
+resume state, scroll position, or the stable outer Nexus obstruction
+measurement. Non-reader and window scroll are outside this contract. See
+[workspace.md](workspace.md#mobile-reader-chrome) for the workspace composition
+contract.
 
 ### natural document completion
 

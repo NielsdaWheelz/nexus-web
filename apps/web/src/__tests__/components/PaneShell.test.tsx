@@ -30,7 +30,6 @@ const TEST_VISIT_ID = assumePaneVisitId("00000000-0000-4000-8000-000000000001");
 
 const mobileChromeMock = vi.hoisted(() => ({
   setPaneChrome: vi.fn(),
-  acquireVisibleLock: vi.fn(() => vi.fn()),
   motionPhase: { kind: "Visible" } as { kind: string; direction?: string },
 }));
 const shareControllerMock = vi.hoisted(() => ({
@@ -45,7 +44,6 @@ vi.mock("@/lib/workspace/mobileChrome", () => ({
     motionPhase: mobileChromeMock.motionPhase,
     paneChrome: null,
     setPaneChrome: mobileChromeMock.setPaneChrome,
-    acquireVisibleLock: mobileChromeMock.acquireVisibleLock,
   }),
   useMobileChromeSurface: () => {},
   usePaneMobileChromeController: () => ({
@@ -244,7 +242,6 @@ class TestErrorBoundary extends Component<
 beforeEach(() => {
   vi.clearAllMocks();
   mobileChromeMock.motionPhase = { kind: "Visible" };
-  mobileChromeMock.acquireVisibleLock.mockImplementation(() => vi.fn());
 });
 
 describe("PaneShell", () => {
@@ -770,40 +767,6 @@ describe("PaneShell", () => {
     expect(toolbar).toHaveAttribute("aria-hidden", "true");
     expect(toolbar).toHaveAttribute("inert");
     expect(screen.getByTestId("pane-shell-body")).toBe(body);
-  });
-
-  it("lets hidden pane chrome focus reveal its toolbar", async () => {
-    const mobileToolbar = {
-      routeHeader: resourceHeader,
-      routeShareIdentity: null,
-      label: "Media",
-      isMobile: true,
-      children: (
-        <PrimaryChromeProbe
-          publication={{
-            ...readyResource("Document title"),
-            toolbar: <button type="button">Reader controls</button>,
-          }}
-        />
-      ),
-    } satisfies Partial<PaneProps>;
-    mobileChromeMock.motionPhase = { kind: "Hidden" };
-    mobileChromeMock.acquireVisibleLock.mockImplementation(() => {
-      mobileChromeMock.motionPhase = { kind: "Pinned" };
-      return vi.fn();
-    });
-    const view = render(paneTree(mobileToolbar));
-
-    await screen.findByRole("button", { name: "Reader controls", hidden: true });
-    const chrome = screen.getByTestId("pane-shell-chrome");
-    expect(chrome).not.toHaveAttribute("inert");
-
-    fireEvent.focus(chrome);
-    view.rerender(paneTree(mobileToolbar));
-
-    expect(mobileChromeMock.acquireVisibleLock).toHaveBeenCalledWith("chrome-focus");
-    expect(chrome).toHaveAttribute("data-mobile-chrome-phase", "Pinned");
-    expect(screen.getByRole("button", { name: "Reader controls" })).toBeVisible();
   });
 
   it("leaves the pane toolbar surface empty when the reader publishes no toolbar", async () => {
