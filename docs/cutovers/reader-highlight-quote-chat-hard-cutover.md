@@ -257,15 +257,16 @@ explicit removal or successful run creation.
 hydrated `ReaderHighlight` variant is sendable. A missing just-launched
 Highlight is projection drift: raise/report a route defect, not `NonSendable`.
 
-`useChatDraft` persists text, complete `ProfileSelection`, and the active send
-attempt in `sessionStorage` by canonical draft key. The attempt stores one
-idempotency key, payload identity, and exact precondition revision. Retries of
-an unchanged ambiguous failure replay that stored request. While status is
-unknown, answer-determining edits, removal, and new sends are blocked until
-reconciliation. After a known failure, changing answer-determining input mints
-a new key. Success clears the record. A stale `ReaderSelectionRevision` is a
-failed precondition, not payload identity: refresh plus explicit reconfirmation
-reuses the unconsumed key.
+`useChatDraft` persists text, an explicit `ChatProfileSelection`, and the
+active send attempt in `sessionStorage` by canonical draft key. Inherited and
+product-default selections are derived, never stored as draft preferences. The
+attempt stores one idempotency key, payload identity, and exact precondition
+revision. Retries of an unchanged ambiguous failure replay that stored request.
+While status is unknown, answer-determining edits, removal, and new sends are
+blocked until reconciliation. After a known failure, changing
+answer-determining input mints a new key. Success clears the record. A stale
+`ReaderSelectionRevision` is a failed precondition, not payload identity:
+refresh plus explicit reconfirmation reuses the unconsumed key.
 
 ## API Contract
 

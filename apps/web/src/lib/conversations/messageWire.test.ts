@@ -143,6 +143,59 @@ describe("decodeConversationMessage", () => {
       unresolvedReason: null,
     });
   });
+
+  it("normalizes completed trust-trail context activations at the message boundary", () => {
+    const wire = {
+      ...userMessageBase,
+      id: "a1",
+      role: "assistant",
+      trust_trail: {
+        schema_version: "assistant_trust_trail.v1",
+        assistant_message_id: "a1",
+        conversation_id: "c1",
+        chat_run_id: "r1",
+        status: "complete",
+        run: null,
+        prompt: null,
+        tool_calls: [],
+        citations: [],
+        context_refs_added: [
+          {
+            chat_run_event_seq: 10,
+            id: "context-edge-1",
+            conversation_id: "c1",
+            resource_ref:
+              "message:11111111-1111-4111-8111-111111111111",
+            activation: {
+              resource_ref:
+                "message:11111111-1111-4111-8111-111111111111",
+              kind: "route",
+              href: "/conversations/c1?message=11111111-1111-4111-8111-111111111111",
+              unresolved_reason: null,
+            },
+            label: "Message",
+            summary: "Quoted message",
+            missing: false,
+            created_at: "2026-01-01T00:00:00Z",
+            citation_edge_id: "citation-edge-1",
+          },
+        ],
+        integrity_notices: [],
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+      },
+    } as unknown as ConversationMessage;
+
+    expect(
+      decodeConversationMessage(wire).trust_trail?.context_refs_added[0]
+        ?.activation,
+    ).toEqual({
+      resourceRef: "message:11111111-1111-4111-8111-111111111111",
+      kind: "route",
+      href: "/conversations/c1?message=11111111-1111-4111-8111-111111111111",
+      unresolvedReason: null,
+    });
+  });
 });
 
 describe("decodeChatRunData", () => {

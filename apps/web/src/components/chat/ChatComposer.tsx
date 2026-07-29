@@ -1,9 +1,9 @@
 /**
  * ChatComposer - message input with LLM-profile picker and chat-run send.
  *
- * The composer owns NO provider/model/reasoning policy: it holds a
- * `{ profileId, reasoningOptionId }` selection reported by ChatProfilePicker
- * (which renders the GET /llm-profiles catalog) and sends it verbatim.
+ * The composer owns profile-catalog loading and next-turn selection resolution.
+ * ChatProfilePicker renders the ready resolved selection and reports explicit
+ * draft changes only.
  *
  * It DOES own the durable send-attempt machine (via `useChatDraft`): one
  * idempotency key per answer-determining payload identity, replayed on an
@@ -22,6 +22,11 @@ import { toFeedback } from "@/components/feedback/Feedback";
 import { absent, type Presence } from "@/lib/api/presence";
 import type { ReaderSelectionInput } from "@/lib/api/sse/requests";
 import { buildChatRunBody } from "@/lib/conversations/chatRunBody";
+import {
+  resolveChatProfileSelection,
+  type InheritedChatProfileSelection,
+  type ResolvedChatProfileSelection,
+} from "@/lib/conversations/chatProfileSelection";
 import { decodeChatRunData } from "@/lib/conversations/messageWire";
 import type { PendingTurnContext } from "@/lib/conversations/pendingTurnContext";
 import {
@@ -33,6 +38,7 @@ import { readerSelectionKeyToWire } from "@/lib/conversations/readerSelectionKey
 import { isRecord } from "@/lib/validation";
 import BranchComposerHeader from "@/components/chat/BranchComposerHeader";
 import ChatProfilePicker from "@/components/chat/ChatProfilePicker";
+import { useChatProfiles } from "@/components/chat/useChatProfiles";
 import QuotedPassageCard from "@/components/chat/QuotedPassageCard";
 import { useChatDraft } from "@/components/chat/useChatDraft";
 import Button from "@/components/ui/Button";
@@ -69,6 +75,8 @@ interface ChatComposerProps {
   branchDraft?: BranchDraft | null;
   /** Active-path assistant message used for ordinary continuation replies. */
   parentMessageId?: string | null;
+  /** Product selection inherited from the causal assistant parent. */
+  inheritedProfileSelection: InheritedChatProfileSelection | null;
   /** Clears branch-reply mode. */
   onClearBranchDraft?: () => void;
   /** Jumps the transcript to the visible parent message for branch mode. */
@@ -130,6 +138,7 @@ export default function ChatComposer({
   draftKey,
   branchDraft = null,
   parentMessageId = null,
+  inheritedProfileSelection,
   onClearBranchDraft,
   onJumpToBranchParent,
   pendingContext = absent(),
@@ -154,6 +163,7 @@ export default function ChatComposer({
     profile,
     setProfile,
     activeDraftKey,
+    attempt: currentAttempt,
     reconciling,
     beginSendAttempt,
     resolveSuccess,
@@ -167,6 +177,42 @@ export default function ChatComposer({
     conversationId,
     initialContent,
   });
+  const {
+    profiles,
+    defaultProfileId,
+    isLoading,
+    error: profilesError,
+  } = useChatProfiles();
+
+  let resolvedProfileSelection: ResolvedChatProfileSelection | null = null;
+  if (!isLoading && profilesError === null) {
+    if (defaultProfileId === null) {
+      // justify-defect: a ready same-system catalog must name its product default.
+      throw new Error(
+        "Ready LLM profile catalog is missing its default profile",
+      );
+    }
+    resolvedProfileSelection = resolveChatProfileSelection({
+      draftSelection: profile,
+      inheritedSelection: inheritedProfileSelection,
+      profiles,
+      defaultProfileId,
+    });
+  }
+  const effectiveProfileSelection = resolvedProfileSelection?.selection ?? null;
+  let unavailableProfileLabel: string | null = null;
+  if (resolvedProfileSelection?.kind === "UnavailableReplacement") {
+    const replacementProfile = profiles.find(
+      (item) => item.id === resolvedProfileSelection.selection.profileId,
+    );
+    if (replacementProfile === undefined) {
+      // justify-defect: the resolver derives its replacement from this catalog.
+      throw new Error(
+        "Replacement chat profile is absent from the ready catalog",
+      );
+    }
+    unavailableProfileLabel = replacementProfile.label;
+  }
 
   useEffect(() => {
     if (!autoFocus) return;
@@ -196,7 +242,7 @@ export default function ChatComposer({
       !trimmed ||
       sending ||
       sendCapability.kind !== "Available" ||
-      !profile ||
+      !effectiveProfileSelection ||
       pendingBlocksSend
     ) {
       return;
@@ -222,24 +268,37 @@ export default function ChatComposer({
       parentMessageId: branchDraft?.parentMessageId ?? parentMessageId,
       branchAnchor: branchDraft?.anchor ?? null,
       content: trimmed,
-      profile,
+      profile: effectiveProfileSelection,
       readerSelectionKey: readerHighlight?.key ?? null,
     });
 
     const attempt = beginSendAttempt(
       payloadIdentity,
+      effectiveProfileSelection,
       readerSelection?.revision ?? null,
     );
+    let attemptedReaderSelection: ReaderSelectionInput | null = null;
+    if (readerSelection !== null) {
+      if (attempt.revision === null) {
+        // justify-defect: a send attempt with a reader selection always
+        // snapshots that selection's compare-on-send revision.
+        throw new Error("Reader-selection send attempt is missing its revision");
+      }
+      attemptedReaderSelection = {
+        ...readerSelection,
+        revision: attempt.revision,
+      };
+    }
 
     try {
       const body = buildChatRunBody({
         conversationId,
         content: trimmed,
-        profileId: profile.profileId,
-        reasoningOptionId: profile.reasoningOptionId,
+        profileId: attempt.profileSelection.profileId,
+        reasoningOptionId: attempt.profileSelection.reasoningOptionId,
         branchDraft,
         parentMessageId,
-        readerSelection,
+        readerSelection: attemptedReaderSelection,
       });
 
       const runResponse = await apiFetch<ChatRunResponse>("/api/chat-runs", {
@@ -303,7 +362,7 @@ export default function ChatComposer({
     content,
     sending,
     sendCapability,
-    profile,
+    effectiveProfileSelection,
     pendingBlocksSend,
     readerHighlight,
     conversationId,
@@ -354,7 +413,7 @@ export default function ChatComposer({
   const sendDisabled =
     sending ||
     sendCapability.kind !== "Available" ||
-    !profile ||
+    !effectiveProfileSelection ||
     !content.trim() ||
     pendingBlocksSend;
 
@@ -412,11 +471,34 @@ export default function ChatComposer({
         />
 
         <div className={styles.composerActionRow}>
-          <ChatProfilePicker
-            value={profile}
-            onChange={setProfile}
-            disabled={composerDisabled}
-          />
+          {profilesError ? (
+            <span className={styles.profileStatus} role="status">
+              AI profiles unavailable
+            </span>
+          ) : isLoading ? (
+            <span className={styles.profileStatus} role="status">
+              Loading profiles…
+            </span>
+          ) : reconciling && currentAttempt ? (
+            <span className={styles.profileStatus} role="status">
+              Original chat profile locked for retry.
+            </span>
+          ) : effectiveProfileSelection ? (
+            <>
+              <ChatProfilePicker
+                profiles={profiles}
+                value={effectiveProfileSelection}
+                onChange={setProfile}
+                disabled={composerDisabled}
+              />
+              {unavailableProfileLabel !== null ? (
+                <span className={styles.profileStatus} role="status">
+                  The previous chat profile is no longer available. Using{" "}
+                  {unavailableProfileLabel}.
+                </span>
+              ) : null}
+            </>
+          ) : null}
 
           {reconciling ? (
             <Button
