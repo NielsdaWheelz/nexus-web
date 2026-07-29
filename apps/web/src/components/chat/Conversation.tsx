@@ -820,6 +820,7 @@ export default function Conversation() {
                 draftKey={composerDraftKey}
                 branchDraft={branchDraft}
                 parentMessageId={activeReplyParentMessageId}
+                inheritedProfileSelection={convo.inheritedProfileSelection}
                 sendCapability={convo.sendCapability}
                 activeRunId={convo.activeRunId}
                 onCancelRun={convo.cancelActiveRun}

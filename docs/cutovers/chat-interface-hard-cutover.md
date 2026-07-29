@@ -155,6 +155,8 @@ LLM profile registry
   -> LlmProfileOut
   -> GET /llm-profiles
   -> useChatProfiles
+  -> ChatComposer
+  -> resolveChatProfileSelection
   -> ChatProfilePicker
 
 ConversationMessage
@@ -176,6 +178,8 @@ ConversationMessage
 | Consequential writes + Undo | `AssistantWriteTrail` | `AssistantMessage` |
 | Run/tool/source diagnostics | `AssistantDetails` | `AssistantMessage` |
 | Send availability derivation | `useConversation` | `ChatComposer` |
+| Causal inherited profile selection | `useConversation` | `ChatComposer` |
+| Ready-catalog selection precedence | `resolveChatProfileSelection` | `ChatComposer` |
 | Profile privacy classification | `llm_profiles.py` registry | profile API/UI |
 | Quote geometry and disclosure | `QuotedPassageCard` | composer, user turn |
 | Collection row hit target | `ResourceRow` | every collection row |
@@ -203,6 +207,13 @@ export type ChatSendCapability =
 it to send gating and accessible copy. Local `sending`, `reconciling`, empty
 draft, missing profile, and pending quote hydration remain composer-owned
 conditions; they are not added to this caller capability.
+
+Profile/reasoning continuation is governed by
+`chat-continuation-selection-hard-cutover.md`: `ChatComposer` owns the cached
+catalog and resolves explicit draft choice, causal assistant-run selection, and
+the exact product default in that order. `ChatProfilePicker` is a pure
+controlled renderer and owns no fetching, defaulting, validation, or mount-time
+mutation.
 
 ### 7.2 Profile privacy API
 

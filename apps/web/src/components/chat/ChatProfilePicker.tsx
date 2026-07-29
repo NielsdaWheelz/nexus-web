@@ -3,57 +3,20 @@
 /**
  * ChatProfilePicker — the composer's product-facing LLM selector.
  *
- * Renders the GET /llm-profiles catalog (via useChatProfiles): a profile
- * chooser, that profile's reasoning options, and its privacy disclosure. It owns NO
- * provider/model/reasoning policy — it renders exactly what the endpoint returns
- * and reports a `{ profileId, reasoningOptionId }` selection up to the composer
- * (controlled). It replaces the old model + reasoning + key-mode controls.
- *
- * Defaulting: once the catalog loads, if the controlled value is empty or no
- * longer valid, it emits the server default profile + that profile's default
- * reasoning option.
+ * Renders the ready catalog, resolved selection, and privacy disclosure that
+ * ChatComposer owns. It reports only explicit user changes back to the draft.
  */
 
-import { useEffect } from "react";
 import Select from "@/components/ui/Select";
-import { useChatProfiles } from "@/components/chat/useChatProfiles";
+import type { ChatProfileSelection } from "@/lib/conversations/chatProfileSelection";
 import type { LlmProfile, LlmProfilePrivacy } from "@/lib/conversations/types";
 import styles from "./ChatProfilePicker.module.css";
 
-export interface ProfileSelection {
-  profileId: string;
-  reasoningOptionId: string;
-}
-
 interface ChatProfilePickerProps {
-  value: ProfileSelection | null;
-  onChange: (value: ProfileSelection) => void;
+  profiles: readonly LlmProfile[];
+  value: ChatProfileSelection;
+  onChange: (value: ChatProfileSelection) => void;
   disabled?: boolean;
-}
-
-function isValidSelection(
-  value: ProfileSelection | null,
-  profiles: LlmProfile[],
-): boolean {
-  if (!value) return false;
-  const profile = profiles.find((item) => item.id === value.profileId);
-  if (!profile) return false;
-  return profile.reasoning_options.some(
-    (option) => option.id === value.reasoningOptionId,
-  );
-}
-
-function defaultSelection(
-  profiles: LlmProfile[],
-  defaultProfileId: string | null,
-): ProfileSelection | null {
-  const profile =
-    profiles.find((item) => item.id === defaultProfileId) ?? profiles[0];
-  if (!profile) return null;
-  return {
-    profileId: profile.id,
-    reasoningOptionId: profile.default_reasoning_option_id,
-  };
 }
 
 function assertNever(value: never): never {
@@ -77,40 +40,17 @@ function ProfilePrivacy({ privacy }: { privacy: LlmProfilePrivacy }) {
 }
 
 export default function ChatProfilePicker({
+  profiles,
   value,
   onChange,
   disabled = false,
 }: ChatProfilePickerProps) {
-  const { profiles, defaultProfileId, isLoading, error } = useChatProfiles();
-
-  // Emit the server default (or repair an invalid selection) once the catalog
-  // is known. The composer owns the state; this only seeds it.
-  useEffect(() => {
-    if (profiles.length === 0) return;
-    if (isValidSelection(value, profiles)) return;
-    const next = defaultSelection(profiles, defaultProfileId);
-    if (next) onChange(next);
-  }, [profiles, defaultProfileId, value, onChange]);
-
-  if (error) {
-    return (
-      <span className={styles.status} role="status">
-        AI profiles unavailable
-      </span>
-    );
+  const selectedProfile = profiles.find((item) => item.id === value.profileId);
+  if (selectedProfile === undefined) {
+    // justify-defect: the composer passes a resolver-validated ready selection.
+    throw new Error("Resolved chat profile is absent from the ready catalog");
   }
-
-  if (isLoading || profiles.length === 0) {
-    return (
-      <span className={styles.status} role="status">
-        Loading profiles…
-      </span>
-    );
-  }
-
-  const selectedProfile =
-    profiles.find((item) => item.id === value?.profileId) ?? null;
-  const reasoningOptions = selectedProfile?.reasoning_options ?? [];
+  const reasoningOptions = selectedProfile.reasoning_options;
 
   return (
     <div className={styles.picker}>
@@ -119,13 +59,18 @@ export default function ChatProfilePicker({
         <Select
           size="sm"
           aria-label="AI profile"
-          value={value?.profileId ?? ""}
+          value={value.profileId}
           disabled={disabled}
           onChange={(event) => {
             const profile = profiles.find(
               (item) => item.id === event.target.value,
             );
-            if (!profile) return;
+            if (profile === undefined) {
+              // justify-defect: a native select only emits one of its rendered options.
+              throw new Error(
+                "Selected chat profile is absent from the ready catalog",
+              );
+            }
             onChange({
               profileId: profile.id,
               reasoningOptionId: profile.default_reasoning_option_id,
@@ -146,10 +91,9 @@ export default function ChatProfilePicker({
           <Select
             size="sm"
             aria-label="Reasoning"
-            value={value?.reasoningOptionId ?? ""}
+            value={value.reasoningOptionId}
             disabled={disabled}
             onChange={(event) => {
-              if (!value) return;
               onChange({
                 profileId: value.profileId,
                 reasoningOptionId: event.target.value,
@@ -165,7 +109,7 @@ export default function ChatProfilePicker({
         </label>
       ) : null}
 
-      {selectedProfile ? <ProfilePrivacy privacy={selectedProfile.privacy} /> : null}
+      <ProfilePrivacy privacy={selectedProfile.privacy} />
     </div>
   );
 }

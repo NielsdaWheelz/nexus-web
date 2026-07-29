@@ -42,6 +42,7 @@ import {
   activeForkOptionsForPath,
   selectedPathMessageIds,
 } from "@/lib/conversations/branching";
+import type { InheritedChatProfileSelection } from "@/lib/conversations/chatProfileSelection";
 import type { SSEContextRefAddedEvent } from "@/lib/api/sse/events";
 import { messageUpdateReducer } from "@/lib/conversations/messageUpdateReducer";
 import {
@@ -128,6 +129,8 @@ interface UseConversation {
   error: FeedbackContent | null;
   /** Complete assistant leaf — the default reply/continuation parent. */
   replyParentMessageId: string | null;
+  /** Product selection inherited from the causal assistant parent, if any. */
+  inheritedProfileSelection: InheritedChatProfileSelection | null;
   /** The one caller-owned send capability; ChatComposer owns its presentation. */
   sendCapability: ChatSendCapability;
 
@@ -909,6 +912,39 @@ export function useConversation(
     return null;
   }, [messages]);
 
+  const inheritedProfileSelection = useMemo(() => {
+    const assistant = branchDraft
+      ? messages.find(
+          (message) => message.id === branchDraft.parentMessageId,
+        )
+      : messages[messages.length - 1];
+    if (!assistant || assistant.role !== "assistant") {
+      if (branchDraft) {
+        // justify-defect: BranchDraft is created only from a rendered assistant
+        // and is cleared when that assistant leaves the active path.
+        throw new Error("Branch draft parent must be an assistant message");
+      }
+      return null;
+    }
+
+    const run = assistant.trust_trail?.run;
+    if (!run) return null;
+    if (run.profile_id === null && run.reasoning_option_id === null) return null;
+    if (run.profile_id === null || run.reasoning_option_id === null) {
+      // justify-defect: a ChatRun writes its product profile and reasoning
+      // selection together, so a same-system trust trail cannot contain half.
+      throw new Error("Assistant run selection must be complete");
+    }
+    return {
+      selection: {
+        profileId: run.profile_id,
+        reasoningOptionId: run.reasoning_option_id,
+      },
+      assistantMessageId: assistant.id,
+      runId: run.run_id,
+    };
+  }, [branchDraft, messages]);
+
   const sendCapability = useMemo<ChatSendCapability>(() => {
     if (!conversationId) return { kind: "Available" };
     if (loading) return { kind: "HistoryLoading" };
@@ -944,6 +980,7 @@ export function useConversation(
     loading,
     error,
     replyParentMessageId,
+    inheritedProfileSelection,
     sendCapability,
     conversationId,
     title,

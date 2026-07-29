@@ -7,14 +7,27 @@ import ChatComposerComponent from "@/components/chat/ChatComposer";
 import { __resetChatProfilesCacheForTests } from "@/components/chat/useChatProfiles";
 import { present } from "@/lib/api/presence";
 import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
+import type { InheritedChatProfileSelection } from "@/lib/conversations/chatProfileSelection";
 import type { PendingTurnContext } from "@/lib/conversations/pendingTurnContext";
 import type { ReaderSelectionPreview } from "@/lib/conversations/readerSelection";
 import type { BranchDraft } from "@/lib/conversations/types";
 
-function ChatComposer(
-  props: Omit<ComponentProps<typeof ChatComposerComponent>, "sendCapability">,
-) {
-  return <ChatComposerComponent {...props} sendCapability={{ kind: "Available" }} />;
+function ChatComposer({
+  inheritedProfileSelection = null,
+  ...props
+}: Omit<
+  ComponentProps<typeof ChatComposerComponent>,
+  "sendCapability" | "inheritedProfileSelection"
+> & {
+  inheritedProfileSelection?: InheritedChatProfileSelection | null;
+}) {
+  return (
+    <ChatComposerComponent
+      {...props}
+      inheritedProfileSelection={inheritedProfileSelection}
+      sendCapability={{ kind: "Available" }}
+    />
+  );
 }
 
 const LLM_PROFILES = {
@@ -41,7 +54,10 @@ const LLM_PROFILES = {
       model_label: "Haiku",
       reasoning_options: [{ id: "default", label: "Default" }],
       default_reasoning_option_id: "default",
-      privacy: { kind: "ExceptionalRetention", notice: "Retained for 30 days." },
+      privacy: {
+        kind: "ExceptionalRetention",
+        notice: "Retained for 30 days.",
+      },
     },
   ],
 };
@@ -163,26 +179,33 @@ function chatRunResponse(body: ChatRunCreateRequest) {
 }
 
 function installChatComposerFetchMock() {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const path = pathOf(input);
-    if (path === "/api/llm-profiles") {
-      return jsonResponse({ data: LLM_PROFILES });
-    }
-    if (path === "/api/chat-runs" && init?.method === "POST") {
-      return jsonResponse(
-        chatRunResponse(JSON.parse(String(init.body)) as ChatRunCreateRequest),
-      );
-    }
-    throw new Error(`Unexpected fetch call: ${path}`);
-  });
+  const fetchMock = vi.fn(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = pathOf(input);
+      if (path === "/api/llm-profiles") {
+        return jsonResponse({ data: LLM_PROFILES });
+      }
+      if (path === "/api/chat-runs" && init?.method === "POST") {
+        return jsonResponse(
+          chatRunResponse(
+            JSON.parse(String(init.body)) as ChatRunCreateRequest,
+          ),
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${path}`);
+    },
+  );
 
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 }
 
-function chatRunCalls(fetchMock: ReturnType<typeof installChatComposerFetchMock>) {
+function chatRunCalls(
+  fetchMock: ReturnType<typeof installChatComposerFetchMock>,
+) {
   return fetchMock.mock.calls.filter(
-    ([input, init]) => pathOf(input) === "/api/chat-runs" && init?.method === "POST",
+    ([input, init]) =>
+      pathOf(input) === "/api/chat-runs" && init?.method === "POST",
   );
 }
 
@@ -234,6 +257,125 @@ describe("ChatComposer", () => {
         ([input]) => pathOf(input) === "/api/llm-profiles",
       ).length,
     ).toBeLessThanOrEqual(1);
+  });
+
+  it("shows the causal inherited profile and reasoning selection", async () => {
+    installChatComposerFetchMock();
+    const inheritedProfileSelection: InheritedChatProfileSelection = {
+      selection: { profileId: "fast", reasoningOptionId: "default" },
+      assistantMessageId: "assistant-parent",
+      runId: "run-parent",
+    };
+
+    render(
+      <ChatComposer
+        conversationId="conversation-1"
+        inheritedProfileSelection={inheritedProfileSelection}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("combobox", { name: "AI profile" }),
+    ).toHaveValue("fast");
+  });
+
+  it("replaces an unavailable inherited selection with the current default and explains it quietly", async () => {
+    const user = userEvent.setup();
+    const fetchMock = installChatComposerFetchMock();
+    const inheritedProfileSelection: InheritedChatProfileSelection = {
+      selection: {
+        profileId: "retired-profile",
+        reasoningOptionId: "retired-high",
+      },
+      assistantMessageId: "assistant-parent",
+      runId: "run-parent",
+    };
+
+    render(
+      <ChatComposer
+        conversationId="conversation-1"
+        inheritedProfileSelection={inheritedProfileSelection}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("combobox", { name: "AI profile" }),
+    ).toHaveValue("balanced");
+    expect(screen.getByRole("combobox", { name: "Reasoning" })).toHaveValue(
+      "default",
+    );
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent(
+      "The previous chat profile is no longer available. Using Balanced.",
+    );
+    expect(status).not.toHaveTextContent("retired-profile");
+    expect(status).not.toHaveTextContent(/cache|provider/i);
+
+    const message = screen.getByRole("textbox", { name: "Ask anything" });
+    await user.click(message);
+    await user.keyboard("Continue with the current profile");
+    await user.click(screen.getByRole("button", { name: "SEND" }));
+
+    await waitFor(() => {
+      expect(chatRunCalls(fetchMock)).toHaveLength(1);
+    });
+    const [, init] = chatRunCalls(fetchMock)[0];
+    const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest;
+    expect(body.profile_id).toBe("balanced");
+    expect(body.reasoning_option_id).toBe("default");
+  });
+
+  it("keeps an explicit draft selection through remount and resumes inheritance after send", async () => {
+    const user = userEvent.setup();
+    const fetchMock = installChatComposerFetchMock();
+    const inheritedProfileSelection: InheritedChatProfileSelection = {
+      selection: { profileId: "fast", reasoningOptionId: "default" },
+      assistantMessageId: "assistant-parent",
+      runId: "run-parent",
+    };
+    const props = {
+      conversationId: "conversation-1",
+      draftKey: "explicit-profile-draft",
+      inheritedProfileSelection,
+    };
+
+    const { unmount: unmountFirst } = render(<ChatComposer {...props} />);
+    await user.selectOptions(
+      await screen.findByRole("combobox", { name: "AI profile" }),
+      "balanced",
+    );
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Reasoning" }),
+      "high",
+    );
+    unmountFirst();
+
+    const { unmount: unmountSecond } = render(<ChatComposer {...props} />);
+    expect(
+      await screen.findByRole("combobox", { name: "AI profile" }),
+    ).toHaveValue("balanced");
+    expect(screen.getByRole("combobox", { name: "Reasoning" })).toHaveValue(
+      "high",
+    );
+
+    const message = screen.getByRole("textbox", { name: "Ask anything" });
+    await user.click(message);
+    await user.keyboard("Send the explicit choice");
+    await user.click(screen.getByRole("button", { name: "SEND" }));
+
+    await waitFor(() => {
+      expect(chatRunCalls(fetchMock)).toHaveLength(1);
+    });
+    const [, init] = chatRunCalls(fetchMock)[0];
+    const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest;
+    expect(body.profile_id).toBe("balanced");
+    expect(body.reasoning_option_id).toBe("high");
+
+    unmountSecond();
+    render(<ChatComposer {...props} />);
+    expect(
+      await screen.findByRole("combobox", { name: "AI profile" }),
+    ).toHaveValue("fast");
   });
 
   it("selects a non-default profile and sends a Reply destination", async () => {
@@ -301,7 +443,12 @@ describe("ChatComposer", () => {
     const user = userEvent.setup();
     const fetchMock = installChatComposerFetchMock();
 
-    render(<ChatComposer conversationId="conversation-1" parentMessageId="assistant-1" />);
+    render(
+      <ChatComposer
+        conversationId="conversation-1"
+        parentMessageId="assistant-1"
+      />,
+    );
 
     await screen.findByRole("combobox", { name: "AI profile" });
     await user.selectOptions(
@@ -328,7 +475,12 @@ describe("ChatComposer", () => {
     const user = userEvent.setup();
     const fetchMock = installChatComposerFetchMock();
 
-    render(<ChatComposer conversationId="conversation-1" parentMessageId="assistant-1" />);
+    render(
+      <ChatComposer
+        conversationId="conversation-1"
+        parentMessageId="assistant-1"
+      />,
+    );
 
     expect(
       await screen.findByRole("combobox", { name: "AI profile" }),
@@ -385,12 +537,16 @@ describe("ChatComposer", () => {
 
     expect(await screen.findByText("Fork reply")).toBeInTheDocument();
     expect(screen.getByText("Parent message 4")).toBeInTheDocument();
-    expect(screen.getByText("The complete assistant answer.")).toBeInTheDocument();
+    expect(
+      screen.getByText("The complete assistant answer."),
+    ).toBeInTheDocument();
     expect(screen.getByText("assistant answer")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Cancel branch reply" }),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Jump to parent message" }));
+    await user.click(
+      screen.getByRole("button", { name: "Jump to parent message" }),
+    );
     expect(onJumpToBranchParent).toHaveBeenCalledWith("assistant-parent");
 
     const message = screen.getByRole("textbox", { name: "Ask anything" });
@@ -576,7 +732,10 @@ describe("ChatComposer", () => {
     await user.keyboard("Draft during resolution");
 
     rerender(
-      <ChatComposer conversationId="conversation-1" draftKey="new-conversation" />,
+      <ChatComposer
+        conversationId="conversation-1"
+        draftKey="new-conversation"
+      />,
     );
 
     expect(message).toHaveValue("Draft during resolution");
@@ -695,35 +854,46 @@ describe("ChatComposer", () => {
     await user.click(message);
     await user.keyboard("Keep this text after removal");
 
-    await user.click(screen.getByRole("button", { name: "Remove quoted passage" }));
+    await user.click(
+      screen.getByRole("button", { name: "Remove quoted passage" }),
+    );
 
     expect(onRemovePendingContext).toHaveBeenCalledOnce();
     expect(message).toHaveValue("Keep this text after removal");
   });
 
-  it("locks the composer for reconciliation and replays the same key on Retry send", async () => {
+  it("replays the exact profile pair and key after reload and a default change", async () => {
     const user = userEvent.setup();
     let failNext = true;
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = pathOf(input);
-      if (path === "/api/llm-profiles") {
-        return jsonResponse({ data: LLM_PROFILES });
-      }
-      if (path === "/api/chat-runs" && init?.method === "POST") {
-        if (failNext) {
-          failNext = false;
-          // A network reject carries no status → ambiguous loss.
-          throw new TypeError("Failed to fetch");
+    let changedCatalog = false;
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        if (path === "/api/llm-profiles") {
+          return jsonResponse({
+            data: changedCatalog
+              ? { ...LLM_PROFILES, default_profile_id: "fast" }
+              : LLM_PROFILES,
+          });
         }
-        return jsonResponse(
-          chatRunResponse(JSON.parse(String(init.body)) as ChatRunCreateRequest),
-        );
-      }
-      throw new Error(`Unexpected fetch call: ${path}`);
-    });
+        if (path === "/api/chat-runs" && init?.method === "POST") {
+          if (failNext) {
+            failNext = false;
+            // A network reject carries no status → ambiguous loss.
+            throw new TypeError("Failed to fetch");
+          }
+          return jsonResponse(
+            chatRunResponse(
+              JSON.parse(String(init.body)) as ChatRunCreateRequest,
+            ),
+          );
+        }
+        throw new Error(`Unexpected fetch call: ${path}`);
+      },
+    );
     vi.stubGlobal("fetch", fetchMock);
 
-    render(
+    const { unmount } = render(
       <ChatComposer
         conversationId="conversation-1"
         parentMessageId="assistant-1"
@@ -731,7 +901,9 @@ describe("ChatComposer", () => {
       />,
     );
 
-    await screen.findByRole("combobox", { name: "AI profile" });
+    expect(
+      await screen.findByRole("combobox", { name: "AI profile" }),
+    ).toHaveValue("balanced");
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);
     await user.keyboard("An ambiguous send");
@@ -742,8 +914,31 @@ describe("ChatComposer", () => {
       await screen.findByRole("button", { name: "Retry send" }),
     ).toBeVisible();
     expect(screen.getByText("Send status unknown. Retry send.")).toBeVisible();
-    expect(screen.getByRole("textbox", { name: "Ask anything" })).toBeDisabled();
+    expect(
+      screen.getByRole("textbox", { name: "Ask anything" }),
+    ).toBeDisabled();
     expect(screen.queryByRole("button", { name: "SEND" })).toBeNull();
+
+    unmount();
+    changedCatalog = true;
+    __resetChatProfilesCacheForTests();
+    render(
+      <ChatComposer
+        conversationId="conversation-1"
+        parentMessageId="assistant-1"
+        draftKey="reconcile-1"
+      />,
+    );
+
+    expect(
+      await screen.findByRole("button", { name: "Retry send" }),
+    ).toBeVisible();
+    expect(
+      await screen.findByText("Original chat profile locked for retry."),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("combobox", { name: "AI profile" }),
+    ).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Retry send" }));
 
@@ -753,6 +948,11 @@ describe("ChatComposer", () => {
     const calls = chatRunCalls(fetchMock);
     // The replay reuses the SAME idempotency key (identity unchanged).
     expect(idempotencyKeyOf(calls[1])).toBe(idempotencyKeyOf(calls[0]));
+    for (const call of calls) {
+      const body = JSON.parse(String(call[1]?.body)) as ChatRunCreateRequest;
+      expect(body.profile_id).toBe("balanced");
+      expect(body.reasoning_option_id).toBe("default");
+    }
   });
 
   it("flips the send button to SENDING while the chat run is in flight (D-3, R-6)", async () => {
@@ -770,7 +970,9 @@ describe("ChatComposer", () => {
         if (path === "/api/chat-runs" && init?.method === "POST") {
           await runGate;
           return jsonResponse(
-            chatRunResponse(JSON.parse(String(init.body)) as ChatRunCreateRequest),
+            chatRunResponse(
+              JSON.parse(String(init.body)) as ChatRunCreateRequest,
+            ),
           );
         }
         throw new Error(`Unexpected fetch call: ${path}`);
@@ -778,7 +980,12 @@ describe("ChatComposer", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<ChatComposer conversationId="conversation-1" parentMessageId="assistant-1" />);
+    render(
+      <ChatComposer
+        conversationId="conversation-1"
+        parentMessageId="assistant-1"
+      />,
+    );
 
     // Idle: the send action is a text "SEND" button (no ArrowUp icon).
     const sendButton = await screen.findByRole("button", { name: "SEND" });
@@ -829,7 +1036,10 @@ describe("ChatComposer", () => {
     await user.click(screen.getByText("Privacy"));
     expect(screen.getByText("Processed by Nexus AI.")).toBeVisible();
 
-    await user.selectOptions(screen.getByRole("combobox", { name: "AI profile" }), "fast");
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "AI profile" }),
+      "fast",
+    );
     expect(screen.getByText("Retained for 30 days.")).toBeVisible();
     expect(screen.queryByText("Privacy")).not.toBeInTheDocument();
   });
@@ -842,6 +1052,7 @@ describe("ChatComposer", () => {
     render(
       <ChatComposerComponent
         conversationId="conversation-1"
+        inheritedProfileSelection={null}
         sendCapability={{ kind: "AssistantRunning" }}
         activeRunId="run-1"
         onCancelRun={onCancelRun}
@@ -856,7 +1067,9 @@ describe("ChatComposer", () => {
     expect(message).toHaveValue("Keep writing");
     expect(message).toBeEnabled();
     expect(screen.getByRole("button", { name: "Stop response" })).toBeVisible();
-    expect(screen.queryByText(/wait for the assistant/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/wait for the assistant/i),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps the composer controls inside a 320px mobile width without horizontal scrolling", async () => {

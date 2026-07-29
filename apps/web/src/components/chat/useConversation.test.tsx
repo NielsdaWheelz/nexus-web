@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConversation } from "@/components/chat/useConversation";
 import type { SSEContextRefAddedEvent } from "@/lib/api/sse/events";
 import type {
+  BranchDraft,
   ChatRunResponse,
   ConversationMessage,
   ConversationTreeResponse,
@@ -89,6 +90,40 @@ function message(
     can_rerun: false,
     created_at: timestamp,
     updated_at: timestamp,
+  };
+}
+
+function assistantWithProfileSelection(
+  assistant: ConversationMessage,
+  selection: { profileId: string; reasoningOptionId: string },
+): ConversationMessage {
+  if (assistant.role !== "assistant" || assistant.trust_trail === null) {
+    throw new Error("Expected an assistant message with a trust trail");
+  }
+  return {
+    ...assistant,
+    trust_trail: {
+      ...assistant.trust_trail,
+      run: {
+        run_id: `run-${assistant.id}`,
+        profile_id: selection.profileId,
+        reasoning_option_id: selection.reasoningOptionId,
+        provider: "Not a selection source",
+        model_name: "Not a selection source",
+        status: "error",
+        usage: null,
+        error_code: "provider_error",
+        error_origin: "provider",
+        failure: null,
+        reasoning_effort: { kind: "Absent" },
+        support_id: { kind: "Absent" },
+        publication_warning: { kind: "Absent" },
+        final_chars: null,
+        started_at: timestamp,
+        completed_at: timestamp,
+        total_cost_usd_micros: null,
+      },
+    },
   };
 }
 
@@ -539,6 +574,161 @@ describe("useConversation", () => {
       await result.current.loadOlder();
     });
     expect(fetchMock.mock.calls.length).toBe(callsBefore);
+  });
+
+  it("derives selection from the causal assistant, including an errored run, and honors a branch parent", async () => {
+    const branchParent = assistantWithProfileSelection(rootAssistant, {
+      profileId: "branch-parent",
+      reasoningOptionId: "branch-reasoning",
+    });
+    const leaf = assistantWithProfileSelection(
+      { ...branchAAssistant, status: "error" },
+      { profileId: "active-leaf", reasoningOptionId: "leaf-reasoning" },
+    );
+    const selectedPath = [rootUser, branchParent, branchAUser, leaf];
+    const tree: ConversationTreeResponse = {
+      ...treeResponse("a"),
+      selected_path: selectedPath,
+      path_cache_by_leaf_id: { "branch-a-assistant": selectedPath },
+    };
+    stubFetch((input) => {
+      const path = pathOf(input);
+      if (path === "/api/conversations/conversation-1/tree") {
+        return jsonResponse({ data: tree });
+      }
+      if (path === "/api/chat-runs") return jsonResponse({ data: [] });
+      throw new Error(`Unexpected fetch: ${path}`);
+    });
+
+    const { result } = renderHook(() =>
+      useConversation({ conversationId: "conversation-1", branching: true }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.inheritedProfileSelection).toEqual({
+      selection: { profileId: "active-leaf", reasoningOptionId: "leaf-reasoning" },
+      assistantMessageId: "branch-a-assistant",
+      runId: "run-branch-a-assistant",
+    });
+
+    const branchDraft: BranchDraft = {
+      parentMessageId: "root-assistant",
+      parentMessageSeq: 2,
+      parentMessagePreview: "Choose a branch",
+      anchor: { kind: "assistant_message", message_id: "root-assistant" },
+    };
+    act(() => {
+      result.current.branch?.setBranchDraft(branchDraft);
+    });
+
+    expect(result.current.inheritedProfileSelection).toEqual({
+      selection: {
+        profileId: "branch-parent",
+        reasoningOptionId: "branch-reasoning",
+      },
+      assistantMessageId: "root-assistant",
+      runId: "run-root-assistant",
+    });
+  });
+
+  it("does not scan backward when the selected-path assistant leaf has no run", async () => {
+    const olderAssistant = assistantWithProfileSelection(rootAssistant, {
+      profileId: "older-profile",
+      reasoningOptionId: "older-reasoning",
+    });
+    const selectedPath = [
+      rootUser,
+      olderAssistant,
+      branchAUser,
+      branchAAssistant,
+    ];
+    const tree: ConversationTreeResponse = {
+      ...treeResponse("a"),
+      selected_path: selectedPath,
+      path_cache_by_leaf_id: { "branch-a-assistant": selectedPath },
+    };
+    stubFetch((input) => {
+      const path = pathOf(input);
+      if (path === "/api/conversations/conversation-1/tree") {
+        return jsonResponse({ data: tree });
+      }
+      if (path === "/api/chat-runs") return jsonResponse({ data: [] });
+      throw new Error(`Unexpected fetch: ${path}`);
+    });
+
+    const { result } = renderHook(() =>
+      useConversation({ conversationId: "conversation-1", branching: true }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.inheritedProfileSelection).toBeNull();
+  });
+
+  it("does not infer selection from execution facts", async () => {
+    const leaf = assistantWithProfileSelection(branchAAssistant, {
+      profileId: "ignored-profile",
+      reasoningOptionId: "ignored-reasoning",
+    });
+    const run = leaf.trust_trail?.run;
+    if (!run) throw new Error("Expected a test run");
+    leaf.trust_trail = {
+      ...leaf.trust_trail!,
+      run: {
+        ...run,
+        profile_id: null,
+        reasoning_option_id: null,
+        provider: "Provider that must not select",
+        model_name: "Model that must not select",
+        reasoning_effort: { kind: "Present", value: "high" },
+      },
+    };
+    const selectedPath = [rootUser, rootAssistant, branchAUser, leaf];
+    const tree: ConversationTreeResponse = {
+      ...treeResponse("a"),
+      selected_path: selectedPath,
+      path_cache_by_leaf_id: { "branch-a-assistant": selectedPath },
+    };
+    stubFetch((input) => {
+      const path = pathOf(input);
+      if (path === "/api/conversations/conversation-1/tree") {
+        return jsonResponse({ data: tree });
+      }
+      if (path === "/api/chat-runs") return jsonResponse({ data: [] });
+      throw new Error(`Unexpected fetch: ${path}`);
+    });
+
+    const { result } = renderHook(() =>
+      useConversation({ conversationId: "conversation-1", branching: true }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.inheritedProfileSelection).toBeNull();
+  });
+
+  it("defects on a half-populated assistant run selection", async () => {
+    const assistant = assistantWithProfileSelection(
+      message("assistant-half-selection", 2, "assistant", "", "user-new"),
+      { profileId: "profile-only", reasoningOptionId: "reasoning-only" },
+    );
+    const run = assistant.trust_trail?.run;
+    if (!run) throw new Error("Expected a test run");
+    assistant.trust_trail = {
+      ...assistant.trust_trail!,
+      run: { ...run, reasoning_option_id: null },
+    };
+    const runData = {
+      ...chatRunData(),
+      assistant_message: assistant,
+    };
+    const { result } = renderHook(() =>
+      useConversation({ conversationId: null, branching: false }),
+    );
+
+    expect(() => {
+      act(() => {
+        result.current.onChatRunCreated(runData);
+      });
+    }).toThrow("Assistant run selection must be complete");
   });
 
   it("branching mode renders empty conversations without waiting on active runs", async () => {

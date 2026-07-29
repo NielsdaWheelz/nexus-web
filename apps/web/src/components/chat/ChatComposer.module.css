@@ -38,6 +38,11 @@
   min-width: 0;
 }
 
+.profileStatus {
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+}
+
 /* While a send is reconciling, the pending quote card stays visible but cannot
    be interacted with (Remove/Retry/source are inert) until the replay resolves. */
 .pendingLocked {
