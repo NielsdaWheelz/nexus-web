@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   activateResource,
+  normalizeResourceActivation,
   secondaryActivationForResource,
   type ResourceActivation,
 } from "./activation";
@@ -33,7 +34,7 @@ describe("activateResource", () => {
     });
   });
 
-  it("forwards label and secondary activation as target payload", () => {
+  it("forwards a standalone Artifact Revision route without Companion state", () => {
     const activateTarget = vi.fn();
     const revisionRef =
       "artifact_revision:44444444-4444-4444-8444-444444444444";
@@ -55,11 +56,6 @@ describe("activateResource", () => {
       target: {
         href: activation.href,
         labelHint: "The Left Hand of Darkness",
-        secondaryActivation: {
-          kind: "DossierRevision",
-          surfaceId: "resource-dossier",
-          revisionRef,
-        },
       },
       disposition: { kind: "Fork" },
     });
@@ -110,21 +106,43 @@ describe("activateResource", () => {
     );
     expect(assign).not.toHaveBeenCalled();
   });
+});
 
+describe("normalizeResourceActivation", () => {
+  it("accepts only the exact transport shape", () => {
+    expect(
+      normalizeResourceActivation({
+        resource_ref: route.resourceRef,
+        kind: route.kind,
+        href: route.href,
+        unresolved_reason: null,
+      }),
+    ).toEqual(route);
+    expect(normalizeResourceActivation(route)).toBeNull();
+    expect(
+      normalizeResourceActivation({
+        resource_ref: route.resourceRef,
+        kind: route.kind,
+        href: route.href,
+        unresolved_reason: null,
+        extra: true,
+      }),
+    ).toBeNull();
+  });
 });
 
 describe("secondaryActivationForResource", () => {
-  it("opens an artifact head on the current Dossier", () => {
+  it("keeps artifact heads on their canonical standalone route", () => {
     expect(
       secondaryActivationForResource({
         ...route,
         resourceRef: "artifact:22222222-2222-4222-8222-222222222222",
         href: "/conversations/33333333-3333-4333-8333-333333333333",
       }),
-    ).toEqual({ kind: "DossierCurrent", surfaceId: "resource-dossier" });
+    ).toBeNull();
   });
 
-  it("opens an artifact revision on that exact historical Dossier", () => {
+  it("keeps artifact revisions on their canonical standalone query route", () => {
     const revisionRef =
       "artifact_revision:44444444-4444-4444-8444-444444444444";
     expect(
@@ -133,10 +151,6 @@ describe("secondaryActivationForResource", () => {
         resourceRef: revisionRef,
         href: "/conversations/33333333-3333-4333-8333-333333333333",
       }),
-    ).toEqual({
-      kind: "DossierRevision",
-      surfaceId: "resource-dossier",
-      revisionRef,
-    });
+    ).toBeNull();
   });
 });

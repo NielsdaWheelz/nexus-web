@@ -1,11 +1,13 @@
 """Per-subject identity / authorization / audience policy (A3/A20).
 
-The generic dossier engine carries ZERO subject-scheme branches: every
+The generic dossier engine carries no Resource-kind branches. Every
 scheme-specific decision — how a route locator resolves to a private subject id,
 whether the requester may read/generate (404-masked), which closed
 :class:`AudienceScope` the head is keyed by, who owns the billing identity and
 the citation graph edges, and how a canonical resource activates — lives behind
-one :class:`SubjectPolicy` per eligible subject scheme.
+one :class:`SubjectPolicy` per eligible subject scheme. The internal Idea
+subject is the one explicit typed non-Resource branch because it has no public
+``ResourceRef``.
 
 The closed registry is installed by :mod:`nexus.services.artifacts.bindings`,
 the composition owner imported by the generic engine. A scheme absent from
@@ -15,7 +17,7 @@ the composition owner imported by the generic engine. A scheme absent from
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -28,12 +30,14 @@ from nexus.services.artifacts.dossier_types import (
     InvalidSubjectLocator,
     SubjectResource,
 )
+from nexus.services.artifacts.idea_identity import IdeaKey
+from nexus.services.artifacts.idea_seeds import get_idea_subject
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 
 
 @dataclass(frozen=True, slots=True)
-class ResolvedSubject:
-    """A locator resolved to its private subject identity (never exposed raw).
+class ResolvedResourceSubject:
+    """A Resource locator resolved to its private subject identity.
 
     ``scheme``/``subject_id`` are the two head-key columns the engine writes; the
     engine treats the subject opaquely beyond them. ``ref`` is the head's subject
@@ -42,10 +46,25 @@ class ResolvedSubject:
     re-query — opaque to the engine.
     """
 
-    scheme: str
+    scheme: ResourceScheme
     subject_id: UUID
     ref: ResourceRef
     detail: Any = None
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedIdeaSubject:
+    """One internal Idea subject; deliberately carries no public ResourceRef."""
+
+    scheme: Literal["idea"]
+    subject_id: UUID
+    idea_key: IdeaKey
+    display_title: str
+    user_id: UUID
+
+
+ResolvedSubject = ResolvedResourceSubject | ResolvedIdeaSubject
+DossierSubjectScheme = ResourceScheme | Literal["idea"]
 
 
 class SubjectPolicy(Protocol):
@@ -154,6 +173,24 @@ def visible_persisted_subject(
     else:
         return None
 
+    if subject_scheme == "idea":
+        if audience_scheme != "user":
+            return None
+        idea = get_idea_subject(
+            db,
+            user_id=viewer_id,
+            idea_subject_id=subject_id,
+        )
+        if idea is None:
+            return None
+        return ResolvedIdeaSubject(
+            scheme="idea",
+            subject_id=idea.id,
+            idea_key=idea.idea_key,
+            display_title=idea.display_title,
+            user_id=idea.user_id,
+        )
+
     policy = SUBJECT_POLICIES.get(subject_scheme)
     if policy is None:
         # The registry composition owner may not have been imported by a direct
@@ -164,8 +201,8 @@ def visible_persisted_subject(
         policy = SUBJECT_POLICIES.get(subject_scheme)
     if policy is None:
         raise AssertionError(f"no policy for persisted subject scheme {subject_scheme!r}")
-    resolved = ResolvedSubject(
-        scheme=subject_scheme,
+    resolved = ResolvedResourceSubject(
+        scheme=cast("ResourceScheme", subject_scheme),
         subject_id=subject_id,
         ref=ResourceRef(
             scheme=cast("ResourceScheme", subject_scheme),

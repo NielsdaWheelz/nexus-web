@@ -19,7 +19,7 @@ from provider_runtime import StrictJsonOutput, parse_canonical_schema
 from pydantic import BaseModel
 
 from nexus.services.artifacts.bindings._shared import StandardSynthesis
-from nexus.services.artifacts.bindings.media import _MediaSynthesis
+from nexus.services.artifacts.learn import IdeaResolverEnvelope
 from nexus.services.media_intelligence import MediaUnitSynthesis
 from nexus.services.metadata_enrichment import (
     MetadataEnrichmentOutput,
@@ -36,7 +36,7 @@ LLM_FACING_MODELS: list[type[BaseModel]] = [
     SynapseSynthesis,  # structured_synthesis (synapse)
     MediaUnitSynthesis,  # structured_synthesis (media_intelligence)
     StandardSynthesis,  # universal Dossier bindings
-    _MediaSynthesis,  # Media Dossier binding
+    IdeaResolverEnvelope,  # Learn idea identity resolver
 ]
 
 

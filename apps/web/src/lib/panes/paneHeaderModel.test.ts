@@ -61,6 +61,10 @@ const EXPECTED_ROUTE_DEFAULTS = {
     kind: "resource",
     resource: { status: "pending", accessibleLabel: "Loading media…" },
   },
+  artifact: {
+    kind: "resource",
+    resource: { status: "pending", accessibleLabel: "Loading dossier…" },
+  },
   conversations: none("Chats"),
   conversationNew: none("Chats"),
   conversation: none("Chats"),

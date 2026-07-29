@@ -76,6 +76,7 @@ export interface EvidenceHighlightActions {
   onFocusHighlight: (highlightId: string) => void;
   onQuoteToNewChat: (highlightId: string) => void;
   onQuoteToExistingChat: (highlightId: string) => void;
+  onLearn: (highlightId: string) => void;
   onLink: (target: HighlightActionTarget) => void;
   onColorChange: (highlightId: string, color: HighlightColor) => Promise<void>;
   onDelete: (highlightId: string) => Promise<void>;
@@ -238,6 +239,7 @@ export function EvidenceItemRow({
               onLink={() =>
                 highlightActions.onLink({ kind: "existing", highlight })
               }
+              onLearn={() => highlightActions.onLearn(highlight.id)}
               onDelete={() => highlightActions.onDelete(highlight.id)}
               onQuoteToNewChat={() =>
                 highlightActions.onQuoteToNewChat(highlight.id)

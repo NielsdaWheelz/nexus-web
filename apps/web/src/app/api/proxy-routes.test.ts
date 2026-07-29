@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const API_ROUTE_COUNT = 150;
+const API_ROUTE_COUNT = 153;
 const EXTENSION_PROXY_ROUTES = new Set([
   "src/app/api/extension/session/route.ts",
   "src/app/api/media/capture/article/route.ts",
@@ -13,7 +13,10 @@ const REQUIRED_PROXY_ROUTES = new Set([
   "src/app/api/artifact-builds/[buildHandle]/cancel/route.ts",
   "src/app/api/artifact-revisions/[revisionRef]/make-current/route.ts",
   "src/app/api/artifact-revisions/[revisionRef]/route.ts",
+  "src/app/api/artifacts/[artifactRef]/builds/route.ts",
+  "src/app/api/artifacts/[artifactRef]/route.ts",
   "src/app/api/artifacts/[artifactRef]/revisions/route.ts",
+  "src/app/api/artifacts/dossiers/learn/route.ts",
   "src/app/api/artifacts/dossiers/[subjectScheme]/[subjectHandle]/builds/route.ts",
   "src/app/api/artifacts/dossiers/[subjectScheme]/[subjectHandle]/route.ts",
   "src/app/api/resource-items/locators/resolve/route.ts",

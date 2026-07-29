@@ -132,6 +132,21 @@ The quick-note composer is a frontend presentation owner. It may create a
 highlight and then attach a note in one gesture, but persistence still flows
 through the canonical highlight and note paths.
 
+## Learn
+
+**Learn** is Highlight-first. A reader selection is created or reused through
+the existing Highlight owner; after that succeeds, the reader pane posts the
+durable `highlight:<id>` ref to `POST /artifacts/dossiers/learn`. Popover state
+ends normally. Global feedback owns pending/failure state, and success adopts
+the standalone Artifact pane.
+
+The Artifact subsystem, not Highlight, resolves the occurrence to one
+user-owned Idea, records the Highlight as a generation seed, and owns exact
+Learn replay. Re-Learn is the recovery path. Highlight deletion explicitly
+removes Idea resolution, seed, and affected Learn replay rows before the
+Highlight row. Learn creates no Resource Graph Link and Highlight still
+publishes no Inspector.
+
 ## Reader Presentation
 
 Inline highlight rendering remains separate from the Document Map. Inline
@@ -201,6 +216,8 @@ resolved through the `highlight:<id>` resource and graph citation path.
   `resource_edges`.
 - Do not make Evidence the owner of highlight CRUD. It is an aggregate read and
   presentation surface.
+- Do not key a learning Dossier by Highlight occurrence or add a second Learn
+  preview surface; the Highlight is provenance for an Idea Artifact.
 - Do not delete a Highlight or its anchors from reindex/refresh code, and do
   not add a DB cascade between highlight-family rows; deletion is always
   explicit and child-first.

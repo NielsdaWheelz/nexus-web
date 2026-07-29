@@ -32,7 +32,8 @@ class RevisionView:
     artifact_id: UUID
     subject_scheme: str
     revision_id: UUID
-    content_md: str
+    content_html: str
+    content_text: str
     created_at: datetime
     promoted_at: datetime | None
     is_current: bool
@@ -138,7 +139,8 @@ def get_revision(db: Session, *, viewer_id: UUID, revision_id: UUID) -> Revision
             text(
                 """
                 SELECT bld.artifact_id, bld.instruction,
-                       r.content_md, r.created_at, r.promoted_at, r.input_manifest,
+                       r.content_html, r.content_text,
+                       r.created_at, r.promoted_at, r.input_manifest,
                        r.creator_user_id,
                        r.citation_owner_user_id,
                        a.current_revision_id, a.subject_scheme, a.subject_id,
@@ -187,7 +189,8 @@ def get_revision(db: Session, *, viewer_id: UUID, revision_id: UUID) -> Revision
         artifact_id=UUID(str(row["artifact_id"])),
         subject_scheme=str(row["subject_scheme"]),
         revision_id=revision_id,
-        content_md=str(row["content_md"] or ""),
+        content_html=str(row["content_html"]),
+        content_text=str(row["content_text"]),
         created_at=row["created_at"],
         promoted_at=row["promoted_at"],
         is_current=current is not None and UUID(str(current)) == revision_id,

@@ -24,6 +24,7 @@ type ExistingProps = {
   onSelectColor: (color: HighlightColor) => Promise<void>;
   onAddNote?: () => void;
   onLink?: () => void;
+  onLearn?: () => void;
   onDelete: () => Promise<void>;
   onQuoteToNewChat: () => void;
   onQuoteToExistingChat: () => void;
@@ -40,6 +41,7 @@ type SelectionProps = {
   onSelectColor: (color: HighlightColor) => void;
   onAddNote?: () => void;
   onLink?: () => void;
+  onLearn?: () => void;
   onShare: (detail: ActionSelectDetail) => void;
   onQuoteToNewChat: () => void;
   onQuoteToExistingChat: () => void;
@@ -73,6 +75,7 @@ function SelectionActionBar(props: SelectionProps) {
       onAddNote: props.onAddNote,
       onLink: props.onLink,
       onShare: props.onShare,
+      onLearn: props.onLearn,
       onQuoteToNewChat: props.onQuoteToNewChat,
       onQuoteToExistingChat: props.onQuoteToExistingChat,
       onToggleEditBounds: () => {},
@@ -135,6 +138,7 @@ function ExistingActionBar(props: ExistingProps) {
             ),
           ),
         ),
+      onLearn: props.onLearn,
       onQuoteToNewChat: props.onQuoteToNewChat,
       onQuoteToExistingChat: props.onQuoteToExistingChat,
       onToggleEditBounds: props.onToggleEditBounds,

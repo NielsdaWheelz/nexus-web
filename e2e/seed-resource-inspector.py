@@ -244,9 +244,17 @@ def seed() -> dict[str, object]:
                 ArtifactRevision(
                     id=old_revision_id,
                     build_id=old_build_id,
-                    content_md=(
-                        "# Earlier fixture dossier\n\n"
-                        "The earlier synthesis cites its grounded source [1]."
+                    content_html=(
+                        '<article><section id="earlier">'
+                        "<h2>Earlier fixture dossier</h2>"
+                        "<p>The earlier synthesis cites its grounded source"
+                        '<button type="button" class="dossier-citation" '
+                        'data-nexus-citation="1" aria-label="Open citation 1">'
+                        "<sup>1</sup></button>.</p></section></article>"
+                    ),
+                    content_text=(
+                        "Earlier fixture dossier "
+                        "The earlier synthesis cites its grounded source ."
                     ),
                     input_manifest=manifest,
                     citation_owner_user_id=owner_id,
@@ -257,9 +265,17 @@ def seed() -> dict[str, object]:
                 ArtifactRevision(
                     id=current_revision_id,
                     build_id=current_build_id,
-                    content_md=(
-                        "# Current fixture dossier\n\n"
-                        "The current synthesis cites its grounded source [1]."
+                    content_html=(
+                        '<article><section id="current">'
+                        "<h2>Current fixture dossier</h2>"
+                        "<p>The current synthesis cites its grounded source"
+                        '<button type="button" class="dossier-citation" '
+                        'data-nexus-citation="1" aria-label="Open citation 1">'
+                        "<sup>1</sup></button>.</p></section></article>"
+                    ),
+                    content_text=(
+                        "Current fixture dossier "
+                        "The current synthesis cites its grounded source ."
                     ),
                     input_manifest=manifest,
                     citation_owner_user_id=owner_id,

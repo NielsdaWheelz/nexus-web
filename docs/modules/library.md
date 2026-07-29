@@ -384,3 +384,8 @@ Dossier citations are `resource_edges` sourced from
 `artifact_revision:<id>`, never a Library-owned citation table. Promotion
 repoints only the stable `artifact:<id>` head; historical revision content and
 citations remain immutable.
+
+The current revision body is one accepted semantic `content_html` article plus
+its derived `content_text`. Library search/chat consume the text projection;
+the Dossier surface renders the article through the shared sandboxed document
+frame.

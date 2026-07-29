@@ -161,10 +161,9 @@ def _artifact_build_handle(build_id: UUID, *, seal_key: bytes) -> str:
 def _preflight_and_census(session: Session) -> dict[str, int]:
     # Defect: every legacy kind has exactly one legal subject scheme and a live
     # subject row from which its audience can be derived.
-    missing = (
-        session.execute(
-            text(
-                """
+    missing = session.execute(
+        text(
+            """
             SELECT a.id, a.kind, a.subject_scheme, a.subject_id
             FROM artifacts a
             LEFT JOIN libraries l
@@ -182,10 +181,8 @@ def _preflight_and_census(session: Session) -> dict[str, int]:
                )
             ORDER BY a.id
             """
-            )
         )
-        .all()
-    )
+    ).all()
     if missing:
         _fail(
             "preflight",
@@ -462,20 +459,6 @@ def _insert_build_event(
 # ---------------------------------------------------------------------------
 def _transform_rows(session: Session, *, seal_key: bytes) -> None:
     from nexus.schemas.presence import absent, present
-    from nexus.services.artifacts.dossier_types import (
-        DeltaEventPayload,
-        DossierBuildFailureCode,
-        FailedEventPayload,
-        MigratedIncompleteReason,
-        ProgressEventPayload,
-        ResourceSubjectWire,
-        StartedEventPayload,
-        SucceededEventPayload,
-    )
-    from nexus.services.artifacts.manifests import (
-        MigratedFailureSupport,
-        MigratedIncompleteSupport,
-    )
 
     non_terminal = {"meta": "Started", "progress": "Progress", "delta": "Delta"}
 
@@ -533,19 +516,18 @@ def _transform_rows(session: Session, *, seal_key: bytes) -> None:
                 continue  # legacy 'done' — the terminal event is re-derived below
             seq += 1
             if translated == "Started":
-                payload = StartedEventPayload(
-                    build_handle=_artifact_build_handle(build_id, seal_key=seal_key),
-                    artifact_ref=f"artifact:{row['artifact_id']}",
-                    subject_locator=ResourceSubjectWire(
-                        ref=f"{row['subject_scheme']}:{row['subject_id']}"
-                    ),
-                ).model_dump(mode="json")
+                payload = {
+                    "build_handle": _artifact_build_handle(build_id, seal_key=seal_key),
+                    "artifact_ref": f"artifact:{row['artifact_id']}",
+                    "subject_locator": {
+                        "kind": "Resource",
+                        "ref": f"{row['subject_scheme']}:{row['subject_id']}",
+                    },
+                }
             elif translated == "Progress":
-                payload = ProgressEventPayload(phase="migrated", message="").model_dump(
-                    mode="json"
-                )
+                payload = {"phase": "migrated", "message": ""}
             else:
-                payload = DeltaEventPayload(appended_text="").model_dump(mode="json")
+                payload = {"appended_text": ""}
             _insert_build_event(session, build_id, seq, translated, payload)
 
         if preserved:
@@ -565,62 +547,59 @@ def _transform_rows(session: Session, *, seal_key: bytes) -> None:
                 build_id,
                 seq,
                 "Succeeded",
-                SucceededEventPayload(
-                    artifact_revision_ref=f"artifact_revision:{revision_id}"
-                ).model_dump(mode="json"),
+                {"artifact_revision_ref": f"artifact_revision:{revision_id}"},
             )
             continue
 
         # Non-preserved -> a modeled failure child + a single Failed event.
         completed_iso = row["completed_at"].isoformat() if row["completed_at"] else None
         if row["status"] == "failed":
-            failure_code = DossierBuildFailureCode.MigratedFailure
-            support_model = MigratedFailureSupport(
-                legacy_revision_id=revision_id,
-                legacy_error_code=(
+            failure_code = "MigratedFailure"
+            support = {
+                "legacy_revision_id": str(revision_id),
+                "legacy_error_code": (
                     present(row["error_code"])
                     if row["error_code"] is not None
                     else absent()
-                ),
-                legacy_error_detail=(
+                ).model_dump(mode="json"),
+                "legacy_error_detail": (
                     present(row["error_detail"])
                     if row["error_detail"] is not None
                     else absent()
-                ),
-                legacy_completed_at=(
+                ).model_dump(mode="json"),
+                "legacy_completed_at": (
                     present(row["completed_at"])
                     if row["completed_at"] is not None
                     else absent()
-                ),
-            )
+                ).model_dump(mode="json"),
+            }
             # Terminal time of a modeled failure is the legacy completion time.
             failure_created = completed_iso
         else:
-            failure_code = DossierBuildFailureCode.MigratedIncomplete
+            failure_code = "MigratedIncomplete"
             if row["status"] == "ready":
-                reason = MigratedIncompleteReason.LegacyZeroCitation
+                reason = "LegacyZeroCitation"
                 content_sha256 = present(
                     hashlib.sha256((row["content_md"] or "").encode()).hexdigest()
                 )
             else:  # building
-                reason = MigratedIncompleteReason.LegacyBuilding
+                reason = "LegacyBuilding"
                 content_sha256 = absent()
-            support_model = MigratedIncompleteSupport(
-                reason=reason,
-                legacy_revision_id=revision_id,
-                legacy_status=row["status"],
-                legacy_completed_at=(
+            support = {
+                "reason": reason,
+                "legacy_revision_id": str(revision_id),
+                "legacy_status": row["status"],
+                "legacy_completed_at": (
                     present(row["completed_at"])
                     if row["completed_at"] is not None
                     else absent()
-                ),
-                content_sha256=content_sha256,
-            )
+                ).model_dump(mode="json"),
+                "content_sha256": content_sha256.model_dump(mode="json"),
+            }
             # A MigratedIncomplete failure time is the migration time; the legacy
             # completion (if any) is typed support provenance.
             failure_created = None
 
-        support = support_model.model_dump(mode="json")
         session.execute(
             text(
                 "INSERT INTO artifact_build_failures"
@@ -630,7 +609,7 @@ def _transform_rows(session: Session, *, seal_key: bytes) -> None:
             ),
             {
                 "b": build_id,
-                "code": str(failure_code),
+                "code": failure_code,
                 "support": json.dumps(support),
                 "created": failure_created,
             },
@@ -641,9 +620,11 @@ def _transform_rows(session: Session, *, seal_key: bytes) -> None:
             build_id,
             seq,
             "Failed",
-            FailedEventPayload(
-                failure_code=failure_code, detail=absent(), support=present(support)
-            ).model_dump(mode="json"),
+            {
+                "failure_code": failure_code,
+                "detail": absent().model_dump(mode="json"),
+                "support": present(support).model_dump(mode="json"),
+            },
         )
 
     # Legacy events are migrated; remove the rows before revisions are deleted

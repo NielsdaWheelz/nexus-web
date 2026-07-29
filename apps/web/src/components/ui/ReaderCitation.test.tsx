@@ -7,14 +7,22 @@ import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
 import { assumePaneVisitId } from "@/lib/workspace/schema";
-import type { MouseEvent as ReactMouseEvent } from "react";
+import type {
+  ComponentProps,
+  MouseEvent as ReactMouseEvent,
+} from "react";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 
-const activateWorkspaceTarget = vi.fn(() => ({
-  kind: "CreatedPane" as const,
-  paneId: "pane-2",
-}));
+const activateWorkspaceTarget =
+  vi.fn<
+    NonNullable<
+      ComponentProps<typeof PaneRuntimeProvider>["onActivateWorkspaceTarget"]
+    >
+  >(() => ({
+    kind: "CreatedPane" as const,
+    paneId: "pane-2",
+  }));
 
 function renderCitation(
   preview: ReaderCitationPreview,
@@ -136,14 +144,19 @@ describe("ReaderCitation summary abstract", () => {
     expect(onActivate).toHaveBeenCalledOnce();
   });
 
-  it("carries an artifact revision dossier activation once", () => {
+  it("opens an artifact revision on its canonical standalone route", () => {
+    const revisionRef =
+      "artifact_revision:44444444-4444-4444-8444-444444444444";
+    const href =
+      `/artifacts/${encodeURIComponent("artifact:55555555-5555-4555-8555-555555555555")}` +
+      `?revision=${encodeURIComponent(revisionRef)}`;
     renderCitation(
       { title: "Revision source" },
       {
         activation: {
-          resourceRef: "artifact_revision:44444444-4444-4444-8444-444444444444",
+          resourceRef: revisionRef,
           kind: "route",
-          href: "/notes/note-1",
+          href,
           unresolvedReason: null,
         },
       },
@@ -152,19 +165,9 @@ describe("ReaderCitation summary abstract", () => {
     fireEvent.click(screen.getByRole("link", { name: "Open citation 1" }));
 
     expect(activateWorkspaceTarget).toHaveBeenCalledOnce();
-    expect(activateWorkspaceTarget).toHaveBeenCalledWith(
-      expect.objectContaining({
-        target: {
-          href: "/notes/note-1",
-          secondaryActivation: {
-            kind: "DossierRevision",
-            surfaceId: "resource-dossier",
-            revisionRef:
-              "artifact_revision:44444444-4444-4444-8444-444444444444",
-          },
-        },
-      }),
-    );
+    const activation = activateWorkspaceTarget.mock.calls[0]?.[0];
+    expect(activation?.target).toEqual({ href });
+    expect(activation?.target).not.toHaveProperty("secondaryActivation");
   });
 
   it.each([

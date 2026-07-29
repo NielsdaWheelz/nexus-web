@@ -1,18 +1,4 @@
-"""CP1 contract tests — MediaIntelligence sole-owner surface (T7).
-
-Exercises the CANONICAL A19 owner interface per CONTRACTS.md A11 (§530-544,
-§580-607). CP3-MI resolved the pinned owner to MODULE-LEVEL functions on
-``nexus.services.media_intelligence`` (``current_content_fingerprint``,
-``get_current``, ``read_single``, ``ensure_current``, ``ensure_current_many``,
-``read_batch``) — the CP1 draft's ``MediaIntelligence.method(...)`` class calls
-were rewritten to ``media_intelligence.method(...)`` and ``requester=`` to the
-pinned ``requester_user_id=`` (no assertions weakened).
-
-Still RED at COLLECTION time until the artifacts engine/types slices land: the
-``nexus.services.artifacts.dossier_types`` / ``.engine`` imports below
-(``create_build`` / ``run_build`` / ``SubjectResource`` / ``DossierBuildFailureCode``)
-do not exist yet. Goes green at integration.
-"""
+"""MediaIntelligence sole-owner surface contracts."""
 
 from __future__ import annotations
 
@@ -27,17 +13,17 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import Fragment
 from nexus.jobs.queue import JobExecutionContext
-from nexus.services import media_intelligence  # noqa: E402
-
-# --- CANONICAL A19 targets (do not exist yet -> ImportError == the RED) -------
-from nexus.services.artifacts.dossier_types import (  # noqa: E402
+from nexus.schemas.presence import absent
+from nexus.services import media_intelligence
+from nexus.services.artifacts.coordination import DossierBuildRuntime
+from nexus.services.artifacts.dossier_types import (
     DossierBuildFailureCode,
     SubjectResource,
 )
-from nexus.services.artifacts.engine import create_build, run_build  # noqa: E402
+from nexus.services.artifacts.engine import bootstrap_resource_dossier, run_build
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.content_indexing import rebuild_fragment_content_index
-from nexus.services.media_intelligence import MediaUnit  # noqa: E402  (existing value type)
+from nexus.services.media_intelligence import MediaUnit
 from nexus.services.resource_graph.refs import ResourceRef
 from tests.factories import (
     create_searchable_media,
@@ -126,12 +112,27 @@ def _coerce_projection(db: Session, media_id: UUID, *, status: str, with_claim: 
 
 def _library_build_failure(db: Session, uid: UUID, lib: UUID) -> DossierBuildFailureCode:
     loc = SubjectResource(ref=ResourceRef(scheme="library", id=lib))
-    ticket = create_build(
+    ticket = bootstrap_resource_dossier(
         db, locator=loc, requester_user_id=uid, idempotency_key="k-1", instruction=None
     )
     job = claim_dossier_build_job(db, build_id=ticket.build_id, worker_id="w")
     ctx = JobExecutionContext(job_id=job.id, worker_id="w", attempt_no=job.attempts)
-    asyncio.run(run_build(db, build_id=ticket.build_id, ctx=ctx, runtime=_NoDispatchRuntime()))
+    runtime = _NoDispatchRuntime()
+    asyncio.run(
+        run_build(
+            db,
+            build_id=ticket.build_id,
+            ctx=ctx,
+            runtime=DossierBuildRuntime(
+                build_id=ticket.build_id,
+                artifact_id=ticket.artifact_id,
+                job=job,
+                execution_context=ctx,
+                llm_runtime=runtime,
+                web_search_provider=absent(),
+            ),
+        )
+    )
     code = db.execute(
         text("SELECT failure_code FROM artifact_build_failures WHERE build_id = :b"),
         {"b": ticket.build_id},

@@ -760,7 +760,10 @@ def test_generated_and_identity_resources_project_existing_routes(
         db_session,
         library_id=library_id,
         requester_user_id=bootstrapped_user,
-        content_md="Route synthesis",
+        content_html=(
+            '<article><section id="route-synthesis"><p>Route synthesis</p></section></article>'
+        ),
+        content_text="Route synthesis",
     )
     reading_id = _make_oracle_reading(db_session, bootstrapped_user)
     contributor = Contributor(
@@ -771,12 +774,11 @@ def test_generated_and_identity_resources_project_existing_routes(
     db_session.add(contributor)
     db_session.flush()
 
-    assert (
-        _route(db_session, bootstrapped_user, "artifact", artifact_id) == f"/libraries/{library_id}"
-    )
+    artifact_route = f"/artifacts/artifact:{artifact_id}"
+    assert _route(db_session, bootstrapped_user, "artifact", artifact_id) == artifact_route
     assert (
         _route(db_session, bootstrapped_user, "artifact_revision", revision_id)
-        == f"/libraries/{library_id}"
+        == f"{artifact_route}?revision=artifact_revision:{revision_id}"
     )
     assert _route(db_session, bootstrapped_user, "oracle_reading", reading_id) == (
         f"/oracle/{reading_id}"

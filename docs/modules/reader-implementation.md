@@ -112,6 +112,12 @@ Dossier binding consumes that same projection and fingerprints it in the input
 manifest, so the screen and generation engine never perform independent
 interpretations of the same Media content version.
 
+Text and PDF selections expose one **Learn** action. The reader first
+creates/reuses the durable Highlight, lets selection chrome dismiss normally,
+and starts the Learn command from pane-owned state. Existing global feedback
+survives the popover; success adopts the standalone Artifact pane. There is no
+inline primer, tooltip, modal, or remote-page iframe.
+
 ### media identity and credits
 
 Media publishes a typed resource header through `usePanePrimaryChrome`. Its

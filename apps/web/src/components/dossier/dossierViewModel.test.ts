@@ -17,7 +17,8 @@ function revision(overrides: Partial<DossierRevision> = {}): DossierRevision {
     revisionId: "r1",
     revisionRef: "artifact_revision:r1",
     isCurrent: true,
-    contentMd: "# Dossier",
+    contentHtml: "<article><section id=\"overview\"><h2>Dossier</h2></section></article>",
+    contentText: "Dossier",
     citations: [],
     inputManifest: {
       version: "v1",
@@ -65,6 +66,7 @@ function ready(overrides: Partial<DossierHeadReady> = {}): DossierControllerStat
         latestUnsuccessfulBuild: absent(),
         revisionCount: 0,
         mediaAbstract: absent(),
+        identity: absent(),
         history: [],
         historyStatus: "idle",
         ...overrides,
@@ -147,7 +149,7 @@ describe("deriveDossierViewModel — exhaustive A15 states", () => {
     });
     expect(vm.activity.kind).toBe("Reconnecting");
     expect(vm.body).toMatchObject({
-      kind: "StreamingDraft",
+      kind: "Building",
       liveness: "reconnecting",
     });
     expect(vm.statusMessage).toBe("Reconnecting to dossier generation…");
@@ -166,7 +168,7 @@ describe("deriveDossierViewModel — exhaustive A15 states", () => {
     });
     expect(vm.activity.kind).toBe("Disconnected");
     expect(vm.body).toMatchObject({
-      kind: "StreamingDraft",
+      kind: "Building",
       liveness: "disconnected",
     });
     expect(vm.statusMessage).toBe(
@@ -182,7 +184,7 @@ describe("deriveDossierViewModel — exhaustive A15 states", () => {
     );
     expect(vm.activity.kind).toBe("Suspended");
     expect(vm.body).toMatchObject({
-      kind: "StreamingDraft",
+      kind: "Building",
       liveness: "suspended",
     });
     expect(vm.controls.canCancel).toBe(true);

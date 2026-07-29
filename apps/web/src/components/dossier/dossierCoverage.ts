@@ -33,6 +33,8 @@ export function dossierCoverageLabel(manifest: DossierInputManifest): string {
       return `${pluralize(manifest.blockRefs.length, "block")} · ${pluralize(manifest.connectionRefs.length, "connection")}`;
     case "note":
       return `${manifest.bodyFingerprint.kind === "Present" ? "body included" : "body unavailable"} · ${pluralize(manifest.connectionRefs.length, "connection")}`;
+    case "idea":
+      return `${pluralize(manifest.includedSeedRefs.length, "learning context")} · ${pluralize(manifest.includedSources.length, "source")} included · ${pluralize(manifest.omittedSources.length, "source")} omitted`;
     default: {
       const exhaustive: never = manifest;
       throw new Error(`Unhandled Dossier coverage manifest: ${JSON.stringify(exhaustive)}`);

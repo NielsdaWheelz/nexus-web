@@ -236,7 +236,11 @@ class TestReferenceProfile:
         revision = ArtifactRevision(
             id=uuid4(),
             build_id=build.id,
-            content_md="dossierword synthesis of the shelf",
+            content_html=(
+                '<article><section id="dossierword">'
+                "<p>dossierword synthesis of the shelf</p></section></article>"
+            ),
+            content_text="dossierword synthesis of the shelf",
             input_manifest={
                 "version": "v1",
                 "kind": "library",

@@ -170,6 +170,12 @@ At the 12-pane cap, `Fork` or creating `Adopt` is rejected atomically with
 non-modal feedback. The workspace never evicts another pane to satisfy target
 activation.
 
+Learn is one of the named Adopt workflows. It preserves the source reader and
+opens `/artifacts/artifact:<id>` as a standalone resource pane after its durable
+Highlight-to-Idea command succeeds. Artifact revision navigation is in-place:
+`?revision=artifact_revision:<id>` changes the viewed revision without changing
+the pane's Artifact resource identity or creating a duplicate pane.
+
 `targetLinkActivation.ts` is the one browser gesture adapter. Plain click and
 `Enter` are `Follow`; `Shift`+click is `Fork`; Meta/Ctrl/Alt, middle-click,
 downloads, external links, `_blank`, fragments, and already-prevented events

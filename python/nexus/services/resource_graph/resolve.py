@@ -32,7 +32,10 @@ from nexus.auth.permissions import (
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services import library_entries
-from nexus.services.artifacts.subject_policy import visible_persisted_subject
+from nexus.services.artifacts.subject_policy import (
+    DossierSubjectScheme,
+    visible_persisted_subject,
+)
 from nexus.services.contributor_credits import (
     media_author_credits_join_sql,
     media_author_names_agg_sql,
@@ -85,7 +88,7 @@ class LoadedResource:
     message_role: str | None = None  # message "{role}: …"
     message_count: int | None = None  # conversation summary
     item_count: int | None = None  # library summary
-    related_subject_scheme: ResourceScheme | None = None  # Dossier -> canonical subject
+    related_subject_scheme: DossierSubjectScheme | None = None
     related_subject_id: UUID | None = None
     related_library_id: UUID | None = None  # Library Dossier -> app-search scope
     related_artifact_id: UUID | None = None  # Dossier revision -> artifact head
@@ -759,9 +762,10 @@ def _load_artifact(
                        m.title, c.title,
                        CASE WHEN l.is_default THEN 'All' ELSE l.name END,
                        p.title, co.display_name,
-                       pg.title, CASE WHEN nb.id IS NOT NULL THEN 'Note' END
+                       pg.title, CASE WHEN nb.id IS NOT NULL THEN 'Note' END,
+                       idea.display_title
                    ) AS subject_title,
-                   r.id AS revision_id, r.content_md,
+                   r.id AS revision_id, r.content_text,
                    a.current_revision_id = r.id AS revision_is_current,
                    a.audience_scheme, a.audience_id
             FROM artifacts a
@@ -776,6 +780,8 @@ def _load_artifact(
             LEFT JOIN pages pg ON a.subject_scheme = 'page' AND pg.id = a.subject_id
             LEFT JOIN note_blocks nb
               ON a.subject_scheme = 'note_block' AND nb.id = a.subject_id
+            LEFT JOIN artifact_idea_subjects idea
+              ON a.subject_scheme = 'idea' AND idea.id = a.subject_id
             WHERE a.id = ANY(:ids)
             """
         ),
@@ -788,7 +794,7 @@ def _load_artifact(
         if row is None:
             out.append(_missing(ref.uri, "artifact"))
             continue
-        subject_scheme = cast(ResourceScheme, str(row[1]))
+        subject_scheme = cast(DossierSubjectScheme, str(row[1]))
         subject_id = UUID(str(row[2]))
         if (
             visible_persisted_subject(
@@ -832,9 +838,10 @@ def _load_artifact_revision(
                        m.title, c.title,
                        CASE WHEN l.is_default THEN 'All' ELSE l.name END,
                        p.title, co.display_name,
-                       pg.title, CASE WHEN nb.id IS NOT NULL THEN 'Note' END
+                       pg.title, CASE WHEN nb.id IS NOT NULL THEN 'Note' END,
+                       idea.display_title
                    ) AS subject_title,
-                   r.content_md, a.current_revision_id = r.id AS is_current,
+                   r.content_text, a.current_revision_id = r.id AS is_current,
                    a.audience_scheme, a.audience_id
             FROM artifact_revisions r
             JOIN artifact_builds b ON b.id = r.build_id
@@ -849,6 +856,8 @@ def _load_artifact_revision(
             LEFT JOIN pages pg ON a.subject_scheme = 'page' AND pg.id = a.subject_id
             LEFT JOIN note_blocks nb
               ON a.subject_scheme = 'note_block' AND nb.id = a.subject_id
+            LEFT JOIN artifact_idea_subjects idea
+              ON a.subject_scheme = 'idea' AND idea.id = a.subject_id
             WHERE r.id = ANY(:ids)
             """
         ),
@@ -861,7 +870,7 @@ def _load_artifact_revision(
         if row is None:
             out.append(_missing(ref.uri, "artifact_revision"))
             continue
-        subject_scheme = cast(ResourceScheme, str(row[2]))
+        subject_scheme = cast(DossierSubjectScheme, str(row[2]))
         subject_id = UUID(str(row[3]))
         if (
             visible_persisted_subject(
@@ -1546,7 +1555,7 @@ def _present(loaded: LoadedResource) -> ResolvedResource:
         )
     if scheme in ("artifact", "artifact_revision"):
         name = loaded.title or ""
-        content_md = loaded.body or ""
+        content_text = loaded.body or ""
         library_uri = (
             f"library:{loaded.related_library_id}"
             if loaded.related_library_id is not None
@@ -1566,9 +1575,11 @@ def _present(loaded: LoadedResource) -> ResolvedResource:
         return ResolvedResource(
             uri=loaded.uri,
             label=label,
-            summary=_first_line(content_md) or f"Dossier for {name}",
+            summary=_first_line(content_text) or f"Dossier for {name}",
             inline_body=(
-                content_md if content_md and len(content_md) < INLINE_THRESHOLD_CHARS else None
+                content_text
+                if content_text and len(content_text) < INLINE_THRESHOLD_CHARS
+                else None
             ),
             fetch_hint=(f'read_resource("{loaded.uri}") for the full synthesis{library_search}'),
             resolved_revision_ref=revision_ref,

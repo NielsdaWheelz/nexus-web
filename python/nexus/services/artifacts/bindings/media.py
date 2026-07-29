@@ -17,11 +17,10 @@ lives in :data:`BINDING`. The generic engine drives both with zero scheme branch
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import cast
 from uuid import UUID
 
 from provider_runtime import ReasoningLevel
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -37,7 +36,19 @@ from nexus.schemas.artifact import (
 )
 from nexus.schemas.presence import Presence, present
 from nexus.schemas.resource_items import ResourceActivationOut
-from nexus.services.artifacts.bindings.base import DossierBindingBase
+from nexus.services.artifacts.bindings._shared import (
+    Candidate,
+    StandardSynthesis,
+    materialize_standard,
+    synthesis_prompt,
+    synthesis_user_content,
+)
+from nexus.services.artifacts.bindings.base import (
+    DossierBindingBase,
+    MaterializedDossier,
+    require_resource_subject,
+)
+from nexus.services.artifacts.coordination import DossierBuildRuntime
 from nexus.services.artifacts.dossier_types import (
     AudienceScope,
     AudienceUser,
@@ -51,8 +62,11 @@ from nexus.services.artifacts.manifests import (
     InputManifestV1,
     MediaInputManifestV1,
 )
-from nexus.services.artifacts.subject_policy import ResolvedSubject, decode_resource_locator
-from nexus.services.llm_execution import ExecutionRuntime
+from nexus.services.artifacts.subject_policy import (
+    ResolvedResourceSubject,
+    ResolvedSubject,
+    decode_resource_locator,
+)
 from nexus.services.llm_profiles import BackgroundLlmOperation
 from nexus.services.media_intelligence import (
     MediaUnit,
@@ -61,12 +75,7 @@ from nexus.services.media_intelligence import (
     read_single,
 )
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.resource_graph.schemas import CitationInput, CitationSnapshot, EdgeKind
-from nexus.services.structured_synthesis import (
-    build_synthesis_prompt,
-    build_synthesis_user_content,
-    ground_indices,
-)
+from nexus.services.resource_graph.schemas import CitationSnapshot
 
 MEDIA_DOSSIER_MAX_OUTPUT_TOKENS = 4000
 # Budget the offered claim context in characters (~4 chars/token); claims past the
@@ -74,7 +83,6 @@ MEDIA_DOSSIER_MAX_OUTPUT_TOKENS = 4000
 # silently capped.
 MEDIA_DOSSIER_INPUT_CHAR_BUDGET = 60_000
 _EXCERPT_MAX_CHARS = 600
-_CITATION_ROLES: frozenset[str] = frozenset(("supports", "contradicts", "context"))
 
 
 # ---------------------------------------------------------------------------
@@ -126,57 +134,19 @@ class MediaCoverage:
     omitted_evidence_refs: tuple[str, ...]
 
 
-# ---------------------------------------------------------------------------
-# Generated-output schema (strict JSON) — prose + inline citations by claim index.
-# ---------------------------------------------------------------------------
-
-
-class _MediaCitationOut(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    ordinal: int
-    claim_index: int
-    role: str
-
-
-class _MediaSynthesis(BaseModel):
-    """The strict-JSON media dossier: synthesis prose plus its inline citations."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    content_md: str
-    citations: list[_MediaCitationOut]
-
-
-_MEDIA_PERSONA = (
-    "You are a careful research assistant writing a dossier for one document from "
-    "its own grounded claims. Each claim is offered by integer index."
-)
-_MEDIA_DOMAIN_RULES = [
-    "Write content_md: faithful markdown synthesis prose for this single document "
-    "— an overview, its key claims and themes, notable tensions, and open "
-    "questions. Use prose, not rigid sections. Base every statement only on the "
-    "provided summary and claims; do not invent passages, indices, or quotations.",
-    "Place inline citation markers [N] in the prose where a claim supports the "
-    "statement, where N is the ordinal you assign in citations.",
-    "Write citations: for each [N], one entry {ordinal:N, claim_index:int, "
-    "role:'supports'|'contradicts'|'context'} where claim_index is the integer "
-    "index of the single provided claim it cites. Never cite an index you were "
-    "not given.",
-]
-_MEDIA_JSON_SHAPE = (
-    '{"content_md": string, "citations": [{"ordinal": int, "claim_index": int, "role": string}]}'
-)
-_MEDIA_SYSTEM_PROMPT = build_synthesis_prompt(
-    persona=_MEDIA_PERSONA,
-    preamble=None,
-    domain_rules=_MEDIA_DOMAIN_RULES,
-    json_shape=_MEDIA_JSON_SHAPE,
-)
-
-
-def _coerce_role(role: str) -> EdgeKind:
-    return cast("EdgeKind", role) if role in _CITATION_ROLES else "context"
+def _standard_candidate(candidate: _MediaCandidate) -> Candidate:
+    return Candidate(
+        index=candidate.index,
+        target=ResourceRef(scheme="evidence_span", id=candidate.evidence_span_id),
+        text=candidate.claim_text,
+        snapshot=CitationSnapshot(
+            title=candidate.title,
+            excerpt=candidate.excerpt,
+            section_label=candidate.section_label,
+            result_type="evidence_span",
+            deep_link=candidate.deep_link,
+        ),
+    )
 
 
 def _viewer(audience: AudienceScope) -> UUID:
@@ -201,8 +171,8 @@ class MediaBinding(DossierBindingBase):
     profile: str = "balanced"
     reasoning: ReasoningLevel = "medium"
     max_output_tokens: int = MEDIA_DOSSIER_MAX_OUTPUT_TOKENS
-    system_prompt: str = _MEDIA_SYSTEM_PROMPT
-    schema: type[BaseModel] = _MediaSynthesis
+    system_prompt: str = synthesis_prompt("one source document")
+    schema: type[BaseModel] = StandardSynthesis
 
     def media_abstract(
         self,
@@ -235,7 +205,7 @@ class MediaBinding(DossierBindingBase):
         db: Session,
         resolved: ResolvedSubject,
         audience: AudienceScope,
-        runtime: ExecutionRuntime,  # noqa: ARG002 - single media reads never dispatch MI
+        runtime: DossierBuildRuntime,  # noqa: ARG002 - single media reads never dispatch MI
     ) -> _MediaCollected:
         """Read the current MI unit for this document and offer its claims + spans.
 
@@ -243,6 +213,7 @@ class MediaBinding(DossierBindingBase):
         ensures/builds — that is the aggregate bindings' job) and never fans out.
         An unreadable / not-ready / claimless media yields no candidates, which
         ``empty_failure`` turns into ``NoSourceMaterial`` (A11 §543)."""
+        resolved = require_resource_subject(resolved)
         media_id = resolved.subject_id
         media_ref = resolved.ref.uri
         viewer = _viewer(audience)
@@ -325,16 +296,11 @@ class MediaBinding(DossierBindingBase):
         return None
 
     def build_user_content(self, collected: _MediaCollected, instruction: str | None) -> str:
-        rendered = "\n\n".join(
-            f"[{candidate.index}] {candidate.claim_text}" for candidate in collected.candidates
-        )
-        extra = f"DOCUMENT SUMMARY:\n{collected.summary_md}"
-        if instruction is not None:
-            extra += f"\n\nCUSTOM INSTRUCTION:\n{instruction}"
-        return build_synthesis_user_content(
-            candidates_header="DOCUMENT CLAIMS",
-            rendered_candidates=rendered,
-            extra_user_block=extra,
+        return synthesis_user_content(
+            candidates=[_standard_candidate(candidate) for candidate in collected.candidates],
+            heading="DOCUMENT CLAIMS",
+            context=f"DOCUMENT SUMMARY:\n{collected.summary_md}",
+            instruction=instruction,
         )
 
     def validation_witness(
@@ -387,40 +353,11 @@ class MediaBinding(DossierBindingBase):
         collected: _MediaCollected,  # noqa: ARG002 - candidates come from the witness (A10)
         decoded_output: BaseModel,
         witness: _MediaWitness,
-    ) -> tuple[str, list[CitationInput]]:
-        """Map the model's citation indices onto the witness candidates (A10) — the
-        only citation source. Pure: every snapshot field was captured in collect."""
-        value = cast("_MediaSynthesis", decoded_output)
-        pairs = (
-            ground_indices(
-                value.citations,
-                witness.candidates,
-                index_of=lambda citation: citation.claim_index,
-                policy="drop",
-            )
-            or []
+    ) -> MaterializedDossier:
+        return materialize_standard(
+            decoded_output,
+            [_standard_candidate(candidate) for candidate in witness.candidates],
         )
-        seen_ordinals: set[int] = set()
-        citations: list[CitationInput] = []
-        for citation, candidate in pairs:
-            if citation.ordinal in seen_ordinals:
-                continue
-            seen_ordinals.add(citation.ordinal)
-            citations.append(
-                CitationInput(
-                    target=ResourceRef(scheme="evidence_span", id=candidate.evidence_span_id),
-                    ordinal=citation.ordinal,
-                    kind=_coerce_role(citation.role),
-                    snapshot=CitationSnapshot(
-                        title=candidate.title,
-                        excerpt=candidate.excerpt,
-                        section_label=candidate.section_label,
-                        result_type="evidence_span",
-                        deep_link=candidate.deep_link,
-                    ),
-                )
-            )
-        return value.content_md, citations
 
     def input_manifest(self, collected: _MediaCollected) -> InputManifestV1:
         return MediaInputManifestV1(
@@ -435,6 +372,7 @@ class MediaBinding(DossierBindingBase):
     ) -> InputManifestV1:
         """The live media manifest for freshness (no LLM). Only the content
         fingerprint drives the comparison, so the claim count is best-effort."""
+        resolved = require_resource_subject(resolved)
         media_id = resolved.subject_id
         viewer = _viewer(audience)
         fingerprint = current_content_fingerprint(db, media_id=media_id)
@@ -496,7 +434,7 @@ class MediaSubjectPolicy:
         media_id = locator.ref.id
         if not can_read_media(db, requester_user_id, media_id):
             raise NotFoundError(message="Media not found")
-        return ResolvedSubject(
+        return ResolvedResourceSubject(
             scheme="media",
             subject_id=media_id,
             ref=ResourceRef(scheme="media", id=media_id),

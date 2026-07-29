@@ -415,11 +415,13 @@ def test_dossier_revision_reference_dropped_from_default_scope_resolution(
         text(
             """
             INSERT INTO artifact_revisions (
-                id, build_id, content_md, input_manifest,
+                id, build_id, content_html, content_text, input_manifest,
                 citation_owner_user_id, promoted_at
             )
             VALUES (
-                :id, :build_id, 'Synthesis',
+                :id, :build_id,
+                '<article><section id="synthesis"><p>Synthesis</p></section></article>',
+                'Synthesis',
                 jsonb_build_object(
                     'version', 'v1', 'kind', 'library',
                     'library_ref', CAST(:library_ref AS text), 'media', '[]'::jsonb

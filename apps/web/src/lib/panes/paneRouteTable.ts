@@ -74,6 +74,9 @@ const PANE_ROUTE_META: Record<PaneRouteId, PaneRouteMeta> = {
   media: {
     icon: FileText,
   },
+  artifact: {
+    icon: BookOpen,
+  },
   conversations: {
     icon: MessageSquare,
   },

@@ -86,6 +86,7 @@ class LlmCallOwner:
         "chat_run",
         "oracle_reading",
         "artifact_build",
+        "artifact_learn_request",
         "media_summary",
         "media_enrichment",
         "synapse_scan",

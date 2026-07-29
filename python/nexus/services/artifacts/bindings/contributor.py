@@ -15,6 +15,8 @@ from nexus.services.artifacts.bindings._shared import (
     AggregateMediaBinding,
     synthesis_prompt,
 )
+from nexus.services.artifacts.bindings.base import require_resource_subject
+from nexus.services.artifacts.coordination import DossierBuildRuntime
 from nexus.services.artifacts.dossier_types import (
     AudienceScope,
     AudienceUser,
@@ -27,14 +29,13 @@ from nexus.services.artifacts.manifests import (
     InputManifestV1,
     MediaManifestEntry,
 )
-from nexus.services.artifacts.subject_policy import ResolvedSubject
+from nexus.services.artifacts.subject_policy import ResolvedResourceSubject, ResolvedSubject
 from nexus.services.contributor_credits import load_visible_contributor_media_ids
 from nexus.services.contributor_taxonomy import (
     ContributorHandle,
     assume_contributor_handle,
     parse_contributor_handle,
 )
-from nexus.services.llm_execution import ExecutionRuntime
 from nexus.services.llm_profiles import BackgroundLlmOperation
 from nexus.services.resource_graph.refs import ResourceRef
 
@@ -50,7 +51,7 @@ class ContributorBinding(AggregateMediaBinding):
         db: Session,
         resolved: ResolvedSubject,
         audience: AudienceScope,
-        runtime: ExecutionRuntime,
+        runtime: DossierBuildRuntime,
     ) -> AggregateCollected:
         return await super().collect(
             db,
@@ -77,6 +78,7 @@ class ContributorBinding(AggregateMediaBinding):
     def _manifest(
         self, resolved: ResolvedSubject, entries: list[MediaManifestEntry]
     ) -> InputManifestV1:
+        resolved = require_resource_subject(resolved)
         if not isinstance(resolved.detail, str):
             raise AssertionError("contributor binding requires its outward handle")
         return ContributorInputManifestV1(
@@ -111,7 +113,7 @@ class ContributorSubjectPolicy:
             viewer_id=requester_user_id,
             contributor_handle=str(locator.handle),
         )
-        return ResolvedSubject(
+        return ResolvedResourceSubject(
             scheme="contributor",
             subject_id=ref.id,
             ref=ref,
@@ -186,9 +188,10 @@ def resolve_contributor_media_ids(
 
 
 def _with_handle(db: Session, resolved: ResolvedSubject) -> ResolvedSubject:
+    resolved = require_resource_subject(resolved)
     if isinstance(resolved.detail, str):
         return resolved
-    return ResolvedSubject(
+    return ResolvedResourceSubject(
         scheme=resolved.scheme,
         subject_id=resolved.subject_id,
         ref=resolved.ref,

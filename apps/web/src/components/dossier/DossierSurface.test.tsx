@@ -22,7 +22,9 @@ function readyMediaState(): DossierControllerState {
           revisionId: "revision-1",
           revisionRef: "artifact_revision:revision-1",
           isCurrent: true,
-          contentMd: "# Canonical dossier",
+          contentHtml:
+            '<article><section id="overview"><h2>Canonical dossier</h2></section></article>',
+          contentText: "Canonical dossier",
           citations: [],
           inputManifest: {
             version: "v1",
@@ -48,6 +50,7 @@ function readyMediaState(): DossierControllerState {
           kind: "Ready",
           summaryMd: "A compact abstract.",
         }),
+        identity: present({ kind: "Idea", title: "Canonical dossier" }),
         history: [],
         historyStatus: "idle",
       },
@@ -88,12 +91,18 @@ describe("DossierSurface", () => {
     );
 
     const abstract = screen.getByRole("region", { name: "Media abstract" });
-    const dossier = screen.getByRole("heading", { name: "Canonical dossier" });
+    const dossier = screen.getByTitle(
+      "Learning dossier: Canonical dossier",
+    );
     expect(
       abstract.compareDocumentPosition(dossier) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(screen.getByText("A compact abstract.")).toBeVisible();
+    expect(dossier).toHaveAttribute("sandbox", "allow-scripts");
+    expect(dossier.getAttribute("srcdoc")).toContain(
+      '<section id="overview"><h2>Canonical dossier</h2></section>',
+    );
     fireEvent.click(screen.getByRole("button", { name: "View evidence" }));
     expect(onViewMediaEvidence).toHaveBeenCalledOnce();
 

@@ -11,7 +11,7 @@ from nexus.db.models import NoteBlock, Page, ResourceEdge, ResourceVersion
 from nexus.schemas.notes import CreatePageRequest, QuickCaptureRequest
 from nexus.services import notes
 from nexus.services.artifacts.dossier_types import SubjectResource
-from nexus.services.artifacts.engine import create_build
+from nexus.services.artifacts.engine import bootstrap_resource_dossier
 from nexus.services.resource_graph.adjacency import OrderedTarget, replace_ordered_targets
 from nexus.services.resource_graph.refs import ResourceRef
 from tests.factories import (
@@ -152,7 +152,7 @@ def test_delete_page_deletes_its_dossier_head(
         bootstrapped_user,
         CreatePageRequest(page_id=uuid4(), title="Page"),
     )
-    ticket = create_build(
+    ticket = bootstrap_resource_dossier(
         db_session,
         locator=SubjectResource(ref=ResourceRef(scheme="page", id=page.id)),
         requester_user_id=bootstrapped_user,

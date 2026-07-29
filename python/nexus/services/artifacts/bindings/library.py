@@ -14,6 +14,7 @@ from nexus.services.artifacts.bindings._shared import (
     AggregateMediaBinding,
     synthesis_prompt,
 )
+from nexus.services.artifacts.bindings.base import require_resource_subject
 from nexus.services.artifacts.dossier_types import (
     AudienceLibrary,
     AudienceScope,
@@ -26,7 +27,11 @@ from nexus.services.artifacts.manifests import (
     LibraryInputManifestV1,
     MediaManifestEntry,
 )
-from nexus.services.artifacts.subject_policy import ResolvedSubject, decode_resource_locator
+from nexus.services.artifacts.subject_policy import (
+    ResolvedResourceSubject,
+    ResolvedSubject,
+    decode_resource_locator,
+)
 from nexus.services.llm_profiles import BackgroundLlmOperation
 from nexus.services.resource_graph.refs import ResourceRef
 
@@ -73,6 +78,7 @@ class LibraryBinding(AggregateMediaBinding):
     def _manifest(
         self, resolved: ResolvedSubject, entries: list[MediaManifestEntry]
     ) -> InputManifestV1:
+        resolved = require_resource_subject(resolved)
         return LibraryInputManifestV1(
             library_ref=resolved.ref.uri,
             media=entries,
@@ -103,7 +109,7 @@ class LibrarySubjectPolicy:
         if not is_library_member(db, requester_user_id, locator.ref.id):
             raise NotFoundError(message="Library not found")
         owner_id = _library_owner(db, locator.ref.id)
-        return ResolvedSubject(
+        return ResolvedResourceSubject(
             scheme="library",
             subject_id=locator.ref.id,
             ref=locator.ref,
@@ -122,6 +128,7 @@ class LibrarySubjectPolicy:
         return AudienceLibrary(library_id=resolved.subject_id)
 
     def collection_viewer(self, resolved: ResolvedSubject, audience: AudienceScope) -> UUID | None:
+        resolved = require_resource_subject(resolved)
         if not isinstance(resolved.detail, UUID):
             raise AssertionError("resolved library must carry its owner")
         return resolved.detail

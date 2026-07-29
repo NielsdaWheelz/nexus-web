@@ -31,12 +31,12 @@ describe("pane route table", () => {
     });
   });
 
-  it("declares a header contract for every route and only media is resource-owned", () => {
+  it("declares a header contract for every route and detail documents are resource-owned", () => {
     expect(
       PANE_ROUTE_MODELS.filter(({ header }) => header.kind === "resource").map(
         ({ id }) => id,
       ),
-    ).toEqual(["media"]);
+    ).toEqual(["media", "artifact"]);
 
     expect(sectionDestinationIdForHref(`/media/${PAGE_ID}`)).toBe("libraries");
   });

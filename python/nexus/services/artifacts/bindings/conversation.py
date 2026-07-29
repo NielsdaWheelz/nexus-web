@@ -22,7 +22,13 @@ from nexus.services.artifacts.bindings._shared import (
     synthesis_prompt,
     synthesis_user_content,
 )
-from nexus.services.artifacts.bindings.base import DossierBindingBase, DossierInputTooLarge
+from nexus.services.artifacts.bindings.base import (
+    DossierBindingBase,
+    DossierInputTooLarge,
+    MaterializedDossier,
+    require_resource_subject,
+)
+from nexus.services.artifacts.coordination import DossierBuildRuntime
 from nexus.services.artifacts.dossier_types import (
     AudienceScope,
     AudienceUser,
@@ -36,12 +42,15 @@ from nexus.services.artifacts.manifests import (
     ConversationInputManifestV1,
     InputManifestV1,
 )
-from nexus.services.artifacts.subject_policy import ResolvedSubject, decode_resource_locator
-from nexus.services.llm_execution import ExecutionRuntime
+from nexus.services.artifacts.subject_policy import (
+    ResolvedResourceSubject,
+    ResolvedSubject,
+    decode_resource_locator,
+)
 from nexus.services.llm_profiles import BackgroundLlmOperation
 from nexus.services.resource_graph.context import list_context_refs
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.resource_graph.schemas import CitationInput, CitationSnapshot
+from nexus.services.resource_graph.schemas import CitationSnapshot
 
 _MAX_MESSAGES = 1_000
 _INPUT_CHAR_BUDGET = 80_000
@@ -79,7 +88,7 @@ class ConversationBinding(DossierBindingBase):
         db: Session,
         resolved: ResolvedSubject,
         audience: AudienceScope,
-        runtime: ExecutionRuntime,  # noqa: ARG002
+        runtime: DossierBuildRuntime,  # noqa: ARG002
     ) -> _ConversationCollected:
         return _collect(db, resolved, audience)
 
@@ -124,7 +133,7 @@ class ConversationBinding(DossierBindingBase):
         collected: _ConversationCollected,  # noqa: ARG002
         decoded_output: BaseModel,
         witness: _ConversationWitness,
-    ) -> tuple[str, list[CitationInput]]:
+    ) -> MaterializedDossier:
         return materialize_standard(decoded_output, witness.candidates)
 
     def input_manifest(self, collected: _ConversationCollected) -> InputManifestV1:
@@ -171,7 +180,7 @@ class ConversationSubjectPolicy:
         )
         if row is None or UUID(str(row["owner_user_id"])) != requester_user_id:
             raise NotFoundError(message="Conversation not found")
-        return ResolvedSubject(
+        return ResolvedResourceSubject(
             scheme="conversation",
             subject_id=locator.ref.id,
             ref=locator.ref,
@@ -223,6 +232,7 @@ class ConversationSubjectPolicy:
 def _collect(
     db: Session, resolved: ResolvedSubject, audience: AudienceScope
 ) -> _ConversationCollected:
+    resolved = require_resource_subject(resolved)
     owner_id = _audience_user(audience)
     rows = (
         db.execute(
@@ -341,6 +351,7 @@ def _audience_user(audience: AudienceScope) -> UUID:
 
 
 def _conversation_owner_from_resolved(resolved: ResolvedSubject) -> UUID:
+    resolved = require_resource_subject(resolved)
     if not isinstance(resolved.detail, UUID):
         raise AssertionError("resolved conversation must carry its owner")
     return resolved.detail

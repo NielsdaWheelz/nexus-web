@@ -1,18 +1,4 @@
-"""CP1 RED contract tests — Dossier durable execution & liveness (T6).
-
-Test-first for the hard cutover. Imports CANONICAL A19 identifiers that do NOT
-exist yet -> COLLECTION-time ImportError == the intended RED. Goes green,
-without edits, once CP2 lands the engine + coordination on the Postgres job
-queue substrate per CONTRACTS.md A8 (durable execution) and B4 (durable-op
-reuse map).
-
-Substrate reuse (all REAL, exist today): nexus.jobs.queue lease reclaim
-(Recovering), dead_letter_expired_job (Suspended), JobExecutionContext.
-NET-NEW pinned surface under test: coordination Prepared/Uncertain/Completed,
-DossierBuildExecutionPhase advisory, and the "uncertain never auto-redispatches"
-defect. The uncertain/replay test exercises the highest-risk coordination
-surface (see module RETURN notes for integrator-owned assumptions).
-"""
+"""Dossier durable execution, replay, and liveness contracts."""
 
 from __future__ import annotations
 
@@ -51,30 +37,31 @@ from nexus.jobs.queue import (
 )
 from nexus.schemas.presence import absent as replay_absent
 from nexus.schemas.presence import present as replay_present
-
-# --- CANONICAL A19 targets (do not exist yet -> ImportError == the RED) -------
 from nexus.services.artifacts import coordination
 from nexus.services.artifacts import engine as artifact_engine
-from nexus.services.artifacts.coordination import (  # noqa: E402
+from nexus.services.artifacts.coordination import (
     AttachReconciledResult,
     Completed,
     Prepared,
     ProveNotDispatched,
     Uncertain,
 )
-from nexus.services.artifacts.dossier_types import (  # noqa: E402
+from nexus.services.artifacts.dossier_types import (
     ArtifactBuildEventType,
     DossierBuildExecutionPhase,
     DossierBuildFailureCode,
     DossierGenerationInProgress,
     SubjectResource,
 )
-from nexus.services.artifacts.engine import (  # noqa: E402
+from nexus.services.artifacts.engine import (
+    bootstrap_resource_dossier,
     cancel_build,
-    create_build,
     read_head,
     reconcile_uncertain_build,
-    run_build,
+    regenerate_artifact,
+)
+from nexus.services.artifacts.engine import (
+    run_build as _engine_run_build,
 )
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
@@ -158,37 +145,76 @@ class _SuccessfulRuntime:
         on_generate: Callable[[], object] | None = None,
         on_before_terminal: Callable[[], object] | None = None,
         chunk_size: int | None = None,
-        content_md: str | None = None,
+        content_html: str | tuple[str, ...] | None = None,
     ) -> None:
         self.calls = 0
         self.with_citation = with_citation
         self.on_generate = on_generate
         self.on_before_terminal = on_before_terminal
         self.chunk_size = chunk_size
-        self.content_md = content_md or (
-            "The conversation establishes a grounded claim. [1]"
+        self.content_html = content_html or (
+            "<article><header><h2>Core claim</h2></header>"
+            '<section id="core-claim"><p>The conversation establishes a grounded claim. '
+            '<cite data-nexus-citation="1"></cite></p></section></article>'
             if with_citation
-            else "The conversation establishes a claim."
+            else (
+                "<article><header><h2>Core claim</h2></header>"
+                '<section id="core-claim"><p>The conversation establishes a claim.'
+                "</p></section></article>"
+            )
         )
 
-    async def generate(self, intent, plan, credential):  # noqa: ANN001
-        raise AssertionError("Dossier synthesis must use the streaming runtime")
-
-    async def _events(self, intent):  # noqa: ANN001
+    def _next_payload(self) -> dict[str, object]:
         self.calls += 1
         if self.on_generate is not None:
             self.on_generate()
-        payload = (
+        content_html = (
+            self.content_html[self.calls - 1]
+            if isinstance(self.content_html, tuple)
+            else self.content_html
+        )
+        return (
             {
-                "content_md": self.content_md,
+                "content_html": content_html,
                 "citations": [{"ordinal": 1, "candidate_index": 0, "role": "supports"}],
             }
             if self.with_citation
             else {
-                "content_md": self.content_md,
+                "content_html": content_html,
                 "citations": [],
             }
         )
+
+    async def generate(self, intent, plan, credential):  # noqa: ANN001
+        payload = self._next_payload()
+        raw = json.dumps(payload, separators=(",", ":"))
+        return Succeeded(
+            meta=CallMeta(
+                provider=intent.target.provider,
+                model=intent.target.model,
+                provider_request_id=Present(f"req-dossier-success-{self.calls}"),
+                upstream_provider=Absent(),
+                usage=Present(
+                    TokenUsage(
+                        input_tokens=50,
+                        output_tokens=25,
+                        total_tokens=75,
+                        reasoning_tokens=Absent(),
+                        cache_read_input_tokens=Absent(),
+                        cache_write_input_tokens=Absent(),
+                    )
+                ),
+                attempt_trace=(),
+                billability=PossiblyBillable(),
+            ),
+            response=ResponsePayload(
+                content=StructuredContent(payload=payload, text=raw),
+                continuation=Absent(),
+            ),
+        )
+
+    async def _events(self, intent):  # noqa: ANN001
+        payload = self._next_payload()
         raw = json.dumps(payload, separators=(",", ":"))
         yield RuntimeStreamEvent(seq=1, event=StreamStart())
         chunks = (
@@ -251,7 +277,11 @@ class _CancellationAwareRuntime:
     async def _events(self, intent, cancel):  # noqa: ANN001
         self.calls += 1
         payload = {
-            "content_md": "A result that must not be promoted. [1]",
+            "content_html": (
+                "<article><header><h2>Unpromoted</h2></header>"
+                '<section id="unpromoted"><p>A result that must not be promoted. '
+                '<cite data-nexus-citation="1"></cite></p></section></article>'
+            ),
             "citations": [{"ordinal": 1, "candidate_index": 0, "role": "supports"}],
         }
         yield RuntimeStreamEvent(seq=1, event=StreamStart())
@@ -369,6 +399,34 @@ def _conversation_locator(db: Session, uid: UUID) -> SubjectResource:
     return SubjectResource(ref=ResourceRef(scheme="conversation", id=conv))
 
 
+async def _run_dossier_build(
+    db: Session,
+    *,
+    build_id: UUID,
+    ctx: JobExecutionContext,
+    runtime,
+):
+    job = get_job(db, ctx.job_id)
+    assert job is not None
+    artifact_id = db.execute(
+        text("SELECT artifact_id FROM artifact_builds WHERE id = :build_id"),
+        {"build_id": build_id},
+    ).scalar_one()
+    return await _engine_run_build(
+        db,
+        build_id=build_id,
+        ctx=ctx,
+        runtime=coordination.DossierBuildRuntime(
+            build_id=build_id,
+            artifact_id=UUID(str(artifact_id)),
+            job=job,
+            execution_context=ctx,
+            llm_runtime=runtime,
+            web_search_provider=replay_absent(),
+        ),
+    )
+
+
 def _library_with_ready_source(
     db: Session,
     *,
@@ -426,7 +484,7 @@ def _dead_uncertain_dossier_build(
 ) -> tuple[UUID, UUID]:
     user_id = _user(db)
     locator = _conversation_locator(db, user_id)
-    ticket = create_build(
+    ticket = bootstrap_resource_dossier(
         db,
         locator=locator,
         requester_user_id=user_id,
@@ -441,7 +499,7 @@ def _dead_uncertain_dossier_build(
     runtime = _RaisingRuntime()
     with pytest.raises(RuntimeError, match="simulated provider crash"):
         asyncio.run(
-            run_build(
+            _run_dossier_build(
                 db,
                 build_id=ticket.build_id,
                 ctx=JobExecutionContext(
@@ -489,7 +547,7 @@ def test_execution_phase_advisory_enum_is_closed() -> None:
 def test_lease_expiry_below_budget_recovers_same_build(db_session: Session) -> None:
     uid = _user(db_session)
     loc = _conversation_locator(db_session, uid)
-    ticket = create_build(
+    ticket = bootstrap_resource_dossier(
         db_session, locator=loc, requester_user_id=uid, idempotency_key="k-1", instruction=None
     )
     job = claim_dossier_build_job(
@@ -524,7 +582,7 @@ def test_lease_expiry_below_budget_recovers_same_build(db_session: Session) -> N
 def test_dead_letter_suspends_without_synthesizing_failed(db_session: Session) -> None:
     uid = _user(db_session)
     loc = _conversation_locator(db_session, uid)
-    ticket = create_build(
+    ticket = bootstrap_resource_dossier(
         db_session, locator=loc, requester_user_id=uid, idempotency_key="k-1", instruction=None
     )
     job = claim_dossier_build_job(
@@ -552,17 +610,21 @@ def test_dead_letter_suspends_without_synthesizing_failed(db_session: Session) -
     assert fails == 0
     head = read_head(db_session, locator=loc, requester_user_id=uid)
     assert head.active_build.execution == DossierBuildExecutionPhase.Suspended
-    # A suspended build does NOT unlock a second Generate.
+    # A suspended build does NOT unlock a regeneration.
     with pytest.raises(DossierGenerationInProgress):
-        create_build(
-            db_session, locator=loc, requester_user_id=uid, idempotency_key="k-2", instruction=None
+        regenerate_artifact(
+            db_session,
+            artifact_id=ticket.artifact_id,
+            requester_user_id=uid,
+            idempotency_key="k-2",
+            instruction=None,
         )
 
 
 def test_cancel_terminalizes_suspended_and_permits_new_generate(db_session: Session) -> None:
     uid = _user(db_session)
     loc = _conversation_locator(db_session, uid)
-    ticket = create_build(
+    ticket = bootstrap_resource_dossier(
         db_session, locator=loc, requester_user_id=uid, idempotency_key="k-1", instruction=None
     )
     job = claim_dossier_build_job(
@@ -586,8 +648,12 @@ def test_cancel_terminalizes_suspended_and_permits_new_generate(db_session: Sess
         {"b": ticket.build_id},
     ).scalar_one()
     assert canc == 1
-    nxt = create_build(
-        db_session, locator=loc, requester_user_id=uid, idempotency_key="k-2", instruction=None
+    nxt = regenerate_artifact(
+        db_session,
+        artifact_id=ticket.artifact_id,
+        requester_user_id=uid,
+        idempotency_key="k-2",
+        instruction=None,
     )
     assert nxt.created is True and nxt.build_id != ticket.build_id
 
@@ -598,7 +664,7 @@ def test_cancel_terminalizes_suspended_and_permits_new_generate(db_session: Sess
 def test_uncertain_dispatch_never_auto_redispatches(db_session: Session) -> None:
     uid = _user(db_session)
     loc = _conversation_locator(db_session, uid)
-    ticket = create_build(
+    ticket = bootstrap_resource_dossier(
         db_session, locator=loc, requester_user_id=uid, idempotency_key="k-1", instruction=None
     )
     first = _RaisingRuntime()
@@ -609,7 +675,9 @@ def test_uncertain_dispatch_never_auto_redispatches(db_session: Session) -> None
     )
     ctx1 = JobExecutionContext(job_id=claimed.id, worker_id="w1", attempt_no=claimed.attempts)
     with pytest.raises(RuntimeError):
-        asyncio.run(run_build(db_session, build_id=ticket.build_id, ctx=ctx1, runtime=first))
+        asyncio.run(
+            _run_dossier_build(db_session, build_id=ticket.build_id, ctx=ctx1, runtime=first)
+        )
     assert first.calls == 1, "coordination commits Uncertain, then dispatches exactly once"
     ledger = db_session.execute(
         text(
@@ -636,7 +704,9 @@ def test_uncertain_dispatch_never_auto_redispatches(db_session: Session) -> None
     second = _RaisingRuntime()
     ctx2 = JobExecutionContext(job_id=claimed.id, worker_id="w1", attempt_no=claimed.attempts)
     with pytest.raises(RuntimeError):
-        asyncio.run(run_build(db_session, build_id=ticket.build_id, ctx=ctx2, runtime=second))
+        asyncio.run(
+            _run_dossier_build(db_session, build_id=ticket.build_id, ctx=ctx2, runtime=second)
+        )
     assert second.calls == 0, "an uncertain billed call is never automatically repeated"
 
     # A defect is NOT softened into a modeled Failed child (suspended prefix stays).
@@ -657,7 +727,7 @@ def test_prepared_replay_reuses_progress_before_uncertain_dispatch(
 ) -> None:
     uid = _user(db_session)
     loc = _conversation_locator(db_session, uid)
-    ticket = create_build(
+    ticket = bootstrap_resource_dossier(
         db_session,
         locator=loc,
         requester_user_id=uid,
@@ -693,7 +763,7 @@ def test_prepared_replay_reuses_progress_before_uncertain_dispatch(
     first = _SuccessfulRuntime()
     with pytest.raises(RuntimeError, match="crash before Uncertain"):
         asyncio.run(
-            run_build(
+            _run_dossier_build(
                 db_session,
                 build_id=ticket.build_id,
                 ctx=ctx,
@@ -718,7 +788,7 @@ def test_prepared_replay_reuses_progress_before_uncertain_dispatch(
     )
     replay = _SuccessfulRuntime()
     asyncio.run(
-        run_build(
+        _run_dossier_build(
             db_session,
             build_id=ticket.build_id,
             ctx=ctx,
@@ -735,13 +805,13 @@ def test_prepared_replay_reuses_progress_before_uncertain_dispatch(
             ),
             {"build_id": ticket.build_id},
         ).scalars()
-    ) == ["Started", "Progress", "Delta", "Succeeded"]
+    ) == ["Started", "Progress", "Succeeded"]
 
 
 def test_runtime_rejects_changed_replay_generation_identity(db_session: Session) -> None:
     uid = _user(db_session)
     loc = _conversation_locator(db_session, uid)
-    ticket = create_build(
+    ticket = bootstrap_resource_dossier(
         db_session,
         locator=loc,
         requester_user_id=uid,
@@ -760,7 +830,9 @@ def test_runtime_rejects_changed_replay_generation_identity(db_session: Session)
     )
     first = _RaisingRuntime()
     with pytest.raises(RuntimeError, match="simulated provider crash"):
-        asyncio.run(run_build(db_session, build_id=ticket.build_id, ctx=ctx, runtime=first))
+        asyncio.run(
+            _run_dossier_build(db_session, build_id=ticket.build_id, ctx=ctx, runtime=first)
+        )
     assert first.calls == 1
 
     job = get_job(db_session, claimed.id)
@@ -780,7 +852,9 @@ def test_runtime_rejects_changed_replay_generation_identity(db_session: Session)
 
     replay = _RaisingRuntime()
     with pytest.raises(AssertionError, match="replay generation identity changed"):
-        asyncio.run(run_build(db_session, build_id=ticket.build_id, ctx=ctx, runtime=replay))
+        asyncio.run(
+            _run_dossier_build(db_session, build_id=ticket.build_id, ctx=ctx, runtime=replay)
+        )
     assert replay.calls == 0
 
 
@@ -792,7 +866,7 @@ def test_provider_target_is_part_of_replay_request_fingerprint(
 ) -> None:
     uid = _user(db_session)
     loc = _conversation_locator(db_session, uid)
-    ticket = create_build(
+    ticket = bootstrap_resource_dossier(
         db_session,
         locator=loc,
         requester_user_id=uid,
@@ -811,7 +885,9 @@ def test_provider_target_is_part_of_replay_request_fingerprint(
     )
     first = _RaisingRuntime()
     with pytest.raises(RuntimeError, match="simulated provider crash"):
-        asyncio.run(run_build(db_session, build_id=ticket.build_id, ctx=ctx, runtime=first))
+        asyncio.run(
+            _run_dossier_build(db_session, build_id=ticket.build_id, ctx=ctx, runtime=first)
+        )
     assert first.calls == 1
 
     original_profile = artifact_engine.operation_profile("dossier_conversation")
@@ -831,7 +907,7 @@ def test_provider_target_is_part_of_replay_request_fingerprint(
     )
     replay = _RaisingRuntime()
 
-    asyncio.run(run_build(db_session, build_id=ticket.build_id, ctx=ctx, runtime=replay))
+    asyncio.run(_run_dossier_build(db_session, build_id=ticket.build_id, ctx=ctx, runtime=replay))
 
     assert replay.calls == 0
     assert (
@@ -894,7 +970,7 @@ def test_operator_reconcile_rejects_corrupt_replay_evidence(
 def test_success_is_cited_current_provenanced_and_replay_safe(db_session: Session) -> None:
     uid = _user(db_session)
     loc = _conversation_locator(db_session, uid)
-    ticket = create_build(
+    ticket = bootstrap_resource_dossier(
         db_session,
         locator=loc,
         requester_user_id=uid,
@@ -913,12 +989,13 @@ def test_success_is_cited_current_provenanced_and_replay_safe(db_session: Sessio
     )
     runtime = _SuccessfulRuntime()
 
-    asyncio.run(run_build(db_session, build_id=ticket.build_id, ctx=ctx, runtime=runtime))
+    asyncio.run(_run_dossier_build(db_session, build_id=ticket.build_id, ctx=ctx, runtime=runtime))
 
     revision = (
         db_session.execute(
             text(
-                "SELECT r.id, r.input_manifest, a.current_revision_id "
+                "SELECT r.id, r.content_html, r.content_text, r.input_manifest, "
+                "a.current_revision_id "
                 "FROM artifact_revisions r "
                 "JOIN artifact_builds b ON b.id = r.build_id "
                 "JOIN artifacts a ON a.id = b.artifact_id "
@@ -931,6 +1008,8 @@ def test_success_is_cited_current_provenanced_and_replay_safe(db_session: Sessio
     )
     revision_id = UUID(str(revision["id"]))
     assert UUID(str(revision["current_revision_id"])) == revision_id
+    assert 'class="dossier-citation"' in revision["content_html"]
+    assert revision["content_text"] == ("Core claim The conversation establishes a grounded claim.")
     assert revision["input_manifest"]["kind"] == "conversation"
     assert (
         db_session.execute(
@@ -960,14 +1039,16 @@ def test_success_is_cited_current_provenanced_and_replay_safe(db_session: Sessio
             ),
             {"build_id": ticket.build_id},
         )
-    ] == ["Started", "Progress", "Delta", "Succeeded"]
+    ] == ["Started", "Progress", "Succeeded"]
     head = read_head(db_session, locator=loc, requester_user_id=uid)
     assert head.current_revision_id == revision_id
     assert head.freshness == "current"
     assert runtime.calls == 1
 
     replay_runtime = _SuccessfulRuntime()
-    asyncio.run(run_build(db_session, build_id=ticket.build_id, ctx=ctx, runtime=replay_runtime))
+    asyncio.run(
+        _run_dossier_build(db_session, build_id=ticket.build_id, ctx=ctx, runtime=replay_runtime)
+    )
     assert replay_runtime.calls == 0
     assert (
         db_session.execute(
@@ -978,71 +1059,12 @@ def test_success_is_cited_current_provenanced_and_replay_safe(db_session: Sessio
     )
 
 
-def test_stream_persists_only_decoded_dossier_prose_as_deltas(
-    db_session: Session,
-) -> None:
-    uid = _user(db_session)
-    loc = _conversation_locator(db_session, uid)
-    ticket = create_build(
-        db_session,
-        locator=loc,
-        requester_user_id=uid,
-        idempotency_key="stream-decoded-prose",
-        instruction=None,
-    )
-    claimed = claim_dossier_build_job(
-        db_session,
-        build_id=ticket.build_id,
-        worker_id="w-stream-decoded-prose",
-    )
-    runtime = _SuccessfulRuntime(
-        chunk_size=5,
-        content_md='Grounded "streamed" dossier.\nSecond line. [1]',
-    )
-
-    asyncio.run(
-        run_build(
-            db_session,
-            build_id=ticket.build_id,
-            ctx=JobExecutionContext(
-                job_id=claimed.id,
-                worker_id="w-stream-decoded-prose",
-                attempt_no=claimed.attempts,
-            ),
-            runtime=runtime,
-        )
-    )
-
-    events = list(
-        db_session.execute(
-            text(
-                "SELECT event_type, payload FROM artifact_build_events "
-                "WHERE build_id = :build_id ORDER BY seq"
-            ),
-            {"build_id": ticket.build_id},
-        ).mappings()
-    )
-    assert runtime.calls == 1
-    assert [event["event_type"] for event in events] == [
-        "Started",
-        "Progress",
-        "Delta",
-        "Succeeded",
-    ]
-    streamed = "".join(
-        event["payload"]["appended_text"] for event in events if event["event_type"] == "Delta"
-    )
-    assert streamed == runtime.content_md
-    assert '{"citations"' not in streamed
-    assert '\\"' not in streamed
-
-
 def test_real_media_fixture_runtime_completes_streamed_dossier_build(
     db_session: Session,
 ) -> None:
     uid = _user(db_session)
     loc = _conversation_locator(db_session, uid)
-    ticket = create_build(
+    ticket = bootstrap_resource_dossier(
         db_session,
         locator=loc,
         requester_user_id=uid,
@@ -1056,7 +1078,7 @@ def test_real_media_fixture_runtime_completes_streamed_dossier_build(
     )
 
     asyncio.run(
-        run_build(
+        _run_dossier_build(
             db_session,
             build_id=ticket.build_id,
             ctx=JobExecutionContext(
@@ -1069,7 +1091,7 @@ def test_real_media_fixture_runtime_completes_streamed_dossier_build(
     )
 
     revision = db_session.execute(
-        text("SELECT content_md FROM artifact_revisions WHERE build_id = :build_id"),
+        text("SELECT content_html FROM artifact_revisions WHERE build_id = :build_id"),
         {"build_id": ticket.build_id},
     ).scalar_one()
     assert "one grounded finding" in revision
@@ -1081,126 +1103,7 @@ def test_real_media_fixture_runtime_completes_streamed_dossier_build(
             ),
             {"build_id": ticket.build_id},
         ).scalars()
-    ) == ["Started", "Progress", "Delta", "Succeeded"]
-
-
-def test_small_slow_stream_flushes_delta_before_provider_terminal(
-    db_session: Session,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    uid = _user(db_session)
-    loc = _conversation_locator(db_session, uid)
-    ticket = create_build(
-        db_session,
-        locator=loc,
-        requester_user_id=uid,
-        idempotency_key="stream-time-bounded-flush",
-        instruction=None,
-    )
-    claimed = claim_dossier_build_job(
-        db_session,
-        build_id=ticket.build_id,
-        worker_id="w-stream-time-bounded-flush",
-    )
-    ticks = iter(index * 0.25 for index in range(1000))
-    monkeypatch.setattr(artifact_engine, "monotonic", lambda: next(ticks))
-
-    def assert_delta_precedes_terminal() -> None:
-        assert (
-            db_session.execute(
-                text(
-                    "SELECT count(*) FROM artifact_build_events "
-                    "WHERE build_id = :build_id AND event_type = 'Delta'"
-                ),
-                {"build_id": ticket.build_id},
-            ).scalar_one()
-            >= 1
-        )
-        assert (
-            db_session.execute(
-                text(
-                    "SELECT count(*) FROM artifact_build_events "
-                    "WHERE build_id = :build_id AND event_type = 'Succeeded'"
-                ),
-                {"build_id": ticket.build_id},
-            ).scalar_one()
-            == 0
-        )
-
-    runtime = _SuccessfulRuntime(
-        chunk_size=5,
-        content_md='Grounded "streamed" dossier.\nSecond line. [1]',
-        on_before_terminal=assert_delta_precedes_terminal,
-    )
-
-    asyncio.run(
-        run_build(
-            db_session,
-            build_id=ticket.build_id,
-            ctx=JobExecutionContext(
-                job_id=claimed.id,
-                worker_id="w-stream-time-bounded-flush",
-                attempt_no=claimed.attempts,
-            ),
-            runtime=runtime,
-        )
-    )
-
-    assert runtime.calls == 1
-    assert (
-        db_session.execute(
-            text("SELECT count(*) FROM artifact_revisions WHERE build_id = :build_id"),
-            {"build_id": ticket.build_id},
-        ).scalar_one()
-        == 1
-    )
-
-
-def test_delta_fences_do_not_repeat_full_binding_witness(
-    db_session: Session,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    uid = _user(db_session)
-    loc = _conversation_locator(db_session, uid)
-    ticket = create_build(
-        db_session,
-        locator=loc,
-        requester_user_id=uid,
-        idempotency_key="stream-cheap-delta-fence",
-        instruction=None,
-    )
-    claimed = claim_dossier_build_job(
-        db_session,
-        build_id=ticket.build_id,
-        worker_id="w-stream-cheap-delta-fence",
-    )
-    binding = artifact_engine.BINDINGS["conversation"]
-    original_recheck = binding.recheck_witness
-    recheck_calls = 0
-
-    def counted_recheck(db, resolved, audience, witness):  # noqa: ANN001
-        nonlocal recheck_calls
-        recheck_calls += 1
-        return original_recheck(db, resolved, audience, witness)
-
-    monkeypatch.setattr(binding, "recheck_witness", counted_recheck)
-
-    asyncio.run(
-        run_build(
-            db_session,
-            build_id=ticket.build_id,
-            ctx=JobExecutionContext(
-                job_id=claimed.id,
-                worker_id="w-stream-cheap-delta-fence",
-                attempt_no=claimed.attempts,
-            ),
-            runtime=_SuccessfulRuntime(chunk_size=1),
-        )
-    )
-
-    # One authoritative pre-dispatch check and one terminal promotion check.
-    # Progress, watcher polls, and every Delta use only the cheap visibility fence.
-    assert recheck_calls == 2
+    ) == ["Started", "Progress", "Succeeded"]
 
 
 def test_public_cancel_midstream_reaches_provider_and_wins_terminal(
@@ -1210,7 +1113,7 @@ def test_public_cancel_midstream_reaches_provider_and_wins_terminal(
     monkeypatch.setattr(artifact_engine, "_CANCEL_POLL_INTERVAL_SECONDS", 0.001)
     uid = _user(db_session)
     loc = _conversation_locator(db_session, uid)
-    ticket = create_build(
+    ticket = bootstrap_resource_dossier(
         db_session,
         locator=loc,
         requester_user_id=uid,
@@ -1231,7 +1134,7 @@ def test_public_cancel_midstream_reaches_provider_and_wins_terminal(
     )
 
     asyncio.run(
-        run_build(
+        _run_dossier_build(
             db_session,
             build_id=ticket.build_id,
             ctx=JobExecutionContext(
@@ -1269,7 +1172,7 @@ def test_lease_loss_midstream_cancels_provider_without_late_domain_write(
     monkeypatch.setattr(artifact_engine, "_CANCEL_POLL_INTERVAL_SECONDS", 0.001)
     uid = _user(db_session)
     loc = _conversation_locator(db_session, uid)
-    ticket = create_build(
+    ticket = bootstrap_resource_dossier(
         db_session,
         locator=loc,
         requester_user_id=uid,
@@ -1295,7 +1198,7 @@ def test_lease_loss_midstream_cancels_provider_without_late_domain_write(
 
     runtime = _CancellationAwareRuntime(on_stream_wait=expire_lease)
     asyncio.run(
-        run_build(
+        _run_dossier_build(
             db_session,
             build_id=ticket.build_id,
             ctx=JobExecutionContext(
@@ -1336,7 +1239,7 @@ def test_unexpected_stream_event_closes_generation_and_settles_ledger(
 ) -> None:
     uid = _user(db_session)
     loc = _conversation_locator(db_session, uid)
-    ticket = create_build(
+    ticket = bootstrap_resource_dossier(
         db_session,
         locator=loc,
         requester_user_id=uid,
@@ -1352,7 +1255,7 @@ def test_unexpected_stream_event_closes_generation_and_settles_ledger(
 
     with pytest.raises(AssertionError, match="unexpected dossier stream event"):
         asyncio.run(
-            run_build(
+            _run_dossier_build(
                 db_session,
                 build_id=ticket.build_id,
                 ctx=JobExecutionContext(
@@ -1392,7 +1295,7 @@ def test_provider_output_without_citations_fails_citation_validation(
 ) -> None:
     uid = _user(db_session)
     loc = _conversation_locator(db_session, uid)
-    ticket = create_build(
+    ticket = bootstrap_resource_dossier(
         db_session,
         locator=loc,
         requester_user_id=uid,
@@ -1411,7 +1314,7 @@ def test_provider_output_without_citations_fails_citation_validation(
     )
     runtime = _SuccessfulRuntime(with_citation=False)
 
-    asyncio.run(run_build(db_session, build_id=ticket.build_id, ctx=ctx, runtime=runtime))
+    asyncio.run(_run_dossier_build(db_session, build_id=ticket.build_id, ctx=ctx, runtime=runtime))
 
     assert runtime.calls == 1
     assert (
@@ -1430,12 +1333,79 @@ def test_provider_output_without_citations_fails_citation_validation(
     )
 
 
+@pytest.mark.parametrize("repair_succeeds", [True, False])
+def test_invalid_document_is_repaired_exactly_once(
+    db_session: Session,
+    repair_succeeds: bool,
+) -> None:
+    uid = _user(db_session)
+    loc = _conversation_locator(db_session, uid)
+    ticket = bootstrap_resource_dossier(
+        db_session,
+        locator=loc,
+        requester_user_id=uid,
+        idempotency_key=f"document-repair-{repair_succeeds}",
+        instruction=None,
+    )
+    claimed = claim_dossier_build_job(
+        db_session,
+        build_id=ticket.build_id,
+        worker_id="w-document-repair",
+    )
+    accepted = (
+        "<article><header><h2>Repaired</h2></header>"
+        '<section id="repaired"><p>A grounded repaired result. '
+        '<cite data-nexus-citation="1"></cite></p></section></article>'
+    )
+    invalid = (
+        "<article><header><h2>Rejected</h2></header>"
+        '<section id="rejected"><script>alert(1)</script>'
+        '<cite data-nexus-citation="1"></cite></section></article>'
+    )
+    runtime = _SuccessfulRuntime(
+        content_html=(invalid, accepted if repair_succeeds else invalid),
+    )
+
+    asyncio.run(
+        _run_dossier_build(
+            db_session,
+            build_id=ticket.build_id,
+            ctx=JobExecutionContext(
+                job_id=claimed.id,
+                worker_id="w-document-repair",
+                attempt_no=claimed.attempts,
+            ),
+            runtime=runtime,
+        )
+    )
+
+    assert runtime.calls == 2
+    if repair_succeeds:
+        revision = db_session.execute(
+            text(
+                "SELECT content_html, content_text FROM artifact_revisions "
+                "WHERE build_id = :build_id"
+            ),
+            {"build_id": ticket.build_id},
+        ).one()
+        assert 'class="dossier-citation"' in revision.content_html
+        assert revision.content_text == "Repaired A grounded repaired result."
+    else:
+        assert (
+            db_session.execute(
+                text("SELECT failure_code FROM artifact_build_failures WHERE build_id = :build_id"),
+                {"build_id": ticket.build_id},
+            ).scalar_one()
+            == DossierBuildFailureCode.DocumentValidationFailed
+        )
+
+
 def test_inputs_changed_precedes_invalid_generated_citations(
     db_session: Session,
 ) -> None:
     uid = _user(db_session)
     loc = _conversation_locator(db_session, uid)
-    ticket = create_build(
+    ticket = bootstrap_resource_dossier(
         db_session,
         locator=loc,
         requester_user_id=uid,
@@ -1459,7 +1429,7 @@ def test_inputs_changed_precedes_invalid_generated_citations(
     )
 
     asyncio.run(
-        run_build(
+        _run_dossier_build(
             db_session,
             build_id=ticket.build_id,
             ctx=JobExecutionContext(
@@ -1490,7 +1460,7 @@ def test_library_member_removed_during_dispatch_cannot_promote(
         owner_id=owner_id,
         member_id=requester_id,
     )
-    ticket = create_build(
+    ticket = bootstrap_resource_dossier(
         db_session,
         locator=SubjectResource(ref=ResourceRef(scheme="library", id=library_id)),
         requester_user_id=requester_id,
@@ -1512,7 +1482,7 @@ def test_library_member_removed_during_dispatch_cannot_promote(
     )
 
     asyncio.run(
-        run_build(
+        _run_dossier_build(
             db_session,
             build_id=ticket.build_id,
             ctx=JobExecutionContext(
@@ -1545,7 +1515,7 @@ def test_streamed_refusal_with_partial_non_json_maps_provider_refused(
 ) -> None:
     uid = _user(db_session)
     loc = _conversation_locator(db_session, uid)
-    ticket = create_build(
+    ticket = bootstrap_resource_dossier(
         db_session,
         locator=loc,
         requester_user_id=uid,
@@ -1560,7 +1530,7 @@ def test_streamed_refusal_with_partial_non_json_maps_provider_refused(
     runtime = _RefusedRuntime()
 
     asyncio.run(
-        run_build(
+        _run_dossier_build(
             db_session,
             build_id=ticket.build_id,
             ctx=JobExecutionContext(
@@ -1601,7 +1571,7 @@ def test_library_ownership_transfer_during_provider_refusal_is_inputs_changed(
         owner_id=owner_id,
         member_id=new_owner_id,
     )
-    ticket = create_build(
+    ticket = bootstrap_resource_dossier(
         db_session,
         locator=SubjectResource(ref=ResourceRef(scheme="library", id=library_id)),
         requester_user_id=owner_id,
@@ -1623,7 +1593,7 @@ def test_library_ownership_transfer_during_provider_refusal_is_inputs_changed(
     )
 
     asyncio.run(
-        run_build(
+        _run_dossier_build(
             db_session,
             build_id=ticket.build_id,
             ctx=JobExecutionContext(
@@ -1659,7 +1629,7 @@ def test_operator_reconciles_uncertain_build_without_automatic_redispatch(
 ) -> None:
     uid = _user(db_session)
     locator = _conversation_locator(db_session, uid)
-    ticket = create_build(
+    ticket = bootstrap_resource_dossier(
         db_session,
         locator=locator,
         requester_user_id=uid,
@@ -1679,7 +1649,7 @@ def test_operator_reconciles_uncertain_build_without_automatic_redispatch(
     first = _RaisingRuntime()
     with pytest.raises(RuntimeError):
         asyncio.run(
-            run_build(
+            _run_dossier_build(
                 db_session,
                 build_id=ticket.build_id,
                 ctx=first_ctx,
@@ -1697,7 +1667,11 @@ def test_operator_reconciles_uncertain_build_without_automatic_redispatch(
     db_session.commit()
 
     payload = {
-        "content_md": "Recovered grounded result. [1]",
+        "content_html": (
+            "<article><header><h2>Recovered result</h2></header>"
+            '<section id="recovered-result"><p>Recovered grounded result. '
+            '<cite data-nexus-citation="1"></cite></p></section></article>'
+        ),
         "citations": [{"ordinal": 1, "candidate_index": 0, "role": "supports"}],
     }
     resolution = (
@@ -1723,7 +1697,7 @@ def test_operator_reconciles_uncertain_build_without_automatic_redispatch(
     )
     replay = _SuccessfulRuntime()
     asyncio.run(
-        run_build(
+        _run_dossier_build(
             db_session,
             build_id=ticket.build_id,
             ctx=replay_ctx,
@@ -1747,7 +1721,7 @@ def test_reconciled_build_rejects_inputs_changed_since_original_request(
 ) -> None:
     uid = _user(db_session)
     locator = _conversation_locator(db_session, uid)
-    ticket = create_build(
+    ticket = bootstrap_resource_dossier(
         db_session,
         locator=locator,
         requester_user_id=uid,
@@ -1762,7 +1736,7 @@ def test_reconciled_build_rejects_inputs_changed_since_original_request(
     first = _RaisingRuntime()
     with pytest.raises(RuntimeError):
         asyncio.run(
-            run_build(
+            _run_dossier_build(
                 db_session,
                 build_id=ticket.build_id,
                 ctx=JobExecutionContext(
@@ -1789,7 +1763,11 @@ def test_reconciled_build_rejects_inputs_changed_since_original_request(
         content="A new branch input changes the original request.",
     )
     payload = {
-        "content_md": "Recovered grounded result. [1]",
+        "content_html": (
+            "<article><header><h2>Recovered result</h2></header>"
+            '<section id="recovered-result"><p>Recovered grounded result. '
+            '<cite data-nexus-citation="1"></cite></p></section></article>'
+        ),
         "citations": [{"ordinal": 1, "candidate_index": 0, "role": "supports"}],
     }
     reconcile_uncertain_build(
@@ -1810,7 +1788,7 @@ def test_reconciled_build_rejects_inputs_changed_since_original_request(
     replay = _SuccessfulRuntime()
 
     asyncio.run(
-        run_build(
+        _run_dossier_build(
             db_session,
             build_id=ticket.build_id,
             ctx=JobExecutionContext(
@@ -1851,7 +1829,7 @@ def test_aggregate_waits_for_media_unit_then_completes_same_build(
         title="Dependency",
     )
     locator = SubjectResource(ref=ResourceRef(scheme="library", id=library_id))
-    ticket = create_build(
+    ticket = bootstrap_resource_dossier(
         db_session,
         locator=locator,
         requester_user_id=uid,
@@ -1870,7 +1848,7 @@ def test_aggregate_waits_for_media_unit_then_completes_same_build(
     )
     before_ready = _SuccessfulRuntime()
     result = asyncio.run(
-        run_build(
+        _run_dossier_build(
             db_session,
             build_id=ticket.build_id,
             ctx=ctx,
@@ -1935,7 +1913,7 @@ def test_aggregate_waits_for_media_unit_then_completes_same_build(
     after_ready = _SuccessfulRuntime()
     assert (
         asyncio.run(
-            run_build(
+            _run_dossier_build(
                 db_session,
                 build_id=ticket.build_id,
                 ctx=ctx,
@@ -1960,7 +1938,7 @@ def test_aggregate_waits_for_media_unit_then_completes_same_build(
 def test_execution_advisory_is_not_persisted_as_a_build_event(db_session: Session) -> None:
     uid = _user(db_session)
     loc = _conversation_locator(db_session, uid)
-    ticket = create_build(
+    ticket = bootstrap_resource_dossier(
         db_session, locator=loc, requester_user_id=uid, idempotency_key="k-1", instruction=None
     )
     head = read_head(db_session, locator=loc, requester_user_id=uid)

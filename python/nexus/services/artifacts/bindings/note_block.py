@@ -25,7 +25,13 @@ from nexus.services.artifacts.bindings._shared import (
     synthesis_prompt,
     synthesis_user_content,
 )
-from nexus.services.artifacts.bindings.base import DossierBindingBase, DossierInputTooLarge
+from nexus.services.artifacts.bindings.base import (
+    DossierBindingBase,
+    DossierInputTooLarge,
+    MaterializedDossier,
+    require_resource_subject,
+)
+from nexus.services.artifacts.coordination import DossierBuildRuntime
 from nexus.services.artifacts.dossier_types import (
     AudienceScope,
     AudienceUser,
@@ -35,11 +41,14 @@ from nexus.services.artifacts.dossier_types import (
     SubjectResource,
 )
 from nexus.services.artifacts.manifests import InputManifestV1, NoteInputManifestV1
-from nexus.services.artifacts.subject_policy import ResolvedSubject, decode_resource_locator
-from nexus.services.llm_execution import ExecutionRuntime
+from nexus.services.artifacts.subject_policy import (
+    ResolvedResourceSubject,
+    ResolvedSubject,
+    decode_resource_locator,
+)
 from nexus.services.llm_profiles import BackgroundLlmOperation
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.resource_graph.schemas import CitationInput, CitationSnapshot
+from nexus.services.resource_graph.schemas import CitationSnapshot
 
 _INPUT_CHAR_BUDGET = 80_000
 
@@ -77,7 +86,7 @@ class NoteBinding(DossierBindingBase):
         db: Session,
         resolved: ResolvedSubject,
         audience: AudienceScope,
-        runtime: ExecutionRuntime,  # noqa: ARG002
+        runtime: DossierBuildRuntime,  # noqa: ARG002
     ) -> _NoteCollected:
         return _collect(db, resolved, audience)
 
@@ -121,7 +130,7 @@ class NoteBinding(DossierBindingBase):
         collected: _NoteCollected,  # noqa: ARG002
         decoded_output: BaseModel,
         witness: _NoteWitness,
-    ) -> tuple[str, list[CitationInput]]:
+    ) -> MaterializedDossier:
         return materialize_standard(decoded_output, witness.candidates)
 
     def input_manifest(self, collected: _NoteCollected) -> InputManifestV1:
@@ -163,7 +172,7 @@ class NoteSubjectPolicy:
         owner_id = _note_owner(db, locator.ref.id)
         if owner_id != requester_user_id:
             raise NotFoundError(message="Note not found")
-        return ResolvedSubject(
+        return ResolvedResourceSubject(
             scheme="note_block",
             subject_id=locator.ref.id,
             ref=locator.ref,
@@ -179,6 +188,7 @@ class NoteSubjectPolicy:
     authorize_generate = authorize_read
 
     def derive_audience(self, resolved: ResolvedSubject, requester_user_id: UUID) -> AudienceScope:
+        resolved = require_resource_subject(resolved)
         owner = resolved.detail
         if not isinstance(owner, UUID):
             raise AssertionError("resolved note must carry its owner")
@@ -210,6 +220,7 @@ class NoteSubjectPolicy:
 
 
 def _collect(db: Session, resolved: ResolvedSubject, audience: AudienceScope) -> _NoteCollected:
+    resolved = require_resource_subject(resolved)
     viewer_id = _audience_user(audience)
     note = (
         db.execute(

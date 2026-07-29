@@ -28,6 +28,7 @@ interface SelectionPopoverProps<H extends { id: string }> {
   onQuoteToExistingChat?: (highlight: H) => void | Promise<void>;
   onAddNote?: () => void;
   onLink?: () => void;
+  onLearn?: (highlight: H) => void | Promise<void>;
   onDismiss: () => void;
   isCreating?: boolean;
 }
@@ -43,6 +44,7 @@ export default function SelectionPopover<H extends { id: string }>({
   onQuoteToExistingChat,
   onAddNote,
   onLink,
+  onLearn,
   onDismiss,
   isCreating = false,
 }: SelectionPopoverProps<H>) {
@@ -75,6 +77,13 @@ export default function SelectionPopover<H extends { id: string }>({
     },
     [isCreating, onCreateHighlight, openShare],
   );
+  const learnHighlight = useCallback(() => {
+    if (isCreating || !onLearn) return;
+    void (async () => {
+      const highlight = await onCreateHighlight(DEFAULT_COLOR);
+      if (highlight) await onLearn(highlight);
+    })();
+  }, [isCreating, onCreateHighlight, onLearn]);
 
   return (
     <FloatingActionSurface
@@ -98,6 +107,7 @@ export default function SelectionPopover<H extends { id: string }>({
         onSelectColor={onCreateHighlight}
         onAddNote={onAddNote}
         onLink={onLink}
+        onLearn={onLearn ? learnHighlight : undefined}
         onShare={({ triggerEl }) => shareHighlight(triggerEl)}
         onQuoteToNewChat={() => quoteHighlight(onQuoteToNewChat)}
         onQuoteToExistingChat={() => quoteHighlight(onQuoteToExistingChat)}

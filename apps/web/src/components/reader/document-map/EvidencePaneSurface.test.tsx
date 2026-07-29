@@ -176,6 +176,7 @@ function actions(): EvidenceHighlightActions {
     onFocusHighlight: vi.fn(),
     onQuoteToNewChat: vi.fn(),
     onQuoteToExistingChat: vi.fn(),
+    onLearn: vi.fn(),
     onLink: vi.fn(),
     onColorChange: vi.fn(async () => {}),
     onDelete: vi.fn(async () => {}),

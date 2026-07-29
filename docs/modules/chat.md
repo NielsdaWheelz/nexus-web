@@ -115,6 +115,11 @@ manual. The generic Dossier head/build/history API and
 history, provenance, and citations; chat owns no feature-specific synthesis
 route, job, schema, deep link, or inline output.
 
+Artifact and Artifact Revision resources use the existing generated-output
+resource-context chat path. Chat reads only the revision's derived
+`content_text`; it never receives stored HTML and never mutates or incrementally
+edits the Dossier.
+
 ## Scrollport Contract
 
 `ChatSurface` owns the transcript scrollport. Desktop may reserve a stable

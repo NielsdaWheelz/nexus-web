@@ -17,12 +17,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
-from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
+from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.presence import Presence
 from nexus.services.contributor_taxonomy import ContributorHandle
 from nexus.services.resource_graph.refs import ResourceRef
@@ -111,18 +111,8 @@ class DossierBuildFailureCode(StrEnum):
     ContextTooLarge = "ContextTooLarge"
     ProviderRefused = "ProviderRefused"
     ProviderIncomplete = "ProviderIncomplete"
-    SchemaRepairExhausted = "SchemaRepairExhausted"
+    DocumentValidationFailed = "DocumentValidationFailed"
     CitationValidationFailed = "CitationValidationFailed"
-    MigratedFailure = "MigratedFailure"
-    MigratedIncomplete = "MigratedIncomplete"
-
-
-class MigratedIncompleteReason(StrEnum):
-    """Support provenance for a ``MigratedIncomplete`` failure (A7/A16) — not a
-    second failure-code namespace."""
-
-    LegacyBuilding = "LegacyBuilding"
-    LegacyZeroCitation = "LegacyZeroCitation"
 
 
 class DossierBuildExecutionPhase(StrEnum):
@@ -142,7 +132,6 @@ class ArtifactBuildEventType(StrEnum):
 
     Started = "Started"
     Progress = "Progress"
-    Delta = "Delta"
     Succeeded = "Succeeded"
     Failed = "Failed"
     Cancelled = "Cancelled"
@@ -158,27 +147,16 @@ class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ResourceSubjectWire(_StrictModel):
-    kind: Literal["Resource"] = "Resource"
-    ref: str  # ResourceRef.uri (`<scheme>:<uuid>`)
-
-
-class ContributorSubjectWire(_StrictModel):
-    kind: Literal["Contributor"] = "Contributor"
-    handle: str
-
-
-SubjectLocatorWire = Annotated[
-    ResourceSubjectWire | ContributorSubjectWire, Field(discriminator="kind")
-]
-
-
 class StartedEventPayload(_StrictModel):
-    """Started{build handle, artifact ref, subject locator}."""
+    """Started{build handle, artifact ref}.
+
+    The Artifact head owns subject identity. Repeating a route locator in every
+    build event leaks private contributor/Idea identity and gives clients a
+    second activation contract.
+    """
 
     build_handle: str
     artifact_ref: str
-    subject_locator: SubjectLocatorWire
 
 
 class ProgressEventPayload(_StrictModel):
@@ -186,12 +164,6 @@ class ProgressEventPayload(_StrictModel):
 
     phase: str
     message: str
-
-
-class DeltaEventPayload(_StrictModel):
-    """Delta{appended text}."""
-
-    appended_text: str
 
 
 class SucceededEventPayload(_StrictModel):
@@ -220,13 +192,13 @@ class CancelledEventPayload(_StrictModel):
 
 
 # ---------------------------------------------------------------------------
-# Create outcome (A19) — the value `engine.create_build` returns.
+# Build-create outcome shared by the three engine commands.
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
 class BuildTicket:
-    """The outcome of ``create_build``: the head + the (existing or new) attempt.
+    """One engine build command's head + existing/new attempt.
 
     ``created`` is True only when this call inserted the build; a reused
     idempotency key returns the original build with ``created=False`` (A6 rule 1).
@@ -253,6 +225,20 @@ class DossierGenerationInProgress(ConflictError):
         super().__init__(ApiErrorCode.E_DOSSIER_GENERATION_IN_PROGRESS, message)
 
 
+class DossierAlreadyExists(ConflictError):
+    """Resource bootstrap targeted a head that already exists."""
+
+    def __init__(self, message: str = "This dossier already exists") -> None:
+        super().__init__(ApiErrorCode.E_DOSSIER_ALREADY_EXISTS, message)
+
+
+class DossierIdeaUnresolved(ApiError):
+    """The bounded resolver could not establish one exact Idea identity."""
+
+    def __init__(self, message: str = "The selected idea could not be resolved") -> None:
+        super().__init__(ApiErrorCode.E_DOSSIER_IDEA_UNRESOLVED, message)
+
+
 class BuildNotActive(ConflictError):
     """Public cancel of an already-succeeded/failed/cancelled build (A9)."""
 
@@ -275,7 +261,8 @@ class RevisionNotOwnedByHead(NotFoundError):
 
 
 class InvalidSubjectLocator(InvalidRequestError):
-    """The route subject scheme/handle is not one of the seven eligible subjects."""
+    """The route subject scheme/handle is not one of the seven locator-addressable
+    Resource subjects (the internal idea scheme is entered only via Learn/by-ref)."""
 
     def __init__(self, message: str = "Invalid dossier subject") -> None:
         super().__init__(ApiErrorCode.E_DOSSIER_INVALID_SUBJECT, message)

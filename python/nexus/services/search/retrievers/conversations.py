@@ -176,12 +176,12 @@ def _search_conversation_artifacts(
                 a.subject_id AS conversation_id,
                 r.id AS revision_id,
                 ts_rank_cd(
-                    to_tsvector('english', COALESCE(r.content_md, '')),
+                    to_tsvector('english', COALESCE(r.content_text, '')),
                     websearch_to_tsquery('english', :query)
                 ) AS score,
                 ts_headline(
                     'english',
-                    COALESCE(r.content_md, ''),
+                    COALESCE(r.content_text, ''),
                     websearch_to_tsquery('english', :query),
                     'MaxWords=40, MinWords=8, MaxFragments=1'
                 ) AS snippet
@@ -192,7 +192,7 @@ def _search_conversation_artifacts(
               AND a.audience_scheme = 'user'
               AND a.audience_id = c.owner_user_id::text
               AND c.owner_user_id = :viewer_id
-              AND to_tsvector('english', COALESCE(r.content_md, ''))
+              AND to_tsvector('english', COALESCE(r.content_text, ''))
                   @@ websearch_to_tsquery('english', :query)
               {_artifact_scope_filter(scope_filter)}
             ORDER BY score DESC, r.id ASC

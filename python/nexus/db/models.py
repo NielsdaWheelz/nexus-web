@@ -2173,7 +2173,8 @@ class ArtifactRevision(Base):
         ForeignKey("artifact_builds.id"),
         nullable=False,
     )
-    content_md: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    content_html: Mapped[str] = mapped_column(Text, nullable=False)
+    content_text: Mapped[str] = mapped_column(Text, nullable=False)
     input_manifest: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     citation_owner_user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -2267,7 +2268,7 @@ class ArtifactBuildEvent(Base):
     """One sequenced, replayable build-event (the dossier run stream, D-3).
 
     Build-keyed; the strict, ``extra='forbid'`` payload union lives in the
-    schema layer. ``event_type`` is the closed 6-value build union; the
+    schema layer. ``event_type`` is the closed 5-value build union; the
     ``(build_id, seq)`` unique + head-lock seq allocation prevent writer
     collisions and crash-replay duplicates.
     """
@@ -2296,7 +2297,7 @@ class ArtifactBuildEvent(Base):
     __table_args__ = (
         CheckConstraint("seq >= 1", name="ck_artifact_build_events_seq_positive"),
         CheckConstraint(
-            "event_type IN ('Started', 'Progress', 'Delta', 'Succeeded', 'Failed', 'Cancelled')",
+            "event_type IN ('Started', 'Progress', 'Succeeded', 'Failed', 'Cancelled')",
             name="ck_artifact_build_events_type",
         ),
         CheckConstraint(
@@ -2304,6 +2305,184 @@ class ArtifactBuildEvent(Base):
             name="ck_artifact_build_events_payload_object",
         ),
         UniqueConstraint("build_id", "seq", name="uq_artifact_build_events_seq"),
+    )
+
+
+class ArtifactIdeaSubject(Base):
+    """One user-owned exact Idea identity eligible for a Dossier head."""
+
+    __tablename__ = "artifact_idea_subjects"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    idea_key: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    display_title: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "idea_key",
+            name="uq_artifact_idea_subjects_owner_key",
+        ),
+    )
+
+
+class ArtifactIdeaResolution(Base):
+    """Immutable mapping from one Highlight occurrence to one Idea subject."""
+
+    __tablename__ = "artifact_idea_resolutions"
+
+    highlight_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("highlights.id"),
+        primary_key=True,
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    idea_subject_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("artifact_idea_subjects.id"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+
+class ArtifactIdeaSeed(Base):
+    """Generation provenance: one Highlight admitted to one Idea Artifact."""
+
+    __tablename__ = "artifact_idea_seeds"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    artifact_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("artifacts.id"),
+        nullable=False,
+    )
+    highlight_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("highlights.id"),
+        nullable=False,
+    )
+    added_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "artifact_id",
+            "highlight_id",
+            name="uq_artifact_idea_seeds_pair",
+        ),
+    )
+
+
+class ArtifactLearnRequest(Base):
+    """Learn-scoped replay identity and billed resolver coordination."""
+
+    __tablename__ = "artifact_learn_requests"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
+    request_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    highlight_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("highlights.id"),
+        nullable=False,
+    )
+    coordination: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    resolver_lease_expires_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "idempotency_key",
+            name="uq_artifact_learn_requests_user_key",
+        ),
+    )
+
+
+class ArtifactLearnSuccess(Base):
+    """The exact successful command outcome memoized for a Learn request."""
+
+    __tablename__ = "artifact_learn_successes"
+
+    request_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("artifact_learn_requests.id"),
+        primary_key=True,
+    )
+    outcome_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    artifact_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("artifacts.id"),
+        nullable=False,
+    )
+    build_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("artifact_builds.id"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+
+class ArtifactLearnFailure(Base):
+    """The exact modeled terminal failure memoized for a Learn request."""
+
+    __tablename__ = "artifact_learn_failures"
+
+    request_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("artifact_learn_requests.id"),
+        primary_key=True,
+    )
+    error_code: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
     )
 
 
@@ -4265,7 +4444,8 @@ class LLMCall(Base):
     __table_args__ = (
         CheckConstraint(
             "owner_kind IN ('chat_run', 'oracle_reading', 'artifact_build', "
-            "'media_summary', 'media_enrichment', 'synapse_scan', 'dawn_write')",
+            "'artifact_learn_request', 'media_summary', 'media_enrichment', "
+            "'synapse_scan', 'dawn_write')",
             name="ck_llm_calls_owner_kind",
         ),
         CheckConstraint("call_seq >= 1", name="ck_llm_calls_call_seq_positive"),

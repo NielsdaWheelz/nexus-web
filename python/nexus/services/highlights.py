@@ -979,7 +979,9 @@ def delete_highlight_rows(db: Session, highlight: Highlight) -> None:
 
     ref = ResourceRef(scheme="highlight", id=locked.id)
     from nexus.services import resource_grants
+    from nexus.services.artifacts.idea_seeds import delete_highlight_idea_rows
 
+    delete_highlight_idea_rows(db, highlight_id=locked.id)
     resource_grants.delete_exact_subject(db, ref)
     delete_edges_for_deleted_resource(db, ref=ref)
     delete_resource_protocol_state(db, viewer_id=locked.user_id, ref=ref)

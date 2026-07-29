@@ -67,7 +67,10 @@ def _dossier_artifact_with_revision(db: Session, user_id: UUID) -> tuple[Resourc
         db,
         library_id=library_id,
         requester_user_id=user_id,
-        content_md="Revision body.",
+        content_html=(
+            '<article><section id="revision-body"><p>Revision body.</p></section></article>'
+        ),
+        content_text="Revision body.",
     )
     return (
         ResourceRef(scheme="artifact", id=artifact_id),

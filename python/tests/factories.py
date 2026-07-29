@@ -601,7 +601,8 @@ def create_test_library_artifact(
     *,
     library_id: UUID,
     requester_user_id: UUID,
-    content_md: str = "Grounded library dossier.",
+    content_html: str = "<article><p>Grounded library dossier.</p></article>",
+    content_text: str = "Grounded library dossier.",
 ) -> tuple[UUID, UUID]:
     """Create one current Library-audience Dossier revision under the universal schema."""
     artifact = SynthesisArtifact(
@@ -624,7 +625,8 @@ def create_test_library_artifact(
     revision = ArtifactRevision(
         id=uuid4(),
         build_id=build.id,
-        content_md=content_md,
+        content_html=content_html,
+        content_text=content_text,
         input_manifest={
             "version": "v1",
             "kind": "library",

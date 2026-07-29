@@ -58,6 +58,26 @@ pytestmark = pytest.mark.integration
 WEB_GENERIC_URL_APPARATUS_CASES = fixture_cases_by_real_media_contract("web_article_capture_api")
 
 
+def test_artifact_research_url_acceptance_persists_ingest_purpose(db_session):
+    user_id = create_test_user_id()
+    ensure_user_and_default_library(db_session, user_id)
+
+    accepted = accept_url_source(
+        db=db_session,
+        viewer_id=user_id,
+        url="https://example.com/research-source",
+        library_ids=[],
+        idempotency_key="artifact-research:test-result",
+        ingest_purpose="artifact_research",
+    )
+
+    source_payload = db_session.execute(
+        text("SELECT source_payload FROM media_source_attempts WHERE id = :attempt_id"),
+        {"attempt_id": accepted.source_attempt_id},
+    ).scalar_one()
+    assert source_payload["ingest_purpose"] == "artifact_research"
+
+
 @pytest.fixture(autouse=True)
 def _clean_teardown_state(direct_db: DirectSessionManager):
     """Clear teardown intents + durable teardown/cleanup jobs after each test so they

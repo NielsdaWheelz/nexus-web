@@ -24,11 +24,23 @@ function resourceRefLocator(
   return parseResourceRef(ref) ? { kind: "resource_ref", ref } : null;
 }
 
+function namespacedResourceRefLocator(
+  scheme: ResourceScheme,
+  ref: string | undefined,
+): PaneResourceLocator | null {
+  if (!ref) return null;
+  const parsed = parseResourceRef(ref);
+  return parsed?.scheme === scheme ? { kind: "resource_ref", ref } : null;
+}
+
 export function resolvePaneResourceLocator(
   route: Pick<ResolvedPaneRouteModel, "id" | "params">,
 ): PaneResourceLocator | null {
   if (route.id === "library") return resourceRefLocator("library", route.params.id);
   if (route.id === "media") return resourceRefLocator("media", route.params.id);
+  if (route.id === "artifact") {
+    return namespacedResourceRefLocator("artifact", route.params.artifactRef);
+  }
   if (route.id === "conversation") {
     return resourceRefLocator("conversation", route.params.id);
   }
@@ -64,6 +76,7 @@ const INTERNAL_ROUTE_IDS = new Set([
 const RESOURCE_ROUTE_IDS = new Set([
   "library",
   "media",
+  "artifact",
   "conversation",
   "podcastDetail",
   "page",

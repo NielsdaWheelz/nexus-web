@@ -157,14 +157,19 @@ a ledger row (or, for a denial before any row exists, a typed `ApiError`) plus
 `error_code`/`error_origin` on the run parent, so the operator can always
 answer "what failed". See [llms.md](llms.md) for the full execution order and
 the profile each kind resolves against (`fast` for Oracle/Synapse/media
-summary/metadata enrichment; binding-owned policy selects `fast` or `balanced`
-for the seven Dossier operations; `balanced` for Dawn Write; chat alone is
+  summary/metadata enrichment; binding-owned policy selects `fast` or `balanced`
+  for the eight Dossier operations and Idea resolution; `balanced` for Dawn
+  Write; chat alone is
 user-selected).
 
 `dossier_build` is one generic kind for Media, Conversation, Library, Podcast,
-Contributor, Page, and Note. Its binding registry selects collection, prompt,
-operation/profile, coverage, and freshness policy. The artifact head is the
-database serialization point; the build is the replay identity. Build success,
-modeled failure, and cancellation are terminal children, while exhausted or
-unreconciled execution remains a visible, operator-repairable suspended build.
-Dead `dossier_build` rows are never pruned.
+Contributor, Page, Note, and internal Idea subjects. Its binding registry
+selects collection, prompt, operation/profile, coverage, and freshness policy.
+The build job payload also owns typed per-step coordination: billed synthesis
+and document repair are never redispatched from an uncertain state, while
+bounded search/read/ingest observations may be replayed and pages awaiting
+ingestion yield the worker. The artifact head is the database serialization
+point; the build is the replay identity. Build success, modeled failure, and
+cancellation are terminal children, while exhausted or unreconciled execution
+remains a visible, operator-repairable suspended build. Dead `dossier_build`
+rows are never pruned.

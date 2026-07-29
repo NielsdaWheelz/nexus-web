@@ -44,19 +44,22 @@ describe("ResourceRow", () => {
     );
   });
 
-  it("derives an exact Dossier revision command from a resource activation", () => {
+  it("keeps an Artifact Revision on its canonical standalone route", () => {
     const revisionRef =
       "artifact_revision:11111111-1111-4111-8111-111111111111";
+    const href =
+      `/artifacts/${encodeURIComponent("artifact:22222222-2222-4222-8222-222222222222")}` +
+      `?revision=${encodeURIComponent(revisionRef)}`;
     render(
       <ResourceList ariaLabel="Resources">
         <ResourceRow
           primary={{
             kind: "link",
-            href: "/conversations/22222222-2222-4222-8222-222222222222",
+            href,
             resourceActivation: {
               resourceRef: revisionRef,
               kind: "route",
-              href: "/conversations/22222222-2222-4222-8222-222222222222",
+              href,
               unresolvedReason: null,
             },
           }}
@@ -65,12 +68,10 @@ describe("ResourceRow", () => {
       </ResourceList>,
     );
 
-    expect(
-      screen.getByRole("link", { name: "Historical Dossier" }),
-    ).toHaveAttribute("data-pane-secondary-activation", "DossierRevision");
-    expect(
-      screen.getByRole("link", { name: "Historical Dossier" }),
-    ).toHaveAttribute("data-pane-dossier-revision", revisionRef);
+    const link = screen.getByRole("link", { name: "Historical Dossier" });
+    expect(link).toHaveAttribute("href", href);
+    expect(link).not.toHaveAttribute("data-pane-secondary-activation");
+    expect(link).not.toHaveAttribute("data-pane-dossier-revision");
   });
 
   it("renders one exceptional state instead of normal activity", () => {

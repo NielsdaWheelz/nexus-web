@@ -8,7 +8,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.services.artifacts import engine
 from nexus.services.artifacts import revisions as revision_service
+from nexus.services.artifacts.dossier_types import DossierIdeaUnresolved
+from nexus.services.artifacts.learn import (
+    BuildAcceptedLearnRequest,
+    OpenedLearnRequest,
+)
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.resource_graph.citations import record_citation
 from nexus.services.resource_graph.refs import ResourceRef
@@ -25,6 +31,91 @@ from tests.test_resource_graph_resolve import _make_span
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
+
+
+def test_learn_route_projects_both_successes_and_named_unresolved_422(
+    authenticated_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = uuid4()
+    highlight_id = uuid4()
+    artifact_id = uuid4()
+    build_id = uuid4()
+    seen: list[tuple[UUID, UUID, str]] = []
+
+    async def opened(
+        db: Session,
+        *,
+        highlight_id: UUID,
+        requester_user_id: UUID,
+        idempotency_key: str,
+        runtime: object,
+    ) -> OpenedLearnRequest:
+        del db, runtime
+        seen.append((highlight_id, requester_user_id, idempotency_key))
+        return OpenedLearnRequest(request_id=uuid4(), artifact_id=artifact_id)
+
+    monkeypatch.setattr(engine, "learn_idea", opened)
+    opened_response = authenticated_client.post(
+        "/artifacts/dossiers/learn",
+        headers={**auth_headers(user_id), "Idempotency-Key": "learn-http-opened"},
+        json={"highlight_ref": f"highlight:{highlight_id}"},
+    )
+
+    assert opened_response.status_code == 200
+    assert opened_response.json()["data"] == {
+        "kind": "Opened",
+        "artifact_ref": f"artifact:{artifact_id}",
+    }
+    assert seen == [(highlight_id, user_id, "learn-http-opened")]
+
+    async def accepted(
+        db: Session,
+        *,
+        highlight_id: UUID,
+        requester_user_id: UUID,
+        idempotency_key: str,
+        runtime: object,
+    ) -> BuildAcceptedLearnRequest:
+        del db, highlight_id, requester_user_id, idempotency_key, runtime
+        return BuildAcceptedLearnRequest(
+            request_id=uuid4(),
+            artifact_id=artifact_id,
+            build_id=build_id,
+        )
+
+    monkeypatch.setattr(engine, "learn_idea", accepted)
+    accepted_response = authenticated_client.post(
+        "/artifacts/dossiers/learn",
+        headers={**auth_headers(user_id), "Idempotency-Key": "learn-http-build"},
+        json={"highlight_ref": f"highlight:{highlight_id}"},
+    )
+    assert accepted_response.status_code == 200
+    assert accepted_response.json()["data"] == {
+        "kind": "BuildAccepted",
+        "artifact_ref": f"artifact:{artifact_id}",
+        "build_handle": engine.seal_artifact_build(build_id),
+    }
+
+    async def unresolved(
+        db: Session,
+        *,
+        highlight_id: UUID,
+        requester_user_id: UUID,
+        idempotency_key: str,
+        runtime: object,
+    ) -> OpenedLearnRequest:
+        del db, highlight_id, requester_user_id, idempotency_key, runtime
+        raise DossierIdeaUnresolved()
+
+    monkeypatch.setattr(engine, "learn_idea", unresolved)
+    unresolved_response = authenticated_client.post(
+        "/artifacts/dossiers/learn",
+        headers={**auth_headers(user_id), "Idempotency-Key": "learn-http-unresolved"},
+        json={"highlight_ref": f"highlight:{highlight_id}"},
+    )
+    assert unresolved_response.status_code == 422
+    assert unresolved_response.json()["error"]["code"] == "E_DOSSIER_IDEA_UNRESOLVED"
 
 
 def test_shared_library_revision_keeps_owner_citation_but_member_target_fails_closed(
@@ -53,7 +144,8 @@ def test_shared_library_revision_keeps_owner_citation_but_member_target_fails_cl
         db_session,
         library_id=library_id,
         requester_user_id=owner_id,
-        content_md="Shared synthesis with private historical evidence [1].",
+        content_html="<article><p>Shared synthesis with private evidence.</p></article>",
+        content_text="Shared synthesis with private historical evidence [1].",
     )
     record_citation(
         db_session,
@@ -105,7 +197,19 @@ def test_generic_head_build_replay_cancel_contract(
 
         never_generated = authenticated_client.get(path, headers=auth_headers(user_id))
         assert never_generated.status_code == 200
-        assert never_generated.json()["data"] == {
+        never_generated_data = never_generated.json()["data"]
+        assert never_generated_data["identity"]["kind"] == "Present"
+        assert never_generated_data["identity"]["value"] == {
+            "kind": "Resource",
+            "title": "Chat",
+            "activation": {
+                "resource_ref": f"conversation:{conversation_id}",
+                "kind": "route",
+                "href": f"/conversations/{conversation_id}",
+                "unresolved_reason": None,
+            },
+        }
+        assert {key: value for key, value in never_generated_data.items() if key != "identity"} == {
             "artifact_id": {"kind": "Absent"},
             "artifact_ref": {"kind": "Absent"},
             "current_revision": {"kind": "Absent"},
@@ -255,11 +359,12 @@ def test_revision_and_history_reauthorize_subject_visibility(
             text(
                 """
                 INSERT INTO artifact_revisions (
-                    id, build_id, content_md, input_manifest,
+                    id, build_id, content_html, content_text, input_manifest,
                     citation_owner_user_id, promoted_at
                 )
                 VALUES (
-                    :id, :build_id, '# Dossier', CAST(:manifest AS jsonb),
+                    :id, :build_id, '<article><p>Dossier</p></article>', 'Dossier',
+                    CAST(:manifest AS jsonb),
                     :user_id, now()
                 )
                 """

@@ -208,8 +208,8 @@ def retrieve_library_artifact_candidates(
                 a.id,
                 a.subject_id AS library_id,
                 {_LIBRARY_DISPLAY_NAME_SQL} AS library_name,
-                r.content_md,
-                {_tier_score_sql(_LIBRARY_DISPLAY_NAME_SQL, "r.content_md")} AS score
+                r.content_text,
+                {_tier_score_sql(_LIBRARY_DISPLAY_NAME_SQL, "r.content_text")} AS score
             FROM artifacts a
             JOIN libraries l ON l.id = a.subject_id
             JOIN memberships mem ON mem.library_id = l.id AND mem.user_id = :viewer_id
@@ -217,7 +217,7 @@ def retrieve_library_artifact_candidates(
             WHERE a.subject_scheme = 'library'
               AND a.audience_scheme = 'library'
               AND a.audience_id = a.subject_id::text
-              AND {_lexical_match_sql("r.content_md")}
+              AND {_lexical_match_sql("r.content_text")}
             ORDER BY score DESC, a.id ASC
             LIMIT :limit
             """

@@ -1322,7 +1322,13 @@ def test_delete_library_applies_graph_cleanup_two_rules(
             session,
             library_id=library_id,
             requester_user_id=user_id,
-            content_md="Doomed revision [1].",
+            content_html=(
+                "<article><p>Doomed revision "
+                '<button type="button" class="dossier-citation" '
+                'data-nexus-citation="1" aria-label="Open citation 1">'
+                "<sup>1</sup></button>.</p></article>"
+            ),
+            content_text="Doomed revision.",
         )
 
         session.add_all(

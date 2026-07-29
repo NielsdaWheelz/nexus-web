@@ -333,7 +333,9 @@ def _present_read(loaded: LoadedResource) -> ReadResourceResult:
         # revision's own citations, not a get_search_result chip.
         subject_ref = (
             f"{loaded.related_subject_scheme}:{loaded.related_subject_id}"
-            if loaded.related_subject_scheme is not None and loaded.related_subject_id is not None
+            if loaded.related_subject_scheme is not None
+            and loaded.related_subject_scheme != "idea"
+            and loaded.related_subject_id is not None
             else None
         )
         artifact_ref = (

@@ -56,6 +56,11 @@ from provider_runtime import (
 from provider_runtime import Cancelled as CancelledOutcome
 from provider_runtime import TokenUsage as _TokenUsage
 
+from nexus.services.artifacts.idea_identity import (
+    canonicalize_idea_text,
+    normalize_idea_display,
+)
+
 
 class RealMediaFixtureExecutionRuntime:
     """The fixture ``ExecutionRuntime``: scripts outcomes from ``intent``,
@@ -111,6 +116,10 @@ class RealMediaFixtureExecutionRuntime:
 
 APP_SEARCH_TOOL_NAME = "app_search"
 _ABOUT_QUERY_RE = re.compile(r"\babout\s+(.+?)\?\s*(?:use\b|$)", re.IGNORECASE)
+_IDEA_CONTEXT_RE = re.compile(
+    r"<untrusted_context_json>(.*?)</untrusted_context_json>",
+    re.DOTALL,
+)
 REAL_MEDIA_FIXTURE_RESPONSE = (
     "The source says SOFIA helped confirm water on the Moon by detecting a "
     "water signature in Clavius Crater."
@@ -125,7 +134,7 @@ REAL_MEDIA_FIXTURE_RESPONSE_WITH_CITATION = REAL_MEDIA_FIXTURE_RESPONSE + " [1]"
 # list, so index 0 always grounds. Metadata enrichment has no candidate-count
 # gate at all (see below); synapse_scan grounds nothing (its canned response is
 # the empty-connections list its own domain rules call "a good answer"). The
-# seven Dossier bindings use the schema-driven response below, not markers.
+# All eight Dossier bindings use the schema-driven response below, not markers.
 ORACLE_SYNTHESIS_FIXTURE_RESPONSE = json.dumps(
     {
         "argument": (
@@ -399,10 +408,38 @@ def _synthesis_response(intent: GenerateIntent) -> str | None:
     system_text = "\n".join(
         _message_text(message) for message in intent.messages if isinstance(message, SystemMessage)
     )
+    if "You resolve a selected phrase to one exact Idea identity" in system_text:
+        return _idea_resolver_response(intent)
     for marker, response in _SYNTHESIS_MARKERS:
         if marker in system_text:
             return response
     return None
+
+
+def _idea_resolver_response(intent: GenerateIntent) -> str:
+    user_text = "\n".join(
+        _message_text(message) for message in intent.messages if isinstance(message, UserMessage)
+    )
+    match = _IDEA_CONTEXT_RE.search(user_text)
+    if match is None:
+        raise AssertionError("real-media fixture: Idea resolver context is missing")
+    context = json.loads(match.group(1))
+    if not isinstance(context, dict) or not isinstance(context.get("selection"), str):
+        raise AssertionError("real-media fixture: Idea resolver selection is malformed")
+    selection = context["selection"]
+    return json.dumps(
+        {
+            "kind": "New",
+            "idea_subject_id": None,
+            "display_title": normalize_idea_display(selection),
+            "idea_key": {
+                "version": "v1",
+                "title_key": str(canonicalize_idea_text(selection)),
+                "disambiguator_key": None,
+            },
+        },
+        separators=(",", ":"),
+    )
 
 
 def _strict_json_response(intent: GenerateIntent) -> str | None:
@@ -415,22 +452,16 @@ def _strict_json_response(intent: GenerateIntent) -> str | None:
 
 
 def _schema_driven_dossier_response(output: StrictJsonOutput) -> str | None:
-    """Build the one shared seven-subject Dossier fixture from its schema.
-
-    Both Dossier shapes have ``content_md`` plus ``citations``. Their sole
-    distinction is the grounded citation index field (``candidate_index`` for
-    six bindings, ``claim_index`` for Media), discovered from the canonical
-    schema rather than a subject or operation branch.
-    """
+    """Build the shared Dossier fixture from the strict generated schema."""
     schema = to_json_schema(
         output.schema,
         inline_defs=True,
         include_annotations=False,
     )
     properties = schema.get("properties")
-    if not isinstance(properties, dict) or set(properties) != {"content_md", "citations"}:
+    if not isinstance(properties, dict) or set(properties) != {"content_html", "citations"}:
         return None
-    content_schema = properties.get("content_md")
+    content_schema = properties.get("content_html")
     citations_schema = properties.get("citations")
     if (
         not isinstance(content_schema, dict)
@@ -445,19 +476,19 @@ def _schema_driven_dossier_response(output: StrictJsonOutput) -> str | None:
     item_properties = item_schema.get("properties")
     if not isinstance(item_properties, dict):
         return None
-    index_fields = {"candidate_index", "claim_index"} & set(item_properties)
-    if len(index_fields) != 1 or not {"ordinal", "role"}.issubset(item_properties):
+    if set(item_properties) != {"ordinal", "candidate_index", "role"}:
         return None
-    index_field = index_fields.pop()
     return json.dumps(
         {
-            "content_md": (
-                "The fixture dossier records one grounded finding from the available source [1]."
+            "content_html": (
+                '<article><section id="finding"><h2>Finding</h2><p>'
+                "The fixture dossier records one grounded finding from the available "
+                'source <cite data-nexus-citation="1"></cite>.</p></section></article>'
             ),
             "citations": [
                 {
                     "ordinal": 1,
-                    index_field: 0,
+                    "candidate_index": 0,
                     "role": "supports",
                 }
             ],

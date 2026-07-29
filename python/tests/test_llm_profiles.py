@@ -84,6 +84,8 @@ def test_background_policy_matches_final_product_portfolio_table():
         "dossier_contributor": "balanced",
         "dossier_page": "fast",
         "dossier_note": "fast",
+        "dossier_idea": "balanced",
+        "dossier_idea_resolve": "fast",
     }
 
 

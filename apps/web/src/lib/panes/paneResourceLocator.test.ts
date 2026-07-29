@@ -11,6 +11,7 @@ const PODCAST_ID = "33333333-3333-4333-8333-333333333333";
 const PAGE_ID = "44444444-4444-4444-8444-444444444444";
 const BLOCK_ID = "55555555-5555-4555-8555-555555555555";
 const CONVERSATION_ID = "66666666-6666-4666-8666-666666666666";
+const ARTIFACT_REF = "artifact:77777777-7777-4777-8777-777777777777";
 
 function locatorFor(href: string) {
   return resolvePaneResourceLocator(resolvePaneRouteModel(href));
@@ -46,6 +47,12 @@ describe("pane resource locator", () => {
     expect(locatorFor(`/conversations/${CONVERSATION_ID}`)).toEqual({
       kind: "resource_ref",
       ref: `conversation:${CONVERSATION_ID}`,
+    });
+    expect(
+      locatorFor(`/artifacts/${encodeURIComponent(ARTIFACT_REF)}?revision=old`),
+    ).toEqual({
+      kind: "resource_ref",
+      ref: ARTIFACT_REF,
     });
   });
 
@@ -85,6 +92,7 @@ describe("pane resource locator", () => {
       `/pages/${PAGE_ID}`,
       `/notes/${BLOCK_ID}`,
       `/conversations/${CONVERSATION_ID}`,
+      `/artifacts/${encodeURIComponent(ARTIFACT_REF)}`,
       "/authors/ursula-k-le-guin",
       "/media/not-a-uuid",
     ]) {

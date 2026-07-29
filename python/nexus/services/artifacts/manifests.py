@@ -10,15 +10,12 @@ DERIVED from these; freshness is the binding's ``manifests_equal(stored, live)``
 
 from __future__ import annotations
 
-from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Literal
-from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
-from nexus.schemas.presence import Absent, Presence
-from nexus.services.artifacts.dossier_types import MigratedIncompleteReason
+from nexus.schemas.presence import Presence
 
 
 class _Manifest(BaseModel):
@@ -53,33 +50,16 @@ class EvidenceOmission(_Manifest):
 
 
 # ---------------------------------------------------------------------------
-# Conversation completeness (A21) — Complete | Incomplete{reason}.
+# Conversation completeness.
 # ---------------------------------------------------------------------------
-
-
-class ConversationCompletenessReason(StrEnum):
-    """Why a conversation manifest is not fully covered. ``MigratedCoverageGap`` is
-    the migration-only reason (old leaf/count could not reconstruct all branches)."""
-
-    MigratedCoverageGap = "MigratedCoverageGap"
 
 
 class ConversationComplete(_Manifest):
     kind: Literal["Complete"] = "Complete"
 
 
-class ConversationIncomplete(_Manifest):
-    kind: Literal["Incomplete"] = "Incomplete"
-    reason: ConversationCompletenessReason
-
-
-ConversationCompleteness = Annotated[
-    ConversationComplete | ConversationIncomplete, Field(discriminator="kind")
-]
-
-
 # ---------------------------------------------------------------------------
-# The seven input manifests (A21) — discriminated by `kind`.
+# The input manifests (A21) — discriminated by `kind`.
 # ---------------------------------------------------------------------------
 
 
@@ -99,7 +79,7 @@ class ConversationInputManifestV1(_Manifest):
     message_refs: list[str] = Field(default_factory=list)
     context_refs: list[str] = Field(default_factory=list)
     topology_fingerprint: Presence[str]
-    completeness: ConversationCompleteness
+    completeness: ConversationComplete
 
 
 class LibraryInputManifestV1(_Manifest):
@@ -141,6 +121,28 @@ class NoteInputManifestV1(_Manifest):
     connection_refs: list[str] = Field(default_factory=list)
 
 
+class IdeaIncludedSource(_Manifest):
+    ref: str
+    content_fingerprint: str
+    role: Literal["seed", "nexus", "web"]
+
+
+class IdeaOmittedSource(_Manifest):
+    locator: str
+    reason: str
+
+
+class IdeaInputManifestV1(_Manifest):
+    version: Literal["v1"] = "v1"
+    kind: Literal["idea"] = "idea"
+    idea_subject_id: str
+    included_seed_refs: list[str] = Field(default_factory=list)
+    nexus_query_fingerprints: list[str] = Field(default_factory=list)
+    web_query_fingerprints: list[str] = Field(default_factory=list)
+    included_sources: list[IdeaIncludedSource] = Field(default_factory=list)
+    omitted_sources: list[IdeaOmittedSource] = Field(default_factory=list)
+
+
 InputManifestV1 = Annotated[
     MediaInputManifestV1
     | ConversationInputManifestV1
@@ -148,40 +150,54 @@ InputManifestV1 = Annotated[
     | PodcastInputManifestV1
     | ContributorInputManifestV1
     | PageInputManifestV1
-    | NoteInputManifestV1,
+    | NoteInputManifestV1
+    | IdeaInputManifestV1,
     Field(discriminator="kind"),
 ]
 
 
 # ---------------------------------------------------------------------------
-# Failure support (A21) — Presence-wrapped in `artifact_build_failures.support`.
+# Wire projection. The persisted Idea manifest carries ``idea_subject_id`` for
+# freshness/rebuild (§5.6), but ``idea`` is an internal subject scheme and §9.3
+# forbids ever exposing the Idea subject UUID on the public contract. Resource
+# manifests carry only public ResourceRefs and are already wire-safe, so only the
+# Idea variant is projected to a subject-id-free shape at the API boundary.
 # ---------------------------------------------------------------------------
+class IdeaInputManifestOut(_Manifest):
+    version: Literal["v1"] = "v1"
+    kind: Literal["idea"] = "idea"
+    included_seed_refs: list[str] = Field(default_factory=list)
+    nexus_query_fingerprints: list[str] = Field(default_factory=list)
+    web_query_fingerprints: list[str] = Field(default_factory=list)
+    included_sources: list[IdeaIncludedSource] = Field(default_factory=list)
+    omitted_sources: list[IdeaOmittedSource] = Field(default_factory=list)
 
 
-class MigratedIncompleteSupport(_Manifest):
-    """Provenance for a migrated ``MigratedIncomplete`` build. ``content_sha256`` is
-    the SHA-256 of the legacy body (NOT the body) and is required for a
-    ``LegacyZeroCitation`` reason."""
-
-    reason: MigratedIncompleteReason
-    legacy_revision_id: UUID
-    legacy_status: str
-    legacy_completed_at: Presence[datetime]
-    content_sha256: Presence[str]
-
-    @model_validator(mode="after")
-    def _require_sha_for_zero_citation(self) -> MigratedIncompleteSupport:
-        if self.reason is MigratedIncompleteReason.LegacyZeroCitation and isinstance(
-            self.content_sha256, Absent
-        ):
-            raise ValueError("content_sha256 is required for LegacyZeroCitation support")
-        return self
+InputManifestOut = Annotated[
+    MediaInputManifestV1
+    | ConversationInputManifestV1
+    | LibraryInputManifestV1
+    | PodcastInputManifestV1
+    | ContributorInputManifestV1
+    | PageInputManifestV1
+    | NoteInputManifestV1
+    | IdeaInputManifestOut,
+    Field(discriminator="kind"),
+]
 
 
-class MigratedFailureSupport(_Manifest):
-    """Provenance for a migrated ``MigratedFailure`` build (normalized legacy error)."""
+def project_manifest_to_wire(manifest: InputManifestV1) -> InputManifestOut:
+    """Redact internal-only fields before a manifest crosses the API boundary.
 
-    legacy_revision_id: UUID
-    legacy_error_code: Presence[str]
-    legacy_error_detail: Presence[str]
-    legacy_completed_at: Presence[datetime]
+    Idea manifests drop the internal ``idea_subject_id`` (§9.3); Resource
+    manifests are already wire-safe and pass through unchanged.
+    """
+    if isinstance(manifest, IdeaInputManifestV1):
+        return IdeaInputManifestOut(
+            included_seed_refs=manifest.included_seed_refs,
+            nexus_query_fingerprints=manifest.nexus_query_fingerprints,
+            web_query_fingerprints=manifest.web_query_fingerprints,
+            included_sources=manifest.included_sources,
+            omitted_sources=manifest.omitted_sources,
+        )
+    return manifest

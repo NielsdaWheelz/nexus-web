@@ -14,7 +14,6 @@ const OWNER_MODULE_CSS = "src/components/ui/MachineText.module.css";
 const MACHINE_TOKENS = ["--font-machine", "--ink-machine", "--rail-machine"];
 const MARKDOWN_IMPORTERS = [
   "src/components/chat/AssistantAnswer.tsx",
-  "src/components/dossier/DossierSurface.tsx",
   "src/components/dossier/MediaAbstract.tsx",
   "src/components/notes/DawnWriteBlock.tsx",
 ];
@@ -82,9 +81,11 @@ describe("Machine Hand cutover source gates", () => {
     expect(importers).toEqual([...MARKDOWN_IMPORTERS].sort());
 
     // Each importer is a known machine-voice site.
-    expect(
-      sourceText("src/components/dossier/DossierSurface.tsx"),
-    ).toMatch(/from\s+["']@\/components\/ui\/MachineText["']/);
+    const dossier = sourceText("src/components/dossier/DossierSurface.tsx");
+    expect(dossier).toMatch(
+      /from\s+["']@\/components\/ui\/MachineText["']/,
+    );
+    expect(dossier).not.toContain("MarkdownMessage");
     expect(sourceText("src/components/notes/DawnWriteBlock.tsx")).toMatch(
       /from\s+["']@\/components\/ui\/MachineText["']/,
     );
@@ -99,6 +100,18 @@ describe("Machine Hand cutover source gates", () => {
         /from\s+["'][^"']*\/AssistantAnswer["']/.test(sourceText(path)),
       );
     expect(answerImporters).toEqual(["src/components/chat/AssistantMessage.tsx"]);
+  });
+
+  it("keeps iframe typography behind the sealed Machine Hand owner", () => {
+    const owner = sourceText("src/components/ui/MachineText.tsx");
+    const frame = sourceText(
+      "src/components/dossier/DossierDocumentFrame.tsx",
+    );
+    expect(owner).toContain("export function machineDocumentStyles");
+    expect(frame).toContain("machineDocumentStyles");
+    for (const token of MACHINE_TOKENS) {
+      expect(frame).not.toContain(token);
+    }
   });
 
   // §13.4 — the Oracle pane tree never imports MachineText (N-1).

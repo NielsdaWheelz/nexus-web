@@ -1,17 +1,4 @@
-"""CP1 RED contract tests — Dossier failure precedence + citation contract (T5).
-
-Test-first for the hard cutover. Imports CANONICAL A19 identifiers that do NOT
-exist yet -> COLLECTION-time ImportError == the intended RED. Goes green,
-without edits, once CP2/CP3 land the engine, bindings, and MediaIntelligence
-per CONTRACTS.md A7 (failure precedence), A10 (citation contract), A11.
-
-Drivable-without-a-provider subset (pre-dispatch precedence): zero usable
-candidate -> NoSourceMaterial; a modeled MI dependency failure while a usable
-source exists -> DependencyProjectionFailed. Post-synthesis branches
-(InputsChanged, CitationValidationFailed, audience-invisible target ->
-InputsChanged, target re-resolution) require a driven provider success and are
-flagged for the integrator (see module RETURN notes).
-"""
+"""Dossier failure precedence at the pre-dispatch boundary."""
 
 from __future__ import annotations
 
@@ -24,13 +11,14 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import NoteBlock
 from nexus.jobs.queue import JobExecutionContext
+from nexus.schemas.presence import absent
 from nexus.services import media_intelligence
+from nexus.services.artifacts.coordination import DossierBuildRuntime
 from nexus.services.artifacts.dossier_types import (
     DossierBuildFailureCode,
-    MigratedIncompleteReason,
     SubjectResource,
 )
-from nexus.services.artifacts.engine import create_build, run_build
+from nexus.services.artifacts.engine import bootstrap_resource_dossier, run_build
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_items import versions
@@ -90,18 +78,32 @@ def _user(db: Session) -> UUID:
 
 
 def _drive_to_failure(db: Session, locator: SubjectResource, uid: UUID) -> DossierBuildFailureCode:
-    """create_build -> claim -> run_build; return the single modeled failure code.
+    """bootstrap_resource_dossier -> claim -> run_build; return the single modeled failure code.
 
     Asserts the run produced exactly ONE failure child, no revision, no
     cancellation, and never dispatched the provider (all these precedence codes
     are decided at/ before collection)."""
-    ticket = create_build(
+    ticket = bootstrap_resource_dossier(
         db, locator=locator, requester_user_id=uid, idempotency_key="k-1", instruction=None
     )
     job = claim_dossier_build_job(db, build_id=ticket.build_id, worker_id="w")
     ctx = JobExecutionContext(job_id=job.id, worker_id="w", attempt_no=job.attempts)
     rt = _NoDispatchRuntime()
-    asyncio.run(run_build(db, build_id=ticket.build_id, ctx=ctx, runtime=rt))
+    asyncio.run(
+        run_build(
+            db,
+            build_id=ticket.build_id,
+            ctx=ctx,
+            runtime=DossierBuildRuntime(
+                build_id=ticket.build_id,
+                artifact_id=ticket.artifact_id,
+                job=job,
+                execution_context=ctx,
+                llm_runtime=rt,
+                web_search_provider=absent(),
+            ),
+        )
+    )
     assert rt.calls == 0, "these codes are selected before provider dispatch"
     rev = db.execute(
         text("SELECT count(*) FROM artifact_revisions WHERE build_id = :b"), {"b": ticket.build_id}
@@ -167,15 +169,9 @@ def test_failure_code_enum_is_closed() -> None:
         "ContextTooLarge",
         "ProviderRefused",
         "ProviderIncomplete",
-        "SchemaRepairExhausted",
+        "DocumentValidationFailed",
         "CitationValidationFailed",
-        "MigratedFailure",
-        "MigratedIncomplete",
     }
-
-
-def test_migrated_incomplete_reason_is_closed() -> None:
-    assert {r.value for r in MigratedIncompleteReason} == {"LegacyBuilding", "LegacyZeroCitation"}
 
 
 # --- Precedence rule 1: NoSourceMaterial (zero usable citation candidate) -----

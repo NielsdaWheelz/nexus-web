@@ -14,8 +14,8 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.schemas.reader_apparatus import ReaderApparatusLocatorStatus
 from nexus.schemas.resource_items import ResourceActivationOut
-from nexus.services.artifacts.subject_policy import SUBJECT_POLICIES, visible_persisted_subject
-from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
+from nexus.services.artifacts.subject_policy import visible_persisted_subject
+from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.resolve import (
     oracle_anchor_current_target,
     reader_target_for_citation_target,
@@ -60,27 +60,32 @@ def route_for_visible_apparatus_item(
     return f"/media/{media_id}?{params}"
 
 
-def _artifact_subject_route(db: Session, row: Any, *, viewer_id: UUID) -> str | None:
-    """Route a visible Dossier head/revision to its canonical subject.
-
-    Dossier surface and historical-revision selection are workspace-local
-    companion state; backend routes never encode either as legacy query state.
-    """
+def _artifact_standalone_route(
+    db: Session,
+    row: Any,
+    *,
+    viewer_id: UUID,
+    revision_id: UUID | None = None,
+) -> str | None:
+    """Authorize and route a Dossier head/revision to its standalone pane."""
     if row is None:
         return None
-    subject_scheme, raw_subject_id, audience_scheme, audience_id = row
+    artifact_id, subject_scheme, raw_subject_id, audience_scheme, audience_id = row
     subject_id = UUID(str(raw_subject_id))
-    resolved = visible_persisted_subject(
-        db,
-        subject_scheme=str(subject_scheme),
-        subject_id=subject_id,
-        audience_scheme=str(audience_scheme),
-        audience_id=str(audience_id),
-        viewer_id=viewer_id,
-    )
-    if resolved is None:
+    if (
+        visible_persisted_subject(
+            db,
+            subject_scheme=str(subject_scheme),
+            subject_id=subject_id,
+            audience_scheme=str(audience_scheme),
+            audience_id=str(audience_id),
+            viewer_id=viewer_id,
+        )
+        is None
+    ):
         return None
-    return SUBJECT_POLICIES[resolved.scheme].activate(db, resolved.ref).href
+    base = f"/artifacts/artifact:{artifact_id}"
+    return f"{base}?revision=artifact_revision:{revision_id}" if revision_id is not None else base
 
 
 def resource_activation_for_ref(
@@ -327,36 +332,26 @@ def _dynamic_routes_for_refs(
     """Resolve non-static adjacency routes with one set query per scheme."""
 
     routes: dict[str, str] = {}
-    artifact_subjects: dict[str, ResourceRef] = {}
-
     artifact_refs = by_scheme["artifact"]
     if artifact_refs:
         rows = db.execute(
             text(
                 """
-                SELECT id, subject_scheme, subject_id
+                SELECT id
                 FROM artifacts
                 WHERE id = ANY(:ids)
                 """
             ),
             {"ids": [ref.id for ref in artifact_refs]},
         ).all()
-        artifact_subjects.update(
-            {
-                f"artifact:{row[0]}": ResourceRef(
-                    scheme=cast(ResourceScheme, str(row[1])),
-                    id=UUID(str(row[2])),
-                )
-                for row in rows
-            }
-        )
+        routes.update({f"artifact:{row[0]}": f"/artifacts/artifact:{row[0]}" for row in rows})
 
     revision_refs = by_scheme["artifact_revision"]
     if revision_refs:
         rows = db.execute(
             text(
                 """
-                SELECT r.id, a.subject_scheme, a.subject_id
+                SELECT r.id, a.id
                 FROM artifact_revisions r
                 JOIN artifact_builds b ON b.id = r.build_id
                 JOIN artifacts a ON a.id = b.artifact_id
@@ -365,11 +360,10 @@ def _dynamic_routes_for_refs(
             ),
             {"ids": [ref.id for ref in revision_refs]},
         ).all()
-        artifact_subjects.update(
+        routes.update(
             {
-                f"artifact_revision:{row[0]}": ResourceRef(
-                    scheme=cast(ResourceScheme, str(row[1])),
-                    id=UUID(str(row[2])),
+                f"artifact_revision:{row[0]}": (
+                    f"/artifacts/artifact:{row[1]}?revision=artifact_revision:{row[0]}"
                 )
                 for row in rows
             }
@@ -472,9 +466,6 @@ def _dynamic_routes_for_refs(
             routes[f"oracle_passage_anchor:{anchor_id}"] = route
 
     contributor_ids = {ref.id for ref in by_scheme["contributor"]}
-    contributor_ids.update(
-        subject.id for subject in artifact_subjects.values() if subject.scheme == "contributor"
-    )
     contributor_handles: dict[UUID, str] = {}
     if contributor_ids:
         rows = db.execute(
@@ -489,14 +480,6 @@ def _dynamic_routes_for_refs(
             if ref.id in contributor_handles
         }
     )
-
-    for uri, subject in artifact_subjects.items():
-        route = _static_route(subject)
-        if route is None and subject.scheme == "contributor":
-            handle = contributor_handles.get(subject.id)
-            route = f"/authors/{handle}" if handle is not None else None
-        if route is not None:
-            routes[uri] = route
 
     passage_refs = by_scheme["passage_anchor"]
     if passage_refs:
@@ -606,17 +589,18 @@ def route_for_ref(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> str | No
     if ref.scheme == "artifact":
         row = db.execute(
             text(
-                "SELECT subject_scheme, subject_id, audience_scheme, audience_id "
+                "SELECT id, subject_scheme, subject_id, audience_scheme, audience_id "
                 "FROM artifacts WHERE id = :id"
             ),
             {"id": ref.id},
         ).first()
-        return _artifact_subject_route(db, row, viewer_id=viewer_id)
+        return _artifact_standalone_route(db, row, viewer_id=viewer_id)
     if ref.scheme == "artifact_revision":
         row = db.execute(
             text(
                 """
-                SELECT a.subject_scheme, a.subject_id, a.audience_scheme, a.audience_id
+                SELECT a.id, a.subject_scheme, a.subject_id,
+                       a.audience_scheme, a.audience_id
                 FROM artifact_revisions r
                 JOIN artifact_builds b ON b.id = r.build_id
                 JOIN artifacts a ON a.id = b.artifact_id
@@ -625,7 +609,12 @@ def route_for_ref(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> str | No
             ),
             {"id": ref.id},
         ).first()
-        return _artifact_subject_route(db, row, viewer_id=viewer_id)
+        return _artifact_standalone_route(
+            db,
+            row,
+            viewer_id=viewer_id,
+            revision_id=ref.id,
+        )
     if ref.scheme == "contributor":
         handle = db.scalar(text("SELECT handle FROM contributors WHERE id = :id"), {"id": ref.id})
         return f"/authors/{quote(str(handle), safe='')}" if handle is not None else None

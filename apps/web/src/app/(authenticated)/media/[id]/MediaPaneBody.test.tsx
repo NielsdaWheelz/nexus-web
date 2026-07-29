@@ -124,6 +124,10 @@ const paneChromeMocks = vi.hoisted(() => ({
   acquireVisibleLock: vi.fn(() => () => {}),
 }));
 
+const learnMocks = vi.hoisted(() => ({
+  learnDossierFromHighlight: vi.fn(),
+}));
+
 vi.mock("@/lib/api/client", async () => {
   const actual =
     await vi.importActual<typeof import("@/lib/api/client")>(
@@ -134,6 +138,17 @@ vi.mock("@/lib/api/client", async () => {
     apiFetch: (...args: unknown[]) => testState.apiFetch(...args),
     isApiError: (error: unknown) =>
       Boolean(error && typeof error === "object" && "status" in error),
+  };
+});
+
+vi.mock("@/lib/dossiers/generationAdapter", async () => {
+  const actual =
+    await vi.importActual<typeof import("@/lib/dossiers/generationAdapter")>(
+      "@/lib/dossiers/generationAdapter",
+    );
+  return {
+    ...actual,
+    learnDossierFromHighlight: learnMocks.learnDossierFromHighlight,
   };
 });
 
@@ -285,6 +300,14 @@ const PDF_HIGHLIGHT_ID = "33333333-3333-4333-8333-333333333333";
 
 function jsonResponse(data: unknown) {
   return { data };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
 }
 
 function pathOf(input: unknown): string {
@@ -1094,6 +1117,7 @@ describe("MediaPaneBody pane sizing", () => {
     paneChromeMocks.startReaderScroll.mockReset();
     paneChromeMocks.updateReaderScroll.mockReset();
     paneChromeMocks.acquireVisibleLock.mockClear();
+    learnMocks.learnDossierFromHighlight.mockReset();
     paneChromeMocks.usePaneMobileChromeController.mockReturnValue({
       startReaderScroll: paneChromeMocks.startReaderScroll,
       updateReaderScroll: paneChromeMocks.updateReaderScroll,
@@ -2370,6 +2394,84 @@ describe("MediaPaneBody pane sizing", () => {
     await waitFor(() =>
       expect(evidenceRow).not.toHaveAttribute("data-hovered"),
     );
+  });
+
+  it("shows Learn feedback and adopts the resulting Artifact pane", async () => {
+    testState.mediaKind = "pdf";
+    testState.documentMapPassageGroups = [pdfHighlightPassage()];
+    const learn = deferred<{
+      kind: "Opened";
+      artifactRef: string;
+    }>();
+    learnMocks.learnDossierFromHighlight.mockReturnValueOnce(learn.promise);
+    const { onActivateWorkspaceTarget } = renderMediaPane({
+      renderSecondarySurfaceId: "resource-evidence",
+    });
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Highlight actions" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "Learn" }),
+    );
+
+    expect(learnMocks.learnDossierFromHighlight).toHaveBeenCalledWith({
+      highlightRef: `highlight:${PDF_HIGHLIGHT_ID}`,
+      idempotencyKey: expect.any(String),
+    });
+    expect(screen.getByText("Creating lesson…")).toBeVisible();
+
+    learn.resolve({
+      kind: "Opened",
+      artifactRef: "artifact:44444444-4444-4444-8444-444444444444",
+    });
+    await waitFor(() => {
+      expect(onActivateWorkspaceTarget).toHaveBeenCalledWith({
+        originPaneId: "pane-1",
+        target: {
+          href:
+            "/artifacts/" +
+            encodeURIComponent(
+              "artifact:44444444-4444-4444-8444-444444444444",
+            ),
+          labelHint: "Lesson",
+        },
+        disposition: { kind: "Adopt" },
+        modality: "Programmatic",
+      });
+    });
+  });
+
+  it("keeps a durable Highlight recovery path when Learn fails", async () => {
+    testState.mediaKind = "pdf";
+    testState.documentMapPassageGroups = [pdfHighlightPassage()];
+    learnMocks.learnDossierFromHighlight.mockRejectedValueOnce(
+      new Error("resolver unavailable"),
+    );
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const { onActivateWorkspaceTarget } = renderMediaPane({
+      renderSecondarySurfaceId: "resource-evidence",
+    });
+
+    try {
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Highlight actions" }),
+      );
+      await userEvent.click(
+        await screen.findByRole("menuitem", { name: "Learn" }),
+      );
+
+      expect(
+        await screen.findByText(
+          "Could not create a lesson from this Highlight. Open the saved Highlight and try Learn again.",
+        ),
+      ).toBeVisible();
+      expect(onActivateWorkspaceTarget).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it("dispatches a PDF reader pulse when a native-link reference row is activated", async () => {

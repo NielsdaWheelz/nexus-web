@@ -35,6 +35,18 @@ describe("toChatSSEEvent", () => {
     citation_edge_id: "11111111-1111-4111-8111-111111111111",
     citation,
   };
+  const wireItem = {
+    ...item,
+    citation: {
+      ...citation,
+      activation: {
+        resource_ref: citation.activation.resourceRef,
+        kind: citation.activation.kind,
+        href: citation.activation.href,
+        unresolved_reason: citation.activation.unresolvedReason,
+      },
+    },
+  };
 
   it("parses backend-shaped meta events", () => {
     const data = {
@@ -134,7 +146,7 @@ describe("toChatSSEEvent", () => {
     expect(
       toChatSSEEvent("citation_index", {
         assistant_message_id: "msg-1",
-        citations: [item],
+        citations: [wireItem],
       }),
     ).toEqual({
       seq: 0,
@@ -144,18 +156,6 @@ describe("toChatSSEEvent", () => {
   });
 
   it("normalizes REST-shaped citation activations on the shared event boundary", () => {
-    const wireItem = {
-      ...item,
-      citation: {
-        ...citation,
-        activation: {
-          resource_ref: citation.activation.resourceRef,
-          kind: citation.activation.kind,
-          href: citation.activation.href,
-          unresolved_reason: citation.activation.unresolvedReason,
-        },
-      },
-    };
     const event = toChatSSEEvent("citation_index", {
       assistant_message_id: "msg-1",
       citations: [wireItem],
@@ -181,7 +181,12 @@ describe("toChatSSEEvent", () => {
     expect(() =>
       toChatSSEEvent("citation_index", {
         assistant_message_id: "msg-1",
-        citations: [{ ...item, citation: { ...citation, ordinal: 0 } }],
+        citations: [
+          {
+            ...wireItem,
+            citation: { ...wireItem.citation, ordinal: 0 },
+          },
+        ],
       }),
     ).toThrow("Invalid SSE payload for citation_index");
   });
@@ -192,9 +197,9 @@ describe("toChatSSEEvent", () => {
         assistant_message_id: "msg-1",
         citations: [
           {
-            ...item,
+            ...wireItem,
             citation: {
-              ...citation,
+              ...wireItem.citation,
               target_ref: { type: "bogus", id: "x" },
             },
           },
@@ -216,7 +221,9 @@ describe("toChatSSEEvent", () => {
     expect(() =>
       toChatSSEEvent("citation_index", {
         assistant_message_id: "msg-1",
-        citations: [{ ...item, transcript_version_id: "transcript-version-1" }],
+        citations: [
+          { ...wireItem, transcript_version_id: "transcript-version-1" },
+        ],
       }),
     ).toThrow("Invalid SSE payload for citation_index");
   });
@@ -227,10 +234,10 @@ describe("toChatSSEEvent", () => {
       conversation_id: "conv-1",
       resource_ref: "media:44444444-4444-4444-8444-444444444444",
       activation: {
-        resourceRef: "media:44444444-4444-4444-8444-444444444444",
+        resource_ref: "media:44444444-4444-4444-8444-444444444444",
         kind: "route",
         href: "/media/44444444-4444-4444-8444-444444444444",
-        unresolvedReason: null,
+        unresolved_reason: null,
       },
       label: "Annual report",
       summary: "Page 4",
@@ -243,10 +250,21 @@ describe("toChatSSEEvent", () => {
       type: "context_ref_added",
       data: {
         ...data,
+        activation: {
+          resourceRef: data.activation.resource_ref,
+          kind: data.activation.kind,
+          href: data.activation.href,
+          unresolvedReason: data.activation.unresolved_reason,
+        },
         actionTarget: {
           kind: "Resource",
           ref: data.resource_ref,
-          activation: data.activation,
+          activation: {
+            resourceRef: data.activation.resource_ref,
+            kind: data.activation.kind,
+            href: data.activation.href,
+            unresolvedReason: data.activation.unresolved_reason,
+          },
           missing: false,
         },
       },
@@ -261,10 +279,10 @@ describe("toChatSSEEvent", () => {
         conversation_id: "conv-1",
         resource_ref: resourceRef,
         activation: {
-          resourceRef: "media:55555555-5555-4555-8555-555555555555",
+          resource_ref: "media:55555555-5555-4555-8555-555555555555",
           kind: "route",
           href: "/media/55555555-5555-4555-8555-555555555555",
-          unresolvedReason: null,
+          unresolved_reason: null,
         },
         label: "Annual report",
         summary: "Page 4",
@@ -282,10 +300,10 @@ describe("toChatSSEEvent", () => {
         conversation_id: "conv-1",
         resource_ref: "media:44444444-4444-4444-8444-444444444444",
         activation: {
-          resourceRef: "media:44444444-4444-4444-8444-444444444444",
+          resource_ref: "media:44444444-4444-4444-8444-444444444444",
           kind: "route",
           href: "/media/44444444-4444-4444-8444-444444444444",
-          unresolvedReason: null,
+          unresolved_reason: null,
         },
         label: "Annual report",
         summary: "Page 4",

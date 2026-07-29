@@ -88,6 +88,26 @@ describe("dossierCoverageLabel", () => {
       },
       "body unavailable · 0 connections",
     ],
+    [
+      {
+        version: "v1",
+        kind: "idea",
+        includedSeedRefs: ["highlight:h1", "highlight:h2"],
+        nexusQueryFingerprints: ["nexus-fp"],
+        webQueryFingerprints: ["web-fp"],
+        includedSources: [
+          {
+            ref: "media:m1",
+            contentFingerprint: "fp",
+            role: "nexus",
+          },
+        ],
+        omittedSources: [
+          { locator: "web-result:1", reason: "Unreadable" },
+        ],
+      },
+      "2 learning contexts · 1 source included · 1 source omitted",
+    ],
   ])("renders the closed manifest union", (manifest, expected) => {
     expect(dossierCoverageLabel(manifest)).toBe(expected);
   });

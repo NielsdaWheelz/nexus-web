@@ -16,6 +16,7 @@ this module is the shape they conform to.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -25,10 +26,11 @@ from sqlalchemy.orm import Session
 
 from nexus.schemas.artifact import MediaAbstractOut
 from nexus.schemas.presence import Presence, absent
+from nexus.services.artifacts.coordination import DossierBuildRuntime
+from nexus.services.artifacts.document_html import AcceptedModelArticle
 from nexus.services.artifacts.dossier_types import AudienceScope, DossierBuildFailureCode
 from nexus.services.artifacts.manifests import InputManifestV1
-from nexus.services.artifacts.subject_policy import ResolvedSubject
-from nexus.services.llm_execution import ExecutionRuntime
+from nexus.services.artifacts.subject_policy import ResolvedResourceSubject, ResolvedSubject
 from nexus.services.llm_profiles import BackgroundLlmOperation
 from nexus.services.resource_graph.schemas import CitationInput
 
@@ -38,6 +40,14 @@ from nexus.services.resource_graph.schemas import CitationInput
 CollectedInputs = Any
 ValidationWitness = Any
 Coverage = Any
+
+
+@dataclass(frozen=True, slots=True)
+class MaterializedDossier:
+    """An accepted inert article and its exact audience-visible citations."""
+
+    article: AcceptedModelArticle
+    citations: tuple[CitationInput, ...]
 
 
 class DossierBindingBase:
@@ -56,6 +66,13 @@ class DossierBindingBase:
 
 class DossierInputTooLarge(Exception):
     """The binding's declared deterministic input budget was exceeded."""
+
+
+def require_resource_subject(resolved: ResolvedSubject) -> ResolvedResourceSubject:
+    """Narrow the subject at the concrete Resource-binding boundary."""
+    if not isinstance(resolved, ResolvedResourceSubject):
+        raise AssertionError("Resource Dossier binding received an Idea subject")
+    return resolved
 
 
 class DossierBinding(Protocol):
@@ -90,7 +107,7 @@ class DossierBinding(Protocol):
         db: Session,
         resolved: ResolvedSubject,
         audience: AudienceScope,
-        runtime: ExecutionRuntime,
+        runtime: DossierBuildRuntime,
     ) -> CollectedInputs:
         """Gather the audience-visible inputs. Aggregate bindings call
         ``MediaIntelligence.ensure_current_many`` here (bounded, inline child)."""
@@ -137,11 +154,13 @@ class DossierBinding(Protocol):
         collected: CollectedInputs,
         decoded_output: BaseModel,
         witness: ValidationWitness,
-    ) -> tuple[str, list[CitationInput]]:
-        """Produce ``(content_md, citations)``. Citations come ONLY from the
-        witness's offered candidates; narrowness is candidate construction, not a
-        validator. Zero citations after dispatch → the engine fails
-        ``CitationValidationFailed``."""
+    ) -> MaterializedDossier:
+        """Accept one article and map every citation to an offered candidate.
+
+        Document acceptance raises ``DocumentHtmlError``. Any citation mismatch
+        raises ``CitationValidationError`` so the engine can preserve the failure
+        precedence and its one document-repair attempt.
+        """
         ...
 
     # --- typed manifest + freshness + coverage (A18/A21) -------------------

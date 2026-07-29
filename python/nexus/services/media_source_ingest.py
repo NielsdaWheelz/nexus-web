@@ -8,6 +8,7 @@ import posixpath
 import re
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 from urllib.parse import unquote, urlparse
 from uuid import UUID, uuid4
 
@@ -324,6 +325,7 @@ def accept_url_source(
     library_ids: list[UUID],
     request_id: str | None = None,
     idempotency_key: str | None = None,
+    ingest_purpose: Literal["artifact_research"] | None = None,
 ) -> FromUrlResponse:
     """Accept a URL source intent before any provider/network/storage work runs."""
     library_governance.validate_writable_library_destinations(db, viewer_id, library_ids)
@@ -335,6 +337,9 @@ def accept_url_source(
         request_id=request_id,
         idempotency_key=idempotency_key,
         assign_viewer_libraries=True,
+        source_payload_extra=(
+            {"ingest_purpose": ingest_purpose} if ingest_purpose is not None else None
+        ),
     )
 
 
@@ -2807,6 +2812,9 @@ def _run_generic_web_article(
         actor_user_id,
         request_id,
         source_attempt_id=attempt.id,
+        extract_embeds=(
+            dict(attempt.source_payload or {}).get("ingest_purpose") != "artifact_research"
+        ),
         publication_fence=fence,
     )
 
@@ -3852,7 +3860,7 @@ def _is_terminal_source_failure(exc: Exception, *, source_type: str) -> bool:
         source_type == source_types.GENERIC_WEB_URL
         and exc.code is ApiErrorCode.E_SOURCE_FETCH_FAILED
     ):
-        return True
+        return exc.message in {"HTTP error: 404", "HTTP error: 410"}
     return exc.code in _TERMINAL_SOURCE_FAILURE_CODES
 
 

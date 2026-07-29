@@ -1,0 +1,24 @@
+.frame {
+  display: block;
+  width: 100%;
+  min-height: clamp(32rem, 72vh, 58rem);
+  border: var(--stroke-hairline) solid var(--edge-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+
+@media (max-width: 540px) {
+  .frame {
+    min-height: 70vh;
+    border-inline: 0;
+    border-radius: 0;
+  }
+}
+
+@media print {
+  .frame {
+    min-height: 0;
+    height: 90vh;
+    border: 0;
+  }
+}

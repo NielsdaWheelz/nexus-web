@@ -32,8 +32,8 @@ Actual execution order per request:
 
 LLM client lifecycle:
 - httpx.AsyncClient is created at startup, stored in app.state, and shared by
-  the web-search provider; the LLM provider runtime itself is constructed
-  per-task by the worker (tasks/llm_task.py), not by this app
+  the web-search provider and request-scoped Learn resolver runtime; background
+  LLM runtimes remain task-owned by tasks/llm_task.py
 - validate_profiles() runs at startup to fail fast on any drift between the
   product profile portfolio and the provider_runtime catalog (mirrors the
   worker-startup call)

@@ -72,10 +72,8 @@
   min-height: 0;
 }
 
-.draft {
-  white-space: pre-wrap;
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
+.revision {
+  min-width: 0;
 }
 
 .freshness {

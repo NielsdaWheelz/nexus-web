@@ -24,6 +24,7 @@ import {
   fetchDossierRevisions,
   makeDossierRevisionCurrent,
   openDossierBuildStream,
+  type DossierReadTarget,
   type DossierSubjectDescriptor,
 } from "@/lib/dossiers/generationAdapter";
 import {
@@ -103,8 +104,12 @@ function readyFromDecodedHead(
 }
 
 export function createDossierControllerStore(
-  subject: DossierSubjectDescriptor,
+  descriptor: DossierSubjectDescriptor | DossierReadTarget,
 ): DossierControllerStore {
+  const target: DossierReadTarget =
+    "kind" in descriptor
+      ? descriptor
+      : { kind: "Subject", subject: descriptor };
   let state: DossierControllerState = initialDossierControllerState();
   const listeners = new Set<() => void>();
 
@@ -152,7 +157,7 @@ export function createDossierControllerStore(
     const requestId = ++headRequestId;
     if (!hadReady) set({ head: { kind: "Loading" } });
     try {
-      const decoded = await fetchDossierHead(subject);
+      const decoded = await fetchDossierHead(target);
       if (disposed || requestId !== headRequestId) return;
       const prior = state.head.kind === "Ready" ? state.head.ready : null;
       const nextReady = readyFromDecodedHead(decoded, prior);
@@ -241,7 +246,6 @@ export function createDossierControllerStore(
     connectingHandle = handle;
     set({
       stream: { kind: "Connecting" },
-      streamingDraft: "",
       progressMessage: null,
     });
     try {
@@ -296,12 +300,6 @@ export function createDossierControllerStore(
       case "Progress":
         set({ stream: { kind: "Live" }, progressMessage: event.message });
         return;
-      case "Delta":
-        set({
-          stream: { kind: "Live" },
-          streamingDraft: (state.streamingDraft ?? "") + event.appendedText,
-        });
-        return;
       case "Advisory":
         if (event.phase === "Suspended") {
           set({ stream: { kind: "Suspended" } });
@@ -339,7 +337,6 @@ export function createDossierControllerStore(
             },
             reconciled: false,
           },
-          streamingDraft: null,
           progressMessage: "Dossier generated.",
         });
         teardownStream();
@@ -356,7 +353,6 @@ export function createDossierControllerStore(
             },
             reconciled: false,
           },
-          streamingDraft: null,
           progressMessage: null,
         });
         teardownStream();
@@ -373,7 +369,6 @@ export function createDossierControllerStore(
             },
             reconciled: false,
           },
-          streamingDraft: null,
           progressMessage: null,
         });
         teardownStream();
@@ -394,7 +389,12 @@ export function createDossierControllerStore(
     // One in-place transport retry reuses the SAME idempotency key (A15).
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        await createDossierBuild({ subject, instruction, idempotencyKey: key });
+        await createDossierBuild({
+          target,
+          artifactRef: currentArtifactRef(),
+          instruction,
+          idempotencyKey: key,
+        });
         if (disposed) return;
         set({ pendingAction: null, instructionDraft: "" });
         await loadHead(true);
@@ -485,6 +485,21 @@ export function createDossierControllerStore(
     try {
       const revision = await fetchDossierRevision(revisionRef);
       if (disposed || requestId !== historicalRequestId) return;
+      if (
+        target.kind === "Artifact" &&
+        revision.artifactRef !== target.artifactRef
+      ) {
+        set({
+          historicalRevision: {
+            kind: "Failed",
+            error: {
+              code: "E_DOSSIER_REVISION_NOT_FOUND",
+              message: "That revision is no longer available.",
+            },
+          },
+        });
+        return;
+      }
       set({ historicalRevision: { kind: "Ready", revision } });
     } catch (error) {
       if (disposed || requestId !== historicalRequestId) return;

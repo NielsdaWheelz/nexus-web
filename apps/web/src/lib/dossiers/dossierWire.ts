@@ -25,6 +25,10 @@ import {
   type DossierRevisionSummary,
   type MediaAbstract,
 } from "@/lib/dossiers/dossierControllerTypes";
+import {
+  normalizeResourceActivation,
+  type ResourceActivation,
+} from "@/lib/resources/activation";
 
 function fail(what: string): never {
   throw new Error(`Invalid dossier wire: ${what}`);
@@ -234,9 +238,69 @@ function decodeInputManifest(value: unknown): DossierInputManifest {
           "connection_refs",
         ),
       };
+    case "idea":
+      return {
+        version: "v1",
+        kind: "idea",
+        includedSeedRefs: decodeStringArray(
+          value.included_seed_refs,
+          "included_seed_refs",
+        ),
+        nexusQueryFingerprints: decodeStringArray(
+          value.nexus_query_fingerprints,
+          "nexus_query_fingerprints",
+        ),
+        webQueryFingerprints: decodeStringArray(
+          value.web_query_fingerprints,
+          "web_query_fingerprints",
+        ),
+        includedSources: decodeIdeaIncludedSources(value.included_sources),
+        omittedSources: decodeIdeaOmittedSources(value.omitted_sources),
+      };
     default:
       return fail(`unknown input_manifest kind ${JSON.stringify(value.kind)}`);
   }
+}
+
+function decodeIdeaIncludedSources(
+  value: unknown,
+): Array<{
+  ref: string;
+  contentFingerprint: string;
+  role: "seed" | "nexus" | "web";
+}> {
+  if (!Array.isArray(value)) fail("included_sources must be an array");
+  return value.map((entry) => {
+    if (!isRecord(entry)) fail("included_sources entry must be an object");
+    if (
+      entry.role !== "seed" &&
+      entry.role !== "nexus" &&
+      entry.role !== "web"
+    ) {
+      fail(`unknown included_sources.role ${JSON.stringify(entry.role)}`);
+    }
+    return {
+      ref: decodeString(entry.ref, "included_sources.ref"),
+      contentFingerprint: decodeString(
+        entry.content_fingerprint,
+        "included_sources.content_fingerprint",
+      ),
+      role: entry.role,
+    };
+  });
+}
+
+function decodeIdeaOmittedSources(
+  value: unknown,
+): Array<{ locator: string; reason: string }> {
+  if (!Array.isArray(value)) fail("omitted_sources must be an array");
+  return value.map((entry) => {
+    if (!isRecord(entry)) fail("omitted_sources entry must be an object");
+    return {
+      locator: decodeString(entry.locator, "omitted_sources.locator"),
+      reason: decodeString(entry.reason, "omitted_sources.reason"),
+    };
+  });
 }
 
 function decodeSupport(value: unknown): Record<string, unknown> {
@@ -252,7 +316,8 @@ export function decodeDossierRevision(raw: unknown): DossierRevision {
     revisionId: decodeString(raw.revision_id, "revision_id"),
     revisionRef: decodeString(raw.revision_ref, "revision_ref"),
     isCurrent: decodeBoolean(raw.is_current, "is_current"),
-    contentMd: decodeString(raw.content_md, "content_md"),
+    contentHtml: decodeString(raw.content_html, "content_html"),
+    contentText: decodeString(raw.content_text, "content_text"),
     citations: decodeCitations(raw.citations),
     inputManifest: decodeInputManifest(raw.input_manifest),
     instruction: decodePresence(raw.instruction, (v) =>
@@ -388,6 +453,31 @@ export interface DecodedDossierHead {
   latestUnsuccessfulBuild: Presence<DossierBuildSummary>;
   revisionCount: number;
   mediaAbstract: Presence<MediaAbstract>;
+  identity: Presence<
+    | { kind: "Resource"; title: string; activation: ResourceActivation }
+    | { kind: "Idea"; title: string }
+  >;
+}
+
+function decodeDossierIdentity(
+  raw: unknown,
+):
+  | { kind: "Resource"; title: string; activation: ResourceActivation }
+  | { kind: "Idea"; title: string } {
+  if (!isRecord(raw)) fail("identity must be an object");
+  if (raw.kind === "Idea") {
+    return { kind: "Idea", title: decodeString(raw.title, "identity.title") };
+  }
+  if (raw.kind === "Resource") {
+    const activation = normalizeResourceActivation(raw.activation);
+    if (activation === null) fail("identity.activation must be valid");
+    return {
+      kind: "Resource",
+      title: decodeString(raw.title, "identity.title"),
+      activation,
+    };
+  }
+  return fail(`unknown identity kind ${JSON.stringify(raw.kind)}`);
 }
 
 export function decodeDossierHead(raw: unknown): DecodedDossierHead {
@@ -411,5 +501,6 @@ export function decodeDossierHead(raw: unknown): DecodedDossierHead {
     ),
     revisionCount: decodeInteger(raw.revision_count, "revision_count"),
     mediaAbstract: decodePresence(raw.media_abstract, decodeMediaAbstract),
+    identity: decodePresence(raw.identity, decodeDossierIdentity),
   };
 }

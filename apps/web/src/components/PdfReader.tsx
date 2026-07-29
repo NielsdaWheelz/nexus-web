@@ -192,6 +192,10 @@ interface PdfReaderProps {
     highlightId: string,
     highlight: PdfHighlightOut,
   ) => void | Promise<void>;
+  onLearn?: (
+    highlightId: string,
+    highlight: PdfHighlightOut,
+  ) => void | Promise<void>;
   onAddNote?: (session: {
     quote: string;
     anchorRect: DOMRect;
@@ -528,6 +532,7 @@ export default function PdfReader({
   temporaryHighlight = null,
   onQuoteToNewChat,
   onQuoteToExistingChat,
+  onLearn,
   onAddNote,
   onLink,
   startPageNumber,
@@ -2607,6 +2612,11 @@ export default function PdfReader({
           onQuoteToExistingChat={
             onQuoteToExistingChat && textGeometryReliable
               ? (highlight) => onQuoteToExistingChat(highlight.id, highlight)
+              : undefined
+          }
+          onLearn={
+            onLearn && textGeometryReliable
+              ? (highlight) => onLearn(highlight.id, highlight)
               : undefined
           }
           onAddNote={

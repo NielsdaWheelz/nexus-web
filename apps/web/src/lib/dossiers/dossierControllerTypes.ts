@@ -14,6 +14,7 @@
 //     | Terminal{outcome, reconciled}
 import type { CitationOut } from "@/lib/conversations/citationOut";
 import type { Presence } from "@/lib/api/presence";
+import type { ResourceActivation } from "@/lib/resources/activation";
 
 /** A9/A15 head-read freshness label (binding `manifests_equal` summary). */
 export type DossierFreshness = "Current" | "Stale";
@@ -35,10 +36,8 @@ export type DossierBuildFailureCode =
   | "ContextTooLarge"
   | "ProviderRefused"
   | "ProviderIncomplete"
-  | "SchemaRepairExhausted"
-  | "CitationValidationFailed"
-  | "MigratedFailure"
-  | "MigratedIncomplete";
+  | "DocumentValidationFailed"
+  | "CitationValidationFailed";
 
 export const DOSSIER_BUILD_FAILURE_CODES: readonly DossierBuildFailureCode[] = [
   "NoSourceMaterial",
@@ -49,10 +48,8 @@ export const DOSSIER_BUILD_FAILURE_CODES: readonly DossierBuildFailureCode[] = [
   "ContextTooLarge",
   "ProviderRefused",
   "ProviderIncomplete",
-  "SchemaRepairExhausted",
+  "DocumentValidationFailed",
   "CitationValidationFailed",
-  "MigratedFailure",
-  "MigratedIncomplete",
 ];
 
 /** A decoded same-system API/transport error, kept near the screen boundary
@@ -129,6 +126,22 @@ export type DossierInputManifest =
       inputFingerprint: string;
       bodyFingerprint: Presence<string>;
       connectionRefs: readonly string[];
+    }
+  | {
+      version: "v1";
+      kind: "idea";
+      includedSeedRefs: readonly string[];
+      nexusQueryFingerprints: readonly string[];
+      webQueryFingerprints: readonly string[];
+      includedSources: readonly {
+        ref: string;
+        contentFingerprint: string;
+        role: "seed" | "nexus" | "web";
+      }[];
+      omittedSources: readonly {
+        locator: string;
+        reason: string;
+      }[];
     };
 
 /** One immutable, citation-bearing revision (DossierRevisionOut). */
@@ -138,7 +151,8 @@ export interface DossierRevision {
   revisionId: string;
   revisionRef: string;
   isCurrent: boolean;
-  contentMd: string;
+  contentHtml: string;
+  contentText: string;
   citations: readonly CitationOut[];
   inputManifest: DossierInputManifest;
   instruction: Presence<string>;
@@ -152,7 +166,7 @@ export interface DossierRevision {
 
 /** One `GET /artifacts/{ref}/revisions` list item (DossierRevisionSummaryOut).
  * Carries NO body — the head-read boundary keeps historical bodies out of the
- * list; the single-revision fetch supplies `content_md`. */
+ * list; the single-revision fetch supplies `content_html` and `content_text`. */
 export interface DossierRevisionSummary {
   revisionId: string;
   revisionRef: string;
@@ -205,6 +219,17 @@ export type MediaAbstract =
 
 export type DossierHistoryStatus = "idle" | "loading" | "ready" | "failed";
 
+export type DossierIdentity =
+  | {
+      kind: "Resource";
+      title: string;
+      activation: ResourceActivation;
+    }
+  | {
+      kind: "Idea";
+      title: string;
+    };
+
 /** The `Ready` head fields (A9 shape) plus the separately-fetched `history`
  * list (A15 folds `history` into Ready even though the head read omits bodies;
  * the controller fills it from `GET /artifacts/{ref}/revisions`). Absent
@@ -218,6 +243,7 @@ export interface DossierHeadReady {
   latestUnsuccessfulBuild: Presence<DossierBuildSummary>;
   revisionCount: number;
   mediaAbstract: Presence<MediaAbstract>;
+  identity: Presence<DossierIdentity>;
   history: readonly DossierRevisionSummary[];
   historyStatus: DossierHistoryStatus;
 }
@@ -272,9 +298,6 @@ export interface DossierControllerState {
   revisionSelection: DossierRevisionSelection;
   historicalRevision: DossierHistoricalRevision;
   stream: DossierStream;
-  /** Accumulated `Delta` text for the active build (a live regeneration draft,
-   * shown subordinate to the preserved current revision). */
-  streamingDraft: string | null;
   /** Last `Progress` user message from the active build (polite status region). */
   progressMessage: string | null;
   pendingAction: DossierPendingAction;
@@ -288,7 +311,6 @@ export function initialDossierControllerState(): DossierControllerState {
     revisionSelection: { kind: "Current" },
     historicalRevision: { kind: "Idle" },
     stream: { kind: "Disconnected" },
-    streamingDraft: null,
     progressMessage: null,
     pendingAction: null,
     actionError: null,

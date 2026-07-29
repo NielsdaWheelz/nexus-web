@@ -176,6 +176,10 @@ import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
 import { usePaneFixedChrome } from "@/components/workspace/PaneFixedChrome";
 import type { PanePrimaryChromePublication } from "@/lib/panes/panePublications";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
+import {
+  artifactPaneHref,
+  learnDossierFromHighlight,
+} from "@/lib/dossiers/generationAdapter";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
 import { canonicalCpLength } from "@/lib/reader/textOffsets";
 import {
@@ -5248,6 +5252,45 @@ export default function MediaPaneBody() {
     [refreshMediaHighlights],
   );
 
+  const learnFromHighlight = useCallback(
+    (highlightId: string) => {
+      const feedbackKey = `learn-dossier:${highlightId}`;
+      feedback.show({
+        severity: "info",
+        title: "Creating lesson…",
+        dedupeKey: feedbackKey,
+        duration: 0,
+      });
+      void learnDossierFromHighlight({
+        highlightRef: `highlight:${highlightId}`,
+        idempotencyKey: createRandomId("learn-dossier"),
+      })
+        .then((outcome) => {
+          feedback.dismissByDedupeKey(feedbackKey);
+          paneRuntime.activateTarget({
+            target: {
+              href: artifactPaneHref(outcome.artifactRef),
+              labelHint: "Lesson",
+            },
+            disposition: { kind: "Adopt" },
+          });
+        })
+        .catch((error: unknown) => {
+          feedback.dismissByDedupeKey(feedbackKey);
+          if (handleUnauthenticatedApiError(error)) return;
+          feedback.show({
+            severity: "error",
+            title:
+              "Could not create a lesson from this Highlight. Open the saved Highlight and try Learn again.",
+            dedupeKey: feedbackKey,
+            duration: 0,
+          });
+          console.error("learn_dossier_failed", error);
+        });
+    },
+    [feedback, paneRuntime],
+  );
+
   const handleSelectExistingChatDestination = useCallback(
     (conversationId: string) => {
       const highlightId = pendingExistingChatHighlightId;
@@ -6574,6 +6617,7 @@ export default function MediaPaneBody() {
             onFocusHighlight: focusHighlight,
             onQuoteToNewChat: quoteHighlightToNewChat,
             onQuoteToExistingChat: quoteHighlightToExistingChat,
+            onLearn: learnFromHighlight,
             onLink: handleLink,
             onColorChange: handleColorChange,
             onDelete: handleDelete,
@@ -6622,6 +6666,7 @@ export default function MediaPaneBody() {
       media?.capabilities?.can_quote,
       quoteHighlightToNewChat,
       quoteHighlightToExistingChat,
+      learnFromHighlight,
       startEditBounds,
     ],
   );
@@ -7037,6 +7082,7 @@ export default function MediaPaneBody() {
                           quoteHighlightToExistingChat(highlightId)
                       : undefined
                   }
+                  onLearn={(highlightId) => learnFromHighlight(highlightId)}
                   onAddNote={({ quote, anchorRect, creation }) =>
                     setQuickNote({
                       kind: "pending-create",
@@ -7250,6 +7296,7 @@ export default function MediaPaneBody() {
                 ? (highlight) => quoteHighlightToExistingChat(highlight.id)
                 : undefined
             }
+            onLearn={(highlight) => learnFromHighlight(highlight.id)}
             onAddNote={handleAddNoteToSelection}
             onLink={() =>
               handleLink({ kind: "selection", color: DEFAULT_COLOR })
@@ -7281,6 +7328,10 @@ export default function MediaPaneBody() {
           }}
           onLink={() => {
             handleLink({ kind: "existing", highlight: highlightActionTarget });
+            dismissHighlightActions();
+          }}
+          onLearn={() => {
+            learnFromHighlight(highlightActionTarget.id);
             dismissHighlightActions();
           }}
           onDelete={() => handleDelete(highlightActionTarget.id)}

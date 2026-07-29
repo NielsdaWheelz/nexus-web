@@ -21,6 +21,8 @@ const PANE_LOADERS: Record<PaneRouteId, PaneLoader> = {
   libraries: () => import("@/app/(authenticated)/libraries/LibrariesPaneBody"),
   library: () => import("@/app/(authenticated)/libraries/[id]/LibraryPaneBody"),
   media: () => import("@/app/(authenticated)/media/[id]/MediaPaneBody"),
+  artifact: () =>
+    import("@/app/(authenticated)/artifacts/[artifactRef]/ArtifactPaneBody"),
   conversations: () => import("@/app/(authenticated)/conversations/ConversationsPaneBody"),
   conversationNew: () => import("@/components/chat/Conversation"),
   conversation: () => import("@/components/chat/Conversation"),

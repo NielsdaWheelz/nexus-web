@@ -23,10 +23,16 @@ from uuid import UUID
 
 import httpx
 from sqlalchemy.orm import Session
+from web_search_tool.brave import BraveSearchProvider
+from web_search_tool.types import WebSearchProvider
 
-from nexus.jobs.queue import JobExecutionContext, JobRow, RescheduleRequested
+from nexus.config import get_settings
+from nexus.db.models import ArtifactBuild
+from nexus.jobs.queue import JobExecutionContext, JobRow, RescheduleRequested, get_job
 from nexus.logging import get_logger
+from nexus.schemas.presence import Presence, absent, present
 from nexus.services.artifacts import engine
+from nexus.services.artifacts.coordination import DossierBuildRuntime
 from nexus.services.llm_execution import ExecutionRuntime
 from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 
@@ -46,11 +52,38 @@ def dossier_build(
     """
     build_id = UUID(str(payload["build_id"]))
     spec = LlmTaskSpec(label="dossier_build", http_timeout_s=120.0)
+    settings = get_settings()
 
     async def _handler(
-        db: Session, runtime: ExecutionRuntime, _client: httpx.AsyncClient
+        db: Session, runtime: ExecutionRuntime, client: httpx.AsyncClient
     ) -> Mapping[str, Any] | RescheduleRequested:
-        reschedule = await engine.run_build(db, build_id=build_id, ctx=context, runtime=runtime)
+        build = db.get(ArtifactBuild, build_id)
+        if build is None:
+            return {"status": "ok", "build_id": str(build_id)}
+        job = get_job(db, context.job_id)
+        if job is None:
+            # justify-defect: a claimed worker execution always owns its durable
+            # job row; coordination cannot checkpoint without that lease record.
+            raise AssertionError("dossier worker job disappeared")
+        web_provider: Presence[WebSearchProvider] = (
+            present(BraveSearchProvider(client, api_key=settings.brave_search_api_key))
+            if settings.brave_search_api_key
+            else absent()
+        )
+        dossier_runtime = DossierBuildRuntime(
+            build_id=build_id,
+            artifact_id=build.artifact_id,
+            job=job,
+            execution_context=context,
+            llm_runtime=runtime,
+            web_search_provider=web_provider,
+        )
+        reschedule = await engine.run_build(
+            db,
+            build_id=build_id,
+            ctx=context,
+            runtime=dossier_runtime,
+        )
         if reschedule is not None:
             return reschedule
         return {"status": "ok", "build_id": str(build_id)}

@@ -20,12 +20,27 @@ export function normalizeResourceActivation(
   raw: unknown,
 ): ResourceActivation | null {
   if (!isRecord(raw)) return null;
-  const resourceRef = raw.resourceRef ?? raw.resource_ref;
+  const keys = Object.keys(raw).sort();
+  const expected = ["href", "kind", "resource_ref", "unresolved_reason"];
+  if (
+    keys.length !== expected.length ||
+    !keys.every((key, index) => key === expected[index])
+  ) {
+    return null;
+  }
+  const resourceRef = raw.resource_ref;
   if (typeof resourceRef !== "string") return null;
   if (raw.kind !== "route" && raw.kind !== "external" && raw.kind !== "none") {
     return null;
   }
-  const href = typeof raw.href === "string" ? raw.href : null;
+  if (raw.href !== null && typeof raw.href !== "string") return null;
+  const href = raw.href;
+  if (
+    raw.unresolved_reason !== null &&
+    typeof raw.unresolved_reason !== "string"
+  ) {
+    return null;
+  }
   if ((raw.kind === "route" || raw.kind === "external") && href === null) {
     return null;
   }
@@ -34,11 +49,7 @@ export function normalizeResourceActivation(
     kind: raw.kind,
     href,
     unresolvedReason:
-      typeof raw.unresolvedReason === "string"
-        ? raw.unresolvedReason
-        : typeof raw.unresolved_reason === "string"
-          ? raw.unresolved_reason
-          : null,
+      typeof raw.unresolved_reason === "string" ? raw.unresolved_reason : null,
   };
 }
 
@@ -55,19 +66,11 @@ export function resourceRefForActivation(
 }
 
 export function secondaryActivationForResource(
-  activation: ResourceActivation,
+  _activation: ResourceActivation,
 ): WorkspaceSecondaryActivation | null {
-  const ref = resourceRefForActivation(activation);
-  if (ref?.scheme === "artifact") {
-    return { kind: "DossierCurrent", surfaceId: "resource-dossier" };
-  }
-  if (ref?.scheme === "artifact_revision") {
-    return {
-      kind: "DossierRevision",
-      surfaceId: "resource-dossier",
-      revisionRef: activation.resourceRef,
-    };
-  }
+  // Artifact and Artifact Revision activations now own canonical standalone
+  // `/artifacts/{ref}` routes. Resource Companion revision selection remains a
+  // local `useResourceInspector` concern and is never inferred here.
   return null;
 }
 

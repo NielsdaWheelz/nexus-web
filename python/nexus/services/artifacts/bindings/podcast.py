@@ -14,6 +14,7 @@ from nexus.services.artifacts.bindings._shared import (
     AggregateMediaBinding,
     synthesis_prompt,
 )
+from nexus.services.artifacts.bindings.base import require_resource_subject
 from nexus.services.artifacts.dossier_types import (
     AudienceScope,
     AudienceUser,
@@ -26,7 +27,11 @@ from nexus.services.artifacts.manifests import (
     MediaManifestEntry,
     PodcastInputManifestV1,
 )
-from nexus.services.artifacts.subject_policy import ResolvedSubject, decode_resource_locator
+from nexus.services.artifacts.subject_policy import (
+    ResolvedResourceSubject,
+    ResolvedSubject,
+    decode_resource_locator,
+)
 from nexus.services.llm_profiles import BackgroundLlmOperation
 from nexus.services.resource_graph.refs import ResourceRef
 
@@ -59,6 +64,7 @@ class PodcastBinding(AggregateMediaBinding):
     def _manifest(
         self, resolved: ResolvedSubject, entries: list[MediaManifestEntry]
     ) -> InputManifestV1:
+        resolved = require_resource_subject(resolved)
         return PodcastInputManifestV1(
             podcast_ref=resolved.ref.uri,
             episodes=entries,
@@ -88,7 +94,7 @@ class PodcastSubjectPolicy:
             raise InvalidSubjectLocator()
         if not _podcast_visible(db, requester_user_id, locator.ref.id):
             raise NotFoundError(message="Podcast not found")
-        return ResolvedSubject(
+        return ResolvedResourceSubject(
             scheme="podcast",
             subject_id=locator.ref.id,
             ref=locator.ref,

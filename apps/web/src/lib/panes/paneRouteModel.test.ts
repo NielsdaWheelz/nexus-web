@@ -13,6 +13,7 @@ const MEDIA_ID = "22222222-2222-4222-8222-222222222222";
 const PODCAST_ID = "33333333-3333-4333-8333-333333333333";
 const PAGE_ID = "44444444-4444-4444-8444-444444444444";
 const CONVERSATION_ID = "55555555-5555-4555-8555-555555555555";
+const ARTIFACT_REF = "artifact:66666666-6666-4666-8666-666666666666";
 
 describe("pane route model", () => {
   it("resolves representative routes with identity, body mode, and width policy", () => {
@@ -56,6 +57,18 @@ describe("pane route model", () => {
         bodyMode: "standard",
         returnMemento: { kind: "ShellScroll" },
         maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+      },
+    });
+    expect(
+      resolvePaneRouteModel(
+        `/artifacts/${encodeURIComponent(ARTIFACT_REF)}?revision=artifact_revision%3Aold`,
+      ),
+    ).toMatchObject({
+      id: "artifact",
+      params: { artifactRef: ARTIFACT_REF },
+      definition: {
+        bodyMode: "standard",
+        queryNavigation: "in-place",
       },
     });
   });
@@ -137,6 +150,7 @@ describe("pane route model", () => {
       "lectern",
       "libraries",
       "library",
+      "artifact",
       "conversations",
       "podcasts",
       "podcastDetail",

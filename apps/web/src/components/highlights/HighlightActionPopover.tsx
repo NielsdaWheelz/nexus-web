@@ -19,6 +19,7 @@ export default function HighlightActionPopover({
   onSelectColor,
   onAddNote,
   onLink,
+  onLearn,
   onDelete,
   onQuoteToNewChat,
   onQuoteToExistingChat,
@@ -33,6 +34,7 @@ export default function HighlightActionPopover({
   onSelectColor: (color: HighlightColor) => Promise<void>;
   onAddNote?: () => void;
   onLink?: () => void;
+  onLearn?: () => void;
   onDelete: () => Promise<void>;
   onQuoteToNewChat: () => void;
   onQuoteToExistingChat: () => void;
@@ -60,6 +62,7 @@ export default function HighlightActionPopover({
         onSelectColor={onSelectColor}
         onAddNote={onAddNote}
         onLink={onLink}
+        onLearn={onLearn}
         onDelete={onDelete}
         onQuoteToNewChat={onQuoteToNewChat}
         onQuoteToExistingChat={onQuoteToExistingChat}

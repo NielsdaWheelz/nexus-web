@@ -158,6 +158,18 @@ export const PANE_ROUTE_MODELS = [
     ...MEDIA_READER_WIDTH_CONTRACT,
   }),
   route({
+    id: "artifact",
+    sectionDestinationId: "libraries",
+    header: { kind: "resource", pendingLabel: "Loading dossier…" },
+    pattern: ["artifacts", ":artifactRef"],
+    defaultLabel: "Dossier",
+    labelMode: "dynamic",
+    queryNavigation: "in-place",
+    returnMemento: { kind: "ShellScroll" },
+    bodyMode: "standard",
+    ...STANDARD_WIDTH_CONTRACT,
+  }),
+  route({
     id: "conversations",
     header: {
       kind: "section",

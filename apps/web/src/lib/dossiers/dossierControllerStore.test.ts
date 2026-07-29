@@ -55,6 +55,7 @@ function decodedHead(active: boolean): DecodedDossierHead {
     latestUnsuccessfulBuild: absent(),
     revisionCount: 0,
     mediaAbstract: absent(),
+    identity: absent(),
   };
 }
 
@@ -65,7 +66,8 @@ function historicalRevision(): DossierRevision {
     revisionId: "revision-old",
     revisionRef: "artifact_revision:revision-old",
     isCurrent: false,
-    contentMd: "# Historical dossier",
+    contentHtml: "<article><section id=\"history\"><h2>Historical dossier</h2></section></article>",
+    contentText: "Historical dossier",
     citations: [],
     inputManifest: {
       version: "v1",
@@ -282,6 +284,38 @@ describe("createDossierControllerStore", () => {
     expect(store.getSnapshot().revisionSelection).toEqual({
       kind: "Historical",
       revisionRef: "artifact_revision:revision-old",
+    });
+    store.dispose();
+  });
+
+  it("fails closed when an Artifact pane requests another head's revision", async () => {
+    mocks.fetchRevision.mockResolvedValueOnce({
+      ...historicalRevision(),
+      artifactId: "artifact-2",
+      artifactRef: "artifact:artifact-2",
+    });
+    const store = createDossierControllerStore({
+      kind: "Artifact",
+      artifactRef: "artifact:artifact-1",
+    });
+
+    store.selectHistorical("artifact_revision:revision-old");
+    await vi.waitFor(() =>
+      expect(store.getSnapshot().historicalRevision.kind).toBe("Failed"),
+    );
+
+    expect(store.getSnapshot()).toMatchObject({
+      revisionSelection: {
+        kind: "Historical",
+        revisionRef: "artifact_revision:revision-old",
+      },
+      historicalRevision: {
+        kind: "Failed",
+        error: {
+          code: "E_DOSSIER_REVISION_NOT_FOUND",
+          message: "That revision is no longer available.",
+        },
+      },
     });
     store.dispose();
   });

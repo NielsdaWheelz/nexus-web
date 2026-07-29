@@ -152,7 +152,10 @@ class TestCreateConversation:
                 session,
                 library_id=library_id,
                 requester_user_id=user_id,
-                content_md="Synthesis",
+                content_html=(
+                    '<article><section id="synthesis"><p>Synthesis</p></section></article>'
+                ),
+                content_text="Synthesis",
             )
             session.commit()
 

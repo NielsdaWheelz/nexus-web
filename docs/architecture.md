@@ -419,10 +419,11 @@ derived audience; `artifact_builds` records each manual generation attempt;
 `artifact_revisions`, `artifact_build_failures`, and
 `artifact_build_cancellations` are mutually exclusive terminal children; and
 `artifact_build_events` is the strict replayable build stream. A successful
-revision has a typed input manifest and at least one citation edge. Seven
+revision stores one accepted semantic `content_html` article, its derived
+`content_text`, a typed input manifest, and at least one citation edge. Eight
 subject policies/bindings cover Media, Conversation, Library, Podcast,
-Contributor, Page, and Note; one generic engine, API, history contract, and
-`dossier_build` job own the lifecycle.
+Contributor, Page, Note, and the internal user-owned Idea subject. One generic
+engine, API, history contract, and `dossier_build` job own the lifecycle.
 
 **Conversations / chat** — `conversations`, `messages` (the message tree with
 branch pointers), `conversation_branches`, `conversation_active_paths`
@@ -782,21 +783,29 @@ The backend separates three owners:
 
 - subject policy derives the subject, audience, authorization, deletion, and
   canonical activation;
-- one of seven bindings collects inputs and owns prompt, operation/profile,
+- one of eight bindings collects inputs and owns prompt, operation/profile,
   manifest, coverage, and freshness;
 - the generic engine owns idempotent build creation, durable execution,
   terminal children, revision history, Make current, cancellation, and events.
 
-The generic API is
+Resource bootstrap/Companion lookup uses
 `GET /artifacts/dossiers/{subject_scheme}/{subject_handle}`,
-`POST /artifacts/dossiers/{subject_scheme}/{subject_handle}/builds`,
+`POST /artifacts/dossiers/{subject_scheme}/{subject_handle}/builds`; an
+existing head regenerates only through
+`POST /artifacts/{artifact_ref}/builds`. `GET /artifacts/{artifact_ref}` is the
+canonical authorized head read. Selection Learn uses
+`POST /artifacts/dossiers/learn`, resolves an internal Idea, records the
+Highlight as a seed, and adopts the standalone Artifact pane. The remaining
+API is
 `GET /artifacts/{artifact_ref}/revisions`,
 `GET /artifact-revisions/{artifact_revision_ref}`,
 `POST /artifact-revisions/{artifact_revision_ref}/make-current`, and
 `POST /artifact-builds/{sealed_handle}/cancel`. Build streaming is
 `GET /stream/artifact-builds/{sealed_handle}/events`; persisted
-`Started | Progress | Delta | Succeeded | Failed | Cancelled` events are
-build-keyed and replayable. Media Intelligence is separately read through
+`Started | Progress | Succeeded | Failed | Cancelled` events are build-keyed
+and replayable. The browser renders a revision in a sandboxed, Nexus-styled
+document frame; rejected or partial HTML is never emitted as an event. Media
+Intelligence is separately read through
 `GET /media/{media_handle}/intelligence`; the Media Dossier renders that
 current projection as a compact Abstract and consumes the same fingerprinted
 projection as generation input.

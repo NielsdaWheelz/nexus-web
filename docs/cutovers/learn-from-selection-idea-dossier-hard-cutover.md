@@ -1,6 +1,6 @@
 # Learn from selection — idea Dossier hard cutover
 
-**Status:** Spec · Rev 2 · 2026-07-28
+**Status:** IMPLEMENTED · UNSHIPPED · Rev 2 · 2026-07-28
 **Type:** Hard cutover — no legacy code, fallback, compatibility shape, or dual renderer.
 
 ## 0. Decisions
@@ -100,6 +100,13 @@ Existing { idea_subject_id }
 | Unresolved
 ```
 
+- This is the decoded domain union. The provider-runtime wire schema is one
+  strict object with `kind` plus required-nullable fields
+  `idea_subject_id`, `display_title`, and `idea_key`; `idea_key` likewise has
+  required-nullable `disambiguator_key`. The decoder rejects every field
+  combination except the three shapes above. This is required because the
+  canonical provider schema permits required-nullable unions only, not
+  `oneOf`, arbitrary `anyOf`, `const`, or UUID `format`.
 - `Existing` must select from the offered list.
 - Every `New.display_title` echoes the selected phrase after
   display normalization (remove default-ignorables, NFKC, trim, and collapse
@@ -250,6 +257,7 @@ artifact_learn_requests
   request_hash TEXT NOT NULL
   highlight_id UUID NOT NULL FK highlights.id (no cascade)
   coordination JSONB NOT NULL
+  resolver_lease_expires_at TIMESTAMPTZ NULL
   created_at TIMESTAMPTZ NOT NULL
   UNIQUE(user_id, idempotency_key)
     NAME uq_artifact_learn_requests_user_key
@@ -277,9 +285,17 @@ artifact_learn_failures
 - Replay returns the recorded terminal response, including the original build
   handle after build completion.
 - Highlight/Artifact/User teardown deletes affected replay rows first. The exact
-  replay promise ends when its target is explicitly deleted.
-- The resolver is a `BilledOnce` coordinated step in `coordination`; an
-  `Uncertain` resolver call never auto-redispatches.
+  replay promise ends when its target is explicitly deleted. A resolver owner
+  or waiter that observes this teardown returns the normal masked not-found
+  outcome; it never asserts or recreates the request.
+- The resolver is a `BilledOnce` coordinated step in `coordination`. Claiming
+  `Uncertain` sets a 15-minute owner lease in the same transaction. Concurrent
+  replays with the same request identity poll the durable result only while
+  that lease is live and return the exact terminal outcome; they never dispatch
+  a second call. Completion clears the lease. A known local/provider failure
+  expires it immediately; process loss leaves it to expire. An expired
+  `Uncertain` call is an operator-visible uncertain-delivery defect and is never
+  auto-redispatched.
 - Add LLM ledger owner `artifact_learn_request`.
 
 ### 5.5 Revision body
@@ -599,11 +615,14 @@ All eight bindings emit the same strict JSON shape:
 
 No binding emits Markdown. No alternate body field survives.
 
-The envelope decoder requires exact top-level keys, a string `content_html`, a
-list `citations`, and exact-key citation objects. It leaves every citation field
-type/value and role/index/ordinal semantic to the strict citation materializer,
-so malformed citation proposals classify as `CitationValidationFailed`, not
-document failure.
+The provider-compatible envelope schema and decoder require exact top-level
+keys, a string `content_html`, a list `citations`, exact-key citation objects,
+and the JSON scalar types of every citation field. Provider/envelope shape or
+type failures use the one document-repair attempt and ultimately classify as
+`DocumentValidationFailed`. The strict citation materializer owns semantic
+validity—positive/contiguous ordinals, non-negative in-range candidate indices,
+the closed role union, visibility, and exact DOM-token parity. Those failures
+classify as `CitationValidationFailed`.
 
 ### 8.2 WHATWG parsing and mXSS boundary
 
@@ -715,7 +734,8 @@ attributes; `N` is the validated canonical decimal ordinal.
 
 After the first complete synthesis:
 
-1. decode the exact envelope;
+1. decode the exact provider-compatible envelope, including citation JSON
+   scalar types;
 2. validate the document;
 3. if envelope/document validation fails, run exactly one memoized tool-free
    `document-repair` step with validator diagnostics and the frozen evidence;
@@ -724,7 +744,8 @@ After the first complete synthesis:
 6. with an unchanged witness, terminalize `DocumentValidationFailed` if the
    document is still invalid;
 7. validate/materialize citations; terminalize `CitationValidationFailed` on
-   any semantic mismatch, without repair.
+   any semantic range, membership, visibility, or DOM-token mismatch, without
+   repair.
 8. compile trusted citation controls, derive text, and publish atomically.
 
 This retries the same final contract; it is not a fallback renderer/format.
@@ -923,7 +944,8 @@ Migration order:
 8. Add nullable `content_html`/`content_text`, assert the revision table is
    empty, set both `NOT NULL`, then drop `content_md`. No compatibility backfill
    exists.
-9. Create Idea/resolution/seed/Learn-replay tables and final constraints.
+9. Create Idea/resolution/seed/Learn-replay tables—including the nullable
+   resolver-owner lease—and final constraints.
 10. Widen closed DB/typed unions and event checks; remove `Delta`.
 11. Deploy backend and frontend as one contract.
 
@@ -1038,7 +1060,9 @@ clause, failure union/precedence, route contract, and owner table.
 6. Idea resolver/binding/manifest/coverage.
 7. Learn selection action, feedback, Adopt, Artifact pane/route.
 8. Hard-delete old paths; update canonical docs.
-9. Focused integration, full backend/frontend suites, then real-stack E2E.
+9. Run the exact focused static, migration, integration, component, browser,
+   and cutover-residue gates named by this change. Broad suites and real-stack
+   E2E are outside this one-user prototype cut.
 
 Do not ship a mixed checkpoint. The final HTML/API/event/route contract becomes
 the only runtime contract in one deployment.
@@ -1114,5 +1138,6 @@ the only runtime contract in one deployment.
 - Seven existing Resource Dossiers retain activation, generation, freshness,
   search text, chat/read, cleanup, authorization, and history behavior.
 - Dawn Library Dossier query remains correct.
-- No `content_md`, `Delta`, tolerant citation materializer, exact-seven guard,
-  compatibility decoder, or legacy activation remains in live code/tests/docs.
+- No Dossier `content_md`, Dossier-build `Delta`, tolerant Dossier citation
+  materializer, exact-seven Dossier-binding guard, compatibility decoder, or
+  legacy Artifact activation remains in live code/tests/docs.

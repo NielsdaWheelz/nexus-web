@@ -30,6 +30,7 @@ from nexus.services.dawn_write import DAWN_WRITE_OPERATION, collect_signals, gen
 from nexus.services.llm_profiles import operation_profile
 from nexus.services.rate_limit import RateLimiter, get_rate_limiter, set_rate_limiter
 from tests.factories import (
+    create_test_library_artifact,
     create_test_media_in_library,
     get_user_default_library,
 )
@@ -243,6 +244,34 @@ class TestCollectSignals:
         assert result is not None
         assert len(result.synapse_edges) == 1
         assert result.synapse_edges[0].excerpt == "synapse rationale text"
+
+    def test_stale_library_dossier_query_uses_the_surviving_head_identity(
+        self, db_session: Session, bootstrapped_user: UUID
+    ) -> None:
+        library_id = get_user_default_library(db_session, bootstrapped_user)
+        assert library_id is not None
+        create_test_library_artifact(
+            db_session,
+            library_id=library_id,
+            requester_user_id=bootstrapped_user,
+        )
+        create_test_media_in_library(
+            db_session,
+            bootstrapped_user,
+            library_id,
+            title="New context after the Dossier revision",
+        )
+        db_session.commit()
+
+        result = collect_signals(
+            db_session,
+            user_id=bootstrapped_user,
+            local_date=date.today(),
+            tz="UTC",
+        )
+
+        assert result is not None
+        assert [signal.name for signal in result.stale_libraries] == ["My Library"]
 
 
 # ---------------------------------------------------------------------------

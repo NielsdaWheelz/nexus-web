@@ -100,25 +100,25 @@ function isCitationSnapshot(value: unknown): value is CitationSnapshot {
 
 function decodeCitationActivation(value: unknown): ResourceActivation | null {
   if (!isRecord(value)) return null;
-  const transportShape =
-    hasOnlyKeys(value, ["resource_ref", "kind", "href", "unresolved_reason"]) &&
-    typeof value.resource_ref === "string" &&
-    (value.unresolved_reason === null ||
-      typeof value.unresolved_reason === "string");
-  const normalizedShape =
-    hasOnlyKeys(value, ["resourceRef", "kind", "href", "unresolvedReason"]) &&
-    typeof value.resourceRef === "string" &&
-    (value.unresolvedReason === null ||
-      typeof value.unresolvedReason === "string");
-  if (!transportShape && !normalizedShape) return null;
+  if (
+    !hasOnlyKeys(value, [
+      "resource_ref",
+      "kind",
+      "href",
+      "unresolved_reason",
+    ]) ||
+    typeof value.resource_ref !== "string" ||
+    (value.unresolved_reason !== null &&
+      typeof value.unresolved_reason !== "string")
+  ) {
+    return null;
+  }
   return normalizeResourceActivation(value);
 }
 
 /**
- * Decode one server-built citation into the owned frontend value. REST uses
- * snake_case inside `activation`; SSE and already-decoded values may carry the
- * normalized camelCase form. Both enter through this one strict boundary and
- * downstream code sees only `ResourceActivation`.
+ * Decode one exact server-built citation into the owned frontend value.
+ * Downstream code receives only normalized `ResourceActivation`.
  */
 export function decodeCitationOut(value: unknown): CitationOut | null {
   if (

@@ -5,6 +5,12 @@ Type: hard cutover
 Date: 2026-07-23
 Open questions: none
 
+The Resource Inspector composition contract remains authoritative for the seven
+public Resource subjects. The later
+[`learn-from-selection-idea-dossier-hard-cutover.md`](learn-from-selection-idea-dossier-hard-cutover.md)
+is authoritative for the eighth, internal Idea binding and for current
+Dossier body, research, event, failure, by-ref routing, and migration contracts.
+
 ## Decision
 
 Every canonical resource pane has one user-facing **Companion**, implemented as
@@ -438,6 +444,7 @@ The server derives it:
 | Media | `User(requesting_user_id)` |
 | Podcast | `User(requesting_user_id)` |
 | Contributor | `User(requesting_user_id)` |
+| Idea | `User(idea_subject.user_id)` |
 
 Audience is never supplied by the client. Requester/billing identity, collection
 viewer, audience identity, and citation-edge owner are separate typed facts.
@@ -482,8 +489,10 @@ authorize server-side without exposing a private Contributor id.
 - generated schema and citation materialization;
 - typed empty-input behavior.
 
-Exactly seven bindings exist. The engine, routes, stream, jobs, resolver, and
-history contain no subject-specific branch.
+Exactly eight bindings exist. Seven public Resource bindings retain
+Companion/subject-locator entry; the internal Idea binding is entered only by
+Learn or Artifact ref. The typed engine identity distinguishes Resource from
+Idea without fabricating a `ResourceRef`.
 
 One job kind, `dossier_build`, dispatches through the binding registry.
 Binding-owned operation policy is exact:
@@ -497,12 +506,13 @@ Binding-owned operation policy is exact:
 | Contributor | `dossier_contributor` | `balanced` | high |
 | Page | `dossier_page` | `fast` | low |
 | Note | `dossier_note` | `fast` | low |
+| Idea | `dossier_idea` | `balanced` | high |
 
 Each binding also owns its concrete input/output/token/cost limits. The hard cut
 updates `BackgroundLlmOperation`, `OPERATION_PROFILES`, job registry, worker
 allowlists, configuration, and ledger checks as one closed union.
 
-All seven Dossier operations use the same managed provider-transition posture.
+All eight Dossier operations use the same managed provider-transition posture.
 A stable build/structural-path request fingerprint and provider reconciliation
 metadata are mandatory. Unless a provider adapter explicitly declares and tests
 idempotent dispatch or authoritative reconciliation, dispatch is treated as
@@ -677,8 +687,7 @@ before that User becomes unobservable.
 
 - build-keyed replacement for `artifact_revision_events`;
 - strict payloads with `extra='forbid'`;
-- event types `Started`, `Progress`, `Delta`, `Succeeded`, `Failed`,
-  `Cancelled`;
+- event types `Started`, `Progress`, `Succeeded`, `Failed`, `Cancelled`;
 - `Succeeded` identifies its revision; other terminal payloads carry only their
   owned facts;
 - each append is one replayable mutation whose committed sequence/result is
@@ -691,9 +700,8 @@ Payloads are exact:
 
 | Event | Payload |
 | --- | --- |
-| `Started` | build handle, artifact ref, subject locator |
+| `Started` | build handle and artifact ref |
 | `Progress` | owned progress phase and user-facing message |
-| `Delta` | appended text |
 | `Succeeded` | artifact revision ref |
 | `Failed` | `DossierBuildFailureCode`, detail/support `Presence` |
 | `Cancelled` | cancellation actor and time |
@@ -753,16 +761,11 @@ Rules:
 `DossierBuildFailureCode` is closed: `NoSourceMaterial`, `InputsChanged`,
 `DependencyProjectionFailed`, `EntitlementDenied`, `BudgetExceeded`,
 `ContextTooLarge`, `ProviderRefused`, `ProviderIncomplete`,
-`SchemaRepairExhausted`, `CitationValidationFailed`, and migration-only
-`MigratedFailure`/`MigratedIncomplete`. Only these modeled outcomes become
-`artifact_build_failures`. Unexpected exceptions, invariant violations,
-persistent infrastructure/provider retry exhaustion, unknown provider
-failures, and unreconciled uncertain dispatches are defects. No generic
-Internal failure code exists.
-
-`MigratedIncomplete` support has a closed reason:
-`LegacyBuilding | LegacyZeroCitation`. The reason is support provenance, not a
-second failure-code namespace.
+`DocumentValidationFailed`, and `CitationValidationFailed`. Only these modeled
+outcomes become `artifact_build_failures`. Unexpected exceptions, invariant
+violations, persistent infrastructure/provider retry exhaustion, unknown
+provider failures, and unreconciled uncertain dispatches are defects. No
+generic Internal or migration-only failure code exists.
 
 The generic build job:
 
@@ -821,6 +824,11 @@ POST /artifacts/dossiers/{subject_scheme}/{subject_handle}/builds
      Idempotency-Key: <required>
      { instruction: Presence<string> }
 
+POST /artifacts/dossiers/learn
+     Idempotency-Key: <required>
+     { highlight_ref }
+GET  /artifacts/{artifact_ref}
+POST /artifacts/{artifact_ref}/builds
 GET  /artifacts/{artifact_ref}/revisions
 GET  /artifact-revisions/{artifact_revision_ref}
 POST /artifact-revisions/{artifact_revision_ref}/make-current
@@ -830,7 +838,8 @@ GET  /stream/artifact-builds/{artifact_build_handle}/events
 GET  /media/{media_handle}/intelligence
 ```
 
-`artifact` and `artifact_revision` retain their existing refs. A build is
+The subject-scoped POST is bootstrap-only; existing heads regenerate solely by
+Artifact ref. `artifact` and `artifact_revision` retain their existing refs. A build is
 attempt/coordination identity, not a ResourceRef. `ArtifactBuildHandle` is a
 validated sealed outward value with one owning seal/unseal helper; it identifies
 but never authorizes. Authenticated subject policy and the existing stream token
@@ -862,135 +871,21 @@ only when cancellation already won; a succeeded/failed build returns
 
 ## Migration
 
-One destructive maintenance cut performs a per-row transformation; there is no
-runtime migration branch. It first stops/drains artifact API mutations and old
-workers, removes legacy dossier/distillate/sweep jobs through the queue owner,
-runs a read-only preflight census, the migration, and assertions, then deploys
-only the new API and `dossier_build` worker. The census reports legacy revisions
-by kind/status/citation count and specifically enumerates every `ready`
-zero-citation revision; its counts must equal the transformation report.
+The original Resource Inspector cutover migration was superseded by the
+destructive Learn/HTML revision cut in
+[`learn-from-selection-idea-dossier-hard-cutover.md`](learn-from-selection-idea-dossier-hard-cutover.md).
+That migration stops workers, removes every queued Dossier job and every
+build/revision/event/terminal child in FK-safe owner order, preserves Artifact
+heads and Artifact-head user Links, installs required `content_html` plus
+`content_text`, removes partial-body events and migration-only runtime failure
+variants, and creates the Idea/resolution/seed/Learn replay tables.
+There is no compatibility reader, body backfill, migrated failure, or dual
+event/body contract.
 
-### Head audience derivation
-
-| Legacy kind | New AudienceScope |
-| --- | --- |
-| `library_dossier` | `Library(artifacts.subject_id)` |
-| `conversation_distillate` | `User(conversations.owner_user_id)` |
-
-The migration never renames `artifacts.user_id` into audience identity.
-It backfills dependent requester/citation ownership first, rewrites both legacy
-kinds into the table’s single Dossier meaning, drops `kind`, installs the
-resource-plus-audience unique key, then drops `artifacts.user_id`.
-
-Conversation Dossiers intentionally become owner-User audience artifacts.
-Legacy shared readers lose distillate visibility; this is the approved
-resource-plus-audience policy, not a migration omission.
-
-### Revision-to-build mapping
-
-Create a deterministic migration map from every legacy revision to one new
-build. Every legacy status receives a parent build:
-
-| Legacy revision | New rows |
-| --- | --- |
-| `ready` with at least one citation edge | build + preserved successful revision |
-| `ready` with zero citation edges | build + `MigratedIncomplete` failure with `support.reason=LegacyZeroCitation`; no revision |
-| `failed` | build + normalized `MigratedFailure` child |
-| `building` | build + `MigratedIncomplete` failure with `support.reason=LegacyBuilding` |
-
-Only citation-valid successful revisions keep their id, content,
-creation/completion provenance, current-head pointer, citation source ref, and
-citation edges. A zero-citation legacy success cannot satisfy the new revision
-invariant: it does not become revision history, its current pointer is cleared,
-and its mapped build records failure support containing the legacy revision id,
-legacy status/completion time, and content SHA-256—not the legacy body. The
-maintenance backup remains the audit source. No citation is fabricated and no
-runtime grandfathering path exists. Other incomplete rows likewise do not
-become revision history or fabricate cancellation.
-
-Timestamp mapping is deterministic: build `created_at` keeps the legacy
-revision start; successful/failed terminal time uses legacy `completed_at`;
-legacy `promoted_at` is retained as immutable initial-promotion provenance.
-`MigratedIncomplete` uses migration time as its failure time; any historical
-completion time remains typed support provenance.
-
-Move:
-
-- `custom_instruction`, `idempotency_key`, and requester attribution from
-  revision/head to build; historical `artifacts.user_id` is the requester;
-- error facts to failure;
-- successful content, creator, and generated provenance to revision; historical
-  `artifacts.user_id` is the creator;
-- the idempotency unique index to `(artifact_id, idempotency_key)` on builds.
-
-A missing historical idempotency key becomes the deterministic migration-only
-key `migrated:<legacy_revision_id>`; no nullable or compatibility form remains.
-
-Backfill every preserved revision’s `citation_owner_user_id` from its historical
-`artifacts.user_id`.
-
-### Dependent data
-
-- Re-key every revision event to its mapped build and translate each payload to
-  the strict build-event union. Every mapped terminal child ends with exactly
-  one matching terminal event; append `Failed` at the next sequence for a
-  migrated failed/incomplete/zero-citation row when legacy history lacks it.
-  For a zero-citation legacy success, replace its legacy ready/done terminal
-  meaning with `Failed(MigratedIncomplete, LegacyZeroCitation)`; never emit
-  `Succeeded`.
-- Drop `notify_library_intelligence_revision_event()` explicitly. Rebuild the
-  notification trigger/function/channel under the build-event owner; migration
-  0174’s inherited library channel is not propagated.
-- Reattribute every `llm_calls(owner_kind='artifact_revision')` row to
-  `owner_kind='artifact_build'` and its mapped build id. Rewrite
-  `library_dossier` to `dossier_library` and `conversation_distillate` to
-  `dossier_conversation` in `llm_operation`.
-- Transform `covered_targets` with exact per-kind adapters:
-  - Library rows `{kind: media, id, fingerprint, coverage}` become
-    `LibraryInputManifestV1.media[]` entries
-    `{media_ref, content_fingerprint, disposition}`; `coverage=included` maps to
-    `Included`, every other value maps to its typed omitted reason.
-  - Conversation rows `{kind: conversation, id, active_leaf_message_id,
-    message_count}` become `ConversationInputManifestV1` with the conversation
-    ref, empty all-branch message/Context sets, absent topology fingerprint, and
-    `completeness=Incomplete(MigratedCoverageGap)`. The old leaf/count are kept
-    only in migration support provenance.
-  Library and Conversation shapes are never treated as interchangeable.
-- Preserve Library freshness only when its migrated manifest still compares
-  equal. A migrated Conversation revision is deterministically Stale because
-  the new binding requires every branch and Context, not the old active path.
-- Preserve resource graph/source refs and current pointers only for preserved
-  citation-valid revisions; zero-citation current pointers are cleared.
-- Assert head, child, terminal-event, current-pointer, citation, and ledger
-  counts before old columns/tables/jobs are removed.
-
-Migration defects on an ambiguous head collision, missing subject/audience,
-unmappable event/ledger row, citation-owner mismatch, a zero-citation row not
-mapped exactly once to `MigratedIncomplete` with
-`support.reason=LegacyZeroCitation`, a preserved successful revision with no
-citation edge, a remaining current pointer to a non-successful revision, or any
-classification/row-count mismatch.
-
-### FK-safe cleanup order
-
-After the subject/audience owner makes the primary resource unobservable and
-memoizes its Dossier keys, cleanup locks each head and:
-
-1. asks queue/coordination owners to revoke pending/running/dead jobs and replay
-   state for its builds;
-2. clears `current_revision_id`;
-3. invokes resource-graph cleanup for every artifact/revision ref, preserving
-   or deleting incident edges according to the graph’s citation-snapshot rules;
-4. deletes build events;
-5. deletes revisions, failure children, and cancellation children;
-6. deletes builds;
-7. deletes heads.
-
-The LLM ledger remains under its independent audit/retention owner after a build
-is deleted. No cascade or direct queue/coordination-table mutation is added. A
-stale worker must fail its lease/head/build recheck and cannot promote after
-cleanup. Dossier cleanup joins existing teardown/visibility-loss lanes; it adds
-no Contributor, Podcast, or other subject-delete UI/API.
+Subject and User teardown remains explicit and child-first. It deletes affected
+Learn replay rows, Idea seeds/resolutions, graph/view-state children, build
+children, and heads in the owning service order; no cascade or stale worker may
+recreate state after the head/build lease check fails.
 
 ## Freshness, Coverage, And Reingestion
 
@@ -1026,9 +921,10 @@ legacy artifact kinds or reading Media Intelligence tables directly.
   AudienceScope.
 - Search results activate the subject pane and open its Dossier tab through a
   workspace command, never `?distillate=1`.
-- Resource activation for an `artifact` opens the subject’s current Dossier.
-  Activation for an `artifact_revision` opens that exact historical revision
-  through workspace-local `{ surface: Dossier, revision }` state.
+- Generic activation for an `artifact` opens its standalone Artifact pane.
+  Activation for an `artifact_revision` opens
+  `/artifacts/{artifact_ref}?revision={artifact_revision_ref}` in place.
+  Resource Companion-local revision viewing remains Inspector-owned.
 - Media projection consumers use the MediaIntelligence single/batch interfaces.
 - Inspector disclosure publishes only Companion. `ActionDescriptor` remains the
   shared general action model; Distill and Document Map disclosure descriptors
@@ -1061,7 +957,7 @@ Generate
   schemas, fixtures, and vocabulary.
 - Legacy reducers
   `services/artifacts/reducers/{__init__,library_dossier,conversation_distillate}.py`;
-  the seven new bindings are not placed behind this reducer registry.
+  the eight bindings are not placed behind this reducer registry.
 - Inline `LibraryBrief*`, Library Dossier hooks/types/query state, and
   feature-specific APIs.
 - Inline Page/Note `ConnectionsSurface` mounts.
@@ -1136,7 +1032,7 @@ only new legacy-literal allowlist; migration history is never rewritten.
 | Capability | `resourceCapabilities.ts`, backend `resource_items/{capabilities,routing}.py`, parity tests |
 | Inspector/Dossier UI | `components/{resource-inspector,dossier}/*`, `lib/dossiers/*`, event decoder/generation adapter |
 | Pane bodies | Seven eligible routes, `ConnectionsSurface.tsx`, existing Contents/Evidence/Context/Forks owners |
-| Artifact backend | `services/artifacts/engine.py`, `services/artifacts/bindings/base.py`, Dossier definition, policy/binding registries, seven bindings, schemas/routes/BFFs |
+| Artifact backend | `services/artifacts/engine.py`, `services/artifacts/bindings/base.py`, Dossier definition, policy/binding registries, eight bindings, Learn/Idea/research/document-HTML owners, schemas/routes/BFFs |
 | Runtime | `media_intelligence.py`, `run_kit.py`, LLM execution/ledger/profiles, jobs registry/queue/worker/tasks, `config.py` |
 | Graph/consumers | resource-graph citations/resolve/cleanup; search, Dawn Write, agents, Synapse |
 | Deploy/gates | `deploy/hetzner/sync-env.sh`, `deploy/env/env-prod-worker.example`, source-reading negative gates |
@@ -1149,7 +1045,7 @@ No partial state ships.
 1. Write red migration/schema and lifecycle/concurrency tests.
 2. Land schema transformation, exact backfill, strict build events, durable
    execution, registries, generic API, history, routing, and cleanup.
-3. Implement seven bindings and the MediaIntelligence public/batch owner.
+3. Implement eight bindings, bounded Idea research, and the MediaIntelligence public/batch owner.
 4. Land capability projection, Resource Inspector model/action, stable Dossier
    controller/surface, and Media Abstract.
 5. Recompose all seven panes and move Podcast Episodes inline.
@@ -1162,7 +1058,8 @@ No partial state ships.
 
 ### Product and composition
 
-- [x] Exactly seven subjects, one `resource-inspector` group, and the six
+- [x] Exactly seven Resource Inspector subjects, one `resource-inspector`
+      group, and the six
       declared surface IDs exist; capability mirror/backend parity is exact.
 - [x] Every pane exposes one Companion in the same desktop/mobile position,
       survives 390px geometry, satisfies the disclosure/tab ARIA contract, and
@@ -1218,19 +1115,14 @@ No partial state ships.
 
 ### Migration and hard cut
 
-- [x] Migration tests cover all legacy statuses, owner/audience divergence,
-      zero/one/many citations, current and non-current zero-citation rows,
-      events/channel/function, exact per-kind manifests, pointers, idempotency,
-      and ledgers.
-- [x] Exact audience/citation-owner derivations hold; every legacy revision maps
-      to one build; every preserved successful revision has one unique build FK;
-      every zero-citation success maps once to
-      `MigratedIncomplete` with `support.reason=LegacyZeroCitation` and no
-      revision.
-- [x] Citation-valid successful history remains navigable; invalid current
-      pointers are cleared; the preflight census equals transformation counts;
-      `artifacts` has one row meaning and no `kind`; build events notify end to
-      end.
+- [x] The destructive HTML migration removes queued builds and all
+      build/revision/event children in FK-safe order while preserving Artifact
+      heads and Artifact-head user Links.
+- [x] Revision view-state/edge cleanup precedes revision deletion; the empty
+      revision table receives required HTML/text columns and no compatibility
+      body or migration-only terminal state.
+- [x] Idea, resolution, seed, and Learn replay tables install their named
+      retry-safe constraints; clean-base upgrade and downgrade boundaries pass.
 - [x] No runtime legacy literal/file/route/API/job/surface/inline placement/
       compatibility path survives.
 - [x] Source-reading gates are rewritten wholesale and no deleted reducer,

@@ -115,7 +115,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             dead_letter_handler=_dead_letter_chat_run,
         ),
         # Universal dossier generation (resource-inspector-and-universal-dossiers
-        # hard cutover). One job kind for all seven subject bindings, dispatched
+        # hard cutover). One job kind for all eight subject bindings, dispatched
         # through the DossierBindingRegistry by the durable job body itself
         # (CONTRACTS.md A19/B1a). Paid + non-idempotent:
         # a moderate retry budget covers a worker crash/restart before the

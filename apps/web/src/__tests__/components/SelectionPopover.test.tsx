@@ -141,6 +141,29 @@ describe("SelectionPopover", () => {
     vi.restoreAllMocks();
   });
 
+  it("materializes the Highlight before handing Learn to the pane owner", async () => {
+    const highlight = { id: "h-learn" };
+    const onCreateHighlight = vi.fn(async () => highlight);
+    const onLearn = vi.fn();
+
+    renderSelectionPopover(
+      <SelectionPopover
+        selectionRect={new DOMRect(120, 120, 80, 24)}
+        containerRef={createContainerRef()}
+        onCreateHighlight={onCreateHighlight}
+        onLearn={onLearn}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Learn" }));
+
+    await waitFor(() => {
+      expect(onCreateHighlight).toHaveBeenCalledWith("yellow");
+      expect(onLearn).toHaveBeenCalledWith(highlight);
+    });
+  });
+
   it("shows icon-only chat destination actions when callbacks are provided", async () => {
     const highlight = { id: "h1" };
     const onCreateHighlight = vi.fn(async () => highlight);

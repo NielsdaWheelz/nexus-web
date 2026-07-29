@@ -4,7 +4,7 @@
 citation contract, the build/revision lifecycle constants, and the shared
 read/history/event vocabulary that every subject binding shares. Per-subject
 variation lives entirely in the :class:`SubjectPolicy` and :class:`DossierBinding`
-registries; this value holds only what is the same for all seven subjects.
+registries; this value holds only what is the same for all eight subject bindings.
 """
 
 from __future__ import annotations

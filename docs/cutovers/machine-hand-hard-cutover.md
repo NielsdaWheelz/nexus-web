@@ -38,11 +38,19 @@ It does not apply to:
 | --- | --- |
 | Machine register component | `components/ui/MachineText.tsx` |
 | Machine register CSS | `components/ui/MachineText.module.css` |
+| Sandboxed Dossier document stylesheet | `machineDocumentStyles(theme)` in `components/ui/MachineText.tsx` |
 | Font/ink/rail tokens | `app/globals.css` |
 | Token and consumer guards | `lib/ui/machineHandCutover.guards.test.ts` |
 
 No consumer references `--font-machine`, `--ink-machine`, or `--rail-machine`
 directly.
+
+`machineDocumentStyles("light" | "dark")` is the sealed iframe exception. It
+returns only fixed, pre-authored, theme-aware Dossier article CSS; it accepts no
+model/document value and is consumed only by `DossierDocumentFrame`. The outer
+`DossierSurface` retains the `MachineText` origin/signature. The model supplies
+semantic article structure only and cannot supply style, color, typography, or
+document chrome.
 
 ## Component contract
 
@@ -114,6 +122,9 @@ decided by the owning surface, not by a global importer closed set.
    pass focused component tests.
 7. Chat answer readability and containment pass the chat-interface acceptance
    suite.
+8. `DossierDocumentFrame` consumes the sealed document stylesheet, runs with
+   sandbox exactly `allow-scripts`, and keeps the origin signature outside the
+   frame.
 
 ## Verification
 

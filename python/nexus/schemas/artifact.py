@@ -2,9 +2,9 @@
 
 Recomposed for CONTRACTS.md A19 (resource-inspector-and-universal-dossiers hard
 cutover): superseded feature-specific revision wrappers and REST facades are
-gone. Every eligible subject (Media, Conversation, Library, Podcast,
-Contributor, Page, Note) shares this one generic read/build/event contract;
-per-subject behavior lives in the binding layer
+gone. The seven public Resource subjects plus the internal user-owned Idea
+subject share this one generic read/build/event contract; per-subject behavior
+lives in the binding layer
 (``services/artifacts/bindings/``), never in these shapes.
 
 Owned absence uses the repository-wide ``Presence[T]`` encoding
@@ -23,17 +23,17 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.schemas.citation import CitationOut
 from nexus.schemas.presence import Presence
+from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.artifacts.dossier_types import (
     ArtifactBuildEventType,
     CancelledEventPayload,
-    DeltaEventPayload,
     DossierBuildExecutionPhase,
     FailedEventPayload,
     ProgressEventPayload,
     StartedEventPayload,
     SucceededEventPayload,
 )
-from nexus.services.artifacts.manifests import InputManifestV1, MediaDisposition
+from nexus.services.artifacts.manifests import InputManifestOut, MediaDisposition
 
 
 class ArtifactSchemaModel(BaseModel):
@@ -63,6 +63,27 @@ class DossierBuildCreatedOut(ArtifactSchemaModel):
     artifact_ref: str
     build_handle: str
     created: bool
+
+
+class LearnDossierRequest(ArtifactSchemaModel):
+    highlight_ref: str = Field(min_length=1)
+
+
+class LearnDossierOpenedOut(ArtifactSchemaModel):
+    kind: Literal["Opened"] = "Opened"
+    artifact_ref: str
+
+
+class LearnDossierBuildAcceptedOut(ArtifactSchemaModel):
+    kind: Literal["BuildAccepted"] = "BuildAccepted"
+    artifact_ref: str
+    build_handle: str
+
+
+LearnDossierOut = Annotated[
+    LearnDossierOpenedOut | LearnDossierBuildAcceptedOut,
+    Field(discriminator="kind"),
+]
 
 
 class DossierBuildExecution(ArtifactSchemaModel):
@@ -137,6 +158,14 @@ class NoteDossierCoverageOut(ArtifactSchemaModel):
     connection_refs: list[str]
 
 
+class IdeaDossierCoverageOut(ArtifactSchemaModel):
+    kind: Literal["idea"] = "idea"
+    seed_count: int = Field(ge=0)
+    nexus_source_count: int = Field(ge=0)
+    web_source_count: int = Field(ge=0)
+    omitted_sources: list[tuple[str, str]]
+
+
 DossierCoverageOut = Annotated[
     MediaDossierCoverageOut
     | ConversationDossierCoverageOut
@@ -144,7 +173,8 @@ DossierCoverageOut = Annotated[
     | PodcastDossierCoverageOut
     | ContributorDossierCoverageOut
     | PageDossierCoverageOut
-    | NoteDossierCoverageOut,
+    | NoteDossierCoverageOut
+    | IdeaDossierCoverageOut,
     Field(discriminator="kind"),
 ]
 
@@ -165,9 +195,10 @@ class DossierRevisionOut(ArtifactSchemaModel):
     revision_id: UUID
     revision_ref: str
     is_current: bool
-    content_md: str
+    content_html: str
+    content_text: str
     citations: list[CitationOut]
-    input_manifest: InputManifestV1
+    input_manifest: InputManifestOut
     coverage: DossierCoverageOut
     instruction: Presence[_InstructionText]
     creator_user_id: Presence[UUID]
@@ -181,7 +212,7 @@ class DossierRevisionOut(ArtifactSchemaModel):
 class DossierRevisionSummaryOut(ArtifactSchemaModel):
     """One ``GET /artifacts/{artifact_ref}/revisions`` list item.
 
-    No ``content_md`` (the "no historical body" boundary — fetch the single
+    No document body (the "no historical body" boundary — fetch the single
     revision for body text) and no ``artifact_id``/``artifact_ref`` (the route
     is already scoped to one artifact). ``input_manifest`` still rides along so
     the history list can render binding-specific coverage per revision without
@@ -192,7 +223,7 @@ class DossierRevisionSummaryOut(ArtifactSchemaModel):
     revision_ref: str
     is_current: bool
     citation_count: int = Field(ge=0)
-    input_manifest: InputManifestV1
+    input_manifest: InputManifestOut
     coverage: DossierCoverageOut
     instruction: Presence[_InstructionText]
     creator_user_id: Presence[UUID]
@@ -245,6 +276,23 @@ MediaAbstractOut = Annotated[
 ]
 
 
+class ResourceDossierIdentityOut(ArtifactSchemaModel):
+    kind: Literal["Resource"] = "Resource"
+    title: str
+    activation: ResourceActivationOut
+
+
+class IdeaDossierIdentityOut(ArtifactSchemaModel):
+    kind: Literal["Idea"] = "Idea"
+    title: str
+
+
+DossierIdentityOut = Annotated[
+    ResourceDossierIdentityOut | IdeaDossierIdentityOut,
+    Field(discriminator="kind"),
+]
+
+
 class DossierHeadOut(ArtifactSchemaModel):
     """``GET /artifacts/dossiers/{subject_scheme}/{subject_handle}`` read model
     (A9) — every field the FE controller union's `Ready` case needs (A15)
@@ -252,12 +300,13 @@ class DossierHeadOut(ArtifactSchemaModel):
 
     Absent ``artifact_id``/``artifact_ref`` (and every other field) is the
     legitimate "never generated" state: `read_head` never inserts a head row —
-    only `create_build` does (A6, "First-head create" is scoped to build
-    creation, not read). ``media_abstract`` is Present only for the Media
+    only the bootstrap/Learn commands do (A6, "First-head create" is scoped to
+    build creation, not read). ``media_abstract`` is Present only for the Media
     binding (A9/A11); every other subject always carries it Absent."""
 
     artifact_id: Presence[UUID]
     artifact_ref: Presence[str]
+    identity: Presence[DossierIdentityOut]
     current_revision: Presence[DossierRevisionOut]
     freshness: Presence[DossierFreshness]
     active_build: Presence[DossierBuildSummary]
@@ -269,7 +318,6 @@ class DossierHeadOut(ArtifactSchemaModel):
 _BUILD_EVENT_PAYLOAD_TYPES: dict[ArtifactBuildEventType, type[BaseModel]] = {
     ArtifactBuildEventType.Started: StartedEventPayload,
     ArtifactBuildEventType.Progress: ProgressEventPayload,
-    ArtifactBuildEventType.Delta: DeltaEventPayload,
     ArtifactBuildEventType.Succeeded: SucceededEventPayload,
     ArtifactBuildEventType.Failed: FailedEventPayload,
     ArtifactBuildEventType.Cancelled: CancelledEventPayload,
@@ -280,7 +328,6 @@ _BUILD_EVENT_PAYLOAD_TYPES: dict[ArtifactBuildEventType, type[BaseModel]] = {
 BuildEventPayload = (
     StartedEventPayload
     | ProgressEventPayload
-    | DeltaEventPayload
     | SucceededEventPayload
     | FailedEventPayload
     | CancelledEventPayload

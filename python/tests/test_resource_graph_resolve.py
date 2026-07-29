@@ -9,6 +9,7 @@ unit tests (``test_resource_graph_refs``).
 
 from __future__ import annotations
 
+from html import escape
 from uuid import UUID, uuid4
 
 import pytest
@@ -66,6 +67,11 @@ from tests.factories import (
 )
 
 pytestmark = pytest.mark.integration
+
+
+def _dossier_html(content_text: str) -> str:
+    paragraphs = "".join(f"<p>{escape(line)}</p>" for line in content_text.splitlines())
+    return f'<article><section id="fixture-body">{paragraphs}</section></article>'
 
 
 def seed_media_author_credits(
@@ -258,7 +264,7 @@ def _make_library_artifact(
     library_id: UUID,
     user_id: UUID,
     *,
-    content_md: str | None = "Synthesis overview.\nMore prose [1].",
+    content_text: str | None = "Synthesis overview.\nMore prose [1].",
 ) -> UUID:
     """Create a Library-audience Dossier head and optional current revision."""
     from sqlalchemy import text as sql_text
@@ -275,13 +281,13 @@ def _make_library_artifact(
         ),
         {"library_id": library_id, "audience_id": str(library_id)},
     ).scalar_one()
-    if content_md is not None:
+    if content_text is not None:
         revision_id = _add_library_revision(
             db,
             artifact_id=UUID(str(artifact_id)),
             library_id=library_id,
             user_id=user_id,
-            content_md=content_md,
+            content_text=content_text,
         ).scalar_one()
         db.execute(
             sql_text("UPDATE artifacts SET current_revision_id = :rev WHERE id = :artifact_id"),
@@ -296,7 +302,7 @@ def _make_conversation_artifact(
     conversation_id: UUID,
     user_id: UUID,
     *,
-    content_md: str = "Conversation synthesis.",
+    content_text: str = "Conversation synthesis.",
 ) -> tuple[UUID, UUID]:
     """Create one User-audience Conversation Dossier and current revision."""
     artifact_id = db.execute(
@@ -334,11 +340,11 @@ def _make_conversation_artifact(
         text(
             """
             INSERT INTO artifact_revisions (
-                build_id, content_md, input_manifest,
+                build_id, content_html, content_text, input_manifest,
                 citation_owner_user_id, promoted_at
             )
             VALUES (
-                :build_id, :content_md,
+                :build_id, :content_html, :content_text,
                 jsonb_build_object(
                     'version', 'v1',
                     'kind', 'conversation',
@@ -356,7 +362,8 @@ def _make_conversation_artifact(
         ),
         {
             "build_id": build_id,
-            "content_md": content_md,
+            "content_html": _dossier_html(content_text),
+            "content_text": content_text,
             "conversation_ref": f"conversation:{conversation_id}",
             "user_id": user_id,
         },
@@ -375,7 +382,7 @@ def _add_library_revision(
     artifact_id: UUID,
     library_id: UUID,
     user_id: UUID,
-    content_md: str,
+    content_text: str,
 ):
     from sqlalchemy import text as sql_text
 
@@ -399,11 +406,11 @@ def _add_library_revision(
         sql_text(
             """
             INSERT INTO artifact_revisions (
-                build_id, content_md, input_manifest,
+                build_id, content_html, content_text, input_manifest,
                 citation_owner_user_id, promoted_at
             )
             VALUES (
-                :build_id, :content_md,
+                :build_id, :content_html, :content_text,
                 jsonb_build_object(
                     'version', 'v1', 'kind', 'library',
                     'library_ref', CAST(:library_ref AS text), 'media', '[]'::jsonb
@@ -415,7 +422,8 @@ def _add_library_revision(
         ),
         {
             "build_id": build_id,
-            "content_md": content_md,
+            "content_html": _dossier_html(content_text),
+            "content_text": content_text,
             "library_ref": f"library:{library_id}",
             "user_id": user_id,
         },
@@ -704,7 +712,7 @@ def test_resolve_default_library_dossier_labels_all(db_session: Session, bootstr
         db_session,
         default_library_id,
         bootstrapped_user,
-        content_md="Overview of everything.",
+        content_text="Overview of everything.",
     )
 
     resolved = _resolve(db_session, f"artifact:{artifact_id}", viewer_id=bootstrapped_user)
@@ -820,7 +828,7 @@ def test_resolve_dossier_artifact_inlines_current_revision(
         db_session,
         library_id,
         bootstrapped_user,
-        content_md="Overview line.\nThe library covers X and Y [1].",
+        content_text="Overview line.\nThe library covers X and Y [1].",
     )
 
     resolved = _resolve(db_session, f"artifact:{artifact_id}", viewer_id=bootstrapped_user)
@@ -854,7 +862,7 @@ def test_resolve_dossier_revision_inlines_exact_revision_after_head_moves(
         db_session,
         library_id,
         bootstrapped_user,
-        content_md="Pinned revision prose.",
+        content_text="Pinned revision prose.",
     )
     pinned_revision_id = _current_dossier_revision_id(db_session, artifact_id)
     new_revision_id = _add_library_revision(
@@ -862,7 +870,7 @@ def test_resolve_dossier_revision_inlines_exact_revision_after_head_moves(
         artifact_id=artifact_id,
         library_id=library_id,
         user_id=bootstrapped_user,
-        content_md="New head prose.",
+        content_text="New head prose.",
     ).scalar_one()
     db_session.execute(
         sql_text("UPDATE artifacts SET current_revision_id = :rev WHERE id = :artifact_id"),
@@ -888,7 +896,7 @@ def test_resolve_dossier_artifact_long_body_not_inlined(
     library_id = create_test_library(db_session, bootstrapped_user, "Big Synthesis")
     long_content = "First line.\n" + ("x" * (INLINE_THRESHOLD_CHARS + 100))
     artifact_id = _make_library_artifact(
-        db_session, library_id, bootstrapped_user, content_md=long_content
+        db_session, library_id, bootstrapped_user, content_text=long_content
     )
 
     resolved = _resolve(db_session, f"artifact:{artifact_id}", viewer_id=bootstrapped_user)
@@ -905,7 +913,9 @@ def test_resolve_dossier_artifact_no_current_revision_is_present_no_inline(
     db_session: Session, bootstrapped_user: UUID
 ):
     library_id = create_test_library(db_session, bootstrapped_user, "Ungenerated Library")
-    artifact_id = _make_library_artifact(db_session, library_id, bootstrapped_user, content_md=None)
+    artifact_id = _make_library_artifact(
+        db_session, library_id, bootstrapped_user, content_text=None
+    )
 
     resolved = _resolve(db_session, f"artifact:{artifact_id}", viewer_id=bootstrapped_user)
 
@@ -981,7 +991,7 @@ def test_dossier_artifact_resources_block_reflects_current_revision(
 
     library_id = create_test_library(db_session, bootstrapped_user, "Fresh-Resolve Library")
     artifact_id = _make_library_artifact(
-        db_session, library_id, bootstrapped_user, content_md="First revision prose."
+        db_session, library_id, bootstrapped_user, content_text="First revision prose."
     )
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
     add_context_edge(db_session, conversation_id, f"artifact:{artifact_id}")
@@ -1004,7 +1014,7 @@ def test_dossier_artifact_resources_block_reflects_current_revision(
         artifact_id=artifact_id,
         library_id=library_id,
         user_id=bootstrapped_user,
-        content_md="Second revision prose.",
+        content_text="Second revision prose.",
     ).scalar_one()
     db_session.execute(
         sql_text("UPDATE artifacts SET current_revision_id = :rev WHERE id = :artifact_id"),
@@ -1037,7 +1047,7 @@ def test_dossier_artifact_not_a_citable_attached_resource(
 
     library_id = create_test_library(db_session, bootstrapped_user, "Noncitable Library")
     artifact_id = _make_library_artifact(
-        db_session, library_id, bootstrapped_user, content_md="Inline synthesis [1]."
+        db_session, library_id, bootstrapped_user, content_text="Inline synthesis [1]."
     )
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
     add_context_edge(db_session, conversation_id, f"artifact:{artifact_id}")
@@ -1060,7 +1070,7 @@ def test_dossier_artifact_in_context_stamps_resolved_revision(
 
     library_id = create_test_library(db_session, bootstrapped_user, "Stamp-Slot Library")
     artifact_id = _make_library_artifact(
-        db_session, library_id, bootstrapped_user, content_md="Synthesis prose [1]."
+        db_session, library_id, bootstrapped_user, content_text="Synthesis prose [1]."
     )
     revision_id = _current_dossier_revision_id(db_session, artifact_id)
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
@@ -1086,7 +1096,7 @@ def test_dossier_revision_context_stays_pinned_after_head_moves(
 
     library_id = create_test_library(db_session, bootstrapped_user, "Pinned-Context Library")
     artifact_id = _make_library_artifact(
-        db_session, library_id, bootstrapped_user, content_md="Pinned context prose."
+        db_session, library_id, bootstrapped_user, content_text="Pinned context prose."
     )
     pinned_revision_id = _current_dossier_revision_id(db_session, artifact_id)
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
@@ -1101,7 +1111,7 @@ def test_dossier_revision_context_stays_pinned_after_head_moves(
         artifact_id=artifact_id,
         library_id=library_id,
         user_id=bootstrapped_user,
-        content_md="New context head.",
+        content_text="New context head.",
     ).scalar_one()
     db_session.execute(
         sql_text("UPDATE artifacts SET current_revision_id = :rev WHERE id = :artifact_id"),

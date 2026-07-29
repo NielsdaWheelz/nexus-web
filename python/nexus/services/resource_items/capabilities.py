@@ -506,7 +506,7 @@ if {
     for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items()
     if capability.inspector_policy is not None
 } != _RESOURCE_INSPECTOR_SCHEMES:
-    raise AssertionError("Resource Inspector policy must cover exactly the seven dossier subjects")
+    raise AssertionError("Resource Inspector policy must cover exactly the seven Resource subjects")
 
 for scheme in _RESOURCE_INSPECTOR_SCHEMES:
     capability = RESOURCE_ITEM_CAPABILITIES[scheme]

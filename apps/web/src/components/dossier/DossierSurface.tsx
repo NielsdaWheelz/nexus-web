@@ -17,7 +17,6 @@ import { GitBranch, RotateCcw, X } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import MachineText from "@/components/ui/MachineText";
-import { MarkdownMessage } from "@/components/ui/MarkdownMessage";
 import { toReaderCitationData } from "@/lib/conversations/citations";
 import { dispatchReaderSourceActivation } from "@/lib/conversations/readerSourceActivation";
 import type { ResourceActivation } from "@/lib/resources/activation";
@@ -34,6 +33,7 @@ import {
   type DossierViewModel,
 } from "@/components/dossier/dossierViewModel";
 import { dossierCoverageLabel } from "@/components/dossier/dossierCoverage";
+import DossierDocumentFrame from "@/components/dossier/DossierDocumentFrame";
 import styles from "./DossierSurface.module.css";
 
 export type DossierCitationActivate = (
@@ -48,6 +48,9 @@ interface DossierSurfaceProps {
   /** Wired by the pane/controller to route citation clicks through the pane
    * router; defaults to reader-source dispatch for in-document targets. */
   onCitationActivate?: DossierCitationActivate;
+  /** Standalone Artifact panes project revision selection into `?revision=`.
+   * Resource Companion surfaces omit this and retain their local controller. */
+  onRevisionSelect?: (revisionRef: string | null) => void;
 }
 
 const defaultCitationActivate: DossierCitationActivate = (_activation, target) => {
@@ -58,6 +61,7 @@ export default function DossierSurface({
   store,
   onViewMediaEvidence,
   onCitationActivate = defaultCitationActivate,
+  onRevisionSelect,
 }: DossierSurfaceProps) {
   // A14: connect on mount / disconnect the CLIENT stream on unmount — the
   // durable build continues; remount refetches the head and resumes.
@@ -72,6 +76,11 @@ export default function DossierSurface({
     (state) => state.instructionDraft,
   );
   const busy = vm.controls.busy !== null;
+  const documentTitle = useDossierSelector(store, (state) => {
+    if (state.head.kind !== "Ready") return "Dossier";
+    const identity = state.head.ready.identity;
+    return identity.kind === "Present" ? identity.value.title : "Dossier";
+  });
   const canStartGeneration =
     vm.controls.canGenerate || vm.controls.canRegenerate;
   const submitInstruction = () => {
@@ -182,7 +191,11 @@ export default function DossierSurface({
           </Button>
         ) : null}
         <span className={styles.spacer} />
-        <HistoryNav store={store} vm={vm} />
+        <HistoryNav
+          store={store}
+          vm={vm}
+          onRevisionSelect={onRevisionSelect}
+        />
       </div>
 
       {vm.actionError ? (
@@ -195,7 +208,9 @@ export default function DossierSurface({
         <DossierBody
           store={store}
           body={vm.body}
+          documentTitle={documentTitle}
           onCitationActivate={onCitationActivate}
+          onRevisionSelect={onRevisionSelect}
         />
       </div>
     </div>
@@ -234,7 +249,6 @@ function ActivityBanner({ activity }: { activity: DossierActivityView }) {
               ? "Regenerating — the current dossier stays readable."
               : "Generating the dossier…"}
           </span>
-          {activity.draft ? <p className={styles.draft}>{activity.draft}</p> : null}
         </div>
       );
     case "Suspended":
@@ -259,11 +273,15 @@ function ActivityBanner({ activity }: { activity: DossierActivityView }) {
 function DossierBody({
   store,
   body,
+  documentTitle,
   onCitationActivate,
+  onRevisionSelect,
 }: {
   store: DossierControllerStore;
   body: DossierBodyView;
+  documentTitle: string;
   onCitationActivate: DossierCitationActivate;
+  onRevisionSelect?: (revisionRef: string | null) => void;
 }) {
   switch (body.kind) {
     case "HeadLoading":
@@ -289,15 +307,19 @@ function DossierBody({
       return (
         <div className={styles.empty}>
           <span>{body.message}</span>
-          <Button variant="secondary" size="sm" onClick={() => store.selectCurrent()}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() =>
+              onRevisionSelect ? onRevisionSelect(null) : store.selectCurrent()
+            }
+          >
             View current
           </Button>
         </div>
       );
-    case "StreamingDraft":
-      return body.text.length > 0 ? (
-        <p className={styles.draft}>{body.text}</p>
-      ) : (
+    case "Building":
+      return (
         <p className={styles.empty}>
           {body.liveness === "connecting"
             ? "Connecting to dossier generation…"
@@ -307,7 +329,7 @@ function DossierBody({
                 ? "Live output is unavailable. Reconnect to check generation."
                 : body.liveness === "suspended"
                   ? "Generation is suspended."
-                : "Generating the dossier…"}
+                  : "Generating the dossier…"}
         </p>
       );
     case "TerminalOutcome":
@@ -322,7 +344,7 @@ function DossierBody({
       );
     case "Revision":
       return (
-        <div>
+        <div className={styles.revision}>
           {body.provenance === "historical" ? (
             <p className={styles.freshness}>Viewing a past revision.</p>
           ) : body.freshness === "Stale" ? (
@@ -331,10 +353,17 @@ function DossierBody({
             </p>
           ) : null}
           <MachineText origin={{ label: "Dossier" }}>
-            <MarkdownMessage
-              content={body.revision.contentMd}
-              citations={body.revision.citations.map(toReaderCitationData)}
-              onCitationActivate={onCitationActivate}
+            <DossierDocumentFrame
+              title={documentTitle}
+              contentHtml={body.revision.contentHtml}
+              onCitation={(ordinal) => {
+                const citation = body.revision.citations.find(
+                  (entry) => entry.ordinal === ordinal,
+                );
+                if (!citation) return;
+                const data = toReaderCitationData(citation);
+                onCitationActivate(data.activation, data.target);
+              }}
             />
           </MachineText>
           <div className={styles.revisionMeta} aria-label="Dossier coverage">
@@ -391,9 +420,11 @@ function RevisionProvenance({
 function HistoryNav({
   store,
   vm,
+  onRevisionSelect,
 }: {
   store: DossierControllerStore;
   vm: DossierViewModel;
+  onRevisionSelect?: (revisionRef: string | null) => void;
 }) {
   if (!vm.controls.historyAvailable) return null;
   if (vm.historyStatus === "idle" || vm.historyStatus === "loading") {
@@ -422,8 +453,13 @@ function HistoryNav({
   const go = (nextIndex: number) => {
     const entry = vm.history[nextIndex];
     if (!entry) return;
-    if (entry.isCurrent) store.selectCurrent();
-    else store.selectHistorical(entry.revisionRef);
+    if (onRevisionSelect) {
+      onRevisionSelect(entry.isCurrent ? null : entry.revisionRef);
+    } else if (entry.isCurrent) {
+      store.selectCurrent();
+    } else {
+      store.selectHistorical(entry.revisionRef);
+    }
   };
   return (
     <div className={styles.historyNav}>
@@ -451,7 +487,13 @@ function HistoryNav({
         ›
       </Button>
       {vm.viewingHistorical ? (
-        <Button variant="ghost" size="sm" onClick={() => store.selectCurrent()}>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() =>
+            onRevisionSelect ? onRevisionSelect(null) : store.selectCurrent()
+          }
+        >
           Current
         </Button>
       ) : null}

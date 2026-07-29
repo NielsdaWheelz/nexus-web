@@ -52,6 +52,7 @@ def materialize_web_article_source(
     request_id: str | None = None,
     source_attempt_id: UUID | None = None,
     *,
+    extract_embeds: bool,
     publication_fence: SourcePublicationFence,
 ) -> dict[str, object]:
     """Materialize a generic web URL under the durable source-ingest owner."""
@@ -143,7 +144,7 @@ def materialize_web_article_source(
             base_url=ingest_result.base_url,
             fragment_idx=0,
             media_title=ingest_result.title,
-            extract_embeds=True,
+            extract_embeds=extract_embeds,
         )
         source_apparatus = (
             prepared
@@ -153,6 +154,7 @@ def materialize_web_article_source(
                 base_url=ingest_result.base_url,
                 fragment_idx=0,
                 media_title=ingest_result.title,
+                extract_embeds=extract_embeds,
             )
         )
     except Exception as exc:
@@ -163,6 +165,7 @@ def materialize_web_article_source(
     embed_urls = [
         detected.detected.canonical_source_url
         for detected in prepared.document_embeds
+        if extract_embeds
         if detected.detected.resolution_status == "pending"
         and detected.detected.canonical_source_url
     ]
@@ -175,13 +178,14 @@ def materialize_web_article_source(
                 reusable_embedded_source_media_ids,
             )
 
-            planned_existing_media_ids.update(
-                reusable_embedded_source_media_ids(
-                    discovery,
-                    viewer_id=actor_user_id,
-                    urls=list(embed_urls),
+            if extract_embeds:
+                planned_existing_media_ids.update(
+                    reusable_embedded_source_media_ids(
+                        discovery,
+                        viewer_id=actor_user_id,
+                        urls=list(embed_urls),
+                    )
                 )
-            )
             discovery.rollback()
         finally:
             discovery.close()
@@ -206,32 +210,33 @@ def materialize_web_article_source(
             db.add(fragment)
             db.flush()
             insert_fragment_blocks(db, fragment.id, prepared.fragment_blocks)
-            queued_children = replace_document_embed_artifact(
-                db,
-                owner_user_id=owner_user_id,
-                media_id=media_id,
-                source_attempt_id=source_attempt_id,
-                occurrences=document_embed_artifact_occurrences(
-                    fragment_id=fragment.id,
-                    document_embeds=prepared.document_embeds,
-                ),
-                extraction_error_code=prepared.document_embed_extraction_error_code,
-                extraction_error_message=prepared.document_embed_extraction_error_message,
-                request_id=request_id,
-                locked_existing_target_media_ids=frozenset(planned_existing_media_ids),
-            )
-            from nexus.services.media_source_ingest import (
-                enqueue_accepted_source_attempt_in_transaction,
-            )
-
-            for child_media_id, child_attempt_id in queued_children:
-                enqueue_accepted_source_attempt_in_transaction(
+            if extract_embeds:
+                queued_children = replace_document_embed_artifact(
                     db,
-                    media_id=child_media_id,
-                    attempt_id=child_attempt_id,
-                    actor_user_id=actor_user_id,
+                    owner_user_id=owner_user_id,
+                    media_id=media_id,
+                    source_attempt_id=source_attempt_id,
+                    occurrences=document_embed_artifact_occurrences(
+                        fragment_id=fragment.id,
+                        document_embeds=prepared.document_embeds,
+                    ),
+                    extraction_error_code=prepared.document_embed_extraction_error_code,
+                    extraction_error_message=prepared.document_embed_extraction_error_message,
                     request_id=request_id,
+                    locked_existing_target_media_ids=frozenset(planned_existing_media_ids),
                 )
+                from nexus.services.media_source_ingest import (
+                    enqueue_accepted_source_attempt_in_transaction,
+                )
+
+                for child_media_id, child_attempt_id in queued_children:
+                    enqueue_accepted_source_attempt_in_transaction(
+                        db,
+                        media_id=child_media_id,
+                        attempt_id=child_attempt_id,
+                        actor_user_id=actor_user_id,
+                        request_id=request_id,
+                    )
             if ingest_result.title:
                 media.title = ingest_result.title[:255]
             _persist_web_metadata(media, ingest_result)

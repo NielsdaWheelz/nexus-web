@@ -31,6 +31,18 @@ export interface DossierSubjectDescriptor {
   handle: string;
 }
 
+export type DossierReadTarget =
+  | { kind: "Subject"; subject: DossierSubjectDescriptor }
+  | { kind: "Artifact"; artifactRef: string };
+
+export type LearnDossierOutcome =
+  | { kind: "Opened"; artifactRef: string }
+  | {
+      kind: "BuildAccepted";
+      artifactRef: string;
+      buildHandle: string;
+    };
+
 function unwrapEnvelope(raw: unknown): unknown {
   if (
     isRecord(raw) &&
@@ -46,10 +58,22 @@ function dossierHeadPath(subject: DossierSubjectDescriptor): ApiPath {
   return `/api/artifacts/dossiers/${encodeURIComponent(subject.scheme)}/${encodeURIComponent(subject.handle)}`;
 }
 
+function artifactHeadPath(artifactRef: string): ApiPath {
+  return `/api/artifacts/${encodeURIComponent(artifactRef)}`;
+}
+
+export function artifactPaneHref(artifactRef: string): string {
+  return `/artifacts/${encodeURIComponent(artifactRef)}`;
+}
+
 export async function fetchDossierHead(
-  subject: DossierSubjectDescriptor,
+  target: DossierReadTarget,
 ): Promise<DecodedDossierHead> {
-  const body = await apiFetch<unknown>(dossierHeadPath(subject));
+  const body = await apiFetch<unknown>(
+    target.kind === "Subject"
+      ? dossierHeadPath(target.subject)
+      : artifactHeadPath(target.artifactRef),
+  );
   return decodeDossierHead(unwrapEnvelope(body));
 }
 
@@ -77,18 +101,67 @@ export async function fetchDossierRevision(
  * transport retry of the SAME logical generation reuses the SAME key (A15).
  */
 export async function createDossierBuild(input: {
-  subject: DossierSubjectDescriptor;
+  target: DossierReadTarget;
+  artifactRef: string | null;
   instruction: string | null;
   idempotencyKey: string;
 }): Promise<void> {
   const trimmed = input.instruction?.trim() ?? "";
-  await apiFetch<unknown>(`${dossierHeadPath(input.subject)}/builds`, {
+  const path =
+    input.artifactRef !== null
+      ? `${artifactHeadPath(input.artifactRef)}/builds`
+      : input.target.kind === "Subject"
+        ? `${dossierHeadPath(input.target.subject)}/builds`
+        : `${artifactHeadPath(input.target.artifactRef)}/builds`;
+  await apiFetch<unknown>(path as ApiPath, {
     method: "POST",
     headers: { "Idempotency-Key": input.idempotencyKey },
     body: JSON.stringify({
       instruction: trimmed.length > 0 ? present(trimmed) : absent<string>(),
     }),
   });
+}
+
+export async function learnDossierFromHighlight(input: {
+  highlightRef: string;
+  idempotencyKey: string;
+}): Promise<LearnDossierOutcome> {
+  const raw = unwrapEnvelope(
+    await apiFetch<unknown>("/api/artifacts/dossiers/learn", {
+      method: "POST",
+      headers: { "Idempotency-Key": input.idempotencyKey },
+      body: JSON.stringify({ highlight_ref: input.highlightRef }),
+    }),
+  );
+  if (!isRecord(raw)) {
+    throw new Error("Invalid Learn Dossier response");
+  }
+  const keys = Object.keys(raw).sort();
+  if (
+    keys.length === 2 &&
+    keys[0] === "artifact_ref" &&
+    keys[1] === "kind" &&
+    raw.kind === "Opened" &&
+    typeof raw.artifact_ref === "string"
+  ) {
+    return { kind: "Opened", artifactRef: raw.artifact_ref };
+  }
+  if (
+    keys.length === 3 &&
+    keys[0] === "artifact_ref" &&
+    keys[1] === "build_handle" &&
+    keys[2] === "kind" &&
+    raw.kind === "BuildAccepted" &&
+    typeof raw.artifact_ref === "string" &&
+    typeof raw.build_handle === "string"
+  ) {
+    return {
+      kind: "BuildAccepted",
+      artifactRef: raw.artifact_ref,
+      buildHandle: raw.build_handle,
+    };
+  }
+  throw new Error("Invalid Learn Dossier response");
 }
 
 export async function cancelDossierBuild(buildHandle: string): Promise<void> {

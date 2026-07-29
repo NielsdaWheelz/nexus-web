@@ -274,13 +274,16 @@ describe("useResourceInspector workspace activation", () => {
     expect(controller.resetRevisionSelection).not.toHaveBeenCalled();
   });
 
-  it("opens a Dossier citation on its exact artifact revision through the pane runtime", async () => {
+  it("opens a Dossier citation on its standalone artifact revision route", async () => {
     const onActivateWorkspaceTarget =
       vi.fn<
         ComponentProps<typeof PaneRuntimeProvider>["onActivateWorkspaceTarget"]
       >();
     const revisionRef =
       "artifact_revision:33333333-3333-4333-8333-333333333333";
+    const href =
+      `/artifacts/${encodeURIComponent("artifact:44444444-4444-4444-8444-444444444444")}` +
+      `?revision=${encodeURIComponent(revisionRef)}`;
     const { publishSecondary } = renderInspector(null, {
       onActivateWorkspaceTarget,
     });
@@ -292,7 +295,7 @@ describe("useResourceInspector workspace activation", () => {
       {
         resourceRef: revisionRef,
         kind: "route",
-        href: "/conversations/44444444-4444-4444-8444-444444444444",
+        href,
         unresolvedReason: null,
       },
       null,
@@ -300,14 +303,7 @@ describe("useResourceInspector workspace activation", () => {
 
     expect(onActivateWorkspaceTarget).toHaveBeenCalledWith({
       originPaneId: "pane-1",
-      target: {
-        href: "/conversations/44444444-4444-4444-8444-444444444444",
-        secondaryActivation: {
-          kind: "DossierRevision",
-          surfaceId: "resource-dossier",
-          revisionRef,
-        },
-      },
+      target: { href },
       disposition: { kind: "Follow" },
       modality: "Programmatic",
     });

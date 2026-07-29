@@ -25047,3 +25047,263 @@ class TestMigration0197XPostSourceAttemptProvenance:
             reset_test_schema()
             run_alembic_command("upgrade head")
             engine.dispose()
+
+
+@MIGRATION_CI_LATE
+class TestMigration0198LearnIdeaDossiers:
+    def test_0198_hard_cuts_revision_bodies_and_preserves_empty_heads(self):
+        reset_test_schema()
+        assert run_alembic_command("upgrade 0197").returncode == 0
+        engine = create_engine(get_test_database_url())
+        user_id = uuid4()
+        subject_id = uuid4()
+        artifact_id = uuid4()
+        build_id = uuid4()
+        revision_id = uuid4()
+        head_edge_id = uuid4()
+        revision_edge_id = uuid4()
+        revision_view_state_id = uuid4()
+        try:
+            with engine.begin() as connection:
+                connection.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO artifacts (
+                            id, subject_scheme, subject_id, audience_scheme, audience_id
+                        )
+                        VALUES (:id, 'media', :subject_id, 'user', :audience_id)
+                        """
+                    ),
+                    {
+                        "id": artifact_id,
+                        "subject_id": subject_id,
+                        "audience_id": str(user_id),
+                    },
+                )
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO artifact_builds (
+                            id, artifact_id, requester_user_id, idempotency_key
+                        )
+                        VALUES (:id, :artifact_id, :user_id, 'legacy-build')
+                        """
+                    ),
+                    {
+                        "id": build_id,
+                        "artifact_id": artifact_id,
+                        "user_id": user_id,
+                    },
+                )
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO artifact_revisions (
+                            id, build_id, content_md, input_manifest,
+                            citation_owner_user_id
+                        )
+                        VALUES (
+                            :id, :build_id, 'Legacy Markdown', '{}'::jsonb, :user_id
+                        )
+                        """
+                    ),
+                    {
+                        "id": revision_id,
+                        "build_id": build_id,
+                        "user_id": user_id,
+                    },
+                )
+                connection.execute(
+                    text(
+                        "UPDATE artifacts SET current_revision_id = :revision_id "
+                        "WHERE id = :artifact_id"
+                    ),
+                    {
+                        "revision_id": revision_id,
+                        "artifact_id": artifact_id,
+                    },
+                )
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO resource_edges (
+                            id, user_id, kind, origin, source_scheme, source_id,
+                            target_scheme, target_id
+                        )
+                        VALUES (
+                            :head_edge_id, :user_id, 'context', 'user',
+                            'artifact', :artifact_id, 'media', :target_id
+                        ), (
+                            :revision_edge_id, :user_id, 'context', 'user',
+                            'artifact_revision', :revision_id, 'media', :target_id
+                        )
+                        """
+                    ),
+                    {
+                        "head_edge_id": head_edge_id,
+                        "revision_edge_id": revision_edge_id,
+                        "user_id": user_id,
+                        "artifact_id": artifact_id,
+                        "revision_id": revision_id,
+                        "target_id": subject_id,
+                    },
+                )
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO resource_view_states (
+                            id, user_id, surface_scheme, surface_id, edge_id, state
+                        )
+                        VALUES (
+                            :id, :user_id, 'artifact_revision', :revision_id,
+                            :edge_id, '{}'::jsonb
+                        )
+                        """
+                    ),
+                    {
+                        "id": revision_view_state_id,
+                        "user_id": user_id,
+                        "revision_id": revision_id,
+                        "edge_id": revision_edge_id,
+                    },
+                )
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO background_jobs (kind, payload, status)
+                        VALUES ('dossier_build', '{}'::jsonb, 'pending')
+                        """
+                    )
+                )
+
+            result = run_alembic_command("upgrade 0198")
+            assert result.returncode == 0, result.stderr
+            with engine.connect() as connection:
+                assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0198"
+                assert (
+                    connection.scalar(
+                        text("SELECT current_revision_id FROM artifacts WHERE id = :id"),
+                        {"id": artifact_id},
+                    )
+                    is None
+                )
+                assert (
+                    connection.scalar(
+                        text("SELECT count(*) FROM resource_edges WHERE id = :id"),
+                        {"id": head_edge_id},
+                    )
+                    == 1
+                )
+                assert (
+                    connection.scalar(
+                        text("SELECT count(*) FROM resource_edges WHERE id = :id"),
+                        {"id": revision_edge_id},
+                    )
+                    == 0
+                )
+                assert (
+                    connection.scalar(
+                        text("SELECT count(*) FROM resource_view_states WHERE id = :id"),
+                        {"id": revision_view_state_id},
+                    )
+                    == 0
+                )
+                assert connection.scalar(text("SELECT count(*) FROM artifact_builds")) == 0
+                assert connection.scalar(text("SELECT count(*) FROM artifact_revisions")) == 0
+                assert (
+                    connection.scalar(
+                        text("SELECT count(*) FROM background_jobs WHERE kind = 'dossier_build'")
+                    )
+                    == 0
+                )
+                revision_columns = {
+                    row.column_name: row.is_nullable
+                    for row in connection.execute(
+                        text(
+                            """
+                            SELECT column_name, is_nullable
+                            FROM information_schema.columns
+                            WHERE table_schema = 'public'
+                              AND table_name = 'artifact_revisions'
+                              AND column_name IN ('content_md', 'content_html', 'content_text')
+                            """
+                        )
+                    )
+                }
+                assert revision_columns == {
+                    "content_html": "NO",
+                    "content_text": "NO",
+                }
+                new_tables = set(
+                    connection.scalars(
+                        text(
+                            """
+                            SELECT table_name
+                            FROM information_schema.tables
+                            WHERE table_schema = 'public'
+                              AND (
+                                table_name LIKE 'artifact_idea_%'
+                                OR table_name LIKE 'artifact_learn_%'
+                              )
+                            """
+                        )
+                    )
+                )
+                assert new_tables == {
+                    "artifact_idea_subjects",
+                    "artifact_idea_resolutions",
+                    "artifact_idea_seeds",
+                    "artifact_learn_requests",
+                    "artifact_learn_successes",
+                    "artifact_learn_failures",
+                }
+                resolver_lease = connection.execute(
+                    text(
+                        """
+                        SELECT data_type, is_nullable
+                        FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND table_name = 'artifact_learn_requests'
+                          AND column_name = 'resolver_lease_expires_at'
+                        """
+                    )
+                ).one()
+                assert resolver_lease == ("timestamp with time zone", "YES")
+                constraint_defs = {
+                    row.conname: row.definition
+                    for row in connection.execute(
+                        text(
+                            """
+                            SELECT con.conname, pg_get_constraintdef(con.oid) AS definition
+                            FROM pg_constraint con
+                            JOIN pg_class rel ON rel.oid = con.conrelid
+                            WHERE rel.relname IN (
+                                'artifact_build_events',
+                                'llm_calls',
+                                'artifact_idea_subjects',
+                                'artifact_idea_resolutions',
+                                'artifact_idea_seeds',
+                                'artifact_learn_requests'
+                            )
+                            """
+                        )
+                    )
+                }
+                assert "Delta" not in constraint_defs["ck_artifact_build_events_type"]
+                assert "artifact_learn_request" in constraint_defs["ck_llm_calls_owner_kind"]
+                assert {
+                    "uq_artifact_idea_subjects_owner_key",
+                    "artifact_idea_resolutions_pkey",
+                    "uq_artifact_idea_seeds_pair",
+                    "uq_artifact_learn_requests_user_key",
+                } <= constraint_defs.keys()
+
+            result = run_alembic_command("downgrade 0197")
+            assert result.returncode != 0
+            with engine.connect() as connection:
+                assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0198"
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()

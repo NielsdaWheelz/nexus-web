@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, cast
 from uuid import UUID
 
 from sqlalchemy.orm import Session
 
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.resource_items import ResourceItemOut
-from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_graph.resolve import load_resource_batch
 from nexus.services.resource_items.capabilities import capability_for_ref, resource_can_attach
 from nexus.services.resource_items.surfaces import resource_item_out
@@ -80,11 +80,12 @@ def resolve_chat_subject(
     if (
         subject_ref.scheme == "artifact_revision"
         and subject_loaded.related_subject_scheme is not None
+        and subject_loaded.related_subject_scheme != "idea"
         and subject_loaded.related_subject_id is not None
     ):
         companion_refs = (
             ResourceRef(
-                scheme=subject_loaded.related_subject_scheme,
+                scheme=cast("ResourceScheme", subject_loaded.related_subject_scheme),
                 id=subject_loaded.related_subject_id,
             ),
         )

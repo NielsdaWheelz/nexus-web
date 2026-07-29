@@ -1,4 +1,5 @@
 import {
+  BookOpenText,
   Link2,
   MessageSquarePlus,
   MessagesSquare,
@@ -53,6 +54,7 @@ export function buildHighlightActions({
     onAddNote?: () => void;
     onLink?: () => void;
     onShare?: (detail: ActionSelectDetail) => void;
+    onLearn?: () => void;
     onQuoteToNewChat: () => void;
     onQuoteToExistingChat: () => void;
     onToggleEditBounds: () => void;
@@ -120,6 +122,17 @@ export function buildHighlightActions({
       disabledReason: "Creating highlight",
       onSelect: handlers.onShare,
     }));
+  }
+
+  if (hasQuoteText && handlers.onLearn) {
+    options.push({
+      kind: "command",
+      id: "learn",
+      label: "Learn",
+      icon: <BookOpenText size={14} aria-hidden="true" />,
+      disabled: !isExisting && state.changingColor,
+      onSelect: handlers.onLearn,
+    });
   }
 
   if (canQuoteToChat && hasQuoteText) {

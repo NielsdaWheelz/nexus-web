@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { decodeDossierRevision } from "@/lib/dossiers/dossierWire";
+import {
+  decodeDossierHead,
+  decodeDossierRevision,
+} from "@/lib/dossiers/dossierWire";
 
 const absent = { kind: "Absent" };
 
@@ -10,7 +13,9 @@ function revisionWire(inputManifest: Record<string, unknown>) {
     revision_id: "revision-1",
     revision_ref: "artifact_revision:revision-1",
     is_current: true,
-    content_md: "# Dossier",
+    content_html:
+      '<article><section id="overview"><h2>Dossier</h2></section></article>',
+    content_text: "Dossier",
     citations: [],
     input_manifest: inputManifest,
     instruction: absent,
@@ -197,10 +202,69 @@ describe("dossierWire", () => {
         connectionRefs: ["page:p1"],
       },
     ],
+    [
+      "idea",
+      {
+        version: "v1",
+        kind: "idea",
+        included_seed_refs: ["highlight:h1"],
+        nexus_query_fingerprints: ["nexus-fp"],
+        web_query_fingerprints: ["web-fp"],
+        included_sources: [
+          {
+            ref: "media:m1",
+            content_fingerprint: "source-fp",
+            role: "nexus",
+          },
+        ],
+        omitted_sources: [
+          { locator: "https://example.test", reason: "Unreadable" },
+        ],
+      },
+      {
+        version: "v1",
+        kind: "idea",
+        includedSeedRefs: ["highlight:h1"],
+        nexusQueryFingerprints: ["nexus-fp"],
+        webQueryFingerprints: ["web-fp"],
+        includedSources: [
+          {
+            ref: "media:m1",
+            contentFingerprint: "source-fp",
+            role: "nexus",
+          },
+        ],
+        omittedSources: [
+          { locator: "https://example.test", reason: "Unreadable" },
+        ],
+      },
+    ],
   ])("decodes the closed %s manifest", (_kind, wire, expected) => {
     expect(decodeDossierRevision(revisionWire(wire)).inputManifest).toEqual(
       expected,
     );
+  });
+
+  it("rejects an unknown Idea source role", () => {
+    expect(() =>
+      decodeDossierRevision(
+        revisionWire({
+          version: "v1",
+          kind: "idea",
+            included_seed_refs: [],
+          nexus_query_fingerprints: [],
+          web_query_fingerprints: [],
+          included_sources: [
+            {
+              ref: "media:m1",
+              content_fingerprint: "source-fp",
+              role: "principal",
+            },
+          ],
+          omitted_sources: [],
+        }),
+      ),
+    ).toThrow("unknown included_sources.role");
   });
 
   it("decodes visible revision provenance and rejects unknown manifest kinds", () => {
@@ -215,6 +279,9 @@ describe("dossierWire", () => {
       }),
     );
     expect(decoded).toMatchObject({
+      contentHtml:
+        '<article><section id="overview"><h2>Dossier</h2></section></article>',
+      contentText: "Dossier",
       creatorUserId: { kind: "Present", value: "user-1" },
       modelProvider: { kind: "Present", value: "openai" },
       modelName: { kind: "Present", value: "gpt-5" },
@@ -223,5 +290,27 @@ describe("dossierWire", () => {
     expect(() =>
       decodeDossierRevision(revisionWire({ version: "v1", kind: "unknown" })),
     ).toThrow(/unknown input_manifest kind/);
+  });
+
+  it("decodes the public Idea identity without exposing its private key", () => {
+    const decoded = decodeDossierHead({
+      artifact_id: { kind: "Present", value: "artifact-1" },
+      artifact_ref: { kind: "Present", value: "artifact:artifact-1" },
+      current_revision: absent,
+      freshness: absent,
+      active_build: absent,
+      latest_unsuccessful_build: absent,
+      revision_count: 0,
+      media_abstract: absent,
+      identity: {
+        kind: "Present",
+        value: { kind: "Idea", title: "Bayesian inference" },
+      },
+    });
+
+    expect(decoded.identity).toEqual({
+      kind: "Present",
+      value: { kind: "Idea", title: "Bayesian inference" },
+    });
   });
 });

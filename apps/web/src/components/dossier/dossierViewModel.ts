@@ -32,8 +32,7 @@ export type DossierBodyView =
   | { kind: "HistoricalLoading" }
   | { kind: "HistoricalFailed"; message: string }
   | {
-      kind: "StreamingDraft";
-      text: string;
+      kind: "Building";
       liveness:
         | "connecting"
         | "reconnecting"
@@ -57,7 +56,6 @@ export type DossierActivityView =
       phase: DossierExecutionPhase;
       regenerating: boolean;
       progress: string | null;
-      draft: string | null;
     }
   | { kind: "Suspended" }
   | { kind: "Failed"; code: DossierBuildFailureCode; message: string }
@@ -246,8 +244,7 @@ export function deriveDossierViewModel(
     };
   } else if (hasEffectiveActive) {
     body = {
-      kind: "StreamingDraft",
-      text: state.streamingDraft ?? "",
+      kind: "Building",
       liveness:
         suspended
           ? "suspended"
@@ -281,7 +278,6 @@ export function deriveDossierViewModel(
       phase: activePhase ?? "Running",
       regenerating: hasCurrent,
       progress: state.progressMessage,
-      draft: state.streamingDraft,
     };
   } else if (failureFacts) {
     activity = {

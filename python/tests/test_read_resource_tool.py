@@ -245,9 +245,9 @@ def test_read_resource_dossier_artifact_returns_current_revision_body(
 
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
     library_id = create_test_library(db_session, bootstrapped_user, "Readable Synthesis")
-    content_md = "The whole synthesis prose with a citation [1]."
+    content_text = "The whole synthesis prose with a citation [1]."
     artifact_id = _make_library_artifact(
-        db_session, library_id, bootstrapped_user, content_md=content_md
+        db_session, library_id, bootstrapped_user, content_text=content_text
     )
     revision_id = _current_dossier_revision_id(db_session, artifact_id)
     uri = f"artifact:{artifact_id}"
@@ -259,7 +259,7 @@ def test_read_resource_dossier_artifact_returns_current_revision_body(
 
     assert not result.is_error, f"A member should read the artifact body; got {result}"
     assert result.kind == "artifact"
-    assert result.body == content_md
+    assert result.body == content_text
     assert result.subject_ref == f"library:{library_id}"
     assert result.artifact_ref == uri
     assert result.revision_ref == f"artifact_revision:{revision_id}"
@@ -283,7 +283,7 @@ def test_read_resource_dossier_revision_returns_exact_body_after_head_moves(
         db_session,
         library_id,
         bootstrapped_user,
-        content_md="Pinned synthesis body.",
+        content_text="Pinned synthesis body.",
     )
     pinned_revision_id = _current_dossier_revision_id(db_session, artifact_id)
     new_revision_id = _add_library_revision(
@@ -291,7 +291,7 @@ def test_read_resource_dossier_revision_returns_exact_body_after_head_moves(
         artifact_id=artifact_id,
         library_id=library_id,
         user_id=bootstrapped_user,
-        content_md="New head body.",
+        content_text="New head body.",
     ).scalar_one()
     db_session.execute(
         sql_text("UPDATE artifacts SET current_revision_id = :rev WHERE id = :artifact_id"),

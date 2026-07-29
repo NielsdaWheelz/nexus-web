@@ -36,14 +36,10 @@ export function dossierBuildFailureMessage(
       return "The model declined to generate this dossier.";
     case "ProviderIncomplete":
       return "The model returned an incomplete dossier. Try again.";
-    case "SchemaRepairExhausted":
+    case "DocumentValidationFailed":
       return "The generated dossier couldn't be validated. Try again.";
     case "CitationValidationFailed":
       return "The generated citations couldn't be verified. Try again.";
-    case "MigratedFailure":
-      return "This dossier failed before it was migrated. Regenerate to rebuild it.";
-    case "MigratedIncomplete":
-      return "This dossier was never completed before migration. Regenerate to build it.";
     default: {
       const exhaustive: never = code;
       throw new Error(`Unhandled dossier failure code: ${String(exhaustive)}`);

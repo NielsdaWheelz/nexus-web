@@ -28,6 +28,8 @@ type BackgroundLlmOperation = Literal[
     "dossier_contributor",
     "dossier_page",
     "dossier_note",
+    "dossier_idea",
+    "dossier_idea_resolve",
 ]
 type LlmOperation = BackgroundLlmOperation | Literal["chat"]
 
@@ -203,6 +205,8 @@ OPERATION_PROFILES: dict[BackgroundLlmOperation, str] = {
     "dossier_contributor": "balanced",
     "dossier_page": "fast",
     "dossier_note": "fast",
+    "dossier_idea": "balanced",
+    "dossier_idea_resolve": "fast",
 }
 
 

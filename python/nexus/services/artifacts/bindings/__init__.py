@@ -1,6 +1,6 @@
 """The closed Universal Dossier binding and subject-policy registries.
 
-Importing this owner installs exactly the seven eligible schemes into both
+Importing this owner installs exactly the eight eligible schemes into both
 registries.  The engine consumes the maps generically and contains no
 subject-specific branch.
 """
@@ -20,6 +20,8 @@ from nexus.services.artifacts.bindings.conversation import (
 from nexus.services.artifacts.bindings.conversation import (
     POLICY as CONVERSATION_POLICY,
 )
+from nexus.services.artifacts.bindings.idea import BINDING as IDEA_BINDING
+from nexus.services.artifacts.bindings.idea import POLICY as IDEA_POLICY
 from nexus.services.artifacts.bindings.library import (
     BINDING as LIBRARY_BINDING,
 )
@@ -60,6 +62,7 @@ BINDINGS: dict[str, DossierBinding] = {
     "contributor": CONTRIBUTOR_BINDING,
     "page": PAGE_BINDING,
     "note_block": NOTE_BINDING,
+    "idea": IDEA_BINDING,
 }
 
 SUBJECT_POLICIES.update(
@@ -71,11 +74,12 @@ SUBJECT_POLICIES.update(
         "contributor": CONTRIBUTOR_POLICY,
         "page": PAGE_POLICY,
         "note_block": NOTE_POLICY,
+        "idea": IDEA_POLICY,
     }
 )
 
-if set(BINDINGS) != set(SUBJECT_POLICIES) or len(BINDINGS) != 7:
-    raise AssertionError("Dossier binding/policy registries must contain exactly seven schemes")
+if set(BINDINGS) != set(SUBJECT_POLICIES) or len(BINDINGS) != 8:
+    raise AssertionError("Dossier binding/policy registries must contain exactly eight schemes")
 
 
 __all__ = ["BINDINGS", "DossierBinding"]

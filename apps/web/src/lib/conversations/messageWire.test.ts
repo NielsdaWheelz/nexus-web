@@ -32,6 +32,7 @@ const wireSnapshot = {
     resource_ref: "media:22222222-2222-4222-8222-222222222222",
     kind: "route",
     href: "/media/22222222-2222-4222-8222-222222222222",
+    unresolved_reason: null,
   },
 };
 

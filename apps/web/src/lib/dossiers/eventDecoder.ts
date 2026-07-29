@@ -8,7 +8,7 @@
 //
 // Every payload is validated strictly (json-values.md): a malformed persisted
 // event throws so the SSE client surfaces a stream error rather than dropping a
-// load-bearing Delta/Succeeded/Failed. Unknown event types also throw (loud, per
+// load-bearing Succeeded/Failed event. Unknown event types also throw (loud, per
 // house `Unknown SSE event type` convention).
 import { isRecord } from "@/lib/validation";
 import { decodePresence } from "@/lib/api/presence";
@@ -26,21 +26,13 @@ import type {
  * queue/coordination advisory frame (not yet landed at authoring time). */
 export const DOSSIER_ADVISORY_EVENT_TYPE = "ExecutionAdvisory";
 
-export interface DossierSubjectLocatorWire {
-  kind: "Resource" | "Contributor";
-  ref?: string;
-  handle?: string;
-}
-
 export type DossierStreamEvent =
   | {
       kind: "Started";
       buildHandle: string;
       artifactRef: string;
-      subjectLocator: DossierSubjectLocatorWire;
     }
   | { kind: "Progress"; phase: string; message: string }
-  | { kind: "Delta"; appendedText: string }
   | { kind: "Succeeded"; artifactRevisionRef: string }
   | { kind: "Failed"; facts: DossierFailedFacts }
   | { kind: "Cancelled"; facts: DossierCancelledFacts }
@@ -55,6 +47,17 @@ function str(value: unknown, field: string): string {
   return value;
 }
 
+function hasExactKeys(
+  value: Record<string, unknown>,
+  expected: readonly string[],
+): boolean {
+  const keys = Object.keys(value).sort();
+  return (
+    keys.length === expected.length &&
+    keys.every((key, index) => key === expected[index])
+  );
+}
+
 function decodeExecutionPhase(value: unknown): DossierExecutionPhase {
   if (
     value === "Queued" ||
@@ -65,20 +68,6 @@ function decodeExecutionPhase(value: unknown): DossierExecutionPhase {
     return value;
   }
   return fail("advisory phase");
-}
-
-function decodeSubjectLocator(value: unknown): DossierSubjectLocatorWire {
-  if (!isRecord(value)) fail("Started.subject_locator");
-  if (value.kind === "Resource") {
-    return { kind: "Resource", ref: str(value.ref, "Started.subject_locator.ref") };
-  }
-  if (value.kind === "Contributor") {
-    return {
-      kind: "Contributor",
-      handle: str(value.handle, "Started.subject_locator.handle"),
-    };
-  }
-  return fail("Started.subject_locator.kind");
 }
 
 /**
@@ -92,24 +81,27 @@ export function decodeDossierStreamEvent(
   if (!isRecord(data)) fail(type || "message");
   switch (type) {
     case "Started":
+      if (!hasExactKeys(data, ["artifact_ref", "build_handle"])) {
+        fail("Started fields");
+      }
       return {
         kind: "Started",
         buildHandle: str(data.build_handle, "Started.build_handle"),
         artifactRef: str(data.artifact_ref, "Started.artifact_ref"),
-        subjectLocator: decodeSubjectLocator(data.subject_locator),
       };
     case "Progress":
+      if (!hasExactKeys(data, ["message", "phase"])) {
+        fail("Progress fields");
+      }
       return {
         kind: "Progress",
         phase: str(data.phase, "Progress.phase"),
         message: str(data.message, "Progress.message"),
       };
-    case "Delta":
-      return {
-        kind: "Delta",
-        appendedText: str(data.appended_text, "Delta.appended_text"),
-      };
     case "Succeeded":
+      if (!hasExactKeys(data, ["artifact_revision_ref"])) {
+        fail("Succeeded fields");
+      }
       return {
         kind: "Succeeded",
         artifactRevisionRef: str(
@@ -118,6 +110,9 @@ export function decodeDossierStreamEvent(
         ),
       };
     case "Failed":
+      if (!hasExactKeys(data, ["detail", "failure_code", "support"])) {
+        fail("Failed fields");
+      }
       return {
         kind: "Failed",
         facts: {
@@ -130,6 +125,9 @@ export function decodeDossierStreamEvent(
         },
       };
     case "Cancelled":
+      if (!hasExactKeys(data, ["actor", "at"])) {
+        fail("Cancelled fields");
+      }
       return {
         kind: "Cancelled",
         facts: {
@@ -138,6 +136,9 @@ export function decodeDossierStreamEvent(
         },
       };
     case DOSSIER_ADVISORY_EVENT_TYPE:
+      if (!hasExactKeys(data, ["phase"])) {
+        fail("ExecutionAdvisory fields");
+      }
       return { kind: "Advisory", phase: decodeExecutionPhase(data.phase) };
     default:
       throw new Error(`Unknown SSE event type: ${type || "message"}`);

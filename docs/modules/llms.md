@@ -8,7 +8,8 @@ platform credentials (`llm_credentials.py`), the sole execution/ledger
 boundary (`llm_execution.py` + `llm_ledger.py`), the worker task envelope
 (`tasks/llm_task.py`), the structured-synthesis scaffold, and the chat
 failure/rerun projection. The generation surfaces — chat, oracle, synapse,
-dawn write, the seven Universal Dossier bindings, Media Intelligence, and
+dawn write, the eight Universal Dossier bindings, Idea resolution, Media
+Intelligence, and
 metadata enrichment — own their own prompts, schemas, semantic validation, and
 finalization writes; this module owns only what is identical across them.
 
@@ -109,8 +110,8 @@ any Nexus credential/execution path today.
 | Operation | Profile |
 |---|---|
 | `oracle`, `media_summary`, `metadata_enrichment`, `synapse` | `fast` |
-| `dossier_page`, `dossier_note` | `fast` |
-| `dossier_media`, `dossier_conversation`, `dossier_library`, `dossier_podcast`, `dossier_contributor` | `balanced` |
+| `dossier_page`, `dossier_note`, `dossier_idea_resolve` | `fast` |
+| `dossier_media`, `dossier_conversation`, `dossier_library`, `dossier_podcast`, `dossier_contributor`, `dossier_idea` | `balanced` |
 | `dawn_write` | `balanced` |
 | `chat` (`LlmOperation` adds this one) | user-selected `profile_id` |
 

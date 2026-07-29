@@ -1,23 +1,10 @@
-"""CP1 RED contract tests — Universal Dossier build lifecycle & concurrency (T4).
-
-Test-first for the hard cutover in
-``docs/cutovers/resource-inspector-and-universal-dossiers-hard-cutover.md``.
-
-These import the CANONICAL A19 target identifiers (``services/artifacts/engine``
-public API, ``services/artifacts/dossier_types``, ``services/artifacts/handles``)
-which do NOT exist yet, so this module fails at COLLECTION with ImportError.
-That is the intended RED. Once CP2 lands those modules and they behave per
-CONTRACTS.md §A5/§A6/§A19, these pass WITHOUT edits.
-
-Contract source: CONTRACTS.md A6 (rules 1-10), A5 (data contract), A19
-(create_build/run_build/cancel_build/make_current/read_head/on_subject_deleted,
-BuildTicket, typed exceptions, ArtifactBuildEventType). REDTESTS.md T4.
-"""
+"""Universal Dossier build lifecycle and concurrency contracts."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+from html import escape
 from uuid import UUID, uuid4
 
 import pytest
@@ -25,14 +12,15 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import Contributor, ContributorCredit, Page
-from nexus.jobs.queue import JobExecutionContext
-
-# --- CANONICAL A19 targets (do not exist yet -> ImportError == the RED) -------
-from nexus.services.artifacts.bindings import BINDINGS  # noqa: E402
-from nexus.services.artifacts.dossier_types import (  # noqa: E402
+from nexus.jobs.queue import JobExecutionContext, get_job
+from nexus.schemas.presence import absent
+from nexus.services.artifacts.bindings import BINDINGS
+from nexus.services.artifacts.coordination import DossierBuildRuntime
+from nexus.services.artifacts.dossier_types import (
     ArtifactBuildEventType,
     AudienceUser,
     BuildNotActive,
+    DossierAlreadyExists,
     DossierBuildFailureCode,
     DossierGenerationInProgress,
     DossierSubjectLocator,  # noqa: F401  (pins the union name)
@@ -42,18 +30,21 @@ from nexus.services.artifacts.dossier_types import (  # noqa: E402
     SubjectContributor,
     SubjectResource,
 )
-from nexus.services.artifacts.engine import (  # noqa: E402
+from nexus.services.artifacts.engine import (
     BuildTicket,
+    bootstrap_resource_dossier,
     cancel_build,
-    create_build,
     make_current,
     on_subject_audience_removed,
     on_subject_deleted,
     on_user_deleted,
     read_head,
-    run_build,
+    regenerate_artifact,
 )
-from nexus.services.artifacts.handles import (  # noqa: E402
+from nexus.services.artifacts.engine import (
+    run_build as _engine_run_build,
+)
+from nexus.services.artifacts.handles import (
     InvalidArtifactBuildHandle,
     seal_artifact_build,
     unseal_artifact_build,
@@ -109,10 +100,10 @@ def _rate_limiter(db_session):
 
 
 class _NoDispatchRuntime:
-    """A fake ExecutionRuntime that FAILS the test if the provider is dispatched.
+    """A fake LLM runtime that FAILS the test if the provider is dispatched.
 
     Pre-dispatch modeled failures (e.g. NoSourceMaterial) must never call the
-    provider — CONTRACTS A7 precedence rule 1 fires before dispatch.
+    provider — pre-dispatch precedence fires before synthesis.
     """
 
     def __init__(self) -> None:
@@ -124,6 +115,34 @@ class _NoDispatchRuntime:
 
     def stream(self, intent, plan, credential, *, cancel):  # noqa: ANN001, pragma: no cover
         raise NotImplementedError
+
+
+async def _run_dossier_build(
+    db: Session,
+    *,
+    build_id: UUID,
+    ctx: JobExecutionContext,
+    runtime,
+):
+    job = get_job(db, ctx.job_id)
+    assert job is not None
+    artifact_id = db.execute(
+        text("SELECT artifact_id FROM artifact_builds WHERE id = :build_id"),
+        {"build_id": build_id},
+    ).scalar_one()
+    return await _engine_run_build(
+        db,
+        build_id=build_id,
+        ctx=ctx,
+        runtime=DossierBuildRuntime(
+            build_id=build_id,
+            artifact_id=UUID(str(artifact_id)),
+            job=job,
+            execution_context=ctx,
+            llm_runtime=runtime,
+            web_search_provider=absent(),
+        ),
+    )
 
 
 def _user(db: Session) -> UUID:
@@ -169,7 +188,7 @@ def test_last_library_visibility_path_removal_purges_user_dossier(
         library_id,
         title="Shared only",
     )
-    ticket = create_build(
+    ticket = bootstrap_resource_dossier(
         db_session,
         locator=SubjectResource(ref=ResourceRef(scheme="media", id=media_id)),
         requester_user_id=member_id,
@@ -213,7 +232,7 @@ def test_shared_library_delete_rechecks_every_members_user_dossiers(
     add_media_to_library(db_session, surviving_library_id, media_id)
     db_session.commit()
     tickets = [
-        create_build(
+        bootstrap_resource_dossier(
             db_session,
             locator=SubjectResource(ref=ResourceRef(scheme="media", id=media_id)),
             requester_user_id=user_id,
@@ -222,7 +241,7 @@ def test_shared_library_delete_rechecks_every_members_user_dossiers(
         )
         for user_id in (owner_id, member_id)
     ]
-    surviving_ticket = create_build(
+    surviving_ticket = bootstrap_resource_dossier(
         db_session,
         locator=SubjectResource(ref=ResourceRef(scheme="media", id=media_id)),
         requester_user_id=surviving_owner_id,
@@ -296,14 +315,14 @@ def test_last_visible_work_removal_purges_media_and_contributor_user_dossiers(
         )
     )
     db_session.commit()
-    media_ticket = create_build(
+    media_ticket = bootstrap_resource_dossier(
         db_session,
         locator=SubjectResource(ref=ResourceRef(scheme="media", id=media_id)),
         requester_user_id=viewer_id,
         idempotency_key="last-visible-media",
         instruction=None,
     )
-    contributor_ticket = create_build(
+    contributor_ticket = bootstrap_resource_dossier(
         db_session,
         locator=SubjectContributor(
             handle=parse_contributor_handle(contributor.handle),
@@ -353,14 +372,14 @@ def test_user_teardown_purges_private_heads_and_cancels_shared_active_builds(
     library_id = create_test_library(db_session, library_owner_id)
     add_library_member(db_session, library_id, departing_user_id)
     private_conversation = create_test_conversation(db_session, departing_user_id)
-    private = create_build(
+    private = bootstrap_resource_dossier(
         db_session,
         locator=SubjectResource(ref=ResourceRef(scheme="conversation", id=private_conversation)),
         requester_user_id=departing_user_id,
         idempotency_key="private",
         instruction=None,
     )
-    shared = create_build(
+    shared = bootstrap_resource_dossier(
         db_session,
         locator=SubjectResource(ref=ResourceRef(scheme="library", id=library_id)),
         requester_user_id=departing_user_id,
@@ -495,7 +514,7 @@ def test_contributor_orphan_pruning_purges_its_dossier(
         )
     )
     db_session.commit()
-    ticket = create_build(
+    ticket = bootstrap_resource_dossier(
         db_session,
         locator=SubjectContributor(
             handle=parse_contributor_handle(contributor.handle),
@@ -547,16 +566,16 @@ def _children(db: Session, build_id: UUID) -> tuple[int, int, int]:
     return int(rev), int(fail), int(canc)
 
 
-# --- Rule 1 / Rule 2 (create_build; no worker needed) ------------------------
+# --- Rule 1 / Rule 2 (bootstrap_resource_dossier; no worker needed) ------------------------
 
 
 def test_r1_same_idempotency_key_returns_original_build(db_session: Session) -> None:
     uid = _user(db_session)
     loc = _conversation_locator(db_session, uid, with_messages=True)
-    t1 = create_build(
+    t1 = bootstrap_resource_dossier(
         db_session, locator=loc, requester_user_id=uid, idempotency_key="k-1", instruction=None
     )
-    t2 = create_build(
+    t2 = bootstrap_resource_dossier(
         db_session, locator=loc, requester_user_id=uid, idempotency_key="k-1", instruction=None
     )
     assert isinstance(t1, BuildTicket)
@@ -566,39 +585,59 @@ def test_r1_same_idempotency_key_returns_original_build(db_session: Session) -> 
     assert t2.created is False
 
 
-def test_r2_different_key_while_active_raises_generation_in_progress(db_session: Session) -> None:
+def test_bootstrap_is_rejected_after_the_head_exists(db_session: Session) -> None:
     uid = _user(db_session)
     loc = _conversation_locator(db_session, uid, with_messages=True)
-    create_build(
+    bootstrap_resource_dossier(
         db_session, locator=loc, requester_user_id=uid, idempotency_key="k-1", instruction=None
     )
-    with pytest.raises(DossierGenerationInProgress):
-        create_build(
+    with pytest.raises(DossierAlreadyExists):
+        bootstrap_resource_dossier(
             db_session, locator=loc, requester_user_id=uid, idempotency_key="k-2", instruction=None
         )
 
 
-def test_cancel_A_permits_build_B_immediately(db_session: Session) -> None:
-    """CONTRACTS A6: conflict key is the build_id — cancelling A permits B now."""
+def test_regenerate_while_active_raises_generation_in_progress(db_session: Session) -> None:
     uid = _user(db_session)
     loc = _conversation_locator(db_session, uid, with_messages=True)
-    a = create_build(
+    active = bootstrap_resource_dossier(
+        db_session, locator=loc, requester_user_id=uid, idempotency_key="k-1", instruction=None
+    )
+    with pytest.raises(DossierGenerationInProgress):
+        regenerate_artifact(
+            db_session,
+            artifact_id=active.artifact_id,
+            requester_user_id=uid,
+            idempotency_key="k-2",
+            instruction=None,
+        )
+
+
+def test_cancel_A_permits_build_B_immediately(db_session: Session) -> None:
+    """The conflict key is the build_id: cancelling A permits B immediately."""
+    uid = _user(db_session)
+    loc = _conversation_locator(db_session, uid, with_messages=True)
+    a = bootstrap_resource_dossier(
         db_session, locator=loc, requester_user_id=uid, idempotency_key="k-1", instruction=None
     )
     cancel_build(db_session, build_id=a.build_id, actor_user_id=uid)
-    b = create_build(
-        db_session, locator=loc, requester_user_id=uid, idempotency_key="k-2", instruction=None
+    b = regenerate_artifact(
+        db_session,
+        artifact_id=a.artifact_id,
+        requester_user_id=uid,
+        idempotency_key="k-2",
+        instruction=None,
     )
     assert b.created is True
     assert b.build_id != a.build_id
 
 
 def test_ineligible_subject_scheme_raises_invalid_subject_locator(db_session: Session) -> None:
-    """A1: exactly 7 eligible subjects; a message subject is not one."""
+    """A message is not an eligible Resource Dossier subject."""
     uid = _user(db_session)
     loc = SubjectResource(ref=ResourceRef(scheme="message", id=uuid4()))
     with pytest.raises(InvalidSubjectLocator):
-        create_build(
+        bootstrap_resource_dossier(
             db_session, locator=loc, requester_user_id=uid, idempotency_key="k-1", instruction=None
         )
 
@@ -609,7 +648,7 @@ def test_ineligible_subject_scheme_raises_invalid_subject_locator(db_session: Se
 def test_r8_cancel_is_idempotent_no_op(db_session: Session) -> None:
     uid = _user(db_session)
     loc = _conversation_locator(db_session, uid, with_messages=True)
-    t = create_build(
+    t = bootstrap_resource_dossier(
         db_session, locator=loc, requester_user_id=uid, idempotency_key="k-1", instruction=None
     )
     cancel_build(db_session, build_id=t.build_id, actor_user_id=uid)
@@ -623,28 +662,27 @@ def test_r7r8_run_after_cancel_returns_existing_without_new_child(db_session: Se
     child under the head lock and returns it — not a defect, no revision."""
     uid = _user(db_session)
     loc = _conversation_locator(db_session, uid, with_messages=True)
-    t = create_build(
+    t = bootstrap_resource_dossier(
         db_session, locator=loc, requester_user_id=uid, idempotency_key="k-1", instruction=None
     )
     ctx = _claim_build_ctx(db_session, build_id=t.build_id)
     cancel_build(db_session, build_id=t.build_id, actor_user_id=uid)
     rt = _NoDispatchRuntime()
-    asyncio.run(run_build(db_session, build_id=t.build_id, ctx=ctx, runtime=rt))
+    asyncio.run(_run_dossier_build(db_session, build_id=t.build_id, ctx=ctx, runtime=rt))
     assert _children(db_session, t.build_id) == (0, 0, 1)
     assert rt.calls == 0
 
 
 def test_no_source_material_then_cancel_raises_build_not_active(db_session: Session) -> None:
-    """An empty subject fails NoSourceMaterial BEFORE dispatch (A7 rule 1). A
-    succeeded/failed build is not active -> cancel raises BuildNotActive (A9/A19)."""
+    """A terminal NoSourceMaterial build cannot subsequently be cancelled."""
     uid = _user(db_session)
     loc = _conversation_locator(db_session, uid, with_messages=False)  # empty conversation
-    t = create_build(
+    t = bootstrap_resource_dossier(
         db_session, locator=loc, requester_user_id=uid, idempotency_key="k-1", instruction=None
     )
     ctx = _claim_build_ctx(db_session, build_id=t.build_id)
     rt = _NoDispatchRuntime()
-    asyncio.run(run_build(db_session, build_id=t.build_id, ctx=ctx, runtime=rt))
+    asyncio.run(_run_dossier_build(db_session, build_id=t.build_id, ctx=ctx, runtime=rt))
     assert rt.calls == 0
     assert _children(db_session, t.build_id) == (0, 1, 0)
     code = db_session.execute(
@@ -662,7 +700,7 @@ def test_no_source_material_then_cancel_raises_build_not_active(db_session: Sess
 def test_r6_persisted_conflicting_terminal_children_is_defect(db_session: Session) -> None:
     uid = _user(db_session)
     loc = _conversation_locator(db_session, uid, with_messages=True)
-    t = create_build(
+    t = bootstrap_resource_dossier(
         db_session, locator=loc, requester_user_id=uid, idempotency_key="k-1", instruction=None
     )
     # Illegal state: a cancellation AND a failure child for one build (A5 §643).
@@ -701,17 +739,23 @@ def _seed_success_revision(db: Session, *, build_id: UUID, owner_id: UUID, body:
     resolved = policy.resolve_locator(db, locator, owner_id)
     audience = policy.derive_audience(resolved, owner_id)
     manifest = BINDINGS["conversation"].live_manifest(db, resolved, audience)
+    content_html = (
+        "<article><header><h2>Dossier</h2></header>"
+        f"<section><p>{escape(body)}</p></section></article>"
+    )
     rid = uuid4()
     db.execute(
         text(
             "INSERT INTO artifact_revisions "
-            "(id, build_id, content_md, input_manifest, citation_owner_user_id, creator_user_id) "
-            "VALUES (:id, :b, :c, CAST(:manifest AS jsonb), :owner, :owner)"
+            "(id, build_id, content_html, content_text, input_manifest, "
+            "citation_owner_user_id, creator_user_id) "
+            "VALUES (:id, :b, :html, :body, CAST(:manifest AS jsonb), :owner, :owner)"
         ),
         {
             "id": rid,
             "b": build_id,
-            "c": body,
+            "html": content_html,
+            "body": body,
             "manifest": json.dumps(manifest.model_dump(mode="json")),
             "owner": owner_id,
         },
@@ -723,7 +767,7 @@ def _seed_success_revision(db: Session, *, build_id: UUID, owner_id: UUID, body:
 def test_read_head_hides_older_failure_after_later_success(db_session: Session) -> None:
     uid = _user(db_session)
     loc = _conversation_locator(db_session, uid, with_messages=False)
-    failed = create_build(
+    failed = bootstrap_resource_dossier(
         db_session,
         locator=loc,
         requester_user_id=uid,
@@ -731,7 +775,7 @@ def test_read_head_hides_older_failure_after_later_success(db_session: Session) 
         instruction=None,
     )
     asyncio.run(
-        run_build(
+        _run_dossier_build(
             db_session,
             build_id=failed.build_id,
             ctx=_claim_build_ctx(db_session, build_id=failed.build_id),
@@ -756,9 +800,9 @@ def test_read_head_hides_older_failure_after_later_success(db_session: Session) 
         role="assistant",
         content="And a settled answer to synthesize.",
     )
-    succeeded = create_build(
+    succeeded = regenerate_artifact(
         db_session,
-        locator=loc,
+        artifact_id=failed.artifact_id,
         requester_user_id=uid,
         idempotency_key="success-second",
         instruction=None,
@@ -786,7 +830,7 @@ def test_read_head_hides_older_cancellation_after_later_success(
 ) -> None:
     uid = _user(db_session)
     loc = _conversation_locator(db_session, uid, with_messages=True)
-    cancelled = create_build(
+    cancelled = bootstrap_resource_dossier(
         db_session,
         locator=loc,
         requester_user_id=uid,
@@ -798,9 +842,9 @@ def test_read_head_hides_older_cancellation_after_later_success(
         text("UPDATE artifact_builds SET created_at = '2026-07-22T00:00:00Z' WHERE id = :build_id"),
         {"build_id": cancelled.build_id},
     )
-    succeeded = create_build(
+    succeeded = regenerate_artifact(
         db_session,
-        locator=loc,
+        artifact_id=cancelled.artifact_id,
         requester_user_id=uid,
         idempotency_key="success-after-cancel",
         instruction=None,
@@ -826,7 +870,7 @@ def test_read_head_hides_older_cancellation_after_later_success(
 def test_r9_make_current_repoints_head_without_mutating_revision(db_session: Session) -> None:
     uid = _user(db_session)
     loc = _conversation_locator(db_session, uid, with_messages=True)
-    t = create_build(
+    t = bootstrap_resource_dossier(
         db_session, locator=loc, requester_user_id=uid, idempotency_key="k-1", instruction=None
     )
     rid = _seed_success_revision(db_session, build_id=t.build_id, owner_id=uid, body="Body text.")
@@ -837,9 +881,11 @@ def test_r9_make_current_repoints_head_without_mutating_revision(db_session: Ses
     assert UUID(str(current)) == rid
     # Make current never mutates the revision body.
     body = db_session.execute(
-        text("SELECT content_md FROM artifact_revisions WHERE id = :r"), {"r": rid}
+        text("SELECT content_html FROM artifact_revisions WHERE id = :r"), {"r": rid}
     ).scalar_one()
-    assert body == "Body text."
+    assert body == (
+        "<article><header><h2>Dossier</h2></header><section><p>Body text.</p></section></article>"
+    )
 
 
 def test_r9_make_current_unknown_revision_raises_revision_not_found(db_session: Session) -> None:
@@ -850,13 +896,11 @@ def test_r9_make_current_unknown_revision_raises_revision_not_found(db_session: 
 
 
 def test_r9_make_current_foreign_actor_is_rejected(db_session: Session) -> None:
-    """A revision under user A's private head cannot be made current by user B.
-    (Exact typed error is integrator-owned: RevisionNotOwnedByHead or masked
-    RevisionNotFound — both A19 exceptions.)"""
+    """A revision under user A's private head cannot be made current by user B."""
     owner = _user(db_session)
     other = _user(db_session)
     loc = _conversation_locator(db_session, owner, with_messages=True)
-    t = create_build(
+    t = bootstrap_resource_dossier(
         db_session, locator=loc, requester_user_id=owner, idempotency_key="k-1", instruction=None
     )
     rid = _seed_success_revision(db_session, build_id=t.build_id, owner_id=owner, body="Body.")
@@ -873,20 +917,38 @@ def test_r10_cleanup_wins_over_late_run(db_session: Session) -> None:
     create_test_message(db_session, conv_ref.id, seq=1, role="user", content="Something.")
     create_test_message(db_session, conv_ref.id, seq=2, role="assistant", content="A reply.")
     loc = SubjectResource(ref=conv_ref)
-    t = create_build(
+    t = bootstrap_resource_dossier(
         db_session, locator=loc, requester_user_id=uid, idempotency_key="k-1", instruction=None
     )
-    ctx = _claim_build_ctx(db_session, build_id=t.build_id)
+    claimed = claim_dossier_build_job(
+        db_session,
+        build_id=t.build_id,
+        worker_id="w-cleanup-race",
+    )
+    ctx = JobExecutionContext(
+        job_id=claimed.id,
+        worker_id="w-cleanup-race",
+        attempt_no=claimed.attempts,
+    )
+    runtime = DossierBuildRuntime(
+        build_id=t.build_id,
+        artifact_id=t.artifact_id,
+        job=claimed,
+        execution_context=ctx,
+        llm_runtime=_NoDispatchRuntime(),
+        web_search_provider=absent(),
+    )
     on_subject_deleted(db_session, conv_ref)  # deletes/invalidates the locked head first
     db_session.commit()
-    rt = _NoDispatchRuntime()
-    asyncio.run(run_build(db_session, build_id=t.build_id, ctx=ctx, runtime=rt))  # must no-op
+    asyncio.run(
+        _engine_run_build(db_session, build_id=t.build_id, ctx=ctx, runtime=runtime)
+    )  # must no-op
     head_rows = db_session.execute(
         text("SELECT count(*) FROM artifacts WHERE id = :a"), {"a": t.artifact_id}
     ).scalar_one()
     assert head_rows == 0
     assert _children(db_session, t.build_id) == (0, 0, 0)
-    assert rt.calls == 0
+    assert runtime.llm_runtime.calls == 0
 
 
 def test_r10_audience_removal_preserves_other_audience_head(db_session: Session) -> None:
@@ -929,11 +991,13 @@ def test_r10_audience_removal_preserves_other_audience_head(db_session: Session)
 def test_build_events_seq_unique_monotonic_with_terminal(db_session: Session) -> None:
     uid = _user(db_session)
     loc = _conversation_locator(db_session, uid, with_messages=False)  # -> NoSourceMaterial
-    t = create_build(
+    t = bootstrap_resource_dossier(
         db_session, locator=loc, requester_user_id=uid, idempotency_key="k-1", instruction=None
     )
     ctx = _claim_build_ctx(db_session, build_id=t.build_id)
-    asyncio.run(run_build(db_session, build_id=t.build_id, ctx=ctx, runtime=_NoDispatchRuntime()))
+    asyncio.run(
+        _run_dossier_build(db_session, build_id=t.build_id, ctx=ctx, runtime=_NoDispatchRuntime())
+    )
     rows = db_session.execute(
         text("SELECT seq, event_type FROM artifact_build_events WHERE build_id = :b ORDER BY seq"),
         {"b": t.build_id},
@@ -952,7 +1016,7 @@ def test_build_events_seq_unique_monotonic_with_terminal(db_session: Session) ->
 def test_handle_seal_unseal_roundtrip(db_session: Session) -> None:
     uid = _user(db_session)
     loc = _conversation_locator(db_session, uid, with_messages=True)
-    t = create_build(
+    t = bootstrap_resource_dossier(
         db_session, locator=loc, requester_user_id=uid, idempotency_key="k-1", instruction=None
     )
     assert isinstance(t.handle, str)
