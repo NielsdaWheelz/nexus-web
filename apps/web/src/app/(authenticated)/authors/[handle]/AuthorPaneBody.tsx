@@ -12,6 +12,7 @@ import {
 } from "react";
 import Button from "@/components/ui/Button";
 import CollectionView from "@/components/collections/CollectionView";
+import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { useConnectionsComposerController } from "@/components/connections/connectionsComposerController";
 import Input from "@/components/ui/Input";
@@ -28,7 +29,14 @@ import {
 } from "@/components/feedback/Feedback";
 import { isApiError } from "@/lib/api/client";
 import { contributorResource } from "@/lib/api/resource";
+import type {
+  CollectionCursor,
+  CollectionPage,
+  CollectionRevision,
+} from "@/lib/api/collectionPage";
+import type { Presence } from "@/lib/api/presence";
 import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
+import { useExhaustivePagination } from "@/lib/api/useExhaustivePagination";
 import { useResource } from "@/lib/api/useResource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -36,7 +44,10 @@ import {
   patchContributorDisplayName,
 } from "@/lib/contributors/api";
 import { createMutationIntent } from "@/lib/contributors/mutationIntent";
-import type { ContributorDetail } from "@/lib/contributors/types";
+import type {
+  ContributorDetail,
+  ContributorWorkItem,
+} from "@/lib/contributors/types";
 import { presentContributorWork } from "@/lib/collections/presenters/presentContributorWork";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { paneResourceLoaders, type AuthorPaneSeed } from "@/lib/panes/paneResourceLoaders";
@@ -62,6 +73,8 @@ type AuthorConnectionsResource =
 
 const AUTHOR_VISIT_DATA =
   definePaneVisitDataKey<AuthorPaneSeed>("Author.Works");
+const NO_CURSOR: Presence<CollectionCursor> = { kind: "Absent" };
+const ZERO_REVISION = 0 as CollectionRevision;
 
 function resolveAuthorConnectionsResource(
   resourceRef: string | null,
@@ -94,37 +107,41 @@ function resolveAuthorConnectionsResource(
 export default function AuthorPaneBody() {
   const handle = usePaneParam("handle");
   const paneRuntime = usePaneRuntime();
-  const activateTarget = requirePaneRuntime(
+  const runtime = requirePaneRuntime(
     paneRuntime,
     "AuthorPaneBody",
-  ).activateTarget;
+  );
+  const activateTarget = runtime.activateTarget;
   const committedSnapshotRef = useRef<AuthorPaneSeed | null>(null);
   const captureCommitted = useCallback(
     () => committedSnapshotRef.current,
     [],
   );
   const restored = usePaneVisitData(AUTHOR_VISIT_DATA, captureCommitted);
+  if (committedSnapshotRef.current === null && restored !== null) {
+    committedSnapshotRef.current = restored;
+  }
   const allowResourceAdoptionRef = useRef(restored === null);
-  const initialAuthor = useResource<AuthorPaneSeed, { handle: string }>({
-    descriptor: contributorResource,
-    params: handle && restored === null ? { handle } : null,
-    load: (params, signal) =>
+  const clearAllVisitData = useClearAllPaneVisitData();
+  const [firstPageVersion, setFirstPageVersion] = useState(0);
+  const [chainEpoch, setChainEpoch] = useState(0);
+  const initialAuthor = useResource<AuthorPaneSeed>({
+    cacheKey:
+      handle && (restored === null || firstPageVersion > 0)
+        ? firstPageVersion === 0
+          ? contributorResource.cacheKey({ handle })
+          : `${contributorResource.cacheKey({ handle })}:collection:${firstPageVersion}`
+        : null,
+    load: (signal) =>
       paneResourceLoaders.author!.load(
         clientResourceFetcher(signal),
-        params,
+        { handle: handle! },
       ) as Promise<AuthorPaneSeed>,
   });
 
   const [data, setData] = useState<AuthorPaneSeed | null>(restored);
-  const clearAllVisitData = useClearAllPaneVisitData();
   const [error, setError] = useState<FeedbackContent | null>(null);
-  const [worksError, setWorksError] = useState<FeedbackContent | null>(null);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
-  const [announcement, setAnnouncement] = useState("");
-
-  const worksRegionRef = useRef<HTMLElement>(null);
-  const pendingFocusIndexRef = useRef<number | null>(null);
 
   const loading =
     !!handle && !error && (data === null || data.detail.handle !== handle);
@@ -134,11 +151,7 @@ export default function AuthorPaneBody() {
   useEffect(() => {
     if (restored === null) setData(null);
     setError(handle ? null : { severity: "error", title: "Author handle is missing" });
-    setWorksError(null);
-    setLoadingMore(false);
     setRenameOpen(false);
-    setAnnouncement("");
-    pendingFocusIndexRef.current = null;
   }, [handle, restored]);
 
   // Seed the local copy from the initial resource's ready/error branch.
@@ -148,14 +161,15 @@ export default function AuthorPaneBody() {
       allowResourceAdoptionRef.current
     ) {
       allowResourceAdoptionRef.current = false;
+      committedSnapshotRef.current = initialAuthor.data;
       setData(initialAuthor.data);
+      setChainEpoch((epoch) => epoch + 1);
       setError(null);
     } else if (
       initialAuthor.status === "error" &&
       allowResourceAdoptionRef.current
     ) {
       setError(toFeedback(initialAuthor.error, { fallback: "Couldn't load this author." }));
-      setData(null);
     }
   }, [initialAuthor]);
 
@@ -165,6 +179,61 @@ export default function AuthorPaneBody() {
 
   usePaneReturnReady(data !== null || error !== null);
   useSetPaneLabel(loading ? null : (data?.detail.displayName ?? "Author"));
+
+  const refreshWorks = useCallback(() => {
+    allowResourceAdoptionRef.current = true;
+    clearAllVisitData();
+    setError(null);
+    setFirstPageVersion((version) => version + 1);
+  }, [clearAllVisitData]);
+  const commitWorksPage = useCallback(
+    (page: CollectionPage<ContributorWorkItem>): number => {
+      const current = committedSnapshotRef.current;
+      if (
+        current === null ||
+        current.collectionRevision !== page.collectionRevision
+      ) {
+        throw new Error("Author continuation settled for a stale collection");
+      }
+      const seen = new Set(current.works.map((work) => work.href));
+      const works = [...current.works];
+      for (const work of page.items) {
+        if (seen.has(work.href)) continue;
+        seen.add(work.href);
+        works.push(work);
+      }
+      const next: AuthorPaneSeed = {
+        ...current,
+        works,
+        nextCursor: page.nextCursor,
+        exhaustion:
+          page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
+      };
+      committedSnapshotRef.current = next;
+      setData(next);
+      return works.length;
+    },
+    [],
+  );
+  const exhaustion = useExhaustivePagination<ContributorWorkItem>({
+    active:
+      runtime.isActive &&
+      data !== null &&
+      data.detail.handle === handle,
+    chainKey: `${handle ?? ""}:${chainEpoch}`,
+    cursor: data?.nextCursor ?? NO_CURSOR,
+    collectionRevision: data?.collectionRevision ?? ZERO_REVISION,
+    itemCount: data?.works.length ?? 0,
+    loadPage: (cursor, collectionRevision, signal) =>
+      fetchContributorWorks(handle!, {
+        cursor,
+        collectionRevision,
+        limit: 100,
+        signal,
+      }),
+    commitPage: commitWorksPage,
+    refresh: refreshWorks,
+  });
 
   const workCount = data?.works.length ?? 0;
   const workRows = useMemo(
@@ -206,8 +275,6 @@ export default function AuthorPaneBody() {
     handle: canonicalHandle,
     bodies: { linkedItems: connectionsBody },
   });
-  // Render no folio when there are no works (content spec M3); a zero count
-  // would render the banned "0 works".
   usePanePrimaryChrome({
     actions: companionAction ? [companionAction] : [],
     menu: data
@@ -220,74 +287,12 @@ export default function AuthorPaneBody() {
     header: {
       kind: "section",
       folio:
-        workCount > 0
+        exhaustion.kind === "Complete"
           ? { kind: "count", value: workCount, unit: "work" }
           : { kind: "none" },
-      pending: loading,
+      pending: loading || exhaustion.kind === "Draining",
     },
   });
-
-  // After appending a Load-more page, move focus to the first newly-appended
-  // work title for keyboard continuity (content spec §4.2).
-  useEffect(() => {
-    const index = pendingFocusIndexRef.current;
-    if (index === null) return;
-    const region = worksRegionRef.current;
-    if (!region) return;
-
-    const focusAppendedTitle = () => {
-      const title = region
-        .querySelectorAll<HTMLAnchorElement>("[data-row-focusable]")
-        .item(index);
-      if (!title) return false;
-      pendingFocusIndexRef.current = null;
-      title.focus();
-      return true;
-    };
-    if (focusAppendedTitle()) return;
-
-    const observer = new MutationObserver(() => {
-      if (focusAppendedTitle()) observer.disconnect();
-    });
-    observer.observe(region, { childList: true, subtree: true });
-    return () => observer.disconnect();
-  }, [workCount]);
-
-  const loadMore = useCallback(async () => {
-    if (!handle || !data || data.worksNextCursor === null || loadingMore) return;
-    const cursor = data.worksNextCursor;
-    const canonicalHandle = data.detail.handle;
-    const appendAt = data.works.length;
-    setLoadingMore(true);
-    setWorksError(null);
-    try {
-      const page = await fetchContributorWorks(handle, { cursor });
-      setData((current) =>
-        current && current.detail.handle === canonicalHandle
-          ? {
-              ...current,
-              works: [...current.works, ...page.works],
-              worksNextCursor: page.nextCursor,
-            }
-          : current,
-      );
-      if (page.works.length > 0) {
-        pendingFocusIndexRef.current = appendAt;
-        setAnnouncement(
-          page.works.length === 1
-            ? "1 more work loaded"
-            : `${page.works.length} more works loaded`,
-        );
-      }
-    } catch (loadMoreError) {
-      if (handleUnauthenticatedApiError(loadMoreError)) return;
-      setWorksError(
-        toFeedback(loadMoreError, { fallback: "Couldn't load more works." }),
-      );
-    } finally {
-      setLoadingMore(false);
-    }
-  }, [handle, data, loadingMore]);
 
   const otherNames = data?.detail.otherNames ?? [];
   const handleRenamed = useCallback(
@@ -345,44 +350,21 @@ export default function AuthorPaneBody() {
             </section>
           ) : null}
 
-          <section ref={worksRegionRef} aria-label="Works">
+          <section aria-label="Works">
             <CollectionView
               returnScope="Author.Works"
               rows={workRows}
               status="ready"
               ariaLabel="Works"
+              collectionBusy={exhaustion.kind === "Draining"}
               surface={false}
-              empty={<p className={styles.empty}>No works yet.</p>}
-              footer={
-                data.worksNextCursor !== null ? (
-                  worksError ? (
-                    <div className={styles.worksError}>
-                      <FeedbackNotice feedback={worksError} />
-                      <Button variant="secondary" size="sm" onClick={() => void loadMore()}>
-                        Try again
-                      </Button>
-                    </div>
-                  ) : (
-                    <div className={styles.worksFooter}>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => void loadMore()}
-                        disabled={loadingMore}
-                        loading={loadingMore}
-                      >
-                        Load more
-                      </Button>
-                    </div>
-                  )
-                ) : null
+              notice={
+                error && data ? <FeedbackNotice feedback={error} /> : undefined
               }
+              empty={<p className={styles.empty}>No works yet.</p>}
+              footer={<CollectionExhaustionNotice state={exhaustion} />}
             />
           </section>
-
-          <div className="sr-only" role="status" aria-live="polite">
-            {announcement}
-          </div>
 
           {renameOpen ? (
             <RenameAuthorDialog

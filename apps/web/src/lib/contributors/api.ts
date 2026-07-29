@@ -1,14 +1,19 @@
 import { type ApiPath, apiFetch } from "@/lib/api/client";
+import {
+  decodeCollectionPage,
+  type CollectionCursor,
+  type CollectionPage,
+  type CollectionRevision,
+} from "@/lib/api/collectionPage";
 import { decodeContributorDetail } from "@/lib/contributors/detail";
 import { parseContributorHandle } from "@/lib/contributors/handle";
 import { decodeContributorWorkItem } from "@/lib/contributors/workItem";
-import { expectArray, expectNullableString } from "@/lib/validation";
 import type {
   ContributorDetail,
   ContributorRenameBody,
   ContributorSearchItem,
   ContributorSearchPage,
-  ContributorWorkPage,
+  ContributorWorkItem,
   MediaAuthorCredit,
   MediaAuthors,
   MediaAuthorsPutBody,
@@ -111,33 +116,29 @@ export async function fetchContributorDetail(handle: string): Promise<Contributo
 }
 
 export interface ContributorWorksOptions {
-  cursor?: string;
+  cursor?: CollectionCursor;
+  collectionRevision?: CollectionRevision;
   limit?: number;
+  signal?: AbortSignal;
 }
 
 export async function fetchContributorWorks(
   handle: string,
   options: ContributorWorksOptions = {},
-): Promise<ContributorWorkPage> {
+): Promise<CollectionPage<ContributorWorkItem>> {
   const params = new URLSearchParams();
   if (options.cursor) params.set("cursor", options.cursor);
+  if (options.collectionRevision !== undefined) {
+    params.set("collection_revision", String(options.collectionRevision));
+  }
   if (options.limit !== undefined) params.set("limit", String(options.limit));
   const suffix = params.toString();
   const path = `/api/contributors/${encode(handle)}/works${suffix ? `?${suffix}` : ""}` as ApiPath;
-  const response = await apiFetch<Envelope<{ works: unknown; nextCursor: unknown }>>(path, {
+  const response = await apiFetch<unknown>(path, {
     cache: "no-store",
+    signal: options.signal,
   });
-  return {
-    works: expectArray(
-      response.data.works,
-      decodeContributorWorkItem,
-      "ContributorWorkPage.works",
-    ),
-    nextCursor: expectNullableString(
-      response.data.nextCursor,
-      "ContributorWorkPage.nextCursor",
-    ),
-  };
+  return decodeCollectionPage(response, decodeContributorWorkItem);
 }
 
 export async function putMediaAuthors(

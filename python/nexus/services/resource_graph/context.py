@@ -9,14 +9,13 @@ Admission and search-scope semantics live here, in code, not in schema:
 - ``app_search`` may scope only to ``media:``/``library:`` targets.
 
 Mutators are flush-only (§9.0); committing wrappers belong to the routes.
-Pagination mirrors ``nexus.services.conversations`` cursor shape, kept local so
-this module does not depend on conversation list internals.
+Pagination uses the shared signed keyset codec with a context-specific family
+bound to viewer and exact target.
 """
 
 from __future__ import annotations
 
-import base64
-import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import cast
@@ -47,6 +46,12 @@ from nexus.services.resource_items.capabilities import (
     resource_can_attach,
 )
 from nexus.services.resource_items.routing import resource_activation_for_ref
+from nexus.services.signed_keyset_cursor import (
+    KeysetValue,
+    KeysetValueKind,
+    decode_signed_keyset_cursor,
+    encode_signed_keyset_cursor,
+)
 
 _DEFAULT_LIMIT = 50
 _MIN_LIMIT = 1
@@ -236,7 +241,15 @@ def list_conversations_with_any_edge_to_ref(
         "target_id": target.id,
         "limit": limit + 1,
     }
-    cursor_clause, cursor_params = _decode_cursor_clause(cursor)
+    cursor_query = {
+        "viewerId": str(viewer_id),
+        "targetScheme": target.scheme,
+        "targetId": str(target.id),
+    }
+    cursor_clause, cursor_params = _decode_cursor_clause(
+        cursor,
+        query=cursor_query,
+    )
     params.update(cursor_params)
 
     rows = db.execute(
@@ -283,7 +296,11 @@ def list_conversations_with_any_edge_to_ref(
     next_cursor = None
     if has_more and conversations:
         last = conversations[-1]
-        next_cursor = _encode_cursor(last.updated_at, last.id)
+        next_cursor = _encode_cursor(
+            last.updated_at,
+            last.id,
+            query=cursor_query,
+        )
 
     return ConversationPage(conversations=conversations, page=PageInfo(next_cursor=next_cursor))
 
@@ -436,28 +453,40 @@ def _next_context_source_order_key(db: Session, *, viewer_id: UUID, conversation
     return f"{int(existing) + 1:010d}"
 
 
-def _decode_cursor_clause(cursor: str | None) -> tuple[str, dict[str, object]]:
+def _decode_cursor_clause(
+    cursor: str | None,
+    *,
+    query: Mapping[str, object],
+) -> tuple[str, dict[str, object]]:
     """Decode a conversation cursor into a SQL fragment + bound params."""
     if not cursor:
         return "", {}
-    try:
-        padding = 4 - len(cursor) % 4
-        if padding != 4:
-            cursor += "=" * padding
-        payload = json.loads(base64.urlsafe_b64decode(cursor).decode("utf-8"))
-        updated_at = datetime.fromisoformat(payload["updated_at"])
-        conversation_id = UUID(payload["id"])
-    except (ValueError, KeyError, TypeError):
-        # justify-ignore-error: expected malformed-cursor failures from the
-        # base64url/JSON decode and primitive parsing path. Other exceptions
-        # propagate.
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
+    updated_at, conversation_id = decode_signed_keyset_cursor(
+        cursor,
+        family="ConversationContext",
+        query=query,
+        expected_kinds=(
+            KeysetValueKind.DateTime,
+            KeysetValueKind.Uuid,
+        ),
+    )
     return (
         "AND (c.updated_at, c.id) < (:cursor_updated_at, :cursor_id)",
         {"cursor_updated_at": updated_at, "cursor_id": conversation_id},
     )
 
 
-def _encode_cursor(updated_at: datetime, conversation_id: UUID) -> str:
-    payload = json.dumps({"updated_at": updated_at.isoformat(), "id": str(conversation_id)})
-    return base64.urlsafe_b64encode(payload.encode("utf-8")).decode("ascii").rstrip("=")
+def _encode_cursor(
+    updated_at: datetime,
+    conversation_id: UUID,
+    *,
+    query: Mapping[str, object],
+) -> str:
+    return encode_signed_keyset_cursor(
+        family="ConversationContext",
+        query=query,
+        after=(
+            KeysetValue(KeysetValueKind.DateTime, updated_at),
+            KeysetValue(KeysetValueKind.Uuid, conversation_id),
+        ),
+    )

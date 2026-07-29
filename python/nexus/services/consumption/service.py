@@ -91,6 +91,11 @@ from nexus.schemas.consumption_activity import (
 )
 from nexus.schemas.presence import Absent, Present, absent, nullable_from_presence, present
 from nexus.schemas.reader import CursorWrite, ReaderCursorSnapshot
+from nexus.services.collection_revisions import (
+    CollectionFamily,
+    bump_collection_families,
+    read_collection_revision,
+)
 from nexus.services.consumption import (
     _activity_stats,
     _activity_store,
@@ -605,6 +610,19 @@ def _put_reader_cursor_op(
         was_finished=was_finished,
         kind=media_kind,
     )
+    families = [CollectionFamily.LibraryEntries]
+    if media_kind == MediaKind.podcast_episode.value:
+        families.extend(
+            (
+                CollectionFamily.PodcastEpisodes,
+                CollectionFamily.PodcastSubscriptions,
+            )
+        )
+    bump_collection_families(
+        db,
+        viewer_ids=(viewer_id,),
+        families=families,
+    )
     db.commit()
     return snapshot
 
@@ -777,6 +795,7 @@ class _ConsumptionEffect:
     next_item_id: UUID | None = None
     progress_media_id: UUID | None = None
     completion_handle: CompletionHandle | None = None
+    revision_media_id: UUID | None = None
 
 
 def run_consumption_command(viewer_id: UUID, command: ConsumptionCommand) -> ConsumptionResult:
@@ -823,6 +842,12 @@ def _run_consumption_command_op(
         return result
 
     effect = _apply_consumption_command(db, viewer_id, command)
+    _bump_collections_for_consumption_command(
+        db,
+        viewer_id=viewer_id,
+        command=command,
+        effect=effect,
+    )
     outcome_memo: dict[str, object] = {"kind": effect.kind}
     if effect.removed_item_id is not None:
         outcome_memo["itemId"] = str(effect.removed_item_id)
@@ -872,7 +897,7 @@ def _apply_consumption_command(
     if isinstance(command, SetUnreadCommand):
         _require_readable(db, viewer_id, command.media_id)
         _write_unread_state(db, viewer_id, command.media_id)
-        return _ConsumptionEffect(kind="StateOnly")
+        return _ConsumptionEffect(kind="StateOnly", revision_media_id=command.media_id)
     if isinstance(command, ResetProgressCommand):
         return _apply_reset_progress(db, viewer_id, command)
     if isinstance(command, UndoCompletionCommand):
@@ -885,7 +910,7 @@ def _apply_consumption_command(
                 ApiErrorCode.E_INVALID_REQUEST, "Completion is no longer undoable"
             )
         _write_unread_state(db, viewer_id, media_id)
-        return _ConsumptionEffect(kind="StateOnly")
+        return _ConsumptionEffect(kind="StateOnly", revision_media_id=media_id)
     return _apply_set_batch_state(db, viewer_id, command)
 
 
@@ -925,6 +950,91 @@ def _apply_set_batch_state(
         else:
             _write_unread_state(db, viewer_id, media_id)
     return _ConsumptionEffect(kind="StateOnly")
+
+
+def set_podcast_episode_states_in_txn(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_ids: list[UUID],
+    state: Literal["Finished", "Unread"],
+) -> int:
+    """Apply an already-resolved Podcast query selection in the caller's txn."""
+    normalized_ids = _dedupe(media_ids)
+    if not normalized_ids:
+        return 0
+    before = media_read_states(db, viewer_id=viewer_id, media_ids=normalized_ids)
+    for media_id in normalized_ids:
+        _require_readable(db, viewer_id, media_id)
+    kinds = _media_kinds(db, normalized_ids)
+    if any(kinds.get(media_id) != MediaKind.podcast_episode.value for media_id in normalized_ids):
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_KIND,
+            "Batch state changes are podcast-episode only",
+        )
+    target = "finished" if state == "Finished" else "unread"
+    changed_count = sum(1 for media_id in normalized_ids if before[media_id].state != target)
+    for media_id in normalized_ids:
+        if state == "Finished":
+            _write_finished_state(
+                db,
+                viewer_id,
+                media_id,
+                kind=MediaKind.podcast_episode.value,
+            )
+        else:
+            _write_unread_state(db, viewer_id, media_id)
+    if changed_count:
+        bump_collection_families(
+            db,
+            viewer_ids=(viewer_id,),
+            families=(
+                CollectionFamily.LibraryEntries,
+                CollectionFamily.PodcastEpisodes,
+                CollectionFamily.PodcastSubscriptions,
+            ),
+        )
+    return changed_count
+
+
+def _bump_collections_for_consumption_command(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    command: ConsumptionCommand,
+    effect: _ConsumptionEffect,
+) -> None:
+    if isinstance(command, SetBatchStateCommand):
+        media_ids = command.media_ids
+    elif isinstance(
+        command,
+        (
+            EnsureMediaFinishedCommand,
+            SetUnreadCommand,
+            ResetProgressCommand,
+        ),
+    ):
+        media_ids = [command.media_id]
+    elif isinstance(command, FinishLecternItemCommand):
+        media_ids = [command.media_id]
+    elif isinstance(command, UndoCompletionCommand) and effect.revision_media_id is not None:
+        media_ids = [effect.revision_media_id]
+    else:
+        return
+    families = [CollectionFamily.LibraryEntries]
+    kinds = _media_kinds(db, _dedupe(media_ids))
+    if any(kind == MediaKind.podcast_episode.value for kind in kinds.values()):
+        families.extend(
+            (
+                CollectionFamily.PodcastEpisodes,
+                CollectionFamily.PodcastSubscriptions,
+            )
+        )
+    bump_collection_families(
+        db,
+        viewer_ids=(viewer_id,),
+        families=families,
+    )
 
 
 def _apply_reset_progress(
@@ -1055,6 +1165,11 @@ def _build_consumption_result(
         next_item=next_item,
         progress_state=progress_state,
         completion_handle=present(completion_handle) if completion_handle is not None else absent(),
+        library_entries_collection_revision=read_collection_revision(
+            db,
+            viewer_id=viewer_id,
+            family=CollectionFamily.LibraryEntries,
+        ),
     )
 
 
@@ -1260,6 +1375,15 @@ def _record_heartbeat_op(
         media_id=media_id,
         was_finished=was_finished,
         kind=MediaKind.podcast_episode.value,
+    )
+    bump_collection_families(
+        db,
+        viewer_ids=(viewer_id,),
+        families=(
+            CollectionFamily.LibraryEntries,
+            CollectionFamily.PodcastEpisodes,
+            CollectionFamily.PodcastSubscriptions,
+        ),
     )
     db.commit()
     return ListeningHeartbeatResult(

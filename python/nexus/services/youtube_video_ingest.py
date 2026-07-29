@@ -13,6 +13,10 @@ from nexus.config import get_settings
 from nexus.db.models import Media, MediaKind
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
+from nexus.services.collection_revisions import (
+    CollectionFamily,
+    bump_all_collection_families,
+)
 from nexus.services.contributor_taxonomy import (
     NOT_OBSERVED,
     ContributorObservationBatch,
@@ -318,6 +322,13 @@ def _persist_youtube_metadata(
         media.publisher = author[:255]
 
     media.updated_at = datetime.now(UTC)
+    bump_all_collection_families(
+        db,
+        families=(
+            CollectionFamily.AuthorWorks,
+            CollectionFamily.LibraryEntries,
+        ),
+    )
     return _build_youtube_observation(author, metadata.get("channel_id"))
 
 

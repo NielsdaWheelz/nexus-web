@@ -1,5 +1,10 @@
 # Resonance + Reading Slate Hard Cutover
 
+> **Finite-list update (2026-07-29):**
+> [`complete-collection-lists-hard-cutover.md`](complete-collection-lists-hard-cutover.md)
+> renders the Library Reading Slate only after the entry inventory is complete;
+> there is no intervening pagination control.
+>
 > **Superseded (2026-07-22):**
 > [`library-sorting-hard-cutover.md`](library-sorting-hard-cutover.md) deletes
 > this document's non-default library Resonance ordering (`rank_library_entry_page`,

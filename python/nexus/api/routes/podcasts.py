@@ -1,16 +1,19 @@
 """Podcast discovery and subscription routes."""
 
-from typing import Annotated, Literal
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db
+from nexus.db.session import get_db, get_repeatable_read_db
+from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import ok
+from nexus.schemas.collection_page import parse_collection_query
 from nexus.schemas.podcast import (
+    PodcastEpisodeSelection,
     PodcastOpmlImportRequest,
     PodcastSubscribeRequest,
     PodcastSubscriptionSettingsPatchRequest,
@@ -51,33 +54,47 @@ def subscribe_to_podcast(
 
 @router.get("/podcasts/subscriptions")
 def list_subscriptions(
+    request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    limit: Annotated[int, Query(ge=1, le=200)] = 100,
-    offset: Annotated[int, Query(ge=0)] = 0,
-    sort: Annotated[
-        Literal["recent_episode", "unplayed_count", "alpha"],
-        Query(),
-    ] = "recent_episode",
-    q: Annotated[str | None, Query()] = None,
-    filter: Annotated[
-        Literal["all", "has_new", "not_in_library"],
-        Query(),
-    ] = "all",
-    library_id: Annotated[UUID | None, Query()] = None,
+    db: Annotated[Session, Depends(get_repeatable_read_db)],
 ) -> dict:
     """List active podcast subscriptions for the viewer."""
-    rows = podcast_subscriptions_query_service.list_subscriptions(
+    parsed = parse_collection_query(
+        request.query_params.multi_items(),
+        domain_keys=frozenset({"sort", "filter", "q", "library_id"}),
+    )
+    sort = parsed.parameters.get("sort", "recent_episode")
+    filter_value = parsed.parameters.get("filter", "all")
+    if sort not in {"recent_episode", "unplayed_count", "alpha"}:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Invalid podcast subscriptions sort option",
+        )
+    if filter_value not in {"all", "has_new", "not_in_library"}:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Invalid podcast subscriptions filter option",
+        )
+    library_value = parsed.parameters.get("library_id")
+    try:
+        library_id = UUID(library_value) if library_value is not None else None
+    except ValueError as exc:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Invalid podcast library scope",
+        ) from exc
+    page = podcast_subscriptions_query_service.list_subscriptions(
         db,
         viewer.user_id,
-        limit=limit,
-        offset=offset,
-        sort=sort,
-        q=q,
-        filter=filter,
+        limit=parsed.limit,
+        cursor=parsed.cursor,
+        collection_revision=parsed.collection_revision,
+        sort=sort,  # type: ignore[arg-type]
+        q=parsed.parameters.get("q"),
+        filter=filter_value,  # type: ignore[arg-type]
         library_id=library_id,
     )
-    return ok(rows)
+    return ok(page, by_alias=True)
 
 
 @router.post("/podcasts/import/opml")
@@ -148,7 +165,7 @@ def patch_subscription_settings(
         podcast_id=podcast_id,
         body=body,
     )
-    return ok(out)
+    return ok(out, by_alias=True)
 
 
 @router.post("/podcasts/subscriptions/{podcast_id}/sync", status_code=202)
@@ -163,7 +180,7 @@ def refresh_subscription_sync(
         viewer_id=viewer.user_id,
         podcast_id=podcast_id,
     )
-    return JSONResponse(status_code=202, content=ok(out))
+    return JSONResponse(status_code=202, content=ok(out, by_alias=True))
 
 
 @router.delete("/podcasts/subscriptions/{podcast_id}")
@@ -178,7 +195,7 @@ def unsubscribe_from_podcast(
         viewer.user_id,
         podcast_id,
     )
-    return ok(out)
+    return ok(out, by_alias=True)
 
 
 @router.get("/podcasts/{podcast_id}")
@@ -197,25 +214,52 @@ def get_podcast_detail(
 @router.get("/podcasts/{podcast_id}/episodes")
 def list_podcast_episodes(
     podcast_id: UUID,
+    request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
-    state: Literal["all", "unplayed", "in_progress", "played"] = Query(default="all"),
-    sort: Literal["newest", "oldest", "duration_asc", "duration_desc"] = Query(default="newest"),
-    q: str | None = Query(default=None),
+    db: Annotated[Session, Depends(get_repeatable_read_db)],
 ) -> dict:
     """List viewer-visible episodes for one podcast."""
-    rows = podcast_episodes_service.list_podcast_episodes_for_viewer(
+    parsed = parse_collection_query(
+        request.query_params.multi_items(),
+        domain_keys=frozenset({"state", "sort", "q"}),
+    )
+    state = parsed.parameters.get("state", "all")
+    sort = parsed.parameters.get("sort", "newest")
+    if state not in {"all", "unplayed", "in_progress", "played"}:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Invalid podcast episode state",
+        )
+    if sort not in {"newest", "oldest", "duration_asc", "duration_desc"}:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Invalid podcast episode sort option",
+        )
+    page = podcast_episodes_service.list_podcast_episodes_for_viewer(
         db,
         viewer.user_id,
         podcast_id,
-        limit=limit,
-        offset=offset,
-        state=state,
-        sort=sort,
-        q=q,
+        limit=parsed.limit,
+        cursor=parsed.cursor,
+        collection_revision=parsed.collection_revision,
+        state=state,  # type: ignore[arg-type]
+        sort=sort,  # type: ignore[arg-type]
+        q=parsed.parameters.get("q"),
     )
-    # by_alias=True: MediaOut.player_descriptor is the sole aliased field
-    # (playerDescriptor, spec §6); every sibling stays snake_case (D-1).
-    return ok(rows, by_alias=True)
+    return ok(page, by_alias=True)
+
+
+@router.post("/podcasts/{podcast_id}/episodes/mark-played")
+def mark_podcast_episode_selection_played(
+    podcast_id: UUID,
+    body: PodcastEpisodeSelection,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    result = podcast_episodes_service.mark_episode_selection_played(
+        db,
+        viewer_id=viewer.user_id,
+        podcast_id=podcast_id,
+        selection=body,
+    )
+    return ok(result, by_alias=True)

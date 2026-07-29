@@ -15,6 +15,10 @@ from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.logging import get_logger
 from nexus.services import library_entries
 from nexus.services import media_source_types as source_types
+from nexus.services.collection_revisions import (
+    CollectionFamily,
+    bump_all_collection_families,
+)
 from nexus.services.contributor_taxonomy import (
     ContributorObservationBatch,
     RawCreditEntry,
@@ -486,6 +490,13 @@ def _refresh_x_author_thread_media_for_viewer(
                 duration_ms=_duration_ms(started_at),
                 snapshot=snapshot,
             )
+            bump_all_collection_families(
+                db,
+                families=(
+                    CollectionFamily.AuthorWorks,
+                    CollectionFamily.LibraryEntries,
+                ),
+            )
             return (
                 None,
                 ProcessingStatus.ready_for_reading.value,
@@ -794,6 +805,13 @@ def _replace_x_post_snapshot_artifacts(
             items=prepared_fragment.apparatus_items,
         ),
         edges=prepared_fragment.apparatus_edges,
+    )
+    bump_all_collection_families(
+        db,
+        families=(
+            CollectionFamily.AuthorWorks,
+            CollectionFamily.LibraryEntries,
+        ),
     )
 
 

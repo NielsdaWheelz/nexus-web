@@ -21,6 +21,10 @@ from nexus.errors import (
     NotFoundError,
 )
 from nexus.ids import new_uuid7
+from nexus.services.collection_revisions import (
+    CollectionFamily,
+    bump_collection_families,
+)
 from nexus.services.resource_graph.refs import (
     ResourceRef,
     assert_resource_ref,
@@ -264,6 +268,14 @@ def count_for_media(db: Session, media_id: UUID) -> int:
 def _notify_user_visibility_changed(db: Session, user_ids: set[UUID]) -> None:
     if not user_ids:
         return
+    bump_collection_families(
+        db,
+        viewer_ids=user_ids,
+        families=(
+            CollectionFamily.AuthorWorks,
+            CollectionFamily.PodcastEpisodes,
+        ),
+    )
     from nexus.services.artifacts.dossier_types import AudienceUser
     from nexus.services.artifacts.engine import on_audience_visibility_changed
 

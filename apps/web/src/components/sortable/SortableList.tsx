@@ -68,6 +68,7 @@ interface SortableListProps<T> {
   readonly renderItem: (props: SortableListRenderItemProps<T>) => ReactNode;
   readonly onReorder: (nextItems: T[]) => void;
   readonly ariaLabel: string;
+  readonly busy?: boolean;
   readonly disabled?: boolean;
 }
 
@@ -154,6 +155,7 @@ export default function SortableList<T>({
   renderItem,
   onReorder,
   ariaLabel,
+  busy,
   disabled = false,
 }: SortableListProps<T>) {
   const [announcement, setAnnouncement] = useState("");
@@ -295,7 +297,9 @@ export default function SortableList<T>({
       onDragEnd={handleDragEnd}
     >
       <SortableContext items={itemIds} strategy={verticalListSortingStrategy}>
-        <ResourceList ariaLabel={ariaLabel}>{sortableItems}</ResourceList>
+        <ResourceList ariaLabel={ariaLabel} busy={busy}>
+          {sortableItems}
+        </ResourceList>
       </SortableContext>
       <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {announcement}

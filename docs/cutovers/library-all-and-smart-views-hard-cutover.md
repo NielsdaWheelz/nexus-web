@@ -1,5 +1,11 @@
 # Library All And Smart Views Hard Cutover
 
+> **Finite-list update (2026-07-29):**
+> [`complete-collection-lists-hard-cutover.md`](complete-collection-lists-hard-cutover.md)
+> replaces this document's entry cursor envelope, `Load More`, and terminal
+> continuation recovery. Exact Library view identity and ordering remain owned
+> here.
+>
 Status: IMPLEMENTED — 2026-07-27 (source cutover complete and focus-verified;
 the production preflight, production-fixture query-plan comparison, and the
 backend-first Hetzner/Vercel release in §Production Release remain release-time

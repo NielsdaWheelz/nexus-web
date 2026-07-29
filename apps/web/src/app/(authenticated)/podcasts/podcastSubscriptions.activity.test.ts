@@ -9,30 +9,15 @@ function wire(
 ): PodcastSubscriptionListItemWire {
   return {
     podcast_id: "podcast-1",
-    status: "active",
+    title: "Signal Path",
+    contributors: [],
     sync_status: "complete",
-    sync_error_code: null,
-    sync_error_message: null,
-    sync_attempts: 0,
-    sync_started_at: null,
-    sync_completed_at: null,
-    last_synced_at: null,
-    updated_at: "2026-07-20T12:00:00Z",
+    default_playback_speed: { kind: "Absent" },
+    auto_queue: false,
     unplayed_count: 2,
-    latest_episode_published_at: "2026-07-20T12:00:00Z",
-    visible_libraries: [],
-    podcast: {
-      id: "podcast-1",
-      provider: "rss",
-      provider_podcast_id: "feed-1",
-      title: "Signal Path",
-      contributors: [],
-      feed_url: "https://example.test/feed.xml",
-      website_url: null,
-      image_url: null,
-      description: null,
-      created_at: "2026-07-01T00:00:00Z",
-      updated_at: "2026-07-20T12:00:00Z",
+    latest_episode_published_at: {
+      kind: "Present",
+      value: "2026-07-20T12:00:00Z",
     },
     ...overrides,
   };
@@ -61,8 +46,45 @@ describe("decodePodcastSubscriptionListItem activity facts", () => {
   it("rejects an unreal latest-episode date", () => {
     expect(() =>
       decodePodcastSubscriptionListItem(
-        wire({ latest_episode_published_at: "2026-02-30" }),
+        wire({
+          latest_episode_published_at: {
+            kind: "Present",
+            value: "2026-02-30",
+          },
+        }),
       ),
     ).toThrow(/latest_episode_published_at/);
+  });
+
+  it("strictly decodes embedded contributor credits", () => {
+    const validCredit = {
+      contributor_handle: "ada-lovelace",
+      contributor_display_name: "Ada Lovelace",
+      href: "/authors/ada-lovelace",
+      credited_name: "A. Lovelace",
+      role: "host",
+      raw_role: null,
+      ordinal: 0,
+    };
+    expect(
+      decodePodcastSubscriptionListItem(
+        wire({ contributors: [validCredit] }),
+      ).contributors,
+    ).toEqual([validCredit]);
+
+    expect(() =>
+      decodePodcastSubscriptionListItem(
+        wire({
+          contributors: [{ ...validCredit, unexpected: true }] as never,
+        }),
+      ),
+    ).toThrow(/Podcast subscription contributors/);
+    expect(() =>
+      decodePodcastSubscriptionListItem(
+        wire({
+          contributors: [{ ...validCredit, credited_name: 42 }] as never,
+        }),
+      ),
+    ).toThrow(/credited_name/);
   });
 });

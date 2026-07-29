@@ -6,6 +6,10 @@ import {
   patchContributorDisplayName,
   putMediaAuthors,
 } from "./api";
+import type {
+  CollectionCursor,
+  CollectionRevision,
+} from "@/lib/api/collectionPage";
 
 const CONTRIBUTOR_ID = "11111111-1111-4111-8111-111111111111";
 const MEDIA_ID = "22222222-2222-4222-8222-222222222222";
@@ -126,10 +130,12 @@ describe("contributor api decode boundary", () => {
 
   it("decodes a works page with role facts and an opaque cursor", async () => {
     stubFetch((path) => {
-      expect(path).toBe("/api/contributors/ursula-le-guin/works?cursor=abc");
+      expect(path).toBe(
+        "/api/contributors/ursula-le-guin/works?cursor=abc&collection_revision=7",
+      );
       return jsonResponse({
         data: {
-          works: [
+          items: [
             {
               title: "A Wizard of Earthsea",
               href: "/media/1",
@@ -139,22 +145,26 @@ describe("contributor api decode boundary", () => {
               actionTarget: resourceTarget("media", MEDIA_ID, `/media/${MEDIA_ID}`),
             },
           ],
-          nextCursor: null,
+          collectionRevision: 7,
+          nextCursor: { kind: "Absent" },
         },
       });
     });
 
-    const page = await fetchContributorWorks("ursula-le-guin", { cursor: "abc" });
-    expect(page.works[0].roleFacts[0].role).toBe("author");
-    expect(page.works[0].date).toEqual({ kind: "Present", value: "1968" });
-    expect(page.nextCursor).toBeNull();
+    const page = await fetchContributorWorks("ursula-le-guin", {
+      cursor: "abc" as CollectionCursor,
+      collectionRevision: 7 as CollectionRevision,
+    });
+    expect(page.items[0].roleFacts[0].role).toBe("author");
+    expect(page.items[0].date).toEqual({ kind: "Present", value: "1968" });
+    expect(page.nextCursor).toEqual({ kind: "Absent" });
   });
 
   it("rejects a malformed contributor-work publication date", async () => {
     stubFetch(() =>
       jsonResponse({
         data: {
-          works: [
+          items: [
             {
               title: "Impossible",
               href: "/media/impossible",
@@ -164,7 +174,8 @@ describe("contributor api decode boundary", () => {
               actionTarget: resourceTarget("media", MEDIA_ID, `/media/${MEDIA_ID}`),
             },
           ],
-          nextCursor: null,
+          collectionRevision: 0,
+          nextCursor: { kind: "Absent" },
         },
       }),
     );

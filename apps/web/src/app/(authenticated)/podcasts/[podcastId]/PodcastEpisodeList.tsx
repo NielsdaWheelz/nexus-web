@@ -14,13 +14,14 @@ import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
+import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
+import type { ExhaustionState } from "@/lib/api/useExhaustivePagination";
 import { presentEpisode } from "@/lib/collections/presenters/episode";
 import {
   RESOURCE_ACTION_CATALOG,
   type ResourceActionId,
 } from "@/lib/actions/resourceActions";
-import { useConnectionSummaries } from "@/lib/collections/useConnectionSummaries";
 import { requireDocumentProcessingStatus } from "@/lib/media/documentReadiness";
 import type { LecternItemId } from "@/lib/lectern/contract";
 import type { ActionSelectDetail } from "@/lib/ui/actionDescriptor";
@@ -69,12 +70,11 @@ interface PodcastEpisodeListProps {
   playNextDisabledMediaId: string | null;
   /** Whether the Lectern snapshot is Ready; its mutations defect until then. */
   lecternReady: boolean;
-  visibleUnplayedEpisodeIds: string[];
+  matchingEpisodeCount: number;
   markAllAsPlayedBusy: boolean;
-  hasMoreEpisodes: boolean;
-  loadingMoreEpisodes: boolean;
-  onMarkAllVisibleUnplayedAsPlayed: () => void;
-  onLoadMoreEpisodes: () => void;
+  collectionBusy: boolean;
+  exhaustion: ExhaustionState;
+  onMarkAllMatchingAsPlayed: () => void;
   onToggleShowNotes: (mediaId: string) => void;
   onPlayNext: (mediaId: string) => Promise<void>;
   onAddToLectern: (mediaId: string) => Promise<void>;
@@ -115,12 +115,11 @@ export default function PodcastEpisodeList({
   lecternItemsByMediaId,
   playNextDisabledMediaId,
   lecternReady,
-  visibleUnplayedEpisodeIds,
+  matchingEpisodeCount,
   markAllAsPlayedBusy,
-  hasMoreEpisodes,
-  loadingMoreEpisodes,
-  onMarkAllVisibleUnplayedAsPlayed,
-  onLoadMoreEpisodes,
+  collectionBusy,
+  exhaustion,
+  onMarkAllMatchingAsPlayed,
   onToggleShowNotes,
   onPlayNext,
   onAddToLectern,
@@ -133,10 +132,14 @@ export default function PodcastEpisodeList({
   onTogglePlayed,
   onResetProgress,
 }: PodcastEpisodeListProps) {
-  const connectionSummaries = useConnectionSummaries(
-    episodes.map((episode) => `media:${episode.id}`),
-  );
-
+  const selectionIsNarrowed =
+    episodeStateFilter !== "all" || episodeSearchInput.trim().length > 0;
+  const transcriptCommandLabel = selectionIsNarrowed
+    ? "Transcribe matching episodes"
+    : "Transcribe all episodes";
+  const markPlayedCommandLabel = selectionIsNarrowed
+    ? "Mark matching episodes as played"
+    : "Mark all episodes as played";
   // Playback presence gates playback-only view actions. Lectern relationship
   // applicability comes exclusively from the ready membership snapshot, just
   // as it does in the opened media pane.
@@ -176,7 +179,6 @@ export default function PodcastEpisodeList({
         activityFacts: decodeEpisodeTimingFacts(episode.listening_state),
       },
       {
-        connectionSummary: connectionSummaries.get(`media:${episode.id}`),
         retryProcessing: episode.capabilities.can_retry
           ? {
               kind: "Available",
@@ -291,7 +293,7 @@ export default function PodcastEpisodeList({
             : []),
         ]),
         view: [
-          ...(episode.description_text?.trim()
+          ...(episode.has_show_notes
             ? [
                 {
                   kind: "command" as const,
@@ -425,7 +427,9 @@ export default function PodcastEpisodeList({
     <div className={styles.episodePaneContent}>
       <div className={styles.episodePaneHeaderRow}>
         <div className={styles.episodeHeaderActions}>
-          <span>{episodes.length} episodes</span>
+          {!loading && error === null && exhaustion.kind === "Complete" ? (
+            <span>{exhaustion.itemCount} episodes</span>
+          ) : null}
         </div>
         <ActionMenu
           label="Episode actions"
@@ -435,19 +439,22 @@ export default function PodcastEpisodeList({
               id: "transcribe-unplayed",
               label: transcript.batchTranscriptBusy
                 ? "Transcribing..."
-                : "Transcribe unplayed",
+                : transcriptCommandLabel,
               disabled:
                 transcript.batchTranscriptBusy ||
-                transcript.batchTranscriptCandidateEpisodes.length === 0,
+                !transcriptionAllowed ||
+                matchingEpisodeCount === 0,
               onSelect: () => void transcript.handleBatchTranscriptRequest(),
             },
             {
               kind: "command",
               id: "mark-all-played",
-              label: markAllAsPlayedBusy ? "Marking..." : "Mark all as played",
+              label: markAllAsPlayedBusy
+                ? "Marking..."
+                : markPlayedCommandLabel,
               disabled:
-                markAllAsPlayedBusy || visibleUnplayedEpisodeIds.length === 0,
-              onSelect: () => onMarkAllVisibleUnplayedAsPlayed(),
+                markAllAsPlayedBusy || matchingEpisodeCount === 0,
+              onSelect: () => onMarkAllMatchingAsPlayed(),
             },
           ]}
         />
@@ -515,6 +522,8 @@ export default function PodcastEpisodeList({
         returnScope="PodcastDetail.Episodes"
         rows={rows}
         status="ready"
+        collectionBusy={collectionBusy}
+        footer={<CollectionExhaustionNotice state={exhaustion} />}
         ariaLabel="Episodes"
         rowPanels={rowPanels}
         empty={
@@ -524,19 +533,6 @@ export default function PodcastEpisodeList({
               title="No episodes found for this podcast."
             />
           ) : null
-        }
-        footer={
-          !loading && hasMoreEpisodes ? (
-            <Button
-              variant="secondary"
-              size="md"
-              onClick={() => onLoadMoreEpisodes()}
-              disabled={loadingMoreEpisodes}
-              aria-label="Load more episodes"
-            >
-              {loadingMoreEpisodes ? "Loading..." : "Load more episodes"}
-            </Button>
-          ) : undefined
         }
       />
     </div>

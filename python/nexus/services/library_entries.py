@@ -7,15 +7,10 @@ The visibility readers in `auth/permissions.py` and the search/object modules re
 the table under an explicit allowlist (see the cutover spec).
 """
 
-import base64
-import binascii
-import hashlib
-import hmac
-import json
 import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any, Literal, assert_never, cast
 from uuid import UUID
 
@@ -30,24 +25,40 @@ from nexus.auth.permissions import (
     visible_media_ids_cte_sql,
     visible_podcast_ids_cte_sql,
 )
-from nexus.config import get_settings
 from nexus.db.retries import retry_read_committed
 from nexus.db.session import transaction
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
+from nexus.schemas.collection_page import (
+    CollectionCursor,
+    CollectionPage,
+    CollectionRevision,
+    ParsedCollectionQuery,
+    parse_collection_query,
+)
 from nexus.schemas.library import (
     LibraryEntryKind,
+    LibraryEntryListItemOut,
+    LibraryEntryMediaCapabilitiesOut,
+    LibraryEntryMediaOut,
     LibraryEntryOrderRequest,
-    LibraryEntryOut,
-    LibraryPageInfo,
+    LibraryEntryPodcastOut,
+    LibraryEntryPodcastSubscriptionOut,
+    LibraryEntryRemovalOut,
+    LibraryMediaListItemOut,
     LibraryPlacementOptionOut,
-    LibraryPodcastOut,
-    LibraryPodcastSubscriptionOut,
+    LibraryPodcastListItemOut,
     ReadingTimeEstimateOut,
 )
 from nexus.schemas.podcast import PodcastSubscriptionVisibleLibraryOut
 from nexus.schemas.presence import Presence, absent, present
 from nexus.services import library_governance as governance
 from nexus.services.billing_entitlements import get_effective_entitlements
+from nexus.services.collection_revisions import (
+    CollectionFamily,
+    bump_all_collection_revisions,
+    read_collection_revision,
+    require_collection_revision,
+)
 from nexus.services.consumption import service as consumption_service
 from nexus.services.contributor_credits import (
     load_contributor_credits_for_podcasts,
@@ -55,6 +66,12 @@ from nexus.services.contributor_credits import (
 )
 from nexus.services.media_document_metrics import load_media_word_counts
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
+from nexus.services.signed_keyset_cursor import (
+    KeysetValue,
+    KeysetValueKind,
+    decode_signed_keyset_cursor,
+    encode_signed_keyset_cursor,
+)
 
 # Mirrors index ix_library_entries_library_order (library_id, position, created_at DESC,
 # id DESC). The single definition of the entry total order.
@@ -65,6 +82,17 @@ _TARGET_COLUMN: dict[LibraryEntryKind, str] = {"media": "media_id", "podcast": "
 _READING_WORDS_PER_MINUTE = 240
 _READING_MINUTES_FINE_LIMIT = 10
 _READING_MINUTES_COARSE_LIMIT = 60
+
+
+def _bump_entry_visibility_revisions(db: Session) -> None:
+    """Invalidate every finite inventory whose membership can change via filing."""
+    for family in (
+        CollectionFamily.AuthorWorks,
+        CollectionFamily.LibraryEntries,
+        CollectionFamily.PodcastSubscriptions,
+        CollectionFamily.PodcastEpisodes,
+    ):
+        bump_all_collection_revisions(db, family=family)
 
 
 # ---------------------------------------------------------------------------
@@ -132,9 +160,7 @@ class LibraryEntryView:
     projection: LibraryEntryProjection
 
 
-_ALLOWED_QUERY_KEYS = frozenset(
-    {"sort", "direction", "completion", "projection", "cursor", "limit"}
-)
+_VIEW_QUERY_KEYS = frozenset({"sort", "direction", "completion", "projection"})
 _FACTUAL_SORTS: dict[str, type[Title | Creator | Published | Added]] = {
     "title": Title,
     "creator": Creator,
@@ -147,29 +173,17 @@ _MAX_LIMIT = 200
 
 def parse_entries_query(
     items: Sequence[tuple[str, str]],
-) -> tuple[LibraryEntryView, int, str | None]:
+) -> tuple[LibraryEntryView, ParsedCollectionQuery]:
     """Strict entry-view query parse (spec API validation). ``items`` is the
     request's ``multi_items()`` so duplicate keys are visible. Every malformed
     request — unknown/duplicate key, factual sort without direction, direction
     without a factual sort, unsupported sort/completion, bad/non-positive limit —
     is ``E_INVALID_REQUEST``. Cursor validity is checked separately at decode."""
-    seen: dict[str, str] = {}
-    for key, value in items:
-        if key not in _ALLOWED_QUERY_KEYS:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST, "Unsupported library-entry query parameter"
-            )
-        if key in seen:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST, "Duplicate library-entry query parameter"
-            )
-        seen[key] = value
-
-    order = _parse_order(seen.get("sort"), seen.get("direction"))
-    completion = _parse_completion(seen.get("completion"))
-    projection = _parse_projection(seen.get("projection"), completion)
-    limit = _parse_limit(seen.get("limit"))
-    return LibraryEntryView(order=order, projection=projection), limit, seen.get("cursor")
+    query = parse_collection_query(items, domain_keys=_VIEW_QUERY_KEYS)
+    order = _parse_order(query.parameters.get("sort"), query.parameters.get("direction"))
+    completion = _parse_completion(query.parameters.get("completion"))
+    projection = _parse_projection(query.parameters.get("projection"), completion)
+    return LibraryEntryView(order=order, projection=projection), query
 
 
 def _parse_projection(value: str | None, completion: Completion) -> LibraryEntryProjection:
@@ -214,19 +228,6 @@ def _parse_completion(value: str | None) -> Completion:
     if value == "unfinished":
         return "unfinished"
     raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported completion")
-
-
-def _parse_limit(value: str | None) -> int:
-    if value is None:
-        return _DEFAULT_LIMIT
-    try:
-        limit = int(value)
-    except ValueError:
-        # justify-ignore-error: a non-integer limit is an expected API error path.
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid limit") from None
-    if limit <= 0:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
-    return min(limit, _MAX_LIMIT)
 
 
 def library_media_ids_cte_sql(*, library_param: str = ":library_id") -> str:
@@ -841,7 +842,7 @@ def hydrate_entry_page(
     *,
     viewer_id: UUID,
     facts: Sequence[LibraryEntryHydrationFact],
-) -> list[LibraryEntryOut]:
+) -> list[LibraryEntryListItemOut]:
     """Strictly hydrate already-visible facts supplied across an owner boundary."""
     rows = [
         {
@@ -868,8 +869,8 @@ def hydrate_entry_page(
 
 def _hydrate_entry_rows(
     db: Session, *, viewer_id: UUID, rows: Sequence[Any]
-) -> list[LibraryEntryOut]:
-    """Hydrate name-keyed entry rows (_ENTRY_COLUMNS) into LibraryEntryOut, batching
+) -> list[LibraryEntryListItemOut]:
+    """Hydrate name-keyed entry rows into the compact Library list union, batching
     the media and podcast lookups. Entries whose target is not viewer-visible drop out."""
     if not rows:
         return []
@@ -883,15 +884,31 @@ def _hydrate_entry_rows(
 
         media_by_id = {
             media.id: media
-            for media in media_service.list_media_for_viewer_by_ids(db, viewer_id, media_ids)
+            for media in media_service.list_collection_media_for_viewer_by_ids(
+                db,
+                viewer_id=viewer_id,
+                media_ids=media_ids,
+            )
         }
 
-    for media in media_by_id.values():
-        if media.read_state is None:
-            # justify-service-invariant-check: shared MediaOut permits contexts
-            # without viewer state; Library hydration requires the correlated projection.
-            # justify-defect: the viewer-scoped media loader must hydrate every row.
-            raise AssertionError(f"missing Library read state for media {media.id}")
+    audio_media_ids = [
+        media.id for media in media_by_id.values() if media.listening_state is not None
+    ]
+    document_media_ids = [
+        media.id for media in media_by_id.values() if media.listening_state is None
+    ]
+    last_engaged_at_by_media_id = consumption_service.listening_recency(
+        db,
+        viewer_id=viewer_id,
+        media_ids=audio_media_ids,
+    )
+    last_engaged_at_by_media_id.update(
+        consumption_service.reader_engagement_recency(
+            db,
+            viewer_id=viewer_id,
+            media_ids=document_media_ids,
+        )
+    )
 
     eligible_media_ids = [
         media.id
@@ -957,27 +974,12 @@ def _hydrate_entry_rows(
                 )
                 SELECT
                     p.id AS podcast_id,
-                    p.provider AS provider,
-                    p.provider_podcast_id AS provider_podcast_id,
                     p.title AS title,
-                    p.feed_url AS feed_url,
-                    p.website_url AS website_url,
-                    p.image_url AS image_url,
-                    p.description AS description,
-                    p.created_at AS podcast_created_at,
-                    p.updated_at AS podcast_updated_at,
                     COALESCE(pu.unplayed_count, 0) AS unplayed_count,
                     ps.status AS sub_status,
                     ps.default_playback_speed AS sub_default_playback_speed,
                     ps.auto_queue AS sub_auto_queue,
-                    ps.sync_status AS sub_sync_status,
-                    ps.sync_error_code AS sub_sync_error_code,
-                    ps.sync_error_message AS sub_sync_error_message,
-                    ps.sync_attempts AS sub_sync_attempts,
-                    ps.sync_started_at AS sub_sync_started_at,
-                    ps.sync_completed_at AS sub_sync_completed_at,
-                    ps.last_synced_at AS sub_last_synced_at,
-                    ps.updated_at AS sub_updated_at
+                    ps.sync_status AS sub_sync_status
                 FROM podcasts p
                 LEFT JOIN podcast_unplayed pu ON pu.podcast_id = p.id
                 LEFT JOIN podcast_subscriptions ps
@@ -992,7 +994,7 @@ def _hydrate_entry_rows(
         podcast_rows_by_id = {UUID(str(row["podcast_id"])): row for row in podcast_rows}
     contributors_by_podcast_id = load_contributor_credits_for_podcasts(db, podcast_ids)
 
-    hydrated: list[LibraryEntryOut] = []
+    hydrated: list[LibraryEntryListItemOut] = []
     for row in rows:
         media_id = UUID(str(row["media_id"])) if row["media_id"] is not None else None
         podcast_id = UUID(str(row["podcast_id"])) if row["podcast_id"] is not None else None
@@ -1001,15 +1003,37 @@ def _hydrate_entry_rows(
             if media is None:
                 continue
             hydrated.append(
-                LibraryEntryOut(
+                LibraryMediaListItemOut(
                     id=UUID(str(row["id"])),
-                    library_id=UUID(str(row["library_id"])),
                     kind="media",
                     position=int(row["position"]),
                     created_at=row["created_at"],
-                    media=media,
-                    podcast=None,
-                    subscription=None,
+                    media=LibraryEntryMediaOut(
+                        id=media.id,
+                        kind=cast(
+                            "Literal['web_article', 'epub', 'pdf', 'podcast_episode', 'video']",
+                            media.kind,
+                        ),
+                        title=media.title,
+                        created_at=media.created_at,
+                        contributors=media.contributors,
+                        author_mode=media.author_mode,
+                        published_date=media.published_date,
+                        canonical_source_url=media.canonical_source_url,
+                        processing_status=media.processing_status,
+                        read_state=media.read_state,
+                        progress_fraction=media.progress_fraction,
+                        progress_resettable=media.progress_resettable,
+                        last_engaged_at=last_engaged_at_by_media_id.get(media.id),
+                        capabilities=LibraryEntryMediaCapabilitiesOut(
+                            can_quote=media.capabilities.can_quote,
+                            can_retry=media.capabilities.can_retry,
+                            can_refresh_source=media.capabilities.can_refresh_source,
+                            can_retry_metadata=media.capabilities.can_retry_metadata,
+                            can_edit_authors=media.capabilities.can_edit_authors,
+                            can_delete=media.capabilities.can_delete,
+                        ),
+                    ),
                     reading_time_estimate=(
                         present(reading_time_by_media_id[media_id])
                         if media_id in reading_time_by_media_id
@@ -1027,42 +1051,25 @@ def _hydrate_entry_rows(
 
         subscription = None
         if podcast_row["sub_status"] is not None:
-            subscription = LibraryPodcastSubscriptionOut(
+            subscription = LibraryEntryPodcastSubscriptionOut(
                 status=podcast_row["sub_status"],
                 default_playback_speed=float(podcast_row["sub_default_playback_speed"])
                 if podcast_row["sub_default_playback_speed"] is not None
                 else None,
                 auto_queue=bool(podcast_row["sub_auto_queue"]),
                 sync_status=podcast_row["sub_sync_status"],
-                sync_error_code=podcast_row["sub_sync_error_code"],
-                sync_error_message=podcast_row["sub_sync_error_message"],
-                sync_attempts=int(podcast_row["sub_sync_attempts"] or 0),
-                sync_started_at=podcast_row["sub_sync_started_at"],
-                sync_completed_at=podcast_row["sub_sync_completed_at"],
-                last_synced_at=podcast_row["sub_last_synced_at"],
-                updated_at=podcast_row["sub_updated_at"],
             )
 
         hydrated.append(
-            LibraryEntryOut(
+            LibraryPodcastListItemOut(
                 id=UUID(str(row["id"])),
-                library_id=UUID(str(row["library_id"])),
                 kind="podcast",
                 position=int(row["position"]),
                 created_at=row["created_at"],
-                media=None,
-                podcast=LibraryPodcastOut(
+                podcast=LibraryEntryPodcastOut(
                     id=podcast_id,
-                    provider=podcast_row["provider"],
-                    provider_podcast_id=podcast_row["provider_podcast_id"],
                     title=podcast_row["title"],
                     contributors=contributors_by_podcast_id.get(podcast_id, []),
-                    feed_url=podcast_row["feed_url"],
-                    website_url=podcast_row["website_url"],
-                    image_url=podcast_row["image_url"],
-                    description=podcast_row["description"],
-                    created_at=podcast_row["podcast_created_at"],
-                    updated_at=podcast_row["podcast_updated_at"],
                     unplayed_count=int(podcast_row["unplayed_count"] or 0),
                 ),
                 subscription=subscription,
@@ -1196,15 +1203,16 @@ def ensure_media_in_library(
         # Idempotent re-file clears a tombstone even when the entry already
         # existed (spec S4.3 rule 6 / AC4).
         clear_user_media_deletion(db, viewer_id, media_id)
+        _bump_entry_visibility_revisions(db)
 
     return LibraryFilingOutcome(inserted=inserted)
 
 
 def ensure_media_absent_from_library_for_viewer(
     db: Session, viewer_id: UUID, media_id: UUID, library_id: UUID
-) -> None:
+) -> LibraryEntryRemovalOut:
     """Idempotently remove one media from a writable non-default library."""
-    _ensure_media_absent_from_library_for_viewer(
+    return _ensure_media_absent_from_library_for_viewer(
         db,
         viewer_id=viewer_id,
         media_id=media_id,
@@ -1216,9 +1224,9 @@ def ensure_media_absent_from_library_for_viewer(
 
 def undo_media_filing_for_viewer(
     db: Session, viewer_id: UUID, media_id: UUID, library_id: UUID
-) -> None:
+) -> LibraryEntryRemovalOut:
     """Undo one agent-created media filing, including a direct Default filing."""
-    _ensure_media_absent_from_library_for_viewer(
+    return _ensure_media_absent_from_library_for_viewer(
         db,
         viewer_id=viewer_id,
         media_id=media_id,
@@ -1236,8 +1244,17 @@ def _ensure_media_absent_from_library_for_viewer(
     library_id: UUID,
     require_non_default_destination: bool,
     retry_label: str,
-) -> None:
-    def attempt() -> None:
+) -> LibraryEntryRemovalOut:
+    def outcome() -> LibraryEntryRemovalOut:
+        return LibraryEntryRemovalOut(
+            library_entries_collection_revision=read_collection_revision(
+                db,
+                viewer_id=viewer_id,
+                family=CollectionFamily.LibraryEntries,
+            )
+        )
+
+    def attempt() -> LibraryEntryRemovalOut:
         with transaction(db):
             context = governance.lock_library_for_member(db, viewer_id, library_id, lock=False)
             governance.require_admin(context.role)
@@ -1247,14 +1264,14 @@ def _ensure_media_absent_from_library_for_viewer(
 
             target = media_target(media_id)
             if not entry_exists(db, library_id, target):
-                return
+                return outcome()
 
             if lock_media_rows_in_order(db, [media_id]) != [media_id]:
                 if not entry_exists(db, library_id, target):
                     # Concurrent whole-resource or whole-library teardown also removes
                     # this entry. Its commit is a successful serial predecessor for this
                     # idempotent command.
-                    return
+                    return outcome()
                 # justify-service-invariant-check: the initial target entry authorized
                 # media reachability, so a missing media row is safe only after a fresh
                 # READ COMMITTED statement confirms that entry disappeared with it.
@@ -1267,7 +1284,7 @@ def _ensure_media_absent_from_library_for_viewer(
                 governance.require_non_default(context.is_default)
             governance.require_not_system(context.system_key)
             if not entry_exists(db, library_id, target):
-                return
+                return outcome()
 
             raise_if_media_teardown_pending(db, media_id)
             reference_count = count_entries_for_media(db, media_id)
@@ -1287,8 +1304,10 @@ def _ensure_media_absent_from_library_for_viewer(
                 # justify-defect: the exact entry cannot disappear while both locks are held.
                 raise AssertionError("locked media library entry disappeared before delete")
             normalize_positions(db, library_id)
+            _bump_entry_visibility_revisions(db)
+            return outcome()
 
-    retry_read_committed(db, retry_label, attempt)
+    return retry_read_committed(db, retry_label, attempt)
 
 
 def add_podcast_to_library(
@@ -1321,6 +1340,8 @@ def add_podcast_to_library(
                 db, actor_user_id=viewer_id, library_id=library_id
             )
         inserted = ensure_entry(db, library_id, target)
+        if inserted:
+            _bump_entry_visibility_revisions(db)
     return LibraryFilingOutcome(inserted=inserted)
 
 
@@ -1337,12 +1358,15 @@ def seed_media_into_system_library(db: Session, library_id: UUID, media_id: UUID
     ).fetchone()
     if system_library is None:
         raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "System library not found")
-    return ensure_entry(db, library_id, media_target(media_id))
+    inserted = ensure_entry(db, library_id, media_target(media_id))
+    if inserted:
+        _bump_entry_visibility_revisions(db)
+    return inserted
 
 
 def remove_podcast_from_library(
     db: Session, viewer_id: UUID, library_id: UUID, podcast_id: UUID
-) -> None:
+) -> LibraryEntryRemovalOut:
     """Remove a podcast from a non-default library. Admin-only; default forbidden."""
     with transaction(db):
         ctx = governance.lock_library_for_member(db, viewer_id, library_id)
@@ -1353,6 +1377,14 @@ def remove_podcast_from_library(
             db, library_id=library_id, podcast_id=podcast_id
         ):
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found in library")
+        _bump_entry_visibility_revisions(db)
+        return LibraryEntryRemovalOut(
+            library_entries_collection_revision=read_collection_revision(
+                db,
+                viewer_id=viewer_id,
+                family=CollectionFamily.LibraryEntries,
+            )
+        )
 
 
 def _remove_podcast_from_library_in_txn(db: Session, *, library_id: UUID, podcast_id: UUID) -> bool:
@@ -1397,14 +1429,13 @@ def remove_user_podcast_subscription_libraries(
     for library_id in sorted(removable_library_ids):
         delete_entry(db, library_id, podcast_target(podcast_id))
         normalize_positions(db, library_id)
+    if removable_library_ids:
+        _bump_entry_visibility_revisions(db)
 
     return PodcastLibraryRemovalResult(
         removed_from_library_count=len(removable_library_ids),
         retained_shared_library_count=retained_shared_library_count,
     )
-
-
-type _SortValue = Literal["int", "datetime", "uuid", "text", "text_or_null"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -1414,7 +1445,7 @@ class _SortKey:
 
     column: str
     direction: Direction
-    value: _SortValue
+    value: KeysetValueKind
 
 
 def _plan(order: LibraryEntryOrder, *, is_default: bool) -> list[_SortKey]:
@@ -1422,34 +1453,37 @@ def _plan(order: LibraryEntryOrder, *, is_default: bool) -> list[_SortKey]:
     cursor `after`. The identity tie-break is ALWAYS ``sort_identity DESC``
     (stable regardless of primary direction); missing-rank keys are ALWAYS ASC so
     missing sorts last in both directions (0=present, 1=missing)."""
-    identity = _SortKey("sort_identity", "desc", "uuid")
+    identity = _SortKey("sort_identity", "desc", KeysetValueKind.Uuid)
     match order:
         case Canonical():
             if is_default:
-                return [_SortKey("media_created_at", "desc", "datetime"), identity]
+                return [
+                    _SortKey("media_created_at", "desc", KeysetValueKind.DateTime),
+                    identity,
+                ]
             return [
-                _SortKey("position", "asc", "int"),
-                _SortKey("created_at", "desc", "datetime"),
+                _SortKey("position", "asc", KeysetValueKind.Int),
+                _SortKey("created_at", "desc", KeysetValueKind.DateTime),
                 identity,
             ]
         case Title(direction):
-            return [_SortKey("title_key", direction, "text"), identity]
+            return [_SortKey("title_key", direction, KeysetValueKind.Text), identity]
         case Creator(direction):
             return [
-                _SortKey("creator_missing", "asc", "int"),
-                _SortKey("creator_name", direction, "text_or_null"),
-                _SortKey("title_key", "asc", "text"),
+                _SortKey("creator_missing", "asc", KeysetValueKind.Int),
+                _SortKey("creator_name", direction, KeysetValueKind.TextOrNull),
+                _SortKey("title_key", "asc", KeysetValueKind.Text),
                 identity,
             ]
         case Published(direction):
             return [
-                _SortKey("published_missing", "asc", "int"),
-                _SortKey("published_date", direction, "text_or_null"),
-                _SortKey("title_key", "asc", "text"),
+                _SortKey("published_missing", "asc", KeysetValueKind.Int),
+                _SortKey("published_date", direction, KeysetValueKind.TextOrNull),
+                _SortKey("title_key", "asc", KeysetValueKind.Text),
                 identity,
             ]
         case Added(direction):
-            return [_SortKey("added_at", direction, "datetime"), identity]
+            return [_SortKey("added_at", direction, KeysetValueKind.DateTime), identity]
         case _:
             assert_never(order)
 
@@ -1484,22 +1518,6 @@ def _order_json(order: LibraryEntryOrder) -> dict[str, str]:
             assert_never(order)
 
 
-# ---------------------------------------------------------------------------
-# View cursor v2 — authenticated, viewer/library/view-bound, tagged keyset codec
-# ---------------------------------------------------------------------------
-
-_VIEW_CURSOR_DOMAIN = b"library-entries-view-cursor-v2"
-
-
-def _view_cursor_key() -> bytes:
-    """Domain-separated HMAC key derived from the effective stream-token signing
-    root, exactly as the consumption-session cursor derives its own key."""
-    return hashlib.sha256(
-        base64.b64decode(get_settings().effective_stream_token_signing_key, validate=True)
-        + _VIEW_CURSOR_DOMAIN
-    ).digest()
-
-
 def _projection_json(projection: LibraryEntryProjection) -> dict[str, str]:
     match projection:
         case AllItems(completion):
@@ -1516,81 +1534,27 @@ def _view_json(view: LibraryEntryView) -> dict[str, Any]:
     return {"order": _order_json(view.order), "projection": _projection_json(view.projection)}
 
 
-def _view_digest(*, viewer_id: UUID, library_id: UUID, view: LibraryEntryView) -> str:
-    """64 lowercase hex chars binding the exact viewer, library, and view. The
-    viewer UUID enters the cursor only through this digest (and the MAC over it);
-    it is never serialized into the cursor body."""
-    return hashlib.sha256(
-        json.dumps(
-            {"libraryId": str(library_id), "view": _view_json(view), "viewerId": str(viewer_id)},
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-    ).hexdigest()
-
-
-def _encode_after_value(value: Any, kind: _SortValue) -> Any:
-    match kind:
-        case "int":
-            return int(value)
-        case "datetime":
-            return value.astimezone(UTC).isoformat()
-        case "uuid":
-            return str(value).lower()
-        case "text":
-            return str(value)
-        case "text_or_null":
-            return None if value is None else str(value)
-        case _:
-            assert_never(kind)
-
-
-def _decode_after_value(value: Any, kind: _SortValue) -> Any:
-    """Strict, non-coercing decode of one tagged ``after`` value. Any type or
-    shape drift raises; the caller maps that to E_INVALID_CURSOR."""
-    match kind:
-        case "int":
-            if not isinstance(value, int) or isinstance(value, bool):
-                raise ValueError
-            return value
-        case "datetime":
-            if not isinstance(value, str):
-                raise ValueError
-            parsed = datetime.fromisoformat(value)
-            if parsed.tzinfo is None:
-                raise ValueError
-            return parsed
-        case "uuid":
-            if not isinstance(value, str) or value != str(UUID(value)).lower():
-                raise ValueError
-            return UUID(value)
-        case "text":
-            if not isinstance(value, str):
-                raise ValueError
-            return value
-        case "text_or_null":
-            if value is not None and not isinstance(value, str):
-                raise ValueError
-            return value
-        case _:
-            assert_never(kind)
+def _cursor_query(
+    *,
+    viewer_id: UUID,
+    library_id: UUID,
+    view: LibraryEntryView,
+) -> dict[str, object]:
+    return {
+        "libraryId": str(library_id),
+        "view": _view_json(view),
+        "viewerId": str(viewer_id),
+    }
 
 
 def _encode_view_cursor(
     *, viewer_id: UUID, library_id: UUID, view: LibraryEntryView, plan: Sequence[_SortKey], row: Any
 ) -> str:
-    """Encode the exact-view v2 cursor from a raw facts row: a canonical-JSON body
-    authenticated with a domain-separated full HMAC-SHA256 tag.
-    justify-base64url-over-base64: the cursor rides in a URL query parameter, so
-    URL-safe base64 (padding stripped) avoids percent-encoding `+`/`/`/`=`."""
-    body = {
-        "after": [[key.value, _encode_after_value(row[key.column], key.value)] for key in plan],
-        "q": _view_digest(viewer_id=viewer_id, library_id=library_id, view=view),
-        "v": 2,
-    }
-    raw = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
-    tag = hmac.new(_view_cursor_key(), raw, hashlib.sha256).digest()
-    return base64.urlsafe_b64encode(raw + tag).rstrip(b"=").decode()
+    return encode_signed_keyset_cursor(
+        family=CollectionFamily.LibraryEntries.value,
+        query=_cursor_query(viewer_id=viewer_id, library_id=library_id, view=view),
+        after=tuple(KeysetValue(key.value, row[key.column]) for key in plan),
+    )
 
 
 def _decode_view_cursor(
@@ -1601,50 +1565,13 @@ def _decode_view_cursor(
     view: LibraryEntryView,
     plan: Sequence[_SortKey],
 ) -> dict[str, object]:
-    """Decode a v2 cursor into ``:ks_<column>`` keyset binds, or raise
-    E_INVALID_CURSOR. Every check is exact: byte-for-byte base64url round-trip, a
-    constant-time full-digest MAC, the canonical body shape, the exact
-    viewer/library/view digest, and a strict positional tagged ``after`` list
-    matching the plan. No value is coerced; the viewer UUID is authenticated
-    through the digest but is never read from the body. Any mismatch — wrong
-    viewer, library, order, projection, completion, tag, or a noncanonical body —
-    fails identically."""
-    try:
-        packed = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
-        if base64.urlsafe_b64encode(packed).rstrip(b"=").decode() != cursor:
-            raise ValueError
-        if len(packed) <= 32:
-            raise ValueError
-        raw, tag = packed[:-32], packed[-32:]
-        if not hmac.compare_digest(tag, hmac.new(_view_cursor_key(), raw, hashlib.sha256).digest()):
-            raise ValueError
-        body = json.loads(raw)
-        if (
-            not isinstance(body, dict)
-            or set(body) != {"after", "q", "v"}
-            or body["v"] != 2
-            or body["q"] != _view_digest(viewer_id=viewer_id, library_id=library_id, view=view)
-        ):
-            raise ValueError
-        after = body["after"]
-        if not isinstance(after, list) or len(after) != len(plan):
-            raise ValueError
-        binds: dict[str, object] = {}
-        for element, key in zip(after, plan, strict=True):
-            if not isinstance(element, list) or len(element) != 2 or element[0] != key.value:
-                raise ValueError
-            binds[f"ks_{key.column}"] = _decode_after_value(element[1], key.value)
-        return binds
-    except (
-        ValueError,
-        TypeError,
-        KeyError,
-        UnicodeDecodeError,
-        binascii.Error,
-        json.JSONDecodeError,
-    ) as exc:
-        # justify-ignore-error: malformed cursor input is an expected API error path.
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from exc
+    values = decode_signed_keyset_cursor(
+        cursor,
+        family=CollectionFamily.LibraryEntries.value,
+        query=_cursor_query(viewer_id=viewer_id, library_id=library_id, view=view),
+        expected_kinds=tuple(key.value for key in plan),
+    )
+    return {f"ks_{key.column}": value for key, value in zip(plan, values, strict=True)}
 
 
 def _finish_entry_page(
@@ -1653,8 +1580,8 @@ def _finish_entry_page(
     viewer_id: UUID,
     rows: Sequence[Any],
     limit: int,
-    build_cursor: Callable[[Any], str],
-) -> tuple[list[LibraryEntryOut], LibraryPageInfo]:
+    build_cursor: Callable[[Any], CollectionCursor],
+) -> tuple[list[LibraryEntryListItemOut], CollectionCursor | None]:
     """Shared tail for every keyset family (spec S4.2/AC6): the caller already
     fetched ``limit + 1`` rows in the family's own order with no write anywhere
     on this path. Slice to `limit`, hydrate, and — only when there is a next
@@ -1664,7 +1591,7 @@ def _finish_entry_page(
     has_more = len(rows) > limit
     page_entries = _hydrate_entry_rows(db, viewer_id=viewer_id, rows=page_rows)
     next_cursor = build_cursor(page_rows[-1]) if has_more and page_rows else None
-    return page_entries, LibraryPageInfo(has_more=has_more, next_cursor=next_cursor)
+    return page_entries, next_cursor
 
 
 def _membership_cte_sql(*, is_default: bool, unfiled: bool) -> str:
@@ -1739,7 +1666,7 @@ def _query_view_page(
     view: LibraryEntryView,
     limit: int,
     after: dict[str, object] | None,
-) -> tuple[list[LibraryEntryOut], LibraryPageInfo]:
+) -> tuple[list[LibraryEntryListItemOut], CollectionCursor | None]:
     """The single view query (spec backend architecture): one statement with a
     single top-level ``WITH`` — membership (branched default vs non-default,
     Unfiled-restricted when requested), a uniform ``facts`` CTE, the projection
@@ -1872,8 +1799,9 @@ def list_library_entries(
     *,
     view: LibraryEntryView,
     limit: int = 100,
-    cursor: str | None = None,
-) -> tuple[list[LibraryEntryOut], LibraryPageInfo]:
+    cursor: CollectionCursor | None = None,
+    collection_revision: CollectionRevision | None = None,
+) -> CollectionPage[LibraryEntryListItemOut]:
     """List a library's hydrated entries under a view lens. Member-only.
 
     The view's ``order`` selects Canonical (Default's `media.created_at DESC`,
@@ -1884,6 +1812,20 @@ def list_library_entries(
     returned cursor is bound to this exact viewer/library/view.
     """
     ctx = governance.lock_library_for_member(db, viewer_id, library_id, lock=False)
+    current_revision = (
+        read_collection_revision(
+            db,
+            viewer_id=viewer_id,
+            family=CollectionFamily.LibraryEntries,
+        )
+        if collection_revision is None
+        else require_collection_revision(
+            db,
+            viewer_id=viewer_id,
+            family=CollectionFamily.LibraryEntries,
+            expected=collection_revision,
+        )
+    )
 
     if isinstance(view.projection, Unfiled) and not ctx.is_default:
         raise InvalidRequestError(
@@ -1900,7 +1842,7 @@ def list_library_entries(
             plan=_plan(view.order, is_default=ctx.is_default),
         )
 
-    return _query_view_page(
+    items, next_cursor = _query_view_page(
         db,
         viewer_id=viewer_id,
         library_id=library_id,
@@ -1908,6 +1850,11 @@ def list_library_entries(
         view=view,
         limit=limit,
         after=after,
+    )
+    return CollectionPage[LibraryEntryListItemOut](
+        items=items,
+        collectionRevision=current_revision,
+        nextCursor=present(next_cursor) if next_cursor is not None else absent(),
     )
 
 
@@ -1964,6 +1911,7 @@ def reorder_entries(
             raise AssertionError(
                 f"Library reorder affected {result.rowcount} rows; expected {len(requested_ids)}"
             )
+        _bump_entry_visibility_revisions(db)
 
 
 # ---------------------------------------------------------------------------
@@ -1976,8 +1924,10 @@ def ensure_media_in_default_library(db: Session, user_id: UUID, media_id: UUID) 
     from nexus.services.media_deletion import clear_user_media_deletion
 
     default_library_id = governance.default_library_id_for_user(db, user_id)
-    ensure_entry(db, default_library_id, media_target(media_id))
+    inserted = ensure_entry(db, default_library_id, media_target(media_id))
     clear_user_media_deletion(db, user_id, media_id)
+    if inserted:
+        _bump_entry_visibility_revisions(db)
 
 
 def ensure_media_in_libraries_for_viewer(
@@ -2002,6 +1952,7 @@ def ensure_media_in_libraries_for_viewer(
         )
         targets = governance.resolve_writable_non_default_library_ids(db, viewer_id, library_ids)
         _add_media_to_resolved_libraries(db, viewer_id, media_id, targets)
+        _bump_entry_visibility_revisions(db)
 
 
 def _add_media_to_resolved_libraries(
@@ -2056,6 +2007,7 @@ def assign_libraries_for_media_in_current_transaction(
     governance.lock_library_rows_in_order(db, [default_library_id, *targets])
     ensure_media_in_default_library(db, viewer_id, media_id)
     _add_media_to_resolved_libraries(db, viewer_id, media_id, targets)
+    _bump_entry_visibility_revisions(db)
 
 
 def materialize_subscription_episode_libraries_in_current_transaction(
@@ -2100,6 +2052,7 @@ def materialize_subscription_episode_libraries_in_current_transaction(
     target = media_target(media_id)
     for library_id in target_library_ids:
         ensure_entry(db, library_id, target)
+    _bump_entry_visibility_revisions(db)
 
 
 def set_subscription_libraries(
@@ -2177,6 +2130,8 @@ def set_subscription_libraries_in_current_transaction(
                 "library_id": library_id,
             },
         )
+    if set(targets) != existing_targets:
+        _bump_entry_visibility_revisions(db)
 
 
 # ---------------------------------------------------------------------------

@@ -7,16 +7,18 @@ import {
   useRef,
   useState,
 } from "react";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import {
-  apiFetch,
-  isApiError,
-  isSameSystemApiDefect,
-} from "@/lib/api/client";
+  type CollectionCursor,
+  type CollectionPage,
+  type CollectionRevision,
+} from "@/lib/api/collectionPage";
+import { absent, type Presence } from "@/lib/api/presence";
 import {
   librariesResource as librariesResourceDescriptor,
   type LibraryListResourceParams,
 } from "@/lib/api/resource";
-import type { CursorPage } from "@/lib/api/useCursorPagination";
+import { useExhaustivePagination } from "@/lib/api/useExhaustivePagination";
 import { useResource } from "@/lib/api/useResource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -26,7 +28,7 @@ import {
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
+import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
 import SectionOpener from "@/components/ui/SectionOpener";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
@@ -40,10 +42,17 @@ import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision
 import { RESOURCE_ACTION_CATALOG } from "@/lib/actions/resourceActions";
 import { useHydrationPreservedInput } from "@/lib/ui/useHydrationPreservedInput";
 import LibrarySettingsDialog from "@/components/LibrarySettingsDialog";
-import { createLibrary } from "@/lib/libraries/client";
+import {
+  createLibrary,
+  deleteMemberLibrary,
+  fetchLibrariesPage,
+  renameMemberLibrary,
+} from "@/lib/libraries/client";
 import {
   definePaneVisitDataKey,
+  requirePaneRuntime,
   useClearAllPaneVisitData,
+  usePaneRuntime,
   usePaneReturnReady,
   usePaneVisitData,
 } from "@/lib/panes/paneRuntime";
@@ -63,19 +72,21 @@ type Library = LibraryOut;
 
 interface LibrariesSnapshot {
   readonly libraries: readonly Library[];
-  readonly nextCursor: string | null;
-  readonly hasMore: boolean;
+  readonly collectionRevision: CollectionRevision;
+  readonly nextCursor: Presence<CollectionCursor>;
+  readonly exhaustion: "Partial" | "Complete";
 }
 
-const LIBRARIES_VISIT_DATA =
-  definePaneVisitDataKey<LibrariesSnapshot>("Libraries.Pagination");
+const LIBRARIES_VISIT_DATA = definePaneVisitDataKey<LibrariesSnapshot>(
+  "Libraries.CompleteCollection",
+);
+const NO_CURSOR = absent<CollectionCursor>();
+const ZERO_REVISION = 0 as CollectionRevision;
 
 export default function LibrariesPaneBody() {
+  const paneRuntime = requirePaneRuntime(usePaneRuntime(), "LibrariesPaneBody");
   const committedSnapshotRef = useRef<LibrariesSnapshot | null>(null);
-  const captureCommitted = useCallback(
-    () => committedSnapshotRef.current,
-    [],
-  );
+  const captureCommitted = useCallback(() => committedSnapshotRef.current, []);
   const restored = usePaneVisitData(LIBRARIES_VISIT_DATA, captureCommitted);
   const allowResourceAdoptionRef = useRef(restored === null);
   const [controller, setController] = useState<LibrariesSnapshot | null>(
@@ -83,14 +94,14 @@ export default function LibrariesPaneBody() {
   );
   const deletingLibraryIds = useStringIdSet();
   const [librariesRefreshVersion, setLibrariesRefreshVersion] = useState(0);
+  const [chainEpoch, setChainEpoch] = useState(0);
+  const [refreshingLibraries, setRefreshingLibraries] = useState(false);
   const clearAllVisitData = useClearAllPaneVisitData();
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [moreError, setMoreError] = useState<FeedbackContent | null>(null);
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
   const [invitesRefreshVersion, setInvitesRefreshVersion] = useState(0);
-  const [viewerInvites, setViewerInvites] = useState<
-    ViewerLibraryInvitation[]
-  >([]);
+  const [viewerInvites, setViewerInvites] = useState<ViewerLibraryInvitation[]>(
+    [],
+  );
   const [busyInvitationHandle, setBusyInvitationHandle] = useState<
     string | null
   >(null);
@@ -108,7 +119,7 @@ export default function LibrariesPaneBody() {
     name: string;
   } | null>(null);
   const librariesResource = useResource<
-    CursorPage<Library>,
+    CollectionPage<Library>,
     LibraryListResourceParams
   >({
     descriptor: librariesResourceDescriptor,
@@ -116,6 +127,7 @@ export default function LibrariesPaneBody() {
       restored !== null && librariesRefreshVersion === 0
         ? null
         : { refreshVersion: librariesRefreshVersion },
+    load: (_params, signal) => fetchLibrariesPage({ limit: 100, signal }),
   });
   const libraries = controller?.libraries ?? [];
   const viewerInvitesResource = useResource<ViewerLibraryInvitation[]>({
@@ -136,24 +148,37 @@ export default function LibrariesPaneBody() {
     controller !== null || librariesResource.status === "error",
   );
 
-  usePanePrimaryChrome({
-    header: {
-      kind: "section",
-      folio: { kind: "count", value: libraries.length, unit: "library" },
-      pending: status === "loading",
-    },
-  });
-
   const refreshLibraries = useCallback(() => {
     committedSnapshotRef.current = null;
     clearAllVisitData();
     allowResourceAdoptionRef.current = true;
-    setController(null);
-    setMoreError(null);
+    setRefreshingLibraries(true);
+    setChainEpoch((epoch) => epoch + 1);
     setLibrariesRefreshVersion((version) => version + 1);
   }, [clearAllVisitData]);
 
   const [settingsLibrary, setSettingsLibrary] = useState<Library | null>(null);
+  const installSafeMutation = useCallback(
+    (
+      collectionRevision: CollectionRevision,
+      update: (libraries: readonly Library[]) => readonly Library[],
+    ) => {
+      const current = committedSnapshotRef.current;
+      if (current === null) {
+        throw new Error("Libraries mutation settled without a committed list");
+      }
+      const next: LibrariesSnapshot = {
+        ...current,
+        libraries: update(current.libraries),
+        collectionRevision,
+      };
+      committedSnapshotRef.current = next;
+      setController(next);
+      clearAllVisitData();
+      setChainEpoch((epoch) => epoch + 1);
+    },
+    [clearAllVisitData],
+  );
 
   useEffect(() => {
     if (
@@ -161,11 +186,19 @@ export default function LibrariesPaneBody() {
       allowResourceAdoptionRef.current
     ) {
       allowResourceAdoptionRef.current = false;
-      setController({
-        libraries: librariesResource.data.data,
-        nextCursor: librariesResource.data.page.next_cursor,
-        hasMore: librariesResource.data.page.has_more,
-      });
+      const next: LibrariesSnapshot = {
+        libraries: librariesResource.data.items,
+        collectionRevision: librariesResource.data.collectionRevision,
+        nextCursor: librariesResource.data.nextCursor,
+        exhaustion:
+          librariesResource.data.nextCursor.kind === "Absent"
+            ? "Complete"
+            : "Partial",
+      };
+      committedSnapshotRef.current = next;
+      setController(next);
+      setRefreshingLibraries(false);
+      setChainEpoch((epoch) => epoch + 1);
     }
   }, [librariesResource]);
 
@@ -179,43 +212,78 @@ export default function LibrariesPaneBody() {
     }
   }, [readyViewerInvites]);
 
-  const loadError =
+  const commitLibrariesPage = useCallback(
+    (page: CollectionPage<Library>): number => {
+      const current = committedSnapshotRef.current;
+      if (
+        current === null ||
+        current.collectionRevision !== page.collectionRevision
+      ) {
+        throw new Error(
+          "Libraries continuation settled for a stale collection",
+        );
+      }
+      const seen = new Set(current.libraries.map((library) => library.id));
+      const libraries = [...current.libraries];
+      for (const library of page.items) {
+        if (seen.has(library.id)) continue;
+        seen.add(library.id);
+        libraries.push(library);
+      }
+      const next: LibrariesSnapshot = {
+        libraries,
+        collectionRevision: page.collectionRevision,
+        nextCursor: page.nextCursor,
+        exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
+      };
+      committedSnapshotRef.current = next;
+      setController(next);
+      return libraries.length;
+    },
+    [],
+  );
+  const exhaustion = useExhaustivePagination<Library>({
+    active: paneRuntime.isActive && controller !== null && !refreshingLibraries,
+    chainKey: `libraries:${chainEpoch}`,
+    cursor: controller?.nextCursor ?? NO_CURSOR,
+    collectionRevision: controller?.collectionRevision ?? ZERO_REVISION,
+    itemCount: controller?.libraries.length ?? 0,
+    loadPage: (cursor, collectionRevision, signal) =>
+      fetchLibrariesPage({
+        cursor,
+        collectionRevision,
+        limit: 100,
+        signal,
+      }),
+    commitPage: commitLibrariesPage,
+    refresh: refreshLibraries,
+  });
+  const collectionComplete =
+    controller !== null && exhaustion.kind === "Complete";
+  usePanePrimaryChrome({
+    header: {
+      kind: "section",
+      folio: collectionComplete
+        ? { kind: "count", value: libraries.length, unit: "library" }
+        : { kind: "none" },
+      pending:
+        status === "loading" ||
+        refreshingLibraries ||
+        exhaustion.kind === "Draining",
+    },
+  });
+  const initialLoadError =
     controller === null && librariesResource.status === "error"
       ? toFeedback(librariesResource.error, {
           fallback: "Failed to load libraries",
         })
-      : moreError;
-
-  const loadMore = useCallback(async () => {
-    const cursor = controller?.nextCursor ?? null;
-    if (cursor === null || loadingMore) return;
-    setLoadingMore(true);
-    setMoreError(null);
-    try {
-      const page = await apiFetch<CursorPage<Library>>(
-        librariesResourceDescriptor.clientPath({
-          refreshVersion: librariesRefreshVersion,
-          cursor,
-        }),
-      );
-      setController((current) =>
-        current === null
-          ? current
-          : {
-              libraries: [...current.libraries, ...page.data],
-              nextCursor: page.page.next_cursor,
-              hasMore: page.page.has_more,
-            },
-      );
-    } catch (error) {
-      if (handleUnauthenticatedApiError(error)) return;
-      setMoreError(
-        toFeedback(error, { fallback: "Failed to load more libraries" }),
-      );
-    } finally {
-      setLoadingMore(false);
-    }
-  }, [controller?.nextCursor, librariesRefreshVersion, loadingMore]);
+      : null;
+  const refreshLoadError =
+    controller !== null && librariesResource.status === "error"
+      ? toFeedback(librariesResource.error, {
+          fallback: "Failed to refresh libraries",
+        })
+      : null;
 
   const inviteLoadError =
     viewerInvitesResource.status === "error"
@@ -248,7 +316,7 @@ export default function LibrariesPaneBody() {
       setFeedback(
         toFeedback(err, {
           fallback: "Failed to create library",
-        })
+        }),
       );
     } finally {
       setCreating(false);
@@ -261,28 +329,18 @@ export default function LibrariesPaneBody() {
     deletingLibraryIds.add(library.id);
 
     try {
-      await apiFetch(`/api/libraries/${library.id}`, {
-        method: "DELETE",
-      });
-      publishLibraryPlacementChange("Unknown");
-      setController((current) =>
-        current === null
-          ? current
-          : {
-              ...current,
-              libraries: current.libraries.filter(
-                (item) => item.id !== library.id,
-              ),
-            },
+      const collectionRevision = await deleteMemberLibrary(library.id);
+      installSafeMutation(collectionRevision, (current) =>
+        current.filter((candidate) => candidate.id !== library.id),
       );
-      clearAllVisitData();
+      publishLibraryPlacementChange("Unknown");
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
       if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
       setFeedback(
         toFeedback(err, {
           fallback: "Failed to delete library",
-        })
+        }),
       );
     } finally {
       deletingLibraryIds.remove(library.id);
@@ -292,54 +350,30 @@ export default function LibrariesPaneBody() {
   const handleRename = useCallback(
     async (name: string) => {
       if (!settingsLibrary) return;
-      await apiFetch(`/api/libraries/${settingsLibrary.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ name }),
-      });
-      setSettingsLibrary((prev) => (prev ? { ...prev, name } : null));
-      setController((current) =>
-        current === null
-          ? current
-          : {
-              ...current,
-              libraries: current.libraries.map((library) =>
-                library.id === settingsLibrary.id
-                  ? { ...library, name }
-                  : library,
-              ),
-            },
+      const result = await renameMemberLibrary(settingsLibrary.id, name);
+      installSafeMutation(result.collectionRevision, (current) =>
+        current.map((library) =>
+          library.id === result.library.id ? result.library : library,
+        ),
       );
-      clearAllVisitData();
+      setSettingsLibrary(result.library);
     },
-    [clearAllVisitData, settingsLibrary],
+    [installSafeMutation, settingsLibrary],
   );
 
   const handleDeleteFromSettings = useCallback(async () => {
     if (!settingsLibrary) return;
-    await apiFetch(`/api/libraries/${settingsLibrary.id}`, {
-      method: "DELETE",
-    });
-    publishLibraryPlacementChange("Unknown");
-    const deletedId = settingsLibrary.id;
-    setSettingsLibrary(null);
-    setController((current) =>
-      current === null
-        ? current
-        : {
-            ...current,
-            libraries: current.libraries.filter(
-              (library) => library.id !== deletedId,
-            ),
-          },
+    const libraryId = settingsLibrary.id;
+    const collectionRevision = await deleteMemberLibrary(libraryId);
+    installSafeMutation(collectionRevision, (current) =>
+      current.filter((library) => library.id !== libraryId),
     );
-    clearAllVisitData();
-  }, [clearAllVisitData, settingsLibrary]);
+    publishLibraryPlacementChange("Unknown");
+    setSettingsLibrary(null);
+  }, [installSafeMutation, settingsLibrary]);
 
   const handleInvitation = useCallback(
-    async (
-      invite: ViewerLibraryInvitation,
-      action: "accept" | "decline",
-    ) => {
+    async (invite: ViewerLibraryInvitation, action: "accept" | "decline") => {
       if (busyInvitationHandle !== null) return;
       setBusyInvitationHandle(invite.invitationHandle);
       try {
@@ -406,7 +440,10 @@ export default function LibrariesPaneBody() {
           </div>
           <div className={styles.invitationRows}>
             {viewerInvites.map((invite) => (
-              <div className={styles.invitationRow} key={invite.invitationHandle}>
+              <div
+                className={styles.invitationRow}
+                key={invite.invitationHandle}
+              >
                 <span>
                   {invite.libraryName} ·{" "}
                   {invite.role === "admin" ? "Admin" : "Member"}
@@ -482,9 +519,14 @@ export default function LibrariesPaneBody() {
         )}
         status={status}
         ariaLabel="Libraries"
+        collectionBusy={refreshingLibraries || exhaustion.kind === "Draining"}
         opener={<SectionOpener heading="Libraries" />}
         notice={feedback ? <FeedbackNotice feedback={feedback} /> : undefined}
-        error={loadError ? <FeedbackNotice feedback={loadError} /> : undefined}
+        error={
+          initialLoadError ? (
+            <FeedbackNotice feedback={initialLoadError} />
+          ) : undefined
+        }
         empty={
           <FeedbackNotice
             severity="neutral"
@@ -495,13 +537,25 @@ export default function LibrariesPaneBody() {
         footer={
           status === "ready" ? (
             <>
-              {loadError ? <FeedbackNotice feedback={loadError} /> : null}
-              <LoadMoreFooter
-                hasMore={controller?.hasMore ?? false}
-                loading={loadingMore}
-                onLoadMore={loadMore}
-                label="Load more libraries"
+              <CollectionExhaustionNotice
+                state={refreshingLibraries ? { kind: "Idle" } : exhaustion}
               />
+              {refreshLoadError ? (
+                <>
+                  <FeedbackNotice feedback={refreshLoadError} />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      if (librariesResource.status === "error") {
+                        librariesResource.retry();
+                      }
+                    }}
+                  >
+                    Retry
+                  </Button>
+                </>
+              ) : null}
             </>
           ) : null
         }

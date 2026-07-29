@@ -19,6 +19,7 @@ import pytest
 from sqlalchemy import text
 
 from nexus.db.models import ResourceEdge
+from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.services.resource_graph.context import (
     admits_resource_for_conversation_read,
     batch_conversations_with_any_edge_to_ref,
@@ -421,6 +422,69 @@ def test_broad_read_admission_is_not_search_scope(auth_client, direct_db: Direct
             )
             == []
         )
+
+
+def test_reverse_context_cursor_is_signed_and_target_bound(
+    auth_client,
+    direct_db: DirectSessionManager,
+):
+    user_id = _bootstrap_user(auth_client, direct_db)
+    target_media_id = _create_media(direct_db, user_id, title="Cursor target")
+    other_media_id = _create_media(direct_db, user_id, title="Other cursor target")
+    with direct_db.session() as session:
+        conversation_ids = [
+            create_test_conversation(session, user_id),
+            create_test_conversation(session, user_id),
+        ]
+        for conversation_id in conversation_ids:
+            session.execute(
+                text(
+                    """
+                    INSERT INTO resource_edges (
+                        user_id, kind, origin, source_scheme, source_id,
+                        target_scheme, target_id
+                    )
+                    VALUES (
+                        :user_id, 'context', 'user', 'conversation',
+                        :conversation_id, 'media', :media_id
+                    )
+                    """
+                ),
+                {
+                    "user_id": user_id,
+                    "conversation_id": conversation_id,
+                    "media_id": target_media_id,
+                },
+            )
+        session.commit()
+
+    with direct_db.session() as session:
+        target = ResourceRef(scheme="media", id=target_media_id)
+        first = list_conversations_with_any_edge_to_ref(
+            session,
+            viewer_id=user_id,
+            target=target,
+            limit=1,
+        )
+        assert len(first.conversations) == 1
+        assert first.page.next_cursor is not None
+        second = list_conversations_with_any_edge_to_ref(
+            session,
+            viewer_id=user_id,
+            target=target,
+            limit=1,
+            cursor=first.page.next_cursor,
+        )
+        assert len(second.conversations) == 1
+        with pytest.raises(InvalidRequestError) as exc_info:
+            list_conversations_with_any_edge_to_ref(
+                session,
+                viewer_id=user_id,
+                target=ResourceRef(scheme="media", id=other_media_id),
+                limit=1,
+                cursor=first.page.next_cursor,
+            )
+        assert exc_info.value.code == ApiErrorCode.E_INVALID_CURSOR
 
 
 def test_reverse_context_edge_lookup_requires_edge_owner(

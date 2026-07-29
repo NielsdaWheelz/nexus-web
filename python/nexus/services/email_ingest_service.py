@@ -20,6 +20,10 @@ from nexus.db.models import Media, MediaKind, ProcessingStatus
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.services import library_entries
 from nexus.services import media_source_types as source_types
+from nexus.services.collection_revisions import (
+    CollectionFamily,
+    bump_all_collection_families,
+)
 from nexus.services.contributor_taxonomy import (
     NOT_OBSERVED,
     ContributorObservationBatch,
@@ -441,6 +445,13 @@ def accept_email_message(
                 stage="upload",
                 error_code=ApiErrorCode.E_STORAGE_ERROR.value,
                 error_message=str(exc),
+            )
+            bump_all_collection_families(
+                db,
+                families=(
+                    CollectionFamily.AuthorWorks,
+                    CollectionFamily.LibraryEntries,
+                ),
             )
             db.commit()
         return EmailAcceptance(media_id=media.id, outcome="accepted")

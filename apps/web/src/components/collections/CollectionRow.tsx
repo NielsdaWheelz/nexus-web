@@ -92,6 +92,8 @@ function renderExceptionalStatus(status: ExceptionalStatus): ReactNode {
           return <Pill tone="info">Processing</Pill>;
         case "failed":
           return <Pill tone="danger">Processing failed</Pill>;
+        case "suspended":
+          return <Pill tone="warning">Processing paused</Pill>;
         default:
           return assertNever(
             processingStatus,

@@ -27,6 +27,11 @@ from nexus.logging import get_logger
 from nexus.schemas.podcast import (
     PodcastSubscriptionSyncRefreshOut,
 )
+from nexus.services.collection_revisions import (
+    CollectionFamily,
+    bump_collection_families,
+    read_collection_revision,
+)
 from nexus.services.consumption import service as consumption_service
 from nexus.services.contributors import MediaTarget, replace_observed_role_slices
 
@@ -47,6 +52,19 @@ logger = get_logger(__name__)
 
 _PODCAST_ACTIVE_POLL_MAX_LIMIT = 1000
 _PODCAST_ACTIVE_POLL_UNEXPECTED_ERROR_CODE = ApiErrorCode.E_INTERNAL.value
+
+
+def _bump_subscription_row_collections(db: Session, *, viewer_id: UUID) -> None:
+    bump_collection_families(
+        db,
+        viewer_ids=(viewer_id,),
+        families=(
+            CollectionFamily.LibraryEntries,
+            CollectionFamily.PodcastSubscriptions,
+        ),
+    )
+
+
 _SYNC_RUNNING_STALE_SQL = """
 COALESCE(sync_started_at, updated_at) < (
     now() - (CAST(:sync_lease_seconds AS integer) * interval '1 second')
@@ -313,6 +331,7 @@ def poll_active_subscriptions_once(
                 if queued is None:
                     skipped_count += 1
                     continue
+                _bump_subscription_row_collections(db, viewer_id=user_id)
                 enqueue_podcast_subscription_sync(db, user_id=user_id, podcast_id=podcast_id)
             enqueued_count += 1
         except Exception as exc:  # justify-ignore-error: per-subscription enqueue boundary; one bad sub must not abort the poll batch
@@ -770,6 +789,18 @@ def refresh_subscription_sync_for_viewer(
                 },
             ).fetchone()
             should_enqueue = updated is not None
+            if should_enqueue:
+                _bump_subscription_row_collections(db, viewer_id=viewer_id)
+        collection_revision = read_collection_revision(
+            db,
+            viewer_id=viewer_id,
+            family=CollectionFamily.PodcastSubscriptions,
+        )
+        library_entries_collection_revision = read_collection_revision(
+            db,
+            viewer_id=viewer_id,
+            family=CollectionFamily.LibraryEntries,
+        )
 
     sync_enqueued = False
     if should_enqueue:
@@ -790,6 +821,8 @@ def refresh_subscription_sync_for_viewer(
         sync_error_message=snapshot.sync_error_message,
         sync_attempts=snapshot.sync_attempts,
         sync_enqueued=sync_enqueued,
+        collectionRevision=collection_revision,
+        libraryEntriesCollectionRevision=library_entries_collection_revision,
     )
 
 
@@ -890,6 +923,7 @@ def _claim_subscription_sync_pending(
     ).fetchone()
     if row is None:
         return None
+    _bump_subscription_row_collections(db, viewer_id=user_id)
     return SubscriptionSyncClaim(sync_attempts=int(row[0]), sync_started_at=row[1])
 
 
@@ -904,7 +938,7 @@ def _mark_subscription_sync_completed(
 ) -> None:
     """Complete the EXACT claim. The attempt/start fence guarantees a reclaimed
     worker never clobbers the replacement claim's state (spec §5.3)."""
-    db.execute(
+    result = db.execute(
         text(
             """
             UPDATE podcast_subscriptions
@@ -929,6 +963,8 @@ def _mark_subscription_sync_completed(
             "sync_started_at": claim.sync_started_at,
         },
     )
+    if getattr(result, "rowcount", 0):
+        _bump_subscription_row_collections(db, viewer_id=user_id)
 
 
 def _mark_subscription_sync_failed(
@@ -942,7 +978,7 @@ def _mark_subscription_sync_failed(
     claim: SubscriptionSyncClaim,
 ) -> None:
     """Fail the EXACT claim (attempt/start fenced), never clobbering a replacement."""
-    db.execute(
+    result = db.execute(
         text(
             """
             UPDATE podcast_subscriptions
@@ -967,6 +1003,8 @@ def _mark_subscription_sync_failed(
             "sync_started_at": claim.sync_started_at,
         },
     )
+    if getattr(result, "rowcount", 0):
+        _bump_subscription_row_collections(db, viewer_id=user_id)
 
 
 def _revalidate_sync_fence_for_ingest(

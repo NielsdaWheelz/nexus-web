@@ -3,6 +3,7 @@ import {
   contributorResource,
   contributorWorksResource,
   lecternSlateResource,
+  librariesResource,
   libraryEntriesResource,
   libraryResource,
   mediaFragmentsResource,
@@ -12,6 +13,69 @@ import {
 import type { ResourceFetcher } from "@/lib/api/resourceTransport";
 import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";
 import { ApiError } from "@/lib/api/client";
+
+describe("Libraries pane resource loader", () => {
+  const library = {
+    id: "library-1",
+    name: "Research",
+    color: null,
+    ownerUserHandle: "nus1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB",
+    isDefault: false,
+    role: "admin",
+    systemKey: null,
+    canRename: true,
+    canDelete: true,
+    canEditEntries: true,
+    canManageMembers: true,
+    canTransferOwnership: true,
+    createdAt: "2026-07-24T10:00:00Z",
+    updatedAt: "2026-07-24T10:30:00Z",
+  };
+
+  it("requests and strictly decodes the canonical first page", async () => {
+    const requestSpy = vi.fn();
+    const request: ResourceFetcher = async <P, T>(
+      descriptor: ResourceDescriptor<P>,
+      params: P,
+    ): Promise<T> => {
+      requestSpy(descriptor, params);
+      return {
+        data: {
+          items: [library],
+          collectionRevision: 7,
+          nextCursor: { kind: "Absent" },
+        },
+      } as T;
+    };
+    const loader = paneResourceLoaders.libraries;
+    if (!loader) throw new Error("Libraries loader missing");
+
+    await expect(loader.load(request, {})).resolves.toEqual({
+      items: [library],
+      collectionRevision: 7,
+      nextCursor: { kind: "Absent" },
+    });
+    expect(loader.cacheKey({})).toBe(
+      librariesResource.cacheKey({ refreshVersion: 0 }),
+    );
+    expect(requestSpy).toHaveBeenCalledWith(librariesResource, {
+      refreshVersion: 0,
+      limit: 100,
+    });
+  });
+
+  it("rejects the superseded data-plus-page envelope", async () => {
+    const request: ResourceFetcher = async <_P, T>(): Promise<T> =>
+      ({
+        data: [library],
+        page: { has_more: false, next_cursor: null },
+      }) as T;
+    const loader = paneResourceLoaders.libraries;
+    if (!loader) throw new Error("Libraries loader missing");
+
+    await expect(loader.load(request, {})).rejects.toThrow(ApiError);
+  });
+});
 
 describe("Lectern pane resource loader", () => {
   it("seeds only the independent strict reading slate", async () => {
@@ -41,8 +105,7 @@ describe("Library pane resource loader", () => {
     id: "library-1",
     name: "Research",
     color: null,
-    ownerUserHandle:
-      "nus1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB",
+    ownerUserHandle: "nus1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB",
     isDefault: false,
     role: "admin",
     systemKey: null,
@@ -57,15 +120,30 @@ describe("Library pane resource loader", () => {
   const entry = {
     id: "entry-1",
     kind: "media",
+    position: 0,
+    created_at: "2026-07-24T10:15:00Z",
     media: {
+      id: "media-1",
       kind: "web_article",
+      title: "A compact list item",
+      created_at: "2026-07-24T10:00:00Z",
+      contributors: [],
+      author_mode: "automatic",
       processing_status: "ready_for_reading",
       read_state: "unread",
       progress_resettable: false,
       progress_fraction: null,
+      last_engaged_at: null,
       published_date: null,
       canonical_source_url: "https://example.test/article",
-      capabilities: { can_quote: true },
+      capabilities: {
+        can_quote: true,
+        can_retry: false,
+        can_refresh_source: true,
+        can_retry_metadata: false,
+        can_edit_authors: true,
+        can_delete: true,
+      },
     },
     readingTimeEstimate: {
       kind: "Present",
@@ -75,15 +153,21 @@ describe("Library pane resource loader", () => {
       },
     },
   };
+  const completePage = (items: unknown[]) => ({
+    data: {
+      items,
+      collectionRevision: 3,
+      nextCursor: { kind: "Absent" },
+    },
+  });
 
   it("strictly decodes reading time in the composed initial page", async () => {
-    const page = { has_more: false, next_cursor: null };
     const request: ResourceFetcher = async <P, T>(
       descriptor: ResourceDescriptor<P>,
     ): Promise<T> => {
       if (descriptor === libraryResource) return { data: library } as T;
       if (descriptor === libraryEntriesResource) {
-        return { data: [entry], page } as T;
+        return completePage([entry]) as T;
       }
       throw new Error("Unexpected resource descriptor");
     };
@@ -110,7 +194,9 @@ describe("Library pane resource loader", () => {
           },
         },
       ],
-      entriesPage: page,
+      collectionRevision: 3,
+      nextCursor: { kind: "Absent" },
+      exhaustion: "Complete",
     });
   });
 
@@ -121,10 +207,7 @@ describe("Library pane resource loader", () => {
       if (descriptor === libraryResource) return { data: library } as T;
       if (descriptor === libraryEntriesResource) {
         const { readingTimeEstimate: _readingTimeEstimate, ...invalid } = entry;
-        return {
-          data: [invalid],
-          page: { has_more: false, next_cursor: null },
-        } as T;
+        return completePage([invalid]) as T;
       }
       throw new Error("Unexpected resource descriptor");
     };
@@ -132,7 +215,7 @@ describe("Library pane resource loader", () => {
     if (!loader) throw new Error("Library loader missing");
 
     await expect(loader.load(request, { id: "library-1" })).rejects.toThrow(
-      /Invalid Presence/,
+      /must contain exactly/,
     );
   });
 
@@ -144,19 +227,16 @@ describe("Library pane resource loader", () => {
         return { data: { ...library, id: "library-other" } } as T;
       }
       if (descriptor === libraryEntriesResource) {
-        return {
-          data: [entry],
-          page: { has_more: false, next_cursor: null },
-        } as T;
+        return completePage([entry]) as T;
       }
       throw new Error("Unexpected resource descriptor");
     };
     const loader = paneResourceLoaders.library;
     if (!loader) throw new Error("Library loader missing");
 
-    await expect(
-      loader.load(request, { id: "library-1" }),
-    ).rejects.toThrow(/does not match requested Library/);
+    await expect(loader.load(request, { id: "library-1" })).rejects.toThrow(
+      /does not match requested Library/,
+    );
   });
 
   it("defects before publishing a malformed Library projection", async () => {
@@ -169,19 +249,16 @@ describe("Library pane resource loader", () => {
         } as T;
       }
       if (descriptor === libraryEntriesResource) {
-        return {
-          data: [entry],
-          page: { has_more: false, next_cursor: null },
-        } as T;
+        return completePage([entry]) as T;
       }
       throw new Error("Unexpected resource descriptor");
     };
     const loader = paneResourceLoaders.library;
     if (!loader) throw new Error("Library loader missing");
 
-    await expect(
-      loader.load(request, { id: "library-1" }),
-    ).rejects.toThrow(/canManageMembers/);
+    await expect(loader.load(request, { id: "library-1" })).rejects.toThrow(
+      /canManageMembers/,
+    );
   });
 });
 
@@ -217,7 +294,7 @@ describe("Author pane resource loader", () => {
       if (descriptor === contributorWorksResource) {
         return {
           data: {
-            works: [
+            items: [
               {
                 title: "A Wizard of Earthsea",
                 href: "/media/earthsea",
@@ -243,7 +320,8 @@ describe("Author pane resource loader", () => {
                 },
               },
             ],
-            nextCursor: null,
+            collectionRevision: 4,
+            nextCursor: { kind: "Absent" },
           },
         } as T;
       }
@@ -261,7 +339,9 @@ describe("Author pane resource loader", () => {
           roleFacts: [{ role: "author", rawRole: null }],
         },
       ],
-      worksNextCursor: null,
+      collectionRevision: 4,
+      nextCursor: { kind: "Absent" },
+      exhaustion: "Complete",
       detail: {
         actionTarget: { ref: `contributor:${contributorId}` },
       },
@@ -298,7 +378,7 @@ describe("Author pane resource loader", () => {
       if (descriptor === contributorWorksResource) {
         return {
           data: {
-            works: [
+            items: [
               {
                 title: "Incomplete",
                 href: "/media/incomplete",
@@ -306,7 +386,8 @@ describe("Author pane resource loader", () => {
                 date: null,
               },
             ],
-            nextCursor: null,
+            collectionRevision: 0,
+            nextCursor: { kind: "Absent" },
           },
         } as T;
       }
@@ -364,8 +445,6 @@ describe("Media pane resource loader", () => {
     const loader = paneResourceLoaders.media;
     if (!loader) throw new Error("Media loader missing");
 
-    await expect(loader.load(request, { id: "media-1" })).rejects.toBe(
-      failure,
-    );
+    await expect(loader.load(request, { id: "media-1" })).rejects.toBe(failure);
   });
 });

@@ -267,8 +267,8 @@ class TestListConversations:
         response = auth_client.get("/conversations", headers=auth_headers(user_id))
 
         assert response.status_code == 200
-        assert response.json()["data"] == []
-        assert response.json()["page"]["next_cursor"] is None
+        assert response.json()["data"]["items"] == []
+        assert response.json()["data"]["nextCursor"] == {"kind": "Absent"}
 
     def test_list_conversations_returns_owned(self, auth_client):
         """List conversations returns only owned conversations."""
@@ -281,8 +281,8 @@ class TestListConversations:
         response = auth_client.get("/conversations", headers=auth_headers(user_id))
 
         assert response.status_code == 200
-        assert len(response.json()["data"]) == 3
-        assert all("title" in item for item in response.json()["data"])
+        assert len(response.json()["data"]["items"]) == 3
+        assert all("title" in item for item in response.json()["data"]["items"])
 
     def test_list_conversations_ordering(self, auth_client, direct_db: DirectSessionManager):
         """Conversations are ordered by updated_at DESC."""
@@ -297,7 +297,7 @@ class TestListConversations:
         response = auth_client.get("/conversations", headers=auth_headers(user_id))
 
         assert response.status_code == 200
-        data = response.json()["data"]
+        data = response.json()["data"]["items"]
         assert len(data) == 3
         # Newest should be first (resp3)
         assert data[0]["id"] == resp3.json()["data"]["id"]
@@ -316,49 +316,54 @@ class TestListConversations:
         response1 = auth_client.get("/conversations?limit=2", headers=auth_headers(user_id))
         assert response1.status_code == 200
         data1 = response1.json()
-        assert len(data1["data"]) == 2
-        assert data1["page"]["next_cursor"] is not None
+        assert len(data1["data"]["items"]) == 2
+        assert data1["data"]["nextCursor"]["kind"] == "Present"
 
         # Second page
-        cursor = data1["page"]["next_cursor"]
+        cursor = data1["data"]["nextCursor"]["value"]
+        revision = data1["data"]["collectionRevision"]
         response2 = auth_client.get(
-            f"/conversations?limit=2&cursor={cursor}", headers=auth_headers(user_id)
+            f"/conversations?limit=2&cursor={cursor}&collection_revision={revision}",
+            headers=auth_headers(user_id),
         )
         assert response2.status_code == 200
         data2 = response2.json()
-        assert len(data2["data"]) == 2
-        assert data2["page"]["next_cursor"] is not None
+        assert len(data2["data"]["items"]) == 2
+        assert data2["data"]["nextCursor"]["kind"] == "Present"
 
         # Third page (last)
-        cursor2 = data2["page"]["next_cursor"]
+        cursor2 = data2["data"]["nextCursor"]["value"]
         response3 = auth_client.get(
-            f"/conversations?limit=2&cursor={cursor2}", headers=auth_headers(user_id)
+            f"/conversations?limit=2&cursor={cursor2}&collection_revision={revision}",
+            headers=auth_headers(user_id),
         )
         assert response3.status_code == 200
         data3 = response3.json()
-        assert len(data3["data"]) == 1
-        assert data3["page"]["next_cursor"] is None
+        assert len(data3["data"]["items"]) == 1
+        assert data3["data"]["nextCursor"] == {"kind": "Absent"}
 
         # Verify no duplicates
-        all_ids = [c["id"] for c in data1["data"] + data2["data"] + data3["data"]]
+        all_ids = [
+            c["id"]
+            for c in (data1["data"]["items"] + data2["data"]["items"] + data3["data"]["items"])
+        ]
         assert len(all_ids) == len(set(all_ids)) == 5
 
     def test_list_conversations_limit_clamped(self, auth_client):
-        """Limit > 100 is rejected by FastAPI validation."""
+        """The complete collection contract accepts the shared upper bound."""
         user_id = create_test_user_id()
 
-        # FastAPI Query validation (le=100) rejects values > 100
         response = auth_client.get("/conversations?limit=200", headers=auth_headers(user_id))
 
-        # FastAPI Query validation returns 422, which our handler maps to 400
-        assert response.status_code in (400, 422)
+        assert response.status_code == 200
 
     def test_list_conversations_invalid_cursor(self, auth_client):
         """Invalid cursor returns 400 E_INVALID_CURSOR."""
         user_id = create_test_user_id()
 
         response = auth_client.get(
-            "/conversations?cursor=not-valid-base64!!!", headers=auth_headers(user_id)
+            "/conversations?cursor=not-valid-base64!!!&collection_revision=0",
+            headers=auth_headers(user_id),
         )
 
         assert response.status_code == 400
@@ -376,15 +381,10 @@ class TestListConversations:
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
-    def test_list_conversations_has_context_ref_ignores_invalid_scope(
+    def test_list_conversations_has_context_ref_rejects_scope_composition(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """has_context_ref returns the listing even with an invalid scope.
-
-        Pinned bypass (decision 14): when has_context_ref is set, scope is
-        meaningless (context filtering is viewer-owned-only) and is neither
-        validated nor applied. An otherwise-400 scope value must NOT 400 here.
-        """
+        """Context mode is closed and rejects the unrelated index scope."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -412,9 +412,8 @@ class TestListConversations:
             headers=auth_headers(user_id),
         )
 
-        assert response.status_code == 200, response.text
-        ids = [c["id"] for c in response.json()["data"]]
-        assert str(conversation_id) in ids
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
 
 # =============================================================================
@@ -481,7 +480,7 @@ class TestDeleteConversation:
     """Tests for DELETE /conversations/:id endpoint."""
 
     def test_delete_conversation_success(self, auth_client, direct_db: DirectSessionManager):
-        """Delete conversation returns 204."""
+        """Delete conversation returns the new primary-index revision."""
         user_id = create_test_user_id()
 
         create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
@@ -499,7 +498,8 @@ class TestDeleteConversation:
             f"/conversations/{conversation_id}", headers=auth_headers(user_id)
         )
 
-        assert response.status_code == 204
+        assert response.status_code == 200
+        assert set(response.json()["data"]) == {"collectionRevision"}
 
         # Verify deleted
         with direct_db.session() as session:
@@ -614,7 +614,7 @@ class TestDeleteConversation:
         response = auth_client.delete(
             f"/conversations/{conversation_id}", headers=auth_headers(user_id)
         )
-        assert response.status_code == 204
+        assert response.status_code == 200
 
         # Verify messages were explicitly deleted.
         with direct_db.session() as session:
@@ -702,7 +702,7 @@ class TestDeleteConversation:
         response = auth_client.delete(
             f"/conversations/{conversation_id}", headers=auth_headers(user_id)
         )
-        assert response.status_code == 204
+        assert response.status_code == 200
 
         with direct_db.session() as session:
             for table, column in (
@@ -1151,11 +1151,11 @@ class TestVisibility:
 
         # User A lists - should see only their 2
         resp_a = auth_client.get("/conversations", headers=auth_headers(user_a))
-        assert len(resp_a.json()["data"]) == 2
+        assert len(resp_a.json()["data"]["items"]) == 2
 
         # User B lists - should see only their 1
         resp_b = auth_client.get("/conversations", headers=auth_headers(user_b))
-        assert len(resp_b.json()["data"]) == 1
+        assert len(resp_b.json()["data"]["items"]) == 1
 
     def test_message_count_accurate(self, auth_client, direct_db: DirectSessionManager):
         """Message count reflects actual message count."""
@@ -1200,17 +1200,16 @@ class TestConversationOutOwnerFields:
         assert data["owner_user_id"] == str(user_id)
         assert data["is_owner"] is True
 
-    def test_list_conversations_response_includes_owner_fields(self, auth_client):
-        """GET /conversations includes owner_user_id and is_owner in each item."""
+    def test_list_conversations_response_is_the_compact_row_contract(self, auth_client):
+        """The primary index omits detail-only ownership and sharing fields."""
         user_id = create_test_user_id()
         auth_client.post("/conversations", headers=auth_headers(user_id))
 
         response = auth_client.get("/conversations", headers=auth_headers(user_id))
         assert response.status_code == 200
-        data = response.json()["data"]
+        data = response.json()["data"]["items"]
         assert len(data) >= 1
-        assert data[0]["owner_user_id"] == str(user_id)
-        assert data[0]["is_owner"] is True
+        assert set(data[0]) == {"id", "title", "message_count", "updated_at"}
 
     def test_create_conversation_response_includes_owner_fields(self, auth_client):
         """POST /conversations includes owner_user_id and is_owner."""
@@ -1322,7 +1321,7 @@ class TestListConversationsScope:
         # B lists with no scope (defaults to mine) - should only see conv_b
         response = auth_client.get("/conversations", headers=auth_headers(user_b))
         assert response.status_code == 200
-        ids = [c["id"] for c in response.json()["data"]]
+        ids = [c["id"] for c in response.json()["data"]["items"]]
         assert str(conv_b) in ids
         assert str(conv_a) not in ids
 
@@ -1368,7 +1367,7 @@ class TestListConversationsScope:
 
         response = auth_client.get("/conversations?scope=all", headers=auth_headers(user_b))
         assert response.status_code == 200
-        ids = {c["id"] for c in response.json()["data"]}
+        ids = {c["id"] for c in response.json()["data"]["items"]}
         assert str(conv_owned) in ids
         assert str(conv_shared) in ids
         assert str(conv_public) in ids
@@ -1398,7 +1397,7 @@ class TestListConversationsScope:
 
         response = auth_client.get("/conversations?scope=shared", headers=auth_headers(user_b))
         assert response.status_code == 200
-        ids = {c["id"] for c in response.json()["data"]}
+        ids = {c["id"] for c in response.json()["data"]["items"]}
         assert str(conv_shared) in ids
         assert str(conv_owned) not in ids
 
@@ -1539,15 +1538,18 @@ class TestListConversationsScope:
 
         all_ids = []
         cursor = None
+        revision = None
         for _ in range(10):  # safety bound
             url = "/conversations?scope=all&limit=2"
             if cursor:
-                url += f"&cursor={cursor}"
+                url += f"&cursor={cursor}&collection_revision={revision}"
             response = auth_client.get(url, headers=auth_headers(user_b))
             assert response.status_code == 200
             page_data = response.json()
-            all_ids.extend(c["id"] for c in page_data["data"])
-            cursor = page_data["page"]["next_cursor"]
+            all_ids.extend(c["id"] for c in page_data["data"]["items"])
+            next_cursor = page_data["data"]["nextCursor"]
+            cursor = next_cursor.get("value") if next_cursor["kind"] == "Present" else None
+            revision = page_data["data"]["collectionRevision"]
             if not cursor:
                 break
 
@@ -1588,7 +1590,7 @@ class TestListConversationsScope:
 
         response = auth_client.get("/conversations?scope=all", headers=auth_headers(user_b))
         assert response.status_code == 200
-        ids = {c["id"] for c in response.json()["data"]}
+        ids = {c["id"] for c in response.json()["data"]["items"]}
 
         assert str(conv_owned) in ids
         assert str(conv_shared) in ids
@@ -1641,7 +1643,7 @@ class TestListConversationsScope:
 
         response = auth_client.get("/conversations?scope=all", headers=auth_headers(user_b))
         assert response.status_code == 200
-        rows = response.json()["data"]
+        rows = response.json()["data"]["items"]
         returned_ids = [c["id"] for c in rows]
 
         assert len(returned_ids) >= 3

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   deriveEpisodeState,
+  decodePodcastEpisodeMedia,
   decodeEpisodePublicationDate,
   decodeEpisodeTimingFacts,
   type PodcastEpisodeMedia,
@@ -13,7 +14,6 @@ function timing(overrides: Partial<EpisodeTiming> = {}): EpisodeTiming {
     position_ms: 30_000,
     duration_ms: 120_000,
     playback_speed: 1,
-    is_completed: false,
     ...overrides,
   };
 }
@@ -75,19 +75,62 @@ describe("deriveEpisodeState", () => {
     },
   );
 
-  it("derives only an explicitly absent state from listening facts", () => {
-    expect(deriveEpisodeState(episode(null))).toBe("unplayed");
-    expect(deriveEpisodeState(episode(null, timing()))).toBe("in_progress");
-    expect(
-      deriveEpisodeState(
-        episode(null, timing({ position_ms: 120_000, is_completed: true })),
-      ),
-    ).toBe("played");
-  });
-
-  it("rejects an unknown non-null wire state", () => {
+  it("rejects an unknown wire state", () => {
     expect(() =>
       deriveEpisodeState(episode("future" as PodcastEpisodeMedia["episode_state"])),
     ).toThrow("Unsupported episode_state: future");
+  });
+});
+
+describe("decodePodcastEpisodeMedia contributor contract", () => {
+  function wire(contributors: unknown[]) {
+    return {
+      id: "00000000-0000-4000-8000-000000000001",
+      kind: "podcast_episode",
+      title: "Episode",
+      canonical_source_url: { kind: "Absent" },
+      processing_status: "ready_for_reading",
+      transcript_state: "ready",
+      transcript_coverage: "full",
+      listening_state: { kind: "Absent" },
+      episode_state: "unplayed",
+      progress_resettable: false,
+      capabilities: {
+        can_retry: false,
+        can_refresh_source: false,
+        can_retry_metadata: false,
+        can_edit_authors: true,
+        can_delete: true,
+      },
+      contributors,
+      author_mode: "automatic",
+      published_date: { kind: "Absent" },
+      duration_seconds: { kind: "Absent" },
+      has_show_notes: false,
+      playerDescriptor: { kind: "Absent" },
+    };
+  }
+
+  it("accepts the exact nested shape and rejects extra or malformed fields", () => {
+    const validCredit = {
+      contributor_handle: "grace-hopper",
+      contributor_display_name: "Grace Hopper",
+      href: "/authors/grace-hopper",
+      credited_name: "G. Hopper",
+      role: "guest",
+      raw_role: null,
+      ordinal: 1,
+    };
+    expect(decodePodcastEpisodeMedia(wire([validCredit])).contributors).toEqual(
+      [validCredit],
+    );
+    expect(() =>
+      decodePodcastEpisodeMedia(
+        wire([{ ...validCredit, unexpected: "legacy" }]),
+      ),
+    ).toThrow(/Podcast episode contributors/);
+    expect(() =>
+      decodePodcastEpisodeMedia(wire([{ ...validCredit, ordinal: "1" }])),
+    ).toThrow(/ordinal/);
   });
 });

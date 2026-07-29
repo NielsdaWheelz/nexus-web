@@ -65,6 +65,7 @@ from nexus.errors import (
     InvalidRequestError,
     NotFoundError,
 )
+from nexus.schemas.collection_page import CollectionCursor, CollectionPage, CollectionRevision
 from nexus.schemas.contributors import (
     ContributorDetailOut,
     ContributorRenameRequest,
@@ -74,7 +75,6 @@ from nexus.schemas.contributors import (
     ContributorSearchPageOut,
     ContributorWorkExampleOut,
     ContributorWorkItemOut,
-    ContributorWorkPageOut,
     ExistingAuthorBinding,
     ExternalActionTargetOut,
     ManualMediaAuthorsRequest,
@@ -83,6 +83,7 @@ from nexus.schemas.contributors import (
     MediaAuthorsPutRequest,
     ResourceActionSubjectOut,
 )
+from nexus.schemas.presence import absent, present
 from nexus.services._contributor_credit_writes import (
     CreditTarget as CreditTarget,
 )
@@ -120,6 +121,12 @@ from nexus.services._contributor_identity import (
 )
 from nexus.services.capabilities import can_edit_media_authors, can_rename_contributor
 from nexus.services.chat_context_refs import contributor_is_referenced_in_persisted_context
+from nexus.services.collection_revisions import (
+    CollectionFamily,
+    bump_all_collection_revisions,
+    read_collection_revision,
+    require_collection_revision,
+)
 from nexus.services.contributor_credits import (
     distinct_visible_works_sql,
     load_contributor_credits_for_media,
@@ -142,6 +149,12 @@ from nexus.services.resource_mutation_replay import (
     canonical_json_bytes,
     lookup_replay,
     record_replay,
+)
+from nexus.services.signed_keyset_cursor import (
+    KeysetValue,
+    KeysetValueKind,
+    decode_signed_keyset_cursor,
+    encode_signed_keyset_cursor,
 )
 from nexus.services.source_publication import (
     SourcePublicationFence,
@@ -276,11 +289,26 @@ def list_contributor_works(
     *,
     viewer_id: UUID,
     contributor_handle: ContributorHandle,
-    cursor: str | None = None,
+    cursor: CollectionCursor | None = None,
+    collection_revision: CollectionRevision | None = None,
     limit: int = 100,
-) -> ContributorWorkPageOut:
+) -> CollectionPage[ContributorWorkItemOut]:
     """Distinct visible works with nested role facts (spec §4, D-25 ordering)."""
     contributor = _load_visible_contributor_by_handle(db, str(contributor_handle), viewer_id)
+    current_revision = (
+        read_collection_revision(db, viewer_id=viewer_id, family=CollectionFamily.AuthorWorks)
+        if collection_revision is None
+        else require_collection_revision(
+            db,
+            viewer_id=viewer_id,
+            family=CollectionFamily.AuthorWorks,
+            expected=collection_revision,
+        )
+    )
+    cursor_query = {
+        "contributorHandle": str(contributor_handle),
+        "viewerId": str(viewer_id),
+    }
 
     params: dict[str, object] = {
         "viewer_id": viewer_id,
@@ -289,30 +317,43 @@ def list_contributor_works(
     }
     keyset_sql = ""
     if cursor is not None:
-        decoded = _decode_cursor(cursor, ("d", "t", "h"))
-        after_date, after_title, after_href = decoded["d"], decoded["t"], decoded["h"]
-        if (
-            not (after_date is None or isinstance(after_date, str))
-            or not isinstance(after_title, str)
-            or not isinstance(after_href, str)
-        ):
-            raise InvalidRequestError(message="Invalid cursor")
-        params["after_title"] = after_title
-        params["after_href"] = after_href
-        if after_date is not None:
-            params["after_date"] = after_date
-            keyset_sql = """AND (
-                w.date_key IS NULL
-                OR w.date_key < :after_date
-                OR (
-                    w.date_key = :after_date
-                    AND (w.title, w.href) > (:after_title, :after_href)
-                )
-            )"""
-        else:
-            keyset_sql = (
-                "AND w.date_key IS NULL AND (w.title, w.href) > (:after_title, :after_href)"
+        after_missing, after_date, after_title, after_href = decode_signed_keyset_cursor(
+            cursor,
+            family=CollectionFamily.AuthorWorks.value,
+            query=cursor_query,
+            expected_kinds=(
+                KeysetValueKind.Int,
+                KeysetValueKind.TextOrNull,
+                KeysetValueKind.Text,
+                KeysetValueKind.Text,
+            ),
+        )
+        params.update(
+            {
+                "after_missing": after_missing,
+                "after_date": after_date,
+                "after_title": after_title,
+                "after_href": after_href,
+            }
+        )
+        keyset_sql = """AND (
+            (w.date_key IS NULL)::int > :after_missing
+            OR (
+                (w.date_key IS NULL)::int = :after_missing
+                AND w.date_key < :after_date
             )
+            OR (
+                (w.date_key IS NULL)::int = :after_missing
+                AND w.date_key IS NOT DISTINCT FROM :after_date
+                AND w.title > :after_title
+            )
+            OR (
+                (w.date_key IS NULL)::int = :after_missing
+                AND w.date_key IS NOT DISTINCT FROM :after_date
+                AND w.title = :after_title
+                AND w.href > :after_href
+            )
+        )"""
 
     rows = db.execute(
         text(
@@ -338,10 +379,19 @@ def list_contributor_works(
     ).all()
 
     page = rows[:limit]
-    next_cursor = None
+    next_cursor: CollectionCursor | None = None
     if len(rows) > limit and page:
         last = page[-1]
-        next_cursor = _encode_cursor({"d": last.date_key, "t": last.title, "h": last.href})
+        next_cursor = encode_signed_keyset_cursor(
+            family=CollectionFamily.AuthorWorks.value,
+            query=cursor_query,
+            after=(
+                KeysetValue(KeysetValueKind.Int, int(last.date_key is None)),
+                KeysetValue(KeysetValueKind.TextOrNull, last.date_key),
+                KeysetValue(KeysetValueKind.Text, last.title),
+                KeysetValue(KeysetValueKind.Text, last.href),
+            ),
+        )
 
     works = [
         ContributorWorkItemOut(
@@ -368,7 +418,21 @@ def list_contributor_works(
         )
         for row in page
     ]
-    return ContributorWorkPageOut(works=works, nextCursor=next_cursor)
+    return CollectionPage[ContributorWorkItemOut](
+        items=works,
+        collectionRevision=current_revision,
+        nextCursor=present(next_cursor) if next_cursor is not None else absent(),
+    )
+
+
+def _bump_contributor_collection_revisions(db: Session) -> None:
+    for family in (
+        CollectionFamily.AuthorWorks,
+        CollectionFamily.LibraryEntries,
+        CollectionFamily.PodcastSubscriptions,
+        CollectionFamily.PodcastEpisodes,
+    ):
+        bump_all_collection_revisions(db, family=family)
 
 
 def _contributor_work_action_target(
@@ -489,6 +553,7 @@ def replace_source_observed_role_slices(
                 observation=observation,
                 source=source,
             )
+            _bump_contributor_collection_revisions(fresh)
             fresh.commit()
 
         retry_serializable(
@@ -609,6 +674,7 @@ def cleanup_credits_for_deleted_target(db: Session, *, target: CreditTarget) -> 
         db.execute(delete(ResourceMutation).where(ResourceMutation.mutation_scope == scope))
     if to_prune:
         prune_contributors_if_orphaned(db, contributor_ids=to_prune)
+    _bump_contributor_collection_revisions(db)
 
 
 def prune_contributors_if_orphaned(db: Session, *, contributor_ids: Iterable[UUID]) -> None:
@@ -667,6 +733,7 @@ def _run_observations_op(
 ) -> None:
     for target, observation, source in items:
         _apply_observation(db, target=target, observation=observation, source=source)
+    _bump_contributor_collection_revisions(db)
     db.commit()
 
 
@@ -772,6 +839,7 @@ def _put_media_authors_op(
     )
     if dropped:
         prune_contributors_if_orphaned(db, contributor_ids=dropped)
+    _bump_contributor_collection_revisions(db)
     db.commit()
     return response
 

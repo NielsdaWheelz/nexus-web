@@ -1,5 +1,13 @@
 # Collection Surface — Hard Cutover
 
+> **Finite-list update (2026-07-29):**
+> [`complete-collection-lists-hard-cutover.md`](complete-collection-lists-hard-cutover.md)
+> makes automatic exhaustion a narrow finite-inventory primitive.
+> `useCursorPagination` remains manual and is not the universal collection
+> owner. For the six finite inventories it also supersedes this document's
+> `MediaOut` list-fact ownership and cursor/offset pagination ownership with
+> strict compact projections and the shared exhaustive driver.
+>
 > **Superseded (2026-07-22):**
 > [`library-sorting-hard-cutover.md`](library-sorting-hard-cutover.md) deletes
 > the library `?sort=resonance` ordering this document describes, replacing it

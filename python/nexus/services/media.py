@@ -7,7 +7,7 @@ import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal, cast
 from uuid import UUID
 
 from sqlalchemy import text
@@ -32,6 +32,8 @@ from nexus.schemas.media import (
     FragmentOut,
     ListeningStateOut,
     MediaOut,
+    MediaProcessingStatus,
+    MediaReadState,
     PodcastEpisodeChapterOut,
 )
 from nexus.schemas.presence import Absent, Present, absent, presence_from_nullable
@@ -50,56 +52,97 @@ from nexus.services.resource_grants import media_grant_path_exists_sql
 
 logger = get_logger(__name__)
 
-_MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
-    "m.id",
-    "m.kind",
-    "m.title",
-    "m.canonical_source_url",
-    "m.processing_status AS persisted_processing_status",
-    """EXISTS(
+_SOURCE_JOB_SUSPENDED_SQL = """EXISTS(
+    SELECT 1
+    FROM media_source_attempts suspended_attempt
+    JOIN background_jobs suspended_job
+      ON suspended_job.id = suspended_attempt.job_id
+     AND suspended_job.kind = 'ingest_media_source'
+     AND suspended_job.status = 'dead'
+     AND suspended_job.payload @> jsonb_build_object(
+         'media_id', m.id::text,
+         'attempt_id', suspended_attempt.id::text
+     )
+    WHERE suspended_attempt.media_id = m.id
+      AND suspended_attempt.id = (
+          SELECT latest.id
+          FROM media_source_attempts latest
+          WHERE latest.media_id = m.id
+          ORDER BY latest.attempt_no DESC, latest.created_at DESC, latest.id DESC
+          LIMIT 1
+      )
+)"""
+_DISPLAY_PROCESSING_STATUS_SQL = f"""CASE
+    WHEN {_SOURCE_JOB_SUSPENDED_SQL}
+    THEN 'suspended'
+    ELSE m.processing_status::text
+END"""
+_SOURCE_ATTEMPT_TYPES_SQL = """
+    'generic_web_url',
+    'x_author_thread',
+    'x_post',
+    'youtube_video',
+    'remote_pdf_url',
+    'remote_epub_url',
+    'uploaded_pdf_file',
+    'uploaded_epub_file',
+    'browser_article_capture',
+    'browser_pdf_capture',
+    'browser_epub_capture',
+    'podcast_episode_transcript',
+    'video_transcript'
+"""
+_SOURCE_ATTEMPT_FILE_TYPES_SQL = """
+    'uploaded_pdf_file',
+    'uploaded_epub_file',
+    'browser_article_capture',
+    'browser_pdf_capture',
+    'browser_epub_capture'
+"""
+_SOURCE_ATTEMPT_STORAGE_ERROR_CODES_SQL = """
+    'E_SIGN_UPLOAD_FAILED',
+    'E_STORAGE_MISSING',
+    'E_STORAGE_ERROR'
+"""
+
+
+def _source_attempt_available_sql(*, failed_only: bool) -> str:
+    status_predicate = "AND msa.status = 'failed'" if failed_only else ""
+    return f"""EXISTS(
         SELECT 1
-        FROM media_source_attempts suspended_attempt
-        JOIN background_jobs suspended_job
-          ON suspended_job.id = suspended_attempt.job_id
-         AND suspended_job.kind = 'ingest_media_source'
-         AND suspended_job.status = 'dead'
-         AND suspended_job.payload @> jsonb_build_object(
-             'media_id', m.id::text,
-             'attempt_id', suspended_attempt.id::text
-         )
-        WHERE suspended_attempt.media_id = m.id
-          AND suspended_attempt.id = (
+        FROM media_source_attempts msa
+        WHERE msa.media_id = m.id
+          {status_predicate}
+          AND msa.source_type IN ({_SOURCE_ATTEMPT_TYPES_SQL})
+          AND NOT (
+              msa.source_type IN ({_SOURCE_ATTEMPT_FILE_TYPES_SQL})
+              AND m.last_error_code IN ({_SOURCE_ATTEMPT_STORAGE_ERROR_CODES_SQL})
+          )
+          AND msa.id = (
               SELECT latest.id
               FROM media_source_attempts latest
               WHERE latest.media_id = m.id
               ORDER BY latest.attempt_no DESC, latest.created_at DESC, latest.id DESC
               LIMIT 1
           )
-    ) AS source_job_suspended""",
-    """CASE
-        WHEN EXISTS(
-            SELECT 1
-            FROM media_source_attempts suspended_attempt
-            JOIN background_jobs suspended_job
-              ON suspended_job.id = suspended_attempt.job_id
-             AND suspended_job.kind = 'ingest_media_source'
-             AND suspended_job.status = 'dead'
-             AND suspended_job.payload @> jsonb_build_object(
-                 'media_id', m.id::text,
-                 'attempt_id', suspended_attempt.id::text
-             )
-            WHERE suspended_attempt.media_id = m.id
-              AND suspended_attempt.id = (
-                  SELECT latest.id
-                  FROM media_source_attempts latest
-                  WHERE latest.media_id = m.id
-                  ORDER BY latest.attempt_no DESC, latest.created_at DESC, latest.id DESC
-                  LIMIT 1
-              )
-        )
-        THEN 'suspended'
-        ELSE m.processing_status::text
-    END AS processing_status""",
+    )"""
+
+
+_SOURCE_RETRY_AVAILABLE_SQL = _source_attempt_available_sql(failed_only=True)
+_SOURCE_REFRESH_AVAILABLE_SQL = _source_attempt_available_sql(failed_only=False)
+_CAN_DELETE_SQL = f"""(
+    {non_system_media_ref_exists_sql("m.id")}
+    OR {media_grant_path_exists_sql("m.id")}
+)"""
+
+_MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
+    "m.id",
+    "m.kind",
+    "m.title",
+    "m.canonical_source_url",
+    "m.processing_status AS persisted_processing_status",
+    f"{_SOURCE_JOB_SUSPENDED_SQL} AS source_job_suspended",
+    f"{_DISPLAY_PROCESSING_STATUS_SQL} AS processing_status",
     "m.failure_stage",
     "m.last_error_code",
     "m.external_playback_url",
@@ -110,89 +153,8 @@ _MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
     "EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id) AS has_file",
     "m.created_by_user_id = :viewer_id AS is_creator",
     "m.requested_url IS NOT NULL AS has_requested_url",
-    """EXISTS(
-        SELECT 1
-        FROM media_source_attempts msa
-        WHERE msa.media_id = m.id
-          AND msa.status = 'failed'
-          AND msa.source_type IN (
-              'generic_web_url',
-              'x_author_thread',
-              'x_post',
-              'youtube_video',
-              'remote_pdf_url',
-              'remote_epub_url',
-              'uploaded_pdf_file',
-              'uploaded_epub_file',
-              'browser_article_capture',
-              'browser_pdf_capture',
-              'browser_epub_capture',
-              'podcast_episode_transcript',
-              'video_transcript'
-          )
-          AND NOT (
-              msa.source_type IN (
-                  'uploaded_pdf_file',
-                  'uploaded_epub_file',
-                  'browser_article_capture',
-                  'browser_pdf_capture',
-                  'browser_epub_capture'
-              )
-              AND m.last_error_code IN (
-                  'E_SIGN_UPLOAD_FAILED',
-                  'E_STORAGE_MISSING',
-                  'E_STORAGE_ERROR'
-              )
-          )
-          AND msa.id = (
-              SELECT latest.id
-              FROM media_source_attempts latest
-              WHERE latest.media_id = m.id
-              ORDER BY latest.attempt_no DESC, latest.created_at DESC, latest.id DESC
-              LIMIT 1
-          )
-    ) AS source_retry_available""",
-    """EXISTS(
-        SELECT 1
-        FROM media_source_attempts msa
-        WHERE msa.media_id = m.id
-          AND msa.source_type IN (
-              'generic_web_url',
-              'x_author_thread',
-              'x_post',
-              'youtube_video',
-              'remote_pdf_url',
-              'remote_epub_url',
-              'uploaded_pdf_file',
-              'uploaded_epub_file',
-              'browser_article_capture',
-              'browser_pdf_capture',
-              'browser_epub_capture',
-              'podcast_episode_transcript',
-              'video_transcript'
-          )
-          AND NOT (
-              msa.source_type IN (
-                  'uploaded_pdf_file',
-                  'uploaded_epub_file',
-                  'browser_article_capture',
-                  'browser_pdf_capture',
-                  'browser_epub_capture'
-              )
-              AND m.last_error_code IN (
-                  'E_SIGN_UPLOAD_FAILED',
-                  'E_STORAGE_MISSING',
-                  'E_STORAGE_ERROR'
-              )
-          )
-          AND msa.id = (
-              SELECT latest.id
-              FROM media_source_attempts latest
-              WHERE latest.media_id = m.id
-              ORDER BY latest.attempt_no DESC, latest.created_at DESC, latest.id DESC
-              LIMIT 1
-          )
-    ) AS source_refresh_available""",
+    f"{_SOURCE_RETRY_AVAILABLE_SQL} AS source_retry_available",
+    f"{_SOURCE_REFRESH_AVAILABLE_SQL} AS source_refresh_available",
     "m.published_date",
     "m.publisher",
     "m.language",
@@ -218,10 +180,7 @@ _MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
         ELSE COALESCE(mcis.status, 'pending')
     END AS retrieval_status""",
     "mcis.status_reason AS retrieval_status_reason",
-    f"""(
-        {non_system_media_ref_exists_sql("m.id")}
-        OR {media_grant_path_exists_sql("m.id")}
-    ) AS can_delete""",
+    f"{_CAN_DELETE_SQL} AS can_delete",
     """(
         SELECT ps.default_playback_speed
         FROM podcast_episodes pe_sub
@@ -245,6 +204,28 @@ _MEDIA_LISTENING_STATE_NULL_SELECT_COLUMNS: tuple[str, ...] = (
     "NULL::double precision AS listening_playback_speed",
     "NULL::boolean AS listening_is_completed",
 )
+_COLLECTION_MEDIA_SELECT_COLUMNS: tuple[str, ...] = (
+    "m.id",
+    "m.kind",
+    "m.title",
+    "m.canonical_source_url",
+    "m.external_playback_url",
+    "m.processing_status AS persisted_processing_status",
+    f"{_SOURCE_JOB_SUSPENDED_SQL} AS source_job_suspended",
+    f"{_DISPLAY_PROCESSING_STATUS_SQL} AS processing_status",
+    "m.last_error_code",
+    "m.created_at",
+    "m.published_date",
+    "m.authors_manually_managed",
+    "EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id) AS has_file",
+    "m.created_by_user_id = :viewer_id AS is_creator",
+    f"{_SOURCE_RETRY_AVAILABLE_SQL} AS source_retry_available",
+    f"{_SOURCE_REFRESH_AVAILABLE_SQL} AS source_refresh_available",
+    "mts.transcript_state",
+    "mts.transcript_coverage",
+    f"{_CAN_DELETE_SQL} AS can_delete",
+    *_MEDIA_LISTENING_STATE_SELECT_COLUMNS,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -257,6 +238,41 @@ class CompactMediaTarget:
     subtitle: Absent | Present[str]
     image_url: Absent | Present[str]
     href: str
+
+
+@dataclass(frozen=True, slots=True)
+class CollectionMediaCapabilities:
+    """Only media actions consumed by Library and Podcast collection rows."""
+
+    can_quote: bool
+    can_retry: bool
+    can_refresh_source: bool
+    can_retry_metadata: bool
+    can_edit_authors: bool
+    can_delete: bool
+
+
+@dataclass(frozen=True, slots=True)
+class CollectionMedia:
+    """Compact viewer-scoped media facts shared by finite collection owners."""
+
+    id: UUID
+    kind: Literal["web_article", "epub", "pdf", "podcast_episode", "video"]
+    title: str
+    canonical_source_url: str | None
+    processing_status: MediaProcessingStatus
+    transcript_state: str | None
+    transcript_coverage: str | None
+    listening_state: ListeningStateOut | None
+    contributors: list[ContributorCreditOut]
+    author_mode: Literal["automatic", "manual"]
+    published_date: str | None
+    read_state: MediaReadState
+    progress_fraction: float | None
+    progress_resettable: bool
+    audio_playable: bool
+    capabilities: CollectionMediaCapabilities
+    created_at: datetime
 
 
 def media_candidate_rows_sql() -> str:
@@ -378,6 +394,10 @@ def _media_select_projection_sql(*, include_listening_state: bool) -> str:
     return ",\n                ".join(columns)
 
 
+def _collection_media_select_projection_sql() -> str:
+    return ",\n                    ".join(_COLLECTION_MEDIA_SELECT_COLUMNS)
+
+
 def _media_listening_state_join_sql(*, include_listening_state: bool) -> str:
     if not include_listening_state:
         return ""
@@ -386,6 +406,157 @@ def _media_listening_state_join_sql(*, include_listening_state: bool) -> str:
               ON pls.media_id = m.id
              AND pls.user_id = :viewer_id
     """
+
+
+def list_collection_media_for_viewer_by_ids(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_ids: list[UUID],
+) -> list[CollectionMedia]:
+    """Hydrate the exact media facts consumed by finite collection rows.
+
+    Visibility and input order match :func:`list_media_for_viewer_by_ids`, but
+    this projection deliberately excludes detail-only descriptions, chapters,
+    document embeds, images, retrieval metadata, and broad ``MediaOut``
+    construction.
+    """
+    ordered_media_ids = _dedupe_uuid_order(media_ids)
+    if not ordered_media_ids:
+        return []
+
+    media_rows = (
+        db.execute(
+            text(
+                f"""
+                WITH visible_media AS (
+                    {visible_media_ids_cte_sql()}
+                )
+                SELECT
+                    {_collection_media_select_projection_sql()}
+                FROM media m
+                JOIN visible_media vm
+                  ON vm.media_id = m.id
+                LEFT JOIN media_transcript_states mts
+                  ON mts.media_id = m.id
+                {_media_listening_state_join_sql(include_listening_state=True)}
+                WHERE m.id = ANY(:media_ids)
+                """
+            ),
+            {"viewer_id": viewer_id, "media_ids": ordered_media_ids},
+        )
+        .mappings()
+        .all()
+    )
+    if not media_rows:
+        return []
+
+    row_by_media_id: dict[UUID, Mapping[str, object]] = {
+        UUID(str(row["id"])): dict(row) for row in media_rows
+    }
+    visible_ids = [media_id for media_id in ordered_media_ids if media_id in row_by_media_id]
+    pdf_ids = [
+        media_id
+        for media_id in visible_ids
+        if _status_to_str(row_by_media_id[media_id]["kind"]) == MediaKind.pdf.value
+    ]
+    pdf_readiness = batch_pdf_quote_text_ready(db, pdf_ids) if pdf_ids else {}
+    contributors_by_media = load_contributor_credits_for_media(db, visible_ids)
+    read_states = consumption_service.media_read_states(
+        db,
+        viewer_id=viewer_id,
+        media_ids=visible_ids,
+    )
+
+    media_list: list[CollectionMedia] = []
+    for media_id in visible_ids:
+        row = row_by_media_id[media_id]
+        kind_value = _status_to_str(row["kind"])
+        try:
+            MediaKind(kind_value)
+        except ValueError as exc:
+            # justify-defect: media.kind is storage-owned and constrained to the
+            # closed MediaKind vocabulary.
+            raise AssertionError(f"unknown media.kind: {kind_value!r}") from exc
+        read_state = read_states.get(media_id)
+        if read_state is None:
+            # justify-defect: media_read_states returns one state for every
+            # trusted, visible media id supplied by this projection.
+            raise AssertionError(f"missing collection read state for media {media_id}")
+
+        transcript_state = (
+            _status_to_str(row["transcript_state"]) if row["transcript_state"] is not None else None
+        )
+        transcript_coverage = (
+            _status_to_str(row["transcript_coverage"])
+            if row["transcript_coverage"] is not None
+            else None
+        )
+        derived_capabilities = derive_capabilities(
+            kind=kind_value,
+            processing_status=_status_to_str(row["persisted_processing_status"]),
+            last_error_code=cast(str | None, row["last_error_code"]),
+            media_file_exists=bool(row["has_file"]),
+            # The broad CapabilitiesOut.can_play value is not exposed. Compact
+            # podcast playability is derived separately below.
+            external_playback_url_exists=False,
+            pdf_quote_text_ready=pdf_readiness.get(media_id, False),
+            transcript_state=transcript_state,
+            transcript_coverage=transcript_coverage,
+            can_delete=bool(row["can_delete"]),
+            is_creator=bool(row["is_creator"]),
+            source_retry_available=bool(row["source_retry_available"]),
+            source_refresh_available=bool(row["source_refresh_available"]),
+            source_suspended=bool(row["source_job_suspended"]),
+        )
+        playback_source = (
+            derive_playback_source(
+                kind=kind_value,
+                external_playback_url=cast(str | None, row["external_playback_url"]),
+                canonical_source_url=cast(str | None, row["canonical_source_url"]),
+            )
+            if kind_value == MediaKind.podcast_episode.value
+            else None
+        )
+        media_list.append(
+            CollectionMedia(
+                id=media_id,
+                kind=cast(
+                    "Literal['web_article', 'epub', 'pdf', 'podcast_episode', 'video']",
+                    kind_value,
+                ),
+                title=str(row["title"]),
+                canonical_source_url=cast(str | None, row["canonical_source_url"]),
+                processing_status=cast(
+                    "MediaProcessingStatus",
+                    _status_to_str(row["processing_status"]),
+                ),
+                transcript_state=transcript_state,
+                transcript_coverage=transcript_coverage,
+                listening_state=_media_listening_state_from_row(row),
+                contributors=contributors_by_media.get(media_id, []),
+                author_mode="manual" if bool(row["authors_manually_managed"]) else "automatic",
+                published_date=cast(str | None, row["published_date"]),
+                read_state=read_state.state,
+                progress_fraction=read_state.progress_fraction,
+                progress_resettable=read_state.progress_resettable,
+                audio_playable=(
+                    kind_value == MediaKind.podcast_episode.value
+                    and playback_source is not None
+                    and bool(playback_source.stream_url)
+                ),
+                capabilities=CollectionMediaCapabilities(
+                    can_quote=derived_capabilities.can_quote,
+                    can_retry=derived_capabilities.can_retry,
+                    can_refresh_source=derived_capabilities.can_refresh_source,
+                    can_retry_metadata=derived_capabilities.can_retry_metadata,
+                    can_edit_authors=derived_capabilities.can_edit_authors,
+                    can_delete=derived_capabilities.can_delete,
+                ),
+                created_at=cast(datetime, row["created_at"]),
+            )
+        )
+    return media_list
 
 
 def get_media_for_viewer(

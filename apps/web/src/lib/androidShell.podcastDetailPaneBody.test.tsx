@@ -111,7 +111,7 @@ describe("PodcastDetailPaneBody transcript billing", () => {
               provider: "podcast_index",
               provider_podcast_id: "provider-1",
               title: "Systems Podcast",
-              author: "Systems Team",
+              contributors: [],
               feed_url: "https://feeds.example.com/systems.xml",
               website_url: null,
               image_url: null,
@@ -125,45 +125,38 @@ describe("PodcastDetailPaneBody transcript billing", () => {
       }
       if (url.pathname === `/api/podcasts/${PODCAST_ID}/episodes`) {
         return jsonResponse({
-          data: [
-            {
+          data: {
+            items: [{
               id: EPISODE_ID,
               kind: "podcast_episode",
               title: "Episode 0",
-              canonical_source_url: "https://feeds.example.com/systems.xml",
+              canonical_source_url: {
+                kind: "Present",
+                value: "https://feeds.example.com/systems.xml",
+              },
               processing_status: "ready_for_reading",
               transcript_state: "not_requested",
               transcript_coverage: "none",
-              listening_state: null,
-              subscription_default_playback_speed: null,
+              listening_state: { kind: "Absent" },
               episode_state: "unplayed",
               progress_resettable: false,
-              failure_stage: null,
-              last_error_code: null,
-              playback_source: null,
               playerDescriptor: { kind: "Absent" },
               capabilities: {
-                can_read: true,
-                can_highlight: true,
-                can_quote: true,
-                can_search: true,
-                can_play: true,
-                can_download_file: false,
+                can_retry: false,
+                can_refresh_source: false,
                 can_retry_metadata: false,
                 can_edit_authors: false,
+                can_delete: false,
               },
               contributors: [],
               author_mode: "automatic",
-              published_date: null,
-              publisher: null,
-              language: null,
-              description: null,
-              description_html: null,
-              description_text: null,
-              created_at: "2026-03-06T00:00:00Z",
-              updated_at: "2026-03-06T00:00:00Z",
-            },
-          ],
+              published_date: { kind: "Absent" },
+              duration_seconds: { kind: "Absent" },
+              has_show_notes: false,
+            }],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         });
       }
       if (url.pathname === "/api/libraries/writable-destinations") {

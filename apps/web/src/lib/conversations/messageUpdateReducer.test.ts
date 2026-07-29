@@ -337,14 +337,19 @@ describe("messageUpdateReducer", () => {
   it("apply_context_ref appends a context ref and is idempotent by id", () => {
     const ref = {
       ...decodeContextRef({
-      id: "ctx-1",
-      conversation_id: "conversation-1",
-      resource_ref: "media:11111111-1111-4111-8111-111111111111",
-      activation: citationOut.activation,
-      label: "Source",
-      summary: "A summary",
-      missing: false,
-      created_at: "2026-01-01T00:00:02Z",
+        id: "ctx-1",
+        conversation_id: "conversation-1",
+        resource_ref: "media:11111111-1111-4111-8111-111111111111",
+        activation: {
+          resource_ref: "media:11111111-1111-4111-8111-111111111111",
+          kind: "route",
+          href: "/media/11111111-1111-4111-8111-111111111111",
+          unresolved_reason: null,
+        },
+        label: "Source",
+        summary: "A summary",
+        missing: false,
+        created_at: "2026-01-01T00:00:02Z",
       }),
       citation_edge_id: null,
     };

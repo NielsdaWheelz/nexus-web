@@ -20,6 +20,10 @@ from nexus.schemas.conversation import (
     ConversationShareTargetOut,
 )
 from nexus.services.billing_entitlements import get_effective_entitlements
+from nexus.services.collection_revisions import (
+    CollectionFamily,
+    bump_all_collection_revisions,
+)
 
 
 def is_member_of_library(db: Session, user_id: UUID, library_id: UUID) -> bool:
@@ -157,6 +161,10 @@ def set_conversation_shares_for_owner(
         )
 
     db.flush()
+    bump_all_collection_revisions(
+        db,
+        family=CollectionFamily.ConversationIndex,
+    )
     db.commit()
     db.refresh(conversation)
 

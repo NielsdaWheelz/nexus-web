@@ -7,21 +7,24 @@ Route contract:
 - Conversations: GET (list/get), POST (create), DELETE
 
 All routes require authentication.
-Response envelope: {"data": ...} or {"data": [...], "page": {...}}
+The finite primary index returns strict CollectionPage data. The explicit
+destination/context modes retain their existing {"data": [...], "page": {...}}
+contracts.
 Error envelope: {"error": {"code": "...", "message": "...", "request_id": "..."}}
 """
 
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, Query, Response
+from fastapi import APIRouter, Body, Depends, Request
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db
+from nexus.db.session import get_db, get_repeatable_read_db
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.responses import ok, ok_page
+from nexus.schemas.collection_page import parse_collection_query, parse_manual_page_query
 from nexus.services import conversations as conversations_service
 
 router = APIRouter(tags=["conversations"])
@@ -29,46 +32,54 @@ router = APIRouter(tags=["conversations"])
 
 @router.get("/conversations")
 def list_conversations(
+    request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    limit: int = Query(default=50, ge=1, le=100, description="Maximum results (1-100)"),
-    cursor: str | None = Query(default=None, description="Pagination cursor"),
-    scope: str | None = Query(default=None, description="Scope: mine|all|shared"),
-    has_context_ref: str | None = Query(
-        default=None,
-        description="Filter to conversations with a context edge to this resource URI",
-    ),
-    q: str | None = Query(
-        default=None,
-        description="Owned-scope title search (destination picker); composes only with cursor/limit",
-    ),
+    db: Annotated[Session, Depends(get_repeatable_read_db)],
 ) -> dict:
     """List conversations.
 
-    When ``q`` is supplied, forces owned scope and title-searches; it composes
-    only with cursor/limit and rejects any other scope/context filter. When
-    ``has_context_ref`` is supplied, returns conversations with any edge to the
-    given resource URI (single-user: viewer-owned only); ``scope`` is ignored in
-    that case. Otherwise lists by visibility scope (mine|all|shared).
-
-    Returns conversations ordered by updated_at DESC, id DESC.
-    Supports cursor-based pagination.
+    An explicit ``q`` selects the retained owned destination picker. An explicit
+    ``has_context_ref`` selects the retained resource-graph mode. Every unmarked
+    request, with optional ``scope``, selects the finite primary index.
 
     Errors:
         E_INVALID_REQUEST (400): Invalid scope value, malformed has_context_ref
             URI, or ``q`` combined with another filter / over its length bound.
         E_INVALID_CURSOR (400): Cursor is malformed or unparseable.
     """
-    conversations, page = conversations_service.list_conversations(
-        db=db,
-        viewer_id=viewer.user_id,
-        limit=limit,
-        cursor=cursor,
-        scope=scope,
-        has_context_ref=has_context_ref,
-        q=q,
+    raw_keys = {key for key, _value in request.query_params.multi_items()}
+    if "q" in raw_keys or "has_context_ref" in raw_keys:
+        mode_key = "q" if "q" in raw_keys else "has_context_ref"
+        query = parse_manual_page_query(
+            request.query_params.multi_items(),
+            domain_keys=frozenset({mode_key}),
+            default_limit=conversations_service.DEFAULT_LIMIT,
+            max_limit=conversations_service.MAX_LIMIT,
+        )
+        conversations, page = conversations_service.list_retained_conversations(
+            db=db,
+            viewer_id=viewer.user_id,
+            limit=query.limit,
+            cursor=query.cursor,
+            scope=None,
+            has_context_ref=query.parameters.get("has_context_ref"),
+            q=query.parameters.get("q"),
+        )
+        return ok_page(conversations, page)
+
+    query = parse_collection_query(
+        request.query_params.multi_items(),
+        domain_keys=frozenset({"scope"}),
     )
-    return ok_page(conversations, page)
+    page = conversations_service.list_conversation_index(
+        db,
+        viewer_id=viewer.user_id,
+        limit=query.limit,
+        cursor=query.cursor,
+        collection_revision=query.collection_revision,
+        scope=query.parameters.get("scope"),
+    )
+    return ok(page, by_alias=True)
 
 
 class CreateConversationRequest(BaseModel):
@@ -154,12 +165,12 @@ def undo_tool_call(
     return ok(tool_call)
 
 
-@router.delete("/conversations/{conversation_id}", status_code=204)
+@router.delete("/conversations/{conversation_id}")
 def delete_conversation(
     conversation_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-) -> Response:
+) -> dict:
     """Delete a conversation.
 
     Explicitly deletes its resource-graph edges, messages, conversation_shares,
@@ -168,9 +179,9 @@ def delete_conversation(
     Errors:
         E_CONVERSATION_NOT_FOUND (404): Conversation doesn't exist or viewer is not owner.
     """
-    conversations_service.delete_conversation(
+    result = conversations_service.delete_conversation(
         db=db,
         viewer_id=viewer.user_id,
         conversation_id=conversation_id,
     )
-    return Response(status_code=204)
+    return ok(result, by_alias=True)

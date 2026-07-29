@@ -12,6 +12,10 @@ from sqlalchemy.orm import Session
 from nexus.db.models import Media, ProcessingStatus
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
+from nexus.services.collection_revisions import (
+    CollectionFamily,
+    bump_all_collection_families,
+)
 from nexus.services.media_author_observation_seam import attach_author_observation
 from nexus.services.pdf_ingest import (
     PdfExtractionError,
@@ -109,6 +113,13 @@ def publish_pdf_source(
     result = publish_pdf_extraction_plan(db, media_id=media_id, plan=plan)
     assert isinstance(result, PdfExtractionResult)
     persist_pdf_metadata(db, media, result)
+    bump_all_collection_families(
+        db,
+        families=(
+            CollectionFamily.AuthorWorks,
+            CollectionFamily.LibraryEntries,
+        ),
+    )
     db.flush()
     response: dict[str, object] = {
         "status": "success",

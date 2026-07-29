@@ -129,6 +129,7 @@ function installLecternFetchMock(): LecternFetchMock {
           nextItem: { kind: "Absent" },
           progressState: { kind: "Absent" },
           completionHandle: { kind: "Absent" },
+          libraryEntriesCollectionRevision: 1,
         },
       }),
   };
@@ -653,6 +654,7 @@ describe("LecternProvider ResetProgress install", () => {
             },
           },
           completionHandle: { kind: "Absent" },
+          libraryEntriesCollectionRevision: 2,
         },
       });
     };

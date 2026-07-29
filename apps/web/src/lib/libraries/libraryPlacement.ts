@@ -1,4 +1,8 @@
 import { apiCommand204, apiFetch } from "@/lib/api/client";
+import {
+  decodeCollectionRevision,
+  type CollectionRevision,
+} from "@/lib/api/collectionPage";
 import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { isRecord } from "@/lib/validation";
@@ -144,23 +148,46 @@ export async function removeLibraryPlacement(
   target: LibraryPlacementTarget,
   libraryId: string,
   { signal }: { signal?: AbortSignal } = {},
-): Promise<void> {
+): Promise<CollectionRevision> {
+  let response: unknown;
   switch (target.kind) {
     case "Media":
-      await apiCommand204(`/api/media/${target.id}/libraries/${libraryId}`, {
+      response = await apiFetch<unknown>(
+        `/api/media/${target.id}/libraries/${libraryId}`,
+        {
         method: "DELETE",
         signal,
-      });
-      publishLibraryPlacementChange([libraryId]);
-      return;
+        },
+      );
+      break;
     case "Podcast":
-      await apiCommand204(
+      response = await apiFetch<unknown>(
         `/api/libraries/${libraryId}/podcasts/${target.id}`,
         { method: "DELETE", signal },
       );
-      publishLibraryPlacementChange([libraryId]);
-      return;
+      break;
   }
+  if (!isRecord(response)) {
+    throw new LibraryPlacementContractDefect(
+      "Invalid LibraryEntryRemovalOut envelope",
+    );
+  }
+  requireExactKeys(response, ["data"], "LibraryEntryRemovalOut envelope");
+  if (!isRecord(response.data)) {
+    throw new LibraryPlacementContractDefect(
+      "Invalid LibraryEntryRemovalOut.data",
+    );
+  }
+  requireExactKeys(
+    response.data,
+    ["libraryEntriesCollectionRevision"],
+    "LibraryEntryRemovalOut.data",
+  );
+  const revision = decodeCollectionRevision(
+    response.data.libraryEntriesCollectionRevision,
+  );
+  publishLibraryPlacementChange([libraryId]);
+  return revision;
 }
 
 export async function addMediaToLibraries(

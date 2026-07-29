@@ -550,6 +550,13 @@ class DirectSessionManager:
                     )
 
                 if table == "users" and column == "id":
+                    session.execute(
+                        text(
+                            "DELETE FROM viewer_collection_revisions "
+                            "WHERE viewer_id = :value"
+                        ),
+                        {"value": value},
+                    )
                     _delete_note_owned_content(
                         session,
                         note_filter="SELECT id FROM note_blocks WHERE user_id = :value",

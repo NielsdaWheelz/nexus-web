@@ -18,6 +18,10 @@ from sqlalchemy.orm import Session
 
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.logging import get_logger
+from nexus.services.collection_revisions import (
+    CollectionFamily,
+    bump_all_collection_revisions,
+)
 
 logger = get_logger(__name__)
 
@@ -69,6 +73,10 @@ def assign_next_message_seq(db: Session, conversation_id: UUID) -> int:
             WHERE id = :conversation_id
         """),
         {"conversation_id": conversation_id},
+    )
+    bump_all_collection_revisions(
+        db,
+        family=CollectionFamily.ConversationIndex,
     )
 
     # Step 3: Return the original next_seq (the one we're assigning)

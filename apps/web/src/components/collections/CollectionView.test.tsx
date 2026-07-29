@@ -221,6 +221,73 @@ describe("canonical CollectionView", () => {
     expect(startViewTransition).toHaveBeenCalledOnce();
   });
 
+  it("commits a pure suffix without a view transition or moving focus", async () => {
+    installMatchMedia(false);
+    const startViewTransition = installStartViewTransition();
+    const view = renderView({ rows: ROWS.slice(0, 2) });
+    const firstLink = screen.getByRole("link", { name: "First document" });
+    firstLink.focus();
+    const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+
+    view.rerender(
+      <CollectionView
+        returnScope="Test.Documents"
+        rows={ROWS}
+        status="ready"
+        ariaLabel="Documents"
+        surface={false}
+      />,
+    );
+
+    await screen.findByRole("link", { name: "Third document" });
+    expect(startViewTransition).not.toHaveBeenCalled();
+    expect(firstLink).toHaveFocus();
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+
+  it("coalesces a row removal and pending suffix into one transition", async () => {
+    installMatchMedia(false);
+    const startViewTransition = installStartViewTransition();
+    const view = renderView({ collectionBusy: true });
+
+    view.rerender(
+      <CollectionView
+        returnScope="Test.Documents"
+        rows={ROWS.slice(1)}
+        status="ready"
+        ariaLabel="Documents"
+        collectionBusy
+        surface={false}
+      />,
+    );
+    view.rerender(
+      <CollectionView
+        returnScope="Test.Documents"
+        rows={[...ROWS.slice(1), row("d", "Fourth document")]}
+        status="ready"
+        ariaLabel="Documents"
+        collectionBusy
+        surface={false}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getAllByRole("link").map((link) => link.textContent),
+      ).toEqual(["Second document", "Third document", "Fourth document"]);
+    });
+    expect(startViewTransition).toHaveBeenCalledOnce();
+  });
+
+  it("puts collection busy state on the native list", () => {
+    renderView({ collectionBusy: true });
+
+    expect(screen.getByRole("list", { name: "Documents" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+  });
+
   it("starts the committed-row transition during layout before an intermediate paint", async () => {
     installMatchMedia(false);
     const startViewTransition = installStartViewTransition();

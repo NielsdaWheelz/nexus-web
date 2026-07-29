@@ -97,6 +97,17 @@ class ConversationOut(BaseModel):
     model_config = ConfigDict(from_attributes=True, extra="forbid")
 
 
+class ConversationListItemOut(BaseModel):
+    """Compact row contract for the finite primary conversation index."""
+
+    id: UUID
+    title: str
+    message_count: int
+    updated_at: datetime
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class MessageDocumentTextBlock(BaseModel):
     type: Literal["text"]
     format: Literal["plain", "markdown"]

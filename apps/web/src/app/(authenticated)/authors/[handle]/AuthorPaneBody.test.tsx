@@ -24,6 +24,21 @@ import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementCon
 import { ShareControllerProvider } from "@/lib/sharing/controller";
 import AuthorPaneBody from "./AuthorPaneBody";
 
+const primaryChromeMocks = vi.hoisted(() => ({
+  usePanePrimaryChrome: vi.fn(),
+}));
+
+vi.mock("@/components/workspace/PanePrimaryChrome", async () => {
+  const actual =
+    await vi.importActual<
+      typeof import("@/components/workspace/PanePrimaryChrome")
+    >("@/components/workspace/PanePrimaryChrome");
+  return {
+    ...actual,
+    usePanePrimaryChrome: primaryChromeMocks.usePanePrimaryChrome,
+  };
+});
+
 const HANDLE = "ursula-le-guin";
 const CANONICAL = "Ursula K. Le Guin";
 const CONTRIBUTOR_ID = "11111111-1111-4111-8111-111111111111";
@@ -38,6 +53,7 @@ let workSequence = 0;
 
 describe("AuthorPaneBody", () => {
   afterEach(() => {
+    primaryChromeMocks.usePanePrimaryChrome.mockReset();
     vi.unstubAllGlobals();
   });
 
@@ -95,13 +111,21 @@ describe("AuthorPaneBody", () => {
     expect(screen.queryByRole("heading", { name: "Other names" })).not.toBeInTheDocument();
   });
 
-  it("shows the zero-work state instead of a count", async () => {
+  it("shows the zero-work state and truthful final count", async () => {
     stubRoutes({ detail: detail({}), works: worksPage([]) });
     render(authorPane());
 
     expect(await screen.findByRole("heading", { name: CANONICAL })).toBeVisible();
     expect(screen.getByText("No works yet.")).toBeVisible();
-    expect(screen.queryByText(/0 works/)).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        primaryChromeMocks.usePanePrimaryChrome.mock.calls.at(-1)?.[0]?.header,
+      ).toEqual({
+        kind: "section",
+        folio: { kind: "count", value: 0, unit: "work" },
+        pending: false,
+      }),
+    );
   });
 
   it("uses the workspace-resolved contributor UUID for Connections", async () => {
@@ -171,7 +195,7 @@ describe("AuthorPaneBody", () => {
     expect(screen.queryByText("Must not render")).toBeNull();
   });
 
-  it("appends the next page when Load more is pressed", async () => {
+  it("automatically exhausts the remaining work pages", async () => {
     const cursors: Array<string | null> = [];
     stubFetchRouter((url) => {
       if (url.pathname === `/api/contributors/${HANDLE}`) return detail({});
@@ -188,11 +212,8 @@ describe("AuthorPaneBody", () => {
     render(authorPane());
 
     expect(await screen.findByRole("link", { name: "First Page Work" })).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
-
     const secondPageWork = await screen.findByRole("link", { name: "Second Page Work" });
     expect(secondPageWork).toBeVisible();
-    await waitFor(() => expect(secondPageWork).toHaveFocus());
     expect(screen.getByRole("link", { name: "First Page Work" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
     expect(cursors).toEqual([null, "cursor-2"]);
@@ -246,7 +267,6 @@ describe("AuthorPaneBody", () => {
     expect(
       await screen.findByRole("link", { name: "Restored Author First" }),
     ).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
     expect(
       await screen.findByRole("link", { name: "Restored Author Second" }),
     ).toBeVisible();
@@ -269,15 +289,16 @@ describe("AuthorPaneBody", () => {
     await waitFor(() => expect(cursors).toEqual([null, "cursor-2"]));
   });
 
-  it("retains rows and offers Try again when a Load more page fails", async () => {
-    let failNext = true;
+  it("retains rows and offers Retry when continuation retries exhaust", async () => {
+    let recovering = false;
+    let continuationRequests = 0;
     stubFetchRouter((url) => {
       if (url.pathname === `/api/contributors/${HANDLE}`) return detail({});
       if (url.pathname === `/api/contributors/${HANDLE}/works`) {
         if (url.searchParams.get("cursor") === "cursor-2") {
-          if (failNext) {
-            failNext = false;
-            return errorResponse(500, "E_INTERNAL", "boom");
+          continuationRequests += 1;
+          if (!recovering) {
+            return errorResponse(503, "E_UPSTREAM", "boom");
           }
           return worksPage([work({ title: "Recovered Work", href: "/media/ok" })]);
         }
@@ -289,12 +310,13 @@ describe("AuthorPaneBody", () => {
     render(authorPane());
 
     expect(await screen.findByRole("link", { name: "First Page Work" })).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
 
-    const tryAgain = await screen.findByRole("button", { name: "Try again" });
+    const tryAgain = await screen.findByRole("button", { name: "Retry" });
     // Existing rows survive the failure.
     expect(screen.getByRole("link", { name: "First Page Work" })).toBeVisible();
 
+    expect(continuationRequests).toBeGreaterThanOrEqual(3);
+    recovering = true;
     fireEvent.click(tryAgain);
     expect(await screen.findByRole("link", { name: "Recovered Work" })).toBeVisible();
   });
@@ -584,7 +606,16 @@ function detail(over: Record<string, unknown>): Response {
 }
 
 function worksPage(works: unknown[], nextCursor: string | null = null): Response {
-  return jsonResponse({ data: { works, nextCursor } });
+  return jsonResponse({
+    data: {
+      items: works,
+      collectionRevision: 0,
+      nextCursor:
+        nextCursor === null
+          ? { kind: "Absent" }
+          : { kind: "Present", value: nextCursor },
+    },
+  });
 }
 
 function work(over: Record<string, unknown>) {

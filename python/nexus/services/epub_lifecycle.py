@@ -17,6 +17,10 @@ from nexus.db.models import (
 )
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
+from nexus.services.collection_revisions import (
+    CollectionFamily,
+    bump_all_collection_families,
+)
 from nexus.services.epub_ingest import (
     EpubExtractionError,
     EpubExtractionPlan,
@@ -117,6 +121,13 @@ def publish_epub_source(
     )
     assert isinstance(result, EpubExtractionResult)
     persist_epub_metadata(db, media, result)
+    bump_all_collection_families(
+        db,
+        families=(
+            CollectionFamily.AuthorWorks,
+            CollectionFamily.LibraryEntries,
+        ),
+    )
     db.flush()
     response: dict[str, object] = {
         "status": "success",

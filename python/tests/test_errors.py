@@ -125,6 +125,8 @@ class TestErrorCodeToStatus:
             (ApiErrorCode.E_TRANSCRIPTION_TIMEOUT, 504),
             (ApiErrorCode.E_DIARIZATION_FAILED, 502),
             (ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE, 409),
+            (ApiErrorCode.E_COLLECTION_CHANGED, 409),
+            (ApiErrorCode.E_SELECTION_CHANGED, 409),
         ],
     )
     def test_error_code_maps_to_correct_status(self, code: ApiErrorCode, expected_status: int):

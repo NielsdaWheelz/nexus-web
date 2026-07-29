@@ -270,6 +270,7 @@ describe("GlobalPlayer listening heartbeat", () => {
               },
             },
             completionHandle: { kind: "Absent" },
+            libraryEntriesCollectionRevision: 1,
           },
         });
       }

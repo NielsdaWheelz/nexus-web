@@ -128,9 +128,10 @@ describe("ConversationDestinationOverlay", () => {
     expect(option).toHaveTextContent("4 messages");
     expect(option).toHaveTextContent(/ago/); // relative updated time
 
-    // The first load asks for recent conversations with no title query.
+    // The explicit empty q keeps this retained picker mode isolated from the
+    // finite primary conversation index.
     expect(calls[0]).toContain("/api/conversations?limit=25");
-    expect(calls[0]).not.toContain("q=");
+    expect(calls[0]).toContain("q=");
   });
 
   it("uses the singular '1 message' label", async () => {

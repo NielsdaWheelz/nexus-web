@@ -17,6 +17,10 @@ from nexus.db.models import FailureStage, Media, ProcessingStatus
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode, exception_error_detail
 from nexus.logging import get_logger
+from nexus.services.collection_revisions import (
+    CollectionFamily,
+    bump_all_collection_families,
+)
 from nexus.services.contributors import MediaTarget, replace_observed_role_slices
 from nexus.services.llm_execution import ExecutionRuntime, GenerationRequest, execute_generation
 from nexus.services.llm_ledger import LlmCallOwner
@@ -58,6 +62,18 @@ def _record_metadata_failure(media: Media, error_code: str, error_message: str) 
 
 def _failed_result(*, reason: str, error_code: str) -> dict:
     return {"status": "failed", "reason": reason, "error_code": error_code}
+
+
+def _commit_metadata_fact_change(db: Session) -> None:
+    bump_all_collection_families(
+        db,
+        families=(
+            CollectionFamily.AuthorWorks,
+            CollectionFamily.LibraryEntries,
+            CollectionFamily.PodcastEpisodes,
+        ),
+    )
+    db.commit()
 
 
 def enrich_metadata(
@@ -102,7 +118,7 @@ def enrich_metadata(
                 if not settings.metadata_enrichment_enabled
                 else "Media has no owning user to attribute the provider call to.",
             )
-            db.commit()
+            _commit_metadata_fact_change(db)
             return _failed_result(reason="no_provider", error_code=error_code)
 
         owner = LlmCallOwner(kind="media_enrichment", id=media.id, user_id=owner_user_id)
@@ -114,7 +130,7 @@ def enrich_metadata(
             rate_limiter.acquire_inflight_slot(owner_user_id)
         except ApiError as exc:
             _record_metadata_failure(media, exc.code.value, exc.message)
-            db.commit()
+            _commit_metadata_fact_change(db)
             return _failed_result(reason="rate_limit_rejected", error_code=exc.code.value)
 
         try:
@@ -143,7 +159,7 @@ def enrich_metadata(
                     error_code=exc.code.value,
                 )
                 _record_metadata_failure(media, exc.code.value, exc.message)
-                db.commit()
+                _commit_metadata_fact_change(db)
                 return _failed_result(reason="llm_rejected", error_code=exc.code.value)
 
             if not isinstance(call.outcome, Succeeded):
@@ -154,7 +170,7 @@ def enrich_metadata(
                     error_code=error_code,
                 )
                 _record_metadata_failure(media, error_code, detail or "provider call failed")
-                db.commit()
+                _commit_metadata_fact_change(db)
                 return _failed_result(reason="llm_failed", error_code=error_code)
 
             content = call.outcome.response.content
@@ -175,7 +191,7 @@ def enrich_metadata(
                     error_code,
                     "provider did not return valid structured metadata",
                 )
-                db.commit()
+                _commit_metadata_fact_change(db)
                 return _failed_result(reason="parse_failed", error_code=error_code)
 
             if not enrichment:
@@ -183,7 +199,7 @@ def enrich_metadata(
                 _record_metadata_failure(
                     media, error_code, "LLM returned no confident metadata fields."
                 )
-                db.commit()
+                _commit_metadata_fact_change(db)
                 return _failed_result(reason="no_fields", error_code=error_code)
 
             merge_result = merge_enrichment(db, media, enrichment)
@@ -192,14 +208,14 @@ def enrich_metadata(
                 _record_metadata_failure(
                     media, error_code, "LLM returned no applicable metadata fields."
                 )
-                db.commit()
+                _commit_metadata_fact_change(db)
                 return _failed_result(reason="no_applicable_fields", error_code=error_code)
 
             if media.failure_stage == FailureStage.metadata:
                 media.failure_stage = None
                 media.last_error_code = None
                 media.last_error_message = None
-            db.commit()
+            _commit_metadata_fact_change(db)
 
             # Fresh-session author op (spec 2.4, D-14). Non-author enrichment is
             # already durable; the author slice is replaced on the facade's own
@@ -233,7 +249,7 @@ def enrich_metadata(
         media = db.get(Media, media_uuid)
         if media is not None:
             _record_metadata_failure(media, "E_METADATA_UNEXPECTED", exception_error_detail(exc))
-            db.commit()
+            _commit_metadata_fact_change(db)
         return _failed_result(reason="unexpected_error", error_code="E_METADATA_UNEXPECTED")
 
     return run_llm_task(

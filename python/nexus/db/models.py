@@ -209,6 +209,20 @@ class User(Base):
     )
 
 
+class ViewerCollectionRevision(Base):
+    """Durable optimistic revision for one viewer collection family."""
+
+    __tablename__ = "viewer_collection_revisions"
+
+    viewer_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        primary_key=True,
+    )
+    family: Mapped[str] = mapped_column(Text, primary_key=True)
+    revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+
 class Page(Base):
     """Title-only page resource."""
 

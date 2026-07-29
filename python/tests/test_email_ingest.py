@@ -51,9 +51,19 @@ def _sign(body: bytes, secret: str = _TEST_SECRET) -> str:
 
 
 @pytest.fixture
-def owner_user_id(db_session: Session) -> UUID:
+def owner_user_id(db_session: Session, monkeypatch: pytest.MonkeyPatch) -> UUID:
     uid = uuid4()
     ensure_user_and_default_library(db_session, uid)
+    # The production email path deliberately commits its media transaction, then
+    # publishes contributor facts through a fresh session. A savepoint fixture's
+    # ``commit`` cannot release the outer test transaction's revision-row locks,
+    # so that second connection would wait on a state impossible in production.
+    # Contributor publication is exercised below with ``direct_db``; keep the
+    # savepoint-only media/pipeline tests on their intended single connection.
+    monkeypatch.setattr(
+        "nexus.services.email_ingest_service._apply_email_sender_credit",
+        lambda _media_id, _observation: None,
+    )
     return uid
 
 

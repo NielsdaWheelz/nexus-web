@@ -38,6 +38,11 @@ from nexus.schemas.library import (
 )
 from nexus.schemas.presence import absent, presence_from_nullable, present
 from nexus.services import library_governance as governance
+from nexus.services.collection_revisions import (
+    CollectionFamily,
+    bump_collection_families,
+    bump_collection_revision,
+)
 from nexus.services.sealed_handles import (
     InvalidSealedHandle,
     LibraryInvitationHandle,
@@ -471,7 +476,7 @@ def accept_library_invite(
                     """),
                     {"lid": invite_library_id, "uid": viewer_id, "role": invite_role},
                 )
-                assert result.rowcount == 1
+                assert getattr(result, "rowcount", None) == 1
 
             result = db.execute(
                 text("""
@@ -481,7 +486,23 @@ def accept_library_invite(
                 """),
                 {"invite_id": invite_id, "now": datetime.now(UTC)},
             )
-            assert result.rowcount == 1
+            assert getattr(result, "rowcount", None) == 1
+            bump_collection_families(
+                db,
+                viewer_ids=(viewer_id,),
+                families=(
+                    CollectionFamily.AuthorWorks,
+                    CollectionFamily.LibrariesIndex,
+                    CollectionFamily.LibraryEntries,
+                    CollectionFamily.PodcastEpisodes,
+                    CollectionFamily.PodcastSubscriptions,
+                ),
+            )
+            bump_collection_revision(
+                db,
+                viewer_id=viewer_id,
+                family=CollectionFamily.ConversationIndex,
+            )
             updated = _load_invitation_projection(db, invite_id)
 
             return AcceptLibraryInviteResponse(
@@ -549,7 +570,7 @@ def decline_library_invite(
                 """),
                 {"invite_id": invite_id, "now": datetime.now(UTC)},
             )
-            assert result.rowcount == 1
+            assert getattr(result, "rowcount", None) == 1
             updated = _load_invitation_projection(db, invite_id)
             return DeclineLibraryInviteResponse(invite=updated, idempotent=False)
 
@@ -614,6 +635,6 @@ def revoke_library_invite(
                 """),
                 {"invite_id": invite_id, "now": datetime.now(UTC)},
             )
-            assert result.rowcount == 1
+            assert getattr(result, "rowcount", None) == 1
 
     retry_serializable(db, "revoke_library_invite", attempt)

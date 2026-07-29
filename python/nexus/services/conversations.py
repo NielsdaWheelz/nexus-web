@@ -18,7 +18,6 @@ Routes are transport-only and call exactly one service function.
 import base64
 import json
 from collections.abc import Callable, Sequence
-from datetime import datetime
 from typing import Any, cast
 from uuid import UUID
 
@@ -39,9 +38,16 @@ from nexus.errors import (
 from nexus.logging import get_logger
 from nexus.schemas.chat_reader_selection import ReaderSelectionOut
 from nexus.schemas.citation import CitationOut
+from nexus.schemas.collection_page import (
+    CollectionCursor,
+    CollectionPage,
+    CollectionRevision,
+    CollectionRevisionOut,
+)
 from nexus.schemas.conversation import (
     BRANCH_ANCHOR_KINDS,
     AssistantTrustTrailOut,
+    ConversationListItemOut,
     ConversationOut,
     MessageDocument,
     MessageOut,
@@ -54,6 +60,13 @@ from nexus.services.chat_reader_selection import (
     decode_reader_selection_snapshot,
     reader_selection_out,
 )
+from nexus.services.collection_revisions import (
+    CollectionFamily,
+    bump_all_collection_revisions,
+    bump_collection_revision,
+    read_collection_revision,
+    require_collection_revision,
+)
 from nexus.services.llm_profiles import profile as lookup_profile
 from nexus.services.message_trust_trails import build_assistant_trust_trails
 from nexus.services.resource_graph import cleanup as graph_cleanup
@@ -62,6 +75,12 @@ from nexus.services.resource_graph.refs import (
     ResourceRef,
     ResourceRefParseFailure,
     parse_resource_ref,
+)
+from nexus.services.signed_keyset_cursor import (
+    KeysetValue,
+    KeysetValueKind,
+    decode_signed_keyset_cursor,
+    encode_signed_keyset_cursor,
 )
 
 logger = get_logger(__name__)
@@ -111,33 +130,12 @@ def _decode_cursor[T](cursor: str, extract: Callable[[dict[str, Any]], T]) -> T:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
 
 
-def encode_conversation_cursor(updated_at: datetime, id: UUID) -> str:
-    return _encode_cursor({"updated_at": updated_at.isoformat(), "id": str(id)})
-
-
-def decode_conversation_cursor(cursor: str) -> tuple[datetime, UUID]:
-    return _decode_cursor(
-        cursor, lambda p: (datetime.fromisoformat(p["updated_at"]), UUID(p["id"]))
-    )
-
-
 def encode_message_cursor(seq: int, id: UUID) -> str:
     return _encode_cursor({"seq": seq, "id": str(id)})
 
 
 def decode_message_cursor(cursor: str) -> tuple[int, UUID]:
     return _decode_cursor(cursor, lambda p: (int(p["seq"]), UUID(p["id"])))
-
-
-def _conversation_cursor_clause(cursor: str | None) -> tuple[str, dict[str, object]]:
-    """SQL fragment + bound params for conversation pagination, or empty when no cursor."""
-    if not cursor:
-        return "", {}
-    updated_at, conversation_id = decode_conversation_cursor(cursor)
-    return (
-        "AND (c.updated_at, c.id) < (:cursor_updated_at, :cursor_id)",
-        {"cursor_updated_at": updated_at, "cursor_id": conversation_id},
-    )
 
 
 # =============================================================================
@@ -382,6 +380,11 @@ def create_conversation(
                 source_order_key=f"{index + 1:010d}",
             )
 
+    bump_collection_revision(
+        db,
+        viewer_id=viewer_id,
+        family=CollectionFamily.ConversationIndex,
+    )
     db.commit()
     return result
 
@@ -437,7 +440,136 @@ def _build_visibility_cte(viewer_id: UUID) -> str:
     """
 
 
-def list_conversations(
+def list_conversation_index(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    limit: int,
+    cursor: CollectionCursor | None,
+    collection_revision: CollectionRevision | None,
+    scope: str | None,
+) -> CollectionPage[ConversationListItemOut]:
+    """One revision-consistent page of the finite primary conversation index."""
+    effective_scope = scope if scope is not None else "mine"
+    if effective_scope not in VALID_SCOPES:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            f"Invalid scope: {effective_scope}. Must be one of: mine, all, shared",
+        )
+
+    current_revision = (
+        read_collection_revision(
+            db,
+            viewer_id=viewer_id,
+            family=CollectionFamily.ConversationIndex,
+        )
+        if collection_revision is None
+        else require_collection_revision(
+            db,
+            viewer_id=viewer_id,
+            family=CollectionFamily.ConversationIndex,
+            expected=collection_revision,
+        )
+    )
+    cursor_family = f"{CollectionFamily.ConversationIndex.value}:{effective_scope}"
+    cursor_query = {
+        "scope": effective_scope,
+        "viewerId": str(viewer_id),
+    }
+    params: dict[str, object] = {
+        "viewer_id": viewer_id,
+        "limit_plus_one": limit + 1,
+    }
+    keyset_clause = ""
+    if cursor is not None:
+        after_updated_at, after_id = decode_signed_keyset_cursor(
+            cursor,
+            family=cursor_family,
+            query=cursor_query,
+            expected_kinds=(
+                KeysetValueKind.DateTime,
+                KeysetValueKind.Uuid,
+            ),
+        )
+        params.update(
+            {
+                "after_updated_at": after_updated_at,
+                "after_id": after_id,
+            }
+        )
+        keyset_clause = """
+          AND (
+            c.updated_at < :after_updated_at
+            OR (c.updated_at = :after_updated_at AND c.id < :after_id)
+          )
+        """
+
+    if effective_scope == "mine":
+        relation = """
+            FROM conversations c
+            WHERE c.owner_user_id = :viewer_id
+        """
+    else:
+        scope_filter = "AND c.owner_user_id != :viewer_id" if effective_scope == "shared" else ""
+        relation = f"""
+            FROM conversations c
+            JOIN visible_conversations vc ON vc.id = c.id
+            WHERE true
+              {scope_filter}
+        """
+
+    cte = "" if effective_scope == "mine" else f"WITH {_build_visibility_cte(viewer_id)}"
+    rows = db.execute(
+        text(
+            f"""
+            {cte}
+            SELECT
+                c.id,
+                c.title,
+                c.updated_at,
+                (
+                    SELECT COUNT(*)
+                    FROM messages m
+                    WHERE m.conversation_id = c.id
+                ) AS message_count
+            {relation}
+            {keyset_clause}
+            ORDER BY c.updated_at DESC, c.id DESC
+            LIMIT :limit_plus_one
+            """
+        ),
+        params,
+    ).all()
+
+    page_rows = rows[:limit]
+    next_cursor: CollectionCursor | None = None
+    if len(rows) > limit and page_rows:
+        last = page_rows[-1]
+        next_cursor = encode_signed_keyset_cursor(
+            family=cursor_family,
+            query=cursor_query,
+            after=(
+                KeysetValue(KeysetValueKind.DateTime, last.updated_at),
+                KeysetValue(KeysetValueKind.Uuid, last.id),
+            ),
+        )
+
+    return CollectionPage[ConversationListItemOut](
+        items=[
+            ConversationListItemOut(
+                id=row.id,
+                title=row.title,
+                message_count=row.message_count,
+                updated_at=row.updated_at,
+            )
+            for row in page_rows
+        ],
+        collectionRevision=current_revision,
+        nextCursor=present(next_cursor) if next_cursor is not None else absent(),
+    )
+
+
+def list_retained_conversations(
     db: Session,
     viewer_id: UUID,
     limit: int = DEFAULT_LIMIT,
@@ -446,7 +578,7 @@ def list_conversations(
     has_context_ref: str | None = None,
     q: str | None = None,
 ) -> tuple[list[ConversationOut], PageInfo]:
-    """List conversations.
+    """List conversations for one retained manual-paging route mode.
 
     When ``q`` is supplied (the destination-picker title search), the scope is
     forced to owned and the query composes only with ``cursor``/``limit``; any
@@ -457,8 +589,8 @@ def list_conversations(
 
     When ``has_context_ref`` is supplied, returns conversations with any edge to
     that resource URI (single-user: viewer-owned only); ``scope`` is meaningless
-    there and is neither validated nor applied (pinned bypass). Otherwise lists
-    by visibility scope (defaulting to 'mine').
+    there and is neither validated nor applied (pinned bypass). Unmarked primary
+    index reads are owned exclusively by ``list_conversation_index``.
 
     Args:
         db: Database session.
@@ -492,7 +624,11 @@ def list_conversations(
                 f"q must be at most {MAX_CONVERSATION_SEARCH_QUERY} characters",
             )
         return _list_conversations_mine(
-            db, viewer_id, clamp_limit(limit), cursor, title_search=normalized_q or None
+            db,
+            viewer_id,
+            clamp_limit(limit),
+            cursor,
+            normalized_q=normalized_q,
         )
 
     if has_context_ref is not None:
@@ -507,19 +643,7 @@ def list_conversations(
         )
         return page.conversations, page.page
 
-    effective_scope = scope if scope is not None else "mine"
-    if effective_scope not in VALID_SCOPES:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            f"Invalid scope: {effective_scope}. Must be one of: mine, all, shared",
-        )
-
-    limit = clamp_limit(limit)
-
-    if effective_scope == "mine":
-        return _list_conversations_mine(db, viewer_id, limit, cursor)
-    else:
-        return _list_conversations_visible(db, viewer_id, limit, cursor, effective_scope)
+    raise ValueError("Retained conversation listing requires q or has_context_ref")
 
 
 def _list_conversations_mine(
@@ -527,21 +651,44 @@ def _list_conversations_mine(
     viewer_id: UUID,
     limit: int,
     cursor: str | None,
-    title_search: str | None = None,
+    normalized_q: str,
 ) -> tuple[list[ConversationOut], PageInfo]:
     """List only conversations owned by viewer (scope=mine).
 
     When ``title_search`` is set, applies a case-insensitive literal-substring
     title match alongside the same cursor/order so pagination stays stable.
     """
-    params: dict = {"viewer_id": viewer_id, "limit": limit + 1}
-    cursor_clause, cursor_params = _conversation_cursor_clause(cursor)
-    params.update(cursor_params)
+    params: dict[str, object] = {"viewer_id": viewer_id, "limit": limit + 1}
+    cursor_clause = ""
+    cursor_query = {
+        "viewerId": str(viewer_id),
+        "q": normalized_q,
+    }
+    if cursor is not None:
+        updated_at, conversation_id = decode_signed_keyset_cursor(
+            cursor,
+            family="ConversationDestination",
+            query=cursor_query,
+            expected_kinds=(
+                KeysetValueKind.DateTime,
+                KeysetValueKind.Uuid,
+            ),
+        )
+        params.update(
+            cursor_updated_at=updated_at,
+            cursor_id=conversation_id,
+        )
+        cursor_clause = """
+          AND (
+            c.updated_at < :cursor_updated_at
+            OR (c.updated_at = :cursor_updated_at AND c.id < :cursor_id)
+          )
+        """
 
     title_clause = ""
-    if title_search:
+    if normalized_q:
         title_clause = "AND c.title ILIKE :title_search"
-        params["title_search"] = f"%{_escape_title_search(title_search)}%"
+        params["title_search"] = f"%{_escape_title_search(normalized_q)}%"
 
     result = db.execute(
         text(f"""
@@ -557,52 +704,20 @@ def _list_conversations_mine(
         params,
     )
 
-    return _build_conversation_page(result.fetchall(), limit, viewer_id)
-
-
-def _list_conversations_visible(
-    db: Session,
-    viewer_id: UUID,
-    limit: int,
-    cursor: str | None,
-    scope: str,
-) -> tuple[list[ConversationOut], PageInfo]:
-    """List visible conversations (scope=all or scope=shared).
-
-    Visibility predicate is applied in SQL before cursor+limit to maintain
-    correct global cursor ordering.
-    """
-    params: dict = {"viewer_id": viewer_id, "limit": limit + 1}
-    cursor_clause, cursor_params = _conversation_cursor_clause(cursor)
-    params.update(cursor_params)
-
-    scope_filter = ""
-    if scope == "shared":
-        scope_filter = "AND c.owner_user_id != :viewer_id"
-
-    cte = _build_visibility_cte(viewer_id)
-
-    result = db.execute(
-        text(f"""
-            WITH {cte}
-            SELECT c.id, c.owner_user_id, c.title, c.sharing, c.created_at, c.updated_at,
-                   (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count
-            FROM conversations c
-            JOIN visible_conversations vc ON vc.id = c.id
-            WHERE true
-              {scope_filter}
-              {cursor_clause}
-            ORDER BY c.updated_at DESC, c.id DESC
-            LIMIT :limit
-        """),
-        params,
+    return _build_conversation_page(
+        result.fetchall(),
+        limit,
+        viewer_id,
+        cursor_query=cursor_query,
     )
-
-    return _build_conversation_page(result.fetchall(), limit, viewer_id)
 
 
 def _build_conversation_page(
-    rows: Sequence, limit: int, viewer_id: UUID
+    rows: Sequence,
+    limit: int,
+    viewer_id: UUID,
+    *,
+    cursor_query: dict[str, object],
 ) -> tuple[list[ConversationOut], PageInfo]:
     """Build paginated response from raw rows.
 
@@ -630,12 +745,23 @@ def _build_conversation_page(
     next_cursor = None
     if has_more and conversations:
         last = conversations[-1]
-        next_cursor = encode_conversation_cursor(last.updated_at, last.id)
+        next_cursor = encode_signed_keyset_cursor(
+            family="ConversationDestination",
+            query=cursor_query,
+            after=(
+                KeysetValue(KeysetValueKind.DateTime, last.updated_at),
+                KeysetValue(KeysetValueKind.Uuid, last.id),
+            ),
+        )
 
     return conversations, PageInfo(next_cursor=next_cursor)
 
 
-def delete_conversation(db: Session, viewer_id: UUID, conversation_id: UUID) -> None:
+def delete_conversation(
+    db: Session,
+    viewer_id: UUID,
+    conversation_id: UUID,
+) -> CollectionRevisionOut:
     """Delete a conversation and its owned rows.
 
     Args:
@@ -658,7 +784,17 @@ def delete_conversation(db: Session, viewer_id: UUID, conversation_id: UUID) -> 
         raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
 
     delete_conversation_rows_without_commit(db, conversation_id)
+    bump_all_collection_revisions(
+        db,
+        family=CollectionFamily.ConversationIndex,
+    )
+    revision = read_collection_revision(
+        db,
+        viewer_id=viewer_id,
+        family=CollectionFamily.ConversationIndex,
+    )
     db.commit()
+    return CollectionRevisionOut(collectionRevision=revision)
 
 
 def list_messages(
@@ -882,6 +1018,10 @@ def delete_message(db: Session, viewer_id: UUID, message_id: UUID) -> None:
         delete_conversation_rows_without_commit(db, conversation_id)
         db.flush()
 
+    bump_all_collection_revisions(
+        db,
+        family=CollectionFamily.ConversationIndex,
+    )
     db.commit()
 
 

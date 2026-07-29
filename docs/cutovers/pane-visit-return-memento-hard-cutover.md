@@ -1,5 +1,11 @@
 # Pane Visit Return Memento Hard Cutover
 
+> **Finite-list update (2026-07-29):**
+> [`complete-collection-lists-hard-cutover.md`](complete-collection-lists-hard-cutover.md)
+> replaces finite-list `hasMore`/`nextOffset` snapshot fields and blanket inert
+> restore. Complete snapshots remain inert; active, visible partial snapshots
+> resume automatic exhaustion.
+>
 Status: IMPLEMENTED · FOCUSED LOCAL PROOF COMPLETE · REAL-STACK E2E AND PRODUCTION GATE PENDING — 2026-07-23
 Type: hard cutover
 Date: 2026-07-23

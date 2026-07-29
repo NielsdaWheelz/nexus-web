@@ -16,9 +16,11 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.responses import ok
 from nexus.schemas.media import (
-    TranscriptForecastBatchRequest,
-    TranscriptRequestBatchRequest,
     TranscriptRequestRequest,
+)
+from nexus.schemas.podcast import (
+    PodcastEpisodeQueryTranscriptRequest,
+    PodcastEpisodeQueryTranscriptTarget,
 )
 from nexus.services.podcasts import transcription as podcast_transcript_service
 
@@ -27,33 +29,33 @@ router = APIRouter(tags=["media"])
 
 @router.post("/media/transcript/request/batch")
 def request_podcast_transcript_batch(
-    body: TranscriptRequestBatchRequest,
+    body: PodcastEpisodeQueryTranscriptRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Admit transcript requests for multiple podcast episodes sequentially."""
-    result = podcast_transcript_service.request_podcast_transcripts_batch_for_viewer(
+    """Admit one fingerprinted Podcast episode-query transcript request."""
+    result = podcast_transcript_service.request_podcast_episode_query_transcripts(
         db=db,
         viewer_id=viewer.user_id,
-        media_ids=body.media_ids,
-        reason=body.reason,
+        target=body.target,
+        expected_fingerprint=body.selection_fingerprint,
     )
-    return ok(result)
+    return ok(result, by_alias=True)
 
 
 @router.post("/media/transcript/forecasts")
 def forecast_podcast_transcripts(
-    body: TranscriptForecastBatchRequest,
+    body: PodcastEpisodeQueryTranscriptTarget,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Return dry-run transcript forecasts for many visible podcast episodes."""
-    result = podcast_transcript_service.forecast_podcast_transcripts_for_viewer(
+    """Forecast one server-resolved Podcast episode-query transcript request."""
+    result = podcast_transcript_service.forecast_podcast_episode_query_transcripts(
         db=db,
         viewer_id=viewer.user_id,
-        requests=[(item.media_id, item.reason) for item in body.requests],
+        target=body,
     )
-    return ok(result)
+    return ok(result, by_alias=True)
 
 
 @router.post("/media/{media_id}/transcript/request")

@@ -20,6 +20,13 @@ import {
   isSameSystemApiDefect,
 } from "@/lib/api/client";
 import { present, type Presence } from "@/lib/api/presence";
+import {
+  decodeCollectionPage,
+  type CollectionCursor,
+  type CollectionPage,
+  type CollectionRevision,
+} from "@/lib/api/collectionPage";
+import { useExhaustivePagination } from "@/lib/api/useExhaustivePagination";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   libraryEntriesResource,
@@ -27,11 +34,7 @@ import {
   type LibraryEntriesResourceParams,
 } from "@/lib/api/resource";
 import { runSourceProcessingAction } from "@/lib/media/sourceActions";
-import {
-  retryMediaMetadata,
-  type MediaActionCapabilities,
-} from "@/lib/media/ingestionClient";
-import type { DocumentProcessingStatus } from "@/lib/media/documentReadiness";
+import { retryMediaMetadata } from "@/lib/media/ingestionClient";
 import {
   FeedbackNotice,
   toFeedback,
@@ -47,11 +50,14 @@ import {
 } from "@/lib/actions/resourceActions";
 import { useLectern } from "@/lib/lectern/LecternProvider";
 import { useCompletionUndo } from "@/lib/lectern/useCompletionUndo";
-import { parseMediaId, type LecternItemId } from "@/lib/lectern/contract";
+import {
+  parseMediaId,
+  type ConsumptionResult,
+  type LecternItemId,
+} from "@/lib/lectern/contract";
 import { runProgressReset } from "@/lib/consumption/progressReset";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
-import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import { confirmAndDeleteMedia } from "@/lib/media/mediaLibraries";
 import {
   addLibraryPlacement,
@@ -60,7 +66,10 @@ import {
 import { useStringIdSet, type StringIdSet } from "@/lib/useStringIdSet";
 import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
 import { useResource } from "@/lib/api/useResource";
-import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";
+import {
+  paneResourceLoaders,
+  type LibraryPaneSeed,
+} from "@/lib/panes/paneResourceLoaders";
 import {
   buildPodcastUnsubscribeConfirmation,
   refreshPodcastSubscriptionSync,
@@ -75,22 +84,13 @@ import Toggle from "@/components/ui/Toggle";
 import PaneSurface from "@/components/ui/PaneSurface";
 import SectionOpener from "@/components/ui/SectionOpener";
 import CollectionView from "@/components/collections/CollectionView";
+import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import ReadingSlateSection from "@/components/collections/ReadingSlateSection";
 import PaneToolbar from "@/components/ui/PaneToolbar";
 import type {
   CollectionContext,
   CollectionRowView,
 } from "@/lib/collections/types";
-import type {
-  PositiveCount,
-  ProgressFraction,
-} from "@/lib/consumption/activityFacts";
-import type { PublicationDate } from "@/lib/dates/publicationDate";
-import {
-  decodePodcastSyncStatus,
-  type PodcastSyncStatus,
-} from "@/lib/status/podcastSync";
-import { useConnectionSummaries } from "@/lib/collections/useConnectionSummaries";
 import { useDebouncedFetch } from "@/lib/api/useDebouncedFetch";
 import LibrarySettingsDialog from "@/components/LibrarySettingsDialog";
 import LibraryMembersSurface from "@/components/libraries/LibraryMembersSurface";
@@ -133,11 +133,15 @@ import {
 } from "@/lib/libraries/libraryView";
 import { libraryPresentation } from "@/lib/libraries/presentation";
 import {
+  libraryPlacementSnapshot,
   libraryPlacementAffectedSince,
   publishLibraryPlacementChange,
   useLibraryPlacementRevision,
 } from "@/lib/libraries/placementRevision";
-import { useConsumptionProjectionRevision } from "@/lib/consumption/projectionRevision";
+import {
+  consumptionProjectionSnapshot,
+  useConsumptionProjectionRevision,
+} from "@/lib/consumption/projectionRevision";
 import type { ContributorCredit, MediaAuthors } from "@/lib/contributors/types";
 import type {
   ActionDescriptor,
@@ -147,10 +151,13 @@ import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget
 import { isAbortError } from "@/lib/errors";
 import { mapMediaAuthorCredits } from "@/app/(authenticated)/media/[id]/mediaFormatting";
 import {
-  decodeLibraryReadingTimeEntry,
-  type LibraryMediaKind,
-  type ReadingTimeEstimatePresence,
-} from "@/lib/libraries/readingTime";
+  decodeLibraryEntryListItem,
+  type LibraryEntryListItem,
+  type LibraryMediaListItem,
+  type LibraryMediaListValue,
+  type LibraryPodcastListItem,
+} from "@/lib/libraries/entryListItem";
+import { decodePodcastSyncStatus } from "@/lib/status/podcastSync";
 import { slateTargetId } from "@/lib/resonance/contract";
 import type { ReadingSlateAccept } from "@/lib/resonance/useReadingSlate";
 import styles from "./LibraryPaneBody.module.css";
@@ -162,114 +169,15 @@ const MediaAuthorsEditor = lazy(
 
 type Library = LibraryOut;
 
-interface LibraryMediaEntry {
-  id: string;
-  kind: LibraryMediaKind;
-  title: string;
-  // Instant the underlying media entered Nexus. Drives the "Added to Nexus …"
-  // row line under the Added order for the default (virtual) library, where each
-  // row keys by media rather than by physical library entry.
-  created_at: string;
-  contributors: ContributorCredit[];
-  author_mode: "automatic" | "manual";
-  published_date: string | null;
-  publicationDate: Presence<PublicationDate>;
-  publisher: string | null;
-  canonical_source_url: string | null;
-  sourceHost: Presence<string>;
-  processing_status: DocumentProcessingStatus;
-  read_state: "unread" | "in_progress" | "finished";
-  progress_fraction: number | null;
-  progressFraction: Presence<ProgressFraction>;
-  progress_resettable: boolean;
-  last_engaged_at?: string | null;
-  capabilities: Partial<MediaActionCapabilities> &
-    Pick<MediaActionCapabilities, "can_quote">;
-}
+type LibraryMediaEntry = LibraryMediaListValue;
 
 type LibraryMediaConsumption = Pick<
   LibraryMediaEntry,
   "read_state" | "progress_fraction"
 >;
 
-interface LibraryPodcastEntry {
-  id: string;
-  title: string;
-  contributors: ContributorCredit[];
-  feed_url: string;
-  website_url: string | null;
-  image_url: string | null;
-  unplayed_count: number;
-  unplayedCount: Presence<PositiveCount>;
-  publicationDate: Presence<PublicationDate>;
-  syncStatus: Presence<PodcastSyncStatus>;
-}
-
-interface LibraryPodcastSubscription {
-  status: "active" | "unsubscribed";
-  default_playback_speed: number | null;
-  auto_queue: boolean;
-  sync_status:
-    | "pending"
-    | "running"
-    | "partial"
-    | "complete"
-    | "source_limited"
-    | "failed";
-}
-
-interface LibraryEntryBase {
-  id: string;
-  position: number;
-  created_at: string;
-  readingTimeEstimate: ReadingTimeEstimatePresence;
-}
-
-interface LibraryMediaListEntry extends LibraryEntryBase {
-  kind: "media";
-  media: LibraryMediaEntry;
-}
-
-interface LibraryPodcastListEntry extends LibraryEntryBase {
-  kind: "podcast";
-  podcast: LibraryPodcastEntry;
-  subscription: LibraryPodcastSubscription | null;
-}
-
-type LibraryEntry = LibraryMediaListEntry | LibraryPodcastListEntry;
-
-type LibraryMediaEntryWire = Omit<
-  LibraryMediaEntry,
-  "progressFraction" | "publicationDate" | "sourceHost"
->;
-type LibraryPodcastEntryWire = Omit<
-  LibraryPodcastEntry,
-  "unplayedCount" | "publicationDate" | "syncStatus"
->;
-type LibraryEntryWire =
-  | (Omit<LibraryMediaListEntry, "media" | "readingTimeEstimate"> & {
-      media: LibraryMediaEntryWire;
-      readingTimeEstimate: unknown;
-    })
-  | (Omit<LibraryPodcastListEntry, "podcast" | "readingTimeEstimate"> & {
-      podcast: LibraryPodcastEntryWire;
-      readingTimeEstimate: unknown;
-    });
-
-interface LibraryPageInfo {
-  has_more: boolean;
-  next_cursor: string | null;
-}
-
-interface LibraryEntryPage {
-  data: LibraryEntry[];
-  page: LibraryPageInfo;
-}
-
-interface LibraryEntryPageWire {
-  data: LibraryEntryWire[];
-  page: LibraryPageInfo;
-}
+type LibraryEntry = LibraryEntryListItem;
+type LibraryEntryPage = CollectionPage<LibraryEntry>;
 
 // The two process-local fact revisions the pane binds every entry request to.
 // A committed page records the revisions it was fetched at; a later advance
@@ -283,6 +191,7 @@ interface EntryReconciliationRequest {
   ownerId: string;
   view: LibraryEntryView;
   serial: number;
+  recovery: "Retry" | "RefreshList";
   // The revisions captured when this reconciliation was requested. On commit
   // they become the committed baseline, so a mutation that landed while the
   // reconciliation was in flight surfaces as exactly one coalesced follow-up.
@@ -294,6 +203,8 @@ interface EntryReconciliationResult {
   page: LibraryEntryPage;
 }
 
+type EntryMutationEffect = "SafePatch" | "SafeRebase" | "Unknown";
+
 interface LibraryEntryPageResult {
   requestKey: string;
   requestedViewKey: string;
@@ -302,23 +213,18 @@ interface LibraryEntryPageResult {
   revisions: LibraryRevisions;
 }
 
-function decodeLibraryEntryPage(page: LibraryEntryPageWire): LibraryEntryPage {
-  return {
-    ...page,
-    data: page.data.map(decodeLibraryReadingTimeEntry),
-  };
+function decodeLibraryEntryPage(page: unknown): LibraryEntryPage {
+  return decodeCollectionPage(page, decodeLibraryEntryListItem);
 }
 
-interface LibraryPaneResource {
-  library: Library;
-  entries: LibraryEntry[];
-  entriesPage: LibraryPageInfo;
-}
+type LibraryPaneResource = LibraryPaneSeed;
 
 interface CommittedLibraryView {
   readonly view: LibraryEntryView;
   readonly entries: readonly LibraryEntry[];
-  readonly nextCursor: string | null;
+  readonly collectionRevision: CollectionRevision;
+  readonly nextCursor: Presence<CollectionCursor>;
+  readonly exhaustion: "Partial" | "Complete";
   // The fact revisions this committed page was fetched at; a later reacted-to
   // advance reconciles the current view against fresh authoritative truth.
   readonly revisions: LibraryRevisions;
@@ -353,6 +259,8 @@ type LibraryEntriesState =
 const LIBRARY_VISIT_DATA =
   definePaneVisitDataKey<LibrarySnapshot>("Library.Entries");
 const EMPTY_LIBRARY_ENTRIES: LibraryEntry[] = [];
+const NO_COLLECTION_CURSOR: Presence<CollectionCursor> = { kind: "Absent" };
+const ZERO_COLLECTION_REVISION = 0 as CollectionRevision;
 
 // The default library's read surface is a deduplicated virtual set: the server
 // can hand back a different representative entry id for the same underlying
@@ -364,7 +272,7 @@ function libraryRowKey(entry: LibraryEntry, isDefaultLibrary: boolean): string {
 
 function appendUniqueEntries(
   current: LibraryEntry[],
-  next: LibraryEntry[],
+  next: readonly LibraryEntry[],
   keyOf: (entry: LibraryEntry) => string = (entry) => entry.id,
 ): LibraryEntry[] {
   const seen = new Set(current.map(keyOf));
@@ -497,15 +405,24 @@ export default function LibraryPaneBody() {
   const isInitialView = view !== null && isInitialLibraryView(view);
   const committedViewInvalidatedRef = useRef(false);
   const committedSnapshotRef = useRef<LibrarySnapshot | null>(null);
+  const pendingScrollTopRef = useRef<number | null>(null);
   const reorderGenerationRef = useRef(0);
+  const capturePaneScroll = useCallback(() => {
+    const region = document.getElementById(`library-entry-region-${id}`);
+    const scrollport = region?.closest<HTMLElement>("[data-pane-content]");
+    if (scrollport) {
+      pendingScrollTopRef.current = scrollport.scrollTop;
+    }
+  }, [id]);
   const setView = useCallback(
     (next: LibraryEntryView) => {
+      capturePaneScroll();
       committedViewInvalidatedRef.current = true;
       committedSnapshotRef.current = null;
       reorderGenerationRef.current += 1;
       setDecodedView({ kind: "Valid", view: next });
     },
-    [setDecodedView],
+    [capturePaneScroll, setDecodedView],
   );
 
   const captureCommitted = useCallback(() => committedSnapshotRef.current, []);
@@ -514,6 +431,19 @@ export default function LibraryPaneBody() {
   const [controller, setController] = useState<LibrarySnapshot | null>(
     initialRestored,
   );
+  const controllerRef = useRef(controller);
+  controllerRef.current = controller;
+  const pendingMutationEffectRef = useRef<EntryMutationEffect | null>(null);
+  const reconcileAfterMutationRef = useRef<
+    (effect: EntryMutationEffect) => void
+  >(() => undefined);
+  if (
+    committedSnapshotRef.current === null &&
+    initialRestored !== null &&
+    controller === initialRestored
+  ) {
+    committedSnapshotRef.current = initialRestored;
+  }
   const [observedUnavailableLibraryId, setObservedUnavailableLibraryId] =
     useState<string | null>(null);
   const observedLibraryUnavailable = observedUnavailableLibraryId === id;
@@ -526,7 +456,8 @@ export default function LibraryPaneBody() {
         : [...controller.entries.entries],
     [controller],
   );
-  const entryCursor = controller?.entries.nextCursor ?? null;
+  const entryCursor =
+    controller?.entries.nextCursor ?? NO_COLLECTION_CURSOR;
   const setLibrary: Dispatch<SetStateAction<Library | null>> = useCallback(
     (update) => {
       setController((current) => {
@@ -553,25 +484,30 @@ export default function LibraryPaneBody() {
     },
     [],
   );
-  const setEntryCursor: Dispatch<SetStateAction<string | null>> = useCallback(
-    (update) => {
+  const [chainEpoch, setChainEpoch] = useState(0);
+  const installEntryCollectionRevision = useCallback(
+    (collectionRevision: CollectionRevision) => {
       setController((current) => {
-        if (current === null) return current;
-        const nextCursor =
-          typeof update === "function"
-            ? update(current.entries.nextCursor)
-            : update;
-        return {
+        if (current === null) {
+          throw new Error(
+            "Library entry mutation settled without a committed list",
+          );
+        }
+        const next: LibrarySnapshot = {
           ...current,
-          entries: { ...current.entries, nextCursor },
+          entries: {
+            ...current.entries,
+            collectionRevision,
+          },
         };
+        controllerRef.current = next;
+        committedSnapshotRef.current = next;
+        return next;
       });
+      clearAllVisitData();
+      setChainEpoch((epoch) => epoch + 1);
     },
-    [],
-  );
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [loadMoreError, setLoadMoreError] = useState<FeedbackContent | null>(
-    null,
+    [clearAllVisitData],
   );
   // Set when an entry fetch for the current view is rejected as invalid; cleared
   // whenever the view changes. Renders the terminal "Invalid library view" state.
@@ -589,10 +525,6 @@ export default function LibraryPaneBody() {
   const unsubscribingPodcastIds = useStringIdSet();
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [reorderBusy, setReorderBusy] = useState(false);
-  // A stale/deployment-era continuation cursor: Load More is never reinterpreted
-  // as an invalid view. Instead the list can no longer continue and offers
-  // Refresh list, which discards the cursor and reloads the same view's first page.
-  const [loadMoreCursorInvalid, setLoadMoreCursorInvalid] = useState(false);
   // The revisions the committed page was fetched at. A reacted-to advance beyond
   // this baseline drives one reconciliation of the current view. When the pane is
   // seeded from a restored visit snapshot, the baseline is the snapshot's captured
@@ -612,6 +544,8 @@ export default function LibraryPaneBody() {
   const entryReconciliationSerialRef = useRef(0);
   const [entryReconciliationRequest, setEntryReconciliationRequest] =
     useState<EntryReconciliationRequest | null>(null);
+  const entryReconciliationRequestRef = useRef(entryReconciliationRequest);
+  entryReconciliationRequestRef.current = entryReconciliationRequest;
   const consumptionOperationTokensRef = useRef(new Map<string, symbol>());
   const handlePodcastSettingsSaved = useCallback(
     (response: PodcastSubscriptionSettingsResponse) => {
@@ -631,9 +565,12 @@ export default function LibraryPaneBody() {
             : candidate,
         ),
       );
-      clearAllVisitData();
+      installEntryCollectionRevision(
+        response.libraryEntriesCollectionRevision,
+      );
+      reconcileAfterMutationRef.current("SafeRebase");
     },
-    [clearAllVisitData, setEntries],
+    [installEntryCollectionRevision, setEntries],
   );
   const podcastSettingsModal = usePodcastSubscriptionSettingsModal({
     onSaved: handlePodcastSettingsSaved,
@@ -647,7 +584,7 @@ export default function LibraryPaneBody() {
     useState<HTMLButtonElement | null>(null);
   const authorsEditorMedia =
     entries.find(
-      (entry): entry is LibraryMediaListEntry =>
+      (entry): entry is LibraryMediaListItem =>
         entry.kind === "media" && entry.media.id === authorsEditorMediaId,
     )?.media ?? null;
   const openAuthorsEditor = useCallback(
@@ -664,6 +601,7 @@ export default function LibraryPaneBody() {
   const listRegionRef = useRef<HTMLDivElement | null>(null);
   const viewSelectRef = useRef<HTMLSelectElement | null>(null);
   const sortSelectRef = useRef<HTMLSelectElement | null>(null);
+  const refreshListRecoveryButtonRef = useRef<HTMLButtonElement | null>(null);
   const hideFinishedInputId = `library-hide-finished-${id}`;
   // A control to focus once the view/reconciliation it initiated commits. A
   // recovery action (Show all items, Clear filters, Show finished, Retry,
@@ -743,6 +681,7 @@ export default function LibraryPaneBody() {
       });
       setAuthorsEditorOpen(false);
       clearAllVisitData();
+      reconcileAfterMutationRef.current("Unknown");
     },
     [authorsEditorMediaId, clearAllVisitData, patchMediaInViews],
   );
@@ -820,14 +759,6 @@ export default function LibraryPaneBody() {
   // UX/endpoint support, independent of canEditEntries (which stays true for
   // Default's "Add content" capability).
   const canReorder = canEditEntries && !isDefaultLibrary;
-  const connectionSummaries = useConnectionSummaries(
-    entries.map((entry) =>
-      entry.kind === "podcast"
-        ? `podcast:${entry.podcast.id}`
-        : `media:${entry.media.id}`,
-    ),
-  );
-
   // The route bootstrap seeds only Canonical + AllItems(All) at process revision
   // zero. The client claims that seed only while BOTH process revisions are still
   // zero; otherwise the exact first page loads through the entries endpoint.
@@ -901,9 +832,9 @@ export default function LibraryPaneBody() {
         // justify-defect: a non-null resource key is built from this request.
         throw new Error("Library entry-view request lost its identity");
       }
-      let page: LibraryEntryPageWire;
+      let page: unknown;
       try {
-        page = await apiFetch<LibraryEntryPageWire>(path, { signal });
+        page = await apiFetch<unknown>(path, { signal });
       } catch (requestError) {
         if (
           !isAbortError(requestError) &&
@@ -974,15 +905,12 @@ export default function LibraryPaneBody() {
   const deletingLibraryRef = useRef(false);
   const [deletingLibrary, setDeletingLibrary] = useState(false);
 
-  const entryLoadMoreAbortRef = useRef<AbortController | null>(null);
-  const entryLoadMoreGenerationRef = useRef(0);
+  // The owner-level generation for continuation. Advancing it aborts any page
+  // in flight and makes a legitimate replacement chain distinct from a cursor
+  // cycle within one chain.
   const cancelEntryLoadMore = useCallback(() => {
-    entryLoadMoreGenerationRef.current += 1;
-    entryLoadMoreAbortRef.current?.abort();
-    entryLoadMoreAbortRef.current = null;
-    setLoadingMore(false);
+    setChainEpoch((epoch) => epoch + 1);
   }, []);
-  useEffect(() => () => entryLoadMoreAbortRef.current?.abort(), []);
   useEffect(() => {
     cancelEntryLoadMore();
     consumptionOperationTokensRef.current.clear();
@@ -990,7 +918,12 @@ export default function LibraryPaneBody() {
 
   const { clear: clearRemovedEntryIds } = removedEntryIds;
   const requestEntryReconciliation = useCallback(
-    (requestedView: LibraryEntryView, revisions: LibraryRevisions) => {
+    (
+      requestedView: LibraryEntryView,
+      revisions: LibraryRevisions,
+      recovery: EntryReconciliationRequest["recovery"] = "Retry",
+    ) => {
+      capturePaneScroll();
       cancelEntryLoadMore();
       committedSnapshotRef.current = null;
       clearAllVisitData();
@@ -1000,11 +933,68 @@ export default function LibraryPaneBody() {
         ownerId: id,
         view: requestedView,
         serial,
+        recovery,
         revisions,
       });
     },
-    [cancelEntryLoadMore, clearAllVisitData, id],
+    [cancelEntryLoadMore, capturePaneScroll, clearAllVisitData, id],
   );
+  const reconcileAfterMutation = useCallback(
+    (effect: EntryMutationEffect) => {
+      const current = controllerRef.current;
+      if (!viewIsCommitted) {
+        pendingMutationEffectRef.current =
+          pendingMutationEffectRef.current === "Unknown"
+            ? "Unknown"
+            : effect;
+        return;
+      }
+      if (entryReconciliationRequestRef.current !== null) {
+        pendingMutationEffectRef.current =
+          pendingMutationEffectRef.current === "Unknown"
+            ? "Unknown"
+            : effect;
+        return;
+      }
+      if (current === null) {
+        return;
+      }
+      if (effect === "SafeRebase") {
+        clearAllVisitData();
+        return;
+      }
+      if (
+        effect === "SafePatch" &&
+        current.entries.exhaustion === "Complete"
+      ) {
+        committedSnapshotRef.current = null;
+        clearAllVisitData();
+        return;
+      }
+      requestEntryReconciliation(current.entries.view, {
+        placement: libraryPlacementSnapshot().revision,
+        consumption: consumptionProjectionSnapshot().revision,
+      });
+    },
+    [clearAllVisitData, requestEntryReconciliation, viewIsCommitted],
+  );
+  reconcileAfterMutationRef.current = reconcileAfterMutation;
+  useEffect(() => {
+    if (
+      !viewIsCommitted ||
+      entryReconciliationRequest !== null ||
+      pendingMutationEffectRef.current === null
+    ) {
+      return;
+    }
+    const effect = pendingMutationEffectRef.current;
+    pendingMutationEffectRef.current = null;
+    reconcileAfterMutation(effect);
+  }, [
+    entryReconciliationRequest,
+    reconcileAfterMutation,
+    viewIsCommitted,
+  ]);
   const entryReconciliationParams: LibraryEntriesResourceParams | null =
     entryReconciliationRequest
       ? {
@@ -1030,12 +1020,21 @@ export default function LibraryPaneBody() {
       return {
         request,
         page: decodeLibraryEntryPage(
-          await apiFetch<LibraryEntryPageWire>(path, { signal }),
+          await apiFetch<unknown>(path, { signal }),
         ),
       };
     },
     { debounceMs: 0 },
   );
+  useEffect(() => {
+    if (
+      entryReconciliationRequest?.recovery !== "RefreshList" ||
+      entryReconciliationFetch.error === null
+    ) {
+      return;
+    }
+    refreshListRecoveryButtonRef.current?.focus();
+  }, [entryReconciliationFetch.error, entryReconciliationRequest]);
 
   useEffect(() => {
     const result = entryReconciliationFetch.data;
@@ -1082,8 +1081,13 @@ export default function LibraryPaneBody() {
             ...current,
             entries: {
               view: result.request.view,
-              entries: result.page.data,
-              nextCursor: result.page.page.next_cursor,
+              entries: result.page.items,
+              collectionRevision: result.page.collectionRevision,
+              nextCursor: result.page.nextCursor,
+              exhaustion:
+                result.page.nextCursor.kind === "Absent"
+                  ? "Complete"
+                  : "Partial",
               revisions: result.request.revisions,
             },
           },
@@ -1092,8 +1096,6 @@ export default function LibraryPaneBody() {
     // reconciliation was requested, so a mutation that landed while it was in
     // flight surfaces as exactly one coalesced follow-up.
     committedRevisionsRef.current = result.request.revisions;
-    setLoadMoreCursorInvalid(false);
-    setLoadMoreError(null);
     setEntryReconciliationRequest(null);
     focusPendingControl();
   }, [
@@ -1117,6 +1119,14 @@ export default function LibraryPaneBody() {
     if (!isPaneActive) return;
     if (!viewIsCommitted || controller === null) return;
     if (entryReconciliationRequest !== null) return;
+    if (
+      consumptionOperationTokensRef.current.size > 0 ||
+      resettingProgressMediaIds.ids.size > 0 ||
+      deletingMediaIds.ids.size > 0 ||
+      unsubscribingPodcastIds.ids.size > 0
+    ) {
+      return;
+    }
     const current: LibraryRevisions = {
       placement: placementChange.revision,
       consumption: consumptionChange.revision,
@@ -1130,16 +1140,20 @@ export default function LibraryPaneBody() {
   }, [
     consumptionChange.revision,
     controller,
+    deletingMediaIds.ids,
     entryReconciliationRequest,
     isPaneActive,
     placementChange.revision,
     requestEntryReconciliation,
+    resettingProgressMediaIds.ids,
     revisionsAreStale,
+    unsubscribingPodcastIds.ids,
     viewIsCommitted,
   ]);
 
   useEffect(() => {
     entryReconciliationSerialRef.current += 1;
+    pendingMutationEffectRef.current = null;
     setEntryReconciliationRequest(null);
   }, [id]);
 
@@ -1164,7 +1178,9 @@ export default function LibraryPaneBody() {
           entries: {
             view: view ?? CANONICAL_VIEW,
             entries: libraryResource.data.entries,
-            nextCursor: libraryResource.data.entriesPage.next_cursor,
+            collectionRevision: libraryResource.data.collectionRevision,
+            nextCursor: libraryResource.data.nextCursor,
+            exhaustion: libraryResource.data.exhaustion,
             revisions: seedRevisions,
           },
         });
@@ -1188,7 +1204,6 @@ export default function LibraryPaneBody() {
         }),
       );
       setController(null);
-      setLoadMoreError(null);
     }
   }, [
     bootstrapSeedClaimable,
@@ -1210,8 +1225,6 @@ export default function LibraryPaneBody() {
     cancelEntryLoadMore();
     clearRemovedEntryIds();
     clearAllVisitData();
-    setLoadMoreError(null);
-    setLoadMoreCursorInvalid(false);
     setViewInvalid(false);
     entryReconciliationSerialRef.current += 1;
     setEntryReconciliationRequest(null);
@@ -1261,18 +1274,18 @@ export default function LibraryPaneBody() {
       library,
       entries: {
         view: firstPageResource.data.view,
-        entries: firstPageResource.data.page.data,
-        nextCursor: firstPageResource.data.page.page.next_cursor,
+        entries: firstPageResource.data.page.items,
+        collectionRevision:
+          firstPageResource.data.page.collectionRevision,
+        nextCursor: firstPageResource.data.page.nextCursor,
+        exhaustion:
+          firstPageResource.data.page.nextCursor.kind === "Absent"
+            ? "Complete"
+            : "Partial",
         revisions: committedRevisions,
       },
     });
-    setLoadMoreError(null);
-    setLoadMoreCursorInvalid(false);
     setViewInvalid(false);
-    const scrollport = listRegionRef.current?.closest<HTMLElement>(
-      "[data-pane-content]",
-    );
-    if (scrollport) scrollport.scrollTop = 0;
     focusPendingControl();
   }, [
     cancelEntryLoadMore,
@@ -1319,6 +1332,19 @@ export default function LibraryPaneBody() {
         ? controller
         : null;
   }, [controller, entriesState?.kind, entryReconciliationRequest]);
+  useLayoutEffect(() => {
+    const scrollTop = pendingScrollTopRef.current;
+    if (scrollTop === null) return;
+    const region = document.getElementById(`library-entry-region-${id}`);
+    const scrollport = region?.closest<HTMLElement>("[data-pane-content]");
+    if (!scrollport) return;
+    scrollport.scrollTop = scrollTop;
+    const frame = requestAnimationFrame(() => {
+      scrollport.scrollTop = scrollTop;
+      pendingScrollTopRef.current = null;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [controller, id]);
 
   usePaneReturnReady(
     entriesState?.kind === "Ready" ||
@@ -1357,8 +1383,7 @@ export default function LibraryPaneBody() {
               observing = false;
               options.signal.removeEventListener("abort", abandon);
               // The placement writer already published to the placement
-              // revision store; the revision-driven trigger reconciles the
-              // current view. No explicit reconciliation call here.
+              // revision store; that revision reconciles the committed view.
               feedback.show({
                 severity: "success",
                 title: `Added to ${
@@ -1430,6 +1455,7 @@ export default function LibraryPaneBody() {
         }));
         feedback.show(projection.feedback);
         clearAllVisitData();
+        reconcileAfterMutationRef.current("SafePatch");
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
         if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
@@ -1478,6 +1504,7 @@ export default function LibraryPaneBody() {
           title: "Metadata re-enrichment started.",
         });
         clearAllVisitData();
+        reconcileAfterMutationRef.current("Unknown");
       } catch (metadataError) {
         if (handleUnauthenticatedApiError(metadataError)) return;
         if (
@@ -1499,7 +1526,7 @@ export default function LibraryPaneBody() {
   );
 
   const handleDeleteMedia = useCallback(
-    async (entry: LibraryMediaListEntry) => {
+    async (entry: LibraryMediaListItem) => {
       if (deletingMediaIds.has(entry.media.id)) return;
       deletingMediaIds.add(entry.media.id);
 
@@ -1525,8 +1552,21 @@ export default function LibraryPaneBody() {
             severity: "info",
             title: "Deleting from your library",
           });
+        } else {
+          committedRevisionsRef.current = {
+            ...committedRevisionsRef.current,
+            placement: libraryPlacementSnapshot().revision,
+          };
         }
-        clearAllVisitData();
+        if (result.kind === "Deleting") {
+          clearAllVisitData();
+          reconcileAfterMutationRef.current("Unknown");
+        } else {
+          installEntryCollectionRevision(
+            result.libraryEntriesCollectionRevision,
+          );
+          reconcileAfterMutationRef.current("SafeRebase");
+        }
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
         if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
@@ -1539,7 +1579,13 @@ export default function LibraryPaneBody() {
         deletingMediaIds.remove(entry.media.id);
       }
     },
-    [clearAllVisitData, deletingMediaIds, feedback, setEntries],
+    [
+      clearAllVisitData,
+      deletingMediaIds,
+      feedback,
+      installEntryCollectionRevision,
+      setEntries,
+    ],
   );
 
   const handleSetConsumption = useCallback(
@@ -1572,6 +1618,7 @@ export default function LibraryPaneBody() {
       }));
 
       try {
+        let result: ConsumptionResult;
         if (status === "finished") {
           const parsedMediaId = parseMediaId(mediaId);
           const preCompletionSnapshot = lectern.getCanonicalSnapshot() ?? {
@@ -1581,7 +1628,7 @@ export default function LibraryPaneBody() {
             preCompletionSnapshot.items.find(
               (item) => item.mediaId === mediaId,
             ) ?? null;
-          const result = await lectern.ensureMediaFinished(parsedMediaId);
+          result = await lectern.ensureMediaFinished(parsedMediaId);
           offerCompletionUndo({
             mediaId: parsedMediaId,
             preCompletionSnapshot,
@@ -1589,9 +1636,16 @@ export default function LibraryPaneBody() {
             completionHandle: result.completionHandle,
           });
         } else {
-          await lectern.setUnread(parseMediaId(mediaId));
+          result = await lectern.setUnread(parseMediaId(mediaId));
         }
-        clearAllVisitData();
+        committedRevisionsRef.current = {
+          ...committedRevisionsRef.current,
+          consumption: consumptionProjectionSnapshot().revision,
+        };
+        installEntryCollectionRevision(
+          result.libraryEntriesCollectionRevision,
+        );
+        reconcileAfterMutationRef.current("SafeRebase");
       } catch (err) {
         if (
           consumptionOperationTokensRef.current.get(mediaId) !== operationToken
@@ -1623,9 +1677,9 @@ export default function LibraryPaneBody() {
       }
     },
     [
-      clearAllVisitData,
       entries,
       feedback,
+      installEntryCollectionRevision,
       lectern,
       offerCompletionUndo,
       patchMediaInViews,
@@ -1660,7 +1714,15 @@ export default function LibraryPaneBody() {
           ...media,
           read_state: "unread",
         }));
+        committedRevisionsRef.current = {
+          ...committedRevisionsRef.current,
+          consumption: consumptionProjectionSnapshot().revision,
+        };
         feedback.show({ severity: "success", title: "Progress reset." });
+        installEntryCollectionRevision(
+          outcome.result.libraryEntriesCollectionRevision,
+        );
+        reconcileAfterMutationRef.current("SafeRebase");
       } catch (error) {
         if (handleUnauthenticatedApiError(error)) return;
         if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
@@ -1674,6 +1736,7 @@ export default function LibraryPaneBody() {
     [
       committedView,
       feedback,
+      installEntryCollectionRevision,
       lectern.resetProgress,
       patchMediaInViews,
       resettingProgressMediaIds,
@@ -1731,7 +1794,7 @@ export default function LibraryPaneBody() {
   );
 
   const handleRefreshPodcast = async (
-    entry: LibraryPodcastListEntry,
+    entry: LibraryPodcastListItem,
   ): Promise<void> => {
     const podcastId = entry.podcast.id;
     if (refreshingPodcastIds.has(podcastId)) return;
@@ -1761,7 +1824,10 @@ export default function LibraryPaneBody() {
             : candidate,
         ),
       );
-      clearAllVisitData();
+      installEntryCollectionRevision(
+        result.libraryEntriesCollectionRevision,
+      );
+      reconcileAfterMutationRef.current("SafeRebase");
     } catch (refreshError) {
       if (handleUnauthenticatedApiError(refreshError)) return;
       if (!isApiError(refreshError) || isSameSystemApiDefect(refreshError)) {
@@ -1778,7 +1844,7 @@ export default function LibraryPaneBody() {
   };
 
   const handleUnsubscribePodcast = async (
-    entry: LibraryPodcastListEntry,
+    entry: LibraryPodcastListItem,
   ): Promise<void> => {
     const podcastId = entry.podcast.id;
     if (unsubscribingPodcastIds.has(podcastId)) return;
@@ -1795,7 +1861,7 @@ export default function LibraryPaneBody() {
       ) {
         return;
       }
-      await unsubscribeFromPodcast(podcastId);
+      const result = await unsubscribeFromPodcast(podcastId);
       const currentPlacement = placements.find(
         (placement) => placement.id === id,
       );
@@ -1812,7 +1878,14 @@ export default function LibraryPaneBody() {
             : [{ ...candidate, subscription: null }];
         }),
       );
-      clearAllVisitData();
+      committedRevisionsRef.current = {
+        ...committedRevisionsRef.current,
+        placement: libraryPlacementSnapshot().revision,
+      };
+      installEntryCollectionRevision(
+        result.libraryEntriesCollectionRevision,
+      );
+      reconcileAfterMutationRef.current("SafeRebase");
     } catch (unsubscribeError) {
       if (handleUnauthenticatedApiError(unsubscribeError)) return;
       if (
@@ -1894,104 +1967,105 @@ export default function LibraryPaneBody() {
     router.push("/libraries");
   }, [clearAllVisitData, currentLibrary, router]);
 
-  const handleLoadMoreEntries = useCallback(() => {
-    if (
-      entryCursor === null ||
-      loadingMore ||
-      committedView === null ||
-      !viewIsCommitted ||
-      entryReconciliationRequest !== null
-    ) {
-      return;
-    }
-    entryLoadMoreAbortRef.current?.abort();
-    const generation = entryLoadMoreGenerationRef.current + 1;
-    entryLoadMoreGenerationRef.current = generation;
-    const controller = new AbortController();
-    entryLoadMoreAbortRef.current = controller;
-    setLoadingMore(true);
-    setLoadMoreError(null);
-    void apiFetch<LibraryEntryPageWire>(
-      libraryEntriesResource.clientPath({
-        id,
-        view: committedView,
-        cursor: entryCursor,
-      }),
-      { signal: controller.signal },
-    )
-      .then(decodeLibraryEntryPage)
-      .then((page) => {
-        if (
-          controller.signal.aborted ||
-          generation !== entryLoadMoreGenerationRef.current
-        ) {
-          return;
-        }
-        setEntries((current) =>
-          appendUniqueEntries(current, page.data, (entry) =>
-            libraryRowKey(entry, isDefaultLibrary),
-          ),
-        );
-        setEntryCursor(page.page.next_cursor);
-      })
-      .catch((err: unknown) => {
-        if (
-          isAbortError(err) ||
-          controller.signal.aborted ||
-          generation !== entryLoadMoreGenerationRef.current
-        ) {
-          return;
-        }
-        if (handleUnauthenticatedApiError(err)) return;
-        // A stale/deployment-era continuation cursor is never reinterpreted as
-        // an invalid view: the list can no longer continue and offers Refresh
-        // list, which reloads the same view's first page.
-        if (isApiError(err) && err.code === "E_INVALID_CURSOR") {
-          setLoadMoreCursorInvalid(true);
-          return;
-        }
-        setLoadMoreError(
-          toFeedback(err, { fallback: "Failed to load more entries" }),
-        );
-      })
-      .finally(() => {
-        if (
-          controller.signal.aborted ||
-          generation !== entryLoadMoreGenerationRef.current
-        ) {
-          return;
-        }
-        setLoadingMore(false);
-      });
-  }, [
-    committedView,
-    entryCursor,
-    entryReconciliationRequest,
-    id,
-    isDefaultLibrary,
-    loadingMore,
-    setEntries,
-    setEntryCursor,
-    viewIsCommitted,
-  ]);
-
-  // Recover from a stale/deployment-era continuation cursor: discard it and
-  // reload the same exact view's first page. On success focus the View select.
+  // Continuation recovery replaces the exact committed view's first page while
+  // preserving its rendered rows until the replacement commits.
   const handleRefreshList = useCallback(() => {
     if (committedView === null) return;
-    // Keep "This list can no longer continue." + "Refresh list" mounted until the
-    // replacement first page COMMITS: the commit path clears loadMoreCursorInvalid
-    // and focuses View; a failed refresh leaves the same notice and focused button
-    // in place (never a generic Retry state that unmounts the button).
     pendingCommitFocusRef.current = "View";
-    requestEntryReconciliation(committedView, {
-      placement: placementRevisionRef.current,
-      consumption: consumptionRevisionRef.current,
-    });
+    requestEntryReconciliation(
+      committedView,
+      {
+        placement: placementRevisionRef.current,
+        consumption: consumptionRevisionRef.current,
+      },
+      "RefreshList",
+    );
   }, [committedView, requestEntryReconciliation]);
 
+  const loadEntryPage = useCallback(
+    async (
+      cursor: CollectionCursor,
+      revision: CollectionRevision,
+      signal: AbortSignal,
+    ): Promise<LibraryEntryPage> => {
+      const exactView = controllerRef.current?.entries.view;
+      if (exactView === undefined) {
+        throw new Error("Library continuation lost its committed view");
+      }
+      return decodeLibraryEntryPage(
+        await apiFetch<unknown>(
+          libraryEntriesResource.clientPath({
+            id,
+            view: exactView,
+            cursor,
+            collectionRevision: revision,
+            limit: 100,
+          }),
+          { signal },
+        ),
+      );
+    },
+    [id],
+  );
+  const commitEntryPage = useCallback(
+    (page: LibraryEntryPage): number => {
+      const current = controllerRef.current;
+      if (
+        current === null ||
+        page.collectionRevision !== current.entries.collectionRevision
+      ) {
+        throw new Error("Library continuation revision mismatch");
+      }
+      const merged = appendUniqueEntries(
+        [...current.entries.entries],
+        page.items,
+        (entry) => libraryRowKey(entry, current.library.isDefault),
+      );
+      const next: LibrarySnapshot = {
+        ...current,
+        entries: {
+          ...current.entries,
+          entries: merged,
+          nextCursor: page.nextCursor,
+          exhaustion:
+            page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
+        },
+      };
+      controllerRef.current = next;
+      committedSnapshotRef.current = next;
+      setController(next);
+      return merged.length;
+    },
+    [],
+  );
+  const entryExhaustion = useExhaustivePagination({
+    active:
+      isPaneActive &&
+      viewIsCommitted &&
+      controller !== null &&
+      entryReconciliationRequest === null,
+    chainKey: [
+      id,
+      committedViewKey ?? "uncommitted",
+      controller?.entries.collectionRevision ?? ZERO_COLLECTION_REVISION,
+      chainEpoch,
+    ].join(":"),
+    cursor: entryCursor,
+    collectionRevision:
+      controller?.entries.collectionRevision ?? ZERO_COLLECTION_REVISION,
+    itemCount: entries.length,
+    loadPage: loadEntryPage,
+    commitPage: commitEntryPage,
+    refresh: handleRefreshList,
+  });
+
   const handleReorderEntries = (nextEntries: LibraryEntry[]) => {
-    if (!viewIsCommitted || !canReorder || entryCursor !== null) {
+    if (
+      !viewIsCommitted ||
+      !canReorder ||
+      controller?.entries.exhaustion !== "Complete" ||
+      entryExhaustion.kind !== "Complete"
+    ) {
       return;
     }
     const generation = reorderGenerationRef.current + 1;
@@ -2007,6 +2081,7 @@ export default function LibraryPaneBody() {
       .then(() => {
         if (generation !== reorderGenerationRef.current) return;
         clearAllVisitData();
+        reconcileAfterMutationRef.current("Unknown");
       })
       .catch((err: unknown) => {
         if (generation !== reorderGenerationRef.current) return;
@@ -2103,7 +2178,15 @@ export default function LibraryPaneBody() {
     [hideFinished, isInProgressView, removedEntryIds.ids],
   );
   const visibleEntries = entries.filter(isVisibleEntry);
-  const entryFolioCount = visibleEntries.length;
+  const entryFolio =
+    controller?.entries.exhaustion === "Complete" &&
+    entryExhaustion.kind === "Complete"
+      ? {
+          kind: "count" as const,
+          value: visibleEntries.length,
+          unit: "entry" as const,
+        }
+      : { kind: "none" as const };
   const connectionsComposerController = useConnectionsComposerController({
     scheme: "library",
     id,
@@ -2159,8 +2242,8 @@ export default function LibraryPaneBody() {
         : undefined,
     header: {
       kind: "section",
-      folio: { kind: "count", value: entryFolioCount, unit: "entry" },
-      pending: loading,
+      folio: entryFolio,
+      pending: loading || entryExhaustion.kind === "Draining",
     },
   });
 
@@ -2260,41 +2343,41 @@ export default function LibraryPaneBody() {
     committedView?.order.kind === "Canonical" &&
     committedView.projection.kind === "AllItems" &&
     committedView.projection.completion === "all" &&
-    entryCursor === null;
-  const entryFooter = loadMoreCursorInvalid ? (
-    <FeedbackNotice
-      severity="neutral"
-      title="This list can no longer continue."
-    >
-      <Button variant="secondary" size="sm" onClick={handleRefreshList}>
-        Refresh list
-      </Button>
-    </FeedbackNotice>
-  ) : (
-    <>
-      {loadMoreError ? <FeedbackNotice {...loadMoreError} /> : null}
-      <LoadMoreFooter
-        hasMore={
-          viewIsCommitted &&
-          entryReconciliationRequest === null &&
-          entryCursor !== null
-        }
-        loading={loadingMore}
-        onLoadMore={handleLoadMoreEntries}
-        label="Load more entries"
-      />
-    </>
+    controller?.entries.exhaustion === "Complete" &&
+    entryExhaustion.kind === "Complete";
+  const entryFooter = (
+    <CollectionExhaustionNotice state={entryExhaustion} />
   );
-  // While the stale-cursor recovery is mounted, the Refresh-list reconciliation
-  // is surfaced by that notice/button (kept until the replacement page commits),
-  // not by a second "Refreshing…" notice.
   const entryReconciliationNotice =
-    entryReconciliationRequest && !loadMoreCursorInvalid ? (
+    entryReconciliationRequest ? (
       entryReconciliationFetch.error === null ? (
         <FeedbackNotice
           severity="neutral"
           title="Refreshing library entries…"
         />
+      ) : entryReconciliationRequest.recovery === "RefreshList" ? (
+        <FeedbackNotice
+          severity="warning"
+          title="List changed while loading"
+        >
+          <Button
+            ref={refreshListRecoveryButtonRef}
+            variant="secondary"
+            size="sm"
+            onClick={() =>
+              requestEntryReconciliation(
+                entryReconciliationRequest.view,
+                {
+                  placement: libraryPlacementSnapshot().revision,
+                  consumption: consumptionProjectionSnapshot().revision,
+                },
+                "RefreshList",
+              )
+            }
+          >
+            Refresh list
+          </Button>
+        </FeedbackNotice>
       ) : (
         <FeedbackNotice
           feedback={toFeedback(
@@ -2308,10 +2391,14 @@ export default function LibraryPaneBody() {
             variant="secondary"
             size="sm"
             onClick={() =>
-              requestEntryReconciliation(entryReconciliationRequest.view, {
-                placement: placementRevisionRef.current,
-                consumption: consumptionRevisionRef.current,
-              })
+              requestEntryReconciliation(
+                entryReconciliationRequest.view,
+                {
+                  placement: libraryPlacementSnapshot().revision,
+                  consumption: consumptionProjectionSnapshot().revision,
+                },
+                entryReconciliationRequest.recovery,
+              )
             }
           >
             Retry
@@ -2414,9 +2501,6 @@ export default function LibraryPaneBody() {
           syncStatus: item.podcast.syncStatus,
         },
         {
-          connectionSummary: connectionSummaries.get(
-            `podcast:${item.podcast.id}`,
-          ),
           settings:
             viewIsCommitted && item.subscription?.status === "active"
               ? {
@@ -2468,7 +2552,6 @@ export default function LibraryPaneBody() {
         : null;
     const row = presentMedia(item.media, {
       readingTimeEstimate: item.readingTimeEstimate,
-      connectionSummary: connectionSummaries.get(`media:${item.media.id}`),
       retryProcessing:
         viewIsCommitted && item.media.capabilities.can_retry
           ? {
@@ -2744,6 +2827,7 @@ export default function LibraryPaneBody() {
       ariaLabel={entriesAccessibleName}
       rowActionsAvailable={viewIsCommitted}
       footer={entryFooter}
+      collectionBusy={entryExhaustion.kind === "Draining"}
       surface={false}
       sortable={
         canReorderVisibleEntries
@@ -2770,10 +2854,7 @@ export default function LibraryPaneBody() {
     null ? // Metadata known but no page has committed yet: the busy region stays empty
   // (rows/empty-state only); the polite status node carries "Loading …" /
   // "Could not load …". No false empty-state notice before the first commit.
-  null : entryCursor !== null ? (
-    // Empty after local filtering while the server still has another page:
-    // keep the explicit continuation control visible instead of publishing a
-    // false empty state or initiating an effect-owned GET.
+  null : entryExhaustion.kind !== "Complete" ? (
     entryFooter
   ) : (
     emptyStateNotice
@@ -2812,14 +2893,17 @@ export default function LibraryPaneBody() {
             entriesState?.kind === "Refreshing" ||
             (entriesState?.kind === "InitialLoading" &&
               !invalidView &&
-              failedFirstPage === null)
+              failedFirstPage === null) ||
+            entryExhaustion.kind === "Draining"
               ? true
               : undefined
           }
         >
           {mainBody}
         </div>
-        {currentLibrary !== null ? (
+        {currentLibrary !== null &&
+        controller?.entries.exhaustion === "Complete" &&
+        entryExhaustion.kind === "Complete" ? (
           <ReadingSlateSection
             returnScope="Library.ReadingSlate"
             destination={{

@@ -18,6 +18,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
+from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.consumption_activity import CompletionHandle
 from nexus.schemas.presence import Presence
 from nexus.schemas.reader import ReaderCursorSnapshot
@@ -318,6 +319,7 @@ class ConsumptionResult(BaseModel):
     next_item: Presence[LecternItemOut]
     progress_state: Presence[MediaProgressState]
     completion_handle: Presence[CompletionHandle]
+    library_entries_collection_revision: CollectionRevision
 
 
 # ---------------------------------------------------------------------------

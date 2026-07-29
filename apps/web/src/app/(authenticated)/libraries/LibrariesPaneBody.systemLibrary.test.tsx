@@ -13,8 +13,7 @@ import { stubFetch } from "@/__tests__/helpers/fetch";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import type { PaneReturnMementoCommands } from "@/lib/workspace/paneReturnMemento";
 
-const OWNER_USER_HANDLE =
-  "nus1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB";
+const OWNER_USER_HANDLE = "nus1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB";
 
 // A system-protected library (e.g. the Oracle Corpus) carries systemKey and
 // reports every mutation capability false. It must list like any other library,
@@ -26,11 +25,28 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function librariesPage<T>(
+  items: T[],
+  nextCursor?: string,
+  collectionRevision = 1,
+) {
+  return {
+    items,
+    collectionRevision,
+    nextCursor:
+      nextCursor === undefined
+        ? { kind: "Absent" as const }
+        : { kind: "Present" as const, value: nextCursor },
+  };
+}
+
 describe("LibrariesPaneBody (system library protection)", () => {
   it("offers Share but no mutation actions on a system library", async () => {
     stubFetch(async (input) => {
       const raw = input instanceof Request ? input.url : String(input);
-      if (new URL(raw, "http://localhost").pathname === "/api/libraries/invites") {
+      if (
+        new URL(raw, "http://localhost").pathname === "/api/libraries/invites"
+      ) {
         return Response.json({ data: [] });
       }
       throw new Error("unexpected client fetch; the seed is the source");
@@ -39,43 +55,40 @@ describe("LibrariesPaneBody (system library protection)", () => {
     renderHydratedPane({
       href: "/libraries",
       resources: {
-        "libraries:0": {
-          data: [
-            {
-              id: "10000000-0000-4000-8000-000000000001",
-              name: "Oracle Corpus",
-              color: null,
-              ownerUserHandle: OWNER_USER_HANDLE,
-              isDefault: false,
-              role: "admin",
-              createdAt: "2026-01-01T00:00:00Z",
-              updatedAt: "2026-01-01T00:00:00Z",
-              systemKey: "oracle_corpus",
-              canRename: false,
-              canDelete: false,
-              canEditEntries: false,
-              canManageMembers: false,
-              canTransferOwnership: false,
-            },
-            {
-              id: "10000000-0000-4000-8000-000000000002",
-              name: "Reading Room",
-              color: null,
-              ownerUserHandle: OWNER_USER_HANDLE,
-              isDefault: false,
-              role: "admin",
-              createdAt: "2026-01-01T00:00:00Z",
-              updatedAt: "2026-01-01T00:00:00Z",
-              systemKey: null,
-              canRename: true,
-              canDelete: true,
-              canEditEntries: true,
-              canManageMembers: true,
-              canTransferOwnership: true,
-            },
-          ],
-          page: { has_more: false, next_cursor: null },
-        },
+        "libraries:0": librariesPage([
+          {
+            id: "10000000-0000-4000-8000-000000000001",
+            name: "Oracle Corpus",
+            color: null,
+            ownerUserHandle: OWNER_USER_HANDLE,
+            isDefault: false,
+            role: "admin",
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            systemKey: "oracle_corpus",
+            canRename: false,
+            canDelete: false,
+            canEditEntries: false,
+            canManageMembers: false,
+            canTransferOwnership: false,
+          },
+          {
+            id: "10000000-0000-4000-8000-000000000002",
+            name: "Reading Room",
+            color: null,
+            ownerUserHandle: OWNER_USER_HANDLE,
+            isDefault: false,
+            role: "admin",
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            systemKey: null,
+            canRename: true,
+            canDelete: true,
+            canEditEntries: true,
+            canManageMembers: true,
+            canTransferOwnership: true,
+          },
+        ]),
       },
       children: (
         <LibraryPlacementControllerProvider>
@@ -127,7 +140,6 @@ describe("LibrariesPaneBody (system library protection)", () => {
   });
 
   it("restores both loaded pages without another page-one request", async () => {
-    const user = userEvent.setup();
     const firstPage = library(
       "10000000-0000-4000-8000-000000000003",
       "First-page library",
@@ -154,14 +166,12 @@ describe("LibrariesPaneBody (system library protection)", () => {
       }
       if (url.searchParams.get("cursor") === "cursor-2") {
         return Response.json({
-          data: [secondPage],
-          page: { has_more: false, next_cursor: null },
+          data: librariesPage([secondPage]),
         });
       }
       firstPageRequestCount += 1;
       return Response.json({
-        data: [replacement],
-        page: { has_more: false, next_cursor: null },
+        data: librariesPage([replacement], undefined, 2),
       });
     });
 
@@ -177,10 +187,7 @@ describe("LibrariesPaneBody (system library protection)", () => {
         resources={
           resourceGeneration === 0
             ? {
-                "libraries:0": {
-                  data: [firstPage],
-                  page: { has_more: true, next_cursor: "cursor-2" },
-                },
+                "libraries:0": librariesPage([firstPage], "cursor-2"),
               }
             : {}
         }
@@ -197,9 +204,6 @@ describe("LibrariesPaneBody (system library protection)", () => {
     expect(
       await screen.findByRole("link", { name: firstPage.name }),
     ).toBeInTheDocument();
-    await user.click(
-      screen.getByRole("button", { name: "Load more libraries" }),
-    );
     expect(
       await screen.findByRole("link", { name: secondPage.name }),
     ).toBeInTheDocument();
@@ -244,11 +248,10 @@ describe("LibrariesPaneBody (system library protection)", () => {
       "data-collection-row-id",
       "10000000-0000-4000-8000-000000000004",
     );
-    // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: row ids are collision-safe only together with their nearest published scope.
-    expect(restoredSecondRow?.closest("[data-pane-return-scope]")).toHaveAttribute(
-      "data-pane-return-scope",
-      "Libraries.Items",
-    );
+    expect(
+      // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: row ids are collision-safe only together with their nearest published scope.
+      restoredSecondRow?.closest("[data-pane-return-scope]"),
+    ).toHaveAttribute("data-pane-return-scope", "Libraries.Items");
     expect(restoredSecondRow?.getBoundingClientRect().top).toBe(20);
     await waitFor(() => expect(firstPageRequestCount).toBe(0));
     expect(
@@ -292,9 +295,8 @@ describe("LibrariesPaneBody (system library protection)", () => {
       }
       if (init?.method === "POST") {
         if (typeof init.body === "string") {
-          createdLibraryId = (
-            JSON.parse(init.body) as { library_id: string }
-          ).library_id;
+          createdLibraryId = (JSON.parse(init.body) as { library_id: string })
+            .library_id;
         }
         return pendingCreate;
       }
@@ -303,8 +305,7 @@ describe("LibrariesPaneBody (system library protection)", () => {
         return unresolvedRefresh;
       }
       return Response.json({
-        data: [freshLibrary],
-        page: { has_more: false, next_cursor: null },
+        data: librariesPage([freshLibrary], undefined, 2),
       });
     });
 
@@ -320,10 +321,7 @@ describe("LibrariesPaneBody (system library protection)", () => {
         resources={
           resourceGeneration === 0
             ? {
-                "libraries:0": {
-                  data: [staleLibrary],
-                  page: { has_more: false, next_cursor: null },
-                },
+                "libraries:0": librariesPage([staleLibrary]),
               }
             : {}
         }

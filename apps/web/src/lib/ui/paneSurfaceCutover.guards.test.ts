@@ -143,7 +143,9 @@ describe("pane surface/resource row cutover source gates", () => {
 
     const sortableList = sourceText("src/components/sortable/SortableList.tsx");
     expect(sortableList).toContain('from "@/components/ui/ResourceList"');
-    expect(sortableList).toContain("<ResourceList ariaLabel={ariaLabel}>");
+    expect(sortableList).toContain(
+      "<ResourceList ariaLabel={ariaLabel} busy={busy}>",
+    );
   });
 
   it("keeps collection presenters pure and status projection centralized", () => {

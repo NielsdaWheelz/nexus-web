@@ -5,11 +5,15 @@ import {
   getPodcastSubscriptionSettingsPatch,
   getPodcastSubscriptionSyncPatch,
   parsePodcastSubscriptionDefaultPlaybackSpeed,
+  savePodcastSubscriptionSettings,
   subscribeToPodcast,
   unsubscribeFromPodcast,
 } from "./podcastSubscriptions";
 import type { LibraryPlacementOption } from "@/lib/libraries/libraryPlacement";
 import { libraryPlacementSnapshot } from "@/lib/libraries/placementRevision";
+import type { CollectionRevision } from "@/lib/api/collectionPage";
+
+const REVISION = 7 as CollectionRevision;
 
 function createLibraryPlacement(
   overrides: Partial<LibraryPlacementOption> = {},
@@ -56,6 +60,8 @@ describe("podcastSubscriptions helpers", () => {
         sync_error_message: "Upstream timed out",
         sync_attempts: 3,
         sync_enqueued: true,
+        collectionRevision: REVISION,
+        libraryEntriesCollectionRevision: REVISION,
       })
     ).toEqual({
       sync_status: "running",
@@ -67,10 +73,21 @@ describe("podcastSubscriptions helpers", () => {
     expect(
       getPodcastSubscriptionSettingsPatch({
         response: {
+          user_id: "user-1",
           podcast_id: "podcast-1",
+          status: "active",
           default_playback_speed: 1.25,
           auto_queue: true,
+          sync_status: "complete",
+          sync_error_code: null,
+          sync_error_message: null,
+          sync_attempts: 1,
+          sync_started_at: null,
+          sync_completed_at: null,
+          last_synced_at: null,
           updated_at: "2026-04-22T00:00:00Z",
+          collectionRevision: REVISION,
+          libraryEntriesCollectionRevision: REVISION,
         },
         updatedAt: "2026-01-01T00:00:00Z",
       })
@@ -129,13 +146,71 @@ describe("podcastSubscriptions placement revision publishing", () => {
     expect(after.affectedLibraryIds).toEqual(["library-1", "library-2"]);
   });
 
+  it("strictly decodes the revision-bearing settings response", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        data: {
+          user_id: "user-1",
+          podcast_id: "podcast-1",
+          status: "active",
+          default_playback_speed: 1.5,
+          auto_queue: true,
+          sync_status: "complete",
+          sync_error_code: null,
+          sync_error_message: null,
+          sync_attempts: 1,
+          sync_started_at: null,
+          sync_completed_at: null,
+          last_synced_at: null,
+          updated_at: "2026-07-29T00:00:00Z",
+          collectionRevision: 7,
+          libraryEntriesCollectionRevision: 11,
+        },
+      }),
+    );
+
+    await expect(
+      savePodcastSubscriptionSettings("podcast-1", {
+        defaultPlaybackSpeed: 1.5,
+        autoQueue: true,
+      }),
+    ).resolves.toMatchObject({
+      user_id: "user-1",
+      podcast_id: "podcast-1",
+      collectionRevision: 7,
+      libraryEntriesCollectionRevision: 11,
+    });
+  });
+
   it("publishes one Unknown placement change after unsubscribe", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(null, { status: 204 }),
+      new Response(
+        JSON.stringify({
+          data: {
+            podcast_id: "podcast-1",
+            status: "unsubscribed",
+            removed_from_library_count: 2,
+            retained_shared_library_count: 1,
+            collectionRevision: 7,
+            libraryEntriesCollectionRevision: 11,
+          },
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
     );
     const before = libraryPlacementSnapshot().revision;
 
-    await unsubscribeFromPodcast("podcast-1");
+    await expect(unsubscribeFromPodcast("podcast-1")).resolves.toEqual({
+      podcast_id: "podcast-1",
+      status: "unsubscribed",
+      removed_from_library_count: 2,
+      retained_shared_library_count: 1,
+      collectionRevision: 7,
+      libraryEntriesCollectionRevision: 11,
+    });
 
     const after = libraryPlacementSnapshot();
     expect(after.revision).toBe(before + 1);

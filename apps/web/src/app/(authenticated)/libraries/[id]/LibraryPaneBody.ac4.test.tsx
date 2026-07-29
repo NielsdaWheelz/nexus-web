@@ -230,7 +230,9 @@ function seededSystemLibraryWithMutableMedia() {
         },
       ),
     ],
-    entriesPage: { has_more: false, next_cursor: null },
+    collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
   };
 }
 
@@ -261,14 +263,22 @@ function mediaEntryWire(
       contributors: [],
       author_mode: "automatic",
       published_date: null,
-      publisher: null,
       canonical_source_url: null,
       created_at: options.createdAt ?? "2026-01-01T00:00:00Z",
       processing_status: "ready_for_reading",
       read_state: options.readState ?? "unread",
       progress_resettable: options.progressResettable ?? false,
       progress_fraction: options.progressFraction ?? null,
-      capabilities: { can_quote: true, ...options.capabilities },
+      last_engaged_at: null,
+      capabilities: {
+        can_quote: true,
+        can_retry: false,
+        can_refresh_source: false,
+        can_retry_metadata: false,
+        can_edit_authors: false,
+        can_delete: false,
+        ...options.capabilities,
+      },
     },
     readingTimeEstimate:
       options.kind === "podcast_episode"
@@ -300,9 +310,6 @@ function seededPodcastEntry() {
       id: SETTINGS_PODCAST_ID,
       title: "Settings Podcast",
       contributors: [],
-      feed_url: "https://feeds.example.test/settings.xml",
-      website_url: null,
-      image_url: null,
       unplayed_count: 2,
       unplayedCount: { kind: "Present", value: { value: 2 } },
       publicationDate: { kind: "Absent" },
@@ -442,6 +449,7 @@ function consumptionSuccessResponse(): Response {
       nextItem: { kind: "Absent" },
       progressState: { kind: "Absent" },
       completionHandle: { kind: "Absent" },
+      libraryEntriesCollectionRevision: 2,
     },
   });
 }
@@ -480,7 +488,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
             entries: [
               seededMediaEntry("entry-width", ACTION_MEDIA_ID, longTitle),
             ],
-            entriesPage: { has_more: false, next_cursor: null },
+            collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
           },
         },
         children: (
@@ -528,7 +538,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         [LIBRARY_ID]: {
           library: seededLibrary(),
           entries: [],
-          entriesPage: { has_more: false, next_cursor: null },
+          collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
         },
       },
       children: paneWithLectern,
@@ -576,7 +588,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
           [LIBRARY_ID]: {
             library: seededLibrary(),
             entries: [],
-            entriesPage: { has_more: false, next_cursor: null },
+            collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
           },
         },
         children: (
@@ -627,6 +641,102 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     } finally {
       window.removeEventListener(OPEN_LAUNCHER_EVENT, onOpen);
     }
+  });
+
+  it("publishes no count until exhaustive loading completes", async () => {
+    let resolveContinuation!: (response: Response) => void;
+    const continuation = new Promise<Response>((resolve) => {
+      resolveContinuation = resolve;
+    });
+    stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      if (
+        fetchInputPathWithSearch(input) ===
+        `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2&collection_revision=1&limit=100`
+      ) {
+        return continuation;
+      }
+      return Response.json({});
+    });
+    const publish =
+      vi.fn<(update: PanePrimaryChromePublicationUpdate) => void>();
+
+    renderHydratedPane({
+      href: `/libraries/${LIBRARY_ID}`,
+      resources: {
+        [LIBRARY_ID]: {
+          library: seededLibrary(),
+          entries: [
+            seededMediaEntry(
+              "entry-1",
+              "11111111-1111-4111-8111-111111111112",
+              "First Page Work",
+            ),
+          ],
+          collectionRevision: 1,
+          nextCursor: { kind: "Present", value: String("cursor-2") },
+          exhaustion: "Partial",
+        },
+      },
+      children: (
+        <PanePrimaryChromeProvider publish={publish}>
+          {paneWithLectern}
+        </PanePrimaryChromeProvider>
+      ),
+    });
+
+    expect(
+      await screen.findByRole("link", { name: "First Page Work" }),
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      const pendingHeader = publish.mock.calls
+        .map(([update]) => update.publication?.header)
+        .find(
+          (header) =>
+            header?.kind === "section" && header.pending === true,
+        );
+      expect(pendingHeader).toEqual({
+        kind: "section",
+        folio: { kind: "none" },
+        pending: true,
+      });
+    });
+
+    resolveContinuation(
+      Response.json({
+        data: {
+          items: [
+            mediaEntryWire(
+              "entry-2",
+              "22222222-2222-4222-8222-222222222222",
+              "Second Page Work",
+            ),
+          ],
+          collectionRevision: 1,
+          nextCursor: { kind: "Absent" },
+        },
+      }),
+    );
+
+    expect(
+      await screen.findByRole("link", { name: "Second Page Work" }),
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      const completeHeader = publish.mock.calls
+        .map(([update]) => update.publication?.header)
+        .find(
+          (header) =>
+            header?.kind === "section" &&
+            header.pending === false &&
+            header.folio.kind === "count",
+        );
+      expect(completeHeader).toEqual({
+        kind: "section",
+        folio: { kind: "count", value: 2, unit: "entry" },
+        pending: false,
+      });
+    });
   });
 
   it("derives canonical media actions from media capabilities, not library editability", async () => {
@@ -700,7 +810,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         [LIBRARY_ID]: {
           library: seededLibrary(),
           entries: [seededPodcastEntry()],
-          entriesPage: { has_more: false, next_cursor: null },
+          collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
         },
       },
       children: paneWithLectern,
@@ -729,24 +841,22 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     ).toHaveLength(0);
   });
 
-  it("loads another page of library entries", async () => {
-    const user = userEvent.setup();
+  it("automatically exhausts library entries", async () => {
     const fetchMock = stubFetch(async (input) => {
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
       if (
         fetchInputPathWithSearch(input) ===
-        `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2`
+        `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2&collection_revision=1&limit=100`
       ) {
         return Response.json({
-          data: [
+          data: { items: [
             mediaEntryWire(
               "entry-2",
               "22222222-2222-4222-8222-222222222222",
               "Second Page Work",
             ),
-          ],
-          page: { has_more: false, next_cursor: null },
+          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       return new Response("{}", {
@@ -768,41 +878,40 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
               "First Page Work",
             ),
           ],
-          entriesPage: { has_more: true, next_cursor: "cursor-2" },
+          collectionRevision: 1,
+nextCursor: { kind: "Present", value: String("cursor-2") },
+exhaustion: "Partial",
         },
       },
       children: paneWithLectern,
     });
 
     expect(await screen.findByRole("link", { name: "First Page Work" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Load more entries" }));
 
     expect(await screen.findByRole("link", { name: "Second Page Work" })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
-      `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2`,
+      `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2&collection_revision=1&limit=100`,
       expect.objectContaining({ method: "GET" }),
     );
   });
 
-  it("restores loaded entry pages and their semantic eye-line without refetching or duplication", async () => {
-    const user = userEvent.setup();
+  it("restores exhausted entry pages without refetching or duplication", async () => {
     let primaryResourceRequests = 0;
     let loadMoreRequests = 0;
     stubFetch(async (input) => {
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
       const path = fetchInputPathWithSearch(input);
-      if (path === `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2`) {
+      if (path === `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2&collection_revision=1&limit=100`) {
         loadMoreRequests += 1;
         return Response.json({
-          data: [
+          data: { items: [
             mediaEntryWire(
               "entry-2",
               "22222222-2222-4222-8222-222222222222",
               "Second Page Work",
             ),
-          ],
-          page: { has_more: false, next_cursor: null },
+          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       if (
@@ -811,10 +920,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       ) {
         primaryResourceRequests += 1;
         return Response.json({
-          data: [
+          data: { items: [
             mediaEntryWire("replacement", "replacement", "Replacement Work"),
-          ],
-          page: { has_more: false, next_cursor: null },
+          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       throw new Error(`Unexpected fetch call: ${path}`);
@@ -841,10 +949,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
                       "First Page Work",
                     ),
                   ],
-                  entriesPage: {
-                    has_more: true,
-                    next_cursor: "cursor-2",
-                  },
+                  collectionRevision: 1,
+nextCursor: { kind: "Present", value: String("cursor-2") },
+exhaustion: "Partial",
                 },
               }
             : {}
@@ -858,16 +965,15 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     const view = render(journey(0));
 
     expect(await screen.findByRole("link", { name: "First Page Work" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Load more entries" }));
     expect(await screen.findByRole("link", { name: "Second Page Work" })).toBeInTheDocument();
     await waitFor(() => expect(commands).not.toBeNull());
-    const sourceScrollport = screen.getByTestId("return-journey-scrollport");
-    definePaneReturnGeometry(sourceScrollport, {
-      "entry-1": 0,
-      "entry-2": 120,
-    });
+    await act(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => resolve());
+        }),
+    );
     act(() => {
-      sourceScrollport.scrollTop = 100;
       commands?.capturePane({
         paneId: "pane-return-journey",
         visitId: RETURN_JOURNEY_VISIT_ID,
@@ -878,14 +984,12 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
 
     view.rerender(journey(1));
 
-    const restoredScrollport = screen.getByTestId("return-journey-scrollport");
-    definePaneReturnGeometry(restoredScrollport, {
-      "entry-1": 0,
-      "entry-2": 120,
-    });
-    expect(screen.getByRole("link", { name: "First Page Work" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Second Page Work" })).toBeInTheDocument();
-    await waitFor(() => expect(restoredScrollport.scrollTop).toBe(100));
+    expect(
+      await screen.findByRole("link", { name: "First Page Work" }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Second Page Work" }),
+    ).toBeInTheDocument();
     const restoredSecondTitle = screen.getByRole("link", { name: "Second Page Work" });
     const restoredSecondRow =
       // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: the scoped semantic-anchor attributes are the observable restoration contract under test.
@@ -900,7 +1004,6 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: row ids are collision-safe only together with their nearest published scope.
       restoredSecondRow?.closest("[data-pane-return-scope]"),
     ).toHaveAttribute("data-pane-return-scope", "Library.Entries");
-    expect(restoredSecondRow?.getBoundingClientRect().top).toBe(20);
     expect(loadMoreRequests).toBe(1);
     expect(primaryResourceRequests).toBe(0);
     expect(screen.queryByText("Replacement Work")).not.toBeInTheDocument();
@@ -909,12 +1012,11 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
   });
 
   it("captures only a coherent committed factual view and its loaded pages", async () => {
-    const user = userEvent.setup();
     const canonicalHref = `/libraries/${LIBRARY_ID}`;
     const factualHref = `${canonicalHref}?sort=title&direction=asc`;
     const factualPath =
       `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`;
-    const factualPageTwoPath = `${factualPath}&cursor=cursor-factual-2`;
+    const factualPageTwoPath = `${factualPath}&cursor=cursor-factual-2&collection_revision=1&limit=100`;
     let resolveSupersededRequest!: (response: Response) => void;
     const supersededRequest = new Promise<Response>((resolve) => {
       resolveSupersededRequest = resolve;
@@ -945,42 +1047,36 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
           );
         }
         return Response.json({
-          data: [
+          data: { items: [
             mediaEntryWire(
               "entry-factual-1",
               "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
               "Committed Factual Work",
             ),
-          ],
-          page: {
-            has_more: true,
-            next_cursor: "cursor-factual-2",
-          },
+          ], collectionRevision: 1, nextCursor: { kind: "Present", value: String("cursor-factual-2") } },
         });
       }
       if (path === factualPageTwoPath) {
         factualPageTwoRequests += 1;
         return Response.json({
-          data: [
+          data: { items: [
             mediaEntryWire(
               "entry-factual-2",
               "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
               "Committed Factual Page Two",
             ),
-          ],
-          page: { has_more: false, next_cursor: null },
+          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       if (path === `/api/libraries/${LIBRARY_ID}/entries`) {
         return Response.json({
-          data: [
+          data: { items: [
             mediaEntryWire(
               "entry-canonical-network",
               "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
               "Canonical Network Work",
             ),
-          ],
-          page: { has_more: false, next_cursor: null },
+          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       if (fetchInputPath(input) === "/api/resource-graph/connections/summary") {
@@ -1003,7 +1099,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
             "Canonical Work",
           ),
         ],
-        entriesPage: { has_more: false, next_cursor: null },
+        collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
       },
     };
     const journey = (
@@ -1069,10 +1167,15 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       expect(screen.getByTestId("lectern-status")).toHaveTextContent("ready"),
     );
     expect(factualAttempts).toBe(3);
-    await user.click(screen.getByRole("button", { name: "Load more entries" }));
     expect(
       await screen.findByRole("link", { name: "Committed Factual Page Two" }),
     ).toBeInTheDocument();
+    await act(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => resolve());
+        }),
+    );
     const libraryRequestsBeforeRestore = libraryRequests;
     const factualAttemptsBeforeRestore = factualAttempts;
     act(() => {
@@ -1085,25 +1188,27 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     });
 
     view.rerender(journey(factualHref, 3, {}));
-    expect(screen.getByRole("link", { name: "Committed Factual Work" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Committed Factual Page Two" })).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Load more entries" }),
-    ).not.toBeInTheDocument();
+      await screen.findByRole("link", { name: "Committed Factual Work" }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", {
+        name: "Committed Factual Page Two",
+      }),
+    ).toBeInTheDocument();
     expect(libraryRequests).toBe(libraryRequestsBeforeRestore);
     expect(factualAttempts).toBe(factualAttemptsBeforeRestore);
     expect(factualPageTwoRequests).toBe(1);
 
     resolveSupersededRequest(
       Response.json({
-        data: [
+        data: { items: [
           mediaEntryWire(
             "entry-stale",
             "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
             "Superseded Factual Work",
           ),
-        ],
-        page: { has_more: false, next_cursor: null },
+        ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
       }),
     );
     await act(async () => {
@@ -1139,14 +1244,13 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       if (path === `/api/libraries/${LIBRARY_ID}/entries`) {
         entriesRequests += 1;
         return Response.json({
-          data: [
+          data: { items: [
             mediaEntryWire(
               "entry-replacement",
               "77777777-7777-4777-8777-777777777777",
               "Replacement Work",
             ),
-          ],
-          page: { has_more: false, next_cursor: null },
+          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       throw new Error(`Unexpected fetch call: ${path}`);
@@ -1167,7 +1271,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
                 [LIBRARY_ID]: {
                   library: seededLibrary(),
                   entries: [oversizedEntry],
-                  entriesPage: { has_more: false, next_cursor: null },
+                  collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
                 },
               }
             : {}
@@ -1205,8 +1311,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     expect(screen.queryByText("Oversized Work")).not.toBeInTheDocument();
   });
 
-  it("loads another page of a factually sorted view with the view query", async () => {
-    const user = userEvent.setup();
+  it("automatically exhausts the exact factual view", async () => {
     const fetchMock = stubFetch(async (input) => {
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
@@ -1215,29 +1320,27 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         path === `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`
       ) {
         return Response.json({
-          data: [
+          data: { items: [
             mediaEntryWire(
               "entry-t1",
               "44444444-4444-4444-8444-444444444444",
               "Alpha Work",
             ),
-          ],
-          page: { has_more: true, next_cursor: "cursor-2" },
+          ], collectionRevision: 1, nextCursor: { kind: "Present", value: String("cursor-2") } },
         });
       }
       if (
         path ===
-        `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc&cursor=cursor-2`
+        `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc&cursor=cursor-2&collection_revision=1&limit=100`
       ) {
         return Response.json({
-          data: [
+          data: { items: [
             mediaEntryWire(
               "entry-t2",
               "55555555-5555-4555-8555-555555555555",
               "Beta Work",
             ),
-          ],
-          page: { has_more: false, next_cursor: null },
+          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       return new Response("{}", {
@@ -1258,7 +1361,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
               "Canonical Seed",
             ),
           ],
-          entriesPage: { has_more: false, next_cursor: null },
+          collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
         },
       },
       children: paneWithLectern,
@@ -1267,23 +1372,22 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     // The factual first page comes from the endpoint, not the canonical seed.
     expect(await screen.findByRole("link", { name: "Alpha Work" })).toBeInTheDocument();
     expect(screen.queryByText("Canonical Seed")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Load more entries" }));
 
     expect(await screen.findByRole("link", { name: "Beta Work" })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
-      `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc&cursor=cursor-2`,
+      `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc&cursor=cursor-2&collection_revision=1&limit=100`,
       expect.objectContaining({ method: "GET" }),
     );
   });
 
-  it("rejects a malformed load-more entry at the shared reading-time boundary", async () => {
-    const user = userEvent.setup();
+  it("defects on a malformed automatic-continuation entry", async () => {
+    const onDefect = vi.fn<(error: unknown) => void>();
     stubFetch(async (input) => {
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
       if (
         fetchInputPathWithSearch(input) ===
-        `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2`
+        `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2&collection_revision=1&limit=100`
       ) {
         const invalid = mediaEntryWire(
           "entry-2",
@@ -1292,8 +1396,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         );
         Reflect.deleteProperty(invalid, "readingTimeEstimate");
         return Response.json({
-          data: [invalid],
-          page: { has_more: false, next_cursor: null },
+          data: { items: [invalid], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       return new Response("{}", {
@@ -1314,19 +1417,25 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
               "Valid Work",
             ),
           ],
-          entriesPage: { has_more: true, next_cursor: "cursor-2" },
+          collectionRevision: 1,
+nextCursor: { kind: "Present", value: String("cursor-2") },
+exhaustion: "Partial",
         },
       },
-      children: paneWithLectern,
+      children: (
+        <DefectBoundary onDefect={onDefect}>
+          {paneWithLectern}
+        </DefectBoundary>
+      ),
     });
 
     expect(
       await screen.findByRole("link", { name: "Valid Work" }),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Load more entries" }));
-    expect(
-      await screen.findByText("Failed to load more entries"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Library defect boundary")).toBeInTheDocument();
+    expect(onDefect).toHaveBeenCalledWith(
+      expect.objectContaining({ code: "E_INVALID_RESPONSE" }),
+    );
     expect(screen.queryByText("Invalid Work")).not.toBeInTheDocument();
   });
 
@@ -1346,8 +1455,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         );
         Reflect.deleteProperty(invalid, "readingTimeEstimate");
         return Response.json({
-          data: [invalid],
-          page: { has_more: false, next_cursor: null },
+          data: { items: [invalid], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       return new Response("{}", {
@@ -1368,7 +1476,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
               "Canonical Seed",
             ),
           ],
-          entriesPage: { has_more: false, next_cursor: null },
+          collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
         },
       },
       children: (
@@ -1400,16 +1510,15 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       if (path === "/api/consumption/commands") {
         return pendingConsumption;
       }
-      if (path === `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2`) {
+      if (path === `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2&collection_revision=1&limit=100`) {
         return Response.json({
-          data: [
+          data: { items: [
             mediaEntryWire(
               "entry-2",
               "22222222-2222-4222-8222-222222222222",
               "Concurrent Work",
             ),
-          ],
-          page: { has_more: false, next_cursor: null },
+          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       return new Response("{}", {
@@ -1430,7 +1539,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
               remainingMinutes: 5,
             }),
           ],
-          entriesPage: { has_more: true, next_cursor: "cursor-2" },
+          collectionRevision: 1,
+nextCursor: { kind: "Present", value: String("cursor-2") },
+exhaustion: "Partial",
         },
       },
       children: paneWithLectern,
@@ -1447,8 +1558,6 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       await screen.findByRole("menuitem", { name: "Mark as finished" }),
     );
     expect(await screen.findByText("Finished")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Load more entries" }));
     expect(await screen.findByRole("link", { name: "Concurrent Work" })).toBeInTheDocument();
 
     resolveConsumption(
@@ -1496,7 +1605,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
               remainingMinutes: 5,
             }),
           ],
-          entriesPage: { has_more: false, next_cursor: null },
+          collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
         },
       },
       children: paneWithLectern,
@@ -1556,15 +1667,14 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         path === `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`
       ) {
         return Response.json({
-          data: [
+          data: { items: [
             mediaEntryWire("entry-t1", ACTION_MEDIA_ID, "Refreshing Work", {
               readState: "in_progress",
               progressFraction: 0.5,
               remainingMinutes: 5,
               capabilities: { can_refresh_source: true },
             }),
-          ],
-          page: { has_more: false, next_cursor: null },
+          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       if (path === `/api/media/${ACTION_MEDIA_ID}/refresh`) {
@@ -1610,7 +1720,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
               "Canonical Seed",
             ),
           ],
-          entriesPage: { has_more: false, next_cursor: null },
+          collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
         },
       },
       children: paneWithLectern,
@@ -1631,6 +1743,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
 
   it("re-enriches metadata from a capable media row without consuming the server capability", async () => {
     const user = userEvent.setup();
+    let entryReads = 0;
     const fetchMock = stubFetch(async (input, init) => {
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
@@ -1642,6 +1755,23 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         expect(init?.method).toBe("POST");
         expect(init?.body).toBe(JSON.stringify({ from_stage: "metadata" }));
         return Response.json({ data: { accepted: true } });
+      }
+      if (path === `/api/libraries/${LIBRARY_ID}/entries`) {
+        entryReads += 1;
+        return Response.json({
+          data: {
+            items: [
+              mediaEntryWire(
+                "44444444-4444-4444-8444-444444444444",
+                ACTION_MEDIA_ID,
+                "Metadata Work",
+                { capabilities: { can_retry_metadata: true } },
+              ),
+            ],
+            collectionRevision: 2,
+            nextCursor: { kind: "Absent" },
+          },
+        });
       }
       throw new Error(`Unexpected fetch: ${path}`);
     });
@@ -1659,7 +1789,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
               { capabilities: { can_retry_metadata: true } },
             ),
           ],
-          entriesPage: { has_more: false, next_cursor: null },
+          collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
         },
       },
       children: paneWithLectern,
@@ -1679,6 +1811,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         fetchCallsForPath(fetchMock, `/api/media/${ACTION_MEDIA_ID}/retry`),
       ).toHaveLength(1),
     );
+    await waitFor(() => expect(entryReads).toBe(1));
     await user.click(
       screen.getByRole("button", {
         name: "More actions for Metadata Work",
@@ -1714,7 +1847,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
               { capabilities: { can_edit_authors: true } },
             ),
           ],
-          entriesPage: { has_more: false, next_cursor: null },
+          collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
         },
       },
       children: paneWithLectern,
@@ -1783,7 +1918,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
                 { capabilities: { can_delete: true } },
               ),
             ],
-            entriesPage: { has_more: false, next_cursor: null },
+            collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
           },
         }}
       />,
@@ -1803,6 +1940,14 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
 
     const sortSelect = screen.getByRole("combobox", { name: "Sort by" });
     const scrollport = screen.getByTestId("library-pane-scrollport");
+    let observedScrollTop = 0;
+    Object.defineProperty(scrollport, "scrollTop", {
+      configurable: true,
+      get: () => observedScrollTop,
+      set: (value: number) => {
+        observedScrollTop = value;
+      },
+    });
     scrollport.scrollTop = 180;
     await user.selectOptions(sortSelect, "title-asc");
 
@@ -1828,30 +1973,22 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         name: "More actions for First Canonical Work",
       }),
     ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Load more entries" }),
-    ).not.toBeInTheDocument();
-
     resolveTitle(
       Response.json({
-        data: [
+        data: { items: [
           mediaEntryWire(
             "entry-t1",
             "44444444-4444-4444-8444-444444444444",
             "Titled Work",
           ),
-        ],
-        page: { has_more: true, next_cursor: "cursor-title-2" },
+        ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
       }),
     );
 
     expect(await screen.findByRole("link", { name: "Titled Work" })).toBeInTheDocument();
     expect(screen.queryByText("First Canonical Work")).not.toBeInTheDocument();
     expect(sortSelect).toHaveFocus();
-    expect(scrollport.scrollTop).toBe(0);
-    expect(
-      screen.getByRole("button", { name: "Load more entries" }),
-    ).toBeVisible();
+    await waitFor(() => expect(scrollport.scrollTop).toBe(180));
     expect(
       screen.getByRole("region", { name: LIBRARY_NAME }),
     ).not.toHaveAttribute("aria-busy");
@@ -1859,23 +1996,19 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     await user.selectOptions(sortSelect, "creator-asc");
 
     expect(screen.getByRole("link", { name: "Titled Work" })).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Load more entries" }),
-    ).not.toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(
       "Loading All items · Creator — A–Z. Showing All items · Title — A–Z.",
     );
 
     resolveCreator(
       Response.json({
-        data: [
+        data: { items: [
           mediaEntryWire(
             "entry-c1",
             "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
             "Creator Work",
           ),
-        ],
-        page: { has_more: false, next_cursor: null },
+        ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
       }),
     );
 
@@ -1909,14 +2042,13 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
           );
         }
         return Response.json({
-          data: [
+          data: { items: [
             mediaEntryWire(
               "entry-t1",
               "44444444-4444-4444-8444-444444444444",
               "Recovered Title Work",
             ),
-          ],
-          page: { has_more: false, next_cursor: null },
+          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       return new Response("{}", {
@@ -1938,7 +2070,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
                 "Canonical Seed",
               ),
             ],
-            entriesPage: { has_more: false, next_cursor: null },
+            collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
           },
         }}
       />,
@@ -2005,14 +2139,13 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
           );
         }
         return Response.json({
-          data: [
+          data: { items: [
             mediaEntryWire(
               "entry-c1",
               "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
               "Recovered Creator Work",
             ),
-          ],
-          page: { has_more: false, next_cursor: null },
+          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       return new Response("{}", {
@@ -2030,7 +2163,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
             "Canonical Seed",
           ),
         ],
-        entriesPage: { has_more: false, next_cursor: null },
+        collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
       },
     };
     const renderPane = () => (
@@ -2062,8 +2197,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     await act(async () => {
       resolveTitle(
         Response.json({
-          data: [malformedTitle],
-          page: { has_more: false, next_cursor: null },
+          data: { items: [malformedTitle], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         }),
       );
       await pendingTitle;
@@ -2108,14 +2242,13 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       }
       if (path === canonicalPath) {
         return Response.json({
-          data: [
+          data: { items: [
             mediaEntryWire(
               "entry-fresh",
               "99999999-9999-4999-8999-999999999999",
               "Fresh Canonical Work",
             ),
-          ],
-          page: { has_more: false, next_cursor: null },
+          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       return new Response("{}", {
@@ -2137,7 +2270,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
                 "Bootstrap Canonical Work",
               ),
             ],
-            entriesPage: { has_more: false, next_cursor: null },
+            collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
           },
         }}
       />,
@@ -2165,14 +2300,13 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
 
     resolveTitle(
       Response.json({
-        data: [
+        data: { items: [
           mediaEntryWire(
             "entry-stale",
             "44444444-4444-4444-8444-444444444444",
             "Stale Title Work",
           ),
-        ],
-        page: { has_more: false, next_cursor: null },
+        ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
       }),
     );
     await act(async () => {
@@ -2193,14 +2327,13 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         path === `/api/libraries/${LIBRARY_ID}/entries?completion=unfinished`
       ) {
         return Response.json({
-          data: [
+          data: { items: [
             mediaEntryWire(
               "entry-u1",
               "88888888-8888-4888-8888-888888888888",
               "Unfinished Work",
             ),
-          ],
-          page: { has_more: false, next_cursor: null },
+          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       return new Response("{}", {
@@ -2222,7 +2355,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
                 "Canonical Seed",
               ),
             ],
-            entriesPage: { has_more: false, next_cursor: null },
+            collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
           },
         }}
       />,
@@ -2246,20 +2381,18 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       const path = fetchInputPathWithSearch(input);
       if (path === `/api/libraries/${LIBRARY_ID}/entries?completion=unfinished`) {
         return Response.json({
-          data: [],
-          page: { has_more: false, next_cursor: null },
+          data: { items: [], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       if (path === `/api/libraries/${LIBRARY_ID}/entries`) {
         return Response.json({
-          data: [
+          data: { items: [
             mediaEntryWire(
               "entry-current",
               "77777777-7777-4777-8777-777777777777",
               "Current Canonical Work",
             ),
-          ],
-          page: { has_more: false, next_cursor: null },
+          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       return new Response("{}", {
@@ -2281,7 +2414,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
                 "Canonical Seed",
               ),
             ],
-            entriesPage: { has_more: false, next_cursor: null },
+            collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
           },
         }}
       />,
@@ -2330,7 +2465,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
                 "Canonical Seed",
               ),
             ],
-            entriesPage: { has_more: false, next_cursor: null },
+            collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
           },
         }}
       />,
@@ -2362,7 +2499,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         `/api/libraries/${LIBRARY_ID}/entries?sort=added&direction=desc`
       ) {
         return Response.json({
-          data: [
+          data: { items: [
             mediaEntryWire(
               "entry-a1",
               "99999999-9999-4999-8999-999999999999",
@@ -2371,8 +2508,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
                 createdAt: addedIso,
               },
             ),
-          ],
-          page: { has_more: false, next_cursor: null },
+          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       return new Response("{}", {
@@ -2398,7 +2534,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
                 },
               ),
             ],
-            entriesPage: { has_more: false, next_cursor: null },
+            collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
           },
         }}
       />,
@@ -2423,7 +2561,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
                 "Canonical Seed",
               ),
             ],
-            entriesPage: { has_more: false, next_cursor: null },
+            collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
           },
         }}
       />,
@@ -2441,7 +2581,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`
       ) {
         return Response.json({
-          data: [
+          data: { items: [
             mediaEntryWire(
               "entry-t1",
               "44444444-4444-4444-8444-444444444444",
@@ -2452,8 +2592,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
               "55555555-5555-4555-8555-555555555555",
               "Beta Work",
             ),
-          ],
-          page: { has_more: false, next_cursor: null },
+          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       return new Response("{}", {
@@ -2474,7 +2613,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
               "Canonical Seed",
             ),
           ],
-          entriesPage: { has_more: false, next_cursor: null },
+          collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
         },
       },
       children: paneWithLectern,
@@ -2541,7 +2682,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
                 "Canonical Seed",
               ),
             ],
-            entriesPage: { has_more: false, next_cursor: null },
+            collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
           },
         }}
       />,
@@ -2564,28 +2707,26 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
 
     resolveCreator(
       Response.json({
-        data: [
+        data: { items: [
           mediaEntryWire(
             "entry-c1",
             "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
             "Creator Work",
           ),
-        ],
-        page: { has_more: false, next_cursor: null },
+        ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
       }),
     );
 
     expect(await screen.findByRole("link", { name: "Creator Work" })).toBeInTheDocument();
     resolveTitle(
       Response.json({
-        data: [
+        data: { items: [
           mediaEntryWire(
             "entry-t1",
             "44444444-4444-4444-8444-444444444444",
             "Stale Title Work",
           ),
-        ],
-        page: { has_more: true, next_cursor: "cursor-title-2" },
+        ], collectionRevision: 1, nextCursor: { kind: "Present", value: String("cursor-title-2") } },
       }),
     );
 
@@ -2614,7 +2755,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         [LIBRARY_ID]: {
           library: seededLibrary(),
           entries: [],
-          entriesPage: { has_more: false, next_cursor: null },
+          collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
         },
       },
       children: paneWithLectern,
@@ -2663,7 +2806,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
                 { readState: "in_progress", progressFraction: 0.4, remainingMinutes: 9 },
               ),
             ],
-            entriesPage: { has_more: false, next_cursor: null },
+            collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
           },
         }}
       />,
@@ -2702,14 +2847,13 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
 
     resolveInProgress(
       Response.json({
-        data: [
+        data: { items: [
           mediaEntryWire("entry-p", ACTION_MEDIA_ID, "In Progress Work", {
             readState: "in_progress",
             progressFraction: 0.4,
             remainingMinutes: 9,
           }),
-        ],
-        page: { has_more: false, next_cursor: null },
+        ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
       }),
     );
     expect(
@@ -2752,7 +2896,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
                 "Canonical Seed",
               ),
             ],
-            entriesPage: { has_more: false, next_cursor: null },
+            collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
           },
         }}
       />,
@@ -2775,14 +2921,13 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
 
     resolveTitle(
       Response.json({
-        data: [
+        data: { items: [
           mediaEntryWire(
             "entry-t",
             "44444444-4444-4444-8444-444444444444",
             "Titled Work",
           ),
-        ],
-        page: { has_more: false, next_cursor: null },
+        ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
       }),
     );
     expect(
@@ -2798,20 +2943,18 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       const path = fetchInputPathWithSearch(input);
       if (path === `/api/libraries/${LIBRARY_ID}/entries?projection=in-progress`) {
         return Response.json({
-          data: [],
-          page: { has_more: false, next_cursor: null },
+          data: { items: [], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       if (path === `/api/libraries/${LIBRARY_ID}/entries`) {
         return Response.json({
-          data: [
+          data: { items: [
             mediaEntryWire(
               "entry-all",
               "77777777-7777-4777-8777-777777777777",
               "All Items Work",
             ),
-          ],
-          page: { has_more: false, next_cursor: null },
+          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       return new Response("{}", {
@@ -2833,7 +2976,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
                 "Canonical Seed",
               ),
             ],
-            entriesPage: { has_more: false, next_cursor: null },
+            collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
           },
         }}
       />,
@@ -2864,7 +3009,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
       const path = fetchInputPathWithSearch(input);
-      if (path === `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-stale`) {
+      if (path === `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-stale&collection_revision=1&limit=100`) {
         return Response.json(
           { error: { code: "E_INVALID_CURSOR", message: "Invalid cursor" } },
           { status: 400 },
@@ -2873,14 +3018,13 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       if (path === `/api/libraries/${LIBRARY_ID}/entries`) {
         firstPageReads += 1;
         return Response.json({
-          data: [
+          data: { items: [
             mediaEntryWire(
               "entry-fresh",
               "88888888-8888-4888-8888-888888888888",
               "Refreshed Work",
             ),
-          ],
-          page: { has_more: false, next_cursor: null },
+          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       return new Response("{}", {
@@ -2902,7 +3046,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
                 "Seed Work",
               ),
             ],
-            entriesPage: { has_more: true, next_cursor: "cursor-stale" },
+            collectionRevision: 1,
+nextCursor: { kind: "Present", value: String("cursor-stale") },
+exhaustion: "Partial",
           },
         }}
       />,
@@ -2911,11 +3057,10 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     expect(
       await screen.findByRole("link", { name: "Seed Work" }),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Load more entries" }));
 
     // The stale cursor is not reinterpreted as an invalid view.
     expect(
-      await screen.findByText("This list can no longer continue."),
+      await screen.findByRole("button", { name: "Refresh list" }),
     ).toBeInTheDocument();
     expect(screen.queryByText("Invalid library view")).not.toBeInTheDocument();
 
@@ -2939,14 +3084,13 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       if (fetchInputPath(input) === `/api/libraries/${LIBRARY_ID}/entries`) {
         entriesReads += 1;
         return Response.json({
-          data: [
+          data: { items: [
             mediaEntryWire(
               "entry-new",
               "22222222-2222-4222-8222-222222222291",
               "Newly Filed",
             ),
-          ],
-          page: { has_more: false, next_cursor: null },
+          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       return new Response("{}", {
@@ -2961,7 +3105,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         [LIBRARY_ID]: {
           library: seededLibrary(),
           entries: [seededMediaEntry("entry-1", ACTION_MEDIA_ID, "Seed Work")],
-          entriesPage: { has_more: false, next_cursor: null },
+          collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
         },
       },
       children: paneWithLectern,
@@ -2994,14 +3140,13 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       if (fetchInputPath(input) === `/api/libraries/${LIBRARY_ID}/entries`) {
         entriesReads += 1;
         return Response.json({
-          data: [
+          data: { items: [
             mediaEntryWire(
               "entry-fresh",
               "22222222-2222-4222-8222-222222222292",
               "Endpoint First Page",
             ),
-          ],
-          page: { has_more: false, next_cursor: null },
+          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       return new Response("{}", {
@@ -3022,7 +3167,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
           entries: [
             seededMediaEntry("entry-seed", ACTION_MEDIA_ID, "Bootstrap Seed Row"),
           ],
-          entriesPage: { has_more: false, next_cursor: null },
+          collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
         },
       },
       children: paneWithLectern,
@@ -3043,14 +3190,13 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       if (fetchInputPath(input) === `/api/libraries/${LIBRARY_ID}/entries`) {
         entriesReads += 1;
         return Response.json({
-          data: [
+          data: { items: [
             mediaEntryWire(
               "entry-reconciled",
               "22222222-2222-4222-8222-222222222293",
               "Reconciled Work",
             ),
-          ],
-          page: { has_more: false, next_cursor: null },
+          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       return new Response("{}", {
@@ -3070,7 +3216,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         entries: [
           seededMediaEntry("entry-existing", ACTION_MEDIA_ID, "Existing Work"),
         ],
-        entriesPage: { has_more: false, next_cursor: null },
+        collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
       },
     };
     const view = render(
@@ -3157,14 +3305,13 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         titleAttempts += 1;
         if (titleAttempts === 1) return pendingTitle;
         return Response.json({
-          data: [
+          data: { items: [
             mediaEntryWire(
               "entry-ok",
               "22222222-2222-4222-8222-222222222294",
               "Loaded Work",
             ),
-          ],
-          page: { has_more: false, next_cursor: null },
+          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       return new Response("{}", {
@@ -3182,7 +3329,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
             entries: [
               seededMediaEntry("entry-seed", ACTION_MEDIA_ID, "Canonical Seed"),
             ],
-            entriesPage: { has_more: false, next_cursor: null },
+            collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
           },
         }}
       />,
@@ -3237,7 +3386,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
       const path = fetchInputPathWithSearch(input);
-      if (path === `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-stale`) {
+      if (path === `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-stale&collection_revision=1&limit=100`) {
         return Response.json(
           { error: { code: "E_INVALID_CURSOR", message: "Invalid cursor" } },
           { status: 400 },
@@ -3269,7 +3418,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
                 "Seed Work",
               ),
             ],
-            entriesPage: { has_more: true, next_cursor: "cursor-stale" },
+            collectionRevision: 1,
+nextCursor: { kind: "Present", value: String("cursor-stale") },
+exhaustion: "Partial",
           },
         }}
       />,
@@ -3278,9 +3429,8 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     expect(
       await screen.findByRole("link", { name: "Seed Work" }),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Load more entries" }));
     expect(
-      await screen.findByText("This list can no longer continue."),
+      await screen.findByRole("button", { name: "Refresh list" }),
     ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Refresh list" }));
@@ -3288,9 +3438,6 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     // The replacement first page fails: the SAME recovery notice and button stay
     // mounted (never a generic "Retry" state), and focus remains on Refresh list.
     await waitFor(() => expect(firstPageReads).toBe(1));
-    expect(
-      screen.getByText("This list can no longer continue."),
-    ).toBeInTheDocument();
     const refresh = screen.getByRole("button", { name: "Refresh list" });
     await waitFor(() => expect(refresh).toHaveFocus());
     expect(
@@ -3317,8 +3464,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       if (fetchInputPath(input) === `/api/libraries/${LIBRARY_ID}/entries`) {
         entriesRequests += 1;
         return Response.json({
-          data: [],
-          page: { has_more: false, next_cursor: null },
+          data: { items: [], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       if (fetchInputPath(input) === "/api/consumption/commands") {
@@ -3347,6 +3493,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
               },
             },
             completionHandle: { kind: "Absent" },
+            libraryEntriesCollectionRevision: 2,
           },
         });
       }
@@ -3366,7 +3513,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
               progressResettable: true,
             }),
           ],
-          entriesPage: { has_more: false, next_cursor: null },
+          collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
         },
       },
       children: paneWithLectern,
@@ -3445,8 +3594,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
                 ),
               ];
         return Response.json({
-          data: rows,
-          page: { has_more: false, next_cursor: null },
+          data: { items: rows, collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       if (path === "/api/consumption/commands") {
@@ -3470,7 +3618,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
               "Canonical Seed",
             ),
           ],
-          entriesPage: { has_more: false, next_cursor: null },
+          collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
         },
       },
       children: paneWithLectern,
@@ -3504,15 +3654,12 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     );
   });
 
-  // Under the unfinished (consumption-sensitive) view, Mark Finished is a
-  // definitive mutation: it removes the row locally AND reconciles the view's
-  // first page against fresh server truth (never reinterpreting a continuation
-  // cursor), and only shows "No unfinished items." once the server truly returns
-  // an empty unfinished page.
-  it("reconciles the unfinished view's first page after Mark Finished until empty", async () => {
+  // Under an exhausted unfinished view, Mark Finished is a proven monotonic
+  // removal: install the returned durable revision and retain the exact local
+  // set without replacing page one.
+  it("rebases the exhausted unfinished view locally after Mark Finished", async () => {
     const user = userEvent.setup();
     const firstPagePath = `/api/libraries/${LIBRARY_ID}/entries?completion=unfinished`;
-    const continuationPath = `${firstPagePath}&cursor=cursor-p2`;
     // parseMediaId requires a canonical UUID; these are the media ids that get
     // a real "Mark as finished" click (which calls lectern.ensureMediaFinished).
     const PAGE1_MEDIA_ID = "11111111-1111-4111-8111-222222222221";
@@ -3524,28 +3671,15 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       const path = fetchInputPathWithSearch(input);
       if (path === firstPagePath) {
         firstPageReads += 1;
-        // 1: initial page; 2: reconcile after the first row is finished;
-        // 3: reconcile after the second row is finished (now empty).
-        const data =
-          firstPageReads === 1
-            ? [mediaEntryWire("entry-p1", PAGE1_MEDIA_ID, "First Unfinished")]
-            : firstPageReads === 2
-              ? [mediaEntryWire("entry-p2", PAGE2_MEDIA_ID, "Second Unfinished")]
-              : [];
         return Response.json({
-          data,
-          page: {
-            has_more: firstPageReads === 1,
-            next_cursor: firstPageReads === 1 ? "cursor-p2" : null,
+          data: {
+            items: [
+              mediaEntryWire("entry-p1", PAGE1_MEDIA_ID, "First Unfinished"),
+              mediaEntryWire("entry-p2", PAGE2_MEDIA_ID, "Second Unfinished"),
+            ],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
           },
-        });
-      }
-      if (path === continuationPath) {
-        // The client may briefly auto-advance on the client-emptied page; the
-        // definitive reconcile then cancels it and reloads the first page.
-        return Response.json({
-          data: [],
-          page: { has_more: false, next_cursor: null },
         });
       }
       if (fetchInputPath(input) === "/api/consumption/commands") {
@@ -3569,7 +3703,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
               "Canonical Seed",
             ),
           ],
-          entriesPage: { has_more: false, next_cursor: null },
+          collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
         },
       },
       children: paneWithLectern,
@@ -3589,17 +3725,13 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       await screen.findByRole("menuitem", { name: "Mark as finished" }),
     );
 
-    // The reconcile refetches the unfinished first page, never the continuation
-    // cursor, and surfaces the next unfinished row.
     expect(
       await screen.findByRole("link", { name: "Second Unfinished" }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("link", { name: "First Unfinished" }),
     ).not.toBeInTheDocument();
-    // The reconcile refetched the first page (reads >= 2), not a stale
-    // continuation as an authoritative result.
-    expect(firstPageReads).toBeGreaterThanOrEqual(2);
+    expect(firstPageReads).toBe(1);
 
     await user.click(
       screen.getByRole("button", { name: "More actions for Second Unfinished" }),
@@ -3608,8 +3740,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       await screen.findByRole("menuitem", { name: "Mark as finished" }),
     );
 
-    // The reconcile now returns an empty unfinished page: the real empty state
-    // renders with its recovery.
+    // The second safe removal leaves the exact exhausted set empty.
     expect(await screen.findByText("No unfinished items.")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Show finished" }),
@@ -3617,6 +3748,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     await waitFor(() =>
       expect(screen.getByTestId("lectern-mutation")).toHaveTextContent("Idle"),
     );
+    expect(firstPageReads).toBe(1);
   });
 
   // Reset Progress removes the focused row from an In Progress view (read_state ->
@@ -3661,8 +3793,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
                 }),
               ];
         return Response.json({
-          data: rows,
-          page: { has_more: false, next_cursor: null },
+          data: { items: rows, collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       if (path === "/api/consumption/commands") {
@@ -3689,6 +3820,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
               },
             },
             completionHandle: { kind: "Absent" },
+            libraryEntriesCollectionRevision: 2,
           },
         });
       }
@@ -3706,7 +3838,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
           entries: [
             seededMediaEntry("entry-seed", ACTION_MEDIA_ID, "Canonical Seed"),
           ],
-          entriesPage: { has_more: false, next_cursor: null },
+          collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
         },
       },
       children: paneWithLectern,

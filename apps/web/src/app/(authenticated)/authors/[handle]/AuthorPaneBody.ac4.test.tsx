@@ -9,7 +9,8 @@ import AuthorPaneBody from "./AuthorPaneBody";
 // heading + first works page straight from the seed with NO client fetch. The
 // lightweight detail has no separate reconciliation/directory fetch, so a hydration
 // hit makes zero network calls. This pins the seed shape in paneResourceLoaders.author
-// ({ detail, works, worksNextCursor }) against what the pane's useResource consumes.
+// ({ detail, works, collectionRevision, nextCursor, exhaustion }) against what
+// the pane's useResource consumes.
 
 describe("AuthorPaneBody (AC-4 hydration hit)", () => {
   afterEach(() => {
@@ -69,7 +70,9 @@ describe("AuthorPaneBody (AC-4 hydration hit)", () => {
               },
             },
           ],
-          worksNextCursor: null,
+          collectionRevision: 0 as never,
+          nextCursor: { kind: "Absent" },
+          exhaustion: "Complete",
         },
       },
       children: <AuthorPaneBody />,

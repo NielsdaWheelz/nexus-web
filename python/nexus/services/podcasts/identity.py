@@ -24,6 +24,10 @@ from nexus.db.errors import integrity_constraint_name
 from nexus.logging import get_logger
 from nexus.schemas.contributors import ContributorCreditIn
 from nexus.schemas.podcast import PodcastSubscribeRequest
+from nexus.services.collection_revisions import (
+    CollectionFamily,
+    bump_all_collection_families,
+)
 from nexus.services.contributor_taxonomy import RawCreditEntry, build_observation
 from nexus.services.contributors import PodcastTarget, replace_observed_role_slices
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
@@ -129,6 +133,7 @@ def upsert_podcast(
         return feed_owner_id
 
     assert row is not None  # the INSERT ... RETURNING id always yields one row on success
+    _bump_podcast_identity_collections(db)
     return row[0]
 
 
@@ -263,4 +268,15 @@ def update_podcast_metadata(
     db.execute(
         text("UPDATE podcasts SET " + ", ".join(set_clauses) + " WHERE id = :podcast_id"),
         params,
+    )
+    _bump_podcast_identity_collections(db)
+
+
+def _bump_podcast_identity_collections(db: Session) -> None:
+    bump_all_collection_families(
+        db,
+        families=(
+            CollectionFamily.LibraryEntries,
+            CollectionFamily.PodcastSubscriptions,
+        ),
     )

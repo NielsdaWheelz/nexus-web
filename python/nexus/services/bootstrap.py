@@ -43,9 +43,33 @@ def _ensure_user_and_default_library_once(db: Session, user_id: UUID, email: str
     with transaction(db):
         _ensure_user(db, user_id, email)
         default_library_id = _get_default_library_id(db, user_id)
+        library_created = default_library_id is None
         if default_library_id is None:
             default_library_id = _create_default_library(db, user_id)
-        _ensure_default_library_membership(db, default_library_id, user_id)
+        membership_changed = _ensure_default_library_membership(
+            db,
+            default_library_id,
+            user_id,
+        )
+        if library_created or membership_changed:
+            from nexus.services.collection_revisions import (
+                CollectionFamily,
+                bump_collection_families,
+            )
+
+            bump_collection_families(
+                db,
+                viewer_ids=(user_id,),
+                families=(CollectionFamily.LibrariesIndex,),
+            )
+            # A newly created Default cannot have a predecessor entry chain.
+            # Repairing membership on an existing Default can.
+            if membership_changed and not library_created:
+                bump_collection_families(
+                    db,
+                    viewer_ids=(user_id,),
+                    families=(CollectionFamily.LibraryEntries,),
+                )
 
     return default_library_id
 
@@ -98,7 +122,7 @@ def _create_default_library(db: Session, user_id: UUID) -> UUID:
 
 def _ensure_default_library_membership(
     db: Session, default_library_id: UUID, user_id: UUID
-) -> None:
+) -> bool:
     row = db.execute(
         text("""
             SELECT role FROM memberships
@@ -114,6 +138,7 @@ def _ensure_default_library_membership(
             """),
             {"library_id": default_library_id, "user_id": user_id},
         )
+        return True
     elif row[0] != "admin":
         db.execute(
             text("""
@@ -123,3 +148,5 @@ def _ensure_default_library_membership(
             """),
             {"library_id": default_library_id, "user_id": user_id},
         )
+        return True
+    return False

@@ -204,6 +204,7 @@ def _capture_entries_query(
     view: LibraryEntryView,
     limit: int,
     cursor: str | None,
+    collection_revision: int | None,
 ) -> tuple[str, dict[str, Any], object]:
     """Run ``list_library_entries`` once (warming caches) while wrapping the
     session's ``execute`` to record the compiled text + params of the entry page
@@ -222,15 +223,21 @@ def _capture_entries_query(
 
     db.execute = _wrapper  # type: ignore[method-assign]
     try:
-        _entries, page_info = library_entries.list_library_entries(
-            db, viewer_id, library_id, view=view, limit=limit, cursor=cursor
+        page = library_entries.list_library_entries(
+            db,
+            viewer_id,
+            library_id,
+            view=view,
+            limit=limit,
+            cursor=cursor,
+            collection_revision=collection_revision,
         )
     finally:
         del db.execute  # restore the class method
 
     assert captured, "entry page SELECT was not captured"
     sql_text, params = captured[-1]
-    return sql_text, params, page_info
+    return sql_text, params, page
 
 
 def _walk(node: dict[str, Any]) -> Iterator[dict[str, Any]]:
@@ -291,6 +298,7 @@ def _run_case(
     library_id: UUID,
     view: LibraryEntryView,
     cursor: str | None,
+    collection_revision: int | None,
     total_media: int,
 ) -> tuple[_PlanEvidence, object]:
     sql, params, page_info = _capture_entries_query(
@@ -300,6 +308,7 @@ def _run_case(
         view=view,
         limit=_PAGE_LIMIT,
         cursor=cursor,
+        collection_revision=collection_revision,
     )
     explain_sql = text(f"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {sql}")
     # One warm-up execution before the measured EXPLAIN ANALYZE (spec: "after one
@@ -412,12 +421,13 @@ class TestLibraryEntryPlanGate:
                 library_id=library_id,
                 view=view,
                 cursor=None,
+                collection_revision=None,
                 total_media=fixture.total_media,
             )
             evidence.append(first_evidence)
 
             if want_continuation:
-                next_cursor = getattr(page_info, "next_cursor", None)
+                next_cursor = getattr(page_info.next_cursor, "value", None)
                 assert next_cursor is not None, (
                     f"{label}: expected a continuation cursor for a >page-limit set"
                 )
@@ -428,6 +438,7 @@ class TestLibraryEntryPlanGate:
                     library_id=library_id,
                     view=view,
                     cursor=next_cursor,
+                    collection_revision=page_info.collection_revision,
                     total_media=fixture.total_media,
                 )
                 evidence.append(cont_evidence)

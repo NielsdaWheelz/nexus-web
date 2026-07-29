@@ -157,6 +157,10 @@ from nexus.services.chat_run_tools import (
 )
 from nexus.services.chat_run_usage import usage_provider_json
 from nexus.services.chat_run_validation import validate_pre_phase
+from nexus.services.collection_revisions import (
+    CollectionFamily,
+    bump_collection_revision,
+)
 from nexus.services.context_assembler import (
     assemble_chat_context,
     persist_prompt_assembly,
@@ -626,6 +630,11 @@ def _resolve_destination(
     )
     db.add(conversation)
     db.flush()
+    bump_collection_revision(
+        db,
+        viewer_id=viewer_id,
+        family=CollectionFamily.ConversationIndex,
+    )
     return conversation.id, None, NoBranchAnchorRequest()
 
 

@@ -5,47 +5,51 @@
  * shapes, and the polling / can-request / progress / summary helpers.
  */
 
-import { type Presence } from "@/lib/api/presence";
+import { decodePresence, type Presence } from "@/lib/api/presence";
 import type {
   PositiveMinutes,
   ProgressFraction,
 } from "@/lib/consumption/activityFacts";
+import { decodeContributorCredit } from "@/lib/contributors/credit";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import {
   decodeOptionalPublicationDate,
   type PublicationDate,
 } from "@/lib/dates/publicationDate";
 import {
-  decodePresentPlayerDescriptor,
-  type PlayerDescriptor,
-} from "@/lib/lectern/contract";
-import {
   canRequestTranscript,
   shouldPollTranscriptProvisioning,
   type TranscriptCoverage,
   type TranscriptState,
 } from "@/lib/media/transcriptView";
+import {
+  expectArray,
+  expectBoolean,
+  expectExactRecord,
+  expectFiniteNumber,
+  expectNonnegativeInteger,
+  expectOneOf,
+  expectString,
+} from "@/lib/validation";
 
 export const TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS = 3000;
-export const TRANSCRIPT_FORECAST_BATCH_SIZE = 100;
 
 export type TranscriptRequestReason = "search" | "highlight" | "quote";
 export type EpisodeState = "unplayed" | "in_progress" | "played";
 export type EpisodeStateFilter = "all" | EpisodeState;
 export type EpisodeSort = "newest" | "oldest" | "duration_asc" | "duration_desc";
 
+export interface PodcastEpisodeListPlayerDescriptor {
+  kind: "FooterAudio";
+  mediaId: string;
+}
+
 interface MediaCapabilities {
-  can_read: boolean;
-  can_highlight: boolean;
-  can_quote: boolean;
-  can_search: boolean;
-  can_play: boolean;
-  can_download_file: boolean;
-  can_delete?: boolean;
-  can_retry?: boolean;
-  can_refresh_source?: boolean;
-  can_retry_metadata?: boolean;
-  can_edit_authors?: boolean;
+  can_delete: boolean;
+  can_retry: boolean;
+  can_refresh_source: boolean;
+  can_retry_metadata: boolean;
+  can_edit_authors: boolean;
 }
 
 export interface PodcastEpisodeMedia {
@@ -56,40 +60,198 @@ export interface PodcastEpisodeMedia {
   processing_status: string;
   transcript_state: TranscriptState;
   transcript_coverage: TranscriptCoverage;
-  failure_stage: string | null;
-  last_error_code: string | null;
-  playback_source: {
-    kind: "external_audio" | "external_video";
-    stream_url: string;
-    source_url: string;
-  } | null;
   /**
-   * The FooterAudio play affordance for this episode (spec §4). Wire key is the
-   * pinned camelCase `playerDescriptor` even inside this snake_case DTO. It is
-   * `Present` only for audio-playable episodes; `Absent` hides the play/Lectern
-   * affordances. Decoded at the pane boundary via {@link episodePlayerDescriptor}.
+   * Chapter/image-free list fact for the FooterAudio play affordance. Wire key
+   * is pinned camelCase `playerDescriptor` even inside this snake_case DTO.
+   * `Present` gates play/Lectern actions; the Lectern mutation returns the full
+   * player activation only when the user invokes one.
    */
-  playerDescriptor: Presence<PlayerDescriptor>;
+  playerDescriptor: Presence<PodcastEpisodeListPlayerDescriptor>;
   listening_state: {
     position_ms: number;
     duration_ms: number | null;
     playback_speed: number;
-    is_completed: boolean;
   } | null;
-  subscription_default_playback_speed?: number | null;
-  episode_state: EpisodeState | null;
+  episode_state: EpisodeState;
   progress_resettable: boolean;
   capabilities: MediaCapabilities;
   contributors: ContributorCredit[];
   author_mode: "automatic" | "manual";
   published_date: string | null;
-  publisher: string | null;
-  language: string | null;
-  description: string | null;
-  description_html: string | null;
+  /** Lazy detail enrichment; never present in the compact list wire value. */
   description_text: string | null;
-  created_at: string;
-  updated_at: string;
+  has_show_notes: boolean;
+  duration_seconds: number | null;
+}
+
+export function decodePodcastEpisodeMedia(raw: unknown): PodcastEpisodeMedia {
+  const item = expectExactRecord(
+    raw,
+    [
+      "id",
+      "kind",
+      "title",
+      "canonical_source_url",
+      "processing_status",
+      "transcript_state",
+      "transcript_coverage",
+      "listening_state",
+      "episode_state",
+      "progress_resettable",
+      "capabilities",
+      "contributors",
+      "author_mode",
+      "published_date",
+      "duration_seconds",
+      "has_show_notes",
+      "playerDescriptor",
+    ],
+    "PodcastEpisodeListItem",
+  );
+  const canonicalSourceUrl = decodePresence(
+    item.canonical_source_url,
+    (value) => expectString(value, "canonical_source_url.value"),
+  );
+  const publishedDate = decodePresence(
+    item.published_date,
+    (value) => expectString(value, "published_date.value"),
+  );
+  const durationSeconds = decodePresence(
+    item.duration_seconds,
+    (value) => expectNonnegativeInteger(value, "duration_seconds.value"),
+  );
+  const listening = decodePresence(item.listening_state, (value) => {
+    const state = expectExactRecord(
+      value,
+      ["position_ms", "duration_ms", "playback_speed"],
+      "listening_state.value",
+    );
+    const duration = decodePresence(
+      state.duration_ms,
+      (rawDuration) =>
+        expectNonnegativeInteger(rawDuration, "listening_state.duration_ms.value"),
+    );
+    return {
+      position_ms: expectNonnegativeInteger(
+        state.position_ms,
+        "listening_state.position_ms",
+      ),
+      duration_ms: duration.kind === "Present" ? duration.value : null,
+      playback_speed: expectFiniteNumber(
+        state.playback_speed,
+        "listening_state.playback_speed",
+      ),
+    };
+  });
+  const capabilities = expectExactRecord(
+    item.capabilities,
+    [
+      "can_retry",
+      "can_refresh_source",
+      "can_retry_metadata",
+      "can_edit_authors",
+      "can_delete",
+    ],
+    "capabilities",
+  );
+  return {
+    id: expectString(item.id, "id"),
+    kind: expectOneOf(item.kind, ["podcast_episode"] as const, "kind"),
+    title: expectString(item.title, "title"),
+    canonical_source_url:
+      canonicalSourceUrl.kind === "Present" ? canonicalSourceUrl.value : null,
+    processing_status: expectString(
+      item.processing_status,
+      "processing_status",
+    ),
+    transcript_state: expectOneOf(
+      item.transcript_state,
+      [
+        "not_requested",
+        "queued",
+        "running",
+        "failed_provider",
+        "failed_quota",
+        "unavailable",
+        "ready",
+        "partial",
+      ] as const,
+      "transcript_state",
+    ),
+    transcript_coverage: expectOneOf(
+      item.transcript_coverage,
+      ["none", "partial", "full"] as const,
+      "transcript_coverage",
+    ),
+    playerDescriptor: decodePresence(item.playerDescriptor, (value) => {
+      const descriptor = expectExactRecord(
+        value,
+        ["kind", "mediaId"],
+        "playerDescriptor.value",
+      );
+      return {
+        kind: expectOneOf(
+          descriptor.kind,
+          ["FooterAudio"] as const,
+          "playerDescriptor.value.kind",
+        ),
+        mediaId: expectString(
+          descriptor.mediaId,
+          "playerDescriptor.value.mediaId",
+        ),
+      };
+    }),
+    listening_state: listening.kind === "Present" ? listening.value : null,
+    episode_state: expectOneOf(
+      item.episode_state,
+      ["unplayed", "in_progress", "played"] as const,
+      "episode_state",
+    ),
+    progress_resettable: expectBoolean(
+      item.progress_resettable,
+      "progress_resettable",
+    ),
+    capabilities: {
+      can_retry: expectBoolean(capabilities.can_retry, "capabilities.can_retry"),
+      can_refresh_source: expectBoolean(
+        capabilities.can_refresh_source,
+        "capabilities.can_refresh_source",
+      ),
+      can_retry_metadata: expectBoolean(
+        capabilities.can_retry_metadata,
+        "capabilities.can_retry_metadata",
+      ),
+      can_edit_authors: expectBoolean(
+        capabilities.can_edit_authors,
+        "capabilities.can_edit_authors",
+      ),
+      can_delete: expectBoolean(
+        capabilities.can_delete,
+        "capabilities.can_delete",
+      ),
+    },
+    contributors: expectArray(
+      item.contributors,
+      (credit, index) =>
+        decodeContributorCredit(
+          credit,
+          index,
+          "Podcast episode contributors",
+        ),
+      "contributors",
+    ),
+    author_mode: expectOneOf(
+      item.author_mode,
+      ["automatic", "manual"] as const,
+      "author_mode",
+    ),
+    published_date:
+      publishedDate.kind === "Present" ? publishedDate.value : null,
+    description_text: null,
+    has_show_notes: expectBoolean(item.has_show_notes, "has_show_notes"),
+    duration_seconds:
+      durationSeconds.kind === "Present" ? durationSeconds.value : null,
+  };
 }
 
 export interface TranscriptRequestResult {
@@ -101,43 +263,6 @@ export interface TranscriptRequestResult {
   remaining_minutes: number | null;
   fits_budget: boolean;
   request_enqueued: boolean;
-}
-
-export interface TranscriptForecastBatchRequest {
-  requests: Array<{
-    media_id: string;
-    reason: TranscriptRequestReason;
-  }>;
-}
-
-export interface TranscriptForecastBatchResponse {
-  data: TranscriptRequestResult[];
-}
-
-type TranscriptBatchStatus =
-  | "queued"
-  | "already_ready"
-  | "already_queued"
-  | "rejected_quota"
-  | "rejected_invalid";
-
-export interface TranscriptBatchResult {
-  media_id: string;
-  status: TranscriptBatchStatus;
-  required_minutes?: number | null;
-  remaining_minutes?: number | null;
-  error?: string | null;
-}
-
-export interface TranscriptBatchRequest {
-  media_ids: string[];
-  reason: TranscriptRequestReason;
-}
-
-export interface TranscriptBatchResponse {
-  data: {
-    results: TranscriptBatchResult[];
-  };
 }
 
 export interface TranscriptRequestForecastState {
@@ -155,12 +280,6 @@ export function deriveEpisodeState(episode: PodcastEpisodeMedia): EpisodeState {
     case "in_progress":
     case "played":
       return episode.episode_state;
-    case null:
-      if (episode.listening_state?.is_completed) return "played";
-      if ((episode.listening_state?.position_ms ?? 0) > 0) {
-        return "in_progress";
-      }
-      return "unplayed";
     default: {
       const invalid: never = episode.episode_state;
       throw new TypeError(`Unsupported episode_state: ${String(invalid)}`);
@@ -169,16 +288,13 @@ export function deriveEpisodeState(episode: PodcastEpisodeMedia): EpisodeState {
 }
 
 /**
- * Decode this episode's `Presence<PlayerDescriptor>` at the pane transport
- * boundary. The field is REQUIRED on the wire (strict `Presence` encoding), so it
- * is decoded unconditionally: omission, `null`, or alternate casing throws rather
- * than being silently tolerated. `Absent` means "not audio-playable" and hides
- * the play/Lectern affordances.
+ * Return the already-decoded list playback fact. The transport boundary
+ * requires strict `Presence`; `Absent` hides play/Lectern affordances.
  */
 export function episodePlayerDescriptor(
   episode: PodcastEpisodeMedia,
-): Presence<PlayerDescriptor> {
-  return decodePresentPlayerDescriptor(episode.playerDescriptor);
+): Presence<PodcastEpisodeListPlayerDescriptor> {
+  return episode.playerDescriptor;
 }
 
 export function episodeMatchesFilter(
@@ -288,52 +404,4 @@ export function toTranscriptForecastState(
     reason,
     source,
   };
-}
-
-export function summarizeBatchTranscriptResults(
-  results: TranscriptBatchResult[],
-): string | null {
-  if (results.length === 0) {
-    return null;
-  }
-
-  let queued = 0;
-  let alreadyReady = 0;
-  let alreadyQueued = 0;
-  let rejectedQuota = 0;
-  let rejectedInvalid = 0;
-  for (const result of results) {
-    if (result.status === "queued") {
-      queued += 1;
-    } else if (result.status === "already_ready") {
-      alreadyReady += 1;
-    } else if (result.status === "already_queued") {
-      alreadyQueued += 1;
-    } else if (result.status === "rejected_quota") {
-      rejectedQuota += 1;
-    } else if (result.status === "rejected_invalid") {
-      rejectedInvalid += 1;
-    }
-  }
-
-  const parts: string[] = [];
-  if (queued > 0) {
-    parts.push(`${queued} queued`);
-  }
-  if (alreadyReady > 0) {
-    parts.push(`${alreadyReady} already ready`);
-  }
-  if (alreadyQueued > 0) {
-    parts.push(`${alreadyQueued} already queued`);
-  }
-  if (rejectedQuota > 0) {
-    parts.push(`${rejectedQuota} rejected (quota)`);
-  }
-  if (rejectedInvalid > 0) {
-    parts.push(`${rejectedInvalid} rejected (invalid)`);
-  }
-  if (parts.length === 0) {
-    return null;
-  }
-  return `Batch transcript result: ${parts.join(", ")}.`;
 }

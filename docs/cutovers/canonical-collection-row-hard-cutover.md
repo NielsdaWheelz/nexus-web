@@ -1,5 +1,12 @@
 # Canonical Collection Row Hard Cutover
 
+> **Finite-list update (2026-07-29):**
+> [`complete-collection-lists-hard-cutover.md`](complete-collection-lists-hard-cutover.md)
+> supersedes append-focus repair. Pure suffix append preserves the current
+> focus and scroll position and commits without a View Transition. It also
+> supersedes §6's unchanged-response and Library/episode `MediaOut` list-payload
+> clauses with strict list-owned compact DTOs.
+>
 > **Superseded (2026-07-22):**
 > [`library-sorting-hard-cutover.md`](library-sorting-hard-cutover.md) collapses
 > the "resonance list, gallery entries, list entries" three-way split of

@@ -41,6 +41,7 @@ export default function CollectionView({
   rowControls,
   rowActionsAvailable = true,
   sortable,
+  collectionBusy,
   surface = true,
 }: {
   readonly returnScope: string;
@@ -60,35 +61,48 @@ export default function CollectionView({
     readonly disabled?: boolean;
     readonly onReorder: (nextRows: CollectionRowView[]) => void;
   };
+  readonly collectionBusy?: boolean;
   readonly surface?: boolean;
 }) {
   const transitionScopeId = useId();
   const returnScopeRef = useRef<HTMLDivElement | null>(null);
   const viewTransitionsReady = useClientViewTransitionsReady();
-  const rowOrderSignature = useMemo(
-    () => rows.map((row) => row.id).join("\u001f"),
-    [rows],
-  );
+  const rowIds = useMemo(() => rows.map((row) => row.id), [rows]);
   const [displayRows, setDisplayRows] = useState<readonly CollectionRowView[]>(rows);
-  const displayRowOrderSignatureRef = useRef(rowOrderSignature);
+  const displayRowIdsRef = useRef(rowIds);
+  const latestRowsRef = useRef(rows);
+  const latestRowIdsRef = useRef(rowIds);
+  const transitionUpdatePendingRef = useRef(false);
+  latestRowsRef.current = rows;
+  latestRowIdsRef.current = rowIds;
 
   useLayoutEffect(() => {
     if (status !== "ready") {
-      displayRowOrderSignatureRef.current = rowOrderSignature;
+      displayRowIdsRef.current = rowIds;
       setDisplayRows(rows);
       return;
     }
 
-    if (displayRowOrderSignatureRef.current === rowOrderSignature) {
+    const previousIds = displayRowIdsRef.current;
+    const sharedPrefix =
+      previousIds.length <= rowIds.length &&
+      previousIds.every((id, index) => id === rowIds[index]);
+    if (sharedPrefix) {
+      displayRowIdsRef.current = rowIds;
       setDisplayRows(rows);
       return;
     }
+    if (transitionUpdatePendingRef.current) {
+      return;
+    }
 
+    transitionUpdatePendingRef.current = true;
     startSameDocumentViewTransition(() => {
-      displayRowOrderSignatureRef.current = rowOrderSignature;
-      setDisplayRows(rows);
+      transitionUpdatePendingRef.current = false;
+      displayRowIdsRef.current = latestRowIdsRef.current;
+      setDisplayRows(latestRowsRef.current);
     });
-  }, [rowOrderSignature, rows, status]);
+  }, [rowIds, rows, status]);
 
   const rowsForRender = status === "ready" ? displayRows : rows;
   usePaneReturnDescendantReady({
@@ -96,7 +110,7 @@ export default function CollectionView({
     ready:
       status !== "loading" &&
       (status !== "ready" ||
-        displayRowOrderSignatureRef.current === rowOrderSignature),
+        displayRowIdsRef.current === rowIds),
   });
   const body =
     status === "loading" ? (
@@ -112,6 +126,7 @@ export default function CollectionView({
         onReorder={sortable.onReorder}
         disabled={sortable.disabled}
         ariaLabel={ariaLabel}
+        busy={collectionBusy}
         renderItem={({ item: row, activatorProps }) => {
           return (
             <CollectionRow
@@ -131,7 +146,7 @@ export default function CollectionView({
         }}
       />
     ) : (
-      <ResourceList ariaLabel={ariaLabel}>
+      <ResourceList ariaLabel={ariaLabel} busy={collectionBusy}>
         {rowsForRender.map((row) => (
           <CollectionRow
             key={row.id}

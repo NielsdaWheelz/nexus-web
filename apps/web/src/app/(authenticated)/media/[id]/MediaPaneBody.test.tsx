@@ -1181,6 +1181,7 @@ describe("MediaPaneBody pane sizing", () => {
               },
             },
             completionHandle: { kind: "Absent" },
+            libraryEntriesCollectionRevision: 1,
           });
         }
         if (

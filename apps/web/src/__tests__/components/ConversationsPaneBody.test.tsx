@@ -38,12 +38,33 @@ function jsonResponse(body: unknown): Response {
   });
 }
 
+function collectionPage(
+  items: ReturnType<typeof conversation>[],
+  options: {
+    revision?: number;
+    nextCursor?: string | null;
+  } = {},
+): Response {
+  const nextCursor = options.nextCursor ?? null;
+  return jsonResponse({
+    data: {
+      items,
+      collectionRevision: options.revision ?? 1,
+      nextCursor:
+        nextCursor === null
+          ? { kind: "Absent" }
+          : { kind: "Present", value: nextCursor },
+    },
+  });
+}
+
 function withPaneRuntime(
   node: ReactNode,
   onActivateWorkspaceTarget = vi.fn(() => ({
     kind: "ActivatedExisting" as const,
     paneId: "pane",
   })),
+  isActive = true,
 ) {
   const href = "/conversations";
   return (
@@ -53,7 +74,7 @@ function withPaneRuntime(
           <PaneRuntimeProvider
             paneId="pane-1"
             visitId={TEST_VISIT_ID}
-            isActive={true}
+            isActive={isActive}
             href={href}
             routeId="conversations"
             routeKey={resolvePaneRouteIdentity(href).routeKey}
@@ -87,19 +108,12 @@ describe("ConversationsPaneBody", () => {
       vi.fn(async (input: RequestInfo | URL) => {
         const path = pathOf(input);
         if (path === "/api/conversations") {
-          return jsonResponse({
-            data: [
-              {
-                id: "11111111-0000-4000-8000-000000000001",
-                title: "Untitled chat",
-                sharing: "private",
-                message_count: 2,
-                created_at: "2026-01-01T00:00:00Z",
-                updated_at: "2026-05-25T12:00:00Z",
-              },
-            ],
-            page: { next_cursor: null },
-          });
+          return collectionPage([
+            conversation(
+              "11111111-0000-4000-8000-000000000001",
+              "Untitled chat",
+            ),
+          ]);
         }
         throw new Error(`Unexpected fetch call: ${path}`);
       }),
@@ -130,7 +144,7 @@ describe("ConversationsPaneBody", () => {
       vi.fn(async (input: RequestInfo | URL) => {
         const path = pathOf(input);
         if (path === "/api/conversations") {
-          return jsonResponse({ data: [], page: { next_cursor: null } });
+          return collectionPage([]);
         }
         throw new Error(`Unexpected fetch call: ${path}`);
       }),
@@ -172,27 +186,19 @@ describe("ConversationsPaneBody", () => {
       vi.fn(async (input: RequestInfo | URL) => {
         const path = pathOf(input);
         if (path === "/api/conversations") {
-          return jsonResponse({
-            data: [
-              {
-                id: "22222222-0000-4000-8000-000000000002",
-                title: "First chat",
-                sharing: "private",
-                message_count: 12,
-                created_at: "2026-01-01T00:00:00Z",
-                updated_at: "2026-05-25T12:00:00Z",
-              },
-              {
-                id: "33333333-0000-4000-8000-000000000003",
-                title: "Second chat",
-                sharing: "private",
-                message_count: 2,
-                created_at: "2026-01-01T00:00:00Z",
-                updated_at: "2026-05-24T12:00:00Z",
-              },
-            ],
-            page: { next_cursor: null },
-          });
+          return collectionPage([
+            {
+              ...conversation(
+                "22222222-0000-4000-8000-000000000002",
+                "First chat",
+              ),
+              message_count: 12,
+            },
+            conversation(
+              "33333333-0000-4000-8000-000000000003",
+              "Second chat",
+            ),
+          ]);
         }
         throw new Error(`Unexpected fetch call: ${path}`);
       }),
@@ -233,7 +239,130 @@ describe("ConversationsPaneBody", () => {
     expect(requestSignal?.aborted).toBe(true);
   });
 
-  it("restores the appended conversation extent without another page-one request or duplication", async () => {
+  it("pauses continuation while the pane is inactive and resumes on activation", async () => {
+    const first = conversation(
+      "77777777-0000-4000-8000-000000000007",
+      "Active first page",
+    );
+    const second = conversation(
+      "88888888-0000-4000-8000-000000000008",
+      "Active second page",
+    );
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(
+          input instanceof Request ? input.url : String(input),
+          "http://localhost",
+        );
+        calls.push(`${url.pathname}${url.search}`);
+        return url.searchParams.has("cursor")
+          ? collectionPage([second], { revision: 3 })
+          : collectionPage([first], {
+              revision: 3,
+              nextCursor: "cursor-active",
+            });
+      }),
+    );
+    const activateTarget = vi.fn(() => ({
+      kind: "ActivatedExisting" as const,
+      paneId: "pane",
+    }));
+    const view = render(
+      withPaneRuntime(<ConversationsPaneBody />, activateTarget, false),
+    );
+
+    expect(
+      await screen.findByRole("link", { name: first.title }),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(
+      screen.queryByRole("link", { name: second.title }),
+    ).not.toBeInTheDocument();
+
+    view.rerender(
+      withPaneRuntime(<ConversationsPaneBody />, activateTarget, true),
+    );
+
+    expect(
+      await screen.findByRole("link", { name: second.title }),
+    ).toBeInTheDocument();
+    expect(calls[1]).toContain(
+      "cursor=cursor-active&collection_revision=3",
+    );
+  });
+
+  it("rebases a safe deletion and continues the same cursor at the returned revision", async () => {
+    const first = conversation(
+      "99999999-0000-4000-8000-000000000009",
+      "Delete this chat",
+    );
+    const second = conversation(
+      "aaaaaaaa-0000-4000-8000-00000000000a",
+      "Older chat",
+    );
+    const calls: string[] = [];
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request =
+          input instanceof Request
+            ? input
+            : new Request(new URL(String(input), "http://localhost"), init);
+        const url = new URL(request.url);
+        calls.push(`${request.method} ${url.pathname}${url.search}`);
+        if (request.method === "DELETE") {
+          return jsonResponse({
+            data: { collectionRevision: 5 },
+          });
+        }
+        return url.searchParams.has("cursor")
+          ? collectionPage([second], { revision: 5 })
+          : collectionPage([first], {
+              revision: 4,
+              nextCursor: "cursor-after-delete",
+            });
+      }),
+    );
+    const activateTarget = vi.fn(() => ({
+      kind: "ActivatedExisting" as const,
+      paneId: "pane",
+    }));
+    const view = render(
+      withPaneRuntime(<ConversationsPaneBody />, activateTarget, false),
+    );
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "More actions for Delete this chat",
+      }),
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", {
+        name: "Delete conversation",
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("link", { name: first.title }),
+      ).not.toBeInTheDocument(),
+    );
+
+    view.rerender(
+      withPaneRuntime(<ConversationsPaneBody />, activateTarget, true),
+    );
+
+    expect(
+      await screen.findByRole("link", { name: second.title }),
+    ).toBeInTheDocument();
+    expect(calls).toContain(
+      "GET /api/conversations?cursor=cursor-after-delete&collection_revision=5&limit=100",
+    );
+  });
+
+  it("automatically exhausts and restores the appended extent without another page-one request", async () => {
     const first = conversation(
       "44444444-0000-4000-8000-000000000004",
       "First-page chat",
@@ -258,18 +387,18 @@ describe("ConversationsPaneBody", () => {
           throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
         }
         if (url.searchParams.get("cursor") === "cursor-2") {
-          return jsonResponse({
-            data: [second],
-            page: { next_cursor: null },
-          });
+          expect(url.searchParams.get("collection_revision")).toBe("4");
+          return collectionPage([second], { revision: 4 });
         }
         firstPageRequestCount += 1;
-        return jsonResponse({
-          data: firstPageRequestCount === 1 ? [first] : [replacement],
-          page: {
-            next_cursor: firstPageRequestCount === 1 ? "cursor-2" : null,
+        return collectionPage(
+          firstPageRequestCount === 1 ? [first] : [replacement],
+          {
+            revision: firstPageRequestCount === 1 ? 4 : 5,
+            nextCursor:
+              firstPageRequestCount === 1 ? "cursor-2" : null,
           },
-        });
+        );
       }),
     );
 
@@ -296,12 +425,12 @@ describe("ConversationsPaneBody", () => {
     expect(
       await screen.findByRole("link", { name: first.title }),
     ).toBeInTheDocument();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Load more conversations" }),
-    );
     expect(
       await screen.findByRole("link", { name: second.title }),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /load more conversations/i }),
+    ).not.toBeInTheDocument();
     await waitFor(() => expect(commands).not.toBeNull());
     act(() => {
       commands?.capturePane({
@@ -333,9 +462,7 @@ function conversation(id: string, title: string) {
   return {
     id,
     title,
-    sharing: "private",
     message_count: 2,
-    created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-05-25T12:00:00Z",
   };
 }

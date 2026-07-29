@@ -17,4 +17,17 @@ describe("ResourceList", () => {
     expect(list).not.toHaveAttribute("data-view");
     expect(list).not.toHaveAttribute("data-density");
   });
+
+  it("owns collection busy state", () => {
+    render(
+      <ResourceList ariaLabel="Documents" busy>
+        <li>First document</li>
+      </ResourceList>,
+    );
+
+    expect(screen.getByRole("list", { name: "Documents" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+  });
 });

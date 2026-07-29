@@ -26,16 +26,36 @@ function jsonResponse(body: unknown): Response {
   });
 }
 
+function deferredResponse() {
+  let resolve!: (response: Response) => void;
+  const promise = new Promise<Response>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
 function stubFetch() {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo) => {
       const url = new URL(String(input), "http://localhost");
       if (url.pathname === "/api/podcasts/subscriptions") {
-        return jsonResponse({ data: [] });
+        return jsonResponse({
+          data: {
+            items: [],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
+        });
       }
       if (url.pathname === "/api/libraries") {
-        return jsonResponse({ data: [] });
+        return jsonResponse({
+          data: {
+            items: [],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
+        });
       }
       // connection summaries (not fired with empty rows, but guard for safety)
       if (url.pathname.startsWith("/api/resource-graph/connections")) {
@@ -58,38 +78,18 @@ function podcastSubscription(index: number) {
   const id = `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
   return {
     podcast_id: id,
-    status: "active",
-    default_playback_speed: null,
+    title:
+      index === 1
+        ? "Restored Podcast First"
+        : index === 101
+          ? "Restored Podcast Second Page"
+          : `Podcast ${index}`,
+    contributors: [],
+    default_playback_speed: { kind: "Absent" },
     auto_queue: false,
     sync_status: "complete",
-    sync_error_code: null,
-    sync_error_message: null,
-    sync_attempts: 0,
-    sync_started_at: null,
-    sync_completed_at: null,
-    last_synced_at: null,
-    updated_at: "2026-01-01T00:00:00Z",
     unplayed_count: 0,
-    latest_episode_published_at: null,
-    visible_libraries: [],
-    podcast: {
-      id,
-      provider: "podcast_index",
-      provider_podcast_id: `provider-${id}`,
-      title:
-        index === 1
-          ? "Restored Podcast First"
-          : index === 101
-            ? "Restored Podcast Second Page"
-            : `Podcast ${index}`,
-      contributors: [],
-      feed_url: `https://feeds.example.com/${id}.xml`,
-      website_url: null,
-      image_url: null,
-      description: null,
-      created_at: "2026-01-01T00:00:00Z",
-      updated_at: "2026-01-01T00:00:00Z",
-    },
+    latest_episode_published_at: { kind: "Absent" },
   };
 }
 
@@ -126,29 +126,37 @@ describe("PodcastsPaneBody — Browse launcher integration", () => {
   });
 
   it("restores the captured subscription controller without initial settlement collapsing it", async () => {
-    const requests: Array<{ offset: string; sort: string | null }> = [];
+    const requests: Array<{ cursor: string | null; sort: string | null }> = [];
     let libraryCalls = 0;
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo) => {
         const url = new URL(String(input), "http://localhost");
         if (url.pathname === "/api/podcasts/subscriptions") {
-          const offset = url.searchParams.get("offset") ?? "0";
-          requests.push({ offset, sort: url.searchParams.get("sort") });
+          const cursor = url.searchParams.get("cursor");
+          requests.push({ cursor, sort: url.searchParams.get("sort") });
           return jsonResponse({
-            data:
-              offset === "100"
-                ? [podcastSubscription(101)]
-                : Array.from({ length: 100 }, (_, index) =>
-                    podcastSubscription(index + 1),
-                  ),
+            data: {
+              items:
+                cursor === "page-2"
+                  ? [podcastSubscription(101), podcastSubscription(101)]
+                  : [podcastSubscription(1)],
+              collectionRevision: 1,
+              nextCursor:
+                cursor === "page-2"
+                  ? { kind: "Absent" }
+                  : { kind: "Present", value: "page-2" },
+            },
           });
         }
         if (url.pathname === "/api/libraries") {
           libraryCalls += 1;
           return jsonResponse({
-            data: [],
-            page: { has_more: false, next_cursor: null },
+            data: {
+              items: [],
+              collectionRevision: 1,
+              nextCursor: { kind: "Absent" },
+            },
           });
         }
         if (url.pathname.startsWith("/api/resource-graph/connections")) {
@@ -162,6 +170,7 @@ describe("PodcastsPaneBody — Browse launcher integration", () => {
       commands = next;
     };
     let resourceGeneration = 0;
+    let bodyGeneration = 0;
     let href = PODCASTS_HREF;
     const journey = () => (
       <PaneReturnJourneyHarness
@@ -172,7 +181,7 @@ describe("PodcastsPaneBody — Browse launcher integration", () => {
         publishCommands={publish}
       >
         <PodcastsPaneBody
-          key={resolvePaneRouteIdentity(href).routeKey}
+          key={`${resolvePaneRouteIdentity(href).routeKey}:${bodyGeneration}`}
         />
       </PaneReturnJourneyHarness>
     );
@@ -180,7 +189,6 @@ describe("PodcastsPaneBody — Browse launcher integration", () => {
     expect(
       await screen.findByRole("link", { name: "Restored Podcast First" }),
     ).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
     expect(
       await screen.findByRole("link", {
         name: "Restored Podcast Second Page",
@@ -194,6 +202,7 @@ describe("PodcastsPaneBody — Browse launcher integration", () => {
     });
 
     resourceGeneration += 1;
+    bodyGeneration += 1;
     view.rerender(journey());
 
     expect(
@@ -206,8 +215,8 @@ describe("PodcastsPaneBody — Browse launcher integration", () => {
     ).toHaveLength(1);
     await waitFor(() => {
       expect(requests).toEqual([
-        { offset: "0", sort: "recent_episode" },
-        { offset: "100", sort: "recent_episode" },
+        { cursor: null, sort: "recent_episode" },
+        { cursor: "page-2", sort: "recent_episode" },
       ]);
       expect(libraryCalls).toBe(1);
     });
@@ -217,11 +226,97 @@ describe("PodcastsPaneBody — Browse launcher integration", () => {
 
     await waitFor(() => {
       expect(requests).toEqual([
-        { offset: "0", sort: "recent_episode" },
-        { offset: "100", sort: "recent_episode" },
-        { offset: "0", sort: "alpha" },
+        { cursor: null, sort: "recent_episode" },
+        { cursor: "page-2", sort: "recent_episode" },
+        { cursor: null, sort: "alpha" },
+        { cursor: "page-2", sort: "alpha" },
       ]);
       expect(libraryCalls).toBe(2);
     });
+  });
+
+  it("commits the new query before continuing a partial subscription chain", async () => {
+    const oldContinuation = deferredResponse();
+    const newFirstPage = deferredResponse();
+    const requests: Array<{ cursor: string | null; sort: string | null }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo) => {
+        const url = new URL(String(input), "http://localhost");
+        if (url.pathname === "/api/podcasts/subscriptions") {
+          const request = {
+            cursor: url.searchParams.get("cursor"),
+            sort: url.searchParams.get("sort"),
+          };
+          requests.push(request);
+          if (request.sort === "alpha") {
+            return newFirstPage.promise;
+          }
+          if (request.cursor === "page-2") {
+            return oldContinuation.promise;
+          }
+          return jsonResponse({
+            data: {
+              items: [podcastSubscription(1)],
+              collectionRevision: 1,
+              nextCursor: { kind: "Present", value: "page-2" },
+            },
+          });
+        }
+        if (url.pathname === "/api/libraries") {
+          return jsonResponse({
+            data: {
+              items: [],
+              collectionRevision: 1,
+              nextCursor: { kind: "Absent" },
+            },
+          });
+        }
+        throw new Error(`Unexpected fetch: ${url.pathname}${url.search}`);
+      }),
+    );
+
+    let href = PODCASTS_HREF;
+    const journey = () => (
+      <PaneReturnJourneyHarness
+        href={href}
+        paneId="pane-1"
+        resources={{}}
+        resourceGeneration={0}
+        publishCommands={() => {}}
+      >
+        <PodcastsPaneBody />
+      </PaneReturnJourneyHarness>
+    );
+    const view = render(journey());
+    expect(
+      await screen.findByRole("link", { name: "Restored Podcast First" }),
+    ).toBeVisible();
+    await waitFor(() =>
+      expect(requests).toContainEqual({
+        cursor: "page-2",
+        sort: "recent_episode",
+      }),
+    );
+
+    href = "/podcasts?sort=alpha";
+    view.rerender(journey());
+    await waitFor(() =>
+      expect(requests).toContainEqual({ cursor: null, sort: "alpha" }),
+    );
+    expect(requests).not.toContainEqual({
+      cursor: "page-2",
+      sort: "alpha",
+    });
+
+    newFirstPage.resolve(
+      jsonResponse({
+        data: {
+          items: [],
+          collectionRevision: 2,
+          nextCursor: { kind: "Absent" },
+        },
+      }),
+    );
   });
 });

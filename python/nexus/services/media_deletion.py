@@ -40,6 +40,12 @@ from nexus.services import (
     passage_anchors,
     resource_grants,
 )
+from nexus.services.collection_revisions import (
+    CollectionFamily,
+    bump_all_collection_families,
+    bump_collection_families,
+    read_collection_revision,
+)
 from nexus.services.consumption import service as consumption_service
 from nexus.services.content_indexing import IndexOwner, delete_content_index
 from nexus.services.document_embeds import (
@@ -233,7 +239,7 @@ def remove_media_for_viewer(
         remaining_reference_count = _total_reference_count(db, media_id)
         if remaining_reference_count == 0 and media[0] in _DOCUMENT_KINDS:
             claim_media_teardown(db, media_id)
-            result: MediaDeleteResult = MediaDeletingResult()
+            result_kind = "Deleting"
         else:
             # Branch on canonical post-removal readability. A system-library
             # membership is still an authenticated access path, even though the
@@ -242,10 +248,7 @@ def remove_media_for_viewer(
             # remain immediately readable after a successful response. References
             # reachable only by other viewers need no tombstone.
             if not can_read_media(db, viewer_id, media_id):
-                result = MediaRemovedResult(
-                    removed_from_library_ids=removed_from_library_ids,
-                    remaining_reference_count=remaining_reference_count,
-                )
+                result_kind = "Removed"
             else:
                 existing = db.execute(
                     text("""
@@ -264,10 +267,7 @@ def remove_media_for_viewer(
                         """),
                         {"viewer_id": viewer_id, "media_id": media_id},
                     )
-                result = MediaHiddenResult(
-                    removed_from_library_ids=removed_from_library_ids,
-                    remaining_reference_count=remaining_reference_count,
-                )
+                result_kind = "Hidden"
 
         # Document-embed rows are global source artifacts. Reconcile after the
         # final Removed/Hidden visibility state so only this viewer's source and
@@ -290,7 +290,40 @@ def remove_media_for_viewer(
             db,
             audience=AudienceUser(user_id=viewer_id),
         )
-        return result
+        families = [
+            CollectionFamily.AuthorWorks,
+            CollectionFamily.LibraryEntries,
+        ]
+        if media[0] == MediaKind.podcast_episode.value:
+            families.extend(
+                (
+                    CollectionFamily.PodcastEpisodes,
+                    CollectionFamily.PodcastSubscriptions,
+                )
+            )
+        bump_collection_families(
+            db,
+            viewer_ids=(viewer_id,),
+            families=families,
+        )
+        library_entries_collection_revision = read_collection_revision(
+            db,
+            viewer_id=viewer_id,
+            family=CollectionFamily.LibraryEntries,
+        )
+        if result_kind == "Deleting":
+            return MediaDeletingResult()
+        if result_kind == "Removed":
+            return MediaRemovedResult(
+                removed_from_library_ids=removed_from_library_ids,
+                remaining_reference_count=remaining_reference_count,
+                library_entries_collection_revision=library_entries_collection_revision,
+            )
+        return MediaHiddenResult(
+            removed_from_library_ids=removed_from_library_ids,
+            remaining_reference_count=remaining_reference_count,
+            library_entries_collection_revision=library_entries_collection_revision,
+        )
 
 
 def clear_user_media_deletion(db: Session, viewer_id: UUID, media_id: UUID) -> None:
@@ -359,6 +392,14 @@ def _claim_document_media_teardown(db: Session, media_id: UUID) -> list[str]:
     affected_library_ids = library_entries.delete_all_entries_for_media(db, media_id)
     for library_id in affected_library_ids:
         library_entries.normalize_positions(db, library_id)
+    if affected_library_ids:
+        bump_all_collection_families(
+            db,
+            families=(
+                CollectionFamily.AuthorWorks,
+                CollectionFamily.LibraryEntries,
+            ),
+        )
 
     claim_media_teardown(db, media_id)
     return []

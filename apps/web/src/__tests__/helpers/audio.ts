@@ -130,6 +130,7 @@ export function installLecternPlayerFetchMock(options: { items?: LecternItem[] }
           nextItem: { kind: "Absent" },
           progressState: { kind: "Absent" },
           completionHandle: { kind: "Absent" },
+          libraryEntriesCollectionRevision: 1,
         },
       });
     }

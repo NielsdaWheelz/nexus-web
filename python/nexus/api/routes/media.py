@@ -194,17 +194,17 @@ def add_media_libraries(
     return Response(status_code=204)
 
 
-@router.delete("/media/{media_id}/libraries/{library_id}", status_code=204)
+@router.delete("/media/{media_id}/libraries/{library_id}")
 def remove_media_library(
     media_id: UUID,
     library_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-) -> Response:
-    library_entries.ensure_media_absent_from_library_for_viewer(
+) -> dict:
+    result = library_entries.ensure_media_absent_from_library_for_viewer(
         db, viewer.user_id, media_id, library_id
     )
-    return Response(status_code=204)
+    return ok(result, by_alias=True)
 
 
 @router.post("/media/{media_id}/refresh", status_code=202)

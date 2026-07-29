@@ -151,19 +151,13 @@ contribution the moment it is gone, on the very next read.
   another membership can still be explicitly filed; that direct row is what
   survives a later membership loss that would otherwise have removed it from
   view.
-- **Stateless keyset pagination, one authenticated cursor family.** Listing any
-  library never touches a snapshot table. Every listing — default or
-  non-default — paginates with the single `library_entries:view:v2` cursor
-  family: an unpadded-base64url token over a canonical-JSON `{v, q, after}`
-  body plus a full HMAC-SHA256 tag under a domain-separated key derived from
-  the effective stream-token signing root. `q` is the SHA-256 digest binding
-  the exact `(viewer, library, view)` — the viewer UUID is bound through `q`
-  and the MAC but never serialized — and `after` is the exact tagged keyset,
-  decoded strictly with no coercion. `view` is the order (canonical or a
-  factual lens) plus the entry projection and, where the projection carries
-  one, the completion filter. A cursor from the wrong viewer, library, or
-  view — malformed, tampered, or from any pre-cutover kind — is a clean
-  `400 E_INVALID_CURSOR`, never silently reinterpreted.
+- **Stateless keyset pagination, one authenticated cursor codec.** Listing any
+  library never touches a snapshot table. Every listing uses the shared signed
+  keyset cursor bound to `LibraryEntries` and the exact
+  `(viewer, library, view)` query. Continuation also requires the unchanged
+  `collectionRevision`; concurrent membership or ordering changes return
+  `409 E_COLLECTION_CHANGED`. A cursor from the wrong viewer, library, view, or
+  pre-cutover family is `400 E_INVALID_CURSOR`, never reinterpreted.
 - **Fixed entry projections.** `GET /libraries/{id}/entries` accepts
   `projection=unfiled|in-progress` (omitted means All items). `Unfiled` is
   valid only for the viewer's own Default library: direct-Default media with
@@ -236,7 +230,8 @@ libraries selected**.
 ## Frontend entry-view lifecycle
 
 The pane URL owns the requested `LibraryEntryView` (order + projection); the
-Library controller owns one committed exact page `{view, entries, nextCursor}`.
+Library controller owns one committed exact collection
+`{view, entries, collectionRevision, nextCursor, exhaustion}`.
 A same-visit query replacement is in-place: pane chrome, controls, focus, live
 ShellScroll position, Slate, and Companion stay mounted while the exact first
 page loads. The full query remains runtime/history identity.
@@ -260,13 +255,13 @@ only]` view formatting.
   qualify); an unfiltered All-items view keeps the immediate local media patch
   and does not refetch for it.
 - While requested and committed views differ, prior rows and row navigation
-  remain available; pagination, reorder, and entry mutations do not. Reorder
-  exists only for a fully loaded, editable, non-default
+  remain available; continuation, reorder, and entry mutations do not. Reorder
+  exists only for a complete, editable, non-default
   `Canonical + All items (all)` view.
-- Failure retains and labels the prior committed page and exposes Retry. A
-  stale or deployment-era continuation cursor is never reinterpreted: Load
-  More presents **This list can no longer continue.** with **Refresh list**,
-  which discards the cursor and requests the first page of the same view.
+- Failure retains and labels the prior committed collection. Network/5xx
+  exhaustion offers **Retry**; an invalid cursor or changed revision offers
+  **Refresh list**, which requests the first page of the same view without
+  clearing committed rows.
 - Pane return captures only a ready snapshot whose committed view equals the
   URL view, and restores Library plus page as one coherent value.
 - A matching commit atomically swaps view, rows, and cursor, resets the
@@ -303,12 +298,12 @@ those modules retain their tables and mutations.
   request-time AI, generation, embedding, scheduled job, or persisted
   recommendation state.
 
-The frontend renders **Suggested for this library** after entries and Load More
-in a fixed comfortable List, independent of the main collection's empty state,
-Gallery choice, or density. Add delegates to the existing media/podcast filing
-command. It does not synthesize a `LibraryEntry`; visible Slate survivors stay
-in order, at most one canonical replacement is appended, and the main entry
-projection reloads on the next pane activation.
+The frontend renders **Suggested for this library** after the complete entry
+inventory in a fixed comfortable List, independent of the main collection's
+empty state, Gallery choice, or density. Add delegates to the existing
+media/podcast filing command. It does not synthesize a `LibraryEntry`; visible
+Slate survivors stay in order, at most one canonical replacement is appended,
+and the main entry projection reloads on the next pane activation.
 
 ## Writable library destinations
 

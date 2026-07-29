@@ -34,6 +34,7 @@ describe("confirmAndDeleteMedia", () => {
           kind: "Hidden",
           removedFromLibraryIds: ["library-1"],
           remainingReferenceCount: 1,
+          libraryEntriesCollectionRevision: 7,
         },
       }),
     );
@@ -50,6 +51,7 @@ describe("confirmAndDeleteMedia", () => {
         kind: "Hidden",
         removedFromLibraryIds: ["library-1"],
         remainingReferenceCount: 1,
+        libraryEntriesCollectionRevision: 7,
       },
     });
     expect(fetchSpy).toHaveBeenCalledWith(
@@ -66,6 +68,7 @@ describe("confirmAndDeleteMedia", () => {
           kind: "Removed",
           removedFromLibraryIds: ["library-1", "library-2"],
           remainingReferenceCount: 0,
+          libraryEntriesCollectionRevision: 8,
         },
       }),
     );
@@ -107,6 +110,7 @@ describe("confirmAndDeleteMedia", () => {
           kind: "Removed",
           removedFromLibraryIds: [],
           remainingReferenceCount: 0,
+          libraryEntriesCollectionRevision: 1,
           legacy: true,
         },
       },
@@ -119,6 +123,7 @@ describe("confirmAndDeleteMedia", () => {
           kind: "Hidden",
           removedFromLibraryIds: [],
           remainingReferenceCount: -1,
+          libraryEntriesCollectionRevision: 1,
         },
       },
       defect: "Invalid MediaDeleteResult.Hidden",

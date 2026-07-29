@@ -52,6 +52,22 @@ def _invite_handle(invitation_id: UUID | str) -> str:
     return str(seal_library_invitation(UUID(str(invitation_id))))
 
 
+def _collection_revision(
+    direct_db: DirectSessionManager,
+    viewer_id: UUID,
+    family: str,
+) -> int:
+    with direct_db.session() as session:
+        revision = session.execute(
+            text(
+                "SELECT revision FROM viewer_collection_revisions "
+                "WHERE viewer_id = :viewer_id AND family = :family"
+            ),
+            {"viewer_id": viewer_id, "family": family},
+        ).scalar_one_or_none()
+    return 0 if revision is None else revision
+
+
 def _user_invitee(user_id: UUID) -> dict:
     return {"kind": "User", "userHandle": _user_handle(user_id)}
 
@@ -119,6 +135,26 @@ def _list_library_entries(auth_client, user_id: UUID, library_id: str, **params)
         headers=auth_headers(user_id),
         params=params,
     )
+
+
+def _entry_page(response) -> dict:
+    return response.json()["data"]
+
+
+def _entry_items(response) -> list[dict]:
+    return _entry_page(response)["items"]
+
+
+def _entry_revision(response) -> int:
+    return _entry_page(response)["collectionRevision"]
+
+
+def _entry_cursor(response) -> str | None:
+    presence = _entry_page(response)["nextCursor"]
+    if presence["kind"] == "Absent":
+        return None
+    assert presence["kind"] == "Present"
+    return presence["value"]
 
 
 def _library_entry_media_ids(rows: list[dict]) -> list[str]:
@@ -283,8 +319,15 @@ class TestListLibraries:
 
         assert response.status_code == 200
         body = response.json()
-        assert body["page"] == {"has_more": False, "next_cursor": None}
-        data = body["data"]
+        assert set(body) == {"data"}
+        assert set(body["data"]) == {
+            "items",
+            "collectionRevision",
+            "nextCursor",
+        }
+        assert body["data"]["collectionRevision"] >= 1
+        assert body["data"]["nextCursor"] == {"kind": "Absent"}
+        data = body["data"]["items"]
         assert len(data) >= 1
 
         # Find default library
@@ -311,7 +354,7 @@ class TestListLibraries:
         response = auth_client.get("/libraries", headers=auth_headers(user_id))
 
         assert response.status_code == 200
-        data = response.json()["data"]
+        data = response.json()["data"]["items"]
 
         # First should be default (created first), then A, B, C in order
         assert data[0]["isDefault"] is True
@@ -332,17 +375,16 @@ class TestListLibraries:
         response = auth_client.get("/libraries?limit=3", headers=auth_headers(user_id))
 
         assert response.status_code == 200
-        data = response.json()["data"]
+        data = response.json()["data"]["items"]
         assert len(data) == 3
 
-    def test_list_libraries_limit_clamped(self, auth_client):
-        """Limit > 200 is clamped to 200 (accepted, not rejected)."""
+    def test_list_libraries_rejects_noncanonical_limit(self, auth_client):
         user_id = create_test_user_id()
 
         response = auth_client.get("/libraries?limit=500", headers=auth_headers(user_id))
 
-        # Should succeed (clamped internally to 200)
-        assert response.status_code == 200
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
     def test_list_libraries_paginates_with_next_cursor(self, auth_client):
         user_id = create_test_user_id()
@@ -357,20 +399,22 @@ class TestListLibraries:
 
         first = auth_client.get("/libraries?limit=2", headers=auth_headers(user_id))
         assert first.status_code == 200, first.text
-        first_body = first.json()
-        assert len(first_body["data"]) == 2
-        assert first_body["page"]["has_more"] is True
-        cursor = first_body["page"]["next_cursor"]
-        assert cursor is not None
+        first_page = first.json()["data"]
+        assert len(first_page["items"]) == 2
+        assert first_page["nextCursor"]["kind"] == "Present"
+        cursor = first_page["nextCursor"]["value"]
+        revision = first_page["collectionRevision"]
 
         second = auth_client.get(
-            f"/libraries?limit=2&cursor={cursor}",
+            f"/libraries?limit=2&cursor={cursor}&collection_revision={revision}",
             headers=auth_headers(user_id),
         )
         assert second.status_code == 200, second.text
-        assert second.json()["page"]["has_more"] is False
-        first_ids = {row["id"] for row in first_body["data"]}
-        second_ids = {row["id"] for row in second.json()["data"]}
+        second_page = second.json()["data"]
+        assert second_page["nextCursor"] == {"kind": "Absent"}
+        assert second_page["collectionRevision"] == revision
+        first_ids = {row["id"] for row in first_page["items"]}
+        second_ids = {row["id"] for row in second_page["items"]}
         assert first_ids
         assert second_ids
         assert first_ids.isdisjoint(second_ids)
@@ -390,11 +434,14 @@ class TestListLibraries:
 
         first = auth_client.get("/libraries?limit=2", headers=auth_headers(owner_id))
         assert first.status_code == 200, first.text
-        cursor = first.json()["page"]["next_cursor"]
-        assert cursor is not None
+        cursor = first.json()["data"]["nextCursor"]["value"]
+        other_revision = auth_client.get(
+            "/libraries",
+            headers=auth_headers(other_id),
+        ).json()["data"]["collectionRevision"]
 
         response = auth_client.get(
-            f"/libraries?limit=2&cursor={cursor}",
+            f"/libraries?limit=2&cursor={cursor}&collection_revision={other_revision}",
             headers=auth_headers(other_id),
         )
 
@@ -405,19 +452,313 @@ class TestListLibraries:
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
-        response = auth_client.get("/libraries?cursor=not-a-cursor", headers=auth_headers(user_id))
+        revision = auth_client.get(
+            "/libraries",
+            headers=auth_headers(user_id),
+        ).json()["data"]["collectionRevision"]
+        response = auth_client.get(
+            f"/libraries?cursor=not-a-cursor&collection_revision={revision}",
+            headers=auth_headers(user_id),
+        )
 
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_INVALID_CURSOR"
 
     def test_list_libraries_invalid_limit(self, auth_client):
-        """Limit <= 0 returns 422 (FastAPI validation error)."""
+        """Limit <= 0 is rejected by the one raw collection parser."""
         user_id = create_test_user_id()
 
         response = auth_client.get("/libraries?limit=0", headers=auth_headers(user_id))
 
-        # FastAPI Query validation (ge=1) returns 422 which we convert to 400
-        assert response.status_code in (400, 422)
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "offset=0",
+            "unknown=1",
+            "limit=01",
+            "limit=2&limit=3",
+            "cursor=orphan",
+            "collection_revision=1",
+        ],
+    )
+    def test_list_libraries_rejects_legacy_or_malformed_query(
+        self,
+        auth_client,
+        query: str,
+    ):
+        user_id = create_test_user_id()
+
+        response = auth_client.get(
+            f"/libraries?{query}",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+    def test_list_libraries_rejects_continuation_after_revision_change(
+        self,
+        auth_client,
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        for index in range(3):
+            auth_client.post(
+                "/libraries",
+                json=_library_create_body(f"Revision Library {index}"),
+                headers=auth_headers(user_id),
+            )
+        first = auth_client.get(
+            "/libraries?limit=2",
+            headers=auth_headers(user_id),
+        ).json()["data"]
+
+        auth_client.post(
+            "/libraries",
+            json=_library_create_body("Revision changed"),
+            headers=auth_headers(user_id),
+        )
+        response = auth_client.get(
+            "/libraries",
+            params={
+                "limit": 2,
+                "cursor": first["nextCursor"]["value"],
+                "collection_revision": first["collectionRevision"],
+            },
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "E_COLLECTION_CHANGED"
+
+
+@pytest.mark.usefixtures("_sharing_entitled")
+class TestLibrariesIndexRevisionBumps:
+    def test_create_and_replay_bump_once(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        viewer_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(viewer_id))
+        before = _collection_revision(
+            direct_db,
+            viewer_id,
+            "LibrariesIndex",
+        )
+        body = _library_create_body("Revision create")
+
+        first = auth_client.post(
+            "/libraries",
+            json=body,
+            headers=auth_headers(viewer_id),
+        )
+        replay = auth_client.post(
+            "/libraries",
+            json=body,
+            headers=auth_headers(viewer_id),
+        )
+
+        assert first.status_code == replay.status_code == 201
+        assert _collection_revision(direct_db, viewer_id, "LibrariesIndex") == before + 1
+
+    def test_system_library_create_and_replay_bump_once(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        viewer_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(viewer_id))
+        before = _collection_revision(
+            direct_db,
+            viewer_id,
+            "LibrariesIndex",
+        )
+        system_key = f"revision_system_{uuid4().hex}"
+
+        with direct_db.session() as session:
+            first_id = library_governance.ensure_system_library(
+                session,
+                system_key=system_key,
+                name="Revision system",
+                owner_user_id=viewer_id,
+            )
+            replay_id = library_governance.ensure_system_library(
+                session,
+                system_key=system_key,
+                name="Revision system",
+                owner_user_id=viewer_id,
+            )
+
+        direct_db.register_cleanup("memberships", "library_id", first_id)
+        direct_db.register_cleanup("libraries", "id", first_id)
+        assert replay_id == first_id
+        assert _collection_revision(direct_db, viewer_id, "LibrariesIndex") == before + 1
+
+    def test_rename_role_transfer_and_removal_bump_affected_viewers(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        owner_id = create_test_user_id()
+        member_id = create_test_user_id()
+        library_id = auth_client.post(
+            "/libraries",
+            json=_library_create_body("Revision governance"),
+            headers=auth_headers(owner_id),
+        ).json()["data"]["id"]
+        auth_client.get("/me", headers=auth_headers(member_id))
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    "INSERT INTO memberships (library_id, user_id, role) "
+                    "VALUES (:library_id, :member_id, 'member')"
+                ),
+                {"library_id": library_id, "member_id": member_id},
+            )
+            session.commit()
+        before_owner = _collection_revision(
+            direct_db,
+            owner_id,
+            "LibrariesIndex",
+        )
+        before_member = _collection_revision(
+            direct_db,
+            member_id,
+            "LibrariesIndex",
+        )
+
+        renamed = auth_client.patch(
+            f"/libraries/{library_id}",
+            json={"name": "Revision renamed"},
+            headers=auth_headers(owner_id),
+        )
+        promoted = auth_client.patch(
+            f"/libraries/{library_id}/members/{_user_handle(member_id)}",
+            json={"role": "admin"},
+            headers=auth_headers(owner_id),
+        )
+        transferred = auth_client.post(
+            f"/libraries/{library_id}/transfer-ownership",
+            json={"newOwnerUserHandle": _user_handle(member_id)},
+            headers=auth_headers(owner_id),
+        )
+
+        assert renamed.status_code == 200
+        assert promoted.status_code == 200
+        assert transferred.status_code == 200
+        assert _collection_revision(direct_db, owner_id, "LibrariesIndex") == before_owner + 3
+        assert _collection_revision(direct_db, member_id, "LibrariesIndex") == before_member + 3
+        before_member_conversations = _collection_revision(
+            direct_db,
+            owner_id,
+            "ConversationIndex",
+        )
+        removed = auth_client.delete(
+            f"/libraries/{library_id}/members/{_user_handle(owner_id)}",
+            headers=auth_headers(member_id),
+        )
+        assert removed.status_code == 204
+        assert _collection_revision(direct_db, owner_id, "LibrariesIndex") == before_owner + 4
+        assert (
+            _collection_revision(direct_db, owner_id, "ConversationIndex")
+            == before_member_conversations + 1
+        )
+
+    def test_invitation_acceptance_bumps_both_visible_indexes(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        owner_id = create_test_user_id()
+        invitee_id = create_test_user_id()
+        library_id = auth_client.post(
+            "/libraries",
+            json=_library_create_body("Revision invitation"),
+            headers=auth_headers(owner_id),
+        ).json()["data"]["id"]
+        auth_client.get("/me", headers=auth_headers(invitee_id))
+        invitation_handle = auth_client.post(
+            f"/libraries/{library_id}/invites",
+            json={"invitee": _user_invitee(invitee_id), "role": "member"},
+            headers=auth_headers(owner_id),
+        ).json()["data"]["invitationHandle"]
+        before_libraries = _collection_revision(
+            direct_db,
+            invitee_id,
+            "LibrariesIndex",
+        )
+        before_conversations = _collection_revision(
+            direct_db,
+            invitee_id,
+            "ConversationIndex",
+        )
+
+        response = auth_client.post(
+            f"/libraries/invites/{invitation_handle}/accept",
+            headers=auth_headers(invitee_id),
+        )
+        replay = auth_client.post(
+            f"/libraries/invites/{invitation_handle}/accept",
+            headers=auth_headers(invitee_id),
+        )
+
+        assert response.status_code == 200
+        assert replay.status_code == 200
+        assert replay.json()["data"]["idempotent"] is True
+        assert _collection_revision(direct_db, invitee_id, "LibrariesIndex") == before_libraries + 1
+        assert (
+            _collection_revision(direct_db, invitee_id, "ConversationIndex")
+            == before_conversations + 1
+        )
+
+    def test_delete_bumps_all_members_and_conversation_visibility(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        owner_id = create_test_user_id()
+        member_id = create_test_user_id()
+        library_id = auth_client.post(
+            "/libraries",
+            json=_library_create_body("Revision delete"),
+            headers=auth_headers(owner_id),
+        ).json()["data"]["id"]
+        auth_client.get("/me", headers=auth_headers(member_id))
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    "INSERT INTO memberships (library_id, user_id, role) "
+                    "VALUES (:library_id, :member_id, 'member')"
+                ),
+                {"library_id": library_id, "member_id": member_id},
+            )
+            session.commit()
+        before = {
+            (viewer_id, family): _collection_revision(
+                direct_db,
+                viewer_id,
+                family,
+            )
+            for viewer_id in (owner_id, member_id)
+            for family in ("LibrariesIndex", "ConversationIndex")
+        }
+
+        response = auth_client.delete(
+            f"/libraries/{library_id}",
+            headers=auth_headers(owner_id),
+        )
+
+        assert response.status_code == 200
+        assert response.json()["data"] == {
+            "libraryId": library_id,
+            "collectionRevision": before[(owner_id, "LibrariesIndex")] + 1,
+        }
+        for key, revision in before.items():
+            assert _collection_revision(direct_db, *key) == revision + 1
 
 
 class TestWritableLibraryDestinations:
@@ -721,7 +1062,9 @@ class TestSystemLibraryMutationGuards:
         direct_db.register_cleanup("memberships", "library_id", system_id)
         direct_db.register_cleanup("libraries", "id", system_id)
 
-        entries = _list_library_entries(auth_client, owner_id, str(system_id)).json()["data"]
+        entries = _entry_items(
+            _list_library_entries(auth_client, owner_id, str(system_id))
+        )
         entry_ids = [row["id"] for row in entries]
         assert entry_ids, "expected a seeded system-library entry"
 
@@ -880,7 +1223,9 @@ class TestRenameLibrary:
         )
 
         assert response.status_code == 200
-        assert response.json()["data"]["name"] == "New Name"
+        assert response.json()["data"]["library"]["name"] == "New Name"
+        assert response.json()["data"]["library"]["id"] == library_id
+        assert response.json()["data"]["collectionRevision"] >= 1
 
     def test_rename_default_library_forbidden(self, auth_client):
         """Cannot rename default library."""
@@ -955,7 +1300,9 @@ class TestDeleteLibrary:
         # Delete
         response = auth_client.delete(f"/libraries/{library_id}", headers=auth_headers(user_id))
 
-        assert response.status_code == 204
+        assert response.status_code == 200
+        assert response.json()["data"]["libraryId"] == library_id
+        assert response.json()["data"]["collectionRevision"] >= 1
 
         # Verify deleted
         with direct_db.session() as session:
@@ -1272,7 +1619,9 @@ class TestPodcastLibraryEntries:
 
         assert response.status_code == 204
         assert response.content == b""
-        entries = _list_library_entries(auth_client, user_id, library_id).json()["data"]
+        entries = _entry_items(
+            _list_library_entries(auth_client, user_id, library_id)
+        )
         data = next(row for row in entries if row["kind"] == "podcast")
         assert data["podcast"]["id"] == str(podcast_id)
         assert data["readingTimeEstimate"] == {"kind": "Absent"}
@@ -1362,7 +1711,8 @@ class TestPodcastLibraryEntries:
             f"/libraries/{library_id}/podcasts/{podcast_id}",
             headers=auth_headers(user_id),
         )
-        assert remove_resp.status_code == 204
+        assert remove_resp.status_code == 200
+        assert remove_resp.json()["data"]["libraryEntriesCollectionRevision"] >= 1
 
 
 class TestListLibraryMedia:
@@ -1378,9 +1728,8 @@ class TestListLibraryMedia:
         response = _list_library_entries(auth_client, user_id, library_id)
 
         assert response.status_code == 200
-        body = response.json()
-        assert body["page"] == {"has_more": False, "next_cursor": None}
-        assert body["data"] == []
+        assert _entry_cursor(response) is None
+        assert _entry_items(response) == []
 
     def test_list_media_success(self, auth_client, direct_db: DirectSessionManager):
         """List media returns media in library."""
@@ -1401,9 +1750,8 @@ class TestListLibraryMedia:
         response = _list_library_entries(auth_client, user_id, library_id)
 
         assert response.status_code == 200
-        body = response.json()
-        assert body["page"] == {"has_more": False, "next_cursor": None}
-        data = body["data"]
+        assert _entry_cursor(response) is None
+        data = _entry_items(response)
         assert len(data) == 1
         assert data[0]["kind"] == "media"
         assert data[0]["media"]["id"] == str(media_id)
@@ -1523,7 +1871,7 @@ class TestListLibraryMedia:
 
         response = _list_library_entries(auth_client, user_id, library_id)
         assert response.status_code == 200, response.text
-        by_id = {row["media"]["id"]: row for row in response.json()["data"]}
+        by_id = {row["media"]["id"]: row for row in _entry_items(response)}
 
         assert by_id[str(unread_id)]["readingTimeEstimate"] == {
             "kind": "Present",
@@ -1598,7 +1946,7 @@ class TestListLibraryMedia:
         assert response.status_code == 200, response.text
         actual_by_id = {
             row["media"]["id"]: row["readingTimeEstimate"]["value"]["totalMinutes"]
-            for row in response.json()["data"]
+            for row in _entry_items(response)
         }
         assert actual_by_id == expected_by_id
 
@@ -1812,62 +2160,25 @@ class TestListLibraryMedia:
         response = _list_library_entries(auth_client, user_id, library_id)
 
         assert response.status_code == 200
-        data = response.json()["data"]
+        data = _entry_items(response)
         assert len(data) == 1
         media = data[0]["media"]
         assert media["id"] == str(media_id)
-        assert media["transcript_state"] == "ready"
-        assert media["transcript_coverage"] == "full"
-        assert media["subscription_default_playback_speed"] == 1.5
-        assert media["description_html"] == "<p>Episode HTML description</p>"
-        assert media["description_text"] == "Episode text description"
-        assert media["listening_state"] == {
-            "position_ms": 12000,
-            "duration_ms": 180000,
-            "playback_speed": 1.25,
-            "is_completed": False,
-        }
         assert media["read_state"] == "in_progress"
         assert media["progress_fraction"] == pytest.approx(12000 / 180000)
         assert "read_state" not in data[0]
         assert "progress_fraction" not in data[0]
         assert data[0]["readingTimeEstimate"] == {"kind": "Absent"}
-        assert "player_descriptor" not in media
-        descriptor = media["playerDescriptor"]
-        assert descriptor["kind"] == "Present"
-        assert descriptor["value"]["mediaId"] == str(media_id)
-        assert descriptor["value"]["activation"]["streamUrl"] == (
-            "https://cdn.example.com/library-hydration-episode.mp3"
-        )
-
-        def assert_camel_tree(value: object) -> None:
-            if isinstance(value, dict):
-                assert all("_" not in key for key in value), value
-                for child in value.values():
-                    assert_camel_tree(child)
-            elif isinstance(value, list):
-                for child in value:
-                    assert_camel_tree(child)
-
-        assert_camel_tree(descriptor)
-        assert media["chapters"] == [
-            {
-                "chapter_idx": 0,
-                "title": "Intro",
-                "t_start_ms": 0,
-                "t_end_ms": 45000,
-                "url": "https://example.com/chapters/intro",
-                "image_url": None,
-            },
-            {
-                "chapter_idx": 1,
-                "title": "Deep Dive",
-                "t_start_ms": 45000,
-                "t_end_ms": None,
-                "url": "https://example.com/chapters/deep-dive",
-                "image_url": "https://cdn.example.com/chapter.png",
-            },
-        ]
+        assert {
+            "transcript_state",
+            "transcript_coverage",
+            "subscription_default_playback_speed",
+            "description_html",
+            "description_text",
+            "listening_state",
+            "playerDescriptor",
+            "chapters",
+        }.isdisjoint(media)
 
     def test_list_media_library_not_found(self, auth_client):
         """List media in non-existent library returns 404."""
@@ -1915,9 +2226,8 @@ class TestListLibraryMedia:
         response = _list_library_entries(auth_client, user_id, library_id)
 
         assert response.status_code == 200
-        body = response.json()
-        assert body["page"] == {"has_more": False, "next_cursor": None}
-        data = body["data"]
+        assert _entry_cursor(response) is None
+        data = _entry_items(response)
         assert len(data) == 3
         assert _library_entry_media_ids(data) == [str(media_id) for media_id in reversed(media_ids)]
 
@@ -1942,20 +2252,26 @@ class TestListLibraryMedia:
         # created media, page 2 the oldest.
         first = _list_library_entries(auth_client, user_id, library_id, limit=2)
         assert first.status_code == 200, first.text
-        first_body = first.json()
-        assert _library_entry_media_ids(first_body["data"]) == [
+        assert _library_entry_media_ids(_entry_items(first)) == [
             str(media_ids[2]),
             str(media_ids[1]),
         ]
-        cursor = first_body["page"]["next_cursor"]
-        assert first_body["page"]["has_more"] is True
+        cursor = _entry_cursor(first)
+        revision = _entry_revision(first)
         assert cursor is not None
 
-        second = _list_library_entries(auth_client, user_id, library_id, limit=2, cursor=cursor)
+        second = _list_library_entries(
+            auth_client,
+            user_id,
+            library_id,
+            limit=2,
+            cursor=cursor,
+            collection_revision=revision,
+        )
         assert second.status_code == 200, second.text
-        second_body = second.json()
-        assert _library_entry_media_ids(second_body["data"]) == [str(media_ids[0])]
-        assert second_body["page"] == {"has_more": False, "next_cursor": None}
+        assert _library_entry_media_ids(_entry_items(second)) == [str(media_ids[0])]
+        assert _entry_cursor(second) is None
+        assert _entry_revision(second) == revision
 
     def test_list_media_rejects_cursor_from_another_library(
         self, auth_client, direct_db: DirectSessionManager
@@ -1987,21 +2303,25 @@ class TestListLibraryMedia:
 
         first = _list_library_entries(auth_client, user_id, library_a, limit=1)
         assert first.status_code == 200, first.text
-        cursor = first.json()["page"]["next_cursor"]
+        cursor = _entry_cursor(first)
         assert cursor is not None
 
-        response = _list_library_entries(auth_client, user_id, library_b, limit=1, cursor=cursor)
+        response = _list_library_entries(
+            auth_client,
+            user_id,
+            library_b,
+            limit=1,
+            cursor=cursor,
+            collection_revision=_entry_revision(first),
+        )
 
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_INVALID_CURSOR"
 
-    def test_list_media_default_insert_above_cursor_keyset_invariant(
+    def test_list_media_default_mutation_invalidates_continuation(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """AC6: Default's stateless keyset has no frozen snapshot — an insert
-        above the cursor (newer than everything already fetched) neither
-        duplicates nor omits the pre-existing lower rows a stale cursor still
-        points at, and the new row appears on a fresh first page."""
+        """A production filing bumps LibraryEntries and rejects a stale drain."""
         user_id = create_test_user_id()
         library_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
             "default_library_id"
@@ -2018,47 +2338,44 @@ class TestListLibraryMedia:
 
         first = _list_library_entries(auth_client, user_id, library_id, limit=2)
         assert first.status_code == 200, first.text
-        first_body = first.json()
-        assert _library_entry_media_ids(first_body["data"]) == [
+        assert _library_entry_media_ids(_entry_items(first)) == [
             str(media_ids[2]),
             str(media_ids[1]),
         ]
-        cursor = first_body["page"]["next_cursor"]
+        cursor = _entry_cursor(first)
+        revision = _entry_revision(first)
         assert cursor is not None
 
-        # Insert a media newer than everything already fetched — "above" the
-        # cursor in Default's (media.created_at DESC) order — after page 1 but
-        # before page 2 is fetched.
+        # Mutate through the production owner so the collection epoch advances.
         with direct_db.session() as session:
             newest_media_id = create_test_media(session, title="Filed after page 1")
-            add_media_to_library(session, UUID(library_id), newest_media_id)
+            library_entries.ensure_media_in_default_library(session, user_id, newest_media_id)
             session.commit()
         direct_db.register_cleanup("library_entries", "media_id", newest_media_id)
         direct_db.register_cleanup("media", "id", newest_media_id)
 
-        # The stale cursor's continuation is unaffected: the pre-existing lower
-        # row appears exactly once, and the new row (above the cursor) never
-        # leaks into it.
-        second = _list_library_entries(auth_client, user_id, library_id, limit=2, cursor=cursor)
-        assert second.status_code == 200, second.text
-        assert _library_entry_media_ids(second.json()["data"]) == [str(media_ids[0])]
-        assert second.json()["page"] == {"has_more": False, "next_cursor": None}
+        second = _list_library_entries(
+            auth_client,
+            user_id,
+            library_id,
+            limit=2,
+            cursor=cursor,
+            collection_revision=revision,
+        )
+        assert second.status_code == 409, second.text
+        assert second.json()["error"]["code"] == "E_COLLECTION_CHANGED"
 
-        # A fresh first page picks up the new row immediately.
         refreshed = _list_library_entries(auth_client, user_id, library_id, limit=2)
         assert refreshed.status_code == 200, refreshed.text
-        assert _library_entry_media_ids(refreshed.json()["data"]) == [
+        assert _library_entry_media_ids(_entry_items(refreshed)) == [
             str(newest_media_id),
             str(media_ids[2]),
         ]
 
-    def test_list_media_non_default_position_insert_above_cursor_keyset_invariant(
+    def test_list_media_non_default_mutation_invalidates_continuation(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """AC6: a non-default canonical (position-order) keyset survives inserts
-        between page fetches the same way Default's does — a row landing before the
-        pagination boundary neither duplicates nor omits the pre-existing
-        higher-position rows a stale cursor still points at."""
+        """A production filing invalidates a named-library continuation."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -2084,42 +2401,42 @@ class TestListLibraryMedia:
 
         first = _list_library_entries(auth_client, user_id, library_id, limit=2)
         assert first.status_code == 200, first.text
-        first_body = first.json()
-        assert _library_entry_media_ids(first_body["data"]) == [
+        assert _library_entry_media_ids(_entry_items(first)) == [
             str(media_ids[0]),
             str(media_ids[1]),
         ]
-        cursor = first_body["page"]["next_cursor"]
-        assert first_body["page"]["has_more"] is True
+        cursor = _entry_cursor(first)
+        revision = _entry_revision(first)
         assert cursor is not None
 
-        # Insert a media at position 5 — sorts before every existing entry
-        # ("above the cursor") — after page 1 is fetched but before page 2 is.
         with direct_db.session() as session:
-            newest_media_id = create_test_media(session, title="Inserted above cursor")
-            session.execute(
-                text(
-                    "INSERT INTO library_entries (library_id, media_id, position) "
-                    "VALUES (:library_id, :media_id, 5)"
-                ),
-                {"library_id": library_id, "media_id": newest_media_id},
+            newest_media_id = create_test_media(session, title="Filed during drain")
+            library_entries.ensure_media_in_default_library(session, user_id, newest_media_id)
+            session.commit()
+            library_entries.ensure_media_in_library(
+                session,
+                user_id,
+                library_id,
+                newest_media_id,
             )
             session.commit()
         direct_db.register_cleanup("library_entries", "media_id", newest_media_id)
         direct_db.register_cleanup("media", "id", newest_media_id)
 
-        # The stale cursor's continuation is unaffected: the pre-existing
-        # higher-position row appears exactly once, and the new row (above
-        # the cursor) never leaks into it.
-        second = _list_library_entries(auth_client, user_id, library_id, limit=2, cursor=cursor)
-        assert second.status_code == 200, second.text
-        assert _library_entry_media_ids(second.json()["data"]) == [str(media_ids[2])]
-        assert second.json()["page"] == {"has_more": False, "next_cursor": None}
+        second = _list_library_entries(
+            auth_client,
+            user_id,
+            library_id,
+            limit=2,
+            cursor=cursor,
+            collection_revision=revision,
+        )
+        assert second.status_code == 409, second.text
+        assert second.json()["error"]["code"] == "E_COLLECTION_CHANGED"
 
-        # A fresh first page picks up the new row immediately, at the top.
-        refreshed = _list_library_entries(auth_client, user_id, library_id, limit=1)
+        refreshed = _list_library_entries(auth_client, user_id, library_id, limit=4)
         assert refreshed.status_code == 200, refreshed.text
-        assert _library_entry_media_ids(refreshed.json()["data"]) == [str(newest_media_id)]
+        assert _library_entry_media_ids(_entry_items(refreshed))[-1] == str(newest_media_id)
 
     def test_list_media_non_default_position_excludes_tombstoned_media_at_page_boundary(
         self, auth_client, direct_db: DirectSessionManager
@@ -2164,34 +2481,48 @@ class TestListLibraryMedia:
 
         first = _list_library_entries(auth_client, user_id, library_id, limit=2)
         assert first.status_code == 200, first.text
-        first_body = first.json()
         # A full page of 2 VISIBLE entries — the tombstoned one is skipped
         # entirely, not counted toward the page and then silently dropped.
-        assert _library_entry_media_ids(first_body["data"]) == [
+        assert _library_entry_media_ids(_entry_items(first)) == [
             str(media_ids[0]),
             str(media_ids[2]),
         ]
-        assert first_body["page"]["has_more"] is True
-        cursor = first_body["page"]["next_cursor"]
+        cursor = _entry_cursor(first)
+        revision = _entry_revision(first)
         assert cursor is not None
 
-        second = _list_library_entries(auth_client, user_id, library_id, limit=2, cursor=cursor)
+        second = _list_library_entries(
+            auth_client,
+            user_id,
+            library_id,
+            limit=2,
+            cursor=cursor,
+            collection_revision=revision,
+        )
         assert second.status_code == 200, second.text
-        assert _library_entry_media_ids(second.json()["data"]) == [str(media_ids[3])]
-        assert second.json()["page"] == {"has_more": False, "next_cursor": None}
+        assert _library_entry_media_ids(_entry_items(second)) == [str(media_ids[3])]
+        assert _entry_cursor(second) is None
 
         # The tombstoned entry never surfaces on any page.
-        assert str(tombstoned_media_id) not in _library_entry_media_ids(first_body["data"]) and str(
+        assert str(tombstoned_media_id) not in _library_entry_media_ids(_entry_items(first)) and str(
             tombstoned_media_id
-        ) not in _library_entry_media_ids(second.json()["data"])
+        ) not in _library_entry_media_ids(_entry_items(second))
 
     def test_list_media_rejects_invalid_cursor(self, auth_client):
         user_id = create_test_user_id()
         library_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
             "default_library_id"
         ]
+        current = _list_library_entries(auth_client, user_id, library_id)
+        assert current.status_code == 200, current.text
 
-        response = _list_library_entries(auth_client, user_id, library_id, cursor="not-a-cursor")
+        response = _list_library_entries(
+            auth_client,
+            user_id,
+            library_id,
+            cursor="not-a-cursor",
+            collection_revision=_entry_revision(current),
+        )
 
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_INVALID_CURSOR"
@@ -2238,7 +2569,7 @@ class TestListLibraryMedia:
 
         first = _list_library_entries(auth_client, user_id, library_id, limit=1)
         assert first.status_code == 200, first.text
-        cursor = first.json()["page"]["next_cursor"]
+        cursor = _entry_cursor(first)
         assert cursor is not None
 
         response = _list_library_entries(
@@ -2248,6 +2579,7 @@ class TestListLibraryMedia:
             sort="title",
             direction="asc",
             cursor=cursor,
+            collection_revision=_entry_revision(first),
         )
 
         assert response.status_code == 400
@@ -2302,7 +2634,7 @@ class TestDefaultLibraryVirtualView:
 
         # Sanity: shared-only membership already surfaces it once in Default.
         shared_only = _list_library_entries(auth_client, viewer_id, viewer_default_id)
-        assert _library_entry_media_ids(shared_only.json()["data"]) == [str(media_id)]
+        assert _library_entry_media_ids(_entry_items(shared_only)) == [str(media_id)]
 
         # Direct: viewer also files it directly into their own Default.
         with direct_db.session() as session:
@@ -2311,11 +2643,11 @@ class TestDefaultLibraryVirtualView:
 
         response = _list_library_entries(auth_client, viewer_id, viewer_default_id)
         assert response.status_code == 200
-        data = response.json()["data"]
+        data = _entry_items(response)
         assert _library_entry_media_ids(data) == [str(media_id)]
         # The representative entry is the direct default one, not the shared
         # library's row.
-        assert data[0]["library_id"] == viewer_default_id
+        assert data[0]["id"] != _entry_items(shared_only)[0]["id"]
 
     def test_viewer_tombstone_hides_media_from_default(
         self, auth_client, direct_db: DirectSessionManager
@@ -2332,7 +2664,7 @@ class TestDefaultLibraryVirtualView:
             library_entries.ensure_media_in_default_library(session, user_id, media_id)
             session.commit()
         assert str(media_id) in _library_entry_media_ids(
-            _list_library_entries(auth_client, user_id, library_id).json()["data"]
+            _entry_items(_list_library_entries(auth_client, user_id, library_id))
         )
 
         with direct_db.session() as session:
@@ -2344,7 +2676,7 @@ class TestDefaultLibraryVirtualView:
 
         response = _list_library_entries(auth_client, user_id, library_id)
         assert response.status_code == 200
-        assert str(media_id) not in _library_entry_media_ids(response.json()["data"])
+        assert str(media_id) not in _library_entry_media_ids(_entry_items(response))
 
     def test_system_only_media_excluded_until_filed_personally(
         self, auth_client, direct_db: DirectSessionManager
@@ -2392,7 +2724,7 @@ class TestDefaultLibraryVirtualView:
 
         before = _list_library_entries(auth_client, user_id, library_id)
         assert before.status_code == 200
-        assert str(media_id) not in _library_entry_media_ids(before.json()["data"])
+        assert str(media_id) not in _library_entry_media_ids(_entry_items(before))
 
         with direct_db.session() as session:
             library_entries.ensure_media_in_default_library(session, user_id, media_id)
@@ -2400,7 +2732,7 @@ class TestDefaultLibraryVirtualView:
 
         after = _list_library_entries(auth_client, user_id, library_id)
         assert after.status_code == 200
-        assert _library_entry_media_ids(after.json()["data"]).count(str(media_id)) == 1
+        assert _library_entry_media_ids(_entry_items(after)).count(str(media_id)) == 1
 
     def test_default_cursor_rejects_cross_scope(self, auth_client, direct_db: DirectSessionManager):
         """A Default v2 cursor is bound to the exact (viewer, library, view);
@@ -2435,17 +2767,29 @@ class TestDefaultLibraryVirtualView:
 
         first = _list_library_entries(auth_client, user_a, library_a, limit=1)
         assert first.status_code == 200, first.text
-        cursor = first.json()["page"]["next_cursor"]
+        cursor = _entry_cursor(first)
         assert cursor is not None
 
         # Same viewer, a DIFFERENT library they also belong to.
-        cross_library = _list_library_entries(auth_client, user_a, library_c, cursor=cursor)
+        cross_library = _list_library_entries(
+            auth_client,
+            user_a,
+            library_c,
+            cursor=cursor,
+            collection_revision=_entry_revision(first),
+        )
         assert cross_library.status_code == 400
         assert cross_library.json()["error"]["code"] == "E_INVALID_CURSOR"
 
         # Foreign viewer, same library id is masked as not-found before the
         # cursor is even reached (viewer_b is not a member of library_a).
-        cross_viewer = _list_library_entries(auth_client, user_b, library_a, cursor=cursor)
+        cross_viewer = _list_library_entries(
+            auth_client,
+            user_b,
+            library_a,
+            cursor=cursor,
+            collection_revision=_entry_revision(first),
+        )
         assert cross_viewer.status_code == 404
 
 
@@ -2482,7 +2826,9 @@ class TestReorderLibraryMedia:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        entries = _list_library_entries(auth_client, user_id, library_id).json()["data"]
+        entries = _entry_items(
+            _list_library_entries(auth_client, user_id, library_id)
+        )
         entry_id = next(row["id"] for row in entries)
 
         # A malformed body (wrong set) against Default still yields the Default
@@ -2495,7 +2841,9 @@ class TestReorderLibraryMedia:
         assert response.status_code == 403
         assert response.json()["error"]["code"] == "E_DEFAULT_LIBRARY_FORBIDDEN"
 
-        after = _list_library_entries(auth_client, user_id, library_id).json()["data"]
+        after = _entry_items(
+            _list_library_entries(auth_client, user_id, library_id)
+        )
         assert _library_entry_media_ids(after) == [str(media_id)]
 
     def test_reorder_library_entries_replaces_order(
@@ -2516,7 +2864,7 @@ class TestReorderLibraryMedia:
 
         reordered_media_ids = [media_ids[2], media_ids[0], media_ids[1]]
         list_resp = _list_library_entries(auth_client, user_id, library_id)
-        existing_entries = list_resp.json()["data"]
+        existing_entries = _entry_items(list_resp)
         media_entry_id_by_media_id = {
             row["media"]["id"]: row["id"]
             for row in existing_entries
@@ -2537,7 +2885,7 @@ class TestReorderLibraryMedia:
 
         list_resp = _list_library_entries(auth_client, user_id, library_id)
         assert list_resp.status_code == 200
-        assert _library_entry_media_ids(list_resp.json()["data"]) == [
+        assert _library_entry_media_ids(_entry_items(list_resp)) == [
             str(media_id) for media_id in reordered_media_ids
         ]
 
@@ -2549,7 +2897,7 @@ class TestReorderLibraryMedia:
         assert idempotent_resp.status_code == 204
         assert idempotent_resp.content == b""
         assert _library_entry_media_ids(
-            _list_library_entries(auth_client, user_id, library_id).json()["data"]
+            _entry_items(_list_library_entries(auth_client, user_id, library_id))
         ) == [str(media_id) for media_id in reordered_media_ids]
 
     def test_reorder_library_entries_requires_exact_media_set(
@@ -2569,7 +2917,7 @@ class TestReorderLibraryMedia:
             direct_db.register_cleanup("media", "id", media_id)
 
         list_resp = _list_library_entries(auth_client, user_id, library_id)
-        existing_entries = list_resp.json()["data"]
+        existing_entries = _entry_items(list_resp)
         media_entry_id_by_media_id = {
             row["media"]["id"]: row["id"]
             for row in existing_entries
@@ -2600,9 +2948,9 @@ class TestReorderLibraryMedia:
                 direct_db.register_cleanup("media", "id", media_id)
             session.commit()
 
-        first_page = _list_library_entries(auth_client, user_id, library_id, limit=2).json()
-        assert first_page["page"]["next_cursor"] is not None
-        partial_ids = [row["id"] for row in first_page["data"]]
+        first_page = _list_library_entries(auth_client, user_id, library_id, limit=2)
+        assert _entry_cursor(first_page) is not None
+        partial_ids = [row["id"] for row in _entry_items(first_page)]
 
         response = auth_client.patch(
             f"/libraries/{library_id}/entries/reorder",
@@ -2651,7 +2999,7 @@ class TestReorderLibraryMedia:
         assert accept_resp.status_code == 200
 
         list_resp = _list_library_entries(auth_client, owner_id, library_id)
-        existing_entries = list_resp.json()["data"]
+        existing_entries = _entry_items(list_resp)
         media_entry_id_by_media_id = {
             row["media"]["id"]: row["id"]
             for row in existing_entries
@@ -2716,7 +3064,9 @@ class TestReorderLibraryMedia:
             == 204
         )
 
-        entries = _list_library_entries(auth_client, user_id, library_id).json()["data"]
+        entries = _entry_items(
+            _list_library_entries(auth_client, user_id, library_id)
+        )
         media_entry_id = next(row["id"] for row in entries if row["kind"] == "media")
         podcast_entry_id = next(row["id"] for row in entries if row["kind"] == "podcast")
 
@@ -2728,7 +3078,9 @@ class TestReorderLibraryMedia:
         assert reorder_resp.status_code == 204, reorder_resp.text
         assert reorder_resp.content == b""
 
-        after = _list_library_entries(auth_client, user_id, library_id).json()["data"]
+        after = _entry_items(
+            _list_library_entries(auth_client, user_id, library_id)
+        )
         assert [row["id"] for row in after] == [podcast_entry_id, media_entry_id]
         assert [row["position"] for row in after] == [0, 1]
 
@@ -2751,7 +3103,9 @@ class TestReorderLibraryMedia:
             direct_db.register_cleanup("library_entries", "media_id", media_id)
             direct_db.register_cleanup("media", "id", media_id)
 
-        entries = _list_library_entries(auth_client, user_id, library_id).json()["data"]
+        entries = _entry_items(
+            _list_library_entries(auth_client, user_id, library_id)
+        )
         entry_id_a = next(
             row["id"] for row in entries if row["media"] and row["media"]["id"] == str(media_a)
         )
@@ -2767,7 +3121,9 @@ class TestReorderLibraryMedia:
         assert resp.status_code == 400
         assert resp.json()["error"]["code"] == "E_INVALID_REQUEST"
 
-        after = _list_library_entries(auth_client, user_id, library_id).json()["data"]
+        after = _entry_items(
+            _list_library_entries(auth_client, user_id, library_id)
+        )
         assert _library_entry_media_ids(after) == [str(media_a), str(media_b)]
 
 
@@ -2878,7 +3234,9 @@ class TestDeleteLibraryGovernance:
 
         # Owner deletes — should succeed
         response = auth_client.delete(f"/libraries/{library_id}", headers=auth_headers(owner_id))
-        assert response.status_code == 204
+        assert response.status_code == 200
+        assert response.json()["data"]["libraryId"] == library_id
+        assert response.json()["data"]["collectionRevision"] >= 1
 
     def test_delete_library_non_owner_admin_returns_owner_required(
         self, auth_client, direct_db: DirectSessionManager
@@ -4186,7 +4544,7 @@ class TestVisibility:
         # User B lists their libraries
         list_resp = auth_client.get("/libraries", headers=auth_headers(user_b))
 
-        library_ids = [lib["id"] for lib in list_resp.json()["data"]]
+        library_ids = [lib["id"] for lib in list_resp.json()["data"]["items"]]
         assert library_id not in library_ids
 
 
@@ -4977,7 +5335,9 @@ class TestLibraryInviteAccept:
         invitation_handle = self._create_invite(auth_client, owner_id, invitee_id, library_id)
 
         # Before accept: shared media is absent from invitee's Default.
-        before = _list_library_entries(auth_client, invitee_id, default_library_id).json()["data"]
+        before = _entry_items(
+            _list_library_entries(auth_client, invitee_id, default_library_id)
+        )
         assert str(media_id) not in _library_entry_media_ids(before)
 
         auth_client.post(
@@ -4987,9 +5347,9 @@ class TestLibraryInviteAccept:
 
         # Immediately after accept, with no worker/projection step run:
         # shared media appears in invitee's Default.
-        after_accept = _list_library_entries(auth_client, invitee_id, default_library_id).json()[
-            "data"
-        ]
+        after_accept = _entry_items(
+            _list_library_entries(auth_client, invitee_id, default_library_id)
+        )
         assert str(media_id) in _library_entry_media_ids(after_accept)
 
         # Owner (admin) removes the invitee from the shared library.
@@ -5001,9 +5361,9 @@ class TestLibraryInviteAccept:
 
         # Immediately after removal, with no worker/projection step run: the
         # media is gone from invitee's Default again.
-        after_removal = _list_library_entries(auth_client, invitee_id, default_library_id).json()[
-            "data"
-        ]
+        after_removal = _entry_items(
+            _list_library_entries(auth_client, invitee_id, default_library_id)
+        )
         assert str(media_id) not in _library_entry_media_ids(after_removal)
 
     def test_accept_invite_grants_immediate_media_access_before_backfill_worker(
@@ -5035,7 +5395,7 @@ class TestLibraryInviteAccept:
         # Invitee can immediately list media in the source library
         response = _list_library_entries(auth_client, invitee_id, library_id)
         assert response.status_code == 200
-        media_ids = _library_entry_media_ids(response.json()["data"])
+        media_ids = _library_entry_media_ids(_entry_items(response))
         assert str(media_id) in media_ids
 
     def test_accept_invite_idempotent_when_already_accepted(self, auth_client):
@@ -5655,13 +6015,14 @@ class TestLibraryListPdfCapabilities:
         assert list_resp.status_code == 200
         entries = {
             row["media"]["id"]: row
-            for row in list_resp.json()["data"]
+            for row in _entry_items(list_resp)
             if row["kind"] == "media" and row["media"] is not None
         }
 
         ready_caps = entries[str(mid_ready)]["media"]["capabilities"]
         assert ready_caps["can_quote"] is True
-        assert ready_caps["can_search"] is False
+        assert "can_search" not in ready_caps
+        assert "can_read" not in ready_caps
         assert entries[str(mid_ready)]["readingTimeEstimate"] == {
             "kind": "Present",
             "value": {
@@ -5672,12 +6033,14 @@ class TestLibraryListPdfCapabilities:
 
         not_ready_caps = entries[str(mid_not_ready)]["media"]["capabilities"]
         assert not_ready_caps["can_quote"] is False
-        assert not_ready_caps["can_search"] is False
+        assert "can_search" not in not_ready_caps
+        assert "can_read" not in not_ready_caps
         assert entries[str(mid_not_ready)]["readingTimeEstimate"] == {"kind": "Absent"}
 
         whitespace_caps = entries[str(mid_whitespace)]["media"]["capabilities"]
         assert whitespace_caps["can_quote"] is False
-        assert whitespace_caps["can_search"] is False
+        assert "can_search" not in whitespace_caps
+        assert "can_read" not in whitespace_caps
         assert entries[str(mid_whitespace)]["readingTimeEstimate"] == {"kind": "Absent"}
 
     def test_library_list_pdf_capabilities_match_detail_readiness_split(
@@ -5706,7 +6069,7 @@ class TestLibraryListPdfCapabilities:
         list_resp = _list_library_entries(auth_client, user_id, library_id)
         list_caps = next(
             row["media"]["capabilities"]
-            for row in list_resp.json()["data"]
+            for row in _entry_items(list_resp)
             if row["kind"] == "media"
             and row["media"] is not None
             and row["media"]["id"] == str(mid)
@@ -5715,9 +6078,9 @@ class TestLibraryListPdfCapabilities:
         detail_resp = auth_client.get(f"/media/{mid}", headers=auth_headers(user_id))
         detail_caps = detail_resp.json()["data"]["capabilities"]
 
-        assert list_caps["can_read"] == detail_caps["can_read"]
         assert list_caps["can_quote"] == detail_caps["can_quote"]
-        assert list_caps["can_search"] == detail_caps["can_search"]
+        assert "can_read" not in list_caps
+        assert "can_search" not in list_caps
 
 
 # =============================================================================
@@ -5818,7 +6181,7 @@ class TestLibraryEntryPositionInvariant:
 
 
 def _view_ids(response) -> list[str]:
-    return _library_entry_media_ids(response.json()["data"])
+    return _library_entry_media_ids(_entry_items(response))
 
 
 def _add_creator(session, media_id: UUID, display_name: str, *, ordinal: int = 1) -> UUID:
@@ -6138,6 +6501,7 @@ class TestLibraryEntryViewLenses:
 
         collected: list[str] = []
         cursor = None
+        revision = None
         for _ in range(4):
             resp = _list_library_entries(
                 auth_client,
@@ -6146,11 +6510,16 @@ class TestLibraryEntryViewLenses:
                 sort="title",
                 direction="asc",
                 limit=1,
-                **({"cursor": cursor} if cursor else {}),
+                **(
+                    {"cursor": cursor, "collection_revision": revision}
+                    if cursor is not None
+                    else {}
+                ),
             )
             assert resp.status_code == 200, resp.text
             collected.extend(_view_ids(resp))
-            cursor = resp.json()["page"]["next_cursor"]
+            revision = _entry_revision(resp)
+            cursor = _entry_cursor(resp)
             if cursor is None:
                 break
         assert collected == expected
@@ -6171,11 +6540,18 @@ class TestLibraryEntryViewLenses:
         first = _list_library_entries(
             auth_client, user_id, library_id, sort="title", direction="asc", limit=1
         )
-        cursor = first.json()["page"]["next_cursor"]
+        cursor = _entry_cursor(first)
+        revision = _entry_revision(first)
         assert cursor is not None
 
         cross_direction = _list_library_entries(
-            auth_client, user_id, library_id, sort="title", direction="desc", cursor=cursor
+            auth_client,
+            user_id,
+            library_id,
+            sort="title",
+            direction="desc",
+            cursor=cursor,
+            collection_revision=revision,
         )
         assert cross_direction.status_code == 400
         assert cross_direction.json()["error"]["code"] == "E_INVALID_CURSOR"
@@ -6188,6 +6564,7 @@ class TestLibraryEntryViewLenses:
             direction="asc",
             completion="unfinished",
             cursor=cursor,
+            collection_revision=revision,
         )
         assert cross_completion.status_code == 400
         assert cross_completion.json()["error"]["code"] == "E_INVALID_CURSOR"
@@ -6221,7 +6598,7 @@ class TestLibraryEntryViewLenses:
         # Both surviving unfinished rows fill the page; the finished X is filtered
         # out up front, not counted then dropped (which would yield a short page).
         assert _view_ids(page) == [str(y), str(z)]
-        assert page.json()["page"] == {"has_more": False, "next_cursor": None}
+        assert _entry_cursor(page) is None
 
     def test_hide_finished_keeps_podcast_shows(self, auth_client, direct_db):
         """AC8: podcast-show rows always remain under completion=unfinished; a
@@ -6266,7 +6643,7 @@ class TestLibraryEntryViewLenses:
 
         page = _list_library_entries(auth_client, user_id, library_id, completion="unfinished")
         assert page.status_code == 200, page.text
-        rows = page.json()["data"]
+        rows = _entry_items(page)
         podcast_ids = [row["podcast"]["id"] for row in rows if row["kind"] == "podcast"]
         assert podcast_ids == [str(podcast_id)]
         assert str(media_finished) not in _view_ids(page)
@@ -6584,7 +6961,7 @@ class TestLibraryEntryInProgressProjection:
 
         page = _list_library_entries(auth_client, user_id, library_id, projection="in-progress")
         assert page.status_code == 200, page.text
-        rows = page.json()["data"]
+        rows = _entry_items(page)
         assert [row for row in rows if row["kind"] == "podcast"] == []
         assert _view_ids(page) == [str(media_in_prog)]
 
@@ -6612,6 +6989,7 @@ class TestLibraryEntryProjectionPagination:
 
         collected: list[str] = []
         cursor = None
+        revision = None
         for _ in range(10):
             resp = _list_library_entries(
                 auth_client,
@@ -6621,13 +6999,18 @@ class TestLibraryEntryProjectionPagination:
                 sort="title",
                 direction="asc",
                 limit=1,
-                **({"cursor": cursor} if cursor else {}),
+                **(
+                    {"cursor": cursor, "collection_revision": revision}
+                    if cursor is not None
+                    else {}
+                ),
             )
             assert resp.status_code == 200, resp.text
             page_ids = _view_ids(resp)
             assert len(page_ids) == 1
             collected.extend(page_ids)
-            cursor = resp.json()["page"]["next_cursor"]
+            revision = _entry_revision(resp)
+            cursor = _entry_cursor(resp)
             if cursor is None:
                 break
         assert collected == [str(unfiled["A"]), str(unfiled["C"]), str(unfiled["E"])]
@@ -6647,6 +7030,7 @@ class TestLibraryEntryProjectionPagination:
 
         collected: list[str] = []
         cursor = None
+        revision = None
         for _ in range(10):
             resp = _list_library_entries(
                 auth_client,
@@ -6656,11 +7040,16 @@ class TestLibraryEntryProjectionPagination:
                 sort="title",
                 direction="asc",
                 limit=1,
-                **({"cursor": cursor} if cursor else {}),
+                **(
+                    {"cursor": cursor, "collection_revision": revision}
+                    if cursor is not None
+                    else {}
+                ),
             )
             assert resp.status_code == 200, resp.text
             collected.extend(_view_ids(resp))
-            cursor = resp.json()["page"]["next_cursor"]
+            revision = _entry_revision(resp)
+            cursor = _entry_cursor(resp)
             if cursor is None:
                 break
         assert collected == [str(a), str(c)]
@@ -6678,18 +7067,18 @@ class TestLibraryEntryCursorV2:
             _create_default_media(direct_db, default_id, title=title)
         return user_id, default_id
 
-    def _first_cursor(self, auth_client, user_id, library_id) -> str:
+    def _first_cursor(self, auth_client, user_id, library_id) -> tuple[str, int]:
         first = _list_library_entries(
             auth_client, user_id, library_id, sort="title", direction="asc", limit=1
         )
         assert first.status_code == 200, first.text
-        cursor = first.json()["page"]["next_cursor"]
+        cursor = _entry_cursor(first)
         assert cursor is not None
-        return cursor
+        return cursor, _entry_revision(first)
 
     def test_cursor_bound_to_exact_view(self, auth_client, direct_db):
         user_id, default_id = self._seed(auth_client, direct_db)
-        cursor = self._first_cursor(auth_client, user_id, default_id)
+        cursor, revision = self._first_cursor(auth_client, user_id, default_id)
 
         cross = {
             "projection": _list_library_entries(
@@ -6700,12 +7089,25 @@ class TestLibraryEntryCursorV2:
                 direction="asc",
                 projection="in-progress",
                 cursor=cursor,
+                collection_revision=revision,
             ),
             "order": _list_library_entries(
-                auth_client, user_id, default_id, sort="added", direction="asc", cursor=cursor
+                auth_client,
+                user_id,
+                default_id,
+                sort="added",
+                direction="asc",
+                cursor=cursor,
+                collection_revision=revision,
             ),
             "direction": _list_library_entries(
-                auth_client, user_id, default_id, sort="title", direction="desc", cursor=cursor
+                auth_client,
+                user_id,
+                default_id,
+                sort="title",
+                direction="desc",
+                cursor=cursor,
+                collection_revision=revision,
             ),
             "completion": _list_library_entries(
                 auth_client,
@@ -6715,6 +7117,7 @@ class TestLibraryEntryCursorV2:
                 direction="asc",
                 completion="unfinished",
                 cursor=cursor,
+                collection_revision=revision,
             ),
         }
         for label, resp in cross.items():
@@ -6723,21 +7126,27 @@ class TestLibraryEntryCursorV2:
 
     def test_tampered_cursor_rejected(self, auth_client, direct_db):
         user_id, default_id = self._seed(auth_client, direct_db)
-        cursor = self._first_cursor(auth_client, user_id, default_id)
+        cursor, revision = self._first_cursor(auth_client, user_id, default_id)
 
         packed = bytearray(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
         packed[0] ^= 0x01
         tampered = base64.urlsafe_b64encode(bytes(packed)).rstrip(b"=").decode()
 
         resp = _list_library_entries(
-            auth_client, user_id, default_id, sort="title", direction="asc", cursor=tampered
+            auth_client,
+            user_id,
+            default_id,
+            sort="title",
+            direction="asc",
+            cursor=tampered,
+            collection_revision=revision,
         )
         assert resp.status_code == 400, resp.text
         assert resp.json()["error"]["code"] == "E_INVALID_CURSOR"
 
     def test_non_canonical_body_rejected(self, auth_client, direct_db):
         user_id, default_id = self._seed(auth_client, direct_db)
-        cursor = self._first_cursor(auth_client, user_id, default_id)
+        cursor, revision = self._first_cursor(auth_client, user_id, default_id)
 
         packed = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
         body_bytes, tag = packed[:-32], packed[-32:]
@@ -6749,7 +7158,13 @@ class TestLibraryEntryCursorV2:
         forged = base64.urlsafe_b64encode(non_canonical + tag).rstrip(b"=").decode()
 
         resp = _list_library_entries(
-            auth_client, user_id, default_id, sort="title", direction="asc", cursor=forged
+            auth_client,
+            user_id,
+            default_id,
+            sort="title",
+            direction="asc",
+            cursor=forged,
+            collection_revision=revision,
         )
         assert resp.status_code == 400, resp.text
         assert resp.json()["error"]["code"] == "E_INVALID_CURSOR"

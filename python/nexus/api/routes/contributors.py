@@ -13,14 +13,15 @@ violations 404 without revealing whether an internal record exists (spec 6).
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import AfterValidator
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db
+from nexus.db.session import get_db, get_repeatable_read_db
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.responses import ok
+from nexus.schemas.collection_page import parse_collection_query
 from nexus.schemas.contributors import ContributorRenameRequest
 from nexus.services import contributors as contributors_service
 from nexus.services.contributor_taxonomy import (
@@ -79,18 +80,19 @@ def get_contributor(
 
 @router.get("/{contributor_handle}/works")
 def list_contributor_works(
+    request: Request,
     contributor_handle: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    cursor: str | None = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=100),
+    db: Annotated[Session, Depends(get_repeatable_read_db)],
 ) -> dict:
+    query = parse_collection_query(request.query_params.multi_items(), domain_keys=frozenset())
     page = contributors_service.list_contributor_works(
         db,
         viewer_id=viewer.user_id,
         contributor_handle=_parse_handle(contributor_handle),
-        cursor=cursor,
-        limit=limit,
+        cursor=query.cursor,
+        collection_revision=query.collection_revision,
+        limit=query.limit,
     )
     return ok(page, by_alias=True)
 

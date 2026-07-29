@@ -389,6 +389,13 @@ clears the record. The picker is hidden behind one locked retry status during
 that reconciliation, so current catalog choices cannot misrepresent or mutate
 the replay.
 
+The unmarked `GET /conversations` primary index and its `scope` variants return
+the strict complete-collection page and drain automatically in
+`ConversationsPaneBody`. The destination picker always sends an explicit `q`
+(including `q=` for recent chats) and retains manual cursor paging.
+`has_context_ref` retains the resource-graph page contract. These three modes
+must not share cursor or response decoding.
+
 ## Citation Candidates And Final Edges
 
 Chat keeps model-facing evidence candidates separate from reader-facing

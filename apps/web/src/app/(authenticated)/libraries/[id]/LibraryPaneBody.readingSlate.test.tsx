@@ -73,12 +73,16 @@ function SwitchingHarness({
           [LIBRARY_ID]: {
             library: library(),
             entries: [entry("entry-1", EXISTING_MEDIA_ID, "Existing work")],
-            entriesPage: { has_more: false, next_cursor: null },
+            collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
           },
           [SECOND_LIBRARY_ID]: {
             library: library(SECOND_LIBRARY_ID, "Archive"),
             entries: [entry("entry-3", SECOND_MEDIA_ID, "Archived work")],
-            entriesPage: { has_more: false, next_cursor: null },
+            collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
           },
         }}
         >
@@ -116,7 +120,7 @@ function entryWire(
   id: string,
   mediaId: string,
   title: string,
-  presentation: {
+  _presentation: {
     publisher?: string | null;
     image_url?: string | null;
     thumbnail_url?: string | null;
@@ -132,17 +136,23 @@ function entryWire(
       kind: "web_article",
       title,
       contributors: [],
+      author_mode: "automatic",
       published_date: null,
-      publisher: presentation.publisher ?? null,
-      image_url: presentation.image_url ?? null,
-      thumbnail_url: presentation.thumbnail_url ?? null,
       canonical_source_url: null,
       created_at: "2026-01-01T00:00:00Z",
       processing_status: "ready_for_reading",
       read_state: "unread",
       progress_resettable: false,
       progress_fraction: null,
-      capabilities: { can_quote: true },
+      last_engaged_at: null,
+      capabilities: {
+        can_quote: true,
+        can_retry: false,
+        can_refresh_source: false,
+        can_retry_metadata: false,
+        can_edit_authors: false,
+        can_delete: false,
+      },
     },
     readingTimeEstimate: {
       kind: "Present",
@@ -206,11 +216,17 @@ function Harness({
   children,
   isActive,
   initialEntries = [entry("entry-1", EXISTING_MEDIA_ID, "Existing work")],
+  nextCursor = { kind: "Absent" },
+  exhaustion = "Complete",
   search = "",
 }: {
   children: ReactNode;
   isActive: boolean;
   initialEntries?: ReturnType<typeof entry>[];
+  nextCursor?:
+    | { kind: "Absent" }
+    | { kind: "Present"; value: string };
+  exhaustion?: "Partial" | "Complete";
   // Pane URL search (e.g. "sort=title&direction=asc"); empty = canonical view.
   search?: string;
 }) {
@@ -224,7 +240,9 @@ function Harness({
           [LIBRARY_ID]: {
             library: library(),
             entries: initialEntries,
-            entriesPage: { has_more: false, next_cursor: null },
+            collectionRevision: 1,
+            nextCursor,
+            exhaustion,
           },
         }}
         >
@@ -271,6 +289,75 @@ afterEach(() => {
 });
 
 describe("LibraryPaneBody Reading Slate host", () => {
+  it("does not mount Reading Slate until the entry list is complete", async () => {
+    let resolveContinuation!: (response: Response) => void;
+    const continuation = new Promise<Response>((resolve) => {
+      resolveContinuation = resolve;
+    });
+    let slateReads = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = pathWithSearch(input);
+        if (path === "/api/lectern") {
+          return response({ data: { items: [] } });
+        }
+        if (
+          path ===
+          `/api/libraries/${LIBRARY_ID}/entries?cursor=next&collection_revision=1&limit=100`
+        ) {
+          return continuation;
+        }
+        if (path === `/api/libraries/${LIBRARY_ID}/slate`) {
+          slateReads += 1;
+          return response({ data: { items: [slateItem()] } });
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      }),
+    );
+
+    render(
+      <Harness
+        isActive
+        nextCursor={{ kind: "Present", value: "next" }}
+        exhaustion="Partial"
+      >
+        <LibraryPaneBody />
+      </Harness>,
+    );
+
+    expect(
+      await screen.findByRole("link", { name: "Existing work" }),
+    ).toBeVisible();
+    expect(slateReads).toBe(0);
+    expect(
+      screen.queryByRole("list", { name: "Suggestions for Research" }),
+    ).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveContinuation(
+        response({
+          data: {
+            items: [
+              entryWire("entry-2", SECOND_MEDIA_ID, "Second page work"),
+            ],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
+        }),
+      );
+      await continuation;
+    });
+
+    expect(
+      await screen.findByRole("link", { name: "Second page work" }),
+    ).toBeVisible();
+    expect(
+      await screen.findByRole("list", { name: "Suggestions for Research" }),
+    ).toBeVisible();
+    expect(slateReads).toBe(1);
+  });
+
   it("clears destination-stale reconciliation state when the library id changes", async () => {
     let firstSlateReads = 0;
     let secondEntryReads = 0;
@@ -301,8 +388,7 @@ describe("LibraryPaneBody Reading Slate host", () => {
       ) {
         secondEntryReads += 1;
         return response({
-          data: [entryWire("entry-3", SECOND_MEDIA_ID, "Archived work")],
-          page: { has_more: false, next_cursor: null },
+          data: { items: [entryWire("entry-3", SECOND_MEDIA_ID, "Archived work")], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       if (
@@ -544,10 +630,9 @@ describe("LibraryPaneBody Reading Slate host", () => {
       let titleEntryReads = 0;
       const currentTitleResponse = () =>
         response({
-          data: [
+          data: { items: [
             entryWire("entry-title", SECOND_MEDIA_ID, "Current title view"),
-          ],
-          page: { has_more: false, next_cursor: null },
+          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       const fetchMock = vi.fn(
         async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -584,8 +669,7 @@ describe("LibraryPaneBody Reading Slate host", () => {
               return pendingInitialTitle;
             }
             return response({
-              data:
-                titleEntryReads === 1
+              data: { items: titleEntryReads === 1
                   ? [
                       entryWire(
                         "entry-title",
@@ -604,8 +688,7 @@ describe("LibraryPaneBody Reading Slate host", () => {
                         SUGGESTED_MEDIA_ID,
                         "Suggested work",
                       ),
-                    ],
-              page: { has_more: false, next_cursor: null },
+                    ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
             });
           }
           throw new Error(`Unexpected fetch: ${method} ${path}`);
@@ -708,14 +791,12 @@ describe("LibraryPaneBody Reading Slate host", () => {
           );
         }
         return response({
-          data:
-            entryReads === 1
+          data: { items: entryReads === 1
               ? [entryWire("entry-1", EXISTING_MEDIA_ID, "Existing work")]
               : [
                   entryWire("entry-1", EXISTING_MEDIA_ID, "Existing work"),
                   entryWire("entry-2", SUGGESTED_MEDIA_ID, "Suggested work"),
-                ],
-          page: { has_more: false, next_cursor: null },
+                ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       throw new Error(`Unexpected fetch: ${method} ${path}`);
@@ -815,8 +896,7 @@ describe("LibraryPaneBody Reading Slate host", () => {
           // cannot claim its bootstrap seed and loads through the endpoint.
           if (reconciliationRequests === 1) return unresolvedReconciliation;
           return response({
-            data: [entryWire("entry-fresh", SECOND_MEDIA_ID, "Fresh server work")],
-            page: { has_more: false, next_cursor: null },
+            data: { items: [entryWire("entry-fresh", SECOND_MEDIA_ID, "Fresh server work")], collectionRevision: 1, nextCursor: { kind: "Absent" } },
           });
         }
         if (path === "/api/consumption/commands" && method === "POST") {
@@ -827,6 +907,7 @@ describe("LibraryPaneBody Reading Slate host", () => {
               nextItem: { kind: "Absent" },
               progressState: { kind: "Absent" },
               completionHandle: { kind: "Absent" },
+              libraryEntriesCollectionRevision: 2,
             },
           });
         }
@@ -847,7 +928,9 @@ describe("LibraryPaneBody Reading Slate host", () => {
           [LIBRARY_ID]: {
             library: library(),
             entries: initialEntries,
-            entriesPage: { has_more: false, next_cursor: null },
+            collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
           },
         }}
         resourceGeneration={resourceGeneration}

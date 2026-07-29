@@ -20,6 +20,7 @@ from nexus.services import (
     resource_grants,
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.services.collection_revisions import CollectionFamily, read_collection_revision
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.sealed_handles import new_share_token, share_token_hash
 from tests.factories import (
@@ -101,6 +102,64 @@ def _run_concurrently(targets: list[Callable[[], object]]) -> list[object]:
             errors.append(AssertionError(f"worker thread did not finish: {thread.name}"))
     assert errors == [], errors
     return results
+
+
+def test_user_grant_create_and_delete_advance_visibility_collections(
+    auth_client,
+    direct_db: DirectSessionManager,
+) -> None:
+    owner_id = create_test_user_id()
+    recipient_id = create_test_user_id()
+    media_id, _ = _seed_media(auth_client, direct_db, owner_id=owner_id)
+    _bootstrap_user(auth_client, recipient_id)
+    families = (
+        CollectionFamily.AuthorWorks,
+        CollectionFamily.PodcastEpisodes,
+    )
+    with direct_db.session() as db:
+        before = {
+            family: read_collection_revision(
+                db,
+                viewer_id=recipient_id,
+                family=family,
+            )
+            for family in families
+        }
+        grant = resource_grants.create_grant(
+            db,
+            viewer_user_id=owner_id,
+            subject=ResourceRef(scheme="media", id=media_id),
+            audience=resource_grants.UserGrantAudience(user_id=recipient_id),
+        ).grant
+    with direct_db.session() as db:
+        after_create = {
+            family: read_collection_revision(
+                db,
+                viewer_id=recipient_id,
+                family=family,
+            )
+            for family in families
+        }
+        assert after_create == {
+            family: revision + 1 for family, revision in before.items()
+        }
+        resource_grants.delete_grant(
+            db,
+            viewer_user_id=owner_id,
+            handle=grant.handle,
+        )
+    with direct_db.session() as db:
+        assert {
+            family: read_collection_revision(
+                db,
+                viewer_id=recipient_id,
+                family=family,
+            )
+            for family in families
+        } == {
+            family: revision + 1
+            for family, revision in after_create.items()
+        }
 
 
 @pytest.mark.parametrize("audience_kind", ["user", "link"])

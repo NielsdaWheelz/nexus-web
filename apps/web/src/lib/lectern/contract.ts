@@ -18,6 +18,10 @@
  */
 
 import { decodePresence, type Presence } from "@/lib/api/presence";
+import {
+  decodeCollectionRevision,
+  type CollectionRevision,
+} from "@/lib/api/collectionPage";
 import type {
   PositiveMinutes,
   ProgressFraction,
@@ -282,6 +286,7 @@ export interface ConsumptionResult {
   nextItem: Presence<LecternItem>;
   progressState: Presence<MediaProgressState>;
   completionHandle: Presence<CompletionHandle>;
+  libraryEntriesCollectionRevision: CollectionRevision;
 }
 
 // --- Bounds ------------------------------------------------------------------
@@ -634,7 +639,14 @@ export function decodeConsumptionResult(raw: unknown): ConsumptionResult {
   const rec = asRecord(raw, "ConsumptionResult");
   exactKeys(
     rec,
-    ["outcome", "lectern", "nextItem", "progressState", "completionHandle"],
+    [
+      "outcome",
+      "lectern",
+      "nextItem",
+      "progressState",
+      "completionHandle",
+      "libraryEntriesCollectionRevision",
+    ],
     "ConsumptionResult",
   );
   return {
@@ -643,6 +655,9 @@ export function decodeConsumptionResult(raw: unknown): ConsumptionResult {
     nextItem: decodePresence(rec.nextItem, decodeLecternItem),
     progressState: decodePresence(rec.progressState, decodeMediaProgressState),
     completionHandle: decodePresence(rec.completionHandle, decodeCompletionHandle),
+    libraryEntriesCollectionRevision: decodeCollectionRevision(
+      rec.libraryEntriesCollectionRevision,
+    ),
   };
 }
 

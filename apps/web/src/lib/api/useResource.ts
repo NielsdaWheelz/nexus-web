@@ -1,9 +1,15 @@
 "use client";
 
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
-import { ApiError, apiFetch, isApiError, type ApiPath } from "@/lib/api/client";
+import {
+  apiFetch,
+  isApiError,
+  type ApiError,
+  type ApiPath,
+} from "@/lib/api/client";
 import { ResourceCacheContext, type ResourceCacheEntry } from "@/lib/api/resourceCache";
 import type { ResourceDescriptor } from "@/lib/api/resource";
+import { requestWithRetry } from "@/lib/api/retryPolicy";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
 
@@ -38,10 +44,6 @@ type LoadResourceArgs<T> = SeedClaimArgs & {
   cacheKey: string | null;
   load: (signal: AbortSignal) => Promise<T>;
 };
-
-const MAX_ATTEMPTS = 3;
-const BASE_DELAY_MS = 250;
-const MAX_DELAY_MS = 2000;
 
 // The one async-resource hook: a keyed GET-or-custom-load with 3× retry/backoff
 // and abort. When the server seed or a client prefetch put the initial cacheKey
@@ -164,8 +166,6 @@ export function useResource<T, P>(
     }
 
     const controller = new AbortController();
-    let delayTimer: ReturnType<typeof setTimeout> | null = null;
-    let attempt = 1;
     setResourceState({
       key: cacheKey,
       resource: { status: "loading" },
@@ -173,7 +173,10 @@ export function useResource<T, P>(
 
     const run = async () => {
       try {
-        const data = await loadRef.current(controller.signal);
+        const data = await requestWithRetry(
+          (signal) => loadRef.current(signal),
+          controller.signal,
+        );
         if (controller.signal.aborted) return;
         setResourceState({
           key: cacheKey,
@@ -182,27 +185,10 @@ export function useResource<T, P>(
       } catch (err) {
         if (isAbortError(err) || controller.signal.aborted) return;
         if (handleUnauthenticatedApiError(err)) return;
-        const retryable = !isApiError(err) || err.status >= 500;
-        if (retryable && attempt < MAX_ATTEMPTS) {
-          attempt += 1;
-          const delay = Math.min(
-            BASE_DELAY_MS * 2 ** (attempt - 2),
-            MAX_DELAY_MS,
-          );
-          const jittered = delay * (0.75 + Math.random() * 0.5);
-          delayTimer = setTimeout(run, jittered);
-          return;
-        }
-        const apiError = isApiError(err)
-          ? err
-          : new ApiError(
-              0,
-              "E_NETWORK",
-              err instanceof Error ? err.message : "Request failed",
-            );
+        if (!isApiError(err)) throw err;
         setResourceState({
           key: cacheKey,
-          resource: { status: "error", error: apiError, retry },
+          resource: { status: "error", error: err, retry },
         });
       }
     };
@@ -210,7 +196,6 @@ export function useResource<T, P>(
 
     return () => {
       controller.abort();
-      if (delayTimer !== null) clearTimeout(delayTimer);
     };
   }, [cacheKey, retryTick, retry, handleUnauthenticatedApiError]);
 

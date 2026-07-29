@@ -127,8 +127,8 @@ function mediaEntryWire(
       kind: "web_article",
       title,
       contributors: [],
+      author_mode: "automatic",
       published_date: null,
-      publisher: null,
       canonical_source_url: null,
       // Distinct from the entry-level created_at above: the default library's
       // "Added" order keys the row line off *this* instant (see addedContext
@@ -139,7 +139,15 @@ function mediaEntryWire(
       read_state: "unread",
       progress_resettable: false,
       progress_fraction: null,
-      capabilities: { can_quote: true },
+      last_engaged_at: null,
+      capabilities: {
+        can_quote: true,
+        can_retry: false,
+        can_refresh_source: false,
+        can_retry_metadata: false,
+        can_edit_authors: false,
+        can_delete: false,
+      },
     },
     readingTimeEstimate: {
       kind: "Present",
@@ -213,7 +221,9 @@ describe("LibraryPaneBody (Default library)", () => {
             seededMediaEntry("entry-1", FIRST_MEDIA_ID, "First Default Work"),
             seededMediaEntry("entry-2", SECOND_MEDIA_ID, "Second Default Work"),
           ],
-          entriesPage: { has_more: false, next_cursor: null },
+          collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
         },
       },
       children: paneWithLectern,
@@ -291,10 +301,9 @@ describe("LibraryPaneBody (Default library)", () => {
         `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`
       ) {
         return Response.json({
-          data: [
+          data: { items: [
             mediaEntryWire("entry-t1", TITLED_MEDIA_ID, "Titled Default Work"),
-          ],
-          page: { has_more: false, next_cursor: null },
+          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       return new Response("{}", {
@@ -311,7 +320,9 @@ describe("LibraryPaneBody (Default library)", () => {
           entries: [
             seededMediaEntry("entry-1", FIRST_MEDIA_ID, "Canonical Seed"),
           ],
-          entriesPage: { has_more: false, next_cursor: null },
+          collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
         },
       },
       children: paneWithLectern,
@@ -332,8 +343,7 @@ describe("LibraryPaneBody (Default library)", () => {
         `/api/libraries/${LIBRARY_ID}/entries?projection=unfiled`
       ) {
         return Response.json({
-          data: [mediaEntryWire("entry-uf", TITLED_MEDIA_ID, "Unfiled Work")],
-          page: { has_more: false, next_cursor: null },
+          data: { items: [mediaEntryWire("entry-uf", TITLED_MEDIA_ID, "Unfiled Work")], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       return new Response("{}", {
@@ -350,7 +360,9 @@ describe("LibraryPaneBody (Default library)", () => {
           entries: [
             seededMediaEntry("entry-1", FIRST_MEDIA_ID, "Canonical Seed"),
           ],
-          entriesPage: { has_more: false, next_cursor: null },
+          collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
         },
       },
       children: paneWithLectern,
@@ -369,23 +381,21 @@ describe("LibraryPaneBody (Default library)", () => {
   });
 
   it("dedupes an appended 00000000-0000-4000-8000-000000000204 page by media id, not entry id", async () => {
-    const user = userEvent.setup();
     stubFetch(async (input) => {
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
       if (
         fetchInputPathWithSearch(input) ===
-        `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2`
+        `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2&collection_revision=1&limit=100`
       ) {
         // The server hands back a *different* representative entry id
         // ("entry-1b") for the same underlying media ("media-1") already
         // present on the first page, alongside one genuinely new entry.
         return Response.json({
-          data: [
+          data: { items: [
             mediaEntryWire("entry-1b", FIRST_MEDIA_ID, "First Default Work"),
             mediaEntryWire("entry-2", SECOND_MEDIA_ID, "Second Default Work"),
-          ],
-          page: { has_more: false, next_cursor: null },
+          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       return new Response("{}", {
@@ -406,14 +416,15 @@ describe("LibraryPaneBody (Default library)", () => {
               "First Default Work",
             ),
           ],
-          entriesPage: { has_more: true, next_cursor: "cursor-2" },
+          collectionRevision: 1,
+nextCursor: { kind: "Present", value: String("cursor-2") },
+exhaustion: "Partial",
         },
       },
       children: paneWithLectern,
     });
 
     expect(await screen.findByRole("link", { name: "First Default Work" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Load more entries" }));
 
     expect(await screen.findByRole("link", { name: "Second Default Work" })).toBeInTheDocument();
 
@@ -442,13 +453,12 @@ describe("LibraryPaneBody (Default library)", () => {
         `/api/libraries/${LIBRARY_ID}/entries?sort=added&direction=asc`
       ) {
         return Response.json({
-          data: [
+          data: { items: [
             mediaEntryWire("entry-a1", OLDEST_MEDIA_ID, "Oldest Default Work", {
               createdAt: entryCreatedIso,
               mediaCreatedAt: mediaCreatedIso,
             }),
-          ],
-          page: { has_more: false, next_cursor: null },
+          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       return new Response("{}", {
@@ -465,7 +475,9 @@ describe("LibraryPaneBody (Default library)", () => {
           entries: [
             seededMediaEntry("entry-1", FIRST_MEDIA_ID, "Canonical Seed"),
           ],
-          entriesPage: { has_more: false, next_cursor: null },
+          collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
         },
       },
       children: paneWithLectern,
@@ -497,7 +509,9 @@ describe("LibraryPaneBody (Default library)", () => {
               mediaCreatedAt: mediaCreatedIso,
             }),
           ],
-          entriesPage: { has_more: false, next_cursor: null },
+          collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
         },
       },
       children: paneWithLectern,
@@ -515,8 +529,7 @@ describe("LibraryPaneBody (Default library)", () => {
       if (fetchInputPath(input) === `/api/libraries/${LIBRARY_ID}/entries`) {
         entriesReads += 1;
         return Response.json({
-          data: [mediaEntryWire("entry-new", SECOND_MEDIA_ID, "Newly Filed")],
-          page: { has_more: false, next_cursor: null },
+          data: { items: [mediaEntryWire("entry-new", SECOND_MEDIA_ID, "Newly Filed")], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       return new Response("{}", {
@@ -533,7 +546,9 @@ describe("LibraryPaneBody (Default library)", () => {
           entries: [
             seededMediaEntry("entry-1", FIRST_MEDIA_ID, "Seed Work"),
           ],
-          entriesPage: { has_more: false, next_cursor: null },
+          collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
         },
       },
       children: paneWithLectern,
@@ -561,14 +576,12 @@ describe("LibraryPaneBody (Default library)", () => {
       const path = fetchInputPathWithSearch(input);
       if (path === `/api/libraries/${LIBRARY_ID}/entries?projection=unfiled`) {
         return Response.json({
-          data: [],
-          page: { has_more: false, next_cursor: null },
+          data: { items: [], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       if (path === `/api/libraries/${LIBRARY_ID}/entries`) {
         return Response.json({
-          data: [mediaEntryWire("entry-all", TITLED_MEDIA_ID, "All Items Work")],
-          page: { has_more: false, next_cursor: null },
+          data: { items: [mediaEntryWire("entry-all", TITLED_MEDIA_ID, "All Items Work")], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       return new Response("{}", {
@@ -586,7 +599,9 @@ describe("LibraryPaneBody (Default library)", () => {
             entries: [
               seededMediaEntry("entry-1", FIRST_MEDIA_ID, "Canonical Seed"),
             ],
-            entriesPage: { has_more: false, next_cursor: null },
+            collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
           },
         }}
       />,
@@ -621,14 +636,12 @@ describe("LibraryPaneBody (Default library)", () => {
         `/api/libraries/${LIBRARY_ID}/entries?projection=unfiled&completion=unfinished`
       ) {
         return Response.json({
-          data: [],
-          page: { has_more: false, next_cursor: null },
+          data: { items: [], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       if (path === `/api/libraries/${LIBRARY_ID}/entries`) {
         return Response.json({
-          data: [mediaEntryWire("entry-all", TITLED_MEDIA_ID, "All Items Work")],
-          page: { has_more: false, next_cursor: null },
+          data: { items: [mediaEntryWire("entry-all", TITLED_MEDIA_ID, "All Items Work")], collectionRevision: 1, nextCursor: { kind: "Absent" } },
         });
       }
       return new Response("{}", {
@@ -646,7 +659,9 @@ describe("LibraryPaneBody (Default library)", () => {
             entries: [
               seededMediaEntry("entry-1", FIRST_MEDIA_ID, "Canonical Seed"),
             ],
-            entriesPage: { has_more: false, next_cursor: null },
+            collectionRevision: 1,
+nextCursor: { kind: "Absent" },
+exhaustion: "Complete",
           },
         }}
       />,

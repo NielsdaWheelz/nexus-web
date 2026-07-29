@@ -13,6 +13,7 @@ import gzip
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from unittest.mock import patch
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -20,6 +21,8 @@ import respx
 from sqlalchemy import event, text
 
 from nexus.db.engine import get_engine
+from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.services.collection_revisions import CollectionFamily, read_collection_revision
 from nexus.services.gutenberg import (
     parse_project_gutenberg_catalog_feed,
     sync_project_gutenberg_catalog,
@@ -236,6 +239,38 @@ def test_sync_replaces_stale_catalog_rows(direct_db: DirectSessionManager):
 
     assert result["row_count"] == 2
     assert _catalog_ebook_ids(direct_db, [123, 456, 999]) == {123, 456}
+
+
+def test_sync_title_change_advances_author_works_with_unchanged_author(
+    direct_db: DirectSessionManager,
+):
+    user_id = uuid4()
+    direct_db.register_cleanup("users", "id", user_id)
+    _track_catalog(direct_db, [123])
+    with direct_db.session() as session:
+        ensure_user_and_default_library(session, user_id)
+        session.commit()
+
+    _sync(direct_db, _catalog_csv([(123, "Original Title", "Stable Author")]))
+    _track_contributors(direct_db, [123])
+    with direct_db.session() as session:
+        before = read_collection_revision(
+            session,
+            viewer_id=user_id,
+            family=CollectionFamily.AuthorWorks,
+        )
+
+    _sync(direct_db, _catalog_csv([(123, "Changed Title", "Stable Author")]))
+
+    with direct_db.session() as session:
+        assert (
+            read_collection_revision(
+                session,
+                viewer_id=user_id,
+                family=CollectionFamily.AuthorWorks,
+            )
+            == before + 1
+        )
 
 
 def test_sync_name_merges_shared_author_across_ebooks(direct_db: DirectSessionManager):

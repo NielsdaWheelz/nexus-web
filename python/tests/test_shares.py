@@ -257,6 +257,10 @@ class TestShareEndpoints:
         direct_db.register_cleanup("memberships", "library_id", lib_id)
         direct_db.register_cleanup("libraries", "id", lib_id)
 
+        before_revision = shares_auth_client.get(
+            "/conversations",
+            headers=auth_headers(user_id),
+        ).json()["data"]["collectionRevision"]
         response = shares_auth_client.put(
             f"/conversations/{conv_id}/shares",
             headers=auth_headers(user_id),
@@ -267,6 +271,11 @@ class TestShareEndpoints:
         assert data["sharing"] == "library"
         assert len(data["shares"]) == 1
         assert data["shares"][0]["library_id"] == str(lib_id)
+        after_revision = shares_auth_client.get(
+            "/conversations",
+            headers=auth_headers(user_id),
+        ).json()["data"]["collectionRevision"]
+        assert after_revision > before_revision
 
     def test_put_conversation_shares_empty_list_clears_shares(
         self, shares_auth_client, direct_db: DirectSessionManager

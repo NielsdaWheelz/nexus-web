@@ -49,6 +49,10 @@ from nexus.services import (
     media_source_types as source_types,
 )
 from nexus.services.capabilities import is_same_source_terminal_error
+from nexus.services.collection_revisions import (
+    CollectionFamily,
+    bump_all_collection_families,
+)
 from nexus.services.contributor_taxonomy import (
     NOT_OBSERVED,
     ContributorObservationBatch,
@@ -122,6 +126,17 @@ from nexus.tasks.storage_object_cleanup import (
 )
 
 logger = get_logger(__name__)
+
+
+def _bump_media_fact_collections(db: Session) -> None:
+    bump_all_collection_families(
+        db,
+        families=(
+            CollectionFamily.AuthorWorks,
+            CollectionFamily.LibraryEntries,
+            CollectionFamily.PodcastEpisodes,
+        ),
+    )
 
 
 class SourcePublicationLockSetChanged(RuntimeError):
@@ -1500,6 +1515,7 @@ def _run_claimed_source_attempt(
                     error_code="E_PDF_TEXT_UNAVAILABLE",
                     error_message="PDF text is unavailable; OCR is required.",
                 )
+            _bump_media_fact_collections(phase_db)
             if bool(result.get("transcript_semantic_intent")):
                 enqueue_job(
                     phase_db,
@@ -1968,6 +1984,7 @@ def confirm_uploaded_source(
             request_id=request_id,
         )
     mark_source_queued(db, media)
+    _bump_media_fact_collections(db)
     attempt.updated_at = func.now()
     db.commit()
     ingest_enqueued = _enqueue_accepted_attempt(
@@ -2538,6 +2555,7 @@ def enqueue_podcast_episode_transcript_source_attempt(
         status=_ATTEMPT_ACCEPTED,
     )
     mark_source_queued(db, media)
+    _bump_media_fact_collections(db)
     db.flush()
     return _enqueue_accepted_attempt(
         db,
@@ -2631,6 +2649,7 @@ def mark_source_attempt_and_media_failed(
         error_code=error_code,
         error_message=error_message[:1000],
     )
+    _bump_media_fact_collections(db)
 
 
 def _load_owned_media_for_source_action(
@@ -2709,6 +2728,7 @@ def _dispatch_requeue_attempt(
 
         _prepare_source_requeue_domain_state(db, media, attempt, actor_user_id)
         mark_source_queued(db, media)
+        _bump_media_fact_collections(db)
         job = _enqueue_source_job(db, media_id, attempt_id, actor_user_id, request_id)
         attempt.job_id = job.id
         attempt.status = _ATTEMPT_QUEUED
@@ -2798,6 +2818,7 @@ def _run_generic_web_article(
                 "Generic web source attempts must target web_article media.",
             )
         begin_extraction(db, media)
+        _bump_media_fact_collections(db)
 
     run_source_publication_phase(
         session_factory=session_factory,
@@ -2838,6 +2859,7 @@ def _run_x_author_thread(
         if media is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
         begin_extraction(db, media)
+        _bump_media_fact_collections(db)
 
     run_source_publication_phase(
         session_factory=session_factory,
@@ -2881,6 +2903,7 @@ def _run_x_post(
                 "X post source attempts must target web_article media.",
             )
         begin_extraction(db, media)
+        _bump_media_fact_collections(db)
 
     run_source_publication_phase(
         session_factory=session_factory,
@@ -2938,6 +2961,7 @@ def _run_youtube_video(
         media.external_playback_url = identity.watch_url
         media.updated_at = datetime.now(UTC)
         begin_extraction(db, media)
+        _bump_media_fact_collections(db)
 
     run_source_publication_phase(
         session_factory=session_factory,
@@ -2975,6 +2999,7 @@ def _run_podcast_episode_transcript(
                 "Podcast transcript source attempts must target podcast episode media.",
             )
         begin_extraction(db, media)
+        _bump_media_fact_collections(db)
 
     run_source_publication_phase(
         session_factory=session_factory,
@@ -3033,6 +3058,7 @@ def _run_prepared_html_article(
                 "Stored HTML source must target web_article media.",
             )
         begin_extraction(db, media)
+        _bump_media_fact_collections(db)
 
     run_source_publication_phase(
         session_factory=session_factory,
@@ -3317,6 +3343,7 @@ def _run_remote_file(
                 "Remote URL must be a PDF or EPUB.",
             )
         begin_extraction(db, media)
+        _bump_media_fact_collections(db)
         return kind
 
     kind = run_source_publication_phase(
@@ -3544,6 +3571,7 @@ def _run_existing_file(
                 "Source file metadata missing.",
             )
         begin_extraction(db, media)
+        _bump_media_fact_collections(db)
         return (
             str(media.kind),
             str(media_file.storage_path),
@@ -3720,6 +3748,7 @@ def _persist_browser_article_metadata(
         media.publisher = site_name[:255]
     if published_time:
         media.published_date = published_time[:64]
+    _bump_media_fact_collections(db)
     if not byline:
         return NOT_OBSERVED
 

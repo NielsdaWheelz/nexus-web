@@ -7,8 +7,7 @@ import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementCon
 import LibrariesPaneBody from "./LibrariesPaneBody";
 import { stubFetch, wasFetchPathCalled } from "@/__tests__/helpers/fetch";
 
-const OWNER_USER_HANDLE =
-  "nus1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB";
+const OWNER_USER_HANDLE = "nus1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB";
 
 // AC-4 hydration-hit guard: when the bootstrap seeds the raw /libraries envelope
 // under the cacheKey the pane reads ("libraries:0"), LibrariesPaneBody must paint
@@ -26,6 +25,21 @@ function fetchInputPathWithSearch(input: unknown): string {
   return `${url.pathname}${url.search}`;
 }
 
+function librariesPage<T>(
+  items: T[],
+  nextCursor?: string,
+  collectionRevision = 1,
+) {
+  return {
+    items,
+    collectionRevision,
+    nextCursor:
+      nextCursor === undefined
+        ? { kind: "Absent" as const }
+        : { kind: "Present" as const, value: nextCursor },
+  };
+}
+
 describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
   it("paints the seeded library and never fetches /api/libraries", async () => {
     const publish = vi.fn();
@@ -39,27 +53,24 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
     renderHydratedPane({
       href: "/libraries",
       resources: {
-        "libraries:0": {
-          data: [
-            {
-              id: "00000000-0000-4000-8000-000000000201",
-              name: "Bootstrapped Reading Room",
-              color: null,
-              ownerUserHandle: OWNER_USER_HANDLE,
-              isDefault: false,
-              role: "admin",
-              createdAt: "2026-01-01T00:00:00Z",
-              updatedAt: "2026-01-01T00:00:00Z",
-              systemKey: null,
-              canRename: true,
-              canDelete: true,
-              canEditEntries: true,
-              canManageMembers: true,
-              canTransferOwnership: true,
-            },
-          ],
-          page: { has_more: false, next_cursor: null },
-        },
+        "libraries:0": librariesPage([
+          {
+            id: "00000000-0000-4000-8000-000000000201",
+            name: "Bootstrapped Reading Room",
+            color: null,
+            ownerUserHandle: OWNER_USER_HANDLE,
+            isDefault: false,
+            role: "admin",
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            systemKey: null,
+            canRename: true,
+            canDelete: true,
+            canEditEntries: true,
+            canManageMembers: true,
+            canTransferOwnership: true,
+          },
+        ]),
       },
       children: (
         <LibraryPlacementControllerProvider>
@@ -125,8 +136,7 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
       }
       if (url.pathname === "/api/libraries") {
         return Response.json({
-          data: [],
-          page: { has_more: false, next_cursor: null },
+          data: librariesPage([]),
         });
       }
       throw new Error(`unexpected fetch: ${path}`);
@@ -135,10 +145,7 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
     renderHydratedPane({
       href: "/libraries",
       resources: {
-        "libraries:0": {
-          data: [],
-          page: { has_more: false, next_cursor: null },
-        },
+        "libraries:0": librariesPage([]),
       },
       children: (
         <LibraryPlacementControllerProvider>
@@ -167,9 +174,7 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
       "Changed draft",
       "Changed draft",
     ]);
-    expect(createBodies[0]?.library_id).not.toBe(
-      createBodies[1]?.library_id,
-    );
+    expect(createBodies[0]?.library_id).not.toBe(createBodies[1]?.library_id);
     expect(createBodies[1]?.library_id).toBe(createBodies[2]?.library_id);
     expect(createBodies[2]?.library_id).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
@@ -188,27 +193,24 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
     renderHydratedPane({
       href: "/libraries",
       resources: {
-        "libraries:0": {
-          data: [
-            {
-              id: "00000000-0000-4000-8000-000000000200",
-              name: "My Library",
-              color: null,
-              ownerUserHandle: OWNER_USER_HANDLE,
-              isDefault: true,
-              role: "admin",
-              createdAt: "2026-01-01T00:00:00Z",
-              updatedAt: "2026-01-01T00:00:00Z",
-              systemKey: null,
-              canRename: false,
-              canDelete: false,
-              canEditEntries: true,
-              canManageMembers: true,
-              canTransferOwnership: true,
-            },
-          ],
-          page: { has_more: false, next_cursor: null },
-        },
+        "libraries:0": librariesPage([
+          {
+            id: "00000000-0000-4000-8000-000000000200",
+            name: "My Library",
+            color: null,
+            ownerUserHandle: OWNER_USER_HANDLE,
+            isDefault: true,
+            role: "admin",
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            systemKey: null,
+            canRename: false,
+            canDelete: false,
+            canEditEntries: true,
+            canManageMembers: true,
+            canTransferOwnership: true,
+          },
+        ]),
       },
       children: (
         <LibraryPlacementControllerProvider>
@@ -219,7 +221,9 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
 
     // The default library surfaces as the "All" view with its cross-library
     // secondary; the stored seed name "My Library" never reaches the surface.
-    expect(await screen.findByRole("link", { name: "All" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "All" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Across your libraries")).toBeInTheDocument();
     expect(screen.queryByText("My Library")).not.toBeInTheDocument();
   });
@@ -236,10 +240,7 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
     renderHydratedPane({
       href: "/libraries",
       resources: {
-        "libraries:0": {
-          data: [],
-          page: { has_more: false, next_cursor: null },
-        },
+        "libraries:0": librariesPage([]),
       },
       children: (
         <LibraryPlacementControllerProvider>
@@ -260,15 +261,17 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
     ).toBeInTheDocument();
   });
 
-  it("loads another library page from the hydrated first page cursor", async () => {
-    const user = userEvent.setup();
+  it("automatically exhausts another library page from the hydrated cursor", async () => {
     const fetchSpy = stubFetch(async (input) => {
       if (fetchInputPathWithSearch(input) === "/api/libraries/invites") {
         return Response.json({ data: [] });
       }
-      if (fetchInputPathWithSearch(input) === "/api/libraries?cursor=cursor-2") {
+      if (
+        fetchInputPathWithSearch(input) ===
+        "/api/libraries?cursor=cursor-2&collection_revision=1&limit=100"
+      ) {
         return Response.json({
-          data: [
+          data: librariesPage([
             {
               id: "00000000-0000-4000-8000-000000000202",
               name: "Second Page Library",
@@ -285,8 +288,7 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
               canManageMembers: true,
               canTransferOwnership: true,
             },
-          ],
-          page: { has_more: false, next_cursor: null },
+          ]),
         });
       }
       throw new Error(`unexpected fetch: ${String(input)}`);
@@ -295,8 +297,8 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
     renderHydratedPane({
       href: "/libraries",
       resources: {
-        "libraries:0": {
-          data: [
+        "libraries:0": librariesPage(
+          [
             {
               id: "00000000-0000-4000-8000-000000000201",
               name: "Bootstrapped Reading Room",
@@ -314,8 +316,8 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
               canTransferOwnership: true,
             },
           ],
-          page: { has_more: true, next_cursor: "cursor-2" },
-        },
+          "cursor-2",
+        ),
       },
       children: (
         <LibraryPlacementControllerProvider>
@@ -324,29 +326,178 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
       ),
     });
 
-    await user.click(await screen.findByRole("button", { name: "Load more libraries" }));
-
     expect(
       await screen.findByRole("link", { name: "Second Page Library" }),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Load more libraries" }),
+    ).not.toBeInTheDocument();
     expect(fetchSpy).toHaveBeenCalledWith(
-      "/api/libraries?cursor=cursor-2",
+      "/api/libraries?cursor=cursor-2&collection_revision=1&limit=100",
       expect.objectContaining({ method: "GET" }),
     );
+  });
+
+  it("rebases a safe deletion onto the same continuation cursor without a page-one refresh", async () => {
+    const user = userEvent.setup();
+    const deletedId = "00000000-0000-4000-8000-000000000201";
+    const retainedId = "00000000-0000-4000-8000-000000000202";
+    const continuedId = "00000000-0000-4000-8000-000000000203";
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const fetchSpy = stubFetch(async (input, init) => {
+      const path = fetchInputPathWithSearch(input);
+      const url = new URL(path, "http://localhost");
+      if (url.pathname === "/api/libraries/invites") {
+        return Response.json({ data: [] });
+      }
+      if (
+        url.pathname === `/api/libraries/${deletedId}` &&
+        init?.method === "DELETE"
+      ) {
+        return Response.json({
+          data: { libraryId: deletedId, collectionRevision: 2 },
+        });
+      }
+      if (
+        path ===
+        "/api/libraries?cursor=cursor-2&collection_revision=1&limit=100"
+      ) {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Aborted", "AbortError")),
+            { once: true },
+          );
+        });
+      }
+      if (
+        path ===
+        "/api/libraries?cursor=cursor-2&collection_revision=2&limit=100"
+      ) {
+        return Response.json({
+          data: librariesPage(
+            [
+              {
+                id: continuedId,
+                name: "Continued Library",
+                color: null,
+                ownerUserHandle: OWNER_USER_HANDLE,
+                isDefault: false,
+                role: "admin",
+                createdAt: "2026-01-03T00:00:00Z",
+                updatedAt: "2026-01-03T00:00:00Z",
+                systemKey: null,
+                canRename: true,
+                canDelete: true,
+                canEditEntries: true,
+                canManageMembers: true,
+                canTransferOwnership: true,
+              },
+            ],
+            undefined,
+            2,
+          ),
+        });
+      }
+      throw new Error(`unexpected fetch: ${path} ${init?.method ?? "GET"}`);
+    });
+
+    renderHydratedPane({
+      href: "/libraries",
+      resources: {
+        "libraries:0": librariesPage(
+          [
+            {
+              id: deletedId,
+              name: "Delete Me",
+              color: null,
+              ownerUserHandle: OWNER_USER_HANDLE,
+              isDefault: false,
+              role: "admin",
+              createdAt: "2026-01-01T00:00:00Z",
+              updatedAt: "2026-01-01T00:00:00Z",
+              systemKey: null,
+              canRename: true,
+              canDelete: true,
+              canEditEntries: true,
+              canManageMembers: true,
+              canTransferOwnership: true,
+            },
+            {
+              id: retainedId,
+              name: "Keep Me",
+              color: null,
+              ownerUserHandle: OWNER_USER_HANDLE,
+              isDefault: false,
+              role: "admin",
+              createdAt: "2026-01-02T00:00:00Z",
+              updatedAt: "2026-01-02T00:00:00Z",
+              systemKey: null,
+              canRename: true,
+              canDelete: true,
+              canEditEntries: true,
+              canManageMembers: true,
+              canTransferOwnership: true,
+            },
+          ],
+          "cursor-2",
+        ),
+      },
+      children: (
+        <LibraryPlacementControllerProvider>
+          <LibrariesPaneBody />
+        </LibraryPlacementControllerProvider>
+      ),
+    });
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "More actions for Delete Me",
+      }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Delete library" }),
+    );
+
+    await vi.waitFor(() =>
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "/api/libraries?cursor=cursor-2&collection_revision=2&limit=100",
+        expect.objectContaining({ method: "GET" }),
+      ),
+    );
+    expect(
+      await screen.findByRole("link", { name: "Continued Library" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Delete Me" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Keep Me" })).toBeInTheDocument();
+    expect(
+      fetchSpy.mock.calls.some(([input, init]) => {
+        const url = new URL(
+          input instanceof Request ? input.url : String(input),
+          "http://localhost",
+        );
+        return (
+          url.pathname === "/api/libraries" &&
+          url.search === "" &&
+          (!init?.method || init.method === "GET")
+        );
+      }),
+    ).toBe(false);
   });
 
   it("lets an invitee accept a sealed library invitation from the library inbox", async () => {
     const user = userEvent.setup();
     const invitationHandle =
       "nli1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB";
-    const inviterHandle =
-      "nus1.CCCCCCCCCCCCCCCCCCCCCC.DDDDDDDDDDDDDDDDDDDDDD";
-    const inviteeHandle =
-      "nus1.EEEEEEEEEEEEEEEEEEEEEE.FFFFFFFFFFFFFFFFFFFFFF";
+    const inviterHandle = "nus1.CCCCCCCCCCCCCCCCCCCCCC.DDDDDDDDDDDDDDDDDDDDDD";
+    const inviteeHandle = "nus1.EEEEEEEEEEEEEEEEEEEEEE.FFFFFFFFFFFFFFFFFFFFFF";
     let inviteReads = 0;
     const fetchSpy = stubFetch(async (input, init) => {
       const path = fetchInputPathWithSearch(input);
-      if (path === "/api/libraries/invites" && (!init?.method || init.method === "GET")) {
+      if (
+        path === "/api/libraries/invites" &&
+        (!init?.method || init.method === "GET")
+      ) {
         inviteReads += 1;
         return Response.json({
           data:
@@ -413,8 +564,7 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
       }
       if (new URL(path, "http://localhost").pathname === "/api/libraries") {
         return Response.json({
-          data: [],
-          page: { has_more: false, next_cursor: null },
+          data: librariesPage([], undefined, 2),
         });
       }
       throw new Error(`unexpected fetch: ${path}`);
@@ -423,10 +573,7 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
     renderHydratedPane({
       href: "/libraries",
       resources: {
-        "libraries:0": {
-          data: [],
-          page: { has_more: false, next_cursor: null },
-        },
+        "libraries:0": librariesPage([]),
       },
       children: (
         <LibraryPlacementControllerProvider>

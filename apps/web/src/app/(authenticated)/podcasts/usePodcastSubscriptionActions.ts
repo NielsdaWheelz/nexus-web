@@ -17,6 +17,7 @@ import {
   refreshPodcastSubscriptionSync,
   unsubscribeFromPodcast,
   type PodcastSubscriptionSyncRefreshResult,
+  type PodcastUnsubscribeResult,
 } from "./podcastSubscriptions";
 
 /**
@@ -151,7 +152,10 @@ export function usePodcastSubscriptionActions(
     async (
       podcastId: string,
       title: string,
-      onSuccess: (libraries: LibraryPlacementOption[]) => void,
+      onSuccess: (
+        libraries: LibraryPlacementOption[],
+        result: PodcastUnsubscribeResult,
+      ) => void,
     ): Promise<boolean> => {
       const libraries = await loadLibraries(podcastId);
       if (libraries === null) {
@@ -164,8 +168,8 @@ export function usePodcastSubscriptionActions(
       }
       unsubscribingPodcastIds.add(podcastId);
       try {
-        await unsubscribeFromPodcast(podcastId);
-        onSuccess(libraries);
+        const result = await unsubscribeFromPodcast(podcastId);
+        onSuccess(libraries, result);
         return true;
       } catch (unsubscribeError) {
         if (handleUnauthenticatedApiError(unsubscribeError)) return false;

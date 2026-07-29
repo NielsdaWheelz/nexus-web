@@ -146,6 +146,7 @@ function installMock(config: MockConfig) {
                 nextItem: { kind: "Absent" },
                 progressState: { kind: "Absent" },
                 completionHandle: { kind: "Absent" },
+                libraryEntriesCollectionRevision: 1,
               },
             });
       }
@@ -336,6 +337,7 @@ describe("GlobalPlayer completion lifecycle", () => {
             },
             progressState: { kind: "Absent" },
             completionHandle: { kind: "Absent" },
+            libraryEntriesCollectionRevision: 2,
           },
         });
         void body;
@@ -470,6 +472,7 @@ describe("GlobalPlayer completion lifecycle", () => {
             nextItem: { kind: "Absent" },
             progressState: { kind: "Absent" },
             completionHandle: { kind: "Absent" },
+            libraryEntriesCollectionRevision: 3,
           },
         });
       },

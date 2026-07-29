@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from lxml import etree
+import lxml.etree as etree
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -27,9 +27,15 @@ from nexus.schemas.podcast import (
     PodcastOpmlImportOut,
     PodcastSubscribeOut,
     PodcastSubscribeRequest,
+    PodcastSubscriptionSettingsOut,
     PodcastSubscriptionSettingsPatchRequest,
     PodcastSubscriptionStatusOut,
     PodcastUnsubscribeOut,
+)
+from nexus.services.collection_revisions import (
+    CollectionFamily,
+    bump_collection_families,
+    read_collection_revision,
 )
 from nexus.services.library_entries import (
     remove_user_podcast_subscription_libraries,
@@ -54,6 +60,25 @@ PODCAST_OPML_MAX_OUTLINES = 200
 PODCAST_OPML_MAX_TITLE_LENGTH = 512
 PODCAST_OPML_MAX_URL_LENGTH = 2048
 PODCAST_OPML_MAX_ERROR_LENGTH = 300
+
+
+def _bump_subscription_collections(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    episodes: bool = False,
+) -> None:
+    families = [
+        CollectionFamily.LibraryEntries,
+        CollectionFamily.PodcastSubscriptions,
+    ]
+    if episodes:
+        families.append(CollectionFamily.PodcastEpisodes)
+    bump_collection_families(
+        db,
+        viewer_ids=(viewer_id,),
+        families=families,
+    )
 
 
 def import_subscriptions_from_opml(
@@ -170,6 +195,7 @@ def import_subscriptions_from_opml(
                         podcast_id,
                         library_ids,
                     )
+                    _bump_subscription_collections(db, viewer_id=viewer_id)
                     summary.skipped_already_subscribed += 1
                     continue
 
@@ -191,6 +217,7 @@ def import_subscriptions_from_opml(
                     user_id=viewer_id,
                     podcast_id=podcast_id,
                 )
+                _bump_subscription_collections(db, viewer_id=viewer_id)
                 summary.imported += 1
         except ApiError as exc:
             summary.errors.append(
@@ -322,6 +349,7 @@ def subscribe_to_podcast(
         snapshot = get_subscription_sync_snapshot(db, viewer_id, podcast_id)
         if snapshot is None:
             raise ApiError(ApiErrorCode.E_INTERNAL, "Failed to read podcast subscription state.")
+        _bump_subscription_collections(db, viewer_id=viewer_id)
 
     # After the transaction commits, apply the typed payload's contributor slices
     # through the author facade in a fresh session (spec 2.1/2.4). The mutation
@@ -397,7 +425,7 @@ def update_subscription_settings_for_viewer(
     viewer_id: UUID,
     podcast_id: UUID,
     body: PodcastSubscriptionSettingsPatchRequest,
-) -> PodcastSubscriptionStatusOut:
+) -> PodcastSubscriptionSettingsOut:
     assignments: list[str] = []
     params: dict[str, Any] = {
         "user_id": viewer_id,
@@ -433,8 +461,24 @@ def update_subscription_settings_for_viewer(
         ).fetchone()
         if updated is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast subscription not found")
+        _bump_subscription_collections(db, viewer_id=viewer_id)
+        collection_revision = read_collection_revision(
+            db,
+            viewer_id=viewer_id,
+            family=CollectionFamily.PodcastSubscriptions,
+        )
+        library_entries_collection_revision = read_collection_revision(
+            db,
+            viewer_id=viewer_id,
+            family=CollectionFamily.LibraryEntries,
+        )
 
-    return get_subscription_status(db, viewer_id, podcast_id)
+    status = get_subscription_status(db, viewer_id, podcast_id)
+    return PodcastSubscriptionSettingsOut(
+        **status.model_dump(),
+        collectionRevision=collection_revision,
+        libraryEntriesCollectionRevision=library_entries_collection_revision,
+    )
 
 
 def unsubscribe_from_podcast(
@@ -445,6 +489,8 @@ def unsubscribe_from_podcast(
     now = datetime.now(UTC)
     removed_from_library_count = 0
     retained_shared_library_count = 0
+    collection_revision = 0
+    library_entries_collection_revision = 0
 
     with transaction(db):
         subscription_exists = db.execute(
@@ -490,12 +536,25 @@ def unsubscribe_from_podcast(
             db,
             audience=AudienceUser(user_id=viewer_id),
         )
+        _bump_subscription_collections(db, viewer_id=viewer_id, episodes=True)
+        collection_revision = read_collection_revision(
+            db,
+            viewer_id=viewer_id,
+            family=CollectionFamily.PodcastSubscriptions,
+        )
+        library_entries_collection_revision = read_collection_revision(
+            db,
+            viewer_id=viewer_id,
+            family=CollectionFamily.LibraryEntries,
+        )
 
     return PodcastUnsubscribeOut(
         podcast_id=podcast_id,
         status="unsubscribed",
         removed_from_library_count=removed_from_library_count,
         retained_shared_library_count=retained_shared_library_count,
+        collectionRevision=collection_revision,
+        libraryEntriesCollectionRevision=library_entries_collection_revision,
     )
 
 

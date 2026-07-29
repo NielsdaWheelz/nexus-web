@@ -105,8 +105,10 @@ export default function ConversationDestinationOverlay({
 }
 
 function buildListHref(query: string, cursor: string | null): ApiPath {
-  const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
-  if (query) params.set("q", query);
+  const params = new URLSearchParams({
+    limit: String(PAGE_SIZE),
+    q: query,
+  });
   if (cursor) params.set("cursor", cursor);
   return `/api/conversations?${params.toString()}` as ApiPath;
 }

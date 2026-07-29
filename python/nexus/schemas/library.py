@@ -7,8 +7,8 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
+from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.contributors import ContributorCreditOut
-from nexus.schemas.media import MediaOut
 from nexus.schemas.presence import Presence
 from nexus.services.sealed_handles import LibraryInvitationHandle, UserHandle
 
@@ -40,6 +40,26 @@ class UpdateLibraryRequest(BaseModel):
 
 class AddPodcastRequest(BaseModel):
     podcast_id: UUID = Field(..., description="ID of the podcast to add")
+
+
+_LIBRARY_MUTATION_OUT_CONFIG = ConfigDict(
+    alias_generator=to_camel,
+    populate_by_name=True,
+    extra="forbid",
+)
+
+
+class LibraryDeleteOut(BaseModel):
+    model_config = _LIBRARY_MUTATION_OUT_CONFIG
+
+    library_id: UUID
+    collection_revision: CollectionRevision
+
+
+class LibraryEntryRemovalOut(BaseModel):
+    model_config = _LIBRARY_MUTATION_OUT_CONFIG
+
+    library_entries_collection_revision: CollectionRevision
 
 
 class LibraryPlacementOptionOut(BaseModel):
@@ -102,6 +122,13 @@ class LibraryOut(BaseModel):
     )
 
 
+class LibraryRenameOut(BaseModel):
+    model_config = _LIBRARY_MUTATION_OUT_CONFIG
+
+    library: LibraryOut
+    collection_revision: CollectionRevision
+
+
 class LibraryPageInfo(BaseModel):
     has_more: bool = False
     next_cursor: str | None = None
@@ -129,33 +156,58 @@ class LibraryDestinationOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class LibraryPodcastOut(BaseModel):
+class LibraryEntryPodcastOut(BaseModel):
     id: UUID
-    provider: str
-    provider_podcast_id: str
     title: str
     contributors: list[ContributorCreditOut] = Field(default_factory=list)
-    feed_url: str
-    website_url: str | None = None
-    image_url: str | None = None
-    description: str | None = None
-    created_at: datetime
-    updated_at: datetime
     unplayed_count: int = Field(ge=0, default=0)
 
+    model_config = ConfigDict(extra="forbid")
 
-class LibraryPodcastSubscriptionOut(BaseModel):
+
+class LibraryEntryPodcastSubscriptionOut(BaseModel):
     status: PodcastSubscriptionStatusValue
     default_playback_speed: float | None = Field(default=None, ge=0.5, le=3.0)
     auto_queue: bool = False
     sync_status: PodcastSyncStatusValue
-    sync_error_code: str | None = None
-    sync_error_message: str | None = None
-    sync_attempts: int = Field(ge=0)
-    sync_started_at: datetime | None = None
-    sync_completed_at: datetime | None = None
-    last_synced_at: datetime | None = None
-    updated_at: datetime
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class LibraryEntryMediaCapabilitiesOut(BaseModel):
+    can_quote: bool
+    can_retry: bool
+    can_refresh_source: bool
+    can_retry_metadata: bool
+    can_edit_authors: bool
+    can_delete: bool
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class LibraryEntryMediaOut(BaseModel):
+    id: UUID
+    kind: Literal["web_article", "epub", "pdf", "podcast_episode", "video"]
+    title: str
+    created_at: datetime
+    contributors: list[ContributorCreditOut] = Field(default_factory=list)
+    author_mode: Literal["automatic", "manual"]
+    published_date: str | None
+    canonical_source_url: str | None
+    processing_status: Literal[
+        "pending",
+        "extracting",
+        "ready_for_reading",
+        "failed",
+        "suspended",
+    ]
+    read_state: Literal["unread", "in_progress", "finished"]
+    progress_fraction: float | None = Field(default=None, ge=0, le=1)
+    progress_resettable: bool
+    last_engaged_at: datetime | None = None
+    capabilities: LibraryEntryMediaCapabilitiesOut
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class ReadingTimeEstimateOut(BaseModel):
@@ -165,20 +217,37 @@ class ReadingTimeEstimateOut(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
 
 
-class LibraryEntryOut(BaseModel):
+class LibraryMediaListItemOut(BaseModel):
     id: UUID
-    library_id: UUID
-    kind: LibraryEntryKind
+    kind: Literal["media"]
     position: int = Field(ge=0)
     created_at: datetime
-    media: MediaOut | None = None
-    podcast: LibraryPodcastOut | None = None
-    subscription: LibraryPodcastSubscriptionOut | None = None
+    media: LibraryEntryMediaOut
     reading_time_estimate: Presence[ReadingTimeEstimateOut] = Field(
         serialization_alias="readingTimeEstimate"
     )
 
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+class LibraryPodcastListItemOut(BaseModel):
+    id: UUID
+    kind: Literal["podcast"]
+    position: int = Field(ge=0)
+    created_at: datetime
+    podcast: LibraryEntryPodcastOut
+    subscription: LibraryEntryPodcastSubscriptionOut | None
+    reading_time_estimate: Presence[ReadingTimeEstimateOut] = Field(
+        serialization_alias="readingTimeEstimate"
+    )
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+LibraryEntryListItemOut = Annotated[
+    LibraryMediaListItemOut | LibraryPodcastListItemOut,
+    Field(discriminator="kind"),
+]
 
 
 class LibraryMemberOut(BaseModel):

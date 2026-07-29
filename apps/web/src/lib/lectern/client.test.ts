@@ -309,6 +309,7 @@ describe("decodeConsumptionResult", () => {
       lectern: { items: [item()] },
       nextItem: { kind: "Absent" },
       completionHandle: { kind: "Absent" },
+      libraryEntriesCollectionRevision: 9,
       progressState: {
         kind: "Present",
         value: {
@@ -344,6 +345,7 @@ describe("decodeConsumptionResult", () => {
       nextItem: { kind: "Absent" },
       progressState: { kind: "Absent" },
       completionHandle: { kind: "Absent" },
+      libraryEntriesCollectionRevision: 10,
     });
     expect(result.outcome).toEqual({ kind: "StateOnly" });
     expect(result.nextItem).toEqual({ kind: "Absent" });
@@ -358,6 +360,7 @@ describe("decodeConsumptionResult", () => {
         nextItem: { kind: "Absent" },
         progressState: { kind: "Absent" },
         completionHandle: { kind: "Absent" },
+        libraryEntriesCollectionRevision: 11,
         unexpected: [],
       }),
     ).toThrow();

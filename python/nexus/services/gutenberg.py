@@ -17,6 +17,10 @@ from sqlalchemy.orm import Session
 from nexus.db.models import ProjectGutenbergCatalogEntry
 from nexus.db.session import transaction
 from nexus.services import contributors
+from nexus.services.collection_revisions import (
+    CollectionFamily,
+    bump_all_collection_revisions,
+)
 from nexus.services.contributor_credits import current_gutenberg_author_names
 from nexus.services.contributor_taxonomy import (
     ContributorObservationBatch,
@@ -120,6 +124,9 @@ def sync_project_gutenberg_catalog(
                     set_={column: stmt.excluded[column] for column in _CATALOG_UPSERT_COLUMNS},
                 )
             )
+        # Title/issued changes alter AuthorWorks ordering even when the author
+        # slice is unchanged and therefore skips the contributor facade.
+        bump_all_collection_revisions(db, family=CollectionFamily.AuthorWorks)
 
     # Author replacement runs only for new/changed ebooks, after the catalog
     # transaction has committed — the facade opens its own fresh sessions and

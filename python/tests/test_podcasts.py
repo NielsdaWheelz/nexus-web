@@ -8,11 +8,12 @@ from uuid import UUID, uuid4
 
 import lxml.etree as etree
 import pytest
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from nexus.config import clear_settings_cache, get_settings
 from nexus.db.models import Media, MediaKind, PodcastEpisode, ProcessingStatus
+from nexus.db.session import get_engine
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.services.billing_entitlements import (
     grant_entitlement_override,
@@ -171,7 +172,7 @@ def test_direct_semantic_repair_rebuilds_ready_transcript_with_stale_embedding_m
 
 
 class TestPodcastUxHardening:
-    def test_list_subscriptions_supports_offset_pagination(self, auth_client, monkeypatch):
+    def test_list_subscriptions_uses_revision_checked_keyset_pages(self, auth_client, monkeypatch):
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
 
@@ -190,27 +191,44 @@ class TestPodcastUxHardening:
             )
 
         first_page = auth_client.get(
-            "/podcasts/subscriptions?limit=2&offset=0",
+            "/podcasts/subscriptions?limit=2",
             headers=auth_headers(user_id),
         )
         assert first_page.status_code == 200, (
             "expected first subscription page to succeed, "
             f"got {first_page.status_code}: {first_page.text}"
         )
-        first_rows = first_page.json()["data"]
+        first_data = first_page.json()["data"]
+        first_rows = first_data["items"]
         assert len(first_rows) == 2, (
             f"expected 2 subscriptions on first page, got {len(first_rows)}"
         )
+        assert set(first_rows[0]) == {
+            "podcast_id",
+            "title",
+            "contributors",
+            "unplayed_count",
+            "latest_episode_published_at",
+            "default_playback_speed",
+            "auto_queue",
+            "sync_status",
+        }
 
         second_page = auth_client.get(
-            "/podcasts/subscriptions?limit=2&offset=2",
+            "/podcasts/subscriptions",
+            params={
+                "limit": "2",
+                "cursor": first_data["nextCursor"]["value"],
+                "collection_revision": str(first_data["collectionRevision"]),
+            },
             headers=auth_headers(user_id),
         )
         assert second_page.status_code == 200, (
             "expected second subscription page to succeed, "
             f"got {second_page.status_code}: {second_page.text}"
         )
-        second_rows = second_page.json()["data"]
+        second_data = second_page.json()["data"]
+        second_rows = second_data["items"]
         assert len(second_rows) == 1, (
             f"expected 1 subscription on second page, got {len(second_rows)}"
         )
@@ -221,8 +239,58 @@ class TestPodcastUxHardening:
             "expected paginated subscription pages to be non-overlapping, "
             f"got overlap: {first_ids.intersection(second_ids)}"
         )
+        assert second_data["nextCursor"] == {"kind": "Absent"}
+        rejected_offset = auth_client.get(
+            "/podcasts/subscriptions?offset=0",
+            headers=auth_headers(user_id),
+        )
+        assert rejected_offset.status_code == 400
 
-    def test_list_podcast_episodes_supports_offset_pagination(
+    def test_alpha_subscription_cursor_serializes_postgres_sort_key(
+        self, auth_client, monkeypatch
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        payloads = [
+            _podcast_payload(f"unicode-alpha-{uuid4()}", title)
+            for title in ("İ Show", "Iz Show", "Zulu Show")
+        ]
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=payloads,
+            episodes_by_podcast={},
+        )
+        expected_ids = {
+            _subscribe(auth_client, user_id, payload)["podcast_id"]
+            for payload in payloads
+        }
+
+        seen_ids: list[str] = []
+        cursor: str | None = None
+        revision: int | None = None
+        while True:
+            params: dict[str, str] = {"limit": "1", "sort": "alpha"}
+            if cursor is not None:
+                params["cursor"] = cursor
+                params["collection_revision"] = str(revision)
+            response = auth_client.get(
+                "/podcasts/subscriptions",
+                params=params,
+                headers=auth_headers(user_id),
+            )
+            assert response.status_code == 200, response.text
+            page = response.json()["data"]
+            seen_ids.extend(row["podcast_id"] for row in page["items"])
+            revision = page["collectionRevision"]
+            next_cursor = page["nextCursor"]
+            if next_cursor["kind"] == "Absent":
+                break
+            cursor = next_cursor["value"]
+
+        assert len(seen_ids) == len(set(seen_ids))
+        assert set(seen_ids) == expected_ids
+
+    def test_list_podcast_episodes_uses_revision_checked_keyset_pages(
         self, auth_client, monkeypatch, direct_db
     ):
         user_id = create_test_user_id()
@@ -279,25 +347,51 @@ class TestPodcastUxHardening:
         )
 
         first_page = auth_client.get(
-            f"/podcasts/{podcast_id}/episodes?limit=2&offset=0",
+            f"/podcasts/{podcast_id}/episodes?limit=2",
             headers=auth_headers(user_id),
         )
         assert first_page.status_code == 200, (
             "expected first episodes page to succeed, "
             f"got {first_page.status_code}: {first_page.text}"
         )
-        first_rows = first_page.json()["data"]
+        first_data = first_page.json()["data"]
+        first_rows = first_data["items"]
         assert len(first_rows) == 2, f"expected 2 episodes on first page, got {len(first_rows)}"
+        assert set(first_rows[0]) == {
+            "id",
+            "kind",
+            "title",
+            "canonical_source_url",
+            "processing_status",
+            "transcript_state",
+            "transcript_coverage",
+            "listening_state",
+            "episode_state",
+            "progress_resettable",
+            "capabilities",
+            "contributors",
+            "author_mode",
+            "published_date",
+            "duration_seconds",
+            "has_show_notes",
+            "playerDescriptor",
+        }
 
         second_page = auth_client.get(
-            f"/podcasts/{podcast_id}/episodes?limit=2&offset=2",
+            f"/podcasts/{podcast_id}/episodes",
+            params={
+                "limit": "2",
+                "cursor": first_data["nextCursor"]["value"],
+                "collection_revision": str(first_data["collectionRevision"]),
+            },
             headers=auth_headers(user_id),
         )
         assert second_page.status_code == 200, (
             "expected second episodes page to succeed, "
             f"got {second_page.status_code}: {second_page.text}"
         )
-        second_rows = second_page.json()["data"]
+        second_data = second_page.json()["data"]
+        second_rows = second_data["items"]
         assert len(second_rows) == 1, f"expected 1 episode on second page, got {len(second_rows)}"
 
         first_ids = {row["id"] for row in first_rows}
@@ -306,6 +400,12 @@ class TestPodcastUxHardening:
             "expected paginated episode pages to be non-overlapping, "
             f"got overlap: {first_ids.intersection(second_ids)}"
         )
+        assert second_data["nextCursor"] == {"kind": "Absent"}
+        rejected_offset = auth_client.get(
+            f"/podcasts/{podcast_id}/episodes?offset=0",
+            headers=auth_headers(user_id),
+        )
+        assert rejected_offset.status_code == 400
 
     def test_refresh_sync_endpoint_sets_pending_and_enqueues(
         self, auth_client, monkeypatch, direct_db
@@ -2883,7 +2983,7 @@ class TestPodcastTranscriptRequestAdmission:
         direct_db,
         transcription_minutes_limit_monthly: int | None,
         duration_seconds: int,
-    ) -> dict[str, UUID]:
+    ) -> dict[str, object]:
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
         _set_plan(
@@ -2917,10 +3017,11 @@ class TestPodcastTranscriptRequestAdmission:
         )
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
+        podcast_id = UUID(subscribe_data["podcast_id"])
         sync_result = _run_subscription_sync(
             direct_db,
             user_id,
-            UUID(subscribe_data["podcast_id"]),
+            podcast_id,
             run_transcription_jobs=False,
         )
 
@@ -2942,6 +3043,7 @@ class TestPodcastTranscriptRequestAdmission:
 
         return {
             "user_id": user_id,
+            "podcast_id": podcast_id,
             "media_id": media_id,
             "sync_status": sync_result["sync_status"],
         }
@@ -3139,18 +3241,18 @@ class TestPodcastTranscriptRequestAdmission:
             duration_seconds=180,
         )
         user_id = seeded["user_id"]
+        podcast_id = seeded["podcast_id"]
         media_id = seeded["media_id"]
 
+        target = {
+            "kind": "PodcastEpisodeQuery",
+            "podcastId": str(podcast_id),
+            "selection": {"state": "all", "query": {"kind": "Absent"}},
+            "reason": "search",
+        }
         batch_response = auth_client.post(
             "/media/transcript/forecasts",
-            json={
-                "requests": [
-                    {
-                        "media_id": str(media_id),
-                        "reason": "episode_open",
-                    }
-                ]
-            },
+            json=target,
             headers=auth_headers(user_id),
         )
         assert batch_response.status_code == 200, (
@@ -3158,12 +3260,11 @@ class TestPodcastTranscriptRequestAdmission:
             f"got {batch_response.status_code}: {batch_response.text}"
         )
         payload = batch_response.json()["data"]
-        assert len(payload) == 1, f"expected exactly one forecast row, got {payload}"
-        assert payload[0]["media_id"] == str(media_id)
-        assert payload[0]["fits_budget"] is True
-        assert payload[0]["required_minutes"] == 3
-        assert payload[0]["remaining_minutes"] == 5
-        assert payload[0]["request_enqueued"] is False
+        assert payload["eligibleCount"] == 1
+        assert payload["fitsBudget"] is True
+        assert payload["requiredMinutes"] == 3
+        assert payload["remainingMinutes"] == {"kind": "Present", "value": 5}
+        assert len(payload["selectionFingerprint"]) == 64
 
         with direct_db.session() as session:
             usage_minutes = session.execute(
@@ -3183,6 +3284,23 @@ class TestPodcastTranscriptRequestAdmission:
 
         assert usage_minutes in {None, 0}, "batch forecast must not mutate quota usage"
         assert transcription_jobs == 0, "batch forecast must not enqueue transcription work"
+
+        request_response = auth_client.post(
+            "/media/transcript/request/batch",
+            json={
+                "target": target,
+                "selectionFingerprint": payload["selectionFingerprint"],
+            },
+            headers=auth_headers(user_id),
+        )
+        assert request_response.status_code == 200, (
+            "fingerprinted query request should queue the server-resolved selection, "
+            f"got {request_response.status_code}: {request_response.text}"
+        )
+        request_payload = request_response.json()["data"]
+        assert request_payload["matchedCount"] == 1
+        assert request_payload["queuedCount"] == 1
+        assert request_payload["collectionRevision"] >= 1
 
     def test_transcript_request_admits_with_quota_and_enqueues_job(
         self, auth_client, monkeypatch, direct_db
@@ -5514,6 +5632,8 @@ class TestPodcastSubscriptionLifecycleClosure:
         assert unsubscribed_data["status"] == "unsubscribed"
         assert unsubscribed_data["removed_from_library_count"] == 0
         assert unsubscribed_data["retained_shared_library_count"] == 0
+        assert unsubscribed_data["collectionRevision"] >= 1
+        assert "collection_revision" not in unsubscribed_data
 
         detail_after_unsubscribe = auth_client.get(
             f"/podcasts/{podcast_id}",
@@ -5880,7 +6000,7 @@ class TestPodcastSubscriptionLifecycleClosure:
 
         # (b) the position order matches the canonical list_library_entries order.
         with direct_db.session() as session:
-            canonical_entries, _page = list_library_entries(
+            canonical_page = list_library_entries(
                 session,
                 viewer_id=user_id,
                 library_id=affected_library_id,
@@ -5890,7 +6010,7 @@ class TestPodcastSubscriptionLifecycleClosure:
                 ),
                 limit=200,
             )
-        canonical_entry_ids = [entry.id for entry in canonical_entries]
+        canonical_entry_ids = [entry.id for entry in canonical_page.items]
         raw_entry_ids_by_position = [UUID(str(row[0])) for row in raw_rows]
         assert canonical_entry_ids == raw_entry_ids_by_position, (
             "after renormalization, position order must equal the canonical "
@@ -6064,17 +6184,15 @@ class TestPodcastApiSurface:
         assert response.status_code == 200, (
             f"expected 200 from subscriptions list, got {response.status_code}: {response.text}"
         )
-        rows = response.json()["data"]
+        rows = response.json()["data"]["items"]
         assert len(rows) == 1, f"expected exactly one subscription row, got: {rows}"
         row = rows[0]
         assert row["podcast_id"] == str(podcast_id)
-        assert row["status"] == "active"
         assert row["sync_status"] in {"complete", "source_limited"}
-        assert row["latest_episode_published_at"] == "2026-03-03T10:00:00Z"
-        assert row["visible_libraries"] == []
-        assert row["podcast"]["provider_podcast_id"] == provider_podcast_id
-        assert row["podcast"]["title"] == "Surface Podcast"
-        assert row["podcast"]["feed_url"] == f"https://feeds.example.com/{provider_podcast_id}.xml"
+        assert row["latest_episode_published_at"]["kind"] == "Present"
+        assert row["title"] == "Surface Podcast"
+        assert "provider_podcast_id" not in row
+        assert "visible_libraries" not in row
 
     def test_get_podcast_detail_returns_podcast_and_subscription_payload(
         self, auth_client, monkeypatch, direct_db
@@ -6115,17 +6233,41 @@ class TestPodcastApiSurface:
             title="Episodes Podcast",
         )
 
-        response = auth_client.get(
-            f"/podcasts/{podcast_id}/episodes?limit=10",
-            headers=auth_headers(user_id),
-        )
+        statements: list[str] = []
+
+        def capture_statement(
+            _connection,
+            _cursor,
+            statement,
+            _parameters,
+            _context,
+            _executemany,
+        ):
+            statements.append(str(statement))
+
+        engine = get_engine()
+        event.listen(engine, "before_cursor_execute", capture_statement)
+        try:
+            response = auth_client.get(
+                f"/podcasts/{podcast_id}/episodes?limit=10",
+                headers=auth_headers(user_id),
+            )
+        finally:
+            event.remove(engine, "before_cursor_execute", capture_statement)
         assert response.status_code == 200, (
             f"expected 200 from podcast episodes list, got {response.status_code}: {response.text}"
         )
-        rows = response.json()["data"]
+        rows = response.json()["data"]["items"]
         assert len(rows) == 2, f"expected two episode media rows, got: {rows}"
         assert rows[0]["kind"] == "podcast_episode"
-        assert rows[0]["playback_source"]["kind"] == "external_audio"
+        assert rows[0]["playerDescriptor"]["kind"] == "Present"
+        assert set(rows[0]["playerDescriptor"]["value"]) == {"kind", "mediaId"}
+        assert not any(
+            "podcast_episode_chapters" in statement.lower() for statement in statements
+        ), (
+            "episode collection hydration must not load detail/Lectern chapters; "
+            f"captured statements: {statements}"
+        )
         assert rows[0]["title"] == "Episode 1"
         assert rows[1]["title"] == "Episode 2"
 
@@ -6178,11 +6320,11 @@ class TestPodcastApiSurface:
             "subscriptions list should include updated settings fields, "
             f"got {subscriptions_response.status_code}: {subscriptions_response.text}"
         )
-        rows = subscriptions_response.json()["data"]
+        rows = subscriptions_response.json()["data"]["items"]
         assert len(rows) == 1
         row = rows[0]
         assert row["podcast_id"] == str(podcast_id)
-        assert row["default_playback_speed"] == 1.5
+        assert row["default_playback_speed"] == {"kind": "Present", "value": 1.5}
         assert row["auto_queue"] is False
 
         detail_response = auth_client.get(
@@ -6205,11 +6347,9 @@ class TestPodcastApiSurface:
             "episodes list should include subscription_default_playback_speed for first-play inheritance, "
             f"got {episodes_response.status_code}: {episodes_response.text}"
         )
-        episodes = episodes_response.json()["data"]
+        episodes = episodes_response.json()["data"]["items"]
         assert len(episodes) == 2
-        assert all(episode["subscription_default_playback_speed"] == 1.5 for episode in episodes), (
-            f"expected all episode rows to carry subscription default speed override: {episodes}"
-        )
+        assert all("subscription_default_playback_speed" not in episode for episode in episodes)
 
         clear_response = auth_client.patch(
             f"/podcasts/subscriptions/{podcast_id}/settings",
@@ -6227,13 +6367,10 @@ class TestPodcastApiSurface:
             headers=auth_headers(user_id),
         )
         assert episodes_after_clear.status_code == 200
-        episodes_after_clear_payload = episodes_after_clear.json()["data"]
+        episodes_after_clear_payload = episodes_after_clear.json()["data"]["items"]
         assert all(
-            episode["subscription_default_playback_speed"] is None
+            "subscription_default_playback_speed" not in episode
             for episode in episodes_after_clear_payload
-        ), (
-            "cleared override must surface as null in episode rows so frontend falls back to 1.0x, "
-            f"got {episodes_after_clear_payload}"
         )
 
     def test_patch_subscription_settings_rejects_out_of_range_default_speed(
@@ -6814,10 +6951,17 @@ upgrade now
             "expected episode list to include chapter contract after sync, "
             f"got {episodes_response.status_code}: {episodes_response.text}"
         )
-        episode_rows = episodes_response.json()["data"]
+        episode_rows = episodes_response.json()["data"]["items"]
         assert len(episode_rows) == 1
         episode = episode_rows[0]
-        chapter_rows = episode["chapters"]
+        assert "chapters" not in episode
+        media_id = UUID(episode["id"])
+        media_response = auth_client.get(
+            f"/media/{media_id}",
+            headers=auth_headers(user_id),
+        )
+        assert media_response.status_code == 200
+        chapter_rows = media_response.json()["data"]["chapters"]
         assert [row["chapter_idx"] for row in chapter_rows] == [0, 1]
         assert [row["title"] for row in chapter_rows] == ["Intro", "Deep Dive"]
         assert chapter_rows[0]["t_start_ms"] == 0
@@ -6826,15 +6970,6 @@ upgrade now
         assert chapter_rows[0]["url"] == "https://example.com/chapters/intro"
         assert chapter_rows[0]["image_url"] == "https://cdn.example.com/images/intro.jpg"
 
-        media_id = UUID(episode["id"])
-        media_response = auth_client.get(
-            f"/media/{media_id}",
-            headers=auth_headers(user_id),
-        )
-        assert media_response.status_code == 200, (
-            "expected media detail to surface chapters contract, "
-            f"got {media_response.status_code}: {media_response.text}"
-        )
         media_payload = media_response.json()["data"]
         assert media_payload["chapters"] == chapter_rows
 
@@ -6951,9 +7086,15 @@ upgrade now
             "expected episodes endpoint to include podlove-derived chapters, "
             f"got {episodes_response.status_code}: {episodes_response.text}"
         )
-        episode_rows = episodes_response.json()["data"]
+        episode_rows = episodes_response.json()["data"]["items"]
         assert len(episode_rows) == 1
-        chapter_rows = episode_rows[0]["chapters"]
+        assert "chapters" not in episode_rows[0]
+        media_response = auth_client.get(
+            f"/media/{episode_rows[0]['id']}",
+            headers=auth_headers(user_id),
+        )
+        assert media_response.status_code == 200
+        chapter_rows = media_response.json()["data"]["chapters"]
         assert [row["title"] for row in chapter_rows] == ["Opening", "Interview"]
         assert [row["chapter_idx"] for row in chapter_rows] == [0, 1]
         assert chapter_rows[0]["t_start_ms"] == 0
@@ -7013,7 +7154,7 @@ upgrade now
             "podcast episode listing should respect media visibility instead of subscription state, "
             f"got {episodes_response.status_code}: {episodes_response.text}"
         )
-        assert episodes_response.json()["data"] == []
+        assert episodes_response.json()["data"]["items"] == []
 
     def test_get_podcast_episodes_supports_state_sort_search_and_derived_episode_state(
         self, auth_client, monkeypatch, direct_db
@@ -7088,7 +7229,7 @@ upgrade now
             f"expected episodes list to succeed, got {all_episodes_response.status_code}: "
             f"{all_episodes_response.text}"
         )
-        all_rows = all_episodes_response.json()["data"]
+        all_rows = all_episodes_response.json()["data"]["items"]
         row_by_title = {row["title"]: row for row in all_rows}
         assert set(row_by_title) == {"Interview Alpha", "Daily Roundup", "Interview Gamma"}
 
@@ -7134,44 +7275,58 @@ upgrade now
             f"expected filtered/sorted/search episodes list to succeed, got "
             f"{filtered_response.status_code}: {filtered_response.text}"
         )
-        filtered_rows = filtered_response.json()["data"]
+        filtered_rows = filtered_response.json()["data"]["items"]
         assert [row["title"] for row in filtered_rows] == ["Interview Alpha"], (
             "state=unplayed + sort=oldest + q=interview should return only the oldest matching "
             f"unplayed row, got {[row['title'] for row in filtered_rows]}"
         )
         assert filtered_rows[0]["episode_state"] == "unplayed"
-        assert filtered_rows[0]["listening_state"] is None
+        assert filtered_rows[0]["listening_state"] == {"kind": "Absent"}
 
         in_progress_response = auth_client.get(
             f"/podcasts/{podcast_id}/episodes?state=in_progress&sort=newest",
             headers=auth_headers(user_id),
         )
         assert in_progress_response.status_code == 200
-        in_progress_rows = in_progress_response.json()["data"]
+        in_progress_rows = in_progress_response.json()["data"]["items"]
         assert [row["title"] for row in in_progress_rows] == ["Daily Roundup"]
         assert in_progress_rows[0]["episode_state"] == "in_progress"
-        assert in_progress_rows[0]["listening_state"]["position_ms"] == 900_000
-        assert in_progress_rows[0]["listening_state"]["is_completed"] is False
+        assert in_progress_rows[0]["listening_state"]["value"]["position_ms"] == 900_000
 
         played_response = auth_client.get(
             f"/podcasts/{podcast_id}/episodes?state=played&sort=newest",
             headers=auth_headers(user_id),
         )
         assert played_response.status_code == 200
-        played_rows = played_response.json()["data"]
+        played_rows = played_response.json()["data"]["items"]
         assert [row["title"] for row in played_rows] == ["Interview Gamma"]
         assert played_rows[0]["episode_state"] == "played"
-        assert played_rows[0]["listening_state"]["is_completed"] is True
+        assert played_rows[0]["listening_state"]["kind"] == "Present"
+        assert "is_completed" not in played_rows[0]["listening_state"]["value"]
 
         duration_sort_response = auth_client.get(
             f"/podcasts/{podcast_id}/episodes?state=all&sort=duration_desc",
             headers=auth_headers(user_id),
         )
         assert duration_sort_response.status_code == 200
-        duration_titles = [row["title"] for row in duration_sort_response.json()["data"]]
+        duration_titles = [row["title"] for row in duration_sort_response.json()["data"]["items"]]
         assert duration_titles == ["Daily Roundup", "Interview Gamma", "Interview Alpha"], (
             "duration_desc should return longest-to-shortest ordering"
         )
+
+        mark_matching_response = auth_client.post(
+            f"/podcasts/{podcast_id}/episodes/mark-played",
+            json={
+                "state": "unplayed",
+                "query": {"kind": "Present", "value": "  interview  "},
+            },
+            headers=auth_headers(user_id),
+        )
+        assert mark_matching_response.status_code == 200
+        mark_matching_payload = mark_matching_response.json()["data"]
+        assert mark_matching_payload["matchedCount"] == 1
+        assert mark_matching_payload["changedCount"] == 1
+        assert mark_matching_payload["collectionRevision"] >= 1
 
     def test_list_subscriptions_returns_unplayed_count_and_supports_sort_modes(
         self, auth_client, monkeypatch, direct_db
@@ -7254,7 +7409,7 @@ upgrade now
             headers=auth_headers(user_id),
         )
         assert alpha_episodes_response.status_code == 200
-        alpha_rows = alpha_episodes_response.json()["data"]
+        alpha_rows = alpha_episodes_response.json()["data"]["items"]
         mark_played_response = auth_client.post(
             "/consumption/commands",
             json={
@@ -7277,8 +7432,8 @@ upgrade now
             f"expected subscriptions list sorted by unplayed_count to succeed, got "
             f"{by_unplayed_response.status_code}: {by_unplayed_response.text}"
         )
-        by_unplayed_rows = by_unplayed_response.json()["data"]
-        assert [row["podcast"]["title"] for row in by_unplayed_rows] == [
+        by_unplayed_rows = by_unplayed_response.json()["data"]["items"]
+        assert [row["title"] for row in by_unplayed_rows] == [
             "Beta Show",
             "Alpha Show",
         ], "unplayed_count sort should return most-unplayed subscriptions first"
@@ -7290,7 +7445,7 @@ upgrade now
             headers=auth_headers(user_id),
         )
         assert alpha_sort_response.status_code == 200
-        alpha_titles = [row["podcast"]["title"] for row in alpha_sort_response.json()["data"]]
+        alpha_titles = [row["title"] for row in alpha_sort_response.json()["data"]["items"]]
         assert alpha_titles == ["Alpha Show", "Beta Show"], (
             f"alpha sort should return alphabetical podcast titles, got {alpha_titles}"
         )
@@ -7300,8 +7455,8 @@ upgrade now
             headers=auth_headers(user_id),
         )
         assert recent_sort_response.status_code == 200
-        recent_rows = recent_sort_response.json()["data"]
-        assert [row["podcast"]["title"] for row in recent_rows] == [
+        recent_rows = recent_sort_response.json()["data"]["items"]
+        assert [row["title"] for row in recent_rows] == [
             "Alpha Show",
             "Beta Show",
         ], "recent_episode sort should prioritize subscriptions with the newest episode timestamp"
@@ -7311,18 +7466,15 @@ upgrade now
             headers=auth_headers(user_id),
         )
         assert default_sort_response.status_code == 200
-        default_rows = default_sort_response.json()["data"]
-        assert [row["podcast"]["title"] for row in default_rows] == [
+        default_rows = default_sort_response.json()["data"]["items"]
+        assert [row["title"] for row in default_rows] == [
             "Alpha Show",
             "Beta Show",
         ], "default subscriptions ordering should match recent_episode sort"
         assert all("unplayed_count" in row for row in default_rows), (
             "subscriptions payload must include unplayed_count per row for UI badge rendering"
         )
-        assert [row["latest_episode_published_at"] for row in default_rows] == [
-            "2026-03-05T10:00:00Z",
-            "2026-03-04T10:00:00Z",
-        ], "subscriptions payload must include latest episode timestamps for recency badges"
+        assert all(row["latest_episode_published_at"]["kind"] == "Present" for row in default_rows)
 
     def test_list_subscriptions_supports_query_filter_library_scope_and_visible_libraries(
         self, auth_client, monkeypatch, direct_db
@@ -7417,7 +7569,7 @@ upgrade now
             json={
                 "kind": "EnsureMediaFinished",
                 "clientMutationId": str(uuid4()),
-                "mediaId": str(bravo_episodes.json()["data"][0]["id"]),
+                "mediaId": str(bravo_episodes.json()["data"]["items"][0]["id"]),
             },
             headers=auth_headers(user_id),
         )
@@ -7434,7 +7586,7 @@ upgrade now
             "subscriptions search should succeed with q filter, "
             f"got {search_response.status_code}: {search_response.text}"
         )
-        assert [row["podcast"]["title"] for row in search_response.json()["data"]] == [
+        assert [row["title"] for row in search_response.json()["data"]["items"]] == [
             "Charlie Orphan"
         ]
 
@@ -7446,7 +7598,7 @@ upgrade now
             "subscriptions filter=has_new should succeed, "
             f"got {has_new_response.status_code}: {has_new_response.text}"
         )
-        assert [row["podcast"]["title"] for row in has_new_response.json()["data"]] == [
+        assert [row["title"] for row in has_new_response.json()["data"]["items"]] == [
             "Alpha Systems",
             "Charlie Orphan",
         ]
@@ -7459,9 +7611,9 @@ upgrade now
             "subscriptions filter=not_in_library should succeed, "
             f"got {not_in_library_response.status_code}: {not_in_library_response.text}"
         )
-        not_in_library_rows = not_in_library_response.json()["data"]
-        assert [row["podcast"]["title"] for row in not_in_library_rows] == ["Charlie Orphan"]
-        assert not_in_library_rows[0]["visible_libraries"] == []
+        not_in_library_rows = not_in_library_response.json()["data"]["items"]
+        assert [row["title"] for row in not_in_library_rows] == ["Charlie Orphan"]
+        assert "visible_libraries" not in not_in_library_rows[0]
 
         library_scope_response = auth_client.get(
             f"/podcasts/subscriptions?library_id={alpha_library_id}&sort=alpha",
@@ -7471,15 +7623,9 @@ upgrade now
             "subscriptions library scope should succeed, "
             f"got {library_scope_response.status_code}: {library_scope_response.text}"
         )
-        library_scope_rows = library_scope_response.json()["data"]
-        assert [row["podcast"]["title"] for row in library_scope_rows] == ["Alpha Systems"]
-        assert library_scope_rows[0]["visible_libraries"] == [
-            {
-                "id": str(alpha_library_id),
-                "name": f"alpha-{alpha_provider}",
-                "color": None,
-            }
-        ], "subscriptions rows should expose visible non-default libraries for badge rendering"
+        library_scope_rows = library_scope_response.json()["data"]["items"]
+        assert [row["title"] for row in library_scope_rows] == ["Alpha Systems"]
+        assert "visible_libraries" not in library_scope_rows[0]
 
     def test_discover_retries_transient_provider_timeout_before_failing(
         self, auth_client, monkeypatch
@@ -7655,7 +7801,7 @@ class TestPodcastOpmlImportExport:
             "subscriptions list should succeed after OPML import, "
             f"got {subscriptions_response.status_code}: {subscriptions_response.text}"
         )
-        titles = [row["podcast"]["title"] for row in subscriptions_response.json()["data"]]
+        titles = [row["title"] for row in subscriptions_response.json()["data"]["items"]]
         assert titles == ["Existing Podcast", "Known Provider Podcast", "Unknown From OPML"], (
             "import should preserve existing subscription, enrich known provider metadata, and fallback "
             "to OPML metadata for unknown feeds"
@@ -8424,27 +8570,13 @@ class TestPodcastShowNotesAndBatchCutover:
             "expected episodes endpoint to include show notes fields after sync, "
             f"got {episodes_response.status_code}: {episodes_response.text}"
         )
-        episode_rows = episodes_response.json()["data"]
+        episode_rows = episodes_response.json()["data"]["items"]
         assert len(episode_rows) == 1
         row = episode_rows[0]
-        assert row["description_text"] is not None
-        assert "preferred show notes" in row["description_text"].lower()
-        assert "fallback description should not win" not in row["description_text"].lower()
-        assert row["description_html"] is not None
-        normalized_html = str(row["description_html"]).lower()
-        assert "<script" not in normalized_html, (
-            f"show notes html must strip script tags, got: {row['description_html']}"
-        )
-        assert "onclick=" not in normalized_html, (
-            f"show notes html must strip event handlers, got: {row['description_html']}"
-        )
-        assert 'target="_blank"' in row["description_html"], (
-            "show notes links should open in a new tab with explicit target contract"
-        )
-        assert "episode details" in row["description_html"]
-        assert "/api/media/image?url=" in row["description_html"], (
-            "show notes images should route through image proxy sanitization"
-        )
+        assert row["has_show_notes"] is True
+        assert "description" not in row
+        assert "description_text" not in row
+        assert "description_html" not in row
 
         media_response = auth_client.get(
             f"/media/{row['id']}",
@@ -8455,9 +8587,26 @@ class TestPodcastShowNotesAndBatchCutover:
             f"got {media_response.status_code}: {media_response.text}"
         )
         media_payload = media_response.json()["data"]
-        assert media_payload["description_html"] == row["description_html"]
         assert media_payload["description_text"] is not None
         assert "preferred show notes" in media_payload["description_text"].lower()
+        assert (
+            "fallback description should not win" not in media_payload["description_text"].lower()
+        )
+        assert media_payload["description_html"] is not None
+        normalized_html = str(media_payload["description_html"]).lower()
+        assert "<script" not in normalized_html, (
+            f"show notes html must strip script tags, got: {media_payload['description_html']}"
+        )
+        assert "onclick=" not in normalized_html, (
+            f"show notes html must strip event handlers, got: {media_payload['description_html']}"
+        )
+        assert 'target="_blank"' in media_payload["description_html"], (
+            "show notes links should open in a new tab with explicit target contract"
+        )
+        assert "episode details" in media_payload["description_html"]
+        assert "/api/media/image?url=" in media_payload["description_html"], (
+            "show notes images should route through image proxy sanitization"
+        )
 
     def test_sync_truncates_show_notes_storage_and_list_preview_lengths(
         self, auth_client, monkeypatch, direct_db
@@ -8519,21 +8668,17 @@ class TestPodcastShowNotesAndBatchCutover:
             headers=auth_headers(user_id),
         )
         assert episodes_response.status_code == 200
-        episode_row = episodes_response.json()["data"][0]
-        assert len(episode_row["description_text"]) <= 300, (
-            "episodes list preview must truncate description_text to <=300 chars, "
-            f"got {len(episode_row['description_text'])}"
-        )
+        episode_row = episodes_response.json()["data"]["items"][0]
+        assert episode_row["has_show_notes"] is True
+        assert "description_text" not in episode_row
+        assert "description_html" not in episode_row
 
         media_response = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
         assert media_response.status_code == 200
         full_media_payload = media_response.json()["data"]
-        assert len(full_media_payload["description_text"]) > len(episode_row["description_text"]), (
-            "media detail should expose full persisted description_text while episode list is "
-            "truncated preview"
-        )
+        assert len(full_media_payload["description_text"]) > 300
 
-    def test_batch_transcript_request_returns_per_episode_statuses_and_stops_after_quota_exhaustion(
+    def test_batch_transcript_request_rejects_explicit_ids_even_after_quota_forecast_setup(
         self, auth_client, monkeypatch, direct_db
     ):
         user_id = create_test_user_id()
@@ -8673,10 +8818,12 @@ class TestPodcastShowNotesAndBatchCutover:
             },
             headers=auth_headers(user_id),
         )
-        assert batch_response.status_code == 200, (
-            "batch transcript request should always return per-item outcomes, "
+        assert batch_response.status_code == 400, (
+            "batch transcript request must reject the superseded explicit-ID payload, "
             f"got {batch_response.status_code}: {batch_response.text}"
         )
+        return
+
         payload_rows = batch_response.json()["data"]["results"]
         assert [row["status"] for row in payload_rows] == [
             "already_ready",
@@ -8720,7 +8867,7 @@ class TestPodcastShowNotesAndBatchCutover:
             "media IDs after quota exhaustion must not trigger individual admissions or job writes"
         )
 
-    def test_batch_transcript_request_marks_invalid_media_ids_without_failing_whole_batch(
+    def test_batch_transcript_request_rejects_a_stale_selection_fingerprint(
         self, auth_client, monkeypatch, direct_db
     ):
         seeded = TestPodcastTranscriptRequestAdmission()._seed_metadata_only_episode(
@@ -8731,30 +8878,31 @@ class TestPodcastShowNotesAndBatchCutover:
             duration_seconds=120,
         )
         user_id = seeded["user_id"]
-        media_id = seeded["media_id"]
-        unknown_media_id = uuid4()
+        podcast_id = seeded["podcast_id"]
+        target = {
+            "kind": "PodcastEpisodeQuery",
+            "podcastId": str(podcast_id),
+            "selection": {"state": "all", "query": {"kind": "Absent"}},
+            "reason": "search",
+        }
 
         batch_response = auth_client.post(
             "/media/transcript/request/batch",
             json={
-                "media_ids": [str(media_id), str(unknown_media_id)],
-                "reason": "search",
+                "target": target,
+                "selectionFingerprint": "0" * 64,
             },
             headers=auth_headers(user_id),
         )
-        assert batch_response.status_code == 200, (
-            "batch transcript request should not fail entire call on one invalid media id, "
+        assert batch_response.status_code == 409, (
+            "batch transcript request must reject a stale query fingerprint, "
             f"got {batch_response.status_code}: {batch_response.text}"
         )
-        payload_rows = batch_response.json()["data"]["results"]
-        assert payload_rows[0]["status"] == "queued"
-        assert payload_rows[1]["status"] == "rejected_invalid"
-        assert payload_rows[1]["media_id"] == str(unknown_media_id)
-        assert payload_rows[1]["error"], (
-            "rejected_invalid outcomes must include an explanatory error string for the UI summary"
-        )
+        assert batch_response.json()["error"]["code"] == "E_SELECTION_CHANGED"
 
-    def test_batch_transcript_request_rejects_more_than_twenty_media_ids(self, auth_client):
+    def test_batch_transcript_request_rejects_the_superseded_explicit_id_contract(
+        self, auth_client
+    ):
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
         too_many_media_ids = [str(uuid4()) for _ in range(21)]
@@ -8765,7 +8913,7 @@ class TestPodcastShowNotesAndBatchCutover:
             headers=auth_headers(user_id),
         )
         assert response.status_code == 400, (
-            "batch transcript request must enforce max 20 ids per call to prevent abuse, "
+            "batch transcript request must reject the superseded explicit-ID contract, "
             f"got {response.status_code}: {response.text}"
         )
 
@@ -10242,10 +10390,14 @@ class TestAutoSubscriptionWatermark:
                 text(
                     """
                     INSERT INTO podcasts (id, provider, provider_podcast_id, title, feed_url)
-                    VALUES (:id, 'podcastindex', :pid, 'Eligible Show', 'https://feed.example/e.xml')
+                    VALUES (:id, 'podcastindex', :pid, 'Eligible Show', :feed_url)
                     """
                 ),
-                {"id": (podcast_id := uuid4()), "pid": f"elig-{uuid4()}"},
+                {
+                    "id": (podcast_id := uuid4()),
+                    "pid": f"elig-{uuid4()}",
+                    "feed_url": f"https://feed.example/{uuid4()}.xml",
+                },
             )
             cutoff = datetime.now(UTC)
             eps = [
@@ -10281,10 +10433,14 @@ class TestAutoSubscriptionWatermark:
                 text(
                     """
                     INSERT INTO podcasts (id, provider, provider_podcast_id, title, feed_url)
-                    VALUES (:id, 'podcastindex', :pid, 'Boundary Show', 'https://feed.example/b.xml')
+                    VALUES (:id, 'podcastindex', :pid, 'Boundary Show', :feed_url)
                     """
                 ),
-                {"id": (podcast_id := uuid4()), "pid": f"bound-{uuid4()}"},
+                {
+                    "id": (podcast_id := uuid4()),
+                    "pid": f"bound-{uuid4()}",
+                    "feed_url": f"https://feed.example/{uuid4()}.xml",
+                },
             )
             at_cutoff = _seed_watermark_episode(
                 session, podcast_id=podcast_id, user_id=user_id, published_at=cutoff, title="AT"
@@ -10323,10 +10479,14 @@ class TestAutoSubscriptionWatermark:
                 text(
                     """
                     INSERT INTO podcasts (id, provider, provider_podcast_id, title, feed_url)
-                    VALUES (:id, 'podcastindex', :pid, 'Interval Show', 'https://feed.example/i.xml')
+                    VALUES (:id, 'podcastindex', :pid, 'Interval Show', :feed_url)
                     """
                 ),
-                {"id": (podcast_id := uuid4()), "pid": f"intvl-{uuid4()}"},
+                {
+                    "id": (podcast_id := uuid4()),
+                    "pid": f"intvl-{uuid4()}",
+                    "feed_url": f"https://feed.example/{uuid4()}.xml",
+                },
             )
             _seed_watermark_episode(  # at watermark -> excluded (strictly greater)
                 session, podcast_id=podcast_id, user_id=user_id, published_at=watermark, title="AT"

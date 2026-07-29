@@ -78,11 +78,6 @@ export interface ContributorWorkItem {
   actionTarget: StandingActionTarget;
 }
 
-export interface ContributorWorkPage {
-  works: ContributorWorkItem[];
-  nextCursor: string | null;
-}
-
 export interface MediaAuthorCredit {
   contributorHandle: ContributorHandle;
   href: string;

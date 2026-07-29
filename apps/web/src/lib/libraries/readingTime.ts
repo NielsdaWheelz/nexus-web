@@ -34,6 +34,7 @@ const PROCESSING_STATUSES = [
   "extracting",
   "ready_for_reading",
   "failed",
+  "suspended",
 ] as const;
 const READ_STATES = ["unread", "in_progress", "finished"] as const;
 

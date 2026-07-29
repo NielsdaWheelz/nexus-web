@@ -143,7 +143,7 @@ describe("library placement commands", () => {
       method: "DELETE",
       body: undefined,
     },
-  ])("executes $name and requires 204", async ({
+  ])("executes $name against its canonical response contract", async ({
     run,
     path,
     method,
@@ -151,7 +151,13 @@ describe("library placement commands", () => {
   }) => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
-      .mockResolvedValue(new Response(null, { status: 204 }));
+      .mockResolvedValue(
+        method === "DELETE"
+          ? Response.json({
+              data: { libraryEntriesCollectionRevision: 4 },
+            })
+          : new Response(null, { status: 204 }),
+      );
 
     await run();
 
@@ -238,9 +244,13 @@ describe("library placement commands", () => {
     },
   ])(
     "$name publishes exactly one placement revision with its scope",
-    async ({ run, affected }) => {
+    async ({ name, run, affected }) => {
       vi.spyOn(globalThis, "fetch").mockResolvedValue(
-        new Response(null, { status: 204 }),
+        name.startsWith("remove")
+          ? Response.json({
+              data: { libraryEntriesCollectionRevision: 5 },
+            })
+          : new Response(null, { status: 204 }),
       );
       const before = libraryPlacementSnapshot().revision;
 

@@ -2,22 +2,24 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiFetch } from "@/lib/api/client";
 import {
   createLibrary,
-  decodeMemberLibrariesResponse,
+  decodeLibrariesPage,
   decodeWritableLibraryDestinationPage,
+  deleteMemberLibrary,
   getMemberLibrary,
+  renameMemberLibrary,
 } from "./client";
 
 vi.mock("@/lib/api/client", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/api/client")>(
-    "@/lib/api/client",
-  );
+  const actual =
+    await vi.importActual<typeof import("@/lib/api/client")>(
+      "@/lib/api/client",
+    );
   return { ...actual, apiFetch: vi.fn() };
 });
 
 const apiFetchMock = vi.mocked(apiFetch);
 
-const OWNER_USER_HANDLE =
-  "nus1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB";
+const OWNER_USER_HANDLE = "nus1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB";
 
 const destination = {
   id: "library-1",
@@ -86,24 +88,34 @@ describe("library destination response contract", () => {
       updatedAt: "2026-07-21T12:30:00Z",
     };
     expect(
-      decodeMemberLibrariesResponse({
-        data: [library],
-        page: { has_more: false, next_cursor: null },
+      decodeLibrariesPage({
+        data: {
+          items: [library],
+          collectionRevision: 4,
+          nextCursor: { kind: "Absent" },
+        },
       }),
     ).toEqual({
-      data: [library],
-      page: { has_more: false, next_cursor: null },
+      items: [library],
+      collectionRevision: 4,
+      nextCursor: { kind: "Absent" },
     });
     expect(() =>
-      decodeMemberLibrariesResponse({
-        data: [{ ...library, ownerUserHandle: undefined }],
-        page: { has_more: false, next_cursor: null },
+      decodeLibrariesPage({
+        data: {
+          items: [{ ...library, ownerUserHandle: undefined }],
+          collectionRevision: 4,
+          nextCursor: { kind: "Absent" },
+        },
       }),
     ).toThrow("LibraryOut");
     expect(() =>
-      decodeMemberLibrariesResponse({
-        data: [{ ...library, ownerUserHandle: "raw-user-id" }],
-        page: { has_more: false, next_cursor: null },
+      decodeLibrariesPage({
+        data: {
+          items: [{ ...library, ownerUserHandle: "raw-user-id" }],
+          collectionRevision: 4,
+          nextCursor: { kind: "Absent" },
+        },
       }),
     ).toThrow("sealed-handle grammar");
   });
@@ -191,5 +203,44 @@ describe("library destination response contract", () => {
     await expect(
       createLibrary({ libraryId, name: "Research" }),
     ).rejects.toThrow(/does not match requested Library/);
+  });
+
+  it("decodes exact revision-bearing delete and rename responses", async () => {
+    const libraryId = "00000000-0000-4000-8000-000000000211";
+    const library = {
+      id: libraryId,
+      name: "Renamed",
+      color: null,
+      ownerUserHandle: OWNER_USER_HANDLE,
+      isDefault: false,
+      role: "admin",
+      systemKey: null,
+      canRename: true,
+      canDelete: true,
+      canEditEntries: true,
+      canManageMembers: true,
+      canTransferOwnership: true,
+      createdAt: "2026-07-21T12:00:00Z",
+      updatedAt: "2026-07-21T12:30:00Z",
+    };
+    apiFetchMock.mockResolvedValueOnce({
+      data: { libraryId, collectionRevision: 5 },
+    });
+    await expect(deleteMemberLibrary(libraryId)).resolves.toBe(5);
+
+    apiFetchMock.mockResolvedValueOnce({
+      data: { library, collectionRevision: 6 },
+    });
+    await expect(renameMemberLibrary(libraryId, "Renamed")).resolves.toEqual({
+      library,
+      collectionRevision: 6,
+    });
+
+    apiFetchMock.mockResolvedValueOnce({
+      data: { libraryId, collectionRevision: 7, legacy: true },
+    });
+    await expect(deleteMemberLibrary(libraryId)).rejects.toThrow(
+      /exactly \[libraryId, collectionRevision\]/,
+    );
   });
 });

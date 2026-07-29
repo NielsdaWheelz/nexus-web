@@ -287,10 +287,3 @@ class ContributorWorkItemOut(BaseModel):
     action_target: StandingActionTargetOut = Field(alias="actionTarget")
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
-
-
-class ContributorWorkPageOut(BaseModel):
-    works: list[ContributorWorkItemOut]
-    next_cursor: str | None = Field(default=None, alias="nextCursor")
-
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")

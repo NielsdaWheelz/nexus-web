@@ -11,6 +11,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, JsonValue
 from pydantic.alias_generators import to_camel
 
+from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.presence import Presence
@@ -303,6 +304,7 @@ class MediaRemovedResult(BaseModel):
     kind: Literal["Removed"] = "Removed"
     removed_from_library_ids: list[UUID]
     remaining_reference_count: int = Field(ge=0)
+    library_entries_collection_revision: CollectionRevision
 
 
 class MediaHiddenResult(BaseModel):
@@ -313,6 +315,7 @@ class MediaHiddenResult(BaseModel):
     kind: Literal["Hidden"] = "Hidden"
     removed_from_library_ids: list[UUID]
     remaining_reference_count: int = Field(ge=0)
+    library_entries_collection_revision: CollectionRevision
 
 
 class MediaDeletingResult(BaseModel):
@@ -427,17 +430,6 @@ class TranscriptRequestRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class TranscriptRequestBatchRequest(BaseModel):
-    """Request schema for POST /media/transcript/request/batch."""
-
-    media_ids: list[UUID] = Field(min_length=1, max_length=20)
-    reason: TranscriptRequestReason = "episode_open"
-
-    model_config = ConfigDict(extra="forbid")
-
-    model_config = ConfigDict(extra="forbid")
-
-
 class TranscriptForecastBatchItemRequest(BaseModel):
     """One media forecast request for POST /media/transcript/forecasts."""
 
@@ -463,28 +455,6 @@ class TranscriptRequestResponse(BaseModel):
     remaining_minutes: int | None = None
     fits_budget: bool
     request_enqueued: bool
-
-
-class TranscriptRequestBatchItemResponse(BaseModel):
-    """Per-media result for batch transcript admission."""
-
-    media_id: str
-    status: Literal[
-        "queued",
-        "already_ready",
-        "already_queued",
-        "rejected_quota",
-        "rejected_invalid",
-    ]
-    required_minutes: int | None = None
-    remaining_minutes: int | None = None
-    error: str | None = None
-
-
-class TranscriptRequestBatchResponse(BaseModel):
-    """Response payload for POST /media/transcript/request/batch."""
-
-    results: list[TranscriptRequestBatchItemResponse]
 
 
 # =============================================================================

@@ -7,11 +7,11 @@ import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget
 import { presentConversationListItem } from "@/lib/conversations/presentation";
 import type { CollectionRowView } from "@/lib/collections/types";
 import type {
-  ConversationSummary,
+  ConversationListItem,
 } from "@/lib/conversations/types";
 
 export function presentConversation(
-  item: ConversationSummary,
+  item: ConversationListItem,
   ctx: Parameters<typeof conversationResourceOptions>[0],
   environment: Parameters<typeof presentConversationListItem>[1],
 ): CollectionRowView {

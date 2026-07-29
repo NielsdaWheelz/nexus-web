@@ -4,6 +4,7 @@ import {
   type ConsumptionResult,
   type MediaId,
 } from "@/lib/lectern/contract";
+import type { CollectionRevision } from "@/lib/api/collectionPage";
 import { progressResetConfirmation, runProgressReset } from "./progressReset";
 
 const MEDIA_A = assumeMediaId("a1111111-1111-1111-1111-111111111111");
@@ -23,6 +24,7 @@ function resultFor(mediaId: MediaId): ConsumptionResult {
       },
     },
     completionHandle: { kind: "Absent" },
+    libraryEntriesCollectionRevision: 1 as CollectionRevision,
   };
 }
 

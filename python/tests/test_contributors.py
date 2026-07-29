@@ -600,9 +600,10 @@ def test_contributor_works_reports_role_facts(auth_client, direct_db):
     response = auth_client.get(f"/contributors/{handle}/works", headers=auth_headers(owner_id))
     assert response.status_code == 200, response.text
     data = response.json()["data"]
-    assert data["nextCursor"] is None
-    assert len(data["works"]) == 1
-    work = data["works"][0]
+    assert data["collectionRevision"] >= 0
+    assert data["nextCursor"] == {"kind": "Absent"}
+    assert len(data["items"]) == 1
+    work = data["items"][0]
     assert work["href"] == f"/media/{media_id}"
     assert work["actionTarget"] == {
         "kind": "Resource",
@@ -634,25 +635,116 @@ def test_contributor_works_pagination_uses_opaque_stable_cursor(auth_client, dir
     page1 = auth_client.get(f"/contributors/{handle}/works?limit=1", headers=auth_headers(owner_id))
     assert page1.status_code == 200, page1.text
     body1 = page1.json()["data"]
-    assert len(body1["works"]) == 1
-    cursor = body1["nextCursor"]
+    assert len(body1["items"]) == 1
+    revision = body1["collectionRevision"]
+    cursor = body1["nextCursor"]["value"]
     assert isinstance(cursor, str) and cursor
 
     # Cursor is opaque (not a raw title/href) and stable across identical calls.
     repeat = auth_client.get(
         f"/contributors/{handle}/works?limit=1", headers=auth_headers(owner_id)
     )
-    assert repeat.json()["data"]["nextCursor"] == cursor
+    assert repeat.json()["data"]["nextCursor"] == {"kind": "Present", "value": cursor}
     assert f"/media/{second_media}" not in cursor and f"/media/{_first_media}" not in cursor
 
     page2 = auth_client.get(
-        f"/contributors/{handle}/works?limit=1&cursor={cursor}",
+        (f"/contributors/{handle}/works?limit=1&cursor={cursor}&collection_revision={revision}"),
         headers=auth_headers(owner_id),
     )
     assert page2.status_code == 200, page2.text
     body2 = page2.json()["data"]
-    assert len(body2["works"]) == 1
-    assert body2["works"][0]["href"] != body1["works"][0]["href"]
+    assert len(body2["items"]) == 1
+    assert body2["items"][0]["href"] != body1["items"][0]["href"]
+    assert body2["collectionRevision"] == revision
+    assert body2["nextCursor"] == {"kind": "Absent"}
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "query",
+    [
+        "offset=1",
+        "wat=1",
+        "limit=01",
+        "limit=201",
+        "limit=1&limit=2",
+        "cursor=opaque",
+        "collection_revision=0",
+    ],
+)
+def test_contributor_works_rejects_noncanonical_page_queries(
+    auth_client,
+    direct_db,
+    query,
+):
+    owner_id, owner_library = _bootstrap_user(auth_client, direct_db)
+    _media_id, handle = _seed_author(
+        auth_client,
+        direct_db,
+        owner_id,
+        owner_library,
+        credited_name=f"Strict Works {uuid4()}",
+    )
+
+    response = auth_client.get(
+        f"/contributors/{handle}/works?{query}",
+        headers=auth_headers(owner_id),
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+
+@pytest.mark.integration
+def test_contributor_works_rejects_continuation_after_collection_change(
+    auth_client,
+    direct_db,
+):
+    owner_id, owner_library = _bootstrap_user(auth_client, direct_db)
+    credited = f"Changing Author {uuid4()}"
+    _first_media, handle = _seed_author(
+        auth_client,
+        direct_db,
+        owner_id,
+        owner_library,
+        credited_name=credited,
+    )
+    second_media = _seed_owned_media(direct_db, owner_id, owner_library)
+    assert (
+        _put_authors(
+            auth_client,
+            owner_id,
+            second_media,
+            [_existing_author_row(credited, handle)],
+        ).status_code
+        == 200
+    )
+    first_page = auth_client.get(
+        f"/contributors/{handle}/works?limit=1",
+        headers=auth_headers(owner_id),
+    )
+    assert first_page.status_code == 200, first_page.text
+    page = first_page.json()["data"]
+
+    third_media = _seed_owned_media(direct_db, owner_id, owner_library)
+    changed = _put_authors(
+        auth_client,
+        owner_id,
+        third_media,
+        [_existing_author_row(credited, handle)],
+    )
+    assert changed.status_code == 200, changed.text
+
+    response = auth_client.get(
+        (
+            f"/contributors/{handle}/works?limit=1"
+            f"&cursor={page['nextCursor']['value']}"
+            f"&collection_revision={page['collectionRevision']}"
+        ),
+        headers=auth_headers(owner_id),
+    )
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "E_COLLECTION_CHANGED"
 
 
 # ---------------------------------------------------------------------------

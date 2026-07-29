@@ -14,8 +14,15 @@ import {
 } from "react";
 import Link from "next/link";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import {
+  decodeCollectionPage,
+  type CollectionCursor,
+  type CollectionPage,
+  type CollectionRevision,
+} from "@/lib/api/collectionPage";
+import type { Presence } from "@/lib/api/presence";
+import { useExhaustivePagination } from "@/lib/api/useExhaustivePagination";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { pluralize } from "@/lib/text/pluralize";
 import { useResource } from "@/lib/api/useResource";
 import { runSourceProcessingAction } from "@/lib/media/sourceActions";
 import { retryMediaMetadata } from "@/lib/media/ingestionClient";
@@ -84,6 +91,7 @@ import { useEpisodeTranscriptController } from "./useEpisodeTranscriptController
 import { usePodcastSubscriptionSettingsModal } from "../usePodcastSubscriptionSettingsModal";
 import {
   deriveEpisodeState,
+  decodePodcastEpisodeMedia,
   episodeMatchesFilter,
   type EpisodeSort,
   type EpisodeStateFilter,
@@ -109,14 +117,17 @@ const MediaAuthorsEditor = lazy(
 
 interface PodcastDetailLoadResult {
   detail: PodcastDetailResponse;
-  episodes: PodcastEpisodeMedia[];
+  episodes: CollectionPage<PodcastEpisodeMedia>;
   podcastLibraries: LibraryPlacementOption[];
 }
 
 interface PodcastDetailSnapshot {
   readonly detail: PodcastDetailResponse;
   readonly episodes: readonly PodcastEpisodeMedia[];
-  readonly hasMoreEpisodes: boolean;
+  readonly queryIdentity: string;
+  readonly collectionRevision: CollectionRevision;
+  readonly nextCursor: Presence<CollectionCursor>;
+  readonly exhaustion: "Partial" | "Complete";
   readonly podcastLibraries: readonly LibraryPlacementOption[];
 }
 
@@ -129,10 +140,11 @@ const EMPTY_PODCAST_LIBRARIES: LibraryPlacementOption[] = [];
 export default function PodcastDetailPaneBody() {
   const podcastId = usePaneParam("podcastId");
   const paneRouter = usePaneRouter();
-  const activateTarget = requirePaneRuntime(
+  const paneRuntime = requirePaneRuntime(
     usePaneRuntime(),
     "PodcastDetailPaneBody",
-  ).activateTarget;
+  );
+  const activateTarget = paneRuntime.activateTarget;
   const paneSearchParams = usePaneSearchParams();
   const { account: billingAccount } = useBillingAccount();
   const player = useGlobalPlayer();
@@ -149,6 +161,8 @@ export default function PodcastDetailPaneBody() {
   const [controller, setController] = useState<PodcastDetailSnapshot | null>(
     restored,
   );
+  const controllerRef = useRef<PodcastDetailSnapshot | null>(restored);
+  const [chainEpoch, setChainEpoch] = useState(0);
   const clearAllVisitData = useClearAllPaneVisitData();
   const detail = controller?.detail ?? null;
   const episodes = useMemo(
@@ -156,7 +170,6 @@ export default function PodcastDetailPaneBody() {
       controller === null ? EMPTY_PODCAST_EPISODES : [...controller.episodes],
     [controller],
   );
-  const hasMoreEpisodes = controller?.hasMoreEpisodes ?? false;
   const podcastLibraries = useMemo(
     () =>
       controller === null
@@ -223,7 +236,12 @@ export default function PodcastDetailPaneBody() {
   const [episodeSearchQuery, setEpisodeSearchQuery] = useState(
     () => paneSearchParams.get("q") ?? "",
   );
-  const [loadingMoreEpisodes, setLoadingMoreEpisodes] = useState(false);
+  const episodeQueryIdentity = [
+    podcastId,
+    episodeStateFilter,
+    episodeSort,
+    episodeSearchQuery.trim(),
+  ].join("\u0000");
   const busyEpisodeActionKeys = useStringIdSet();
   const beginEpisodeAction = useCallback(
     (mediaId: string, actionId: EpisodeActionId): string | null => {
@@ -276,12 +294,6 @@ export default function PodcastDetailPaneBody() {
               },
             }
           : prev,
-      );
-      setEpisodes((prev) =>
-        prev.map((episode) => ({
-          ...episode,
-          subscription_default_playback_speed: response.default_playback_speed,
-        })),
       );
       clearAllVisitData();
     },
@@ -362,8 +374,23 @@ export default function PodcastDetailPaneBody() {
     setSuppressInitialLoad(false);
     setReloadNonce((nonce) => nonce + 1);
   }, [clearAllVisitData]);
+  const previousEpisodeQueryIdentityRef = useRef(episodeQueryIdentity);
+  useLayoutEffect(() => {
+    if (previousEpisodeQueryIdentityRef.current === episodeQueryIdentity) {
+      return;
+    }
+    previousEpisodeQueryIdentityRef.current = episodeQueryIdentity;
+    reload();
+  }, [episodeQueryIdentity, reload]);
 
   const transcript = useEpisodeTranscriptController({
+    podcastId: podcastId ?? "",
+    selection: {
+      state: episodeStateFilter,
+      query: episodeSearchQuery.trim()
+        ? { kind: "Present", value: episodeSearchQuery.trim() }
+        : { kind: "Absent" },
+    },
     episodes,
     setEpisodes,
     transcriptionAllowed,
@@ -380,7 +407,6 @@ export default function PodcastDetailPaneBody() {
       }
       const episodeParams = new URLSearchParams({
         limit: String(EPISODES_PAGE_SIZE),
-        offset: "0",
         state: episodeStateFilter,
         sort: episodeSort,
       });
@@ -394,7 +420,7 @@ export default function PodcastDetailPaneBody() {
           `/api/podcasts/${podcastId}`,
           fetchOptions,
         ),
-        apiFetch<{ data: PodcastEpisodeMedia[] }>(
+        apiFetch<unknown>(
           `/api/podcasts/${podcastId}/episodes?${episodeParams}`,
           fetchOptions,
         ),
@@ -411,7 +437,10 @@ export default function PodcastDetailPaneBody() {
       }
       return {
         detail: detailResp.data,
-        episodes: episodesResp.data,
+        episodes: decodeCollectionPage(
+          episodesResp,
+          decodePodcastEpisodeMedia,
+        ),
         podcastLibraries,
       };
     },
@@ -421,17 +450,29 @@ export default function PodcastDetailPaneBody() {
   const applyPodcastDetailLoad = useCallback(
     (result: PodcastDetailLoadResult) => {
       reconciliationPendingRef.current = false;
-      setController({
+      const snapshot: PodcastDetailSnapshot = {
         detail: result.detail,
-        episodes: result.episodes,
-        hasMoreEpisodes: result.episodes.length === EPISODES_PAGE_SIZE,
+        episodes: result.episodes.items,
+        queryIdentity: episodeQueryIdentity,
+        collectionRevision: result.episodes.collectionRevision,
+        nextCursor: result.episodes.nextCursor,
+        exhaustion:
+          result.episodes.nextCursor.kind === "Absent" ? "Complete" : "Partial",
         podcastLibraries: result.podcastLibraries,
-      });
+      };
+      controllerRef.current = snapshot;
+      setController(snapshot);
+      setChainEpoch((epoch) => epoch + 1);
       clearExpandedShowNotesMediaIds();
       resetForecasts();
       closeSettingsModal();
     },
-    [clearExpandedShowNotesMediaIds, closeSettingsModal, resetForecasts],
+    [
+      clearExpandedShowNotesMediaIds,
+      closeSettingsModal,
+      episodeQueryIdentity,
+      resetForecasts,
+    ],
   );
 
   const podcastDetailResource = useResource<PodcastDetailLoadResult>({
@@ -477,6 +518,7 @@ export default function PodcastDetailPaneBody() {
   }, [applyPodcastDetailLoad, podcastDetailResource, podcastId]);
 
   useLayoutEffect(() => {
+    controllerRef.current = controller;
     committedSnapshotRef.current = reconciliationPendingRef.current
       ? null
       : controller;
@@ -517,53 +559,82 @@ export default function PodcastDetailPaneBody() {
     podcastId,
   ]);
 
-  const handleLoadMoreEpisodes = useCallback(async () => {
-    if (!podcastId || loadingMoreEpisodes || !hasMoreEpisodes) {
-      return;
-    }
-    setLoadingMoreEpisodes(true);
-    setError(null);
-    try {
+  const loadEpisodePage = useCallback(
+    async (
+      cursor: CollectionCursor,
+      revision: CollectionRevision,
+      signal: AbortSignal,
+    ) => {
+      if (!podcastId) {
+        throw new Error("Podcast id is missing");
+      }
       const episodeParams = new URLSearchParams({
         limit: String(EPISODES_PAGE_SIZE),
-        offset: String(episodes.length),
         state: episodeStateFilter,
         sort: episodeSort,
+        cursor,
+        collection_revision: String(revision),
       });
       if (episodeSearchQuery.trim()) {
         episodeParams.set("q", episodeSearchQuery.trim());
       }
-      const response = await apiFetch<{ data: PodcastEpisodeMedia[] }>(
+      const response = await apiFetch<unknown>(
         `/api/podcasts/${podcastId}/episodes?${episodeParams}`,
+        { signal },
       );
-      setController((current) =>
-        current === null
-          ? current
-          : {
-              ...current,
-              episodes: [...current.episodes, ...response.data],
-              hasMoreEpisodes: response.data.length === EPISODES_PAGE_SIZE,
-            },
-      );
-    } catch (loadError) {
-      if (handleUnauthenticatedApiError(loadError)) return;
-      setError(
-        toFeedback(loadError, {
-          fallback: "Failed to load more podcast episodes",
-        }),
-      );
-    } finally {
-      setLoadingMoreEpisodes(false);
-    }
-  }, [
-    episodeSearchQuery,
-    episodeSort,
-    episodeStateFilter,
-    episodes.length,
-    hasMoreEpisodes,
-    loadingMoreEpisodes,
-    podcastId,
-  ]);
+      return decodeCollectionPage(response, decodePodcastEpisodeMedia);
+    },
+    [episodeSearchQuery, episodeSort, episodeStateFilter, podcastId],
+  );
+  const commitEpisodePage = useCallback(
+    (page: CollectionPage<PodcastEpisodeMedia>) => {
+      const current = controllerRef.current;
+      if (
+        current === null ||
+        page.collectionRevision !== current.collectionRevision
+      ) {
+        throw new Error("Podcast episode continuation revision mismatch");
+      }
+      const seen = new Set(current.episodes.map((episode) => episode.id));
+      const nextEpisodes = [...current.episodes];
+      for (const episode of page.items) {
+        if (seen.has(episode.id)) continue;
+        seen.add(episode.id);
+        nextEpisodes.push(episode);
+      }
+      const next: PodcastDetailSnapshot = {
+        ...current,
+        episodes: nextEpisodes,
+        nextCursor: page.nextCursor,
+        exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
+      };
+      controllerRef.current = next;
+      setController(next);
+      return nextEpisodes.length;
+    },
+    [],
+  );
+  const episodeExhaustion = useExhaustivePagination({
+    active:
+      paneRuntime.isActive &&
+      controller !== null &&
+      controller.queryIdentity === episodeQueryIdentity &&
+      !reconciliationPendingRef.current,
+    chainKey: [
+      podcastId,
+      episodeStateFilter,
+      episodeSort,
+      episodeSearchQuery,
+      chainEpoch,
+    ].join(":"),
+    cursor: controller?.nextCursor ?? { kind: "Absent" },
+    collectionRevision:
+      controller?.collectionRevision ?? (0 as CollectionRevision),
+    itemCount: episodes.length,
+    loadPage: loadEpisodePage,
+    commitPage: commitEpisodePage,
+    refresh: reload,
+  });
 
   const handleSubscribe = useCallback(async () => {
     if (!detail) {
@@ -674,6 +745,7 @@ export default function PodcastDetailPaneBody() {
         );
         setError(projection.feedback);
         clearAllVisitData();
+        reload();
       } catch (retryError) {
         if (handleUnauthenticatedApiError(retryError)) return;
         if (!isApiError(retryError) || isSameSystemApiDefect(retryError)) {
@@ -688,7 +760,13 @@ export default function PodcastDetailPaneBody() {
         finishEpisodeAction(busyKey);
       }
     },
-    [beginEpisodeAction, clearAllVisitData, finishEpisodeAction, setEpisodes],
+    [
+      beginEpisodeAction,
+      clearAllVisitData,
+      finishEpisodeAction,
+      reload,
+      setEpisodes,
+    ],
   );
 
   const handleRefreshEpisodeSource = useCallback(
@@ -727,6 +805,7 @@ export default function PodcastDetailPaneBody() {
         );
         setError(projection.feedback);
         clearAllVisitData();
+        reload();
       } catch (refreshError) {
         if (handleUnauthenticatedApiError(refreshError)) return;
         if (!isApiError(refreshError) || isSameSystemApiDefect(refreshError)) {
@@ -741,7 +820,13 @@ export default function PodcastDetailPaneBody() {
         finishEpisodeAction(busyKey);
       }
     },
-    [beginEpisodeAction, clearAllVisitData, finishEpisodeAction, setEpisodes],
+    [
+      beginEpisodeAction,
+      clearAllVisitData,
+      finishEpisodeAction,
+      reload,
+      setEpisodes,
+    ],
   );
 
   const handleRetryEpisodeMetadata = useCallback(
@@ -759,6 +844,7 @@ export default function PodcastDetailPaneBody() {
           title: "Metadata re-enrichment started.",
         });
         clearAllVisitData();
+        reload();
       } catch (metadataError) {
         if (handleUnauthenticatedApiError(metadataError)) return;
         if (
@@ -776,7 +862,7 @@ export default function PodcastDetailPaneBody() {
         finishEpisodeAction(busyKey);
       }
     },
-    [beginEpisodeAction, clearAllVisitData, finishEpisodeAction],
+    [beginEpisodeAction, clearAllVisitData, finishEpisodeAction, reload],
   );
 
   const handleDeleteEpisode = useCallback(
@@ -798,6 +884,7 @@ export default function PodcastDetailPaneBody() {
           prev.filter((candidate) => candidate.id !== episode.id),
         );
         clearAllVisitData();
+        reload();
       } catch (deleteError) {
         if (handleUnauthenticatedApiError(deleteError)) return;
         if (!isApiError(deleteError) || isSameSystemApiDefect(deleteError)) {
@@ -810,7 +897,13 @@ export default function PodcastDetailPaneBody() {
         finishEpisodeAction(busyKey);
       }
     },
-    [beginEpisodeAction, clearAllVisitData, finishEpisodeAction, setEpisodes],
+    [
+      beginEpisodeAction,
+      clearAllVisitData,
+      finishEpisodeAction,
+      reload,
+      setEpisodes,
+    ],
   );
 
   const applyEpisodeCompletionState = useCallback(
@@ -828,7 +921,6 @@ export default function PodcastDetailPaneBody() {
           position_ms: previousListeningState?.position_ms ?? 0,
           duration_ms: previousListeningState?.duration_ms ?? null,
           playback_speed: previousListeningState?.playback_speed ?? 1,
-          is_completed: true,
         },
         episode_state: "played",
       };
@@ -885,6 +977,7 @@ export default function PodcastDetailPaneBody() {
           await lectern.setUnread(assumeMediaId(mediaId));
         }
         clearAllVisitData();
+        reload();
       } catch (markError) {
         setEpisodes(previousEpisodes);
         if (handleUnauthenticatedApiError(markError)) return;
@@ -910,6 +1003,7 @@ export default function PodcastDetailPaneBody() {
       lectern,
       markingEpisodeIds,
       offerCompletionUndo,
+      reload,
       setEpisodes,
     ],
   );
@@ -950,7 +1044,6 @@ export default function PodcastDetailPaneBody() {
                     ? canonicalListeningState.durationMs.value
                     : null,
                 playback_speed: canonicalListeningState.playbackSpeed,
-                is_completed: false,
               },
               episode_state: "unplayed",
               progress_resettable: false,
@@ -983,82 +1076,94 @@ export default function PodcastDetailPaneBody() {
     ],
   );
 
-  const visibleUnplayedEpisodeIds = useMemo(
-    () =>
-      episodes
-        .filter((episode) => deriveEpisodeState(episode) === "unplayed")
-        .map((episode) => episode.id),
-    [episodes],
-  );
-
   const toggleEpisodeShowNotesExpansion = useCallback(
     (mediaId: string) => {
       if (expandedShowNotesMediaIds.has(mediaId)) {
         expandedShowNotesMediaIds.remove(mediaId);
-      } else {
-        expandedShowNotesMediaIds.add(mediaId);
+        return;
       }
+      const episode = episodes.find((candidate) => candidate.id === mediaId);
+      if (!episode?.has_show_notes) return;
+      if (episode.description_text?.trim()) {
+        expandedShowNotesMediaIds.add(mediaId);
+        return;
+      }
+      void apiFetch<{ data: { description_text: string | null } }>(
+        `/api/media/${mediaId}`,
+      )
+        .then((response) => {
+          setEpisodes((current) =>
+            current.map((candidate) =>
+              candidate.id === mediaId
+                ? {
+                    ...candidate,
+                    description_text: response.data.description_text,
+                  }
+                : candidate,
+            ),
+          );
+          expandedShowNotesMediaIds.add(mediaId);
+        })
+        .catch((loadError) => {
+          if (handleUnauthenticatedApiError(loadError)) return;
+          setError(
+            toFeedback(loadError, { fallback: "Failed to load episode notes" }),
+          );
+        });
     },
-    [expandedShowNotesMediaIds],
+    [episodes, expandedShowNotesMediaIds, setEpisodes],
   );
 
-  const handleMarkAllVisibleUnplayedAsPlayed = useCallback(async () => {
-    if (visibleUnplayedEpisodeIds.length === 0) {
+  const handleMarkAllMatchingAsPlayed = useCallback(async () => {
+    if (episodes.length === 0 || !podcastId) {
       return;
     }
+    const filtered =
+      episodeStateFilter !== "all" || episodeSearchQuery.trim().length > 0;
     if (
       !window.confirm(
-        `Mark ${pluralize(visibleUnplayedEpisodeIds.length, "visible episode")} as played?`,
+        filtered
+          ? "Mark matching episodes as played?"
+          : "Mark all episodes as played?",
       )
     ) {
       return;
     }
     setMarkAllAsPlayedBusy(true);
     setError(null);
-    const previousEpisodes = episodes;
-    const targetIds = new Set(visibleUnplayedEpisodeIds);
-    setEpisodes((prev) =>
-      prev.flatMap((episode) => {
-        if (!targetIds.has(episode.id)) {
-          return [episode];
-        }
-        const optimisticEpisode = applyEpisodeCompletionState(episode, true);
-        if (
-          !episodeMatchesFilter(
-            deriveEpisodeState(optimisticEpisode),
-            episodeStateFilter,
-          )
-        ) {
-          return [];
-        }
-        return [optimisticEpisode];
-      }),
-    );
     try {
-      await lectern.setBatchState({
-        mediaIds: visibleUnplayedEpisodeIds.map(assumeMediaId),
-        state: "Finished",
-      });
-      clearAllVisitData();
+      await apiFetch(
+        `/api/podcasts/${podcastId}/episodes/mark-played`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            state: episodeStateFilter,
+            query: episodeSearchQuery.trim()
+              ? { kind: "Present", value: episodeSearchQuery.trim() }
+              : { kind: "Absent" },
+          }),
+        },
+      );
+      reconciliationSuccessRef.current = filtered
+        ? "Matching episodes marked as played."
+        : "All episodes marked as played.";
+      reload();
     } catch (markError) {
-      setEpisodes(previousEpisodes);
       if (handleUnauthenticatedApiError(markError)) return;
       setError(
         toFeedback(markError, {
-          fallback: "Failed to mark visible episodes as played",
+          fallback: "Failed to mark episodes as played",
         }),
       );
     } finally {
       setMarkAllAsPlayedBusy(false);
     }
   }, [
-    applyEpisodeCompletionState,
-    clearAllVisitData,
+    episodeSearchQuery,
     episodeStateFilter,
     episodes,
-    lectern,
-    setEpisodes,
-    visibleUnplayedEpisodeIds,
+    podcastId,
+    reload,
   ]);
 
   // Which episodes are already On Lectern, from the canonical Lectern snapshot
@@ -1226,8 +1331,15 @@ export default function PodcastDetailPaneBody() {
         : undefined,
     header: {
       kind: "section",
-      folio: { kind: "count", value: episodes.length, unit: "episode" },
-      pending: loading,
+      folio:
+        !loading && episodeExhaustion.kind === "Complete"
+          ? {
+              kind: "count",
+              value: episodeExhaustion.itemCount,
+              unit: "episode",
+            }
+          : { kind: "none" },
+      pending: loading || episodeExhaustion.kind === "Draining",
     },
   });
 
@@ -1253,14 +1365,13 @@ export default function PodcastDetailPaneBody() {
       lecternItemsByMediaId={lecternItemsByMediaId}
       playNextDisabledMediaId={playNextDisabledMediaId}
       lecternReady={lectern.resource.status === "ready"}
-      visibleUnplayedEpisodeIds={visibleUnplayedEpisodeIds}
+      matchingEpisodeCount={episodes.length}
       markAllAsPlayedBusy={markAllAsPlayedBusy}
-      hasMoreEpisodes={hasMoreEpisodes}
-      loadingMoreEpisodes={loadingMoreEpisodes}
-      onMarkAllVisibleUnplayedAsPlayed={() =>
-        void handleMarkAllVisibleUnplayedAsPlayed()
+      collectionBusy={episodeExhaustion.kind === "Draining"}
+      exhaustion={episodeExhaustion}
+      onMarkAllMatchingAsPlayed={() =>
+        void handleMarkAllMatchingAsPlayed()
       }
-      onLoadMoreEpisodes={() => void handleLoadMoreEpisodes()}
       onToggleShowNotes={toggleEpisodeShowNotesExpansion}
       onPlayNext={handlePlayNext}
       onAddToLectern={handleAddToLectern}

@@ -21,6 +21,7 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db, get_repeatable_read_db
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.responses import ok, ok_page
+from nexus.schemas.collection_page import parse_collection_query
 from nexus.schemas.library import (
     AddPodcastRequest,
     CreateLibraryInviteRequest,
@@ -111,17 +112,26 @@ def revoke_library_invite(
 
 @router.get("/libraries")
 def list_libraries(
+    request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    cursor: str | None = Query(default=None, description="Pagination cursor"),
-    limit: int = Query(default=100, ge=1, description="Maximum results (clamped to 200)"),
+    db: Annotated[Session, Depends(get_repeatable_read_db)],
 ) -> dict:
     """List all libraries the viewer is a member of.
 
     Returns libraries ordered by created_at ASC, id ASC.
     """
-    result, page = library_governance.list_libraries(db, viewer.user_id, cursor=cursor, limit=limit)
-    return ok_page(result, page, by_alias=True)
+    query = parse_collection_query(
+        request.query_params.multi_items(),
+        domain_keys=frozenset(),
+    )
+    page = library_governance.list_libraries(
+        db,
+        viewer.user_id,
+        cursor=query.cursor,
+        collection_revision=query.collection_revision,
+        limit=query.limit,
+    )
+    return ok(page, by_alias=True)
 
 
 @router.get("/libraries/writable-destinations")
@@ -188,18 +198,18 @@ def rename_library(
     return ok(result, by_alias=True)
 
 
-@router.delete("/libraries/{library_id}", status_code=204)
+@router.delete("/libraries/{library_id}")
 def delete_library(
     library_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-) -> Response:
+) -> dict:
     """Delete a library.
 
     Owner-only for non-default libraries. Non-owner admins get 403 E_OWNER_REQUIRED.
     """
-    library_governance.delete_library(db, viewer.user_id, library_id)
-    return Response(status_code=204)
+    result = library_governance.delete_library(db, viewer.user_id, library_id)
+    return ok(result, by_alias=True)
 
 
 # ---- Library-scoped Invites ----
@@ -368,16 +378,17 @@ def list_library_entries(
     ``completion=unfinished`` composes with all-items/unfiled projections only.
     The whole query is parsed strictly (see ``library_entries.parse_entries_query``).
     """
-    view, limit, cursor = library_entries.parse_entries_query(request.query_params.multi_items())
-    result, page = library_entries.list_library_entries(
+    view, query = library_entries.parse_entries_query(request.query_params.multi_items())
+    page = library_entries.list_library_entries(
         db,
         viewer.user_id,
         library_id,
         view=view,
-        limit=limit,
-        cursor=cursor,
+        limit=query.limit,
+        cursor=query.cursor,
+        collection_revision=query.collection_revision,
     )
-    return ok_page(result, page, by_alias=True)
+    return ok(page, by_alias=True)
 
 
 @router.get("/libraries/{library_id}/slate")
@@ -422,13 +433,15 @@ def add_podcast_to_library(
     return Response(status_code=204)
 
 
-@router.delete("/libraries/{library_id}/podcasts/{podcast_id}", status_code=204)
+@router.delete("/libraries/{library_id}/podcasts/{podcast_id}")
 def remove_podcast_from_library(
     library_id: UUID,
     podcast_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-) -> Response:
+) -> dict:
     """Remove a podcast reference from one non-default library."""
-    library_entries.remove_podcast_from_library(db, viewer.user_id, library_id, podcast_id)
-    return Response(status_code=204)
+    result = library_entries.remove_podcast_from_library(
+        db, viewer.user_id, library_id, podcast_id
+    )
+    return ok(result, by_alias=True)

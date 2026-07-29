@@ -11,26 +11,39 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.coerce import coerce_non_negative_int, coerce_positive_int
+from nexus.coerce import coerce_positive_int
 from nexus.db.errors import integrity_constraint_name
+from nexus.db.session import transaction
 from nexus.errors import (
     ApiError,
     ApiErrorCode,
+    ConflictError,
     InvalidRequestError,
     NotFoundError,
 )
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
 from nexus.schemas.media import (
-    TranscriptRequestBatchItemResponse,
-    TranscriptRequestBatchResponse,
+    MediaProcessingStatus,
     TranscriptRequestResponse,
 )
 from nexus.schemas.media import (
     TranscriptRequestReason as TranscriptResponseReason,
 )
+from nexus.schemas.podcast import (
+    PodcastEpisodeQueryTranscriptForecastOut,
+    PodcastEpisodeQueryTranscriptRequestOut,
+    PodcastEpisodeQueryTranscriptTarget,
+)
+from nexus.schemas.presence import absent, present
 from nexus.services.billing import get_transcription_usage
 from nexus.services.billing_entitlements import get_effective_entitlements
+from nexus.services.collection_revisions import (
+    CollectionFamily,
+    bump_all_collection_families,
+    bump_collection_families,
+    read_collection_revision,
+)
 from nexus.services.semantic_chunks import (
     current_transcript_embedding_model,
     current_transcript_embedding_provider,
@@ -50,6 +63,10 @@ from nexus.services.transcripts.current import (
 from .deepgram_adapter import (
     get_deepgram_client,
 )
+from .episodes import (
+    episode_selection_fingerprint,
+    resolve_transcript_eligible_episode_ids,
+)
 
 logger = get_logger(__name__)
 
@@ -62,6 +79,27 @@ PODCAST_TRANSCRIPT_REQUEST_REASONS = {
     "operator_requeue",
     "rss_feed",
 }
+
+
+def _bump_episode_row_collections(db: Session, *, viewer_id: UUID) -> None:
+    bump_collection_families(
+        db,
+        viewer_ids=(viewer_id,),
+        families=(
+            CollectionFamily.LibraryEntries,
+            CollectionFamily.PodcastEpisodes,
+        ),
+    )
+
+
+def _bump_all_episode_row_collections(db: Session) -> None:
+    bump_all_collection_families(
+        db,
+        families=(
+            CollectionFamily.LibraryEntries,
+            CollectionFamily.PodcastEpisodes,
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -256,7 +294,7 @@ def request_podcast_transcript_for_viewer(
             db.commit()
         return TranscriptRequestResponse(
             media_id=str(media_id),
-            processing_status=effective_status,
+            processing_status=cast(MediaProcessingStatus, effective_status),
             transcript_state=transcript_state or "not_requested",
             transcript_coverage=transcript_coverage or "none",
             request_reason=cast(TranscriptResponseReason, normalized_reason),
@@ -265,6 +303,8 @@ def request_podcast_transcript_for_viewer(
             fits_budget=fits_budget,
             request_enqueued=False,
         )
+
+    _bump_episode_row_collections(db, viewer_id=viewer_id)
 
     if semantic_needs_repair:
         semantic_repair_enqueued = _enqueue_podcast_semantic_repair_job(
@@ -298,7 +338,8 @@ def request_podcast_transcript_for_viewer(
             fits_budget=True,
             now=now,
         )
-        db.commit()
+        if _auto_commit:
+            db.commit()
         return TranscriptRequestResponse(
             media_id=str(media_id),
             processing_status="ready_for_reading",
@@ -325,10 +366,11 @@ def request_podcast_transcript_for_viewer(
             fits_budget=True,
             now=now,
         )
-        db.commit()
+        if _auto_commit:
+            db.commit()
         return TranscriptRequestResponse(
             media_id=str(media_id),
-            processing_status=effective_status,
+            processing_status=cast(MediaProcessingStatus, effective_status),
             transcript_state=transcript_state or ("ready" if already_ready else "queued"),
             transcript_coverage=transcript_coverage or ("full" if already_ready else "none"),
             request_reason=cast(TranscriptResponseReason, normalized_reason),
@@ -351,7 +393,8 @@ def request_podcast_transcript_for_viewer(
             fits_budget=False,
             now=now,
         )
-        db.commit()
+        if _auto_commit:
+            db.commit()
         raise ApiError(
             ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED,
             "Monthly transcription quota exceeded",
@@ -487,7 +530,8 @@ def request_podcast_transcript_for_viewer(
             fits_budget=True,
             now=now,
         )
-        db.commit()
+        if _auto_commit:
+            db.commit()
         return TranscriptRequestResponse(
             media_id=str(media_id),
             processing_status="failed",
@@ -512,7 +556,8 @@ def request_podcast_transcript_for_viewer(
         fits_budget=True,
         now=now,
     )
-    db.commit()
+    if _auto_commit:
+        db.commit()
     return TranscriptRequestResponse(
         media_id=str(media_id),
         processing_status="extracting",
@@ -526,149 +571,87 @@ def request_podcast_transcript_for_viewer(
     )
 
 
-def request_podcast_transcripts_batch_for_viewer(
+def forecast_podcast_episode_query_transcripts(
     db: Session,
-    viewer_id: UUID,
     *,
-    media_ids: list[UUID],
-    reason: str,
-) -> TranscriptRequestBatchResponse:
-    normalized_media_ids: list[UUID] = []
-    seen_media_ids: set[UUID] = set()
-    for media_id in media_ids:
-        normalized_media_id = UUID(str(media_id))
-        if normalized_media_id in seen_media_ids:
-            continue
-        seen_media_ids.add(normalized_media_id)
-        normalized_media_ids.append(normalized_media_id)
+    viewer_id: UUID,
+    target: PodcastEpisodeQueryTranscriptTarget,
+) -> PodcastEpisodeQueryTranscriptForecastOut:
+    media_ids = resolve_transcript_eligible_episode_ids(
+        db,
+        viewer_id=viewer_id,
+        podcast_id=target.podcast_id,
+        selection=target.selection,
+    )
+    forecasts = [
+        request_podcast_transcript_for_viewer(
+            db,
+            viewer_id=viewer_id,
+            media_id=media_id,
+            reason=target.reason,
+            dry_run=True,
+            _auto_commit=False,
+        )
+        for media_id in media_ids
+    ]
+    db.commit()
+    required_minutes = sum(item.required_minutes for item in forecasts)
+    remaining_values = [
+        item.remaining_minutes for item in forecasts if item.remaining_minutes is not None
+    ]
+    remaining_minutes = min(remaining_values) if remaining_values else None
+    return PodcastEpisodeQueryTranscriptForecastOut(
+        eligible_count=len(media_ids),
+        required_minutes=required_minutes,
+        remaining_minutes=(
+            present(remaining_minutes) if remaining_minutes is not None else absent()
+        ),
+        fits_budget=remaining_minutes is None or required_minutes <= remaining_minutes,
+        selection_fingerprint=episode_selection_fingerprint(media_ids),
+    )
 
-    results: list[TranscriptRequestBatchItemResponse] = []
-    quota_exhausted = False
-    quota_remaining_after_exhaustion: int | None = 0
 
-    for media_id in normalized_media_ids:
-        media_id_str = str(media_id)
-        if quota_exhausted:
-            results.append(
-                TranscriptRequestBatchItemResponse(
-                    media_id=media_id_str,
-                    status="rejected_quota",
-                    required_minutes=None,
-                    remaining_minutes=quota_remaining_after_exhaustion,
-                    error="Monthly transcription quota exceeded",
-                )
+def request_podcast_episode_query_transcripts(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    target: PodcastEpisodeQueryTranscriptTarget,
+    expected_fingerprint: str,
+) -> PodcastEpisodeQueryTranscriptRequestOut:
+    with transaction(db):
+        media_ids = resolve_transcript_eligible_episode_ids(
+            db,
+            viewer_id=viewer_id,
+            podcast_id=target.podcast_id,
+            selection=target.selection,
+        )
+        actual_fingerprint = episode_selection_fingerprint(media_ids)
+        if actual_fingerprint != expected_fingerprint:
+            raise ConflictError(
+                ApiErrorCode.E_SELECTION_CHANGED,
+                "Episode selection changed before transcript request",
             )
-            continue
-
-        try:
+        queued_count = 0
+        for media_id in media_ids:
             admission = request_podcast_transcript_for_viewer(
                 db,
                 viewer_id=viewer_id,
                 media_id=media_id,
-                reason=reason,
+                reason=target.reason,
                 dry_run=False,
+                _auto_commit=False,
             )
-        except ApiError as exc:
-            if exc.code == ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED:
-                quota_exhausted = True
-                quota_remaining_after_exhaustion = 0
-                results.append(
-                    TranscriptRequestBatchItemResponse(
-                        media_id=media_id_str,
-                        status="rejected_quota",
-                        required_minutes=None,
-                        remaining_minutes=0,
-                        error=exc.message,
-                    )
-                )
-                continue
-            if exc.code in {
-                ApiErrorCode.E_MEDIA_NOT_FOUND,
-                ApiErrorCode.E_INVALID_KIND,
-                ApiErrorCode.E_FORBIDDEN,
-            }:
-                results.append(
-                    TranscriptRequestBatchItemResponse(
-                        media_id=media_id_str,
-                        status="rejected_invalid",
-                        required_minutes=None,
-                        remaining_minutes=None,
-                        error=exc.message,
-                    )
-                )
-                continue
-            raise
-
-        status = _batch_transcript_status_from_admission(admission)
-        required_minutes = coerce_non_negative_int(admission.required_minutes)
-        remaining_minutes = (
-            coerce_non_negative_int(admission.remaining_minutes)
-            if admission.remaining_minutes is not None
-            else None
+            queued_count += int(admission.request_enqueued)
+        revision = read_collection_revision(
+            db,
+            viewer_id=viewer_id,
+            family=CollectionFamily.PodcastEpisodes,
         )
-        error_message = None
-        if status == "rejected_invalid":
-            error_message = "Transcript request admission failed"
-
-        results.append(
-            TranscriptRequestBatchItemResponse(
-                media_id=media_id_str,
-                status=status,
-                required_minutes=required_minutes,
-                remaining_minutes=remaining_minutes,
-                error=error_message,
-            )
+        return PodcastEpisodeQueryTranscriptRequestOut(
+            matched_count=len(media_ids),
+            queued_count=queued_count,
+            collection_revision=revision,
         )
-
-        if status == "queued" and remaining_minutes == 0:
-            quota_exhausted = True
-            quota_remaining_after_exhaustion = 0
-
-    return TranscriptRequestBatchResponse(results=results)
-
-
-def _batch_transcript_status_from_admission(
-    admission: TranscriptRequestResponse,
-) -> Literal["queued", "already_ready", "already_queued", "rejected_invalid"]:
-    transcript_state = admission.transcript_state.strip().lower()
-    if transcript_state in {"ready", "partial"}:
-        return "already_ready"
-    if admission.request_enqueued:
-        return "queued"
-    if transcript_state in {"queued", "running"}:
-        return "already_queued"
-    return "rejected_invalid"
-
-
-def forecast_podcast_transcripts_for_viewer(
-    db: Session,
-    viewer_id: UUID,
-    requests: list[tuple[UUID, str]],
-) -> list[TranscriptRequestResponse]:
-    """Return dry-run transcript forecasts for many podcast episodes in one commit."""
-
-    if not requests:
-        return []
-
-    results: list[TranscriptRequestResponse] = []
-    try:
-        for media_id, reason in requests:
-            results.append(
-                request_podcast_transcript_for_viewer(
-                    db,
-                    viewer_id,
-                    media_id,
-                    reason=reason,
-                    dry_run=True,
-                    _auto_commit=False,
-                )
-            )
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
-
-    return results
 
 
 def prepare_podcast_transcription_for_source_attempt(
@@ -937,6 +920,7 @@ def mark_podcast_transcription_failure(
         last_error_code=error_code,
         now=now,
     )
+    _bump_all_episode_row_collections(db)
 
 
 def run_podcast_transcription_now(
@@ -991,6 +975,7 @@ def run_podcast_transcription_now(
             last_error_code=None,
             now=datetime.now(UTC),
         )
+        _bump_all_episode_row_collections(db)
         return request_reason, str(media_row[1] or "").strip() or None
 
     request_reason, audio_url = run_source_publication_phase(
@@ -1037,6 +1022,7 @@ def run_podcast_transcription_now(
                 },
             )
             _commit_reserved_usage_for_media(db, media_id=media_id, now=now)
+            _bump_all_episode_row_collections(db)
 
         run_source_publication_phase(
             session_factory=session_factory,
@@ -1177,6 +1163,7 @@ def _reset_media_transcript_state_for_source_attempt(
         last_error_code=None,
         now=now,
     )
+    _bump_all_episode_row_collections(db)
 
 
 def _assert_one_mutated_row(result: Any, table_name: str) -> None:

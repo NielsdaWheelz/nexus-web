@@ -1,5 +1,11 @@
 # Chat Interface Hard Cutover
 
+> **Finite-list update (2026-07-29):**
+> [`complete-collection-lists-hard-cutover.md`](complete-collection-lists-hard-cutover.md)
+> replaces the conversation-index continuation envelope and automatic
+> exhaustion behavior. Older-message prepend and destination-picker paging
+> remain explicit.
+>
 **Status:** IMPLEMENTED · **Scope:** chat presentation and interaction only ·
 **Doctrine:** hard cut; one owner per capability; no compatibility path
 
@@ -126,8 +132,10 @@ fork strip, only when forks exist
 - Focus-visible styling identifies the whole active row.
 - Each row shows only data already returned by the list API:
   `<relative updated time> · <message count>`.
-- `next_cursor` is the sole pagination continuation signal; no synthetic
-  `has_more` field enters pane return state.
+- The primary index follows the successor complete-collection contract:
+  `nextCursor` Presence plus `collectionRevision`, exhausted automatically.
+  The retained `q` destination chooser continues to use `next_cursor`; neither
+  mode stores a synthetic `has_more`.
 - Formatting reuses `formatRelativeTime`, `formatDisplayNumber`, and the injected
   render-environment instant; render code never reads the wall clock.
 - Empty titles use the existing `Untitled chat` rule.

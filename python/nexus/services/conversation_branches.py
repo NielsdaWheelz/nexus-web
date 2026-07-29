@@ -27,6 +27,10 @@ from nexus.schemas.conversation import (
     ForkOptionOut,
     MessageOut,
 )
+from nexus.services.collection_revisions import (
+    CollectionFamily,
+    bump_all_collection_revisions,
+)
 from nexus.services.conversations import (
     conversation_to_out,
     delete_message_rows_without_commit,
@@ -488,6 +492,10 @@ def delete_branch(
             ApiErrorCode.E_BRANCH_DELETE_ACTIVE_PATH,
             "Switch away from this branch before deleting it",
         )
+    bump_all_collection_revisions(
+        db,
+        family=CollectionFamily.ConversationIndex,
+    )
     db.commit()
 
 

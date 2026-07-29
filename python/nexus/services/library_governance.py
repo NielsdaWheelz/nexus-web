@@ -29,17 +29,36 @@ from nexus.errors import (
     InvalidRequestError,
     NotFoundError,
 )
+from nexus.schemas.collection_page import (
+    CollectionCursor,
+    CollectionPage,
+    CollectionRevision,
+)
 from nexus.schemas.library import (
     CreateLibraryRequest,
+    LibraryDeleteOut,
     LibraryDestinationOut,
     LibraryGovernancePageInfo,
     LibraryMemberOut,
     LibraryOut,
-    LibraryPageInfo,
+    LibraryRenameOut,
     LibraryRole,
 )
 from nexus.schemas.presence import absent, presence_from_nullable, present
+from nexus.services.collection_revisions import (
+    CollectionFamily,
+    bump_collection_families,
+    bump_collection_revisions,
+    read_collection_revision,
+    require_collection_revision,
+)
 from nexus.services.sealed_handles import seal_user, unseal_user
+from nexus.services.signed_keyset_cursor import (
+    KeysetValue,
+    KeysetValueKind,
+    decode_signed_keyset_cursor,
+    encode_signed_keyset_cursor,
+)
 from nexus.storage.client import StorageError, get_storage_client
 
 logger = logging.getLogger(__name__)
@@ -126,6 +145,41 @@ def _library_member_out_from_row(row, *, owner_user_id: UUID) -> LibraryMemberOu
     )
 
 
+def _library_member_ids(db: Session, library_id: UUID) -> list[UUID]:
+    return [
+        UUID(str(user_id))
+        for user_id in db.execute(
+            text("SELECT user_id FROM memberships WHERE library_id = :library_id ORDER BY user_id"),
+            {"library_id": library_id},
+        ).scalars()
+    ]
+
+
+def _bump_library_index(
+    db: Session,
+    viewer_ids: Sequence[UUID],
+    *,
+    conversations: bool = False,
+) -> None:
+    bump_collection_families(
+        db,
+        viewer_ids=viewer_ids,
+        families=(
+            CollectionFamily.AuthorWorks,
+            CollectionFamily.LibrariesIndex,
+            CollectionFamily.LibraryEntries,
+            CollectionFamily.PodcastEpisodes,
+            CollectionFamily.PodcastSubscriptions,
+        ),
+    )
+    if conversations:
+        bump_collection_revisions(
+            db,
+            viewer_ids=viewer_ids,
+            family=CollectionFamily.ConversationIndex,
+        )
+
+
 def lock_library_for_member(
     db: Session, viewer_id: UUID, library_id: UUID, *, lock: bool = True
 ) -> LibraryMembershipContext:
@@ -198,8 +252,11 @@ def require_not_system(system_key: str | None) -> None:
         raise ForbiddenError(ApiErrorCode.E_LIBRARY_FORBIDDEN, "System library cannot be modified")
 
 
-def _repair_owner_admin_invariant(db: Session, library_id: UUID, owner_user_id: UUID) -> None:
-    """Ensure the owner has an admin membership row. Create or promote if needed."""
+def _repair_owner_admin_invariant(db: Session, library_id: UUID, owner_user_id: UUID) -> bool:
+    """Ensure the owner has an admin membership row.
+
+    Return whether the repair changed the owner-visible library projection.
+    """
     row = db.execute(
         text("""
             SELECT role
@@ -217,7 +274,7 @@ def _repair_owner_admin_invariant(db: Session, library_id: UUID, owner_user_id: 
             """),
             {"library_id": library_id, "owner_user_id": owner_user_id},
         )
-        return
+        return True
     if row[0] != "admin":
         db.execute(
             text("""
@@ -228,16 +285,18 @@ def _repair_owner_admin_invariant(db: Session, library_id: UUID, owner_user_id: 
             """),
             {"library_id": library_id, "owner_user_id": owner_user_id},
         )
+        return True
+    return False
 
 
-def _lock_memberships_and_repair_owner(db: Session, library_id: UUID, owner_user_id: UUID) -> None:
+def _lock_memberships_and_repair_owner(db: Session, library_id: UUID, owner_user_id: UUID) -> bool:
     """Gap-lock the library's membership rows, then repair the owner-admin invariant — the
     shared preamble for every membership mutation (role change, removal, transfer)."""
     db.execute(
         text("SELECT 1 FROM memberships WHERE library_id = :lid FOR UPDATE"),
         {"lid": library_id},
     )
-    _repair_owner_admin_invariant(db, library_id, owner_user_id)
+    return _repair_owner_admin_invariant(db, library_id, owner_user_id)
 
 
 def _validate_library_name(name: str) -> str:
@@ -295,7 +354,7 @@ def create_library(
                         ApiErrorCode.E_RESOURCE_CONFLICT,
                         "Library create id is already bound to a different resource",
                     )
-                return row
+                return row, False
 
             row = (
                 db.execute(
@@ -328,9 +387,17 @@ def create_library(
                 ),
                 {"library_id": request.library_id, "user_id": viewer_id},
             )
-            return {**row, "role": "admin"}
+            bump_collection_families(
+                db,
+                viewer_ids=(viewer_id,),
+                families=(
+                    CollectionFamily.LibrariesIndex,
+                    CollectionFamily.LibraryEntries,
+                ),
+            )
+            return {**row, "role": "admin"}, True
 
-    row = retry_serializable(db, "create_library", op)
+    row, _created = retry_serializable(db, "create_library", op)
     return _library_out_from_row(row, viewer_user_id=viewer_id)
 
 
@@ -365,10 +432,18 @@ def ensure_system_library(db: Session, *, system_key: str, name: str, owner_user
             ),
             {"library_id": library_id, "user_id": owner_user_id},
         )
+        bump_collection_families(
+            db,
+            viewer_ids=(owner_user_id,),
+            families=(
+                CollectionFamily.LibrariesIndex,
+                CollectionFamily.LibraryEntries,
+            ),
+        )
         return library_id
 
 
-def rename_library(db: Session, viewer_id: UUID, library_id: UUID, name: str) -> LibraryOut:
+def rename_library(db: Session, viewer_id: UUID, library_id: UUID, name: str) -> LibraryRenameOut:
     """Rename a non-default library. Admin-only; default library forbidden."""
     name = _validate_library_name(name)
 
@@ -387,28 +462,37 @@ def rename_library(db: Session, viewer_id: UUID, library_id: UUID, name: str) ->
             """),
             {"name": name, "updated_at": now, "library_id": library_id},
         )
+        _bump_library_index(db, _library_member_ids(db, library_id))
+        collection_revision = read_collection_revision(
+            db,
+            viewer_id=viewer_id,
+            family=CollectionFamily.LibrariesIndex,
+        )
 
-    return LibraryOut(
-        id=ctx.library_id,
-        name=name,
-        color=ctx.color,
-        owner_user_handle=seal_user(ctx.owner_user_id),
-        is_default=ctx.is_default,
-        role=ctx.role,
-        system_key=ctx.system_key,
-        created_at=ctx.created_at,
-        updated_at=now,
-        **_library_capabilities(
-            role=ctx.role,
+    return LibraryRenameOut(
+        library=LibraryOut(
+            id=ctx.library_id,
+            name=name,
+            color=ctx.color,
+            owner_user_handle=seal_user(ctx.owner_user_id),
             is_default=ctx.is_default,
+            role=ctx.role,
             system_key=ctx.system_key,
-            viewer_user_id=viewer_id,
-            owner_user_id=ctx.owner_user_id,
+            created_at=ctx.created_at,
+            updated_at=now,
+            **_library_capabilities(
+                role=ctx.role,
+                is_default=ctx.is_default,
+                system_key=ctx.system_key,
+                viewer_user_id=viewer_id,
+                owner_user_id=ctx.owner_user_id,
+            ),
         ),
+        collection_revision=collection_revision,
     )
 
 
-def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
+def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> LibraryDeleteOut:
     """Delete a non-default library. Owner-only; non-owner admins get E_OWNER_REQUIRED."""
     from nexus.services import library_entries, media_deletion
     from nexus.services.artifacts import engine as artifact_engine
@@ -416,7 +500,7 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
     from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
     from nexus.services.resource_graph.refs import ResourceRef
 
-    def attempt() -> list[str]:
+    def attempt() -> tuple[list[str], CollectionRevision]:
         with transaction(db):
             ctx = lock_library_for_member(db, viewer_id, library_id, lock=False)
             require_non_default(ctx.is_default)
@@ -453,6 +537,7 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
                     {"library_id": library_id},
                 ).scalars()
             ]
+            _bump_library_index(db, affected_user_ids, conversations=True)
             # This transaction composes Library-subject cleanup, zero-reference
             # Media-subject cleanup, and every affected member's User-audience
             # visibility sweep. Prelock their complete possible head union once
@@ -494,9 +579,14 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
                     db,
                     audience=AudienceUser(user_id=affected_user_id),
                 )
-            return storage_paths
+            collection_revision = read_collection_revision(
+                db,
+                viewer_id=viewer_id,
+                family=CollectionFamily.LibrariesIndex,
+            )
+            return storage_paths, collection_revision
 
-    storage_paths = retry_read_committed(db, "delete_library", attempt)
+    storage_paths, collection_revision = retry_read_committed(db, "delete_library", attempt)
 
     if storage_paths:
         storage_client = get_storage_client()
@@ -511,42 +601,50 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
                     storage_path,
                     exc.message,
                 )
-
-
-def _encode_library_cursor(row, *, viewer_id: UUID) -> str:
-    payload = {
-        "k": "libraries",
-        "viewer_id": str(viewer_id),
-        "created_at": row["created_at"].isoformat(),
-        "id": str(row["id"]),
-    }
-    encoded = base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
-    return encoded.rstrip("=")
-
-
-def _decode_library_cursor(cursor: str, *, viewer_id: UUID) -> tuple[datetime, UUID]:
-    try:
-        padded = cursor + "=" * (-len(cursor) % 4)
-        payload: dict[str, Any] = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
-        if payload.get("k") != "libraries" or UUID(str(payload["viewer_id"])) != viewer_id:
-            raise ValueError
-        return datetime.fromisoformat(str(payload["created_at"])), UUID(str(payload["id"]))
-    except Exception:
-        # justify-ignore-error: malformed cursor input is an expected API error path.
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
+    return LibraryDeleteOut(
+        library_id=library_id,
+        collection_revision=collection_revision,
+    )
 
 
 def list_libraries(
-    db: Session, viewer_id: UUID, *, cursor: str | None = None, limit: int = 100
-) -> tuple[list[LibraryOut], LibraryPageInfo]:
-    """List all libraries the viewer is a member of, ordered created_at ASC, id ASC."""
-    if limit <= 0:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
-    limit = min(limit, 200)
+    db: Session,
+    viewer_id: UUID,
+    *,
+    cursor: CollectionCursor | None = None,
+    collection_revision: CollectionRevision | None = None,
+    limit: int = 100,
+) -> CollectionPage[LibraryOut]:
+    """List one immutable-keyset page of the viewer's Libraries index."""
+    revision = (
+        read_collection_revision(
+            db,
+            viewer_id=viewer_id,
+            family=CollectionFamily.LibrariesIndex,
+        )
+        if collection_revision is None
+        else require_collection_revision(
+            db,
+            viewer_id=viewer_id,
+            family=CollectionFamily.LibrariesIndex,
+            expected=collection_revision,
+        )
+    )
+    cursor_query = {"viewerId": str(viewer_id)}
     cursor_clause = ""
     params: dict[str, object] = {"viewer_id": viewer_id, "limit": limit + 1}
     if cursor is not None:
-        cursor_created_at, cursor_id = _decode_library_cursor(cursor, viewer_id=viewer_id)
+        cursor_created_at, cursor_id = decode_signed_keyset_cursor(
+            cursor,
+            family=CollectionFamily.LibrariesIndex.value,
+            query=cursor_query,
+            expected_kinds=(
+                KeysetValueKind.DateTime,
+                KeysetValueKind.Uuid,
+            ),
+        )
+        if not isinstance(cursor_created_at, datetime) or not isinstance(cursor_id, UUID):
+            raise AssertionError("LibrariesIndex cursor decoded invalid key types")
         cursor_clause = """
           AND (
             l.created_at > :cursor_created_at
@@ -574,11 +672,24 @@ def list_libraries(
     )
     page_rows = rows[:limit]
     next_cursor = (
-        _encode_library_cursor(page_rows[-1], viewer_id=viewer_id) if len(rows) > limit else None
+        encode_signed_keyset_cursor(
+            family=CollectionFamily.LibrariesIndex.value,
+            query=cursor_query,
+            after=(
+                KeysetValue(
+                    KeysetValueKind.DateTime,
+                    page_rows[-1]["created_at"],
+                ),
+                KeysetValue(KeysetValueKind.Uuid, page_rows[-1]["id"]),
+            ),
+        )
+        if len(rows) > limit
+        else None
     )
-    return (
-        [_library_out_from_row(row, viewer_user_id=viewer_id) for row in page_rows],
-        LibraryPageInfo(has_more=next_cursor is not None, next_cursor=next_cursor),
+    return CollectionPage[LibraryOut](
+        items=[_library_out_from_row(row, viewer_user_id=viewer_id) for row in page_rows],
+        collectionRevision=revision,
+        nextCursor=present(next_cursor) if next_cursor is not None else absent(),
     )
 
 
@@ -884,7 +995,7 @@ def update_library_member_role(
             require_non_default(ctx.is_default)
             require_not_system(ctx.system_key)
 
-            _lock_memberships_and_repair_owner(db, library_id, ctx.owner_user_id)
+            owner_repaired = _lock_memberships_and_repair_owner(db, library_id, ctx.owner_user_id)
 
             if target_user_id == ctx.owner_user_id:
                 raise ForbiddenError(
@@ -908,7 +1019,8 @@ def update_library_member_role(
             if target is None:
                 raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Member not found")
 
-            if target["role"] != role:
+            role_changed = target["role"] != role
+            if role_changed:
                 result = db.execute(
                     text("""
                     UPDATE memberships SET role = :role
@@ -916,7 +1028,7 @@ def update_library_member_role(
                 """),
                     {"role": role, "lid": library_id, "uid": target_user_id},
                 )
-                assert result.rowcount == 1
+                assert getattr(result, "rowcount", None) == 1
                 target = (
                     db.execute(
                         text("""
@@ -930,6 +1042,8 @@ def update_library_member_role(
                     .mappings()
                     .one()
                 )
+            if role_changed or owner_repaired:
+                _bump_library_index(db, _library_member_ids(db, library_id))
 
             return _library_member_out_from_row(target, owner_user_id=ctx.owner_user_id)
 
@@ -948,7 +1062,7 @@ def remove_library_member(
             require_non_default(ctx.is_default)
             require_not_system(ctx.system_key)
 
-            _lock_memberships_and_repair_owner(db, library_id, ctx.owner_user_id)
+            owner_repaired = _lock_memberships_and_repair_owner(db, library_id, ctx.owner_user_id)
 
             if target_user_id == ctx.owner_user_id:
                 raise ForbiddenError(
@@ -961,13 +1075,20 @@ def remove_library_member(
                 {"lid": library_id, "uid": target_user_id},
             ).fetchone()
             if target is None:
+                if owner_repaired:
+                    _bump_library_index(db, _library_member_ids(db, library_id))
                 return
 
             result = db.execute(
                 text("DELETE FROM memberships WHERE library_id = :lid AND user_id = :uid"),
                 {"lid": library_id, "uid": target_user_id},
             )
-            assert result.rowcount == 1
+            assert getattr(result, "rowcount", None) == 1
+            _bump_library_index(
+                db,
+                _library_member_ids(db, library_id) + [target_user_id],
+                conversations=True,
+            )
             from nexus.services.artifacts.dossier_types import AudienceUser
             from nexus.services.artifacts.engine import on_audience_visibility_changed
 
@@ -995,9 +1116,11 @@ def transfer_library_ownership(
                     "Only the library owner can transfer ownership",
                 )
 
-            _lock_memberships_and_repair_owner(db, library_id, ctx.owner_user_id)
+            owner_repaired = _lock_memberships_and_repair_owner(db, library_id, ctx.owner_user_id)
 
             if new_owner_user_id == ctx.owner_user_id:
+                if owner_repaired:
+                    _bump_library_index(db, _library_member_ids(db, library_id))
                 return LibraryOut(
                     id=ctx.library_id,
                     name=ctx.name,
@@ -1035,7 +1158,7 @@ def transfer_library_ownership(
                     """),
                     {"lid": library_id, "uid": new_owner_user_id},
                 )
-                assert result.rowcount == 1
+                assert getattr(result, "rowcount", None) == 1
 
             now = datetime.now(UTC)
             result = db.execute(
@@ -1045,7 +1168,8 @@ def transfer_library_ownership(
                 """),
                 {"new_owner": new_owner_user_id, "now": now, "lid": library_id},
             )
-            assert result.rowcount == 1
+            assert getattr(result, "rowcount", None) == 1
+            _bump_library_index(db, _library_member_ids(db, library_id))
 
             return LibraryOut(
                 id=ctx.library_id,

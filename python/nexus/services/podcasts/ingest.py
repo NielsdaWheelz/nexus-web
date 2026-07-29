@@ -14,6 +14,11 @@ from sqlalchemy.orm import Session
 from nexus.coerce import coerce_non_negative_int, coerce_positive_int
 from nexus.jobs.queue import enqueue_unique_job
 from nexus.logging import get_logger
+from nexus.services.collection_revisions import (
+    CollectionFamily,
+    bump_all_collection_families,
+    bump_collection_revisions,
+)
 from nexus.services.contributor_credits import load_contributor_credits_for_podcasts
 from nexus.services.contributor_taxonomy import (
     NOT_OBSERVED,
@@ -452,6 +457,39 @@ def sync_subscription_ingest(
                 media_id=str(media_id),
                 error=str(exc),
             )
+
+    affected_viewers = tuple(
+        UUID(str(value))
+        for value in db.execute(
+            text(
+                """
+                SELECT user_id
+                FROM podcast_subscriptions
+                WHERE podcast_id = :podcast_id
+                  AND status = 'active'
+                """
+            ),
+            {"podcast_id": podcast_id},
+        ).scalars()
+    )
+    bump_collection_revisions(
+        db,
+        viewer_ids=affected_viewers,
+        family=CollectionFamily.PodcastSubscriptions,
+    )
+    if selected_episodes:
+        # Episode Media is visible through subscriptions, shared libraries, and
+        # authenticated resource grants. Broad invalidation is the deliberate
+        # one-user 80/20 closure: it cannot miss a non-subscriber visibility
+        # path while feed sync mutates membership and every list sort fact.
+        bump_all_collection_families(
+            db,
+            families=(
+                CollectionFamily.AuthorWorks,
+                CollectionFamily.LibraryEntries,
+                CollectionFamily.PodcastEpisodes,
+            ),
+        )
 
     return SubscriptionIngestResult(
         ingested_episode_count=ingested_episode_count,

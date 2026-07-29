@@ -25307,3 +25307,59 @@ class TestMigration0198LearnIdeaDossiers:
             reset_test_schema()
             run_alembic_command("upgrade head")
             engine.dispose()
+
+
+@MIGRATION_CI_LATE
+class TestMigration0200ViewerCollectionRevisions:
+    def test_0200_adds_only_the_collection_revision_storage_contract(self):
+        reset_test_schema()
+        assert run_alembic_command("upgrade 0199").returncode == 0
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0200")
+            assert result.returncode == 0, result.stderr
+            with engine.begin() as connection:
+                assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0200"
+                columns = {
+                    row.column_name: (row.data_type, row.is_nullable)
+                    for row in connection.execute(
+                        text(
+                            """
+                            SELECT column_name, data_type, is_nullable
+                            FROM information_schema.columns
+                            WHERE table_schema = 'public'
+                              AND table_name = 'viewer_collection_revisions'
+                            """
+                        )
+                    )
+                }
+                assert columns == {
+                    "viewer_id": ("uuid", "NO"),
+                    "family": ("text", "NO"),
+                    "revision": ("bigint", "NO"),
+                }
+                constraints = {
+                    row.contype: row.definition
+                    for row in connection.execute(
+                        text(
+                            """
+                            SELECT con.contype, pg_get_constraintdef(con.oid) AS definition
+                            FROM pg_constraint AS con
+                            JOIN pg_class AS rel ON rel.oid = con.conrelid
+                            WHERE rel.relname = 'viewer_collection_revisions'
+                            """
+                        )
+                    )
+                }
+                assert constraints["p"] == "PRIMARY KEY (viewer_id, family)"
+                assert constraints["f"] == "FOREIGN KEY (viewer_id) REFERENCES users(id)"
+                assert "c" not in constraints
+
+            result = run_alembic_command("downgrade 0199")
+            assert result.returncode != 0
+            with engine.connect() as connection:
+                assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0200"
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()

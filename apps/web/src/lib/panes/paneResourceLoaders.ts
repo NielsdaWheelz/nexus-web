@@ -20,14 +20,28 @@ import { normalizePageSummary } from "@/lib/notes/normalize";
 import { shouldLoadInitialMediaFragments } from "@/lib/media/documentReadiness";
 import { isAbortError } from "@/lib/errors";
 import { decodeContributorDetail } from "@/lib/contributors/detail";
-import { decodeLibraryReadingTimeEntry } from "@/lib/libraries/readingTime";
-import { expectLibraryOutForId } from "@/lib/libraries/contract";
+import {
+  decodeCollectionPage,
+  type CollectionCursor,
+  type CollectionRevision,
+} from "@/lib/api/collectionPage";
+import type { Presence } from "@/lib/api/presence";
+import {
+  expectLibraryOut,
+  expectLibraryOutForId,
+  type LibraryOut,
+} from "@/lib/libraries/contract";
+import {
+  decodeLibraryEntryListItem,
+  type LibraryEntryListItem,
+} from "@/lib/libraries/entryListItem";
 import { decodeContributorWorkItem } from "@/lib/contributors/workItem";
-import { expectArray, expectNullableString } from "@/lib/validation";
 import type {
   ContributorDetail,
   ContributorWorkItem,
 } from "@/lib/contributors/types";
+import { decodeConversationIndexItem } from "@/lib/conversations/indexApi";
+import type { ConversationListItem } from "@/lib/conversations/types";
 
 // The author pane's composed first-paint seed: the lightweight contributor
 // detail plus the first page of distinct works (D-25 cursor pagination). Decoded
@@ -35,8 +49,25 @@ import type {
 // brand-checked shape (D-45 — handle parsed at this boundary).
 export interface AuthorPaneSeed {
   detail: ContributorDetail;
-  works: ContributorWorkItem[];
-  worksNextCursor: string | null;
+  works: readonly ContributorWorkItem[];
+  collectionRevision: CollectionRevision;
+  nextCursor: Presence<CollectionCursor>;
+  exhaustion: "Partial" | "Complete";
+}
+
+export interface ConversationsPaneSeed {
+  conversations: readonly ConversationListItem[];
+  collectionRevision: CollectionRevision;
+  nextCursor: Presence<CollectionCursor>;
+  exhaustion: "Partial" | "Complete";
+}
+
+export interface LibraryPaneSeed {
+  library: LibraryOut;
+  entries: readonly LibraryEntryListItem[];
+  collectionRevision: CollectionRevision;
+  nextCursor: Presence<CollectionCursor>;
+  exhaustion: "Partial" | "Complete";
 }
 
 // One transport-agnostic loader per prefetchable pane — the single definition of
@@ -81,7 +112,9 @@ function paneSubresourceFailure(error: unknown): PaneSubresourceFailure {
 // no route-keyed primary). Lectern's canonical ordered queue remains exclusively
 // owned by the shell-mounted LecternProvider; only its independent Slate read is
 // seeded here.
-export const paneResourceLoaders: Partial<Record<PaneRouteId, PaneResourceLoader>> = {
+export const paneResourceLoaders: Partial<
+  Record<PaneRouteId, PaneResourceLoader>
+> = {
   lectern: {
     cacheKey: () => lecternSlateResource.cacheKey({ refreshVersion: 0 }),
     load: async (request) =>
@@ -92,25 +125,35 @@ export const paneResourceLoaders: Partial<Record<PaneRouteId, PaneResourceLoader
 
   libraries: {
     cacheKey: () => librariesResource.cacheKey({ refreshVersion: 0 }),
-    load: (request) => request(librariesResource, { refreshVersion: 0 }),
+    load: async (request) =>
+      decodeCollectionPage(
+        await request(librariesResource, { refreshVersion: 0, limit: 100 }),
+        (row, index) => expectLibraryOut(row, `LibraryOut items[${index}]`),
+      ),
   },
 
   library: {
     cacheKey: (p) => libraryResource.cacheKey({ id: p.id }),
-    load: async (request, p) => {
+    load: async (request, p): Promise<LibraryPaneSeed> => {
       const params = { id: p.id };
-      const [library, entries] = await Promise.all([
+      const [library, entriesEnvelope] = await Promise.all([
         request<{ id: string }, { data: unknown }>(libraryResource, params),
-        request<{ id: string }, { data: object[]; page: unknown }>(libraryEntriesResource, params),
+        request<{ id: string }, unknown>(libraryEntriesResource, params),
       ]);
+      const page = decodeCollectionPage(
+        entriesEnvelope,
+        decodeLibraryEntryListItem,
+      );
       return {
         library: expectLibraryOutForId(
           library.data,
           p.id,
           "Library pane response.data",
         ),
-        entries: entries.data.map(decodeLibraryReadingTimeEntry),
-        entriesPage: entries.page,
+        entries: page.items,
+        collectionRevision: page.collectionRevision,
+        nextCursor: page.nextCursor,
+        exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
       };
     },
   },
@@ -122,7 +165,12 @@ export const paneResourceLoaders: Partial<Record<PaneRouteId, PaneResourceLoader
       const media = (
         await request<
           { id: string },
-          { data: { kind?: string; capabilities?: { can_read?: boolean } | null } }
+          {
+            data: {
+              kind?: string;
+              capabilities?: { can_read?: boolean } | null;
+            };
+          }
         >(mediaResource, params)
       ).data;
       let fragments: PaneMediaFragmentsSeed = { status: "ready", data: [] };
@@ -156,22 +204,18 @@ export const paneResourceLoaders: Partial<Record<PaneRouteId, PaneResourceLoader
         request<{ handle: string }, { data: unknown }>(contributorResource, {
           handle: p.handle,
         }),
-        request<
-          { handle: string; limit: number },
-          { data: { works: unknown; nextCursor: unknown } }
-        >(contributorWorksResource, { handle: p.handle, limit: AUTHOR_WORKS_LIMIT }),
+        request<{ handle: string; limit: number }, unknown>(
+          contributorWorksResource,
+          { handle: p.handle, limit: AUTHOR_WORKS_LIMIT },
+        ),
       ]);
+      const page = decodeCollectionPage(worksEnv, decodeContributorWorkItem);
       return {
         detail: decodeContributorDetail(detailEnv.data),
-        works: expectArray(
-          worksEnv.data.works,
-          decodeContributorWorkItem,
-          "ContributorWorkPage.works",
-        ),
-        worksNextCursor: expectNullableString(
-          worksEnv.data.nextCursor,
-          "ContributorWorkPage.nextCursor",
-        ),
+        works: page.items,
+        collectionRevision: page.collectionRevision,
+        nextCursor: page.nextCursor,
+        exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
       };
     },
   },
@@ -189,7 +233,18 @@ export const paneResourceLoaders: Partial<Record<PaneRouteId, PaneResourceLoader
 
   conversations: {
     cacheKey: () => conversationsInitialResource.cacheKey({}),
-    load: (request) => request(conversationsInitialResource, {}),
+    load: async (request): Promise<ConversationsPaneSeed> => {
+      const page = decodeCollectionPage(
+        await request(conversationsInitialResource, {}),
+        decodeConversationIndexItem,
+      );
+      return {
+        conversations: page.items,
+        collectionRevision: page.collectionRevision,
+        nextCursor: page.nextCursor,
+        exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
+      };
+    },
   },
 
   settingsAccount: {

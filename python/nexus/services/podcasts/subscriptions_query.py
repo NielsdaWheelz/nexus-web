@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from datetime import datetime
+from typing import Any, Literal, cast
 from uuid import UUID
 
 from sqlalchemy import text
@@ -15,6 +16,7 @@ from nexus.errors import (
     InvalidRequestError,
     NotFoundError,
 )
+from nexus.schemas.collection_page import CollectionCursor, CollectionPage, CollectionRevision
 from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.podcast import (
     PodcastDetailOut,
@@ -22,16 +24,29 @@ from nexus.schemas.podcast import (
     PodcastSubscriptionListItemOut,
     PodcastSubscriptionStatusOut,
 )
-from nexus.schemas.presence import Absent, Present, presence_from_nullable
+from nexus.schemas.presence import Absent, Present, absent, presence_from_nullable, present
 from nexus.services import library_entries
+from nexus.services.collection_revisions import (
+    CollectionFamily,
+    read_collection_revision,
+    require_collection_revision,
+)
 from nexus.services.consumption import service as consumption_service
 from nexus.services.contributor_credits import (
     load_contributor_credits_for_podcasts,
     podcast_credit_text_match_sql,
 )
+from nexus.services.signed_keyset_cursor import (
+    KeysetValue,
+    KeysetValueKind,
+    decode_signed_keyset_cursor,
+    encode_signed_keyset_cursor,
+)
 
-PODCAST_SUBSCRIPTION_SORT_OPTIONS = {"recent_episode", "unplayed_count", "alpha"}
-PODCAST_SUBSCRIPTION_FILTER_OPTIONS = {"all", "has_new", "not_in_library"}
+PodcastSubscriptionSort = Literal["recent_episode", "unplayed_count", "alpha"]
+PodcastSubscriptionFilter = Literal["all", "has_new", "not_in_library"]
+PODCAST_SUBSCRIPTION_SORT_OPTIONS = frozenset({"recent_episode", "unplayed_count", "alpha"})
+PODCAST_SUBSCRIPTION_FILTER_OPTIONS = frozenset({"all", "has_new", "not_in_library"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,21 +153,155 @@ def _podcast_list_item_from_row(
     )
 
 
+def _subscription_query_identity(
+    *,
+    viewer_id: UUID,
+    sort: PodcastSubscriptionSort,
+    filter: PodcastSubscriptionFilter,
+    query: str | None,
+    library_id: UUID | None,
+) -> dict[str, object]:
+    return {
+        "viewerId": str(viewer_id),
+        "sort": sort,
+        "filter": filter,
+        "query": query,
+        "libraryId": str(library_id) if library_id is not None else None,
+    }
+
+
+def _subscription_order(
+    sort: PodcastSubscriptionSort,
+) -> tuple[str, tuple[KeysetValueKind, ...]]:
+    if sort == "alpha":
+        return (
+            "title_key ASC, podcast_id ASC",
+            (KeysetValueKind.Text, KeysetValueKind.Uuid),
+        )
+    if sort == "unplayed_count":
+        return (
+            "unplayed_count DESC, latest_missing ASC, latest_published_at DESC, "
+            "subscription_updated_at DESC, podcast_id DESC",
+            (
+                KeysetValueKind.Int,
+                KeysetValueKind.Int,
+                KeysetValueKind.DateTimeOrNull,
+                KeysetValueKind.DateTime,
+                KeysetValueKind.Uuid,
+            ),
+        )
+    return (
+        "latest_missing ASC, latest_published_at DESC, "
+        "subscription_updated_at DESC, podcast_id DESC",
+        (
+            KeysetValueKind.Int,
+            KeysetValueKind.DateTimeOrNull,
+            KeysetValueKind.DateTime,
+            KeysetValueKind.Uuid,
+        ),
+    )
+
+
+def _subscription_keyset_predicate(
+    sort: PodcastSubscriptionSort,
+    after: tuple[object, ...] | None,
+    params: dict[str, object],
+) -> str:
+    if after is None:
+        return "TRUE"
+    if sort == "alpha":
+        title, podcast_id = after
+        params.update(after_title=title, after_podcast_id=podcast_id)
+        return """
+            title_key > :after_title
+            OR (title_key = :after_title AND podcast_id > :after_podcast_id)
+        """
+
+    if sort == "unplayed_count":
+        unplayed, missing, published, updated, podcast_id = after
+        params.update(
+            after_unplayed=unplayed,
+            after_latest_missing=missing,
+            after_latest_published=published,
+            after_subscription_updated=updated,
+            after_podcast_id=podcast_id,
+        )
+        return """
+            unplayed_count < :after_unplayed
+            OR (unplayed_count = :after_unplayed
+                AND latest_missing > :after_latest_missing)
+            OR (unplayed_count = :after_unplayed
+                AND latest_missing = :after_latest_missing
+                AND :after_latest_missing = 0
+                AND latest_published_at < :after_latest_published)
+            OR (unplayed_count = :after_unplayed
+                AND latest_missing = :after_latest_missing
+                AND latest_published_at IS NOT DISTINCT FROM :after_latest_published
+                AND subscription_updated_at < :after_subscription_updated)
+            OR (unplayed_count = :after_unplayed
+                AND latest_missing = :after_latest_missing
+                AND latest_published_at IS NOT DISTINCT FROM :after_latest_published
+                AND subscription_updated_at = :after_subscription_updated
+                AND podcast_id < :after_podcast_id)
+        """
+
+    missing, published, updated, podcast_id = after
+    params.update(
+        after_latest_missing=missing,
+        after_latest_published=published,
+        after_subscription_updated=updated,
+        after_podcast_id=podcast_id,
+    )
+    return """
+        latest_missing > :after_latest_missing
+        OR (latest_missing = :after_latest_missing
+            AND :after_latest_missing = 0
+            AND latest_published_at < :after_latest_published)
+        OR (latest_missing = :after_latest_missing
+            AND latest_published_at IS NOT DISTINCT FROM :after_latest_published
+            AND subscription_updated_at < :after_subscription_updated)
+        OR (latest_missing = :after_latest_missing
+            AND latest_published_at IS NOT DISTINCT FROM :after_latest_published
+            AND subscription_updated_at = :after_subscription_updated
+            AND podcast_id < :after_podcast_id)
+    """
+
+
+def _subscription_after_values(
+    sort: PodcastSubscriptionSort,
+    row: Any,
+) -> tuple[KeysetValue, ...]:
+    if sort == "alpha":
+        return (
+            KeysetValue(KeysetValueKind.Text, str(row["title_key"])),
+            KeysetValue(KeysetValueKind.Uuid, UUID(str(row["podcast_id"]))),
+        )
+    common = (
+        KeysetValue(KeysetValueKind.Int, int(row["latest_missing"])),
+        KeysetValue(KeysetValueKind.DateTimeOrNull, row["latest_published_at"]),
+        KeysetValue(
+            KeysetValueKind.DateTime,
+            cast(datetime, row["subscription_updated_at"]),
+        ),
+        KeysetValue(KeysetValueKind.Uuid, UUID(str(row["podcast_id"]))),
+    )
+    if sort == "unplayed_count":
+        return (KeysetValue(KeysetValueKind.Int, int(row["unplayed_count"])), *common)
+    return common
+
+
 def list_subscriptions(
     db: Session,
     viewer_id: UUID,
     *,
-    limit: int = 100,
-    offset: int = 0,
-    sort: str = "recent_episode",
+    limit: int,
+    cursor: CollectionCursor | None,
+    collection_revision: CollectionRevision | None,
+    sort: PodcastSubscriptionSort,
     q: str | None = None,
-    filter: str = "all",
+    filter: PodcastSubscriptionFilter,
     library_id: UUID | None = None,
-) -> list[PodcastSubscriptionListItemOut]:
-    if limit <= 0:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
-    if offset < 0:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Offset must be non-negative")
+) -> CollectionPage[PodcastSubscriptionListItemOut]:
     if sort not in PODCAST_SUBSCRIPTION_SORT_OPTIONS:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
@@ -163,24 +312,42 @@ def list_subscriptions(
             ApiErrorCode.E_INVALID_REQUEST,
             "Invalid podcast subscriptions filter option",
         )
-    limit = min(limit, 200)
     q = q.strip() if q is not None else None
     if q == "":
         q = None
 
-    if sort == "alpha":
-        order_by_sql = "LOWER(p.title) ASC, ps.podcast_id ASC"
-    elif sort == "unplayed_count":
-        order_by_sql = (
-            "COALESCE(sa.unplayed_count, 0) DESC, "
-            "sa.latest_published_at DESC NULLS LAST, "
-            "ps.updated_at DESC, "
-            "ps.podcast_id DESC"
+    query_identity = _subscription_query_identity(
+        viewer_id=viewer_id,
+        sort=sort,
+        filter=filter,
+        query=q,
+        library_id=library_id,
+    )
+    order_by_sql, cursor_kinds = _subscription_order(sort)
+    after = (
+        decode_signed_keyset_cursor(
+            cursor,
+            family=CollectionFamily.PodcastSubscriptions.value,
+            query=query_identity,
+            expected_kinds=cursor_kinds,
         )
-    else:
-        order_by_sql = (
-            "sa.latest_published_at DESC NULLS LAST, ps.updated_at DESC, ps.podcast_id DESC"
+        if cursor is not None
+        else None
+    )
+    revision = (
+        read_collection_revision(
+            db,
+            viewer_id=viewer_id,
+            family=CollectionFamily.PodcastSubscriptions,
         )
+        if collection_revision is None
+        else require_collection_revision(
+            db,
+            viewer_id=viewer_id,
+            family=CollectionFamily.PodcastSubscriptions,
+            expected=collection_revision,
+        )
+    )
 
     # library_entries.py owns the library-membership reads: derive the membership/scope sets
     # via its readers so this query never touches the tables. `not_in_library` and the
@@ -210,7 +377,11 @@ def list_subscriptions(
             )
         )
         if not scoped_podcast_ids:
-            return []
+            return CollectionPage(
+                items=[],
+                collection_revision=revision,
+                next_cursor=absent(),
+            )
         library_scope_sql = "ps.podcast_id = ANY(:scoped_podcast_ids)"
     else:
         scoped_podcast_ids = []
@@ -219,18 +390,19 @@ def list_subscriptions(
     query_params: dict[str, object] = {
         "user_id": viewer_id,
         "viewer_id": viewer_id,  # required by the embedded visible_media CTE
-        "limit": limit,
-        "offset": offset,
+        "page_limit": limit + 1,
         "has_query": q is not None,
         "q": q,
         "q_pattern": f"%{q}%" if q is not None else None,
         "in_library_podcast_ids": in_library_podcast_ids,
         "scoped_podcast_ids": scoped_podcast_ids,
     }
+    keyset_sql = _subscription_keyset_predicate(sort, after, query_params)
 
-    rows = db.execute(
-        text(
-            f"""
+    rows = (
+        db.execute(
+            text(
+                f"""
             WITH visible_media AS (
                 {visible_media_ids_cte_sql()}
             ),
@@ -240,21 +412,21 @@ def list_subscriptions(
                     pe.media_id,
                     pe.published_at,
                     {
-                consumption_service.episode_state_case_sql(
-                    listening_alias="pls", override_alias="co", episode_alias="pe"
-                )
-            } AS episode_state
+                    consumption_service.episode_state_case_sql(
+                        listening_alias="pls", override_alias="co", episode_alias="pe"
+                    )
+                } AS episode_state
                 FROM podcast_episodes pe
                 JOIN visible_media vm
                   ON vm.media_id = pe.media_id
                 {
-                consumption_service.episode_state_joins_sql(
-                    user_param=":user_id",
-                    media_expr="pe.media_id",
-                    listening_alias="pls",
-                    override_alias="co",
-                )
-            }
+                    consumption_service.episode_state_joins_sql(
+                        user_param=":user_id",
+                        media_expr="pe.media_id",
+                        listening_alias="pls",
+                        override_alias="co",
+                    )
+                }
             ),
             subscription_aggregates AS (
                 SELECT
@@ -267,85 +439,84 @@ def list_subscriptions(
                 WHERE ps.user_id = :user_id
                   AND ps.status = 'active'
                 GROUP BY ps.podcast_id
+            ),
+            ordered_subscriptions AS (
+                SELECT
+                    ps.podcast_id,
+                    ps.default_playback_speed,
+                    ps.auto_queue,
+                    ps.sync_status,
+                    ps.updated_at AS subscription_updated_at,
+                    p.title,
+                    LOWER(p.title) AS title_key,
+                    COALESCE(sa.unplayed_count, 0) AS unplayed_count,
+                    CASE WHEN sa.latest_published_at IS NULL THEN 1 ELSE 0 END
+                        AS latest_missing,
+                    sa.latest_published_at
+                FROM podcast_subscriptions ps
+                JOIN podcasts p ON p.id = ps.podcast_id
+                LEFT JOIN subscription_aggregates sa ON sa.podcast_id = ps.podcast_id
+                WHERE ps.user_id = :user_id
+                  AND ps.status = 'active'
+                  AND (
+                        :has_query IS FALSE
+                        OR p.title ILIKE :q_pattern
+                        OR {podcast_credit_text_match_sql("p.id")}
+                    )
+                  AND {filter_sql}
+                  AND {library_scope_sql}
             )
-            SELECT
-                ps.podcast_id,
-                ps.status,
-                ps.default_playback_speed,
-                ps.auto_queue,
-                ps.sync_status,
-                ps.sync_error_code,
-                ps.sync_error_message,
-                ps.sync_attempts,
-                ps.sync_started_at,
-                ps.sync_completed_at,
-                ps.last_synced_at,
-                ps.updated_at,
-                p.id,
-                p.provider,
-                p.provider_podcast_id,
-                p.title,
-                p.feed_url,
-                p.website_url,
-                p.image_url,
-                p.description,
-                p.created_at,
-                p.updated_at,
-                COALESCE(sa.unplayed_count, 0) AS unplayed_count,
-                sa.latest_published_at
-            FROM podcast_subscriptions ps
-            JOIN podcasts p ON p.id = ps.podcast_id
-            LEFT JOIN subscription_aggregates sa ON sa.podcast_id = ps.podcast_id
-            WHERE ps.user_id = :user_id
-              AND ps.status = 'active'
-              AND (
-                    :has_query IS FALSE
-                    OR p.title ILIKE :q_pattern
-                    OR {podcast_credit_text_match_sql("p.id")}
-                )
-              AND {filter_sql}
-              AND {library_scope_sql}
+            SELECT *
+            FROM ordered_subscriptions
+            WHERE ({keyset_sql})
             ORDER BY {order_by_sql}
-            LIMIT :limit
-            OFFSET :offset
+            LIMIT :page_limit
             """
-        ),
-        query_params,
-    ).fetchall()
-    page_podcast_ids = [row[12] for row in rows]
-    contributors_by_podcast_id = load_contributor_credits_for_podcasts(db, page_podcast_ids)
-    visible_libraries_by_podcast_id = library_entries.visible_non_default_libraries_for_viewer(
-        db,
-        viewer_id=viewer_id,
-        podcast_ids=page_podcast_ids,
-    )
-    out: list[PodcastSubscriptionListItemOut] = []
-    for row in rows:
-        podcast = _podcast_list_item_from_row(
-            row[12:22],
-            contributors_by_podcast_id.get(row[12], []),
+            ),
+            query_params,
         )
+        .mappings()
+        .all()
+    )
+    has_next = len(rows) > limit
+    page_rows = rows[:limit]
+    page_podcast_ids = [UUID(str(row["podcast_id"])) for row in page_rows]
+    contributors_by_podcast_id = load_contributor_credits_for_podcasts(db, page_podcast_ids)
+    out: list[PodcastSubscriptionListItemOut] = []
+    for row in page_rows:
+        podcast_id = UUID(str(row["podcast_id"]))
         out.append(
             PodcastSubscriptionListItemOut(
-                podcast_id=row[0],
-                status=row[1],
-                default_playback_speed=float(row[2]) if row[2] is not None else None,
-                auto_queue=bool(row[3]),
-                sync_status=row[4],
-                sync_error_code=row[5],
-                sync_error_message=row[6],
-                sync_attempts=row[7],
-                sync_started_at=row[8],
-                sync_completed_at=row[9],
-                last_synced_at=row[10],
-                updated_at=row[11],
-                unplayed_count=int(row[22] or 0),
-                latest_episode_published_at=row[23],
-                visible_libraries=visible_libraries_by_podcast_id.get(row[12], []),
-                podcast=podcast,
+                podcast_id=podcast_id,
+                title=str(row["title"]),
+                contributors=contributors_by_podcast_id.get(podcast_id, []),
+                unplayed_count=int(row["unplayed_count"]),
+                latest_episode_published_at=presence_from_nullable(row["latest_published_at"]),
+                default_playback_speed=presence_from_nullable(
+                    float(row["default_playback_speed"])
+                    if row["default_playback_speed"] is not None
+                    else None
+                ),
+                auto_queue=bool(row["auto_queue"]),
+                sync_status=row["sync_status"],
             )
         )
-    return out
+    next_cursor = (
+        present(
+            encode_signed_keyset_cursor(
+                family=CollectionFamily.PodcastSubscriptions.value,
+                query=query_identity,
+                after=_subscription_after_values(sort, page_rows[-1]),
+            )
+        )
+        if has_next and page_rows
+        else absent()
+    )
+    return CollectionPage(
+        items=out,
+        collection_revision=revision,
+        next_cursor=next_cursor,
+    )
 
 
 def get_podcast_detail_for_viewer(

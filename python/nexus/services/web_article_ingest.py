@@ -13,6 +13,10 @@ from sqlalchemy.orm import Session, sessionmaker
 from nexus.db.models import Fragment, Media, MediaKind, ProcessingStatus
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
+from nexus.services.collection_revisions import (
+    CollectionFamily,
+    bump_all_collection_families,
+)
 from nexus.services.contributor_taxonomy import (
     NOT_OBSERVED,
     ContributorObservationBatch,
@@ -239,7 +243,7 @@ def materialize_web_article_source(
                     )
             if ingest_result.title:
                 media.title = ingest_result.title[:255]
-            _persist_web_metadata(media, ingest_result)
+            _persist_web_metadata(db, media, ingest_result)
             replace_media_apparatus(
                 db,
                 media_id=media_id,
@@ -295,15 +299,29 @@ def materialize_web_article_source(
     return result
 
 
-def _persist_web_metadata(media: Media, ingest_result: IngestResult) -> None:
+def _persist_web_metadata(db: Session, media: Media, ingest_result: IngestResult) -> None:
+    changed = False
     if ingest_result.excerpt and not media.description:
         media.description = ingest_result.excerpt[:2000]
+        changed = True
 
     if ingest_result.site_name and not media.publisher:
         media.publisher = ingest_result.site_name[:255]
+        changed = True
 
     if ingest_result.published_time and not media.published_date:
         media.published_date = ingest_result.published_time[:64]
+        changed = True
+    if ingest_result.title:
+        changed = True
+    if changed:
+        bump_all_collection_families(
+            db,
+            families=(
+                CollectionFamily.AuthorWorks,
+                CollectionFamily.LibraryEntries,
+            ),
+        )
 
 
 def _split_byline_names(byline_raw: str | None) -> list[str]:

@@ -1,4 +1,8 @@
 import { apiFetch } from "@/lib/api/client";
+import {
+  decodeCollectionRevision,
+  type CollectionRevision,
+} from "@/lib/api/collectionPage";
 import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
 import { isRecord } from "@/lib/validation";
 
@@ -16,11 +20,13 @@ export type MediaDeleteResult =
       kind: "Removed";
       removedFromLibraryIds: string[];
       remainingReferenceCount: number;
+      libraryEntriesCollectionRevision: CollectionRevision;
     }
   | {
       kind: "Hidden";
       removedFromLibraryIds: string[];
       remainingReferenceCount: number;
+      libraryEntriesCollectionRevision: CollectionRevision;
     }
   | { kind: "Deleting" };
 
@@ -61,7 +67,12 @@ function decodeMediaDeleteResult(raw: unknown): MediaDeleteResult {
   if (data.kind === "Removed" || data.kind === "Hidden") {
     requireExactKeys(
       data,
-      ["kind", "removedFromLibraryIds", "remainingReferenceCount"],
+      [
+        "kind",
+        "removedFromLibraryIds",
+        "remainingReferenceCount",
+        "libraryEntriesCollectionRevision",
+      ],
       `MediaDeleteResult.${data.kind}`,
     );
     const ids = data.removedFromLibraryIds;
@@ -81,6 +92,9 @@ function decodeMediaDeleteResult(raw: unknown): MediaDeleteResult {
       kind: data.kind,
       removedFromLibraryIds: ids,
       remainingReferenceCount: count,
+      libraryEntriesCollectionRevision: decodeCollectionRevision(
+        data.libraryEntriesCollectionRevision,
+      ),
     };
   }
   throw new MediaLibraryContractDefect(

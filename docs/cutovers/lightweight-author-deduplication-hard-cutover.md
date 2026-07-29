@@ -1,5 +1,10 @@
 # Lightweight Author Deduplication Hard Cutover
 
+> **Finite-list update (2026-07-29):**
+> [`complete-collection-lists-hard-cutover.md`](complete-collection-lists-hard-cutover.md)
+> replaces Author-work `Load more`, append-focus repair, and the old work
+> cursor envelope. Author identity and work ordering remain owned here.
+>
 **Status:** Implemented — merged and deployed (migration 0179) · 2026-07-16
 **Posture:** Irreversible coordinated cutover. No dual reads, dual writes,
 fallbacks, compatibility DTOs, legacy routes, or mixed-version deployment.

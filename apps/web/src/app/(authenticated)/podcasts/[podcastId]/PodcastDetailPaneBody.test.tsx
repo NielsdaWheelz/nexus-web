@@ -251,77 +251,67 @@ function episodeMedia({
     is_completed: boolean;
   } | null;
 } = {}) {
-  const footerAudio = {
-    kind: "FooterAudio" as const,
-    streamUrl: "https://cdn.example.test/episode.mp3",
-    sourceUrl: "https://example.test/episode",
-    positionMs: 0,
-    writeRevision: 0,
-    resetEpoch: 0,
-    playbackSpeed: 1,
-    durationMs: { kind: "Present" as const, value: 60_000 },
-    artworkUrl: { kind: "Absent" as const },
-    chapters: [],
-  };
   return {
     id,
     kind: "podcast_episode",
     title,
-    canonical_source_url: "https://feeds.example.com/systems.xml",
+    canonical_source_url: {
+      kind: "Present",
+      value: "https://feeds.example.com/systems.xml",
+    },
     processing_status: "ready_for_reading",
     transcript_state: transcriptState,
     transcript_coverage: transcriptCoverage,
-    listening_state: listeningState,
-    subscription_default_playback_speed: null,
-    episode_state: episodeState,
+    listening_state:
+      listeningState === null
+        ? { kind: "Absent" }
+        : {
+            kind: "Present",
+            value: {
+              position_ms: listeningState.position_ms,
+              duration_ms:
+                listeningState.duration_ms === null
+                  ? { kind: "Absent" }
+                  : {
+                      kind: "Present",
+                      value: listeningState.duration_ms,
+                    },
+              playback_speed: listeningState.playback_speed,
+            },
+          },
+    episode_state: episodeState ?? "unplayed",
     progress_resettable: progressResettable,
-    failure_stage: null,
-    last_error_code: null,
-    playback_source: null,
     playerDescriptor: audioPlayable
       ? {
           kind: "Present",
           value: {
+            kind: "FooterAudio",
             mediaId: id,
-            title,
-            subtitle: { kind: "Absent" },
-            activation: footerAudio,
           },
         }
       : { kind: "Absent" },
     capabilities: {
-      can_read: true,
-      can_highlight: true,
-      can_quote: true,
-      can_search: true,
-      can_play: true,
-      can_download_file: false,
+      can_retry: false,
+      can_refresh_source: false,
       can_retry_metadata: canRetryMetadata,
       can_edit_authors: canEditAuthors,
+      can_delete: false,
     },
     contributors: [],
     author_mode: "automatic",
-    published_date: null,
-    publisher: null,
-    language: null,
-    description: descriptionText,
-    description_html: null,
-    description_text: descriptionText,
-    created_at: "2026-03-06T00:00:00Z",
-    updated_at: "2026-03-06T00:00:00Z",
+    published_date: { kind: "Absent" },
+    duration_seconds: { kind: "Present", value: 60 },
+    has_show_notes: descriptionText !== null,
   };
 }
 
-function transcriptForecast(mediaId = "00000000-0000-4000-8000-000000000111") {
+function episodePage(items: unknown[], nextCursor: unknown = { kind: "Absent" }) {
   return {
-    media_id: mediaId,
-    processing_status: "ready_for_reading",
-    transcript_state: "not_requested",
-    transcript_coverage: "none",
-    required_minutes: 1,
-    remaining_minutes: 100,
-    fits_budget: true,
-    request_enqueued: false,
+    data: {
+      items,
+      collectionRevision: 1,
+      nextCursor,
+    },
   };
 }
 
@@ -363,7 +353,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
         url.pathname ===
         "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
       ) {
-        return jsonResponse({ data: [] });
+        return jsonResponse(episodePage([]));
       }
       if (url.pathname === "/api/libraries/writable-destinations") {
         return jsonResponse({
@@ -466,16 +456,16 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
       ) {
         episodeCalls += 1;
         if (episodeCalls === 2) return pendingEpisodes.promise;
-        return jsonResponse({
-          data: [
+        return jsonResponse(
+          episodePage([
             episodeMedia({
               title:
                 episodeCalls === 1
                   ? "Before refresh episode"
                   : "After refresh episode",
             }),
-          ],
-        });
+          ]),
+        );
       }
       if (
         url.pathname ===
@@ -490,11 +480,21 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
             sync_error_message: null,
             sync_attempts: 2,
             sync_enqueued: true,
+            collectionRevision: 4,
+            libraryEntriesCollectionRevision: 6,
           },
         });
       }
       if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
         return jsonResponse({ data: [] });
+      }
+      if (
+        url.pathname ===
+        "/api/media/00000000-0000-4000-8000-000000000111"
+      ) {
+        return jsonResponse({
+          data: { description_text: "Detailed show notes" },
+        });
       }
       if (url.pathname === "/api/lectern") {
         return jsonResponse({ data: { items: [] } });
@@ -567,7 +567,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
         url.pathname ===
         "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
       ) {
-        return jsonResponse({ data: [episodeMedia()] });
+        return jsonResponse(episodePage([episodeMedia()]));
       }
       if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
         return jsonResponse({ data: [] });
@@ -634,7 +634,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
         url.pathname ===
         "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
       ) {
-        return jsonResponse({ data: [] });
+        return jsonResponse(episodePage([]));
       }
       if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
         return jsonResponse({ data: [] });
@@ -677,12 +677,20 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
         url.pathname ===
         "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
       ) {
-        return jsonResponse({
-          data: [
+        return jsonResponse(
+          episodePage([
             episodeMedia({
               descriptionText: "Detailed show notes",
             }),
-          ],
+          ]),
+        );
+      }
+      if (
+        url.pathname ===
+        "/api/media/00000000-0000-4000-8000-000000000111"
+      ) {
+        return jsonResponse({
+          data: { description_text: "Detailed show notes" },
         });
       }
       if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
@@ -744,7 +752,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
         url.pathname ===
         "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
       ) {
-        return jsonResponse({ data: [episodeMedia()] });
+        return jsonResponse(episodePage([episodeMedia()]));
       }
       if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
         return jsonResponse({ data: [] });
@@ -771,6 +779,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
               command.kind === "EnsureMediaFinished"
                 ? { kind: "Present", value: completionHandle }
                 : { kind: "Absent" },
+            libraryEntriesCollectionRevision: 7,
           },
         });
       }
@@ -837,8 +846,8 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
         "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
       ) {
         episodeRequests += 1;
-        return jsonResponse({
-          data: [
+        return jsonResponse(
+          episodePage([
             episodeMedia({
               progressResettable: !resetCommitted,
               episodeState: resetCommitted ? "unplayed" : "in_progress",
@@ -849,8 +858,8 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
                 is_completed: false,
               },
             }),
-          ],
-        });
+          ]),
+        );
       }
       if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
         return jsonResponse({ data: [] });
@@ -888,6 +897,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
               },
             },
             completionHandle: { kind: "Absent" },
+            libraryEntriesCollectionRevision: 8,
           },
         });
       }
@@ -942,9 +952,9 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
         url.pathname ===
         "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
       ) {
-        return jsonResponse({
-          data: [episodeMedia({ canRetryMetadata: true })],
-        });
+        return jsonResponse(
+          episodePage([episodeMedia({ canRetryMetadata: true })]),
+        );
       }
       if (
         url.pathname === "/api/media/00000000-0000-4000-8000-000000000111/retry"
@@ -1006,9 +1016,9 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
         url.pathname ===
         "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
       ) {
-        return jsonResponse({
-          data: [episodeMedia({ canRetryMetadata: true })],
-        });
+        return jsonResponse(
+          episodePage([episodeMedia({ canRetryMetadata: true })]),
+        );
       }
       if (
         url.pathname === "/api/media/00000000-0000-4000-8000-000000000111/retry"
@@ -1071,9 +1081,9 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
         url.pathname ===
         "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
       ) {
-        return jsonResponse({
-          data: [episodeMedia({ canEditAuthors: true })],
-        });
+        return jsonResponse(
+          episodePage([episodeMedia({ canEditAuthors: true })]),
+        );
       }
       if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
         return jsonResponse({ data: [] });
@@ -1115,9 +1125,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
         url.pathname ===
         "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
       ) {
-        return jsonResponse({
-          data: [episodeMedia()],
-        });
+        return jsonResponse(episodePage([episodeMedia()]));
       }
       if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
         return jsonResponse({ data: [] });
@@ -1209,7 +1217,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
 
   it("restores the captured episode controller without initial load overwriting it", async () => {
     const episodeRequests: Array<{
-      offset: string;
+      cursor: string | null;
       sort: string | null;
     }> = [];
     let detailCalls = 0;
@@ -1225,15 +1233,19 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
         url.pathname ===
         "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
       ) {
-        const offset = url.searchParams.get("offset") ?? "0";
+        const cursor = url.searchParams.get("cursor");
         episodeRequests.push({
-          offset,
+          cursor,
           sort: url.searchParams.get("sort"),
         });
-        return jsonResponse({
-          data:
-            offset === "100"
+        return jsonResponse(
+          episodePage(
+            cursor === "page-2"
               ? [
+                  episodeMedia({
+                    id: "00000000-0000-4000-8000-000000000113",
+                    title: "Restored Episode Second Page",
+                  }),
                   episodeMedia({
                     id: "00000000-0000-4000-8000-000000000113",
                     title: "Restored Episode Second Page",
@@ -1248,7 +1260,11 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
                         : `Episode ${index + 1}`,
                   }),
                 ),
-        });
+            cursor === "page-2"
+              ? { kind: "Absent" }
+              : { kind: "Present", value: "page-2" },
+          ),
+        );
       }
       if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
         return jsonResponse({ data: [] });
@@ -1263,6 +1279,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
       commands = next;
     };
     let resourceGeneration = 0;
+    let bodyGeneration = 0;
     let href = "/podcasts/00000000-0000-4000-8000-000000000011";
     const journey = () => (
       <PaneReturnJourneyHarness
@@ -1275,7 +1292,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
         <LecternProvider>
           <GlobalPlayerProvider>
             <PodcastDetailPaneBody
-              key={resolvePaneRouteIdentity(href).routeKey}
+              key={`${resolvePaneRouteIdentity(href).routeKey}:${bodyGeneration}`}
             />
           </GlobalPlayerProvider>
         </LecternProvider>
@@ -1285,7 +1302,6 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     expect(
       await screen.findByRole("link", { name: "Restored Episode First" }),
     ).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Load more episodes" }));
     expect(
       await screen.findByRole("link", {
         name: "Restored Episode Second Page",
@@ -1301,6 +1317,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     });
 
     resourceGeneration += 1;
+    bodyGeneration += 1;
     view.rerender(journey());
 
     expect(
@@ -1311,8 +1328,8 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     ).toHaveLength(1);
     await waitFor(() => {
       expect(episodeRequests).toEqual([
-        { offset: "0", sort: "newest" },
-        { offset: "100", sort: "newest" },
+        { cursor: null, sort: "newest" },
+        { cursor: "page-2", sort: "newest" },
       ]);
       expect(detailCalls).toBe(1);
     });
@@ -1323,12 +1340,83 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
 
     await waitFor(() => {
       expect(episodeRequests).toEqual([
-        { offset: "0", sort: "newest" },
-        { offset: "100", sort: "newest" },
-        { offset: "0", sort: "oldest" },
+        { cursor: null, sort: "newest" },
+        { cursor: "page-2", sort: "newest" },
+        { cursor: null, sort: "oldest" },
+        { cursor: "page-2", sort: "oldest" },
       ]);
       expect(detailCalls).toBe(2);
     });
+  });
+
+  it("commits the new query before continuing a partial episode chain", async () => {
+    const oldContinuation = deferredResponse();
+    const newFirstPage = deferredResponse();
+    const requests: Array<{ cursor: string | null; sort: string | null }> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input), "http://localhost");
+      if (
+        url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011"
+      ) {
+        return jsonResponse(podcastDetailResponse());
+      }
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
+      ) {
+        const request = {
+          cursor: url.searchParams.get("cursor"),
+          sort: url.searchParams.get("sort"),
+        };
+        requests.push(request);
+        if (request.sort === "oldest") {
+          return newFirstPage.promise;
+        }
+        if (request.cursor === "page-2") {
+          return oldContinuation.promise;
+        }
+        return jsonResponse(
+          episodePage(
+            [episodeMedia()],
+            { kind: "Present", value: "page-2" },
+          ),
+        );
+      }
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries"
+      ) {
+        return jsonResponse({ data: [] });
+      }
+      if (url.pathname === "/api/lectern") {
+        return jsonResponse({ data: { items: [] } });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(<Wrapped />);
+    expect(
+      await screen.findByRole("link", { name: "Episode 1" }),
+    ).toBeVisible();
+    await waitFor(() =>
+      expect(requests).toContainEqual({
+        cursor: "page-2",
+        sort: "newest",
+      }),
+    );
+
+    fireEvent.change(screen.getByLabelText("Episode sort"), {
+      target: { value: "oldest" },
+    });
+    await waitFor(() =>
+      expect(requests).toContainEqual({ cursor: null, sort: "oldest" }),
+    );
+    expect(requests).not.toContainEqual({
+      cursor: "page-2",
+      sort: "oldest",
+    });
+
+    newFirstPage.resolve(jsonResponse(episodePage([])));
   });
 
   it("ignores older podcast loads that resolve after a newer route load", async () => {
@@ -1367,14 +1455,14 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
         url.pathname ===
         "/api/podcasts/00000000-0000-4000-8000-000000000022/episodes"
       ) {
-        return jsonResponse({
-          data: [
+        return jsonResponse(
+          episodePage([
             episodeMedia({
               id: "00000000-0000-4000-8000-000000000112",
               title: "Current Episode",
             }),
-          ],
-        });
+          ]),
+        );
       }
       if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
         return jsonResponse({ data: [] });
@@ -1402,14 +1490,14 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     await act(async () => {
       oldDetail.resolve(jsonResponse(podcastDetailResponse()));
       oldEpisodes.resolve(
-        jsonResponse({
-          data: [
+        jsonResponse(
+          episodePage([
             episodeMedia({
               id: "00000000-0000-4000-8000-000000000099",
               title: "Old Episode",
             }),
-          ],
-        }),
+          ]),
+        ),
       );
     });
 
@@ -1423,8 +1511,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     ).toBeInTheDocument();
   });
 
-  it("keeps transcript forecast reservations until the POST settles", async () => {
-    const firstForecast = deferredResponse();
+  it("does not forecast transcripts eagerly while the episode query changes", async () => {
     let forecastCalls = 0;
     const calls: string[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -1439,24 +1526,29 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
         url.pathname ===
         "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
       ) {
-        return jsonResponse({
-          data: [
+        return jsonResponse(
+          episodePage([
             episodeMedia({
               transcriptState: "not_requested",
               transcriptCoverage: "none",
             }),
-          ],
-        });
+          ]),
+        );
       }
       if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
         return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/media/transcript/forecasts") {
         forecastCalls += 1;
-        if (forecastCalls === 1) {
-          return firstForecast.promise;
-        }
-        return jsonResponse({ data: [transcriptForecast()] });
+        return jsonResponse({
+          data: {
+            eligibleCount: 1,
+            requiredMinutes: 1,
+            remainingMinutes: { kind: "Present", value: 100 },
+            fitsBudget: true,
+            selectionFingerprint: "a".repeat(64),
+          },
+        });
       }
       if (url.pathname === "/api/lectern") {
         return jsonResponse({ data: { items: [] } });
@@ -1466,9 +1558,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
 
     render(<Wrapped />);
 
-    await waitFor(() => {
-      expect(forecastCalls).toBe(1);
-    });
+    expect(forecastCalls).toBe(0);
     fireEvent.change(screen.getByLabelText("Episode sort"), {
       target: { value: "oldest" },
     });
@@ -1482,13 +1572,77 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
         ),
       ).toBe(true);
     });
-    expect(forecastCalls).toBe(1);
+    expect(forecastCalls).toBe(0);
+  });
+
+  it("does not derive the query-wide transcript command from rendered rows", async () => {
+    const continuation = deferredResponse();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input), "http://localhost");
+      if (
+        url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011"
+      ) {
+        return jsonResponse(podcastDetailResponse());
+      }
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
+      ) {
+        if (url.searchParams.has("cursor")) {
+          return continuation.promise.then((response) => response.clone());
+        }
+        return jsonResponse(
+          episodePage(
+            [episodeMedia({ transcriptState: "ready" })],
+            { kind: "Present", value: "next-episodes" },
+          ),
+        );
+      }
+      if (url.pathname === "/api/lectern") {
+        return jsonResponse({ data: { items: [] } });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(<Wrapped />);
+    expect(
+      await screen.findByRole("link", { name: "Episode 1" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Episode actions" }));
+    expect(
+      screen.getByRole("menuitem", { name: "Transcribe all episodes" }),
+    ).not.toBeDisabled();
+    expect(
+      screen.getByRole("menuitem", {
+        name: "Mark all episodes as played",
+      }),
+    ).not.toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Unplayed" }));
+    expect(
+      screen.getByRole("menuitem", {
+        name: "Transcribe matching episodes",
+      }),
+    ).not.toBeDisabled();
+    expect(
+      screen.getByRole("menuitem", {
+        name: "Mark matching episodes as played",
+      }),
+    ).not.toBeDisabled();
 
     await act(async () => {
-      firstForecast.resolve(jsonResponse({ data: [transcriptForecast()] }));
-    });
-    await waitFor(() => {
-      expect(forecastCalls).toBe(2);
+      continuation.resolve(
+        jsonResponse(
+          episodePage([
+            episodeMedia({
+              id: "00000000-0000-4000-8000-000000000112",
+              title: "Needs transcript",
+              transcriptState: "not_requested",
+              transcriptCoverage: "none",
+            }),
+          ]),
+        ),
+      );
+      await continuation.promise;
     });
   });
 });
