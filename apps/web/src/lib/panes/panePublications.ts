@@ -16,13 +16,20 @@ import type {
 } from "@/lib/panes/paneHeaderModel";
 import {
   secondarySurfaceBelongsToGroup,
+  transientSecondarySurfaceBelongsToGroup,
+  type PaneTransientSecondarySurfaceId,
   type WorkspaceSecondaryGroupId,
   type WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
+import {
+  arePaneSearchPublicationsEqual,
+  type PaneSearchPublication,
+} from "@/lib/panes/paneSearch";
 
 export interface PanePrimaryChromePublication {
   readonly header?: PaneHeaderPublication;
   readonly toolbar?: ReactNode;
+  readonly search?: PaneSearchPublication;
   readonly actions?: readonly PaneHeaderAction[];
   readonly menu?: ActionPublication;
 }
@@ -244,6 +251,7 @@ export function arePanePrimaryChromePublicationsEqual(
   return (
     arePaneHeaderPublicationsEqual(left.header, right.header) &&
     left.toolbar === right.toolbar &&
+    arePaneSearchPublicationsEqual(left.search, right.search) &&
     areActionDescriptorListsEqual(left.actions, right.actions) &&
     areActionPublicationsEqual(left.menu, right.menu)
   );
@@ -254,10 +262,20 @@ export interface PaneSecondarySurfacePublication {
   readonly body: ReactNode;
 }
 
+export interface PaneTransientSecondarySurfacePublication {
+  readonly id: PaneTransientSecondarySurfaceId;
+  readonly body: ReactNode;
+}
+
+export type PaneSecondaryPresentationSurfacePublication =
+  | PaneSecondarySurfacePublication
+  | PaneTransientSecondarySurfacePublication;
+
 export interface PaneSecondaryPublication {
   readonly groupId: WorkspaceSecondaryGroupId;
   readonly surfaces: readonly PaneSecondarySurfacePublication[];
-  readonly defaultSurfaceId: WorkspaceSecondarySurfaceId;
+  readonly defaultSurfaceId: WorkspaceSecondarySurfaceId | null;
+  readonly transientSurfaces?: readonly PaneTransientSecondarySurfacePublication[];
 }
 
 export type PaneFixedChromePublicationId = "reader-document-map-overview-rail";
@@ -271,8 +289,19 @@ export interface PaneFixedChromePublication {
 export function normalizePaneSecondaryPublication(
   publication: PaneSecondaryPublication,
 ): PaneSecondaryPublication {
-  if (publication.surfaces.length === 0) {
-    throw new Error("Pane secondary publication requires at least one surface.");
+  const transientSurfaces = publication.transientSurfaces ?? [];
+  if (
+    (publication.surfaces.length === 0) !==
+    (publication.defaultSurfaceId === null)
+  ) {
+    throw new Error(
+      "Pane secondary durable surfaces and default surface must be published together.",
+    );
+  }
+  if (publication.surfaces.length === 0 && transientSurfaces.length === 0) {
+    throw new Error(
+      "Pane secondary publication requires a durable or transient surface.",
+    );
   }
   const surfaceIds = new Set<WorkspaceSecondarySurfaceId>();
   for (const surface of publication.surfaces) {
@@ -286,14 +315,43 @@ export function normalizePaneSecondaryPublication(
     }
     surfaceIds.add(surface.id);
   }
-  if (!surfaceIds.has(publication.defaultSurfaceId)) {
+  if (
+    publication.defaultSurfaceId !== null &&
+    !surfaceIds.has(publication.defaultSurfaceId)
+  ) {
     throw new Error(
       `Default secondary surface ${publication.defaultSurfaceId} is not published.`,
     );
   }
+  const transientSurfaceIds = new Set<PaneTransientSecondarySurfaceId>();
+  for (const surface of transientSurfaces) {
+    if (
+      !transientSecondarySurfaceBelongsToGroup(
+        surface.id,
+        publication.groupId,
+      )
+    ) {
+      throw new Error(
+        `Transient secondary surface ${surface.id} does not belong to group ${publication.groupId}.`,
+      );
+    }
+    if (transientSurfaceIds.has(surface.id)) {
+      throw new Error(
+        `Duplicate transient secondary surface publication: ${surface.id}.`,
+      );
+    }
+    transientSurfaceIds.add(surface.id);
+  }
   return {
     ...publication,
     surfaces: publication.surfaces.map((surface) => ({ ...surface })),
+    ...(publication.transientSurfaces
+      ? {
+          transientSurfaces: publication.transientSurfaces.map((surface) => ({
+            ...surface,
+          })),
+        }
+      : {}),
   };
 }
 
@@ -306,14 +364,23 @@ export function arePaneSecondaryPublicationsEqual(
   if (
     left.groupId !== right.groupId ||
     left.defaultSurfaceId !== right.defaultSurfaceId ||
-    left.surfaces.length !== right.surfaces.length
+    left.surfaces.length !== right.surfaces.length ||
+    (left.transientSurfaces?.length ?? 0) !==
+      (right.transientSurfaces?.length ?? 0)
   ) {
     return false;
   }
-  return left.surfaces.every((surface, index) => {
+  const durableEqual = left.surfaces.every((surface, index) => {
     const other = right.surfaces[index];
     return other?.id === surface.id && other.body === surface.body;
   });
+  return (
+    durableEqual &&
+    (left.transientSurfaces ?? []).every((surface, index) => {
+      const other = right.transientSurfaces?.[index];
+      return other?.id === surface.id && other.body === surface.body;
+    })
+  );
 }
 
 export function getPublishedSecondarySurface(
@@ -328,6 +395,24 @@ export function secondaryPublicationIncludesSurface(
   surfaceId: WorkspaceSecondarySurfaceId,
 ): boolean {
   return getPublishedSecondarySurface(publication, surfaceId) !== null;
+}
+
+export function getPublishedTransientSecondarySurface(
+  publication: PaneSecondaryPublication | null,
+  surfaceId: PaneTransientSecondarySurfaceId | null | undefined,
+): PaneTransientSecondarySurfacePublication | null {
+  return (
+    publication?.transientSurfaces?.find(
+      (surface) => surface.id === surfaceId,
+    ) ?? null
+  );
+}
+
+export function secondaryPublicationIncludesTransientSurface(
+  publication: PaneSecondaryPublication | null,
+  surfaceId: PaneTransientSecondarySurfaceId,
+): boolean {
+  return getPublishedTransientSecondarySurface(publication, surfaceId) !== null;
 }
 
 function normalizeFixedChromeWidthPx(widthPx: number): number {

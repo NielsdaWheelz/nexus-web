@@ -45,5 +45,28 @@ describe("planInspectorSurfaces required capability bodies", () => {
       "resource-dossier",
     ]);
     expect(plan.defaultSurfaceId).toBe("resource-dossier");
+    expect(plan.transientSurfaces).toEqual([]);
+  });
+
+  it("composes Search results separately from durable Inspector tabs", () => {
+    const plan = planInspectorSurfaces({
+      policy: {
+        linkedItems: "ResourceConnections",
+        forks: null,
+        defaultSurfaceOrder: ["Dossier"],
+      },
+      bodies: { linkedItems: "Connections" },
+      dossierBody: "Dossier",
+      searchResultsBody: "Matches",
+    });
+
+    expect(plan.surfaces.map((surface) => surface.id)).toEqual([
+      "resource-connections",
+      "resource-dossier",
+    ]);
+    expect(plan.transientSurfaces).toEqual([
+      { id: "resource-search", body: "Matches" },
+    ]);
+    expect(plan.defaultSurfaceId).toBe("resource-dossier");
   });
 });

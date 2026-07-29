@@ -26,6 +26,7 @@ import ForkStrip from "./ForkStrip";
 import StreamingGutterCue from "./StreamingGutterCue";
 import { useAssistantSelectionBranch } from "./useAssistantSelectionBranch";
 import styles from "./MessageRow.module.css";
+import type { ChatFindOccurrencePosition } from "./useChatScroll";
 
 export default function AssistantMessage({
   message,
@@ -40,6 +41,7 @@ export default function AssistantMessage({
   onReconnectAssistant,
   onStartWalk,
   timestampLabel,
+  findOccurrence = null,
 }: {
   message: ConversationMessage;
   forkOptions: ForkOption[];
@@ -57,6 +59,7 @@ export default function AssistantMessage({
   onReconnectAssistant?: (assistantMessageId: string) => void;
   onStartWalk?: (citations: CitationOut[], text: string) => void;
   timestampLabel: string;
+  findOccurrence?: ChatFindOccurrencePosition | null;
 }) {
   const assistantText = conversationMessageText(message);
   const toolCalls = message.trust_trail?.tool_calls ?? [];
@@ -139,6 +142,7 @@ export default function AssistantMessage({
           citations={citations}
           answerRef={answerRef}
           onCitationActivate={onCitationActivate}
+          findOccurrence={findOccurrence}
         />
       ) : null}
       {trustRun?.publication_warning.kind === "Present" ? (

@@ -173,6 +173,33 @@ function quickActionEntry(
   };
 }
 
+function paneSearchEntry(
+  query: string,
+  shortcutHint: string | undefined,
+): NexusEntry | null {
+  const label = "Search this pane";
+  const tier = nexusTextRankTier({
+    query,
+    label,
+    aliases: ["find in this pane", "filter this pane"],
+    fallback: "Metadata",
+  });
+  if (tier === null) return null;
+  return {
+    key: { kind: "PaneSearch" },
+    historySource: "Static",
+    label,
+    shortcutHint,
+    typeLabel: "Command",
+    icon: Search,
+    primaryAction: action("pane-search", label, Search, {
+      kind: "PaneSearch",
+    }),
+    secondaryActions: [],
+    rank: { tier, score: 0, frecency: 0 },
+  };
+}
+
 export function buildNexusZeroState(input: {
   readonly panes: readonly NexusPane[];
   readonly recent: readonly NexusRecentTarget[];
@@ -228,6 +255,7 @@ export function projectNexusLocalEntries(input: {
   readonly destinations: readonly Destination[];
   readonly quickActions: readonly NexusQuickAction[];
   readonly frecencyByHref: Readonly<Record<string, number>>;
+  readonly paneSearchKeybindingHint?: string;
 }): NexusEntry[] {
   const query = input.query.trim();
   if (!query) return [];
@@ -278,6 +306,10 @@ export function projectNexusLocalEntries(input: {
     const entry = quickActionEntry(quickAction, query);
     return entry ? [entry] : [];
   });
+  const paneSearch = paneSearchEntry(
+    query,
+    input.paneSearchKeybindingHint,
+  );
   const importUrl = normalizedUrl(query);
   const importEntry: NexusEntry[] = importUrl
     ? [
@@ -302,7 +334,13 @@ export function projectNexusLocalEntries(input: {
         },
       ]
     : [];
-  return [...importEntry, ...panes, ...destinations, ...quick];
+  return [
+    ...importEntry,
+    ...panes,
+    ...(paneSearch ? [paneSearch] : []),
+    ...destinations,
+    ...quick,
+  ];
 }
 
 function resourceEntry(input: {

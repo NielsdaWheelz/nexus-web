@@ -64,11 +64,19 @@ Every supported route declares one `PaneRouteHeaderContract`:
 - `section` resolves the destination-owned standing head and an optional folio
 - `resource` resolves a title plus structured credit groups
 
-Pane bodies publish the orthogonal `{ header, toolbar, actions, menu }`
+Pane bodies publish the orthogonal `{ header, toolbar, search, actions, menu }`
 capabilities through `usePanePrimaryChrome`. Each update carries the current
 `routeKey`; `PaneShell` rejects stale updates before validating the header kind.
 There is no route-level chrome descriptor, body-mode inference, or ambient title
 override.
+
+`search` is one closed pane-local capability: `FilterRows` derives local primary
+rows, while `FindOccurrences` delegates document matching and exact preview to
+the format owner. `PaneShell` alone owns the shared Filter/Find header action,
+expanded row, focus, and active-pane request consumption. `WorkspaceHost`
+arbitrates bindable `Pane.Search` before the editable-target guard, so
+Cmd/Ctrl+F reaches Page and Note editors; it prevents native Find only when the
+active pane consumes the request. Cmd/Ctrl+K remains Nexus retrieval.
 
 `menu` is an `ActionPublication`. Resource panes publish an explicit canonical
 target and the four semantic groups `core | operations | relationships | view`;
@@ -141,6 +149,17 @@ and mobile, but the chrome owner differs:
 
 - desktop: `SecondaryPaneShell`
 - mobile: `MobileSecondaryPaneHost`
+
+Pane Find results use the separately typed, route-keyed transient
+`resource-search` surface in the existing `resource-inspector` group.
+`WorkspaceHost` owns that activation outside `WorkspaceSecondaryState`: it
+never enters workspace persistence, never changes the underlying durable
+visibility or active tab, and is pruned on route replacement. Desktop keeps it
+open while results preview; mobile hides the sheet after a successful exact
+preview. Ending Find restores the prior durable presentation exactly. Selecting
+a durable tab explicitly ends the transient presentation and selects that tab.
+Transient-only publication is valid while active and renders without a durable
+tab strip.
 
 An expanded secondary region uses
 `paneSecondaryRegionId(primaryPaneId, groupId)`. Disclosure actions expose that

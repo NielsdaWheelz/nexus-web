@@ -75,6 +75,8 @@ const hostMocks = vi.hoisted(() => ({
     returnFocusTo?: () => HTMLElement | null;
   }[],
   useActualPaneShell: false,
+  matchesKeyEvent: vi.fn(),
+  keybindings: { "Pane.Search": "Meta+f" } as Record<string, string>,
   primaryChromePublicationByPaneId: new Map<
     string,
     PanePrimaryChromePublication
@@ -368,6 +370,12 @@ function TestPaneBody() {
           ? paneRuntime.secondaryActivation.revisionRef
           : "none"
       }
+      data-runtime-transient-surface={
+        paneRuntime?.transientSecondarySurface?.id ?? "none"
+      }
+      data-runtime-transient-expanded={
+        paneRuntime?.transientSecondarySurface?.expanded ? "true" : "false"
+      }
       style={hostMocks.useActualPaneShell ? { minHeight: 1200 } : undefined}
     >
       {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- justify-eslint-override: test fixture uses a plain anchor so WorkspaceHost link interception is the behavior under test */}
@@ -391,6 +399,28 @@ function TestPaneBody() {
         }
       >
         Open Companion
+      </button>
+      <button
+        type="button"
+        onClick={(event) =>
+          paneRuntime?.requestTransientSecondarySurface("resource-search", {
+            returnFocusTo: event.currentTarget,
+          })
+        }
+      >
+        Show search results
+      </button>
+      <button
+        type="button"
+        onClick={() => paneRuntime?.previewTransientSecondaryResult()}
+      >
+        Preview search result
+      </button>
+      <button
+        type="button"
+        onClick={() => paneRuntime?.closeTransientSecondarySurface()}
+      >
+        End search results
       </button>
       <button
         type="button"
@@ -521,6 +551,8 @@ vi.mock("@/components/workspace/MobileSecondaryPaneHost", async () => {
       primaryPaneId,
       secondary,
       publication,
+      transientSurface,
+      transientExpanded,
       returnFocusTo,
     }: {
       primaryPaneId: string;
@@ -530,9 +562,18 @@ vi.mock("@/components/workspace/MobileSecondaryPaneHost", async () => {
         visibility: "visible" | "collapsed";
       } | null;
       publication: PaneSecondaryPublication | null;
+      transientSurface?: { id: "resource-search" } | null;
+      transientExpanded?: boolean;
       returnFocusTo?: () => HTMLElement | null;
     }) => {
       hostMocks.mobileSecondaryInputs.push({ primaryPaneId, returnFocusTo });
+      if (transientSurface) {
+        return transientExpanded ? (
+          <div data-testid="mobile-secondary-host">
+            {transientSurface.id}
+          </div>
+        ) : null;
+      }
       if (
         secondary?.visibility !== "visible" ||
         !publication ||
@@ -568,11 +609,12 @@ vi.mock("@/lib/ui/useIsMobileViewport", () => ({
 }));
 
 vi.mock("@/lib/keybindings", () => ({
-  matchesKeyEvent: () => false,
+  matchesKeyEvent: (combo: string, event: KeyboardEvent) =>
+    hostMocks.matchesKeyEvent(combo, event),
 }));
 
 vi.mock("@/lib/keybindingsProvider", () => ({
-  useKeybindings: () => ({}),
+  useKeybindings: () => hostMocks.keybindings,
 }));
 
 vi.mock("@/lib/renderEnvironment/provider", () => ({
@@ -697,6 +739,14 @@ describe("WorkspaceHost pane route lifecycle", () => {
     hostMocks.paneShellSnapshots = [];
     hostMocks.mobileSecondaryInputs = [];
     hostMocks.useActualPaneShell = false;
+    hostMocks.keybindings = { "Pane.Search": "Meta+f" };
+    hostMocks.matchesKeyEvent.mockReset();
+    hostMocks.matchesKeyEvent.mockImplementation(
+      (combo: string, event: KeyboardEvent) =>
+        combo === "Meta+f" &&
+        (event.metaKey || event.ctrlKey) &&
+        event.key.toLowerCase() === "f",
+    );
     hostMocks.primaryChromePublicationByPaneId = new Map();
     hostMocks.isMobile = false;
     hostMocks.canvasEdges = { atStart: false, atEnd: false };
@@ -731,6 +781,45 @@ describe("WorkspaceHost pane route lifecycle", () => {
     hostMocks.store.resizeSecondaryPane.mockReset();
     hostMocks.store.runtimeLabelByPaneId = new Map();
     setPaneHref(MEDIA_HREF_1);
+  });
+
+  it("routes Cmd/Ctrl+F from an editor to the active capable pane", async () => {
+    hostMocks.useActualPaneShell = true;
+    hostMocks.primaryChromePublicationByPaneId.set("pane-1", {
+      search: {
+        kind: "FilterRows",
+        query: "",
+        inputLabel: "Filter pane items",
+        placeholder: "Filter",
+        onQueryChange: vi.fn(),
+        onDismiss: vi.fn(),
+      },
+    });
+    render(
+      <MobileChromeProvider>
+        <WorkspaceHost />
+      </MobileChromeProvider>,
+    );
+    const editor = screen.getByRole("textbox", { name: "Pane body control" });
+    editor.focus();
+
+    expect(
+      fireEvent.keyDown(editor, { key: "f", metaKey: true }),
+    ).toBe(false);
+    const search = await screen.findByRole("searchbox", {
+      name: "Filter pane items",
+    });
+    await waitFor(() => expect(search).toHaveFocus());
+  });
+
+  it("leaves native Find unprevented when the active pane is incapable", () => {
+    render(<WorkspaceHost />);
+    const editor = screen.getByRole("textbox", { name: "Pane body control" });
+
+    expect(
+      fireEvent.keyDown(editor, { key: "f", ctrlKey: true }),
+    ).toBe(true);
+    expect(screen.queryByTestId("pane-search-toolbar")).toBeNull();
   });
 
   it("preserves the route body for same-resource location changes", () => {
@@ -1461,6 +1550,22 @@ const RESOURCE_INSPECTOR_WITH_CONTENTS: PaneSecondaryPublication = {
   ],
 };
 
+const RESOURCE_INSPECTOR_WITH_SEARCH: PaneSecondaryPublication = {
+  ...RESOURCE_INSPECTOR_WITH_CONTENTS,
+  transientSurfaces: [
+    { id: "resource-search", body: <div>Search matches</div> },
+  ],
+};
+
+const RESOURCE_SEARCH_ONLY: PaneSecondaryPublication = {
+  groupId: "resource-inspector",
+  surfaces: [],
+  defaultSurfaceId: null,
+  transientSurfaces: [
+    { id: "resource-search", body: <div>Search matches</div> },
+  ],
+};
+
 const RESOURCE_DOSSIER_PUBLICATION: PaneSecondaryPublication = {
   groupId: "resource-inspector",
   defaultSurfaceId: "resource-dossier",
@@ -1551,8 +1656,10 @@ describe("WorkspaceHost secondary publication validation", () => {
       },
     );
     hostMocks.store.requestSecondarySurface.mockReset();
+    hostMocks.store.closeSecondaryPane.mockReset();
     hostMocks.store.dropSecondaryPane.mockReset();
     hostMocks.store.setSecondarySurface.mockReset();
+    hostMocks.store.resizeSecondaryPane.mockReset();
     hostMocks.store.runtimeLabelByPaneId = new Map();
     setPaneHref(MEDIA_HREF_1);
   });
@@ -2016,5 +2123,177 @@ describe("WorkspaceHost secondary publication validation", () => {
     const mobileInput = hostMocks.mobileSecondaryInputs.at(-1);
     expect(mobileInput?.primaryPaneId).toBe("pane-1");
     expect(mobileInput?.returnFocusTo?.()).toBe(trigger);
+  });
+
+  it("restores the exact durable Companion tab and visibility after closing transient results", async () => {
+    hostMocks.useActualPaneShell = true;
+    setPaneWithSecondary({
+      groupId: "resource-inspector",
+      activeSurfaceId: "resource-contents",
+      visibility: "visible",
+    });
+    hostMocks.secondaryPublication = RESOURCE_INSPECTOR_WITH_SEARCH;
+
+    render(
+      <MobileChromeProvider>
+        <WorkspaceHost />
+      </MobileChromeProvider>,
+    );
+
+    await screen.findByRole("tab", { name: "Contents" });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Show search results" }),
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("tab", { name: "Search results" }),
+      ).toHaveAttribute("aria-selected", "true"),
+    );
+    expect(screen.getByText("Search matches")).toBeInTheDocument();
+    expect(hostMocks.store.requestSecondarySurface).not.toHaveBeenCalled();
+    expect(hostMocks.store.setSecondarySurface).not.toHaveBeenCalled();
+    expect(hostMocks.store.closeSecondaryPane).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Close Search results" }),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: "Contents" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      ),
+    );
+    expect(
+      hostMocks.store.state.secondaryPanesById["secondary-1"],
+    ).toMatchObject({
+      activeSurfaceId: "resource-contents",
+      visibility: "visible",
+    });
+  });
+
+  it("ends transient results when a durable tab is selected and keeps that explicit choice", async () => {
+    setPaneWithSecondary({
+      groupId: "resource-inspector",
+      activeSurfaceId: "resource-contents",
+      visibility: "collapsed",
+    });
+    hostMocks.secondaryPublication = RESOURCE_INSPECTOR_WITH_SEARCH;
+
+    render(<WorkspaceHost />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Show search results" }),
+    );
+    await screen.findByRole("tab", { name: "Search results" });
+
+    fireEvent.click(screen.getByRole("tab", { name: "Evidence" }));
+
+    expect(hostMocks.store.requestSecondarySurface).toHaveBeenCalledWith(
+      "pane-1",
+      "resource-evidence",
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("tab", { name: "Search results" })).toBeNull(),
+    );
+    expect(screen.getByTestId("route-body")).toHaveAttribute(
+      "data-runtime-transient-surface",
+      "none",
+    );
+  });
+
+  it("hides the mobile sheet for result preview, reopens it, and ends back at a collapsed origin", async () => {
+    hostMocks.isMobile = true;
+    setPaneWithSecondary({
+      groupId: "resource-inspector",
+      activeSurfaceId: "resource-contents",
+      visibility: "collapsed",
+    });
+    hostMocks.secondaryPublication = RESOURCE_INSPECTOR_WITH_SEARCH;
+
+    render(<WorkspaceHost />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Show search results" }),
+    );
+    await screen.findByTestId("mobile-secondary-host");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Preview search result" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByTestId("mobile-secondary-host")).toBeNull(),
+    );
+    expect(screen.getByTestId("route-body")).toHaveAttribute(
+      "data-runtime-transient-surface",
+      "resource-search",
+    );
+    expect(screen.getByTestId("route-body")).toHaveAttribute(
+      "data-runtime-transient-expanded",
+      "false",
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Show search results" }),
+    );
+    await screen.findByTestId("mobile-secondary-host");
+    fireEvent.click(
+      screen.getByRole("button", { name: "End search results" }),
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("mobile-secondary-host")).toBeNull(),
+    );
+    expect(screen.getByTestId("route-body")).toHaveAttribute(
+      "data-runtime-transient-surface",
+      "none",
+    );
+    expect(
+      hostMocks.store.state.secondaryPanesById["secondary-1"],
+    ).toMatchObject({
+      activeSurfaceId: "resource-contents",
+      visibility: "collapsed",
+    });
+  });
+
+  it("prunes transient activation when the pane route key changes", async () => {
+    hostMocks.secondaryPublication = RESOURCE_INSPECTOR_WITH_SEARCH;
+    const { rerender } = render(<WorkspaceHost />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Show search results" }),
+    );
+    await screen.findByRole("tab", { name: "Search results" });
+
+    setSecondaryPaneHref(`${MEDIA_HREF_1}?loc=chapter-2`);
+    rerender(<WorkspaceHost />);
+
+    await waitFor(() =>
+      expect(screen.queryByRole("tab", { name: "Search results" })).toBeNull(),
+    );
+    expect(screen.getByTestId("route-body")).toHaveAttribute(
+      "data-runtime-transient-surface",
+      "none",
+    );
+  });
+
+  it("hosts transient-only results without creating durable Companion state", async () => {
+    hostMocks.secondaryPublication = RESOURCE_SEARCH_ONLY;
+
+    render(<WorkspaceHost />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Show search results" }),
+    );
+
+    await screen.findByText("Search matches");
+    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(hostMocks.store.requestSecondarySurface).not.toHaveBeenCalled();
+    expect(Object.keys(hostMocks.store.state.secondaryPanesById)).toEqual([]);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Close Search results" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByText("Search matches")).toBeNull(),
+    );
+    expect(Object.keys(hostMocks.store.state.secondaryPanesById)).toEqual([]);
   });
 });

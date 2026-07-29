@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { createRef } from "react";
+import { createRef, useRef } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import ChatSurface from "@/components/chat/ChatSurface";
 import type { ChatScrollHandle } from "@/components/chat/useChatScroll";
+import { useConversationPaneFind } from "@/components/chat/useConversationPaneFind";
 import type { ConversationMessage, ForkOption } from "@/lib/conversations/types";
 
 const baseMessage = {
@@ -72,6 +73,34 @@ function assistantMessage(
 }
 
 const FIXED_HEIGHT = { display: "flex", height: "240px" } as const;
+
+function ConversationFindHarness({
+  messages,
+  query = "needle",
+}: {
+  readonly messages: ConversationMessage[];
+  readonly query?: string;
+}) {
+  const scrollRef = useRef<ChatScrollHandle | null>(null);
+  const find = useConversationPaneFind({
+    conversationId: "conversation-1",
+    activeLeafMessageId: messages.at(-1)?.id ?? null,
+    messages,
+    scrollRef,
+  });
+  return (
+    <div style={FIXED_HEIGHT}>
+      <ChatSurface ref={scrollRef} messages={messages} composer={null} />
+      <button type="button" onClick={() => find.onQueryChange(query)}>
+        Start Find
+      </button>
+      <button type="button" onClick={() => find.onStep("Next")}>
+        Next match
+      </button>
+      <output aria-label="Find status">{find.result.kind}</output>
+    </div>
+  );
+}
 
 // Distance, in viewport space, from the scrollport's top edge to an element's
 // top edge. Measuring with getBoundingClientRect keeps the result independent of
@@ -814,5 +843,76 @@ describe("ChatSurface", () => {
       const bottom = scrollport.scrollHeight - scrollport.clientHeight;
       expect(scrollport.scrollTop).toBeGreaterThanOrEqual(bottom - 4);
     });
+  });
+
+  it("marks distinct exact occurrences when stepping within one message", async () => {
+    render(
+      <ConversationFindHarness
+        messages={[
+          assistantMessage(
+            "assistant-1",
+            1,
+            `needle ${"middle ".repeat(150)}needle`,
+          ),
+        ]}
+      />,
+    );
+
+    const scrollport = screen.getByRole("region", {
+      name: "Chat conversation",
+    });
+    await waitFor(() => expect(scrollport.scrollTop).toBeGreaterThan(0));
+    const initialScrollTop = scrollport.scrollTop;
+    fireEvent.click(screen.getByRole("button", { name: "Start Find" }));
+    const first = await screen.findByLabelText("Current match");
+    expect(first).toHaveTextContent("needle");
+    const firstStart = Number(first.getAttribute("data-find-start"));
+    await waitFor(() =>
+      expect(scrollport.scrollTop).toBeLessThan(initialScrollTop),
+    );
+    const firstScrollTop = scrollport.scrollTop;
+
+    fireEvent.click(screen.getByRole("button", { name: "Next match" }));
+    await waitFor(() => {
+      expect(
+        Number(
+          screen
+            .getByLabelText("Current match")
+            .getAttribute("data-find-start"),
+        ),
+      ).toBeGreaterThan(firstStart);
+    });
+    expect(screen.getAllByLabelText("Current match")).toHaveLength(1);
+    await waitFor(() =>
+      expect(scrollport.scrollTop).toBeGreaterThan(firstScrollTop),
+    );
+  });
+
+  it("rejects an invisible Markdown-syntax match without moving the transcript", async () => {
+    render(
+      <ConversationFindHarness
+        query="hidden.example"
+        messages={[
+          assistantMessage(
+            "assistant-1",
+            1,
+            `${"body ".repeat(100)}[Visible](https://hidden.example/path)`,
+          ),
+        ]}
+      />,
+    );
+    const scrollport = screen.getByRole("region", {
+      name: "Chat conversation",
+    });
+    await waitFor(() => expect(scrollport.scrollTop).toBeGreaterThan(0));
+    const initialScrollTop = scrollport.scrollTop;
+
+    fireEvent.click(screen.getByRole("button", { name: "Start Find" }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Find status")).toHaveTextContent("Failed"),
+    );
+
+    expect(screen.queryByLabelText("Current match")).toBeNull();
+    expect(scrollport.scrollTop).toBe(initialScrollTop);
   });
 });

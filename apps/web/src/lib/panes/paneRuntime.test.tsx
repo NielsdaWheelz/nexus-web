@@ -108,6 +108,22 @@ function SecondaryCommandsOnMount() {
   return <button ref={triggerRef}>Options</button>;
 }
 
+function TransientSecondaryCommandsOnMount() {
+  const runtime = usePaneRuntime();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!runtime) {
+      throw new Error("Pane runtime missing");
+    }
+    runtime.requestTransientSecondarySurface("resource-search", {
+      returnFocusTo: triggerRef.current,
+    });
+    runtime.previewTransientSecondaryResult();
+    runtime.closeTransientSecondarySurface();
+  }, [runtime]);
+  return <button ref={triggerRef}>Show results</button>;
+}
+
 function RuntimeShapeProbe({ onValue }: { onValue: (value: unknown) => void }) {
   const runtime = usePaneRuntime();
   useEffect(() => {
@@ -598,6 +614,67 @@ describe("PaneRuntimeProvider", () => {
     });
   });
 
+  it("passes route-keyed transient secondary commands and projects expansion", async () => {
+    const onRequestTransientSecondarySurface = vi.fn();
+    const onPreviewTransientSecondaryResult = vi.fn();
+    const onCloseTransientSecondarySurface = vi.fn();
+    const onValue = vi.fn();
+    const identity = resolvePaneRouteIdentity(MEDIA_HREF_1);
+
+    render(
+      <TestPaneRuntimeProvider
+        paneId="pane-1"
+        visitId={TEST_VISIT_ID}
+        isActive
+        href={MEDIA_HREF_1}
+        routeId={identity.routeId}
+        routeKey={identity.routeKey}
+        {...defaultNavigationProps}
+        onNavigatePane={vi.fn()}
+        onReplacePane={vi.fn()}
+        transientSecondarySurface={{
+          id: "resource-search",
+          expanded: true,
+        }}
+        onRequestTransientSecondarySurface={
+          onRequestTransientSecondarySurface
+        }
+        onPreviewTransientSecondaryResult={
+          onPreviewTransientSecondaryResult
+        }
+        onCloseTransientSecondarySurface={onCloseTransientSecondarySurface}
+      >
+        <RuntimeShapeProbe onValue={onValue} />
+        <TransientSecondaryCommandsOnMount />
+      </TestPaneRuntimeProvider>,
+    );
+
+    await waitFor(() => {
+      expect(onRequestTransientSecondarySurface).toHaveBeenCalledWith(
+        "pane-1",
+        identity.routeKey,
+        "resource-search",
+        screen.getByRole("button", { name: "Show results" }),
+      );
+      expect(onPreviewTransientSecondaryResult).toHaveBeenCalledWith(
+        "pane-1",
+        identity.routeKey,
+      );
+      expect(onCloseTransientSecondarySurface).toHaveBeenCalledWith(
+        "pane-1",
+        identity.routeKey,
+      );
+    });
+    const runtimeValue = onValue.mock.calls.at(-1)?.[0] as Record<
+      string,
+      unknown
+    >;
+    expect(runtimeValue.transientSecondarySurface).toEqual({
+      id: "resource-search",
+      expanded: true,
+    });
+  });
+
   it("does not expose removed pane width setters", async () => {
     const onValue = vi.fn();
     const identity = resolvePaneRouteIdentity(LIBRARY_HREF);
@@ -630,6 +707,15 @@ describe("PaneRuntimeProvider", () => {
     expect(runtimeValue.requestSecondarySurface).toEqual(expect.any(Function));
     expect(runtimeValue.closeSecondaryPane).toEqual(expect.any(Function));
     expect(runtimeValue.setSecondarySurface).toEqual(expect.any(Function));
+    expect(runtimeValue.requestTransientSecondarySurface).toEqual(
+      expect.any(Function),
+    );
+    expect(runtimeValue.closeTransientSecondarySurface).toEqual(
+      expect.any(Function),
+    );
+    expect(runtimeValue.previewTransientSecondaryResult).toEqual(
+      expect.any(Function),
+    );
     expect(runtimeValue[`setPane${"Min"}Width`]).toBeUndefined();
     expect(runtimeValue[`setPane${"Extra"}Width`]).toBeUndefined();
   });

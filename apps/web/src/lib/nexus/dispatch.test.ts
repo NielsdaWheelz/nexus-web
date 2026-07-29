@@ -38,6 +38,7 @@ function context(input?: {
     activatePane: vi.fn(),
     restorePane: vi.fn(),
     closePane: vi.fn(),
+    requestPaneSearch: vi.fn(() => false),
     openShare: vi.fn(),
     shareOptions: () => ({
       returnFocusTo: () => null,
@@ -185,6 +186,28 @@ describe("Nexus dispatch", () => {
       });
     }
     expect(ctx.activateWorkspaceTarget).not.toHaveBeenCalled();
+  });
+
+  it("accepts pane Search only when the active pane consumes the request", async () => {
+    const ctx = context();
+    vi.mocked(ctx.requestPaneSearch)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
+
+    await expect(
+      dispatchNexusTarget(
+        { kind: "PaneSearch" },
+        ctx,
+        PROGRAMMATIC_NEXUS_TARGET_ACTIVATION,
+      ),
+    ).resolves.toEqual({ kind: "Stayed" });
+    await expect(
+      dispatchNexusTarget(
+        { kind: "PaneSearch" },
+        ctx,
+        PROGRAMMATIC_NEXUS_TARGET_ACTIVATION,
+      ),
+    ).resolves.toEqual({ kind: "NavigationAccepted" });
   });
 
   it("keeps conversation, queue, share, and pane mutations in the dispatch owner", async () => {

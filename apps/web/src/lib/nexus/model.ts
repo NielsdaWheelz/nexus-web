@@ -1,4 +1,5 @@
 import type { ComponentType } from "react";
+import type { EmphasisSegment } from "@/lib/ui/emphasis";
 import type { Presence } from "@/lib/api/presence";
 import type { LibraryDestinationSelection } from "@/lib/libraries/client";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
@@ -16,6 +17,7 @@ export type NexusIcon = ComponentType<{
 
 export type NexusEntryKey =
   | { kind: "Pane"; paneId: string }
+  | { kind: "PaneSearch" }
   | { kind: "Destination"; destinationId: string }
   | { kind: "Resource"; occurrenceRef: string }
   | { kind: "QuickAction"; actionId: NexusQuickActionId }
@@ -42,11 +44,6 @@ export type NexusHistorySource =
   | "Oracle"
   | "Search"
   | "Ai";
-
-export type NexusSnippetSegment = {
-  readonly text: string;
-  readonly emphasized: boolean;
-};
 
 export type AddSeed =
   | {
@@ -85,6 +82,7 @@ export type NexusTarget =
   | { kind: "CopyExternalLink"; href: string }
   | { kind: "PaneOpen"; paneId: string }
   | { kind: "PaneClose"; paneId: string }
+  | { kind: "PaneSearch" }
   | { kind: "OpenToday" }
   | { kind: "OpenAdd"; seed: AddSeed }
   | { kind: "OpenTodayCapture" }
@@ -105,9 +103,10 @@ export interface NexusEntry {
   /** Typed observability provenance. Never infer this from display copy. */
   readonly historySource: NexusHistorySource;
   readonly label: string;
+  readonly shortcutHint?: string;
   readonly typeLabel?: string;
   readonly metadata?: string;
-  readonly snippetSegments?: readonly NexusSnippetSegment[];
+  readonly snippetSegments?: readonly EmphasisSegment[];
   readonly icon: NexusIcon;
   readonly openState?: "Active" | "Open" | "Minimized";
   /**

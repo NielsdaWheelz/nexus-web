@@ -1,9 +1,5 @@
 import type { ReactNode } from "react";
-
-export interface DesktopNexusSnippetSegment {
-  readonly text: string;
-  readonly emphasized: boolean;
-}
+import type { EmphasisSegment } from "@/lib/ui/emphasis";
 
 export type DesktopNexusModality = "Keyboard" | "Pointer";
 
@@ -15,6 +11,8 @@ export type DesktopNexusModality = "Keyboard" | "Pointer";
 export interface DesktopNexusEntry {
   readonly key: string;
   readonly label: string;
+  /** Current formatted keybinding for static teaching entries. */
+  readonly shortcutHint?: string;
   /** A factual type label, such as `Page` or `Highlight`; absent means omit. */
   readonly typeLabel?: string;
   /** Existing owner or source fact; absent means omit. */
@@ -22,7 +20,7 @@ export interface DesktopNexusEntry {
   /** Existing matched excerpt; no generated summaries belong here. */
   readonly excerpt?: string;
   /** Existing matched excerpt segments; rendering stays text-only. */
-  readonly excerptSegments?: readonly DesktopNexusSnippetSegment[];
+  readonly excerptSegments?: readonly EmphasisSegment[];
   /** Only emitted when the entry is already an open workspace pane. */
   readonly open?: boolean;
   /** Serialized canonical-owner/open-pane identity, never this entry's key. */

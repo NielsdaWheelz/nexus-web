@@ -12,15 +12,24 @@
 
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import DocentOverlay from "@/components/chat/DocentOverlay";
 import { useDocentWalk } from "@/lib/conversations/useDocentWalk";
 import Button from "@/components/ui/Button";
 import ChatComposer from "@/components/chat/ChatComposer";
 import ChatSurface from "@/components/chat/ChatSurface";
+import PaneSearchResults from "@/components/resource-inspector/PaneSearchResults";
 import ConversationForksPanel from "@/components/chat/ConversationForksPanel";
 import ConversationContextRefsSurface from "@/components/chat/ConversationContextRefsSurface";
 import { useConversation } from "@/components/chat/useConversation";
+import { useConversationPaneFind } from "@/components/chat/useConversationPaneFind";
 import { useConversationContextRefs } from "@/lib/conversations/useConversationContextRefs";
 import {
   readerTargetFromReaderSelection,
@@ -78,7 +87,11 @@ import {
 } from "@/lib/panes/paneRuntime";
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
-import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
+import {
+  useResourceInspector,
+  type ResourceInspectorComposition,
+} from "@/lib/dossiers/useResourceInspector";
+import type { PaneFindOccurrencesPublication } from "@/lib/panes/paneSearch";
 import styles from "@/app/(authenticated)/conversations/page.module.css";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 
@@ -452,6 +465,12 @@ export default function Conversation() {
   upsertContextRefRef.current = upsertContextRef;
 
   const branch = convo.branch;
+  const paneFind = useConversationPaneFind({
+    conversationId: convo.conversationId,
+    activeLeafMessageId: branch?.activeLeafMessageId ?? null,
+    messages: convo.messages,
+    scrollRef: convo.scrollRef,
+  });
 
   useSetPaneLabel(convo.conversationId ? `Chat: ${convo.title}` : "New chat");
 
@@ -693,14 +712,101 @@ export default function Conversation() {
     ),
     [branch, convo.conversationId, handleSelectFork],
   );
-  const { companionAction } = useResourceInspector({
+  const searchCommandsRef = useRef<
+    Pick<
+      ResourceInspectorComposition,
+      | "openSearchResults"
+      | "closeSearchResults"
+      | "previewSearchResult"
+    >
+  >(null);
+  const dismissPaneFind = paneFind.onDismiss;
+  const activatePaneFind = paneFind.onActivate;
+  const dismissFind = useCallback(() => {
+    dismissPaneFind();
+    searchCommandsRef.current?.closeSearchResults();
+  }, [dismissPaneFind]);
+  const showFindResults = useCallback((trigger: HTMLButtonElement | null) => {
+    searchCommandsRef.current?.openSearchResults(trigger);
+  }, []);
+  const activateFindResult = useCallback(
+    (key: Parameters<PaneFindOccurrencesPublication["onActivate"]>[0]) => {
+      void activatePaneFind(key).then((previewed) => {
+        if (previewed) searchCommandsRef.current?.previewSearchResult();
+      });
+    },
+    [activatePaneFind],
+  );
+  const findPublicationBase = useMemo(
+    () => ({
+      kind: "FindOccurrences" as const,
+      query: paneFind.query,
+      inputLabel: "Find in conversation",
+      placeholder: "Find in conversation",
+      onQueryChange: paneFind.onQueryChange,
+      onDismiss: dismissFind,
+      result: paneFind.result,
+      scope: paneFind.scope,
+      matchCase: paneFind.matchCase,
+      wholeWord: paneFind.wholeWord,
+      onMatchCaseChange: paneFind.onMatchCaseChange,
+      onWholeWordChange: paneFind.onWholeWordChange,
+      onStep: paneFind.onStep,
+      onActivate: activateFindResult,
+      onShowResults: showFindResults,
+      returnToReadingPosition: paneFind.returnToReadingPosition,
+    }),
+    [
+      activateFindResult,
+      dismissFind,
+      paneFind.matchCase,
+      paneFind.onMatchCaseChange,
+      paneFind.onQueryChange,
+      paneFind.onStep,
+      paneFind.query,
+      paneFind.result,
+      paneFind.returnToReadingPosition,
+      paneFind.scope,
+      paneFind.wholeWord,
+      paneFind.onWholeWordChange,
+      showFindResults,
+    ],
+  );
+  const searchResultsBody = useMemo(
+    () => (
+      <PaneSearchResults
+        publication={{ ...findPublicationBase, resultsExpanded: true }}
+      />
+    ),
+    [findPublicationBase],
+  );
+  const inspector = useResourceInspector({
     scheme: "conversation",
     handle: convo.conversationId,
     bodies: { linkedItems: contextBody, forks: forksBody },
+    searchResults: searchResultsBody,
     onCitationActivate: handleReaderSourceActivate,
   });
+  searchCommandsRef.current = inspector;
+  const previousFindSourceRef = useRef(paneFind.sourceKey);
+  useLayoutEffect(() => {
+    if (previousFindSourceRef.current === paneFind.sourceKey) return;
+    previousFindSourceRef.current = paneFind.sourceKey;
+    inspector.closeSearchResults();
+  }, [inspector, paneFind.sourceKey]);
+  const findPublication = useMemo<PaneFindOccurrencesPublication>(
+    () => ({
+      ...findPublicationBase,
+      resultsExpanded: inspector.searchResultsExpanded,
+    }),
+    [findPublicationBase, inspector.searchResultsExpanded],
+  );
   usePanePrimaryChrome({
-    actions: companionAction ? [companionAction] : [],
+    search:
+      convo.conversationId && !convo.loading && !convo.error
+        ? findPublication
+        : undefined,
+    actions: inspector.companionAction ? [inspector.companionAction] : [],
     menu:
       convo.conversationId &&
       paneOptions &&

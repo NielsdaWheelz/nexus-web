@@ -8,6 +8,11 @@
   background: var(--surface-2);
 }
 
+.soloTitle {
+  min-width: 0;
+  font-weight: 600;
+}
+
 .body {
   flex: 1 1 auto;
   min-width: 0;

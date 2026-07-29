@@ -19,6 +19,13 @@
     transform 150ms var(--ease-glide);
 }
 
+.emptyRow {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  min-height: 44px;
+  padding: var(--space-3);
+}
+
 .noteRow {
   min-height: 44px;
   padding-block: var(--space-2);

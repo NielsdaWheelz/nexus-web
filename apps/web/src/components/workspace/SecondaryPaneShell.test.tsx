@@ -18,6 +18,11 @@ const state = {
   visibility: "visible" as const,
 };
 
+const transientSurface = {
+  id: "resource-search" as const,
+  body: <div>Search matches</div>,
+};
+
 describe("SecondaryPaneShell", () => {
   it("links tabs to their own panel ids", () => {
     render(
@@ -100,5 +105,85 @@ describe("SecondaryPaneShell", () => {
 
     fireEvent.keyDown(resizeHandle, { key: "ArrowRight" });
     expect(onResize).toHaveBeenCalledWith("secondary-1", 376);
+  });
+
+  it("renders Search results as the temporary active tab and selects durable tabs normally", () => {
+    const onActiveSurfaceChange = vi.fn();
+    const onSelectDurableFromTransient = vi.fn();
+    const onCloseTransient = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <SecondaryPaneShell
+        primaryPaneId="pane-1"
+        secondaryPaneId="secondary-1"
+        publication={{ ...publication, transientSurfaces: [transientSurface] }}
+        state={state}
+        transientSurface={transientSurface}
+        sizing={{
+          widthPx: 360,
+          minWidthPx: 280,
+          maxWidthPx: 720,
+          storedWidthCorrectionPx: null,
+        }}
+        onActiveSurfaceChange={onActiveSurfaceChange}
+        onSelectDurableFromTransient={onSelectDurableFromTransient}
+        onClose={onClose}
+        onCloseTransient={onCloseTransient}
+        onResize={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("tab", { name: "Search results" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByText("Search matches")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Evidence" }));
+    expect(onSelectDurableFromTransient).toHaveBeenCalledWith(
+      "secondary-1",
+      "resource-evidence",
+    );
+    expect(onActiveSurfaceChange).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Search results" }), {
+      key: "Escape",
+    });
+    expect(onCloseTransient).toHaveBeenCalledOnce();
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Close Search results" }),
+    );
+    expect(onCloseTransient).toHaveBeenCalledTimes(2);
+  });
+
+  it("hosts a transient-only route without a durable tab strip", () => {
+    render(
+      <SecondaryPaneShell
+        primaryPaneId="pane-1"
+        secondaryPaneId="pane-1-transient"
+        publication={{
+          groupId: "resource-inspector",
+          surfaces: [],
+          defaultSurfaceId: null,
+          transientSurfaces: [transientSurface],
+        }}
+        state={null}
+        transientSurface={transientSurface}
+        sizing={{
+          widthPx: 360,
+          minWidthPx: 280,
+          maxWidthPx: 720,
+          storedWidthCorrectionPx: null,
+        }}
+        onActiveSurfaceChange={vi.fn()}
+        onSelectDurableFromTransient={vi.fn()}
+        onClose={vi.fn()}
+        onCloseTransient={vi.fn()}
+        onResize={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(screen.getByText("Search results")).toBeInTheDocument();
+    expect(screen.getByText("Search matches")).toBeInTheDocument();
   });
 });

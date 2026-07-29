@@ -166,6 +166,65 @@ describe("ResourceSurfaceEditor", () => {
     );
   });
 
+  it("filters an optimistic inserted note before the server echoes it without search or graph calls", async () => {
+    const filterPageRef =
+      "page:77777777-7777-4777-8777-777777777777";
+    const initialSurface = {
+      source: {
+        item: item(filterPageRef, "page", filterPageRef.slice(5)),
+        content: { kind: "page_title", title: "Today" },
+      },
+      ordered_items: [],
+    };
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === "POST") {
+          return await new Promise<Response>(() => {});
+        }
+        return response(initialSurface);
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const view = render(
+      <ResourceSurfaceEditor
+        sourceRef={filterPageRef}
+        activateTarget={vi.fn()}
+      />,
+    );
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Add a note" }),
+    );
+    const optimisticNote = await screen.findByRole("textbox", {
+      name: "Edit note 1",
+    });
+    await userEvent.type(optimisticNote, "Local comet");
+
+    view.rerender(
+      <ResourceSurfaceEditor
+        sourceRef={filterPageRef}
+        rowFilterQuery="local COMET"
+        activateTarget={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByRole("textbox", { name: "Edit note 1" }),
+    ).toHaveTextContent("Local comet");
+    const requestedPaths = fetchMock.mock.calls.map(([input]) =>
+      new URL(String(input), "http://localhost").pathname,
+    );
+    expect(requestedPaths[0]).toBe(
+      `/api/resource-items/${encodeURIComponent(filterPageRef)}/surface`,
+    );
+    expect(
+      requestedPaths.some((path) => path.endsWith("/surface/commands")),
+    ).toBe(true);
+    expect(
+      requestedPaths.every((path) => path.startsWith("/api/resource-items/")),
+    ).toBe(true);
+  });
+
   it("resolves a note object reference through the required target capability", async () => {
     const activateTarget = vi.fn();
     const pageId = "33333333-3333-4333-8333-333333333333";

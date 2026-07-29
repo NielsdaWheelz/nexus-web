@@ -17,6 +17,12 @@ vi.mock("./useChatScroll", () => ({
     beginUserScroll: vi.fn(),
     captureAnchor: vi.fn(),
     scrollToMessage: scrollMocks.scrollToMessage,
+    captureReadingPosition: vi.fn(),
+    restoreReadingPosition: vi.fn(),
+    previewFindOccurrence: vi.fn(),
+    clearFindPresentation: vi.fn(),
+    setReadingFocusTarget: vi.fn(),
+    activeFindOccurrence: null,
   }),
 }));
 

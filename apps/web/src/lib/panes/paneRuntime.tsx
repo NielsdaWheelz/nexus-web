@@ -39,6 +39,7 @@ import type {
   WorkspaceTargetDisposition,
 } from "@/lib/workspace/targetActivation";
 import type {
+  PaneTransientSecondarySurfaceId,
   WorkspaceDossierActivation,
   WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
@@ -87,6 +88,11 @@ export interface PaneSecondarySurfaceRequestOptions {
   readonly returnFocusTo?: HTMLElement | null;
 }
 
+export interface PaneRuntimeTransientSecondarySurface {
+  readonly id: PaneTransientSecondarySurfaceId;
+  readonly expanded: boolean;
+}
+
 export interface PaneRuntimeContextValue {
   paneId: string;
   visitId: PaneVisitId;
@@ -102,6 +108,7 @@ export interface PaneRuntimeContextValue {
   resourceStatus: PaneResourceStatus;
   secondaryPane?: WorkspaceAttachedSecondaryPaneState | null;
   secondaryActivation: WorkspaceDossierActivation | null;
+  transientSecondarySurface: PaneRuntimeTransientSecondarySurface | null;
   pathParams: Record<string, string>;
   searchParams: URLSearchParams;
   /** The pane-local URL hash (e.g. the reader-Highlight intent
@@ -122,6 +129,12 @@ export interface PaneRuntimeContextValue {
   ) => void;
   closeSecondaryPane: () => void;
   setSecondarySurface: (surfaceId: WorkspaceSecondarySurfaceId) => void;
+  requestTransientSecondarySurface: (
+    surfaceId: PaneTransientSecondarySurfaceId,
+    options?: PaneSecondarySurfaceRequestOptions,
+  ) => void;
+  closeTransientSecondarySurface: () => void;
+  previewTransientSecondaryResult: () => void;
   acknowledgeSecondaryActivation: () => void;
 }
 
@@ -145,6 +158,7 @@ interface PaneRuntimeProviderProps {
   resourceStatus?: PaneResourceStatus;
   secondaryPane?: WorkspaceAttachedSecondaryPaneState | null;
   secondaryActivation?: WorkspaceDossierActivation | null;
+  transientSecondarySurface?: PaneRuntimeTransientSecondarySurface | null;
   pathParams?: Record<string, string>;
   canGoBack: boolean;
   canGoForward: boolean;
@@ -178,6 +192,20 @@ interface PaneRuntimeProviderProps {
   onSetSecondarySurface?: (
     secondaryPaneId: string,
     surfaceId: WorkspaceSecondarySurfaceId,
+  ) => void;
+  onRequestTransientSecondarySurface?: (
+    paneId: string,
+    routeKey: string,
+    surfaceId: PaneTransientSecondarySurfaceId,
+    returnFocusTo?: HTMLElement | null,
+  ) => void;
+  onCloseTransientSecondarySurface?: (
+    paneId: string,
+    routeKey: string,
+  ) => void;
+  onPreviewTransientSecondaryResult?: (
+    paneId: string,
+    routeKey: string,
   ) => void;
   onAcknowledgeSecondaryActivation?: (
     paneId: string,
@@ -257,6 +285,7 @@ export function PaneRuntimeProvider({
   resourceStatus = "none",
   secondaryPane = null,
   secondaryActivation = null,
+  transientSecondarySurface = null,
   pathParams = {},
   canGoBack,
   canGoForward,
@@ -270,6 +299,9 @@ export function PaneRuntimeProvider({
   onRequestSecondarySurface,
   onCloseSecondaryPane,
   onSetSecondarySurface,
+  onRequestTransientSecondarySurface,
+  onCloseTransientSecondarySurface,
+  onPreviewTransientSecondaryResult,
   onAcknowledgeSecondaryActivation,
   children,
 }: PaneRuntimeProviderProps) {
@@ -319,6 +351,9 @@ export function PaneRuntimeProvider({
     onRequestSecondarySurface,
     onCloseSecondaryPane,
     onSetSecondarySurface,
+    onRequestTransientSecondarySurface,
+    onCloseTransientSecondarySurface,
+    onPreviewTransientSecondaryResult,
     onAcknowledgeSecondaryActivation,
     secondaryActivation,
   });
@@ -336,6 +371,9 @@ export function PaneRuntimeProvider({
     onRequestSecondarySurface,
     onCloseSecondaryPane,
     onSetSecondarySurface,
+    onRequestTransientSecondarySurface,
+    onCloseTransientSecondarySurface,
+    onPreviewTransientSecondaryResult,
     onAcknowledgeSecondaryActivation,
     secondaryActivation,
   };
@@ -454,6 +492,35 @@ export function PaneRuntimeProvider({
     },
     [],
   );
+  const requestTransientSecondarySurface = useCallback(
+    (
+      surfaceId: PaneTransientSecondarySurfaceId,
+      options?: PaneSecondarySurfaceRequestOptions,
+    ) => {
+      const current = commandsRef.current;
+      current.onRequestTransientSecondarySurface?.(
+        current.paneId,
+        current.routeKey,
+        surfaceId,
+        options?.returnFocusTo,
+      );
+    },
+    [],
+  );
+  const closeTransientSecondarySurface = useCallback(() => {
+    const current = commandsRef.current;
+    current.onCloseTransientSecondarySurface?.(
+      current.paneId,
+      current.routeKey,
+    );
+  }, []);
+  const previewTransientSecondaryResult = useCallback(() => {
+    const current = commandsRef.current;
+    current.onPreviewTransientSecondaryResult?.(
+      current.paneId,
+      current.routeKey,
+    );
+  }, []);
   const acknowledgeSecondaryActivation = useCallback(() => {
     const current = commandsRef.current;
     if (current.secondaryActivation) {
@@ -479,6 +546,7 @@ export function PaneRuntimeProvider({
       resourceStatus: effectiveResourceStatus,
       secondaryPane,
       secondaryActivation,
+      transientSecondarySurface,
       pathParams,
       searchParams: parsed.searchParams,
       hash: parsed.hash,
@@ -489,6 +557,9 @@ export function PaneRuntimeProvider({
       requestSecondarySurface,
       closeSecondaryPane,
       setSecondarySurface,
+      requestTransientSecondarySurface,
+      closeTransientSecondarySurface,
+      previewTransientSecondaryResult,
       acknowledgeSecondaryActivation,
     }),
     [
@@ -514,8 +585,12 @@ export function PaneRuntimeProvider({
       effectiveResourceStatus,
       secondaryPane,
       secondaryActivation,
+      transientSecondarySurface,
       routeKey,
       routeId,
+      requestTransientSecondarySurface,
+      closeTransientSecondarySurface,
+      previewTransientSecondaryResult,
     ],
   );
 

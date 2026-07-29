@@ -13,6 +13,10 @@ afterEach(() => {
 });
 
 describe("loadStoredKeybindings", () => {
+  it("includes pane-local Search in the canonical defaults", () => {
+    expect(DEFAULT_KEYBINDINGS["Pane.Search"]).toBe("Meta+f");
+  });
+
   it("merges valid stored string bindings over defaults", () => {
     stubStoredKeybindings(
       JSON.stringify({

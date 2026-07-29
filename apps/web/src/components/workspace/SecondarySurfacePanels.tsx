@@ -1,7 +1,7 @@
 "use client";
 
-import type { PaneSecondarySurfacePublication } from "@/lib/panes/panePublications";
-import type { WorkspaceSecondarySurfaceId } from "@/lib/panes/paneSecondaryModel";
+import type { PaneSecondaryPresentationSurfacePublication } from "@/lib/panes/panePublications";
+import type { PaneSecondaryPresentationSurfaceId } from "@/lib/panes/paneSecondaryModel";
 import {
   secondarySurfacePanelId,
   secondarySurfaceTabId,
@@ -9,8 +9,8 @@ import {
 
 interface SecondarySurfacePanelsProps {
   baseId: string;
-  surfaces: readonly PaneSecondarySurfacePublication[];
-  activeSurfaceId: WorkspaceSecondarySurfaceId;
+  surfaces: readonly PaneSecondaryPresentationSurfacePublication[];
+  activeSurfaceId: PaneSecondaryPresentationSurfaceId;
   className: string;
 }
 

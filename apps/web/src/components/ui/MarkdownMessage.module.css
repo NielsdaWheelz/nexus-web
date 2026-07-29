@@ -170,3 +170,8 @@
   background: var(--surface-2);
   color: var(--ink);
 }
+.findMark {
+  color: inherit;
+  background: var(--highlight-yellow);
+  border-radius: 0.12em;
+}

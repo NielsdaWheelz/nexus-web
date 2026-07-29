@@ -8,6 +8,7 @@ import { __resetChatProfilesCacheForTests } from "@/components/chat/useChatProfi
 import { PanePrimaryChromeProvider } from "@/components/workspace/PanePrimaryChrome";
 import PaneShell from "@/components/workspace/PaneShell";
 import type { PanePrimaryChromePublicationUpdate } from "@/lib/panes/panePublications";
+import { createPaneFindResultKey } from "@/lib/panes/paneSearch";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
@@ -497,6 +498,10 @@ function renderPane(
     onActivateWorkspaceTarget?: ComponentProps<
       typeof PaneRuntimeProvider
     >["onActivateWorkspaceTarget"];
+    onNavigatePane?: ComponentProps<typeof PaneRuntimeProvider>["onNavigatePane"];
+    onPreviewTransientSecondaryResult?: ComponentProps<
+      typeof PaneRuntimeProvider
+    >["onPreviewTransientSecondaryResult"];
   } = {},
 ) {
   const href =
@@ -522,13 +527,16 @@ function renderPane(
       pathParams={
         options.pathParams ?? { id: "00000000-0000-4000-8000-000000000101" }
       }
-      onNavigatePane={vi.fn()}
+      onNavigatePane={options.onNavigatePane ?? vi.fn()}
       onReplacePane={onReplacePane}
       onActivateWorkspaceTarget={
         options.onActivateWorkspaceTarget ??
         vi.fn(() => ({ kind: "ActivatedExisting" as const, paneId: "pane" }))
       }
       onSetPaneLabel={vi.fn()}
+      onPreviewTransientSecondaryResult={
+        options.onPreviewTransientSecondaryResult
+      }
     >
       <PanePrimaryChromeProvider publish={publishPrimaryChrome}>
         <Conversation />
@@ -1749,5 +1757,67 @@ describe("Conversation", () => {
       "resource-context",
       expect.any(HTMLButtonElement),
     );
+  });
+
+  it("keeps transient results open when exact Find activation is rejected", async () => {
+    const onPreviewTransientSecondaryResult = vi.fn();
+    const onNavigatePane = vi.fn();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = pathOf(input);
+      if (
+        path ===
+        "/api/conversations/00000000-0000-4000-8000-000000000101/tree"
+      ) {
+        return jsonResponse({ data: treeResponse() });
+      }
+      if (
+        path ===
+        "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs"
+      ) {
+        return jsonResponse({ data: [] });
+      }
+      if (path === "/api/llm-profiles") {
+        return jsonResponse({ data: LLM_PROFILES });
+      }
+      if (path === "/api/chat-runs") {
+        return jsonResponse({ data: [] });
+      }
+      throw new Error(`Unexpected fetch call: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { publishPrimaryChrome } = renderPane({
+      onNavigatePane,
+      onPreviewTransientSecondaryResult,
+    });
+    expect(await screen.findByText("Answer A")).toBeVisible();
+    await waitFor(() =>
+      expect(
+        publishPrimaryChrome.mock.calls.some(
+          ([update]) =>
+            update.publication?.search?.kind === "FindOccurrences",
+        ),
+      ).toBe(true),
+    );
+    const publication = [...publishPrimaryChrome.mock.calls]
+      .reverse()
+      .map(([update]) => update.publication?.search)
+      .find((search) => search?.kind === "FindOccurrences");
+    if (publication?.kind !== "FindOccurrences") {
+      throw new Error("Expected Conversation Find publication");
+    }
+    const baselineFetches = fetchMock.mock.calls.length;
+
+    publication.onActivate(
+      createPaneFindResultKey({
+        source: { kind: "StaleConversation" },
+        locator: { messageId: "missing", blockIndex: 0, start: 0, end: 1 },
+      }),
+    );
+    await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
+
+    expect(onPreviewTransientSecondaryResult).not.toHaveBeenCalled();
+    expect(onNavigatePane).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(baselineFetches);
   });
 });

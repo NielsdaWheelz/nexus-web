@@ -59,6 +59,7 @@ function ActionButton({ option }: { option: Extract<PaneHeaderAction, { kind: "c
       aria-pressed={control.barPressed}
       aria-expanded={control.barExpanded}
       aria-controls={control.barControls}
+      data-action-id={option.id}
       className={cx(styles.chromeAction, control.active && styles.pressed)}
       onClick={(event) => {
         event.stopPropagation();
@@ -80,6 +81,7 @@ function LinkAction({ option }: { option: Extract<PaneHeaderAction, { kind: "lin
       className={styles.chromeAction}
     >
       <a
+        data-action-id={option.id}
         href={option.disabled ? undefined : option.href}
         aria-label={option.label}
         title={option.label}

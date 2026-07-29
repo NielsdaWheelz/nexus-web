@@ -56,7 +56,7 @@
   overflow-wrap: anywhere;
 }
 
-.meta b {
+.meta mark {
   color: var(--ink);
   font-weight: var(--weight-medium);
 }

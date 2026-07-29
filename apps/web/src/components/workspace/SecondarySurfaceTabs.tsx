@@ -8,13 +8,14 @@ import {
   Link2,
   ListTree,
   Network,
+  Search,
   Users,
 } from "lucide-react";
-import type { PaneSecondarySurfacePublication } from "@/lib/panes/panePublications";
-import { getSecondarySurfaceDefinition } from "@/lib/panes/paneSecondaryModel";
+import type { PaneSecondaryPresentationSurfacePublication } from "@/lib/panes/panePublications";
+import { getPaneSecondarySurfaceDefinition } from "@/lib/panes/paneSecondaryModel";
 import type {
   PaneSecondaryIconId,
-  WorkspaceSecondarySurfaceId,
+  PaneSecondaryPresentationSurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
 import styles from "./SecondarySurfaceTabs.module.css";
 
@@ -27,28 +28,29 @@ const SECONDARY_ICONS: Record<
   "link-2": Link2,
   "list-tree": ListTree,
   network: Network,
+  search: Search,
   users: Users,
 };
 
 export function secondarySurfaceTabId(
   baseId: string,
-  surfaceId: WorkspaceSecondarySurfaceId,
+  surfaceId: PaneSecondaryPresentationSurfaceId,
 ): string {
   return `${baseId}-${surfaceId}-tab`;
 }
 
 export function secondarySurfacePanelId(
   baseId: string,
-  surfaceId: WorkspaceSecondarySurfaceId,
+  surfaceId: PaneSecondaryPresentationSurfaceId,
 ): string {
   return `${baseId}-${surfaceId}-panel`;
 }
 
 interface SecondarySurfaceTabsProps {
   baseId: string;
-  surfaces: readonly PaneSecondarySurfacePublication[];
-  activeSurfaceId: WorkspaceSecondarySurfaceId;
-  onSelect: (surfaceId: WorkspaceSecondarySurfaceId) => void;
+  surfaces: readonly PaneSecondaryPresentationSurfacePublication[];
+  activeSurfaceId: PaneSecondaryPresentationSurfaceId;
+  onSelect: (surfaceId: PaneSecondaryPresentationSurfaceId) => void;
 }
 
 /**
@@ -65,9 +67,11 @@ export default function SecondarySurfaceTabs({
   activeSurfaceId,
   onSelect,
 }: SecondarySurfaceTabsProps) {
-  const tabRefs = useRef(new Map<WorkspaceSecondarySurfaceId, HTMLButtonElement>());
+  const tabRefs = useRef(
+    new Map<PaneSecondaryPresentationSurfaceId, HTMLButtonElement>(),
+  );
 
-  const selectSurface = (surfaceId: WorkspaceSecondarySurfaceId) => {
+  const selectSurface = (surfaceId: PaneSecondaryPresentationSurfaceId) => {
     onSelect(surfaceId);
     window.requestAnimationFrame(() => tabRefs.current.get(surfaceId)?.focus());
   };
@@ -75,7 +79,7 @@ export default function SecondarySurfaceTabs({
   return (
     <div className={styles.tabs} role="tablist" aria-label="Secondary surfaces">
       {surfaces.map((surface, index) => {
-        const definition = getSecondarySurfaceDefinition(surface.id);
+        const definition = getPaneSecondarySurfaceDefinition(surface.id);
         const Icon = SECONDARY_ICONS[definition.iconId];
         const active = surface.id === activeSurfaceId;
         return (

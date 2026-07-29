@@ -25,6 +25,13 @@ Mobile pane shells do not mount desktop resize handles, fixed primary chrome, or
 desktop-attached secondary columns. Secondary content is presented by the
 workspace mobile secondary sheet.
 
+Pane-local Search is visit-local chrome, not pane history or workspace state.
+Only the active capable `PaneShell` consumes Cmd/Ctrl+F; inactive panes retain
+their mounted query/result state, while route/source replacement retires it.
+Unsupported panes leave native browser Find untouched. Page and Note currently
+publish local direct-item `FilterRows`; Conversation publishes
+`FindOccurrences` with transient Companion results.
+
 Open-pane management belongs to the Nexus Switchboard Root. It renders all
 primary panes in stable workspace order, activates or restores an exact pane,
 closes panes without dismissing, and exposes the workspace provider's bounded

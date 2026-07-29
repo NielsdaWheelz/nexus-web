@@ -28,6 +28,11 @@ const secondary = {
   visibility: "visible" as const,
 };
 
+const transientSurface = {
+  id: "resource-search" as const,
+  body: <button type="button">First match</button>,
+};
+
 const readerPublication = {
   groupId: "resource-inspector" as const,
   defaultSurfaceId: "resource-contents" as const,
@@ -210,6 +215,87 @@ describe("MobileSecondaryPaneHost", () => {
       "secondary-1",
       "resource-forks",
     );
+  });
+
+  it("hides Search results for preview without revealing the durable sheet and reopens them", async () => {
+    const props = {
+      primaryPaneId: "pane-1",
+      secondaryPaneId: "secondary-1",
+      secondary,
+      publication: {
+        ...publication,
+        transientSurfaces: [transientSurface],
+      },
+      transientSurface,
+      onClose: vi.fn(),
+      onCloseTransient: vi.fn(),
+      onActiveSurfaceChange: vi.fn(),
+      onSelectDurableFromTransient: vi.fn(),
+      returnFocusTo: () => null,
+      options: [],
+    };
+    const { rerender } = render(
+      <MobileSecondaryPaneHost {...props} transientExpanded />,
+    );
+
+    expect(
+      screen.getByRole("dialog", { name: "Search results" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Search results" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Context" }));
+    expect(props.onSelectDurableFromTransient).toHaveBeenCalledWith(
+      "secondary-1",
+      "resource-context",
+    );
+    expect(props.onActiveSurfaceChange).not.toHaveBeenCalled();
+
+    rerender(
+      <MobileSecondaryPaneHost {...props} transientExpanded={false} />,
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Search results" }),
+      ).toBeNull(),
+    );
+    expect(screen.queryByRole("dialog", { name: "Context" })).toBeNull();
+
+    rerender(<MobileSecondaryPaneHost {...props} transientExpanded />);
+    expect(
+      screen.getByRole("dialog", { name: "Search results" }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders a transient-only Search results sheet without a durable tab strip", () => {
+    render(
+      <MobileSecondaryPaneHost
+        primaryPaneId="pane-1"
+        secondaryPaneId="pane-1-transient"
+        secondary={null}
+        publication={{
+          groupId: "resource-inspector",
+          surfaces: [],
+          defaultSurfaceId: null,
+          transientSurfaces: [transientSurface],
+        }}
+        transientSurface={transientSurface}
+        transientExpanded
+        onClose={vi.fn()}
+        onCloseTransient={vi.fn()}
+        onActiveSurfaceChange={vi.fn()}
+        onSelectDurableFromTransient={vi.fn()}
+        returnFocusTo={() => null}
+        options={[]}
+      />,
+    );
+
+    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(
+      screen.getByRole("dialog", { name: "Search results" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "First match" })).toBeInTheDocument();
   });
 
   it("renders reader Contents with the mobile secondary icon map", () => {

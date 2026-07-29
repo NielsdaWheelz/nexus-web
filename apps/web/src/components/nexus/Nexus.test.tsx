@@ -18,6 +18,7 @@ import {
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
+import { PANE_SEARCH_REQUESTED_EVENT } from "@/lib/panes/paneSearchEvents";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { requestNexusOpen } from "@/lib/nexus/events";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
@@ -460,6 +461,30 @@ describe("Nexus shell contracts", () => {
     expect(
       within(dialog).getByRole("combobox", { name: "Find anything" }),
     ).toHaveValue("notes");
+  });
+
+  it("teaches the current pane Search binding and closes only after consumption", async () => {
+    renderNexus();
+    openWithKeyboard();
+    const dialog = await screen.findByRole("dialog", { name: "Nexus" });
+    const input = within(dialog).getByRole("combobox", {
+      name: "Find anything",
+    });
+    await userEvent.type(input, "search this pane");
+    const option = await within(dialog).findByRole("option", {
+      name: /^Search this pane\. Ctrl\+F\. Command$/,
+    });
+    const consume = vi.fn((event: Event) => event.preventDefault());
+    window.addEventListener(PANE_SEARCH_REQUESTED_EVENT, consume, {
+      once: true,
+    });
+
+    await userEvent.click(option);
+
+    expect(consume).toHaveBeenCalledOnce();
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Nexus" })).toBeNull(),
+    );
   });
 
   it("executes the committed key when a provider arrives and logs only the accepted target", async () => {

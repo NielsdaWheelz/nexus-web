@@ -26,6 +26,7 @@ const EMPTY_NOTE_BODY = {
 
 export default function ResourceSurfaceEditor({
   sourceRef,
+  rowFilterQuery = "",
   editable = true,
   focusMastheadSerial = 0,
   focusBodySerial = 0,
@@ -34,6 +35,7 @@ export default function ResourceSurfaceEditor({
   notePulseTarget,
 }: {
   sourceRef: string;
+  rowFilterQuery?: string;
   editable?: boolean;
   focusMastheadSerial?: number;
   focusBodySerial?: number;
@@ -75,6 +77,7 @@ export default function ResourceSurfaceEditor({
   return <LoadedResourceSurfaceEditor
     key={sourceRef}
     sourceRef={sourceRef}
+    rowFilterQuery={rowFilterQuery}
     initialSurface={loaded}
     editable={editable}
     focusMastheadSerial={focusMastheadSerial}
@@ -91,6 +94,7 @@ export default function ResourceSurfaceEditor({
 
 function LoadedResourceSurfaceEditor({
   sourceRef,
+  rowFilterQuery,
   initialSurface,
   editable,
   focusMastheadSerial,
@@ -104,6 +108,7 @@ function LoadedResourceSurfaceEditor({
   notePulseTarget,
 }: {
   sourceRef: string;
+  rowFilterQuery: string;
   initialSurface: ResourceSurface;
   editable: boolean;
   focusMastheadSerial: number;
@@ -255,6 +260,7 @@ function LoadedResourceSurfaceEditor({
       <ResourceSurfaceBodyEditor
         sourceRef={sourceRef}
         orderedItems={session.surface.orderedItems}
+        rowFilterQuery={rowFilterQuery}
         editable={editable}
         focusRequest={bodyFocus}
         onInsertNote={insertNote}

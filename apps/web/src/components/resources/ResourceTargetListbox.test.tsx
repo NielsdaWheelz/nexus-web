@@ -113,9 +113,8 @@ describe("ResourceTargetListbox", () => {
 
     expect(screen.getByText("Chapter 3")).toBeInTheDocument();
     expect(screen.getByText("Left Hand of Darkness")).toBeInTheDocument();
-    // The `<b>` match markup renders as a real bold element, never raw HTML.
-    const bold = screen.getByText("ansible");
-    expect(bold.tagName).toBe("B");
+    // The transport markup renders as a semantic match, never raw HTML.
+    expect(screen.getByText("ansible")).toHaveProperty("tagName", "MARK");
   });
 
   it("shows a non-color-only Linked state for already-linked targets", () => {

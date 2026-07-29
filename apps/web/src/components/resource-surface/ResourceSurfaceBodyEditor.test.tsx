@@ -77,6 +77,76 @@ describe("ResourceSurfaceBodyEditor", () => {
     expect(onInsertNote).toHaveBeenCalledWith({ kind: "start" });
   });
 
+  it("filters only rendered direct-item text and preserves authored order", () => {
+    const rows = [
+      noteOccurrence(
+        "occ-first",
+        "First MATCH",
+        "44444444-4444-4444-8444-444444444444",
+      ),
+      {
+        occurrenceId: "occ-second",
+        target: {
+          item: {
+            ...resourceItem(
+              "page:55555555-5555-4555-8555-555555555555",
+              "Second item",
+            ),
+            summary: "Second match summary",
+          },
+          content: {
+            kind: "page_title" as const,
+            title: "Hidden linked page title",
+          },
+        },
+      },
+      noteOccurrence(
+        "occ-third",
+        "Third match",
+        "66666666-6666-4666-8666-666666666666",
+      ),
+    ];
+    const view = renderEditor(rows, { rowFilterQuery: "match" });
+    const region = screen.getByRole("region", { name: "Ordered resources" });
+
+    const renderedText = region.textContent ?? "";
+    expect(renderedText.indexOf("First MATCH")).toBeLessThan(
+      renderedText.indexOf("Second match summary"),
+    );
+    expect(renderedText.indexOf("Second match summary")).toBeLessThan(
+      renderedText.indexOf("Third match"),
+    );
+    expect(
+      screen.getByRole("button", { name: "Open Second item" }),
+    ).toHaveTextContent("Second match summary");
+
+    view.rerender(
+      withRenderEnvironment(
+        <ResourceSurfaceBodyEditor
+          sourceRef="page:11111111-1111-4111-8111-111111111111"
+          orderedItems={rows}
+          rowFilterQuery="Hidden linked page title"
+          onInsertNote={vi.fn()}
+          onSplitNote={vi.fn()}
+          onMoveOccurrence={vi.fn()}
+          onRemoveOccurrence={vi.fn()}
+          onInsertResource={vi.fn()}
+          onBodyChange={vi.fn()}
+          onBodyBlur={vi.fn()}
+          onActivate={vi.fn()}
+          onOpenObject={vi.fn()}
+        />,
+      ),
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "No items match this filter.",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Open Second item" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("forks only a Shift pointer activation", () => {
     const onActivate = vi.fn();
     const items = [resourceOccurrence("occ-media", "Paper")];
@@ -200,12 +270,13 @@ function renderEditor(
 function noteOccurrence(
   occurrenceId: string,
   text: string,
+  noteId = "22222222-2222-4222-8222-222222222222",
 ): ResourceSurfaceOccurrence {
   return {
     occurrenceId,
     target: {
       item: resourceItem(
-        `note_block:22222222-2222-4222-8222-222222222222`,
+        `note_block:${noteId}`,
         "First note",
       ),
       content: {

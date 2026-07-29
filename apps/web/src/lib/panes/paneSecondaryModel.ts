@@ -93,6 +93,27 @@ export const PANE_SECONDARY_SURFACE_DEFINITIONS = [
 export type WorkspaceSecondarySurfaceId =
   (typeof PANE_SECONDARY_SURFACE_DEFINITIONS)[number]["id"];
 
+export const PANE_TRANSIENT_SECONDARY_SURFACE_DEFINITIONS = [
+  {
+    id: "resource-search",
+    groupId: "resource-inspector",
+    title: "Search results",
+    iconId: "search",
+  },
+] as const satisfies readonly {
+  id: string;
+  groupId: WorkspaceSecondaryGroupId;
+  title: string;
+  iconId: string;
+}[];
+
+export type PaneTransientSecondarySurfaceId =
+  (typeof PANE_TRANSIENT_SECONDARY_SURFACE_DEFINITIONS)[number]["id"];
+
+export type PaneSecondaryPresentationSurfaceId =
+  | WorkspaceSecondarySurfaceId
+  | PaneTransientSecondarySurfaceId;
+
 export type WorkspaceSecondaryActivation =
   | {
       readonly kind: "Surface";
@@ -114,7 +135,8 @@ export type WorkspaceDossierActivation = Extract<
 >;
 
 export type PaneSecondaryIconId =
-  (typeof PANE_SECONDARY_SURFACE_DEFINITIONS)[number]["iconId"];
+  | (typeof PANE_SECONDARY_SURFACE_DEFINITIONS)[number]["iconId"]
+  | (typeof PANE_TRANSIENT_SECONDARY_SURFACE_DEFINITIONS)[number]["iconId"];
 
 export interface WorkspaceSecondaryState {
   groupId: WorkspaceSecondaryGroupId;
@@ -144,6 +166,13 @@ export interface PaneSecondarySurfaceDefinition {
   iconId: PaneSecondaryIconId;
 }
 
+export interface PaneTransientSecondarySurfaceDefinition {
+  id: PaneTransientSecondarySurfaceId;
+  groupId: WorkspaceSecondaryGroupId;
+  title: string;
+  iconId: PaneSecondaryIconId;
+}
+
 function findSecondarySurfaceDefinition(
   surfaceId: WorkspaceSecondarySurfaceId,
 ): PaneSecondarySurfaceDefinition {
@@ -152,6 +181,18 @@ function findSecondarySurfaceDefinition(
   );
   if (!definition) {
     throw new Error(`Unknown secondary surface: ${surfaceId}`);
+  }
+  return definition;
+}
+
+function findTransientSecondarySurfaceDefinition(
+  surfaceId: PaneTransientSecondarySurfaceId,
+): PaneTransientSecondarySurfaceDefinition {
+  const definition = PANE_TRANSIENT_SECONDARY_SURFACE_DEFINITIONS.find(
+    (candidate) => candidate.id === surfaceId,
+  );
+  if (!definition) {
+    throw new Error(`Unknown transient secondary surface: ${surfaceId}`);
   }
   return definition;
 }
@@ -171,10 +212,37 @@ export function isWorkspaceSecondarySurfaceId(
   );
 }
 
+export function isPaneTransientSecondarySurfaceId(
+  value: unknown,
+): value is PaneTransientSecondarySurfaceId {
+  return (
+    typeof value === "string" &&
+    PANE_TRANSIENT_SECONDARY_SURFACE_DEFINITIONS.some(
+      (definition) => definition.id === value,
+    )
+  );
+}
+
 export function getSecondarySurfaceDefinition(
   surfaceId: WorkspaceSecondarySurfaceId,
 ): PaneSecondarySurfaceDefinition {
   return findSecondarySurfaceDefinition(surfaceId);
+}
+
+export function getTransientSecondarySurfaceDefinition(
+  surfaceId: PaneTransientSecondarySurfaceId,
+): PaneTransientSecondarySurfaceDefinition {
+  return findTransientSecondarySurfaceDefinition(surfaceId);
+}
+
+export function getPaneSecondarySurfaceDefinition(
+  surfaceId: PaneSecondaryPresentationSurfaceId,
+):
+  | PaneSecondarySurfaceDefinition
+  | PaneTransientSecondarySurfaceDefinition {
+  return isPaneTransientSecondarySurfaceId(surfaceId)
+    ? findTransientSecondarySurfaceDefinition(surfaceId)
+    : findSecondarySurfaceDefinition(surfaceId);
 }
 
 export function getSecondaryGroupForSurface(
@@ -214,6 +282,13 @@ export function secondarySurfaceBelongsToGroup(
   groupId: WorkspaceSecondaryGroupId,
 ): boolean {
   return getSecondaryGroupForSurface(surfaceId) === groupId;
+}
+
+export function transientSecondarySurfaceBelongsToGroup(
+  surfaceId: PaneTransientSecondarySurfaceId,
+  groupId: WorkspaceSecondaryGroupId,
+): boolean {
+  return findTransientSecondarySurfaceDefinition(surfaceId).groupId === groupId;
 }
 
 export function resolveEffectiveSecondarySizing(input: {

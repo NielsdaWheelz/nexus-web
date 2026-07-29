@@ -19,11 +19,15 @@ import {
 import { useDebouncedFetch } from "@/lib/api/useDebouncedFetch";
 import { useResource } from "@/lib/api/useResource";
 import { usePaneWarm } from "@/lib/panes/paneWarm";
+import { dispatchPaneSearchRequest } from "@/lib/panes/paneSearchEvents";
 import { resolveWorkspaceActivationRouteId } from "@/lib/panes/paneIdentity";
 import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { matchesKeyEvent } from "@/lib/keybindings";
-import { useKeybindings } from "@/lib/keybindingsProvider";
+import {
+  useKeybindingLabel,
+  useKeybindings,
+} from "@/lib/keybindingsProvider";
 import { useLectern } from "@/lib/lectern/LecternProvider";
 import { buildResourceNexusActions } from "@/lib/nexus/actions";
 import {
@@ -431,6 +435,7 @@ export function useNexusController(): NexusController {
   const { androidShell } = useRenderEnvironment();
   const viewport = useViewportState();
   const keybindings = useKeybindings();
+  const paneSearchKeybindingHint = useKeybindingLabel("Pane.Search");
   const feedback = useFeedback();
   const { openShare } = useShareController();
   const warmPane = usePaneWarm();
@@ -1009,6 +1014,7 @@ export function useNexusController(): NexusController {
             destinations: DESTINATIONS,
             quickActions,
             frecencyByHref,
+            paneSearchKeybindingHint: paneSearchKeybindingHint ?? undefined,
           })
         : buildNexusZeroState({
             panes: nexusPanes,
@@ -1021,6 +1027,7 @@ export function useNexusController(): NexusController {
       historyRows,
       nexusPanes,
       parsedQuery.text,
+      paneSearchKeybindingHint,
       quickActions,
     ],
   );
@@ -1217,6 +1224,7 @@ export function useNexusController(): NexusController {
       activatePane,
       restorePane,
       closePane,
+      requestPaneSearch: dispatchPaneSearchRequest,
       openShare,
       shareOptions: () => {
         const returnTarget =
@@ -2597,6 +2605,7 @@ export function useNexusController(): NexusController {
       desktopCommit.entries.map((entry) => ({
         key: serializeNexusEntryKey(entry.key),
         label: entry.label,
+        shortcutHint: entry.shortcutHint,
         typeLabel: entry.typeLabel,
         metadata: entry.metadata,
         excerpt: entry.snippetSegments

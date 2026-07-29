@@ -13,7 +13,10 @@ import type {
   ResourceInspectorResourcePolicy,
   ResourceInspectorSurfaceRole,
 } from "@/lib/resources/resourceCapabilities";
-import type { PaneSecondarySurfacePublication } from "@/lib/panes/panePublications";
+import type {
+  PaneSecondarySurfacePublication,
+  PaneTransientSecondarySurfacePublication,
+} from "@/lib/panes/panePublications";
 import type { WorkspaceSecondarySurfaceId } from "@/lib/panes/paneSecondaryModel";
 
 export interface InspectorDomainBodies {
@@ -29,6 +32,7 @@ export interface InspectorDomainBodies {
 
 export interface InspectorSurfacePlan {
   surfaces: PaneSecondarySurfacePublication[];
+  transientSurfaces: PaneTransientSecondarySurfacePublication[];
   defaultSurfaceId: WorkspaceSecondarySurfaceId;
 }
 
@@ -59,8 +63,9 @@ export function planInspectorSurfaces(input: {
   policy: ResourceInspectorResourcePolicy;
   bodies: InspectorDomainBodies;
   dossierBody: ReactNode;
+  searchResultsBody?: ReactNode;
 }): InspectorSurfacePlan {
-  const { policy, bodies, dossierBody } = input;
+  const { policy, bodies, dossierBody, searchResultsBody } = input;
   const surfaces: PaneSecondarySurfacePublication[] = [];
   const linkedId = linkedItemsSurfaceId(policy.linkedItems);
 
@@ -118,5 +123,12 @@ export function planInspectorSurfaces(input: {
     }
   }
 
-  return { surfaces, defaultSurfaceId };
+  return {
+    surfaces,
+    transientSurfaces:
+      searchResultsBody == null
+        ? []
+        : [{ id: "resource-search", body: searchResultsBody }],
+    defaultSurfaceId,
+  };
 }

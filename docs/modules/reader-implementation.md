@@ -57,6 +57,21 @@ measurement. Non-reader and window scroll are outside this contract. See
 [workspace.md](workspace.md#mobile-reader-chrome) for the workspace composition
 contract.
 
+### Pane Find adoption boundary
+
+The shared Pane Search foundation defines `FindOccurrences`, exact
+revision-scoped result keys, one immutable **Go back to reading position**
+origin, and transient Companion results. Readable media formats are not migrated
+by that foundation cutover; their format-specific cutovers must add a
+`SearchPreview` lease beside the existing progress/activity owner.
+
+That lease captures the live origin before the first move and fences both cursor
+persistence (including lifecycle flush) and activity measurement until the next
+trusted reader input. Preview must not call navigation, URL replacement,
+transcript seek, playback, or resume paths. Close clears marks without
+returning; Return restores and retires the origin once. A reader format must not
+publish Pane Find until those invariants have focused lifecycle proof.
+
 ### natural document completion
 
 Web articles and the final EPUB section render a semantic end marker inside the

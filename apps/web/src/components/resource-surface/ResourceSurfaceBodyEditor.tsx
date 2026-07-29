@@ -58,6 +58,7 @@ export interface ResourceSurfaceInsertResourceRequest {
 export interface ResourceSurfaceBodyEditorProps {
   sourceRef: string;
   orderedItems: ResourceSurfaceOccurrence[];
+  rowFilterQuery?: string;
   editable?: boolean;
   focusRequest?: ResourceSurfaceBodyFocusRequest;
   onInsertNote: (position: SurfacePosition) => void;
@@ -85,6 +86,7 @@ interface LocalFocusRequest {
 export default function ResourceSurfaceBodyEditor({
   sourceRef,
   orderedItems,
+  rowFilterQuery = "",
   editable = true,
   focusRequest,
   onInsertNote,
@@ -111,6 +113,20 @@ export default function ResourceSurfaceBodyEditor({
     () => [sourceRef, ...orderedItems.map((occurrence) => occurrence.target.item.ref)],
     [orderedItems, sourceRef],
   );
+  const visibleRows = useMemo(() => {
+    if (rowFilterQuery.length === 0) {
+      return orderedItems.map((occurrence, sourceIndex) => ({
+        occurrence,
+        sourceIndex,
+      }));
+    }
+    const foldedQuery = rowFilterQuery.toLowerCase();
+    return orderedItems.flatMap((occurrence, sourceIndex) =>
+      visibleItemText(occurrence).toLowerCase().includes(foldedQuery)
+        ? [{ occurrence, sourceIndex }]
+        : [],
+    );
+  }, [orderedItems, rowFilterQuery]);
   const { targets, loading, error } = useResourceTargetSearch({
     purpose: "link",
     query,
@@ -186,7 +202,7 @@ export default function ResourceSurfaceBodyEditor({
       data-pane-return-scope="Notes.EditorBlocks"
     >
       <ol className={styles.rows}>
-        {orderedItems.map((occurrence, index) => {
+        {visibleRows.map(({ occurrence, sourceIndex }) => {
           const { item, content } = occurrence.target;
           const label = item.label.trim() || item.scheme.replaceAll("_", " ");
           if (content.kind === "note_body") {
@@ -203,7 +219,7 @@ export default function ResourceSurfaceBodyEditor({
                     initialBodyPmJson={content.bodyPmJson}
                     fallbackBodyText={content.bodyText}
                     editable={editable}
-                    ariaLabel={`Edit note ${index + 1}`}
+                    ariaLabel={`Edit note ${sourceIndex + 1}`}
                     focusRequest={focusForOccurrence(occurrence.occurrenceId)}
                     onBodyChange={(body) =>
                       onBodyChange({
@@ -225,13 +241,13 @@ export default function ResourceSurfaceBodyEditor({
                       )
                     }
                     onEmptyBackspace={() => {
-                      focusPreviousEditableRow(index);
+                      focusPreviousEditableRow(sourceIndex);
                       onRemoveOccurrence(occurrence.occurrenceId);
                     }}
                     onMove={(direction) => {
                       const position = positionForMove(
                         orderedItems,
-                        index,
+                        sourceIndex,
                         direction,
                       );
                       if (position) {
@@ -248,13 +264,13 @@ export default function ResourceSurfaceBodyEditor({
                 </div>
                 {editable ? (
                   <RowActions
-                    label={label || `note ${index + 1}`}
-                    canMoveUp={index > 0}
-                    canMoveDown={index < orderedItems.length - 1}
+                    label={label || `note ${sourceIndex + 1}`}
+                    canMoveUp={sourceIndex > 0}
+                    canMoveDown={sourceIndex < orderedItems.length - 1}
                     onMoveUp={() => {
                       const position = positionForMove(
                         orderedItems,
-                        index,
+                        sourceIndex,
                         "up",
                       );
                       if (position) {
@@ -267,7 +283,7 @@ export default function ResourceSurfaceBodyEditor({
                     onMoveDown={() => {
                       const position = positionForMove(
                         orderedItems,
-                        index,
+                        sourceIndex,
                         "down",
                       );
                       if (position) {
@@ -310,12 +326,12 @@ export default function ResourceSurfaceBodyEditor({
               {editable ? (
                 <RowActions
                   label={label}
-                  canMoveUp={index > 0}
-                  canMoveDown={index < orderedItems.length - 1}
+                  canMoveUp={sourceIndex > 0}
+                  canMoveDown={sourceIndex < orderedItems.length - 1}
                   onMoveUp={() => {
                     const position = positionForMove(
                       orderedItems,
-                      index,
+                      sourceIndex,
                       "up",
                     );
                     if (position) {
@@ -328,7 +344,7 @@ export default function ResourceSurfaceBodyEditor({
                   onMoveDown={() => {
                     const position = positionForMove(
                       orderedItems,
-                      index,
+                      sourceIndex,
                       "down",
                     );
                     if (position) {
@@ -344,6 +360,11 @@ export default function ResourceSurfaceBodyEditor({
             </li>
           );
         })}
+        {rowFilterQuery.length > 0 && visibleRows.length === 0 ? (
+          <li className={styles.emptyRow} role="status">
+            No items match this filter.
+          </li>
+        ) : null}
         {editable ? (
           <li className={styles.insertionRow}>
             <button
@@ -458,6 +479,15 @@ export default function ResourceSurfaceBodyEditor({
       ) : null}
     </section>
   );
+}
+
+function visibleItemText(occurrence: ResourceSurfaceOccurrence): string {
+  const { item, content } = occurrence.target;
+  if (content.kind === "note_body") {
+    return content.bodyText;
+  }
+  const label = item.label.trim() || item.scheme.replaceAll("_", " ");
+  return item.summary ? `${label}\n${item.summary}` : label;
 }
 
 function RowActions({

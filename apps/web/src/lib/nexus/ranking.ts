@@ -17,11 +17,12 @@ const TIER_ORDER: Record<NexusRankTier, number> = {
 
 const SOURCE_ORDER: Record<NexusEntryKey["kind"], number> = {
   Pane: 0,
-  Destination: 1,
-  Resource: 2,
-  QuickAction: 3,
-  ImportUrl: 4,
-  Continuation: 5,
+  PaneSearch: 1,
+  Destination: 2,
+  Resource: 3,
+  QuickAction: 4,
+  ImportUrl: 5,
+  Continuation: 6,
 };
 
 function normalizedRankValue(
@@ -42,6 +43,8 @@ export function serializeNexusEntryKey(key: NexusEntryKey): string {
   switch (key.kind) {
     case "Pane":
       return `Pane:${key.paneId}`;
+    case "PaneSearch":
+      return "PaneSearch";
     case "Destination":
       return `Destination:${key.destinationId}`;
     case "Resource":

@@ -17,6 +17,18 @@
   margin-bottom: 0;
 }
 
+.message[data-find-active="true"] {
+  border-radius: var(--radius-sm);
+  outline: 2px solid color-mix(in srgb, var(--accent) 62%, transparent);
+  outline-offset: var(--space-2);
+}
+
+.findMark {
+  color: inherit;
+  background: var(--highlight-yellow);
+  border-radius: 0.12em;
+}
+
 @keyframes messageIn {
   from {
     opacity: 0;

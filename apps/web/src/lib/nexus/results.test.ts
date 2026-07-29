@@ -164,6 +164,35 @@ describe("Nexus result composition", () => {
     });
   });
 
+  it("projects pane Search as one static searchable command with its current hint", () => {
+    const entries = projectNexusLocalEntries({
+      query: "search this pane",
+      panes: [],
+      destinations: DESTINATIONS,
+      quickActions,
+      frecencyByHref: {},
+      paneSearchKeybindingHint: "⌘F",
+    });
+    const paneSearch = entries.find(
+      (entry) => entry.key.kind === "PaneSearch",
+    );
+
+    expect(paneSearch).toMatchObject({
+      key: { kind: "PaneSearch" },
+      historySource: "Static",
+      label: "Search this pane",
+      shortcutHint: "⌘F",
+      primaryAction: {
+        target: { kind: "PaneSearch" },
+      },
+      rank: {
+        tier: "Exact",
+        score: 0,
+        frecency: 0,
+      },
+    });
+  });
+
   it("keeps every destination and registered quick capability reachable by prefix", () => {
     for (const destination of DESTINATIONS) {
       const entries = projectNexusLocalEntries({

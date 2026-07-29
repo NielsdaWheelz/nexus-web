@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, type MouseEvent } from "react";
+import EmphasisSegments from "@/components/ui/EmphasisSegments";
 import { desktopNexusOptionId } from "./DesktopNexusInput";
 import type { DesktopNexusController, DesktopNexusEntry } from "./types";
 import styles from "./desktopNexus.module.css";
@@ -47,7 +48,9 @@ export default function DesktopNexusRow({
       id={desktopNexusOptionId(entry.key)}
       role="option"
       aria-selected={selected}
-      aria-label={[entry.label, secondary, excerpt].filter(Boolean).join(". ")}
+      aria-label={[entry.label, entry.shortcutHint, secondary, excerpt]
+        .filter(Boolean)
+        .join(". ")}
       className={styles.option}
       data-active={selected || undefined}
       data-nested={nested || undefined}
@@ -60,20 +63,18 @@ export default function DesktopNexusRow({
         {secondary ? <span className={styles.optionMeta}>{secondary}</span> : null}
         {excerpt ? (
           <span className={styles.optionExcerpt}>
-            {entry.excerptSegments
-              ? entry.excerptSegments.map((segment, index) =>
-                segment.emphasized ? (
-                  <mark key={index} className={styles.optionExcerptMatch}>
-                    {segment.text}
-                  </mark>
-                ) : (
-                  <span key={index}>{segment.text}</span>
-                ),
-              )
-              : entry.excerpt}
+            {entry.excerptSegments ? (
+              <EmphasisSegments
+                segments={entry.excerptSegments}
+                emphasisClassName={styles.optionExcerptMatch}
+              />
+            ) : entry.excerpt}
           </span>
         ) : null}
       </span>
+      {entry.shortcutHint ? (
+        <kbd className={styles.optionShortcut}>{entry.shortcutHint}</kbd>
+      ) : null}
     </div>
   );
 }

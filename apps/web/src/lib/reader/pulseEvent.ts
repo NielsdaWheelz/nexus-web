@@ -1,44 +1,8 @@
 "use client";
 
-import { useEffect } from "react";
 import { isRetrievalLocator, type RetrievalLocator } from "@/lib/api/sse/locators";
 import { isRecord } from "@/lib/validation";
-
-/**
- * A single window-`CustomEvent` channel: the dispatch side, the subscribe hook,
- * and the event name, all routed through one type guard so the dispatch and the
- * listener can never disagree about the payload shape. Reader and note pulses
- * are two instances of this primitive.
- */
-export interface PulseChannel<T> {
-  eventName: string;
-  dispatch: (target: T) => void;
-  useSubscribe: (handler: (target: T) => void) => void;
-}
-
-export function createPulseChannel<T>(
-  eventName: string,
-  isTarget: (value: unknown) => value is T,
-): PulseChannel<T> {
-  function dispatch(target: T): void {
-    window.dispatchEvent(new CustomEvent<T>(eventName, { detail: target }));
-  }
-
-  function useSubscribe(handler: (target: T) => void): void {
-    useEffect(() => {
-      function listener(event: Event) {
-        if (!(event instanceof CustomEvent) || !isTarget(event.detail)) {
-          return;
-        }
-        handler(event.detail);
-      }
-      window.addEventListener(eventName, listener);
-      return () => window.removeEventListener(eventName, listener);
-    }, [handler]);
-  }
-
-  return { eventName, dispatch, useSubscribe };
-}
+import { createWindowEventChannel } from "@/lib/windowEventChannel";
 
 export const READER_PULSE_HIGHLIGHT = "nexus:reader-pulse-highlight";
 
@@ -69,13 +33,21 @@ export function isReaderPulseTarget(value: unknown): value is ReaderPulseTarget 
   );
 }
 
-const readerPulseChannel = createPulseChannel(
-  READER_PULSE_HIGHLIGHT,
-  isReaderPulseTarget,
-);
+const readerPulseChannel = createWindowEventChannel({
+  eventName: READER_PULSE_HIGHLIGHT,
+  isTarget: isReaderPulseTarget,
+  cancelable: false,
+});
 
-export const dispatchReaderPulse = readerPulseChannel.dispatch;
-export const useReaderPulseHighlight = readerPulseChannel.useSubscribe;
+export function dispatchReaderPulse(target: ReaderPulseTarget): void {
+  readerPulseChannel.dispatch(target);
+}
+
+export function useReaderPulseHighlight(
+  handler: (target: ReaderPulseTarget) => void,
+): void {
+  readerPulseChannel.useSubscribe(handler);
+}
 
 export const NOTE_PULSE_HIGHLIGHT = "nexus:note-pulse-highlight";
 
@@ -101,10 +73,18 @@ export function isNotePulseTarget(value: unknown): value is NotePulseTarget {
   );
 }
 
-const notePulseChannel = createPulseChannel(
-  NOTE_PULSE_HIGHLIGHT,
-  isNotePulseTarget,
-);
+const notePulseChannel = createWindowEventChannel({
+  eventName: NOTE_PULSE_HIGHLIGHT,
+  isTarget: isNotePulseTarget,
+  cancelable: false,
+});
 
-export const dispatchNotePulse = notePulseChannel.dispatch;
-export const useNotePulseHighlight = notePulseChannel.useSubscribe;
+export function dispatchNotePulse(target: NotePulseTarget): void {
+  notePulseChannel.dispatch(target);
+}
+
+export function useNotePulseHighlight(
+  handler: (target: NotePulseTarget) => void,
+): void {
+  notePulseChannel.useSubscribe(handler);
+}

@@ -318,7 +318,14 @@ function stubFetch(handler: FetchHandler) {
 // A fake scroll handle so we can assert the engine calls captureAnchor before
 // path-changing setMessages (the view normally populates scrollRef.current).
 function fakeScrollHandle() {
-  return { captureAnchor: vi.fn(), scrollToMessage: vi.fn() };
+  return {
+    captureAnchor: vi.fn(),
+    scrollToMessage: vi.fn(),
+    captureReadingPosition: vi.fn(),
+    restoreReadingPosition: vi.fn(),
+    previewFindOccurrence: vi.fn(),
+    clearFindPresentation: vi.fn(),
+  };
 }
 
 function deferred<T>() {

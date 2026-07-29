@@ -88,6 +88,12 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
       beginUserScroll,
       captureAnchor,
       scrollToMessage,
+      captureReadingPosition,
+      restoreReadingPosition,
+      previewFindOccurrence,
+      clearFindPresentation,
+      setReadingFocusTarget,
+      activeFindOccurrence,
     } = useChatScroll(scrollportRef, transcriptRef, messages, historyLoading);
     const requestedTargetMessageIdRef = useRef<string | null>(null);
     const activatedTargetMessageIdRef = useRef<string | null>(null);
@@ -119,10 +125,25 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
       activatedTargetMessageIdRef.current = initialTargetMessageId;
     }, [historyLoading, initialTargetMessageId, messages, scrollToMessage]);
 
-    useImperativeHandle(ref, () => ({ captureAnchor, scrollToMessage }), [
-      captureAnchor,
-      scrollToMessage,
-    ]);
+    useImperativeHandle(
+      ref,
+      () => ({
+        captureAnchor,
+        scrollToMessage,
+        captureReadingPosition,
+        restoreReadingPosition,
+        previewFindOccurrence,
+        clearFindPresentation,
+      }),
+      [
+        captureAnchor,
+        captureReadingPosition,
+        clearFindPresentation,
+        previewFindOccurrence,
+        restoreReadingPosition,
+        scrollToMessage,
+      ],
+    );
 
     return (
       <div className={styles.surface}>
@@ -136,6 +157,11 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
           onWheel={beginUserScroll}
           onTouchMove={beginUserScroll}
           onKeyDown={beginUserScroll}
+          onFocusCapture={(event) => {
+            setReadingFocusTarget(
+              event.target instanceof HTMLElement ? event.target : null,
+            );
+          }}
         >
           <div
             ref={transcriptRef}
@@ -172,6 +198,11 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
                 onReconnectAssistant={onReconnectAssistant}
                 onReaderSourceActivate={onReaderSourceActivate}
                 onStartWalk={onStartWalk}
+                findOccurrence={
+                  activeFindOccurrence?.messageId === msg.id
+                    ? activeFindOccurrence
+                    : null
+                }
               />
             ))}
 
@@ -201,6 +232,7 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
           className={styles.composerSlot}
           data-testid="chat-composer-dock"
           onWheel={onComposerWheel}
+          onFocusCapture={() => setReadingFocusTarget(null)}
         >
           {docentOverlay}
           {composer}

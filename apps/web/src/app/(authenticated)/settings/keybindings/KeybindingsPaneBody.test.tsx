@@ -11,7 +11,7 @@ import KeybindingsPaneBody from "./KeybindingsPaneBody";
 const TEST_VISIT_ID = assumePaneVisitId("00000000-0000-4000-8000-000000000001");
 
 describe("KeybindingsPaneBody", () => {
-  it("renders Nexus, canonical destinations, and the Today action", () => {
+  it("renders Nexus, pane Search, canonical destinations, and the Today action", () => {
     render(
       <PaneReturnMementoProvider>
         <PaneReturnVisitScope visitId={TEST_VISIT_ID} routeKey="settings:/settings/keybindings">
@@ -22,6 +22,8 @@ describe("KeybindingsPaneBody", () => {
       </PaneReturnMementoProvider>,
     );
     expect(screen.getByText("Open Nexus")).toBeInTheDocument();
+    expect(screen.getByText("Search this pane")).toBeInTheDocument();
+    expect(screen.getByText("Ctrl+F")).toBeInTheDocument();
     expect(screen.getByText("Go to Lectern")).toBeInTheDocument();
     expect(screen.getByText("Go to Stats")).toBeInTheDocument();
     expect(screen.getByText("Go to Atlas")).toBeInTheDocument();

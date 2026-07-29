@@ -11,12 +11,15 @@ import {
 import type { ResourceActivation } from "@/lib/resources/activation";
 import ChatFailureCard from "./ChatFailureCard";
 import QuotedPassageCard from "./QuotedPassageCard";
+import ConversationMessageText from "./ConversationMessageText";
+import type { ChatFindOccurrencePosition } from "./useChatScroll";
 import styles from "./MessageRow.module.css";
 
 export default function UserMessage({
   message,
   timestampLabel,
   onReaderSourceActivate,
+  findOccurrence = null,
 }: {
   message: ConversationMessage;
   timestampLabel: string;
@@ -25,6 +28,7 @@ export default function UserMessage({
     target: ReaderSourceTarget | null,
     event?: React.MouseEvent,
   ) => void;
+  findOccurrence?: ChatFindOccurrencePosition | null;
 }) {
   const text = conversationMessageText(message);
   const content = text || (message.status === "pending" ? "..." : "");
@@ -66,7 +70,16 @@ export default function UserMessage({
             onActivateSource={handleActivateSource}
           />
         ) : null}
-        <span className={styles.userPromptBody}>{content}</span>
+        <span className={styles.userPromptBody}>
+          {text ? (
+            <ConversationMessageText
+              message={message}
+              findOccurrence={findOccurrence}
+            />
+          ) : (
+            content
+          )}
+        </span>
       </div>
       {isTerminalFailure ? (
         <ChatFailureCard failure={null} supportId={{ kind: "Absent" }} />

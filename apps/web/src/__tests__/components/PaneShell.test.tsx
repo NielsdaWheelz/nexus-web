@@ -12,6 +12,7 @@ import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import PaneShell from "@/components/workspace/PaneShell";
 import type { PanePrimaryChromePublication } from "@/lib/panes/panePublications";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
+import { dispatchPaneSearchRequest } from "@/lib/panes/paneSearchEvents";
 import { paneSecondaryRegionId } from "@/lib/panes/paneSecondaryModel";
 import type {
   ActionDescriptor,
@@ -245,6 +246,121 @@ beforeEach(() => {
 });
 
 describe("PaneShell", () => {
+  it("opens and focuses the active pane Filter through its action and shared request", async () => {
+    const onQueryChange = vi.fn();
+    const onDismiss = vi.fn();
+    const companion = {
+      kind: "command",
+      id: "resource-inspector-companion",
+      label: "Companion",
+      icon: <span aria-hidden="true">map</span>,
+      onSelect: vi.fn(),
+    } satisfies PaneHeaderAction;
+
+    render(
+      paneTree({
+        isActive: true,
+        children: (
+          <PrimaryChromeProbe
+            publication={{
+              actions: [companion],
+              search: {
+                kind: "FilterRows",
+                query: "needle",
+                inputLabel: "Filter items",
+                placeholder: "Filter",
+                onQueryChange,
+                onDismiss,
+              },
+            }}
+          />
+        ),
+      }),
+    );
+
+    const paneActions = await screen.findByRole("group", {
+      name: "Pane actions",
+    });
+    expect(
+      within(paneActions)
+        .getAllByRole("button")
+        .map((button) => button.getAttribute("aria-label")),
+    ).toEqual(["Companion", "Filter"]);
+
+    fireEvent.click(within(paneActions).getByRole("button", { name: "Filter" }));
+    const input = await screen.findByRole("searchbox", {
+      name: "Filter items",
+    });
+    await waitFor(() => expect(input).toHaveFocus());
+
+    input.blur();
+    expect(dispatchPaneSearchRequest()).toBe(true);
+    await waitFor(() => expect(input).toHaveFocus());
+
+    fireEvent.change(input, { target: { value: "next" } });
+    expect(onQueryChange).toHaveBeenCalledWith("next");
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("pane-search-toolbar")).toBeNull();
+    await waitFor(() =>
+      expect(
+        within(paneActions).getByRole("button", { name: "Filter" }),
+      ).toHaveFocus(),
+    );
+  });
+
+  it("keeps the reading-position action after Find and invokes Return once", async () => {
+    const onReturn = vi.fn();
+    render(
+      paneTree({
+        isActive: true,
+        children: (
+          <PrimaryChromeProbe
+            publication={{
+              search: {
+                kind: "FindOccurrences",
+                query: "",
+                inputLabel: "Find in document",
+                placeholder: "Find",
+                onQueryChange: vi.fn(),
+                onDismiss: vi.fn(),
+                result: { kind: "Idle" },
+                scope: { kind: "EntireResource" },
+                matchCase: false,
+                wholeWord: false,
+                onMatchCaseChange: vi.fn(),
+                onWholeWordChange: vi.fn(),
+                onStep: vi.fn(),
+                onActivate: vi.fn(),
+                onShowResults: vi.fn(),
+                resultsExpanded: false,
+                returnToReadingPosition: {
+                  kind: "Available",
+                  onReturn,
+                },
+              },
+            }}
+          />
+        ),
+      }),
+    );
+
+    const paneActions = await screen.findByRole("group", {
+      name: "Pane actions",
+    });
+    expect(
+      within(paneActions)
+        .getAllByRole("button")
+        .map((button) => button.getAttribute("aria-label")),
+    ).toEqual(["Find", "Go back to reading position"]);
+    fireEvent.click(
+      within(paneActions).getByRole("button", {
+        name: "Go back to reading position",
+      }),
+    );
+    expect(onReturn).toHaveBeenCalledTimes(1);
+  });
+
   it("fills the pane with one native-touch scroll owner while the bounded secondary pane still scrolls", () => {
     render(
       <div style={{ height: 640 }}>

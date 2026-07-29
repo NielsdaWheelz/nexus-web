@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
 import {
@@ -130,6 +130,31 @@ describe("NotePaneBody", () => {
             ),
         ),
       ).toBe(true);
+    });
+
+    const noteSearch = publish.mock.calls
+      .map(([update]) => update.publication?.search)
+      .findLast((search) => search !== undefined);
+    expect(noteSearch).toMatchObject({
+      kind: "FilterRows",
+      query: "",
+      inputLabel: "Filter note items",
+      placeholder: "Filter items",
+    });
+    expect(noteSearch).not.toHaveProperty("matchCase");
+    expect(noteSearch).not.toHaveProperty("wholeWord");
+    expect(noteSearch).not.toHaveProperty("onStep");
+    expect(noteSearch).not.toHaveProperty("onShowResults");
+
+    act(() => noteSearch?.onQueryChange("missing"));
+    expect(
+      await screen.findByText("No items match this filter."),
+    ).toBeVisible();
+    await waitFor(() => {
+      const updatedSearch = publish.mock.calls
+        .map(([update]) => update.publication?.search)
+        .findLast((search) => search !== undefined);
+      expect(updatedSearch?.query).toBe("missing");
     });
   });
 });

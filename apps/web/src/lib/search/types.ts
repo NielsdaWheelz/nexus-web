@@ -1,4 +1,5 @@
 import type { RetrievalLocator } from "@/lib/api/sse/locators";
+import type { EmphasisSegment } from "@/lib/ui/emphasis";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
@@ -197,10 +198,7 @@ export interface SearchResultRowViewModel {
   } | null;
   typeLabel: string;
   primaryText: string;
-  snippetSegments: Array<{
-    text: string;
-    emphasized: boolean;
-  }>;
+  snippetSegments: readonly EmphasisSegment[];
   sourceMeta: string | null;
   publicationDate: Presence<PublicationDate>;
   contributorCredits: ContributorCredit[];

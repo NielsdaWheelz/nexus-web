@@ -1,7 +1,9 @@
 "use client";
 
+import EmphasisSegments from "@/components/ui/EmphasisSegments";
 import { resourceIconForScheme } from "@/lib/resources/resourceKind";
 import type { ResourceTarget } from "@/lib/resources/resourceTargets";
+import { parseSnippetSegments } from "@/lib/search/searchViewModel";
 import styles from "./ResourceTargetListbox.module.css";
 
 /**
@@ -14,36 +16,6 @@ import styles from "./ResourceTargetListbox.module.css";
  * `activeKey` and reports hover/pick by target, leaving keyboard handling,
  * `aria-activedescendant`, and positioning to the caller.
  */
-
-interface SnippetSegment {
-  text: string;
-  emphasized: boolean;
-}
-
-// Mirrors the private `parseSnippetSegments` in `lib/search/searchViewModel.ts`:
-// splits the backend's `<b>…</b>` match markup into safe React segments — no
-// `dangerouslySetInnerHTML`. Duplicated rather than imported because that
-// function isn't exported and belongs to a sibling subsystem's owned file.
-function parseSnippetSegments(snippet: string): SnippetSegment[] {
-  if (!snippet) return [];
-  const segments: SnippetSegment[] = [];
-  const parts = snippet.split(/(<\/?b>)/gi);
-  let emphasized = false;
-  for (const part of parts) {
-    const normalized = part.toLowerCase();
-    if (normalized === "<b>") {
-      emphasized = true;
-      continue;
-    }
-    if (normalized === "</b>") {
-      emphasized = false;
-      continue;
-    }
-    if (!part) continue;
-    segments.push({ text: part, emphasized });
-  }
-  return segments;
-}
 
 /** Stable row identity: the item's own ref for a resource target, its
  * transient candidate ref for a passage target. */
@@ -153,13 +125,7 @@ export default function ResourceTargetListbox({
                     <span className={styles.meta} dir="auto">
                       <span>{target.source.label}</span>
                       {segments.length > 0 ? " · " : null}
-                      {segments.map((segment, index) =>
-                        segment.emphasized ? (
-                          <b key={index}>{segment.text}</b>
-                        ) : (
-                          <span key={index}>{segment.text}</span>
-                        ),
-                      )}
+                      <EmphasisSegments segments={segments} />
                     </span>
                   ) : target.item.summary ? (
                     <span className={styles.meta} dir="auto">

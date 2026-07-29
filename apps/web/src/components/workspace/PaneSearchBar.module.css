@@ -1,0 +1,40 @@
+.bar {
+  width: 100%;
+}
+
+.findOptions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.scopeField {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+}
+
+.scopeField > div {
+  min-width: 9rem;
+}
+
+.status {
+  max-width: 16rem;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--leading-snug);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stepControls {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}

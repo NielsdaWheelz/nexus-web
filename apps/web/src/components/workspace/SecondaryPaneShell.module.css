@@ -20,6 +20,11 @@
   background: var(--surface-2);
 }
 
+.soloTitle {
+  min-width: 0;
+  font-weight: 600;
+}
+
 .body {
   display: flex;
   flex-direction: column;

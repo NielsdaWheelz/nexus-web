@@ -6,6 +6,7 @@ import {
   arePanePrimaryChromePublicationsEqual,
   arePaneSecondaryPublicationsEqual,
   getPublishedSecondarySurface,
+  getPublishedTransientSecondarySurface,
   normalizePaneFixedChromePublication,
   normalizePaneSecondaryPublication,
   secondaryPublicationIncludesSurface,
@@ -283,6 +284,27 @@ describe("panePublications", () => {
     expect(normalized.surfaces[0]).not.toBe(surface);
   });
 
+  it("normalizes a transient-only publication without minting a durable default", () => {
+    const body = createElement("div");
+    const publication: PaneSecondaryPublication = {
+      groupId: "resource-inspector",
+      surfaces: [],
+      defaultSurfaceId: null,
+      transientSurfaces: [{ id: "resource-search", body }],
+    };
+
+    const normalized = normalizePaneSecondaryPublication(publication);
+
+    expect(normalized).toEqual(publication);
+    expect(normalized.transientSurfaces).not.toBe(
+      publication.transientSurfaces,
+    );
+    expect(getPublishedTransientSecondarySurface(
+      normalized,
+      "resource-search",
+    )).toEqual({ id: "resource-search", body });
+  });
+
   it("rejects invalid secondary publications", () => {
     const body = createElement("div");
 
@@ -292,7 +314,21 @@ describe("panePublications", () => {
         defaultSurfaceId: "resource-evidence",
         surfaces: [],
       }),
-    ).toThrow("at least one surface");
+    ).toThrow("published together");
+    expect(() =>
+      normalizePaneSecondaryPublication({
+        groupId: "resource-inspector",
+        defaultSurfaceId: null,
+        surfaces: [],
+      }),
+    ).toThrow("durable or transient surface");
+    expect(() =>
+      normalizePaneSecondaryPublication({
+        groupId: "resource-inspector",
+        defaultSurfaceId: null,
+        surfaces: [{ id: "resource-evidence", body }],
+      }),
+    ).toThrow("published together");
     expect(() =>
       normalizePaneSecondaryPublication({
         groupId: "resource-inspector",
@@ -341,6 +377,30 @@ describe("panePublications", () => {
           { id: "resource-contents", body },
         ],
       }),
+    ).toBe(false);
+    expect(
+      arePaneSecondaryPublicationsEqual(
+        {
+          ...publication,
+          transientSurfaces: [{ id: "resource-search", body }],
+        },
+        {
+          ...publication,
+          transientSurfaces: [{ id: "resource-search", body }],
+        },
+      ),
+    ).toBe(true);
+    expect(
+      arePaneSecondaryPublicationsEqual(
+        {
+          ...publication,
+          transientSurfaces: [{ id: "resource-search", body }],
+        },
+        {
+          ...publication,
+          transientSurfaces: [{ id: "resource-search", body: otherBody }],
+        },
+      ),
     ).toBe(false);
     expect(
       arePaneSecondaryPublicationsEqual(publication, {

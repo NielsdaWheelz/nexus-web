@@ -561,7 +561,7 @@ export default function LibrariesPaneBody() {
         }
         toolbar={
           <PaneToolbar
-            search={
+            filters={
               <>
                 <form
                   className={styles.createForm}

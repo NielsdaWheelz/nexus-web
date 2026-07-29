@@ -1,4 +1,5 @@
 import type { ContributorCredit } from "@/lib/contributors/types";
+import type { EmphasisSegment } from "@/lib/ui/emphasis";
 import { absent, type Presence } from "@/lib/api/presence";
 import {
   decodeOptionalPublicationDate,
@@ -12,12 +13,12 @@ function sanitizeSnippet(snippet: string): string {
   return snippet.replace(/<\/?b>/gi, "");
 }
 
-function parseSnippetSegments(snippet: string) {
+export function parseSnippetSegments(snippet: string): EmphasisSegment[] {
   if (!snippet) {
     return [];
   }
 
-  const segments: SearchResultRowViewModel["snippetSegments"] = [];
+  const segments: EmphasisSegment[] = [];
   const parts = snippet.split(/(<\/?b>)/gi);
   let emphasized = false;
 

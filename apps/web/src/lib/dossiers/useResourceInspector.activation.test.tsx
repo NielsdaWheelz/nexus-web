@@ -1,4 +1,4 @@
-import { render, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type {
   ComponentProps,
   MouseEvent as ReactMouseEvent,
@@ -64,6 +64,34 @@ function InspectorOwner() {
     bodies: { linkedItems: <div>Evidence</div> },
   });
   return null;
+}
+
+function SearchInspectorOwner() {
+  const composition = useResourceInspector({
+    scheme: "media",
+    handle: MEDIA_ID,
+    bodies: { linkedItems: <div>Evidence</div> },
+    searchResults: <div>Matches</div>,
+  });
+  return (
+    <>
+      <span data-testid="search-results-expanded">
+        {composition.searchResultsExpanded ? "true" : "false"}
+      </span>
+      <button
+        type="button"
+        onClick={(event) => composition.openSearchResults(event.currentTarget)}
+      >
+        Show results
+      </button>
+      <button type="button" onClick={composition.previewSearchResult}>
+        Preview result
+      </button>
+      <button type="button" onClick={composition.closeSearchResults}>
+        End results
+      </button>
+    </>
+  );
 }
 
 function DefectiveMembersOwner() {
@@ -231,6 +259,80 @@ describe("useResourceInspector workspace activation", () => {
   it("defects when a non-LibraryMembership scheme supplies Members", () => {
     expect(() => render(<DefectiveMembersOwner />)).toThrow(
       /Members requires LibraryMembership sharing/,
+    );
+  });
+
+  it("publishes Search results transiently and forwards host-owned commands", async () => {
+    const publishSecondary = vi.fn();
+    const onRequestTransientSecondarySurface = vi.fn();
+    const onPreviewTransientSecondaryResult = vi.fn();
+    const onCloseTransientSecondarySurface = vi.fn();
+
+    render(
+      <PaneRuntimeProvider
+        paneId="pane-1"
+        visitId={TEST_VISIT_ID}
+        isActive
+        href={MEDIA_HREF}
+        routeId="media"
+        routeKey={`media:${MEDIA_HREF}`}
+        transientSecondarySurface={{
+          id: "resource-search",
+          expanded: true,
+        }}
+        canGoBack={false}
+        canGoForward={false}
+        onNavigatePane={vi.fn()}
+        onReplacePane={vi.fn()}
+        onActivateWorkspaceTarget={vi.fn(() => ({
+          kind: "Unchanged" as const,
+          paneId: "pane-1",
+        }))}
+        onGoBackPane={vi.fn()}
+        onGoForwardPane={vi.fn()}
+        onRequestTransientSecondarySurface={
+          onRequestTransientSecondarySurface
+        }
+        onPreviewTransientSecondaryResult={
+          onPreviewTransientSecondaryResult
+        }
+        onCloseTransientSecondarySurface={onCloseTransientSecondarySurface}
+      >
+        <PaneSecondaryContext.Provider value={publishSecondary}>
+          <SearchInspectorOwner />
+        </PaneSecondaryContext.Provider>
+      </PaneRuntimeProvider>,
+    );
+
+    await waitFor(() => expect(publishSecondary).toHaveBeenCalled());
+    const publication = publishSecondary.mock.calls
+      .map(([value]) => value as PaneSecondaryPublication | null)
+      .find((value) => value !== null);
+    expect(publication?.transientSurfaces).toEqual([
+      { id: "resource-search", body: expect.any(Object) },
+    ]);
+    expect(screen.getByTestId("search-results-expanded")).toHaveTextContent(
+      "true",
+    );
+
+    const trigger = screen.getByRole("button", { name: "Show results" });
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("button", { name: "Preview result" }));
+    fireEvent.click(screen.getByRole("button", { name: "End results" }));
+
+    expect(onRequestTransientSecondarySurface).toHaveBeenCalledWith(
+      "pane-1",
+      `media:${MEDIA_HREF}`,
+      "resource-search",
+      trigger,
+    );
+    expect(onPreviewTransientSecondaryResult).toHaveBeenCalledWith(
+      "pane-1",
+      `media:${MEDIA_HREF}`,
+    );
+    expect(onCloseTransientSecondarySurface).toHaveBeenCalledWith(
+      "pane-1",
+      `media:${MEDIA_HREF}`,
     );
   });
 

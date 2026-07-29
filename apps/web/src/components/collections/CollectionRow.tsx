@@ -18,6 +18,7 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
 import type { SortableActivatorProps } from "@/components/sortable/SortableList";
 import ActionMenu from "@/components/ui/ActionMenu";
+import EmphasisSegments from "@/components/ui/EmphasisSegments";
 import Pill from "@/components/ui/Pill";
 import ResourceRow from "@/components/ui/ResourceRow";
 import {
@@ -31,7 +32,6 @@ import {
 import type {
   CollectionContext,
   CollectionRowView,
-  EmphasisSegment,
   ExceptionalStatus,
 } from "@/lib/collections/types";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -54,18 +54,6 @@ import {
 } from "./collectionRowFormatting";
 import styles from "./CollectionRow.module.css";
 
-function renderSegments(segments: readonly EmphasisSegment[]): ReactNode {
-  return segments.map((segment, index) =>
-    segment.emphasized ? (
-      <mark key={index} className={styles.mark}>
-        {segment.text}
-      </mark>
-    ) : (
-      <span key={index}>{segment.text}</span>
-    ),
-  );
-}
-
 function assertNever(value: never, context: string): never {
   throw new Error(`${context}: ${JSON.stringify(value)}`);
 }
@@ -73,7 +61,12 @@ function assertNever(value: never, context: string): never {
 function renderContext(context: CollectionContext): ReactNode {
   switch (context.kind) {
     case "Snippet":
-      return renderSegments(context.segments);
+      return (
+        <EmphasisSegments
+          segments={context.segments}
+          emphasisClassName={styles.mark}
+        />
+      );
     case "Text":
       return context.text;
     default:
@@ -386,7 +379,12 @@ export default function CollectionRow({
       : "idle";
 
   const title = row.title.segments
-    ? renderSegments(row.title.segments)
+    ? (
+        <EmphasisSegments
+          segments={row.title.segments}
+          emphasisClassName={styles.mark}
+        />
+      )
     : row.title.text;
 
   const supportParts: ReactNode[] = [];

@@ -5,6 +5,7 @@ const STORAGE_KEY = "nexus.keybindings";
 
 export const DEFAULT_KEYBINDINGS: Record<string, string> = {
   "Nexus.Open": "Meta+k",
+  "Pane.Search": "Meta+f",
   "pane-next": "Meta+Shift+arrowright",
   "pane-previous": "Meta+Shift+arrowleft",
 };

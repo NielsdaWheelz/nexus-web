@@ -11,6 +11,11 @@ const surfaces = [
   { id: "resource-evidence" as const, body: <div /> },
 ];
 
+const surfacesWithSearch = [
+  ...surfaces,
+  { id: "resource-search" as const, body: <div /> },
+];
+
 describe("SecondarySurfaceTabs", () => {
   it("applies roving focus and links each tab to its own panel id", () => {
     render(
@@ -67,5 +72,21 @@ describe("SecondarySurfaceTabs", () => {
       key: "ArrowLeft",
     });
     expect(onSelect).toHaveBeenLastCalledWith("resource-evidence");
+  });
+
+  it("renders the separately typed transient Search results definition", () => {
+    render(
+      <SecondarySurfaceTabs
+        baseId="base"
+        surfaces={surfacesWithSearch}
+        activeSurfaceId="resource-search"
+        onSelect={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("tab", { name: "Search results" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 });

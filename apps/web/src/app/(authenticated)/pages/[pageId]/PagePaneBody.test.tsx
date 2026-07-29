@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PanePrimaryChromeProvider } from "@/components/workspace/PanePrimaryChrome";
 import type { PanePrimaryChromePublicationUpdate } from "@/lib/panes/panePublications";
@@ -154,6 +154,31 @@ describe("PagePaneBody", () => {
           "ViewAction.Page.OpenTomorrow",
         ]),
       );
+    });
+
+    const pageSearch = publish.mock.calls
+      .map(([update]) => update.publication?.search)
+      .findLast((search) => search !== undefined);
+    expect(pageSearch).toMatchObject({
+      kind: "FilterRows",
+      query: "",
+      inputLabel: "Filter page items",
+      placeholder: "Filter items",
+    });
+    expect(pageSearch).not.toHaveProperty("matchCase");
+    expect(pageSearch).not.toHaveProperty("wholeWord");
+    expect(pageSearch).not.toHaveProperty("onStep");
+    expect(pageSearch).not.toHaveProperty("onShowResults");
+
+    act(() => pageSearch?.onQueryChange("missing"));
+    expect(
+      await screen.findByText("No items match this filter."),
+    ).toBeVisible();
+    await waitFor(() => {
+      const updatedSearch = publish.mock.calls
+        .map(([update]) => update.publication?.search)
+        .findLast((search) => search !== undefined);
+      expect(updatedSearch?.query).toBe("missing");
     });
   });
 });

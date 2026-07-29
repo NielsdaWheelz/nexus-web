@@ -10,9 +10,12 @@ import SecondarySurfacePanels from "@/components/workspace/SecondarySurfacePanel
 import {
   getPublishedSecondarySurface,
   type PaneSecondaryPublication,
+  type PaneSecondaryPresentationSurfacePublication,
+  type PaneTransientSecondarySurfacePublication,
 } from "@/lib/panes/panePublications";
 import {
-  getSecondarySurfaceDefinition,
+  getPaneSecondarySurfaceDefinition,
+  isPaneTransientSecondarySurfaceId,
   paneSecondaryRegionId,
   type WorkspaceSecondaryState,
   type WorkspaceSecondarySurfaceId,
@@ -28,8 +31,15 @@ interface MobileSecondaryPaneHostProps {
   secondaryPaneId: string;
   secondary: WorkspaceSecondaryState | null;
   publication: PaneSecondaryPublication | null;
+  transientSurface?: PaneTransientSecondarySurfacePublication | null;
+  transientExpanded?: boolean;
   onClose: (secondaryPaneId: string) => void;
+  onCloseTransient?: () => void;
   onActiveSurfaceChange: (
+    secondaryPaneId: string,
+    surfaceId: WorkspaceSecondarySurfaceId,
+  ) => void;
+  onSelectDurableFromTransient?: (
     secondaryPaneId: string,
     surfaceId: WorkspaceSecondarySurfaceId,
   ) => void;
@@ -53,25 +63,54 @@ function MobileSecondaryPanePresentation({
   secondaryPaneId,
   secondary,
   publication,
+  transientSurface = null,
+  transientExpanded = false,
   onClose,
+  onCloseTransient,
   onActiveSurfaceChange,
+  onSelectDurableFromTransient,
   returnFocusTo,
   options,
 }: MobileSecondaryPanePresentationProps) {
   const baseId = useId();
-  const activeSurface = getPublishedSecondarySurface(
-    publication,
-    secondary?.activeSurfaceId,
-  );
+  const activeSurface =
+    transientSurface ??
+    getPublishedSecondarySurface(publication, secondary?.activeSurfaceId);
   const activeSurfaceDefinition = activeSurface
-    ? getSecondarySurfaceDefinition(activeSurface.id)
+    ? getPaneSecondarySurfaceDefinition(activeSurface.id)
     : null;
-  const active = Boolean(
-    secondary?.visibility === "visible" &&
+  const durableActive = Boolean(
+    !transientSurface &&
+      secondary?.visibility === "visible" &&
       publication &&
       secondary.groupId === publication.groupId &&
       activeSurface,
   );
+  const active = transientSurface ? transientExpanded : durableActive;
+  const surfaces: readonly PaneSecondaryPresentationSurfacePublication[] =
+    publication && transientSurface
+      ? [...publication.surfaces, transientSurface]
+      : (publication?.surfaces ?? []);
+  const showTabs = Boolean(publication && publication.surfaces.length > 0);
+  if (
+    transientSurface &&
+    (!onCloseTransient || !onSelectDurableFromTransient)
+  ) {
+    throw new Error(
+      "Transient secondary presentation requires close and durable-select commands.",
+    );
+  }
+  let close = () => onClose(secondaryPaneId);
+  let selectDurableFromTransient:
+    | ((
+        secondaryPaneId: string,
+        surfaceId: WorkspaceSecondarySurfaceId,
+      ) => void)
+    | null = null;
+  if (transientSurface && onCloseTransient && onSelectDurableFromTransient) {
+    close = onCloseTransient;
+    selectDurableFromTransient = onSelectDurableFromTransient;
+  }
 
   return (
     <MobileSheet
@@ -81,13 +120,20 @@ function MobileSecondaryPanePresentation({
           ? paneSecondaryRegionId(primaryPaneId, publication.groupId)
           : undefined
       }
-      onDismiss={() => onClose(secondaryPaneId)}
+      onDismiss={close}
       ariaLabel={activeSurfaceDefinition?.title ?? ""}
       layer="overlay"
       scrim="soft"
-      initialFocus={(c) => c.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')}
+      initialFocus={(container) =>
+        container.querySelector<HTMLElement>(
+          '[role="tab"][aria-selected="true"], [data-secondary-close="true"]',
+        )
+      }
       returnFocusTo={returnFocusTo}
       returnFocusFallback={() => findPaneChromeFocusTarget(primaryPaneId)}
+      skipReturnFocus={() =>
+        Boolean(transientSurface && !transientExpanded)
+      }
       focusKey={activeSurface?.id ?? null}
       backdropTestId="mobile-secondary-backdrop"
       panelTestId="mobile-secondary-host"
@@ -95,12 +141,29 @@ function MobileSecondaryPanePresentation({
       {publication && activeSurface && activeSurfaceDefinition ? (
         <>
           <header className={styles.header}>
-            <SecondarySurfaceTabs
-              baseId={baseId}
-              surfaces={publication.surfaces}
-              activeSurfaceId={activeSurface.id}
-              onSelect={(surfaceId) => onActiveSurfaceChange(secondaryPaneId, surfaceId)}
-            />
+            {showTabs ? (
+              <SecondarySurfaceTabs
+                baseId={baseId}
+                surfaces={surfaces}
+                activeSurfaceId={activeSurface.id}
+                onSelect={(surfaceId) => {
+                  if (!isPaneTransientSecondarySurfaceId(surfaceId)) {
+                    if (selectDurableFromTransient) {
+                      selectDurableFromTransient(
+                        secondaryPaneId,
+                        surfaceId,
+                      );
+                    } else {
+                      onActiveSurfaceChange(secondaryPaneId, surfaceId);
+                    }
+                  }
+                }}
+              />
+            ) : (
+              <span className={styles.soloTitle}>
+                {activeSurfaceDefinition.title}
+              </span>
+            )}
             <ActionMenu
               options={options}
               label="Pane options"
@@ -110,17 +173,22 @@ function MobileSecondaryPanePresentation({
               size="sm"
               iconOnly
               aria-label={`Close ${activeSurfaceDefinition.title}`}
-              onClick={() => onClose(secondaryPaneId)}
+              data-secondary-close="true"
+              onClick={close}
             >
               <X size={15} aria-hidden="true" />
             </Button>
           </header>
-          <SecondarySurfacePanels
-            baseId={baseId}
-            surfaces={publication.surfaces}
-            activeSurfaceId={activeSurface.id}
-            className={styles.body}
-          />
+          {showTabs ? (
+            <SecondarySurfacePanels
+              baseId={baseId}
+              surfaces={surfaces}
+              activeSurfaceId={activeSurface.id}
+              className={styles.body}
+            />
+          ) : (
+            <div className={styles.body}>{activeSurface.body}</div>
+          )}
         </>
       ) : null}
     </MobileSheet>

@@ -14,6 +14,7 @@ import { consumePendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import { fetchDailyNotePage, fetchDawnWrite, fetchNotePage, type DawnWrite, type NotePage } from "@/lib/notes/api";
 import { shiftLocalDate } from "@/lib/localDate";
 import { requirePaneRuntime, usePaneParam, usePaneReturnReady, usePaneRuntime, useSetPaneLabel } from "@/lib/panes/paneRuntime";
+import type { PaneFilterRowsPublication } from "@/lib/panes/paneSearch";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 
 export default function PagePaneBody({
@@ -30,6 +31,32 @@ export default function PagePaneBody({
     usePaneRuntime(),
     "PagePaneBody",
   ).activateTarget;
+  const sourceRef = `page:${pageId}`;
+  const [filterState, setFilterState] = useState({
+    sourceRef,
+    query: "",
+  });
+  const filterQuery =
+    filterState.sourceRef === sourceRef ? filterState.query : "";
+  const onFilterQueryChange = useCallback(
+    (query: string) => setFilterState({ sourceRef, query }),
+    [sourceRef],
+  );
+  const dismissFilter = useCallback(
+    () => setFilterState({ sourceRef, query: "" }),
+    [sourceRef],
+  );
+  const search = useMemo<PaneFilterRowsPublication>(
+    () => ({
+      kind: "FilterRows",
+      query: filterQuery,
+      inputLabel: "Filter page items",
+      placeholder: "Filter items",
+      onQueryChange: onFilterQueryChange,
+      onDismiss: dismissFilter,
+    }),
+    [dismissFilter, filterQuery, onFilterQueryChange],
+  );
   const [page, setPage] = useState<NotePage | null>(
     initialPage?.id === pageId ? initialPage : null,
   );
@@ -80,6 +107,7 @@ export default function PagePaneBody({
   );
   const { companionAction } = useResourceInspector({ scheme: "page", handle: pageId, bodies: { linkedItems: connections } });
   usePanePrimaryChrome({
+    search,
     actions: companionAction ? [companionAction] : [],
     menu: page ? { kind: "ResourceMenu", target: page.actionTarget, groups: { core: [], operations: [], relationships: [], view: viewActions } } : undefined,
   });
@@ -94,7 +122,8 @@ export default function PagePaneBody({
   return <>
     {dawnWrite ? <DawnWriteBlock write={dawnWrite} /> : null}
     <ResourceSurfaceEditor
-      sourceRef={`page:${pageId}`}
+      sourceRef={sourceRef}
+      rowFilterQuery={filterQuery}
       focusMastheadSerial={focusMastheadSerial}
       focusBodySerial={focusBodySerial}
       onSurfaceReady={(surface) => {

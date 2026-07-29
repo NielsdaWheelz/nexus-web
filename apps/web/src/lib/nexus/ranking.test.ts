@@ -94,6 +94,12 @@ describe("Nexus ranking", () => {
     ]);
   });
 
+  it("serializes the pane Search teaching entry as its dedicated key", () => {
+    expect(serializeNexusEntryKey({ kind: "PaneSearch" })).toBe(
+      "PaneSearch",
+    );
+  });
+
   it("rejects an invalid normalized score or frecency even for a singleton", () => {
     expect(() =>
       rankNexusEntries([

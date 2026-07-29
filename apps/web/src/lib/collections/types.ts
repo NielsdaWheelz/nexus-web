@@ -4,6 +4,7 @@
  */
 
 import type { ResourceRowPrimary } from "@/components/ui/ResourceRow";
+import type { EmphasisSegment } from "@/lib/ui/emphasis";
 import type { Presence } from "@/lib/api/presence";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import type {
@@ -32,11 +33,6 @@ export type CollectionItemKind =
   | "conversation"
   | "search_result"
   | "settings_row";
-
-export interface EmphasisSegment {
-  readonly text: string;
-  readonly emphasized: boolean;
-}
 
 export type ConsumptionModality = "Read" | "Listen" | "Watch";
 

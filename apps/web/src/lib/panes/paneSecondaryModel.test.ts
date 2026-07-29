@@ -5,11 +5,14 @@ import {
   getSecondarySurfaceDefinition,
   getSecondarySurfaceIdsForGroup,
   getSecondaryWidthPolicy,
+  getTransientSecondarySurfaceDefinition,
+  isPaneTransientSecondarySurfaceId,
   isWorkspaceSecondaryGroupId,
   isWorkspaceSecondarySurfaceId,
   paneSecondaryRegionId,
   resolveEffectiveSecondarySizing,
   PANE_SECONDARY_SURFACE_DEFINITIONS,
+  PANE_TRANSIENT_SECONDARY_SURFACE_DEFINITIONS,
 } from "@/lib/panes/paneSecondaryModel";
 
 describe("paneSecondaryModel", () => {
@@ -68,6 +71,9 @@ describe("paneSecondaryModel", () => {
 
   it("validates secondary ids", () => {
     expect(isWorkspaceSecondarySurfaceId("resource-evidence")).toBe(true);
+    expect(isWorkspaceSecondarySurfaceId("resource-search")).toBe(false);
+    expect(isPaneTransientSecondarySurfaceId("resource-search")).toBe(true);
+    expect(isPaneTransientSecondarySurfaceId("resource-evidence")).toBe(false);
     expect(isWorkspaceSecondarySurfaceId("unknown")).toBe(false);
     expect(isWorkspaceSecondaryGroupId("resource-inspector")).toBe(true);
     expect(isWorkspaceSecondaryGroupId("unknown")).toBe(false);
@@ -111,5 +117,18 @@ describe("paneSecondaryModel", () => {
       "resource-forks",
       "resource-dossier",
     ]);
+  });
+
+  it("owns Search results as a separate transient definition", () => {
+    expect(PANE_TRANSIENT_SECONDARY_SURFACE_DEFINITIONS).toHaveLength(1);
+    expect(getTransientSecondarySurfaceDefinition("resource-search")).toEqual({
+      id: "resource-search",
+      groupId: "resource-inspector",
+      title: "Search results",
+      iconId: "search",
+    });
+    expect(
+      PANE_SECONDARY_SURFACE_DEFINITIONS.map((definition) => definition.id),
+    ).not.toContain("resource-search");
   });
 });

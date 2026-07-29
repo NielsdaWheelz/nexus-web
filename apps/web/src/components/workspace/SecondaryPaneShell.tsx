@@ -11,9 +11,12 @@ import SecondarySurfacePanels from "@/components/workspace/SecondarySurfacePanel
 import {
   getPublishedSecondarySurface,
   type PaneSecondaryPublication,
+  type PaneSecondaryPresentationSurfacePublication,
+  type PaneTransientSecondarySurfacePublication,
 } from "@/lib/panes/panePublications";
 import {
-  getSecondarySurfaceDefinition,
+  getPaneSecondarySurfaceDefinition,
+  isPaneTransientSecondarySurfaceId,
   paneSecondaryRegionId,
 } from "@/lib/panes/paneSecondaryModel";
 import type {
@@ -27,13 +30,19 @@ interface SecondaryPaneShellProps {
   primaryPaneId: string;
   secondaryPaneId: string;
   publication: PaneSecondaryPublication;
-  state: WorkspaceSecondaryState;
+  state: WorkspaceSecondaryState | null;
+  transientSurface?: PaneTransientSecondarySurfacePublication | null;
   sizing: WorkspaceSecondarySizing;
   onActiveSurfaceChange: (
     secondaryPaneId: string,
     surfaceId: WorkspaceSecondarySurfaceId,
   ) => void;
+  onSelectDurableFromTransient?: (
+    secondaryPaneId: string,
+    surfaceId: WorkspaceSecondarySurfaceId,
+  ) => void;
   onClose: (secondaryPaneId: string) => void;
+  onCloseTransient?: () => void;
   onResize: (secondaryPaneId: string, widthPx: number) => void;
 }
 
@@ -42,16 +51,23 @@ export default function SecondaryPaneShell({
   secondaryPaneId,
   publication,
   state,
+  transientSurface = null,
   sizing,
   onActiveSurfaceChange,
+  onSelectDurableFromTransient,
   onClose,
+  onCloseTransient,
   onResize,
 }: SecondaryPaneShellProps) {
   const baseId = useId();
-  const activeSurface = getPublishedSecondarySurface(
-    publication,
-    state.activeSurfaceId,
-  );
+  const activeSurface =
+    transientSurface ??
+    getPublishedSecondarySurface(publication, state?.activeSurfaceId);
+  const surfaces: readonly PaneSecondaryPresentationSurfacePublication[] =
+    transientSurface
+      ? [...publication.surfaces, transientSurface]
+      : publication.surfaces;
+  const showTabs = publication.surfaces.length > 0;
   const { handleResizeMouseDown, handleResizeKeyDown } = useResizeHandle({
     id: secondaryPaneId,
     widthPx: sizing.widthPx,
@@ -63,8 +79,29 @@ export default function SecondaryPaneShell({
   if (!activeSurface) {
     return null;
   }
+  if (
+    transientSurface &&
+    (!onCloseTransient || !onSelectDurableFromTransient)
+  ) {
+    throw new Error(
+      "Transient secondary presentation requires close and durable-select commands.",
+    );
+  }
 
-  const activeSurfaceDefinition = getSecondarySurfaceDefinition(activeSurface.id);
+  const activeSurfaceDefinition = getPaneSecondarySurfaceDefinition(
+    activeSurface.id,
+  );
+  let close = () => onClose(secondaryPaneId);
+  let selectDurableFromTransient:
+    | ((
+        secondaryPaneId: string,
+        surfaceId: WorkspaceSecondarySurfaceId,
+      ) => void)
+    | null = null;
+  if (transientSurface && onCloseTransient && onSelectDurableFromTransient) {
+    close = onCloseTransient;
+    selectDurableFromTransient = onSelectDurableFromTransient;
+  }
 
   return (
     <aside
@@ -86,32 +123,53 @@ export default function SecondaryPaneShell({
         }
         event.preventDefault();
         event.stopPropagation();
-        onClose(secondaryPaneId);
+        close();
       }}
     >
       <header className={styles.header}>
-        <SecondarySurfaceTabs
-          baseId={baseId}
-          surfaces={publication.surfaces}
-          activeSurfaceId={activeSurface.id}
-          onSelect={(surfaceId) => onActiveSurfaceChange(secondaryPaneId, surfaceId)}
-        />
+        {showTabs ? (
+          <SecondarySurfaceTabs
+            baseId={baseId}
+            surfaces={surfaces}
+            activeSurfaceId={activeSurface.id}
+            onSelect={(surfaceId) => {
+              if (!isPaneTransientSecondarySurfaceId(surfaceId)) {
+                if (selectDurableFromTransient) {
+                  selectDurableFromTransient(secondaryPaneId, surfaceId);
+                } else {
+                  onActiveSurfaceChange(secondaryPaneId, surfaceId);
+                }
+              }
+            }}
+          />
+        ) : (
+          <span className={styles.soloTitle}>{activeSurfaceDefinition.title}</span>
+        )}
         <Button
           variant="ghost"
           size="sm"
           iconOnly
           aria-label={`Close ${activeSurfaceDefinition.title}`}
-          onClick={() => onClose(secondaryPaneId)}
+          onClick={close}
         >
           <X size={15} aria-hidden="true" />
         </Button>
       </header>
-      <SecondarySurfacePanels
-        baseId={baseId}
-        surfaces={publication.surfaces}
-        activeSurfaceId={activeSurface.id}
-        className={styles.body}
-      />
+      {showTabs ? (
+        <SecondarySurfacePanels
+          baseId={baseId}
+          surfaces={surfaces}
+          activeSurfaceId={activeSurface.id}
+          className={styles.body}
+        />
+      ) : (
+        <div
+          id={secondarySurfacePanelId(baseId, activeSurface.id)}
+          className={styles.body}
+        >
+          {activeSurface.body}
+        </div>
+      )}
       <div
         className={styles.resizeHandle}
         role="separator"

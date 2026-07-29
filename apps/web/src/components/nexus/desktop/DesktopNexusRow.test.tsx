@@ -56,6 +56,33 @@ describe("DesktopNexusRow", () => {
     );
   });
 
+  it("renders a static teaching entry's current keybinding as a hint", () => {
+    const teaching = {
+      ...entry,
+      key: "PaneSearch",
+      label: "Search this pane",
+      shortcutHint: "⌘F",
+      typeLabel: "Command",
+      metadata: undefined,
+      excerpt: undefined,
+      open: undefined,
+      hasSecondaryActions: false,
+    };
+
+    render(
+      <DesktopNexusRow
+        entry={teaching}
+        selected
+        controller={controller()}
+      />,
+    );
+
+    const option = screen.getByRole("option", {
+      name: "Search this pane. ⌘F. Command",
+    });
+    expect(within(option).getByText("⌘F")).toHaveProperty("tagName", "KBD");
+  });
+
   it("renders matched excerpt segments as escaped text with semantic emphasis", () => {
     const segmented = {
       ...entry,

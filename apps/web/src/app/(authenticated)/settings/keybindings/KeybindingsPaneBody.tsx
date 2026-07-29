@@ -43,6 +43,7 @@ const BINDABLE_DESTINATION_IDS = [
 // shared destination registry and workspace actions.
 const BINDABLE_ACTIONS: BindableAction[] = [
   { id: "Nexus.Open", label: "Open Nexus" },
+  { id: "Pane.Search", label: "Search this pane" },
   ...BINDABLE_DESTINATION_IDS.map((id) => ({
     id,
     label: `Go to ${getDestination(id).label}`,

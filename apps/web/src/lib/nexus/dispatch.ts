@@ -95,6 +95,7 @@ export interface NexusDispatchCtx {
   activatePane(paneId: string): void;
   restorePane(paneId: string): void;
   closePane(paneId: string): void;
+  requestPaneSearch(): boolean;
   openShare(target: ShareTarget, options: ShareOpenOptions): void;
   shareOptions(): ShareOpenOptions;
 }
@@ -143,6 +144,7 @@ export function nexusTargetNavigates(target: NexusTarget): boolean {
     case "QueueAdd":
     case "CopyExternalLink":
     case "PaneClose":
+    case "PaneSearch":
     case "OpenAdd":
     case "OpenTodayCapture":
     case "CreatePage":
@@ -298,6 +300,10 @@ export async function dispatchNexusTarget(
     case "PaneClose":
       context.closePane(target.paneId);
       return { kind: "Stayed" };
+    case "PaneSearch":
+      return context.requestPaneSearch()
+        ? { kind: "NavigationAccepted" }
+        : { kind: "Stayed" };
     case "OpenToday": {
       const page = await fetchDailyNotePage(todayLocalDate());
       return activateTarget(

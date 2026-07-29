@@ -1,6 +1,10 @@
 "use client";
 
 import {
+  RotateCcw,
+  Search,
+} from "lucide-react";
+import {
   useCallback,
   useId,
   useLayoutEffect,
@@ -9,6 +13,7 @@ import {
   useState,
   type CSSProperties,
 } from "react";
+import PaneSearchBar from "@/components/workspace/PaneSearchBar";
 import SurfaceHeader, {
   type SurfaceHeaderNavigation,
 } from "@/components/ui/SurfaceHeader";
@@ -59,6 +64,8 @@ import {
 import { useLibraryPlacementController } from "@/lib/libraries/placementController";
 import { useShareController } from "@/lib/sharing/controller";
 import { present } from "@/lib/api/presence";
+import { usePaneSearchRequested } from "@/lib/panes/paneSearchEvents";
+import type { PaneSearchPublication } from "@/lib/panes/paneSearch";
 import type {
   ActionDescriptor,
   PaneHeaderAction,
@@ -248,6 +255,45 @@ export default function PaneShell({
     primaryChromeRecord !== null && primaryChromeRecord.routeKey === routeKey
       ? primaryChromeRecord.publication
       : null;
+  const acceptedSearch = acceptedPrimaryChrome?.search;
+  const acceptedSearchRef = useRef<PaneSearchPublication | undefined>(
+    acceptedSearch,
+  );
+  const isActiveRef = useRef(isActive);
+  acceptedSearchRef.current = acceptedSearch;
+  isActiveRef.current = isActive;
+  const [expandedSearchRouteKey, setExpandedSearchRouteKey] = useState<
+    string | null
+  >(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const searchRowId = `${paneId}-pane-search`;
+  const searchExpanded =
+    expandedSearchRouteKey === routeKey && acceptedSearch !== undefined;
+  const focusSearchInput = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      searchInputRef.current?.focus({ preventScroll: true });
+      searchInputRef.current?.select();
+    });
+  }, []);
+  const openSearch = useCallback(() => {
+    if (!isActiveRef.current || !acceptedSearchRef.current) return false;
+    setExpandedSearchRouteKey(currentRouteKeyRef.current);
+    focusSearchInput();
+    return true;
+  }, [focusSearchInput]);
+  usePaneSearchRequested(openSearch);
+  const closeSearch = useCallback(() => {
+    setExpandedSearchRouteKey(null);
+    window.requestAnimationFrame(() => {
+      const trigger =
+        searchTriggerRef.current ??
+        chromeRef.current?.querySelector<HTMLButtonElement>(
+          '[data-action-id="Pane.Search"]',
+        );
+      trigger?.focus({ preventScroll: true });
+    });
+  }, []);
   // The mobile chrome provider re-renders active PaneShell consumers when a pane
   // publishes. Keep this projection referentially stable across that feedback render;
   // otherwise the publication effect below sees a new header, republishes, and can
@@ -273,7 +319,7 @@ export default function PaneShell({
   useMobileChromeSurface(
     chromeRef,
     "PaneToolbar",
-    isMobile && isActive && Boolean(effectiveToolbar),
+    isMobile && isActive && Boolean(effectiveToolbar || searchExpanded),
   );
   const effectiveActions =
     acceptedPrimaryChrome?.actions ?? EMPTY_HEADER_ACTIONS;
@@ -292,9 +338,70 @@ export default function PaneShell({
   const secondaryRegionId = secondaryPresentation
     ? paneSecondaryRegionId(paneId, secondaryPresentation.publication.groupId)
     : null;
+  const actionsWithSearch = useMemo<readonly PaneHeaderAction[]>(() => {
+    if (!acceptedSearch) return effectiveActions;
+    const searchLabel =
+      acceptedSearch.kind === "FilterRows" ? "Filter" : "Find";
+    const actions: PaneHeaderAction[] = [
+      ...effectiveActions,
+      {
+        kind: "command",
+        id: "Pane.Search",
+        label: searchLabel,
+        icon: <Search size={16} aria-hidden="true" />,
+        state: searchExpanded
+          ? {
+              kind: "disclosure",
+              expanded: true,
+              controls: searchRowId,
+              menuLabels: {
+                collapsed: searchLabel,
+                expanded: `Close ${searchLabel.toLowerCase()}`,
+              },
+            }
+          : {
+              kind: "disclosure",
+              expanded: false,
+              menuLabels: {
+                collapsed: searchLabel,
+                expanded: `Close ${searchLabel.toLowerCase()}`,
+              },
+            },
+        onSelect: ({ triggerEl }) => {
+          searchTriggerRef.current = triggerEl;
+          if (searchExpanded) {
+            acceptedSearch.onDismiss();
+            closeSearch();
+            return;
+          }
+          openSearch();
+        },
+      },
+    ];
+    if (
+      acceptedSearch.kind === "FindOccurrences" &&
+      acceptedSearch.returnToReadingPosition.kind === "Available"
+    ) {
+      actions.push({
+        kind: "command",
+        id: "Pane.SearchReturn",
+        label: "Go back to reading position",
+        icon: <RotateCcw size={16} aria-hidden="true" />,
+        onSelect: acceptedSearch.returnToReadingPosition.onReturn,
+      });
+    }
+    return actions;
+  }, [
+    acceptedSearch,
+    closeSearch,
+    effectiveActions,
+    openSearch,
+    searchExpanded,
+    searchRowId,
+  ]);
   const reconciledActions = useMemo(
     () =>
-      effectiveActions.filter((action) => {
+      actionsWithSearch.filter((action) => {
         if (
           action.kind !== "command" ||
           action.state?.kind !== "disclosure" ||
@@ -305,7 +412,7 @@ export default function PaneShell({
         }
         return action.state.controls === secondaryRegionId;
       }),
-    [effectiveActions, paneId, secondaryRegionId],
+    [actionsWithSearch, paneId, secondaryRegionId],
   );
 
   useLayoutEffect(() => {
@@ -321,7 +428,7 @@ export default function PaneShell({
     const observer = new ResizeObserver(update);
     observer.observe(node);
     return () => observer.disconnect();
-  }, [effectiveToolbar, isMobile]);
+  }, [effectiveToolbar, isMobile, searchExpanded]);
 
   const chatBusyRefs = useRef(new Set<string>());
   const [chatBusySubjects, setChatBusySubjects] = useState<
@@ -576,7 +683,9 @@ export default function PaneShell({
           className={styles.chrome}
           data-testid="pane-shell-chrome"
           data-pane-chrome-focus={
-            !isMobile || effectiveToolbar ? "true" : undefined
+            !isMobile || effectiveToolbar || searchExpanded
+              ? "true"
+              : undefined
           }
           data-mobile-chrome-phase={motionPhase.kind}
           tabIndex={-1}
@@ -590,6 +699,19 @@ export default function PaneShell({
               actions={reconciledActions}
               navigation={navigation}
             />
+          ) : null}
+          {searchExpanded && acceptedSearch ? (
+            <div
+              id={searchRowId}
+              className={styles.toolbar}
+              data-testid="pane-search-toolbar"
+            >
+              <PaneSearchBar
+                ref={searchInputRef}
+                publication={acceptedSearch}
+                onClose={closeSearch}
+              />
+            </div>
           ) : null}
           {effectiveToolbar ? (
             <div
