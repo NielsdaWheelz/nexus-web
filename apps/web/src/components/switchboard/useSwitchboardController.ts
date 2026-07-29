@@ -3,9 +3,9 @@
 import { useMemo } from "react";
 import { getPaneRouteIcon } from "@/lib/panes/paneRouteTable";
 import { paneStatusLabel } from "@/lib/switchboard/paneStatusLabel";
-import type { LauncherController } from "@/components/launcher/useLauncherController";
+import type { NexusController } from "@/components/nexus/useNexusController";
 
-export function useSwitchboardController(controller: LauncherController) {
+export function useSwitchboardController(controller: NexusController) {
   const places = useMemo(
     () =>
       controller.switchboardPlaces.map((place) => ({

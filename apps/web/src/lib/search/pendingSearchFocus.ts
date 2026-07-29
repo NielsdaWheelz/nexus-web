@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * A one-shot "focus the search box" request. The Launcher sets it when it navigates
+ * A one-shot "focus the search box" request. Nexus sets it when it navigates
  * to the search surface (the "Go to Authors" / "Search" commands and their
  * keybindings); SearchPaneBody consumes it the first time it mounts enabled.
  *

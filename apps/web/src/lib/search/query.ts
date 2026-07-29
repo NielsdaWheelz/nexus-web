@@ -1,5 +1,5 @@
 // The frontend SearchQuery value object — one model shared by the /search page and
-// the command-palette @ lane (search cutover §7.1/G3).
+// the retired sigil-based search mode (search cutover §7.1/G3).
 
 import { SEARCH_KINDS, type MediaFormat, type SearchKind } from "./kinds";
 import { parseSearchInput, type ParsedSearchInput } from "./parseSearchInput";
@@ -89,7 +89,7 @@ export function applyParsedInput(
   };
 }
 
-// One-shot: build a fresh SearchQuery from raw box input (page + palette share this).
+// One-shot: build a fresh SearchQuery from raw box input (page + Nexus share this).
 export function searchQueryFromInput(raw: string): SearchQuery {
   return applyParsedInput(emptySearchQuery(), parseSearchInput(raw));
 }

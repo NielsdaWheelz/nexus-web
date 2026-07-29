@@ -39,10 +39,10 @@ const BINDABLE_DESTINATION_IDS = [
   "settings",
 ] as const satisfies readonly DestinationId[];
 
-// Bindable ids match the launcher's resolvable actions: "open-launcher" + a
-// deliberate projection of the shared destination registry + workspace actions.
+// Bindable ids match the Nexus executor plus a deliberate projection of the
+// shared destination registry and workspace actions.
 const BINDABLE_ACTIONS: BindableAction[] = [
-  { id: "open-launcher", label: "Open launcher" },
+  { id: "Nexus.Open", label: "Open Nexus" },
   ...BINDABLE_DESTINATION_IDS.map((id) => ({
     id,
     label: `Go to ${getDestination(id).label}`,

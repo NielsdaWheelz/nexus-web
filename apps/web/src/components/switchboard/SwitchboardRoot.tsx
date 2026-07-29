@@ -3,7 +3,7 @@
 import { X } from "lucide-react";
 import { useLayoutEffect, useRef, type ReactNode } from "react";
 import SwitchboardRow from "./SwitchboardRow";
-import type { SwitchboardQuickAction } from "@/lib/launcher/quickActions";
+import type { NexusQuickAction } from "@/lib/nexus/model";
 import type { Destination } from "@/lib/navigation/destinations";
 import type { WorkspaceActivationRouteId } from "@/lib/panes/paneIdentity";
 import {
@@ -42,9 +42,10 @@ export default function SwitchboardRoot({
   onClosePane,
   onRestorePane,
   onRetryRetained,
+  onCancelRetained,
 }: {
   places: readonly Destination[];
-  quickActions: readonly SwitchboardQuickAction[];
+  quickActions: readonly NexusQuickAction[];
   panes: readonly SwitchboardPaneRow[];
   recentlyClosed: readonly SwitchboardClosedPaneRow[];
   accountMenu: ReactNode;
@@ -53,11 +54,12 @@ export default function SwitchboardRoot({
   onDone: () => void;
   onFind: () => void;
   onPlace: (destination: Destination) => void;
-  onQuickAction: (action: SwitchboardQuickAction) => void;
+  onQuickAction: (action: NexusQuickAction) => void;
   onOpenPane: (paneId: string) => void;
   onClosePane: (paneId: string) => void;
   onRestorePane: (paneId: string) => void;
   onRetryRetained?: () => void;
+  onCancelRetained?: () => void;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -128,6 +130,11 @@ export default function SwitchboardRoot({
             <button type="button" onClick={onRetryRetained}>
               Open
             </button>
+            {onCancelRetained ? (
+              <button type="button" onClick={onCancelRetained}>
+                Cancel
+              </button>
+            ) : null}
           </section>
         ) : null}
 

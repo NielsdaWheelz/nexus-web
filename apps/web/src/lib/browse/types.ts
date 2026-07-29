@@ -1,6 +1,6 @@
 /**
  * Browse API wire-format types. These describe the shapes returned by
- * `GET /api/browse` and consumed by the Launcher `browse` lane.
+ * `GET /api/browse` and consumed by podcast discovery.
  */
 
 import type { ContributorCredit } from "@/lib/contributors/types";

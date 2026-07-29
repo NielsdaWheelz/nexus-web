@@ -49,7 +49,7 @@ import {
   listMemberLibraries,
   type MemberLibrary,
 } from "@/lib/libraries/client";
-import { dispatchOpenLauncher } from "@/lib/launcher/launcherEvents";
+import { requestNexusOpen } from "@/lib/nexus/events";
 import {
   definePaneVisitDataKey,
   useClearAllPaneVisitData,
@@ -669,7 +669,10 @@ export default function PodcastsPaneBody() {
                   variant="primary"
                   size="md"
                   onClick={() =>
-                    dispatchOpenLauncher({ kind: "Root", lane: "browse" })
+                    requestNexusOpen({
+                      kind: "QuickAction",
+                      actionId: "Nexus.Quick.Podcast",
+                    })
                   }
                 >
                   Browse
@@ -712,7 +715,10 @@ export default function PodcastsPaneBody() {
                   size="sm"
                   className={styles.inlineButton}
                   onClick={() =>
-                    dispatchOpenLauncher({ kind: "Root", lane: "browse" })
+                    requestNexusOpen({
+                      kind: "QuickAction",
+                      actionId: "Nexus.Quick.Podcast",
+                    })
                   }
                 >
                   Browse podcasts

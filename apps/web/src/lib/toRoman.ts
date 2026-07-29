@@ -1,6 +1,6 @@
 /**
  * Convert a positive integer to its Roman-numeral representation.
- * Used by the command palette folio search and the Oracle folio views.
+ * Used by Nexus folio search and the Oracle folio views.
  */
 
 const ROMAN_VALUES: [number, string][] = [

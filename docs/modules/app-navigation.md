@@ -20,18 +20,54 @@ Neither is a directory of every feature.
 - **Mobile Places order is exact and flat:** Lectern, Libraries, Podcasts,
   Chats, Notes. Stats, Atlas, and Oracle remain retrievable through Find.
 - **Fixed navigation is not customizable.** Pinning is not part of this
-  contract. Personalized retrieval belongs in the Lectern Reading Slate and the
-  Launcher, where it can scale without destabilizing spatial memory.
+  contract. Personalized retrieval belongs in the Lectern Reading Slate and
+  Nexus, where it can scale without destabilizing spatial memory.
 
-On desktop, Account, Add, and Launcher controls are rail actions outside the
+On desktop, Account and Nexus controls are rail actions outside the
 ordered destination list. On mobile, Account, Find, Add/Create, open panes, and
 recently closed panes live inside Switchboard. Search, Authors, settings
 subpages, and other valid destinations remain retrievable without becoming
 permanent navigation items.
 
-Desktop Add is a direct Launcher detail, not a Launcher lane or mode chooser.
-Mobile Import opens the same source-first Add workbench from Switchboard Quick;
-an editable non-default Library may still seed its full destination object.
+Desktop Nexus presents New Chat, New Note, New Page, and Import as direct
+actions, not as an Add lane or mode chooser. Mobile Import opens the same
+source-first Add workbench from Switchboard Quick; an editable non-default
+Library may still seed its full destination object.
+
+## Desktop Nexus content grammar
+
+Desktop Nexus is a one-column workspace switchboard, not a typed command
+language. Its input is always labelled and placeholdered **Find anything…**.
+The zero state shows only an `Open` run of existing/recent internal targets and
+the four explicit `New` actions: **New Chat**, **New Note**, **New Page**, and
+**Import**. Places are retrievable; they are not a permanent button wall.
+
+A result has one required primary label. It may add only facts already carried
+by its projection, in this hierarchy:
+
+1. a factual type label;
+2. an owner or source;
+3. `Open` only for an existing workspace pane;
+4. an existing matched excerpt.
+
+The primary label remains dominant. Nexus never invents a summary, confidence,
+activity state, or type decoration merely to fill a row. Search-source failures
+say either **Couldn’t search your resources** or **Couldn’t search inside your
+library**, retain successful rows, and expose a source-specific **Retry** outside
+the listbox. The explicit Web Search page says **Web Search**, `Results for
+“{query}”`, and on failure **Couldn’t search the web. Retry**. A Web result is
+an Import-URL candidate, never a silently ingested document.
+
+The listbox has no nested controls: one result equals one primary activation.
+The selected result's **Actions** control is outside it and remains pointer
+reachable at every desktop width. `Enter`/click is Follow; `Shift+Enter`/
+Shift+click is Fork.
+
+Desktop Nexus publishes named user-timing measures at input-ready, local rows
+committed, accepted pane paint, and first usable provider rows. The benchmark
+reports its sample size and p95 separately for warm and cold runs; it never
+labels a warmed provider loop as cold. The p95 gates are respectively under
+50 ms, 50 ms, 100 ms, and 250 ms.
 
 ## Ownership
 
@@ -47,15 +83,15 @@ an editable non-default Library may still seed its full destination object.
 | Internal-link gesture policy                                      | `apps/web/src/lib/panes/targetLinkActivation.ts`                                                                  |
 | Target selection, restoration, creation, and activation           | `activateWorkspaceTarget` in `apps/web/src/lib/workspace/store.tsx`                                               |
 | Server-restored deep-link merge                                   | `apps/web/src/lib/workspace/workspaceRestore.ts`                                                                  |
-| Desktop Launcher projection                                      | `apps/web/src/lib/launcher/providers.ts`                                                                          |
-| Mobile quick-action projection                                   | `apps/web/src/lib/launcher/quickActions.ts`                                                                        |
-| Direct Add intent/session                                         | `apps/web/src/lib/launcher/launcherEvents.ts` and `apps/web/src/components/launcher/useAddContentSession.ts`      |
+| Desktop Nexus projection                                         | `apps/web/src/lib/nexus/model.ts`, `apps/web/src/lib/nexus/ranking.ts`, and `apps/web/src/components/nexus/desktop/` |
+| Mobile quick-action projection                                   | `apps/web/src/lib/nexus/quickActions.ts`                                                                          |
+| Nexus ingress and direct action session                          | `apps/web/src/lib/nexus/events.ts` and `apps/web/src/components/nexus/useNexusController.ts`                      |
 | Keybinding projection                                             | `apps/web/src/app/(authenticated)/settings/keybindings/KeybindingsPaneBody.tsx`                                   |
-| Palette-history href allowlist                                    | `python/nexus/services/command_palette.py`                                                                        |
+| Nexus history href allowlist                                     | `python/nexus/services/nexus_history.py`                                                                          |
 
 The separations are deliberate. A destination can exist without occupying
 fixed navigation; a pane route can identify its owning section without
-reimplementing path-prefix matching; and Launcher ranking can change without
+reimplementing path-prefix matching; and Nexus ranking can change without
 reordering the rail.
 
 ## Active-state semantics
@@ -117,7 +153,7 @@ and brand href all derive from `/lectern`. There is no root redirect.
 
 `/` is the authenticated **Resume** entry. Server bootstrap restores the saved
 workspace unchanged, including its active primary pane; when no usable session
-exists it creates the one-pane Lectern empty state. Root Launcher query intents
+exists it creates the one-pane Lectern empty state. Root Nexus query intents
 are consumed before the workspace projects that active pane back into the URL,
 so they open over the restored workspace and never become panes.
 
@@ -139,7 +175,7 @@ When adding or changing a destination:
 2. Change fixed membership/order/presentation only in `APP_NAVIGATION`.
 3. Give a section route one `header.destinationId`; give a resource route one
    `sectionDestinationId`.
-4. If the backend records Launcher history for the href, update its canonical
+4. If the backend records Nexus history for the href, update its canonical
    allowlist and integration coverage.
 5. Add a destination to mobile Places only by changing
    `SWITCHBOARD_PLACE_IDS`; do not duplicate its identity.

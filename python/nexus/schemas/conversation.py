@@ -731,7 +731,7 @@ class NewChatDestination(BaseModel):
 class EmptyInsertion(BaseModel):
     """Insert the first root message into a still-empty conversation.
 
-    Exists only because the retained generic resource-context launcher creates a
+    Exists only because the retained generic resource-context picker creates a
     context-bearing conversation before its first message; the server locks and
     linearizes it against concurrent message creation.
     """

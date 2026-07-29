@@ -13,7 +13,7 @@ import { getPaneRouteIcon } from "@/lib/panes/paneRouteTable";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { sectionDestinationIdForHref } from "@/lib/panes/paneRouteModel";
 import type { WorkspaceTargetActivationResult } from "@/lib/workspace/targetActivation";
-import { dispatchOpenLauncher } from "@/lib/launcher/launcherEvents";
+import { requestNexusOpen } from "@/lib/nexus/events";
 import { DEFAULT_KEYBINDINGS } from "@/lib/keybindings";
 import { useKeybinding, useKeybindingLabel } from "@/lib/keybindingsProvider";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -49,8 +49,8 @@ export default function AppNav() {
 
   const [collapsed, setCollapsed] = useState(false);
   const commandCombo =
-    useKeybinding("open-launcher") ?? DEFAULT_KEYBINDINGS["open-launcher"];
-  const commandHint = useKeybindingLabel("open-launcher") ?? commandCombo;
+    useKeybinding("Nexus.Open") ?? DEFAULT_KEYBINDINGS["Nexus.Open"];
+  const commandHint = useKeybindingLabel("Nexus.Open") ?? commandCombo;
 
   useEffect(() => {
     setCollapsed(localStorage.getItem(COLLAPSE_KEY) === "1");
@@ -105,10 +105,13 @@ export default function AppNav() {
     [activateWorkspaceTarget, state.activePrimaryPaneId],
   );
 
-  const openCommand = useCallback(() => dispatchOpenLauncher(), []);
+  const openCommand = useCallback(
+    () => requestNexusOpen({ kind: "Root" }),
+    [],
+  );
   const openAdd = useCallback(
     () =>
-      dispatchOpenLauncher({
+      requestNexusOpen({
         kind: "Add",
         seed: {
           kind: "Content",

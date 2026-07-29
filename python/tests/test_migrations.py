@@ -25363,3 +25363,270 @@ class TestMigration0200ViewerCollectionRevisions:
             reset_test_schema()
             run_alembic_command("upgrade head")
             engine.dispose()
+
+
+@MIGRATION_CI_LATE
+class TestMigration0199NexusUsageHardCutover:
+    def test_0199_deletes_non_href_rows_and_round_trips_every_retained_href_field(self):
+        reset_test_schema()
+        assert run_alembic_command("upgrade 0198").returncode == 0
+        engine = create_engine(get_test_database_url())
+        user_id = uuid4()
+        recorded_at = datetime(2026, 7, 29, 12, 34, 56, tzinfo=UTC)
+        source_pairs = (
+            ("static", "Static"),
+            ("workspace", "Workspace"),
+            ("recent", "Recent"),
+            ("oracle", "Oracle"),
+            ("search", "Search"),
+            ("ai", "Ai"),
+        )
+        href_rows = [
+            {
+                "id": uuid4(),
+                "user_id": user_id,
+                "query": f"query-{old_source}",
+                "target_key": f"/media/{index}",
+                "target_href": f"/media/{index}",
+                "title": f"Label {index}",
+                "source": old_source,
+                "use_count": index + 1,
+                "visits": [
+                    recorded_at.isoformat(),
+                    recorded_at.replace(hour=11).isoformat(),
+                ],
+                "last_used_at": recorded_at,
+                "created_at": recorded_at.replace(day=28),
+                "updated_at": recorded_at,
+            }
+            for index, (old_source, _new_source) in enumerate(source_pairs, start=1)
+        ]
+        non_href_rows = [
+            {
+                "id": uuid4(),
+                "user_id": user_id,
+                "query": "",
+                "target_key": "open-oracle",
+                "target_kind": "action",
+                "target_href": None,
+                "title": "Open Oracle",
+                "source": "oracle",
+                "use_count": 3,
+                "visits": [recorded_at.isoformat()],
+                "last_used_at": recorded_at,
+                "created_at": recorded_at,
+                "updated_at": recorded_at,
+            },
+            {
+                "id": uuid4(),
+                "user_id": user_id,
+                "query": "systems",
+                "target_key": "ask-nexus",
+                "target_kind": "prefill",
+                "target_href": None,
+                "title": "Ask Nexus",
+                "source": "ai",
+                "use_count": 2,
+                "visits": [recorded_at.isoformat()],
+                "last_used_at": recorded_at,
+                "created_at": recorded_at,
+                "updated_at": recorded_at,
+            },
+        ]
+        try:
+            with engine.begin() as connection:
+                connection.execute(
+                    text("INSERT INTO users (id) VALUES (:id)"),
+                    {"id": user_id},
+                )
+                for row in href_rows:
+                    connection.execute(
+                        text(
+                            """
+                            INSERT INTO command_palette_usages (
+                                id, user_id, query_normalized, target_key,
+                                target_kind, target_href, title_snapshot, source,
+                                use_count, visit_timestamps, last_used_at,
+                                created_at, updated_at
+                            )
+                            VALUES (
+                                :id, :user_id, :query, :target_key,
+                                'href', :target_href, :title, :source,
+                                :use_count, CAST(:visits AS jsonb), :last_used_at,
+                                :created_at, :updated_at
+                            )
+                            """
+                        ),
+                        {**row, "visits": json.dumps(row["visits"])},
+                    )
+                for row in non_href_rows:
+                    connection.execute(
+                        text(
+                            """
+                            INSERT INTO command_palette_usages (
+                                id, user_id, query_normalized, target_key,
+                                target_kind, target_href, title_snapshot, source,
+                                use_count, visit_timestamps, last_used_at,
+                                created_at, updated_at
+                            )
+                            VALUES (
+                                :id, :user_id, :query, :target_key,
+                                :target_kind, :target_href, :title, :source,
+                                :use_count, CAST(:visits AS jsonb), :last_used_at,
+                                :created_at, :updated_at
+                            )
+                            """
+                        ),
+                        {**row, "visits": json.dumps(row["visits"])},
+                    )
+
+            result = run_alembic_command("upgrade 0199")
+            assert result.returncode == 0, result.stderr
+            assert "target_kind='action' source='oracle' rows=1" in result.stdout
+            assert "target_kind='prefill' source='ai' rows=1" in result.stdout
+
+            with engine.connect() as connection:
+                assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0199"
+                assert (
+                    connection.scalar(text("SELECT to_regclass('public.command_palette_usages')"))
+                    is None
+                )
+                assert connection.scalar(text("SELECT to_regclass('public.nexus_usages')")) == (
+                    "nexus_usages"
+                )
+                columns = {
+                    row.column_name: row.is_nullable
+                    for row in connection.execute(
+                        text(
+                            """
+                            SELECT column_name, is_nullable
+                            FROM information_schema.columns
+                            WHERE table_schema = 'public'
+                              AND table_name = 'nexus_usages'
+                            """
+                        )
+                    )
+                }
+                assert columns["target_href"] == "NO"
+                assert columns["label_snapshot"] == "NO"
+                assert {"target_key", "target_kind", "title_snapshot"}.isdisjoint(columns)
+
+                migrated = connection.execute(
+                    text(
+                        """
+                        SELECT id, query_normalized, target_href, label_snapshot,
+                               source, use_count, visit_timestamps, last_used_at,
+                               created_at, updated_at
+                        FROM nexus_usages
+                        ORDER BY id
+                        """
+                    )
+                ).all()
+                expected_by_id = {row["id"]: row for row in href_rows}
+                assert len(migrated) == len(href_rows)
+                for row in migrated:
+                    seeded = expected_by_id[row.id]
+                    assert row.query_normalized == seeded["query"]
+                    assert row.target_href == seeded["target_href"]
+                    assert row.label_snapshot == seeded["title"]
+                    assert row.source == dict(source_pairs)[seeded["source"]]
+                    assert row.use_count == seeded["use_count"]
+                    assert row.visit_timestamps == seeded["visits"]
+                    assert row.last_used_at == seeded["last_used_at"]
+                    assert row.created_at == seeded["created_at"]
+                    assert row.updated_at == seeded["updated_at"]
+
+                constraints = set(
+                    connection.scalars(
+                        text(
+                            """
+                            SELECT conname
+                            FROM pg_constraint
+                            WHERE conrelid = 'nexus_usages'::regclass
+                            """
+                        )
+                    )
+                )
+                assert {
+                    "nexus_usages_pkey",
+                    "nexus_usages_user_id_fkey",
+                    "uq_nexus_usages_user_query_href",
+                    "ck_nexus_usages_use_count",
+                } <= constraints
+                assert not any("command_palette" in name for name in constraints)
+                assert not any("source" in name for name in constraints)
+
+                indexes = set(
+                    connection.scalars(
+                        text(
+                            """
+                            SELECT indexname
+                            FROM pg_indexes
+                            WHERE schemaname = 'public'
+                              AND tablename = 'nexus_usages'
+                            """
+                        )
+                    )
+                )
+                assert {
+                    "nexus_usages_pkey",
+                    "uq_nexus_usages_user_query_href",
+                    "ix_nexus_usages_user_last_used_at_id",
+                    "ix_nexus_usages_user_query_last_used_at",
+                } <= indexes
+                assert not any("command_palette" in name for name in indexes)
+
+            duplicate = href_rows[0]
+            with pytest.raises(IntegrityError):
+                with engine.begin() as connection:
+                    connection.execute(
+                        text(
+                            """
+                            INSERT INTO nexus_usages (
+                                user_id, query_normalized, target_href,
+                                label_snapshot, source, use_count,
+                                visit_timestamps
+                            )
+                            VALUES (
+                                :user_id, :query, :target_href,
+                                'Duplicate', 'Static', 1, '[]'::jsonb
+                            )
+                            """
+                        ),
+                        duplicate,
+                    )
+
+            result = run_alembic_command("downgrade 0198")
+            assert result.returncode == 0, result.stderr
+            with engine.connect() as connection:
+                assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0198"
+                assert connection.scalar(text("SELECT to_regclass('public.nexus_usages')")) is None
+                reversed_rows = connection.execute(
+                    text(
+                        """
+                        SELECT id, query_normalized, target_key, target_kind,
+                               target_href, title_snapshot, source, use_count,
+                               visit_timestamps, last_used_at, created_at, updated_at
+                        FROM command_palette_usages
+                        ORDER BY id
+                        """
+                    )
+                ).all()
+                assert len(reversed_rows) == len(href_rows)
+                for row in reversed_rows:
+                    seeded = expected_by_id[row.id]
+                    assert row.query_normalized == seeded["query"]
+                    assert row.target_key == seeded["target_href"]
+                    assert row.target_kind == "href"
+                    assert row.target_href == seeded["target_href"]
+                    assert row.title_snapshot == seeded["title"]
+                    assert row.source == seeded["source"]
+                    assert row.use_count == seeded["use_count"]
+                    assert row.visit_timestamps == seeded["visits"]
+                    assert row.last_used_at == seeded["last_used_at"]
+                    assert row.created_at == seeded["created_at"]
+                    assert row.updated_at == seeded["updated_at"]
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()

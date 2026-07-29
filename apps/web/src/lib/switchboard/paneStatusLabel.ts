@@ -1,6 +1,6 @@
 /**
  * The one status label for an open workspace pane row shown across the
- * Switchboard root, the launcher owner-pane rows, and mobile local Find.
+ * Switchboard root, Nexus owner-pane rows, and mobile local Find.
  */
 export function paneStatusLabel(pane: {
   current: boolean;

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import AppNav from "@/components/appnav/AppNav";
-import Launcher from "@/components/launcher/Launcher";
+import Nexus from "@/components/nexus/Nexus";
 import WorkspaceHost from "@/components/workspace/WorkspaceHost";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
 import LecternMutationNotice from "@/components/LecternMutationNotice";
@@ -109,13 +109,13 @@ function AuthenticatedWorkspace({ initialState }: { initialState: WorkspaceState
         >
           <MobileViewportProvider>
             <MobileChromeProvider>
-              {/* One Lectern owner wraps the Launcher/workspace leaves and the player
+              {/* One Lectern owner wraps the Nexus/workspace leaves and the player
                   session (spec §3 architecture): LecternProvider -> leaves ->
                   GlobalPlayerProvider -> WorkspaceHost + GlobalPlayerFooter. */}
               <LecternProvider>
                 <LibraryPlacementControllerProvider>
                   <ShareControllerProvider>
-                    <Launcher />
+                    <Nexus />
                     <div className={styles.layout} data-hydrated={hydrated || undefined}>
                       <AppNav />
                       <main className={styles.main}>

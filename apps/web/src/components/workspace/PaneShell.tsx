@@ -78,6 +78,7 @@ import {
 import type { WorkspaceAttachedSecondaryPaneState } from "@/lib/workspace/schema";
 import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
 import { SwitchboardPanePerformanceContext } from "@/lib/switchboard/performance";
+import { NexusDesktopPanePerformanceContext } from "@/lib/nexus/performance";
 import styles from "./PaneShell.module.css";
 
 const noopResizeSecondaryPane = () => {};
@@ -623,9 +624,11 @@ export default function PaneShell({
             <SwitchboardPanePerformanceContext.Provider
               value={panePerformance}
             >
-              <PanePrimaryChromeProvider publish={publishPrimaryChrome}>
-                {children}
-              </PanePrimaryChromeProvider>
+              <NexusDesktopPanePerformanceContext.Provider value={panePerformance}>
+                <PanePrimaryChromeProvider publish={publishPrimaryChrome}>
+                  {children}
+                </PanePrimaryChromeProvider>
+              </NexusDesktopPanePerformanceContext.Provider>
             </SwitchboardPanePerformanceContext.Provider>
           </div>
           {visibleFixedChrome ? (

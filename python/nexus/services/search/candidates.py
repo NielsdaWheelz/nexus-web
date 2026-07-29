@@ -49,7 +49,11 @@ from nexus.services.search.projection import (
     _snippet_around_query,
     _truncate_snippet,
 )
-from nexus.services.search.ranking import TYPE_WEIGHTS, _normalize_scores_by_type
+from nexus.services.search.ranking import (
+    MAX_POSITIVE_TYPE_WEIGHT,
+    TYPE_WEIGHTS,
+    _normalize_scores_by_type,
+)
 from nexus.services.search.results import (
     InternalSearchResult,
     _build_search_score,
@@ -156,10 +160,11 @@ def candidate_resource_ref(candidate: TargetCandidate) -> ResourceRef:
 
 
 def rank_candidates[C: TargetCandidate](candidates: list[C]) -> list[C]:
-    """Weight, normalize within type, and sort candidates deterministically in place."""
-    for candidate in candidates:
-        candidate.score.weighted = candidate.score.raw * TYPE_WEIGHTS[candidate.result_type]
+    """Normalize, weight, project to [0, 1], and sort deterministically in place."""
     _normalize_scores_by_type(candidates)
+    for candidate in candidates:
+        candidate.score.weighted = candidate.score.normalized * TYPE_WEIGHTS[candidate.result_type]
+        candidate.score.normalized = candidate.score.weighted / MAX_POSITIVE_TYPE_WEIGHT
     candidates.sort(
         key=lambda candidate: (
             -candidate.score.normalized,

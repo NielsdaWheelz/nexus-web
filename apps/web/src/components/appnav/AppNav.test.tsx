@@ -11,9 +11,9 @@ import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import AppNav from "./AppNav";
 import {
-  OPEN_LAUNCHER_EVENT,
-  type OpenLauncherDetail,
-} from "@/lib/launcher/launcherEvents";
+  NEXUS_OPEN_REQUESTED_EVENT,
+} from "@/lib/nexus/events";
+import type { NexusOpenIntent } from "@/lib/nexus/model";
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
 import {
@@ -221,9 +221,9 @@ describe("AppNav (desktop rail)", () => {
     });
   });
 
-  it("opens the launcher from the command bar (no lane seed)", () => {
+  it("opens Nexus from the command bar", () => {
     const onOpen = vi.fn();
-    window.addEventListener(OPEN_LAUNCHER_EVENT, onOpen);
+    window.addEventListener(NEXUS_OPEN_REQUESTED_EVENT, onOpen);
     renderNav();
 
     fireEvent.click(
@@ -231,21 +231,21 @@ describe("AppNav (desktop rail)", () => {
     );
 
     expect(onOpen).toHaveBeenCalledTimes(1);
-    const detail = (onOpen.mock.calls[0]![0] as CustomEvent<OpenLauncherDetail>)
+    const detail = (onOpen.mock.calls[0]![0] as CustomEvent<NexusOpenIntent>)
       .detail;
     expect(detail).toEqual({ kind: "Root" });
-    window.removeEventListener(OPEN_LAUNCHER_EVENT, onOpen);
+    window.removeEventListener(NEXUS_OPEN_REQUESTED_EVENT, onOpen);
   });
 
   it("opens source-first Add from the + button", () => {
     const onOpen = vi.fn();
-    window.addEventListener(OPEN_LAUNCHER_EVENT, onOpen);
+    window.addEventListener(NEXUS_OPEN_REQUESTED_EVENT, onOpen);
     renderNav();
 
     fireEvent.click(screen.getByRole("button", { name: "Add content" }));
 
     expect(onOpen).toHaveBeenCalledTimes(1);
-    const detail = (onOpen.mock.calls[0]![0] as CustomEvent<OpenLauncherDetail>)
+    const detail = (onOpen.mock.calls[0]![0] as CustomEvent<NexusOpenIntent>)
       .detail;
     expect(detail).toEqual({
       kind: "Add",
@@ -255,7 +255,7 @@ describe("AppNav (desktop rail)", () => {
         initialDestinations: [],
       },
     });
-    window.removeEventListener(OPEN_LAUNCHER_EVENT, onOpen);
+    window.removeEventListener(NEXUS_OPEN_REQUESTED_EVENT, onOpen);
   });
 
   it("opens an account menu with Settings and Sign Out", async () => {

@@ -33,9 +33,9 @@ import {
   resetLibraryPlacementRevisionForTest,
 } from "@/lib/libraries/placementRevision";
 import {
-  OPEN_LAUNCHER_EVENT,
-  type OpenLauncherDetail,
-} from "@/lib/launcher/launcherEvents";
+  NEXUS_OPEN_REQUESTED_EVENT,
+} from "@/lib/nexus/events";
+import type { NexusOpenIntent } from "@/lib/nexus/model";
 import { PanePrimaryChromeProvider } from "@/components/workspace/PanePrimaryChrome";
 import type { PanePrimaryChromePublicationUpdate } from "@/lib/panes/panePublications";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
@@ -575,11 +575,11 @@ exhaustion: "Complete",
     });
     const publish =
       vi.fn<(update: PanePrimaryChromePublicationUpdate) => void>();
-    const details: OpenLauncherDetail[] = [];
+    const details: NexusOpenIntent[] = [];
     const onOpen = (event: Event) => {
-      details.push((event as CustomEvent<OpenLauncherDetail>).detail);
+      details.push((event as CustomEvent<NexusOpenIntent>).detail);
     };
-    window.addEventListener(OPEN_LAUNCHER_EVENT, onOpen);
+    window.addEventListener(NEXUS_OPEN_REQUESTED_EVENT, onOpen);
 
     try {
       renderHydratedPane({
@@ -639,7 +639,7 @@ exhaustion: "Complete",
         },
       ]);
     } finally {
-      window.removeEventListener(OPEN_LAUNCHER_EVENT, onOpen);
+      window.removeEventListener(NEXUS_OPEN_REQUESTED_EVENT, onOpen);
     }
   });
 

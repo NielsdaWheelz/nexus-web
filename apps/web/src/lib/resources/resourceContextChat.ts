@@ -1,7 +1,7 @@
 import { apiFetch } from "@/lib/api/client";
 
 /**
- * The generic resource-context chat launcher: creates a conversation seeded with
+ * The generic resource-context chat creator: creates a conversation seeded with
  * `initial_context_refs` (a subject ref plus optional companions) and returns its
  * id. This is context-only and is NOT the reader-Highlight quote path — reader
  * quotes use the typed `ReaderHighlightChatIntent` and never pre-create a

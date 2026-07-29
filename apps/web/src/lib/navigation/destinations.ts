@@ -1,10 +1,10 @@
 /**
  * The single identity registry for in-app destinations. The app navigation and
- * Launcher project this registry independently, so neither fixed-navigation
+ * Nexus projects this registry independently, so neither fixed-navigation
  * membership nor presentation order leaks into destination identity.
  *
  * Create/add command rows are not destinations (they have no href); they live in
- * the Launcher providers.
+ * Nexus providers.
  */
 
 import { Sparkles, UserRound, type LucideIcon } from "lucide-react";
@@ -65,7 +65,7 @@ export const DESTINATION_REGISTRY = {
     keywords: ["find", "query"],
   },
   // No root Authors directory page or fixed nav item (author-dedup cutover §7).
-  // The identity remains for the standing head, Launcher, and keybinding. It
+  // The identity remains for the standing head, Nexus, and keybinding. It
   // opens Search with People selected, so it needs an explicit icon because the
   // deleted /authors root route cannot supply the route-icon fallback.
   authors: {
@@ -111,7 +111,7 @@ export function getDestination(id: DestinationId): Destination {
   return { id, ...DESTINATION_REGISTRY[id] };
 }
 
-/** Ordered view for Launcher tie-breaking only; app-nav order has its own owner. */
+/** Ordered view for Nexus tie-breaking only; app-nav order has its own owner. */
 export const DESTINATIONS: readonly Destination[] = (
   Object.keys(DESTINATION_REGISTRY) as DestinationId[]
 ).map(getDestination);

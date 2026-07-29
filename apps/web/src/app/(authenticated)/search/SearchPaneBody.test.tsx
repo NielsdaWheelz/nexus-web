@@ -325,13 +325,13 @@ describe("SearchPaneBody filter chips", () => {
   });
 });
 
-// The Launcher "Go to Authors"/"Search" commands set a one-shot focus request before
+// Nexus navigation to Search sets a one-shot focus request before
 // navigating; SearchPaneBody consumes it on the mount flip and focuses the box only for
 // a blank landing. Ordinary arrivals (no request) and text landings must not grab focus.
 describe("SearchPaneBody navigated-landing focus", () => {
   it("focuses the search box on a requested blank landing", async () => {
     stubEmptySearch();
-    requestSearchInputFocus(); // the Launcher navigation just declared intent to type
+    requestSearchInputFocus(); // Nexus navigation just declared intent to type
     renderSearch("/search?kinds=people");
 
     const input = await screen.findByLabelText("Search content");

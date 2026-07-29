@@ -285,7 +285,7 @@ Resource subjects and reader Highlight quotes are not branch anchors. The
 `chat_subject` request field is removed: a reader quote travels as
 `reader_selection` (a `ReaderSelectionKey` plus revision), and a generic
 resource-context chat carries its subject as a conversation context
-`ResourceEdge` created by its separately-owned launcher, not as a per-run
+`ResourceEdge` created by its separately-owned workflow, not as a per-run
 request field.
 
 `chatDraftKeyFor` is the single draft-key serializer. It produces:

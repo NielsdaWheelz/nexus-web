@@ -2,7 +2,7 @@
  * Local-date helpers (YYYY-MM-DD).
  *
  * The user's local calendar date as a string, used by daily-note routes,
- * the command palette, and the notes API client.
+ * Nexus, and the notes API client.
  */
 
 const LOCAL_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Protocol
 
 from nexus.services.search.results import _SearchScore
@@ -32,6 +33,7 @@ TYPE_WEIGHTS = {
     "oracle_reading": 1.0,
     "passage_anchor": 1.25,
 }
+MAX_POSITIVE_TYPE_WEIGHT = max(weight for weight in TYPE_WEIGHTS.values() if weight > 0)
 
 
 class _ScoredCandidate(Protocol):
@@ -43,8 +45,8 @@ class _ScoredCandidate(Protocol):
     def result_type(self) -> str: ...
 
 
-def _normalize_scores_by_type(results: list[_ScoredCandidate]) -> None:
-    """Normalize weighted scores within each type to [0, 1] range.
+def _normalize_scores_by_type(results: Sequence[_ScoredCandidate]) -> None:
+    """Normalize raw scores within each type to [0, 1].
 
     Modifies results in place.
     """
@@ -58,8 +60,8 @@ def _normalize_scores_by_type(results: list[_ScoredCandidate]) -> None:
         if not type_results:
             continue
 
-        max_score = max(result.score.weighted for result in type_results)
-        min_score = min(result.score.weighted for result in type_results)
+        max_score = max(result.score.raw for result in type_results)
+        min_score = min(result.score.raw for result in type_results)
 
         if max_score == min_score:
             # All same score -> all get 1.0 (or 0.5 if zero)
@@ -68,6 +70,4 @@ def _normalize_scores_by_type(results: list[_ScoredCandidate]) -> None:
                 result.score.normalized = norm_value
         else:
             for result in type_results:
-                result.score.normalized = (result.score.weighted - min_score) / (
-                    max_score - min_score
-                )
+                result.score.normalized = (result.score.raw - min_score) / (max_score - min_score)

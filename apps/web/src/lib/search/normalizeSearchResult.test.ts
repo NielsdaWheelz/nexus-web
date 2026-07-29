@@ -153,6 +153,7 @@ describe("normalizeSearchResult happy-path adaptation", () => {
 
     expect(row).toMatchObject({
       key: "content_chunk-chunk-7",
+      score: 0.88,
       activation: { href: "/media/media-pdf-1#evidence-span-1" },
       actionTarget: {
         kind: "Resource",
@@ -669,6 +670,24 @@ describe("normalizeSearchResult structural rejections", () => {
         media_kind: null,
         activationHref: "/x",
         context_ref: { type: "page", id: "x" },
+      }),
+    ).toBeNull();
+  });
+
+  it("rejects a non-normalized same-system score", () => {
+    expect(
+      normalize({
+        type: "page",
+        id: "page-1",
+        score: 1.01,
+        snippet: "s",
+        title: "t",
+        source_label: "page",
+        media_id: null,
+        media_kind: null,
+        activationHref: "/pages/page-1",
+        context_ref: { type: "page", id: "page-1" },
+        description: "Page",
       }),
     ).toBeNull();
   });

@@ -18,7 +18,7 @@ import {
 } from "@/lib/panes/paneRuntime";
 import { createNotePage } from "@/lib/notes/api";
 import { openTodayPage } from "@/lib/notes/openToday";
-import { PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION } from "@/lib/launcher/dispatch";
+import { PROGRAMMATIC_NEXUS_TARGET_ACTIVATION } from "@/lib/nexus/dispatch";
 import type { NotePageSummary } from "@/lib/notes/normalize";
 import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
@@ -83,7 +83,7 @@ export default function NotesPaneBody() {
 
   const openToday = useCallback(async () => {
     try {
-      await openTodayPage(PROGRAMMATIC_LAUNCHER_TARGET_ACTIVATION);
+      await openTodayPage(PROGRAMMATIC_NEXUS_TARGET_ACTIVATION);
     } catch (error: unknown) {
       if (handleUnauthenticatedApiError(error)) return;
       setFeedback(toFeedback(error, { fallback: "Could not open today." }));

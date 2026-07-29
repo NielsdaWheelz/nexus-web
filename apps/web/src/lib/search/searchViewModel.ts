@@ -206,6 +206,7 @@ export function adaptSearchResultRow(
 
   return {
     key: `${result.type}-${result.id}`,
+    score: result.score,
     resourceRef: result.resource_ref,
     ownerResourceRef: result.owner_resource_ref,
     activation: result.activation,

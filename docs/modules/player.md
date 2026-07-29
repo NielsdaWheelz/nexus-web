@@ -5,7 +5,7 @@
 The player module owns two related but distinct concerns: the **Lectern** (one
 ordered, mixed-media list of outstanding intentions) and **Now Playing** (one
 device-local audio session, not a second durable list). Podcast, video, reader,
-agent, and Launcher actions address the ordered list. The Resonance subsystem's
+agent, and Nexus actions address the ordered list. The Resonance subsystem's
 read-only **At hand** Slate is adjacent to the Lectern but does not become
 another queue or acquire mutation ownership. The player is the consumer of
 podcast episodes (and YouTube videos) for playback; the

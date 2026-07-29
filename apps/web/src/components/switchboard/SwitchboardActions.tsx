@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowLeft } from "lucide-react";
-import type { LauncherAction } from "@/lib/launcher/model";
+import type { NexusAction } from "@/lib/nexus/model";
 import styles from "./switchboard.module.css";
 
 export default function SwitchboardActions({
@@ -11,9 +11,9 @@ export default function SwitchboardActions({
   onSelect,
 }: {
   label: string;
-  actions: readonly LauncherAction[];
+  actions: readonly NexusAction[];
   onBack: () => void;
-  onSelect: (action: LauncherAction) => void;
+  onSelect: (action: NexusAction) => void;
 }) {
   return (
     <div className={styles.page}>

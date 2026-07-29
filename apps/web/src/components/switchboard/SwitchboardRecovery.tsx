@@ -1,6 +1,6 @@
 "use client";
 
-import type { RetainedActivation } from "@/lib/switchboard/model";
+import type { RetainedActivation } from "@/lib/nexus/model";
 import styles from "./switchboard.module.css";
 
 function completionLabel(retained: RetainedActivation): string {

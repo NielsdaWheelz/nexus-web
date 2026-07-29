@@ -1,10 +1,10 @@
 import { fetchDailyNotePage } from "@/lib/notes/api";
 import { todayLocalDate } from "@/lib/localDate";
 import { requestWorkspaceTargetActivation } from "@/lib/workspace/workspaceTargetActivationIngress";
-import type { LauncherTargetActivation } from "@/lib/launcher/dispatch";
+import type { NexusTargetActivation } from "@/lib/nexus/model";
 
 export async function openTodayPage(
-  activation: LauncherTargetActivation,
+  activation: NexusTargetActivation,
 ): Promise<void> {
   const page = await fetchDailyNotePage(todayLocalDate());
   requestWorkspaceTargetActivation({

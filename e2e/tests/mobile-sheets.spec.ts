@@ -113,10 +113,10 @@ test.describe("mobile sheets", () => {
       .fill("stats");
 
     await page.setViewportSize({ width: 1200, height: 800 });
-    const desktop = page.getByRole("dialog", { name: "Launcher" });
+    const desktop = page.getByRole("dialog", { name: "Nexus" });
     await expect(desktop).toBeVisible();
     await expect(
-      desktop.getByRole("combobox", { name: "Search, add, or ask" }),
+      desktop.getByRole("combobox", { name: "Find anything" }),
     ).toHaveValue("stats");
 
     await page.setViewportSize({ width: 390, height: 844 });
