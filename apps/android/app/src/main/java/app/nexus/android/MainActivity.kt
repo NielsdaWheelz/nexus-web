@@ -1,11 +1,14 @@
 package app.nexus.android
 
+import android.Manifest
 import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Message
 import android.util.Base64
@@ -16,6 +19,7 @@ import android.webkit.CookieManager
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
@@ -23,10 +27,13 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.browser.customtabs.CustomTabsIntent
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import app.nexus.android.offline.OfflineMediaStore
+import app.nexus.android.offline.OfflineMediaWebCapability
 import java.security.MessageDigest
 import java.security.SecureRandom
 
@@ -37,6 +44,13 @@ class MainActivity : AppCompatActivity() {
     private val nexusBaseUri = Uri.parse(BuildConfig.NEXUS_BASE_URL)
     internal var pendingHandoffVerifier: String? = null
     private val googleSignInController by lazy { GoogleSignInController(this) }
+    private lateinit var offlineMediaCapability: OfflineMediaWebCapability
+
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+            // A denied notification permission hides the drawer notification but does
+            // not invalidate the user-started foreground download.
+        }
 
     private val fileChooserLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -68,8 +82,21 @@ class MainActivity : AppCompatActivity() {
 
         webView = WebView(this)
         NexusWebView.configure(webView)
+        offlineMediaCapability = OfflineMediaWebCapability(
+            webView,
+            ::requestOfflineDownloadNotificationPermission,
+        )
+        offlineMediaCapability.install()
 
         webView.webViewClient = object : WebViewClient() {
+            override fun shouldInterceptRequest(
+                view: WebView?,
+                request: WebResourceRequest?,
+            ): WebResourceResponse? {
+                return request?.let(offlineMediaCapability::intercept)
+                    ?: super.shouldInterceptRequest(view, request)
+            }
+
             override fun shouldOverrideUrlLoading(
                 view: WebView?,
                 request: WebResourceRequest?
@@ -93,6 +120,10 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 CookieManager.getInstance().flush()
+            }
+
+            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                offlineMediaCapability.onPageStarted()
             }
         }
 
@@ -238,6 +269,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
+        OfflineMediaStore.get(this).onAppBackground()
         CookieManager.getInstance().flush()
         webView.onPause()
         webView.pauseTimers()
@@ -246,6 +278,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        OfflineMediaStore.get(this).onAppForeground()
         webView.onResume()
         webView.resumeTimers()
     }
@@ -258,10 +291,23 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         fileChooserCallback?.onReceiveValue(null)
         fileChooserCallback = null
+        offlineMediaCapability.close()
         webView.stopLoading()
         (webView.parent as? ViewGroup)?.removeView(webView)
         webView.destroy()
         super.onDestroy()
+    }
+
+    private fun requestOfflineDownloadNotificationPermission() {
+        if (
+            Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
     }
 
     internal fun routeUrl(uri: Uri) {

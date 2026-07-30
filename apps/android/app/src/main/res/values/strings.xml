@@ -1,3 +1,7 @@
 <resources>
     <string name="app_name">Nexus</string>
+    <string name="offline_download_channel_name">Offline downloads</string>
+    <string name="offline_download_channel_description">Podcast episodes saved for offline playback</string>
+    <string name="offline_download_notification_title">Downloading episodes</string>
+    <string name="offline_download_notification_waiting">Waiting to download episodes</string>
 </resources>
