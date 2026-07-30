@@ -13,17 +13,20 @@
  */
 
 import { apiFetch } from "@/lib/api/client";
-import { requiredRecord, requiredString } from "@/lib/notes/normalize";
 import type { ResourceScheme } from "@/lib/resourceGraph/resourceRef";
+import type { ResourceActivation } from "@/lib/resources/activation";
 import {
-  normalizeResourceActivation,
-  type ResourceActivation,
-} from "@/lib/resources/activation";
-import {
+  decodeResourceActivation,
   decodeResourceItem,
   type ResourceItem,
 } from "@/lib/resources/resourceItems";
-import { isRecord } from "@/lib/validation";
+import {
+  expectArray,
+  expectExactRecord,
+  expectNullableString,
+  expectRecord,
+  expectString,
+} from "@/lib/validation";
 
 export type ResourceTargetSearchPurpose = "link" | "reference";
 
@@ -61,40 +64,59 @@ export interface ResourceTargetSearchResult {
   nextCursor: string | null;
 }
 
-function normalizeExistingLinkId(record: Record<string, unknown>): string | null {
-  const value = record.existingLinkId ?? record.existing_link_id;
-  return typeof value === "string" ? value : null;
-}
+const RESOURCE_TARGET_KEYS = ["kind", "item", "existingLinkId"] as const;
+const PASSAGE_TARGET_KEYS = [
+  "kind",
+  "candidateRef",
+  "source",
+  "label",
+  "excerpt",
+  "activation",
+  "existingLinkId",
+] as const;
+const SEARCH_RESULT_KEYS = ["targets", "nextCursor"] as const;
 
-function normalizeResourceTarget(raw: unknown): ResourceTarget {
-  const record = requiredRecord(raw, "resource target");
-  const existingLinkId = normalizeExistingLinkId(record);
-  if (record.kind === "resource") {
+function decodeResourceTarget(raw: unknown): ResourceTarget {
+  const discriminator = expectRecord(raw, "resource target").kind;
+  if (discriminator === "resource") {
+    const record = expectExactRecord(
+      raw,
+      RESOURCE_TARGET_KEYS,
+      "resource target",
+    );
     return {
       kind: "resource",
-      item: decodeResourceItem(requiredRecord(record.item, "resource target item")),
-      existingLinkId,
+      item: decodeResourceItem(record.item),
+      existingLinkId: expectNullableString(
+        record.existingLinkId,
+        "resource target.existingLinkId",
+      ),
     };
   }
-  if (record.kind === "passage") {
-    const activation = normalizeResourceActivation(record.activation);
-    if (!activation) {
-      throw new Error("Resource target response is missing activation");
-    }
+  if (discriminator === "passage") {
+    const record = expectExactRecord(
+      raw,
+      PASSAGE_TARGET_KEYS,
+      "passage resource target",
+    );
+    const candidateRef = expectString(
+      record.candidateRef,
+      "passage resource target.candidateRef",
+    );
     return {
       kind: "passage",
-      candidateRef: requiredString(
-        record.candidateRef ?? record.candidate_ref,
-        "candidate ref",
+      candidateRef,
+      source: decodeResourceItem(record.source),
+      label: expectString(record.label, "passage resource target.label"),
+      excerpt: expectString(record.excerpt, "passage resource target.excerpt"),
+      activation: decodeResourceActivation(record.activation, candidateRef),
+      existingLinkId: expectNullableString(
+        record.existingLinkId,
+        "passage resource target.existingLinkId",
       ),
-      source: decodeResourceItem(requiredRecord(record.source, "resource target source")),
-      label: String(record.label ?? ""),
-      excerpt: String(record.excerpt ?? ""),
-      activation,
-      existingLinkId,
     };
   }
-  throw new Error(`Unknown resource target kind: ${String(record.kind)}`);
+  throw new TypeError(`Unknown resource target kind: ${String(discriminator)}`);
 }
 
 export async function searchResourceTargets(
@@ -114,11 +136,20 @@ export async function searchResourceTargets(
       limit: input.limit,
     }),
   });
-  const data = isRecord(response.data) ? response.data : {};
-  const targetsRaw = Array.isArray(data.targets) ? data.targets : [];
-  const nextCursor = data.nextCursor ?? data.next_cursor;
+  const data = expectExactRecord(
+    response.data,
+    SEARCH_RESULT_KEYS,
+    "resource target search response.data",
+  );
   return {
-    targets: targetsRaw.map(normalizeResourceTarget),
-    nextCursor: typeof nextCursor === "string" ? nextCursor : null,
+    targets: expectArray(
+      data.targets,
+      decodeResourceTarget,
+      "resource target search response.data.targets",
+    ),
+    nextCursor: expectNullableString(
+      data.nextCursor,
+      "resource target search response.data.nextCursor",
+    ),
   };
 }

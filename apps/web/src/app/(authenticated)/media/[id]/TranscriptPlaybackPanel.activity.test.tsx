@@ -11,13 +11,20 @@ vi.mock("@/lib/consumption/activityRecorder", () => ({
   activityRecorder: () => recorder,
 }));
 
-vi.mock("@/lib/player/globalPlayer", () => ({
-  useGlobalPlayer: () => ({
-    playAudio: vi.fn(),
-    presentation: { positionMs: 0 },
-    state: { kind: "Absent" },
-  }),
-}));
+vi.mock("@/lib/player/globalPlayer", async () => {
+  const actual =
+    await vi.importActual<typeof import("@/lib/player/globalPlayer")>(
+      "@/lib/player/globalPlayer",
+    );
+  return {
+    ...actual,
+    useGlobalPlayer: () => ({
+      playAudio: vi.fn(),
+      presentation: { positionMs: 0 },
+      state: { kind: "Absent" },
+    }),
+  };
+});
 
 vi.mock("@/lib/lectern/LecternProvider", () => ({
   useLectern: () => ({

@@ -865,13 +865,52 @@ describe("ChatSurface", () => {
     expect(screen.queryByTestId("chat-scroll-latest")).toBeNull();
   });
 
-  // AC-8 is verified by the S3 device pass / e2e: a component test cannot resize
-  // the visual viewport, so the keyboard-shrink → bottom-follow path is not unit-
-  // testable here. The hook re-pins from its ResizeObserver when the scrollport
-  // shrinks (Android/`interactive-widget`; the iOS mobile sheet via useKeyboardInset).
-  it.todo(
-    "AC-8: bottom-follow keeps the newest text above the on-screen keyboard when the visual viewport shrinks",
-  );
+  it("keeps the newest text in view when the usable viewport shrinks", async () => {
+    const messages = [
+      userMessage("user-1", 1, "Keyboard question"),
+      assistantMessage(
+        "assistant-1",
+        2,
+        `Answer ${"streamed token ".repeat(180)}`,
+        "user-1",
+      ),
+    ];
+    const { rerender } = render(
+      <div style={{ display: "flex", height: "240px" }}>
+        <ChatSurface
+          messages={messages}
+          composer={<textarea aria-label="Message" />}
+        />
+      </div>,
+    );
+    const scrollport = screen.getByRole("region", {
+      name: "Chat conversation",
+    });
+    await waitFor(() => {
+      const bottom = scrollport.scrollHeight - scrollport.clientHeight;
+      expect(scrollport.scrollTop).toBeGreaterThanOrEqual(bottom - 4);
+    });
+    const initialClientHeight = scrollport.clientHeight;
+
+    // The browser expresses both Android resizes-content keyboards and the iOS
+    // keyboard inset as a smaller usable scrollport. ResizeObserver is the
+    // production signal; bottom-follow must re-pin against the new geometry.
+    rerender(
+      <div style={{ display: "flex", height: "140px" }}>
+        <ChatSurface
+          messages={messages}
+          composer={<textarea aria-label="Message" />}
+        />
+      </div>,
+    );
+
+    await waitFor(() => {
+      expect(scrollport.clientHeight).toBeLessThan(initialClientHeight);
+      const bottom = scrollport.scrollHeight - scrollport.clientHeight;
+      expect(scrollport.scrollTop).toBeGreaterThanOrEqual(bottom - 4);
+    });
+    expect(screen.queryByTestId("chat-scroll-latest")).toBeNull();
+  });
 
   it("restores the eye-line across a messages swap via captureAnchor", async () => {
     const ref = createRef<ChatScrollHandle>();

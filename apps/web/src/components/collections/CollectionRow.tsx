@@ -548,6 +548,7 @@ export default function CollectionRow({
       primary={row.primary}
       selected={row.selected || reorder?.isDragging}
       rootProps={{
+        "aria-current": row.selected ? "true" : undefined,
         "data-collection-row-id": row.id,
         "data-collection-item-kind": row.kind,
         "data-view-transition-part": "row",

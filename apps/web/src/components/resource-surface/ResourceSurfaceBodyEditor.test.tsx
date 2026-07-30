@@ -277,9 +277,9 @@ describe("ResourceSurfaceBodyEditor", () => {
         JSON.stringify({
           data: {
             targets: [
-              { kind: "resource", item: target, existing_link_id: null },
+              { kind: "resource", item: target, existingLinkId: null },
             ],
-            next_cursor: null,
+            nextCursor: null,
           },
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },

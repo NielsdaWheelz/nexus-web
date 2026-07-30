@@ -30,13 +30,3 @@
   padding: var(--space-2) var(--space-3);
   border-bottom: var(--stroke-hairline) solid var(--edge-subtle);
 }
-
-.contextSeparator {
-  color: var(--ink-faint);
-}
-
-.mark {
-  border-radius: var(--radius-xs);
-  background: var(--accent-muted);
-  color: inherit;
-}

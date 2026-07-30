@@ -475,11 +475,14 @@ describe("ConnectionsSurface", () => {
     ).toBeInTheDocument();
   });
 
-  it("opens a connected artifact revision on its exact local Dossier revision", async () => {
+  it("opens a connected artifact revision on its canonical standalone route", async () => {
     const user = userEvent.setup();
     const activateTarget = vi.fn();
     const revisionRef =
       "artifact_revision:77777777-7777-4777-8777-777777777777";
+    const href =
+      `/artifacts/${encodeURIComponent("artifact:88888888-8888-4888-8888-888888888888")}` +
+      `?revision=${encodeURIComponent(revisionRef)}`;
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) =>
@@ -493,13 +496,13 @@ describe("ConnectionsSurface", () => {
                   revisionRef,
                   "Historical Dossier",
                   false,
-                  `/conversations/${CONVERSATION_ID}`,
+                  href,
                 ),
                 other: endpoint(
                   revisionRef,
                   "Historical Dossier",
                   false,
-                  `/conversations/${CONVERSATION_ID}`,
+                  href,
                 ),
               }),
             ]),
@@ -521,13 +524,8 @@ describe("ConnectionsSurface", () => {
 
     expect(activateTarget).toHaveBeenCalledWith({
       target: {
-        href: `/conversations/${CONVERSATION_ID}`,
+        href,
         labelHint: "Historical Dossier",
-        secondaryActivation: {
-          kind: "DossierRevision",
-          surfaceId: "resource-dossier",
-          revisionRef,
-        },
       },
       disposition: { kind: "Follow" },
     });

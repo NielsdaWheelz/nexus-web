@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+  type MockInstance,
+} from "vitest";
 import {
   AUTH_CALLBACK_CANCELLED_MESSAGE,
   AUTH_CALLBACK_FAILURE_MESSAGE,
@@ -45,7 +53,7 @@ vi.mock("@supabase/ssr", () => ({
   ),
 }));
 
-const fetchSpy = vi.spyOn(globalThis, "fetch");
+let fetchSpy: MockInstance<typeof globalThis.fetch>;
 const previousFastApiBaseUrl = process.env.FASTAPI_BASE_URL;
 const previousInternalSecret = process.env.NEXUS_INTERNAL_SECRET;
 const previousSupabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -54,6 +62,7 @@ const previousSupabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 describe("GET /auth/handoff", () => {
   beforeEach(() => {
     vi.resetModules();
+    fetchSpy = vi.spyOn(globalThis, "fetch");
     mockCookieStore.getAll.mockReset().mockReturnValue([]);
     mockCookieStore.set.mockReset();
     setSessionSpy.mockReset();

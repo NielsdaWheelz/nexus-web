@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import * as pdfjsLib from "pdfjs-dist/build/pdf.mjs";
+import * as pdfjsLib from "pdfjs-dist";
 import { createPdfFindRuntime } from "@/components/pdfPaneFind";
 import type {
   PdfDocumentLike,

@@ -4,8 +4,8 @@ Sole transaction/operation owner for contributor identity. The final semantic
 surface is exactly: contributor search, contributor detail, distinct works,
 ref resolve/hydrate for panes, observed role-slice replacement (single and
 gutenberg-chunked batch), media-author PUT/reset, display-name rename, and the
-transaction-scoped target cleanup + orphan prune helpers. No second public
-identity/write path exists.
+transaction-scoped observation, target cleanup, and orphan-prune helpers. No
+second public identity/write path exists.
 
 Composition:
 
@@ -588,8 +588,32 @@ def ensure_contributor_display_name(
 
 
 # ---------------------------------------------------------------------------
-# Transaction-scoped composition (caller's deletion transaction, no runner)
+# Transaction-scoped composition (caller-owned transaction, no runner)
 # ---------------------------------------------------------------------------
+
+
+def apply_observed_role_slices_in_current_transaction(
+    db: Session,
+    *,
+    target: CreditTarget,
+    observation: ContributorObservationBatch,
+    source: str,
+) -> None:
+    """Apply one automatic observation inside an owning source transaction.
+
+    Source-publication flows need contributor credits to commit with the source
+    facts they describe. This facade remains the sole importer of the private
+    identity and credit writers while the source owner retains its transaction
+    boundary.
+    """
+    if isinstance(observation, NotObserved):
+        return
+    _apply_observation(
+        db,
+        target=target,
+        observation=observation,
+        source=source,
+    )
 
 
 def cleanup_credits_for_deleted_target(db: Session, *, target: CreditTarget) -> None:

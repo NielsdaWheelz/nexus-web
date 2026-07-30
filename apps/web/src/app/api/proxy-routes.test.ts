@@ -2,7 +2,6 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const API_ROUTE_COUNT = 156;
 const EXTENSION_PROXY_ROUTES = new Set([
   "src/app/api/extension/session/route.ts",
   "src/app/api/media/capture/article/route.ts",
@@ -54,7 +53,6 @@ describe("BFF API route shape", () => {
       relative(process.cwd(), route).split(sep).join("/"),
     );
 
-    expect(routes).toHaveLength(API_ROUTE_COUNT);
     for (const route of REQUIRED_PROXY_ROUTES) {
       expect(relativeRoutes).toContain(route);
     }

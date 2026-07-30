@@ -264,13 +264,18 @@ def test_facade_issues_no_resource_edges_dml() -> None:
 
 def test_podcast_visibility_cte_lives_only_in_permissions() -> None:
     # The subscriptions-∪-library_entries visibility CTE has exactly one home.
+    visibility_cte = re.compile(
+        r"SELECT\s+\w+\.podcast_id\s+"
+        r"FROM\s+podcast_subscriptions\b"
+        r"[\s\S]{0,500}?\bUNION\b"
+        r"[\s\S]{0,500}?SELECT\s+\w+\.podcast_id\s+"
+        r"FROM\s+library_entries\b",
+        re.IGNORECASE,
+    )
     offenders = [
         relative
         for relative, src in _nexus_sources().items()
-        if relative != "auth/permissions.py"
-        and "FROM podcast_subscriptions" in src
-        and "UNION" in src
-        and "le.podcast_id" in src
+        if relative != "auth/permissions.py" and visibility_cte.search(src)
     ]
     assert offenders == [], f"inline podcast-visibility CTE outside permissions.py: {offenders}"
 

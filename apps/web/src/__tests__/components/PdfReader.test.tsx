@@ -236,7 +236,11 @@ vi.mock("@/components/pdfReaderRuntime", () => {
       return { pageIdx: -1, matchIdx: -1 };
     }
 
-    match(query: string | string[], pageContent: string) {
+    match(
+      query: string | string[],
+      pageContent: string,
+      _pageIndex: number,
+    ) {
       const needle = Array.isArray(query) ? query.join("") : query;
       if (needle.length === 0) {
         return [];
@@ -547,14 +551,19 @@ describe("PdfReader selection chat destinations", () => {
     pdfRuntimeState.pageTexts = ["", "Alpha selected quote Omega"];
     const onResumeStateChange = vi.fn();
     const onFindRuntimeReady = vi.fn();
-    let runtime: PdfFindRuntime | null = null;
+    let resolveRuntime!: (runtime: PdfFindRuntime) => void;
+    const runtimeReady = new Promise<PdfFindRuntime>((resolve) => {
+      resolveRuntime = resolve;
+    });
 
     const view = render(
       <PdfReader
         mediaId="media-1"
         onResumeStateChange={onResumeStateChange}
         onFindRuntimeReady={(nextRuntime) => {
-          runtime = nextRuntime;
+          if (nextRuntime) {
+            resolveRuntime(nextRuntime);
+          }
           onFindRuntimeReady(nextRuntime);
         }}
       />,
@@ -563,13 +572,7 @@ describe("PdfReader selection chat destinations", () => {
     const viewport = await screen.findByRole("region", {
       name: "PDF document",
     });
-    await waitFor(() => {
-      expect(runtime).not.toBeNull();
-    });
-    const activeRuntime = runtime;
-    if (!activeRuntime) {
-      throw new Error("PDF Find runtime was not published");
-    }
+    const activeRuntime = await runtimeReady;
     expect(activeRuntime.source).toEqual({
       mediaId: "media-1",
       fingerprints: ["pdf-reader-test-fingerprint"],
@@ -601,11 +604,12 @@ describe("PdfReader selection chat destinations", () => {
       throw new Error(`Expected ready PDF Find result, got ${result.kind}`);
     }
     expect(result.occurrences).toHaveLength(1);
+    const occurrence = result.occurrences[0]!;
     expect(screen.getByText("Page 1 of 2")).toBeInTheDocument();
 
     await act(async () => {
       await activeRuntime.activate(
-        result.occurrences[0]!.locator,
+        occurrence.locator,
         new AbortController().signal,
       );
     });

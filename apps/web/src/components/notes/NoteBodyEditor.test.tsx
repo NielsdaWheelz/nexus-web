@@ -145,10 +145,10 @@ describe("NoteBodyEditor", () => {
                 {
                   kind: "resource",
                   item: referenceTargetItem(),
-                  existing_link_id: null,
+                  existingLinkId: null,
                 },
               ],
-              next_cursor: null,
+              nextCursor: null,
             },
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },

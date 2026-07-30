@@ -355,8 +355,8 @@ function createHarness({
   viewer.currentPageNumber = Math.min(2, pages.length);
   viewer.setDocument(document);
   let binding: PdfFindRuntimeBinding | null = null;
-  let reveal = async (_request: RevealRequest) => undefined;
-  let restore = async (
+  let reveal: (request: RevealRequest) => Promise<void> = async () => {};
+  let restore: (
     _origin: {
       readonly pageNumber: number;
       readonly zoom: number;
@@ -364,7 +364,7 @@ function createHarness({
       readonly scrollLeft: number;
     },
     _signal: AbortSignal,
-  ) => undefined;
+  ) => Promise<void> = async () => {};
   binding = createPdfFindRuntime({
     mediaId: "media-1",
     viewerModule,
@@ -726,9 +726,9 @@ describe("PDF Find runtime", () => {
     }
 
     const staleReveal = deferred();
-    let staleRevealSignal: AbortSignal | null = null;
+    const staleRevealSignals: AbortSignal[] = [];
     harness.setReveal(({ signal }) => {
-      staleRevealSignal = signal;
+      staleRevealSignals.push(signal);
       return staleReveal.promise;
     });
     const staleActivation = harness.runtime
@@ -739,7 +739,8 @@ describe("PDF Find runtime", () => {
       .catch((error: unknown) => error);
 
     const replacementRuntime = harness.rebindDocument();
-    expect(staleRevealSignal?.aborted).toBe(true);
+    expect(staleRevealSignals).toHaveLength(1);
+    expect(staleRevealSignals[0]!.aborted).toBe(true);
     const replacementResult = await replacementRuntime.search({
       generation: 2,
       query: "replacement",
@@ -770,9 +771,9 @@ describe("PDF Find runtime", () => {
   it("aborts a deferred origin restore when the same PDF document is rebound", async () => {
     const harness = createHarness({ pages: ["one", "two"] });
     const staleRestore = deferred();
-    let staleRestoreSignal: AbortSignal | null = null;
+    const staleRestoreSignals: AbortSignal[] = [];
     harness.setRestore(async (origin, signal) => {
-      staleRestoreSignal = signal;
+      staleRestoreSignals.push(signal);
       await staleRestore.promise;
       if (!signal.aborted) {
         harness.viewer.currentPageNumber = origin.pageNumber;
@@ -792,7 +793,8 @@ describe("PDF Find runtime", () => {
 
     harness.rebindDocument();
     harness.viewer.currentPageNumber = 2;
-    expect(staleRestoreSignal?.aborted).toBe(true);
+    expect(staleRestoreSignals).toHaveLength(1);
+    expect(staleRestoreSignals[0]!.aborted).toBe(true);
     staleRestore.resolve();
 
     await expect(restore).resolves.toMatchObject({

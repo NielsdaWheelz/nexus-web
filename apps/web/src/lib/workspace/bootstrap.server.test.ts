@@ -447,10 +447,12 @@ describe("loadWorkspaceBootstrap", () => {
       updatedAt: "2026-07-24T10:30:00Z",
     };
     const entry = {
-      id: "entry-1",
       kind: "media",
-      position: 0,
-      created_at: "2026-07-24T10:15:00Z",
+      placement: {
+        kind: "Present",
+        value: { libraryEntryId: "entry-1", position: 0 },
+      },
+      addedAt: "2026-07-24T10:15:00Z",
       media: {
         id: "media-1",
         kind: "web_article",

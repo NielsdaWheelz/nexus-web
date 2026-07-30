@@ -36,7 +36,7 @@ describe("pane route table", () => {
       PANE_ROUTE_MODELS.filter(({ header }) => header.kind === "resource").map(
         ({ id }) => id,
       ),
-    ).toEqual(["media", "artifact"]);
+    ).toEqual(["browsePreview", "media", "artifact"]);
 
     expect(sectionDestinationIdForHref(`/media/${PAGE_ID}`)).toBe("libraries");
   });

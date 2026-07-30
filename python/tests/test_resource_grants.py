@@ -140,9 +140,7 @@ def test_user_grant_create_and_delete_advance_visibility_collections(
             )
             for family in families
         }
-        assert after_create == {
-            family: revision + 1 for family, revision in before.items()
-        }
+        assert after_create == {family: revision + 1 for family, revision in before.items()}
         resource_grants.delete_grant(
             db,
             viewer_user_id=owner_id,
@@ -156,10 +154,7 @@ def test_user_grant_create_and_delete_advance_visibility_collections(
                 family=family,
             )
             for family in families
-        } == {
-            family: revision + 1
-            for family, revision in after_create.items()
-        }
+        } == {family: revision + 1 for family, revision in after_create.items()}
 
 
 @pytest.mark.parametrize("audience_kind", ["user", "link"])

@@ -82,7 +82,7 @@ else:
     raise AssertionError("RESOURCE_ITEM_CAPABILITIES not found")
 `;
   return JSON.parse(
-    execFileSync("python3", ["-c", script], {
+    execFileSync("uv", ["run", "--project", "python", "python", "-c", script], {
       cwd: REPO_ROOT,
       encoding: "utf8",
     }),

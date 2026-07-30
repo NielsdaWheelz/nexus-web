@@ -8,7 +8,7 @@ export default defineConfig({
   optimizeDeps: {
     include: [
       "next/navigation",
-      "pdfjs-dist/build/pdf.mjs",
+      "pdfjs-dist",
       "pdfjs-dist/web/pdf_viewer.mjs",
     ],
   },

@@ -159,7 +159,10 @@ function decodeUserRelation(raw: unknown): ResourceUserRelation {
   };
 }
 
-function decodeActivation(raw: unknown, ref: string): ResourceActivation {
+export function decodeResourceActivation(
+  raw: unknown,
+  ref: string,
+): ResourceActivation {
   const activation = expectExactRecord(
     raw,
     RESOURCE_ACTIVATION_KEYS,
@@ -245,7 +248,7 @@ export function decodeResourceItem(raw: unknown): ResourceItem {
     }),
   );
   const route = expectNullableString(item.route, "resource item.route");
-  const activation = decodeActivation(item.activation, ref);
+  const activation = decodeResourceActivation(item.activation, ref);
   if (
     (activation.kind === "route" && route !== activation.href) ||
     (activation.kind !== "route" && route !== null)

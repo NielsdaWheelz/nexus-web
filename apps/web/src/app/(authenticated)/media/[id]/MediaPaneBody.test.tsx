@@ -36,6 +36,10 @@ import {
   assumePaneVisitId,
   type WorkspaceAttachedSecondaryPaneState,
 } from "@/lib/workspace/schema";
+import {
+  PaneReturnMementoProvider,
+  PaneReturnVisitScope,
+} from "@/lib/workspace/paneReturnMemento";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import type {
   ActionDescriptor,
@@ -1738,7 +1742,13 @@ describe("MediaPaneBody pane sizing", () => {
         )?.body ?? null;
       expect(resultsBody).not.toBeNull();
     });
-    render(<>{resultsBody}</>);
+    render(
+      <PaneReturnMementoProvider>
+        <PaneReturnVisitScope visitId={TEST_VISIT_ID} routeKey={routeKey}>
+          {resultsBody}
+        </PaneReturnVisitScope>
+      </PaneReturnMementoProvider>,
+    );
     expect(screen.getByRole("list", { name: "Search results" })).toBeVisible();
     expect(screen.getByRole("listitem")).toBeVisible();
   });

@@ -111,6 +111,7 @@ vi.mock("@/lib/dossiers/dossierControllerStore", () => ({
 vi.mock("@/lib/panes/paneRuntime", () => ({
   requirePaneRuntime: (runtime: unknown) => runtime,
   usePaneParam: () => ARTIFACT_REF,
+  usePaneReturnDescendantReady: vi.fn(),
   usePaneReturnReady: vi.fn(),
   usePaneRouter: () => ({ replace: paneMocks.replace }),
   usePaneRuntime: () => ({

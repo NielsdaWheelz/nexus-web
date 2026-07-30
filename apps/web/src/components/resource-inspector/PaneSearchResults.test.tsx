@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { render, screen } from "@testing-library/react";
+import { useState, type ReactElement } from "react";
+import { render as testingRender, screen } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { describe, expect, it } from "vitest";
 import PaneSearchResults from "@/components/resource-inspector/PaneSearchResults";
@@ -8,6 +8,25 @@ import type {
   PaneFindResultKey,
   PaneSearchPublication,
 } from "@/lib/panes/paneSearch";
+import {
+  PaneReturnMementoProvider,
+  PaneReturnVisitScope,
+} from "@/lib/workspace/paneReturnMemento";
+import { assumePaneVisitId } from "@/lib/workspace/schema";
+
+const TEST_VISIT_ID = assumePaneVisitId(
+  "00000000-0000-4000-8000-000000000012",
+);
+
+function render(ui: ReactElement) {
+  return testingRender(
+    <PaneReturnMementoProvider>
+      <PaneReturnVisitScope visitId={TEST_VISIT_ID} routeKey="/test">
+        {ui}
+      </PaneReturnVisitScope>
+    </PaneReturnMementoProvider>,
+  );
+}
 
 function resultKey(value: string): PaneFindResultKey {
   // justify-type-assertion: tests mint opaque result keys from distinct fixture values.

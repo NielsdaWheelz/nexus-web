@@ -61,9 +61,9 @@ function runtimeFixture({
       numPages: 12,
     },
     search: vi.fn(search),
-    activate: vi.fn(async () => undefined),
+    activate: vi.fn<PdfFindRuntime["activate"]>(async () => {}),
     captureOrigin: vi.fn(captureOrigin),
-    restoreOrigin: vi.fn(async () => undefined),
+    restoreOrigin: vi.fn<PdfFindRuntime["restoreOrigin"]>(async () => {}),
     clearPresentation: vi.fn(),
   } satisfies PdfFindRuntime;
   return runtime;

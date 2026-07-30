@@ -1151,6 +1151,12 @@ def test_no_serializable_retry_loop_outside_db_retries():
 
 
 def test_media_library_entry_dml_has_one_owner():
+    # The stopped-world Browse maintenance command is the migration owner for
+    # the legacy-to-final schema transition. Keeping its legacy DML there avoids
+    # contaminating the final-schema library service with dead table shapes.
+    migration_owners = {
+        (_PY_ROOT / "ops" / "browse_cutover.py").resolve(),
+    }
     dml = re.compile(
         r"(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+library_entries\b|"
         r"\b(?:insert|update|delete)\(\s*LibraryEntry(?:\.__table__)?\b|"
@@ -1159,7 +1165,10 @@ def test_media_library_entry_dml_has_one_owner():
     )
     hits: list[_Hit] = []
     for path in _iter_scan_files(_PY_ROOT):
-        if path.as_posix().endswith("/services/library_entries.py"):
+        if (
+            path.as_posix().endswith("/services/library_entries.py")
+            or path.resolve() in migration_owners
+        ):
             continue
         source = path.read_text(encoding="utf-8", errors="ignore")
         lines = source.splitlines()
@@ -2484,6 +2493,11 @@ def test_consumption_projection_reads_confined_to_owners():
     )
     hits = _excluding(
         _grep(pattern, _PY_ROOT),
+        # Stopped-world migration preflight must reject destructive transcript
+        # remediation when any legacy or final consumption projection still
+        # references the media. It is a schema-level migration read, not a live
+        # product projection.
+        "ops/browse_cutover.py",
         "services/consumption/_state_store.py",
         "services/consumption/_listening_store.py",
         "services/consumption/_projection.py",
