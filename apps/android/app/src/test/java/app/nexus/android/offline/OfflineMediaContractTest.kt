@@ -2,6 +2,7 @@ package app.nexus.android.offline
 
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Instant
@@ -55,6 +56,22 @@ class OfflineMediaContractTest {
             assertEquals(
                 "expected strict rejection for $raw",
                 CommandParseResult.Rejected(requestId),
+                OfflineMediaWire.parseCommand(raw),
+            )
+        }
+    }
+
+    @Test
+    fun `rejects lenient syntax and duplicate keys before trusting request id`() {
+        listOf(
+            """{'kind':'GetSnapshot','requestId':'$requestId','protocolVersion':1}""",
+            """{"kind":"GetSnapshot","requestId":"$requestId","protocolVersion":1,}""",
+            """{"kind":"GetSnapshot","requestId":"$requestId","request\u0049d":"$requestId","protocolVersion":1}""",
+            """{"kind":"GetSnapshot","requestId":"$requestId","protocolVersion":01}""",
+        ).forEach { raw ->
+            assertEquals(
+                "expected strict syntax rejection for $raw",
+                CommandParseResult.Unreplyable,
                 OfflineMediaWire.parseCommand(raw),
             )
         }
@@ -142,6 +159,24 @@ class OfflineMediaContractTest {
             Presence.Absent,
         )
         assertEquals(metadata, OfflineMediaMetadata.decode(metadata.encode()))
+    }
+
+    @Test
+    fun `malformed durable metadata has one typed decode boundary`() {
+        val malformed = """
+            {
+              "schemaVersion":1,
+              "accountId":"$accountId",
+              "mediaId":"$mediaId",
+              "title":"Episode",
+              "contentType":"audio/mpeg",
+              "contentLength":{"kind":"Future"}
+            }
+        """.trimIndent()
+
+        assertThrows(IllegalArgumentException::class.java) {
+            OfflineMediaMetadata.decode(malformed.toByteArray())
+        }
     }
 
     @Test

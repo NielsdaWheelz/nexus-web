@@ -6,6 +6,8 @@ import android.app.Notification
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import androidx.core.content.ContextCompat
 import androidx.media3.exoplayer.offline.Download
 import androidx.media3.exoplayer.offline.DownloadManager
@@ -14,9 +16,11 @@ import androidx.media3.exoplayer.offline.DownloadService
 import androidx.media3.exoplayer.scheduler.Scheduler
 import app.nexus.android.MainActivity
 import app.nexus.android.R
+import java.util.concurrent.atomic.AtomicBoolean
 
 private const val OFFLINE_MEDIA_NOTIFICATION_ID = 71
 private const val OFFLINE_MEDIA_NOTIFICATION_CHANNEL = "offline_downloads"
+private const val OFFLINE_MEDIA_TIMEOUT_HARD_STOP_MS = 2_500L
 
 class OfflineMediaDownloadService : DownloadService(
     OFFLINE_MEDIA_NOTIFICATION_ID,
@@ -61,23 +65,48 @@ class OfflineMediaDownloadService : DownloadService(
     }
 
     override fun onTimeout(startId: Int, fgsType: Int) {
-        store.pauseForSystemLimit()
-        super.onTimeout(startId, fgsType)
+        val finished = AtomicBoolean(false)
+        val finish = Runnable {
+            finishTimeout(startId, fgsType, finished)
+        }
+        store.pauseForSystemLimit {
+            finish.run()
+        }
+        Handler(Looper.getMainLooper()).postDelayed(
+            finish,
+            OFFLINE_MEDIA_TIMEOUT_HARD_STOP_MS,
+        )
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val result = super.onStartCommand(intent, flags, startId)
-        intent?.getStringExtra(EXTRA_ADMIT_DOWNLOAD_ID)?.let { id ->
-            downloadManager.setStopReason(id, Download.STOP_REASON_NONE)
+        val admissionId = intent?.getStringExtra(EXTRA_ADMIT_DOWNLOAD_ID)
+        when {
+            admissionId != null -> store.releaseSystemLimit(admissionId)
+            intent?.getBooleanExtra(EXTRA_CLEAR_SYSTEM_LIMIT, false) == true ->
+                store.releaseSystemLimit()
         }
-        if (intent?.getBooleanExtra(EXTRA_CLEAR_SYSTEM_LIMIT, false) == true) {
-            downloadManager.currentDownloads
-                .filter { it.stopReason == OFFLINE_MEDIA_SYSTEM_LIMIT_STOP_REASON }
-                .forEach {
-                    downloadManager.setStopReason(it.request.id, Download.STOP_REASON_NONE)
-                }
+        super.onStartCommand(intent, flags, startId)
+        return START_NOT_STICKY
+    }
+
+    override fun onDestroy() {
+        store.pauseForSystemLimit {
+            store.completeServiceStop()
         }
-        return result
+        super.onDestroy()
+    }
+
+    private fun finishTimeout(
+        startId: Int,
+        fgsType: Int,
+        finished: AtomicBoolean,
+    ) {
+        if (!finished.compareAndSet(false, true)) {
+            return
+        }
+        stopSelf(startId)
+        super.onTimeout(startId, fgsType)
+        store.completeServiceStop()
     }
 
     companion object {

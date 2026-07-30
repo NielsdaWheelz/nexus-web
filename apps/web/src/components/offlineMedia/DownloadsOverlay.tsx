@@ -61,7 +61,7 @@ function stateCopy(state: LocalAvailability): string {
     case "Restarting":
       return "Restarting download…";
     case "Ready":
-      return formatByteCount(state.sizeBytes);
+      return `Downloaded · ${formatByteCount(state.sizeBytes)}`;
     case "Failed":
       return "Download failed";
     case "Removing":

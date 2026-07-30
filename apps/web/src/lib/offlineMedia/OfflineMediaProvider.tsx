@@ -15,6 +15,7 @@ import { useFeedback } from "@/components/feedback/Feedback";
 import DownloadsOverlay from "@/components/offlineMedia/DownloadsOverlay";
 import { apiFetch } from "@/lib/api/client";
 import { absent, type Presence } from "@/lib/api/presence";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
 import {
   OfflineMediaClientStore,
@@ -22,7 +23,9 @@ import {
 } from "./clientStore";
 import { projectOfflineMediaAnnouncementMilestone } from "./announcements";
 import {
+  OfflineMediaRejectedError,
   OfflineMediaControllerRuntime,
+  offlineMediaRejectionMessage,
   type OfflineDownloadSpecReader,
   type OfflineMediaController,
 } from "./controller";
@@ -165,6 +168,7 @@ export function OfflineMediaProvider({
         setSession({ accountId, capability: UNAVAILABLE });
         setAsyncDefect(error);
       },
+      handleUnauthenticatedApiError,
       () => setDownloadsOpen(true),
     );
     setSession({ accountId, capability: CONNECTING });
@@ -182,9 +186,13 @@ export function OfflineMediaProvider({
         if (!current || isAbortError(error)) return;
         controller.dispose();
         setSession({ accountId, capability: UNAVAILABLE });
+        const title =
+          error instanceof OfflineMediaRejectedError
+            ? offlineMediaRejectionMessage(error.code)
+            : "Offline downloads are unavailable.";
         feedback.show({
           severity: "error",
-          title: "Offline downloads are unavailable.",
+          title,
           dedupeKey: "offline-media-connect",
         });
       });

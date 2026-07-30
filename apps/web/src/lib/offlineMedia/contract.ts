@@ -26,7 +26,8 @@ export type OfflineMediaRejectedCode =
   | "SourceMissing"
   | "SourceUnavailable"
   | "UnsupportedAudio"
-  | "StorageInsufficient";
+  | "StorageInsufficient"
+  | "StorageUnavailable";
 
 export interface OfflineDownloadSpec {
   readonly kind: "ProgressiveAudio";
@@ -367,6 +368,7 @@ function decodeReplyOutcome(raw: unknown): OfflineMediaReplyOutcome {
             "SourceUnavailable",
             "UnsupportedAudio",
             "StorageInsufficient",
+            "StorageUnavailable",
           ] as const,
           "offline media reply.outcome.code",
         ),

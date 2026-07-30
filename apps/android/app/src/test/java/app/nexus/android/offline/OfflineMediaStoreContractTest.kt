@@ -1,12 +1,19 @@
 package app.nexus.android.offline
 
 import androidx.media3.common.C
+import androidx.media3.datasource.cache.Cache
+import androidx.media3.datasource.cache.CacheSpan
+import androidx.media3.datasource.cache.ContentMetadata
+import androidx.media3.datasource.cache.ContentMetadataMutations
 import androidx.media3.exoplayer.offline.Download
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.IOException
+import java.lang.reflect.Proxy
+import java.net.Proxy as NetworkProxy
 import java.time.Instant
 import java.util.UUID
 
@@ -160,6 +167,285 @@ class OfflineMediaStoreContractTest {
             )
         )
         assertFalse(preservesStorageReserve(Long.MAX_VALUE, Long.MAX_VALUE))
+    }
+
+    @Test
+    fun `media HTTP client is direct and has no whole-transfer deadline`() {
+        val client = SafeHttpClient().client
+
+        assertEquals(NetworkProxy.NO_PROXY, client.proxy)
+        assertEquals(0, client.callTimeoutMillis)
+        assertEquals(OFFLINE_PREFLIGHT_DEADLINE.toMillis().toInt(), client.connectTimeoutMillis)
+        assertEquals(OFFLINE_PREFLIGHT_DEADLINE.toMillis().toInt(), client.readTimeoutMillis)
+    }
+
+    @Test
+    fun `durable mutation retries swallowed index writes and verifies readback`() {
+        var stored: String? = null
+        var writes = 0
+        assertTrue(
+            ensureDurableMutation(
+                expected = "persisted",
+                read = { stored },
+                write = {
+                    writes += 1
+                    if (writes == 1) {
+                        throw IOException("transient")
+                    }
+                    stored = it
+                },
+            )
+        )
+        assertEquals(2, writes)
+
+        assertFalse(
+            ensureDurableMutation(
+                expected = "expected",
+                read = { "stale" },
+                write = {},
+            )
+        )
+    }
+
+    @Test
+    fun `durable removal retries swallowed index deletes and fails closed`() {
+        var stored: String? = "persisted"
+        var removals = 0
+        assertTrue(
+            ensureDurableRemoval(
+                read = { stored },
+                remove = {
+                    removals += 1
+                    if (removals == 1) {
+                        throw IOException("transient")
+                    }
+                    stored = null
+                },
+            )
+        )
+        assertEquals(2, removals)
+
+        assertFalse(
+            ensureDurableRemoval(
+                read = { "still present" },
+                remove = {},
+            )
+        )
+    }
+
+    @Test
+    fun `active removal waits for manager observation while terminal removal can mark directly`() {
+        listOf(
+            Download.STATE_QUEUED,
+            Download.STATE_STOPPED,
+            Download.STATE_DOWNLOADING,
+            Download.STATE_RESTARTING,
+        ).forEach { state ->
+            assertTrue(removalRequiresManagerObservation(state))
+        }
+        listOf(
+            Download.STATE_COMPLETED,
+            Download.STATE_FAILED,
+            Download.STATE_REMOVING,
+        ).forEach { state ->
+            assertFalse(removalRequiresManagerObservation(state))
+        }
+    }
+
+    @Test
+    fun `system limit fence excludes terminal removing and repair-required rows`() {
+        listOf(
+            Download.STATE_QUEUED,
+            Download.STATE_DOWNLOADING,
+            Download.STATE_RESTARTING,
+        ).forEach { state ->
+            assertTrue(
+                requiresSystemLimitFence(state, Download.STOP_REASON_NONE)
+            )
+        }
+        assertTrue(
+            requiresSystemLimitFence(
+                Download.STATE_STOPPED,
+                OFFLINE_MEDIA_SYSTEM_LIMIT_STOP_REASON,
+            )
+        )
+        assertFalse(
+            requiresSystemLimitFence(
+                Download.STATE_STOPPED,
+                OFFLINE_MEDIA_REPAIR_REQUIRED_STOP_REASON,
+            )
+        )
+        listOf(
+            Download.STATE_COMPLETED,
+            Download.STATE_FAILED,
+            Download.STATE_REMOVING,
+        ).forEach { state ->
+            assertFalse(
+                requiresSystemLimitFence(state, Download.STOP_REASON_NONE)
+            )
+        }
+    }
+
+    @Test
+    fun `notification repair never regresses newer or equal precedence durable state`() {
+        assertTrue(
+            durableStateSupersedes(
+                Download.STATE_DOWNLOADING,
+                Download.STOP_REASON_NONE,
+                11,
+                Download.STATE_REMOVING,
+                Download.STOP_REASON_NONE,
+                10,
+            )
+        )
+        assertTrue(
+            durableStateSupersedes(
+                Download.STATE_REMOVING,
+                Download.STOP_REASON_NONE,
+                10,
+                Download.STATE_DOWNLOADING,
+                Download.STOP_REASON_NONE,
+                10,
+            )
+        )
+        assertFalse(
+            durableStateSupersedes(
+                Download.STATE_DOWNLOADING,
+                Download.STOP_REASON_NONE,
+                10,
+                Download.STATE_REMOVING,
+                Download.STOP_REASON_NONE,
+                10,
+            )
+        )
+        assertFalse(
+            durableStateSupersedes(
+                Download.STATE_STOPPED,
+                OFFLINE_MEDIA_SYSTEM_LIMIT_STOP_REASON,
+                10,
+                Download.STATE_COMPLETED,
+                Download.STOP_REASON_NONE,
+                10,
+            )
+        )
+    }
+
+    @Test
+    fun `notification repair never writes through an unreadable durable row`() {
+        var reads = 0
+        var writes = 0
+        val observed = observeDurableNotification(
+            notification = "stale",
+            read = {
+                reads += 1
+                if (reads == 1) {
+                    throw IOException("transient read failure")
+                }
+                "newer"
+            },
+            write = {
+                writes += 1
+            },
+            matches = { expected, actual -> expected == actual },
+            supersedes = { durable, _ -> durable == "newer" },
+        )
+
+        assertEquals("newer", observed)
+        assertEquals(0, writes)
+    }
+
+    @Test
+    fun `zero resume deletes spans length and redirected URI metadata`() {
+        var removedKey: String? = null
+        var metadataMutations: ContentMetadataMutations? = null
+        val operations = mutableListOf<String>()
+        var keyPresent = true
+        val cache = Proxy.newProxyInstance(
+            Cache::class.java.classLoader,
+            arrayOf(Cache::class.java),
+        ) { _, method, arguments ->
+            when (method.name) {
+                "getKeys" -> if (keyPresent) setOf("download-id") else emptySet<String>()
+                "removeResource" -> {
+                    operations.add("spans")
+                    removedKey = arguments?.get(0) as String
+                    keyPresent = false
+                    null
+                }
+                "applyContentMetadataMutations" -> {
+                    operations.add("metadata")
+                    metadataMutations = arguments?.get(1) as ContentMetadataMutations
+                    null
+                }
+                else -> error("unexpected Cache call ${method.name}")
+            }
+        } as Cache
+
+        removeCachedResource(cache, "download-id")
+
+        assertEquals("download-id", removedKey)
+        assertEquals(listOf("metadata", "spans"), operations)
+        assertEquals(
+            setOf(
+                ContentMetadata.KEY_CONTENT_LENGTH,
+                ContentMetadata.KEY_REDIRECTED_URI,
+            ),
+            metadataMutations?.removedValues?.toSet(),
+        )
+    }
+
+    @Test
+    fun `cache cleanup does not create an absent resource key`() {
+        val cache = Proxy.newProxyInstance(
+            Cache::class.java.classLoader,
+            arrayOf(Cache::class.java),
+        ) { _, method, _ ->
+            when (method.name) {
+                "getKeys" -> emptySet<String>()
+                else -> error("unexpected Cache call ${method.name}")
+            }
+        } as Cache
+
+        removeCachedResource(cache, "absent-download")
+    }
+
+    @Test
+    fun `cache cleanup releases a metadata-only empty key`() {
+        val operations = mutableListOf<String>()
+        var keyPresent = true
+        val hole = CacheSpan(
+            "download-id",
+            0,
+            C.LENGTH_UNSET.toLong(),
+        )
+        val cache = Proxy.newProxyInstance(
+            Cache::class.java.classLoader,
+            arrayOf(Cache::class.java),
+        ) { _, method, _ ->
+            when (method.name) {
+                "getKeys" -> if (keyPresent) setOf("download-id") else emptySet<String>()
+                "applyContentMetadataMutations" -> operations.add("metadata")
+                "removeResource" -> operations.add("spans")
+                "startReadWriteNonBlocking" -> {
+                    operations.add("acquire-hole")
+                    hole
+                }
+                "releaseHoleSpan" -> {
+                    operations.add("release-hole")
+                    keyPresent = false
+                    null
+                }
+                else -> error("unexpected Cache call ${method.name}")
+            }
+        } as Cache
+
+        removeCachedResource(cache, "download-id")
+
+        assertEquals(
+            listOf("metadata", "spans", "acquire-hole", "release-hole"),
+            operations,
+        )
+        assertFalse(keyPresent)
     }
 
     @Test

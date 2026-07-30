@@ -145,7 +145,8 @@ NetworkPolicy = UnmeteredOnly | AnyConnected
 - Never recompute or switch an active source when download state changes.
 - `Ready` resolves to `<owned-origin>/_native/offline-media/{mediaId}`. Native
   resolves the key only within the currently connected account.
-- The native route supports GET and one byte range: `200`, `206`, `416`.
+- The native route supports GET and one byte range: `200`, `206`, `416`;
+  durable local-index failure returns `503`.
 - Missing/incomplete local bytes mark the indexed item repair-required and
   project durable generic `Failed`; that activation never falls back remotely.
 - `OfflineMediaStore` owns read leases. Remove hides the item, defers byte
@@ -289,7 +290,8 @@ all other states are native. Match every state exhaustively.
 Install one AndroidX WebKit listener: `nexusOfflineMedia`.
 
 - Exact `BuildConfig.NEXUS_BASE_URL` origin; main frame; verify `sourceOrigin`.
-- Strict JSON, exact keys/bounds, canonical UUIDs.
+- Strict RFC JSON with duplicate-key rejection, exact keys/bounds, canonical
+  UUIDs, a 64 KiB message limit, and bounded nesting.
 - Exact `protocolVersion: 1`; reject mismatch. This is a schema discriminator,
   not negotiation or compatibility.
 - UUID `requestId`; replies echo it.
@@ -316,7 +318,7 @@ Reply = {
       code:
         InvalidRequest | AccountMismatch | NetworkUnavailable |
         SourceForbidden | SourceMissing | SourceUnavailable |
-        UnsupportedAudio | StorageInsufficient
+        UnsupportedAudio | StorageInsufficient | StorageUnavailable
     }
 }
 
@@ -328,6 +330,9 @@ Event =
 
 A rejection creates no durable item. Runtime transfer failure is the one
 durable `DownloadFailed` product state; detailed causes belong in diagnostics.
+`StorageInsufficient` means the reserve/space check failed;
+`StorageUnavailable` means the durable local index could not be read or
+verified.
 
 No `addJavascriptInterface`, generic fetch, arbitrary headers/path/filesystem,
 script evaluation, or native product API client. Keep file/content access,
@@ -373,41 +378,70 @@ DownloadRequest.data = OfflineMediaMetadata {
   post-redirect final URL.
 - Before enqueue, perform one `Range: bytes=0-0` preflight with
   `OFFLINE_PREFLIGHT_DEADLINE_MS = 30_000` through the owned public-HTTPS
-  OkHttp data source. Validate status and MIME and determine length when
-  available; do not issue HEAD.
+  direct-only OkHttp data source. The deadline applies to preflight only, never
+  to the transfer. Validate status and MIME and determine length when available;
+  do not issue HEAD.
 - Re-run redirect policy on every attempt. Reject credentials, non-HTTPS,
-  IP literals, non-global DNS, redirect loops, and more than five redirects.
+  IP literals, system proxies, non-global DNS, redirect loops, and more than
+  five redirects.
 - Log structured request/media ids, sanitized host, response status, redirect
   count, byte counts, and error class. Never log credentials, full URLs, or
   paths/queries.
 - `SafeProgressiveDownloaderFactory` deletes every incomplete cache resource
-  before a new attempt. Failed/interrupted work never resumes cached spans.
+  before a new attempt, including Media3's cached content-length and redirected
+  URI metadata, and verifies the cache key is gone. Failed/interrupted work
+  never resumes cached spans or a prior attempt's short-lived final URL.
+- Download each attempt to EOF. A known preflight length is an expected
+  representation fact, not a transfer bound; any final Media3/cache/preflight
+  length disagreement is repair-required, never `Ready`.
 - `Ready` requires Media3 completion, complete cache coverage, and an MP3/M4A
   container signature read from the completed cache. Verification is an
-  internal transition, not a visible state.
+  internal transition, not a visible state. Corruption found during activation
+  persists repair-required before pushing `Failed`.
 - Before enqueue, require known remaining bytes plus the 512 MiB reserve when
   length is known. An owned sink guard checks allocatable space during writes
   and fails before crossing the reserve.
 - `NoOpCacheEvictor` never evicts manual downloads.
-- `OfflineMediaStore` owns a keyed read-lease registry and pending removals.
+- `OfflineMediaStore` owns a keyed read-lease registry. Cancel/Remove
+  acknowledge only after Media3 `STATE_REMOVING` is persisted and read back;
+  this is the sole durable pending-removal fact and survives process death
+  while a read lease drains.
+- For active Media3 work, issue removal through `DownloadManager` and acknowledge
+  only its observed `STATE_REMOVING` after exact index readback/repair. Direct
+  removal markers are only for terminal or lease-deferred rows.
 - On a new `Connect(accountId)`, hide old state, purge every other account's
-  index/cache entries, then reply `Connected`. Never expose cross-account data.
+  index/cache entries with verified deletion, then reply `Connected`. Never
+  expose cross-account data.
 
 Android lifecycle:
 
 - The user starts a non-exported `dataSync` `DownloadService`.
 - Admission first inserts the request with the app's `SystemLimit` stop reason.
-  The first DownloadIndex-backed `onDownloadChanged` is the durability
-  acknowledgement. Only then may a still-current foreground account session
-  start the service, clear that stop reason, and reply `Accepted`; cancellation
-  or account-generation change removes the request instead.
+  Treat Media3 callbacks as notifications, not durability acknowledgements:
+  read back the exact DownloadIndex mutation and perform a bounded direct index
+  repair before `Accepted`, `Absent`, or `Connected`; a stale callback never
+  overwrites a newer durable row. Only then may a
+  still-current foreground account session start the service, clear that stop
+  reason, and reply `Accepted`; cancellation or account-generation change
+  persists `STATE_REMOVING` instead.
 - `getScheduler()` returns `null`. Add no restart intent filter,
   `PlatformScheduler`, WorkManager, Android `DownloadManager`, UIDT, boot
   receiver, connectivity scheduler, or second lifecycle owner.
-- On target-SDK-35 `dataSync` timeout, pause work and call the Media3 superclass
-  timeout path promptly. Project `Queued.SystemLimit`; resume only after Nexus
-  is next foregrounded and a completed `Connect` has established the active
-  account.
+- On target-SDK-35 `dataSync` timeout, fence only active/already-SystemLimit
+  work and persist/read back `SystemLimit`, then call `stopSelf(startId)` and
+  the pinned Media3 superclass timeout path. A separate 2.5-second main-thread
+  deadline always stops the service if storage work stalls; the stop gate still
+  forbids resume until the fence settles and Nexus is foregrounded again.
+  Never rewrite repair-required rows. Project `Queued.SystemLimit`.
+- The service returns `START_NOT_STICKY`. Before Media3 evaluates a foreground
+  resume intent, the Store rechecks foreground authorization, active account,
+  metadata account, and admission generation, then clears only matching
+  `SystemLimit` stop reasons. When the service is destroyed, restore
+  `SystemLimit` on every unfinished transfer. Android service recreation
+  therefore cannot become a second background-resume owner.
+- Cache deletion is verified. If deletion fails after Media3 removed the index
+  row, restore a repair-required manifest owner, project `Failed`, and reject
+  any waiting account connection instead of leaking bytes or hanging.
 - Process death/reboot preserves index and complete/partial cleanup facts but
   does not promise automatic background restart.
 - Add only the required new permissions:
@@ -472,7 +506,8 @@ Web:
 
 Android:
 
-- pin AndroidX WebKit, Media3 download/cache/OkHttp data-source, and OkHttp
+- pin AndroidX WebKit, Media3 download/cache/OkHttp data-source, OkHttp, and
+  Moshi's strict streaming JSON reader
 - change `app/build.gradle.kts`, manifest, `MainActivity.kt`, strings
 - add `offline/{OfflineMediaContract.kt,OfflineMediaStore.kt,
   OfflineMediaDownloadService.kt,OfflineMediaWebCapability.kt,

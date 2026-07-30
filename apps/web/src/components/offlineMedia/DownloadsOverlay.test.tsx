@@ -96,6 +96,7 @@ describe("DownloadsOverlay", () => {
 
     expect(await screen.findByText("47 B of 100 B")).toBeVisible();
     expect(screen.getByText("2 KB downloaded")).toBeVisible();
+    expect(screen.getByText("Downloaded · 2 KB")).toBeVisible();
     const [active, ready, failed] = screen.getAllByRole("listitem");
     if (!active || !ready || !failed) throw new Error("Missing inventory row");
 
@@ -105,6 +106,95 @@ describe("DownloadsOverlay", () => {
     expect(offlineController.cancel).toHaveBeenCalledWith(ACTIVE_ID);
     expect(offlineController.remove).toHaveBeenCalledWith(READY_ID);
     expect(offlineController.retry).toHaveBeenCalledWith(FAILED_ID);
+  });
+
+  it("labels every inventory state and queue reason", async () => {
+    const store = new OfflineMediaClientStore();
+    store.installSnapshot(
+      [
+        {
+          mediaId: "00000000-0000-4000-8000-000000000002",
+          title: "Capacity",
+          state: { kind: "Queued", reason: "Capacity" },
+        },
+        {
+          mediaId: "00000000-0000-4000-8000-000000000003",
+          title: "Network",
+          state: { kind: "Queued", reason: "WaitingForNetwork" },
+        },
+        {
+          mediaId: "00000000-0000-4000-8000-000000000004",
+          title: "Wi-Fi",
+          state: { kind: "Queued", reason: "WaitingForUnmetered" },
+        },
+        {
+          mediaId: "00000000-0000-4000-8000-000000000005",
+          title: "Android",
+          state: { kind: "Queued", reason: "SystemLimit" },
+        },
+        {
+          mediaId: "00000000-0000-4000-8000-000000000006",
+          title: "Downloading",
+          state: {
+            kind: "Downloading",
+            bytesDownloaded: 1_000,
+            totalBytes: { kind: "Absent" },
+          },
+        },
+        {
+          mediaId: "00000000-0000-4000-8000-000000000007",
+          title: "Restarting",
+          state: { kind: "Restarting" },
+        },
+        {
+          mediaId: "00000000-0000-4000-8000-000000000008",
+          title: "Ready",
+          state: {
+            kind: "Ready",
+            sizeBytes: 2_000,
+            contentType: "audio/mpeg",
+            updatedAt: "2026-07-30T19:00:00Z",
+          },
+        },
+        {
+          mediaId: "00000000-0000-4000-8000-000000000009",
+          title: "Failed",
+          state: { kind: "Failed", code: "DownloadFailed" },
+        },
+        {
+          mediaId: "00000000-0000-4000-8000-000000000010",
+          title: "Removing",
+          state: { kind: "Removing" },
+        },
+      ],
+      "UnmeteredOnly",
+    );
+    store.noteTitle(
+      "00000000-0000-4000-8000-000000000001",
+      "Resolving",
+    );
+    store.beginResolving("00000000-0000-4000-8000-000000000001");
+
+    renderOverlay(store, controller());
+
+    const dialog = await screen.findByRole("dialog", { name: "Downloads" });
+    for (const copy of [
+      "Preparing download…",
+      "Download queued",
+      "Waiting for network",
+      "Waiting for Wi-Fi",
+      "Download paused by Android",
+      "1 KB",
+      "Restarting download…",
+      "Downloaded · 2 KB",
+      "Download failed",
+      "Removing download…",
+    ]) {
+      expect(within(dialog).getByText(copy)).toBeVisible();
+    }
+    expect(
+      within(dialog).getByRole("button", { name: "Removing…" }),
+    ).toBeDisabled();
   });
 
   it("requires one explicit global confirmation before enabling mobile data", async () => {

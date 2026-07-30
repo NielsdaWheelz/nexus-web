@@ -33,7 +33,10 @@ internal class OfflineMediaWebCapability(
 
     @Volatile
     private var replyProxy: JavaScriptReplyProxy? = null
+    @Volatile
     private var documentGeneration = 0L
+    @Volatile
+    private var connectionGeneration = 0L
     private var installed = false
 
     fun install() {
@@ -72,11 +75,14 @@ internal class OfflineMediaWebCapability(
 
     fun onPageStarted() {
         documentGeneration += 1
+        connectionGeneration += 1
         replyProxy = null
         store.disconnect()
     }
 
     fun close() {
+        documentGeneration += 1
+        connectionGeneration += 1
         replyProxy = null
         store.disconnect()
         store.removeListener(this)
@@ -144,6 +150,8 @@ internal class OfflineMediaWebCapability(
                         )
                     is AccountMismatchException, is LocalMediaMissingException ->
                         response(404, "Not Found")
+                    is OfflineMediaPersistenceException ->
+                        response(503, "Service Unavailable")
                     else -> throw error
                 }
             },
@@ -168,14 +176,36 @@ internal class OfflineMediaWebCapability(
         when (command) {
             is OfflineMediaCommand.Connect -> {
                 val generation = documentGeneration
-                store.connect(command.accountId) { items, policy ->
+                val connection = connectionGeneration + 1
+                connectionGeneration = connection
+                replyProxy = null
+                store.connect(command.accountId) { result ->
                     mainHandler.post {
-                        if (generation != documentGeneration) {
+                        if (
+                            generation != documentGeneration ||
+                            connection != connectionGeneration
+                        ) {
                             return@post
                         }
-                        replyProxy = commandReplyProxy
-                        commandReplyProxy.postMessage(
-                            OfflineMediaWire.connected(command.requestId, items, policy)
+                        result.fold(
+                            onSuccess = { (items, policy) ->
+                                replyProxy = commandReplyProxy
+                                commandReplyProxy.postMessage(
+                                    OfflineMediaWire.connected(
+                                        command.requestId,
+                                        items,
+                                        policy,
+                                    )
+                                )
+                            },
+                            onFailure = { error ->
+                                commandReplyProxy.postMessage(
+                                    OfflineMediaWire.rejected(
+                                        command.requestId,
+                                        rejectionCode(error),
+                                    )
+                                )
+                            },
                         )
                     }
                 }
@@ -189,11 +219,11 @@ internal class OfflineMediaWebCapability(
                                     OfflineMediaWire.snapshot(command.requestId, items, policy)
                                 )
                             },
-                            onFailure = {
+                            onFailure = { error ->
                                 commandReplyProxy.postMessage(
                                     OfflineMediaWire.rejected(
                                         command.requestId,
-                                        RejectionCode.AccountMismatch,
+                                        rejectionCode(error),
                                     )
                                 )
                             },
@@ -238,22 +268,36 @@ internal class OfflineMediaWebCapability(
                     commandReplyProxy.postMessage(OfflineMediaWire.accepted(requestId))
                 },
                 onFailure = { error ->
-                    val code = when (error) {
-                        is AccountMismatchException -> RejectionCode.AccountMismatch
-                        is OfflineMediaSourceException -> error.rejectionCode
-                        else -> throw error
-                    }
-                    commandReplyProxy.postMessage(OfflineMediaWire.rejected(requestId, code))
+                    commandReplyProxy.postMessage(
+                        OfflineMediaWire.rejected(requestId, rejectionCode(error))
+                    )
                 },
             )
         }
     }
 
+    private fun rejectionCode(error: Throwable): RejectionCode {
+        return when (error) {
+            is AccountMismatchException -> RejectionCode.AccountMismatch
+            is OfflineMediaSourceException -> error.rejectionCode
+            is OfflineMediaPersistenceException -> RejectionCode.StorageUnavailable
+            else -> throw error
+        }
+    }
+
     private fun postEvent(message: String) {
-        val currentReplyProxy = replyProxy ?: return
+        val generation = documentGeneration
+        val connection = connectionGeneration
+        val proxy = replyProxy
         mainHandler.post {
-            if (replyProxy === currentReplyProxy) {
-                currentReplyProxy.postMessage(message)
+            if (
+                generation == documentGeneration &&
+                connection == connectionGeneration
+            ) {
+                val current = replyProxy
+                if (proxy == null || current === proxy) {
+                    current?.postMessage(message)
+                }
             }
         }
     }

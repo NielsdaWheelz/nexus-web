@@ -31,6 +31,7 @@ import java.io.InputStream
 import java.security.MessageDigest
 import java.time.Instant
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -39,6 +40,8 @@ import java.util.concurrent.atomic.AtomicLong
 
 internal const val OFFLINE_MEDIA_REPAIR_REQUIRED_STOP_REASON = 10_001
 internal const val OFFLINE_MEDIA_SYSTEM_LIMIT_STOP_REASON = 10_002
+private const val DURABLE_INDEX_MUTATION_ATTEMPTS = 3
+private const val SYSTEM_LIMIT_FENCE_TIMEOUT_MS = 1_500L
 private const val OFFLINE_MEDIA_CACHE_DIRECTORY = "offline-media"
 private const val OFFLINE_MEDIA_DOWNLOAD_INDEX_NAME = "offline_media"
 private const val OFFLINE_MEDIA_PREFERENCES = "offline_media_policy"
@@ -178,7 +181,9 @@ internal fun projectMedia3State(
                     NativeLocalAvailability.Queued(QueueReason.SystemLimit)
                 OFFLINE_MEDIA_REPAIR_REQUIRED_STOP_REASON ->
                     NativeLocalAvailability.Failed
-                else -> error("unknown offline media stop reason $stopReason")
+                else -> throw OfflineMediaCorruptionException(
+                    "unknown offline media stop reason $stopReason"
+                )
             }
         Download.STATE_DOWNLOADING ->
             NativeLocalAvailability.Downloading(
@@ -192,7 +197,9 @@ internal fun projectMedia3State(
         Download.STATE_FAILED -> NativeLocalAvailability.Failed
         Download.STATE_REMOVING -> NativeLocalAvailability.Removing
         Download.STATE_RESTARTING -> NativeLocalAvailability.Restarting
-        else -> error("unknown Media3 download state $state")
+        else -> throw OfflineMediaCorruptionException(
+            "unknown Media3 download state $state"
+        )
     }
 }
 
@@ -208,6 +215,237 @@ internal fun admissionIsCurrent(
         currentGeneration == expectedGeneration
 }
 
+internal fun durableDownloadMatches(
+    expected: Download,
+    actual: Download?,
+): Boolean {
+    return actual != null &&
+        actual.request == expected.request &&
+        actual.state == expected.state &&
+        actual.startTimeMs == expected.startTimeMs &&
+        actual.updateTimeMs == expected.updateTimeMs &&
+        actual.contentLength == expected.contentLength &&
+        actual.stopReason == expected.stopReason &&
+        actual.failureReason == expected.failureReason &&
+        actual.bytesDownloaded == expected.bytesDownloaded &&
+        actual.percentDownloaded.toBits() == expected.percentDownloaded.toBits()
+}
+
+internal fun <T> ensureDurableMutation(
+    expected: T,
+    read: () -> T?,
+    write: (T) -> Unit,
+    matches: (T, T?) -> Boolean = { left, right -> left == right },
+): Boolean {
+    repeat(DURABLE_INDEX_MUTATION_ATTEMPTS) {
+        val current = try {
+            read()
+        } catch (_: IOException) {
+            null
+        }
+        if (matches(expected, current)) {
+            return true
+        }
+        try {
+            write(expected)
+        } catch (_: IOException) {
+            // The bounded retry below owns transient index I/O failure.
+        }
+    }
+    return try {
+        matches(expected, read())
+    } catch (_: IOException) {
+        false
+    }
+}
+
+internal fun <T> ensureDurableRemoval(
+    read: () -> T?,
+    remove: () -> Unit,
+): Boolean {
+    repeat(DURABLE_INDEX_MUTATION_ATTEMPTS) {
+        val current = try {
+            read()
+        } catch (_: IOException) {
+            return@repeat
+        }
+        if (current == null) {
+            return true
+        }
+        try {
+            remove()
+        } catch (_: IOException) {
+            // The bounded retry below owns transient index I/O failure.
+        }
+    }
+    return try {
+        read() == null
+    } catch (_: IOException) {
+        false
+    }
+}
+
+internal fun ensureDurableDownload(
+    expected: Download,
+    read: () -> Download?,
+    write: (Download) -> Unit,
+): Boolean {
+    return ensureDurableMutation(
+        expected,
+        read,
+        write,
+        ::durableDownloadMatches,
+    )
+}
+
+internal fun observeDurableDownloadNotification(
+    notification: Download,
+    read: () -> Download?,
+    write: (Download) -> Unit,
+): Download? {
+    return observeDurableNotification(
+        notification,
+        read,
+        write,
+        ::durableDownloadMatches,
+        ::durableDownloadSupersedes,
+    )
+}
+
+internal fun <T> observeDurableNotification(
+    notification: T,
+    read: () -> T?,
+    write: (T) -> Unit,
+    matches: (T, T?) -> Boolean,
+    supersedes: (T, T) -> Boolean,
+): T? {
+    repeat(DURABLE_INDEX_MUTATION_ATTEMPTS) {
+        val current = try {
+            read()
+        } catch (_: IOException) {
+            return@repeat
+        }
+        if (matches(notification, current)) {
+            return current
+        }
+        if (current != null && supersedes(current, notification)) {
+            return current
+        }
+        try {
+            write(notification)
+        } catch (_: IOException) {
+            // The bounded retry below owns transient index I/O failure.
+        }
+    }
+    return try {
+        read()?.takeIf {
+            matches(notification, it) || supersedes(it, notification)
+        }
+    } catch (_: IOException) {
+        null
+    }
+}
+
+private fun durableDownloadSupersedes(
+    durable: Download,
+    notification: Download,
+): Boolean {
+    return durableStateSupersedes(
+        durable.state,
+        durable.stopReason,
+        durable.updateTimeMs,
+        notification.state,
+        notification.stopReason,
+        notification.updateTimeMs,
+    )
+}
+
+internal fun durableStateSupersedes(
+    durableState: Int,
+    durableStopReason: Int,
+    durableUpdateTimeMs: Long,
+    notificationState: Int,
+    notificationStopReason: Int,
+    notificationUpdateTimeMs: Long,
+): Boolean {
+    if (durableUpdateTimeMs != notificationUpdateTimeMs) {
+        return durableUpdateTimeMs > notificationUpdateTimeMs
+    }
+    return durableStateRank(durableState, durableStopReason) >=
+        durableStateRank(notificationState, notificationStopReason)
+}
+
+private fun durableStateRank(
+    state: Int,
+    stopReason: Int,
+): Int {
+    return when {
+        state == Download.STATE_REMOVING -> 6
+        state in setOf(Download.STATE_COMPLETED, Download.STATE_FAILED) -> 5
+        stopReason != Download.STOP_REASON_NONE -> 4
+        state == Download.STATE_RESTARTING -> 3
+        state == Download.STATE_DOWNLOADING -> 2
+        else -> 1
+    }
+}
+
+internal fun systemLimited(download: Download): Download {
+    require(requiresSystemLimitFence(download))
+    if (
+        download.state == Download.STATE_STOPPED &&
+        download.stopReason == OFFLINE_MEDIA_SYSTEM_LIMIT_STOP_REASON
+    ) {
+        return download
+    }
+    return Download(
+        download.request,
+        Download.STATE_STOPPED,
+        download.startTimeMs,
+        maxOf(System.currentTimeMillis(), download.updateTimeMs + 1),
+        download.contentLength,
+        OFFLINE_MEDIA_SYSTEM_LIMIT_STOP_REASON,
+        Download.FAILURE_REASON_NONE,
+    )
+}
+
+internal fun requiresSystemLimitFence(download: Download): Boolean {
+    return requiresSystemLimitFence(download.state, download.stopReason)
+}
+
+internal fun requiresSystemLimitFence(
+    state: Int,
+    stopReason: Int,
+): Boolean {
+    return state in setOf(
+        Download.STATE_QUEUED,
+        Download.STATE_DOWNLOADING,
+        Download.STATE_RESTARTING,
+    ) || (
+        state == Download.STATE_STOPPED &&
+            stopReason == OFFLINE_MEDIA_SYSTEM_LIMIT_STOP_REASON
+        )
+}
+
+internal fun removalRequiresManagerObservation(state: Int): Boolean {
+    return state !in setOf(
+        Download.STATE_COMPLETED,
+        Download.STATE_FAILED,
+        Download.STATE_REMOVING,
+    )
+}
+
+private inline fun <T> indexResult(block: () -> T): Result<T> {
+    return try {
+        Result.success(block())
+    } catch (error: IOException) {
+        Result.failure(OfflineMediaPersistenceException(error))
+    } catch (error: IllegalArgumentException) {
+        Result.failure(OfflineMediaPersistenceException(error))
+    } catch (error: OfflineMediaCorruptionException) {
+        Result.failure(OfflineMediaPersistenceException(error))
+    }
+}
+
 internal class OfflineMediaStore private constructor(
     context: Context,
 ) {
@@ -221,13 +459,13 @@ internal class OfflineMediaStore private constructor(
         val accountId: UUID,
         val generation: Long,
         val waitingForRemoval: MutableSet<String>,
-        val callback: (List<OfflineMediaItem>, NetworkPolicy) -> Unit,
+        val callback: (Result<Pair<List<OfflineMediaItem>, NetworkPolicy>>) -> Unit,
     )
 
     private data class QueuedConnect(
         val accountId: UUID,
         val generation: Long,
-        val callback: (List<OfflineMediaItem>, NetworkPolicy) -> Unit,
+        val callback: (Result<Pair<List<OfflineMediaItem>, NetworkPolicy>>) -> Unit,
     )
 
     private class PendingEnqueue(
@@ -249,6 +487,17 @@ internal class OfflineMediaStore private constructor(
                 currentGeneration,
             )
         }
+    }
+
+    private class SystemLimitFence(
+        val snapshots: List<Download>,
+        val callback: (Result<Unit>) -> Unit,
+    ) {
+        val remaining = ConcurrentHashMap.newKeySet<String>().apply {
+            addAll(snapshots.map { it.request.id })
+        }
+        val completed = AtomicBoolean(false)
+        val retryCount = AtomicLong(0)
     }
 
     private val appContext = context.applicationContext
@@ -299,9 +548,18 @@ internal class OfflineMediaStore private constructor(
         appContext.getSystemService(ConnectivityManager::class.java)
     private val readLeases = mutableMapOf<String, Int>()
     private val pendingRemovals = mutableSetOf<String>()
+    private val pendingRemovalCallbacks =
+        mutableMapOf<String, MutableList<(Result<Unit>) -> Unit>>()
     private val pendingEnqueues = mutableMapOf<String, PendingEnqueue>()
+    private val systemLimitFences = CopyOnWriteArraySet<SystemLimitFence>()
+    private data class AdmissionToken(
+        val accountId: UUID,
+        val generation: Long,
+    )
+    private val admissionTokens = ConcurrentHashMap<String, AdmissionToken>()
     private val connectQueue = ArrayDeque<QueuedConnect>()
     private val sessionGeneration = AtomicLong(0)
+    private val foregroundGeneration = AtomicLong(0)
 
     @Volatile
     private var activeAccountId: UUID? = null
@@ -309,8 +567,13 @@ internal class OfflineMediaStore private constructor(
     private var initialized = false
     private var reconciled = false
     private var foregroundRequested = false
+    private var foregroundWhileStopping = false
     @Volatile
     private var foregroundAuthorized = false
+    @Volatile
+    private var serviceStopInProgress = false
+    @Volatile
+    private var admittedForegroundGeneration = 0L
     private var networkPolicy = loadNetworkPolicy()
 
     init {
@@ -337,57 +600,129 @@ internal class OfflineMediaStore private constructor(
                         val pending = pendingEnqueues[download.request.id]
                         if (pending != null) {
                             if (pending.durableObserved) {
+                                val durable = observeDownloadNotification(download)
+                                if (durable != null) {
+                                    observeSystemLimitSettlement(durable)
+                                    publish(durable)
+                                }
                                 return@execute
                             }
-                            pending.durableObserved = true
                             if (!pending.mayAdmit(activeAccountId, sessionGeneration.get())) {
+                                pending.durableObserved = true
+                                pendingEnqueues.remove(download.request.id, pending)
+                                val current = observeDownloadNotification(download)
+                                if (current == null) {
+                                    completePending(
+                                        pending,
+                                        Result.failure(OfflineMediaPersistenceException()),
+                                    )
+                                    return@execute
+                                }
+                                beginRemoval(
+                                    current,
+                                    metadata(current).mediaId,
+                                ) { removal ->
+                                    completePending(
+                                        pending,
+                                        removal.fold(
+                                            onSuccess = {
+                                                if (pending.canceled.get()) {
+                                                    Result.success(Unit)
+                                                } else {
+                                                    Result.failure(
+                                                        AccountMismatchException()
+                                                    )
+                                                }
+                                            },
+                                            onFailure = { Result.failure(it) },
+                                        ),
+                                    )
+                                }
+                                return@execute
+                            }
+                            val durable = observeDownloadNotification(download)
+                            if (durable == null) {
+                                pending.durableObserved = true
                                 pendingEnqueues.remove(download.request.id, pending)
                                 requestRemoval(download.request.id)
                                 completePending(
                                     pending,
-                                    if (pending.canceled.get()) {
-                                        Result.success(Unit)
-                                    } else {
-                                        Result.failure(AccountMismatchException())
-                                    },
+                                    Result.failure(OfflineMediaPersistenceException()),
                                 )
                                 return@execute
                             }
-                            logDownload(download, finalException)
-                            publish(download)
+                            pending.durableObserved = true
+                            logDownload(durable, finalException)
+                            publish(durable)
+                            observeSystemLimitSettlement(durable)
                             mainHandler.post {
                                 val shouldStart = foregroundAuthorized &&
-                                    pending.mayAdmit(activeAccountId, sessionGeneration.get())
+                                    pending.mayAdmit(
+                                        activeAccountId,
+                                        sessionGeneration.get(),
+                                    ) &&
+                                    systemLimitFences.isEmpty()
                                 if (shouldStart) {
+                                    admissionTokens[durable.request.id] = AdmissionToken(
+                                        pending.accountId,
+                                        pending.generation,
+                                    )
                                     OfflineMediaDownloadService.admit(
                                         appContext,
-                                        download.request.id,
+                                        durable.request.id,
                                     )
                                 }
                                 worker.execute {
                                     pendingEnqueues.remove(download.request.id, pending)
                                     if (!pending.mayAdmit(activeAccountId, sessionGeneration.get())) {
-                                        requestRemoval(download.request.id)
+                                        beginRemoval(
+                                            durable,
+                                            metadata(durable).mediaId,
+                                        ) { removal ->
+                                            completePending(
+                                                pending,
+                                                removal.fold(
+                                                    onSuccess = {
+                                                        if (pending.canceled.get()) {
+                                                            Result.success(Unit)
+                                                        } else {
+                                                            Result.failure(
+                                                                AccountMismatchException()
+                                                            )
+                                                        }
+                                                    },
+                                                    onFailure = { Result.failure(it) },
+                                                ),
+                                            )
+                                        }
+                                    } else {
+                                        completePending(pending, Result.success(Unit))
                                     }
-                                    completePending(
-                                        pending,
-                                        if (pending.canceled.get()) {
-                                            Result.success(Unit)
-                                        } else if (
-                                            activeAccountId != pending.accountId ||
-                                            sessionGeneration.get() != pending.generation
-                                        ) {
-                                            Result.failure(AccountMismatchException())
-                                        } else {
-                                            Result.success(Unit)
-                                        },
-                                    )
                                 }
                             }
                             return@execute
                         }
-                        logDownload(download, finalException)
-                        publish(download)
+                        val durable = observeDownloadNotification(download)
+                        if (durable == null) {
+                            Log.e(
+                                LOG_TAG,
+                                "downloadId=${download.request.id} failed durable index verification",
+                            )
+                            failRemoval(download.request.id)
+                            failConnectRemoval(download.request.id)
+                            return@execute
+                        }
+                        logDownload(durable, finalException)
+                        if (durable.state == Download.STATE_REMOVING) {
+                            synchronized(readLeases) {
+                                pendingRemovals.add(durable.request.id)
+                            }
+                        }
+                        publish(durable)
+                        observeSystemLimitSettlement(durable)
+                        if (durable.state == Download.STATE_REMOVING) {
+                            completeRemoval(durable.request.id, Result.success(Unit))
+                        }
                     }
                 }
 
@@ -396,6 +731,23 @@ internal class OfflineMediaStore private constructor(
                     download: Download,
                 ) {
                     worker.execute {
+                        observeSystemLimit(download.request.id)
+                        if (!ensureObservedRemoval(download.request.id)) {
+                            Log.e(
+                                LOG_TAG,
+                                "downloadId=${download.request.id} failed durable removal verification",
+                            )
+                            synchronized(readLeases) {
+                                pendingRemovals.remove(download.request.id)
+                            }
+                            completeRemoval(
+                                download.request.id,
+                                Result.failure(OfflineMediaPersistenceException()),
+                            )
+                            failConnectRemoval(download.request.id)
+                            markRepairRequired(download)
+                            return@execute
+                        }
                         pendingEnqueues.remove(download.request.id)?.let { pending ->
                             completePending(
                                 pending,
@@ -406,10 +758,22 @@ internal class OfflineMediaStore private constructor(
                                 },
                             )
                         }
+                        if (!removeCachedResourceVerified(download.request.id)) {
+                            synchronized(readLeases) {
+                                pendingRemovals.remove(download.request.id)
+                            }
+                            completeRemoval(
+                                download.request.id,
+                                Result.failure(OfflineMediaPersistenceException()),
+                            )
+                            failConnectRemoval(download.request.id)
+                            persistRepairRequired(download)?.let(::publish)
+                            return@execute
+                        }
                         synchronized(readLeases) {
                             pendingRemovals.remove(download.request.id)
                         }
-                        cache.removeResource(download.request.id)
+                        completeRemoval(download.request.id, Result.success(Unit))
                         val connect = pendingConnect
                         if (connect != null && connect.waitingForRemoval.remove(download.request.id)) {
                             finishConnectIfReady(connect)
@@ -450,14 +814,16 @@ internal class OfflineMediaStore private constructor(
     fun disconnect() {
         activeAccountId = null
         sessionGeneration.incrementAndGet()
+        admissionTokens.clear()
     }
 
     fun connect(
         accountId: UUID,
-        callback: (List<OfflineMediaItem>, NetworkPolicy) -> Unit,
+        callback: (Result<Pair<List<OfflineMediaItem>, NetworkPolicy>>) -> Unit,
     ) {
         if (activeAccountId != accountId) {
             activeAccountId = null
+            admissionTokens.clear()
         }
         val generation = sessionGeneration.get()
         worker.execute {
@@ -471,7 +837,7 @@ internal class OfflineMediaStore private constructor(
             if (activeAccountId == null) {
                 callback(Result.failure(AccountMismatchException()))
             } else {
-                callback(Result.success(itemsForActiveAccount() to networkPolicy))
+                callback(indexResult { itemsForActiveAccount() to networkPolicy })
             }
         }
     }
@@ -488,7 +854,14 @@ internal class OfflineMediaStore private constructor(
                 it.callbacks.add(callback)
                 return@execute
             }
-            if (downloadIndex.getDownload(id) != null) {
+            val existing = try {
+                downloadIndex.getDownload(id)
+            } catch (error: IOException) {
+                return@execute callback(
+                    Result.failure(OfflineMediaPersistenceException(error))
+                )
+            }
+            if (existing != null) {
                 return@execute callback(Result.success(Unit))
             }
             startPreflightAttempt(accountId, spec, callback)
@@ -496,26 +869,21 @@ internal class OfflineMediaStore private constructor(
     }
 
     fun cancel(mediaId: UUID, callback: (Result<Unit>) -> Unit) {
-        withDownload(mediaId, callback) { download ->
+        worker.execute {
             val accountId = activeAccountId
-                ?: throw AccountMismatchException()
+                ?: return@execute callback(Result.failure(AccountMismatchException()))
             val id = stableDownloadId(accountId, mediaId)
-            pendingEnqueues[id]?.let { pending ->
-                pending.canceled.set(true)
-                pending.cancellation.cancel()
-                requestRemoval(id)
+            if (cancelPendingEnqueue(id, callback)) {
+                return@execute
             }
-            if (
-                download != null &&
-                download.state in setOf(
-                    Download.STATE_QUEUED,
-                    Download.STATE_STOPPED,
-                    Download.STATE_DOWNLOADING,
-                    Download.STATE_RESTARTING,
+            val download = try {
+                downloadIndex.getDownload(id)
+            } catch (error: IOException) {
+                return@execute callback(
+                    Result.failure(OfflineMediaPersistenceException(error))
                 )
-            ) {
-                requestRemoval(id)
             }
+            beginRemoval(download, mediaId, callback)
         }
     }
 
@@ -528,7 +896,13 @@ internal class OfflineMediaStore private constructor(
                 it.callbacks.add(callback)
                 return@execute
             }
-            val download = downloadIndex.getDownload(id)
+            val download = try {
+                downloadIndex.getDownload(id)
+            } catch (error: IOException) {
+                return@execute callback(
+                    Result.failure(OfflineMediaPersistenceException(error))
+                )
+            }
                 ?: return@execute callback(Result.success(Unit))
             if (
                 download.state != Download.STATE_FAILED &&
@@ -542,7 +916,11 @@ internal class OfflineMediaStore private constructor(
                 oldMetadata.title,
                 download.request.uri.toString(),
             )
-            cache.removeResource(id)
+            if (!removeCachedResourceVerified(id)) {
+                return@execute callback(
+                    Result.failure(OfflineMediaPersistenceException())
+                )
+            }
             startPreflightAttempt(accountId, spec, callback)
         }
     }
@@ -618,23 +996,21 @@ internal class OfflineMediaStore private constructor(
     }
 
     fun remove(mediaId: UUID, callback: (Result<Unit>) -> Unit) {
-        withDownload(mediaId, callback) { download ->
-            if (download != null) {
-                val id = download.request.id
-                pendingEnqueues[id]?.let { pending ->
-                    pending.canceled.set(true)
-                    pending.cancellation.cancel()
-                }
-                val (added, removeNow) = synchronized(readLeases) {
-                    pendingRemovals.add(id) to ((readLeases[id] ?: 0) == 0)
-                }
-                if (added) {
-                    emitState(mediaId, Presence.Present(NativeLocalAvailability.Removing))
-                }
-                if (removeNow) {
-                    requestRemoval(id)
-                }
+        worker.execute {
+            val accountId = activeAccountId
+                ?: return@execute callback(Result.failure(AccountMismatchException()))
+            val id = stableDownloadId(accountId, mediaId)
+            if (cancelPendingEnqueue(id, callback)) {
+                return@execute
             }
+            val download = try {
+                downloadIndex.getDownload(id)
+            } catch (error: IOException) {
+                return@execute callback(
+                    Result.failure(OfflineMediaPersistenceException(error))
+                )
+            }
+            beginRemoval(download, mediaId, callback)
         }
     }
 
@@ -649,7 +1025,11 @@ internal class OfflineMediaStore private constructor(
             if (networkPolicy == policy) {
                 return@execute callback(Result.success(Unit))
             }
-            check(preferences.edit().putString(NETWORK_POLICY_KEY, policy.name).commit())
+            if (!preferences.edit().putString(NETWORK_POLICY_KEY, policy.name).commit()) {
+                return@execute callback(
+                    Result.failure(OfflineMediaPersistenceException())
+                )
+            }
             networkPolicy = policy
             val requirements = requirementsFor(policy)
             mainHandler.post {
@@ -664,32 +1044,227 @@ internal class OfflineMediaStore private constructor(
     }
 
     fun onAppForeground() {
+        foregroundGeneration.incrementAndGet()
         foregroundAuthorized = true
+        systemLimitFences.forEach(::forceSystemLimitFence)
         worker.execute {
-            foregroundRequested = true
+            if (serviceStopInProgress || systemLimitFences.isNotEmpty()) {
+                foregroundRequested = false
+                foregroundWhileStopping = true
+            } else {
+                foregroundRequested = true
+            }
             maybeResumeInForeground()
         }
     }
 
     fun onAppBackground() {
         foregroundAuthorized = false
-        worker.execute { foregroundRequested = false }
+        worker.execute {
+            foregroundRequested = false
+            foregroundWhileStopping = false
+        }
     }
 
-    fun pauseForSystemLimit() {
+    fun pauseForSystemLimit(
+        callback: (Result<Unit>) -> Unit = {},
+    ) {
         check(Looper.myLooper() == downloadManager.applicationLooper)
-        downloadManager.currentDownloads.filter {
-            it.state in setOf(
-                Download.STATE_QUEUED,
-                Download.STATE_DOWNLOADING,
-                Download.STATE_RESTARTING,
-            )
-        }.forEach { download ->
+        val unfinished = downloadManager.currentDownloads
+            .filter(::requiresSystemLimitFence)
+        if (unfinished.isEmpty()) {
+            callback(Result.success(Unit))
+            return
+        }
+        val replayForeground =
+            foregroundGeneration.get() > admittedForegroundGeneration
+        serviceStopInProgress = true
+        worker.execute {
+            foregroundRequested = false
+            foregroundWhileStopping =
+                foregroundWhileStopping || replayForeground
+        }
+        val fence = SystemLimitFence(
+            unfinished,
+            callback,
+        )
+        systemLimitFences.add(fence)
+        downloadManager.pauseDownloads()
+        unfinished.forEach { download ->
             downloadManager.setStopReason(
                 download.request.id,
                 OFFLINE_MEDIA_SYSTEM_LIMIT_STOP_REASON,
             )
         }
+        worker.execute {
+            unfinished
+                .filter { it.stopReason == OFFLINE_MEDIA_SYSTEM_LIMIT_STOP_REASON }
+                .forEach { download ->
+                    if (ensureObservedDownload(download)) {
+                        observeSystemLimit(download.request.id)
+                    }
+                }
+        }
+        mainHandler.postDelayed(
+            {
+                if (!fence.completed.get()) {
+                    forceSystemLimitFence(fence)
+                }
+            },
+            SYSTEM_LIMIT_FENCE_TIMEOUT_MS,
+        )
+    }
+
+    fun releaseSystemLimit(admissionId: String? = null) {
+        check(Looper.myLooper() == downloadManager.applicationLooper)
+        val accountId = activeAccountId ?: return
+        val generation = sessionGeneration.get()
+        if (
+            !foregroundAuthorized ||
+            serviceStopInProgress ||
+            systemLimitFences.isNotEmpty()
+        ) {
+            return
+        }
+        if (admissionId != null) {
+            val token = admissionTokens.remove(admissionId) ?: return
+            if (token.accountId != accountId || token.generation != generation) {
+                return
+            }
+        }
+        admittedForegroundGeneration = foregroundGeneration.get()
+        downloadManager.currentDownloads
+            .asSequence()
+            .filter {
+                it.stopReason == OFFLINE_MEDIA_SYSTEM_LIMIT_STOP_REASON &&
+                    (admissionId == null || it.request.id == admissionId)
+            }
+            .filter {
+                runCatching { metadata(it).accountId == accountId }
+                    .getOrDefault(false)
+            }
+            .forEach {
+                downloadManager.setStopReason(
+                    it.request.id,
+                    Download.STOP_REASON_NONE,
+                )
+            }
+    }
+
+    private fun observeSystemLimit(id: String) {
+        systemLimitFences.forEach { fence ->
+            if (fence.remaining.remove(id) && fence.remaining.isEmpty()) {
+                finishSystemLimitFence(fence, Result.success(Unit))
+            }
+        }
+    }
+
+    private fun observeSystemLimitSettlement(download: Download) {
+        if (
+            download.stopReason == OFFLINE_MEDIA_SYSTEM_LIMIT_STOP_REASON ||
+            !requiresSystemLimitFence(download)
+        ) {
+            observeSystemLimit(download.request.id)
+        }
+    }
+
+    private fun forceSystemLimitFence(
+        fence: SystemLimitFence,
+    ) {
+        worker.execute {
+            val persisted = fence.snapshots
+                .filter { it.request.id in fence.remaining }
+                .map { snapshot ->
+                    val current = try {
+                        downloadIndex.getDownload(snapshot.request.id)
+                    } catch (error: IOException) {
+                        Log.e(
+                            LOG_TAG,
+                            "downloadId=${snapshot.request.id} failed SystemLimit read",
+                            error,
+                        )
+                        return@map false
+                    }
+                    when {
+                        current == null || !requiresSystemLimitFence(current) -> {
+                            fence.remaining.remove(snapshot.request.id)
+                            true
+                        }
+                        current.stopReason ==
+                            OFFLINE_MEDIA_SYSTEM_LIMIT_STOP_REASON -> {
+                            ensureObservedDownload(current).also { success ->
+                                if (success) {
+                                    fence.remaining.remove(snapshot.request.id)
+                                }
+                            }
+                        }
+                        else -> {
+                            ensureObservedDownload(systemLimited(current)).also { success ->
+                                if (success) {
+                                    fence.remaining.remove(snapshot.request.id)
+                                }
+                            }
+                        }
+                    }
+                }
+                .all { it }
+            if (!persisted) {
+                Log.e(LOG_TAG, "failed durable SystemLimit service-stop fence")
+                if (fence.retryCount.getAndIncrement() < 2) {
+                    mainHandler.postDelayed(
+                        { forceSystemLimitFence(fence) },
+                        SYSTEM_LIMIT_FENCE_TIMEOUT_MS,
+                    )
+                }
+            }
+            if (persisted && fence.completed.get()) {
+                systemLimitFences.remove(fence)
+                maybeRearmAfterServiceStop()
+            } else {
+                finishSystemLimitFence(
+                    fence,
+                    if (persisted) {
+                        Result.success(Unit)
+                    } else {
+                        Result.failure(OfflineMediaPersistenceException())
+                    },
+                )
+            }
+        }
+    }
+
+    private fun finishSystemLimitFence(
+        fence: SystemLimitFence,
+        result: Result<Unit>,
+    ) {
+        if (!fence.completed.compareAndSet(false, true)) {
+            return
+        }
+        if (result.isSuccess) {
+            systemLimitFences.remove(fence)
+        }
+        mainHandler.post { fence.callback(result) }
+        maybeRearmAfterServiceStop()
+    }
+
+    fun completeServiceStop() {
+        check(Looper.myLooper() == downloadManager.applicationLooper)
+        serviceStopInProgress = false
+        worker.execute(::maybeRearmAfterServiceStop)
+    }
+
+    private fun maybeRearmAfterServiceStop() {
+        if (
+            serviceStopInProgress ||
+            systemLimitFences.isNotEmpty() ||
+            !foregroundAuthorized ||
+            !foregroundWhileStopping
+        ) {
+            return
+        }
+        foregroundWhileStopping = false
+        foregroundRequested = true
+        maybeResumeInForeground()
     }
 
     fun publishForegroundProgress(downloads: List<Download>) {
@@ -706,7 +1281,11 @@ internal class OfflineMediaStore private constructor(
             if (activeAccountId != accountId) {
                 return Result.failure(AccountMismatchException())
             }
-            val download = downloadIndex.getDownload(id)
+            val download = try {
+                downloadIndex.getDownload(id)
+            } catch (error: IOException) {
+                return Result.failure(OfflineMediaPersistenceException(error))
+            }
                 ?: return Result.failure(LocalMediaMissingException())
             val metadata = metadata(download)
             if (
@@ -763,19 +1342,39 @@ internal class OfflineMediaStore private constructor(
         if (pendingConnect != null || connectQueue.isEmpty() || !initialized) {
             return
         }
+        if (!reconciled && !reconcile()) {
+            connectQueue.removeFirst().callback(
+                Result.failure(OfflineMediaPersistenceException())
+            )
+            startNextConnect()
+            return
+        }
         val queued = connectQueue.removeFirst()
         if (queued.generation != sessionGeneration.get()) {
             startNextConnect()
             return
         }
         if (activeAccountId == queued.accountId) {
-            queued.callback(itemsForActiveAccount(), networkPolicy)
+            val snapshot = indexResult {
+                itemsForActiveAccount() to networkPolicy
+            }
+            if (snapshot.isFailure) {
+                activeAccountId = null
+            }
+            queued.callback(snapshot)
             startNextConnect()
             return
         }
         activeAccountId = null
-        val foreign = downloads()
+        val foreignDownloads = try {
+            downloads()
+        } catch (error: IOException) {
+            queued.callback(Result.failure(OfflineMediaPersistenceException(error)))
+            startNextConnect()
+            return
+        }
             .filter { metadata(it).accountId != queued.accountId }
+        val foreign = foreignDownloads
             .mapTo(mutableSetOf()) { it.request.id }
         val pending = PendingConnect(
             queued.accountId,
@@ -788,17 +1387,14 @@ internal class OfflineMediaStore private constructor(
             finishConnectIfReady(pending)
             return
         }
-        foreign.forEach { id ->
-            val removeNow = synchronized(readLeases) {
-                if ((readLeases[id] ?: 0) == 0) {
-                    true
-                } else {
-                    pendingRemovals.add(id)
-                    false
-                }
-            }
-            if (removeNow) {
-                requestRemoval(id)
+        for (download in foreignDownloads) {
+            if (!beginAccountRemoval(download)) {
+                Log.e(
+                    LOG_TAG,
+                    "downloadId=${download.request.id} failed durable account-purge marker",
+                )
+                failConnect(pending, OfflineMediaPersistenceException())
+                return
             }
         }
     }
@@ -814,26 +1410,205 @@ internal class OfflineMediaStore private constructor(
         }
         activeAccountId = connect.accountId
         pendingConnect = null
-        connect.callback(itemsForActiveAccount(), networkPolicy)
-        maybeResumeInForeground()
+        val snapshot = indexResult {
+            itemsForActiveAccount() to networkPolicy
+        }
+        if (snapshot.isFailure) {
+            activeAccountId = null
+        }
+        connect.callback(snapshot)
+        try {
+            maybeResumeInForeground()
+        } finally {
+            startNextConnect()
+        }
+    }
+
+    private fun failConnect(
+        connect: PendingConnect,
+        error: OfflineMediaPersistenceException,
+    ) {
+        if (pendingConnect !== connect) {
+            return
+        }
+        pendingConnect = null
+        activeAccountId = null
+        connect.callback(Result.failure(error))
         startNextConnect()
     }
 
-    private fun withDownload(
+    private fun failConnectRemoval(id: String) {
+        val connect = pendingConnect ?: return
+        if (connect.waitingForRemoval.remove(id)) {
+            failConnect(connect, OfflineMediaPersistenceException())
+        }
+    }
+
+    private fun beginRemoval(
+        download: Download?,
         mediaId: UUID,
         callback: (Result<Unit>) -> Unit,
-        action: (Download?) -> Unit,
     ) {
-        worker.execute {
-            val accountId = activeAccountId
-                ?: return@execute callback(Result.failure(AccountMismatchException()))
-            action(downloadIndex.getDownload(stableDownloadId(accountId, mediaId)))
+        if (download == null) {
             callback(Result.success(Unit))
+            return
         }
+        val id = download.request.id
+        pendingRemovalCallbacks[id]?.let {
+            it.add(callback)
+            return
+        }
+        val managerOwned = removalRequiresManagerObservation(download.state)
+        if (managerOwned) {
+            pendingRemovalCallbacks[id] = mutableListOf(callback)
+            requestRemoval(id)
+            return
+        }
+        val (added, removeNow) = synchronized(readLeases) {
+            pendingRemovals.add(id) to ((readLeases[id] ?: 0) == 0)
+        }
+        if (!markRemovalPending(download)) {
+            synchronized(readLeases) {
+                pendingRemovals.remove(id)
+            }
+            callback(Result.failure(OfflineMediaPersistenceException()))
+            return
+        }
+        if (added) {
+            emitState(mediaId, Presence.Present(NativeLocalAvailability.Removing))
+        }
+        callback(Result.success(Unit))
+        if (removeNow) {
+            requestRemoval(id)
+        }
+    }
+
+    private fun beginAccountRemoval(download: Download): Boolean {
+        val id = download.request.id
+        val managerOwned = removalRequiresManagerObservation(download.state)
+        val removeNow = synchronized(readLeases) {
+            pendingRemovals.add(id)
+            (readLeases[id] ?: 0) == 0
+        }
+        if (!managerOwned && !markRemovalPending(download)) {
+            synchronized(readLeases) {
+                pendingRemovals.remove(id)
+            }
+            return false
+        }
+        if (removeNow) {
+            requestRemoval(id)
+        }
+        return true
+    }
+
+    private fun cancelPendingEnqueue(
+        id: String,
+        callback: (Result<Unit>) -> Unit,
+    ): Boolean {
+        val pending = pendingEnqueues[id] ?: return false
+        pending.canceled.set(true)
+        pending.cancellation.cancel()
+        pending.callbacks.add(callback)
+        val observed = try {
+            downloadIndex.getDownload(id)
+        } catch (error: IOException) {
+            pendingEnqueues.remove(id, pending)
+            completePending(
+                pending,
+                Result.failure(OfflineMediaPersistenceException(error)),
+            )
+            return true
+        } ?: return true
+        pendingEnqueues.remove(id, pending)
+        beginRemoval(
+            observed,
+            metadata(observed).mediaId,
+        ) { result ->
+            completePending(pending, result)
+        }
+        return true
+    }
+
+    private fun completeRemoval(id: String, result: Result<Unit>) {
+        pendingRemovalCallbacks.remove(id)?.forEach { it(result) }
+    }
+
+    private fun failRemoval(id: String) {
+        completeRemoval(
+            id,
+            Result.failure(OfflineMediaPersistenceException()),
+        )
+        synchronized(readLeases) {
+            pendingRemovals.remove(id)
+        }
+    }
+
+    private fun markRemovalPending(download: Download): Boolean {
+        val removing = if (download.state == Download.STATE_REMOVING) {
+            download
+        } else {
+            Download(
+                download.request,
+                Download.STATE_REMOVING,
+                download.startTimeMs,
+                maxOf(System.currentTimeMillis(), download.updateTimeMs + 1),
+                download.contentLength,
+                Download.STOP_REASON_NONE,
+                Download.FAILURE_REASON_NONE,
+            )
+        }
+        return ensureDurableDownload(
+            removing,
+            read = { downloadIndex.getDownload(removing.request.id) },
+            write = downloadIndex::putDownload,
+        )
+    }
+
+    private fun ensureObservedDownload(download: Download): Boolean {
+        return ensureDurableDownload(
+            download,
+            read = { downloadIndex.getDownload(download.request.id) },
+            write = downloadIndex::putDownload,
+        )
+    }
+
+    private fun observeDownloadNotification(download: Download): Download? {
+        return observeDurableDownloadNotification(
+            download,
+            read = { downloadIndex.getDownload(download.request.id) },
+            write = downloadIndex::putDownload,
+        )
+    }
+
+    private fun readDurableDownload(id: String): Download? {
+        return try {
+            downloadIndex.getDownload(id)
+        } catch (error: IOException) {
+            Log.e(LOG_TAG, "downloadId=$id failed durable index read", error)
+            null
+        }
+    }
+
+    private fun ensureObservedRemoval(id: String): Boolean {
+        return ensureDurableRemoval(
+            read = { downloadIndex.getDownload(id) },
+            remove = { downloadIndex.removeDownload(id) },
+        )
     }
 
     private fun requestRemoval(id: String) {
         mainHandler.post { downloadManager.removeDownload(id) }
+    }
+
+    private fun removeCachedResourceVerified(id: String): Boolean {
+        return try {
+            removeCachedResource(cache, id)
+            id !in cache.keys
+        } catch (error: IOException) {
+            Log.e(LOG_TAG, "downloadId=$id failed cache cleanup", error)
+            false
+        }
     }
 
     private fun persistDownload(request: DownloadRequest) {
@@ -871,31 +1646,61 @@ internal class OfflineMediaStore private constructor(
         }
     }
 
-    private fun reconcile() {
+    private fun reconcile(): Boolean {
         if (reconciled) {
-            return
+            return true
         }
-        val indexedDownloads = downloads()
-        val indexedIds = indexedDownloads.mapTo(mutableSetOf()) { it.request.id }
-        cache.keys.filterNot(indexedIds::contains).forEach(cache::removeResource)
-        indexedDownloads.forEach { download ->
-            val metadata = metadata(download)
-            check(download.request.id == stableDownloadId(metadata.accountId, metadata.mediaId))
-            check(download.request.customCacheKey == download.request.id)
-            if (download.state == Download.STATE_COMPLETED) {
-                val size = completedSize(download, metadata)
-                if (
-                    size == null ||
-                    !isComplete(download.request.id, size) ||
-                    !hasExpectedContainer(download.request.id, metadata.contentType, size)
-                ) {
-                    markRepairRequired(download)
+        val indexedDownloads = try {
+            downloads()
+        } catch (error: IOException) {
+            Log.e(LOG_TAG, "failed offline media index reconciliation", error)
+            return false
+        }
+        try {
+            val indexedIds = indexedDownloads.mapTo(mutableSetOf()) { it.request.id }
+            for (id in cache.keys.filterNot(indexedIds::contains)) {
+                if (!removeCachedResourceVerified(id)) {
+                    return false
                 }
-            } else {
-                cache.removeResource(download.request.id)
             }
+            for (download in indexedDownloads) {
+                val metadata = metadata(download)
+                if (
+                    download.request.id !=
+                    stableDownloadId(metadata.accountId, metadata.mediaId) ||
+                    download.request.customCacheKey != download.request.id
+                ) {
+                    Log.e(
+                        LOG_TAG,
+                        "downloadId=${download.request.id} has corrupt durable identity",
+                    )
+                    return false
+                }
+                if (download.state == Download.STATE_COMPLETED) {
+                    val size = completedSize(download, metadata)
+                    if (
+                        size == null ||
+                        !isComplete(download.request.id, size) ||
+                        !hasExpectedContainer(
+                            download.request.id,
+                            metadata.contentType,
+                            size,
+                        )
+                    ) {
+                        if (persistRepairRequired(download) == null) {
+                            return false
+                        }
+                    }
+                } else if (!removeCachedResourceVerified(download.request.id)) {
+                    return false
+                }
+            }
+        } catch (error: IllegalArgumentException) {
+            Log.e(LOG_TAG, "failed offline media metadata reconciliation", error)
+            return false
         }
         reconciled = true
+        return true
     }
 
     private fun maybeResumeInForeground() {
@@ -909,7 +1714,13 @@ internal class OfflineMediaStore private constructor(
         ) {
             return
         }
-        val resumable = downloads().any {
+        val indexedDownloads = try {
+            downloads()
+        } catch (error: IOException) {
+            Log.e(LOG_TAG, "failed foreground resume index read", error)
+            return
+        }
+        val resumable = indexedDownloads.any {
             it.state !in setOf(Download.STATE_COMPLETED, Download.STATE_FAILED) &&
                 it.stopReason != OFFLINE_MEDIA_REPAIR_REQUIRED_STOP_REASON
         }
@@ -923,7 +1734,11 @@ internal class OfflineMediaStore private constructor(
     }
 
     private fun publishAll() {
-        downloads().forEach(::publish)
+        try {
+            downloads().forEach(::publish)
+        } catch (error: IOException) {
+            Log.e(LOG_TAG, "failed offline media snapshot publication", error)
+        }
     }
 
     private fun publish(download: Download) {
@@ -951,7 +1766,9 @@ internal class OfflineMediaStore private constructor(
                 OFFLINE_MEDIA_SYSTEM_LIMIT_STOP_REASON,
             )
         ) {
-            error("unknown offline media stop reason ${download.stopReason}")
+            throw OfflineMediaCorruptionException(
+                "unknown offline media stop reason ${download.stopReason}"
+            )
         }
         if (download.stopReason == OFFLINE_MEDIA_REPAIR_REQUIRED_STOP_REASON) {
             return NativeLocalAvailability.Failed
@@ -966,7 +1783,9 @@ internal class OfflineMediaStore private constructor(
                 !isComplete(download.request.id, size) ||
                 !hasExpectedContainer(download.request.id, metadata.contentType, size)
             ) {
-                markRepairRequired(download)
+                if (persistRepairRequired(download) == null) {
+                    throw OfflineMediaPersistenceException()
+                }
                 null
             } else {
                 NativeLocalAvailability.Ready(
@@ -1114,20 +1933,44 @@ internal class OfflineMediaStore private constructor(
     }
 
     private fun brokenCompleted(download: Download): Result<OfflineMediaRead> {
-        markRepairRequired(download)
-        return Result.failure(LocalMediaMissingException())
+        return if (persistRepairRequired(download) == null) {
+            Result.failure(OfflineMediaPersistenceException())
+        } else {
+            Result.failure(LocalMediaMissingException())
+        }
     }
 
     private fun markRepairRequired(download: Download) {
         if (download.stopReason == OFFLINE_MEDIA_REPAIR_REQUIRED_STOP_REASON) {
             return
         }
-        mainHandler.post {
-            downloadManager.setStopReason(
-                download.request.id,
-                OFFLINE_MEDIA_REPAIR_REQUIRED_STOP_REASON,
-            )
+        worker.execute {
+            persistRepairRequired(download)?.let(::publish)
         }
+    }
+
+    private fun persistRepairRequired(download: Download): Download? {
+        val current = readDurableDownload(download.request.id) ?: download
+        if (current.stopReason == OFFLINE_MEDIA_REPAIR_REQUIRED_STOP_REASON) {
+            return current
+        }
+        val repairRequired = Download(
+            current.request,
+            Download.STATE_STOPPED,
+            current.startTimeMs,
+            maxOf(System.currentTimeMillis(), current.updateTimeMs + 1),
+            current.contentLength,
+            OFFLINE_MEDIA_REPAIR_REQUIRED_STOP_REASON,
+            Download.FAILURE_REASON_NONE,
+        )
+        if (!ensureObservedDownload(repairRequired)) {
+            Log.e(
+                LOG_TAG,
+                "downloadId=${download.request.id} failed repair marker persistence",
+            )
+            return null
+        }
+        return repairRequired
     }
 
     private fun emitState(
@@ -1276,6 +2119,14 @@ internal class OfflineMediaStore private constructor(
 }
 
 internal class AccountMismatchException : IllegalStateException("offline media account is not connected")
+
+internal class OfflineMediaPersistenceException(
+    cause: Throwable? = null,
+) : IOException("offline media index mutation could not be persisted", cause)
+
+internal class OfflineMediaCorruptionException(
+    message: String,
+) : IllegalStateException(message)
 
 internal class LocalMediaMissingException : IOException("offline media is unavailable")
 

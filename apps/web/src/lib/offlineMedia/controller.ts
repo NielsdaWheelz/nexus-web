@@ -40,7 +40,7 @@ interface ResolvingRequest {
   nativeRequested: boolean;
 }
 
-class OfflineMediaRejectedError extends Error {
+export class OfflineMediaRejectedError extends Error {
   readonly code: OfflineMediaRejectedCode;
 
   constructor(code: OfflineMediaRejectedCode) {
@@ -50,7 +50,9 @@ class OfflineMediaRejectedError extends Error {
   }
 }
 
-function rejectionMessage(code: OfflineMediaRejectedCode): string {
+export function offlineMediaRejectionMessage(
+  code: OfflineMediaRejectedCode,
+): string {
   switch (code) {
     case "NetworkUnavailable":
       return "Connect to the internet and try again.";
@@ -62,6 +64,8 @@ function rejectionMessage(code: OfflineMediaRejectedCode): string {
       return "This episode’s audio can’t be downloaded.";
     case "StorageInsufficient":
       return "Not enough device storage for this download.";
+    case "StorageUnavailable":
+      return "Device storage is unavailable. Try again.";
     case "AccountMismatch":
       return "Your account changed. Reopen Nexus and try again.";
     case "InvalidRequest":
@@ -86,6 +90,7 @@ export class OfflineMediaControllerRuntime
     private readonly ownedOrigin: string,
     private readonly showError: (message: string) => void,
     private readonly onFatal: (error: Error) => void,
+    private readonly handleUnauthenticated: (error: unknown) => boolean,
     readonly openDownloads: () => void,
     private readonly mintRequestId: () => string = () => crypto.randomUUID(),
   ) {}
@@ -124,7 +129,7 @@ export class OfflineMediaControllerRuntime
     if (this.disposed) return;
     const outcome = await this.request({ kind: "GetSnapshot" });
     if (outcome.kind === "Rejected") {
-      this.showError(rejectionMessage(outcome.code));
+      this.showError(offlineMediaRejectionMessage(outcome.code));
       return;
     }
     if (outcome.kind !== "Snapshot") {
@@ -159,7 +164,7 @@ export class OfflineMediaControllerRuntime
       if (!this.isCurrentResolving(mediaId, request)) return;
       if (outcome.kind === "Rejected") {
         this.store.clearResolving(mediaId);
-        this.showError(rejectionMessage(outcome.code));
+        this.showError(offlineMediaRejectionMessage(outcome.code));
         return;
       }
       if (outcome.kind !== "Accepted") {
@@ -169,6 +174,9 @@ export class OfflineMediaControllerRuntime
     } catch (error) {
       if (!this.isCurrentResolving(mediaId, request)) return;
       this.store.clearResolving(mediaId);
+      if (this.handleUnauthenticated(error)) {
+        return;
+      }
       if (deadlineExpired) {
         this.showError("Preparing the download took too long. Try again.");
       } else if (!isAbortError(error)) {
@@ -247,7 +255,7 @@ export class OfflineMediaControllerRuntime
     if (this.disposed) return false;
     const outcome = await this.request(command);
     if (outcome.kind === "Rejected") {
-      this.showError(rejectionMessage(outcome.code));
+      this.showError(offlineMediaRejectionMessage(outcome.code));
       return false;
     }
     if (outcome.kind !== "Accepted") {

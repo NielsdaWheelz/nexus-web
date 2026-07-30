@@ -1,3 +1,4 @@
+import { ApiError } from "@/lib/api/client";
 import { describe, expect, it, vi } from "vitest";
 import { OfflineMediaClientStore } from "./clientStore";
 import { OfflineMediaControllerRuntime } from "./controller";
@@ -44,11 +45,12 @@ class FakeTransport implements OfflineMediaTransport {
 
 function runtime(
   readDownloadSpec: OfflineDownloadSpecReader = vi.fn(async () => ({
-      kind: "ProgressiveAudio" as const,
-      mediaId: MEDIA_ID,
-      title: "Episode",
-      sourceUrl: "https://example.test/episode.mp3",
-    })),
+    kind: "ProgressiveAudio" as const,
+    mediaId: MEDIA_ID,
+    title: "Episode",
+    sourceUrl: "https://example.test/episode.mp3",
+  })),
+  handleUnauthenticated = vi.fn(() => false),
 ) {
   const store = new OfflineMediaClientStore();
   const transport = new FakeTransport();
@@ -63,11 +65,19 @@ function runtime(
     "https://nexus.test",
     showError,
     onFatal,
+    handleUnauthenticated,
     vi.fn(),
     () =>
       `00000000-0000-4000-8000-${(++request).toString().padStart(12, "0")}`,
   );
-  return { controller, store, transport, showError, onFatal };
+  return {
+    controller,
+    store,
+    transport,
+    showError,
+    onFatal,
+    handleUnauthenticated,
+  };
 }
 
 async function connect(
@@ -84,6 +94,37 @@ async function connect(
 }
 
 describe("OfflineMediaController", () => {
+  it("gives expired-session recovery precedence over the spec deadline", async () => {
+    vi.useFakeTimers();
+    const expiredSession = new ApiError(
+      401,
+      "E_UNAUTHENTICATED",
+      "Session expired",
+    );
+    const handleUnauthenticated = vi.fn(() => true);
+    const { controller, store, transport, showError } = runtime(
+      (_mediaId, signal) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(expiredSession), {
+            once: true,
+          });
+        }),
+      handleUnauthenticated,
+    );
+    await connect(controller, transport);
+    store.noteTitle(MEDIA_ID, "Episode");
+
+    const enqueue = controller.enqueue(MEDIA_ID);
+    await vi.advanceTimersByTimeAsync(OFFLINE_DOWNLOAD_SPEC_DEADLINE_MS);
+    await enqueue;
+
+    expect(handleUnauthenticated).toHaveBeenCalledWith(
+      expiredSession,
+    );
+    expect(showError).not.toHaveBeenCalled();
+    expect(store.getItem(MEDIA_ID)).toEqual({ kind: "Absent" });
+  });
+
   it("classifies the real AbortSignal deadline with exact timeout feedback", async () => {
     vi.useFakeTimers();
     const { controller, store, transport, showError } = runtime(
@@ -105,6 +146,25 @@ describe("OfflineMediaController", () => {
     expect(showError).toHaveBeenCalledWith(
       "Preparing the download took too long. Try again.",
     );
+  });
+
+  it("reports durable storage failure separately from insufficient space", async () => {
+    const { controller, store, transport, showError } = runtime();
+    await connect(controller, transport);
+    store.noteTitle(MEDIA_ID, "Episode");
+
+    const enqueue = controller.enqueue(MEDIA_ID);
+    await Promise.resolve();
+    transport.reply(transport.commands[1], {
+      kind: "Rejected",
+      code: "StorageUnavailable",
+    });
+    await enqueue;
+
+    expect(showError).toHaveBeenCalledWith(
+      "Device storage is unavailable. Try again.",
+    );
+    expect(store.getItem(MEDIA_ID)).toEqual({ kind: "Absent" });
   });
 
   it("publishes Resolving immediately and fences a canceled spec completion", async () => {

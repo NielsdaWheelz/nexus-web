@@ -1,5 +1,7 @@
 package app.nexus.android.offline
 
+import com.squareup.moshi.JsonReader
+import okio.Buffer
 import org.json.JSONException
 import org.json.JSONObject
 import java.nio.charset.StandardCharsets
@@ -105,6 +107,7 @@ internal enum class RejectionCode {
     SourceUnavailable,
     UnsupportedAudio,
     StorageInsufficient,
+    StorageUnavailable,
 }
 
 internal sealed interface CommandParseResult {
@@ -136,23 +139,33 @@ internal data class OfflineMediaMetadata(
 
     companion object {
         fun decode(data: ByteArray): OfflineMediaMetadata {
-            val json = JSONObject(data.toString(StandardCharsets.UTF_8))
-            json.requireExactKeys(
-                "schemaVersion",
-                "accountId",
-                "mediaId",
-                "title",
-                "contentType",
-                "contentLength",
-            )
-            require(json.requireLong("schemaVersion", 1, 1) == 1L)
-            return OfflineMediaMetadata(
-                accountId = json.requireCanonicalUuid("accountId"),
-                mediaId = json.requireCanonicalUuid("mediaId"),
-                title = json.requireBoundedString("title", 1, 512),
-                contentType = json.requireBoundedString("contentType", 1, 127),
-                contentLength = json.requireLongPresence("contentLength"),
-            )
+            try {
+                val json = strictJsonObject(data.toString(StandardCharsets.UTF_8))
+                json.requireExactKeys(
+                    "schemaVersion",
+                    "accountId",
+                    "mediaId",
+                    "title",
+                    "contentType",
+                    "contentLength",
+                )
+                require(json.requireLong("schemaVersion", 1, 1) == 1L)
+                return OfflineMediaMetadata(
+                    accountId = json.requireCanonicalUuid("accountId"),
+                    mediaId = json.requireCanonicalUuid("mediaId"),
+                    title = json.requireBoundedString("title", 1, 512),
+                    contentType = json.requireBoundedString("contentType", 1, 127),
+                    contentLength = json.requireLongPresence("contentLength"),
+                )
+            } catch (error: Exception) {
+                if (error is IllegalArgumentException) {
+                    throw error
+                }
+                throw IllegalArgumentException(
+                    "invalid offline media metadata",
+                    error,
+                )
+            }
         }
     }
 }
@@ -163,8 +176,8 @@ internal object OfflineMediaWire {
             return CommandParseResult.Unreplyable
         }
         val json = try {
-            JSONObject(raw)
-        } catch (_: JSONException) {
+            strictJsonObject(raw)
+        } catch (_: RuntimeException) {
             return CommandParseResult.Unreplyable
         }
         val requestId = try {
@@ -384,5 +397,60 @@ private fun JSONObject.requireLongPresence(key: String): Presence<Long> {
             Presence.Present(json.requireLong("value", 0, Long.MAX_VALUE))
         }
         else -> error("$key has an unknown presence kind")
+    }
+}
+
+private fun strictJsonObject(raw: String): JSONObject {
+    try {
+        JsonReader.of(Buffer().writeUtf8(raw)).use { reader ->
+            reader.isLenient = false
+            require(reader.peek() == JsonReader.Token.BEGIN_OBJECT) {
+                "JSON document must be an object"
+            }
+            validateStrictJsonValue(reader, 0)
+            require(reader.peek() == JsonReader.Token.END_DOCUMENT) {
+                "unexpected trailing JSON content"
+            }
+        }
+    } catch (error: Exception) {
+        throw IllegalArgumentException("invalid strict JSON", error)
+    }
+    return try {
+        JSONObject(raw)
+    } catch (error: JSONException) {
+        throw IllegalArgumentException("invalid JSON object", error)
+    }
+}
+
+private fun validateStrictJsonValue(
+    reader: JsonReader,
+    depth: Int,
+) {
+    require(depth <= 16) { "JSON nesting is too deep" }
+    when (reader.peek()) {
+        JsonReader.Token.BEGIN_OBJECT -> {
+            reader.beginObject()
+            val keys = mutableSetOf<String>()
+            while (reader.hasNext()) {
+                require(keys.add(reader.nextName())) { "duplicate JSON object key" }
+                validateStrictJsonValue(reader, depth + 1)
+            }
+            reader.endObject()
+        }
+        JsonReader.Token.BEGIN_ARRAY -> {
+            reader.beginArray()
+            while (reader.hasNext()) {
+                validateStrictJsonValue(reader, depth + 1)
+            }
+            reader.endArray()
+        }
+        JsonReader.Token.STRING, JsonReader.Token.NUMBER -> reader.nextString()
+        JsonReader.Token.BOOLEAN -> reader.nextBoolean()
+        JsonReader.Token.NULL -> reader.nextNull<Unit>()
+        JsonReader.Token.END_ARRAY,
+        JsonReader.Token.END_OBJECT,
+        JsonReader.Token.NAME,
+        JsonReader.Token.END_DOCUMENT,
+        -> error("invalid JSON value")
     }
 }

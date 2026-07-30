@@ -1,7 +1,10 @@
 package app.nexus.android.offline
 
+import android.net.Uri
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.media3.exoplayer.offline.Download
+import androidx.media3.exoplayer.offline.DownloadRequest
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -21,12 +24,37 @@ import java.util.concurrent.TimeUnit
 @RunWith(AndroidJUnit4::class)
 class OfflineMediaTest {
     @Test
+    fun systemLimitFallbackIsAnExactDurableStoppedState() {
+        val active = Download(
+            DownloadRequest.Builder(
+                "download-id",
+                Uri.parse("https://media.example/episode.mp3"),
+            ).build(),
+            Download.STATE_DOWNLOADING,
+            10,
+            20,
+            100,
+            Download.STOP_REASON_NONE,
+            Download.FAILURE_REASON_NONE,
+        )
+
+        val stopped = systemLimited(active)
+
+        assertEquals(Download.STATE_STOPPED, stopped.state)
+        assertEquals(OFFLINE_MEDIA_SYSTEM_LIMIT_STOP_REASON, stopped.stopReason)
+        assertEquals(active.request, stopped.request)
+        assertEquals(active.startTimeMs, stopped.startTimeMs)
+        assertEquals(active.contentLength, stopped.contentLength)
+    }
+
+    @Test
     fun connectQueuedDuringManagerInitializationEventuallyReplies() {
         val store = OfflineMediaStore.get(ApplicationProvider.getApplicationContext())
         val connected = CountDownLatch(1)
         store.disconnect()
 
-        store.connect(UUID.fromString("22222222-2222-4222-8222-222222222222")) { _, policy ->
+        store.connect(UUID.fromString("22222222-2222-4222-8222-222222222222")) { result ->
+            val (_, policy) = result.getOrThrow()
             assertEquals(
                 "expected the persisted default policy in the first Connected snapshot",
                 NetworkPolicy.UnmeteredOnly,
@@ -82,6 +110,22 @@ class OfflineMediaTest {
             )
             assertEquals("Rejected", reply.getJSONObject("outcome").getString("kind"))
             assertEquals("InvalidRequest", reply.getJSONObject("outcome").getString("code"))
+        }
+    }
+
+    @Test
+    fun platformDecoderRejectsLenientAndDuplicateJsonMembers() {
+        val requestId = "11111111-1111-4111-8111-111111111111"
+        listOf(
+            """{'kind':'GetSnapshot','requestId':'$requestId','protocolVersion':1}""",
+            """{"kind":"GetSnapshot","requestId":"$requestId","protocolVersion":1,}""",
+            """{"kind":"GetSnapshot","requestId":"$requestId","request\u0049d":"$requestId","protocolVersion":1}""",
+        ).forEach { raw ->
+            assertEquals(
+                "expected platform strict syntax rejection for $raw",
+                CommandParseResult.Unreplyable,
+                OfflineMediaWire.parseCommand(raw),
+            )
         }
     }
 

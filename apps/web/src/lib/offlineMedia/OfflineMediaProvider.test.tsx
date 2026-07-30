@@ -251,6 +251,27 @@ describe("OfflineMediaProvider", () => {
     expect(screen.getByText("Unavailable")).toBeInTheDocument();
   });
 
+  it("preserves exact durable-storage feedback from Connect", async () => {
+    const transport = new HandshakeTransport({
+      kind: "Rejected",
+      code: "StorageUnavailable",
+    });
+    render(
+      <FeedbackProvider>
+        <MobileViewportProvider>
+          <OfflineMediaProvider accountId={ACCOUNT_ID} transport={transport}>
+            <Probe />
+          </OfflineMediaProvider>
+        </MobileViewportProvider>
+      </FeedbackProvider>,
+    );
+
+    expect(
+      await screen.findByText("Device storage is unavailable. Try again."),
+    ).toBeInTheDocument();
+    expect(transport.stops).toBe(1);
+  });
+
   it("shows Downloads in Account only after the native handshake", async () => {
     const transport = new HandshakeTransport();
     const user = userEvent.setup();

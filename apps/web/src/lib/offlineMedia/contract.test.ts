@@ -153,6 +153,19 @@ describe("offline media contract", () => {
     ).toThrow(/Presence/);
   });
 
+  it("distinguishes unavailable durable storage from insufficient space", () => {
+    expect(
+      decodeOfflineMediaInbound(
+        reply({ kind: "Rejected", code: "StorageUnavailable" }),
+      ),
+    ).toMatchObject({
+      kind: "Reply",
+      reply: {
+        outcome: { kind: "Rejected", code: "StorageUnavailable" },
+      },
+    });
+  });
+
   it("rejects wrong versions, noncanonical ids, unknown states, and extra keys", () => {
     expect(() =>
       decodeOfflineMediaInbound({

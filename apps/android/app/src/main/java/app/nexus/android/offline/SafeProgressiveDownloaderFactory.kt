@@ -11,6 +11,8 @@ import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheDataSink
 import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.datasource.cache.ContentMetadata
+import androidx.media3.datasource.cache.ContentMetadataMutations
 import androidx.media3.exoplayer.offline.DownloadRequest
 import androidx.media3.exoplayer.offline.Downloader
 import androidx.media3.exoplayer.offline.DownloaderFactory
@@ -27,6 +29,7 @@ import java.io.IOException
 import java.net.Inet4Address
 import java.net.Inet6Address
 import java.net.InetAddress
+import java.net.Proxy
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.time.Duration
@@ -53,6 +56,26 @@ internal class OfflineMediaSourceException(
 ) : IOException(rejectionCode.name, cause)
 
 internal class StorageReserveException : IOException("offline media storage reserve reached")
+
+internal fun removeCachedResource(cache: Cache, key: String) {
+    if (key !in cache.keys) {
+        return
+    }
+    cache.applyContentMetadataMutations(
+        key,
+        ContentMetadataMutations()
+            .remove(ContentMetadata.KEY_CONTENT_LENGTH)
+            .remove(ContentMetadata.KEY_REDIRECTED_URI),
+    )
+    cache.removeResource(key)
+    if (key in cache.keys) {
+        cache.startReadWriteNonBlocking(
+            key,
+            0,
+            C.LENGTH_UNSET.toLong(),
+        )?.let(cache::releaseHoleSpan)
+    }
+}
 
 internal fun preservesStorageReserve(availableBytes: Long, nextBytes: Long): Boolean {
     return nextBytes >= 0 &&
@@ -156,8 +179,6 @@ internal class PublicHttpsPolicy(
         }
 
         private fun isGlobalIpv6(bytes: ByteArray): Boolean {
-            val first = bytes[0].toInt() and 0xff
-            val second = bytes[1].toInt() and 0xff
             if (
                 bytes.copyOfRange(0, 10).all { it == 0.toByte() } &&
                 bytes[10] == 0xff.toByte() &&
@@ -165,32 +186,43 @@ internal class PublicHttpsPolicy(
             ) {
                 return isGlobalIpv4(bytes.copyOfRange(12, 16))
             }
-            if (
-                first == 0x00 &&
-                second == 0x64 &&
-                bytes[2] == 0xff.toByte() &&
-                bytes[3] == 0x9b.toByte() &&
-                bytes.copyOfRange(4, 12).all { it == 0.toByte() }
-            ) {
+            if (hasPrefix(bytes, byteArrayOf(0x00, 0x64, 0xff.toByte(), 0x9b.toByte()), 96)) {
                 return isGlobalIpv4(bytes.copyOfRange(12, 16))
             }
-            if (first and 0xe0 != 0x20) {
+            if (!hasPrefix(bytes, byteArrayOf(0x20), 3)) {
                 return false
             }
-            if (first == 0x20 && second == 0x02) {
-                return isGlobalIpv4(bytes.copyOfRange(2, 6))
+            return !hasPrefix(bytes, byteArrayOf(0x20, 0x01), 23) &&
+                !hasPrefix(
+                    bytes,
+                    byteArrayOf(0x20, 0x01, 0x0d, 0xb8.toByte()),
+                    32,
+                ) &&
+                !hasPrefix(bytes, byteArrayOf(0x20, 0x02), 16) &&
+                !hasPrefix(bytes, byteArrayOf(0x3f, 0xff.toByte(), 0x00), 20)
+        }
+
+        private fun hasPrefix(
+            address: ByteArray,
+            prefix: ByteArray,
+            prefixLength: Int,
+        ): Boolean {
+            require(prefixLength <= address.size * 8)
+            val normalizedPrefix = prefix.copyOf(address.size)
+            val fullBytes = prefixLength / 8
+            if (
+                !address.copyOfRange(0, fullBytes)
+                    .contentEquals(normalizedPrefix.copyOfRange(0, fullBytes))
+            ) {
+                return false
             }
-            if (first == 0x20 && second == 0x01) {
-                val third = bytes[2].toInt() and 0xff
-                val fourth = bytes[3].toInt() and 0xff
-                if (
-                    (third == 0x0d && fourth == 0xb8) ||
-                    (third == 0x00 && fourth in setOf(0x00, 0x02, 0x10))
-                ) {
-                    return false
-                }
+            val remainingBits = prefixLength % 8
+            if (remainingBits == 0) {
+                return true
             }
-            return !(first == 0x3f && second and 0xf0 == 0xf0)
+            val mask = 0xff shl (8 - remainingBits) and 0xff
+            return (address[fullBytes].toInt() and mask) ==
+                (normalizedPrefix[fullBytes].toInt() and mask)
         }
     }
 }
@@ -207,7 +239,7 @@ internal class SafeHttpClient(
     val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(OFFLINE_PREFLIGHT_DEADLINE.toMillis(), TimeUnit.MILLISECONDS)
         .readTimeout(OFFLINE_PREFLIGHT_DEADLINE.toMillis(), TimeUnit.MILLISECONDS)
-        .callTimeout(OFFLINE_PREFLIGHT_DEADLINE.toMillis(), TimeUnit.MILLISECONDS)
+        .proxy(Proxy.NO_PROXY)
         .followRedirects(false)
         .followSslRedirects(false)
         .dns(
@@ -261,6 +293,10 @@ internal class SafeHttpClient(
                     .header("Range", "bytes=0-0")
                     .build()
             )
+        call.timeout().timeout(
+            OFFLINE_PREFLIGHT_DEADLINE.toMillis(),
+            TimeUnit.MILLISECONDS,
+        )
         cancellation.attach(call::cancel)
         if (cancellation.isCanceled()) {
             throw PreflightCanceledException()
@@ -406,20 +442,16 @@ internal class SafeProgressiveDownloaderFactory(
             ?: error("offline media request must have a custom cache key")
         check(cacheKey == request.id)
         check(request.mimeType == metadata.contentType)
-        cache.removeResource(cacheKey)
-        val length = when (val contentLength = metadata.contentLength) {
-            Presence.Absent -> C.LENGTH_UNSET.toLong()
-            is Presence.Present -> contentLength.value
-        }
         val downloader = ProgressiveDownloader(
             request.toMediaItem(),
             cacheDataSourceFactory,
             executor,
             0,
-            length,
+            C.LENGTH_UNSET.toLong(),
         )
         return object : Downloader {
             override fun download(progressListener: Downloader.ProgressListener?) {
+                removeCachedResource(cache, cacheKey)
                 safeHttpClient.withAttempt(request.id, metadata.mediaId) {
                     downloader.download(progressListener)
                 }
