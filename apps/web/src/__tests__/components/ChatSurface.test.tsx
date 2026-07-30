@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { createRef, useRef } from "react";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import ChatSurface from "@/components/chat/ChatSurface";
 import {
   prepareConversationFindUnits,
@@ -12,11 +18,14 @@ import {
   createConversationFindSnapshot,
   matchConversationFindUnits,
 } from "@/lib/conversations/conversationFind";
-import type { ConversationMessage, ForkOption } from "@/lib/conversations/types";
+import type {
+  ConversationMessage,
+  ForkOption,
+} from "@/lib/conversations/types";
 import {
-  WEB_FIND_ACTIVE_HIGHLIGHT_NAME,
-  WEB_FIND_ALL_HIGHLIGHT_NAME,
-} from "@/lib/reader/webFindHighlights";
+  CANONICAL_TEXT_FIND_ACTIVE_HIGHLIGHT_NAME,
+  CANONICAL_TEXT_FIND_ALL_HIGHLIGHT_NAME,
+} from "@/lib/reader/canonicalTextFindHighlights";
 
 const baseMessage = {
   seq: 1,
@@ -42,7 +51,11 @@ function messageDocument(text: string, role: ConversationMessage["role"]) {
   };
 }
 
-function userMessage(id: string, seq: number, text: string): ConversationMessage {
+function userMessage(
+  id: string,
+  seq: number,
+  text: string,
+): ConversationMessage {
   return {
     ...baseMessage,
     id,
@@ -137,7 +150,10 @@ function ConversationFindHarness({
 // Distance, in viewport space, from the scrollport's top edge to an element's
 // top edge. Measuring with getBoundingClientRect keeps the result independent of
 // each row's positioned offsetParent.
-function topOffsetWithin(element: HTMLElement, scrollport: HTMLElement): number {
+function topOffsetWithin(
+  element: HTMLElement,
+  scrollport: HTMLElement,
+): number {
   return (
     element.getBoundingClientRect().top - scrollport.getBoundingClientRect().top
   );
@@ -233,7 +249,9 @@ describe("ChatSurface", () => {
       />,
     );
 
-    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    const scrollport = screen.getByRole("region", {
+      name: "Chat conversation",
+    });
     const transcript = screen.getByRole("log", { name: "Chat messages" });
     const composer = screen.getByRole("textbox", { name: "Message" });
     const composerDock = screen.getByTestId("chat-composer-dock");
@@ -242,7 +260,9 @@ describe("ChatSurface", () => {
     expect(scrollport).toContainElement(transcript);
     expect(scrollport).not.toContainElement(composer);
     expect(composerDock).toContainElement(composer);
-    expect(transcript).toContainElement(screen.getByText("Ask about this quote"));
+    expect(transcript).toContainElement(
+      screen.getByText("Ask about this quote"),
+    );
   });
 
   it("renders user and assistant messages through the shared row component", () => {
@@ -252,7 +272,10 @@ describe("ChatSurface", () => {
     ];
 
     render(
-      <ChatSurface messages={messages} composer={<textarea aria-label="Message" />} />,
+      <ChatSurface
+        messages={messages}
+        composer={<textarea aria-label="Message" />}
+      />,
     );
 
     expect(screen.getByText("What does this quote mean?")).toBeInTheDocument();
@@ -381,23 +404,34 @@ describe("ChatSurface", () => {
   });
 
   it("lets wheel gestures over the composer scroll the message scrollport", () => {
-    const messages: ConversationMessage[] = Array.from({ length: 30 }, (_, index) =>
-      index % 2 === 0
-        ? userMessage(`message-${index + 1}`, index + 1, `Question ${index + 1}`)
-        : assistantMessage(
-            `message-${index + 1}`,
-            index + 1,
-            `Overflow answer ${index + 1}: ${"chat transcript content ".repeat(8)}`,
-          ),
+    const messages: ConversationMessage[] = Array.from(
+      { length: 30 },
+      (_, index) =>
+        index % 2 === 0
+          ? userMessage(
+              `message-${index + 1}`,
+              index + 1,
+              `Question ${index + 1}`,
+            )
+          : assistantMessage(
+              `message-${index + 1}`,
+              index + 1,
+              `Overflow answer ${index + 1}: ${"chat transcript content ".repeat(8)}`,
+            ),
     );
 
     render(
       <div style={FIXED_HEIGHT}>
-        <ChatSurface messages={messages} composer={<textarea aria-label="Message" />} />
+        <ChatSurface
+          messages={messages}
+          composer={<textarea aria-label="Message" />}
+        />
       </div>,
     );
 
-    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    const scrollport = screen.getByRole("region", {
+      name: "Chat conversation",
+    });
     const composerDock = screen.getByTestId("chat-composer-dock");
 
     scrollport.scrollTop = scrollport.scrollHeight;
@@ -421,11 +455,16 @@ describe("ChatSurface", () => {
 
     const { rerender } = render(
       <div style={FIXED_HEIGHT}>
-        <ChatSurface messages={history} composer={<textarea aria-label="Message" />} />
+        <ChatSurface
+          messages={history}
+          composer={<textarea aria-label="Message" />}
+        />
       </div>,
     );
 
-    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    const scrollport = screen.getByRole("region", {
+      name: "Chat conversation",
+    });
     // First load of an existing conversation opens at the bottom.
     await waitFor(() => expect(scrollport.scrollTop).toBeGreaterThan(0));
 
@@ -437,7 +476,10 @@ describe("ChatSurface", () => {
 
     rerender(
       <div style={FIXED_HEIGHT}>
-        <ChatSurface messages={sent} composer={<textarea aria-label="Message" />} />
+        <ChatSurface
+          messages={sent}
+          composer={<textarea aria-label="Message" />}
+        />
       </div>,
     );
 
@@ -446,9 +488,9 @@ describe("ChatSurface", () => {
     // The pinned question's top sits in the top region of the scrollport (not
     // chased to the bottom).
     await waitFor(() => {
-      expect(isPinnedNearTop(topOffsetWithin(anchor, scrollport), scrollport)).toBe(
-        true,
-      );
+      expect(
+        isPinnedNearTop(topOffsetWithin(anchor, scrollport), scrollport),
+      ).toBe(true);
     });
   });
 
@@ -464,7 +506,9 @@ describe("ChatSurface", () => {
       </div>,
     );
 
-    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    const scrollport = screen.getByRole("region", {
+      name: "Chat conversation",
+    });
     expect(screen.getByText("Start a chat")).toBeInTheDocument();
 
     rerender(
@@ -473,7 +517,12 @@ describe("ChatSurface", () => {
           historyLoading={false}
           messages={[
             userMessage("first-user", 1, "First question"),
-            assistantMessage("first-assistant", 2, "First answer", "first-user"),
+            assistantMessage(
+              "first-assistant",
+              2,
+              "First answer",
+              "first-user",
+            ),
           ]}
           composer={<textarea aria-label="Message" />}
         />
@@ -482,9 +531,9 @@ describe("ChatSurface", () => {
 
     const anchor = screen.getByText("First question");
     await waitFor(() => {
-      expect(isPinnedNearTop(topOffsetWithin(anchor, scrollport), scrollport)).toBe(
-        true,
-      );
+      expect(
+        isPinnedNearTop(topOffsetWithin(anchor, scrollport), scrollport),
+      ).toBe(true);
     });
   });
 
@@ -496,10 +545,15 @@ describe("ChatSurface", () => {
 
     const { rerender } = render(
       <div style={FIXED_HEIGHT}>
-        <ChatSurface messages={[]} composer={<textarea aria-label="Message" />} />
+        <ChatSurface
+          messages={[]}
+          composer={<textarea aria-label="Message" />}
+        />
       </div>,
     );
-    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    const scrollport = screen.getByRole("region", {
+      name: "Chat conversation",
+    });
 
     // A short answer keeps the question pinned at the top inset.
     rerender(
@@ -543,10 +597,15 @@ describe("ChatSurface", () => {
 
     const { rerender } = render(
       <div style={FIXED_HEIGHT}>
-        <ChatSurface messages={[]} composer={<textarea aria-label="Message" />} />
+        <ChatSurface
+          messages={[]}
+          composer={<textarea aria-label="Message" />}
+        />
       </div>,
     );
-    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    const scrollport = screen.getByRole("region", {
+      name: "Chat conversation",
+    });
 
     // A tall answer overflows the viewport, so the transcript follows the bottom.
     rerender(
@@ -594,10 +653,15 @@ describe("ChatSurface", () => {
 
     const { rerender } = render(
       <div style={FIXED_HEIGHT}>
-        <ChatSurface messages={[]} composer={<textarea aria-label="Message" />} />
+        <ChatSurface
+          messages={[]}
+          composer={<textarea aria-label="Message" />}
+        />
       </div>,
     );
-    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    const scrollport = screen.getByRole("region", {
+      name: "Chat conversation",
+    });
     rerender(
       <div style={FIXED_HEIGHT}>
         <ChatSurface
@@ -647,10 +711,15 @@ describe("ChatSurface", () => {
     ];
     const { rerender } = render(
       <div style={FIXED_HEIGHT}>
-        <ChatSurface messages={[]} composer={<textarea aria-label="Message" />} />
+        <ChatSurface
+          messages={[]}
+          composer={<textarea aria-label="Message" />}
+        />
       </div>,
     );
-    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    const scrollport = screen.getByRole("region", {
+      name: "Chat conversation",
+    });
     rerender(
       <div style={FIXED_HEIGHT}>
         <ChatSurface
@@ -693,10 +762,15 @@ describe("ChatSurface", () => {
     ];
     const { rerender } = render(
       <div style={FIXED_HEIGHT}>
-        <ChatSurface messages={[]} composer={<textarea aria-label="Message" />} />
+        <ChatSurface
+          messages={[]}
+          composer={<textarea aria-label="Message" />}
+        />
       </div>,
     );
-    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    const scrollport = screen.getByRole("region", {
+      name: "Chat conversation",
+    });
 
     // The answer overflows → the transcript follows the bottom.
     rerender(
@@ -739,10 +813,15 @@ describe("ChatSurface", () => {
     ];
     const { rerender } = render(
       <div style={FIXED_HEIGHT}>
-        <ChatSurface messages={[]} composer={<textarea aria-label="Message" />} />
+        <ChatSurface
+          messages={[]}
+          composer={<textarea aria-label="Message" />}
+        />
       </div>,
     );
-    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    const scrollport = screen.getByRole("region", {
+      name: "Chat conversation",
+    });
     rerender(
       <div style={FIXED_HEIGHT}>
         <ChatSurface
@@ -796,10 +875,16 @@ describe("ChatSurface", () => {
 
   it("restores the eye-line across a messages swap via captureAnchor", async () => {
     const ref = createRef<ChatScrollHandle>();
-    const original: ConversationMessage[] = Array.from({ length: 16 }, (_, index) =>
-      index % 2 === 0
-        ? userMessage(`u-${index}`, index + 1, `Turn ${index} question`)
-        : assistantMessage(`a-${index}`, index + 1, `Turn ${index} answer text body`),
+    const original: ConversationMessage[] = Array.from(
+      { length: 16 },
+      (_, index) =>
+        index % 2 === 0
+          ? userMessage(`u-${index}`, index + 1, `Turn ${index} question`)
+          : assistantMessage(
+              `a-${index}`,
+              index + 1,
+              `Turn ${index} answer text body`,
+            ),
     );
 
     const { rerender } = render(
@@ -812,7 +897,9 @@ describe("ChatSurface", () => {
       </div>,
     );
 
-    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    const scrollport = screen.getByRole("region", {
+      name: "Chat conversation",
+    });
 
     // Scroll to a stable middle position and capture the eye-line of a visible row.
     act(() => {
@@ -828,7 +915,11 @@ describe("ChatSurface", () => {
     // Swap to a different branch that prepends a tall turn but keeps u-8 present.
     const swapped: ConversationMessage[] = [
       userMessage("prefix-1", 100, `Prepended ${"context ".repeat(30)}`),
-      assistantMessage("prefix-2", 101, `Prepended answer ${"body ".repeat(30)}`),
+      assistantMessage(
+        "prefix-2",
+        101,
+        `Prepended answer ${"body ".repeat(30)}`,
+      ),
       ...original,
     ];
     rerender(
@@ -850,14 +941,16 @@ describe("ChatSurface", () => {
 
   it("scrolls to a message through the scoped scroll handle", async () => {
     const ref = createRef<ChatScrollHandle>();
-    const messages: ConversationMessage[] = Array.from({ length: 20 }, (_, index) =>
-      index % 2 === 0
-        ? userMessage(`u-${index}`, index + 1, `Question ${index}`)
-        : assistantMessage(
-            `a-${index}`,
-            index + 1,
-            `Answer ${index}: ${"transcript body ".repeat(8)}`,
-          ),
+    const messages: ConversationMessage[] = Array.from(
+      { length: 20 },
+      (_, index) =>
+        index % 2 === 0
+          ? userMessage(`u-${index}`, index + 1, `Question ${index}`)
+          : assistantMessage(
+              `a-${index}`,
+              index + 1,
+              `Answer ${index}: ${"transcript body ".repeat(8)}`,
+            ),
     );
 
     render(
@@ -870,7 +963,9 @@ describe("ChatSurface", () => {
       </div>,
     );
 
-    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    const scrollport = screen.getByRole("region", {
+      name: "Chat conversation",
+    });
     await waitFor(() => expect(scrollport.scrollTop).toBeGreaterThan(0));
     act(() => {
       scrollport.scrollTop = 0;
@@ -881,22 +976,29 @@ describe("ChatSurface", () => {
   });
 
   it("reveals the ↓ Latest control below the fold and jumps to the newest turn on click", async () => {
-    const messages: ConversationMessage[] = Array.from({ length: 24 }, (_, index) =>
-      index % 2 === 0
-        ? userMessage(`u-${index}`, index + 1, `Question ${index}`)
-        : assistantMessage(
-            `a-${index}`,
-            index + 1,
-            `Answer ${index}: ${"transcript body ".repeat(8)}`,
-          ),
+    const messages: ConversationMessage[] = Array.from(
+      { length: 24 },
+      (_, index) =>
+        index % 2 === 0
+          ? userMessage(`u-${index}`, index + 1, `Question ${index}`)
+          : assistantMessage(
+              `a-${index}`,
+              index + 1,
+              `Answer ${index}: ${"transcript body ".repeat(8)}`,
+            ),
     );
 
     render(
       <div style={FIXED_HEIGHT}>
-        <ChatSurface messages={messages} composer={<textarea aria-label="Message" />} />
+        <ChatSurface
+          messages={messages}
+          composer={<textarea aria-label="Message" />}
+        />
       </div>,
     );
-    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    const scrollport = screen.getByRole("region", {
+      name: "Chat conversation",
+    });
 
     // First load opens at the bottom: the newest turn is in view, no affordance.
     await waitFor(() => expect(scrollport.scrollTop).toBeGreaterThan(0));
@@ -933,7 +1035,9 @@ describe("ChatSurface", () => {
       </div>,
     );
 
-    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    const scrollport = screen.getByRole("region", {
+      name: "Chat conversation",
+    });
     await waitFor(() => expect(scrollport.scrollTop).toBeGreaterThan(0));
 
     act(() => {
@@ -961,11 +1065,7 @@ describe("ChatSurface", () => {
     ];
     render(
       <div style={FIXED_HEIGHT}>
-        <ChatSurface
-          ref={ref}
-          messages={messages}
-          composer={null}
-        />
+        <ChatSurface ref={ref} messages={messages} composer={null} />
       </div>,
     );
 
@@ -1022,13 +1122,14 @@ describe("ChatSurface", () => {
         scrollLeft = value;
       },
     });
-    vi.spyOn(scrollport, "scrollTo").mockImplementation(
-      ((options: ScrollToOptions | number, y?: number) => {
-        revealOrder.push("outer");
-        scrollport.scrollTop =
-          typeof options === "number" ? (y ?? 0) : (options.top ?? 0);
-      }) as typeof scrollport.scrollTo,
-    );
+    vi.spyOn(scrollport, "scrollTo").mockImplementation(((
+      options: ScrollToOptions | number,
+      y?: number,
+    ) => {
+      revealOrder.push("outer");
+      scrollport.scrollTop =
+        typeof options === "number" ? (y ?? 0) : (options.top ?? 0);
+    }) as typeof scrollport.scrollTo);
 
     let settlement: Awaited<
       ReturnType<ChatScrollHandle["previewFindOccurrence"]>
@@ -1142,22 +1243,32 @@ describe("ChatSurface", () => {
         "Available",
       ),
     );
-    expect(highlightRanges(WEB_FIND_ALL_HIGHLIGHT_NAME)).toHaveLength(2);
-    const firstActive = highlightRanges(WEB_FIND_ACTIVE_HIGHLIGHT_NAME);
+    expect(
+      highlightRanges(CANONICAL_TEXT_FIND_ALL_HIGHLIGHT_NAME),
+    ).toHaveLength(2);
+    const firstActive = highlightRanges(
+      CANONICAL_TEXT_FIND_ACTIVE_HIGHLIGHT_NAME,
+    );
     expect(firstActive).toHaveLength(1);
 
     fireEvent.click(screen.getByRole("button", { name: "Next match" }));
     await waitFor(() =>
-      expect(highlightRanges(WEB_FIND_ACTIVE_HIGHLIGHT_NAME)[0]).not.toBe(
-        firstActive[0],
-      ),
+      expect(
+        highlightRanges(CANONICAL_TEXT_FIND_ACTIVE_HIGHLIGHT_NAME)[0],
+      ).not.toBe(firstActive[0]),
     );
-    expect(highlightRanges(WEB_FIND_ALL_HIGHLIGHT_NAME)).toHaveLength(2);
+    expect(
+      highlightRanges(CANONICAL_TEXT_FIND_ALL_HIGHLIGHT_NAME),
+    ).toHaveLength(2);
 
     fireEvent.click(screen.getByRole("button", { name: "Close Find" }));
     await waitFor(() => {
-      expect(CSS.highlights.has(WEB_FIND_ALL_HIGHLIGHT_NAME)).toBe(false);
-      expect(CSS.highlights.has(WEB_FIND_ACTIVE_HIGHLIGHT_NAME)).toBe(false);
+      expect(CSS.highlights.has(CANONICAL_TEXT_FIND_ALL_HIGHLIGHT_NAME)).toBe(
+        false,
+      );
+      expect(
+        CSS.highlights.has(CANONICAL_TEXT_FIND_ACTIVE_HIGHLIGHT_NAME),
+      ).toBe(false);
     });
   });
 
@@ -1196,8 +1307,12 @@ describe("ChatSurface", () => {
       "Unavailable",
     );
     expect(messageRow).not.toHaveAttribute("data-find-active");
-    expect(CSS.highlights.has(WEB_FIND_ALL_HIGHLIGHT_NAME)).toBe(false);
-    expect(CSS.highlights.has(WEB_FIND_ACTIVE_HIGHLIGHT_NAME)).toBe(false);
+    expect(CSS.highlights.has(CANONICAL_TEXT_FIND_ALL_HIGHLIGHT_NAME)).toBe(
+      false,
+    );
+    expect(CSS.highlights.has(CANONICAL_TEXT_FIND_ACTIVE_HIGHLIGHT_NAME)).toBe(
+      false,
+    );
   });
 
   it("holds streaming follow under a preview lease and Close leaves the revealed position released", async () => {
@@ -1224,12 +1339,13 @@ describe("ChatSurface", () => {
     await waitFor(() => expect(scrollport.scrollTop).toBeGreaterThan(0));
     const target = screen.getByRole("group", { name: "Your message" });
     const range = visibleTextRange(target, "needle");
-    vi.spyOn(scrollport, "scrollTo").mockImplementation(
-      ((options: ScrollToOptions | number, y?: number) => {
-        scrollport.scrollTop =
-          typeof options === "number" ? (y ?? 0) : (options.top ?? 0);
-      }) as typeof scrollport.scrollTo,
-    );
+    vi.spyOn(scrollport, "scrollTo").mockImplementation(((
+      options: ScrollToOptions | number,
+      y?: number,
+    ) => {
+      scrollport.scrollTop =
+        typeof options === "number" ? (y ?? 0) : (options.top ?? 0);
+    }) as typeof scrollport.scrollTo);
     const frames = manualAnimationFrames();
     const firstPreview = ref.current!.previewFindOccurrence({
       messageId: "user-1",
@@ -1269,7 +1385,9 @@ describe("ChatSurface", () => {
         />
       </div>,
     );
-    await waitFor(() => expect(scrollport.scrollTop).toBeGreaterThan(leasedScrollTop));
+    await waitFor(() =>
+      expect(scrollport.scrollTop).toBeGreaterThan(leasedScrollTop),
+    );
 
     const revealed = ref.current!.previewFindOccurrence({
       messageId: "user-1",
@@ -1295,9 +1413,9 @@ describe("ChatSurface", () => {
       </div>,
     );
     await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(Math.abs(scrollport.scrollTop - revealedScrollTop)).toBeLessThanOrEqual(
-      1,
-    );
+    expect(
+      Math.abs(scrollport.scrollTop - revealedScrollTop),
+    ).toBeLessThanOrEqual(1);
   });
 
   it("retains one bottom-pinned origin across previews and Return restores it once", async () => {
@@ -1319,9 +1437,7 @@ describe("ChatSurface", () => {
       },
     ];
     const initial = turn(`Answer ${"streamed token ".repeat(140)}`);
-    const { rerender } = render(
-      <ConversationFindHarness messages={initial} />,
-    );
+    const { rerender } = render(<ConversationFindHarness messages={initial} />);
     const scrollport = screen.getByRole("region", {
       name: "Chat conversation",
     });
@@ -1339,15 +1455,17 @@ describe("ChatSurface", () => {
     await waitFor(() =>
       expect(assistantTargets[1]).toHaveAttribute("data-find-active", "true"),
     );
-    expect(screen.getByLabelText("Return status")).toHaveTextContent("Available");
+    expect(screen.getByLabelText("Return status")).toHaveTextContent(
+      "Available",
+    );
 
     fireEvent.click(
       screen.getByRole("button", { name: "Go back to reading position" }),
     );
     await waitFor(() => {
-      expect(Math.abs(scrollport.scrollTop - originScrollTop)).toBeLessThanOrEqual(
-        2,
-      );
+      expect(
+        Math.abs(scrollport.scrollTop - originScrollTop),
+      ).toBeLessThanOrEqual(2);
       expect(screen.getByLabelText("Return status")).toHaveTextContent(
         "Unavailable",
       );
@@ -1396,21 +1514,22 @@ describe("ChatSurface", () => {
     const focus = vi.spyOn(focusTarget, "focus");
     focusTarget.replaceWith(focusTarget.cloneNode(true));
     focus.mockClear();
-    vi.spyOn(scrollport, "scrollTo").mockImplementation(
-      ((options: ScrollToOptions | number, y?: number) => {
-        scrollport.scrollTop =
-          typeof options === "number" ? (y ?? 0) : (options.top ?? 0);
-      }) as typeof scrollport.scrollTo,
-    );
+    vi.spyOn(scrollport, "scrollTo").mockImplementation(((
+      options: ScrollToOptions | number,
+      y?: number,
+    ) => {
+      scrollport.scrollTop =
+        typeof options === "number" ? (y ?? 0) : (options.top ?? 0);
+    }) as typeof scrollport.scrollTo);
     act(() => {
       scrollport.scrollTop = 0;
       ref.current!.restoreReadingPosition(position!);
     });
 
     await waitFor(() =>
-      expect(Math.abs(scrollport.scrollTop - originScrollTop)).toBeLessThanOrEqual(
-        2,
-      ),
+      expect(
+        Math.abs(scrollport.scrollTop - originScrollTop),
+      ).toBeLessThanOrEqual(2),
     );
     expect(focusTarget.isConnected).toBe(false);
     expect(focus).not.toHaveBeenCalled();
@@ -1475,7 +1594,9 @@ describe("ChatSurface", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Start Find" }));
     await waitFor(() =>
-      expect(screen.getByLabelText("Find status")).toHaveTextContent("NoMatches"),
+      expect(screen.getByLabelText("Find status")).toHaveTextContent(
+        "NoMatches",
+      ),
     );
 
     expect(

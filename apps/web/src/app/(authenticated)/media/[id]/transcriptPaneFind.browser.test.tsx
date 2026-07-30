@@ -8,6 +8,7 @@ import {
   createTranscriptFindAdapter,
   createTranscriptFindSnapshot,
 } from "./transcriptPaneFind";
+import { createMediaFindPreviewLease } from "./mediaFindPreviewLease";
 
 function fragment(
   id: string,
@@ -75,6 +76,7 @@ describe("Transcript Find preview and Return", () => {
     let activeFragmentId: string | null = "origin";
     const elements = new Map<PaneFindResultKey, HTMLSpanElement>();
     const presentations: TranscriptFindPresentation[] = [];
+    const previewLease = createMediaFindPreviewLease();
     const setActiveFragmentId = vi.fn((fragmentId: string | null) => {
       activeFragmentId = fragmentId;
     });
@@ -109,6 +111,7 @@ describe("Transcript Find preview and Return", () => {
       getSegmentList: () => list,
       getMatchElement: (key) => elements.get(key) ?? null,
       publishPresentation,
+      previewLease,
     });
     const signal = new AbortController().signal;
     await adapter.prepare({
@@ -178,6 +181,7 @@ describe("Transcript Find preview and Return", () => {
     expect(setActiveFragmentId).toHaveBeenLastCalledWith("origin");
     expect(list.scrollTop).toBe(40);
     expect(list).toHaveFocus();
+    expect(previewLease.isActive()).toBe(false);
   });
 
   it("rolls back selection and presentation when the exact occurrence never renders", async () => {
@@ -189,6 +193,7 @@ describe("Transcript Find preview and Return", () => {
     const list = segmentList();
     let activeFragmentId: string | null = "origin";
     const presentations: TranscriptFindPresentation[] = [];
+    const previewLease = createMediaFindPreviewLease();
     const adapter = createTranscriptFindAdapter({
       snapshot: frozen,
       getCurrentSourceKey: () => frozen.sourceKey,
@@ -201,6 +206,7 @@ describe("Transcript Find preview and Return", () => {
       publishPresentation: (presentation) => {
         presentations.push(presentation);
       },
+      previewLease,
     });
     const signal = new AbortController().signal;
     await adapter.prepare({
@@ -235,6 +241,7 @@ describe("Transcript Find preview and Return", () => {
     expect(activeFragmentId).toBe("origin");
     expect(list.scrollTop).toBe(40);
     expect(presentations.at(-1)).toEqual({ kind: "Text" });
+    expect(previewLease.isActive()).toBe(false);
   });
 
   it("settles a late first-preview abort so Close and reopen retain Return", async () => {
@@ -242,6 +249,7 @@ describe("Transcript Find preview and Return", () => {
     const list = segmentList();
     let activeFragmentId: string | null = "origin";
     const publishPresentation = vi.fn();
+    const previewLease = createMediaFindPreviewLease();
     const adapter = createTranscriptFindAdapter({
       snapshot: frozen,
       getCurrentSourceKey: () => frozen.sourceKey,
@@ -252,9 +260,18 @@ describe("Transcript Find preview and Return", () => {
       getSegmentList: () => list,
       getMatchElement: () => null,
       publishPresentation,
+      previewLease,
     });
     const prepare = vi.spyOn(adapter, "prepare");
-    const view = renderHook(() => usePaneFind({ adapter }));
+    const view = renderHook(() => {
+      const paneFind = usePaneFind({
+        capability: { kind: "Available", adapter },
+      });
+      if (paneFind.kind !== "Available") {
+        throw new Error("Expected an available Transcript Pane Find.");
+      }
+      return paneFind.controller;
+    });
     await waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
 
     act(() => view.result.current.onQueryChange("needle"));

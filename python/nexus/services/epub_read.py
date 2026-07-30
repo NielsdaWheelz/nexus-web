@@ -103,7 +103,7 @@ def get_epub_section_source(
     return rows[0]
 
 
-def _enforce_epub_read_guards(
+def require_readable_epub(
     db: Session,
     viewer_id: UUID,
     media_id: UUID,
@@ -127,41 +127,49 @@ def _enforce_epub_read_guards(
 
 
 def _load_toc_rows(db: Session, media_id: UUID) -> list[tuple]:
-    return db.execute(
-        text("""
-            SELECT node_id, parent_node_id, label, href,
-                   fragment_idx, depth, order_key
-            FROM epub_toc_nodes
-            WHERE media_id = :mid
-              AND nav_type = 'toc'
-            ORDER BY order_key ASC
-        """),
-        {"mid": media_id},
-    ).fetchall()
+    return list(
+        db.execute(
+            text("""
+                SELECT node_id, parent_node_id, label, href,
+                       fragment_idx, depth, order_key
+                FROM epub_toc_nodes
+                WHERE media_id = :mid
+                  AND nav_type = 'toc'
+                ORDER BY order_key ASC
+            """),
+            {"mid": media_id},
+        )
+        .tuples()
+        .all()
+    )
 
 
 def _load_navigation_locations(db: Session, media_id: UUID, nav_type: str) -> list[tuple]:
-    return db.execute(
-        text("""
-            SELECT n.label,
-                   n.href,
-                   n.fragment_idx,
-                   loc.location_id
-            FROM epub_toc_nodes n
-            LEFT JOIN LATERAL (
-                SELECT location_id
-                FROM epub_nav_locations
-                WHERE media_id = n.media_id
-                  AND fragment_idx = n.fragment_idx
-                ORDER BY ordinal ASC
-                LIMIT 1
-            ) loc ON n.fragment_idx IS NOT NULL
-            WHERE n.media_id = :mid
-              AND n.nav_type = :nav_type
-            ORDER BY n.order_key ASC
-        """),
-        {"mid": media_id, "nav_type": nav_type},
-    ).fetchall()
+    return list(
+        db.execute(
+            text("""
+                SELECT n.label,
+                       n.href,
+                       n.fragment_idx,
+                       loc.location_id
+                FROM epub_toc_nodes n
+                LEFT JOIN LATERAL (
+                    SELECT location_id
+                    FROM epub_nav_locations
+                    WHERE media_id = n.media_id
+                      AND fragment_idx = n.fragment_idx
+                    ORDER BY ordinal ASC
+                    LIMIT 1
+                ) loc ON n.fragment_idx IS NOT NULL
+                WHERE n.media_id = :mid
+                  AND n.nav_type = :nav_type
+                ORDER BY n.order_key ASC
+            """),
+            {"mid": media_id, "nav_type": nav_type},
+        )
+        .tuples()
+        .all()
+    )
 
 
 def get_epub_navigation_for_viewer(
@@ -170,7 +178,7 @@ def get_epub_navigation_for_viewer(
     media_id: UUID,
 ) -> MediaNavigationOut:
     """Return canonical persisted EPUB navigation."""
-    _enforce_epub_read_guards(db, viewer_id, media_id)
+    require_readable_epub(db, viewer_id, media_id)
 
     section_rows = db.execute(
         text("""
@@ -297,7 +305,7 @@ def get_epub_section_for_viewer(
     if not section_id:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "section_id is required")
 
-    _enforce_epub_read_guards(db, viewer_id, media_id)
+    require_readable_epub(db, viewer_id, media_id)
 
     row = db.execute(
         text("""

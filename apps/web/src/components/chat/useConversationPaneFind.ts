@@ -25,9 +25,9 @@ import {
   type PaneFindPreviewReceipt,
 } from "@/lib/panes/usePaneFind";
 import {
-  createWebFindHighlightOwner,
-  type WebFindHighlightOwner,
-} from "@/lib/reader/webFindHighlights";
+  createCanonicalTextFindHighlightOwner,
+  type CanonicalTextFindHighlightOwner,
+} from "@/lib/reader/canonicalTextFindHighlights";
 import type {
   ChatReadingPosition,
   ChatScrollHandle,
@@ -44,8 +44,7 @@ type ConversationFindError = {
   readonly kind: "OriginUnavailable";
 };
 
-interface ConversationFindAdapter
-  extends PaneFindAdapter<ConversationFindError> {
+interface ConversationFindAdapter extends PaneFindAdapter<ConversationFindError> {
   invalidate(): void;
   dispose(): void;
 }
@@ -80,7 +79,7 @@ function createConversationFindAdapter({
   readonly snapshot: ConversationFindSnapshot;
   readonly getCurrentSourceKey: () => PaneFindSourceKey;
   readonly getScrollHandle: () => ChatScrollHandle | null;
-  readonly highlightOwner: WebFindHighlightOwner;
+  readonly highlightOwner: CanonicalTextFindHighlightOwner;
 }): ConversationFindAdapter {
   let prepared: {
     readonly sessionId: number;
@@ -183,18 +182,26 @@ function createConversationFindAdapter({
         });
       }
       highlightOwner.publish({ all: allRanges(), active: [] });
+      const rows = matches.occurrences.map(({ row }) => row);
+      const initial = rows[0];
+      if (!initial) {
+        throw new Error(
+          "Conversation Find Ready requires at least one occurrence.",
+        );
+      }
       return {
         kind: "Ready",
         sessionId: request.sessionId,
         queryId: request.queryId,
         sourceKey: request.sourceKey,
         completeness: "Complete",
-        rows: matches.occurrences.map(({ row }) => row),
+        rows,
+        initialActiveKey: initial.key,
       };
     },
-    async preview(request): Promise<
-      PaneFindPreviewReceipt<ConversationFindError>
-    > {
+    async preview(
+      request,
+    ): Promise<PaneFindPreviewReceipt<ConversationFindError>> {
       assertCurrent(request.sourceKey);
       throwIfAborted(request.signal);
       const match = matchesByKey.get(request.key);
@@ -296,7 +303,10 @@ export function useConversationPaneFind({
   }
 
   const currentSourceKeyRef = useRef(committedSnapshot.sourceKey);
-  const highlightOwner = useMemo(() => createWebFindHighlightOwner(), []);
+  const highlightOwner = useMemo(
+    () => createCanonicalTextFindHighlightOwner(),
+    [],
+  );
   const adapter = useMemo(
     () =>
       createConversationFindAdapter({
@@ -307,6 +317,11 @@ export function useConversationPaneFind({
       }),
     [highlightOwner, scrollRef, snapshot],
   );
+  const capability = useMemo(
+    () => ({ kind: "Available" as const, adapter }),
+    [adapter],
+  );
+  const paneFind = usePaneFind({ capability });
   const mountedAdapterRef = useRef<ConversationFindAdapter | null>(null);
   useLayoutEffect(() => {
     currentSourceKeyRef.current = snapshot.sourceKey;
@@ -323,5 +338,8 @@ export function useConversationPaneFind({
       });
     };
   }, [adapter, snapshot.sourceKey]);
-  return { ...usePaneFind({ adapter }), sourceKey: snapshot.sourceKey };
+  if (paneFind.kind !== "Available") {
+    throw new Error("Conversation Pane Find capability must be available.");
+  }
+  return { ...paneFind.controller, sourceKey: snapshot.sourceKey };
 }

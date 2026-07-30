@@ -9,6 +9,8 @@ private resource assets.
   used by the source owner.
 - `epub_ingest.py` / related reader services: extraction, fragments, TOC,
   navigation, resume data.
+- `epub_find.py`: bounded literal Find over current canonical fragments in one
+  repeatable-read snapshot.
 - `epub_assets.py`: private extracted resource asset reads.
 
 `ingest_media_source` is the only worker job kind that starts source processing.
@@ -26,6 +28,19 @@ storage through byte-size-checked helpers.
 
 EPUB assets are private media assets. They are not public owned assets and must
 not be added to Next Image `images.localPatterns`.
+
+## Find
+
+Readable EPUB panes publish the shared pane-local `FindOccurrences`
+capability. `POST /media/{id}/epub-find` validates the current first-fragment
+witness, then scans one fragment at a time in spine order. It returns only
+ordered occurrence locators and plain-text snippets, stops at match 2,001, and
+uses no global search index.
+
+Cross-section results render through an ephemeral preview override. The
+committed section, URL, restore session, reader progress, activity, and
+completion remain unchanged until genuine reader input adopts the rendered
+section. One immutable origin powers **Go back to reading position**.
 
 ## Reader Apparatus
 

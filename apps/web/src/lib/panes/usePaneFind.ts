@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   PaneFindResult,
   PaneFindResultKey,
@@ -54,6 +48,7 @@ export type PaneFindResponse<TError> =
       readonly sourceKey: PaneFindSourceKey;
       readonly completeness: "Complete" | "Partial";
       readonly rows: readonly PaneFindResultRow[];
+      readonly initialActiveKey: PaneFindResultKey;
     }
   | {
       readonly kind: "NoMatches";
@@ -107,6 +102,13 @@ export interface PaneFindAdapter<TError> {
   errorMessage(error: TError): string;
 }
 
+export type PaneFindCapability<TError> =
+  | { readonly kind: "Unavailable" }
+  | {
+      readonly kind: "Available";
+      readonly adapter: PaneFindAdapter<TError>;
+    };
+
 export interface PaneFindController {
   readonly query: string;
   readonly result: PaneFindResult;
@@ -125,9 +127,28 @@ export interface PaneFindController {
   readonly onActivate: (key: PaneFindResultKey) => Promise<boolean>;
 }
 
+export type PaneFindUseResult =
+  | { readonly kind: "Unavailable" }
+  | {
+      readonly kind: "Available";
+      readonly controller: PaneFindController;
+    };
+
 type PreparedState =
   | { readonly kind: "Preparing" }
   | { readonly kind: "Ready"; readonly session: PaneFindSession };
+
+type ReadyResult = Extract<PaneFindResult, { readonly kind: "Ready" }>;
+
+interface PreviewAttempt {
+  readonly key: PaneFindResultKey;
+  readonly queryId: number;
+  readonly ready: ReadyResult;
+}
+
+type PreviewSettlement =
+  | { readonly kind: "Stale" }
+  | { readonly kind: "Current"; readonly reprepare: boolean };
 
 function isAbort(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
@@ -179,13 +200,15 @@ function readyResult(input: {
 }
 
 export function usePaneFind<TError>({
-  adapter,
+  capability,
 }: {
-  readonly adapter: PaneFindAdapter<TError>;
-}): PaneFindController {
-  const sourceAdapterRef = useRef(adapter);
-  if (sourceAdapterRef.current.sourceKey !== adapter.sourceKey) {
-    sourceAdapterRef.current = adapter;
+  readonly capability: PaneFindCapability<TError>;
+}): PaneFindUseResult {
+  const adapterCandidate =
+    capability.kind === "Available" ? capability.adapter : undefined;
+  const sourceAdapterRef = useRef(adapterCandidate);
+  if (sourceAdapterRef.current?.sourceKey !== adapterCandidate?.sourceKey) {
+    sourceAdapterRef.current = adapterCandidate;
   }
   const sourceAdapter = sourceAdapterRef.current;
   const [query, setQuery] = useState("");
@@ -226,8 +249,9 @@ export function usePaneFind<TError>({
   }, []);
 
   const beginPreviewAttempt = useCallback(() => {
-    const generation = previewGenerationRef.current;
-    previewInFlightRef.current += 1;
+    const generation = previewGenerationRef.current + 1;
+    previewGenerationRef.current = generation;
+    previewInFlightRef.current = 1;
     return generation;
   }, []);
 
@@ -238,26 +262,21 @@ export function usePaneFind<TError>({
     }: {
       readonly generation: number;
       readonly capturedOrigin: boolean;
-    }): boolean => {
-      if (generation !== previewGenerationRef.current) return false;
-      previewInFlightRef.current = Math.max(
-        0,
-        previewInFlightRef.current - 1,
-      );
+    }): PreviewSettlement => {
+      if (generation !== previewGenerationRef.current) {
+        return { kind: "Stale" };
+      }
+      previewInFlightRef.current = 0;
       if (capturedOrigin) {
         reprepareAfterPreviewRef.current = false;
         setReturnAvailability(true);
-        return false;
+        return { kind: "Current", reprepare: false };
       }
-      if (
-        previewInFlightRef.current === 0 &&
-        reprepareAfterPreviewRef.current &&
-        !returnAvailableRef.current
-      ) {
+      if (reprepareAfterPreviewRef.current && !returnAvailableRef.current) {
         reprepareAfterPreviewRef.current = false;
-        return true;
+        return { kind: "Current", reprepare: true };
       }
-      return false;
+      return { kind: "Current", reprepare: false };
     },
     [setReturnAvailability],
   );
@@ -268,7 +287,7 @@ export function usePaneFind<TError>({
 
   const clearCurrentPresentation = useCallback(() => {
     const current = preparedRef.current;
-    if (current.kind !== "Ready") return;
+    if (!sourceAdapter || current.kind !== "Ready") return;
     clearAbortRef.current?.abort();
     const abort = new AbortController();
     clearAbortRef.current = abort;
@@ -289,6 +308,7 @@ export function usePaneFind<TError>({
       readonly preserveQuery: boolean;
       readonly resetMatchOptions: boolean;
     }) => {
+      if (!sourceAdapter) return;
       const sessionId = sessionIdRef.current + 1;
       sessionIdRef.current = sessionId;
       queryIdRef.current = 0;
@@ -348,6 +368,33 @@ export function usePaneFind<TError>({
   );
 
   useEffect(() => {
+    if (!sourceAdapter) {
+      sourcePreparedRef.current = false;
+      sessionIdRef.current += 1;
+      queryIdRef.current += 1;
+      previewGenerationRef.current += 1;
+      previewInFlightRef.current = 0;
+      reprepareAfterPreviewRef.current = false;
+      if (queryTimerRef.current !== null) {
+        window.clearTimeout(queryTimerRef.current);
+        queryTimerRef.current = null;
+      }
+      prepareAbortRef.current?.abort();
+      queryAbortRef.current?.abort();
+      previewAbortRef.current?.abort();
+      clearAbortRef.current?.abort();
+      returnAbortRef.current?.abort();
+      returnInFlightRef.current = false;
+      setPrepared({ kind: "Preparing" });
+      setQuery("");
+      setResult({ kind: "Idle" });
+      setReturnAvailability(false);
+      setDefect(null);
+      setSelectedScopeId("");
+      setMatchCase(false);
+      setWholeWord(false);
+      return;
+    }
     const preserveQuery = sourcePreparedRef.current;
     sourcePreparedRef.current = true;
     startPreparation({
@@ -368,7 +415,7 @@ export function usePaneFind<TError>({
       clearAbortRef.current?.abort();
       returnAbortRef.current?.abort();
     };
-  }, [startPreparation]);
+  }, [setReturnAvailability, sourceAdapter, startPreparation]);
 
   const onOpen = useCallback(() => {
     if (returnInFlightRef.current) return;
@@ -382,7 +429,7 @@ export function usePaneFind<TError>({
 
   const retryRef = useRef<() => void>(() => {});
   const runQuery = useCallback(() => {
-    if (returnInFlightRef.current) return;
+    if (!sourceAdapter || returnInFlightRef.current) return;
     const current = preparedRef.current;
     if (current.kind !== "Ready" || query.length === 0 || !selectedScopeId) {
       return;
@@ -440,14 +487,10 @@ export function usePaneFind<TError>({
             });
             return;
           case "Ready": {
-            const first = response.rows[0];
-            if (!first) {
-              throw new Error("Pane Find Ready response requires rows.");
-            }
             setResult(
               readyResult({
                 rows: response.rows,
-                activeKey: first.key,
+                activeKey: response.initialActiveKey,
                 completeness: response.completeness,
               }),
             );
@@ -460,31 +503,32 @@ export function usePaneFind<TError>({
                 queryId,
                 sourceKey: session.sourceKey,
                 signal: previewAbort.signal,
-                key: first.key,
+                key: response.initialActiveKey,
               })
               .then((receipt) => {
                 const identifiesRequest =
                   receipt.sessionId === session.sessionId &&
                   receipt.queryId === queryId &&
                   receipt.sourceKey === session.sourceKey &&
-                  receipt.key === first.key;
-                const reprepare = settlePreviewAttempt({
+                  receipt.key === response.initialActiveKey;
+                const settlement = settlePreviewAttempt({
                   generation: previewGeneration,
                   capturedOrigin:
                     identifiesRequest && receipt.kind === "Previewed",
                 });
-                if (reprepare) {
+                if (settlement.kind === "Current" && settlement.reprepare) {
                   startPreparation({
                     preserveQuery: false,
                     resetMatchOptions: false,
                   });
                 }
                 if (
+                  settlement.kind === "Stale" ||
                   previewAbort.signal.aborted ||
                   sessionIdRef.current !== receipt.sessionId ||
                   queryIdRef.current !== receipt.queryId ||
                   receipt.sourceKey !== session.sourceKey ||
-                  receipt.key !== first.key
+                  receipt.key !== response.initialActiveKey
                 ) {
                   return;
                 }
@@ -499,15 +543,21 @@ export function usePaneFind<TError>({
                 }
               })
               .catch((error: unknown) => {
-                const reprepare = settlePreviewAttempt({
+                const settlement = settlePreviewAttempt({
                   generation: previewGeneration,
                   capturedOrigin: false,
                 });
-                if (reprepare) {
+                if (settlement.kind === "Current" && settlement.reprepare) {
                   startPreparation({
                     preserveQuery: false,
                     resetMatchOptions: false,
                   });
+                }
+                if (
+                  settlement.kind === "Stale" ||
+                  previewAbort.signal.aborted
+                ) {
+                  return;
                 }
                 defectAsync(error);
               });
@@ -560,53 +610,62 @@ export function usePaneFind<TError>({
     selectedScopeId,
   ]);
 
-  const preview = useCallback(
-    async (key: PaneFindResultKey): Promise<boolean> => {
-      if (returnInFlightRef.current) return false;
+  const retryPreviewRef = useRef<(attempt: PreviewAttempt) => Promise<boolean>>(
+    async () => false,
+  );
+  const runPreview = useCallback(
+    async (attempt: PreviewAttempt): Promise<boolean> => {
+      if (!sourceAdapter || returnInFlightRef.current) return false;
       const currentSession = preparedRef.current;
-      const currentResult = resultRef.current;
       if (
         currentSession.kind !== "Ready" ||
-        currentResult.kind !== "Ready" ||
-        !currentResult.rows.some((row) => row.key === key)
+        queryIdRef.current !== attempt.queryId ||
+        !attempt.ready.rows.some((row) => row.key === attempt.key)
       ) {
         return false;
       }
-      const queryId = queryIdRef.current;
       previewAbortRef.current?.abort();
       const abort = new AbortController();
       previewAbortRef.current = abort;
       const { session } = currentSession;
       const previewGeneration = beginPreviewAttempt();
+      setResult(
+        readyResult({
+          rows: attempt.ready.rows,
+          activeKey: attempt.key,
+          completeness: attempt.ready.completeness,
+        }),
+      );
       try {
         const receipt = await sourceAdapter.preview({
           sessionId: session.sessionId,
-          queryId,
+          queryId: attempt.queryId,
           sourceKey: session.sourceKey,
           signal: abort.signal,
-          key,
+          key: attempt.key,
         });
         const identifiesRequest =
           receipt.sessionId === session.sessionId &&
-          receipt.queryId === queryId &&
+          receipt.queryId === attempt.queryId &&
           receipt.sourceKey === session.sourceKey &&
-          receipt.key === key;
-        const reprepare = settlePreviewAttempt({
+          receipt.key === attempt.key;
+        const settlement = settlePreviewAttempt({
           generation: previewGeneration,
           capturedOrigin: identifiesRequest && receipt.kind === "Previewed",
         });
-        if (reprepare) {
+        if (settlement.kind === "Current" && settlement.reprepare) {
           startPreparation({
             preserveQuery: false,
             resetMatchOptions: false,
           });
         }
         if (
+          settlement.kind === "Stale" ||
           abort.signal.aborted ||
           sessionIdRef.current !== receipt.sessionId ||
           queryIdRef.current !== receipt.queryId ||
           receipt.sourceKey !== session.sourceKey ||
-          receipt.key !== key
+          receipt.key !== attempt.key
         ) {
           return false;
         }
@@ -616,29 +675,25 @@ export function usePaneFind<TError>({
             kind: "Failed",
             message: sourceAdapter.errorMessage(receipt.error),
             onRetry: () => {
-              void preview(key);
+              void retryPreviewRef.current(attempt);
             },
           });
           return false;
         }
-        setResult(
-          readyResult({
-            rows: currentResult.rows,
-            activeKey: key,
-            completeness: currentResult.completeness,
-          }),
-        );
         return true;
       } catch (error: unknown) {
-        const reprepare = settlePreviewAttempt({
+        const settlement = settlePreviewAttempt({
           generation: previewGeneration,
           capturedOrigin: false,
         });
-        if (reprepare) {
+        if (settlement.kind === "Current" && settlement.reprepare) {
           startPreparation({
             preserveQuery: false,
             resetMatchOptions: false,
           });
+        }
+        if (settlement.kind === "Stale" || abort.signal.aborted) {
+          return false;
         }
         defectAsync(error);
         return false;
@@ -652,6 +707,20 @@ export function usePaneFind<TError>({
       sourceAdapter,
       startPreparation,
     ],
+  );
+  retryPreviewRef.current = runPreview;
+
+  const preview = useCallback(
+    async (key: PaneFindResultKey): Promise<boolean> => {
+      const currentResult = resultRef.current;
+      if (currentResult.kind !== "Ready") return false;
+      return runPreview({
+        key,
+        queryId: queryIdRef.current,
+        ready: currentResult,
+      });
+    },
+    [runPreview],
   );
 
   const onStep = useCallback(
@@ -739,6 +808,7 @@ export function usePaneFind<TError>({
   const onReturn = useCallback(() => {
     const current = preparedRef.current;
     if (
+      !sourceAdapter ||
       current.kind !== "Ready" ||
       !returnAvailable ||
       returnInFlightRef.current
@@ -783,12 +853,7 @@ export function usePaneFind<TError>({
           returnInFlightRef.current = false;
         }
       });
-  }, [
-    defectAsync,
-    returnAvailable,
-    setReturnAvailability,
-    sourceAdapter,
-  ]);
+  }, [defectAsync, returnAvailable, setReturnAvailability, sourceAdapter]);
 
   const scope = useMemo<PaneFindScopeControl>(() => {
     if (prepared.kind !== "Ready" || prepared.session.scopes.length <= 1) {
@@ -844,7 +909,14 @@ export function usePaneFind<TError>({
       wholeWord,
     ],
   );
+  const useResult = useMemo<PaneFindUseResult>(
+    () =>
+      sourceAdapter
+        ? { kind: "Available", controller }
+        : { kind: "Unavailable" },
+    [controller, sourceAdapter],
+  );
 
   if (defect !== null) throw defect;
-  return controller;
+  return useResult;
 }

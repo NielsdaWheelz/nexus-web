@@ -182,6 +182,7 @@ import type {
   PaneFindResultKey,
   PaneFindSourceKey,
 } from "@/lib/panes/paneSearch";
+import { usePaneFind, type PaneFindCapability } from "@/lib/panes/usePaneFind";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import {
   artifactPaneHref,
@@ -254,11 +255,19 @@ import TextDocumentReader, {
 } from "./TextDocumentReader";
 import TranscriptPlaybackPanel from "./TranscriptPlaybackPanel";
 import { useReaderActivityAdapter } from "./ReaderActivityAdapter";
+import { createMediaFindPreviewLease } from "./mediaFindPreviewLease";
 import {
-  createMediaFindPreviewLease,
-  useMediaPaneFind,
+  useWebPaneFindCapability,
   type WebFindRenderedState,
 } from "./useMediaPaneFind";
+import {
+  useEpubPaneFind,
+  type EpubFindRenderedState,
+  type EpubRenderedSectionOverride,
+} from "./useEpubPaneFind";
+import type { MediaPaneFindError } from "./mediaPaneFind";
+import { usePdfPaneFind } from "./usePdfPaneFind";
+import type { PdfFindError, PdfFindRuntime } from "@/components/pdfPaneFind";
 import TranscriptContentPanel, {
   type TranscriptFindPresentation,
 } from "./TranscriptContentPanel";
@@ -277,6 +286,7 @@ import {
   normalizeFragments,
   resolveActiveTranscriptFragment,
 } from "@/lib/media/transcriptView";
+import type { EpubSectionContent } from "@/lib/media/epubFind";
 import {
   type Highlight,
   fetchHighlights,
@@ -437,26 +447,6 @@ interface ActiveContent {
   documentEmbeds: DocumentEmbed[];
 }
 
-interface EpubSectionContent {
-  section_id: string;
-  label: string;
-  fragment_id: string;
-  fragment_idx: number;
-  href_path: string | null;
-  anchor_id: string | null;
-  source_node_id: string | null;
-  source: "toc" | "spine";
-  ordinal: number;
-  prev_section_id: string | null;
-  next_section_id: string | null;
-  html_sanitized: string;
-  canonical_text: string;
-  char_count: number;
-  word_count: number;
-  document_word_start?: number;
-  created_at: string;
-}
-
 /**
  * Rank-2 polymorphic shape so one helper can drive `Highlight[]`,
  * `PdfHighlightOut[]` slots with the same transform.
@@ -489,8 +479,6 @@ const READER_APPARATUS_FOCUS_CLASS = "reader-apparatus-focused";
 const READER_APPARATUS_HOVER_CLASS = "reader-apparatus-hover";
 const READER_APPARATUS_PULSE_CLASS = "reader-apparatus-pulse";
 const READER_APPARATUS_PULSE_MS = 1200;
-const EMPTY_MEDIA_FRAGMENTS: readonly Fragment[] = [];
-const EMPTY_WEB_SECTIONS: readonly ReaderNavigationSection[] = [];
 
 interface ReaderApparatusPreviewState {
   itemId: string;
@@ -1034,8 +1022,28 @@ export default function MediaPaneBody() {
   const [restorePhase, setRestorePhase] = useState<ReaderRestorePhase>("idle");
   const [activeEpubSection, setActiveEpubSection] =
     useState<EpubSectionContent | null>(null);
+  const [epubSourceGeneration, setEpubSourceGeneration] = useState(0);
+  const [epubRenderedSectionOverride, setEpubRenderedSectionOverrideState] =
+    useState<EpubRenderedSectionOverride | null>(null);
+  const epubRenderedSectionOverrideRef =
+    useRef<EpubRenderedSectionOverride | null>(null);
+  const awaitingEpubFindAdoptionRef = useRef(false);
   const [epubSectionLoading, setEpubSectionLoading] = useState(false);
   const [epubError, setEpubError] = useState<string | null>(null);
+  const setEpubRenderedSectionOverride = useCallback(
+    (value: EpubRenderedSectionOverride | null) => {
+      epubRenderedSectionOverrideRef.current = value;
+      setEpubRenderedSectionOverrideState(value);
+    },
+    [],
+  );
+  const getEpubRenderedSectionOverride = useCallback(
+    () => epubRenderedSectionOverrideRef.current,
+    [],
+  );
+  const setAwaitingEpubFindAdoption = useCallback((value: boolean) => {
+    awaitingEpubFindAdoptionRef.current = value;
+  }, []);
 
   // ---- Web article navigation state ----
   const [activeWebSectionId, setActiveWebSectionId] = useState<string | null>(
@@ -1049,11 +1057,28 @@ export default function MediaPaneBody() {
   const [pdfIntrinsicWidthPx, setPdfIntrinsicWidthPx] = useState<number | null>(
     null,
   );
+  const [pdfFindRuntimePublication, setPdfFindRuntimePublication] = useState<{
+    readonly mediaId: string;
+    readonly runtime: PdfFindRuntime;
+  } | null>(null);
+  const handlePdfFindRuntimeReady = useCallback(
+    (runtime: PdfFindRuntime | null) => {
+      setPdfFindRuntimePublication((current) =>
+        runtime === null
+          ? current?.mediaId === id
+            ? null
+            : current
+          : { mediaId: id, runtime },
+      );
+    },
+    [id],
+  );
   const pdfControlsRef = useRef<PdfReaderControlActions | null>(null);
   const restoreSessionIdRef = useRef(0);
   const appliedEpubNavigationRef = useRef<ReaderNavigationSection[] | null>(
     null,
   );
+  const previousCommittedEpubSectionIdRef = useRef<string | null>(null);
 
   // ==========================================================================
   // Reader progress coordinator — capability, cursor authority, cold-query rule
@@ -1457,10 +1482,13 @@ export default function MediaPaneBody() {
 
   const contentRef = useRef<HTMLDivElement>(null);
   const pdfContentRef = useRef<HTMLDivElement>(null);
+  const pdfViewportRef = useRef<HTMLDivElement>(null);
   const textViewportRef = useRef<HTMLDivElement>(null);
   const textEndRef = useRef<HTMLElement>(null);
   const cursorRef = useRef<CanonicalCursorResult | null>(null);
   const webFindRenderedStateRef = useRef<WebFindRenderedState | null>(null);
+  const epubFindRenderedStateRef = useRef<EpubFindRenderedState | null>(null);
+  const renderedFragmentIdRef = useRef<string | null>(null);
   const textProgressGenerationRef = useRef(0);
   const hasTrustedForwardTextScrollIntentRef = useRef(false);
   const terminalReportedGenerationRef = useRef<number | null>(null);
@@ -1475,6 +1503,7 @@ export default function MediaPaneBody() {
     scrollHeight: number;
   } | null>(null);
   const textViewportCaptureFrameRef = useRef(0);
+  const epubAdoptionCaptureSuppressionRef = useRef(false);
   const resetTextProgressGeneration = useCallback(() => {
     textProgressGenerationRef.current += 1;
     hasTrustedForwardTextScrollIntentRef.current = false;
@@ -1654,7 +1683,8 @@ export default function MediaPaneBody() {
     sections: ReaderNavigationSection[];
     toc: NormalizedNavigationTocNode[];
   }>({
-    cacheKey: isEpub && canRead ? id : null,
+    cacheKey:
+      isEpub && canRead ? `${id}:epub-source:${epubSourceGeneration}` : null,
     load: async (signal) => {
       const payload = await loadReaderNavigation(signal);
       if (payload.kind !== "epub") {
@@ -1805,18 +1835,21 @@ export default function MediaPaneBody() {
     [readerDocumentMapData],
   );
 
+  const renderedEpubSection =
+    epubRenderedSectionOverride?.section ?? activeEpubSection;
+
   // Active content
   const activeContent: ActiveContent | null = useMemo(() => {
     if (isPdf) {
       return null;
     }
-    if (isEpub && activeEpubSection) {
+    if (isEpub && renderedEpubSection) {
       return {
-        fragmentId: activeEpubSection.fragment_id,
-        htmlSanitized: activeEpubSection.html_sanitized,
-        canonicalText: activeEpubSection.canonical_text,
-        wordCount: activeEpubSection.word_count,
-        documentWordStart: activeEpubSection.document_word_start,
+        fragmentId: renderedEpubSection.fragment_id,
+        htmlSanitized: renderedEpubSection.html_sanitized,
+        canonicalText: renderedEpubSection.canonical_text,
+        wordCount: renderedEpubSection.word_count,
+        documentWordStart: renderedEpubSection.document_word_start,
         documentEmbeds: [],
       };
     }
@@ -1850,7 +1883,7 @@ export default function MediaPaneBody() {
     isEpub,
     isTranscriptMedia,
     activeRequestedFragmentId,
-    activeEpubSection,
+    renderedEpubSection,
     activeTranscriptFragment,
     fragments,
     media?.kind,
@@ -1863,20 +1896,26 @@ export default function MediaPaneBody() {
       return null;
     }
     if (isEpub) {
-      return activeEpubSection?.href_path ?? null;
+      return renderedEpubSection?.href_path ?? null;
     }
     return activeContent?.fragmentId ?? null;
-  }, [activeContent?.fragmentId, activeEpubSection?.href_path, isEpub, isPdf]);
+  }, [
+    activeContent?.fragmentId,
+    renderedEpubSection?.href_path,
+    isEpub,
+    isPdf,
+  ]);
+  renderedFragmentIdRef.current = activeContent?.fragmentId ?? null;
 
   const activeTextAnchor = useMemo(() => {
     if (isPdf) {
       return null;
     }
     if (isEpub) {
-      return activeEpubSection?.anchor_id ?? null;
+      return renderedEpubSection?.anchor_id ?? null;
     }
     return null;
-  }, [activeEpubSection?.anchor_id, isEpub, isPdf]);
+  }, [renderedEpubSection?.anchor_id, isEpub, isPdf]);
 
   const sourceReferenceByStableKey = useMemo(() => {
     const references = new Map<
@@ -1968,17 +2007,30 @@ export default function MediaPaneBody() {
 
   useEffect(() => closeReaderApparatusPreview, [closeReaderApparatusPreview]);
 
+  const resetEpubRenderedSectionAuxiliaryState = useCallback(() => {
+    highlightVersionRef.current += 1;
+    clearFocus();
+    setHighlights([]);
+    clearRetainedSelection(false);
+    setHoveredHighlightId(null);
+    setHighlightActionAnchor(null);
+    setFocusedApparatusItemId(null);
+    setHoveredApparatusItemId(null);
+    setHoveredEvidenceItemId(null);
+    closeReaderApparatusPreview();
+  }, [clearFocus, clearRetainedSelection, closeReaderApparatusPreview]);
+
   const activeTextStartOffset = useMemo(() => {
     if (isPdf) {
       return 0;
     }
     if (isEpub) {
-      if (!activeEpubSection || !epubSections) {
+      if (!renderedEpubSection || !epubSections) {
         return 0;
       }
       let offset = 0;
       for (const section of epubSections) {
-        if (section.section_id === activeEpubSection.section_id) {
+        if (section.section_id === renderedEpubSection.section_id) {
           break;
         }
         offset += section.char_count ?? 0;
@@ -1999,7 +2051,7 @@ export default function MediaPaneBody() {
     return offset;
   }, [
     activeContent,
-    activeEpubSection,
+    renderedEpubSection,
     epubSections,
     fragments,
     isEpub,
@@ -2012,8 +2064,8 @@ export default function MediaPaneBody() {
     }
     if (isEpub) {
       if (!epubSections || epubSections.length === 0) {
-        return activeEpubSection
-          ? canonicalCpLength(activeEpubSection.canonical_text)
+        return renderedEpubSection
+          ? canonicalCpLength(renderedEpubSection.canonical_text)
           : 0;
       }
       return epubSections.reduce(
@@ -2030,7 +2082,7 @@ export default function MediaPaneBody() {
     return activeContent ? canonicalCpLength(activeContent.canonicalText) : 0;
   }, [
     activeContent,
-    activeEpubSection,
+    renderedEpubSection,
     epubSections,
     fragments,
     isEpub,
@@ -2045,9 +2097,9 @@ export default function MediaPaneBody() {
     }
     if (isEpub) {
       return (
-        activeEpubSection !== null &&
+        renderedEpubSection !== null &&
         epubSections !== null &&
-        epubSections.at(-1)?.section_id === activeEpubSection.section_id
+        epubSections.at(-1)?.section_id === renderedEpubSection.section_id
       );
     }
     return (
@@ -2056,7 +2108,7 @@ export default function MediaPaneBody() {
     );
   }, [
     activeContent,
-    activeEpubSection,
+    renderedEpubSection,
     epubSections,
     fragments,
     isEpub,
@@ -2416,7 +2468,10 @@ export default function MediaPaneBody() {
   }, []);
 
   const epubSectionResource = useResource<EpubSectionContent>({
-    cacheKey: isEpub && activeSectionId ? `${id}:${activeSectionId}` : null,
+    cacheKey:
+      isEpub && activeSectionId
+        ? `${id}:epub-source:${epubSourceGeneration}:${activeSectionId}`
+        : null,
     load: async (signal) => {
       const sectionResp = await apiFetch<{ data: EpubSectionContent }>(
         `/api/media/${id}/sections/${encodeURIComponent(activeSectionId!)}`,
@@ -2430,12 +2485,22 @@ export default function MediaPaneBody() {
     if (!isEpub || !activeSectionId) {
       return;
     }
+    if (activeEpubSection?.section_id === activeSectionId) {
+      return;
+    }
 
     setActiveEpubSection(null);
     clearFocus();
     setHighlights([]);
     clearRetainedSelection(false);
-  }, [activeSectionId, clearFocus, clearRetainedSelection, id, isEpub]);
+  }, [
+    activeEpubSection?.section_id,
+    activeSectionId,
+    clearFocus,
+    clearRetainedSelection,
+    id,
+    isEpub,
+  ]);
 
   useEffect(() => {
     if (epubSectionResource.status === "loading") {
@@ -2509,6 +2574,10 @@ export default function MediaPaneBody() {
     setActiveWebSectionId(null);
     appliedRequestedReaderLocRef.current = null;
     webSectionScrollKeyRef.current = null;
+    setEpubRenderedSectionOverride(null);
+    setAwaitingEpubFindAdoption(false);
+    epubAdoptionCaptureSuppressionRef.current = false;
+    setEpubSourceGeneration((generation) => generation + 1);
     scrollRestoreAppliedRef.current = false;
     lastSavedTextAnchorOffsetRef.current = null;
     setFocusedApparatusItemId(null);
@@ -2516,7 +2585,7 @@ export default function MediaPaneBody() {
     textRestoreSettledRef.current = false;
     setPdfHighlightNavigation(null);
     setCanonicalResetRevision(null);
-  }, [id]);
+  }, [id, setAwaitingEpubFindAdoption, setEpubRenderedSectionOverride]);
 
   useEffect(() => {
     resetTextProgressGeneration();
@@ -2562,8 +2631,14 @@ export default function MediaPaneBody() {
     resetTextProgressGeneration();
     scrollRestoreAppliedRef.current = false;
     lastSavedTextAnchorOffsetRef.current = null;
-    textRestoreSettledRef.current = false;
-  }, [activeContent?.fragmentId, resetTextProgressGeneration]);
+    textRestoreSettledRef.current =
+      isEpub && epubRenderedSectionOverride !== null;
+  }, [
+    activeContent?.fragmentId,
+    epubRenderedSectionOverride,
+    isEpub,
+    resetTextProgressGeneration,
+  ]);
 
   const activeFragmentId = activeContent?.fragmentId ?? null;
 
@@ -2604,6 +2679,10 @@ export default function MediaPaneBody() {
   useEffect(() => {
     if (isPdf || !activeContent) {
       textRestoreSettledRef.current = false;
+      return;
+    }
+    if (isEpub && epubRenderedSectionOverride !== null) {
+      textRestoreSettledRef.current = true;
       return;
     }
     if (restorePhase === "cancelled") {
@@ -2800,6 +2879,7 @@ export default function MediaPaneBody() {
   }, [
     isPdf,
     isEpub,
+    epubRenderedSectionOverride,
     activeContent,
     activeTextSource,
     activeTextStartOffset,
@@ -2859,14 +2939,14 @@ export default function MediaPaneBody() {
         quote_suffix: quoteWindow.quoteSuffix,
       };
       if (isEpub) {
-        if (!activeEpubSection?.href_path) {
+        if (!renderedEpubSection?.href_path) {
           return null;
         }
         return {
           kind: "epub",
           target: {
-            section_id: activeEpubSection.section_id,
-            href_path: activeEpubSection.href_path,
+            section_id: renderedEpubSection.section_id,
+            href_path: renderedEpubSection.href_path,
             anchor_id: activeTextAnchor,
           },
           locations,
@@ -2882,7 +2962,7 @@ export default function MediaPaneBody() {
     },
     [
       activeContent,
-      activeEpubSection,
+      renderedEpubSection,
       activeTextAnchor,
       activeTextSource,
       activeTextStartOffset,
@@ -2895,7 +2975,7 @@ export default function MediaPaneBody() {
 
   // Stable reader viewport focus target after a handoff button resolves.
   const focusReaderViewport = useCallback(() => {
-    const container = isPdf ? pdfContentRef.current : textViewportRef.current;
+    const container = isPdf ? pdfViewportRef.current : textViewportRef.current;
     if (!container) {
       return;
     }
@@ -3286,7 +3366,11 @@ export default function MediaPaneBody() {
 
         try {
           const data = await fetchHighlights(activeContent.fragmentId);
-          if (cancelled || version !== highlightVersionRef.current) {
+          if (
+            cancelled ||
+            version !== highlightVersionRef.current ||
+            renderedFragmentIdRef.current !== activeContent.fragmentId
+          ) {
             return;
           }
 
@@ -3353,6 +3437,9 @@ export default function MediaPaneBody() {
       const fragmentId = evidenceSource.fragment_id;
       const startOffset = evidenceSource.start_offset;
       const endOffset = evidenceSource.end_offset;
+      if (fragmentId !== activeContent.fragmentId) {
+        return null;
+      }
       const quoteHighlight = temporaryTextEvidenceHighlightFromQuote({
         activeContent,
         evidenceSpanId: resolvedEvidence.evidence_span_id,
@@ -3363,16 +3450,9 @@ export default function MediaPaneBody() {
         return quoteHighlight;
       }
       if (
-        fragmentId !== activeContent.fragmentId ||
         typeof startOffset !== "number" ||
         typeof endOffset !== "number" ||
         endOffset <= startOffset
-      ) {
-        return quoteHighlight;
-      }
-      if (
-        kind === "transcript_time_text" &&
-        fragmentId !== activeContent.fragmentId
       ) {
         return quoteHighlight;
       }
@@ -3643,6 +3723,32 @@ export default function MediaPaneBody() {
     renderedHtml,
   ]);
 
+  useEffect(() => {
+    const cursor = cursorRef.current;
+    const viewport = textViewportRef.current;
+    if (
+      !isEpub ||
+      !renderedEpubSection ||
+      !cursor ||
+      !viewport ||
+      isMismatchDisabled
+    ) {
+      epubFindRenderedStateRef.current = null;
+      return;
+    }
+    epubFindRenderedStateRef.current = {
+      section: renderedEpubSection,
+      cursor,
+      viewport,
+    };
+  }, [
+    isEpub,
+    isMismatchDisabled,
+    readerLayoutReady,
+    renderedEpubSection,
+    renderedHtml,
+  ]);
+
   const transcriptFindSnapshotCandidate = useMemo(
     () =>
       isTranscriptMedia &&
@@ -3706,29 +3812,125 @@ export default function MediaPaneBody() {
             getMatchElement: (key) =>
               transcriptFindMatchElementsRef.current.get(key) ?? null,
             publishPresentation: setTranscriptFindPresentation,
+            previewLease: mediaFindPreviewLease,
           })
         : null,
-    [transcriptFindSnapshot],
+    [mediaFindPreviewLease, transcriptFindSnapshot],
   );
-
-  const mediaPaneFind = useMediaPaneFind({
+  useLayoutEffect(() => {
+    if (!transcriptFindAdapter) return;
+    mediaFindPreviewLease.beginSource();
+    return () => transcriptFindAdapter.dispose();
+  }, [mediaFindPreviewLease, transcriptFindAdapter]);
+  const pdfFindAdapter = usePdfPaneFind({
     mediaId: id,
-    fragments:
-      media?.kind === "web_article" ? fragments : EMPTY_MEDIA_FRAGMENTS,
-    sections:
-      media?.kind === "web_article"
-        ? (webSections ?? EMPTY_WEB_SECTIONS)
-        : EMPTY_WEB_SECTIONS,
+    runtime:
+      isPdf && canRead && pdfFindRuntimePublication?.mediaId === id
+        ? pdfFindRuntimePublication.runtime
+        : null,
+    previewLease: mediaFindPreviewLease,
+  });
+
+  const webPaneFindSource = useMemo(
+    () =>
+      media?.kind === "web_article" &&
+      canRead &&
+      fragments.length > 0 &&
+      webSections !== null
+        ? {
+            kind: "Available" as const,
+            mediaId: id,
+            fragments,
+            sections: webSections,
+          }
+        : { kind: "Unavailable" as const },
+    [canRead, fragments, id, media?.kind, webSections],
+  );
+  const webPaneFindCapability = useWebPaneFindCapability({
+    source: webPaneFindSource,
     renderedStateRef: webFindRenderedStateRef,
     previewFragmentId: webSearchPreviewFragmentId,
     setPreviewFragmentId: setWebSearchPreviewFragmentId,
     focusReaderViewport,
     previewLease: mediaFindPreviewLease,
-    transcriptAdapter: transcriptFindAdapter,
   });
-  const rebuildMediaFindPresentation = mediaPaneFind.rebuildPresentation;
+  const handleEpubFindSourceChanged = useCallback(() => {
+    epubAdoptionCaptureSuppressionRef.current = false;
+    setActiveSectionId(null);
+    setActiveEpubSection(null);
+    setEpubRestoreRequest(null);
+    appliedEpubNavigationRef.current = null;
+    setEpubSourceGeneration((generation) => generation + 1);
+  }, []);
+  const epubFindNavigation = useMemo(() => {
+    if (!isEpub || !canRead || !epubSections) {
+      return null;
+    }
+    if (
+      renderedEpubSection &&
+      !epubSections.some(
+        (section) =>
+          section.section_id === renderedEpubSection.section_id &&
+          section.fragment_id === renderedEpubSection.fragment_id &&
+          section.fragment_idx === renderedEpubSection.fragment_idx,
+      )
+    ) {
+      return null;
+    }
+    return epubSections;
+  }, [canRead, epubSections, isEpub, renderedEpubSection]);
+  const epubPaneFindCapability = useEpubPaneFind({
+    mediaId: id,
+    navigation: epubFindNavigation,
+    renderedStateRef: epubFindRenderedStateRef,
+    getRenderedSectionOverride: getEpubRenderedSectionOverride,
+    setRenderedSectionOverride: setEpubRenderedSectionOverride,
+    previewLease: mediaFindPreviewLease,
+    setAwaitingReaderAdoption: setAwaitingEpubFindAdoption,
+    resetRenderedSectionAuxiliaryState: resetEpubRenderedSectionAuxiliaryState,
+    onSourceChanged: handleEpubFindSourceChanged,
+    focusReaderViewport,
+  });
+  const selectedMediaFindCapability = useMemo<
+    PaneFindCapability<MediaPaneFindError | PdfFindError>
+  >(() => {
+    switch (media?.kind) {
+      case "web_article":
+        return webPaneFindCapability;
+      case "podcast_episode":
+      case "video":
+        return transcriptFindAdapter
+          ? { kind: "Available", adapter: transcriptFindAdapter }
+          : { kind: "Unavailable" };
+      case "epub":
+        return epubPaneFindCapability;
+      case "pdf":
+        return pdfFindAdapter
+          ? { kind: "Available", adapter: pdfFindAdapter }
+          : { kind: "Unavailable" };
+      default:
+        return { kind: "Unavailable" };
+    }
+  }, [
+    epubPaneFindCapability,
+    media?.kind,
+    pdfFindAdapter,
+    transcriptFindAdapter,
+    webPaneFindCapability,
+  ]);
+  const mediaPaneFindResult = usePaneFind({
+    capability: selectedMediaFindCapability,
+  });
+  const mediaPaneFind =
+    mediaPaneFindResult.kind === "Available"
+      ? mediaPaneFindResult.controller
+      : null;
+  const rebuildMediaFindPresentation =
+    webPaneFindCapability.kind === "Available"
+      ? webPaneFindCapability.adapter.rebuildPresentation
+      : null;
   useEffect(() => {
-    if (media?.kind === "web_article") {
+    if (media?.kind === "web_article" && rebuildMediaFindPresentation) {
       rebuildMediaFindPresentation();
     }
   }, [
@@ -3736,6 +3938,32 @@ export default function MediaPaneBody() {
     media?.kind,
     rebuildMediaFindPresentation,
     renderedHtml,
+  ]);
+
+  useLayoutEffect(() => {
+    if (!isEpub || !epubSections || !renderedEpubSection) {
+      return;
+    }
+    const renderedSectionStillCurrent = epubSections.some(
+      (section) =>
+        section.section_id === renderedEpubSection.section_id &&
+        section.fragment_id === renderedEpubSection.fragment_id &&
+        section.fragment_idx === renderedEpubSection.fragment_idx,
+    );
+    if (!renderedSectionStillCurrent) {
+      resetEpubRenderedSectionAuxiliaryState();
+      setEpubRenderedSectionOverride(null);
+      setAwaitingEpubFindAdoption(false);
+      handleEpubFindSourceChanged();
+    }
+  }, [
+    epubSections,
+    handleEpubFindSourceChanged,
+    isEpub,
+    resetEpubRenderedSectionAuxiliaryState,
+    renderedEpubSection,
+    setAwaitingEpubFindAdoption,
+    setEpubRenderedSectionOverride,
   ]);
 
   // ==========================================================================
@@ -4576,6 +4804,38 @@ export default function MediaPaneBody() {
       reportReaderMovement,
     ],
   );
+  const beginOrdinaryEpubNavigation = useCallback(() => {
+    if (
+      epubRenderedSectionOverrideRef.current === null &&
+      !awaitingEpubFindAdoptionRef.current
+    ) {
+      return;
+    }
+    if (epubRenderedSectionOverrideRef.current !== null) {
+      resetEpubRenderedSectionAuxiliaryState();
+      setEpubRenderedSectionOverride(null);
+    }
+    awaitingEpubFindAdoptionRef.current = false;
+    mediaFindPreviewLease.releaseForGenuineInput();
+  }, [
+    mediaFindPreviewLease,
+    resetEpubRenderedSectionAuxiliaryState,
+    setEpubRenderedSectionOverride,
+  ]);
+  const navigateToEpubSection = useCallback(
+    (sectionId: string, anchorId: string | null = null) => {
+      beginOrdinaryEpubNavigation();
+      navigateToSection(sectionId, anchorId);
+    },
+    [beginOrdinaryEpubNavigation, navigateToSection],
+  );
+  useLayoutEffect(() => {
+    if (previousCommittedEpubSectionIdRef.current === activeSectionId) {
+      return;
+    }
+    previousCommittedEpubSectionIdRef.current = activeSectionId;
+    beginOrdinaryEpubNavigation();
+  }, [activeSectionId, beginOrdinaryEpubNavigation]);
 
   const navigateToWebSection = useCallback(
     (sectionId: string) => {
@@ -4616,13 +4876,13 @@ export default function MediaPaneBody() {
   );
 
   const activeSectionPosition = useMemo(() => {
-    if (!epubSections || !activeSectionId) {
+    if (!epubSections || !renderedEpubSection) {
       return -1;
     }
     return epubSections.findIndex(
-      (section) => section.section_id === activeSectionId,
+      (section) => section.section_id === renderedEpubSection.section_id,
     );
-  }, [activeSectionId, epubSections]);
+  }, [epubSections, renderedEpubSection]);
   const prevSection =
     activeSectionPosition > 0 && epubSections
       ? epubSections[activeSectionPosition - 1]
@@ -4658,7 +4918,10 @@ export default function MediaPaneBody() {
         message: "No sections available for this EPUB.",
       };
     }
-    if (epubSectionLoading || !activeEpubSection) {
+    if (
+      (!epubRenderedSectionOverride && epubSectionLoading) ||
+      !renderedEpubSection
+    ) {
       return { status: "loading" as const, message: "Loading section..." };
     }
     return { status: "ready" as const, renderedHtml };
@@ -4746,6 +5009,36 @@ export default function MediaPaneBody() {
     () => `reader:${paneRuntime.paneId}`,
     [paneRuntime.paneId],
   );
+  const handleGenuineReaderInput = useCallback((): boolean => {
+    epubAdoptionCaptureSuppressionRef.current = false;
+    const adoptsEpubFind = awaitingEpubFindAdoptionRef.current;
+    if (adoptsEpubFind) {
+      awaitingEpubFindAdoptionRef.current = false;
+      epubAdoptionCaptureSuppressionRef.current = true;
+      resetTextProgressGeneration();
+      const renderedOverride = epubRenderedSectionOverrideRef.current;
+      if (renderedOverride) {
+        const section = renderedOverride.section;
+        appliedRequestedReaderLocRef.current = section.section_id;
+        setActiveSectionId(section.section_id);
+        setActiveEpubSection(section);
+        setEpubRestoreRequest(null);
+        setEpubRenderedSectionOverride(null);
+        replaceReaderLocation({ loc: section.section_id });
+        scrollRestoreAppliedRef.current = true;
+        textRestoreSettledRef.current = true;
+      }
+    }
+    mediaFindPreviewLease.releaseForGenuineInput();
+    noteGenuineReaderInput();
+    return adoptsEpubFind;
+  }, [
+    mediaFindPreviewLease,
+    noteGenuineReaderInput,
+    replaceReaderLocation,
+    resetTextProgressGeneration,
+    setEpubRenderedSectionOverride,
+  ]);
 
   const readerActivity = useReaderActivityAdapter({
     mediaId: id,
@@ -4755,9 +5048,10 @@ export default function MediaPaneBody() {
     paneActive: paneRuntime.isActive,
     viewport,
     readerRootRef,
-    pdfContentRef,
+    pdfViewportRef,
     activeContent,
     pdfControls: pdfControlsState,
+    onGenuineReaderInput: handleGenuineReaderInput,
     previewLease: mediaFindPreviewLease,
   });
   const focusModeForRoot = readerProfile.focus_mode;
@@ -4901,6 +5195,12 @@ export default function MediaPaneBody() {
       setFragments([]);
       setInitialFragmentsFailure(null);
       setActiveSectionId(null);
+      setActiveEpubSection(null);
+      resetEpubRenderedSectionAuxiliaryState();
+      setEpubRenderedSectionOverride(null);
+      setAwaitingEpubFindAdoption(false);
+      epubAdoptionCaptureSuppressionRef.current = false;
+      setEpubSourceGeneration((generation) => generation + 1);
       setActiveWebSectionId(null);
       setEpubError(null);
       if (!media) return;
@@ -4922,7 +5222,12 @@ export default function MediaPaneBody() {
           : prev,
       );
     },
-    [media],
+    [
+      media,
+      resetEpubRenderedSectionAuxiliaryState,
+      setAwaitingEpubFindAdoption,
+      setEpubRenderedSectionOverride,
+    ],
   );
 
   const handleMetadataRetryEnqueued = useCallback(() => {
@@ -5092,6 +5397,12 @@ export default function MediaPaneBody() {
         if (mediaFindPreviewLease.isActive()) {
           return;
         }
+        if (
+          epubRenderedSectionOverrideRef.current !== null ||
+          epubAdoptionCaptureSuppressionRef.current
+        ) {
+          return;
+        }
 
         const container = textViewportRef.current;
         if (container) {
@@ -5255,8 +5566,7 @@ export default function MediaPaneBody() {
   );
   const handleTrustedTextScrollIntent = useCallback(
     (direction: TrustedScrollDirection) => {
-      mediaFindPreviewLease.releaseForGenuineInput();
-      noteGenuineReaderInput();
+      const adoptedEpubFind = handleGenuineReaderInput();
       noteGenuineReaderActivityInput();
       if (
         !textRestoreSettledRef.current ||
@@ -5266,7 +5576,7 @@ export default function MediaPaneBody() {
       ) {
         cancelRestoreSession();
       }
-      if (direction === "forward") {
+      if (!adoptedEpubFind && direction === "forward") {
         hasTrustedForwardTextScrollIntentRef.current = true;
       }
       const container = textViewportRef.current;
@@ -5284,9 +5594,8 @@ export default function MediaPaneBody() {
     },
     [
       cancelRestoreSession,
-      mediaFindPreviewLease,
+      handleGenuineReaderInput,
       noteGenuineReaderActivityInput,
-      noteGenuineReaderInput,
       restorePhase,
       scheduleTextViewportCapture,
     ],
@@ -5833,9 +6142,9 @@ export default function MediaPaneBody() {
         {isEpub ? (
           <ReaderContentsNav
             nodes={epubToc ?? []}
-            activeSectionId={activeSectionId}
+            activeSectionId={renderedEpubSection?.section_id ?? null}
             onNavigate={({ sectionId, anchorId }) => {
-              navigateToSection(sectionId, anchorId);
+              navigateToEpubSection(sectionId, anchorId);
               closeSecondaryOnMobile();
             }}
           />
@@ -5852,12 +6161,12 @@ export default function MediaPaneBody() {
       </div>
     ),
     [
-      activeSectionId,
       activeWebSectionId,
       closeSecondaryOnMobile,
       epubToc,
       isEpub,
-      navigateToSection,
+      navigateToEpubSection,
+      renderedEpubSection?.section_id,
       navigateToWebSection,
       webToc,
     ],
@@ -6051,7 +6360,7 @@ export default function MediaPaneBody() {
               iconOnly
               onClick={() => {
                 if (prevSection) {
-                  navigateToSection(prevSection.section_id);
+                  navigateToEpubSection(prevSection.section_id);
                 }
               }}
               disabled={!prevSection}
@@ -6073,7 +6382,7 @@ export default function MediaPaneBody() {
               iconOnly
               onClick={() => {
                 if (nextSection) {
-                  navigateToSection(nextSection.section_id);
+                  navigateToEpubSection(nextSection.section_id);
                 }
               }}
               disabled={!nextSection}
@@ -6085,16 +6394,17 @@ export default function MediaPaneBody() {
               <Select
                 className={styles.mediaToolbarSectionSelect}
                 size="sm"
-                value={activeSectionId ?? ""}
+                value={renderedEpubSection?.section_id ?? ""}
                 onChange={(event) => {
                   if (event.target.value) {
-                    navigateToSection(event.target.value);
+                    navigateToEpubSection(event.target.value);
                   }
                 }}
                 aria-label="Select section"
                 title={
                   epubSections.find(
-                    (section) => section.section_id === activeSectionId,
+                    (section) =>
+                      section.section_id === renderedEpubSection?.section_id,
                   )?.label
                 }
               >
@@ -6109,16 +6419,16 @@ export default function MediaPaneBody() {
         </div>
       ) : null,
     [
-      activeSectionId,
       activeSectionPosition,
       canRead,
       epubSections,
       isEpub,
       isPdf,
-      navigateToSection,
+      navigateToEpubSection,
       nextSection,
       pdfControlsState,
       prevSection,
+      renderedEpubSection?.section_id,
     ],
   );
   useEffect(() => {
@@ -6535,7 +6845,7 @@ export default function MediaPaneBody() {
           target,
           apparatusStableKey,
         };
-        navigateToSection(section.section_id);
+        navigateToEpubSection(section.section_id);
         completeActivation();
         return true;
       }
@@ -6577,7 +6887,7 @@ export default function MediaPaneBody() {
       handleTranscriptSegmentSelect,
       id,
       isTranscriptMedia,
-      navigateToSection,
+      navigateToEpubSection,
       replaceReaderLocation,
       resume,
       scrollRenderedHighlightIntoView,
@@ -6658,7 +6968,7 @@ export default function MediaPaneBody() {
           ? marker.item_id.slice("contents:".length)
           : null;
         if (!sectionId) return;
-        if (isEpub) navigateToSection(sectionId);
+        if (isEpub) navigateToEpubSection(sectionId);
         else navigateToWebSection(sectionId);
         return;
       }
@@ -6698,7 +7008,7 @@ export default function MediaPaneBody() {
       clearFocus,
       clearRetainedSelection,
       isEpub,
-      navigateToSection,
+      navigateToEpubSection,
       navigateToWebSection,
       readerEvidence,
       readerDocumentMapData,
@@ -6858,75 +7168,69 @@ export default function MediaPaneBody() {
       startEditBounds,
     ],
   );
-  const webFindAvailable =
-    media?.kind === "web_article" && canRead && fragments.length > 0;
   const transcriptFindAvailable = transcriptFindAdapter !== null;
-  const mediaFindAvailable = webFindAvailable || transcriptFindAvailable;
-  const mediaFindInputLabel = transcriptFindAvailable
-    ? "Find in transcript"
-    : "Find in article";
-  const searchCommandsRef = useRef<
-    Pick<
-      ReturnType<typeof useResourceInspector>,
-      | "openSearchResults"
-      | "closeSearchResults"
-      | "previewSearchResult"
-    >
-  >(null);
-  const dismissPaneFind = mediaPaneFind.onDismiss;
-  const activatePaneFind = mediaPaneFind.onActivate;
+  const mediaFindInputLabel =
+    media?.kind === "epub"
+      ? "Find in book"
+      : media?.kind === "pdf"
+        ? "Find in PDF"
+        : transcriptFindAvailable
+          ? "Find in transcript"
+          : "Find in article";
+  const searchCommandsRef =
+    useRef<
+      Pick<
+        ReturnType<typeof useResourceInspector>,
+        "openSearchResults" | "closeSearchResults" | "previewSearchResult"
+      >
+    >(null);
   const dismissFind = useCallback(() => {
-    dismissPaneFind();
+    mediaPaneFind?.onDismiss();
     searchCommandsRef.current?.closeSearchResults();
-  }, [dismissPaneFind]);
+  }, [mediaPaneFind]);
   const showFindResults = useCallback((trigger: HTMLButtonElement | null) => {
     searchCommandsRef.current?.openSearchResults(trigger);
   }, []);
   const activateFindResult = useCallback(
     (key: Parameters<PaneFindOccurrencesPublication["onActivate"]>[0]) => {
-      void activatePaneFind(key).then((previewed) => {
+      if (!mediaPaneFind) return;
+      void mediaPaneFind.onActivate(key).then((previewed) => {
         if (previewed) searchCommandsRef.current?.previewSearchResult();
       });
     },
-    [activatePaneFind],
+    [mediaPaneFind],
   );
-  const findPublicationBase = useMemo(
-    () => ({
-      kind: "FindOccurrences" as const,
-      query: mediaPaneFind.query,
-      partialSourceLabel: transcriptFindAvailable
-        ? "available transcript"
-        : undefined,
-      inputLabel: mediaFindInputLabel,
-      placeholder: mediaFindInputLabel,
-      onOpen: mediaPaneFind.onOpen,
-      onQueryChange: mediaPaneFind.onQueryChange,
-      onDismiss: dismissFind,
-      result: mediaPaneFind.result,
-      scope: mediaPaneFind.scope,
-      matchCase: mediaPaneFind.matchCase,
-      wholeWord: mediaPaneFind.wholeWord,
-      onMatchCaseChange: mediaPaneFind.onMatchCaseChange,
-      onWholeWordChange: mediaPaneFind.onWholeWordChange,
-      onStep: mediaPaneFind.onStep,
-      onActivate: activateFindResult,
-      onShowResults: showFindResults,
-      returnToReadingPosition: mediaPaneFind.returnToReadingPosition,
-    }),
+  const findPublicationBase = useMemo<PaneFindOccurrencesPublication | null>(
+    () =>
+      mediaPaneFind
+        ? {
+            kind: "FindOccurrences",
+            query: mediaPaneFind.query,
+            partialSourceLabel: transcriptFindAvailable
+              ? "available transcript"
+              : undefined,
+            inputLabel: mediaFindInputLabel,
+            placeholder: mediaFindInputLabel,
+            onOpen: mediaPaneFind.onOpen,
+            onQueryChange: mediaPaneFind.onQueryChange,
+            onDismiss: dismissFind,
+            result: mediaPaneFind.result,
+            scope: mediaPaneFind.scope,
+            matchCase: mediaPaneFind.matchCase,
+            wholeWord: mediaPaneFind.wholeWord,
+            onMatchCaseChange: mediaPaneFind.onMatchCaseChange,
+            onWholeWordChange: mediaPaneFind.onWholeWordChange,
+            onStep: mediaPaneFind.onStep,
+            onActivate: activateFindResult,
+            onShowResults: showFindResults,
+            returnToReadingPosition: mediaPaneFind.returnToReadingPosition,
+            resultsExpanded: false,
+          }
+        : null,
     [
       activateFindResult,
       dismissFind,
-      mediaPaneFind.matchCase,
-      mediaPaneFind.onMatchCaseChange,
-      mediaPaneFind.onOpen,
-      mediaPaneFind.onQueryChange,
-      mediaPaneFind.onStep,
-      mediaPaneFind.onWholeWordChange,
-      mediaPaneFind.query,
-      mediaPaneFind.result,
-      mediaPaneFind.returnToReadingPosition,
-      mediaPaneFind.scope,
-      mediaPaneFind.wholeWord,
+      mediaPaneFind,
       mediaFindInputLabel,
       showFindResults,
       transcriptFindAvailable,
@@ -6934,12 +7238,12 @@ export default function MediaPaneBody() {
   );
   const searchResultsBody = useMemo(
     () =>
-      mediaFindAvailable ? (
+      findPublicationBase ? (
         <PaneSearchResults
           publication={{ ...findPublicationBase, resultsExpanded: true }}
         />
       ) : undefined,
-    [findPublicationBase, mediaFindAvailable],
+    [findPublicationBase],
   );
   const inspector = useResourceInspector({
     scheme: "media",
@@ -6951,17 +7255,24 @@ export default function MediaPaneBody() {
     searchResults: searchResultsBody,
   });
   searchCommandsRef.current = inspector;
-  const previousMediaFindSourceRef = useRef(mediaPaneFind.sourceKey);
+  const mediaFindSourceKey =
+    selectedMediaFindCapability.kind === "Available"
+      ? selectedMediaFindCapability.adapter.sourceKey
+      : null;
+  const previousMediaFindSourceRef = useRef(mediaFindSourceKey);
   useLayoutEffect(() => {
-    if (previousMediaFindSourceRef.current === mediaPaneFind.sourceKey) return;
-    previousMediaFindSourceRef.current = mediaPaneFind.sourceKey;
+    if (previousMediaFindSourceRef.current === mediaFindSourceKey) return;
+    previousMediaFindSourceRef.current = mediaFindSourceKey;
     inspector.closeSearchResults();
-  }, [inspector, mediaPaneFind.sourceKey]);
-  const findPublication = useMemo<PaneFindOccurrencesPublication>(
-    () => ({
-      ...findPublicationBase,
-      resultsExpanded: inspector.searchResultsExpanded,
-    }),
+  }, [inspector, mediaFindSourceKey]);
+  const findPublication = useMemo<PaneFindOccurrencesPublication | null>(
+    () =>
+      findPublicationBase
+        ? {
+            ...findPublicationBase,
+            resultsExpanded: inspector.searchResultsExpanded,
+          }
+        : null,
     [findPublicationBase, inspector.searchResultsExpanded],
   );
   const { companionAction } = inspector;
@@ -6976,7 +7287,7 @@ export default function MediaPaneBody() {
           }
         : {}),
       ...(mediaToolbar ? { toolbar: mediaToolbar } : {}),
-      search: mediaFindAvailable ? findPublication : undefined,
+      search: findPublication ?? undefined,
       actions: companionAction ? [companionAction] : [],
       menu: media
         ? {
@@ -6998,7 +7309,6 @@ export default function MediaPaneBody() {
       mediaHeaderGroups,
       mediaResourceHeader,
       mediaToolbar,
-      mediaFindAvailable,
     ],
   );
   usePanePrimaryChrome(primaryChromePublication);
@@ -7358,6 +7668,7 @@ export default function MediaPaneBody() {
                   key={`${id}:${canonicalResetRevision ?? "initial"}`}
                   mediaId={id}
                   beforeContent={readerBanners}
+                  viewportRef={pdfViewportRef}
                   contentRef={pdfContentRef}
                   focusedHighlightId={focusState.focusedId}
                   hoveredHighlightId={hoveredHighlightId}
@@ -7428,6 +7739,7 @@ export default function MediaPaneBody() {
                     }
                   }}
                   onIntrinsicWidthChange={handlePdfIntrinsicWidthChange}
+                  onFindRuntimeReady={handlePdfFindRuntimeReady}
                   startPageNumber={
                     canonicalResetRevision === null
                       ? (activeRequestedPdfPageNumber ??
@@ -7482,13 +7794,13 @@ export default function MediaPaneBody() {
               onInternalLinkClick={(href) => {
                 const target = resolveEpubInternalLinkTarget(
                   href,
-                  activeSectionId,
+                  renderedEpubSection?.section_id ?? null,
                   epubSections,
                 );
                 if (!target) {
                   return false;
                 }
-                navigateToSection(target.sectionId, target.anchorId);
+                navigateToEpubSection(target.sectionId, target.anchorId);
                 return true;
               }}
             />

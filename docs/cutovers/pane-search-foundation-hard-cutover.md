@@ -15,10 +15,10 @@ Governing contracts:
 
 Ship one pane-local Search interaction with two closed capabilities:
 
-| Capability | Surfaces | Result presentation |
-| --- | --- | --- |
-| `FilterRows` | finite inventories; Page/Note direct items | filter primary rows in place |
-| `FindOccurrences` | Chat and readable media/documents | select occurrences in the document; Companion result list |
+| Capability        | Surfaces                                   | Result presentation                                       |
+| ----------------- | ------------------------------------------ | --------------------------------------------------------- |
+| `FilterRows`      | finite inventories; Page/Note direct items | filter primary rows in place                              |
+| `FindOccurrences` | Chat and readable media/documents          | select occurrences in the document; Companion result list |
 
 `Cmd/Ctrl+F` always means Search in the active capable pane. `Cmd/Ctrl+K`
 remains global Nexus retrieval. The shell owns interaction grammar; each domain
@@ -98,9 +98,10 @@ is not permission to migrate every domain in one change.
 5. `FindOccurrences` shows query, result ordinal/count, Previous, Next, optional
    scope, Match case, Whole word, Show results, and mirrors the header's
    persistent Return action when available.
-6. The first Ready match becomes active and previews. `Enter` selects Next;
-   `Shift+Enter` selects Previous. Navigation wraps and announces the wrap.
-   Empty and failed states never move the document.
+6. The adapter-nominated Ready match becomes active and previews without
+   reordering rows. `Enter` selects Next; `Shift+Enter` selects Previous.
+   Navigation wraps and announces the wrap. Empty and failed states never move
+   the document.
 7. Scope is a selector, not a checkbox. Default is the entire resource. A child
    may add one exact current chapter/section scope; omit it when ownership
    cannot be resolved exactly.
@@ -170,19 +171,19 @@ route/domain owner
        -> existing Resource Inspector hosts
 ```
 
-| Concern | Sole owner |
-| --- | --- |
-| capability values/equality | `paneSearch.ts` + `panePublications.ts` |
-| active-pane request event | `paneSearchEvents.ts` |
-| shortcut arbitration | `WorkspaceHost` |
-| expanded state, focus, shared controls/actions | `PaneShell` / `PaneSearchBar` |
-| FilterRows collapsed-state marker and spoken status | `PaneShell` / `PaneSearchBar` |
-| query generations, active occurrence, wrap, same-pane preserve/reprepare | `usePaneFind` |
-| rows, filters, sorts | collection/domain owner |
-| searchable source, matcher, scopes, locator, preview | dependent format adapter |
-| origin, presentation invalidation, and progress/playback fence | mounted reader/format owner |
-| transient result presentation | Resource Inspector + workspace host |
-| global retrieval | Nexus and `/search`, unchanged |
+| Concern                                                                  | Sole owner                              |
+| ------------------------------------------------------------------------ | --------------------------------------- |
+| capability values/equality                                               | `paneSearch.ts` + `panePublications.ts` |
+| active-pane request event                                                | `paneSearchEvents.ts`                   |
+| shortcut arbitration                                                     | `WorkspaceHost`                         |
+| expanded state, focus, shared controls/actions                           | `PaneShell` / `PaneSearchBar`           |
+| FilterRows collapsed-state marker and spoken status                      | `PaneShell` / `PaneSearchBar`           |
+| query generations, active occurrence, wrap, same-pane preserve/reprepare | `usePaneFind`                           |
+| rows, filters, sorts                                                     | collection/domain owner                 |
+| searchable source, matcher, scopes, locator, preview                     | dependent format adapter                |
+| origin, presentation invalidation, and progress/playback fence           | mounted reader/format owner             |
+| transient result presentation                                            | Resource Inspector + workspace host     |
+| global retrieval                                                         | Nexus and `/search`, unchanged          |
 
 Route bodies publish one memoized capability through
 `PanePrimaryChromePublication.search`. Do not add a search context, registry,
@@ -292,16 +293,31 @@ opaque tokens. With no exact narrow scope, publish `EntireResource` and render
 no selector. `Unavailable`/`Available` reuses the existing capability pairing;
 do not mint `Absent` or optional-callback variants.
 
-`usePaneFind(adapter)` owns session/query generations, abort, stale-settlement
-rejection, input scheduling (one named duration constant), active key,
-stepping, and publication projection. Stale settlements are discarded
-silently; they never surface as `Failed`. `Failed` models expected, modelable
-failures only: each child closes an adapter error union, and the producer maps
-it to `message` through one exhaustive `*ErrorMessage` helper; defects throw.
-The adapter owns preparation, literal matching, exact preview, presentation
-clear, and return:
+`usePaneFind({ capability })` owns session/query generations, abort,
+stale-settlement rejection, input scheduling (one named duration constant),
+active key, stepping, and publication projection. `Unavailable` performs no
+adapter work and returns a tagged unavailable result; `Available` returns the
+controller. Stale settlements are discarded silently; they never surface as
+`Failed`. `Failed` models expected, modelable failures only: each child closes
+an adapter error union, and the producer maps it to `message` through one
+exhaustive `*ErrorMessage` helper; defects throw. The adapter owns preparation,
+literal matching, exact preview, presentation clear, and return:
 
 ```ts
+type PaneFindCapability<TError> =
+  | { readonly kind: "Unavailable" }
+  | {
+      readonly kind: "Available";
+      readonly adapter: PaneFindAdapter<TError>;
+    };
+
+type PaneFindUseResult =
+  | { readonly kind: "Unavailable" }
+  | {
+      readonly kind: "Available";
+      readonly controller: PaneFindController;
+    };
+
 interface PaneFindAdapter<TError> {
   readonly sourceKey: PaneFindSourceKey;
   prepare(request: PaneFindPrepareRequest): Promise<PaneFindSession>;
@@ -313,6 +329,16 @@ interface PaneFindAdapter<TError> {
   returnToReadingPosition(request: PaneFindSessionRequest): Promise<void>;
   errorMessage(error: TError): string;
 }
+
+type PaneFindReadyResponse = {
+  readonly kind: "Ready";
+  readonly sessionId: number;
+  readonly queryId: number;
+  readonly sourceKey: PaneFindSourceKey;
+  readonly completeness: "Complete" | "Partial";
+  readonly rows: readonly PaneFindResultRow[];
+  readonly initialActiveKey: PaneFindResultKey;
+};
 ```
 
 This is the exact implemented interface in `usePaneFind.ts`.
@@ -320,8 +346,17 @@ This is the exact implemented interface in `usePaneFind.ts`.
 `Failed`; `PaneFindPreviewReceipt<TError>` closes `Previewed` and `Rejected`.
 Every request carries `sessionId`, `sourceKey`, and `AbortSignal`; queries and
 previews also carry `queryId`. Responses echo the relevant identities. Abort
-where possible and reject every late identity regardless. Dependent specs
-close `TError`; no optional capability bags.
+where possible and reject every late identity regardless. Preview attempts
+also have a foundation-owned monotonic generation; only the latest attempt may
+change active result, Return availability, or failure state. Dependent specs
+close `TError`; no optional capability bags. A `Ready` response requires
+non-empty unique rows and an `initialActiveKey` occurring exactly once. The
+foundation preserves row order, makes that key active, and auto-previews it.
+
+Retry retains the failed operation's exact identity. Query `Failed` retries the
+query. Auto-preview `Rejected` reruns the query so the adapter can nominate the
+current initial key. Explicit-preview `Rejected` retries that same result key
+against the retained Ready result; it does not silently restart the query.
 
 Once Return begins, `usePaneFind` cancels queued/in-flight query, preview, and
 presentation-clear work and rejects every new Find command until restoration
@@ -335,8 +370,18 @@ and Return, preserves query/Match case/Whole word, prepares the new adapter,
 and reruns one retained nonempty query. The format owner synchronously clears
 marks, preview leases, and other external presentation on that key change;
 `usePaneFind` cannot own DOM/frame/scroll side effects. Initial mount,
-route-key exit/unmount, Dismiss, and explicit empty query retain reset
-semantics.
+route-key exit/unmount, Dismiss, explicit empty query, and capability becoming
+Unavailable retain reset semantics.
+
+### Conversation same-pane source-replacement amendment
+
+The Conversation Find cutover hard-cuts the source-key lifecycle immediately
+above into the shared `usePaneFind` owner. This corrects adapter-object effects,
+which otherwise treat same-source producer rerenders as new sources and
+silently clear a query on an actual revision. This is shared Find behavior, not
+a Conversation option or compatibility branch. Existing format-owned
+source-key cleanup effects remain authoritative for marks, frame state,
+preview leases, and reading origins.
 
 Preview positioning is side-effect-free by construction. Where a format has no
 such path today — EPUB cross-section movement exists only as navigation that
@@ -351,16 +396,6 @@ closed-to-open transition before focusing the query. `usePaneFind` reprepares
 only when no Return origin exists; an existing origin retains its session.
 Every producer, including Chat, forwards the callback. Refocusing an already
 open bar does not reprepare.
-
-### Conversation same-pane source-replacement amendment
-
-The Conversation Find cutover hard-cuts the source-key lifecycle immediately
-above into the shared `usePaneFind` owner. This corrects the implemented
-adapter-object effect, which otherwise treats same-source producer rerenders as
-new sources and silently clears a query on an actual revision. This is shared
-Find behavior, not a Conversation option or compatibility branch. Existing
-format-owned source-key cleanup effects remain authoritative for marks, frame
-state, preview leases, and reading origins.
 
 ### Implemented collection FilterRows successor amendment
 
@@ -629,7 +664,8 @@ Dependent format/list files belong only in their named child cutover. Update
 2. Filter panes render only matching local rows, preserve domain order, reuse
    existing filters/sorts, expose no Find-only controls, mark active collapsed
    domain state, and announce debounced Partial/Complete row status.
-3. Find panes expose the shared controls, wrap correctly, announce state,
+3. Find panes preserve document-ordered rows, activate the adapter-nominated
+   initial result, expose the shared controls, wrap correctly, announce state,
    reject stale session/query/source results, and retain one prepared adapter
    across same-source producer rerenders.
 4. Companion results are ordered, typed, keyboard reachable, activate exact

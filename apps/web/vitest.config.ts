@@ -6,7 +6,11 @@ import path from "path";
 export default defineConfig({
   plugins: [react()],
   optimizeDeps: {
-    include: ["next/navigation"],
+    include: [
+      "next/navigation",
+      "pdfjs-dist/build/pdf.mjs",
+      "pdfjs-dist/web/pdf_viewer.mjs",
+    ],
   },
   test: {
     alias: {

@@ -62,7 +62,7 @@ contract.
 The shared Pane Search foundation defines `FindOccurrences`, exact
 revision-scoped result keys, one immutable **Go back to reading position**
 origin, and transient Companion results. Web articles and readable
-video/podcast transcripts are migrated; EPUB and PDF are not.
+video/podcast transcripts and EPUBs are migrated; PDF is not.
 
 `MediaPaneBody` selects one route-local adapter under one `usePaneFind`
 controller. Web searches every loaded canonical fragment and uses one
@@ -77,6 +77,13 @@ the active transcript row and nested segment-list scroll. It never seeks,
 plays, resumes, mounts a progress seam, or creates an activity seam. Partial
 coverage is explicit in both zero and nonzero result states. Close clears marks
 without returning; Return restores and retires the one origin.
+
+EPUB Find searches canonical fragments through the bounded EPUB Find API.
+Cross-section preview uses a rendered-section override, while committed
+navigation, URL, restore state, progress, completion, and activity remain
+fenced. The first genuine input atomically adopts the rendered section and is
+capture-suppressed; later input resumes ordinary reader behavior. Same-section
+stepping reuses the rendered section without a request.
 
 ### natural document completion
 

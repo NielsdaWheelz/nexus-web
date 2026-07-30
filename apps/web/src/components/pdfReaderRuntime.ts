@@ -1,7 +1,34 @@
 "use client";
 
+export interface PdfTextItemLike {
+  readonly str: string;
+  readonly hasEOL: boolean;
+}
+
+export interface PdfMarkedContentLike {
+  readonly type: string;
+  readonly id?: string;
+}
+
+export interface PdfTextContentLike {
+  readonly items: readonly (PdfTextItemLike | PdfMarkedContentLike)[];
+}
+
+export interface PdfPageLike {
+  getTextContent(params: {
+    includeMarkedContent: true;
+    disableNormalization: true;
+  }): Promise<PdfTextContentLike>;
+  getViewport(params: {
+    scale: number;
+    rotation?: number;
+  }): PdfViewportLike;
+}
+
 export interface PdfDocumentLike {
-  numPages: number;
+  readonly fingerprints: readonly (string | null)[];
+  readonly numPages: number;
+  getPage(pageNumber: number): Promise<PdfPageLike>;
   destroy?: () => Promise<void> | void;
 }
 
@@ -45,11 +72,52 @@ export interface PdfPageViewLike {
 export interface PdfEventBusLike {
   on(eventName: string, listener: (event: unknown) => void): void;
   off(eventName: string, listener: (event: unknown) => void): void;
+  dispatch(eventName: string, event: object): void;
 }
 
 export interface PdfLinkServiceLike {
   setDocument(doc: PdfDocumentLike | null, baseUrl?: string | null): void;
   setViewer(viewer: PdfViewerLike): void;
+  get page(): number;
+  set page(value: number);
+  readonly pagesCount: number;
+}
+
+export interface PdfFindMatchLike {
+  readonly index: number;
+  readonly length: number;
+}
+
+export interface PdfFindSelectionLike {
+  readonly pageIdx: number;
+  readonly matchIdx: number;
+}
+
+export interface PdfFindStateLike {
+  readonly highlightAll: boolean;
+}
+
+export interface PdfFindControllerLike {
+  readonly highlightMatches: boolean | undefined;
+  readonly pageMatches:
+    | readonly (readonly number[] | undefined)[]
+    | undefined;
+  readonly pageMatchesLength:
+    | readonly (readonly number[] | undefined)[]
+    | undefined;
+  readonly selected: PdfFindSelectionLike | undefined;
+  readonly state: PdfFindStateLike | null;
+  match(
+    query: string | string[],
+    pageContent: string,
+    pageIndex: number,
+  ): readonly PdfFindMatchLike[] | undefined;
+  setDocument(doc: PdfDocumentLike | null): void;
+  scrollMatchIntoView(params: {
+    element: HTMLElement;
+    pageIndex: number;
+    matchIndex: number;
+  }): void;
 }
 
 export interface PdfViewerLike {
@@ -69,11 +137,17 @@ export interface PdfJsViewerLike {
     externalLinkTarget?: number | null;
     externalLinkRel?: string | null;
   }) => PdfLinkServiceLike;
+  PDFFindController: new (params: {
+    linkService: PdfLinkServiceLike;
+    eventBus: PdfEventBusLike;
+    updateMatchesCountOnProgress?: boolean;
+  }) => PdfFindControllerLike;
   PDFViewer: new (params: {
     container: HTMLDivElement;
     viewer: HTMLDivElement;
     eventBus: PdfEventBusLike;
     linkService: PdfLinkServiceLike;
+    findController?: PdfFindControllerLike;
     textLayerMode?: number;
     enableAutoLinking?: boolean;
   }) => PdfViewerLike;

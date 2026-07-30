@@ -37,12 +37,25 @@ import type { PaneRuntimeContextValue } from "@/lib/panes/paneRuntime";
 import type { PanePrimaryChromePublication } from "@/lib/panes/panePublications";
 import { dispatchPaneSearchRequest } from "@/lib/panes/paneSearchEvents";
 import type { PaneFindOccurrencesPublication } from "@/lib/panes/paneSearch";
-import { usePaneFind } from "@/lib/panes/usePaneFind";
+import {
+  usePaneFind,
+  type PaneFindController,
+  type PaneFindUseResult,
+} from "@/lib/panes/usePaneFind";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { activateResource } from "@/lib/resources/activation";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { createArtifactPaneFindAdapter } from "./artifactPaneFind";
 import styles from "./ArtifactPaneBody.module.css";
+
+function requireArtifactPaneFindController(
+  result: PaneFindUseResult,
+): PaneFindController {
+  if (result.kind !== "Available") {
+    throw new Error("Artifact Pane Find capability must be available.");
+  }
+  return result.controller;
+}
 
 function useArtifactDossierStore(artifactRef: string): DossierControllerStore {
   const [store] = useState(() =>
@@ -112,7 +125,12 @@ function ArtifactFindComposition({
     () => createArtifactPaneFindAdapter(artifactRef, capability),
     [artifactRef, capability],
   );
-  const paneFind = usePaneFind({ adapter });
+  const paneFindCapability = useMemo(
+    () => ({ kind: "Available" as const, adapter }),
+    [adapter],
+  );
+  const paneFindResult = usePaneFind({ capability: paneFindCapability });
+  const paneFind = requireArtifactPaneFindController(paneFindResult);
   const {
     closeTransientSecondarySurface,
     isActive,

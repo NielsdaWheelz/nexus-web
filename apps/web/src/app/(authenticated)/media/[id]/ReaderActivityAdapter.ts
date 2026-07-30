@@ -28,12 +28,12 @@ interface UseReaderActivityAdapterInput {
   paneActive: boolean;
   viewport: ReaderActivityViewport;
   readerRootRef: RefObject<HTMLDivElement | null>;
-  pdfContentRef: RefObject<HTMLDivElement | null>;
+  pdfViewportRef: RefObject<HTMLDivElement | null>;
   activeContent: ReaderActivityText | null;
   pdfControls: ReaderActivityPdfControls | null;
+  onGenuineReaderInput: () => void;
   previewLease: {
     isActive(): boolean;
-    releaseForGenuineInput(): void;
     subscribe(listener: () => void): () => void;
   };
 }
@@ -77,9 +77,10 @@ export function useReaderActivityAdapter({
   paneActive,
   viewport,
   readerRootRef,
-  pdfContentRef,
+  pdfViewportRef,
   activeContent,
   pdfControls,
+  onGenuineReaderInput,
   previewLease,
 }: UseReaderActivityAdapterInput): ReaderActivityAdapter {
   const lastGenuineInputMonoRef = useRef<number | undefined>(undefined);
@@ -106,7 +107,7 @@ export function useReaderActivityAdapter({
     if (!viewport.hydrated || !canRead || (!isPdf && !activeContent)) {
       return;
     }
-    const root = isPdf ? pdfContentRef.current : readerRootRef.current;
+    const root = isPdf ? pdfViewportRef.current : readerRootRef.current;
     if (!root) return;
 
     const recorder = activityRecorder();
@@ -160,7 +161,7 @@ export function useReaderActivityAdapter({
     const noteInput = (event: Event) => {
       if (!event.isTrusted) return;
       if (event instanceof KeyboardEvent && !isPdfScrollKey(event)) return;
-      previewLease.releaseForGenuineInput();
+      onGenuineReaderInput();
       lastGenuineInputMonoRef.current = performance.now();
       update();
     };
@@ -198,8 +199,9 @@ export function useReaderActivityAdapter({
     isPdf,
     mediaId,
     observerKey,
+    onGenuineReaderInput,
     paneActive,
-    pdfContentRef,
+    pdfViewportRef,
     pdfControls,
     previewLease,
     readerRootRef,

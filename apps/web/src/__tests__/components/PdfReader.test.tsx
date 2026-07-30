@@ -6,7 +6,12 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import { createRef } from "react";
 import PdfReader from "@/components/PdfReader";
+import type {
+  PdfFindRuntime,
+  PdfRuntimeFindResult,
+} from "@/components/pdfPaneFind";
 import { apiFetch } from "@/lib/api/client";
 import { dispatchReaderPulse } from "@/lib/reader/pulseEvent";
 
@@ -18,6 +23,7 @@ const pdfRuntimeState = vi.hoisted(() => ({
   textNode: null as Text | null,
   numPages: 1,
   pageWidths: [600] as number[],
+  pageTexts: ["Alpha selected quote Omega"] as string[],
   pageHighlights: [] as unknown[],
   createdHighlightId: "created-highlight-1",
 }));
@@ -121,19 +127,19 @@ vi.mock("@/lib/api/client", async () => {
 });
 
 vi.mock("@/components/pdfReaderRuntime", () => {
-  function setElementRect(element: HTMLElement, rect: DOMRect): void {
-    element.getBoundingClientRect = vi.fn(() => rect);
-  }
-
   class FakeEventBus {
     private listeners = new Map<string, Array<(event: unknown) => void>>();
 
     constructor() {
       pdfRuntimeState.eventBus = {
         dispatch: (eventName: string, event: unknown) => {
-          this.listeners.get(eventName)?.forEach((listener) => listener(event));
+          this.dispatch(eventName, event);
         },
       };
+    }
+
+    dispatch(eventName: string, event: unknown) {
+      this.listeners.get(eventName)?.forEach((listener) => listener(event));
     }
 
     on(eventName: string, listener: (event: unknown) => void) {
@@ -152,17 +158,165 @@ vi.mock("@/components/pdfReaderRuntime", () => {
   }
 
   class FakePDFLinkService {
-    setDocument() {}
-    setViewer() {}
+    private document: { numPages: number } | null = null;
+    private viewer: FakePDFViewer | null = null;
+
+    get page() {
+      return this.viewer?.currentPageNumber ?? 1;
+    }
+
+    set page(value: number) {
+      if (this.viewer) {
+        this.viewer.currentPageNumber = value;
+      }
+    }
+
+    get pagesCount() {
+      return this.document?.numPages ?? 0;
+    }
+
+    setDocument(document: { numPages: number } | null) {
+      this.document = document;
+    }
+
+    setViewer(viewer: FakePDFViewer) {
+      this.viewer = viewer;
+    }
+  }
+
+  class FakePDFFindController {
+    highlightMatches = false;
+    pageMatches: number[][] = [];
+    pageMatchesLength: number[][] = [];
+    state: { highlightAll: boolean } | null = null;
+    private document: { numPages: number } | null = null;
+
+    constructor({
+      eventBus,
+    }: {
+      eventBus: FakeEventBus;
+    }) {
+      eventBus.on("find", (rawEvent) => {
+        const event = rawEvent as {
+          query?: string;
+          caseSensitive?: boolean;
+          entireWord?: boolean;
+          highlightAll?: boolean;
+        };
+        const query = event.query ?? "";
+        this.state = { highlightAll: event.highlightAll ?? false };
+        this.highlightMatches = this.state.highlightAll;
+        this.pageMatches = [];
+        this.pageMatchesLength = [];
+        let total = 0;
+        for (
+          let pageIndex = 0;
+          pageIndex < (this.document?.numPages ?? 0);
+          pageIndex += 1
+        ) {
+          const matches = this.match(
+            query,
+            pdfRuntimeState.pageTexts[pageIndex] ?? "",
+            pageIndex,
+          );
+          const starts = (matches ?? []).map((match) => match.index);
+          const lengths = (matches ?? []).map((match) => match.length);
+          this.pageMatches.push(starts);
+          this.pageMatchesLength.push(lengths);
+          total += starts.length;
+        }
+        eventBus.dispatch("updatefindmatchescount", {
+          source: this,
+          matchesCount: { current: total > 0 ? 1 : 0, total },
+        });
+      });
+    }
+
+    get selected() {
+      return { pageIdx: -1, matchIdx: -1 };
+    }
+
+    match(query: string | string[], pageContent: string) {
+      const needle = Array.isArray(query) ? query.join("") : query;
+      if (needle.length === 0) {
+        return [];
+      }
+      const starts: { index: number; length: number }[] = [];
+      let offset = 0;
+      while (offset <= pageContent.length - needle.length) {
+        const index = pageContent.indexOf(needle, offset);
+        if (index < 0) {
+          break;
+        }
+        starts.push({ index, length: needle.length });
+        offset = index + needle.length;
+      }
+      return starts;
+    }
+
+    setDocument(document: { numPages: number } | null) {
+      this.document = document;
+      this.pageMatches = [];
+      this.pageMatchesLength = [];
+    }
+
+    scrollMatchIntoView({
+      element,
+    }: {
+      element: HTMLElement;
+      pageIndex: number;
+      matchIndex: number;
+    }) {
+      element.scrollIntoView();
+    }
   }
 
   class FakePDFViewer {
-    currentPageNumber = 1;
-    currentScaleValue: string | number = 1;
+    private pageNumber = 1;
+    private scale = 1;
     pagesCount = 0;
+    private readonly container: HTMLDivElement;
+    private readonly eventBus: FakeEventBus;
 
-    constructor({ viewer }: { viewer: HTMLDivElement }) {
+    constructor({
+      container,
+      viewer,
+      eventBus,
+    }: {
+      container: HTMLDivElement;
+      viewer: HTMLDivElement;
+      eventBus: FakeEventBus;
+    }) {
+      this.container = container;
+      this.eventBus = eventBus;
       pdfRuntimeState.viewerHost = viewer;
+    }
+
+    get currentPageNumber() {
+      return this.pageNumber;
+    }
+
+    set currentPageNumber(value: number) {
+      this.pageNumber = value;
+      this.container.scrollTop = (value - 1) * 820;
+      this.eventBus.dispatch("pagechanging", { pageNumber: value });
+    }
+
+    get currentScaleValue() {
+      return this.scale;
+    }
+
+    set currentScaleValue(value: string | number) {
+      this.scale = typeof value === "number" ? value : 1;
+      window.requestAnimationFrame(() => {
+        this.eventBus.dispatch("pagerendered", {
+          pageNumber: this.pageNumber,
+          source: this.getPageView(this.pageNumber - 1),
+        });
+        this.eventBus.dispatch("textlayerrendered", {
+          pageNumber: this.pageNumber,
+        });
+      });
     }
 
     setDocument(doc: { numPages: number } | null) {
@@ -174,34 +328,42 @@ vi.mock("@/components/pdfReaderRuntime", () => {
 
       if (!doc) {
         this.pagesCount = 0;
+        viewer.style.height = "";
         return;
       }
 
       this.pagesCount = doc.numPages;
+      viewer.style.height = `${doc.numPages * 820}px`;
       for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber += 1) {
         const width = pdfRuntimeState.pageWidths[pageNumber - 1] ?? 600;
-        const pageRect = new DOMRect(40, 80 * pageNumber, width, 800);
+        const pageTop = (pageNumber - 1) * 820;
         const page = document.createElement("div");
         page.className = "page";
         page.setAttribute("data-page-number", String(pageNumber));
-        setElementRect(page, pageRect);
+        page.style.width = `${width}px`;
+        page.style.height = "800px";
+        page.getBoundingClientRect = vi.fn(
+          () => new DOMRect(40, pageTop - this.container.scrollTop, width, 800),
+        );
         Object.defineProperty(page, "offsetTop", {
           configurable: true,
-          value: (pageNumber - 1) * 820,
+          value: pageTop,
         });
 
         const canvasWrapper = document.createElement("div");
         canvasWrapper.className = "canvasWrapper";
-        setElementRect(canvasWrapper, pageRect);
+        canvasWrapper.getBoundingClientRect = page.getBoundingClientRect;
         const canvas = document.createElement("canvas");
-        setElementRect(canvas, pageRect);
+        canvas.getBoundingClientRect = page.getBoundingClientRect;
         canvasWrapper.append(canvas);
 
         const textLayer = document.createElement("div");
         textLayer.className = "textLayer";
-        setElementRect(textLayer, pageRect);
+        textLayer.getBoundingClientRect = page.getBoundingClientRect;
         const span = document.createElement("span");
-        const textNode = document.createTextNode("Alpha selected quote Omega");
+        const textNode = document.createTextNode(
+          pdfRuntimeState.pageTexts[pageNumber - 1] ?? "",
+        );
         span.append(textNode);
         textLayer.append(span);
 
@@ -220,6 +382,15 @@ vi.mock("@/components/pdfReaderRuntime", () => {
           pageNumber: 1,
           source: this.getPageView(0),
         });
+        for (
+          let pageNumber = 1;
+          pageNumber <= doc.numPages;
+          pageNumber += 1
+        ) {
+          pdfRuntimeState.eventBus?.dispatch("textlayerrendered", {
+            pageNumber,
+          });
+        }
         pdfRuntimeState.eventBus?.dispatch("pagechanging", { pageNumber: 1 });
       });
     }
@@ -230,14 +401,14 @@ vi.mock("@/components/pdfReaderRuntime", () => {
         viewport: {
           width,
           height: 800,
-          scale: 1,
+          scale: this.scale,
           rotation: 0,
         },
         pdfPage: {
           getViewport: () => ({
             width,
             height: 800,
-            scale: 1,
+            scale: this.scale,
             rotation: 0,
           }),
         },
@@ -255,6 +426,23 @@ vi.mock("@/components/pdfReaderRuntime", () => {
       getDocument: () => ({
         promise: Promise.resolve({
           numPages: pdfRuntimeState.numPages,
+          fingerprints: ["pdf-reader-test-fingerprint"],
+          getPage: async (pageNumber: number) => ({
+            getTextContent: async () => ({
+              items: [
+                {
+                  str: pdfRuntimeState.pageTexts[pageNumber - 1] ?? "",
+                  hasEOL: false,
+                },
+              ],
+            }),
+            getViewport: () => ({
+              width: pdfRuntimeState.pageWidths[pageNumber - 1] ?? 600,
+              height: 800,
+              scale: 1,
+              rotation: 0,
+            }),
+          }),
           destroy: vi.fn(),
         }),
         destroy: vi.fn(),
@@ -263,6 +451,7 @@ vi.mock("@/components/pdfReaderRuntime", () => {
     loadPdfJsViewer: async () => ({
       EventBus: FakeEventBus,
       PDFLinkService: FakePDFLinkService,
+      PDFFindController: FakePDFFindController,
       PDFViewer: FakePDFViewer,
       ScrollMode: { VERTICAL: 0 },
       LinkTarget: { BLANK: 2 },
@@ -279,6 +468,7 @@ describe("PdfReader selection chat destinations", () => {
     pdfRuntimeState.textNode = null;
     pdfRuntimeState.numPages = 1;
     pdfRuntimeState.pageWidths = [600];
+    pdfRuntimeState.pageTexts = ["Alpha selected quote Omega"];
     pdfRuntimeState.pageHighlights = [];
     pdfRuntimeState.createdHighlightId = "created-highlight-1";
     mobileChromeMocks.startReaderScroll.mockReset();
@@ -297,6 +487,31 @@ describe("PdfReader selection chat destinations", () => {
 
     const viewport = await screen.findByLabelText("PDF document");
     expect(viewport).toContainElement(screen.getByText("Reader readiness"));
+  });
+
+  it("publishes distinct viewport and content refs", async () => {
+    const viewportRef = createRef<HTMLDivElement>();
+    const contentRef = createRef<HTMLDivElement>();
+    const view = render(
+      <PdfReader
+        mediaId="media-1"
+        viewportRef={viewportRef}
+        contentRef={contentRef}
+      />,
+    );
+
+    const viewport = await screen.findByRole("region", {
+      name: "PDF document",
+    });
+    expect(viewportRef.current).toBe(viewport);
+    expect(viewportRef.current).toHaveAttribute("data-pane-content", "true");
+    expect(contentRef.current).toHaveClass("pdfViewer");
+    expect(viewportRef.current).toContainElement(contentRef.current);
+    expect(contentRef.current).not.toBe(viewportRef.current);
+
+    view.unmount();
+    expect(viewportRef.current).toBeNull();
+    expect(contentRef.current).toBeNull();
   });
 
   it("starts then updates mobile chrome from the PDF viewport", async () => {
@@ -324,6 +539,98 @@ describe("PdfReader selection chat destinations", () => {
     await waitFor(() => {
       expect(mobileChromeMocks.startReaderScroll).toHaveBeenCalledTimes(2);
     });
+  });
+
+  it("publishes PDF Find, previews without resume writes, and returns to an empty-text origin page", async () => {
+    pdfRuntimeState.numPages = 2;
+    pdfRuntimeState.pageWidths = [600, 600];
+    pdfRuntimeState.pageTexts = ["", "Alpha selected quote Omega"];
+    const onResumeStateChange = vi.fn();
+    const onFindRuntimeReady = vi.fn();
+    let runtime: PdfFindRuntime | null = null;
+
+    const view = render(
+      <PdfReader
+        mediaId="media-1"
+        onResumeStateChange={onResumeStateChange}
+        onFindRuntimeReady={(nextRuntime) => {
+          runtime = nextRuntime;
+          onFindRuntimeReady(nextRuntime);
+        }}
+      />,
+    );
+
+    const viewport = await screen.findByRole("region", {
+      name: "PDF document",
+    });
+    await waitFor(() => {
+      expect(runtime).not.toBeNull();
+    });
+    const activeRuntime = runtime;
+    if (!activeRuntime) {
+      throw new Error("PDF Find runtime was not published");
+    }
+    expect(activeRuntime.source).toEqual({
+      mediaId: "media-1",
+      fingerprints: ["pdf-reader-test-fingerprint"],
+      numPages: 2,
+    });
+
+    viewport.scrollTop = 135;
+    viewport.scrollLeft = 9;
+    fireEvent.scroll(viewport);
+    await waitFor(() => {
+      expect(onResumeStateChange).toHaveBeenCalled();
+    });
+    onResumeStateChange.mockClear();
+    const origin = activeRuntime.captureOrigin();
+    expect(origin.kind).toBe("Captured");
+
+    let result!: PdfRuntimeFindResult;
+    await act(async () => {
+      result = await activeRuntime.search({
+        generation: 1,
+        query: "selected quote",
+        scope: { kind: "EntirePdf" },
+        matchCase: false,
+        wholeWord: false,
+        signal: new AbortController().signal,
+      });
+    });
+    if (result.kind !== "Ready") {
+      throw new Error(`Expected ready PDF Find result, got ${result.kind}`);
+    }
+    expect(result.occurrences).toHaveLength(1);
+    expect(screen.getByText("Page 1 of 2")).toBeInTheDocument();
+
+    await act(async () => {
+      await activeRuntime.activate(
+        result.occurrences[0]!.locator,
+        new AbortController().signal,
+      );
+    });
+    expect(screen.getByText("Page 2 of 2")).toBeInTheDocument();
+    expect(onResumeStateChange).not.toHaveBeenCalled();
+
+    if (origin.kind !== "Captured") {
+      throw new Error("Expected a captured PDF Find origin");
+    }
+    await act(async () => {
+      await activeRuntime.restoreOrigin(
+        origin.value,
+        new AbortController().signal,
+      );
+    });
+    await waitFor(() => {
+      expect(screen.getByText("Page 1 of 2")).toBeInTheDocument();
+      expect(viewport).toHaveFocus();
+    });
+    expect(viewport.scrollTop).toBe(135);
+    expect(viewport.scrollLeft).toBe(9);
+    expect(onResumeStateChange).not.toHaveBeenCalled();
+
+    view.unmount();
+    expect(onFindRuntimeReady).toHaveBeenLastCalledWith(null);
   });
 
   it("creates a PDF highlight and quotes it to a new chat", async () => {

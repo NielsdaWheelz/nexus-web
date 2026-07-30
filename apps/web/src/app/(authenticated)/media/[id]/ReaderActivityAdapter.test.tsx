@@ -3,7 +3,7 @@ import { useEffect, useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { userEvent } from "vitest/browser";
 import { useReaderActivityAdapter } from "./ReaderActivityAdapter";
-import { createMediaFindPreviewLease } from "./useMediaPaneFind";
+import { createMediaFindPreviewLease } from "./mediaFindPreviewLease";
 
 const recorder = vi.hoisted(() => ({
   observe: vi.fn(),
@@ -40,20 +40,21 @@ function ReaderHarness({
   totalProgression = 0.25,
   previewLease = {
     isActive: () => false,
-    releaseForGenuineInput: () => {},
     subscribe: () => () => {},
   },
+  onGenuineReaderInput = () => {},
 }: {
   isPdf?: boolean;
   paneActive?: boolean;
   totalProgression?: number;
   previewLease?: {
     isActive(): boolean;
-    releaseForGenuineInput(): void;
     subscribe(listener: () => void): () => void;
   };
+  onGenuineReaderInput?: () => void;
 }) {
   const readerRootRef = useRef<HTMLDivElement>(null);
+  const pdfViewportRef = useRef<HTMLDivElement>(null);
   const pdfContentRef = useRef<HTMLDivElement>(null);
   const { noteGenuineInput, publishTextMeasurement } =
     useReaderActivityAdapter({
@@ -64,7 +65,7 @@ function ReaderHarness({
     paneActive,
     viewport: { hydrated: true, kind: "desktop" },
     readerRootRef,
-    pdfContentRef,
+    pdfViewportRef,
     activeContent: isPdf
       ? null
       : { canonicalText: "reader fixture", documentWordStart: 10 },
@@ -74,6 +75,7 @@ function ReaderHarness({
           numPages: 4,
         }
       : null,
+    onGenuineReaderInput,
     previewLease,
     });
   useEffect(() => {
@@ -86,13 +88,23 @@ function ReaderHarness({
   }, [isPdf, publishTextMeasurement, totalProgression]);
   return (
     <>
-      <div
-        ref={isPdf ? pdfContentRef : readerRootRef}
-        data-testid="reader-root"
-        tabIndex={0}
-      >
-        Reader
-      </div>
+      {isPdf ? (
+        <div
+          ref={pdfViewportRef}
+          data-testid="reader-root"
+          role="region"
+          aria-label="PDF document"
+          tabIndex={-1}
+        >
+          <div ref={pdfContentRef} data-testid="pdf-content">
+            Reader
+          </div>
+        </div>
+      ) : (
+        <div ref={readerRootRef} data-testid="reader-root" tabIndex={0}>
+          Reader
+        </div>
+      )}
       <button type="button" onClick={noteGenuineInput}>
         Trusted viewport intent
       </button>
@@ -174,7 +186,12 @@ describe("useReaderActivityAdapter", () => {
   it("becomes ineligible immediately while previewing and releases on reader pointer input", async () => {
     const previewLease = createMediaFindPreviewLease();
     const release = vi.spyOn(previewLease, "releaseForGenuineInput");
-    render(<ReaderHarness previewLease={previewLease} />);
+    render(
+      <ReaderHarness
+        previewLease={previewLease}
+        onGenuineReaderInput={() => previewLease.releaseForGenuineInput()}
+      />,
+    );
     const root = screen.getByTestId("reader-root");
 
     await userEvent.click(
@@ -200,5 +217,35 @@ describe("useReaderActivityAdapter", () => {
       progress: 0.5,
       wordPosition: undefined,
     });
+  });
+
+  it("owns trusted PDF keyboard activity on the scrolling viewport", async () => {
+    const previewLease = createMediaFindPreviewLease();
+    const release = vi.spyOn(previewLease, "releaseForGenuineInput");
+    previewLease.acquire();
+    render(
+      <ReaderHarness
+        isPdf
+        previewLease={previewLease}
+        onGenuineReaderInput={() =>
+          previewLease.releaseForGenuineInput()
+        }
+      />,
+    );
+
+    const viewport = screen.getByRole("region", { name: "PDF document" });
+    const content = screen.getByTestId("pdf-content");
+    expect(viewport).toContainElement(content);
+    await waitFor(() => expect(latestReadingObservation().eligible).toBe(false));
+
+    fireEvent.keyDown(content, { key: "PageDown" });
+    expect(release).not.toHaveBeenCalled();
+    expect(latestReadingObservation().eligible).toBe(false);
+
+    viewport.focus({ preventScroll: true });
+    await userEvent.keyboard("{PageDown}");
+
+    await waitFor(() => expect(release).toHaveBeenCalledOnce());
+    await waitFor(() => expect(latestReadingObservation().eligible).toBe(true));
   });
 });

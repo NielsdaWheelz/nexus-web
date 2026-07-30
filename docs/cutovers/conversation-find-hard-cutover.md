@@ -143,17 +143,17 @@ Out:
 `convo.messages` is already the complete selected path because `Conversation`
 uses `useConversation({ branching: true })`.
 
-| Content | Rule |
-| --- | --- |
-| `complete` user/system primary blocks | Include |
-| `complete` assistant answer blocks | Include |
-| `error` / `cancelled` primary blocks | Include only when the transcript renders them |
-| refused assistant body suppressed by `AssistantMessage` | Exclude |
-| `pending` message text | Exclude |
-| visible prose, link labels, inline/fenced code | Include |
-| Markdown syntax, link destinations, raw HTML | Absent unless rendered as visible text |
-| resolved citation controls | Exclude |
-| quote/citation/source/tool/trail/detail/failure/time chrome | Exclude |
+| Content                                                     | Rule                                          |
+| ----------------------------------------------------------- | --------------------------------------------- |
+| `complete` user/system primary blocks                       | Include                                       |
+| `complete` assistant answer blocks                          | Include                                       |
+| `error` / `cancelled` primary blocks                        | Include only when the transcript renders them |
+| refused assistant body suppressed by `AssistantMessage`     | Exclude                                       |
+| `pending` message text                                      | Exclude                                       |
+| visible prose, link labels, inline/fenced code              | Include                                       |
+| Markdown syntax, link destinations, raw HTML                | Absent unless rendered as visible text        |
+| resolved citation controls                                  | Exclude                                       |
+| quote/citation/source/tool/trail/detail/failure/time chrome | Exclude                                       |
 
 `message_document.blocks` is the structural boundary:
 
@@ -191,7 +191,7 @@ committed primary block roots
   -> canonicalTextFind
   -> compact logical occurrences + Companion rows
   -> exact DOM Range groups
-  -> createWebFindHighlightOwner(all, active)
+  -> createCanonicalTextFindHighlightOwner(all, active)
   -> useChatScroll preview lease/reveal/Return
 ```
 
@@ -238,7 +238,7 @@ UTF-16 locator contract, and threshold constant.
 
 ### 7.3 Highlight presentation
 
-Reuse `createWebFindHighlightOwner`; do not create a chat registry or inject
+Reuse `createCanonicalTextFindHighlightOwner`; do not create a chat registry or inject
 React marks.
 
 - resolve every occurrence through its prepared block cursor;
@@ -292,8 +292,7 @@ interface ConversationFindOccurrence {
 }
 
 type ChatFindPreviewSettlement =
-  | { readonly kind: "Revealed" }
-  | { readonly kind: "Cancelled" };
+  { readonly kind: "Revealed" } | { readonly kind: "Cancelled" };
 ```
 
 Rules:
@@ -322,8 +321,7 @@ Rules:
 The closed expected error union is:
 
 ```ts
-type ConversationFindError =
-  | { readonly kind: "OriginUnavailable" };
+type ConversationFindError = { readonly kind: "OriginUnavailable" };
 ```
 
 `OriginUnavailable` means the transcript eye-line contains no message anchor,
@@ -416,21 +414,21 @@ Every request remains fenced by
 
 ## 11. Ownership
 
-| Capability | Sole owner |
-| --- | --- |
-| shortcut, toolbar, query, stepping, Companion, Return publication | Pane Search foundation |
-| same-pane query preservation/reprepare | `usePaneFind` |
-| selected path and active leaf | `useConversation` branch engine |
-| assistant primary-body visibility | shared conversation presentation helper |
-| eligible source, text units, result mapping | `conversationFind.ts` |
-| committed block lookup, DOM cursors, exact ranges | `conversationFindDom.ts` |
-| DOM normalization/provenance core | extracted shared DOM text cursor |
-| literal matching/snippets | `canonicalTextFind.ts` |
-| all/active range registry | `webFindHighlights.ts` |
-| adapter and source-key invalidation | `useConversationPaneFind.ts` |
-| block roots/exclusions | message render chain / `MarkdownMessage` |
-| preview lease, nested reveal, eye-line/focus/pin restore | `useChatScroll.ts` |
-| publication and transient Companion closure | `Conversation.tsx` |
+| Capability                                                        | Sole owner                               |
+| ----------------------------------------------------------------- | ---------------------------------------- |
+| shortcut, toolbar, query, stepping, Companion, Return publication | Pane Search foundation                   |
+| same-pane query preservation/reprepare                            | `usePaneFind`                            |
+| selected path and active leaf                                     | `useConversation` branch engine          |
+| assistant primary-body visibility                                 | shared conversation presentation helper  |
+| eligible source, text units, result mapping                       | `conversationFind.ts`                    |
+| committed block lookup, DOM cursors, exact ranges                 | `conversationFindDom.ts`                 |
+| DOM normalization/provenance core                                 | extracted shared DOM text cursor         |
+| literal matching/snippets                                         | `canonicalTextFind.ts`                   |
+| all/active range registry                                         | `canonicalTextFindHighlights.ts`         |
+| adapter and source-key invalidation                               | `useConversationPaneFind.ts`             |
+| block roots/exclusions                                            | message render chain / `MarkdownMessage` |
+| preview lease, nested reveal, eye-line/focus/pin restore          | `useChatScroll.ts`                       |
+| publication and transient Companion closure                       | `Conversation.tsx`                       |
 
 No generic search provider, chat-specific highlight registry, second Markdown
 pipeline, second scroll hook, or AST `<mark>` path is permitted.
@@ -465,7 +463,7 @@ Hard-cut:
 Reuse unchanged:
 
 - `canonicalTextFind.ts`;
-- `webFindHighlights.ts`;
+- `canonicalTextFindHighlights.ts`;
 - Pane Search controls/Companion owners;
 - conversation tree/BFF/backend services.
 
@@ -572,7 +570,7 @@ rg -n "data-find-active-mark|data-find-block-index|data-find-start|data-find-end
 rg -n "markdownTextProjection" apps/web/src
 rg -n "ChatFindOccurrencePosition|activeFindOccurrence|Promise<boolean>" \
   apps/web/src/components/chat/useChatScroll.ts
-rg -n "createWebFindHighlightOwner|WEB_FIND_ALL_HIGHLIGHT_NAME|WEB_FIND_ACTIVE_HIGHLIGHT_NAME" \
+rg -n "createCanonicalTextFindHighlightOwner|CANONICAL_TEXT_FIND_ALL_HIGHLIGHT_NAME|CANONICAL_TEXT_FIND_ACTIVE_HIGHLIGHT_NAME" \
   apps/web/src/lib/reader apps/web/src/components/chat apps/web/src/app
 ```
 

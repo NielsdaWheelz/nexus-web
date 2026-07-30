@@ -98,6 +98,7 @@ describe("Artifact pane Find adapter", () => {
     if (response.kind !== "Ready") {
       throw new Error("Expected Artifact Find rows.");
     }
+    expect(response.initialActiveKey).toBe(response.rows[0]?.key);
     expect(response.rows[0]!.key).toContain(
       '"locator":{"endCp":18,"kind":"ArtifactRange","startCp":12}',
     );

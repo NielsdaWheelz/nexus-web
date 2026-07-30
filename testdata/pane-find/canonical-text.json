@@ -1,0 +1,223 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "escaped-literal",
+      "units": [
+        {
+          "id": "literal",
+          "text": "before ^$.*+?()[]{}|\\ after"
+        }
+      ],
+      "query": "^$.*+?()[]{}|\\",
+      "matchCase": true,
+      "wholeWord": false,
+      "expected": {
+        "kind": "Ready",
+        "occurrences": [
+          {
+            "unitId": "literal",
+            "startCp": 7,
+            "endCp": 21,
+            "snippet": [
+              { "text": "before ", "emphasized": false },
+              { "text": "^$.*+?()[]{}|\\", "emphasized": true },
+              { "text": " after", "emphasized": false }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "nfc-query-and-ordinary-case",
+      "units": [{ "id": "normalized", "text": "Café CAFÉ" }],
+      "query": "café",
+      "matchCase": false,
+      "wholeWord": false,
+      "expected": {
+        "kind": "Ready",
+        "occurrences": [
+          {
+            "unitId": "normalized",
+            "startCp": 0,
+            "endCp": 4,
+            "snippet": [
+              { "text": "Café", "emphasized": true },
+              { "text": " CAFÉ", "emphasized": false }
+            ]
+          },
+          {
+            "unitId": "normalized",
+            "startCp": 5,
+            "endCp": 9,
+            "snippet": [
+              { "text": "Café ", "emphasized": false },
+              { "text": "CAFÉ", "emphasized": true }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "match-case",
+      "units": [{ "id": "case", "text": "Cat cat" }],
+      "query": "cat",
+      "matchCase": true,
+      "wholeWord": false,
+      "expected": {
+        "kind": "Ready",
+        "occurrences": [
+          {
+            "unitId": "case",
+            "startCp": 4,
+            "endCp": 7,
+            "snippet": [
+              { "text": "Cat ", "emphasized": false },
+              { "text": "cat", "emphasized": true }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "latin-whole-word",
+      "units": [{ "id": "latin", "text": "cat catfish cat. cat_dog" }],
+      "query": "cat",
+      "matchCase": false,
+      "wholeWord": true,
+      "expected": {
+        "kind": "Ready",
+        "occurrences": [
+          {
+            "unitId": "latin",
+            "startCp": 0,
+            "endCp": 3,
+            "snippet": [
+              { "text": "cat", "emphasized": true },
+              { "text": " catfish cat. cat_dog", "emphasized": false }
+            ]
+          },
+          {
+            "unitId": "latin",
+            "startCp": 12,
+            "endCp": 15,
+            "snippet": [
+              { "text": "cat catfish ", "emphasized": false },
+              { "text": "cat", "emphasized": true },
+              { "text": ". cat_dog", "emphasized": false }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "rejected-boundary-overlap",
+      "units": [{ "id": "overlap", "text": "xa a a" }],
+      "query": "a a",
+      "matchCase": true,
+      "wholeWord": true,
+      "expected": {
+        "kind": "Ready",
+        "occurrences": [
+          {
+            "unitId": "overlap",
+            "startCp": 3,
+            "endCp": 6,
+            "snippet": [
+              { "text": "xa ", "emphasized": false },
+              { "text": "a a", "emphasized": true }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "non-overlap-and-unit-order",
+      "units": [
+        { "id": "first", "text": "aaaa" },
+        { "id": "second", "text": "aa" }
+      ],
+      "query": "aa",
+      "matchCase": true,
+      "wholeWord": false,
+      "expected": {
+        "kind": "Ready",
+        "occurrences": [
+          {
+            "unitId": "first",
+            "startCp": 0,
+            "endCp": 2,
+            "snippet": [
+              { "text": "aa", "emphasized": true },
+              { "text": "aa", "emphasized": false }
+            ]
+          },
+          {
+            "unitId": "first",
+            "startCp": 2,
+            "endCp": 4,
+            "snippet": [
+              { "text": "aa", "emphasized": false },
+              { "text": "aa", "emphasized": true }
+            ]
+          },
+          {
+            "unitId": "second",
+            "startCp": 0,
+            "endCp": 2,
+            "snippet": [{ "text": "aa", "emphasized": true }]
+          }
+        ]
+      }
+    },
+    {
+      "name": "never-cross-units",
+      "units": [
+        { "id": "left", "text": "hel" },
+        { "id": "right", "text": "lo" }
+      ],
+      "query": "hello",
+      "matchCase": true,
+      "wholeWord": false,
+      "expected": { "kind": "NoMatches" }
+    },
+    {
+      "name": "astral-codepoint-offsets-and-snippet",
+      "units": [{ "id": "astral", "text": "A😀needle😀Z" }],
+      "query": "needle",
+      "matchCase": true,
+      "wholeWord": false,
+      "expected": {
+        "kind": "Ready",
+        "occurrences": [
+          {
+            "unitId": "astral",
+            "startCp": 2,
+            "endCp": 8,
+            "snippet": [
+              { "text": "A😀", "emphasized": false },
+              { "text": "needle", "emphasized": true },
+              { "text": "😀Z", "emphasized": false }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "accent-folding-is-forbidden",
+      "units": [{ "id": "accent", "text": "Café" }],
+      "query": "cafe",
+      "matchCase": false,
+      "wholeWord": false,
+      "expected": { "kind": "NoMatches" }
+    },
+    {
+      "name": "match-2001-is-too-many",
+      "units": [{ "id": "limit", "text": "x", "repeat": 2001 }],
+      "query": "x",
+      "matchCase": true,
+      "wholeWord": false,
+      "expected": { "kind": "TooManyMatches", "threshold": 2000 }
+    }
+  ]
+}

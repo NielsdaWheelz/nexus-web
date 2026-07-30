@@ -1,17 +1,17 @@
-export const WEB_FIND_ALL_HIGHLIGHT_NAME = "nexus-find-all";
-export const WEB_FIND_ACTIVE_HIGHLIGHT_NAME = "nexus-find-active";
+export const CANONICAL_TEXT_FIND_ALL_HIGHLIGHT_NAME = "nexus-find-all";
+export const CANONICAL_TEXT_FIND_ACTIVE_HIGHLIGHT_NAME = "nexus-find-active";
 
-export interface WebFindHighlightRanges {
+export interface CanonicalTextFindHighlightRanges {
   readonly all: readonly Range[];
   readonly active: readonly Range[];
 }
 
-export interface WebFindHighlightOwner {
-  publish(ranges: WebFindHighlightRanges): void;
+export interface CanonicalTextFindHighlightOwner {
+  publish(ranges: CanonicalTextFindHighlightRanges): void;
   clear(): void;
 }
 
-const ownerRanges = new Map<symbol, WebFindHighlightRanges>();
+const ownerRanges = new Map<symbol, CanonicalTextFindHighlightRanges>();
 
 function requireCustomHighlightRegistry(): HighlightRegistry {
   if (
@@ -19,7 +19,9 @@ function requireCustomHighlightRegistry(): HighlightRegistry {
     typeof Highlight === "undefined" ||
     !CSS.highlights
   ) {
-    throw new Error("Web Find requires the CSS Custom Highlight API.");
+    throw new Error(
+      "Canonical text Find requires the CSS Custom Highlight API.",
+    );
   }
   return CSS.highlights;
 }
@@ -47,12 +49,20 @@ function publishRegistry(registry: HighlightRegistry): void {
     all.push(...ranges.all);
     active.push(...ranges.active);
   }
-  publishFixedHighlight(registry, WEB_FIND_ALL_HIGHLIGHT_NAME, all);
-  publishFixedHighlight(registry, WEB_FIND_ACTIVE_HIGHLIGHT_NAME, active);
+  publishFixedHighlight(
+    registry,
+    CANONICAL_TEXT_FIND_ALL_HIGHLIGHT_NAME,
+    all,
+  );
+  publishFixedHighlight(
+    registry,
+    CANONICAL_TEXT_FIND_ACTIVE_HIGHLIGHT_NAME,
+    active,
+  );
 }
 
-export function createWebFindHighlightOwner(): WebFindHighlightOwner {
-  const ownerId = Symbol("WebFindHighlightOwner");
+export function createCanonicalTextFindHighlightOwner(): CanonicalTextFindHighlightOwner {
+  const ownerId = Symbol("CanonicalTextFindHighlightOwner");
   return {
     publish(ranges) {
       const registry = requireCustomHighlightRegistry();

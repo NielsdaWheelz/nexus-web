@@ -5,14 +5,15 @@ import { buildCanonicalCursor } from "@/lib/highlights/canonicalCursor";
 import type { Fragment } from "@/lib/media/transcriptView";
 import type { ReaderNavigationSection } from "@/lib/media/readerNavigation";
 import type { PaneFindResultKey } from "@/lib/panes/paneSearch";
+import { usePaneFind } from "@/lib/panes/usePaneFind";
 import {
-  createMediaFindPreviewLease,
   createWebFindAdapter,
   createWebFindSnapshot,
   resolvePreparedWebSectionScope,
   type WebFindRenderedState,
-  useMediaPaneFind,
+  useWebPaneFindCapability,
 } from "./useMediaPaneFind";
+import { createMediaFindPreviewLease } from "./mediaFindPreviewLease";
 
 function fragment(id: string, idx: number, canonicalText: string): Fragment {
   return {
@@ -56,7 +57,7 @@ function rendered(
   // Detached canonical-DOM fixture; no Testing Library query owns this node.
   // eslint-disable-next-line testing-library/no-node-access
   root.querySelector("p")!.getBoundingClientRect = () =>
-    ({ top: 50, bottom: 80, left: 10, right: 300 } as DOMRect);
+    ({ top: 50, bottom: 80, left: 10, right: 300 }) as DOMRect;
   const viewport = document.createElement("div");
   Object.defineProperty(viewport, "scrollTop", {
     configurable: true,
@@ -76,7 +77,7 @@ function rendered(
       right: 400,
       width: 400,
       height: 500,
-    } as DOMRect);
+    }) as DOMRect;
   return {
     fragmentId,
     canonicalText,
@@ -87,43 +88,6 @@ function rendered(
 
 afterEach(() => {
   vi.restoreAllMocks();
-});
-
-describe("createMediaFindPreviewLease", () => {
-  it("publishes one acquire/release transition and retires capture suppression", () => {
-    const lease = createMediaFindPreviewLease();
-    const changed = vi.fn();
-    const unsubscribe = lease.subscribe(changed);
-
-    lease.acquire();
-    lease.acquire();
-    expect(lease.isActive()).toBe(true);
-    expect(changed).toHaveBeenCalledTimes(1);
-
-    lease.releaseForGenuineInput();
-    lease.releaseForGenuineInput();
-    expect(lease.isActive()).toBe(false);
-    expect(changed).toHaveBeenCalledTimes(2);
-
-    lease.armNextCaptureSuppression();
-    expect(lease.consumeNextCaptureSuppression(false)).toBe(true);
-    expect(lease.consumeNextCaptureSuppression(false)).toBe(false);
-    lease.armNextCaptureSuppression();
-    expect(lease.consumeNextCaptureSuppression(true)).toBe(false);
-
-    lease.acquire();
-    lease.armNextCaptureSuppression();
-    lease.retire();
-    expect(lease.isActive()).toBe(true);
-    expect(lease.consumeNextCaptureSuppression(false)).toBe(false);
-    expect(changed).toHaveBeenCalledTimes(4);
-    lease.beginSource();
-    expect(lease.isActive()).toBe(false);
-    lease.acquire();
-    expect(lease.isActive()).toBe(true);
-
-    unsubscribe();
-  });
 });
 
 describe("Web Find adapter", () => {
@@ -205,16 +169,14 @@ describe("Web Find adapter", () => {
   });
 
   it("searches ordered canonical fragments, previews exact ranges, and returns once to the origin", async () => {
-    vi.spyOn(Range.prototype, "getBoundingClientRect").mockReturnValue(
-      {
-        top: 70,
-        bottom: 88,
-        left: 10,
-        right: 20,
-        height: 18,
-        width: 10,
-      } as DOMRect,
-    );
+    vi.spyOn(Range.prototype, "getBoundingClientRect").mockReturnValue({
+      top: 70,
+      bottom: 88,
+      left: 10,
+      right: 20,
+      height: 18,
+      width: 10,
+    } as DOMRect);
     const snapshot = createWebFindSnapshot({
       mediaId: "media-1",
       fragments: [
@@ -281,6 +243,7 @@ describe("Web Find adapter", () => {
     });
     expect(response.kind).toBe("Ready");
     if (response.kind !== "Ready") throw new Error("expected ready response");
+    expect(response.initialActiveKey).toBe(response.rows[0]?.key);
     expect(response.rows.map((row) => row.context)).toEqual([
       ["Opening"],
       ["Later"],
@@ -351,19 +314,18 @@ describe("Web Find adapter", () => {
     expect(focusReaderViewport).toHaveBeenCalledTimes(1);
     expect(clearPreviewFragment).toHaveBeenCalledTimes(1);
     expect(highlightOwner.clear).toHaveBeenCalled();
+    expect(previewLease.isActive()).toBe(false);
   });
 
   it("rejects an unavailable origin without moving and defects on canonical mismatch before scrolling", async () => {
-    vi.spyOn(Range.prototype, "getBoundingClientRect").mockReturnValue(
-      {
-        top: 70,
-        bottom: 88,
-        left: 10,
-        right: 20,
-        height: 18,
-        width: 10,
-      } as DOMRect,
-    );
+    vi.spyOn(Range.prototype, "getBoundingClientRect").mockReturnValue({
+      top: 70,
+      bottom: 88,
+      left: 10,
+      right: 20,
+      height: 18,
+      width: 10,
+    } as DOMRect);
     const snapshot = createWebFindSnapshot({
       mediaId: "media-1",
       fragments: [
@@ -547,7 +509,31 @@ describe("Web Find adapter", () => {
   });
 });
 
-describe("useMediaPaneFind", () => {
+describe("useWebPaneFindCapability", () => {
+  it("publishes Unavailable without constructing a dummy Web source", () => {
+    const lease = createMediaFindPreviewLease();
+    const beginSource = vi.spyOn(lease, "beginSource");
+    const renderedStateRef: { current: WebFindRenderedState | null } = {
+      current: null,
+    };
+    const { result } = renderHook(() => {
+      const [previewFragmentId, setPreviewFragmentId] = useState<string | null>(
+        null,
+      );
+      return useWebPaneFindCapability({
+        source: { kind: "Unavailable" },
+        renderedStateRef,
+        previewFragmentId,
+        setPreviewFragmentId,
+        focusReaderViewport: vi.fn(),
+        previewLease: lease,
+      });
+    });
+
+    expect(result.current).toEqual({ kind: "Unavailable" });
+    expect(beginSource).not.toHaveBeenCalled();
+  });
+
   it("cancels a queued first preview on Close, restores the origin, and reprepares on reopen", async () => {
     vi.spyOn(Range.prototype, "getBoundingClientRect").mockReturnValue({
       top: 70,
@@ -578,20 +564,28 @@ describe("useMediaPaneFind", () => {
       // Deliberately withhold fragment-2's commit so Close races a queued
       // preview after its state command but before exact render settlement.
       if (previewFragmentId !== "fragment-2") {
-        renderedStateRef.current =
-          renderedById.get(previewFragmentId ?? "fragment-1")!;
+        renderedStateRef.current = renderedById.get(
+          previewFragmentId ?? "fragment-1",
+        )!;
       }
-      const find = useMediaPaneFind({
-        mediaId: "media-1",
-        fragments,
-        sections,
+      const capability = useWebPaneFindCapability({
+        source: {
+          kind: "Available",
+          mediaId: "media-1",
+          fragments,
+          sections,
+        },
         renderedStateRef,
         previewFragmentId,
         setPreviewFragmentId,
         focusReaderViewport,
         previewLease: lease,
-        transcriptAdapter: null,
       });
+      const findResult = usePaneFind({ capability });
+      if (findResult.kind !== "Available") {
+        throw new Error("Expected Web Find capability.");
+      }
+      const find = findResult.controller;
       return { find, previewFragmentId };
     });
     await waitFor(() =>
@@ -633,9 +627,7 @@ describe("useMediaPaneFind", () => {
       fragment("fragment-1", 0, "Origin text"),
       fragment("fragment-2", 1, "Find needle"),
     ];
-    const replacementSource = [
-      fragment("fragment-3", 0, "Replacement text"),
-    ];
+    const replacementSource = [fragment("fragment-3", 0, "Replacement text")];
     const renderedById = new Map([
       ["fragment-1", rendered("fragment-1", "Origin text")],
       ["fragment-2", rendered("fragment-2", "Find needle")],
@@ -654,21 +646,27 @@ describe("useMediaPaneFind", () => {
           string | null
         >(null);
         committedPreviewFragmentId = previewFragmentId;
-        const normalFragmentId =
-          fragments[0]?.id ?? "fragment-1";
+        const normalFragmentId = fragments[0]?.id ?? "fragment-1";
         renderedStateRef.current =
           renderedById.get(previewFragmentId ?? normalFragmentId) ?? null;
-        const find = useMediaPaneFind({
-          mediaId: "media-1",
-          fragments,
-          sections,
+        const capability = useWebPaneFindCapability({
+          source: {
+            kind: "Available",
+            mediaId: "media-1",
+            fragments,
+            sections,
+          },
           renderedStateRef,
           previewFragmentId,
           setPreviewFragmentId,
           focusReaderViewport,
           previewLease: lease,
-          transcriptAdapter: null,
         });
+        const findResult = usePaneFind({ capability });
+        if (findResult.kind !== "Available") {
+          throw new Error("Expected Web Find capability.");
+        }
+        const find = findResult.controller;
         return { find, previewFragmentId };
       },
       { initialProps: { fragments: firstSource as readonly Fragment[] } },
@@ -684,8 +682,7 @@ describe("useMediaPaneFind", () => {
       );
     });
     act(() => {
-      const command =
-        view.result.current.find.returnToReadingPosition;
+      const command = view.result.current.find.returnToReadingPosition;
       if (command.kind === "Available") command.onReturn();
     });
     await waitFor(() =>
@@ -721,9 +718,9 @@ describe("useMediaPaneFind", () => {
       expect(renderedStateRef.current?.fragmentId).toBe("fragment-3");
       expect(lease.isActive()).toBe(false);
     });
-    expect(
-      leaseTransitions.filter((transition) => !transition.active),
-    ).toEqual([{ active: false, previewFragmentId: null }]);
+    expect(leaseTransitions.filter((transition) => !transition.active)).toEqual(
+      [{ active: false, previewFragmentId: null }],
+    );
     unsubscribe();
     lease.acquire();
     expect(lease.isActive()).toBe(true);
@@ -754,18 +751,24 @@ describe("useMediaPaneFind", () => {
         const [previewFragmentId, setPreviewFragmentId] = useState<
           string | null
         >(null);
-        const find = useMediaPaneFind({
-          mediaId: "media-1",
-          fragments,
-          sections: [],
+        const capability = useWebPaneFindCapability({
+          source: {
+            kind: "Available",
+            mediaId: "media-1",
+            fragments,
+            sections: [],
+          },
           renderedStateRef,
           previewFragmentId,
           setPreviewFragmentId,
           focusReaderViewport,
           previewLease: lease,
-          transcriptAdapter: null,
         });
-        return find;
+        const find = usePaneFind({ capability });
+        if (find.kind !== "Available") {
+          throw new Error("Expected Web Find to be available.");
+        }
+        return find.controller;
       },
       {
         initialProps: {

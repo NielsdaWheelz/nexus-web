@@ -79,6 +79,19 @@
   position: relative;
 }
 
+.viewerHost :global(.textLayer .highlight) {
+  background: var(--highlight-yellow);
+  color: inherit;
+}
+
+.viewerHost :global(.textLayer .highlight.selected) {
+  background: var(--highlight-yellow);
+  outline: 2px solid var(--edge-strong);
+  outline-offset: 1px;
+  text-decoration: underline double var(--edge-strong);
+  text-underline-offset: 0.14em;
+}
+
 .overlayLayer {
   position: absolute;
   inset: 0;
@@ -176,5 +189,19 @@
 
   .pulsing {
     animation: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .viewerHost :global(.textLayer .highlight),
+  .viewerHost :global(.textLayer .highlight.selected) {
+    forced-color-adjust: none;
+    background: Highlight;
+    color: HighlightText;
+  }
+
+  .viewerHost :global(.textLayer .highlight.selected) {
+    outline-color: Highlight;
+    text-decoration-color: HighlightText;
   }
 }

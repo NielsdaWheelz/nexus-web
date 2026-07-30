@@ -121,6 +121,7 @@ class TestErrorCodeToStatus:
             (ApiErrorCode.E_RETRY_NOT_ALLOWED, 409),
             (ApiErrorCode.E_CHAPTER_NOT_FOUND, 404),
             (ApiErrorCode.E_ARCHIVE_UNSAFE, 400),
+            (ApiErrorCode.E_EPUB_FIND_SOURCE_CHANGED, 409),
             (ApiErrorCode.E_TRANSCRIPTION_FAILED, 502),
             (ApiErrorCode.E_TRANSCRIPTION_TIMEOUT, 504),
             (ApiErrorCode.E_DIARIZATION_FAILED, 502),

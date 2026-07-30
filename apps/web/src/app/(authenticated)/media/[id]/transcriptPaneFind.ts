@@ -23,14 +23,17 @@ import type {
   PaneFindPreviewReceipt,
 } from "@/lib/panes/usePaneFind";
 import { canonicalTextFind } from "@/lib/reader/canonicalTextFind";
+import {
+  mediaPaneFindErrorMessage,
+  type MediaPaneFindError,
+} from "./mediaPaneFind";
+import type { MediaFindPreviewLease } from "./mediaFindPreviewLease";
 
 const ENTIRE_TRANSCRIPT_SCOPE_ID = "EntireTranscript";
 const CURRENT_CHAPTER_SCOPE_PREFIX = "CurrentChapter:";
 const RENDER_ATTEMPT_LIMIT = 48;
 
-export type TranscriptPaneFindError = {
-  readonly kind: "OriginUnavailable";
-};
+export type TranscriptPaneFindError = MediaPaneFindError;
 
 export interface TranscriptFindSnapshotFragment {
   readonly id: string;
@@ -71,8 +74,7 @@ interface TranscriptFindOrigin {
   readonly segmentListScrollTop: number;
 }
 
-export interface TranscriptFindAdapter
-  extends PaneFindAdapter<TranscriptPaneFindError> {
+export interface TranscriptFindAdapter extends PaneFindAdapter<TranscriptPaneFindError> {
   dispose(): void;
 }
 
@@ -82,12 +84,11 @@ export interface CreateTranscriptFindAdapterInput {
   readonly getActiveFragmentId: () => string | null;
   readonly setActiveFragmentId: (fragmentId: string | null) => void;
   readonly getSegmentList: () => HTMLDivElement | null;
-  readonly getMatchElement: (
-    key: PaneFindResultKey,
-  ) => HTMLSpanElement | null;
+  readonly getMatchElement: (key: PaneFindResultKey) => HTMLSpanElement | null;
   readonly publishPresentation: (
     presentation: TranscriptFindPresentation,
   ) => void;
+  readonly previewLease: MediaFindPreviewLease;
 }
 
 function readableTranscriptState(
@@ -114,8 +115,7 @@ export function createTranscriptFindSnapshot({
   }
   const orderedFragments = [...fragments]
     .sort(
-      (left, right) =>
-        left.idx - right.idx || left.id.localeCompare(right.id),
+      (left, right) => left.idx - right.idx || left.id.localeCompare(right.id),
     )
     .map((fragment) => ({
       id: fragment.id,
@@ -181,7 +181,10 @@ function nextAnimationFrame(signal: AbortSignal): Promise<void> {
     const onAbort = () => {
       window.cancelAnimationFrame(frame);
       reject(
-        new DOMException("Transcript Find request was cancelled.", "AbortError"),
+        new DOMException(
+          "Transcript Find request was cancelled.",
+          "AbortError",
+        ),
       );
     };
     const frame = window.requestAnimationFrame(() => {
@@ -223,9 +226,7 @@ async function waitForMatchElement({
   readonly getCurrentSourceKey: () => PaneFindSourceKey | null;
   readonly expectedSourceKey: PaneFindSourceKey;
   readonly getSegmentList: () => HTMLDivElement | null;
-  readonly getMatchElement: (
-    key: PaneFindResultKey,
-  ) => HTMLSpanElement | null;
+  readonly getMatchElement: (key: PaneFindResultKey) => HTMLSpanElement | null;
 }): Promise<{
   readonly segmentList: HTMLDivElement;
   readonly matchElement: HTMLSpanElement;
@@ -280,22 +281,11 @@ function fragmentIsInPreparedChapter(
   if (
     fragment.startMs === null ||
     fragment.startMs < scope.startMs ||
-    (scope.endMs.kind === "Present" &&
-      fragment.startMs >= scope.endMs.value)
+    (scope.endMs.kind === "Present" && fragment.startMs >= scope.endMs.value)
   ) {
     return false;
   }
-  return fragmentChapter(snapshot, fragment)?.ordinal ===
-    scope.chapterOrdinal;
-}
-
-function transcriptPaneFindErrorMessage(
-  error: TranscriptPaneFindError,
-): string {
-  switch (error.kind) {
-    case "OriginUnavailable":
-      return "Your reading position could not be captured.";
-  }
+  return fragmentChapter(snapshot, fragment)?.ordinal === scope.chapterOrdinal;
 }
 
 export function createTranscriptFindAdapter({
@@ -306,14 +296,12 @@ export function createTranscriptFindAdapter({
   getSegmentList,
   getMatchElement,
   publishPresentation,
+  previewLease,
 }: CreateTranscriptFindAdapterInput): TranscriptFindAdapter {
   let currentSessionId = 0;
   let currentQueryId = 0;
   let preparedScope: PreparedChapterScope | null = null;
-  let occurrencesByKey = new Map<
-    PaneFindResultKey,
-    TranscriptFindOccurrence
-  >();
+  let occurrencesByKey = new Map<PaneFindResultKey, TranscriptFindOccurrence>();
   let presentationOccurrences: TranscriptFindOccurrence[] = [];
   let activePresentationKey: PaneFindResultKey | null = null;
   let origin: TranscriptFindOrigin | null = null;
@@ -420,9 +408,7 @@ export function createTranscriptFindAdapter({
       presentationOccurrences = [];
       activePresentationKey = null;
       const scopedChapter =
-        request.scopeId === preparedScope?.id
-          ? preparedScope
-          : null;
+        request.scopeId === preparedScope?.id ? preparedScope : null;
       const scopedFragments = snapshot.fragments.filter(
         (fragment) =>
           scopedChapter === null ||
@@ -488,11 +474,18 @@ export function createTranscriptFindAdapter({
           snippet: match.snippet,
         };
       });
+      const initial = rows[0];
+      if (!initial) {
+        throw new Error(
+          "Transcript Find Ready requires at least one occurrence.",
+        );
+      }
       return {
         ...base,
         kind: "Ready",
         completeness: result.completeness,
         rows,
+        initialActiveKey: initial.key,
       };
     },
     async preview(request) {
@@ -532,6 +525,7 @@ export function createTranscriptFindAdapter({
         activeFragmentId: getActiveFragmentId(),
         segmentListScrollTop: segmentList.scrollTop,
       };
+      previewLease.acquire();
       const previous = {
         activeFragmentId: getActiveFragmentId(),
         segmentListScrollTop: segmentList.scrollTop,
@@ -574,7 +568,10 @@ export function createTranscriptFindAdapter({
         } catch {
           return previewReceipt(request);
         }
-        if (originWasNew) origin = null;
+        if (originWasNew) {
+          origin = null;
+          previewLease.cancelUnreportedPreview();
+        }
         throw error;
       }
       return previewReceipt(request);
@@ -593,6 +590,7 @@ export function createTranscriptFindAdapter({
       if (origin.sessionId !== request.sessionId) {
         throw new Error("Transcript Find origin belongs to another session.");
       }
+      previewLease.acquire();
       const captured = origin;
       activePresentationKey = null;
       publishPresentation({ kind: "Text" });
@@ -608,8 +606,9 @@ export function createTranscriptFindAdapter({
       segmentList.scrollTop = captured.segmentListScrollTop;
       segmentList.focus({ preventScroll: true });
       origin = null;
+      previewLease.completeReturn();
     },
-    errorMessage: transcriptPaneFindErrorMessage,
+    errorMessage: mediaPaneFindErrorMessage,
     dispose() {
       currentSessionId = 0;
       currentQueryId = 0;

@@ -15,9 +15,11 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db, get_repeatable_read_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import ok, success_response
+from nexus.schemas.epub_find import EpubFindRequest
 from nexus.schemas.media import MediaEvidenceResponse
 from nexus.schemas.reader import CursorWrite
 from nexus.services import (
+    epub_find,
     epub_read,
     locator_resolver,
     media_file_access,
@@ -57,6 +59,17 @@ def get_epub_section(
     """Get a canonical EPUB section by encoded section id."""
     result = epub_read.get_epub_section_for_viewer(db, viewer.user_id, media_id, section_id)
     return ok(result)
+
+
+@router.post("/media/{media_id}/epub-find")
+def find_in_epub(
+    media_id: UUID,
+    payload: EpubFindRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_repeatable_read_db)],
+) -> dict:
+    """Find literal occurrences in one current EPUB snapshot."""
+    return ok(epub_find.find_epub_for_viewer(db, viewer.user_id, media_id, payload))
 
 
 @router.get("/media/{media_id}/navigation")

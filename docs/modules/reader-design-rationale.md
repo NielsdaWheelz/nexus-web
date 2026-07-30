@@ -97,6 +97,12 @@ and retires it. Preview and Return do not write progress, activity, completion,
 playback, URL, or pane history. This separation lets a reader explore evidence
 without corrupting the answer to “where was I reading?”
 
+For EPUBs, the same principle requires two section identities: committed
+navigation state and an ephemeral rendered preview. Search may change only the
+latter. Genuine reader input is the adoption boundary, and its triggering
+capture is suppressed so previewing a final section cannot accidentally finish
+the book.
+
 ### global reader profile
 
 - `reader_profiles` stores the global reader preferences for a user
