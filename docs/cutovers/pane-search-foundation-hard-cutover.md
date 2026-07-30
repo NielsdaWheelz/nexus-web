@@ -98,9 +98,10 @@ is not permission to migrate every domain in one change.
 5. `FindOccurrences` shows query, result ordinal/count, Previous, Next, optional
    scope, Match case, Whole word, Show results, and mirrors the header's
    persistent Return action when available.
-6. The first Ready match becomes active and previews. `Enter` selects Next;
-   `Shift+Enter` selects Previous. Navigation wraps and announces the wrap.
-   Empty and failed states never move the document.
+6. The adapter-nominated Ready match becomes active and previews without
+   reordering rows. `Enter` selects Next; `Shift+Enter` selects Previous.
+   Navigation wraps and announces the wrap. Empty and failed states never move
+   the document.
 7. Scope is a selector, not a checkbox. Default is the entire resource. A child
    may add one exact current chapter/section scope; omit it when ownership
    cannot be resolved exactly.
@@ -289,16 +290,31 @@ opaque tokens. With no exact narrow scope, publish `EntireResource` and render
 no selector. `Unavailable`/`Available` reuses the existing capability pairing;
 do not mint `Absent` or optional-callback variants.
 
-`usePaneFind(adapter)` owns session/query generations, abort, stale-settlement
-rejection, input scheduling (one named duration constant), active key,
-stepping, and publication projection. Stale settlements are discarded
-silently; they never surface as `Failed`. `Failed` models expected, modelable
-failures only: each child closes an adapter error union, and the producer maps
-it to `message` through one exhaustive `*ErrorMessage` helper; defects throw.
-The adapter owns preparation, literal matching, exact preview, presentation
-clear, and return:
+`usePaneFind({ capability })` owns session/query generations, abort,
+stale-settlement rejection, input scheduling (one named duration constant),
+active key, stepping, and publication projection. `Unavailable` performs no
+adapter work and returns a tagged unavailable result; `Available` returns the
+controller. Stale settlements are discarded silently; they never surface as
+`Failed`. `Failed` models expected, modelable failures only: each child closes
+an adapter error union, and the producer maps it to `message` through one
+exhaustive `*ErrorMessage` helper; defects throw. The adapter owns preparation,
+literal matching, exact preview, presentation clear, and return:
 
 ```ts
+type PaneFindCapability<TError> =
+  | { readonly kind: "Unavailable" }
+  | {
+      readonly kind: "Available";
+      readonly adapter: PaneFindAdapter<TError>;
+    };
+
+type PaneFindUseResult =
+  | { readonly kind: "Unavailable" }
+  | {
+      readonly kind: "Available";
+      readonly controller: PaneFindController;
+    };
+
 interface PaneFindAdapter<TError> {
   readonly sourceKey: PaneFindSourceKey;
   prepare(request: PaneFindPrepareRequest): Promise<PaneFindSession>;
@@ -310,6 +326,16 @@ interface PaneFindAdapter<TError> {
   returnToReadingPosition(request: PaneFindSessionRequest): Promise<void>;
   errorMessage(error: TError): string;
 }
+
+type PaneFindReadyResponse = {
+  readonly kind: "Ready";
+  readonly sessionId: number;
+  readonly queryId: number;
+  readonly sourceKey: PaneFindSourceKey;
+  readonly completeness: "Complete" | "Partial";
+  readonly rows: readonly PaneFindResultRow[];
+  readonly initialActiveKey: PaneFindResultKey;
+};
 ```
 
 This is the exact implemented interface in `usePaneFind.ts`.
@@ -317,8 +343,17 @@ This is the exact implemented interface in `usePaneFind.ts`.
 `Failed`; `PaneFindPreviewReceipt<TError>` closes `Previewed` and `Rejected`.
 Every request carries `sessionId`, `sourceKey`, and `AbortSignal`; queries and
 previews also carry `queryId`. Responses echo the relevant identities. Abort
-where possible and reject every late identity regardless. Dependent specs
-close `TError`; no optional capability bags.
+where possible and reject every late identity regardless. Preview attempts
+also have a foundation-owned monotonic generation; only the latest attempt may
+change active result, Return availability, or failure state. Dependent specs
+close `TError`; no optional capability bags. A `Ready` response requires
+non-empty unique rows and an `initialActiveKey` occurring exactly once. The
+foundation preserves row order, makes that key active, and auto-previews it.
+
+Retry retains the failed operation's exact identity. Query `Failed` retries the
+query. Auto-preview `Rejected` reruns the query so the adapter can nominate the
+current initial key. Explicit-preview `Rejected` retries that same result key
+against the retained Ready result; it does not silently restart the query.
 
 Once Return begins, `usePaneFind` cancels queued/in-flight query, preview, and
 presentation-clear work and rejects every new Find command until restoration
@@ -605,8 +640,9 @@ Dependent format/list files belong only in their named child cutover. Update
 2. Filter panes render only matching local rows, preserve domain order, reuse
    existing filters/sorts, expose no Find-only controls, mark active collapsed
    domain state, and announce debounced Partial/Complete row status.
-3. Find panes expose the shared controls, wrap correctly, announce state, and
-   reject stale session/query/source results.
+3. Find panes preserve document-ordered rows, activate the adapter-nominated
+   initial result, expose the shared controls, wrap correctly, announce state,
+   and reject stale session/query/source results.
 4. Companion results are ordered, typed, keyboard reachable, activate exact
    occurrences, restore prior Companion state, and never persist.
 5. First preview captures one exact origin; repeated jumps do not replace it;

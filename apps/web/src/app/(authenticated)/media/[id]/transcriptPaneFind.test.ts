@@ -159,6 +159,7 @@ describe("Transcript pane Find", () => {
     if (entire.kind !== "Ready") {
       throw new Error("Expected transcript results.");
     }
+    expect(entire.initialActiveKey).toBe(entire.rows[0]?.key);
     expect(entire.rows.map(({ context }) => context)).toEqual([
       ["Opening", "00:00:01", "Alice"],
       ["Later", "00:00:12", "Bob"],

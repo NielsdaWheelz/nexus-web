@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { canonicalTextFind } from "@/lib/reader/canonicalTextFind";
+import sharedCases from "../../../../../testdata/pane-find/canonical-text.json";
 
 function readyOccurrences(
   result: ReturnType<typeof canonicalTextFind>,
@@ -12,6 +13,42 @@ function readyOccurrences(
 }
 
 describe("canonicalTextFind", () => {
+  it("matches the shared TypeScript/Python agreement corpus", () => {
+    for (const testCase of sharedCases.cases) {
+      const result = canonicalTextFind({
+        units: testCase.units.map((unit) => ({
+          id: unit.id,
+          text: unit.text.repeat("repeat" in unit ? unit.repeat : 1),
+        })),
+        query: testCase.query,
+        matchCase: testCase.matchCase,
+        wholeWord: testCase.wholeWord,
+        completeness: "Complete",
+      });
+      expect(result.kind, testCase.name).toBe(testCase.expected.kind);
+      switch (result.kind) {
+        case "Ready":
+          if (!("occurrences" in testCase.expected)) {
+            throw new Error(`${testCase.name} requires Ready occurrences.`);
+          }
+          expect(result.occurrences, testCase.name).toEqual(
+            testCase.expected.occurrences,
+          );
+          break;
+        case "NoMatches":
+          break;
+        case "TooManyMatches":
+          if (!("threshold" in testCase.expected)) {
+            throw new Error(`${testCase.name} requires a match threshold.`);
+          }
+          expect(result.threshold, testCase.name).toBe(
+            testCase.expected.threshold,
+          );
+          break;
+      }
+    }
+  });
+
   it("matches escaped NFC literals with ECMAScript Unicode case semantics", () => {
     const literal = canonicalTextFind({
       units: [

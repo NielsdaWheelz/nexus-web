@@ -31,9 +31,9 @@ interface UseReaderActivityAdapterInput {
   pdfContentRef: RefObject<HTMLDivElement | null>;
   activeContent: ReaderActivityText | null;
   pdfControls: ReaderActivityPdfControls | null;
+  onGenuineReaderInput: () => void;
   previewLease: {
     isActive(): boolean;
-    releaseForGenuineInput(): void;
     subscribe(listener: () => void): () => void;
   };
 }
@@ -80,6 +80,7 @@ export function useReaderActivityAdapter({
   pdfContentRef,
   activeContent,
   pdfControls,
+  onGenuineReaderInput,
   previewLease,
 }: UseReaderActivityAdapterInput): ReaderActivityAdapter {
   const lastGenuineInputMonoRef = useRef<number | undefined>(undefined);
@@ -160,7 +161,7 @@ export function useReaderActivityAdapter({
     const noteInput = (event: Event) => {
       if (!event.isTrusted) return;
       if (event instanceof KeyboardEvent && !isPdfScrollKey(event)) return;
-      previewLease.releaseForGenuineInput();
+      onGenuineReaderInput();
       lastGenuineInputMonoRef.current = performance.now();
       update();
     };
@@ -198,6 +199,7 @@ export function useReaderActivityAdapter({
     isPdf,
     mediaId,
     observerKey,
+    onGenuineReaderInput,
     paneActive,
     pdfContentRef,
     pdfControls,

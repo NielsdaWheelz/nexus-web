@@ -25,6 +25,7 @@ import {
   type PanePrimaryChromePublication,
   type PaneSecondaryPublication,
 } from "@/lib/panes/panePublications";
+import type { PaneFindOccurrencesPublication } from "@/lib/panes/paneSearch";
 import type { WorkspaceSecondarySurfaceId } from "@/lib/panes/paneSecondaryModel";
 import {
   assumePaneVisitId,
@@ -1009,6 +1010,7 @@ function renderMediaPane(
   const onSetPaneLayout = vi.fn();
   const onSetPaneLabel = vi.fn();
   const onNavigatePane = vi.fn();
+  const onReplacePane = vi.fn();
   const onRequestSecondarySurface = vi.fn();
   const onRequestTransientSecondarySurface = vi.fn();
   const onCloseSecondaryPane = vi.fn();
@@ -1049,7 +1051,7 @@ function renderMediaPane(
                     "00000000-0000-4000-8000-000000000001",
                 }}
                 onNavigatePane={onNavigatePane}
-                onReplacePane={vi.fn()}
+                onReplacePane={onReplacePane}
                 onActivateWorkspaceTarget={onActivateWorkspaceTarget}
                 onSetPaneLabel={onSetPaneLabel}
                 onSetPaneLayout={onSetPaneLayout}
@@ -1081,6 +1083,7 @@ function renderMediaPane(
     onSetPaneLayout,
     onSetPaneLabel,
     onNavigatePane,
+    onReplacePane,
     onRequestSecondarySurface,
     onRequestTransientSecondarySurface,
     onCloseSecondaryPane,
@@ -1372,6 +1375,7 @@ describe("MediaPaneBody pane sizing", () => {
             canonical_text: testState.fragmentCanonicalText,
             char_count: testState.fragmentCanonicalText.length,
             word_count: 2,
+            document_word_start: 0,
             created_at: "2026-01-01T00:00:00Z",
           });
         }
@@ -1395,7 +1399,44 @@ describe("MediaPaneBody pane sizing", () => {
             canonical_text: testState.secondEpubCanonicalText,
             char_count: testState.secondEpubCanonicalText.length,
             word_count: 2,
+            document_word_start: 2,
             created_at: "2026-01-01T00:00:00Z",
+          });
+        }
+        if (
+          path ===
+          "/api/media/00000000-0000-4000-8000-000000000001/epub-find"
+        ) {
+          const request = JSON.parse(String(init?.body)) as {
+            query: string;
+          };
+          if (
+            !testState.includeSecondEpubSection ||
+            request.query !== "evidence"
+          ) {
+            return jsonResponse({
+              kind: "NoMatches",
+              source_witness_fragment_id: "fragment-1",
+            });
+          }
+          return jsonResponse({
+            kind: "Ready",
+            source_witness_fragment_id: "fragment-1",
+            occurrences: [
+              {
+                section_id: "section-2",
+                section_label: "Section 2",
+                fragment_id: "fragment-2",
+                fragment_idx: 1,
+                start_offset: 14,
+                end_offset: 22,
+                snippet: [
+                  { text: "Cross-section ", emphasized: false },
+                  { text: "evidence", emphasized: true },
+                  { text: ".", emphasized: false },
+                ],
+              },
+            ],
           });
         }
         if (
@@ -1741,6 +1782,42 @@ describe("MediaPaneBody pane sizing", () => {
     ).toHaveAttribute("aria-current", "true");
   });
 
+  it("previews EPUB results without navigation and adopts on genuine input", async () => {
+    testState.mediaKind = "epub";
+    testState.includeSecondEpubSection = true;
+    testState.fragmentCanonicalText = "Readable text.";
+    testState.secondEpubCanonicalText = "Cross-section evidence.";
+    testState.renderHtmlInMock = true;
+    const { onReplacePane } = renderMediaPane();
+
+    await screen.findByText("Readable text.");
+    let search: PaneFindOccurrencesPublication | undefined;
+    await waitFor(() => {
+      const publication = latestPrimaryChrome()?.search;
+      expect(publication?.kind).toBe("FindOccurrences");
+      if (publication?.kind === "FindOccurrences") {
+        expect(publication.inputLabel).toBe("Find in book");
+        search = publication;
+      }
+    });
+    const epubSearch = search;
+    if (!epubSearch) throw new Error("Expected EPUB Find publication");
+    act(() => epubSearch.onOpen());
+    act(() => epubSearch.onQueryChange("evidence"));
+
+    expect(await screen.findByText("Cross-section evidence.")).toBeVisible();
+    expect(onReplacePane).not.toHaveBeenCalled();
+    expect(readerStatePutCalls()).toHaveLength(0);
+
+    await userEvent.click(screen.getByText("Cross-section evidence."));
+
+    await waitFor(() => expect(onReplacePane).toHaveBeenCalled());
+    expect(String(onReplacePane.mock.calls.at(-1)?.[1])).toContain(
+      "?loc=section-2",
+    );
+    expect(readerStatePutCalls()).toHaveLength(0);
+  });
+
   it("preserves an exact terminal locator through lifecycle capture and conflict Stay", async () => {
     testState.mediaKind = "web_article";
     testState.fragmentCanonicalText = "Readable text.";
@@ -1916,6 +1993,7 @@ describe("MediaPaneBody pane sizing", () => {
         }),
       );
     });
+    expect(latestPrimaryChrome()?.search).toBeUndefined();
   });
 
   it("publishes a grouped resource target and leaves core ownership to PaneShell", async () => {

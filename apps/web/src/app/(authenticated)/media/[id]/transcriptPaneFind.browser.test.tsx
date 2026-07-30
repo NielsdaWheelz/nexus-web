@@ -254,7 +254,15 @@ describe("Transcript Find preview and Return", () => {
       publishPresentation,
     });
     const prepare = vi.spyOn(adapter, "prepare");
-    const view = renderHook(() => usePaneFind({ adapter }));
+    const view = renderHook(() => {
+      const paneFind = usePaneFind({
+        capability: { kind: "Available", adapter },
+      });
+      if (paneFind.kind !== "Available") {
+        throw new Error("Expected an available Transcript Pane Find.");
+      }
+      return paneFind.controller;
+    });
     await waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
 
     act(() => view.result.current.onQueryChange("needle"));

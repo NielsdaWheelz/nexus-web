@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  createWebFindHighlightOwner,
-  WEB_FIND_ACTIVE_HIGHLIGHT_NAME,
-  WEB_FIND_ALL_HIGHLIGHT_NAME,
-  type WebFindHighlightOwner,
-} from "./webFindHighlights";
+  CANONICAL_TEXT_FIND_ACTIVE_HIGHLIGHT_NAME,
+  CANONICAL_TEXT_FIND_ALL_HIGHLIGHT_NAME,
+  createCanonicalTextFindHighlightOwner,
+  type CanonicalTextFindHighlightOwner,
+} from "./canonicalTextFindHighlights";
 
-const owners: WebFindHighlightOwner[] = [];
+const owners: CanonicalTextFindHighlightOwner[] = [];
 
 function range(text: string): Range {
   const node = document.createTextNode(text);
@@ -28,22 +28,27 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
-describe("Web Find highlight owners", () => {
+describe("canonical text Find highlight owners", () => {
   it("publishes all and active ranges under the fixed names", () => {
-    const owner = createWebFindHighlightOwner();
+    const owner = createCanonicalTextFindHighlightOwner();
     owners.push(owner);
     const first = range("all");
     const active = range("active");
 
     owner.publish({ all: [first, active], active: [active] });
 
-    expect(currentRanges(WEB_FIND_ALL_HIGHLIGHT_NAME)).toEqual([first, active]);
-    expect(currentRanges(WEB_FIND_ACTIVE_HIGHLIGHT_NAME)).toEqual([active]);
+    expect(currentRanges(CANONICAL_TEXT_FIND_ALL_HIGHLIGHT_NAME)).toEqual([
+      first,
+      active,
+    ]);
+    expect(currentRanges(CANONICAL_TEXT_FIND_ACTIVE_HIGHLIGHT_NAME)).toEqual([
+      active,
+    ]);
   });
 
   it("updates and clears one owner without erasing another owner", () => {
-    const firstOwner = createWebFindHighlightOwner();
-    const secondOwner = createWebFindHighlightOwner();
+    const firstOwner = createCanonicalTextFindHighlightOwner();
+    const secondOwner = createCanonicalTextFindHighlightOwner();
     owners.push(firstOwner, secondOwner);
     const first = range("first");
     const firstReplacement = range("first replacement");
@@ -56,29 +61,37 @@ describe("Web Find highlight owners", () => {
       active: [firstReplacement],
     });
 
-    expect(currentRanges(WEB_FIND_ALL_HIGHLIGHT_NAME)).toEqual([
+    expect(currentRanges(CANONICAL_TEXT_FIND_ALL_HIGHLIGHT_NAME)).toEqual([
       firstReplacement,
       second,
     ]);
-    expect(currentRanges(WEB_FIND_ACTIVE_HIGHLIGHT_NAME)).toEqual([
+    expect(currentRanges(CANONICAL_TEXT_FIND_ACTIVE_HIGHLIGHT_NAME)).toEqual([
       firstReplacement,
       second,
     ]);
 
     firstOwner.clear();
 
-    expect(currentRanges(WEB_FIND_ALL_HIGHLIGHT_NAME)).toEqual([second]);
-    expect(currentRanges(WEB_FIND_ACTIVE_HIGHLIGHT_NAME)).toEqual([second]);
+    expect(currentRanges(CANONICAL_TEXT_FIND_ALL_HIGHLIGHT_NAME)).toEqual([
+      second,
+    ]);
+    expect(currentRanges(CANONICAL_TEXT_FIND_ACTIVE_HIGHLIGHT_NAME)).toEqual([
+      second,
+    ]);
   });
 
   it("removes the fixed registry entries after the last owner clears", () => {
-    const owner = createWebFindHighlightOwner();
+    const owner = createCanonicalTextFindHighlightOwner();
     owners.push(owner);
     owner.publish({ all: [range("match")], active: [] });
 
     owner.clear();
 
-    expect(CSS.highlights.has(WEB_FIND_ALL_HIGHLIGHT_NAME)).toBe(false);
-    expect(CSS.highlights.has(WEB_FIND_ACTIVE_HIGHLIGHT_NAME)).toBe(false);
+    expect(
+      CSS.highlights.has(CANONICAL_TEXT_FIND_ALL_HIGHLIGHT_NAME),
+    ).toBe(false);
+    expect(
+      CSS.highlights.has(CANONICAL_TEXT_FIND_ACTIVE_HIGHLIGHT_NAME),
+    ).toBe(false);
   });
 });

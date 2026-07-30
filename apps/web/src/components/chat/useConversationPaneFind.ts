@@ -142,21 +142,30 @@ export function createConversationFindAdapter({
             sourceKey: request.sourceKey,
             threshold: matches.threshold,
           };
-        case "Ready":
+        case "Ready": {
           occurrencesByKey = new Map(
             matches.occurrences.map((occurrence) => [
               occurrence.key,
               occurrence,
             ]),
           );
+          const rows = matches.occurrences.map((occurrence) => occurrence.row);
+          const initial = rows[0];
+          if (!initial) {
+            throw new Error(
+              "Conversation Find Ready requires at least one occurrence.",
+            );
+          }
           return {
             kind: "Ready",
             sessionId: request.sessionId,
             queryId: request.queryId,
             sourceKey: request.sourceKey,
             completeness: "Complete",
-            rows: matches.occurrences.map((occurrence) => occurrence.row),
+            rows,
+            initialActiveKey: initial.key,
           };
+        }
       }
     },
     async preview(request) {
@@ -249,10 +258,18 @@ export function useConversationPaneFind({
       }),
     [scrollRef, snapshot],
   );
+  const capability = useMemo(
+    () => ({ kind: "Available" as const, adapter }),
+    [adapter],
+  );
+  const paneFind = usePaneFind({ capability });
   useLayoutEffect(() => {
     const scroll = scrollRef.current;
     scroll?.clearFindPresentation();
     return () => scroll?.clearFindPresentation();
   }, [scrollRef, snapshot.sourceKey]);
-  return { ...usePaneFind({ adapter }), sourceKey: snapshot.sourceKey };
+  if (paneFind.kind !== "Available") {
+    throw new Error("Conversation Pane Find capability must be available.");
+  }
+  return { ...paneFind.controller, sourceKey: snapshot.sourceKey };
 }

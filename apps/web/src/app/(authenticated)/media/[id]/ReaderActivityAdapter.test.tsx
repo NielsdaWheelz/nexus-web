@@ -3,7 +3,7 @@ import { useEffect, useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { userEvent } from "vitest/browser";
 import { useReaderActivityAdapter } from "./ReaderActivityAdapter";
-import { createMediaFindPreviewLease } from "./useMediaPaneFind";
+import { createMediaFindPreviewLease } from "./mediaFindPreviewLease";
 
 const recorder = vi.hoisted(() => ({
   observe: vi.fn(),
@@ -40,18 +40,18 @@ function ReaderHarness({
   totalProgression = 0.25,
   previewLease = {
     isActive: () => false,
-    releaseForGenuineInput: () => {},
     subscribe: () => () => {},
   },
+  onGenuineReaderInput = () => {},
 }: {
   isPdf?: boolean;
   paneActive?: boolean;
   totalProgression?: number;
   previewLease?: {
     isActive(): boolean;
-    releaseForGenuineInput(): void;
     subscribe(listener: () => void): () => void;
   };
+  onGenuineReaderInput?: () => void;
 }) {
   const readerRootRef = useRef<HTMLDivElement>(null);
   const pdfContentRef = useRef<HTMLDivElement>(null);
@@ -74,6 +74,7 @@ function ReaderHarness({
           numPages: 4,
         }
       : null,
+    onGenuineReaderInput,
     previewLease,
     });
   useEffect(() => {
@@ -174,7 +175,12 @@ describe("useReaderActivityAdapter", () => {
   it("becomes ineligible immediately while previewing and releases on reader pointer input", async () => {
     const previewLease = createMediaFindPreviewLease();
     const release = vi.spyOn(previewLease, "releaseForGenuineInput");
-    render(<ReaderHarness previewLease={previewLease} />);
+    render(
+      <ReaderHarness
+        previewLease={previewLease}
+        onGenuineReaderInput={() => previewLease.releaseForGenuineInput()}
+      />,
+    );
     const root = screen.getByTestId("reader-root");
 
     await userEvent.click(

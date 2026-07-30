@@ -176,11 +176,18 @@ export function createArtifactPaneFindAdapter(
           ) {
             resultOrdinals = nextResultOrdinals;
           }
+          const initial = rows[0];
+          if (!initial) {
+            throw new Error(
+              "Artifact Find Ready requires at least one occurrence.",
+            );
+          }
           return {
             ...base,
             kind: "Ready",
             completeness: "Complete",
             rows,
+            initialActiveKey: initial.key,
           };
         }
       }

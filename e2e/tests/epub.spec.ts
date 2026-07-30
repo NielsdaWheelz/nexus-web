@@ -3,6 +3,7 @@ import {
   expect,
   type Locator,
   type Page,
+  type Request,
   type TestInfo,
 } from "@playwright/test";
 import { readFileSync } from "node:fs";
@@ -752,6 +753,89 @@ test.describe("epub", () => {
     await expect(
       activePane.getByRole("heading", { name: seed.chapter_titles[0] }),
     ).toBeVisible({ timeout: 15_000 });
+  });
+
+  test("Find previews and returns across sections without advancing reading state", async ({
+    page,
+  }, testInfo) => {
+    const seed = readSeededEpubMedia();
+    const firstSection = await findSectionByLabel(
+      page,
+      seed.media_id,
+      seed.chapter_titles[0],
+    );
+    const finalSection = await findSectionByLabel(
+      page,
+      seed.media_id,
+      seed.chapter_titles.at(-1)!,
+    );
+    const activePane = await gotoEpubReader(
+      page,
+      testInfo,
+      seed.media_id,
+      firstSection.section_id,
+    );
+    await expect(
+      activePane.getByRole("heading", { name: seed.chapter_titles[0] }),
+    ).toBeVisible({ timeout: 15_000 });
+    const urlBefore = page.url();
+    const readerStateBefore = await fetchReaderState(page, seed.media_id);
+    const readerStateWrites: Request[] = [];
+    const captureReaderStateWrite = (request: Request) => {
+      if (
+        request.method() === "PUT" &&
+        new URL(request.url()).pathname ===
+          `/api/media/${seed.media_id}/reader-state`
+      ) {
+        readerStateWrites.push(request);
+      }
+    };
+    page.on("request", captureReaderStateWrite);
+    try {
+      await page.keyboard.press("Control+f");
+      const input = activePane.getByRole("searchbox", {
+        name: "Find in book",
+      });
+      await expect(input).toBeFocused();
+      await input.fill("final chapter of the E2E test EPUB");
+      await expect(
+        activePane.getByRole("status").filter({ hasText: /1 of 1 match/ }),
+      ).toContainText("1 of 1 match");
+      await expect(
+        activePane.getByRole("heading", {
+          name: seed.chapter_titles.at(-1)!,
+        }),
+      ).toBeVisible();
+      expect(page.url()).toBe(urlBefore);
+      expect(await fetchReaderState(page, seed.media_id)).toEqual(
+        readerStateBefore,
+      );
+      expect(readerStateWrites).toHaveLength(0);
+
+      await activePane
+        .getByRole("region", { name: "Document reading area" })
+        .hover();
+      await page.mouse.wheel(0, 4_000);
+      await expect
+        .poll(() => page.url())
+        .toContain(`loc=${encodeURIComponent(finalSection.section_id)}`);
+      await page.waitForTimeout(350);
+      expect(readerStateWrites).toHaveLength(0);
+
+      await activePane
+        .getByRole("group", { name: "Pane actions" })
+        .getByRole("button", { name: "Go back to reading position" })
+        .click();
+      await expect(
+        activePane.getByRole("heading", { name: seed.chapter_titles[0] }),
+      ).toBeVisible();
+      expect(await fetchReaderState(page, seed.media_id)).toEqual(
+        readerStateBefore,
+      );
+      expect(readerStateWrites).toHaveLength(0);
+    } finally {
+      page.off("request", captureReaderStateWrite);
+    }
   });
 
   test("renders EPUB image assets through the BFF when present", async ({
