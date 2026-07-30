@@ -68,6 +68,21 @@ interface StartE2eWorkerUntilMediaReadyOptions extends RunE2eWorkerOnceOptions {
   readinessTarget?: "source" | "full";
 }
 
+interface StartE2eWorkerUntilPodcastRefreshTerminalOptions
+  extends RunE2eWorkerOnceOptions {
+  userId: string;
+  idempotencyKey: string;
+  deadlineSeconds?: number;
+}
+
+export interface E2eWorkerPodcastRefreshResult {
+  status: "Complete" | "Partial" | "Failed" | "timeout";
+  notification_seen: boolean;
+  worker_iterations: number;
+  stdout: string;
+  stderr: string;
+}
+
 export interface E2eWorkerMediaReadyResult {
   status: "success" | "failed" | "timeout";
   processing_status: string | null;
@@ -576,6 +591,157 @@ print(json.dumps(result, sort_keys=True))
         chunk_count: Number(parsed.chunk_count ?? 0),
         evidence_count: Number(parsed.evidence_count ?? 0),
         embedding_count: Number(parsed.embedding_count ?? 0),
+        worker_iterations: Number(parsed.worker_iterations ?? 0),
+        stdout: stdout.slice(-4000),
+        stderr: stderr.slice(-4000),
+      });
+    });
+  });
+}
+
+export function startE2eWorkerUntilPodcastRefreshTerminal({
+  userId,
+  idempotencyKey,
+  allowedNexusEnvs = ["local", "test"],
+  extraEnv = {},
+  deadlineSeconds = 100,
+}: StartE2eWorkerUntilPodcastRefreshTerminalOptions): Promise<E2eWorkerPodcastRefreshResult> {
+  const databaseUrl = assertLocalDatabaseUrl();
+  const nexusEnv = assertAllowedNexusEnv(allowedNexusEnvs);
+  const deadline = Math.max(Math.floor(deadlineSeconds), 1);
+  const workerEnv = {
+    ...buildE2eAppRuntimeEnv(process.env),
+    DATABASE_URL: databaseUrl,
+    NEXUS_ENV: nexusEnv,
+    WORKER_LANE: "interactive",
+    ...extraEnv,
+    NEXUS_E2E_PODCAST_REFRESH_USER_ID: userId,
+    NEXUS_E2E_PODCAST_REFRESH_IDEMPOTENCY_KEY: idempotencyKey,
+    NEXUS_E2E_WORKER_DEADLINE_SECONDS: String(deadline),
+  };
+  assertLocalStorageEndpoint(workerEnv);
+
+  const child = spawn(
+    "uv",
+    [
+      "run",
+      "--project",
+      "python",
+      "python",
+      "-c",
+      `
+import json
+import os
+import time
+
+import psycopg
+
+from apps.worker.main import create_worker
+
+database_url = os.environ["DATABASE_URL"].replace("postgresql+psycopg://", "postgresql://", 1)
+user_id = os.environ["NEXUS_E2E_PODCAST_REFRESH_USER_ID"]
+idempotency_key = os.environ["NEXUS_E2E_PODCAST_REFRESH_IDEMPOTENCY_KEY"]
+deadline = time.monotonic() + float(os.environ["NEXUS_E2E_WORKER_DEADLINE_SECONDS"])
+job_kind = "podcast_sync_subscription_job"
+worker = create_worker()
+if worker.allowed_kinds is None or job_kind not in worker.allowed_kinds:
+    raise RuntimeError(
+        f"E2E worker kind {job_kind!r} does not belong to "
+        f"WORKER_LANE={os.environ.get('WORKER_LANE')!r}"
+    )
+worker.allowed_kinds = (job_kind,)
+conn = psycopg.connect(database_url, autocommit=True)
+listen_conn = psycopg.connect(database_url, autocommit=True)
+listen_conn.execute("LISTEN podcast_refresh_events")
+with conn.cursor() as cur:
+    cur.execute(
+        """
+        SELECT id, status
+        FROM podcast_refresh_runs
+        WHERE user_id = %s::uuid
+          AND idempotency_key = %s
+        """,
+        (user_id, idempotency_key),
+    )
+    admitted = cur.fetchone()
+if admitted is None:
+    raise RuntimeError("E2E worker could not find the admitted Podcast refresh run")
+run_id = str(admitted[0])
+iterations = 0
+status = admitted[1]
+notification_seen = False
+
+while time.monotonic() < deadline:
+    if worker.run_once():
+        iterations += 1
+    for notification in listen_conn.notifies(timeout=0.1, stop_after=100):
+        if notification.payload == run_id:
+            notification_seen = True
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT status
+            FROM podcast_refresh_runs
+            WHERE user_id = %s::uuid
+              AND idempotency_key = %s
+            """,
+            (user_id, idempotency_key),
+        )
+        row = cur.fetchone()
+    status = row[0] if row is not None else "timeout"
+    if status in {"Complete", "Partial", "Failed"}:
+        break
+    time.sleep(0.1)
+
+print(
+    json.dumps(
+        {
+            "notification_seen": notification_seen,
+            "status": status,
+            "worker_iterations": iterations,
+        },
+        sort_keys=True,
+    )
+)
+`,
+    ],
+    { cwd: ROOT_DIR, env: workerEnv },
+  );
+  let stdout = "";
+  let stderr = "";
+  const timer = setTimeout(() => child.kill("SIGKILL"), (deadline + 15) * 1000);
+
+  return new Promise((resolve, reject) => {
+    child.stdout.on("data", (chunk: unknown) => {
+      stdout += String(chunk);
+    });
+    child.stderr.on("data", (chunk: unknown) => {
+      stderr += String(chunk);
+    });
+    child.on("error", (error: Error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("close", (code: number | null, signal: string | null) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        reject(
+          new Error(stderr || stdout || `worker exited with ${signal ?? code}`),
+        );
+        return;
+      }
+      const lines = stdout.trim().split(/\r?\n/u).filter(Boolean);
+      const parsed = JSON.parse(lines[lines.length - 1] ?? "{}") as Record<
+        string,
+        unknown
+      >;
+      const status = String(parsed.status ?? "timeout");
+      resolve({
+        notification_seen: parsed.notification_seen === true,
+        status:
+          status === "Complete" || status === "Partial" || status === "Failed"
+            ? status
+            : "timeout",
         worker_iterations: Number(parsed.worker_iterations ?? 0),
         stdout: stdout.slice(-4000),
         stderr: stderr.slice(-4000),

@@ -1,5 +1,5 @@
-import { act, renderHook } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api/client";
 import { usePodcastSubscriptionActions } from "./usePodcastSubscriptionActions";
 
@@ -15,6 +15,10 @@ vi.mock("@/lib/libraries/libraryPlacement", async (importOriginal) => ({
 describe("usePodcastSubscriptionActions error boundary", () => {
   beforeEach(() => {
     mocks.addLibraryPlacement.mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("reports an expected API failure and clears the placement busy key", async () => {
@@ -65,5 +69,52 @@ describe("usePodcastSubscriptionActions error boundary", () => {
     expect(
       result.current.busyLibraryPlacementKeys.has("library-1:podcast-1"),
     ).toBe(false);
+  });
+
+  it("keeps the row action busy through the owning pane commit", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        data: {
+          refreshRunHandle:
+            "prr1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB",
+          status: "Complete",
+          requestedCount: 0,
+        },
+      }),
+    );
+    let resolveCommit!: () => void;
+    const commit = new Promise<void>((resolve) => {
+      resolveCommit = resolve;
+    });
+    const controller = new AbortController();
+    const onSuccess = vi.fn(
+      async (_result: unknown, signal: AbortSignal) => {
+        expect(signal).toBe(controller.signal);
+        await commit;
+      },
+    );
+    const onError = vi.fn();
+    const { result } = renderHook(() =>
+      usePodcastSubscriptionActions(onError),
+    );
+
+    let action!: Promise<void>;
+    act(() => {
+      action = result.current.checkForNewEpisodes(
+        "podcast-1",
+        controller.signal,
+        onSuccess,
+      );
+    });
+    await waitFor(() => expect(onSuccess).toHaveBeenCalledOnce());
+    expect(result.current.refreshingPodcastIds.has("podcast-1")).toBe(true);
+
+    await act(async () => {
+      resolveCommit();
+      await action;
+    });
+
+    expect(result.current.refreshingPodcastIds.has("podcast-1")).toBe(false);
+    expect(onError).not.toHaveBeenCalled();
   });
 });

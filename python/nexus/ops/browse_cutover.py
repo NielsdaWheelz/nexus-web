@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.session import get_session_factory, transaction
 from nexus.ids import new_uuid7
-from nexus.jobs.queue import enqueue_job, lock_jobs_for_payload
+from nexus.jobs.queue import lock_jobs_for_payload
 from nexus.services.podcasts.backfill import (
     cursor_digest,
     enqueue_backfill_step_in_current_transaction,
@@ -1410,7 +1410,6 @@ def enqueue(db: Session) -> dict[str, Any]:
     if _schema_phase(db) != "Finalized":
         raise RuntimeError("Browse cutover enqueue requires revision 0202")
     inserted_backfill = 0
-    inserted_live = 0
     with transaction(db):
         backfills = db.execute(
             text(
@@ -1472,48 +1471,6 @@ def enqueue(db: Session) -> dict[str, Any]:
                     cursor=cursor,
                 )
             )
-        subscriptions = db.execute(
-            text(
-                """
-                SELECT user_id, podcast_id
-                FROM podcast_subscriptions
-                ORDER BY id
-                """
-            )
-        ).mappings()
-        for row in subscriptions:
-            expected = {
-                "user_id": str(row["user_id"]),
-                "podcast_id": str(row["podcast_id"]),
-            }
-            jobs = lock_jobs_for_payload(
-                db,
-                kind="podcast_sync_subscription_job",
-                expected_payload_match=expected,
-            )
-            if any(job.status in {"pending", "running", "failed"} for job in jobs):
-                continue
-            current_subscription = db.scalar(
-                text(
-                    """
-                    SELECT 1
-                    FROM podcast_subscriptions
-                    WHERE user_id = :user_id
-                      AND podcast_id = :podcast_id
-                    FOR UPDATE
-                    """
-                ),
-                expected,
-            )
-            if current_subscription is None:
-                continue
-            enqueue_job(
-                db,
-                kind="podcast_sync_subscription_job",
-                payload={**expected, "request_id": None},
-                max_attempts=3,
-            )
-            inserted_live += 1
         pending_backfills = list(
             db.execute(
                 text(
@@ -1556,10 +1513,7 @@ def enqueue(db: Session) -> dict[str, Any]:
                 raise RuntimeError(
                     "Pending backfill does not have exactly one current nonterminal job"
                 )
-    report = {
-        "backfillJobsInserted": inserted_backfill,
-        "liveJobsInserted": inserted_live,
-    }
+    report = {"backfillJobsInserted": inserted_backfill}
     return {**report, "reportHash": _stable_hash(report)}
 
 

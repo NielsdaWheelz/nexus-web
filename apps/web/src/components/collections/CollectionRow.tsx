@@ -96,20 +96,12 @@ function renderExceptionalStatus(status: ExceptionalStatus): ReactNode {
     case "PodcastSync":
       const podcastSyncStatus = status.status;
       switch (podcastSyncStatus) {
-        case "pending":
-          return <Pill tone="neutral">Sync pending</Pill>;
-        case "running":
-          return <Pill tone="info">Syncing</Pill>;
-        case "partial":
-          return <Pill tone="warning">Partial sync</Pill>;
-        case "source_limited":
-          return <Pill tone="warning">Source-limited</Pill>;
-        case "failed":
-          return <Pill tone="danger">Sync failed</Pill>;
+        case "Failed":
+          return <Pill tone="danger">Update failed</Pill>;
         default:
           return assertNever(
             podcastSyncStatus,
-            "Unsupported podcast sync status",
+            "Unsupported podcast update status",
           );
       }
     default:

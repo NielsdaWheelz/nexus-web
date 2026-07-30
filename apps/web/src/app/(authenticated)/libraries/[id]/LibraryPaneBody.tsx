@@ -72,7 +72,6 @@ import {
 } from "@/lib/panes/paneResourceLoaders";
 import {
   buildPodcastUnsubscribeConfirmation,
-  refreshPodcastSubscriptionSync,
   unsubscribeFromPodcast,
   type PodcastSubscriptionSettingsResponse,
 } from "@/app/(authenticated)/podcasts/podcastSubscriptions";
@@ -148,8 +147,10 @@ import type {
   ActionDescriptor,
   ActionSelectDetail,
 } from "@/lib/ui/actionDescriptor";
+import type { PaneRefreshPublication } from "@/lib/panes/panePublications";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { isAbortError } from "@/lib/errors";
+import { runPodcastRefresh } from "@/lib/podcasts/refresh";
 import { mapMediaAuthorCredits } from "@/app/(authenticated)/media/[id]/mediaFormatting";
 import {
   decodeLibraryEntryListItem,
@@ -158,7 +159,6 @@ import {
   type LibraryMediaListValue,
   type LibraryPodcastListItem,
 } from "@/lib/libraries/entryListItem";
-import { decodePodcastSyncStatus } from "@/lib/status/podcastSync";
 import { slateTargetId } from "@/lib/resonance/contract";
 import type { ReadingSlateAccept } from "@/lib/resonance/useReadingSlate";
 import { findPaneSearchFocusTarget } from "@/lib/workspace/paneDom";
@@ -203,6 +203,14 @@ interface EntryReconciliationRequest {
 interface EntryReconciliationResult {
   request: EntryReconciliationRequest;
   page: LibraryEntryPage;
+}
+
+interface PendingLibraryRevalidation {
+  readonly serial: number;
+  readonly sourceKey: string;
+  readonly resolve: () => void;
+  readonly reject: (error: unknown) => void;
+  readonly removeAbortListener: () => void;
 }
 
 type EntryMutationEffect = "SafePatch" | "SafeRebase" | "Unknown";
@@ -537,6 +545,7 @@ export default function LibraryPaneBody() {
   const addingToLecternMediaIds = useStringIdSet();
   const removingFromLecternMediaIds = useStringIdSet();
   const refreshingPodcastIds = useStringIdSet();
+  const podcastRowRefreshControllersRef = useRef(new Set<AbortController>());
   const unsubscribingPodcastIds = useStringIdSet();
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [reorderBusy, setReorderBusy] = useState(false);
@@ -557,6 +566,9 @@ export default function LibraryPaneBody() {
   // requested view refetches once against current truth (coalesced follow-up).
   const [firstPageNonce, setFirstPageNonce] = useState(0);
   const entryReconciliationSerialRef = useRef(0);
+  const pendingLibraryRevalidationRef =
+    useRef<PendingLibraryRevalidation | null>(null);
+  const completedLibraryRevalidationSerialRef = useRef<number | null>(null);
   const [entryReconciliationRequest, setEntryReconciliationRequest] =
     useState<EntryReconciliationRequest | null>(null);
   const entryReconciliationRequestRef = useRef(entryReconciliationRequest);
@@ -962,12 +974,23 @@ export default function LibraryPaneBody() {
   }, [cancelEntryLoadMore, id]);
 
   const { clear: clearRemovedEntryIds } = removedEntryIds;
+  const rejectPendingLibraryRevalidation = useCallback((error: unknown) => {
+    const pending = pendingLibraryRevalidationRef.current;
+    pendingLibraryRevalidationRef.current = null;
+    completedLibraryRevalidationSerialRef.current = null;
+    if (!pending) return;
+    pending.removeAbortListener();
+    pending.reject(error);
+  }, []);
   const requestEntryReconciliation = useCallback(
     (
       requestedView: LibraryEntryView,
       revisions: LibraryRevisions,
       recovery: EntryReconciliationRequest["recovery"] = "Retry",
     ) => {
+      rejectPendingLibraryRevalidation(
+        new DOMException("Library refresh was superseded.", "AbortError"),
+      );
       capturePaneScroll();
       cancelEntryLoadMore();
       committedSnapshotRef.current = null;
@@ -981,8 +1004,86 @@ export default function LibraryPaneBody() {
         recovery,
         revisions,
       });
+      return serial;
     },
-    [cancelEntryLoadMore, capturePaneScroll, clearAllVisitData, id],
+    [
+      cancelEntryLoadMore,
+      capturePaneScroll,
+      clearAllVisitData,
+      id,
+      rejectPendingLibraryRevalidation,
+    ],
+  );
+  const revalidateLibraryEntries = useCallback(
+    (signal: AbortSignal): Promise<void> => {
+      if (signal.aborted) {
+        return Promise.reject(
+          signal.reason ??
+            new DOMException("Library refresh was aborted.", "AbortError"),
+        );
+      }
+      const current = controllerRef.current;
+      const sourceKey = requestedViewKey;
+      if (
+        current === null ||
+        sourceKey === null ||
+        libraryEntriesResource.cacheKey({
+          id,
+          view: current.entries.view,
+        }) !== sourceKey
+      ) {
+        return Promise.reject(
+          new Error("Library refresh lost its exact committed view"),
+        );
+      }
+      const serial = requestEntryReconciliation(current.entries.view, {
+        placement: placementRevisionRef.current,
+        consumption: consumptionRevisionRef.current,
+      });
+      return new Promise<void>((resolve, reject) => {
+        const onAbort = () => {
+          const pending = pendingLibraryRevalidationRef.current;
+          if (pending?.serial !== serial) return;
+          pendingLibraryRevalidationRef.current = null;
+          pending.removeAbortListener();
+          completedLibraryRevalidationSerialRef.current = null;
+          entryReconciliationSerialRef.current += 1;
+          setEntryReconciliationRequest((request) =>
+            request?.serial === serial ? null : request,
+          );
+          committedSnapshotRef.current = controllerRef.current;
+          reject(
+            signal.reason ??
+              new DOMException("Library refresh was aborted.", "AbortError"),
+          );
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        pendingLibraryRevalidationRef.current = {
+          serial,
+          sourceKey,
+          resolve,
+          reject,
+          removeAbortListener: () =>
+            signal.removeEventListener("abort", onAbort),
+        };
+        if (signal.aborted) onAbort();
+      });
+    },
+    [id, requestEntryReconciliation, requestedViewKey],
+  );
+  useEffect(
+    () => () => {
+      for (const controller of podcastRowRefreshControllersRef.current) {
+        controller.abort(
+          new DOMException("Library refresh source was replaced.", "AbortError"),
+        );
+      }
+      podcastRowRefreshControllersRef.current.clear();
+      rejectPendingLibraryRevalidation(
+        new DOMException("Library refresh source was replaced.", "AbortError"),
+      );
+    },
+    [id, rejectPendingLibraryRevalidation, requestedViewKey],
   );
   const reconcileAfterMutation = useCallback(
     (effect: EntryMutationEffect) => {
@@ -1059,6 +1160,31 @@ export default function LibraryPaneBody() {
     { debounceMs: 0 },
   );
   useEffect(() => {
+    const request = entryReconciliationRequest;
+    const requestError = entryReconciliationFetch.error;
+    const pending = pendingLibraryRevalidationRef.current;
+    if (
+      request === null ||
+      requestError === null ||
+      pending?.serial !== request.serial
+    ) {
+      return;
+    }
+    entryReconciliationSerialRef.current += 1;
+    setEntryReconciliationRequest(null);
+    committedSnapshotRef.current = controllerRef.current;
+    setError(
+      toFeedback(requestError, {
+        fallback: "Library failed to refresh",
+      }),
+    );
+    rejectPendingLibraryRevalidation(requestError);
+  }, [
+    entryReconciliationFetch.error,
+    entryReconciliationRequest,
+    rejectPendingLibraryRevalidation,
+  ]);
+  useEffect(() => {
     if (
       entryReconciliationRequest?.recovery !== "RefreshList" ||
       entryReconciliationFetch.error === null
@@ -1097,6 +1223,14 @@ export default function LibraryPaneBody() {
       // The requested view moved on: the first-page path owns the new view. Drop
       // this result; the revision trigger re-fires if the current view is still
       // behind its committed baseline.
+      if (pendingLibraryRevalidationRef.current?.serial === request.serial) {
+        rejectPendingLibraryRevalidation(
+          new DOMException(
+            "Library refresh source was replaced.",
+            "AbortError",
+          ),
+        );
+      }
       setEntryReconciliationRequest(null);
       return;
     }
@@ -1128,6 +1262,9 @@ export default function LibraryPaneBody() {
     // reconciliation was requested, so a mutation that landed while it was in
     // flight surfaces as exactly one coalesced follow-up.
     committedRevisionsRef.current = result.request.revisions;
+    if (pendingLibraryRevalidationRef.current?.serial === request.serial) {
+      completedLibraryRevalidationSerialRef.current = request.serial;
+    }
     setEntryReconciliationRequest(null);
     focusPendingControl();
   }, [
@@ -1139,6 +1276,7 @@ export default function LibraryPaneBody() {
     focusPendingControl,
     id,
     requestedViewKey,
+    rejectPendingLibraryRevalidation,
     viewIsCommitted,
   ]);
 
@@ -1363,6 +1501,22 @@ export default function LibraryPaneBody() {
         ? controller
         : null;
   }, [controller, entriesState?.kind, entryReconciliationRequest]);
+  useEffect(() => {
+    const pending = pendingLibraryRevalidationRef.current;
+    if (
+      pending === null ||
+      completedLibraryRevalidationSerialRef.current !== pending.serial ||
+      entryReconciliationRequest !== null ||
+      requestedViewKey !== pending.sourceKey ||
+      committedSnapshotRef.current === null
+    ) {
+      return;
+    }
+    pendingLibraryRevalidationRef.current = null;
+    completedLibraryRevalidationSerialRef.current = null;
+    pending.removeAbortListener();
+    pending.resolve();
+  }, [controller, entryReconciliationRequest, requestedViewKey]);
   useLayoutEffect(() => {
     const scrollTop = pendingScrollTopRef.current;
     if (scrollTop === null) return;
@@ -1852,48 +2006,37 @@ export default function LibraryPaneBody() {
     const podcastId = entry.podcast.id;
     if (refreshingPodcastIds.has(podcastId)) return;
     refreshingPodcastIds.add(podcastId);
+    const controller = new AbortController();
+    podcastRowRefreshControllersRef.current.add(controller);
     try {
-      const result = await refreshPodcastSubscriptionSync(podcastId);
-      const syncStatus = decodePodcastSyncStatus(
-        result.sync_status,
-        "podcast sync_status",
+      const result = await runPodcastRefresh(
+        { kind: "Podcast", podcastId },
+        {
+          signal: controller.signal,
+          onProgress: () => {},
+        },
       );
-      setEntries((current) =>
-        current.map((candidate) =>
-          candidate.kind === "podcast" && candidate.podcast.id === podcastId
-            ? {
-                ...candidate,
-                podcast: {
-                  ...candidate.podcast,
-                  syncStatus: present(syncStatus),
-                },
-                subscription:
-                  candidate.subscription.kind === "Present"
-                    ? {
-                        kind: "Present",
-                        value: {
-                          ...candidate.subscription.value,
-                          syncStatus: result.sync_status,
-                        },
-                      }
-                    : candidate.subscription,
-              }
-            : candidate,
-        ),
-      );
-      installEntryCollectionRevision(result.libraryEntriesCollectionRevision);
-      reconcileAfterMutationRef.current("SafeRebase");
+      await revalidateLibraryEntries(controller.signal);
+      feedback.show({
+        severity:
+          result.kind === "Failed"
+            ? "error"
+            : result.kind === "Complete"
+              ? "success"
+              : "warning",
+        title: result.announcement,
+      });
     } catch (refreshError) {
+      if (isAbortError(refreshError)) return;
       if (handleUnauthenticatedApiError(refreshError)) return;
       if (!isApiError(refreshError) || isSameSystemApiDefect(refreshError)) {
         throw refreshError;
       }
       feedback.show(
-        toFeedback(refreshError, {
-          fallback: "Failed to refresh podcast sync",
-        }),
+        { severity: "error", title: "Library failed to refresh" },
       );
     } finally {
+      podcastRowRefreshControllersRef.current.delete(controller);
       refreshingPodcastIds.remove(podcastId);
     }
   };
@@ -2432,8 +2575,45 @@ export default function LibraryPaneBody() {
       linkedItems: connectionsBody,
     },
   });
+  const executeRefresh = useCallback<PaneRefreshPublication["execute"]>(
+    async ({ signal, reportProgress }) => {
+      try {
+        const result = await runPodcastRefresh(
+          { kind: "Library", libraryId: id },
+          {
+            signal,
+            onProgress: ({ finishedCount, requestedCount }) =>
+              reportProgress({
+                kind: "Determinate",
+                finishedCount,
+                requestedCount,
+              }),
+          },
+        );
+        await revalidateLibraryEntries(signal);
+        return {
+          kind: result.kind,
+          announcement: result.announcement,
+        };
+      } catch (refreshError: unknown) {
+        if (isAbortError(refreshError)) throw refreshError;
+        return {
+          kind: "Failed",
+          announcement: "Library failed to refresh",
+        };
+      }
+    },
+    [id, revalidateLibraryEntries],
+  );
   usePanePrimaryChrome({
     search,
+    refresh:
+      currentLibrary && requestedViewKey && viewIsCommitted
+        ? {
+            sourceKey: requestedViewKey,
+            execute: executeRefresh,
+          }
+        : undefined,
     actions: companionAction ? [companionAction] : [],
     menu:
       currentLibrary && paneResourceGroups
@@ -2726,7 +2906,7 @@ export default function LibraryPaneBody() {
                     }),
                 }
               : { kind: "Unavailable" },
-          refreshSync:
+          checkForNewEpisodes:
             viewIsCommitted && item.subscription.kind === "Present"
               ? {
                   kind: "Available",

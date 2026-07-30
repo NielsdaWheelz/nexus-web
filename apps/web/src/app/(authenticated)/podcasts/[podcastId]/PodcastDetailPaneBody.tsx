@@ -115,6 +115,9 @@ import type { ActionSelectDetail } from "@/lib/ui/actionDescriptor";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
 import { findPaneSearchFocusTarget } from "@/lib/workspace/paneDom";
+import { isAbortError } from "@/lib/errors";
+import { runPodcastRefresh } from "@/lib/podcasts/refresh";
+import type { PaneRefreshPublication } from "@/lib/panes/panePublications";
 
 const EPISODES_PAGE_SIZE = 100;
 
@@ -139,6 +142,14 @@ interface PodcastDetailSnapshot {
   readonly podcastLibraries: readonly LibraryPlacementOption[];
 }
 
+interface PendingPodcastDetailRevalidation {
+  readonly nonce: number;
+  readonly sourceKey: string;
+  readonly resolve: () => void;
+  readonly reject: (error: unknown) => void;
+  readonly removeAbortListener: () => void;
+}
+
 const PODCAST_DETAIL_VISIT_DATA = definePaneVisitDataKey<PodcastDetailSnapshot>(
   "PodcastDetail.Episodes",
 );
@@ -155,6 +166,23 @@ function formatBackfillFact(backfill: PodcastBackfillRecord): string {
   return `${label} · ${backfill.processed_count} processed · ${backfill.added_count} added`;
 }
 
+function formatEpisodeUpdateStatus(
+  status: NonNullable<PodcastDetailResponse["subscription"]>["sync_status"],
+): string {
+  switch (status) {
+    case "Pending":
+      return "Episode updates pending";
+    case "Running":
+      return "Checking for new episodes";
+    case "Complete":
+      return "Episode updates current";
+    case "SourceLimited":
+      return "Episode updates source-limited";
+    case "Failed":
+      return "Episode updates failed";
+  }
+}
+
 export default function PodcastDetailPaneBody() {
   const podcastId = usePaneParam("podcastId");
   const paneRouter = usePaneRouter();
@@ -169,6 +197,8 @@ export default function PodcastDetailPaneBody() {
   const lectern = useLectern();
   const offerCompletionUndo = useCompletionUndo();
   const committedSnapshotRef = useRef<PodcastDetailSnapshot | null>(null);
+  const refreshFallbackSnapshotRef =
+    useRef<PodcastDetailSnapshot | null>(null);
   const reconciliationPendingRef = useRef(false);
   const reconciliationSuccessRef = useRef<string | null>(null);
   const captureCommitted = useCallback(() => committedSnapshotRef.current, []);
@@ -296,11 +326,13 @@ export default function PodcastDetailPaneBody() {
   );
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
+  const reloadNonceRef = useRef(0);
+  const pendingPodcastDetailRevalidationRef =
+    useRef<PendingPodcastDetailRevalidation | null>(null);
+  const completedPodcastDetailRevalidationNonceRef =
+    useRef<number | null>(null);
   const [backfillRetryBusy, setBackfillRetryBusy] = useState(false);
   const actions = usePodcastSubscriptionActions(setError);
-  const refreshSyncBusy = podcastId
-    ? actions.refreshingPodcastIds.ids.has(podcastId)
-    : false;
   const unsubscribeBusy = podcastId
     ? actions.unsubscribingPodcastIds.ids.has(podcastId)
     : false;
@@ -357,13 +389,86 @@ export default function PodcastDetailPaneBody() {
           reloadNonce,
         ].join(":")
       : null;
+  const rejectPendingPodcastDetailRevalidation = useCallback(
+    (refreshError: unknown) => {
+      const pending = pendingPodcastDetailRevalidationRef.current;
+      pendingPodcastDetailRevalidationRef.current = null;
+      completedPodcastDetailRevalidationNonceRef.current = null;
+      if (!pending) return;
+      pending.removeAbortListener();
+      pending.reject(refreshError);
+    },
+    [],
+  );
   const reload = useCallback(() => {
+    rejectPendingPodcastDetailRevalidation(
+      new DOMException("Podcast refresh was superseded.", "AbortError"),
+    );
+    if (committedSnapshotRef.current !== null) {
+      refreshFallbackSnapshotRef.current = committedSnapshotRef.current;
+    }
     reconciliationPendingRef.current = true;
     committedSnapshotRef.current = null;
     clearAllVisitData();
     setSuppressInitialLoad(false);
-    setReloadNonce((nonce) => nonce + 1);
-  }, [clearAllVisitData]);
+    const nonce = reloadNonceRef.current + 1;
+    reloadNonceRef.current = nonce;
+    setReloadNonce(nonce);
+  }, [clearAllVisitData, rejectPendingPodcastDetailRevalidation]);
+  const revalidatePodcastDetail = useCallback(
+    (signal: AbortSignal): Promise<void> => {
+      if (signal.aborted) {
+        return Promise.reject(
+          signal.reason ??
+            new DOMException("Podcast refresh was aborted.", "AbortError"),
+        );
+      }
+      reload();
+      const nonce = reloadNonceRef.current;
+      const sourceKey = episodeQueryIdentity;
+      return new Promise<void>((resolve, reject) => {
+        const onAbort = () => {
+          const pending = pendingPodcastDetailRevalidationRef.current;
+          if (pending?.nonce !== nonce) return;
+          pendingPodcastDetailRevalidationRef.current = null;
+          completedPodcastDetailRevalidationNonceRef.current = null;
+          pending.removeAbortListener();
+          reconciliationPendingRef.current = false;
+          setSuppressInitialLoad(true);
+          committedSnapshotRef.current = refreshFallbackSnapshotRef.current;
+          refreshFallbackSnapshotRef.current = null;
+          setLoading(false);
+          reject(
+            signal.reason ??
+              new DOMException("Podcast refresh was aborted.", "AbortError"),
+          );
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        pendingPodcastDetailRevalidationRef.current = {
+          nonce,
+          sourceKey,
+          resolve,
+          reject,
+          removeAbortListener: () =>
+            signal.removeEventListener("abort", onAbort),
+        };
+        if (signal.aborted) onAbort();
+      });
+    },
+    [episodeQueryIdentity, reload],
+  );
+  useEffect(
+    () => () => {
+      rejectPendingPodcastDetailRevalidation(
+        new DOMException("Podcast refresh source was replaced.", "AbortError"),
+      );
+    },
+    [
+      episodeQueryIdentity,
+      podcastId,
+      rejectPendingPodcastDetailRevalidation,
+    ],
+  );
   const previousEpisodeQueryIdentityRef = useRef(episodeQueryIdentity);
   useLayoutEffect(() => {
     if (previousEpisodeQueryIdentityRef.current === episodeQueryIdentity) {
@@ -438,6 +543,8 @@ export default function PodcastDetailPaneBody() {
         podcastLibraries: result.podcastLibraries,
       };
       controllerRef.current = snapshot;
+      committedSnapshotRef.current = snapshot;
+      refreshFallbackSnapshotRef.current = null;
       setController(snapshot);
       setChainEpoch((epoch) => epoch + 1);
       clearExpandedShowNotesMediaIds();
@@ -480,26 +587,63 @@ export default function PodcastDetailPaneBody() {
           : { severity: "success", title: successTitle },
       );
       setLoading(false);
+      const pending = pendingPodcastDetailRevalidationRef.current;
+      if (
+        pending?.nonce === reloadNonce &&
+        pending.sourceKey === episodeQueryIdentity
+      ) {
+        completedPodcastDetailRevalidationNonceRef.current = pending.nonce;
+      }
       return;
     }
 
     if (podcastDetailResource.status === "error") {
       reconciliationSuccessRef.current = null;
+      reconciliationPendingRef.current = false;
+      setSuppressInitialLoad(true);
+      committedSnapshotRef.current = refreshFallbackSnapshotRef.current;
+      refreshFallbackSnapshotRef.current = null;
       setError(
         toFeedback(podcastDetailResource.error, {
           fallback: "Failed to load podcast detail",
         }),
       );
       setLoading(false);
+      const pending = pendingPodcastDetailRevalidationRef.current;
+      if (pending?.nonce === reloadNonce) {
+        rejectPendingPodcastDetailRevalidation(podcastDetailResource.error);
+      }
     }
-  }, [applyPodcastDetailLoad, podcastDetailResource, podcastId]);
+  }, [
+    applyPodcastDetailLoad,
+    episodeQueryIdentity,
+    podcastDetailResource,
+    podcastId,
+    rejectPendingPodcastDetailRevalidation,
+    reloadNonce,
+  ]);
 
   useLayoutEffect(() => {
     controllerRef.current = controller;
     committedSnapshotRef.current = reconciliationPendingRef.current
       ? null
       : controller;
-  }, [controller]);
+    const pending = pendingPodcastDetailRevalidationRef.current;
+    if (
+      controller === null ||
+      pending === null ||
+      completedPodcastDetailRevalidationNonceRef.current !== pending.nonce ||
+      pending.sourceKey !== episodeQueryIdentity ||
+      controller.queryIdentity !== episodeQueryIdentity ||
+      reconciliationPendingRef.current
+    ) {
+      return;
+    }
+    completedPodcastDetailRevalidationNonceRef.current = null;
+    pendingPodcastDetailRevalidationRef.current = null;
+    pending.removeAbortListener();
+    pending.resolve();
+  }, [controller, episodeQueryIdentity]);
 
   usePaneReturnReady((!loading && controller !== null) || error !== null);
 
@@ -774,20 +918,6 @@ export default function PodcastDetailPaneBody() {
     pendingFocusRafRef.current = outer;
     return () => cancelAnimationFrame(pendingFocusRafRef.current);
   }, [paneRuntime.paneId, visibleEpisodeSignature]);
-
-  const refreshPodcastSync = useCallback(async () => {
-    if (!podcastId || !detail?.subscription) {
-      return;
-    }
-    await actions.refreshSync(podcastId, (patch) => {
-      setDetail((prev) =>
-        prev && prev.subscription
-          ? { ...prev, subscription: { ...prev.subscription, ...patch } }
-          : prev,
-      );
-      reload();
-    });
-  }, [actions, detail?.subscription, podcastId, reload, setDetail]);
 
   const unsubscribePodcast = useCallback(async () => {
     if (!podcastId || !detail?.subscription) {
@@ -1435,11 +1565,44 @@ export default function PodcastDetailPaneBody() {
     },
     [lectern, runEpisodeLecternMutation],
   );
+  const executeRefresh = useCallback<PaneRefreshPublication["execute"]>(
+    async ({ signal, reportProgress }) => {
+      if (!podcastId) {
+        return {
+          kind: "Failed",
+          announcement: "Podcast failed to refresh",
+        };
+      }
+      try {
+        const result = await runPodcastRefresh(
+          { kind: "Podcast", podcastId },
+          {
+            signal,
+            onProgress: ({ finishedCount, requestedCount }) =>
+              reportProgress({
+                kind: "Determinate",
+                finishedCount,
+                requestedCount,
+              }),
+          },
+        );
+        await revalidatePodcastDetail(signal);
+        return {
+          kind: result.kind,
+          announcement: result.announcement,
+        };
+      } catch (refreshError: unknown) {
+        if (isAbortError(refreshError)) throw refreshError;
+        return {
+          kind: "Failed",
+          announcement: "Podcast failed to refresh",
+        };
+      }
+    },
+    [podcastId, revalidatePodcastDetail],
+  );
   const activeSubscription = detail?.subscription ?? null;
   const paneBusyIds = new Set<ResourceActionId>();
-  if (refreshSyncBusy) {
-    paneBusyIds.add(RESOURCE_ACTION_CATALOG.RefreshPodcast.id);
-  }
   if (unsubscribeBusy) {
     paneBusyIds.add(RESOURCE_ACTION_CATALOG.UnsubscribePodcast.id);
   }
@@ -1447,9 +1610,7 @@ export default function PodcastDetailPaneBody() {
     settings: activeSubscription
       ? { kind: "Available", execute: openSettingsModal }
       : { kind: "Unavailable" },
-    refreshSync: activeSubscription
-      ? { kind: "Available", execute: refreshPodcastSync }
-      : { kind: "Unavailable" },
+    checkForNewEpisodes: { kind: "Unavailable" },
     subscription: activeSubscription
       ? { kind: "Subscribed", execute: unsubscribePodcast }
       : { kind: "Unavailable" },
@@ -1477,6 +1638,13 @@ export default function PodcastDetailPaneBody() {
   });
   usePanePrimaryChrome({
     actions: companionAction ? [companionAction] : [],
+    refresh:
+      podcastId && activeSubscription
+        ? {
+            sourceKey: `Podcast.Detail:${episodeQueryIdentity}`,
+            execute: executeRefresh,
+          }
+        : undefined,
     menu:
       podcastId && detail
         ? {
@@ -1607,7 +1775,7 @@ export default function PodcastDetailPaneBody() {
                 `In ${pluralize(podcastLibraryCount, "library", "libraries")}`,
                 ...(activeSubscription
                   ? [
-                      `Sync ${activeSubscription.sync_status}`,
+                      formatEpisodeUpdateStatus(activeSubscription.sync_status),
                       formatBackfillFact(activeSubscription.backfill),
                       formatSubscriptionPlaybackSummary(
                         activeSubscription.default_playback_speed,
@@ -1626,7 +1794,7 @@ export default function PodcastDetailPaneBody() {
               ]}
               note={
                 activeSubscription
-                  ? "Subscription is active. Manage playback defaults, sync, and library membership from this header."
+                  ? "Subscription is active. Manage playback defaults, episode updates, and library membership from this header."
                   : "Subscribe to save playback defaults and add this show to your libraries."
               }
               error={

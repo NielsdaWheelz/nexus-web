@@ -1,31 +1,27 @@
-"""Worker job handler for podcast subscription sync data-plane ingestion."""
+"""Worker job handler for exact-epoch Podcast subscription sync."""
 
+from collections.abc import Mapping
 from dataclasses import asdict
-from uuid import UUID
+from typing import Any
 
 from nexus.db.session import get_session_factory
+from nexus.jobs.queue import JobExecutionContext
 from nexus.logging import get_logger
-from nexus.services.podcasts.poll import run_podcast_subscription_sync_now
+from nexus.services.podcasts.sync import run_podcast_subscription_sync_now
 
 logger = get_logger(__name__)
 
 
 def podcast_sync_subscription_job(
-    user_id: str,
-    podcast_id: str,
-    request_id: str | None = None,
-    task_id: str | None = None,
+    *,
+    payload: Mapping[str, Any],
+    context: JobExecutionContext,
 ) -> dict:
-    user_uuid = UUID(user_id)
-    podcast_uuid = UUID(podcast_id)
-    resolved_task_id = task_id or f"direct:{podcast_id}"
-
     logger.info(
         "podcast_sync_task_started",
-        user_id=user_id,
-        podcast_id=podcast_id,
-        request_id=request_id,
-        task_id=resolved_task_id,
+        job_id=str(context.job_id),
+        attempt_no=context.attempt_no,
+        subscription_id=str(payload.get("subscription_id")),
     )
 
     session_factory = get_session_factory()
@@ -34,17 +30,15 @@ def podcast_sync_subscription_job(
         result = asdict(
             run_podcast_subscription_sync_now(
                 db,
-                user_id=user_uuid,
-                podcast_id=podcast_uuid,
+                payload=payload,
+                context=context,
             )
         )
         logger.info(
             "podcast_sync_task_completed",
-            user_id=user_id,
-            podcast_id=podcast_id,
-            request_id=request_id,
+            job_id=str(context.job_id),
+            attempt_no=context.attempt_no,
             result=result,
-            task_id=resolved_task_id,
         )
         return result
     finally:

@@ -147,8 +147,8 @@ export const RESOURCE_ACTION_CATALOG = {
   },
   RefreshPodcast: {
     id: "ResourceOperation.Podcast.Refresh",
-    label: "Refresh sync",
-    busyLabel: "Refreshing...",
+    label: "Check for new episodes",
+    busyLabel: "Checking...",
     icon: RefreshCw,
   },
   MarkPlayed: {
@@ -889,7 +889,7 @@ export function libraryResourceOptions(
 
 export interface PodcastResourceActionsInput {
   readonly settings: ExecutableResourceAction;
-  readonly refreshSync: ExecutableResourceAction;
+  readonly checkForNewEpisodes: ExecutableResourceAction;
   readonly subscription: PodcastSubscriptionAction;
   readonly busyIds: ReadonlySet<ResourceActionId>;
 }
@@ -906,7 +906,7 @@ export function podcastResourceOptions(
   if (settings) operations.push(settings);
   const refresh = executableDescriptor(
     "RefreshPodcast",
-    input.refreshSync,
+    input.checkForNewEpisodes,
     input.busyIds,
   );
   if (refresh) operations.push(refresh);

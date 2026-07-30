@@ -68,7 +68,56 @@
   min-height: 0;
 }
 
+.refreshIndicator {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  order: -1;
+  display: flex;
+  flex: 0 0 0;
+  justify-content: center;
+  height: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.refreshIndicatorContent {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--size-md);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-2);
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+  opacity: 1;
+  transform: translateY(
+    calc(-100% + var(--pane-refresh-offset))
+  );
+  transition:
+    opacity var(--duration-fast) var(--ease-glide),
+    transform var(--duration-fast) var(--ease-glide);
+}
+
+.refreshIndicator[data-refresh-state="Idle"] .refreshIndicatorContent {
+  opacity: 0;
+}
+
+.refreshIndicator[data-refresh-state="Refreshing"] .refreshIndicatorIcon {
+  animation: pane-refresh-spin 900ms linear infinite;
+}
+
+@keyframes pane-refresh-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
 .primaryContentRow {
+  position: relative;
   display: grid;
   min-width: 0;
   min-height: 0;
@@ -146,5 +195,13 @@
 @media (prefers-reduced-motion: reduce) {
   .paneShell[data-mobile="true"] .chrome {
     transition: none;
+  }
+
+  .refreshIndicatorContent {
+    transition: none;
+  }
+
+  .refreshIndicatorIcon {
+    animation: none !important;
   }
 }

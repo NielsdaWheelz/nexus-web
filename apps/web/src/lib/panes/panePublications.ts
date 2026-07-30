@@ -26,12 +26,35 @@ import {
   type PaneSearchPublication,
 } from "@/lib/panes/paneSearch";
 
+export type PaneRefreshProgress =
+  | { readonly kind: "Indeterminate" }
+  | {
+      readonly kind: "Determinate";
+      readonly finishedCount: number;
+      readonly requestedCount: number;
+    };
+
+export type PaneRefreshResult =
+  | { readonly kind: "Complete"; readonly announcement: string }
+  | { readonly kind: "Partial"; readonly announcement: string }
+  | { readonly kind: "Failed"; readonly announcement: string }
+  | { readonly kind: "ObservationLost"; readonly announcement: string };
+
+export interface PaneRefreshPublication {
+  readonly sourceKey: string;
+  readonly execute: (input: {
+    readonly signal: AbortSignal;
+    readonly reportProgress: (progress: PaneRefreshProgress) => void;
+  }) => Promise<PaneRefreshResult>;
+}
+
 export interface PanePrimaryChromePublication {
   readonly header?: PaneHeaderPublication;
   readonly toolbar?: ReactNode;
   readonly search?: PaneSearchPublication;
   readonly actions?: readonly PaneHeaderAction[];
   readonly menu?: ActionPublication;
+  readonly refresh?: PaneRefreshPublication;
 }
 
 export interface PanePrimaryChromePublicationUpdate {
@@ -162,6 +185,15 @@ function areActionPublicationsEqual(
   );
 }
 
+function arePaneRefreshPublicationsEqual(
+  left: PaneRefreshPublication | undefined,
+  right: PaneRefreshPublication | undefined,
+): boolean {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return left.sourceKey === right.sourceKey && left.execute === right.execute;
+}
+
 function areActionDescriptorListsEqual(
   left: readonly ActionDescriptor[] | undefined,
   right: readonly ActionDescriptor[] | undefined,
@@ -253,7 +285,8 @@ export function arePanePrimaryChromePublicationsEqual(
     left.toolbar === right.toolbar &&
     arePaneSearchPublicationsEqual(left.search, right.search) &&
     areActionDescriptorListsEqual(left.actions, right.actions) &&
-    areActionPublicationsEqual(left.menu, right.menu)
+    areActionPublicationsEqual(left.menu, right.menu) &&
+    arePaneRefreshPublicationsEqual(left.refresh, right.refresh)
   );
 }
 

@@ -43,6 +43,7 @@ import PaneSearchBar from "@/components/workspace/PaneSearchBar";
 import type {
   PanePrimaryChromePublication,
   PanePrimaryChromePublicationUpdate,
+  PaneRefreshPublication,
 } from "@/lib/panes/panePublications";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { decodeLibraryReadingTimeEntry } from "@/lib/libraries/readingTime";
@@ -57,6 +58,8 @@ import { ShareControllerProvider } from "@/lib/sharing/controller";
 import LibraryPaneBody from "./LibraryPaneBody";
 
 const TEST_VISIT_ID = assumePaneVisitId("00000000-0000-4000-8000-000000000001");
+const REFRESH_RUN_HANDLE =
+  "prr1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB";
 
 function ExpandedPaneSearchHarness({ children }: { children: ReactNode }) {
   const [publication, setPublication] =
@@ -363,14 +366,14 @@ function seededPodcastEntry() {
       contributors: [],
       unplayedCount: { kind: "Present", value: { value: 2 } },
       publicationDate: { kind: "Absent" },
-      syncStatus: { kind: "Present", value: "complete" },
+      syncStatus: { kind: "Present", value: "Complete" },
     },
     subscription: {
       kind: "Present",
       value: {
         defaultPlaybackSpeed: 1.5,
         autoQueue: true,
-        syncStatus: "complete",
+        syncStatus: "Complete",
       },
     },
     readingTimeEstimate: { kind: "Absent" },
@@ -619,6 +622,300 @@ exhaustion: "Complete",
       `/api/libraries/${LIBRARY_ID}`,
     );
     expect(libraryCalls).toHaveLength(0);
+  });
+
+  it("awaits the exact committed Library view after the podcast refresh run", async () => {
+    const publish =
+      vi.fn<(update: PanePrimaryChromePublicationUpdate) => void>();
+    let entriesReadCount = 0;
+    let resolveReplacement!: (response: Response) => void;
+    const replacement = new Promise<Response>((resolve) => {
+      resolveReplacement = resolve;
+    });
+    let refreshRequestBody: unknown;
+    stubFetch(async (input, init) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      const path = fetchInputPath(input);
+      if (
+        path === "/api/podcasts/refresh-runs" &&
+        init?.method === "POST"
+      ) {
+        refreshRequestBody = JSON.parse(String(init.body));
+        return Response.json(
+          {
+            data: {
+              refreshRunHandle: REFRESH_RUN_HANDLE,
+              status: "Complete",
+              requestedCount: 1,
+            },
+          },
+          { status: 202 },
+        );
+      }
+      if (path === `/api/podcasts/refresh-runs/${REFRESH_RUN_HANDLE}`) {
+        return Response.json({
+          data: {
+            refreshRunHandle: REFRESH_RUN_HANDLE,
+            status: "Complete",
+            requestedCount: 1,
+            finishedCount: 1,
+            succeededCount: 1,
+            sourceLimitedCount: 0,
+            failedCount: 0,
+            skippedCount: 0,
+            newEpisodeCount: 0,
+            startedAt: "2026-07-30T12:00:00Z",
+            completedAt: {
+              kind: "Present",
+              value: "2026-07-30T12:00:01Z",
+            },
+          },
+        });
+      }
+      if (path === `/api/libraries/${LIBRARY_ID}/entries`) {
+        entriesReadCount += 1;
+        return replacement;
+      }
+      return Response.json({});
+    });
+
+    renderHydratedPane({
+      href: `/libraries/${LIBRARY_ID}`,
+      resources: {
+        [LIBRARY_ID]: {
+          library: seededLibrary(),
+          entries: [
+            seededMediaEntry(
+              "entry-committed",
+              ACTION_MEDIA_ID,
+              "Committed Library work",
+            ),
+          ],
+          collectionRevision: 1,
+          nextCursor: { kind: "Absent" },
+          exhaustion: "Complete",
+        },
+      },
+      children: (
+        <PanePrimaryChromeProvider publish={publish}>
+          {paneWithLectern}
+        </PanePrimaryChromeProvider>
+      ),
+    });
+
+    expect(
+      await screen.findByRole("link", { name: "Committed Library work" }),
+    ).toBeVisible();
+    let refresh: PaneRefreshPublication | undefined;
+    await waitFor(() => {
+      refresh = publish.mock.calls
+        .map(([update]) => update.publication?.refresh)
+        .findLast(
+          (candidate): candidate is PaneRefreshPublication =>
+            candidate !== undefined,
+        );
+      expect(refresh).toBeDefined();
+    });
+    if (!refresh) {
+      throw new Error("Expected LibraryPaneBody to publish Refresh.");
+    }
+
+    let settled = false;
+    const refreshPromise = refresh
+      .execute({
+        signal: new AbortController().signal,
+        reportProgress: vi.fn(),
+      })
+      .then((result) => {
+        settled = true;
+        return result;
+      });
+
+    await waitFor(() => expect(entriesReadCount).toBe(1));
+    expect(
+      screen.getByRole("link", { name: "Committed Library work" }),
+    ).toBeVisible();
+    expect(settled).toBe(false);
+    expect(refreshRequestBody).toEqual({
+      kind: "Library",
+      libraryId: LIBRARY_ID,
+    });
+
+    await act(async () => {
+      resolveReplacement(
+        Response.json({
+          data: {
+            items: [
+              mediaEntryWire(
+                "entry-replacement",
+                "22222222-2222-4222-8222-222222222299",
+                "Replacement Library work",
+              ),
+            ],
+            collectionRevision: 2,
+            nextCursor: { kind: "Absent" },
+          },
+        }),
+      );
+    });
+
+    await expect(refreshPromise).resolves.toEqual({
+      kind: "Complete",
+      announcement: "Up to date",
+    });
+    expect(
+      await screen.findByRole("link", { name: "Replacement Library work" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("link", { name: "Committed Library work" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("rejects an aborted owner refresh, ignores its late page, and retains committed entries through a later refresh error", async () => {
+    const publish =
+      vi.fn<(update: PanePrimaryChromePublicationUpdate) => void>();
+    let entriesReadCount = 0;
+    let resolveLatePage!: (response: Response) => void;
+    const latePage = new Promise<Response>((resolve) => {
+      resolveLatePage = resolve;
+    });
+    stubFetch(async (input, init) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      const path = fetchInputPath(input);
+      if (
+        path === "/api/podcasts/refresh-runs" &&
+        init?.method === "POST"
+      ) {
+        return Response.json(
+          {
+            data: {
+              refreshRunHandle: REFRESH_RUN_HANDLE,
+              status: "Complete",
+              requestedCount: 1,
+            },
+          },
+          { status: 202 },
+        );
+      }
+      if (path === `/api/podcasts/refresh-runs/${REFRESH_RUN_HANDLE}`) {
+        return Response.json({
+          data: {
+            refreshRunHandle: REFRESH_RUN_HANDLE,
+            status: "Complete",
+            requestedCount: 1,
+            finishedCount: 1,
+            succeededCount: 1,
+            sourceLimitedCount: 0,
+            failedCount: 0,
+            skippedCount: 0,
+            newEpisodeCount: 0,
+            startedAt: "2026-07-30T12:00:00Z",
+            completedAt: {
+              kind: "Present",
+              value: "2026-07-30T12:00:01Z",
+            },
+          },
+        });
+      }
+      if (path === `/api/libraries/${LIBRARY_ID}/entries`) {
+        entriesReadCount += 1;
+        if (entriesReadCount === 1) return latePage;
+        return Response.json(
+          { error: { code: "E_BAD_REQUEST", message: "Refresh failed" } },
+          { status: 400 },
+        );
+      }
+      return Response.json({});
+    });
+
+    renderHydratedPane({
+      href: `/libraries/${LIBRARY_ID}`,
+      resources: {
+        [LIBRARY_ID]: {
+          library: seededLibrary(),
+          entries: [
+            seededMediaEntry(
+              "entry-stable",
+              ACTION_MEDIA_ID,
+              "Stable Library work",
+            ),
+          ],
+          collectionRevision: 1,
+          nextCursor: { kind: "Absent" },
+          exhaustion: "Complete",
+        },
+      },
+      children: (
+        <PanePrimaryChromeProvider publish={publish}>
+          {paneWithLectern}
+        </PanePrimaryChromeProvider>
+      ),
+    });
+
+    expect(
+      await screen.findByRole("link", { name: "Stable Library work" }),
+    ).toBeVisible();
+    let refresh: PaneRefreshPublication | undefined;
+    await waitFor(() => {
+      refresh = publish.mock.calls
+        .map(([update]) => update.publication?.refresh)
+        .findLast(Boolean);
+      expect(refresh).toBeDefined();
+    });
+    if (!refresh) throw new Error("Expected Library Pane Refresh");
+
+    const owner = new AbortController();
+    const abortedRefresh = refresh.execute({
+      signal: owner.signal,
+      reportProgress: vi.fn(),
+    });
+    const expectedAbort = expect(abortedRefresh).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    await waitFor(() => expect(entriesReadCount).toBe(1));
+    owner.abort(new DOMException("Source replaced.", "AbortError"));
+    await expectedAbort;
+
+    act(() => {
+      resolveLatePage(
+        Response.json({
+          data: {
+            items: [
+              mediaEntryWire(
+                "entry-late",
+                "22222222-2222-4222-8222-222222222298",
+                "Late stale Library work",
+              ),
+            ],
+            collectionRevision: 2,
+            nextCursor: { kind: "Absent" },
+          },
+        }),
+      );
+    });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("link", { name: "Late stale Library work" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.getByRole("link", { name: "Stable Library work" }),
+    ).toBeVisible();
+
+    await expect(
+      refresh.execute({
+        signal: new AbortController().signal,
+        reportProgress: vi.fn(),
+      }),
+    ).resolves.toEqual({
+      kind: "Failed",
+      announcement: "Library failed to refresh",
+    });
+    expect(
+      screen.getByRole("link", { name: "Stable Library work" }),
+    ).toBeVisible();
   });
 
   it("shows the Partial no-match copy while the initial library page is loading", async () => {

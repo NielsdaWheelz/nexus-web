@@ -11,7 +11,7 @@ function wire(
     podcast_id: "podcast-1",
     title: "Signal Path",
     contributors: [],
-    sync_status: "complete",
+    sync_status: "Complete",
     default_playback_speed: { kind: "Absent" },
     auto_queue: false,
     unplayed_count: 2,
@@ -31,7 +31,7 @@ describe("decodePodcastSubscriptionListItem activity facts", () => {
         kind: "Present",
         value: "2026-07-20T12:00:00Z",
       },
-      syncStatus: { kind: "Present", value: "complete" },
+      syncStatus: { kind: "Present", value: "Complete" },
     });
   });
 

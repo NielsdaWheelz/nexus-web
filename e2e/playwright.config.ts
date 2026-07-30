@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+import { cpSync, rmSync } from "node:fs";
 import path from "node:path";
 import supabaseEnv from "./supabase-env.cjs";
 
@@ -19,6 +20,20 @@ const API_PORT = process.env.API_PORT ?? "8000";
 const READER_PROXY_PORT = process.env.READER_PROXY_PORT ?? "8010";
 const REAL_MEDIA_ENABLED = process.env.E2E_REAL_MEDIA === "1";
 const RUNTIME_ENV = REAL_MEDIA_ENABLED ? "local" : "test";
+
+if (REAL_MEDIA_ENABLED) {
+  const sourceFixtureDir =
+    process.env.REAL_MEDIA_FIXTURE_DIR ??
+    path.join(ROOT_DIR, "python/tests/fixtures/real_media");
+  const runtimeFixtureDir = path.join(
+    ROOT_DIR,
+    "e2e/.seed/real-media-runtime",
+  );
+  rmSync(runtimeFixtureDir, { recursive: true, force: true });
+  cpSync(sourceFixtureDir, runtimeFixtureDir, { recursive: true });
+  process.env.REAL_MEDIA_PROVIDER_FIXTURES = "1";
+  process.env.REAL_MEDIA_FIXTURE_DIR = runtimeFixtureDir;
+}
 
 process.env.RATE_LIMIT_RPM ??= "240";
 process.env.RATE_LIMIT_CONCURRENT ??= "8";

@@ -27,6 +27,10 @@ describe("panePublications", () => {
     const icon = createElement("span");
     const toolbar = createElement("div");
     const onSelect = () => {};
+    const executeRefresh = async () => ({
+      kind: "Complete" as const,
+      announcement: "Refreshed",
+    });
     const publication: PanePrimaryChromePublication = {
       header: {
         kind: "resource",
@@ -62,6 +66,10 @@ describe("panePublications", () => {
           onSelect,
         }],
       },
+      refresh: {
+        sourceKey: "media:1",
+        execute: executeRefresh,
+      },
     };
 
     expect(arePanePrimaryChromePublicationsEqual(publication, {
@@ -81,6 +89,10 @@ describe("panePublications", () => {
       menu: publication.menu?.kind === "FlatMenu"
         ? { kind: "FlatMenu", actions: [...publication.menu.actions] }
         : publication.menu,
+      refresh: {
+        sourceKey: "media:1",
+        execute: executeRefresh,
+      },
     })).toBe(true);
     expect(arePanePrimaryChromePublicationsEqual(publication, {
       ...publication,
@@ -100,6 +112,23 @@ describe("panePublications", () => {
           label: "Credits…",
           onSelect: () => {},
         }],
+      },
+    })).toBe(false);
+    expect(arePanePrimaryChromePublicationsEqual(publication, {
+      ...publication,
+      refresh: {
+        sourceKey: "media:2",
+        execute: executeRefresh,
+      },
+    })).toBe(false);
+    expect(arePanePrimaryChromePublicationsEqual(publication, {
+      ...publication,
+      refresh: {
+        sourceKey: "media:1",
+        execute: async () => ({
+          kind: "Complete",
+          announcement: "Refreshed",
+        }),
       },
     })).toBe(false);
   });

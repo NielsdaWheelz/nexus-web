@@ -17,6 +17,8 @@ import PodcastsPaneBody from "./PodcastsPaneBody";
 const PODCASTS_HREF = "/podcasts";
 const PODCASTS_ROUTE_KEY =
   resolvePaneRouteIdentity(PODCASTS_HREF).routeKey;
+const REFRESH_RUN_HANDLE =
+  "prr1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB";
 let publishedPrimaryChrome: PanePrimaryChromePublication | null = null;
 
 function jsonResponse(body: unknown): Response {
@@ -101,7 +103,7 @@ function podcastSubscription(index: number) {
     contributors: [],
     default_playback_speed: { kind: "Absent" },
     auto_queue: false,
-    sync_status: "complete",
+    sync_status: "Complete",
     unplayed_count: 0,
     latest_episode_published_at: { kind: "Absent" },
   };
@@ -125,6 +127,276 @@ describe("PodcastsPaneBody — Nexus podcast integration", () => {
       "href",
       "/browse?kind=Podcast",
     );
+  });
+
+  it("awaits the exact owner generation after the Podcasts refresh run", async () => {
+    const refreshedPage = deferredResponse();
+    let subscriptionCalls = 0;
+    let refreshRequestBody: unknown;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo, init?: RequestInit) => {
+        const url = new URL(String(input), "http://localhost");
+        if (
+          url.pathname === "/api/podcasts/refresh-runs" &&
+          init?.method === "POST"
+        ) {
+          refreshRequestBody = JSON.parse(String(init.body));
+          return new Response(
+            JSON.stringify({
+              data: {
+                refreshRunHandle: REFRESH_RUN_HANDLE,
+                status: "Complete",
+                requestedCount: 1,
+              },
+            }),
+            {
+              status: 202,
+              headers: { "Content-Type": "application/json" },
+            },
+          );
+        }
+        if (
+          url.pathname ===
+          `/api/podcasts/refresh-runs/${REFRESH_RUN_HANDLE}`
+        ) {
+          return jsonResponse({
+            data: {
+              refreshRunHandle: REFRESH_RUN_HANDLE,
+              status: "Complete",
+              requestedCount: 1,
+              finishedCount: 1,
+              succeededCount: 1,
+              sourceLimitedCount: 0,
+              failedCount: 0,
+              skippedCount: 0,
+              newEpisodeCount: 0,
+              startedAt: "2026-07-30T12:00:00Z",
+              completedAt: {
+                kind: "Present",
+                value: "2026-07-30T12:00:01Z",
+              },
+            },
+          });
+        }
+        if (url.pathname === "/api/podcasts/subscriptions") {
+          subscriptionCalls += 1;
+          if (subscriptionCalls === 2) return refreshedPage.promise;
+          return jsonResponse({
+            data: {
+              items: [
+                { ...podcastSubscription(1), title: "Before refresh show" },
+              ],
+              collectionRevision: 1,
+              nextCursor: { kind: "Absent" },
+            },
+          });
+        }
+        if (url.pathname === "/api/libraries") {
+          return jsonResponse({
+            data: {
+              items: [],
+              collectionRevision: 1,
+              nextCursor: { kind: "Absent" },
+            },
+          });
+        }
+        if (url.pathname.startsWith("/api/resource-graph/connections")) {
+          return jsonResponse({ data: {} });
+        }
+        throw new Error(`Unexpected fetch: ${url.pathname}`);
+      }),
+    );
+    renderPodcastsPane();
+    expect(
+      await screen.findByRole("link", { name: "Before refresh show" }),
+    ).toBeVisible();
+    await waitFor(() => expect(publishedPrimaryChrome?.refresh).toBeDefined());
+    const refresh = publishedPrimaryChrome?.refresh;
+    if (!refresh) throw new Error("Expected Podcasts Pane Refresh");
+
+    let refreshResult:
+      | Awaited<ReturnType<typeof refresh.execute>>
+      | undefined;
+    let refreshPromise!: Promise<void>;
+    await act(async () => {
+      refreshPromise = refresh
+        .execute({
+          signal: new AbortController().signal,
+          reportProgress: vi.fn(),
+        })
+        .then((result) => {
+          refreshResult = result;
+        });
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(subscriptionCalls).toBe(2));
+    expect(
+      screen.getByRole("link", { name: "Before refresh show" }),
+    ).toBeVisible();
+
+    act(() => {
+      refreshedPage.resolve(
+        jsonResponse({
+          data: {
+            items: [
+              { ...podcastSubscription(2), title: "After refresh show" },
+            ],
+            collectionRevision: 2,
+            nextCursor: { kind: "Absent" },
+          },
+        }),
+      );
+    });
+    await refreshPromise;
+    expect(
+      await screen.findByRole("link", { name: "After refresh show" }),
+    ).toBeVisible();
+    expect(refreshResult).toEqual({
+      kind: "Complete",
+      announcement: "Up to date",
+    });
+    expect(refreshRequestBody).toEqual({ kind: "Podcasts" });
+  });
+
+  it("rejects an aborted owner refresh, ignores its late page, and retains committed podcasts through a later refresh error", async () => {
+    const latePage = deferredResponse();
+    let subscriptionCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo, init?: RequestInit) => {
+        const url = new URL(String(input), "http://localhost");
+        if (
+          url.pathname === "/api/podcasts/refresh-runs" &&
+          init?.method === "POST"
+        ) {
+          return new Response(
+            JSON.stringify({
+              data: {
+                refreshRunHandle: REFRESH_RUN_HANDLE,
+                status: "Complete",
+                requestedCount: 1,
+              },
+            }),
+            {
+              status: 202,
+              headers: { "Content-Type": "application/json" },
+            },
+          );
+        }
+        if (
+          url.pathname ===
+          `/api/podcasts/refresh-runs/${REFRESH_RUN_HANDLE}`
+        ) {
+          return jsonResponse({
+            data: {
+              refreshRunHandle: REFRESH_RUN_HANDLE,
+              status: "Complete",
+              requestedCount: 1,
+              finishedCount: 1,
+              succeededCount: 1,
+              sourceLimitedCount: 0,
+              failedCount: 0,
+              skippedCount: 0,
+              newEpisodeCount: 0,
+              startedAt: "2026-07-30T12:00:00Z",
+              completedAt: {
+                kind: "Present",
+                value: "2026-07-30T12:00:01Z",
+              },
+            },
+          });
+        }
+        if (url.pathname === "/api/podcasts/subscriptions") {
+          subscriptionCalls += 1;
+          if (subscriptionCalls === 1) {
+            return jsonResponse({
+              data: {
+                items: [
+                  { ...podcastSubscription(1), title: "Stable podcast" },
+                ],
+                collectionRevision: 1,
+                nextCursor: { kind: "Absent" },
+              },
+            });
+          }
+          if (subscriptionCalls === 2) return latePage.promise;
+          return new Response(
+            JSON.stringify({
+              error: { code: "E_BAD_REQUEST", message: "Refresh failed" },
+            }),
+            {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            },
+          );
+        }
+        if (url.pathname === "/api/libraries") {
+          return jsonResponse({
+            data: {
+              items: [],
+              collectionRevision: 1,
+              nextCursor: { kind: "Absent" },
+            },
+          });
+        }
+        if (url.pathname.startsWith("/api/resource-graph/connections")) {
+          return jsonResponse({ data: {} });
+        }
+        throw new Error(`Unexpected fetch: ${url.pathname}`);
+      }),
+    );
+
+    renderPodcastsPane();
+    expect(
+      await screen.findByRole("link", { name: "Stable podcast" }),
+    ).toBeVisible();
+    await waitFor(() => expect(publishedPrimaryChrome?.refresh).toBeDefined());
+    const refresh = publishedPrimaryChrome?.refresh;
+    if (!refresh) throw new Error("Expected Podcasts Pane Refresh");
+
+    const owner = new AbortController();
+    const abortedRefresh = refresh.execute({
+      signal: owner.signal,
+      reportProgress: vi.fn(),
+    });
+    const expectedAbort = expect(abortedRefresh).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    await waitFor(() => expect(subscriptionCalls).toBe(2));
+    owner.abort(new DOMException("Source replaced.", "AbortError"));
+    await expectedAbort;
+
+    act(() => {
+      latePage.resolve(
+        jsonResponse({
+          data: {
+            items: [
+              { ...podcastSubscription(2), title: "Late stale podcast" },
+            ],
+            collectionRevision: 2,
+            nextCursor: { kind: "Absent" },
+          },
+        }),
+      );
+    });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("link", { name: "Late stale podcast" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("link", { name: "Stable podcast" })).toBeVisible();
+
+    await expect(
+      refresh.execute({
+        signal: new AbortController().signal,
+        reportProgress: vi.fn(),
+      }),
+    ).resolves.toEqual({
+      kind: "Failed",
+      announcement: "Podcasts failed to refresh",
+    });
+    expect(screen.getByRole("link", { name: "Stable podcast" })).toBeVisible();
   });
 
   it("shows Partial filter feedback beside the initial loading state", async () => {

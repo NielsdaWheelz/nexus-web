@@ -60,6 +60,7 @@ from nexus.services.podcasts.episode_identity import (
     EpisodeAlias,
     attach_episode_aliases_in_current_transaction,
 )
+from nexus.services.podcasts.refresh import healthy_next_sync_at
 
 DEV_EMAIL = "dev@nexus.local"
 DEV_PASSWORD = "devdevdev"
@@ -244,9 +245,7 @@ def main() -> None:
 
     with session_factory() as db:
         # ── Nexus user + default library ──────────────────────────────
-        default_library_id = ensure_user_and_default_library(
-            db, user_id, email=DEV_EMAIL
-        )
+        default_library_id = ensure_user_and_default_library(db, user_id, email=DEV_EMAIL)
 
         # ── Research library ──────────────────────────────────────────
         research_lib_id = _sid("library:research")
@@ -848,12 +847,18 @@ def main() -> None:
         ).scalar_one_or_none()
         if not existing_sub:
             subscription_id = _sid("subscription:hardcore-history")
+            checked_at = datetime.now(UTC)
             existing_sub = PodcastSubscription(
                 id=subscription_id,
                 user_id=user_id,
                 podcast_id=podcast_id,
                 auto_queue=True,
-                sync_status="complete",
+                sync_status="Complete",
+                sync_generation=0,
+                next_sync_at=healthy_next_sync_at(subscription_id, checked_at),
+                consecutive_sync_failures=0,
+                sync_completed_at=checked_at,
+                last_checked_at=checked_at,
             )
             db.add(existing_sub)
             db.flush()

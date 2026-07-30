@@ -12,7 +12,7 @@ import type {
   EdgeKind,
 } from "@/lib/resourceGraph/connections";
 import type { MediaProcessingStatus } from "@/lib/status/mediaProcessing";
-import type { PodcastSyncStatus } from "@/lib/status/podcastSync";
+import type { PodcastSyncStatus } from "@/lib/podcasts/types";
 import type { ActionPublication } from "@/lib/actions/resourceActions";
 import type { PublicationDate } from "@/lib/dates/publicationDate";
 import type {
@@ -67,6 +67,10 @@ export type CollectionActivity =
   | {
       readonly kind: "Unplayed";
       readonly count: PositiveCount;
+    }
+  | {
+      readonly kind: "PodcastSync";
+      readonly status: Extract<PodcastSyncStatus, "Pending" | "Running">;
     };
 
 export type CollectionContext =
@@ -80,7 +84,7 @@ export type ExceptionalStatus =
     }
   | {
       readonly kind: "PodcastSync";
-      readonly status: Exclude<PodcastSyncStatus, "complete">;
+      readonly status: Extract<PodcastSyncStatus, "Failed">;
     };
 
 export interface ConnectionSummaryView {

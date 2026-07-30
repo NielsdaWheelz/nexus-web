@@ -194,7 +194,8 @@ class TestDatabasePoolConfiguration:
 class TestWorkerMaintenanceConfiguration:
     def test_production_and_maintenance_schedule_defaults(self):
         settings = _make_settings()
-        assert settings.podcast_active_poll_schedule_seconds == 0
+        assert settings.podcast_refresh_due_schedule_seconds == 900
+        assert settings.podcast_refresh_due_limit == 100
         assert settings.ingest_reconcile_schedule_seconds == 600
         assert settings.sync_gutenberg_catalog_schedule_seconds == 0
         assert settings.background_job_prune_schedule_seconds == 0
@@ -216,8 +217,8 @@ class TestWorkerMaintenanceConfiguration:
             f"production worker lanes overlap: {sorted(interactive & background)}"
         )
         assert interactive | background == production
-        assert len(production) == 18
-        assert len(maintenance) == 4
+        assert len(production) == 20
+        assert len(maintenance) == 3
         assert not production & maintenance, (
             f"production and maintenance job sets overlap: {sorted(production & maintenance)}"
         )
@@ -238,21 +239,31 @@ class TestWorkerMaintenanceConfiguration:
         assert definition.failed_result_statuses == ("failed",)
         assert definition.dead_letter_handler is not None
 
+    def test_podcast_refresh_jobs_are_background_work(self):
+        from nexus.jobs.registry import get_default_registry
+
+        registry = get_default_registry()
+        assert "podcast_refresh_due_job" in BACKGROUND_WORKER_JOB_KINDS
+        assert "podcast_refresh_run_prune_job" in BACKGROUND_WORKER_JOB_KINDS
+        assert registry["podcast_refresh_due_job"].periodic_interval_seconds == 900
+        assert registry["podcast_refresh_run_prune_job"].periodic_interval_seconds == 86_400
+        assert registry["podcast_sync_subscription_job"].dead_letter_handler is not None
+
     def test_zero_schedule_values_are_valid_disabled_state(self):
         settings = _make_settings(
-            PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS=0,
             INGEST_RECONCILE_SCHEDULE_SECONDS=0,
             SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS=0,
             BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS=0,
         )
-        assert settings.podcast_active_poll_schedule_seconds == 0
         assert settings.ingest_reconcile_schedule_seconds == 0
         assert settings.sync_gutenberg_catalog_schedule_seconds == 0
         assert settings.background_job_prune_schedule_seconds == 0
 
     def test_negative_schedule_values_are_rejected(self):
-        with pytest.raises(ValidationError, match="PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS"):
-            _make_settings(PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS=-1)
+        with pytest.raises(ValidationError, match="PODCAST_REFRESH_DUE_SCHEDULE_SECONDS"):
+            _make_settings(PODCAST_REFRESH_DUE_SCHEDULE_SECONDS=0)
+        with pytest.raises(ValidationError, match="PODCAST_REFRESH_DUE_LIMIT"):
+            _make_settings(PODCAST_REFRESH_DUE_LIMIT=0)
         with pytest.raises(ValidationError, match="INGEST_RECONCILE_SCHEDULE_SECONDS"):
             _make_settings(INGEST_RECONCILE_SCHEDULE_SECONDS=-1)
         with pytest.raises(ValidationError, match="SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS"):

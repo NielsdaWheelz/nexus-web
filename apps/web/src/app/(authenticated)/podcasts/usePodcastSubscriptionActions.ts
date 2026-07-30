@@ -4,19 +4,19 @@ import { useCallback } from "react";
 import { toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { isAbortError } from "@/lib/errors";
 import {
   addLibraryPlacement,
   listLibraryPlacements,
   removeLibraryPlacement,
   type LibraryPlacementOption,
 } from "@/lib/libraries/libraryPlacement";
+import { runPodcastRefresh } from "@/lib/podcasts/refresh";
+import type { PodcastRefreshResult } from "@/lib/podcasts/types";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import {
   buildPodcastUnsubscribeConfirmation,
-  getPodcastSubscriptionSyncPatch,
-  refreshPodcastSubscriptionSync,
   unsubscribeFromPodcast,
-  type PodcastSubscriptionSyncRefreshResult,
   type PodcastUnsubscribeResult,
 } from "./podcastSubscriptions";
 
@@ -24,10 +24,10 @@ import {
  * The shared network core of the five podcast-subscription handlers, used by
  * both the list pane (keyed by podcast id) and the detail pane (single
  * podcast). Each primitive owns its busy-state toggle and routes failures to
- * `onError`; the caller supplies the success bookkeeping (`onSuccess`) because
- * the two panes patch different local state shapes (row badges vs. scalar
- * subscription). Membership/refresh busy sets are owned here so callers read
- * them for disabled states.
+ * `onError`; the caller owns success bookkeeping and owner-level revalidation.
+ * Membership and refresh busy sets are owned here so callers read them for
+ * disabled states. Refresh observation borrows the pane owner's source-fenced
+ * signal and stays busy until that owner's success callback commits.
  */
 export function usePodcastSubscriptionActions(
   onError: (feedback: FeedbackContent) => void,
@@ -117,25 +117,36 @@ export function usePodcastSubscriptionActions(
     [busyLibraryPlacementKeys, onError],
   );
 
-  const refreshSync = useCallback(
+  const checkForNewEpisodes = useCallback(
     async (
       podcastId: string,
+      signal: AbortSignal,
       onSuccess: (
-        patch: ReturnType<typeof getPodcastSubscriptionSyncPatch>,
-        result: PodcastSubscriptionSyncRefreshResult,
-      ) => void,
+        result: PodcastRefreshResult,
+        signal: AbortSignal,
+      ) => void | Promise<void>,
     ): Promise<void> => {
       refreshingPodcastIds.add(podcastId);
       try {
-        const result = await refreshPodcastSubscriptionSync(podcastId);
-        onSuccess(getPodcastSubscriptionSyncPatch(result), result);
+        const result = await runPodcastRefresh(
+          { kind: "Podcast", podcastId },
+          {
+            signal,
+            onProgress: () => {},
+          },
+        );
+        if (signal.aborted) return;
+        await onSuccess(result, signal);
       } catch (refreshError) {
+        if (isAbortError(refreshError)) return;
         if (handleUnauthenticatedApiError(refreshError)) return;
         if (!isApiError(refreshError) || isSameSystemApiDefect(refreshError)) {
           throw refreshError;
         }
         onError(
-          toFeedback(refreshError, { fallback: "Failed to refresh podcast sync" }),
+          toFeedback(refreshError, {
+            fallback: "Failed to check for new episodes",
+          }),
         );
       } finally {
         refreshingPodcastIds.remove(podcastId);
@@ -199,7 +210,7 @@ export function usePodcastSubscriptionActions(
     loadLibraries,
     addToLibrary,
     removeFromLibrary,
-    refreshSync,
+    checkForNewEpisodes,
     unsubscribe,
   };
 }

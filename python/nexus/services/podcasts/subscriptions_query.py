@@ -527,7 +527,7 @@ def get_podcast_detail_for_viewer(
                 ps.sync_attempts,
                 ps.sync_started_at,
                 ps.sync_completed_at,
-                ps.last_synced_at,
+                ps.last_checked_at,
                 ps.updated_at
             FROM podcasts p
             LEFT JOIN podcast_subscriptions ps
@@ -561,7 +561,7 @@ def get_podcast_detail_for_viewer(
             sync_attempts=row[18],
             sync_started_at=row[19],
             sync_completed_at=row[20],
-            last_synced_at=row[21],
+            last_checked_at=row[21],
             updated_at=row[22],
             backfill=_load_backfill_out(db, subscription_id=UUID(str(row[11]))),
         )

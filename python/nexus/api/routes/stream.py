@@ -1,9 +1,9 @@
 """SSE replay/tail routes for durable runs and media processing status.
 
-All four browser-callable streams live under ``/stream/`` (auth via stream-token
+All five browser-callable streams live under ``/stream/`` (auth via stream-token
 bearer; see ``stream_paths.is_stream_path``). Three are append-cursor durable-run
-streams (chat run, oracle reading, Dossier build) that share one
-generic factory; the fourth is the media processing-status snapshot/diff stream.
+streams (chat run, oracle reading, Dossier build) that share one generic factory;
+media processing and Podcast refresh runs use snapshot/diff streams.
 
 Push-driven: an AFTER trigger ``pg_notify``s the per-entity channel on each new
 event/state change; the tail uses the shared stream LISTEN resource and re-reads
@@ -38,6 +38,11 @@ from nexus.services import oracle as oracle_service
 from nexus.services import run_kit
 from nexus.services.artifacts import engine as artifact_engine
 from nexus.services.artifacts.handles import unseal_artifact_build
+from nexus.services.podcasts import refresh as podcast_refresh_service
+from nexus.services.podcasts.handles import (
+    PodcastRefreshRunHandle,
+    unseal_podcast_refresh_run,
+)
 from nexus.services.redact import safe_kv
 
 router = APIRouter(tags=["streaming"])
@@ -220,6 +225,50 @@ async def stream_media_events(
             request=request,
             listener=listener,
             read_snapshot=lambda: _read_media_snapshot(viewer_id, media_id),
+        ),
+        media_type="text/event-stream; charset=utf-8",
+        headers=_SSE_HEADERS,
+    )
+
+
+@router.get("/stream/podcast-refresh-runs/{refresh_run_handle}/events")
+async def stream_podcast_refresh_run_events(
+    request: Request,
+    refresh_run_handle: PodcastRefreshRunHandle,
+    viewer_id: Annotated[UUID, Depends(get_stream_viewer)],
+) -> StreamingResponse:
+    run_id = unseal_podcast_refresh_run(refresh_run_handle)
+
+    def assert_owner() -> None:
+        with get_session_factory()() as db:
+            podcast_refresh_service.assert_refresh_run_owner(
+                db,
+                viewer_id=viewer_id,
+                run_id=run_id,
+            )
+
+    def read_snapshot() -> tuple[dict[str, Any], bool]:
+        with get_session_factory()() as db:
+            snapshot = podcast_refresh_service.get_refresh_run_snapshot(
+                db,
+                viewer_id=viewer_id,
+                run_id=run_id,
+            )
+        return (
+            snapshot.model_dump(mode="json", by_alias=True),
+            snapshot.status != "Running",
+        )
+
+    await run_in_threadpool(assert_owner)
+    listener = await open_sse_listener(
+        podcast_refresh_service.PODCAST_REFRESH_NOTIFY_CHANNEL,
+        str(run_id),
+    )
+    return StreamingResponse(
+        tail_snapshot_stream(
+            request=request,
+            listener=listener,
+            read_snapshot=read_snapshot,
         ),
         media_type="text/event-stream; charset=utf-8",
         headers=_SSE_HEADERS,

@@ -14,6 +14,8 @@ from nexus.schemas.contributors import (
 )
 from nexus.schemas.media import MediaProcessingStatus
 from nexus.schemas.presence import Presence
+from nexus.services.podcasts.handles import PodcastRefreshRunHandle
+from nexus.services.podcasts.types import PodcastRefreshRunStatus, PodcastSyncStatus
 from nexus.services.sealed_handles import DiscoveryTargetHandle
 
 
@@ -208,13 +210,13 @@ class PodcastSubscriptionStatusOut(BaseModel):
     podcast_id: UUID
     default_playback_speed: float | None = Field(default=None, ge=0.5, le=3.0)
     auto_queue: bool = False
-    sync_status: Literal["pending", "running", "partial", "complete", "source_limited", "failed"]
+    sync_status: PodcastSyncStatus
     sync_error_code: str | None = None
     sync_error_message: str | None = None
     sync_attempts: int
     sync_started_at: datetime | None = None
     sync_completed_at: datetime | None = None
-    last_synced_at: datetime | None = None
+    last_checked_at: datetime | None = None
     updated_at: datetime
     backfill: PodcastBackfillOut
 
@@ -258,7 +260,7 @@ class PodcastSubscriptionListItemOut(BaseModel):
     latest_episode_published_at: Presence[datetime]
     default_playback_speed: Presence[float]
     auto_queue: bool
-    sync_status: Literal["pending", "running", "partial", "complete", "source_limited", "failed"]
+    sync_status: PodcastSyncStatus
 
     model_config = ConfigDict(extra="forbid")
 
@@ -417,16 +419,67 @@ PodcastUnsubscribeOut = Annotated[
 ]
 
 
-class PodcastSubscriptionSyncRefreshOut(BaseModel):
+class PodcastRefreshPodcastScope(BaseModel):
+    kind: Literal["Podcast"] = "Podcast"
     podcast_id: UUID
-    sync_status: Literal["pending", "running", "partial", "complete", "source_limited", "failed"]
-    sync_error_code: str | None = None
-    sync_error_message: str | None = None
-    sync_attempts: int
-    sync_enqueued: bool
-    collection_revision: CollectionRevision = Field(alias="collectionRevision")
-    library_entries_collection_revision: CollectionRevision = Field(
-        alias="libraryEntriesCollectionRevision"
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
     )
 
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+class PodcastRefreshPodcastsScope(BaseModel):
+    kind: Literal["Podcasts"] = "Podcasts"
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class PodcastRefreshLibraryScope(BaseModel):
+    kind: Literal["Library"] = "Library"
+    library_id: UUID
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )
+
+
+PodcastRefreshManualScope = Annotated[
+    PodcastRefreshPodcastScope | PodcastRefreshPodcastsScope | PodcastRefreshLibraryScope,
+    Field(discriminator="kind"),
+]
+
+
+class PodcastRefreshRunCreateOut(BaseModel):
+    refresh_run_handle: PodcastRefreshRunHandle
+    status: PodcastRefreshRunStatus
+    requested_count: int = Field(ge=0)
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )
+
+
+class PodcastRefreshRunSnapshotOut(BaseModel):
+    refresh_run_handle: PodcastRefreshRunHandle
+    status: PodcastRefreshRunStatus
+    requested_count: int = Field(ge=0)
+    finished_count: int = Field(ge=0)
+    succeeded_count: int = Field(ge=0)
+    source_limited_count: int = Field(ge=0)
+    failed_count: int = Field(ge=0)
+    skipped_count: int = Field(ge=0)
+    new_episode_count: int = Field(ge=0)
+    started_at: datetime
+    completed_at: Presence[datetime]
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )

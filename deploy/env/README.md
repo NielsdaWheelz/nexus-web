@@ -57,11 +57,14 @@ Worker topology is invocation-owned. Hetzner Compose assigns the fixed
 allowlist. Reconciliation runs every 600 seconds in the background lane.
 Maintenance-only schedules remain zero in the normal production env.
 `deploy/hetzner/sync-env.sh` rejects stored lane, maintenance-gate, or raw
-allowlist values.
+allowlist values. The production background lane instead requires
+`PODCAST_REFRESH_DUE_SCHEDULE_SECONDS=900` and a positive
+`PODCAST_REFRESH_DUE_LIMIT`; refresh-run pruning uses its registry-owned daily
+schedule.
 
 A bounded maintenance process must set `WORKER_LANE=maintenance`,
 `NEXUS_ALLOW_WORKER_MAINTENANCE=1`, and a non-empty
-`WORKER_ALLOWED_JOB_KINDS` subset of the four declared maintenance kinds on the
+`WORKER_ALLOWED_JOB_KINDS` subset of the three declared maintenance kinds on the
 one-off invocation itself. There is no continuously deployed maintenance
 service.
 

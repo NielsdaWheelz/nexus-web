@@ -38,6 +38,7 @@ import {
   libraryPresentation,
   RESERVED_LIBRARY_NAME_MESSAGE,
 } from "@/lib/libraries/presentation";
+import { isAbortError } from "@/lib/errors";
 import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
 import { RESOURCE_ACTION_CATALOG } from "@/lib/actions/resourceActions";
 import { useHydrationPreservedInput } from "@/lib/ui/useHydrationPreservedInput";
@@ -58,6 +59,7 @@ import {
 } from "@/lib/panes/paneRuntime";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
+import type { PaneRefreshPublication } from "@/lib/panes/panePublications";
 import { findPaneSearchFocusTarget } from "@/lib/workspace/paneDom";
 import {
   acceptLibraryInvite,
@@ -79,6 +81,13 @@ interface LibrariesSnapshot {
   readonly collectionRevision: CollectionRevision;
   readonly nextCursor: Presence<CollectionCursor>;
   readonly exhaustion: "Partial" | "Complete";
+}
+
+interface PendingLibrariesRevalidation {
+  readonly version: number;
+  readonly resolve: () => void;
+  readonly reject: (error: unknown) => void;
+  readonly removeAbortListener: () => void;
 }
 
 const LIBRARIES_VISIT_DATA = definePaneVisitDataKey<LibrariesSnapshot>(
@@ -108,6 +117,7 @@ export default function LibrariesPaneBody() {
     pendingFocusNeighborRef.current = focusNeighborFor(removedId);
   }, [focusNeighborFor]);
   const committedSnapshotRef = useRef<LibrariesSnapshot | null>(null);
+  const refreshFallbackSnapshotRef = useRef<LibrariesSnapshot | null>(null);
   const captureCommitted = useCallback(() => committedSnapshotRef.current, []);
   const restored = usePaneVisitData(LIBRARIES_VISIT_DATA, captureCommitted);
   const allowResourceAdoptionRef = useRef(restored === null);
@@ -116,6 +126,10 @@ export default function LibrariesPaneBody() {
   );
   const deletingLibraryIds = useStringIdSet();
   const [librariesRefreshVersion, setLibrariesRefreshVersion] = useState(0);
+  const librariesRefreshVersionRef = useRef(0);
+  const pendingLibrariesRevalidationRef =
+    useRef<PendingLibrariesRevalidation | null>(null);
+  const completedLibrariesRevalidationVersionRef = useRef<number | null>(null);
   const [chainEpoch, setChainEpoch] = useState(0);
   const [refreshingLibraries, setRefreshingLibraries] = useState(false);
   const clearAllVisitData = useClearAllPaneVisitData();
@@ -170,14 +184,77 @@ export default function LibrariesPaneBody() {
     controller !== null || librariesResource.status === "error",
   );
 
+  const rejectPendingLibrariesRevalidation = useCallback((error: unknown) => {
+    const pending = pendingLibrariesRevalidationRef.current;
+    pendingLibrariesRevalidationRef.current = null;
+    completedLibrariesRevalidationVersionRef.current = null;
+    if (!pending) return;
+    pending.removeAbortListener();
+    pending.reject(error);
+  }, []);
   const refreshLibraries = useCallback(() => {
+    rejectPendingLibrariesRevalidation(
+      new DOMException("Libraries refresh was superseded.", "AbortError"),
+    );
+    if (committedSnapshotRef.current !== null) {
+      refreshFallbackSnapshotRef.current = committedSnapshotRef.current;
+    }
     committedSnapshotRef.current = null;
     clearAllVisitData();
     allowResourceAdoptionRef.current = true;
     setRefreshingLibraries(true);
     setChainEpoch((epoch) => epoch + 1);
-    setLibrariesRefreshVersion((version) => version + 1);
-  }, [clearAllVisitData]);
+    const version = librariesRefreshVersionRef.current + 1;
+    librariesRefreshVersionRef.current = version;
+    setLibrariesRefreshVersion(version);
+  }, [clearAllVisitData, rejectPendingLibrariesRevalidation]);
+  const revalidateLibraries = useCallback(
+    (signal: AbortSignal): Promise<void> => {
+      if (signal.aborted) {
+        return Promise.reject(
+          signal.reason ??
+            new DOMException("Libraries refresh was aborted.", "AbortError"),
+        );
+      }
+      refreshLibraries();
+      const version = librariesRefreshVersionRef.current;
+      return new Promise<void>((resolve, reject) => {
+        const onAbort = () => {
+          const pending = pendingLibrariesRevalidationRef.current;
+          if (pending?.version !== version) return;
+          pendingLibrariesRevalidationRef.current = null;
+          completedLibrariesRevalidationVersionRef.current = null;
+          pending.removeAbortListener();
+          allowResourceAdoptionRef.current = false;
+          setRefreshingLibraries(false);
+          committedSnapshotRef.current = refreshFallbackSnapshotRef.current;
+          refreshFallbackSnapshotRef.current = null;
+          reject(
+            signal.reason ??
+              new DOMException("Libraries refresh was aborted.", "AbortError"),
+          );
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        pendingLibrariesRevalidationRef.current = {
+          version,
+          resolve,
+          reject,
+          removeAbortListener: () =>
+            signal.removeEventListener("abort", onAbort),
+        };
+        if (signal.aborted) onAbort();
+      });
+    },
+    [refreshLibraries],
+  );
+  useEffect(
+    () => () => {
+      rejectPendingLibrariesRevalidation(
+        new DOMException("Libraries refresh was replaced.", "AbortError"),
+      );
+    },
+    [rejectPendingLibrariesRevalidation],
+  );
 
   const [settingsLibrary, setSettingsLibrary] = useState<Library | null>(null);
   const installSafeMutation = useCallback(
@@ -195,6 +272,7 @@ export default function LibrariesPaneBody() {
         collectionRevision,
       };
       committedSnapshotRef.current = next;
+      refreshFallbackSnapshotRef.current = null;
       setController(next);
       clearAllVisitData();
       setChainEpoch((epoch) => epoch + 1);
@@ -221,11 +299,43 @@ export default function LibrariesPaneBody() {
       setController(next);
       setRefreshingLibraries(false);
       setChainEpoch((epoch) => epoch + 1);
+      const pending = pendingLibrariesRevalidationRef.current;
+      if (pending?.version === librariesRefreshVersion) {
+        completedLibrariesRevalidationVersionRef.current = pending.version;
+      }
+    } else if (
+      librariesResource.status === "error" &&
+      allowResourceAdoptionRef.current
+    ) {
+      allowResourceAdoptionRef.current = false;
+      setRefreshingLibraries(false);
+      committedSnapshotRef.current = refreshFallbackSnapshotRef.current;
+      refreshFallbackSnapshotRef.current = null;
+      const pending = pendingLibrariesRevalidationRef.current;
+      if (pending?.version === librariesRefreshVersion) {
+        rejectPendingLibrariesRevalidation(librariesResource.error);
+      }
     }
-  }, [librariesResource]);
+  }, [
+    librariesRefreshVersion,
+    librariesResource,
+    rejectPendingLibrariesRevalidation,
+  ]);
 
   useLayoutEffect(() => {
     committedSnapshotRef.current = controller;
+    const pending = pendingLibrariesRevalidationRef.current;
+    if (
+      controller === null ||
+      pending === null ||
+      completedLibrariesRevalidationVersionRef.current !== pending.version
+    ) {
+      return;
+    }
+    completedLibrariesRevalidationVersionRef.current = null;
+    pendingLibrariesRevalidationRef.current = null;
+    pending.removeAbortListener();
+    pending.resolve();
   }, [controller]);
 
   useEffect(() => {
@@ -550,8 +660,40 @@ export default function LibrariesPaneBody() {
     pendingFocusNeighborRef.current = neighbor;
     setFocusRecoverySerial((serial) => serial + 1);
   }, []);
+  const executeRefresh = useCallback<PaneRefreshPublication["execute"]>(
+    async ({ signal, reportProgress }) => {
+      reportProgress({
+        kind: "Determinate",
+        finishedCount: 0,
+        requestedCount: 1,
+      });
+      try {
+        await revalidateLibraries(signal);
+        reportProgress({
+          kind: "Determinate",
+          finishedCount: 1,
+          requestedCount: 1,
+        });
+        return {
+          kind: "Complete" as const,
+          announcement: "Libraries refreshed",
+        };
+      } catch (error: unknown) {
+        if (isAbortError(error)) throw error;
+        return {
+          kind: "Failed" as const,
+          announcement: "Libraries failed to refresh",
+        };
+      }
+    },
+    [revalidateLibraries],
+  );
   usePanePrimaryChrome({
     search,
+    refresh: {
+      sourceKey: "Libraries.Index",
+      execute: executeRefresh,
+    },
     header: {
       kind: "section",
       folio: collectionComplete

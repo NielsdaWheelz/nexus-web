@@ -1,11 +1,13 @@
 "use client";
 
 import {
+  RefreshCw,
   RotateCcw,
   Search,
 } from "lucide-react";
 import {
   useCallback,
+  useEffect,
   useId,
   useLayoutEffect,
   useMemo,
@@ -46,6 +48,8 @@ import {
   type PaneFixedChromePublication,
   type PanePrimaryChromePublication,
   type PanePrimaryChromePublicationUpdate,
+  type PaneRefreshProgress,
+  type PaneRefreshResult,
   type PaneSecondaryPublication,
 } from "@/lib/panes/panePublications";
 import type {
@@ -89,6 +93,7 @@ import {
 } from "@/lib/workspace/paneDom";
 import { SwitchboardPanePerformanceContext } from "@/lib/switchboard/performance";
 import { NexusDesktopPanePerformanceContext } from "@/lib/nexus/performance";
+import { isAbortError } from "@/lib/errors";
 import styles from "./PaneShell.module.css";
 
 const noopResizeSecondaryPane = () => {};
@@ -96,9 +101,74 @@ const noopCloseSecondary = () => {};
 const noopSetActiveSecondarySurface = () => {};
 const EMPTY_HEADER_ACTIONS: readonly PaneHeaderAction[] = [];
 const EMPTY_OPTIONS: readonly ActionDescriptor[] = [];
+const PANE_REFRESH_ARM_DISTANCE_PX = 72;
+const PANE_REFRESH_MAX_OFFSET_PX = 96;
+const PANE_REFRESH_DRAG_RESISTANCE = 0.45;
+const PANE_REFRESH_SETTLED_MS = 900;
+
+type PaneRefreshState =
+  | { readonly kind: "Idle" }
+  | { readonly kind: "Pulling"; readonly offsetPx: number }
+  | { readonly kind: "Armed"; readonly offsetPx: number }
+  | {
+      readonly kind: "Refreshing";
+      readonly progress: PaneRefreshProgress;
+    }
+  | { readonly kind: "Settled"; readonly result: PaneRefreshResult };
+
+interface PaneRefreshTouch {
+  readonly identifier: number;
+  readonly startX: number;
+  readonly startY: number;
+  intent: "Pending" | "Downward";
+}
+
+interface PaneRefreshExecution {
+  readonly routeKey: string;
+  readonly sourceKey: string;
+  readonly controller: AbortController;
+}
+
+function findTouch(
+  touches: TouchList,
+  identifier: number,
+): Touch | undefined {
+  for (let index = 0; index < touches.length; index += 1) {
+    const touch = touches[index];
+    if (touch?.identifier === identifier) return touch;
+  }
+  return undefined;
+}
+
+function paneRefreshFeedback(state: PaneRefreshState): string | null {
+  switch (state.kind) {
+    case "Idle":
+      return null;
+    case "Pulling":
+      return "Pull to refresh";
+    case "Armed":
+      return "Release to refresh";
+    case "Refreshing":
+      return state.progress.kind === "Determinate"
+        ? `Refreshing ${state.progress.finishedCount} of ${state.progress.requestedCount}`
+        : "Refreshing";
+    case "Settled":
+      return state.result.announcement;
+    default: {
+      const exhaustive: never = state;
+      throw new Error(
+        `Unhandled pane refresh state: ${JSON.stringify(exhaustive)}`,
+      );
+    }
+  }
+}
 
 type PaneShellStyle = CSSProperties & {
   "--mobile-pane-chrome-height"?: string;
+};
+
+type PaneRefreshIndicatorStyle = CSSProperties & {
+  "--pane-refresh-offset": string;
 };
 
 type ExpandedPaneSearchIdentity =
@@ -273,6 +343,220 @@ export default function PaneShell({
     primaryChromeRecord !== null && primaryChromeRecord.routeKey === routeKey
       ? primaryChromeRecord.publication
       : null;
+  const acceptedRefresh = acceptedPrimaryChrome?.refresh;
+  const acceptedRefreshRef = useRef(acceptedRefresh);
+  acceptedRefreshRef.current = acceptedRefresh;
+  const [refreshState, setRefreshState] = useState<PaneRefreshState>({
+    kind: "Idle",
+  });
+  const refreshStateRef = useRef(refreshState);
+  refreshStateRef.current = refreshState;
+  const [refreshAnnouncement, setRefreshAnnouncement] = useState<string | null>(
+    null,
+  );
+  const refreshExecutionRef = useRef<PaneRefreshExecution | null>(null);
+  const refreshTouchRef = useRef<PaneRefreshTouch | null>(null);
+  const refreshSettledTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const commitRefreshState = useCallback((next: PaneRefreshState) => {
+    refreshStateRef.current = next;
+    setRefreshState(next);
+  }, []);
+  const clearRefreshSettledTimer = useCallback(() => {
+    if (refreshSettledTimerRef.current === null) return;
+    clearTimeout(refreshSettledTimerRef.current);
+    refreshSettledTimerRef.current = null;
+  }, []);
+  const startPaneRefresh = useCallback(() => {
+    const publication = acceptedRefreshRef.current;
+    if (!publication || refreshExecutionRef.current) return;
+
+    clearRefreshSettledTimer();
+    setRefreshAnnouncement(null);
+    const execution: PaneRefreshExecution = {
+      routeKey: currentRouteKeyRef.current,
+      sourceKey: publication.sourceKey,
+      controller: new AbortController(),
+    };
+    refreshExecutionRef.current = execution;
+    commitRefreshState({
+      kind: "Refreshing",
+      progress: { kind: "Indeterminate" },
+    });
+
+    void (async () => {
+      try {
+        const result = await publication.execute({
+          signal: execution.controller.signal,
+          reportProgress: (progress) => {
+            if (
+              refreshExecutionRef.current !== execution ||
+              execution.controller.signal.aborted ||
+              currentRouteKeyRef.current !== execution.routeKey ||
+              acceptedRefreshRef.current?.sourceKey !== execution.sourceKey
+            ) {
+              return;
+            }
+            commitRefreshState({ kind: "Refreshing", progress });
+          },
+        });
+        if (
+          refreshExecutionRef.current !== execution ||
+          execution.controller.signal.aborted ||
+          currentRouteKeyRef.current !== execution.routeKey ||
+          acceptedRefreshRef.current?.sourceKey !== execution.sourceKey
+        ) {
+          return;
+        }
+        refreshExecutionRef.current = null;
+        setRefreshAnnouncement(result.announcement);
+        commitRefreshState({ kind: "Settled", result });
+        refreshSettledTimerRef.current = setTimeout(() => {
+          refreshSettledTimerRef.current = null;
+          if (
+            currentRouteKeyRef.current === execution.routeKey &&
+            acceptedRefreshRef.current?.sourceKey === execution.sourceKey
+          ) {
+            commitRefreshState({ kind: "Idle" });
+          }
+        }, PANE_REFRESH_SETTLED_MS);
+      } catch (error: unknown) {
+        if (refreshExecutionRef.current !== execution) return;
+        refreshExecutionRef.current = null;
+        commitRefreshState({ kind: "Idle" });
+        if (execution.controller.signal.aborted || isAbortError(error)) return;
+        throw error;
+      }
+    })();
+  }, [
+    clearRefreshSettledTimer,
+    commitRefreshState,
+    currentRouteKeyRef,
+  ]);
+  useEffect(() => {
+    refreshTouchRef.current = null;
+    clearRefreshSettledTimer();
+    refreshExecutionRef.current?.controller.abort(
+      new DOMException("Pane refresh target changed.", "AbortError"),
+    );
+    refreshExecutionRef.current = null;
+    setRefreshAnnouncement(null);
+    commitRefreshState({ kind: "Idle" });
+    return () => {
+      refreshTouchRef.current = null;
+      clearRefreshSettledTimer();
+      refreshExecutionRef.current?.controller.abort(
+        new DOMException("Pane refresh target changed.", "AbortError"),
+      );
+      refreshExecutionRef.current = null;
+    };
+  }, [
+    acceptedRefresh?.sourceKey,
+    clearRefreshSettledTimer,
+    commitRefreshState,
+    routeKey,
+  ]);
+  const pullRefreshEligible =
+    isActive &&
+    isMobile &&
+    bodyMode === "standard" &&
+    acceptedRefresh !== undefined;
+  useEffect(() => {
+    const scrollport = bodyRef.current;
+    if (!pullRefreshEligible || !scrollport) {
+      refreshTouchRef.current = null;
+      if (
+        refreshStateRef.current.kind === "Pulling" ||
+        refreshStateRef.current.kind === "Armed"
+      ) {
+        commitRefreshState({ kind: "Idle" });
+      }
+      return;
+    }
+
+    const cancelPull = () => {
+      refreshTouchRef.current = null;
+      if (
+        refreshStateRef.current.kind === "Pulling" ||
+        refreshStateRef.current.kind === "Armed"
+      ) {
+        commitRefreshState({ kind: "Idle" });
+      }
+    };
+    const onTouchStart = (event: TouchEvent) => {
+      if (
+        event.touches.length !== 1 ||
+        scrollport.scrollTop !== 0 ||
+        refreshExecutionRef.current !== null
+      ) {
+        cancelPull();
+        return;
+      }
+      const touch = event.touches[0];
+      if (!touch) return;
+      refreshTouchRef.current = {
+        identifier: touch.identifier,
+        startX: touch.clientX,
+        startY: touch.clientY,
+        intent: "Pending",
+      };
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      const tracked = refreshTouchRef.current;
+      if (!tracked) return;
+      if (event.touches.length !== 1 || scrollport.scrollTop !== 0) {
+        cancelPull();
+        return;
+      }
+      const touch = findTouch(event.touches, tracked.identifier);
+      if (!touch) {
+        cancelPull();
+        return;
+      }
+      const deltaX = touch.clientX - tracked.startX;
+      const deltaY = touch.clientY - tracked.startY;
+      if (deltaY <= 0 || Math.abs(deltaX) >= deltaY) {
+        cancelPull();
+        return;
+      }
+      tracked.intent = "Downward";
+      event.preventDefault();
+      const offsetPx = Math.min(
+        PANE_REFRESH_MAX_OFFSET_PX,
+        deltaY * PANE_REFRESH_DRAG_RESISTANCE,
+      );
+      commitRefreshState(
+        offsetPx >= PANE_REFRESH_ARM_DISTANCE_PX
+          ? { kind: "Armed", offsetPx }
+          : { kind: "Pulling", offsetPx },
+      );
+    };
+    const onTouchEnd = () => {
+      const tracked = refreshTouchRef.current;
+      refreshTouchRef.current = null;
+      if (!tracked) return;
+      if (refreshStateRef.current.kind === "Armed") {
+        startPaneRefresh();
+        return;
+      }
+      if (refreshStateRef.current.kind === "Pulling") {
+        commitRefreshState({ kind: "Idle" });
+      }
+    };
+
+    scrollport.addEventListener("touchstart", onTouchStart, { passive: true });
+    scrollport.addEventListener("touchmove", onTouchMove, { passive: false });
+    scrollport.addEventListener("touchend", onTouchEnd, { passive: true });
+    scrollport.addEventListener("touchcancel", cancelPull, { passive: true });
+    return () => {
+      scrollport.removeEventListener("touchstart", onTouchStart);
+      scrollport.removeEventListener("touchmove", onTouchMove);
+      scrollport.removeEventListener("touchend", onTouchEnd);
+      scrollport.removeEventListener("touchcancel", cancelPull);
+      cancelPull();
+    };
+  }, [commitRefreshState, pullRefreshEligible, startPaneRefresh]);
   const retainedFilterRowsSearch = primaryChromeRecord?.publication.search;
   const acceptedSearch =
     acceptedPrimaryChrome?.search ??
@@ -511,6 +795,30 @@ export default function PaneShell({
     ReadonlySet<string>
   >(new Set());
   const paneMenuOptions = useMemo<readonly ActionDescriptor[]>(() => {
+    const prependRefresh = (
+      options: readonly ActionDescriptor[],
+    ): readonly ActionDescriptor[] => {
+      if (!acceptedRefresh) return options;
+      const existingOptions =
+        options.length > 0 && options[0]?.separatorBefore === undefined
+          ? [{ ...options[0], separatorBefore: true }, ...options.slice(1)]
+          : options;
+      return [
+        {
+          kind: "command",
+          id: "Pane.Refresh",
+          label: "Refresh",
+          icon: <RefreshCw size={16} aria-hidden="true" />,
+          disabled: refreshState.kind === "Refreshing",
+          disabledReason:
+            refreshState.kind === "Refreshing"
+              ? "Refresh is already running"
+              : undefined,
+          onSelect: startPaneRefresh,
+        },
+        ...existingOptions,
+      ];
+    };
     const routeShareOption: ActionDescriptor[] = routeShareIdentity
       ? [
           {
@@ -529,7 +837,9 @@ export default function PaneShell({
         ]
       : [];
     if (!effectiveMenu) {
-      return routeShareOption.length > 0 ? routeShareOption : EMPTY_OPTIONS;
+      return prependRefresh(
+        routeShareOption.length > 0 ? routeShareOption : EMPTY_OPTIONS,
+      );
     }
     if (effectiveMenu.kind === "FlatMenu") {
       const contextualOptions = effectiveMenu.actions.map((option, index) =>
@@ -539,7 +849,7 @@ export default function PaneShell({
           ? { ...option, separatorBefore: true }
           : option,
       );
-      return [...routeShareOption, ...contextualOptions];
+      return prependRefresh([...routeShareOption, ...contextualOptions]);
     }
     if (routeShareIdentity) {
       // justify-defect: a resource pane must not retain the route-share path.
@@ -624,15 +934,18 @@ export default function PaneShell({
           },
         },
       }).relationships;
-    return composeResourceMenu({
-      ...effectiveMenu.groups,
-      core,
-      relationships: [
-        ...universalRelationships,
-        ...effectiveMenu.groups.relationships,
-      ],
-    });
+    return prependRefresh(
+      composeResourceMenu({
+        ...effectiveMenu.groups,
+        core,
+        relationships: [
+          ...universalRelationships,
+          ...effectiveMenu.groups.relationships,
+        ],
+      }),
+    );
   }, [
+    acceptedRefresh,
     chatBusySubjects,
     effectiveMenu,
     feedback,
@@ -640,7 +953,9 @@ export default function PaneShell({
     openShare,
     paneId,
     activateTarget,
+    refreshState.kind,
     routeShareIdentity,
+    startPaneRefresh,
   ]);
   useLayoutEffect(() => {
     if (!isMobile) return;
@@ -714,6 +1029,10 @@ export default function PaneShell({
         overflowY: "auto",
         overflowX: "hidden",
         ...(isMobile && { overscrollBehavior: "contain" }),
+        ...(pullRefreshEligible && {
+          touchAction: "pan-x pan-up",
+          overscrollBehaviorY: "contain",
+        }),
       };
       break;
     case "document":
@@ -727,6 +1046,16 @@ export default function PaneShell({
       };
       break;
   }
+  const refreshFeedback = paneRefreshFeedback(refreshState);
+  const refreshIndicatorOffsetPx =
+    refreshState.kind === "Pulling" || refreshState.kind === "Armed"
+      ? refreshState.offsetPx
+      : refreshState.kind === "Idle"
+        ? 0
+        : PANE_REFRESH_ARM_DISTANCE_PX;
+  const refreshIndicatorStyle: PaneRefreshIndicatorStyle = {
+    "--pane-refresh-offset": `${refreshIndicatorOffsetPx}px`,
+  };
 
   return (
     <section
@@ -817,6 +1146,9 @@ export default function PaneShell({
             data-testid="pane-shell-body"
             data-body-mode={bodyMode}
             data-pane-content="true"
+            data-pane-refresh-eligible={
+              pullRefreshEligible ? "true" : undefined
+            }
             style={bodyStyle}
           >
             <SwitchboardPanePerformanceContext.Provider
@@ -828,6 +1160,48 @@ export default function PaneShell({
                 </PanePrimaryChromeProvider>
               </NexusDesktopPanePerformanceContext.Provider>
             </SwitchboardPanePerformanceContext.Provider>
+            <div
+              className={styles.refreshIndicator}
+              data-testid="pane-refresh-indicator"
+              data-refresh-state={refreshState.kind}
+              style={refreshIndicatorStyle}
+              role={refreshState.kind === "Refreshing" ? "progressbar" : undefined}
+              aria-label={
+                refreshState.kind === "Refreshing"
+                  ? (refreshFeedback ?? "Refreshing")
+                  : undefined
+              }
+              aria-hidden={
+                refreshState.kind === "Refreshing" ? undefined : "true"
+              }
+              aria-valuemin={
+                refreshState.kind === "Refreshing" &&
+                refreshState.progress.kind === "Determinate"
+                  ? 0
+                  : undefined
+              }
+              aria-valuemax={
+                refreshState.kind === "Refreshing" &&
+                refreshState.progress.kind === "Determinate"
+                  ? refreshState.progress.requestedCount
+                  : undefined
+              }
+              aria-valuenow={
+                refreshState.kind === "Refreshing" &&
+                refreshState.progress.kind === "Determinate"
+                  ? refreshState.progress.finishedCount
+                  : undefined
+              }
+            >
+              <span className={styles.refreshIndicatorContent}>
+                <RefreshCw
+                  className={styles.refreshIndicatorIcon}
+                  size={14}
+                  aria-hidden="true"
+                />
+                {refreshFeedback}
+              </span>
+            </div>
           </div>
           {visibleFixedChrome ? (
             <div className={styles.fixedChrome} data-testid="pane-fixed-chrome">
@@ -851,6 +1225,9 @@ export default function PaneShell({
           />
         ) : null}
       </div>
+      <span className="sr-only" aria-live="polite" aria-atomic="true">
+        {refreshAnnouncement}
+      </span>
       {visibleSecondary ? (
         <SecondaryPaneShell
           primaryPaneId={paneId}

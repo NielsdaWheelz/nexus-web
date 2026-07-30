@@ -8,7 +8,7 @@ from sqlalchemy import text
 from nexus.ids import new_uuid7
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.net.safe_fetch import SafeFetchResult
-from nexus.services.podcasts.poll import run_podcast_subscription_sync_now
+from tests.support.podcast_jobs import run_queued_podcast_subscription_sync
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
@@ -53,10 +53,13 @@ def test_live_sync_marks_aliasless_candidate_source_limited(
             text(
                 """
                 INSERT INTO podcast_subscriptions (
-                    id, user_id, podcast_id, sync_status
+                    id, user_id, podcast_id, auto_queue, sync_status,
+                    sync_generation, next_sync_at, consecutive_sync_failures,
+                    sync_attempts
                 )
                 VALUES (
-                    :subscription_id, :viewer_id, :podcast_id, 'pending'
+                    :subscription_id, :viewer_id, :podcast_id, false, 'Pending',
+                    1, now(), 0, 0
                 )
                 """
             ),
@@ -99,18 +102,17 @@ def test_live_sync_marks_aliasless_candidate_source_limited(
     )
     monkeypatch.setattr("nexus.services.podcasts.feed.safe_get", fetch_feed)
 
-    with direct_db.session() as db:
-        result = run_podcast_subscription_sync_now(
-            db,
-            user_id=user_id,
-            podcast_id=podcast_id,
-        )
+    result = run_queued_podcast_subscription_sync(
+        direct_db,
+        user_id=user_id,
+        podcast_id=podcast_id,
+    )
 
-    assert result.sync_status == "source_limited", (
+    assert result.status == "SourceLimited", (
         "an exposed live candidate without any stable alias must not report Complete"
     )
     assert result.source_limited is True
-    assert result.ingested_episode_count == 0
+    assert result.new_episode_count == 0
     with direct_db.session() as db:
         assert (
             db.scalar(

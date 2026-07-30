@@ -550,6 +550,7 @@ keepalive, never drops it.
 | `oracle_reading_events` | insert on `oracle_reading_events` | oracle SSE tail  |
 | `artifact_build_events` | insert on `artifact_build_events` | Dossier SSE tail |
 | `media_events`          | update on `media`                 | media-status SSE |
+| `podcast_refresh_events` | insert/update on `podcast_refresh_runs` | Podcast refresh SSE |
 | `nexus_background_jobs` | enqueue in `jobs/queue.py`        | worker wake-up   |
 
 ### 7.3 Background jobs & the worker
@@ -565,15 +566,15 @@ same entrypoint with fixed `interactive` and `background` lanes:
   heartbeat thread, then commits a terminal/retry transition. Retries are bounded
   per-kind (`max_attempts`, `retry_delays_seconds`, `lease_seconds`); exhaustion
   dead-letters the row. Domain finalizers close or suspend current Chat, Note,
-  Dossier, Media teardown, and Podcast-backfill state without overwriting newer
-  lifecycle facts.
+  Dossier, Media teardown, Podcast live-sync, and Podcast-backfill state without
+  overwriting newer lifecycle facts.
 - **Scheduler loop**: the background lane enqueues production periodic jobs
   into fixed time slots with deterministic dedupe keys. The interactive lane
   has no periodic kinds.
 
 The **registry** (`jobs/registry.py`) is the source of truth mapping job kind →
-handler + policy. `config.py` owns the disjoint/exhaustive 18-kind production
-topology and separate four-kind maintenance declaration. The entrypoint rejects
+handler + policy. `config.py` owns the disjoint/exhaustive 20-kind production
+topology and separate three-kind maintenance declaration. The entrypoint rejects
 missing/unknown lanes, registry drift, and raw allowlists on normal lanes.
 `get_task_contract_version()` fingerprints the registry's per-kind
 attempt/lease policy for `/health` deploy checks. See
@@ -585,8 +586,9 @@ Task catalog (each is a thin handler in `tasks/` that wraps a service):
 `media_content_reindex_job`, `media_unit_build`, `note_reindex_job`,
 `podcast_sync_subscription_job`,
 `podcast_backfill_subscription`,
-`podcast_reindex_semantic_job`, `podcast_active_subscription_poll_job`
-(periodic), `reconcile_stale_ingest_media_job` (periodic),
+`podcast_reindex_semantic_job`, `podcast_refresh_due_job` (periodic),
+`podcast_refresh_run_prune_job` (periodic),
+`reconcile_stale_ingest_media_job` (periodic),
 `sync_gutenberg_catalog_job` (periodic), `prune_background_jobs_job`
 (periodic), `purge_expired_auth_handoff_codes` (periodic), `synapse_scan`,
 `dawn_write_job` (periodic), `atlas_project_job` (periodic), `media_teardown`,

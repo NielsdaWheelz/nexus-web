@@ -357,7 +357,6 @@ def test_unsubscribe_returns_the_rebased_subscription_revision(
         user_id=viewer_id,
         podcast_id=podcast_id,
         default_playback_speed=1.0,
-        sync_status="complete",
     )
     db_session.commit()
     before = read_collection_revision(

@@ -2571,17 +2571,41 @@ class PodcastSubscription(Base):
     )
     auto_queue: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     default_playback_speed: Mapped[float | None] = mapped_column(Float, nullable=True)
-    sync_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    sync_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="Pending")
     sync_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     sync_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     sync_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    sync_generation: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    next_sync_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    consecutive_sync_failures: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default="0",
+    )
+    sync_job_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    sync_job_attempt_no: Mapped[int | None] = mapped_column(Integer, nullable=True)
     sync_started_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
     sync_completed_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
-    last_synced_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    last_checked_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    sync_checkpoint_status: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sync_checkpoint_cutoff_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=True,
+    )
+    sync_checkpoint_new_episode_count: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+    sync_checkpoint_completed_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=True,
+    )
     auto_queue_watermark_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
@@ -2602,9 +2626,10 @@ class PodcastSubscription(Base):
             "podcast_id",
             name="uq_podcast_subscriptions_user_podcast",
         ),
-        CheckConstraint(
-            "sync_status IN ('pending', 'running', 'partial', 'complete', 'source_limited', 'failed')",
-            name="ck_podcast_subscriptions_sync_status",
+        Index(
+            "ix_podcast_subscriptions_next_sync_at_id",
+            "next_sync_at",
+            "id",
         ),
         CheckConstraint(
             "sync_attempts >= 0",
@@ -2656,35 +2681,38 @@ class PodcastSubscriptionBackfill(Base):
     )
 
 
-class PodcastSubscriptionPollRun(Base):
-    """Durable telemetry row for one scheduled active-subscription poll run."""
+class PodcastRefreshRun(Base):
+    """One viewer-owned manual or scheduled Podcast refresh aggregate."""
 
-    __tablename__ = "podcast_subscription_poll_runs"
+    __tablename__ = "podcast_refresh_runs"
 
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         primary_key=True,
         server_default=text("gen_random_uuid()"),
     )
-    orchestration_source: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default="scheduled"
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
     )
-    scheduler_identity: Mapped[str | None] = mapped_column(Text, nullable=True)
-    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="running")
-    run_limit: Mapped[int] = mapped_column(Integer, nullable=False)
+    idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    request_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scope: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    requested_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    finished_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    succeeded_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_limited_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    failed_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    skipped_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    new_episode_count: Mapped[int] = mapped_column(Integer, nullable=False)
     started_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         nullable=False,
         server_default=text("now()"),
     )
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    lease_expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
-    processed_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    failed_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    skipped_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    scanned_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -2697,50 +2725,66 @@ class PodcastSubscriptionPollRun(Base):
     )
 
     __table_args__ = (
-        CheckConstraint(
-            "status IN ('running', 'completed', 'failed', 'expired')",
-            name="ck_podcast_subscription_poll_runs_status",
+        Index(
+            "uq_podcast_refresh_runs_user_idempotency_key",
+            "user_id",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
         ),
-        CheckConstraint(
-            "run_limit >= 1",
-            name="ck_podcast_subscription_poll_runs_run_limit_positive",
-        ),
-        CheckConstraint(
-            "processed_count >= 0 AND failed_count >= 0 AND skipped_count >= 0 AND scanned_count >= 0",
-            name="ck_podcast_subscription_poll_runs_counters_non_negative",
+        Index(
+            "ix_podcast_refresh_runs_completed_at_id",
+            "completed_at",
+            "id",
         ),
     )
 
-    failure_breakdown: Mapped[list["PodcastSubscriptionPollRunFailure"]] = relationship(
-        "PodcastSubscriptionPollRunFailure",
-        back_populates="run",
-        cascade="all, delete-orphan",
+
+class PodcastRefreshRunItem(Base):
+    """One subscription epoch/generation joined to a refresh run."""
+
+    __tablename__ = "podcast_refresh_run_items"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
     )
-
-
-class PodcastSubscriptionPollRunFailure(Base):
-    """Per-run stable failure-code breakdown for scheduled podcast polling."""
-
-    __tablename__ = "podcast_subscription_poll_run_failures"
-
     run_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("podcast_subscription_poll_runs.id", ondelete="CASCADE"),
-        primary_key=True,
+        ForeignKey("podcast_refresh_runs.id"),
+        nullable=False,
     )
-    error_code: Mapped[str] = mapped_column(Text, primary_key=True)
-    failure_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    podcast_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("podcasts.id"),
+        nullable=False,
+    )
+    subscription_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    sync_generation: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    new_episode_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
 
     __table_args__ = (
-        CheckConstraint(
-            "failure_count >= 1",
-            name="ck_podcast_subscription_poll_run_failures_count_positive",
+        UniqueConstraint(
+            "run_id",
+            "subscription_id",
+            name="uq_podcast_refresh_run_items_run_subscription",
         ),
-    )
-
-    run: Mapped["PodcastSubscriptionPollRun"] = relationship(
-        "PodcastSubscriptionPollRun",
-        back_populates="failure_breakdown",
     )
 
 

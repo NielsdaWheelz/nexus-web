@@ -40,6 +40,8 @@ BACKGROUND_WORKER_JOB_KINDS: tuple[str, ...] = (
     "media_unit_build",
     "note_reindex_job",
     "podcast_backfill_subscription",
+    "podcast_refresh_due_job",
+    "podcast_refresh_run_prune_job",
     "podcast_reindex_semantic_job",
     "synapse_scan",
     "dawn_write_job",
@@ -53,7 +55,6 @@ PRODUCTION_ENABLED_JOB_KINDS: tuple[str, ...] = (
     INTERACTIVE_WORKER_JOB_KINDS + BACKGROUND_WORKER_JOB_KINDS
 )
 MAINTENANCE_JOB_KINDS: tuple[str, ...] = (
-    "podcast_active_subscription_poll_job",
     "sync_gutenberg_catalog_job",
     "prune_background_jobs_job",
     "purge_expired_auth_handoff_codes",
@@ -256,16 +257,10 @@ class Settings(BaseSettings):
     podcast_transcription_timeout_seconds: float = Field(
         default=90.0, alias="PODCAST_TRANSCRIPTION_TIMEOUT_SECONDS"
     )
-    podcast_active_poll_schedule_seconds: int = Field(
-        default=0, alias="PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS"
+    podcast_refresh_due_schedule_seconds: int = Field(
+        default=900, alias="PODCAST_REFRESH_DUE_SCHEDULE_SECONDS"
     )
-    podcast_active_poll_limit: int = Field(default=100, alias="PODCAST_ACTIVE_POLL_LIMIT")
-    podcast_active_poll_run_lease_seconds: int = Field(
-        default=900, alias="PODCAST_ACTIVE_POLL_RUN_LEASE_SECONDS"
-    )
-    podcast_sync_running_lease_seconds: int = Field(
-        default=1800, alias="PODCAST_SYNC_RUNNING_LEASE_SECONDS"
-    )
+    podcast_refresh_due_limit: int = Field(default=100, alias="PODCAST_REFRESH_DUE_LIMIT")
 
     # Billing / Stripe settings
     app_public_url: str = Field(default="http://localhost:3000", alias="APP_PUBLIC_URL")
@@ -680,14 +675,10 @@ class Settings(BaseSettings):
             )
         if self.transcript_embedding_timeout_seconds <= 0:
             raise ValueError("TRANSCRIPT_EMBEDDING_TIMEOUT_SECONDS must be > 0.")
-        if self.podcast_active_poll_schedule_seconds < 0:
-            raise ValueError("PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS must be >= 0.")
-        if self.podcast_active_poll_limit < 1:
-            raise ValueError("PODCAST_ACTIVE_POLL_LIMIT must be >= 1.")
-        if self.podcast_active_poll_run_lease_seconds < 1:
-            raise ValueError("PODCAST_ACTIVE_POLL_RUN_LEASE_SECONDS must be >= 1.")
-        if self.podcast_sync_running_lease_seconds < 1:
-            raise ValueError("PODCAST_SYNC_RUNNING_LEASE_SECONDS must be >= 1.")
+        if self.podcast_refresh_due_schedule_seconds < 1:
+            raise ValueError("PODCAST_REFRESH_DUE_SCHEDULE_SECONDS must be >= 1.")
+        if self.podcast_refresh_due_limit < 1:
+            raise ValueError("PODCAST_REFRESH_DUE_LIMIT must be >= 1.")
         if self.podcast_transcription_timeout_seconds <= 0:
             raise ValueError("PODCAST_TRANSCRIPTION_TIMEOUT_SECONDS must be > 0.")
         if self.youtube_transcript_timeout_seconds <= 0:

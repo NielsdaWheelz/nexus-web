@@ -430,7 +430,7 @@ class TestPodcastUxHardening:
         )
         assert rejected_offset.status_code == 400
 
-    def test_refresh_sync_endpoint_sets_pending_and_enqueues(
+    def test_refresh_run_endpoint_starts_generation_and_enqueues(
         self, auth_client, monkeypatch, direct_db
     ):
         user_id = create_test_user_id()
@@ -456,7 +456,7 @@ class TestPodcastUxHardening:
                     """
                     UPDATE podcast_subscriptions
                     SET
-                        sync_status = 'failed',
+                        sync_status = 'Failed',
                         sync_error_code = 'E_SYNC_PROVIDER_TIMEOUT',
                         sync_error_message = 'provider timeout'
                     WHERE user_id = :user_id AND podcast_id = :podcast_id
@@ -483,8 +483,12 @@ class TestPodcastUxHardening:
             )
 
         response = auth_client.post(
-            f"/podcasts/subscriptions/{podcast_id}/sync",
-            headers=auth_headers(user_id),
+            "/podcasts/refresh-runs",
+            json={"kind": "Podcast", "podcastId": str(podcast_id)},
+            headers={
+                **auth_headers(user_id),
+                "Idempotency-Key": f"refresh-run-{uuid4()}",
+            },
         )
 
         assert response.status_code == 202, (
@@ -492,10 +496,38 @@ class TestPodcastUxHardening:
             f"got {response.status_code}: {response.text}"
         )
         payload = response.json()["data"]
-        assert payload["sync_status"] == "pending", (
-            f"expected refresh endpoint to place subscription in pending state, got {payload}"
+        assert payload["status"] == "Running"
+        assert payload["requestedCount"] == 1
+        assert payload["refreshRunHandle"].startswith("prr1.")
+        owned_snapshot = auth_client.get(
+            f"/podcasts/refresh-runs/{payload['refreshRunHandle']}",
+            headers=auth_headers(user_id),
         )
-        assert payload["sync_enqueued"] is True
+        assert owned_snapshot.status_code == 200, owned_snapshot.text
+        owned_snapshot_data = owned_snapshot.json()["data"]
+        started_at = owned_snapshot_data.pop("startedAt")
+        assert isinstance(started_at, str)
+        assert owned_snapshot_data == {
+            "refreshRunHandle": payload["refreshRunHandle"],
+            "status": "Running",
+            "requestedCount": 1,
+            "finishedCount": 0,
+            "succeededCount": 0,
+            "sourceLimitedCount": 0,
+            "failedCount": 0,
+            "skippedCount": 0,
+            "newEpisodeCount": 0,
+            "completedAt": {"kind": "Absent"},
+        }
+
+        other_user_id = create_test_user_id()
+        _bootstrap_user(auth_client, other_user_id)
+        masked_snapshot = auth_client.get(
+            f"/podcasts/refresh-runs/{payload['refreshRunHandle']}",
+            headers=auth_headers(other_user_id),
+        )
+        assert masked_snapshot.status_code == 404, masked_snapshot.text
+
         with direct_db.session() as session:
             after_dispatch_count = int(
                 session.execute(
@@ -607,6 +639,19 @@ def _mock_podcast_index(
         )
         return {"feed": None} if podcast is None else _podcast_browse_payload(podcast)
 
+    empty_feed = (
+        b'<?xml version="1.0" encoding="UTF-8"?>'
+        b'<rss version="2.0"><channel><title>Podcast fixture</title></channel></rss>'
+    )
+
+    def fake_feed_fetch(url: str, **_kwargs: object) -> SafeFetchResult:
+        return SafeFetchResult(
+            final_url=url,
+            content_type="application/rss+xml",
+            content=empty_feed,
+            text=empty_feed.decode(),
+        )
+
     # EXTERNAL SEAM EXCEPTION:
     # Podcast transcription is an external provider boundary. This default
     # test seam maps episode transcript_segments fixtures into the provider
@@ -659,6 +704,7 @@ def _mock_podcast_index(
         "nexus.services.podcasts.provider.PodcastIndexClient.browse_podcast_payload",
         fake_browse_podcast,
     )
+    monkeypatch.setattr("nexus.services.podcasts.feed.safe_get", fake_feed_fetch)
     monkeypatch.setattr(
         "nexus.services.podcasts.deepgram_adapter.DeepgramClient.transcribe",
         fake_transcribe,
@@ -845,18 +891,18 @@ def _run_subscription_sync(
     from dataclasses import asdict
 
     from nexus.services.podcasts import transcription as podcast_transcript_service
-    from nexus.services.podcasts.poll import run_podcast_subscription_sync_now
+    from tests.support.podcast_jobs import run_queued_podcast_subscription_sync
 
     episode_media_ids: list[UUID] = []
+    result = run_queued_podcast_subscription_sync(
+        direct_db,
+        user_id=user_id,
+        podcast_id=podcast_id,
+    )
     with direct_db.session() as session:
-        result = run_podcast_subscription_sync_now(
-            session,
-            user_id=user_id,
-            podcast_id=podcast_id,
-        )
-        if run_transcription_jobs and result.sync_status in {
-            "complete",
-            "source_limited",
+        if run_transcription_jobs and result.status in {
+            "Complete",
+            "SourceLimited",
         }:
             candidate_media_ids = list(
                 session.execute(
@@ -1356,7 +1402,7 @@ class TestPodcastSubscriptionSyncLifecycle:
                 },
             ).one()
         assert episode_count == 0, "control-plane subscribe must not ingest episodes inline"
-        assert sync_status == "pending"
+        assert sync_status == "Pending"
         assert sync_job_count == 1
 
     def test_concurrent_duplicate_subscribe_is_idempotent(
@@ -1542,8 +1588,6 @@ class TestPodcastSubscriptionSyncLifecycle:
         self, auth_client, monkeypatch, direct_db
     ):
         # Data-plane worker path should ingest episodes and transition pending -> complete.
-        from nexus.services.podcasts.poll import run_podcast_subscription_sync_now
-
         user_id = create_test_user_id()
         default_library_id = _bootstrap_user(auth_client, user_id)
         _set_plan(
@@ -1594,15 +1638,14 @@ class TestPodcastSubscriptionSyncLifecycle:
 
         podcast_id = _subscribe(auth_client, user_id, payload)["podcastId"]
 
-        with direct_db.session() as session:
-            job_result = run_podcast_subscription_sync_now(
-                session,
-                user_id=user_id,
-                podcast_id=UUID(podcast_id),
-            )
-            session.commit()
+        job_result = _run_subscription_sync(
+            direct_db,
+            user_id,
+            UUID(podcast_id),
+            run_transcription_jobs=False,
+        )
 
-        assert job_result.sync_status == "complete"
+        assert job_result["status"] == "Complete"
 
         with direct_db.session() as session:
             status_row = session.execute(
@@ -1630,7 +1673,7 @@ class TestPodcastSubscriptionSyncLifecycle:
             ).fetchall()
 
         assert status_row is not None
-        assert status_row[0] == "complete"
+        assert status_row[0] == "Complete"
         assert [row[0] for row in media_rows] == [
             "Episode Newer",
             "Episode Newest",
@@ -1640,8 +1683,6 @@ class TestPodcastSubscriptionSyncLifecycle:
     def test_sync_job_auto_queue_opt_in_appends_new_episodes_to_playback_queue(
         self, auth_client, monkeypatch, direct_db
     ):
-        from nexus.services.podcasts.poll import run_podcast_subscription_sync_now
-
         opted_in_user = create_test_user_id()
         opted_out_user = create_test_user_id()
         _bootstrap_user(auth_client, opted_in_user)
@@ -1692,18 +1733,18 @@ class TestPodcastSubscriptionSyncLifecycle:
         assert settings.status_code == 200, settings.text
         opted_out_podcast_id = UUID(_subscribe(auth_client, opted_out_user, payload)["podcastId"])
 
-        with direct_db.session() as session:
-            run_podcast_subscription_sync_now(
-                session,
-                user_id=opted_in_user,
-                podcast_id=opted_in_podcast_id,
-            )
-            run_podcast_subscription_sync_now(
-                session,
-                user_id=opted_out_user,
-                podcast_id=opted_out_podcast_id,
-            )
-            session.commit()
+        _run_subscription_sync(
+            direct_db,
+            opted_in_user,
+            opted_in_podcast_id,
+            run_transcription_jobs=False,
+        )
+        _run_subscription_sync(
+            direct_db,
+            opted_out_user,
+            opted_out_podcast_id,
+            run_transcription_jobs=False,
+        )
 
         with direct_db.session() as session:
             opted_in_rows = session.execute(
@@ -1739,8 +1780,6 @@ class TestPodcastSubscriptionSyncLifecycle:
         self, auth_client, monkeypatch, direct_db
     ):
         # If provider result appears capped and feed has no next-page path, surface source_limited.
-        from nexus.services.podcasts.poll import run_podcast_subscription_sync_now
-
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
         _set_plan(
@@ -1800,13 +1839,13 @@ class TestPodcastSubscriptionSyncLifecycle:
 
         podcast_id = _subscribe(auth_client, user_id, payload)["podcastId"]
 
+        job_result = _run_subscription_sync(
+            direct_db,
+            user_id,
+            UUID(podcast_id),
+            run_transcription_jobs=False,
+        )
         with direct_db.session() as session:
-            job_result = run_podcast_subscription_sync_now(
-                session,
-                user_id=user_id,
-                podcast_id=UUID(podcast_id),
-            )
-            session.commit()
             sync_status = session.execute(
                 text(
                     """
@@ -1818,8 +1857,8 @@ class TestPodcastSubscriptionSyncLifecycle:
                 {"user_id": user_id, "podcast_id": podcast_id},
             ).scalar()
 
-        assert job_result.sync_status == "source_limited"
-        assert sync_status == "source_limited"
+        assert job_result["status"] == "SourceLimited"
+        assert sync_status == "SourceLimited"
 
 
 class TestPodcastSubscribeIngest:
@@ -1893,9 +1932,7 @@ class TestPodcastSubscribeIngest:
 
         assert observed["limit"] == PODCAST_INDEX_EPISODE_PAGE_SIZE
 
-    def test_subscribe_feed_pagination_augments_provider_candidates(
-        self, auth_client, monkeypatch, direct_db
-    ):
+    def test_live_sync_fetches_exactly_one_rss_document(self, auth_client, monkeypatch, direct_db):
         user_id = create_test_user_id()
         default_library_id = _bootstrap_user(auth_client, user_id)
         _set_plan(
@@ -1971,8 +2008,11 @@ class TestPodcastSubscribeIngest:
 
         # EXTERNAL SEAM EXCEPTION:
         # Feed URL pagination is an external HTTP boundary; mock deterministic pages.
+        requested_feed_urls: list[str] = []
+
         def fake_safe_get(url: str, **kwargs: object) -> SafeFetchResult:
             _ = kwargs
+            requested_feed_urls.append(url)
             if url == page1_url:
                 return SafeFetchResult(
                     final_url=url,
@@ -2015,8 +2055,10 @@ class TestPodcastSubscribeIngest:
             ).fetchall()
 
         titles = [row[0] for row in rows]
-        assert len(titles) == 102
-        assert {"Episode Newer", "Episode Newest"}.issubset(titles)
+        assert requested_feed_urls == [page1_url]
+        assert len(titles) == 101
+        assert "Episode Newest" in titles
+        assert "Episode Newer" not in titles
         assert {f"Episode Old {idx}" for idx in range(100)}.issubset(titles)
 
     def test_live_sync_ingests_every_exposed_episode(self, auth_client, monkeypatch, direct_db):
@@ -2203,6 +2245,20 @@ class TestPodcastSubscribeIngest:
         monkeypatch.setattr(
             "nexus.services.podcasts.provider.PodcastIndexClient.fetch_recent_episodes", fake_fetch
         )
+        empty_feed = (
+            b'<?xml version="1.0" encoding="UTF-8"?>'
+            b'<rss version="2.0"><channel><title>Fallback Podcast</title></channel></rss>'
+        )
+
+        def fake_safe_get(url: str, **_kwargs: object) -> SafeFetchResult:
+            return SafeFetchResult(
+                final_url=url,
+                content_type="application/rss+xml",
+                content=empty_feed,
+                text=empty_feed.decode(),
+            )
+
+        monkeypatch.setattr("nexus.services.podcasts.feed.safe_get", fake_safe_get)
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
         _run_subscription_sync(
@@ -2371,7 +2427,7 @@ class TestPodcastBillingQuota:
             UUID(data["podcastId"]),
             run_transcription_jobs=False,
         )
-        assert sync_result["sync_status"] == "complete"
+        assert sync_result["status"] == "Complete"
 
         with direct_db.session() as session:
             media_id = session.execute(
@@ -2447,7 +2503,7 @@ class TestPodcastBillingQuota:
             UUID(blocked_data["podcastId"]),
             run_transcription_jobs=False,
         )
-        assert blocked_result["sync_status"] == "complete"
+        assert blocked_result["status"] == "Complete"
 
         with direct_db.session() as session:
             media_id = session.execute(
@@ -2553,7 +2609,7 @@ class TestPodcastBillingQuota:
             UUID(data["podcastId"]),
             run_transcription_jobs=False,
         )
-        assert sync_result["sync_status"] == "complete"
+        assert sync_result["status"] == "Complete"
         with direct_db.session() as session:
             media_id = session.execute(
                 text(
@@ -2624,7 +2680,6 @@ class TestPodcastBillingQuota:
             def today(cls):
                 return wrong_local_today
 
-        monkeypatch.setattr("nexus.services.podcasts.poll.datetime", FixedDatetime)
         monkeypatch.setattr("nexus.services.podcasts.transcription.datetime", FixedDatetime)
         monkeypatch.setattr("nexus.services.podcasts.transcription.date", WrongLocalDate)
 
@@ -2970,7 +3025,7 @@ class TestPodcastTranscriptRequestAdmission:
             "user_id": user_id,
             "podcast_id": podcast_id,
             "media_id": media_id,
-            "sync_status": sync_result["sync_status"],
+            "sync_status": sync_result["status"],
         }
 
     def _promote_episode_to_ready_with_semantic_backlog(
@@ -3077,7 +3132,7 @@ class TestPodcastTranscriptRequestAdmission:
         user_id = seeded["user_id"]
         media_id = seeded["media_id"]
 
-        assert seeded["sync_status"] == "complete", (
+        assert seeded["sync_status"] == "Complete", (
             "metadata-first subscribe/sync must complete even when transcript budget is insufficient"
         )
 
@@ -4696,39 +4751,6 @@ class TestPodcastEpisodeMetadataPersistence:
         )
 
 
-def _run_active_subscription_poll(direct_db: DirectSessionManager, *, limit: int = 100) -> dict:
-    from dataclasses import asdict
-
-    from nexus.services.podcasts.poll import poll_active_subscriptions_once
-
-    with direct_db.session() as session:
-        result = asdict(poll_active_subscriptions_once(session, limit=limit))
-        session.commit()
-    return result
-
-
-def _run_scheduled_active_subscription_poll(
-    direct_db: DirectSessionManager,
-    *,
-    limit: int = 100,
-    run_lease_seconds: int = 300,
-    scheduler_identity: str = "pytest-scheduler",
-) -> dict:
-    from nexus.tasks.podcast_active_subscription_poll import (
-        run_podcast_active_subscription_poll_now,
-    )
-
-    with direct_db.session() as session:
-        result = run_podcast_active_subscription_poll_now(
-            session,
-            limit=limit,
-            run_lease_seconds=run_lease_seconds,
-            scheduler_identity=scheduler_identity,
-        )
-        session.commit()
-    return result
-
-
 def _create_library(auth_client, user_id: UUID, *, name: str) -> UUID:
     response = auth_client.post(
         "/libraries",
@@ -4841,606 +4863,6 @@ class TestPodcastMediaDetailContract:
         assert media["transcript_coverage"] == "full"
 
 
-class TestPodcastPollingOrchestration:
-    def test_scheduled_poll_rejects_non_positive_limit(self, direct_db):
-        from nexus.errors import InvalidRequestError
-
-        with pytest.raises(InvalidRequestError) as exc_info:
-            _run_scheduled_active_subscription_poll(
-                direct_db,
-                limit=0,
-                scheduler_identity="pytest-invalid-limit",
-            )
-        assert exc_info.value.code.value == "E_INVALID_REQUEST"
-
-    def test_scheduled_poll_clamps_run_limit_to_service_max(self, direct_db):
-        result = _run_scheduled_active_subscription_poll(
-            direct_db,
-            limit=5_000,
-            scheduler_identity="pytest-clamped-limit",
-        )
-        assert result["status"] == "completed", (
-            f"expected completed scheduled run for clamp assertion, got {result}"
-        )
-
-        with direct_db.session() as session:
-            run_limit = session.execute(
-                text(
-                    """
-                    SELECT run_limit
-                    FROM podcast_subscription_poll_runs
-                    WHERE id = :run_id
-                    """
-                ),
-                {"run_id": UUID(result["run_id"])},
-            ).scalar()
-        assert run_limit == 1_000, f"expected persisted run_limit clamp to 1000, got {run_limit}"
-
-    def test_scheduled_poll_persists_durable_run_counters_and_failure_breakdown(
-        self, auth_client, monkeypatch, direct_db
-    ):
-        user_id = create_test_user_id()
-        _bootstrap_user(auth_client, user_id)
-        _set_plan(
-            auth_client,
-            user_id,
-            user_id,
-            plan_tier="free",
-            transcription_minutes_limit_monthly=None,
-        )
-
-        provider_podcast_id = f"scheduled-failure-{uuid4()}"
-        payload = _podcast_payload(provider_podcast_id, "Scheduled Failure Podcast")
-        episodes_by_podcast = {
-            provider_podcast_id: [
-                {
-                    "podcast_index_episode_ref": "ep-failure-1",
-                    "guid": "guid-failure-1",
-                    "title": "Over Quota Episode",
-                    "audio_url": "https://cdn.example.com/over-quota.mp3",
-                    "published_at": "2026-03-02T10:00:00Z",
-                    "duration_seconds": 600,
-                    "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 1000, "text": "quota"}],
-                }
-            ]
-        }
-        _mock_podcast_index(
-            monkeypatch,
-            podcasts=[payload],
-            episodes_by_podcast=episodes_by_podcast,
-        )
-
-        subscribe_data = _subscribe(auth_client, user_id, payload)
-        podcast_id = UUID(subscribe_data["podcastId"])
-
-        # Row presence is active after the hard cutover. Keep unrelated fixture
-        # subscriptions healthy-running so this run owns exactly one due row.
-        with direct_db.session() as session:
-            session.execute(
-                text(
-                    """
-                    UPDATE podcast_subscriptions
-                    SET sync_status = 'running',
-                        sync_started_at = now(),
-                        sync_completed_at = NULL,
-                        updated_at = now()
-                    WHERE NOT (user_id = :user_id AND podcast_id = :podcast_id)
-                    """
-                ),
-                {
-                    "user_id": user_id,
-                    "podcast_id": podcast_id,
-                },
-            )
-            session.commit()
-
-        result = _run_scheduled_active_subscription_poll(
-            direct_db,
-            limit=100,
-            scheduler_identity="pytest-scheduled-run",
-        )
-
-        # The poll is now a pure scheduler. Its run telemetry counts ENQUEUE outcomes,
-        # not sync outcomes: processed_count = subscriptions enqueued, failed_count =
-        # enqueue failures (normally 0), skipped_count = subs not claimable, and
-        # scanned_count = rows scanned. The actual feed sync (which, for this free-tier
-        # over-quota episode, would fail with E_PODCAST_QUOTA_EXCEEDED) now runs later in
-        # the enqueued `podcast_sync_subscription_job`, so per-sync failure codes belong
-        # to the job, NOT to this poll run.
-        assert result["status"] == "completed", f"expected completed run, got {result}"
-        assert result["processed_count"] == 1
-        assert result["failed_count"] == 0
-        assert result["skipped_count"] == 0
-        assert result["scanned_count"] == 1
-        assert result["failure_code_breakdown"] == {}, (
-            "the poll only enqueues; per-sync failure codes are recorded by the job, "
-            f"not the poll run, so its breakdown must be empty, got {result}"
-        )
-        assert "run_id" in result and result["run_id"], (
-            f"expected durable run_id in scheduled poll result, got {result}"
-        )
-
-        status_response = auth_client.get(
-            f"/podcasts/subscriptions/{podcast_id}",
-            headers=auth_headers(user_id),
-        )
-        assert status_response.status_code == 200, (
-            f"expected subscription status 200, got {status_response.status_code}: "
-            f"{status_response.text}"
-        )
-        status_data = status_response.json()["data"]
-        # The poll claimed the due subscription into 'pending' and enqueued its sync job;
-        # it does not run the sync, so the subscription sits in 'pending' until the
-        # enqueued job claims it.
-        assert status_data["sync_status"] == "pending"
-        assert status_data["sync_error_code"] is None
-
-        with direct_db.session() as session:
-            run_row = session.execute(
-                text(
-                    """
-                    SELECT
-                        status,
-                        processed_count,
-                        failed_count,
-                        skipped_count,
-                        scanned_count
-                    FROM podcast_subscription_poll_runs
-                    WHERE id = :run_id
-                    """
-                ),
-                {"run_id": UUID(result["run_id"])},
-            ).fetchone()
-            assert run_row is not None, (
-                f"expected durable poll run row for run_id={result['run_id']}, found none"
-            )
-
-            failure_rows = session.execute(
-                text(
-                    """
-                    SELECT error_code, failure_count
-                    FROM podcast_subscription_poll_run_failures
-                    WHERE run_id = :run_id
-                    ORDER BY error_code ASC
-                    """
-                ),
-                {"run_id": UUID(result["run_id"])},
-            ).fetchall()
-
-        assert run_row[0] == "completed"
-        # Durable counters mirror the enqueue model: 1 enqueued, 0 enqueue failures,
-        # 0 skipped, 1 scanned.
-        assert run_row[1:] == (1, 0, 0, 1), (
-            f"durable run counters mismatch: expected (1,0,0,1), got {run_row[1:]}"
-        )
-        # No durable poll-run failure rows: the poll only enqueues. The per-sync failure
-        # breakdown (e.g. E_PODCAST_QUOTA_EXCEEDED for this free-tier over-quota episode)
-        # is now the job's concern, recorded against the subscription/job, not the poll.
-        assert failure_rows == []
-
-    def test_scheduled_poll_is_singleton_safe_when_another_run_is_active(self, direct_db):
-        now = datetime.now(UTC)
-        with direct_db.session() as session:
-            session.execute(
-                text(
-                    """
-                    INSERT INTO podcast_subscription_poll_runs (
-                        id,
-                        orchestration_source,
-                        scheduler_identity,
-                        status,
-                        run_limit,
-                        started_at,
-                        lease_expires_at,
-                        processed_count,
-                        failed_count,
-                        skipped_count,
-                        scanned_count,
-                        created_at,
-                        updated_at
-                    )
-                    VALUES (
-                        :id,
-                        'scheduled',
-                        'other-scheduler',
-                        'running',
-                        100,
-                        :started_at,
-                        :lease_expires_at,
-                        0,
-                        0,
-                        0,
-                        0,
-                        :now,
-                        :now
-                    )
-                    """
-                ),
-                {
-                    "id": uuid4(),
-                    "started_at": now - timedelta(seconds=10),
-                    "lease_expires_at": now + timedelta(minutes=10),
-                    "now": now,
-                },
-            )
-            session.commit()
-
-        try:
-            result = _run_scheduled_active_subscription_poll(
-                direct_db,
-                limit=10,
-                scheduler_identity="pytest-contender",
-            )
-            assert result["status"] == "skipped_singleton", (
-                "expected scheduled poll contender to skip when another active run lease exists, "
-                f"got {result}"
-            )
-        finally:
-            with direct_db.session() as session:
-                session.execute(
-                    text(
-                        """
-                        UPDATE podcast_subscription_poll_runs
-                        SET status = 'expired',
-                            completed_at = :now,
-                            updated_at = :now
-                        WHERE status = 'running'
-                        """
-                    ),
-                    {"now": datetime.now(UTC)},
-                )
-                session.commit()
-
-    def test_scheduled_poll_keeps_db_clock_active_singleton_when_app_clock_fast(
-        self, monkeypatch, direct_db
-    ):
-        with direct_db.session() as session:
-            session.execute(
-                text(
-                    """
-                    INSERT INTO podcast_subscription_poll_runs (
-                        id,
-                        orchestration_source,
-                        scheduler_identity,
-                        status,
-                        run_limit,
-                        started_at,
-                        lease_expires_at,
-                        processed_count,
-                        failed_count,
-                        skipped_count,
-                        scanned_count,
-                        created_at,
-                        updated_at
-                    )
-                    VALUES (
-                        :id,
-                        'scheduled',
-                        'db-clock-owner',
-                        'running',
-                        100,
-                        now(),
-                        now() + interval '10 minutes',
-                        0,
-                        0,
-                        0,
-                        0,
-                        now(),
-                        now()
-                    )
-                    """
-                ),
-                {"id": uuid4()},
-            )
-            session.commit()
-
-        class FutureDateTime(datetime):
-            @classmethod
-            def now(cls, tz=None):  # noqa: ANN001
-                return datetime(2099, 1, 1, tzinfo=UTC)
-
-        monkeypatch.setattr("nexus.services.podcasts.poll.datetime", FutureDateTime)
-
-        try:
-            result = _run_scheduled_active_subscription_poll(
-                direct_db,
-                limit=10,
-                scheduler_identity="pytest-fast-clock-contender",
-            )
-            assert result["status"] == "skipped_singleton", (
-                "active poll leases must be judged by the DB clock, "
-                f"not a fast app-server clock, got {result}"
-            )
-        finally:
-            with direct_db.session() as session:
-                session.execute(
-                    text(
-                        """
-                        UPDATE podcast_subscription_poll_runs
-                        SET status = 'expired',
-                            completed_at = now(),
-                            updated_at = now()
-                        WHERE status = 'running'
-                        """
-                    )
-                )
-                session.commit()
-
-    def test_poll_reclaims_expired_running_sync_claim(self, auth_client, monkeypatch, direct_db):
-        user_id = create_test_user_id()
-        _bootstrap_user(auth_client, user_id)
-        _set_plan(
-            auth_client,
-            user_id,
-            user_id,
-            plan_tier="ai_plus",
-            transcription_minutes_limit_monthly=None,
-        )
-
-        provider_podcast_id = f"stale-running-{uuid4()}"
-        payload = _podcast_payload(provider_podcast_id, "Stale Running Claim Podcast")
-        episodes_by_podcast = {
-            provider_podcast_id: [
-                {
-                    "podcast_index_episode_ref": "ep-stale-1",
-                    "guid": "guid-stale-1",
-                    "title": "Recovered Episode",
-                    "audio_url": "https://cdn.example.com/recovered.mp3",
-                    "published_at": "2026-03-02T10:30:00Z",
-                    "duration_seconds": 60,
-                    "transcript_segments": [
-                        {"t_start_ms": 0, "t_end_ms": 900, "text": "recovered"}
-                    ],
-                }
-            ]
-        }
-        _mock_podcast_index(
-            monkeypatch,
-            podcasts=[payload],
-            episodes_by_podcast=episodes_by_podcast,
-        )
-        subscribe_data = _subscribe(auth_client, user_id, payload)
-        podcast_id = UUID(subscribe_data["podcastId"])
-
-        with direct_db.session() as session:
-            session.execute(
-                text(
-                    """
-                    UPDATE podcast_subscriptions
-                    SET sync_status = 'running',
-                        sync_started_at = now(),
-                        sync_completed_at = NULL,
-                        updated_at = now()
-                    WHERE NOT (user_id = :user_id AND podcast_id = :podcast_id)
-                    """
-                ),
-                {
-                    "user_id": user_id,
-                    "podcast_id": podcast_id,
-                },
-            )
-            session.execute(
-                text(
-                    """
-                    UPDATE podcast_subscriptions
-                    SET
-                        sync_status = 'running',
-                        sync_started_at = :sync_started_at,
-                        sync_completed_at = NULL,
-                        updated_at = :updated_at
-                    WHERE user_id = :user_id AND podcast_id = :podcast_id
-                    """
-                ),
-                {
-                    "user_id": user_id,
-                    "podcast_id": podcast_id,
-                    "sync_started_at": datetime.now(UTC) - timedelta(hours=2),
-                    "updated_at": datetime.now(UTC) - timedelta(hours=2),
-                },
-            )
-            session.commit()
-
-        # The poll reclaims the stale `running` claim (lease expired by the DB clock)
-        # by resetting sync_status -> 'pending' and enqueuing a fresh
-        # `podcast_sync_subscription_job`, counting it as processed (enqueued). It no
-        # longer re-syncs inline.
-        result = _run_scheduled_active_subscription_poll(
-            direct_db,
-            limit=100,
-            scheduler_identity="pytest-stale-recovery",
-        )
-        assert result["processed_count"] >= 1, (
-            f"expected stale running claim to be reclaimed and re-enqueued, got {result}"
-        )
-
-        # The reclaim itself is the poll's responsibility: the expired 'running' claim
-        # must be reset to 'pending' so the enqueued job can re-claim it.
-        with direct_db.session() as session:
-            reclaimed_status = session.execute(
-                text(
-                    """
-                    SELECT sync_status
-                    FROM podcast_subscriptions
-                    WHERE user_id = :user_id AND podcast_id = :podcast_id
-                    """
-                ),
-                {"user_id": user_id, "podcast_id": podcast_id},
-            ).scalar_one()
-        assert reclaimed_status == "pending", (
-            "expected the poll to reclaim the expired running claim back to pending, "
-            f"got {reclaimed_status}"
-        )
-
-        # Drive the enqueued job (claims 'pending' -> 'running', then syncs) to confirm
-        # the reclaimed subscription recovers to a completed sync end-to-end.
-        _run_subscription_sync(direct_db, user_id, podcast_id)
-
-        status_response = auth_client.get(
-            f"/podcasts/subscriptions/{podcast_id}",
-            headers=auth_headers(user_id),
-        )
-        assert status_response.status_code == 200
-        status_data = status_response.json()["data"]
-        assert status_data["sync_status"] in {"complete", "source_limited"}
-        assert status_data["last_synced_at"] is not None
-
-    def test_poll_keeps_db_clock_healthy_running_sync_claim(
-        self, auth_client, monkeypatch, direct_db
-    ):
-        user_id = create_test_user_id()
-        _bootstrap_user(auth_client, user_id)
-        _set_plan(
-            auth_client,
-            user_id,
-            user_id,
-            plan_tier="ai_plus",
-            transcription_minutes_limit_monthly=None,
-        )
-
-        provider_podcast_id = f"healthy-running-{uuid4()}"
-        payload = _podcast_payload(provider_podcast_id, "Healthy Running Claim Podcast")
-        subscribe_data = _subscribe(auth_client, user_id, payload)
-        podcast_id = UUID(subscribe_data["podcastId"])
-
-        with direct_db.session() as session:
-            session.execute(
-                text(
-                    """
-                    UPDATE podcast_subscriptions
-                    SET sync_status = 'running',
-                        sync_started_at = now(),
-                        sync_completed_at = NULL,
-                        updated_at = now()
-                    WHERE NOT (user_id = :user_id AND podcast_id = :podcast_id)
-                    """
-                ),
-                {
-                    "user_id": user_id,
-                    "podcast_id": podcast_id,
-                },
-            )
-            session.execute(
-                text(
-                    """
-                    UPDATE podcast_subscriptions
-                    SET
-                        sync_status = 'running',
-                        sync_started_at = now(),
-                        sync_completed_at = NULL,
-                        updated_at = now()
-                    WHERE user_id = :user_id AND podcast_id = :podcast_id
-                    """
-                ),
-                {
-                    "user_id": user_id,
-                    "podcast_id": podcast_id,
-                },
-            )
-            session.commit()
-
-        class FutureDateTime(datetime):
-            @classmethod
-            def now(cls, tz=None):  # noqa: ANN001
-                return datetime(2099, 1, 1, tzinfo=UTC)
-
-        monkeypatch.setattr("nexus.services.podcasts.poll.datetime", FutureDateTime)
-
-        result = _run_active_subscription_poll(direct_db, limit=100)
-        assert result["scanned_count"] == 0, (
-            "running syncs that are healthy by the DB clock must not be reclaimed "
-            f"by an app server with a skewed clock, got {result}"
-        )
-
-        with direct_db.session() as session:
-            row = session.execute(
-                text(
-                    """
-                    SELECT sync_status, sync_attempts
-                    FROM podcast_subscriptions
-                    WHERE user_id = :user_id AND podcast_id = :podcast_id
-                    """
-                ),
-                {
-                    "user_id": user_id,
-                    "podcast_id": podcast_id,
-                },
-            ).one()
-
-        assert row[0] == "running"
-        assert row[1] == 0
-
-    def test_scheduled_poll_is_bounded_by_explicit_run_limit(
-        self, auth_client, monkeypatch, direct_db
-    ):
-        user_a = create_test_user_id()
-        user_b = create_test_user_id()
-        _bootstrap_user(auth_client, user_a)
-        _bootstrap_user(auth_client, user_b)
-        _set_plan(
-            auth_client,
-            user_a,
-            user_a,
-            plan_tier="ai_plus",
-            transcription_minutes_limit_monthly=None,
-        )
-        _set_plan(
-            auth_client,
-            user_b,
-            user_b,
-            plan_tier="ai_plus",
-            transcription_minutes_limit_monthly=None,
-        )
-
-        provider_a = f"bounded-a-{uuid4()}"
-        provider_b = f"bounded-b-{uuid4()}"
-        payload_a = _podcast_payload(provider_a, "Bounded Podcast A")
-        payload_b = _podcast_payload(provider_b, "Bounded Podcast B")
-
-        _mock_podcast_index(
-            monkeypatch,
-            podcasts=[payload_a, payload_b],
-            episodes_by_podcast={
-                provider_a: [
-                    {
-                        "podcast_index_episode_ref": "ep-bound-a-1",
-                        "guid": "guid-bound-a-1",
-                        "title": "Bounded Episode A",
-                        "audio_url": "https://cdn.example.com/bounded-a.mp3",
-                        "published_at": "2026-03-02T11:00:00Z",
-                        "duration_seconds": 60,
-                        "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 700, "text": "a"}],
-                    }
-                ],
-                provider_b: [
-                    {
-                        "podcast_index_episode_ref": "ep-bound-b-1",
-                        "guid": "guid-bound-b-1",
-                        "title": "Bounded Episode B",
-                        "audio_url": "https://cdn.example.com/bounded-b.mp3",
-                        "published_at": "2026-03-02T11:01:00Z",
-                        "duration_seconds": 60,
-                        "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 700, "text": "b"}],
-                    }
-                ],
-            },
-        )
-
-        _subscribe(auth_client, user_a, payload_a)
-        _subscribe(auth_client, user_b, payload_b)
-
-        result = _run_scheduled_active_subscription_poll(
-            direct_db,
-            limit=1,
-            scheduler_identity="pytest-bounded-limit",
-        )
-        assert result["scanned_count"] == 1, (
-            f"expected scanned_count=1 with run limit=1, got {result}"
-        )
-        assert result["processed_count"] + result["failed_count"] + result["skipped_count"] <= 1, (
-            f"bounded run processed more subscriptions than limit permits: {result}"
-        )
-
-
 class TestPodcastSubscriptionLifecycleClosure:
     def _ingest_single_episode_subscription(
         self,
@@ -5501,9 +4923,11 @@ class TestPodcastSubscriptionLifecycleClosure:
         assert media_id is not None
         return podcast_id, media_id
 
-    def test_unsubscribe_stops_future_poll_ingest_and_keeps_saved_episodes(
+    def test_unsubscribe_stops_future_due_admission_and_keeps_saved_episodes(
         self, auth_client, monkeypatch, direct_db
     ):
+        from nexus.services.podcasts.refresh import admit_due_refresh_runs
+
         user_id = create_test_user_id()
         provider_podcast_id = f"mode1-{uuid4()}"
         default_library_id = _bootstrap_user(auth_client, user_id)
@@ -5551,6 +4975,40 @@ class TestPodcastSubscriptionLifecycleClosure:
             }
         )
 
+        refresh = auth_client.post(
+            "/podcasts/refresh-runs",
+            json={"kind": "Podcast", "podcastId": str(podcast_id)},
+            headers={
+                **auth_headers(user_id),
+                "Idempotency-Key": f"refresh-before-unsubscribe-{uuid4()}",
+            },
+        )
+        assert refresh.status_code == 202, refresh.text
+        refresh_data = refresh.json()["data"]
+        assert refresh_data["status"] == "Running"
+        assert refresh_data["requestedCount"] == 1
+
+        with direct_db.session() as session:
+            subscription_id, live_sync_job_id = session.execute(
+                text(
+                    """
+                    SELECT id, sync_job_id
+                    FROM podcast_subscriptions
+                    WHERE user_id = :user_id
+                      AND podcast_id = :podcast_id
+                    """
+                ),
+                {"user_id": user_id, "podcast_id": podcast_id},
+            ).one()
+            assert live_sync_job_id is not None
+            assert (
+                session.execute(
+                    text("SELECT status FROM background_jobs WHERE id = :job_id"),
+                    {"job_id": live_sync_job_id},
+                ).scalar_one()
+                == "pending"
+            )
+
         unsubscribe = auth_client.delete(
             f"/podcasts/subscriptions/{podcast_id}",
             headers={
@@ -5578,10 +5036,39 @@ class TestPodcastSubscriptionLifecycleClosure:
         )
         assert detail_after_unsubscribe.json()["data"]["subscription"] is None
 
-        # Count any sync jobs already enqueued for this podcast (e.g. from the initial
-        # subscribe sync) so we can prove the post-unsubscribe poll adds none.
+        refresh_after_unsubscribe = auth_client.get(
+            f"/podcasts/refresh-runs/{refresh_data['refreshRunHandle']}",
+            headers=auth_headers(user_id),
+        )
+        assert refresh_after_unsubscribe.status_code == 200, refresh_after_unsubscribe.text
+        refresh_snapshot = refresh_after_unsubscribe.json()["data"]
+        assert refresh_snapshot["status"] == "Complete"
+        assert refresh_snapshot["requestedCount"] == 1
+        assert refresh_snapshot["finishedCount"] == 1
+        assert refresh_snapshot["skippedCount"] == 1
+
+        # Unsubscribe fences the deleted epoch through durable state. It must not
+        # revoke the live queue attempt; the stale worker will claim and no-op.
         with direct_db.session() as session:
-            sync_jobs_before_poll = int(
+            live_job = session.execute(
+                text(
+                    """
+                    SELECT
+                        status,
+                        payload->>'subscription_id' AS subscription_id,
+                        payload->>'podcast_id' AS podcast_id
+                    FROM background_jobs
+                    WHERE id = :job_id
+                    """
+                ),
+                {"job_id": live_sync_job_id},
+            ).one()
+            assert tuple(live_job) == (
+                "pending",
+                str(subscription_id),
+                str(podcast_id),
+            )
+            sync_jobs_before_due = int(
                 session.execute(
                     text(
                         """
@@ -5596,14 +5083,11 @@ class TestPodcastSubscriptionLifecycleClosure:
                 ).scalar_one()
             )
 
-        # Active subscriptions are rows, so deletion makes this Podcast ineligible
-        # for the scheduler and the poll enqueues nothing for it.
-        # Other active subscriptions in the shared test DB may also be enqueued; the
-        # scoped check below proves the UNSUBSCRIBED podcast specifically is not.
-        _run_active_subscription_poll(direct_db, limit=100)
+        with direct_db.session() as session:
+            admit_due_refresh_runs(session, limit=100)
 
         with direct_db.session() as session:
-            sync_jobs_after_poll = int(
+            sync_jobs_after_due = int(
                 session.execute(
                     text(
                         """
@@ -5617,9 +5101,9 @@ class TestPodcastSubscriptionLifecycleClosure:
                     {"user_id": str(user_id), "podcast_id": str(podcast_id)},
                 ).scalar_one()
             )
-        assert sync_jobs_after_poll == sync_jobs_before_poll, (
-            "the poll must not enqueue a new sync job for an unsubscribed podcast; "
-            f"before={sync_jobs_before_poll} after={sync_jobs_after_poll}"
+        assert sync_jobs_after_due == sync_jobs_before_due, (
+            "due admission must not enqueue a new sync job for an unsubscribed podcast; "
+            f"before={sync_jobs_before_due} after={sync_jobs_after_due}"
         )
 
         # Episodes saved while subscribed are retained; nothing new is ingested for the
@@ -5985,9 +5469,11 @@ class TestPodcastSubscriptionLifecycleClosure:
             f"renormalization; got {canonical_entry_ids} expected {expected_canonical_order}"
         )
 
-    def test_active_subscription_poll_ingests_newly_published_episode(
+    def test_due_admission_ingests_newly_published_episode(
         self, auth_client, monkeypatch, direct_db
     ):
+        from nexus.services.podcasts.refresh import admit_due_refresh_runs
+
         user_id = create_test_user_id()
         default_library_id = _bootstrap_user(auth_client, user_id)
         _set_plan(
@@ -5998,15 +5484,15 @@ class TestPodcastSubscriptionLifecycleClosure:
             transcription_minutes_limit_monthly=None,
         )
 
-        provider_podcast_id = f"poll-{uuid4()}"
-        payload = _podcast_payload(provider_podcast_id, "Polling Podcast")
+        provider_podcast_id = f"due-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, "Due Podcast")
         episodes_by_podcast = {
             provider_podcast_id: [
                 {
-                    "podcast_index_episode_ref": "ep-poll-1",
-                    "guid": "guid-poll-1",
-                    "title": "Poll Episode One",
-                    "audio_url": "https://cdn.example.com/poll-1.mp3",
+                    "podcast_index_episode_ref": "ep-due-1",
+                    "guid": "guid-due-1",
+                    "title": "Due Episode One",
+                    "audio_url": "https://cdn.example.com/due-1.mp3",
                     "published_at": "2026-03-01T09:00:00Z",
                     "duration_seconds": 60,
                     "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 800, "text": "one"}],
@@ -6025,29 +5511,31 @@ class TestPodcastSubscriptionLifecycleClosure:
 
         episodes_by_podcast[provider_podcast_id].append(
             {
-                "podcast_index_episode_ref": "ep-poll-2",
-                "guid": "guid-poll-2",
-                "title": "Poll Episode Two",
-                "audio_url": "https://cdn.example.com/poll-2.mp3",
+                "podcast_index_episode_ref": "ep-due-2",
+                "guid": "guid-due-2",
+                "title": "Due Episode Two",
+                "audio_url": "https://cdn.example.com/due-2.mp3",
                 "published_at": "2026-03-02T09:00:00Z",
                 "duration_seconds": 60,
                 "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 900, "text": "two"}],
             }
         )
 
-        # The poll is now a pure scheduler: it claims the due subscription
-        # (sync_status -> 'pending') and enqueues one durable
-        # `podcast_sync_subscription_job`, reporting the enqueue count as
-        # processed_count. It does NOT ingest inline.
-        poll_result = _run_active_subscription_poll(direct_db, limit=100)
-        assert poll_result["processed_count"] >= 1, (
-            f"expected the poll to enqueue a sync job for the due subscription, got {poll_result}"
-        )
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    UPDATE podcast_subscriptions
+                    SET next_sync_at = now() - interval '1 second'
+                    WHERE user_id = :user_id AND podcast_id = :podcast_id
+                    """
+                ),
+                {"user_id": user_id, "podcast_id": podcast_id},
+            )
+            session.commit()
+            due_result = admit_due_refresh_runs(session, limit=100)
+        assert due_result.subscription_count >= 1
 
-        # Drive the enqueued sync job (claims 'pending' -> 'running', then ingests),
-        # reusing the same `run_podcast_subscription_sync_now` mechanism the worker
-        # invokes when the enqueued job runs. Only after the job runs is the newly
-        # published episode ingested.
         _run_subscription_sync(direct_db, user_id, podcast_id)
 
         with direct_db.session() as session:
@@ -6065,7 +5553,7 @@ class TestPodcastSubscriptionLifecycleClosure:
                 {"library_id": default_library_id},
             ).fetchall()
 
-        assert [row[0] for row in titles] == ["Poll Episode One", "Poll Episode Two"]
+        assert [row[0] for row in titles] == ["Due Episode One", "Due Episode Two"]
 
 
 class TestPodcastApiSurface:
@@ -6142,7 +5630,7 @@ class TestPodcastApiSurface:
         assert len(rows) == 1, f"expected exactly one subscription row, got: {rows}"
         row = rows[0]
         assert row["podcast_id"] == str(podcast_id)
-        assert row["sync_status"] in {"complete", "source_limited"}
+        assert row["sync_status"] in {"Complete", "SourceLimited"}
         assert row["latest_episode_published_at"]["kind"] == "Present"
         assert row["title"] == "Surface Podcast"
         assert "provider_podcast_id" not in row
@@ -6171,7 +5659,7 @@ class TestPodcastApiSurface:
         assert data["podcast"]["provider_podcast_id"] == provider_podcast_id
         assert data["podcast"]["title"] == "Detail Podcast"
         assert data["subscription"]["podcast_id"] == str(podcast_id)
-        assert data["subscription"]["sync_status"] in {"complete", "source_limited"}
+        assert data["subscription"]["sync_status"] in {"Complete", "SourceLimited"}
         assert data["subscription"]["backfill"]["state"] == "Pending"
 
     def test_get_podcast_episodes_returns_visible_episode_media(
@@ -6762,8 +6250,12 @@ upgrade now
 
         state["rss_enabled"] = True
         refresh_response = auth_client.post(
-            f"/podcasts/subscriptions/{podcast_id}/sync",
-            headers=auth_headers(user_id),
+            "/podcasts/refresh-runs",
+            json={"kind": "Podcast", "podcastId": str(podcast_id)},
+            headers={
+                **auth_headers(user_id),
+                "Idempotency-Key": f"transcript-feed-refresh-{uuid4()}",
+            },
         )
         assert refresh_response.status_code == 202
         _run_subscription_sync(
@@ -9875,8 +9367,6 @@ class TestSubscribeWithNamedLibraries:
         self, auth_client, monkeypatch, direct_db
     ):
         """Named Libraries contain the Podcast; ingested episodes project through Default."""
-        from nexus.services.podcasts.poll import run_podcast_subscription_sync_now
-
         user_id = create_test_user_id()
         default_library_id = _bootstrap_user(auth_client, user_id)
         _set_plan(
@@ -9929,14 +9419,13 @@ class TestSubscribeWithNamedLibraries:
         direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
         direct_db.register_cleanup("library_entries", "podcast_id", podcast_id)
 
-        with direct_db.session() as session:
-            sync_result = run_podcast_subscription_sync_now(
-                session,
-                user_id=user_id,
-                podcast_id=podcast_id,
-            )
-            session.commit()
-        assert sync_result.sync_status in {"complete", "source_limited"}, (
+        sync_result = _run_subscription_sync(
+            direct_db,
+            user_id,
+            podcast_id,
+            run_transcription_jobs=False,
+        )
+        assert sync_result["status"] in {"Complete", "SourceLimited"}, (
             f"sync should complete to backfill episodes; got {sync_result}"
         )
 
@@ -9978,8 +9467,6 @@ class TestSubscribeWithNamedLibraries:
         self, auth_client, monkeypatch, direct_db
     ):
         """A named Podcast placement never creates redundant named episode entries."""
-        from nexus.services.podcasts.poll import run_podcast_subscription_sync_now
-
         user_id = create_test_user_id()
         default_library_id = _bootstrap_user(auth_client, user_id)
         _set_plan(
@@ -10027,13 +9514,12 @@ class TestSubscribeWithNamedLibraries:
         direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
         direct_db.register_cleanup("library_entries", "podcast_id", podcast_id)
 
-        with direct_db.session() as session:
-            run_podcast_subscription_sync_now(
-                session,
-                user_id=user_id,
-                podcast_id=podcast_id,
-            )
-            session.commit()
+        _run_subscription_sync(
+            direct_db,
+            user_id,
+            podcast_id,
+            run_transcription_jobs=False,
+        )
 
         _set_plan(
             auth_client,
@@ -10055,13 +9541,12 @@ class TestSubscribeWithNamedLibraries:
         }
         episodes_by_podcast[provider_podcast_id].append(new_episode)
 
-        with direct_db.session() as session:
-            run_podcast_subscription_sync_now(
-                session,
-                user_id=user_id,
-                podcast_id=podcast_id,
-            )
-            session.commit()
+        _run_subscription_sync(
+            direct_db,
+            user_id,
+            podcast_id,
+            run_transcription_jobs=False,
+        )
 
         with direct_db.session() as session:
             second_sync_episode_ids = {
@@ -10195,24 +9680,8 @@ class TestSubscribeWithNamedLibraries:
 
 
 # =============================================================================
-# Auto-subscription watermark (lectern-player-lifecycle-hard-cutover.md §5.3, §8
-# item 5). The fenced watermark step owns eligible-episode selection + Lectern
-# insertion + monotonic watermark advance as one database fact; the ensure has no
-# replay memo, disabled preserves the watermark, and a reclaimed claim writes
-# nothing.
+# Auto-subscription watermark eligibility retained by exact sync finalization.
 # =============================================================================
-
-
-def _seed_watermark_podcast(auth_client, direct_db, monkeypatch, *, user_id):
-    """Create a podcast + subscription (via the real subscribe path) and return the
-    podcast id. The provider feed is empty so no episodes are ingested; the tests
-    seed episodes directly to control published_at."""
-    _bootstrap_user(auth_client, user_id)
-    provider_id = f"watermark-{uuid4()}"
-    payload = _podcast_payload(provider_id, "Watermark Podcast")
-    _mock_podcast_index(monkeypatch, podcasts=[payload], episodes_by_podcast={provider_id: []})
-    data = _subscribe(auth_client, user_id, {**payload, "auto_queue": True})
-    return UUID(data["podcastId"])
 
 
 def _seed_watermark_episode(session, *, podcast_id, user_id, published_at, title="WM Episode"):
@@ -10249,68 +9718,9 @@ def _seed_watermark_episode(session, *, podcast_id, user_id, published_at, title
     return media_id
 
 
-def _set_subscription_sync_state(
-    direct_db, *, user_id, podcast_id, auto_queue, watermark, sync_started_at, sync_attempts=1
-):
-    with direct_db.session() as session:
-        session.execute(
-            text(
-                """
-                UPDATE podcast_subscriptions
-                SET sync_status = 'running',
-                    sync_attempts = :attempts,
-                    sync_started_at = :started,
-                    auto_queue = :auto_queue,
-                    auto_queue_watermark_at = :watermark,
-                    updated_at = now()
-                WHERE user_id = :user_id AND podcast_id = :podcast_id
-                """
-            ),
-            {
-                "attempts": sync_attempts,
-                "started": sync_started_at,
-                "auto_queue": auto_queue,
-                "watermark": watermark,
-                "user_id": user_id,
-                "podcast_id": podcast_id,
-            },
-        )
-        session.commit()
-
-
-def _queue_media_ids(direct_db, user_id):
-    with direct_db.session() as session:
-        rows = session.execute(
-            text(
-                """
-                SELECT media_id, source
-                FROM consumption_queue_items
-                WHERE user_id = :u
-                ORDER BY position ASC
-                """
-            ),
-            {"u": user_id},
-        ).fetchall()
-    return [(UUID(str(r[0])), r[1]) for r in rows]
-
-
-def _subscription_state(direct_db, user_id, podcast_id):
-    with direct_db.session() as session:
-        return session.execute(
-            text(
-                """
-                SELECT auto_queue_watermark_at, sync_status, sync_attempts
-                FROM podcast_subscriptions
-                WHERE user_id = :u AND podcast_id = :p
-                """
-            ),
-            {"u": user_id, "p": podcast_id},
-        ).fetchone()
-
-
 class TestAutoSubscriptionWatermark:
     def test_eligible_null_watermark_selects_all_eligible_oldest_first(self, direct_db):
-        from nexus.services.podcasts.poll import _eligible_auto_subscription_media
+        from nexus.services.podcasts.sync import _eligible_auto_subscription_media
 
         user_id = create_test_user_id()
         with direct_db.session() as session:
@@ -10352,7 +9762,7 @@ class TestAutoSubscriptionWatermark:
         assert eligible == eps
 
     def test_eligible_cutoff_boundary_and_missing_published_at(self, direct_db):
-        from nexus.services.podcasts.poll import _eligible_auto_subscription_media
+        from nexus.services.podcasts.sync import _eligible_auto_subscription_media
 
         user_id = create_test_user_id()
         cutoff = datetime.now(UTC)
@@ -10396,7 +9806,7 @@ class TestAutoSubscriptionWatermark:
         assert eligible == [at_cutoff]
 
     def test_eligible_watermark_window_is_open_interval(self, direct_db):
-        from nexus.services.podcasts.poll import _eligible_auto_subscription_media
+        from nexus.services.podcasts.sync import _eligible_auto_subscription_media
 
         user_id = create_test_user_id()
         cutoff = datetime.now(UTC)
@@ -10435,243 +9845,3 @@ class TestAutoSubscriptionWatermark:
                 watermark=watermark,
             )
         assert eligible == [after]
-
-    def test_advance_disabled_inserts_nothing_and_preserves_watermark(
-        self, auth_client, direct_db, monkeypatch
-    ):
-        from nexus.services.podcasts.poll import (
-            SubscriptionSyncClaim,
-            _advance_auto_subscription_after_sync,
-        )
-
-        user_id = create_test_user_id()
-        podcast_id = _seed_watermark_podcast(auth_client, direct_db, monkeypatch, user_id=user_id)
-        started = datetime.now(UTC)
-        watermark = started - timedelta(days=30)
-        with direct_db.session() as session:
-            _seed_watermark_episode(
-                session,
-                podcast_id=podcast_id,
-                user_id=user_id,
-                published_at=started - timedelta(days=1),
-            )
-            session.commit()
-        _set_subscription_sync_state(
-            direct_db,
-            user_id=user_id,
-            podcast_id=podcast_id,
-            auto_queue=False,
-            watermark=watermark,
-            sync_started_at=started,
-        )
-        _advance_auto_subscription_after_sync(
-            user_id=user_id,
-            podcast_id=podcast_id,
-            claim=SubscriptionSyncClaim(sync_attempts=1, sync_started_at=started),
-            sync_cutoff_at=started,
-            sync_status_on_complete="complete",
-            sync_lease_seconds=3600,
-            now=started,
-        )
-        assert _queue_media_ids(direct_db, user_id) == []
-        wm, status, _ = _subscription_state(direct_db, user_id, podcast_id)
-        assert wm == watermark, "disabled auto-queue preserves the watermark"
-        assert status == "complete", "the exact claim is still completed"
-
-    def test_advance_monotonic_second_sync_same_cutoff_noops(
-        self, auth_client, direct_db, monkeypatch
-    ):
-        from nexus.services.podcasts.poll import (
-            SubscriptionSyncClaim,
-            _advance_auto_subscription_after_sync,
-        )
-
-        user_id = create_test_user_id()
-        podcast_id = _seed_watermark_podcast(auth_client, direct_db, monkeypatch, user_id=user_id)
-        started = datetime.now(UTC)
-        with direct_db.session() as session:
-            _seed_watermark_episode(
-                session,
-                podcast_id=podcast_id,
-                user_id=user_id,
-                published_at=started - timedelta(days=1),
-            )
-            session.commit()
-
-        def run_advance(attempt):
-            _set_subscription_sync_state(
-                direct_db,
-                user_id=user_id,
-                podcast_id=podcast_id,
-                auto_queue=True,
-                watermark=None if attempt == 1 else started,
-                sync_started_at=started,
-                sync_attempts=attempt,
-            )
-            _advance_auto_subscription_after_sync(
-                user_id=user_id,
-                podcast_id=podcast_id,
-                claim=SubscriptionSyncClaim(sync_attempts=attempt, sync_started_at=started),
-                sync_cutoff_at=started,
-                sync_status_on_complete="complete",
-                sync_lease_seconds=3600,
-                now=started,
-            )
-
-        run_advance(1)
-        first = _queue_media_ids(direct_db, user_id)
-        assert len(first) == 1
-        wm_after_first, _, _ = _subscription_state(direct_db, user_id, podcast_id)
-        assert wm_after_first == started
-
-        run_advance(2)
-        second = _queue_media_ids(direct_db, user_id)
-        assert second == first, "a second sync at the same cutoff inserts nothing"
-        wm_after_second, _, _ = _subscription_state(direct_db, user_id, podcast_id)
-        assert wm_after_second == started, "watermark advance is idempotent (monotonic)"
-
-    def test_advance_reenable_resumes_from_watermark(self, auth_client, direct_db, monkeypatch):
-        from nexus.services.podcasts.poll import (
-            SubscriptionSyncClaim,
-            _advance_auto_subscription_after_sync,
-        )
-
-        user_id = create_test_user_id()
-        podcast_id = _seed_watermark_podcast(auth_client, direct_db, monkeypatch, user_id=user_id)
-        first_cutoff = datetime.now(UTC) - timedelta(days=10)
-        watermark = first_cutoff  # a prior run already advanced to here
-        with direct_db.session() as session:
-            newer = _seed_watermark_episode(
-                session,
-                podcast_id=podcast_id,
-                user_id=user_id,
-                published_at=first_cutoff + timedelta(days=1),
-                title="NEWER",
-            )
-            _seed_watermark_episode(  # already covered by the watermark
-                session,
-                podcast_id=podcast_id,
-                user_id=user_id,
-                published_at=first_cutoff - timedelta(days=1),
-                title="OLDER",
-            )
-            session.commit()
-        second_cutoff = datetime.now(UTC)
-        _set_subscription_sync_state(
-            direct_db,
-            user_id=user_id,
-            podcast_id=podcast_id,
-            auto_queue=True,
-            watermark=watermark,
-            sync_started_at=second_cutoff,
-        )
-        _advance_auto_subscription_after_sync(
-            user_id=user_id,
-            podcast_id=podcast_id,
-            claim=SubscriptionSyncClaim(sync_attempts=1, sync_started_at=second_cutoff),
-            sync_cutoff_at=second_cutoff,
-            sync_status_on_complete="complete",
-            sync_lease_seconds=3600,
-            now=second_cutoff,
-        )
-        queued = _queue_media_ids(direct_db, user_id)
-        assert [media_id for media_id, _ in queued] == [newer], (
-            "re-enable resumes strictly after the watermark"
-        )
-        assert {source for _, source in queued} == {"auto_subscription"}
-
-    def test_advance_stale_claim_writes_nothing(self, auth_client, direct_db, monkeypatch):
-        from nexus.services.podcasts.poll import (
-            StaleSubscriptionSyncClaim,
-            SubscriptionSyncClaim,
-            _advance_auto_subscription_after_sync,
-        )
-
-        user_id = create_test_user_id()
-        podcast_id = _seed_watermark_podcast(auth_client, direct_db, monkeypatch, user_id=user_id)
-        started = datetime.now(UTC)
-        with direct_db.session() as session:
-            _seed_watermark_episode(
-                session,
-                podcast_id=podcast_id,
-                user_id=user_id,
-                published_at=started - timedelta(days=1),
-            )
-            session.commit()
-        # The subscription now carries a REPLACEMENT claim (attempt 2); this worker
-        # still holds attempt 1.
-        _set_subscription_sync_state(
-            direct_db,
-            user_id=user_id,
-            podcast_id=podcast_id,
-            auto_queue=True,
-            watermark=None,
-            sync_started_at=started,
-            sync_attempts=2,
-        )
-        with pytest.raises(StaleSubscriptionSyncClaim):
-            _advance_auto_subscription_after_sync(
-                user_id=user_id,
-                podcast_id=podcast_id,
-                claim=SubscriptionSyncClaim(sync_attempts=1, sync_started_at=started),
-                sync_cutoff_at=started,
-                sync_status_on_complete="complete",
-                sync_lease_seconds=3600,
-                now=started,
-            )
-        assert _queue_media_ids(direct_db, user_id) == [], "reclaimed worker writes no rows"
-        wm, status, attempts = _subscription_state(direct_db, user_id, podcast_id)
-        assert wm is None, "no watermark advance"
-        assert status == "running" and attempts == 2, "the replacement claim is untouched"
-
-    def test_advance_writes_no_replay_memo(self, auth_client, direct_db, monkeypatch):
-        from nexus.services.podcasts.poll import (
-            SubscriptionSyncClaim,
-            _advance_auto_subscription_after_sync,
-        )
-
-        user_id = create_test_user_id()
-        podcast_id = _seed_watermark_podcast(auth_client, direct_db, monkeypatch, user_id=user_id)
-        started = datetime.now(UTC)
-        with direct_db.session() as session:
-            _seed_watermark_episode(
-                session,
-                podcast_id=podcast_id,
-                user_id=user_id,
-                published_at=started - timedelta(days=1),
-            )
-            session.commit()
-        _set_subscription_sync_state(
-            direct_db,
-            user_id=user_id,
-            podcast_id=podcast_id,
-            auto_queue=True,
-            watermark=None,
-            sync_started_at=started,
-        )
-        with direct_db.session() as session:
-            memo_rows_before = int(
-                session.execute(
-                    text("SELECT count(*) FROM resource_mutations WHERE user_id = :u"),
-                    {"u": user_id},
-                ).scalar_one()
-            )
-        _advance_auto_subscription_after_sync(
-            user_id=user_id,
-            podcast_id=podcast_id,
-            claim=SubscriptionSyncClaim(sync_attempts=1, sync_started_at=started),
-            sync_cutoff_at=started,
-            sync_status_on_complete="complete",
-            sync_lease_seconds=3600,
-            now=started,
-        )
-        assert len(_queue_media_ids(direct_db, user_id)) == 1
-        with direct_db.session() as session:
-            memo_rows = session.execute(
-                text("SELECT count(*) FROM resource_mutations WHERE user_id = :u"),
-                {"u": user_id},
-            ).scalar_one()
-        assert memo_rows == memo_rows_before, (
-            "the trusted advancement persists no replay memo; setup Podcast controls "
-            "retain their own replay facts"
-        )

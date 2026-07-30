@@ -64,11 +64,18 @@ Every supported route declares one `PaneRouteHeaderContract`:
 - `section` resolves the destination-owned standing head and an optional folio
 - `resource` resolves a title plus structured credit groups
 
-Pane bodies publish the orthogonal `{ header, toolbar, search, actions, menu }`
+Pane bodies publish the orthogonal `{ header, toolbar, search, actions, menu,
+refresh }`
 capabilities through `usePanePrimaryChrome`. Each update carries the current
 `routeKey`; `PaneShell` rejects stale updates before validating the header kind.
 There is no route-level chrome descriptor, body-mode inference, or ambient title
 override.
+
+`refresh` publishes one source-fenced, abortable, awaitable owner operation.
+`PaneShell` owns its menu action, mobile top-edge pull gesture, progress, and
+announcement; the pane owner resolves only after its canonical first page is
+installed. Only the six explicitly supported finite standard-scroll panes
+publish it. Refresh never reloads the route or polls for completion.
 
 `search` is one closed pane-local capability: `FilterRows` derives local primary
 rows, while `FindOccurrences` delegates document matching and exact preview to

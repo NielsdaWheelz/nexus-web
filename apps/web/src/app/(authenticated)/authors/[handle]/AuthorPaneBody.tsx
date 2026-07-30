@@ -69,6 +69,7 @@ import {
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { emptyResourceMenuGroups } from "@/lib/actions/resourceActions";
+import { isAbortError } from "@/lib/errors";
 import styles from "./page.module.css";
 
 type AuthorConnectionsResource =
@@ -80,6 +81,13 @@ const AUTHOR_VISIT_DATA =
   definePaneVisitDataKey<AuthorPaneSeed>("Author.Works");
 const NO_CURSOR: Presence<CollectionCursor> = { kind: "Absent" };
 const ZERO_REVISION = 0 as CollectionRevision;
+
+interface PendingAuthorRevalidation {
+  readonly version: number;
+  readonly resolve: () => void;
+  readonly reject: (error: unknown) => void;
+  readonly removeAbortListener: () => void;
+}
 
 function resolveAuthorConnectionsResource(
   resourceRef: string | null,
@@ -123,6 +131,11 @@ export default function AuthorPaneBody() {
   const allowResourceAdoptionRef = useRef(restored === null);
   const clearAllVisitData = useClearAllPaneVisitData();
   const [firstPageVersion, setFirstPageVersion] = useState(0);
+  const firstPageVersionRef = useRef(0);
+  const pendingAuthorRevalidationRef =
+    useRef<PendingAuthorRevalidation | null>(null);
+  const completedAuthorRevalidationVersionRef = useRef<number | null>(null);
+  const [refreshingWorks, setRefreshingWorks] = useState(false);
   const [chainEpoch, setChainEpoch] = useState(0);
   const initialAuthor = useResource<AuthorPaneSeed>({
     cacheKey:
@@ -162,31 +175,116 @@ export default function AuthorPaneBody() {
       setData(initialAuthor.data);
       setChainEpoch((epoch) => epoch + 1);
       setError(null);
+      setRefreshingWorks(false);
+      const pending = pendingAuthorRevalidationRef.current;
+      if (pending?.version === firstPageVersion) {
+        completedAuthorRevalidationVersionRef.current = pending.version;
+      }
     } else if (
       initialAuthor.status === "error" &&
       allowResourceAdoptionRef.current
     ) {
+      setRefreshingWorks(false);
       setError(
         toFeedback(initialAuthor.error, {
           fallback: "Couldn't load this author.",
         }),
       );
+      const pending = pendingAuthorRevalidationRef.current;
+      if (pending?.version === firstPageVersion) {
+        pendingAuthorRevalidationRef.current = null;
+        completedAuthorRevalidationVersionRef.current = null;
+        pending.removeAbortListener();
+        pending.reject(initialAuthor.error);
+      }
     }
-  }, [initialAuthor]);
+  }, [firstPageVersion, initialAuthor]);
 
   useLayoutEffect(() => {
     committedSnapshotRef.current = data;
-  }, [data]);
+    const pending = pendingAuthorRevalidationRef.current;
+    if (
+      data === null ||
+      data.detail.handle !== handle ||
+      pending === null ||
+      completedAuthorRevalidationVersionRef.current !== pending.version
+    ) {
+      return;
+    }
+    completedAuthorRevalidationVersionRef.current = null;
+    pendingAuthorRevalidationRef.current = null;
+    pending.removeAbortListener();
+    pending.resolve();
+  }, [data, handle]);
 
   usePaneReturnReady(data !== null || error !== null);
   useSetPaneLabel(loading ? null : (data?.detail.displayName ?? "Author"));
 
+  const rejectPendingAuthorRevalidation = useCallback((error: unknown) => {
+    const pending = pendingAuthorRevalidationRef.current;
+    pendingAuthorRevalidationRef.current = null;
+    completedAuthorRevalidationVersionRef.current = null;
+    if (!pending) return;
+    pending.removeAbortListener();
+    pending.reject(error);
+  }, []);
   const refreshWorks = useCallback(() => {
+    rejectPendingAuthorRevalidation(
+      new DOMException("Author refresh was superseded.", "AbortError"),
+    );
     allowResourceAdoptionRef.current = true;
     clearAllVisitData();
     setError(null);
-    setFirstPageVersion((version) => version + 1);
-  }, [clearAllVisitData]);
+    setRefreshingWorks(true);
+    const version = firstPageVersionRef.current + 1;
+    firstPageVersionRef.current = version;
+    setFirstPageVersion(version);
+  }, [clearAllVisitData, rejectPendingAuthorRevalidation]);
+  const revalidateWorks = useCallback(
+    (signal: AbortSignal): Promise<void> => {
+      if (signal.aborted) {
+        return Promise.reject(
+          signal.reason ??
+            new DOMException("Author refresh was aborted.", "AbortError"),
+        );
+      }
+      refreshWorks();
+      const version = firstPageVersionRef.current;
+      return new Promise<void>((resolve, reject) => {
+        const onAbort = () => {
+          const pending = pendingAuthorRevalidationRef.current;
+          if (pending?.version !== version) return;
+          pendingAuthorRevalidationRef.current = null;
+          completedAuthorRevalidationVersionRef.current = null;
+          pending.removeAbortListener();
+          allowResourceAdoptionRef.current = false;
+          setRefreshingWorks(false);
+          reject(
+            signal.reason ??
+              new DOMException("Author refresh was aborted.", "AbortError"),
+          );
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        pendingAuthorRevalidationRef.current = {
+          version,
+          resolve,
+          reject,
+          removeAbortListener: () =>
+            signal.removeEventListener("abort", onAbort),
+        };
+        if (signal.aborted) onAbort();
+      });
+    },
+    [refreshWorks],
+  );
+  useEffect(
+    () => () => {
+      rejectPendingAuthorRevalidation(
+        new DOMException("Author refresh source was replaced.", "AbortError"),
+      );
+    },
+    [handle, rejectPendingAuthorRevalidation],
+  );
   const commitWorksPage = useCallback(
     (page: CollectionPage<ContributorWorkItem>): number => {
       const current = committedSnapshotRef.current;
@@ -216,7 +314,11 @@ export default function AuthorPaneBody() {
     [],
   );
   const exhaustion = useExhaustivePagination<ContributorWorkItem>({
-    active: runtime.isActive && data !== null && data.detail.handle === handle,
+    active:
+      runtime.isActive &&
+      data !== null &&
+      data.detail.handle === handle &&
+      !refreshingWorks,
     chainKey: `${handle ?? ""}:${chainEpoch}`,
     cursor: data?.nextCursor ?? NO_CURSOR,
     collectionRevision: data?.collectionRevision ?? ZERO_REVISION,
@@ -309,8 +411,32 @@ export default function AuthorPaneBody() {
     handle: canonicalHandle,
     bodies: { linkedItems: connectionsBody },
   });
+  const executeRefresh = useCallback(
+    async ({ signal }: { readonly signal: AbortSignal }) => {
+      try {
+        await revalidateWorks(signal);
+        return {
+          kind: "Complete" as const,
+          announcement: "Author refreshed",
+        };
+      } catch (refreshError: unknown) {
+        if (isAbortError(refreshError)) throw refreshError;
+        return {
+          kind: "Failed" as const,
+          announcement: "Author failed to refresh",
+        };
+      }
+    },
+    [revalidateWorks],
+  );
   usePanePrimaryChrome({
     search,
+    refresh: handle
+      ? {
+          sourceKey: `Author.Works:${handle}`,
+          execute: executeRefresh,
+        }
+      : undefined,
     actions: companionAction ? [companionAction] : [],
     menu: data
       ? {
@@ -325,7 +451,7 @@ export default function AuthorPaneBody() {
         exhaustion.kind === "Complete"
           ? { kind: "count", value: workCount, unit: "work" }
           : { kind: "none" },
-      pending: loading || exhaustion.kind !== "Complete",
+      pending: loading || refreshingWorks || exhaustion.kind !== "Complete",
     },
   });
 

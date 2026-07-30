@@ -642,7 +642,7 @@ describe("rich resource builders", () => {
       () => ({
         groups: podcastResourceOptions({
           settings: noAction,
-          refreshSync: noAction,
+          checkForNewEpisodes: noAction,
           subscription: noAction,
           busyIds: noBusy,
         }),
@@ -690,9 +690,12 @@ describe("rich resource builders", () => {
   });
 
   it("keeps podcast unsubscribe in the relationship group and danger-last", () => {
+    expect(RESOURCE_ACTION_CATALOG.RefreshPodcast.label).toBe(
+      "Check for new episodes",
+    );
     const groups = podcastResourceOptions({
       settings: available(),
-      refreshSync: available(),
+      checkForNewEpisodes: available(),
       subscription: { kind: "Subscribed", execute: vi.fn() },
       busyIds: new Set([
         RESOURCE_ACTION_CATALOG.RefreshPodcast.id,
@@ -708,6 +711,12 @@ describe("rich resource builders", () => {
       "ResourceOperation.Podcast.Refresh",
       "RelationshipAction.Podcast.Unsubscribe",
     ]);
+    expect(
+      command(menu, "ResourceOperation.Podcast.Refresh"),
+    ).toMatchObject({
+      label: "Checking...",
+      disabled: true,
+    });
     expect(
       command(menu, "RelationshipAction.Podcast.Unsubscribe"),
     ).toMatchObject({

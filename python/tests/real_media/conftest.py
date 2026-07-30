@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from dataclasses import asdict
 from pathlib import Path
 from urllib.parse import urlparse
 from uuid import UUID
@@ -13,6 +14,7 @@ import pytest
 from sqlalchemy import text
 
 from nexus.config import get_settings
+from nexus.jobs.queue import JobExecutionContext, claim_job, complete_job
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.semantic_chunks import current_transcript_embedding_provider
 from nexus.storage.client import get_storage_client
@@ -339,40 +341,51 @@ def create_nasa_podcast_episode(
     podcast_id = UUID(subscribe_response.json()["data"]["href"].rsplit("/", 1)[-1])
     register_podcast_cleanup(direct_db, podcast_id)
 
-    sync_response = auth_client.post(
-        f"/podcasts/subscriptions/{podcast_id}/sync",
-        headers=headers,
-    )
-    assert sync_response.status_code == 202, sync_response.text
-
     with direct_db.session() as session:
-        job_ids = (
-            session.execute(
-                text(
-                    """
-                    SELECT id
-                    FROM background_jobs
-                    WHERE payload->>'podcast_id' = :podcast_id
-                    """
-                ),
-                {"podcast_id": str(podcast_id)},
-            )
-            .scalars()
-            .all()
+        _subscription_id, sync_job_id = session.execute(
+            text(
+                """
+                SELECT id, sync_job_id
+                FROM podcast_subscriptions
+                WHERE user_id = :user_id
+                  AND podcast_id = :podcast_id
+                """
+            ),
+            {"user_id": user_id, "podcast_id": podcast_id},
+        ).one()
+        claimed = claim_job(
+            session,
+            job_id=UUID(str(sync_job_id)),
+            worker_id="real-media-podcast-sync",
+            lease_seconds=900,
+            allowed_kinds=("podcast_sync_subscription_job",),
         )
+        assert claimed is not None
+        session.commit()
+        job_ids = [claimed.id]
     for job_id in job_ids:
         direct_db.register_cleanup("background_jobs", "id", job_id)
 
-    from nexus.services.podcasts.poll import run_podcast_subscription_sync_now
+    from nexus.services.podcasts.sync import run_podcast_subscription_sync_now
 
     with direct_db.session() as session:
         sync_result = run_podcast_subscription_sync_now(
             session,
-            user_id=user_id,
-            podcast_id=podcast_id,
+            payload=claimed.payload,
+            context=JobExecutionContext(
+                job_id=claimed.id,
+                worker_id="real-media-podcast-sync",
+                attempt_no=claimed.attempts,
+            ),
+        )
+        assert complete_job(
+            session,
+            job_id=claimed.id,
+            worker_id="real-media-podcast-sync",
+            result_payload=asdict(sync_result),
         )
         session.commit()
-    assert sync_result.sync_status == "complete", sync_result
+    assert sync_result.status == "Complete", sync_result
 
     episodes_response = auth_client.get(f"/podcasts/{podcast_id}/episodes", headers=headers)
     assert episodes_response.status_code == 200, episodes_response.text

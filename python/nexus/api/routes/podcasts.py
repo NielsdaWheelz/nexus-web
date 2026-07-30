@@ -16,15 +16,17 @@ from nexus.schemas.podcast import (
     PodcastEpisodeFromDiscoveryRequest,
     PodcastEpisodeSelection,
     PodcastOpmlImportRequest,
+    PodcastRefreshManualScope,
     PodcastSubscribeRequest,
     PodcastSubscriptionSettingsPatchRequest,
 )
 from nexus.services import library_entries
 from nexus.services.podcasts import episode_acquisition as podcast_episode_acquisition_service
 from nexus.services.podcasts import episodes as podcast_episodes_service
-from nexus.services.podcasts import poll as podcast_sync_service
+from nexus.services.podcasts import refresh as podcast_refresh_service
 from nexus.services.podcasts import subscriptions as podcast_subscription_service
 from nexus.services.podcasts import subscriptions_query as podcast_subscriptions_query_service
+from nexus.services.podcasts.handles import PodcastRefreshRunHandle, unseal_podcast_refresh_run
 
 router = APIRouter(tags=["podcasts"])
 
@@ -194,19 +196,35 @@ def patch_subscription_settings(
     return ok(out, by_alias=True)
 
 
-@router.post("/podcasts/subscriptions/{podcast_id}/sync", status_code=202)
-def refresh_subscription_sync(
-    podcast_id: UUID,
+@router.post("/podcasts/refresh-runs", status_code=202)
+def create_podcast_refresh_run(
+    body: PodcastRefreshManualScope,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=120)],
 ) -> Response:
-    """Queue a manual subscription sync refresh for the viewer."""
-    out = podcast_sync_service.refresh_subscription_sync_for_viewer(
+    out = podcast_refresh_service.create_manual_refresh_run(
         db,
         viewer_id=viewer.user_id,
-        podcast_id=podcast_id,
+        scope=body,
+        idempotency_key=idempotency_key,
     )
     return JSONResponse(status_code=202, content=ok(out, by_alias=True))
+
+
+@router.get("/podcasts/refresh-runs/{refresh_run_handle}")
+def get_podcast_refresh_run(
+    refresh_run_handle: PodcastRefreshRunHandle,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    run_id = unseal_podcast_refresh_run(refresh_run_handle)
+    out = podcast_refresh_service.get_refresh_run_snapshot(
+        db,
+        viewer_id=viewer.user_id,
+        run_id=run_id,
+    )
+    return ok(out, by_alias=True)
 
 
 @router.delete("/podcasts/subscriptions/{podcast_id}")

@@ -16,7 +16,7 @@ import { pluralize } from "@/lib/text/pluralize";
 import {
   decodePodcastSyncStatus,
   type PodcastSyncStatus,
-} from "@/lib/status/podcastSync";
+} from "@/lib/podcasts/types";
 import {
   expectArray,
   expectBoolean,
@@ -26,8 +26,6 @@ import {
   expectNonnegativeInteger,
   expectString,
 } from "@/lib/validation";
-
-export type PodcastSubscriptionSyncStatus = PodcastSyncStatus;
 
 export type PodcastBackfillState =
   "Pending" | "Running" | "Complete" | "SourceLimited" | "Failed";
@@ -64,13 +62,13 @@ export type PodcastSubscriptionRecord = {
   podcast_id: string;
   default_playback_speed?: number | null;
   auto_queue?: boolean;
-  sync_status: PodcastSubscriptionSyncStatus;
+  sync_status: PodcastSyncStatus;
   sync_error_code: string | null;
   sync_error_message: string | null;
   sync_attempts: number;
   sync_started_at: string | null;
   sync_completed_at: string | null;
-  last_synced_at: string | null;
+  last_checked_at: string | null;
   updated_at: string;
   backfill: PodcastBackfillRecord;
 };
@@ -165,7 +163,7 @@ export function decodePodcastDetailResponse(
             "sync_attempts",
             "sync_started_at",
             "sync_completed_at",
-            "last_synced_at",
+            "last_checked_at",
             "updated_at",
             "backfill",
           ],
@@ -243,9 +241,9 @@ export function decodePodcastDetailResponse(
               subscription.sync_completed_at,
               "subscription.sync_completed_at",
             ),
-            last_synced_at: expectNullableString(
-              subscription.last_synced_at,
-              "subscription.last_synced_at",
+            last_checked_at: expectNullableString(
+              subscription.last_checked_at,
+              "subscription.last_checked_at",
             ),
             updated_at: expectString(
               subscription.updated_at,
@@ -267,7 +265,7 @@ export type PodcastSubscriptionListItemWire = {
   latest_episode_published_at: Presence<string>;
   default_playback_speed: Presence<number>;
   auto_queue: boolean;
-  sync_status: PodcastSubscriptionSyncStatus;
+  sync_status: PodcastSyncStatus;
 };
 
 export type PodcastSubscriptionListItem = PodcastSubscriptionListItemWire & {
@@ -364,13 +362,13 @@ export type PodcastSubscriptionSettingsResponse = {
   podcast_id: string;
   default_playback_speed: number | null;
   auto_queue: boolean;
-  sync_status: PodcastSubscriptionSyncStatus;
+  sync_status: PodcastSyncStatus;
   sync_error_code: string | null;
   sync_error_message: string | null;
   sync_attempts: number;
   sync_started_at: string | null;
   sync_completed_at: string | null;
-  last_synced_at: string | null;
+  last_checked_at: string | null;
   updated_at: string;
   backfill: PodcastBackfill;
   collectionRevision: CollectionRevision;
@@ -381,17 +379,6 @@ export type PodcastBackfillRetryResult = {
   podcastId: string;
   outcome: "Retried" | "NotEligible";
   backfill: PodcastBackfill;
-};
-
-export type PodcastSubscriptionSyncRefreshResult = {
-  podcast_id: string;
-  sync_status: PodcastSubscriptionSyncStatus;
-  sync_error_code: string | null;
-  sync_error_message: string | null;
-  sync_attempts: number;
-  sync_enqueued: boolean;
-  collectionRevision: CollectionRevision;
-  libraryEntriesCollectionRevision: CollectionRevision;
 };
 
 export type PodcastUnsubscribeResult =
@@ -428,17 +415,6 @@ export function parsePodcastSubscriptionDefaultPlaybackSpeed(
   return value === "default" ? null : Number.parseFloat(value);
 }
 
-export function getPodcastSubscriptionSyncPatch(
-  result: PodcastSubscriptionSyncRefreshResult,
-) {
-  return {
-    sync_status: result.sync_status,
-    sync_error_code: result.sync_error_code,
-    sync_error_message: result.sync_error_message,
-    sync_attempts: result.sync_attempts,
-  };
-}
-
 export function getPodcastSubscriptionSettingsPatch({
   response,
   updatedAt,
@@ -450,47 +426,6 @@ export function getPodcastSubscriptionSettingsPatch({
     default_playback_speed: response.default_playback_speed,
     auto_queue: response.auto_queue,
     updated_at: response.updated_at ?? updatedAt,
-  };
-}
-
-function decodePodcastSubscriptionSyncRefreshResult(
-  raw: unknown,
-): PodcastSubscriptionSyncRefreshResult {
-  const data = expectExactRecord(
-    expectExactRecord(raw, ["data"], "PodcastSubscriptionSyncRefreshResult")
-      .data,
-    [
-      "podcast_id",
-      "sync_status",
-      "sync_error_code",
-      "sync_error_message",
-      "sync_attempts",
-      "sync_enqueued",
-      "collectionRevision",
-      "libraryEntriesCollectionRevision",
-    ],
-    "PodcastSubscriptionSyncRefreshResult.data",
-  );
-  return {
-    podcast_id: expectString(data.podcast_id, "podcast_id"),
-    sync_status: decodePodcastSyncStatus(data.sync_status, "sync_status"),
-    sync_error_code: expectNullableString(
-      data.sync_error_code,
-      "sync_error_code",
-    ),
-    sync_error_message: expectNullableString(
-      data.sync_error_message,
-      "sync_error_message",
-    ),
-    sync_attempts: expectNonnegativeInteger(
-      data.sync_attempts,
-      "sync_attempts",
-    ),
-    sync_enqueued: expectBoolean(data.sync_enqueued, "sync_enqueued"),
-    collectionRevision: decodeCollectionRevision(data.collectionRevision),
-    libraryEntriesCollectionRevision: decodeCollectionRevision(
-      data.libraryEntriesCollectionRevision,
-    ),
   };
 }
 
@@ -511,7 +446,7 @@ function decodePodcastSubscriptionSettingsResponse(
       "sync_attempts",
       "sync_started_at",
       "sync_completed_at",
-      "last_synced_at",
+      "last_checked_at",
       "updated_at",
       "backfill",
       "collectionRevision",
@@ -551,7 +486,10 @@ function decodePodcastSubscriptionSettingsResponse(
       data.sync_completed_at,
       "sync_completed_at",
     ),
-    last_synced_at: expectNullableString(data.last_synced_at, "last_synced_at"),
+    last_checked_at: expectNullableString(
+      data.last_checked_at,
+      "last_checked_at",
+    ),
     updated_at: expectString(data.updated_at, "updated_at"),
     backfill: decodePodcastBackfill(data.backfill, "backfill"),
     collectionRevision: decodeCollectionRevision(data.collectionRevision),
@@ -598,16 +536,6 @@ function decodePodcastBackfillRetryResult(
     outcome,
     backfill: decodePodcastBackfill(data.backfill, "backfill"),
   };
-}
-
-export async function refreshPodcastSubscriptionSync(
-  podcastId: string,
-): Promise<PodcastSubscriptionSyncRefreshResult> {
-  return decodePodcastSubscriptionSyncRefreshResult(
-    await apiFetch<unknown>(`/api/podcasts/subscriptions/${podcastId}/sync`, {
-      method: "POST",
-    }),
-  );
 }
 
 export async function savePodcastSubscriptionSettings(

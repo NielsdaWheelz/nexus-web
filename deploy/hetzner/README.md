@@ -296,7 +296,8 @@ Storage. Before pointing users at this stack, verify:
   R2 has the imported production objects, verified offline before traffic moves.
 - Supabase Auth callback URLs and Vercel env point at the production app/API.
 - Both fixed lane contracts match `config.py`, reconciliation is scheduled at
-  600 seconds, and maintenance-only schedules are `0`.
+  600 seconds, Podcast due admission is scheduled at 900 seconds with a positive
+  bounded limit, and maintenance-only schedules are `0`.
 
 If cutover fails before user traffic is switched, fix the migration and rerun the
 cutover. If it fails after traffic is switched, stop both workers, keep `api` and

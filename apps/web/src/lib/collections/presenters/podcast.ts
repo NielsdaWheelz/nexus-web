@@ -6,6 +6,7 @@ import { connectionsFromSummary } from "@/lib/collections/connectionSummary";
 import { publishResourceRowActions } from "@/lib/collections/resourceActionPublication";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type {
+  CollectionActivity,
   CollectionRowView,
   ExceptionalStatus,
 } from "@/lib/collections/types";
@@ -13,7 +14,7 @@ import type { PositiveCount } from "@/lib/consumption/activityFacts";
 import type { PublicationDate } from "@/lib/dates/publicationDate";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import type { ConnectionSummaryOut } from "@/lib/resourceGraph/connections";
-import type { PodcastSyncStatus } from "@/lib/status/podcastSync";
+import type { PodcastSyncStatus } from "@/lib/podcasts/types";
 
 export interface PodcastPresenterItem {
   id: string;
@@ -31,10 +32,41 @@ export type PodcastPresenterContext = Parameters<typeof podcastResourceOptions>[
 function exceptionalStatus(
   syncStatus: Presence<PodcastSyncStatus>,
 ): Presence<ExceptionalStatus> {
-  if (syncStatus.kind === "Absent" || syncStatus.value === "complete") {
+  if (syncStatus.kind === "Absent") {
     return absent();
   }
-  return present({ kind: "PodcastSync", status: syncStatus.value });
+  switch (syncStatus.value) {
+    case "Failed":
+      return present({ kind: "PodcastSync", status: "Failed" });
+    case "Pending":
+    case "Running":
+    case "Complete":
+    case "SourceLimited":
+      return absent();
+  }
+}
+
+function activity(
+  syncStatus: Presence<PodcastSyncStatus>,
+  unplayedCount: Presence<PositiveCount>,
+): Presence<CollectionActivity> {
+  if (syncStatus.kind === "Present") {
+    switch (syncStatus.value) {
+      case "Pending":
+      case "Running":
+        return present({
+          kind: "PodcastSync",
+          status: syncStatus.value,
+        });
+      case "Complete":
+      case "SourceLimited":
+      case "Failed":
+        break;
+    }
+  }
+  return unplayedCount.kind === "Present"
+    ? present({ kind: "Unplayed", count: unplayedCount.value })
+    : absent();
 }
 
 export function presentPodcast(
@@ -56,10 +88,7 @@ export function presentPodcast(
     contributors: item.contributors,
     publicationDate: item.publicationDate,
     context: absent(),
-    activity:
-      item.unplayedCount.kind === "Present"
-        ? present({ kind: "Unplayed", count: item.unplayedCount.value })
-        : absent(),
+    activity: activity(item.syncStatus, item.unplayedCount),
     exceptionalStatus: exceptionalStatus(item.syncStatus),
     connections: connectionsFromSummary(connectionSummary),
     relatedMediaId: absent(),

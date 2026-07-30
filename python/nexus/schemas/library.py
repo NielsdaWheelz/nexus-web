@@ -10,15 +10,13 @@ from pydantic.alias_generators import to_camel
 from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.presence import Presence
+from nexus.services.podcasts.types import PodcastSyncStatus
 from nexus.services.sealed_handles import LibraryInvitationHandle, UserHandle
 
 LibraryRole = Literal["admin", "member"]
 LibraryInvitationStatusValue = Literal["pending", "accepted", "declined", "revoked"]
 LibraryGovernanceCursor = Annotated[str, Field(min_length=1)]
 LibraryEntryKind = Literal["media", "podcast"]
-PodcastSyncStatusValue = Literal[
-    "pending", "running", "partial", "complete", "source_limited", "failed"
-]
 
 _INT32_MAX = 2_147_483_647
 _PositiveInt32 = Annotated[int, Field(strict=True, ge=1, le=_INT32_MAX)]
@@ -175,7 +173,7 @@ class LibraryEntryPodcastOut(BaseModel):
 class LibraryEntryPodcastSubscriptionOut(BaseModel):
     default_playback_speed: float | None = Field(default=None, ge=0.5, le=3.0)
     auto_queue: bool = False
-    sync_status: PodcastSyncStatusValue
+    sync_status: PodcastSyncStatus
 
     model_config = ConfigDict(
         alias_generator=to_camel,

@@ -10,7 +10,10 @@ import {
   type PublicationDate,
 } from "@/lib/dates/publicationDate";
 import type { MediaActionCapabilities } from "@/lib/media/ingestionClient";
-import type { PodcastSyncStatus } from "@/lib/status/podcastSync";
+import {
+  decodePodcastSyncStatus,
+  type PodcastSyncStatus,
+} from "@/lib/podcasts/types";
 import {
   decodeLibraryReadingTimeEntry,
   type LibraryMediaKind,
@@ -44,14 +47,6 @@ const PROCESSING_STATUSES = [
 ] as const;
 const READ_STATES = ["unread", "in_progress", "finished"] as const;
 const AUTHOR_MODES = ["automatic", "manual"] as const;
-const SYNC_STATUSES = [
-  "pending",
-  "running",
-  "partial",
-  "complete",
-  "source_limited",
-  "failed",
-] as const;
 
 export interface LibraryMediaListValue {
   readonly id: string;
@@ -93,7 +88,7 @@ export interface LibraryPodcastListValue {
 export interface LibraryPodcastSubscriptionValue {
   readonly defaultPlaybackSpeed: number | null;
   readonly autoQueue: boolean;
-  readonly syncStatus: (typeof SYNC_STATUSES)[number];
+  readonly syncStatus: PodcastSyncStatus;
 }
 
 export interface LibraryEntryPlacement {
@@ -312,9 +307,8 @@ function decodeSubscription(
           subscription.autoQueue,
           "Library podcast subscription.autoQueue",
         ),
-        syncStatus: expectOneOf(
+        syncStatus: decodePodcastSyncStatus(
           subscription.syncStatus,
-          SYNC_STATUSES,
           "Library podcast subscription.syncStatus",
         ),
       };

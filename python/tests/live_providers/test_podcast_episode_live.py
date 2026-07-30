@@ -23,6 +23,7 @@ from tests.real_media.conftest import (
     register_podcast_cleanup,
     write_trace,
 )
+from tests.support.podcast_jobs import run_queued_podcast_subscription_sync
 
 pytestmark = [
     pytest.mark.integration,
@@ -103,23 +104,12 @@ def test_live_podcast_episode_transcribes_and_indexes_real_episode(
     podcast_id = UUID(subscribe_response.json()["data"]["href"].rsplit("/", 1)[-1])
     register_podcast_cleanup(direct_db, podcast_id)
 
-    sync_response = auth_client.post(
-        f"/podcasts/subscriptions/{podcast_id}/sync",
-        headers=headers,
+    sync_result = run_queued_podcast_subscription_sync(
+        direct_db,
+        user_id=user_id,
+        podcast_id=podcast_id,
     )
-    assert sync_response.status_code == 202, sync_response.text
-
-    from nexus.services.podcasts.poll import run_podcast_subscription_sync_now
-
-    with direct_db.session() as session:
-        sync_result = run_podcast_subscription_sync_now(
-            session,
-            user_id=user_id,
-            podcast_id=podcast_id,
-        )
-        session.commit()
-
-    assert sync_result.sync_status == "complete", sync_result
+    assert sync_result.status == "Complete", sync_result
 
     episodes_response = auth_client.get(
         f"/podcasts/{podcast_id}/episodes",

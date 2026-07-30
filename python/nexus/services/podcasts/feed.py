@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -46,6 +47,12 @@ PODCAST_EPISODE_SHOW_NOTES_HTML_MAX_BYTES = 100_000
 PODCAST_EPISODE_SHOW_NOTES_TEXT_MAX_BYTES = 50_000
 _MAX_FEED_PAGE_BYTES = 10 * 1024 * 1024
 _MAX_CHAPTER_JSON_BYTES = 2 * 1024 * 1024
+_REAL_MEDIA_LIVE_FEED_FIXTURE_SHA256S = frozenset(
+    {
+        "c59f38a211d707d8c2c218c3ce425f5d7c843ad0949309b14760263991e91043",
+        "cccfc5c9b58b52c88e995a93453b5e7171aea10a9fdcfad79d0746c0e946cdf7",
+    }
+)
 PODCAST_CHAPTER_SOURCE_PODCASTING20 = "rss_podcasting20"
 PODCAST_CHAPTER_SOURCE_PODLOVE = "rss_podlove"
 _PODCAST_CHAPTERS_20_CONTENT_TYPES = {
@@ -76,7 +83,7 @@ class FeedBackfillPage:
 
 
 @dataclass(frozen=True, slots=True)
-class LiveFeedCandidates:
+class LiveFeedSnapshot:
     episodes: tuple[dict[str, Any], ...]
     source_limited: bool
 
@@ -90,93 +97,67 @@ def _fill_episode_enrichment_from(target: dict[str, Any], source: dict[str, Any]
             target[field] = source.get(field)
 
 
-def augment_provider_episodes_with_feed_pagination(
+def fetch_live_feed_snapshot(
     *,
     provider_episode_candidates: list[dict[str, Any]],
     feed_url: str,
-) -> LiveFeedCandidates:
-    """Merge one bounded PI page with an independent bounded RSS traversal."""
+) -> LiveFeedSnapshot:
+    """Fetch/parse RSS once and merge that snapshot into the provider window."""
     normalized_feed_url = str(feed_url or "").strip()
-    supplemental, rss_limited = (
-        _fetch_feed_episodes_paginated_with_status(normalized_feed_url)
-        if normalized_feed_url
-        else ([], True)
-    )
+    if not normalized_feed_url:
+        raise ApiError(
+            ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE,
+            "Podcast feed URL is unavailable",
+        )
+    if not _is_safe_feed_page_url(normalized_feed_url):
+        raise ApiError(
+            ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE,
+            "Podcast feed URL is invalid",
+        )
+    supplemental, next_page_url = _fetch_live_feed_episode_page(normalized_feed_url)
 
     combined = list(provider_episode_candidates)
-    episode_by_dedupe_key = {_episode_dedupe_key(episode): episode for episode in combined}
-    seen = set(episode_by_dedupe_key.keys())
-    for episode in supplemental:
-        dedupe_key = _episode_dedupe_key(episode)
-        if dedupe_key in seen:
-            existing = episode_by_dedupe_key.get(dedupe_key)
-            if existing is not None:
-                _fill_episode_enrichment_from(existing, episode)
-            continue
-        seen.add(dedupe_key)
-        combined.append(episode)
-        episode_by_dedupe_key[dedupe_key] = episode
+    for episode in combined:
+        for field in (*_ENRICHMENT_NONE_GUARD_FIELDS, *_ENRICHMENT_FALSY_GUARD_FIELDS):
+            episode.setdefault(field, None)
 
+    by_match_key: dict[str, dict[str, Any]] = {}
+    for episode in combined:
+        for match_key in _episode_match_keys(episode):
+            by_match_key.setdefault(match_key, episode)
+
+    for episode in supplemental:
+        existing = next(
+            (
+                by_match_key[match_key]
+                for match_key in _episode_match_keys(episode)
+                if match_key in by_match_key
+            ),
+            None,
+        )
+        if existing is not None:
+            _fill_episode_enrichment_from(existing, episode)
+            continue
+        combined.append(episode)
+        for match_key in _episode_match_keys(episode):
+            by_match_key.setdefault(match_key, episode)
+
+    source_limited = (
+        len(provider_episode_candidates) >= PODCAST_INDEX_EPISODE_PAGE_SIZE
+        or next_page_url is not None
+    )
     logger.info(
-        "podcast_feed_pagination_augmentation",
+        "podcast_live_feed_snapshot",
         feed_url=normalized_feed_url,
         provider_candidate_count=len(provider_episode_candidates),
         supplemental_count=len(supplemental),
         combined_count=len(combined),
-        source_limited=(
-            len(provider_episode_candidates) >= PODCAST_INDEX_EPISODE_PAGE_SIZE or rss_limited
-        ),
+        source_limited=source_limited,
     )
-    return LiveFeedCandidates(
+    return LiveFeedSnapshot(
         episodes=tuple(combined),
-        source_limited=(
-            len(provider_episode_candidates) >= PODCAST_INDEX_EPISODE_PAGE_SIZE or rss_limited
-        ),
+        source_limited=source_limited,
     )
-
-
-def hydrate_selected_episode_chapters_from_feed(
-    *,
-    selected_episodes: list[dict[str, Any]],
-    feed_url: str,
-) -> list[dict[str, Any]]:
-    if not selected_episodes:
-        return selected_episodes
-
-    for episode in selected_episodes:
-        for field in (*_ENRICHMENT_NONE_GUARD_FIELDS, *_ENRICHMENT_FALSY_GUARD_FIELDS):
-            episode.setdefault(field, None)
-
-    normalized_feed_url = str(feed_url or "").strip()
-    if not normalized_feed_url:
-        return selected_episodes
-
-    feed_lookup_limit = max(PODCAST_INDEX_EPISODE_PAGE_SIZE, len(selected_episodes) * 4)
-    feed_episodes = _fetch_feed_episodes_paginated(normalized_feed_url, feed_lookup_limit)
-    if not feed_episodes:
-        return selected_episodes
-
-    feed_episode_by_match_key: dict[str, dict[str, Any]] = {}
-    for feed_episode in feed_episodes:
-        for match_key in _episode_match_keys(feed_episode):
-            feed_episode_by_match_key.setdefault(match_key, feed_episode)
-
-    for episode in selected_episodes:
-        if (
-            episode.get("rss_chapters") is not None
-            and episode.get("rss_transcript_refs") is not None
-            and episode.get("description_html")
-            and episode.get("description_text")
-        ):
-            continue
-        for match_key in _episode_match_keys(episode):
-            feed_episode = feed_episode_by_match_key.get(match_key)
-            if feed_episode is None:
-                continue
-            _fill_episode_enrichment_from(episode, feed_episode)
-            break
-
-    return selected_episodes
 
 
 def _is_safe_feed_page_url(page_url: str) -> bool:
@@ -192,82 +173,8 @@ def _is_safe_feed_page_url(page_url: str) -> bool:
         return False
 
 
-def _fetch_feed_episodes_paginated(feed_url: str, limit: int) -> list[dict[str, Any]]:
-    if limit <= 0:
-        return []
-
-    episodes: list[dict[str, Any]] = []
-    seen_episode_keys: set[tuple[str, str, str, str]] = set()
-    seen_page_urls: set[str] = set()
-
-    next_page_url: str | None = feed_url
-    pages_fetched = 0
-    while (
-        next_page_url
-        and len(episodes) < limit
-        and pages_fetched < PODCAST_FEED_PAGINATION_MAX_PAGES
-    ):
-        if not _is_safe_feed_page_url(next_page_url):
-            break
-        if next_page_url in seen_page_urls:
-            break
-        seen_page_urls.add(next_page_url)
-        page_episodes, upcoming_page_url = _fetch_feed_episode_page(next_page_url)
-        pages_fetched += 1
-
-        for episode in page_episodes:
-            dedupe_key = _episode_dedupe_key(episode)
-            if dedupe_key in seen_episode_keys:
-                continue
-            seen_episode_keys.add(dedupe_key)
-            episodes.append(episode)
-            if len(episodes) >= limit:
-                break
-
-        if upcoming_page_url and not _is_safe_feed_page_url(upcoming_page_url):
-            break
-        next_page_url = upcoming_page_url
-
-    if next_page_url and pages_fetched >= PODCAST_FEED_PAGINATION_MAX_PAGES:
-        logger.warning(
-            "podcast_feed_pagination_page_limit_reached",
-            feed_url=feed_url,
-            pages_fetched=pages_fetched,
-            episode_limit=limit,
-        )
-
-    return episodes
-
-
-def _fetch_feed_episodes_paginated_with_status(
-    feed_url: str,
-) -> tuple[list[dict[str, Any]], bool]:
-    """Traverse RSS independently of PI, bounded only by the explicit page cap."""
-    episodes: list[dict[str, Any]] = []
-    seen_episode_keys: set[tuple[str, str, str, str]] = set()
-    seen_page_urls: set[str] = set()
-    next_page_url: str | None = feed_url
-    pages_fetched = 0
-    source_limited = False
-    while next_page_url and pages_fetched < PODCAST_FEED_PAGINATION_MAX_PAGES:
-        if not _is_safe_feed_page_url(next_page_url) or next_page_url in seen_page_urls:
-            source_limited = True
-            break
-        seen_page_urls.add(next_page_url)
-        page_episodes, upcoming_page_url = _fetch_feed_episode_page(next_page_url)
-        pages_fetched += 1
-        for episode in page_episodes:
-            dedupe_key = _episode_dedupe_key(episode)
-            if dedupe_key not in seen_episode_keys:
-                seen_episode_keys.add(dedupe_key)
-                episodes.append(episode)
-        if upcoming_page_url and not _is_safe_feed_page_url(upcoming_page_url):
-            source_limited = True
-            break
-        next_page_url = upcoming_page_url
-    if next_page_url is not None:
-        source_limited = True
-    return episodes, source_limited
+def _real_media_live_feed_fixture_is_pinned(content: bytes) -> bool:
+    return hashlib.sha256(content).hexdigest() in _REAL_MEDIA_LIVE_FEED_FIXTURE_SHA256S
 
 
 def fetch_feed_backfill_page(
@@ -345,8 +252,8 @@ def _fetch_feed_episode_page(page_url: str) -> tuple[list[dict[str, Any]], str |
         except OSError as exc:
             logger.warning("podcast_feed_fixture_unavailable", page_url=page_url, error=str(exc))
             return [], None
-        if len(content) != 1_397:
-            logger.warning("podcast_feed_fixture_size_mismatch", page_url=page_url)
+        if not _real_media_live_feed_fixture_is_pinned(content):
+            logger.warning("podcast_feed_fixture_digest_mismatch", page_url=page_url)
             return [], None
         return _parse_feed_episode_page(content, page_url)
 
@@ -359,6 +266,54 @@ def _fetch_feed_episode_page(page_url: str) -> tuple[list[dict[str, Any]], str |
     return _parse_feed_episode_page(result.content, result.final_url)
 
 
+def _fetch_live_feed_episode_page(page_url: str) -> tuple[list[dict[str, Any]], str | None]:
+    if real_media_provider_fixtures_requested():
+        settings = get_settings()
+        if (
+            not settings.real_media_provider_fixtures
+            or page_url != "https://www.nasa.gov/podcasts/houston-we-have-a-podcast/feed/"
+            or settings.real_media_fixture_dir is None
+        ):
+            raise ApiError(
+                ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE,
+                "Podcast feed fixture is unavailable",
+            )
+        path = Path(settings.real_media_fixture_dir) / "nasa-hwhap-feed.xml"
+        try:
+            content = path.read_bytes()
+        except OSError as exc:
+            raise ApiError(
+                ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE,
+                "Podcast feed fixture is unavailable",
+            ) from exc
+        if not _real_media_live_feed_fixture_is_pinned(content):
+            raise ApiError(
+                ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE,
+                "Podcast feed fixture digest mismatch",
+            )
+        final_url = page_url
+    else:
+        try:
+            result = safe_get(page_url, max_bytes=_MAX_FEED_PAGE_BYTES, timeout_s=15.0)
+        except ApiError as exc:
+            raise ApiError(
+                ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE,
+                "Podcast feed is unavailable",
+            ) from exc
+        content = result.content
+        final_url = result.final_url
+
+    try:
+        parser = etree.XMLParser(resolve_entities=False, no_network=True, recover=False)
+        root = etree.fromstring(content, parser=parser)
+    except etree.XMLSyntaxError as exc:
+        raise ApiError(
+            ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE,
+            "Podcast feed could not be parsed",
+        ) from exc
+    return _episodes_from_feed_root(root, final_url)
+
+
 def _parse_feed_episode_page(
     content: bytes, page_url: str
 ) -> tuple[list[dict[str, Any]], str | None]:
@@ -369,6 +324,13 @@ def _parse_feed_episode_page(
         logger.warning("podcast_feed_page_parse_failed", page_url=page_url, error=str(exc))
         return [], None
 
+    return _episodes_from_feed_root(root, page_url)
+
+
+def _episodes_from_feed_root(
+    root: Any,
+    page_url: str,
+) -> tuple[list[dict[str, Any]], str | None]:
     item_nodes = root.xpath("./channel/item")
     if not item_nodes:
         item_nodes = root.xpath(".//atom:entry", namespaces=_ATOM_NAMESPACE)

@@ -35,7 +35,8 @@ split by storage and query concern:
   consumed by Resonance. Two narrow
   in-transaction exceptions compose here rather than going
   through a command: `ensure_missing_items_in_txn` (the auto-subscription
-  watermark step; only caller is `services/podcasts/poll.py`) and
+  watermark step; only caller is the fenced finalization path in
+  `services/podcasts/sync.py`) and
   `delete_media_consumption_state_in_txn` (media teardown; only caller is
   `services/media_deletion.py`).
 - `_lectern_store.py` — sole DML owner of `consumption_queue_items` (Lectern

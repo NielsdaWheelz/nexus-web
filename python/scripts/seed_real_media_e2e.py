@@ -287,7 +287,7 @@ def main() -> None:
                 REAL_MEDIA_FIXTURES_DIR / "nasa-hwhap-crew4-transcript.txt"
             ).read_bytes()
             assert len(podcast_bytes) == 753
-            podcast_media_id, _podcast_id, _podcast_result = create_nasa_podcast_episode(
+            podcast_media_id, podcast_id, _podcast_result = create_nasa_podcast_episode(
                 client, direct_db, headers, user_id
             )
 
@@ -328,6 +328,7 @@ def main() -> None:
                         },
                         "podcast": {
                             "media_id": str(podcast_media_id),
+                            "podcast_id": str(podcast_id),
                             "query": "International Space Station",
                             "needle": "International Space Station",
                         },
@@ -387,8 +388,12 @@ def _existing_seed_ready(engine: Engine, user_id: UUID, default_library_id: UUID
         if set(fixtures) != set(EXPECTED_SEED_FIXTURES):
             return False
         media_ids: dict[str, UUID] = {}
+        podcast_id: UUID | None = None
         for name, fixture in fixtures.items():
-            if set(fixture) != {"media_id", "query", "needle"}:
+            expected_keys = {"media_id", "query", "needle"}
+            if name == "podcast":
+                expected_keys.add("podcast_id")
+            if set(fixture) != expected_keys:
                 return False
             expected = EXPECTED_SEED_FIXTURES[name]
             if fixture["query"] != expected["query"] or fixture["needle"] != expected["needle"]:
@@ -400,7 +405,11 @@ def _existing_seed_ready(engine: Engine, user_id: UUID, default_library_id: UUID
             if expected_size is not None and expected_path.stat().st_size != expected_size:
                 raise RuntimeError(f"Fixture size changed for {expected_path}")
             media_ids[name] = UUID(str(fixture["media_id"]))
+            if name == "podcast":
+                podcast_id = UUID(str(fixture["podcast_id"]))
         if len(set(media_ids.values())) != len(media_ids):
+            return False
+        if podcast_id is None:
             return False
     except RuntimeError:
         raise
@@ -439,6 +448,26 @@ def _existing_seed_ready(engine: Engine, user_id: UUID, default_library_id: UUID
                 .one()
             )
             if not user_row["user_exists"] or not user_row["default_library_ready"]:
+                return False
+
+            if not conn.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM podcast_episodes episode
+                    JOIN podcast_subscriptions subscription
+                      ON subscription.podcast_id = episode.podcast_id
+                     AND subscription.user_id = :user_id
+                    WHERE episode.media_id = :media_id
+                      AND episode.podcast_id = :podcast_id
+                    """
+                ),
+                {
+                    "user_id": user_id,
+                    "media_id": media_ids["podcast"],
+                    "podcast_id": podcast_id,
+                },
+            ).first():
                 return False
 
             for name, media_id in media_ids.items():

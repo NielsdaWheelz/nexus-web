@@ -106,6 +106,16 @@ describe("collection activity grammar", () => {
       "3 new",
       "3 new unplayed episodes",
     ],
+    [
+      { kind: "PodcastSync", status: "Pending" },
+      "Update queued",
+      "Podcast update queued",
+    ],
+    [
+      { kind: "PodcastSync", status: "Running" },
+      "Checking",
+      "Checking for new episodes",
+    ],
   ];
 
   it.each(cases)("projects %s truthfully", (activity, visible, accessible) => {

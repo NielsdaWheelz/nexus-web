@@ -181,7 +181,7 @@ describe("CollectionRow", () => {
             activity: present({ kind: "Finished", modality: "Read" }),
             exceptionalStatus: present({
               kind: "PodcastSync",
-              status: "partial",
+              status: "Failed",
             }),
             actionPublication: {
               kind: "FlatMenu",
@@ -199,7 +199,7 @@ describe("CollectionRow", () => {
       </ResourceList>,
     );
 
-    expect(screen.getByText("Partial sync")).toBeVisible();
+    expect(screen.getByText("Update failed")).toBeVisible();
     expect(screen.queryByText("Finished")).toBeNull();
     const trigger = screen.getByRole("button", {
       name: "More actions for Canonical title",

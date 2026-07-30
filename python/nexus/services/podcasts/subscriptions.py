@@ -71,8 +71,9 @@ from .identity import (
     upsert_podcast,
     validate_and_normalize_feed_url,
 )
-from .poll import enqueue_podcast_subscription_sync
 from .provider import get_podcast_index_client
+from .refresh import admit_subscription_generation_in_txn, skip_subscription_epoch_in_txn
+from .types import PODCAST_SYNC_BULK_PRIORITY, PODCAST_SYNC_INTERACTIVE_PRIORITY
 
 logger = get_logger(__name__)
 
@@ -157,6 +158,7 @@ def _apply_resolved_subscription_relationship_in_current_transaction(
     library_ids: list[UUID],
     confirmation_fingerprint: str | None,
     relationship_locked: bool = False,
+    sync_priority: int = PODCAST_SYNC_INTERACTIVE_PRIORITY,
 ) -> tuple[UUID, UUID, bool, tuple[UUID, ...], tuple[UUID, ...]]:
     """Apply one resolved Subscribe/OPML relationship under the total lock order."""
     if not relationship_locked:
@@ -230,10 +232,12 @@ def _apply_resolved_subscription_relationship_in_current_transaction(
             subscription_id=subscription_id,
             cutoff_at=created_at,
         )
-        enqueue_podcast_subscription_sync(
+        admit_subscription_generation_in_txn(
             db,
+            subscription_id=subscription_id,
             user_id=viewer_id,
             podcast_id=podcast_id,
+            priority=sync_priority,
         )
 
     placement = place_podcast_in_named_libraries_in_current_transaction(
@@ -400,6 +404,7 @@ def import_subscriptions_from_opml(
                         canonical_podcast_id=podcast_id,
                         library_ids=library_ids,
                         confirmation_fingerprint=None,
+                        sync_priority=PODCAST_SYNC_BULK_PRIORITY,
                     )
 
             (
@@ -741,7 +746,7 @@ def get_subscription_status(
                 ps.sync_attempts,
                 ps.sync_started_at,
                 ps.sync_completed_at,
-                ps.last_synced_at,
+                ps.last_checked_at,
                 ps.updated_at
             FROM podcast_subscriptions ps
             WHERE ps.user_id = :user_id AND ps.podcast_id = :podcast_id
@@ -763,7 +768,7 @@ def get_subscription_status(
         sync_attempts=row[8],
         sync_started_at=row[9],
         sync_completed_at=row[10],
-        last_synced_at=row[11],
+        last_checked_at=row[11],
         updated_at=row[12],
         backfill=_load_backfill_out(db, subscription_id=UUID(str(row[1]))),
     )
@@ -995,42 +1000,28 @@ def update_subscription_settings_for_viewer(
     )
 
 
-def _decode_queue_revocation(revocation: object) -> tuple[UUID | None, bool]:
-    """Decode a persisted ``_queueRevocation`` marker into its two job fences."""
+def _decode_queue_revocation(revocation: object) -> UUID | None:
+    """Decode the persisted backfill-only queue-revocation marker."""
     if not isinstance(revocation, dict):
-        return None, False
+        return None
     raw_backfill_id = revocation.get("backfillId")
-    backfill_id = UUID(str(raw_backfill_id)) if raw_backfill_id is not None else None
-    return backfill_id, bool(revocation.get("sync"))
+    return UUID(str(raw_backfill_id)) if raw_backfill_id is not None else None
 
 
 def _revoke_subscription_jobs(
     db: Session,
     *,
-    viewer_id: UUID,
-    podcast_id: UUID,
     backfill_id: UUID | None,
-    sync: bool,
 ) -> None:
-    """Revoke the backfill and sync jobs a completed Unsubscribe orphaned."""
-    if backfill_id is None and not sync:
+    """Revoke only the backfill job a completed Unsubscribe orphaned."""
+    if backfill_id is None:
         return
     with transaction(db):
-        if backfill_id is not None:
-            revoke_jobs_for_payload(
-                db,
-                kind="podcast_backfill_subscription",
-                expected_payload_match={"backfillId": str(backfill_id)},
-            )
-        if sync:
-            revoke_jobs_for_payload(
-                db,
-                kind="podcast_sync_subscription_job",
-                expected_payload_match={
-                    "user_id": str(viewer_id),
-                    "podcast_id": str(podcast_id),
-                },
-            )
+        revoke_jobs_for_payload(
+            db,
+            kind="podcast_backfill_subscription",
+            expected_payload_match={"backfillId": str(backfill_id)},
+        )
 
 
 def unsubscribe_from_podcast(
@@ -1059,21 +1050,15 @@ def unsubscribe_from_podcast(
     )
     if replay is not None:
         replay_payload = dict(replay)
-        replay_backfill_id, replay_sync = _decode_queue_revocation(
-            replay_payload.pop("_queueRevocation", None)
-        )
+        replay_backfill_id = _decode_queue_revocation(replay_payload.pop("_queueRevocation", None))
         _revoke_subscription_jobs(
             db,
-            viewer_id=viewer_id,
-            podcast_id=podcast_id,
             backfill_id=replay_backfill_id,
-            sync=replay_sync,
         )
         if replay_payload.get("outcome") == "Unsubscribed":
             return PodcastUnsubscribedOut.model_validate(replay_payload)
         return PodcastAlreadyUnsubscribedOut.model_validate(replay_payload)
     removed_backfill_id: UUID | None = None
-    should_revoke_sync = False
     command_identity = _subscription_command_identity(
         db,
         podcast_id=podcast_id,
@@ -1081,7 +1066,7 @@ def unsubscribe_from_podcast(
     )
 
     def attempt() -> PodcastUnsubscribeOut:
-        nonlocal removed_backfill_id, should_revoke_sync
+        nonlocal removed_backfill_id
         with transaction(db):
             _lock_subscription_command(
                 db,
@@ -1097,11 +1082,10 @@ def unsubscribe_from_podcast(
             )
             if replay is not None:
                 replay_payload = dict(replay)
-                removed_backfill_id, should_revoke_sync = _decode_queue_revocation(
+                removed_backfill_id = _decode_queue_revocation(
                     replay_payload.pop("_queueRevocation", None)
                 )
                 if replay_payload.get("outcome") == "Unsubscribed":
-                    should_revoke_sync = True
                     return PodcastUnsubscribedOut.model_validate(replay_payload)
                 return PodcastAlreadyUnsubscribedOut.model_validate(replay_payload)
 
@@ -1180,11 +1164,14 @@ def unsubscribe_from_podcast(
                             ),
                             {"subscription_id": subscription_id},
                         )
+                    skip_subscription_epoch_in_txn(
+                        db,
+                        subscription_id=UUID(str(subscription_id)),
+                    )
                     db.execute(
                         text("DELETE FROM podcast_subscriptions WHERE id = :subscription_id"),
                         {"subscription_id": subscription_id},
                     )
-                    should_revoke_sync = True
                     from nexus.services.artifacts.dossier_types import AudienceUser
                     from nexus.services.artifacts.engine import on_audience_visibility_changed
 
@@ -1223,8 +1210,7 @@ def unsubscribe_from_podcast(
                                     str(removed_backfill_id)
                                     if removed_backfill_id is not None
                                     else None
-                                ),
-                                "sync": True,
+                                )
                             }
                         }
                         if response.outcome == "Unsubscribed"
@@ -1238,10 +1224,7 @@ def unsubscribe_from_podcast(
     response = retry_read_committed(db, "unsubscribe_from_podcast", attempt)
     _revoke_subscription_jobs(
         db,
-        viewer_id=viewer_id,
-        podcast_id=podcast_id,
         backfill_id=removed_backfill_id,
-        sync=should_revoke_sync,
     )
     return response
 
@@ -1368,6 +1351,9 @@ def _insert_subscription_in_current_transaction(
                 podcast_id,
                 auto_queue,
                 sync_status,
+                sync_generation,
+                next_sync_at,
+                consecutive_sync_failures,
                 created_at,
                 updated_at
             )
@@ -1376,7 +1362,10 @@ def _insert_subscription_in_current_transaction(
                 :user_id,
                 :podcast_id,
                 false,
-                'pending',
+                'Pending',
+                1,
+                now(),
+                0,
                 now(),
                 now()
             )

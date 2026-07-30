@@ -96,16 +96,38 @@ that matter:
 
 ## Sync Orchestration
 
-The scheduled poll (`poll.run_scheduled_active_subscription_poll`) is a **pure scheduler**:
-it claims each due active subscription (`sync_status -> 'pending'`) and enqueues one durable
-`podcast_sync_subscription_job` per subscription, then records run telemetry and returns. It
-performs no feed I/O. Manual refresh enqueues the same job. The per-subscription job claims
-`pending -> running` (`_claim_subscription_sync_pending`), so exactly one sync runs per claim
-— a second poll tick or a concurrent manual refresh cannot duplicate the live
-metadata step. The poll is off by default. A bounded operator run requires the
-`maintenance` worker lane, its explicit authorization gate, the exact
-`podcast_active_subscription_poll_job` allowlist, and a positive
-`PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS`.
+`services/podcasts/refresh.py` is the sole admission owner. Scheduled due
+refresh, manual Podcast/Podcasts/Library refresh, Subscribe, and OPML all call
+one generation primitive and enqueue the same
+`podcast_sync_subscription_job`. Manual and due admission additionally create
+durable `podcast_refresh_runs` plus one item per subscription epoch. Concurrent
+commands either join the active generation or serialize a single generation
+bump; the queue dedupe key includes both subscription UUID and generation.
+
+The background lane runs `podcast_refresh_due_job` every 15 minutes. Each pass
+claims at most `PODCAST_REFRESH_DUE_LIMIT` oldest eligible rows by
+`(next_sync_at, id)` with `FOR UPDATE SKIP LOCKED`, groups them into one run per
+viewer, and performs no network I/O. Healthy completion schedules the next
+check at 23 hours plus deterministic per-subscription jitter; modeled failures
+use the bounded 15m/1h/6h/24h backoff.
+
+`services/podcasts/sync.py` owns the exact queue-attempt protocol. Identity is
+subscription epoch + sync generation + queue job/attempt. The worker fences
+every claim, checkpoint, and final write against that exact live lease, fetches
+and parses RSS once, and persists an ingest checkpoint before the separate
+SERIALIZABLE auto-queue/finalization transaction. A retry resumes from the
+checkpoint without another feed request or recount. Expected feed failures and
+dead-letter exhaustion terminalize the subscription and all joined run items;
+unexpected defects remain queue retries. Unsubscribe marks joined items
+`Skipped`, deletes the subscription epoch, and deliberately leaves the queue
+row for a stale no-I/O exit.
+
+Manual refresh is `POST /podcasts/refresh-runs` with a required
+`Idempotency-Key`; canonical snapshots are available by sealed run handle.
+Run changes notify `podcast_refresh_events`, and the snapshot SSE route
+rechecks ownership on each fresh read before emitting changed `state` frames
+and one terminal `done`. Terminal runs/items are pruned child-first after 30
+days by the daily bounded `podcast_refresh_run_prune_job`.
 
 Subscribe also creates one `podcast_subscription_backfills` row and enqueues
 `podcast_backfill_subscription`. Its immutable cutoff separates pre-subscription

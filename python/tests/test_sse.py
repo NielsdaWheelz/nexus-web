@@ -243,25 +243,85 @@ async def test_cursor_emits_changed_unsequenced_execution_advisories():
 
 
 @pytest.mark.asyncio
-async def test_snapshot_emits_state_then_done_without_id_lines():
+async def test_podcast_snapshot_emits_changed_running_and_terminal_state_then_done():
     snapshots = iter(
         [
-            ({"processing_status": "pending"}, False),
-            ({"processing_status": "ready_for_reading"}, True),
+            ({"status": "Running", "finished_count": 0}, False),
+            ({"status": "Running", "finished_count": 0}, False),
+            ({"status": "Complete", "finished_count": 1}, True),
         ]
     )
-    listener = _FakeListener()
+    listener = _FakeListener(ticks=3)
     chunks = [
         chunk
         async for chunk in tail_snapshot_stream(
             request=_FakeRequest(), listener=listener, read_snapshot=lambda: next(snapshots)
         )
     ]
-    assert chunks[0] == 'event: state\ndata: {"processing_status":"pending"}\n\n'
-    assert chunks[1] == 'event: state\ndata: {"processing_status":"ready_for_reading"}\n\n'
+    assert chunks[0] == 'event: state\ndata: {"status":"Running","finished_count":0}\n\n'
+    assert chunks[1] == 'event: state\ndata: {"status":"Complete","finished_count":1}\n\n'
     assert chunks[2].startswith("event: done")
     assert all("id:" not in chunk for chunk in chunks)
     assert listener.closed_reason == "terminal"
+
+
+@pytest.mark.asyncio
+async def test_podcast_refresh_stream_checks_owner_before_listen_and_uses_fresh_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = uuid4()
+    viewer_id = uuid4()
+    calls: list[str] = []
+    listener = _FakeListener(ticks=1)
+
+    class _SessionContext:
+        def __enter__(self):
+            return object()
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+    def assert_owner(_db, *, viewer_id, run_id) -> None:
+        calls.append("preflight_owner")
+
+    def read_snapshot(_db, *, viewer_id, run_id):
+        calls.append("canonical_snapshot")
+        raise ApiError(ApiErrorCode.E_NOT_FOUND, "revoked")
+
+    async def open_listener(channel: str, key: str):
+        assert channel == "podcast_refresh_events"
+        assert key == str(run_id)
+        calls.append("listen")
+        return listener
+
+    monkeypatch.setattr(
+        stream_routes,
+        "get_session_factory",
+        lambda: lambda: _SessionContext(),
+    )
+    monkeypatch.setattr(stream_routes, "unseal_podcast_refresh_run", lambda _handle: run_id)
+    monkeypatch.setattr(
+        stream_routes.podcast_refresh_service,
+        "assert_refresh_run_owner",
+        assert_owner,
+    )
+    monkeypatch.setattr(
+        stream_routes.podcast_refresh_service,
+        "get_refresh_run_snapshot",
+        read_snapshot,
+    )
+    monkeypatch.setattr(stream_routes, "open_sse_listener", open_listener)
+
+    response = await stream_routes.stream_podcast_refresh_run_events(
+        request=_FakeRequest(),
+        refresh_run_handle="prr1.test.test",
+        viewer_id=viewer_id,
+    )
+    chunks = [chunk async for chunk in response.body_iterator]
+
+    assert calls == ["preflight_owner", "listen", "canonical_snapshot"]
+    assert chunks == []
+    assert listener.closed_reason == "gone"
 
 
 @pytest.mark.asyncio

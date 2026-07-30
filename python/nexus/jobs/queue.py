@@ -548,6 +548,56 @@ def lock_job(db: Session, job_id: UUID) -> JobRow | None:
     return _row_to_job(row) if row is not None else None
 
 
+def promote_unclaimed_job(
+    db: Session,
+    *,
+    job_id: UUID,
+    kind: str,
+    payload: Mapping[str, Any],
+    dedupe_key: str,
+    priority: int,
+) -> bool:
+    """Promote one exact pending queue operation without replacing a live claim.
+
+    The queue row is locked even when it is already running so callers can
+    compose this with a subsequent subscription-row fence in the canonical
+    queue -> domain lock order.
+    """
+    row = (
+        db.execute(
+            text("SELECT * FROM background_jobs WHERE id = :job_id FOR UPDATE"),
+            {"job_id": job_id},
+        )
+        .mappings()
+        .first()
+    )
+    if row is None:
+        raise RuntimeError("Queue promotion target is missing")
+    if (
+        str(row["kind"]) != kind
+        or dict(row["payload"] or {}) != dict(payload)
+        or str(row["dedupe_key"] or "") != dedupe_key
+    ):
+        raise RuntimeError("Queue promotion target does not match the exact operation")
+    status = str(row["status"])
+    if status == RUNNING:
+        return False
+    if status not in {PENDING, FAILED} or row["claimed_by"] is not None:
+        raise RuntimeError("Queue promotion target is not an active unclaimed operation")
+    db.execute(
+        text(
+            """
+            UPDATE background_jobs
+            SET priority = :priority, available_at = now(), updated_at = now()
+            WHERE id = :job_id
+            """
+        ),
+        {"job_id": job_id, "priority": int(priority)},
+    )
+    db.execute(text("SELECT pg_notify('nexus_background_jobs', :kind)"), {"kind": kind})
+    return True
+
+
 def heartbeat_job(
     db: Session,
     *,

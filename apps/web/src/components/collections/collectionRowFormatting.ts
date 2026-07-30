@@ -96,6 +96,24 @@ export function collectionActivityText(activity: CollectionActivity): ActivityTe
         accessible: `${count} new unplayed ${count === 1 ? "episode" : "episodes"}`,
       };
     }
+    case "PodcastSync":
+      switch (activity.status) {
+        case "Pending":
+          return {
+            visible: "Update queued",
+            accessible: "Podcast update queued",
+          };
+        case "Running":
+          return {
+            visible: "Checking",
+            accessible: "Checking for new episodes",
+          };
+        default:
+          return assertNever(
+            activity.status,
+            "Unsupported podcast activity status",
+          );
+      }
     default:
       return assertNever(activity, "Unsupported collection activity");
   }

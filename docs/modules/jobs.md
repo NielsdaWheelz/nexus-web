@@ -56,7 +56,7 @@ plus the structured synthesis call plus the one bounded repair round
 
 ### Dead-lettering
 
-Exhausted retries dead-letter the row. Five kinds register a finalizer:
+Exhausted retries dead-letter the row. Six kinds register a finalizer:
 
 - `chat_run` (`_dead_letter_chat_run`) writes an errored assistant message so the
   user sees a terminal failure.
@@ -70,6 +70,9 @@ Exhausted retries dead-letter the row. Five kinds register a finalizer:
 - `podcast_backfill_subscription` (`_dead_letter_podcast_backfill`) stamps the
   current backfill fence Failed only when the dead job still names its exact
   backfill ID, step, and cursor digest; dead rows remain operator-visible.
+- `podcast_sync_subscription_job` (`_dead_letter_podcast_sync_subscription`)
+  exact-matches subscription epoch, generation, job, and attempt before marking
+  the subscription and every joined refresh item Failed.
 
 Other kinds have no finalizer; their failure is recorded on their own domain row.
 
@@ -98,10 +101,10 @@ kind; queue completion is not a claim that the answer published.
 - `INTERACTIVE_WORKER_JOB_KINDS`: ingest, chat, Dossier, subscription live sync,
   and Oracle generation;
 - `BACKGROUND_WORKER_JOB_KINDS`: content indexing, enrichment, derived units,
-  semantic indexing, subscription backfill, ambient generation, teardown,
-  storage cleanup, and reconciliation;
-- `MAINTENANCE_JOB_KINDS`: podcast polling, Gutenberg catalog sync, queue
-  pruning, and expired auth-handoff purge.
+  semantic indexing, subscription backfill, Podcast due admission and run
+  retention, ambient generation, teardown, storage cleanup, and reconciliation;
+- `MAINTENANCE_JOB_KINDS`: Gutenberg catalog sync, queue pruning, and expired
+  auth-handoff purge.
 
 The two production lanes are non-empty, disjoint, and together equal
 `PRODUCTION_ENABLED_JOB_KINDS`. Production plus the maintenance kinds equals the
@@ -129,9 +132,22 @@ later.
 
 ## Podcast Live Sync And Backfill
 
-`podcast_sync_subscription_job` is the current-window live path. Scheduled poll
-and manual refresh enqueue the same per-subscription job; its subscription claim
-fences duplicate live work.
+`podcast_sync_subscription_job` is the current-window live path. Subscribe,
+OPML, scheduled due admission, and manual refresh use one generation-admission
+primitive and the same per-subscription job. Its payload names subscription
+epoch, viewer, Podcast, and generation; the handler also requires the exact
+queue job/attempt lease. It fetches RSS once, persists a fenced ingest
+checkpoint, and finishes auto-queue, subscription state, all joined refresh
+items, parent aggregates, and collection revisions in a fresh SERIALIZABLE
+transaction. Modeled failures are terminal domain results; unexpected defects
+use ordinary queue retries, and exhausted retries invoke the exact dead-letter
+finalizer.
+
+`podcast_refresh_due_job` is a 15-minute background schedule that admits a
+bounded oldest-due set and creates one refresh run per affected viewer.
+`podcast_refresh_run_prune_job` runs daily and deletes at most 1,000 terminal
+runs older than 30 days, child items first. Neither is a maintenance-only
+operation.
 
 `podcast_backfill_subscription` is a separate durable history traversal seeded
 once by Subscribe. Each payload carries `backfillId`, `expectedStepNo`, and

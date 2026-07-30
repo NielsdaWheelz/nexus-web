@@ -26,7 +26,7 @@ function podcastEntry() {
       value: {
         defaultPlaybackSpeed: 1.25,
         autoQueue: true,
-        syncStatus: "complete",
+        syncStatus: "Complete",
       },
     },
     readingTimeEstimate: ABSENT,
@@ -48,14 +48,14 @@ describe("decodeLibraryEntryListItem", () => {
           kind: "Present",
           value: "2026-07-28T00:00:00Z",
         },
-        syncStatus: { kind: "Present", value: "complete" },
+        syncStatus: { kind: "Present", value: "Complete" },
       },
       subscription: {
         kind: "Present",
         value: {
           defaultPlaybackSpeed: 1.25,
           autoQueue: true,
-          syncStatus: "complete",
+          syncStatus: "Complete",
         },
       },
     });

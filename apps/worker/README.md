@@ -11,7 +11,7 @@ Each single-process lane runs two loops:
 
 `WORKER_LANE=interactive|background` selects one fixed allowlist declared in
 `nexus.config`. The five-kind interactive lane owns user-waiting work. The
-twelve-kind background lane owns retrieval, repair, teardown, and production
+fifteen-kind background lane owns retrieval, repair, teardown, and production
 periodic schedules. The lanes are disjoint and together cover the complete
 production-enabled job set.
 
@@ -56,7 +56,8 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.worker.yml 
 - `WORKER_LEASE_SECONDS`
 - `WORKER_DB_FAILURE_BACKOFF_SECONDS`
 - `WORKER_DB_FAILURE_BACKOFF_MAX_SECONDS`
-- `PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS`
+- `PODCAST_REFRESH_DUE_SCHEDULE_SECONDS`
+- `PODCAST_REFRESH_DUE_LIMIT`
 - `INGEST_RECONCILE_SCHEDULE_SECONDS`
 - `SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS`
 - `BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS`
@@ -73,7 +74,7 @@ BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS=3600 \
 uv run python -m apps.worker.main
 ```
 
-The raw allowlist must be a non-empty subset of the four
+The raw allowlist must be a non-empty subset of the three
 `MAINTENANCE_JOB_KINDS`. Normal lanes reject it. Stop the process when the
 bounded maintenance operation is complete.
 

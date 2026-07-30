@@ -11,6 +11,7 @@ import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { PanePrimaryChromeProvider } from "@/components/workspace/PanePrimaryChrome";
 import PaneRouteBoundary from "@/components/workspace/PaneRouteBoundary";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
+import type { PaneRefreshPublication } from "@/lib/panes/panePublications";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
@@ -133,6 +134,169 @@ describe("ConversationsPaneBody", () => {
       "/conversations/new",
     );
     expect(screen.getByText(/2 messages/)).toBeVisible();
+  });
+
+  it("keeps committed chats visible until pane refresh installs the replacement page", async () => {
+    const publish = vi.fn();
+    let requestCount = 0;
+    let resolveReplacement!: (response: Response) => void;
+    const replacement = new Promise<Response>((resolve) => {
+      resolveReplacement = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = pathOf(input);
+        if (path !== "/api/conversations") {
+          throw new Error(`Unexpected fetch call: ${path}`);
+        }
+        requestCount += 1;
+        return requestCount === 1
+          ? collectionPage([
+              conversation(
+                "11111111-0000-4000-8000-000000000001",
+                "Committed chat",
+              ),
+            ])
+          : replacement;
+      }),
+    );
+
+    render(
+      withPaneRuntime(
+        <PanePrimaryChromeProvider publish={publish}>
+          <ConversationsPaneBody />
+        </PanePrimaryChromeProvider>,
+      ),
+    );
+
+    expect(
+      await screen.findByRole("link", { name: "Committed chat" }),
+    ).toBeVisible();
+    let refresh: PaneRefreshPublication | undefined;
+    await waitFor(() => {
+      refresh = publish.mock.calls
+        .map(([update]) => update.publication?.refresh)
+        .findLast(
+          (candidate): candidate is PaneRefreshPublication =>
+            candidate !== undefined,
+        );
+      expect(refresh?.sourceKey).toBe("Conversations:mine");
+    });
+    if (!refresh) {
+      throw new Error("Expected ConversationsPaneBody to publish Refresh.");
+    }
+
+    let settled = false;
+    const refreshPromise = refresh
+      .execute({
+        signal: new AbortController().signal,
+        reportProgress: vi.fn(),
+      })
+      .then((result) => {
+        settled = true;
+        return result;
+      });
+
+    await waitFor(() => expect(requestCount).toBe(2));
+    expect(screen.getByRole("link", { name: "Committed chat" })).toBeVisible();
+    expect(settled).toBe(false);
+
+    await act(async () => {
+      resolveReplacement(
+        collectionPage([
+          conversation(
+            "22222222-0000-4000-8000-000000000002",
+            "Replacement chat",
+          ),
+        ]),
+      );
+    });
+
+    await expect(refreshPromise).resolves.toEqual({
+      kind: "Complete",
+      announcement: "Conversations refreshed",
+    });
+    expect(
+      await screen.findByRole("link", { name: "Replacement chat" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("link", { name: "Committed chat" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("rejects an aborted owner refresh and ignores its late replacement page", async () => {
+    const publish = vi.fn();
+    let requestCount = 0;
+    let resolveReplacement!: (response: Response) => void;
+    const replacement = new Promise<Response>((resolve) => {
+      resolveReplacement = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = pathOf(input);
+        if (path !== "/api/conversations") {
+          throw new Error(`Unexpected fetch call: ${path}`);
+        }
+        requestCount += 1;
+        return requestCount === 1
+          ? collectionPage([
+              conversation(
+                "11111111-0000-4000-8000-000000000001",
+                "Stable chat",
+              ),
+            ])
+          : replacement;
+      }),
+    );
+
+    render(
+      withPaneRuntime(
+        <PanePrimaryChromeProvider publish={publish}>
+          <ConversationsPaneBody />
+        </PanePrimaryChromeProvider>,
+      ),
+    );
+    expect(
+      await screen.findByRole("link", { name: "Stable chat" }),
+    ).toBeVisible();
+    let refresh: PaneRefreshPublication | undefined;
+    await waitFor(() => {
+      refresh = publish.mock.calls
+        .map(([update]) => update.publication?.refresh)
+        .findLast(Boolean);
+      expect(refresh).toBeDefined();
+    });
+    if (!refresh) {
+      throw new Error("Expected ConversationsPaneBody to publish Refresh.");
+    }
+
+    const owner = new AbortController();
+    const refreshPromise = refresh.execute({
+      signal: owner.signal,
+      reportProgress: vi.fn(),
+    });
+    await waitFor(() => expect(requestCount).toBe(2));
+    owner.abort(new DOMException("Source replaced.", "AbortError"));
+    await expect(refreshPromise).rejects.toMatchObject({ name: "AbortError" });
+
+    act(() => {
+      resolveReplacement(
+        collectionPage([
+          conversation(
+            "22222222-0000-4000-8000-000000000002",
+            "Late stale chat",
+          ),
+        ]),
+      );
+    });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("link", { name: "Late stale chat" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("link", { name: "Stable chat" })).toBeVisible();
   });
 
   it("keeps starting a new chat visible when the recent list is empty", async () => {

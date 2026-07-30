@@ -51,6 +51,7 @@ import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import { findPaneSearchFocusTarget } from "@/lib/workspace/paneDom";
+import { isAbortError } from "@/lib/errors";
 
 const CONVERSATIONS_VISIT_DATA = definePaneVisitDataKey<ConversationsPaneSeed>(
   "Conversations.Pagination",
@@ -58,6 +59,13 @@ const CONVERSATIONS_VISIT_DATA = definePaneVisitDataKey<ConversationsPaneSeed>(
 const NO_CURSOR: Presence<CollectionCursor> = { kind: "Absent" };
 const ZERO_REVISION = 0 as CollectionRevision;
 const PAGE_SIZE = 100;
+
+interface PendingConversationsRevalidation {
+  readonly version: number;
+  readonly resolve: () => void;
+  readonly reject: (error: unknown) => void;
+  readonly removeAbortListener: () => void;
+}
 
 function seedFromPage(
   page: CollectionPage<ConversationListItem>,
@@ -89,6 +97,12 @@ export default function ConversationsPaneBody() {
   const restored = usePaneVisitData(CONVERSATIONS_VISIT_DATA, captureCommitted);
   const allowResourceAdoptionRef = useRef(restored === null);
   const [firstPageVersion, setFirstPageVersion] = useState(0);
+  const firstPageVersionRef = useRef(0);
+  const pendingConversationsRevalidationRef =
+    useRef<PendingConversationsRevalidation | null>(null);
+  const completedConversationsRevalidationVersionRef =
+    useRef<number | null>(null);
+  const [refreshingIndex, setRefreshingIndex] = useState(false);
   const [chainEpoch, setChainEpoch] = useState(0);
   const [controller, setController] = useState<ConversationsPaneSeed | null>(
     restored,
@@ -119,29 +133,125 @@ export default function ConversationsPaneBody() {
       setController(initial.data);
       setChainEpoch((epoch) => epoch + 1);
       setFeedback(null);
+      setRefreshingIndex(false);
+      const pending = pendingConversationsRevalidationRef.current;
+      if (pending?.version === firstPageVersion) {
+        completedConversationsRevalidationVersionRef.current = pending.version;
+      }
       return;
     }
     if (initial.status === "error" && allowResourceAdoptionRef.current) {
+      setRefreshingIndex(false);
       setFeedback(
         toFeedback(initial.error, {
           fallback: "Failed to load conversations",
         }),
       );
+      const pending = pendingConversationsRevalidationRef.current;
+      if (pending?.version === firstPageVersion) {
+        pendingConversationsRevalidationRef.current = null;
+        completedConversationsRevalidationVersionRef.current = null;
+        pending.removeAbortListener();
+        pending.reject(initial.error);
+      }
     }
-  }, [initial]);
+  }, [firstPageVersion, initial]);
 
   useLayoutEffect(() => {
     committedSnapshotRef.current = controller;
+    const pending = pendingConversationsRevalidationRef.current;
+    if (
+      controller === null ||
+      pending === null ||
+      completedConversationsRevalidationVersionRef.current !== pending.version
+    ) {
+      return;
+    }
+    completedConversationsRevalidationVersionRef.current = null;
+    pendingConversationsRevalidationRef.current = null;
+    pending.removeAbortListener();
+    pending.resolve();
   }, [controller]);
 
   usePaneReturnReady(controller !== null || initial.status === "error");
 
+  const rejectPendingConversationsRevalidation = useCallback(
+    (error: unknown) => {
+      const pending = pendingConversationsRevalidationRef.current;
+      pendingConversationsRevalidationRef.current = null;
+      completedConversationsRevalidationVersionRef.current = null;
+      if (!pending) return;
+      pending.removeAbortListener();
+      pending.reject(error);
+    },
+    [],
+  );
   const refreshIndex = useCallback(() => {
+    rejectPendingConversationsRevalidation(
+      new DOMException("Conversations refresh was superseded.", "AbortError"),
+    );
     allowResourceAdoptionRef.current = true;
     clearAllVisitData();
     setFeedback(null);
-    setFirstPageVersion((version) => version + 1);
-  }, [clearAllVisitData]);
+    setRefreshingIndex(true);
+    const version = firstPageVersionRef.current + 1;
+    firstPageVersionRef.current = version;
+    setFirstPageVersion(version);
+  }, [clearAllVisitData, rejectPendingConversationsRevalidation]);
+  const revalidateIndex = useCallback(
+    (signal: AbortSignal): Promise<void> => {
+      if (signal.aborted) {
+        return Promise.reject(
+          signal.reason ??
+            new DOMException(
+              "Conversations refresh was aborted.",
+              "AbortError",
+            ),
+        );
+      }
+      refreshIndex();
+      const version = firstPageVersionRef.current;
+      return new Promise<void>((resolve, reject) => {
+        const onAbort = () => {
+          const pending = pendingConversationsRevalidationRef.current;
+          if (pending?.version !== version) return;
+          pendingConversationsRevalidationRef.current = null;
+          completedConversationsRevalidationVersionRef.current = null;
+          pending.removeAbortListener();
+          allowResourceAdoptionRef.current = false;
+          setRefreshingIndex(false);
+          reject(
+            signal.reason ??
+              new DOMException(
+                "Conversations refresh was aborted.",
+                "AbortError",
+              ),
+          );
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        pendingConversationsRevalidationRef.current = {
+          version,
+          resolve,
+          reject,
+          removeAbortListener: () =>
+            signal.removeEventListener("abort", onAbort),
+        };
+        if (signal.aborted) onAbort();
+      });
+    },
+    [refreshIndex],
+  );
+  useEffect(
+    () => () => {
+      rejectPendingConversationsRevalidation(
+        new DOMException(
+          "Conversations refresh source was replaced.",
+          "AbortError",
+        ),
+      );
+    },
+    [rejectPendingConversationsRevalidation],
+  );
 
   const commitPage = useCallback(
     (page: CollectionPage<ConversationListItem>): number => {
@@ -177,7 +287,7 @@ export default function ConversationsPaneBody() {
   );
 
   const exhaustion = useExhaustivePagination<ConversationListItem>({
-    active: runtime.isActive && controller !== null,
+    active: runtime.isActive && controller !== null && !refreshingIndex,
     chainKey: `mine:${chainEpoch}`,
     cursor: controller?.nextCursor ?? NO_CURSOR,
     collectionRevision: controller?.collectionRevision ?? ZERO_REVISION,
@@ -345,15 +455,40 @@ export default function ConversationsPaneBody() {
     return () => cancelAnimationFrame(pendingFocusRafRef.current);
   }, [runtime.paneId, visibleRowSignature]);
 
+  const executeRefresh = useCallback(
+    async ({ signal }: { readonly signal: AbortSignal }) => {
+      try {
+        await revalidateIndex(signal);
+        return {
+          kind: "Complete" as const,
+          announcement: "Conversations refreshed",
+        };
+      } catch (refreshError: unknown) {
+        if (isAbortError(refreshError)) throw refreshError;
+        return {
+          kind: "Failed" as const,
+          announcement: "Conversations failed to refresh",
+        };
+      }
+    },
+    [revalidateIndex],
+  );
   usePanePrimaryChrome({
     search,
+    refresh: {
+      sourceKey: "Conversations:mine",
+      execute: executeRefresh,
+    },
     header: {
       kind: "section",
       folio:
         finalCount === null
           ? { kind: "none" }
           : { kind: "count", value: finalCount, unit: "chat" },
-      pending: status === "loading" || exhaustion.kind !== "Complete",
+      pending:
+        status === "loading" ||
+        refreshingIndex ||
+        exhaustion.kind !== "Complete",
     },
   });
 

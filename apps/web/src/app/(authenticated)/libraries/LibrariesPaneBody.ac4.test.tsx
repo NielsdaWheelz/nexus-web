@@ -147,6 +147,176 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
     );
   });
 
+  it("retains the committed rows and resolves an exact failure announcement when owner revalidation fails", async () => {
+    const publish = vi.fn();
+    const library = {
+      id: "00000000-0000-4000-8000-000000000211",
+      name: "Retained Reading Room",
+      color: null,
+      ownerUserHandle: OWNER_USER_HANDLE,
+      isDefault: false,
+      role: "admin",
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      systemKey: null,
+      canRename: true,
+      canDelete: true,
+      canEditEntries: true,
+      canManageMembers: true,
+      canTransferOwnership: true,
+    };
+    stubFetch(async (input) => {
+      const path = fetchInputPathWithSearch(input);
+      if (path === "/api/libraries/invites") {
+        return Response.json({ data: [] });
+      }
+      if (new URL(path, "http://localhost").pathname === "/api/libraries") {
+        return Response.json(
+          { error: { code: "E_BAD_REQUEST", message: "Refresh failed" } },
+          { status: 400 },
+        );
+      }
+      throw new Error(`unexpected fetch: ${path}`);
+    });
+
+    renderHydratedPane({
+      href: "/libraries",
+      resources: {
+        "libraries:0": librariesPage([library]),
+      },
+      children: (
+        <LibraryPlacementControllerProvider>
+          <PanePrimaryChromeProvider publish={publish}>
+            <LibrariesPaneBody />
+          </PanePrimaryChromeProvider>
+        </LibraryPlacementControllerProvider>
+      ),
+    });
+    expect(
+      await screen.findByRole("link", { name: "Retained Reading Room" }),
+    ).toBeInTheDocument();
+    await vi.waitFor(() =>
+      expect(
+        publish.mock.calls
+          .map(([update]) => update.publication?.refresh)
+          .findLast(Boolean),
+      ).toBeDefined(),
+    );
+    const refresh = publish.mock.calls
+      .map(([update]) => update.publication?.refresh)
+      .findLast(Boolean);
+    if (!refresh) throw new Error("Expected Libraries refresh publication");
+
+    let refreshPromise!: ReturnType<typeof refresh.execute>;
+    act(() => {
+      refreshPromise = refresh.execute({
+        signal: new AbortController().signal,
+        reportProgress: vi.fn(),
+      });
+    });
+    await expect(refreshPromise).resolves.toEqual({
+      kind: "Failed",
+      announcement: "Libraries failed to refresh",
+    });
+    expect(
+      screen.getByRole("link", { name: "Retained Reading Room" }),
+    ).toBeInTheDocument();
+  });
+
+  it("rejects an aborted owner refresh, ignores its late first page, and retains the committed index", async () => {
+    const publish = vi.fn();
+    const stableLibrary = {
+      id: "00000000-0000-4000-8000-000000000212",
+      name: "Stable Reading Room",
+      color: null,
+      ownerUserHandle: OWNER_USER_HANDLE,
+      isDefault: false,
+      role: "admin",
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      systemKey: null,
+      canRename: true,
+      canDelete: true,
+      canEditEntries: true,
+      canManageMembers: true,
+      canTransferOwnership: true,
+    };
+    let resolveLatePage!: (response: Response) => void;
+    const latePage = new Promise<Response>((resolve) => {
+      resolveLatePage = resolve;
+    });
+    let libraryRequests = 0;
+    stubFetch(async (input) => {
+      const path = fetchInputPathWithSearch(input);
+      if (path === "/api/libraries/invites") {
+        return Response.json({ data: [] });
+      }
+      if (new URL(path, "http://localhost").pathname === "/api/libraries") {
+        libraryRequests += 1;
+        return latePage;
+      }
+      throw new Error(`unexpected fetch: ${path}`);
+    });
+
+    renderHydratedPane({
+      href: "/libraries",
+      resources: {
+        "libraries:0": librariesPage([stableLibrary]),
+      },
+      children: (
+        <LibraryPlacementControllerProvider>
+          <PanePrimaryChromeProvider publish={publish}>
+            <LibrariesPaneBody />
+          </PanePrimaryChromeProvider>
+        </LibraryPlacementControllerProvider>
+      ),
+    });
+    expect(
+      await screen.findByRole("link", { name: "Stable Reading Room" }),
+    ).toBeVisible();
+    await vi.waitFor(() =>
+      expect(
+        publish.mock.calls
+          .map(([update]) => update.publication?.refresh)
+          .findLast(Boolean),
+      ).toBeDefined(),
+    );
+    const refresh = publish.mock.calls
+      .map(([update]) => update.publication?.refresh)
+      .findLast(Boolean);
+    if (!refresh) throw new Error("Expected Libraries refresh publication");
+
+    const owner = new AbortController();
+    const refreshPromise = refresh.execute({
+      signal: owner.signal,
+      reportProgress: vi.fn(),
+    });
+    const expectedAbort = expect(refreshPromise).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    await vi.waitFor(() => expect(libraryRequests).toBe(1));
+    owner.abort(new DOMException("Source replaced.", "AbortError"));
+    await expectedAbort;
+
+    act(() => {
+      resolveLatePage(
+        Response.json({
+          data: librariesPage([
+            { ...stableLibrary, name: "Late stale Reading Room" },
+          ]),
+        }),
+      );
+    });
+    await vi.waitFor(() =>
+      expect(
+        screen.queryByRole("link", { name: "Late stale Reading Room" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.getByRole("link", { name: "Stable Reading Room" }),
+    ).toBeVisible();
+  });
+
   it("retains an id across a response-loss retry and rotates it when the draft changes", async () => {
     const user = userEvent.setup();
     const createBodies: Array<Record<string, unknown>> = [];

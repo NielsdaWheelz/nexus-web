@@ -1,4 +1,11 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { useState, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -12,7 +19,10 @@ import {
   PaneRuntimeProvider,
   type PaneResourceStatus,
 } from "@/lib/panes/paneRuntime";
-import type { PaneSecondaryPublication } from "@/lib/panes/panePublications";
+import type {
+  PaneRefreshPublication,
+  PaneSecondaryPublication,
+} from "@/lib/panes/panePublications";
 import type { ResourceItem } from "@/lib/resources/resourceItems";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { assumePaneVisitId } from "@/lib/workspace/schema";
@@ -126,6 +136,121 @@ describe("AuthorPaneBody", () => {
         pending: false,
       }),
     );
+  });
+
+  it("keeps committed works visible until pane refresh installs the replacement page", async () => {
+    let worksRequestCount = 0;
+    let resolveReplacement!: (response: Response) => void;
+    const replacement = new Promise<Response>((resolve) => {
+      resolveReplacement = resolve;
+    });
+    stubFetchRouter((url) => {
+      if (url.pathname === `/api/contributors/${HANDLE}`) return detail({});
+      if (url.pathname === `/api/contributors/${HANDLE}/works`) {
+        worksRequestCount += 1;
+        return worksRequestCount === 1
+          ? worksPage([work({ title: "Committed work" })])
+          : replacement;
+      }
+      throw new Error(`unexpected path ${url.pathname}`);
+    });
+
+    render(authorPane());
+
+    expect(
+      await screen.findByRole("link", { name: "Committed work" }),
+    ).toBeVisible();
+    const refresh = await publishedRefresh();
+    let settled = false;
+    const refreshPromise = refresh
+      .execute({
+        signal: new AbortController().signal,
+        reportProgress: vi.fn(),
+      })
+      .then((result) => {
+        settled = true;
+        return result;
+      });
+
+    await waitFor(() => expect(worksRequestCount).toBe(2));
+    expect(
+      screen.getByRole("link", { name: "Committed work" }),
+    ).toBeVisible();
+    expect(settled).toBe(false);
+
+    await act(async () => {
+      resolveReplacement(worksPage([work({ title: "Replacement work" })]));
+    });
+
+    await expect(refreshPromise).resolves.toEqual({
+      kind: "Complete",
+      announcement: "Author refreshed",
+    });
+    expect(
+      await screen.findByRole("link", { name: "Replacement work" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("link", { name: "Committed work" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("rejects an aborted owner refresh, ignores its late page, and retains committed works through a later refresh error", async () => {
+    let worksRequestCount = 0;
+    let resolveLatePage!: (response: Response) => void;
+    const latePage = new Promise<Response>((resolve) => {
+      resolveLatePage = resolve;
+    });
+    stubFetchRouter((url) => {
+      if (url.pathname === `/api/contributors/${HANDLE}`) return detail({});
+      if (url.pathname === `/api/contributors/${HANDLE}/works`) {
+        worksRequestCount += 1;
+        if (worksRequestCount === 1) {
+          return worksPage([work({ title: "Stable work" })]);
+        }
+        if (worksRequestCount === 2) return latePage;
+        return errorResponse(400, "E_BAD_REQUEST", "Refresh failed");
+      }
+      throw new Error(`unexpected path ${url.pathname}`);
+    });
+
+    render(authorPane());
+
+    expect(
+      await screen.findByRole("link", { name: "Stable work" }),
+    ).toBeVisible();
+    const refresh = await publishedRefresh();
+    const owner = new AbortController();
+    const abortedRefresh = refresh.execute({
+      signal: owner.signal,
+      reportProgress: vi.fn(),
+    });
+    const expectedAbort = expect(abortedRefresh).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    await waitFor(() => expect(worksRequestCount).toBe(2));
+    owner.abort(new DOMException("Source replaced.", "AbortError"));
+    await expectedAbort;
+
+    act(() => {
+      resolveLatePage(worksPage([work({ title: "Late stale work" })]));
+    });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("link", { name: "Late stale work" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("link", { name: "Stable work" })).toBeVisible();
+
+    await expect(
+      refresh.execute({
+        signal: new AbortController().signal,
+        reportProgress: vi.fn(),
+      }),
+    ).resolves.toEqual({
+      kind: "Failed",
+      announcement: "Author failed to refresh",
+    });
+    expect(screen.getByRole("link", { name: "Stable work" })).toBeVisible();
   });
 
   it("uses the workspace-resolved contributor UUID for Connections", async () => {
@@ -669,7 +794,7 @@ function stubRoutes({ detail: detailResponse, works }: { detail: Response; works
 }
 
 function stubFetchRouter(
-  handler: (url: URL, init?: RequestInit) => Response,
+  handler: (url: URL, init?: RequestInit) => Response | Promise<Response>,
 ) {
   vi.stubGlobal(
     "fetch",
@@ -678,6 +803,21 @@ function stubFetchRouter(
       return handler(new URL(raw, "https://nexus.test"), init);
     }),
   );
+}
+
+async function publishedRefresh(): Promise<PaneRefreshPublication> {
+  let refresh: PaneRefreshPublication | undefined;
+  await waitFor(() => {
+    refresh = primaryChromeMocks.usePanePrimaryChrome.mock.calls
+      .map(([publication]) => publication?.refresh)
+      .findLast(
+        (candidate): candidate is PaneRefreshPublication =>
+          candidate !== undefined,
+      );
+    expect(refresh).toBeDefined();
+  });
+  if (!refresh) throw new Error("Expected AuthorPaneBody to publish Refresh.");
+  return refresh;
 }
 
 function jsonResponse(body: unknown): Response {

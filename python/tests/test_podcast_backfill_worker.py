@@ -107,14 +107,20 @@ def _seed_backfill(direct_db: DirectSessionManager) -> _BackfillFixture:
                     user_id,
                     podcast_id,
                     auto_queue,
-                    sync_status
+                    sync_status,
+                    sync_generation,
+                    next_sync_at,
+                    consecutive_sync_failures
                 )
                 VALUES (
                     :id,
                     :user_id,
                     :podcast_id,
                     false,
-                    'pending'
+                    'Complete',
+                    1,
+                    :next_sync_at,
+                    0
                 )
                 """
             ),
@@ -122,6 +128,7 @@ def _seed_backfill(direct_db: DirectSessionManager) -> _BackfillFixture:
                 "id": subscription_id,
                 "user_id": user_id,
                 "podcast_id": podcast_id,
+                "next_sync_at": cutoff_at,
             },
         )
         backfill_id = seed_subscription_backfill_in_current_transaction(

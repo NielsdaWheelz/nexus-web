@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildPodcastUnsubscribeConfirmation,
+  decodePodcastDetailResponse,
   getPodcastSubscriptionSettingsDraft,
   getPodcastSubscriptionSettingsPatch,
-  getPodcastSubscriptionSyncPatch,
   parsePodcastSubscriptionDefaultPlaybackSpeed,
   retryPodcastSubscriptionBackfill,
   savePodcastSubscriptionSettings,
@@ -14,6 +14,46 @@ import { libraryPlacementSnapshot } from "@/lib/libraries/placementRevision";
 import type { CollectionRevision } from "@/lib/api/collectionPage";
 
 const REVISION = 7 as CollectionRevision;
+
+function podcastDetailWire() {
+  return {
+    data: {
+      podcast: {
+        id: "podcast-1",
+        provider: "rss",
+        provider_podcast_id: "feed-1",
+        title: "Signal Path",
+        contributors: [],
+        feed_url: "https://example.test/feed.xml",
+        website_url: null,
+        image_url: null,
+        description: null,
+        created_at: "2026-07-29T00:00:00Z",
+        updated_at: "2026-07-30T00:00:00Z",
+      },
+      subscription: {
+        user_id: "user-1",
+        podcast_id: "podcast-1",
+        default_playback_speed: null,
+        auto_queue: false,
+        sync_status: "Complete",
+        sync_error_code: null,
+        sync_error_message: null,
+        sync_attempts: 1,
+        sync_started_at: null,
+        sync_completed_at: "2026-07-30T00:00:00Z",
+        last_checked_at: "2026-07-30T00:00:00Z",
+        updated_at: "2026-07-30T00:00:00Z",
+        backfill: {
+          id: "backfill-1",
+          state: "Complete",
+          processed_count: 10,
+          added_count: 8,
+        },
+      },
+    },
+  };
+}
 
 function createLibraryPlacement(
   overrides: Partial<LibraryPlacementOption> = {},
@@ -51,25 +91,7 @@ describe("podcastSubscriptions helpers", () => {
     expect(parsePodcastSubscriptionDefaultPlaybackSpeed("1.5")).toBe(1.5);
   });
 
-  it("returns explicit sync and settings patches", () => {
-    expect(
-      getPodcastSubscriptionSyncPatch({
-        podcast_id: "podcast-1",
-        sync_status: "running",
-        sync_error_code: "timeout",
-        sync_error_message: "Upstream timed out",
-        sync_attempts: 3,
-        sync_enqueued: true,
-        collectionRevision: REVISION,
-        libraryEntriesCollectionRevision: REVISION,
-      }),
-    ).toEqual({
-      sync_status: "running",
-      sync_error_code: "timeout",
-      sync_error_message: "Upstream timed out",
-      sync_attempts: 3,
-    });
-
+  it("returns an explicit settings patch", () => {
     expect(
       getPodcastSubscriptionSettingsPatch({
         response: {
@@ -77,13 +99,13 @@ describe("podcastSubscriptions helpers", () => {
           podcast_id: "podcast-1",
           default_playback_speed: 1.25,
           auto_queue: true,
-          sync_status: "complete",
+          sync_status: "Complete",
           sync_error_code: null,
           sync_error_message: null,
           sync_attempts: 1,
           sync_started_at: null,
           sync_completed_at: null,
-          last_synced_at: null,
+          last_checked_at: null,
           updated_at: "2026-04-22T00:00:00Z",
           backfill: {
             id: "backfill-1",
@@ -101,6 +123,32 @@ describe("podcastSubscriptions helpers", () => {
       auto_queue: true,
       updated_at: "2026-04-22T00:00:00Z",
     });
+  });
+
+  it("hard-requires last_checked_at on podcast detail", () => {
+    expect(decodePodcastDetailResponse(podcastDetailWire())).toMatchObject({
+      subscription: {
+        sync_status: "Complete",
+        last_checked_at: "2026-07-30T00:00:00Z",
+      },
+    });
+
+    const canonical = podcastDetailWire();
+    const {
+      last_checked_at: _lastCheckedAt,
+      ...legacySubscription
+    } = canonical.data.subscription;
+    expect(() =>
+      decodePodcastDetailResponse({
+        data: {
+          ...canonical.data,
+          subscription: {
+            ...legacySubscription,
+            last_synced_at: "2026-07-30T00:00:00Z",
+          },
+        },
+      }),
+    ).toThrow(/PodcastDetailResponse.subscription/);
   });
 
   it("describes unsubscribe side effects with removable and retained libraries", () => {
@@ -137,13 +185,13 @@ describe("podcastSubscriptions placement revision publishing", () => {
           podcast_id: "podcast-1",
           default_playback_speed: 1.5,
           auto_queue: true,
-          sync_status: "complete",
+          sync_status: "Complete",
           sync_error_code: null,
           sync_error_message: null,
           sync_attempts: 1,
           sync_started_at: null,
           sync_completed_at: null,
-          last_synced_at: null,
+          last_checked_at: null,
           updated_at: "2026-07-29T00:00:00Z",
           backfill: {
             id: "backfill-1",

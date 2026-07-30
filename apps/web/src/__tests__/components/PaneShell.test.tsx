@@ -9,6 +9,7 @@ import {
   within,
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { cdp } from "vitest/browser";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import PaneShell from "@/components/workspace/PaneShell";
 import type { PanePrimaryChromePublication } from "@/lib/panes/panePublications";
@@ -214,6 +215,35 @@ function latestMobilePaneSearchAction(): Extract<
     if (action?.kind === "command") return action;
   }
   throw new Error("Mobile Pane Search action was not published");
+}
+
+function latestMobilePaneChrome(): MobilePaneChrome {
+  for (
+    let index = mobileChromeMock.setPaneChrome.mock.calls.length - 1;
+    index >= 0;
+    index -= 1
+  ) {
+    const chrome = mobileChromeMock.setPaneChrome.mock.calls[index]?.[0] as
+      | MobilePaneChrome
+      | null;
+    if (chrome) return chrome;
+  }
+  throw new Error("Mobile pane chrome was not published");
+}
+
+function dispatchTouch(
+  target: HTMLElement,
+  type: "touchstart" | "touchmove" | "touchend" | "touchcancel",
+  touches: readonly {
+    readonly identifier: number;
+    readonly clientX: number;
+    readonly clientY: number;
+  }[],
+): Event {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "touches", { value: touches });
+  fireEvent(target, event);
+  return event;
 }
 
 function readyResource(title: string): PanePrimaryChromePublication {
@@ -746,6 +776,356 @@ describe("PaneShell", () => {
       }),
     );
     expect(onReturn).toHaveBeenCalledTimes(1);
+  });
+
+  it("prepends one Refresh option and projects determinate progress plus the terminal announcement", async () => {
+    let reportProgress:
+      | ((progress: {
+          readonly kind: "Determinate";
+          readonly finishedCount: number;
+          readonly requestedCount: number;
+        }) => void)
+      | null = null;
+    let resolveRefresh:
+      | ((result: {
+          readonly kind: "Complete";
+          readonly announcement: string;
+        }) => void)
+      | null = null;
+    const execute = vi.fn(
+      ({
+        reportProgress: publishProgress,
+      }: Parameters<
+        NonNullable<PanePrimaryChromePublication["refresh"]>["execute"]
+      >[0]) =>
+        new Promise<{
+          readonly kind: "Complete";
+          readonly announcement: string;
+        }>((resolve) => {
+          reportProgress = publishProgress;
+          resolveRefresh = resolve;
+        }),
+    );
+
+    render(
+      paneTree({
+        isActive: true,
+        children: (
+          <PrimaryChromeProbe
+            publication={{
+              refresh: { sourceKey: "libraries", execute },
+              menu: {
+                kind: "FlatMenu",
+                actions: [
+                  {
+                    kind: "command",
+                    id: "custom",
+                    label: "Custom action",
+                    onSelect: vi.fn(),
+                  },
+                ],
+              },
+            }}
+          />
+        ),
+      }),
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Options" }));
+    const menu = await screen.findByRole("menu");
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((item) => item.textContent?.trim()),
+    ).toEqual(["Refresh", "Share…", "Custom action"]);
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Refresh" }));
+    expect(execute).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      reportProgress?.({
+        kind: "Determinate",
+        finishedCount: 3,
+        requestedCount: 8,
+      });
+    });
+    expect(screen.getByText("Refreshing 3 of 8")).toBeInTheDocument();
+    expect(
+      screen.getByRole("progressbar", { name: "Refreshing 3 of 8" }),
+    ).toHaveAttribute("aria-valuenow", "3");
+    expect(
+      screen.getByRole("progressbar", { name: "Refreshing 3 of 8" }),
+    ).toHaveAttribute("aria-valuemax", "8");
+
+    await act(async () => {
+      resolveRefresh?.({
+        kind: "Complete",
+        announcement: "Libraries refreshed",
+      });
+    });
+    expect(screen.getAllByText("Libraries refreshed")).toHaveLength(2);
+    const liveRegion = screen.getByText("Libraries refreshed", {
+      selector: '[aria-live="polite"]',
+    });
+    expect(liveRegion).toHaveAttribute("aria-atomic", "true");
+    expect(liveRegion).toHaveTextContent("Libraries refreshed");
+  });
+
+  it("locks only a top-edge downward mobile gesture, arms at the exact resisted distance, and coalesces execution", async () => {
+    let resolveRefresh:
+      | ((result: {
+          readonly kind: "Complete";
+          readonly announcement: string;
+        }) => void)
+      | null = null;
+    const execute = vi.fn(
+      () =>
+        new Promise<{
+          readonly kind: "Complete";
+          readonly announcement: string;
+        }>((resolve) => {
+          resolveRefresh = resolve;
+        }),
+    );
+
+    render(
+      paneTree({
+        isActive: true,
+        isMobile: true,
+        children: (
+          <PrimaryChromeProbe
+            publication={{
+              refresh: { sourceKey: "libraries", execute },
+            }}
+          />
+        ),
+      }),
+    );
+
+    const body = screen.getByTestId("pane-shell-body");
+    let scrollTop = 0;
+    Object.defineProperty(body, "scrollTop", {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = value;
+      },
+    });
+    await waitFor(() =>
+      expect(body).toHaveAttribute("data-pane-refresh-eligible", "true"),
+    );
+    expect(getComputedStyle(body).touchAction).toBe("pan-x pan-up");
+    body.scrollTop = 1;
+    dispatchTouch(body, "touchstart", [
+      { identifier: 0, clientX: 40, clientY: 20 },
+    ]);
+    const scrolledMove = dispatchTouch(body, "touchmove", [
+      { identifier: 0, clientX: 40, clientY: 220 },
+    ]);
+    expect(scrolledMove.defaultPrevented).toBe(false);
+    expect(execute).not.toHaveBeenCalled();
+    body.scrollTop = 0;
+
+    dispatchTouch(body, "touchstart", [
+      { identifier: 1, clientX: 40, clientY: 20 },
+    ]);
+    const horizontalMove = dispatchTouch(body, "touchmove", [
+      { identifier: 1, clientX: 100, clientY: 40 },
+    ]);
+    expect(horizontalMove.defaultPrevented).toBe(false);
+    expect(screen.getByTestId("pane-refresh-indicator")).toHaveAttribute(
+      "data-refresh-state",
+      "Idle",
+    );
+
+    dispatchTouch(body, "touchstart", [
+      { identifier: 2, clientX: 40, clientY: 20 },
+    ]);
+    const pullingMove = dispatchTouch(body, "touchmove", [
+      { identifier: 2, clientX: 42, clientY: 120 },
+    ]);
+    expect(pullingMove.defaultPrevented).toBe(true);
+    expect(screen.getByText("Pull to refresh")).toBeInTheDocument();
+    dispatchTouch(body, "touchend", []);
+    expect(execute).not.toHaveBeenCalled();
+
+    dispatchTouch(body, "touchstart", [
+      { identifier: 6, clientX: 40, clientY: 20 },
+    ]);
+    dispatchTouch(body, "touchmove", [
+      { identifier: 6, clientX: 42, clientY: 120 },
+    ]);
+    expect(screen.getByTestId("pane-refresh-indicator")).toHaveAttribute(
+      "data-refresh-state",
+      "Pulling",
+    );
+    dispatchTouch(body, "touchcancel", []);
+    expect(screen.getByTestId("pane-refresh-indicator")).toHaveAttribute(
+      "data-refresh-state",
+      "Idle",
+    );
+    expect(execute).not.toHaveBeenCalled();
+
+    dispatchTouch(body, "touchstart", [
+      { identifier: 4, clientX: 40, clientY: 20 },
+    ]);
+    dispatchTouch(body, "touchmove", [
+      { identifier: 4, clientX: 42, clientY: 120 },
+    ]);
+    dispatchTouch(body, "touchstart", [
+      { identifier: 4, clientX: 42, clientY: 120 },
+      { identifier: 5, clientX: 80, clientY: 120 },
+    ]);
+    expect(screen.getByTestId("pane-refresh-indicator")).toHaveAttribute(
+      "data-refresh-state",
+      "Idle",
+    );
+
+    dispatchTouch(body, "touchstart", [
+      { identifier: 3, clientX: 40, clientY: 20 },
+    ]);
+    const armedMove = dispatchTouch(body, "touchmove", [
+      { identifier: 3, clientX: 42, clientY: 180 },
+    ]);
+    expect(armedMove.defaultPrevented).toBe(true);
+    expect(screen.getByText("Release to refresh")).toBeInTheDocument();
+    dispatchTouch(body, "touchend", []);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Refreshing")).toBeInTheDocument();
+
+    const refreshOption = latestMobilePaneChrome().options[0];
+    if (refreshOption?.kind !== "command") {
+      throw new Error("Mobile Refresh option was not a command");
+    }
+    refreshOption.onSelect({ triggerEl: null });
+    expect(execute).toHaveBeenCalledTimes(1);
+
+    const session = cdp() as unknown as {
+      send(
+        method: string,
+        params: Record<string, unknown>,
+      ): Promise<unknown>;
+    };
+    await session.send("Emulation.setEmulatedMedia", {
+      features: [{ name: "prefers-reduced-motion", value: "reduce" }],
+    });
+    try {
+      const refreshIndicator = screen.getByTestId("pane-refresh-indicator");
+      expect(
+        getComputedStyle(screen.getByText("Refreshing")).transitionDuration,
+      ).toBe("0s");
+      // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: the decorative icon has no semantic query surface; its computed animation is the reduced-motion contract.
+      const refreshIcon = refreshIndicator.querySelector("svg");
+      expect(refreshIcon).not.toBeNull();
+      expect(getComputedStyle(refreshIcon!).animationName).toBe("none");
+    } finally {
+      await session.send("Emulation.setEmulatedMedia", {
+        features: [
+          { name: "prefers-reduced-motion", value: "no-preference" },
+        ],
+      });
+    }
+
+    await act(async () => {
+      resolveRefresh?.({
+        kind: "Complete",
+        announcement: "Libraries refreshed",
+      });
+    });
+  });
+
+  it("aborts and fences a stale completion when the published refresh source changes", async () => {
+    let signal: AbortSignal | null = null;
+    let resolveRefresh:
+      | ((result: {
+          readonly kind: "Complete";
+          readonly announcement: string;
+        }) => void)
+      | null = null;
+    const execute = vi.fn(
+      ({ signal: executionSignal }: { readonly signal: AbortSignal }) => {
+        signal = executionSignal;
+        return new Promise<{
+          readonly kind: "Complete";
+          readonly announcement: string;
+        }>((resolve) => {
+          resolveRefresh = resolve;
+        });
+      },
+    );
+    const capturedSignal = () => signal as AbortSignal | null;
+    const publication = (sourceKey: string): PanePrimaryChromePublication => ({
+      refresh: { sourceKey, execute },
+    });
+    const { rerender } = render(
+      paneTree({
+        children: (
+          <PrimaryChromeProbe publication={publication("libraries:a")} />
+        ),
+      }),
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Options" }));
+    fireEvent.click(
+      within(await screen.findByRole("menu")).getByRole("menuitem", {
+        name: "Refresh",
+      }),
+    );
+    expect(capturedSignal()?.aborted).toBe(false);
+
+    rerender(
+      paneTree({
+        children: (
+          <PrimaryChromeProbe publication={publication("libraries:b")} />
+        ),
+      }),
+    );
+    await waitFor(() => expect(capturedSignal()?.aborted).toBe(true));
+    await act(async () => {
+      resolveRefresh?.({
+        kind: "Complete",
+        announcement: "Stale refresh complete",
+      });
+    });
+    expect(screen.queryByText("Stale refresh complete")).toBeNull();
+    expect(screen.getByTestId("pane-refresh-indicator")).toHaveAttribute(
+      "data-refresh-state",
+      "Idle",
+    );
+  });
+
+  it("keeps the routed content as the pane-return root when refresh is published", async () => {
+    render(
+      paneTree({
+        isActive: true,
+        isMobile: true,
+        returnMementoEnabled: true,
+        children: (
+          <div data-testid="routed-content-root">
+            <PrimaryChromeProbe
+              publication={{
+                refresh: {
+                  sourceKey: "libraries",
+                  execute: async () => ({
+                    kind: "Complete",
+                    announcement: "Libraries refreshed",
+                  }),
+                },
+              }}
+            />
+          </div>
+        ),
+      }),
+    );
+
+    const body = screen.getByTestId("pane-shell-body");
+    await waitFor(() =>
+      expect(body).toHaveAttribute("data-pane-refresh-eligible", "true"),
+    );
+    // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: first-child identity is the pane-return scrollport capability contract.
+    expect(body.firstElementChild).toBe(screen.getByTestId("routed-content-root"));
+    expect(getComputedStyle(screen.getByTestId("pane-refresh-indicator")).order).toBe(
+      "-1",
+    );
   });
 
   it("fills the pane with one native-touch scroll owner while the bounded secondary pane still scrolls", () => {

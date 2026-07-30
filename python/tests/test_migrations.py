@@ -994,10 +994,10 @@ class TestMigrationUpgradeDowngrade:
             with Session(engine) as session:
                 first_enqueue = enqueue(session)
                 assert first_enqueue["backfillJobsInserted"] == 1
-                assert first_enqueue["liveJobsInserted"] == 1
+                assert set(first_enqueue) == {"backfillJobsInserted", "reportHash"}
                 second_enqueue = enqueue(session)
                 assert second_enqueue["backfillJobsInserted"] == 0
-                assert second_enqueue["liveJobsInserted"] == 0
+                assert set(second_enqueue) == {"backfillJobsInserted", "reportHash"}
                 jobs = dict(
                     session.execute(
                         text(
@@ -1015,10 +1015,7 @@ class TestMigrationUpgradeDowngrade:
                     .tuples()
                     .all()
                 )
-                assert jobs == {
-                    "podcast_backfill_subscription": 1,
-                    "podcast_sync_subscription_job": 1,
-                }
+                assert jobs == {"podcast_backfill_subscription": 1}
         finally:
             engine.dispose()
             reset_test_schema()
@@ -26193,6 +26190,279 @@ class TestMigration0199NexusUsageHardCutover:
                     assert row.last_used_at == seeded["last_used_at"]
                     assert row.created_at == seeded["created_at"]
                     assert row.updated_at == seeded["updated_at"]
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+
+@MIGRATION_CI_LATE
+class TestMigration0203PodcastFreshness:
+    def test_seeded_conversion_and_legacy_activity_preflights(self):
+        def seed_subscriptions(connection, user_id: UUID, rows: list[dict]) -> None:
+            connection.execute(
+                text("INSERT INTO users (id) VALUES (:id)"),
+                {"id": user_id},
+            )
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO podcasts (
+                        id, provider, provider_podcast_id, title, feed_url
+                    )
+                    VALUES (
+                        :podcast_id, 'podcast_index', :provider_id, :title, :feed_url
+                    )
+                    """
+                ),
+                [
+                    {
+                        **row,
+                        "provider_id": f"migration-0203-{row['podcast_id']}",
+                        "title": f"Migration 0203 {row['podcast_id']}",
+                        "feed_url": f"https://feeds.example.com/{row['podcast_id']}.xml",
+                    }
+                    for row in rows
+                ],
+            )
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO podcast_subscriptions (
+                        id, user_id, podcast_id, sync_status, last_synced_at
+                    )
+                    VALUES (
+                        :subscription_id, :user_id, :podcast_id, :old_status, :checked_at
+                    )
+                    """
+                ),
+                [{**row, "user_id": user_id} for row in rows],
+            )
+
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0202")
+            assert result.returncode == 0, result.stderr
+
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO background_jobs (kind, payload, status)
+                        VALUES (:kind, '{}'::jsonb, :status)
+                        """
+                    ),
+                    [
+                        {"kind": kind, "status": status}
+                        for kind in (
+                            "podcast_active_subscription_poll_job",
+                            "podcast_sync_subscription_job",
+                        )
+                        for status in ("pending", "running", "failed")
+                    ],
+                )
+            rejected = run_alembic_command("upgrade 0203")
+            assert rejected.returncode != 0
+            assert "deployment preflight must drain every active legacy Podcast job" in (
+                rejected.stdout + rejected.stderr
+            )
+            with engine.connect() as connection:
+                assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0202"
+                assert (
+                    connection.scalar(text("SELECT to_regclass('public.podcast_refresh_runs')"))
+                    is None
+                )
+                columns = set(
+                    connection.scalars(
+                        text(
+                            """
+                            SELECT column_name
+                            FROM information_schema.columns
+                            WHERE table_schema = 'public'
+                              AND table_name = 'podcast_subscriptions'
+                            """
+                        )
+                    )
+                )
+                assert "last_synced_at" in columns
+                assert "last_checked_at" not in columns
+
+            reset_test_schema()
+            result = run_alembic_command("upgrade 0202")
+            assert result.returncode == 0, result.stderr
+
+            with engine.begin() as connection:
+                seed_subscriptions(
+                    connection,
+                    uuid4(),
+                    [
+                        {
+                            "podcast_id": uuid4(),
+                            "subscription_id": uuid4(),
+                            "old_status": "running",
+                            "checked_at": datetime(2026, 7, 29, 1, tzinfo=UTC),
+                        }
+                    ],
+                )
+            rejected = run_alembic_command("upgrade 0203")
+            assert rejected.returncode != 0
+            assert "deployment preflight must drain every active legacy sync" in (
+                rejected.stdout + rejected.stderr
+            )
+            with engine.connect() as connection:
+                assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0202"
+                columns = set(
+                    connection.scalars(
+                        text(
+                            """
+                            SELECT column_name
+                            FROM information_schema.columns
+                            WHERE table_schema = 'public'
+                              AND table_name = 'podcast_subscriptions'
+                            """
+                        )
+                    )
+                )
+                assert "last_synced_at" in columns
+                assert "last_checked_at" not in columns
+
+            reset_test_schema()
+            result = run_alembic_command("upgrade 0202")
+            assert result.returncode == 0, result.stderr
+
+            user_id = uuid4()
+            seeded = [
+                {
+                    "podcast_id": uuid4(),
+                    "subscription_id": uuid4(),
+                    "old_status": "complete",
+                    "new_status": "Complete",
+                    "checked_at": datetime(2026, 7, 28, 1, tzinfo=UTC),
+                    "next_sync_at": datetime(2026, 7, 29, 0, tzinfo=UTC),
+                },
+                {
+                    "podcast_id": uuid4(),
+                    "subscription_id": uuid4(),
+                    "old_status": "partial",
+                    "new_status": "SourceLimited",
+                    "checked_at": datetime(2026, 7, 28, 2, tzinfo=UTC),
+                    "next_sync_at": datetime(2026, 7, 29, 1, tzinfo=UTC),
+                },
+                {
+                    "podcast_id": uuid4(),
+                    "subscription_id": uuid4(),
+                    "old_status": "failed",
+                    "new_status": "Failed",
+                    "checked_at": datetime(2026, 7, 28, 3, tzinfo=UTC),
+                    "next_sync_at": datetime(2026, 7, 29, 2, tzinfo=UTC),
+                },
+            ]
+            legacy_poll_run_id = uuid4()
+            with engine.begin() as connection:
+                seed_subscriptions(connection, user_id, seeded)
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO podcast_subscription_poll_runs (
+                            id, status, run_limit, lease_expires_at, completed_at
+                        )
+                        VALUES (:id, 'completed', 100, now(), now())
+                        """
+                    ),
+                    {"id": legacy_poll_run_id},
+                )
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO podcast_subscription_poll_run_failures (
+                            run_id, error_code, failure_count
+                        )
+                        VALUES (:run_id, 'E_PROVIDER', 1)
+                        """
+                    ),
+                    {"run_id": legacy_poll_run_id},
+                )
+
+            upgraded = run_alembic_command("upgrade 0203")
+            assert upgraded.returncode == 0, upgraded.stderr
+            with engine.connect() as connection:
+                assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0203"
+                migrated = {
+                    UUID(str(row.id)): row
+                    for row in connection.execute(
+                        text(
+                            """
+                            SELECT id, sync_status, last_checked_at, sync_generation,
+                                   next_sync_at, consecutive_sync_failures
+                            FROM podcast_subscriptions
+                            WHERE user_id = :user_id
+                            """
+                        ),
+                        {"user_id": user_id},
+                    )
+                }
+                for expected in seeded:
+                    row = migrated[expected["subscription_id"]]
+                    assert tuple(row)[1:] == (
+                        expected["new_status"],
+                        expected["checked_at"],
+                        0,
+                        expected["next_sync_at"],
+                        0,
+                    )
+
+                subscription_columns = {
+                    row.column_name: row.is_nullable
+                    for row in connection.execute(
+                        text(
+                            """
+                            SELECT column_name, is_nullable
+                            FROM information_schema.columns
+                            WHERE table_schema = 'public'
+                              AND table_name = 'podcast_subscriptions'
+                            """
+                        )
+                    )
+                }
+                assert "last_synced_at" not in subscription_columns
+                assert subscription_columns["last_checked_at"] == "YES"
+                assert subscription_columns["sync_generation"] == "NO"
+                assert subscription_columns["next_sync_at"] == "NO"
+                assert subscription_columns["consecutive_sync_failures"] == "NO"
+                assert (
+                    connection.scalar(
+                        text(
+                            """
+                        SELECT to_regclass(
+                            'public.ix_podcast_subscriptions_next_sync_at_id'
+                        )
+                        """
+                        )
+                    )
+                    == "ix_podcast_subscriptions_next_sync_at_id"
+                )
+                for removed_table in (
+                    "podcast_subscription_poll_runs",
+                    "podcast_subscription_poll_run_failures",
+                ):
+                    assert (
+                        connection.scalar(
+                            text("SELECT to_regclass(:table_name)"),
+                            {"table_name": f"public.{removed_table}"},
+                        )
+                        is None
+                    )
+                assert (
+                    connection.scalar(text("SELECT to_regclass('public.podcast_refresh_runs')"))
+                    == "podcast_refresh_runs"
+                )
+                assert (
+                    connection.scalar(
+                        text("SELECT to_regclass('public.podcast_refresh_run_items')")
+                    )
+                    == "podcast_refresh_run_items"
+                )
         finally:
             reset_test_schema()
             run_alembic_command("upgrade head")

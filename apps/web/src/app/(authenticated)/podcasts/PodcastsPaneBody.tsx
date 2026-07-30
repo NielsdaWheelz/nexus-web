@@ -10,7 +10,7 @@ import {
   type SetStateAction,
 } from "react";
 import Link from "next/link";
-import { apiFetch } from "@/lib/api/client";
+import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import {
   decodeCollectionPage,
   type CollectionCursor,
@@ -60,6 +60,9 @@ import {
   requirePaneRuntime,
   usePaneVisitData,
 } from "@/lib/panes/paneRuntime";
+import { isAbortError } from "@/lib/errors";
+import { runPodcastRefresh } from "@/lib/podcasts/refresh";
+import type { PaneRefreshPublication } from "@/lib/panes/panePublications";
 import styles from "./page.module.css";
 
 const PAGE_SIZE = 100;
@@ -86,6 +89,13 @@ interface PodcastsSnapshot {
   readonly nextCursor: Presence<CollectionCursor>;
   readonly exhaustion: "Partial" | "Complete";
   readonly libraries: readonly MemberLibrary[];
+}
+
+interface PendingPodcastsRevalidation {
+  readonly nonce: number;
+  readonly resolve: () => void;
+  readonly reject: (error: unknown) => void;
+  readonly removeAbortListener: () => void;
 }
 
 const PODCASTS_VISIT_DATA =
@@ -167,6 +177,7 @@ export default function PodcastsPaneBody() {
     selectedLibraryId,
   ].join("\u0000");
   const committedSnapshotRef = useRef<PodcastsSnapshot | null>(null);
+  const refreshFallbackSnapshotRef = useRef<PodcastsSnapshot | null>(null);
   const captureCommitted = useCallback(
     () => committedSnapshotRef.current,
     [],
@@ -179,22 +190,90 @@ export default function PodcastsPaneBody() {
   const [chainEpoch, setChainEpoch] = useState(0);
   const [initialLoadEnabled, setInitialLoadEnabled] = useState(restored === null);
   const [reloadNonce, setReloadNonce] = useState(0);
+  const reloadNonceRef = useRef(0);
+  const pendingPodcastsRevalidationRef =
+    useRef<PendingPodcastsRevalidation | null>(null);
+  const completedPodcastsRevalidationNonceRef = useRef<number | null>(null);
   const clearAllVisitData = useClearAllPaneVisitData();
   const initialPageRef = useRef<
     CollectionPage<PodcastSubscriptionListItem> | null
   >(null);
+  const initialPageNonceRef = useRef(0);
   const initialLibrariesRef = useRef<readonly MemberLibrary[] | null>(
     restored?.libraries ?? null,
   );
   const allowInitialAdoptionRef = useRef(restored === null);
+  const rejectPendingPodcastsRevalidation = useCallback((error: unknown) => {
+    const pending = pendingPodcastsRevalidationRef.current;
+    pendingPodcastsRevalidationRef.current = null;
+    completedPodcastsRevalidationNonceRef.current = null;
+    if (!pending) return;
+    pending.removeAbortListener();
+    pending.reject(error);
+  }, []);
   const refreshSubscriptions = useCallback(() => {
+    rejectPendingPodcastsRevalidation(
+      new DOMException("Podcasts refresh was superseded.", "AbortError"),
+    );
+    if (committedSnapshotRef.current !== null) {
+      refreshFallbackSnapshotRef.current = committedSnapshotRef.current;
+    }
     committedSnapshotRef.current = null;
     clearAllVisitData();
     allowInitialAdoptionRef.current = true;
     initialPageRef.current = null;
     setInitialLoadEnabled(true);
-    setReloadNonce((nonce) => nonce + 1);
-  }, [clearAllVisitData]);
+    const nonce = reloadNonceRef.current + 1;
+    reloadNonceRef.current = nonce;
+    setReloadNonce(nonce);
+  }, [clearAllVisitData, rejectPendingPodcastsRevalidation]);
+  const revalidateSubscriptions = useCallback(
+    (signal: AbortSignal): Promise<void> => {
+      if (signal.aborted) {
+        return Promise.reject(
+          signal.reason ??
+            new DOMException("Podcasts refresh was aborted.", "AbortError"),
+        );
+      }
+      refreshSubscriptions();
+      const nonce = reloadNonceRef.current;
+      return new Promise<void>((resolve, reject) => {
+        const onAbort = () => {
+          const pending = pendingPodcastsRevalidationRef.current;
+          if (pending?.nonce !== nonce) return;
+          pendingPodcastsRevalidationRef.current = null;
+          completedPodcastsRevalidationNonceRef.current = null;
+          pending.removeAbortListener();
+          allowInitialAdoptionRef.current = false;
+          setInitialLoadEnabled(false);
+          committedSnapshotRef.current = refreshFallbackSnapshotRef.current;
+          refreshFallbackSnapshotRef.current = null;
+          reject(
+            signal.reason ??
+              new DOMException("Podcasts refresh was aborted.", "AbortError"),
+          );
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        pendingPodcastsRevalidationRef.current = {
+          nonce,
+          resolve,
+          reject,
+          removeAbortListener: () =>
+            signal.removeEventListener("abort", onAbort),
+        };
+        if (signal.aborted) onAbort();
+      });
+    },
+    [refreshSubscriptions],
+  );
+  useEffect(
+    () => () => {
+      rejectPendingPodcastsRevalidation(
+        new DOMException("Podcasts refresh source was replaced.", "AbortError"),
+      );
+    },
+    [rejectPendingPodcastsRevalidation, subscriptionQueryIdentity],
+  );
   const commitInitialController = useCallback(() => {
     if (
       !allowInitialAdoptionRef.current ||
@@ -214,8 +293,14 @@ export default function PodcastsPaneBody() {
       libraries: initialLibrariesRef.current,
     };
     controllerRef.current = snapshot;
+    committedSnapshotRef.current = snapshot;
+    refreshFallbackSnapshotRef.current = null;
     setController(snapshot);
     setChainEpoch((epoch) => epoch + 1);
+    const pending = pendingPodcastsRevalidationRef.current;
+    if (pending?.nonce === initialPageNonceRef.current) {
+      completedPodcastsRevalidationNonceRef.current = pending.nonce;
+    }
   }, [subscriptionQueryIdentity]);
   const setRows = useCallback(
     (update: SetStateAction<PodcastSubscriptionListItem[]>) => {
@@ -233,6 +318,25 @@ export default function PodcastsPaneBody() {
   );
   const [error, setError] = useState<FeedbackContent | null>(null);
   const actions = usePodcastSubscriptionActions(setError);
+  const rowRefreshOwnerRef = useRef<{
+    readonly sourceKey: string;
+    readonly controller: AbortController;
+  } | null>(null);
+  useEffect(() => {
+    const owner = {
+      sourceKey: subscriptionQueryIdentity,
+      controller: new AbortController(),
+    };
+    rowRefreshOwnerRef.current = owner;
+    return () => {
+      owner.controller.abort(
+        new DOMException("Podcasts view was replaced.", "AbortError"),
+      );
+      if (rowRefreshOwnerRef.current === owner) {
+        rowRefreshOwnerRef.current = null;
+      }
+    };
+  }, [subscriptionQueryIdentity]);
   const listRegionRef = useRef<HTMLDivElement | null>(null);
   const pendingFocusNeighborRef = useRef<string | null | undefined>(undefined);
   const pendingFocusRafRef = useRef(0);
@@ -333,19 +437,33 @@ export default function PodcastsPaneBody() {
 
     if (subscriptionListResource.status === "ready") {
       initialPageRef.current = subscriptionListResource.data;
+      initialPageNonceRef.current = reloadNonce;
       commitInitialController();
       setError(null);
       return;
     }
 
     if (subscriptionListResource.status === "error") {
+      allowInitialAdoptionRef.current = false;
+      setInitialLoadEnabled(false);
+      committedSnapshotRef.current = refreshFallbackSnapshotRef.current;
+      refreshFallbackSnapshotRef.current = null;
       setError(
         toFeedback(subscriptionListResource.error, {
           fallback: "Failed to load followed podcasts",
         }),
       );
+      const pending = pendingPodcastsRevalidationRef.current;
+      if (pending?.nonce === reloadNonce) {
+        rejectPendingPodcastsRevalidation(subscriptionListResource.error);
+      }
     }
-  }, [commitInitialController, subscriptionListResource]);
+  }, [
+    commitInitialController,
+    rejectPendingPodcastsRevalidation,
+    reloadNonce,
+    subscriptionListResource,
+  ]);
 
   useEffect(() => {
     if (restored !== null) return;
@@ -375,7 +493,20 @@ export default function PodcastsPaneBody() {
   useLayoutEffect(() => {
     committedSnapshotRef.current = controller;
     controllerRef.current = controller;
-  }, [controller]);
+    const pending = pendingPodcastsRevalidationRef.current;
+    if (
+      controller === null ||
+      pending === null ||
+      completedPodcastsRevalidationNonceRef.current !== pending.nonce ||
+      controller.queryIdentity !== subscriptionQueryIdentity
+    ) {
+      return;
+    }
+    completedPodcastsRevalidationNonceRef.current = null;
+    pendingPodcastsRevalidationRef.current = null;
+    pending.removeAbortListener();
+    pending.resolve();
+  }, [controller, subscriptionQueryIdentity]);
 
   usePaneReturnReady(controller !== null || error !== null);
 
@@ -483,17 +614,45 @@ export default function PodcastsPaneBody() {
     [actions, captureFocusNeighbor, clearAllVisitData],
   );
 
-  const refreshPodcastSync = useCallback(
-    (podcastId: string) =>
-      actions.refreshSync(podcastId, (patch) => {
-        setRows((prev) =>
-          prev.map((row) =>
-            row.podcast_id === podcastId ? { ...row, ...patch } : row,
-          ),
-        );
-        refreshSubscriptions();
-      }),
-    [actions, refreshSubscriptions, setRows],
+  const checkForNewEpisodes = useCallback(
+    (podcastId: string) => {
+      const owner = rowRefreshOwnerRef.current;
+      if (owner?.sourceKey !== subscriptionQueryIdentity) {
+        return Promise.resolve();
+      }
+      return actions.checkForNewEpisodes(
+        podcastId,
+        owner.controller.signal,
+        async (result, signal) => {
+          try {
+            await revalidateSubscriptions(signal);
+            setError({
+              severity:
+                result.kind === "Failed"
+                  ? "error"
+                  : result.kind === "Complete"
+                    ? "success"
+                    : "warning",
+              title: result.announcement,
+            });
+          } catch (refreshError: unknown) {
+            if (isAbortError(refreshError)) throw refreshError;
+            if (handleUnauthenticatedApiError(refreshError)) return;
+            if (
+              !isApiError(refreshError) ||
+              isSameSystemApiDefect(refreshError)
+            ) {
+              throw refreshError;
+            }
+            setError({
+              severity: "error",
+              title: "Podcasts failed to refresh",
+            });
+          }
+        },
+      );
+    },
+    [actions, revalidateSubscriptions, subscriptionQueryIdentity],
   );
 
   const finalCount =
@@ -687,6 +846,36 @@ export default function PodcastsPaneBody() {
     return () => cancelAnimationFrame(pendingFocusRafRef.current);
   }, [paneRuntime.paneId, visibleRowSignature]);
 
+  const executeRefresh = useCallback<PaneRefreshPublication["execute"]>(
+    async ({ signal, reportProgress }) => {
+      try {
+        const result = await runPodcastRefresh(
+          { kind: "Podcasts" },
+          {
+            signal,
+            onProgress: ({ finishedCount, requestedCount }) =>
+              reportProgress({
+                kind: "Determinate",
+                finishedCount,
+                requestedCount,
+              }),
+          },
+        );
+        await revalidateSubscriptions(signal);
+        return {
+          kind: result.kind,
+          announcement: result.announcement,
+        };
+      } catch (refreshError: unknown) {
+        if (isAbortError(refreshError)) throw refreshError;
+        return {
+          kind: "Failed",
+          announcement: "Podcasts failed to refresh",
+        };
+      }
+    },
+    [revalidateSubscriptions],
+  );
   usePanePrimaryChrome({
     header: {
       kind: "section",
@@ -697,6 +886,10 @@ export default function PodcastsPaneBody() {
       pending: loading || exhaustion.kind !== "Complete",
     },
     search: subscriptionFilterRows.publication,
+    refresh: {
+      sourceKey: `Podcasts.Subscriptions:${subscriptionQueryIdentity}`,
+      execute: executeRefresh,
+    },
   });
 
   const collectionRows = visibleRows.map((row) => {
@@ -721,11 +914,11 @@ export default function PodcastsPaneBody() {
               auto_queue: row.auto_queue,
             }),
         },
-        refreshSync: {
+        checkForNewEpisodes: {
           kind: "Available",
           execute: async () => {
             if (actions.refreshingPodcastIds.has(row.podcast_id)) return;
-            await refreshPodcastSync(row.podcast_id);
+            await checkForNewEpisodes(row.podcast_id);
           },
         },
         subscription: {

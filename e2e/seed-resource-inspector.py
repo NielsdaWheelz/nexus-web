@@ -22,8 +22,10 @@ from nexus.db.models import (
     SynthesisArtifact,
 )
 from nexus.db.session import create_session_factory
+from nexus.ids import new_uuid7
 from nexus.services import media_intelligence
 from nexus.services.artifacts import engine as artifact_engine
+from nexus.services.podcasts.refresh import healthy_next_sync_at
 from nexus.services.resource_graph.citations import record_citation
 from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
 from nexus.services.resource_graph.edges import create_edge
@@ -77,6 +79,8 @@ def seed() -> dict[str, object]:
         )
 
         podcast_id = uuid4()
+        subscription_id = new_uuid7()
+        podcast_checked_at = datetime.now(UTC)
         db.add(
             Podcast(
                 id=podcast_id,
@@ -89,10 +93,18 @@ def seed() -> dict[str, object]:
         )
         db.add(
             PodcastSubscription(
+                id=subscription_id,
                 user_id=owner_id,
                 podcast_id=podcast_id,
-                status="active",
-                sync_status="complete",
+                sync_status="Complete",
+                sync_generation=0,
+                next_sync_at=healthy_next_sync_at(
+                    subscription_id,
+                    podcast_checked_at,
+                ),
+                consecutive_sync_failures=0,
+                sync_completed_at=podcast_checked_at,
+                last_checked_at=podcast_checked_at,
             )
         )
 
@@ -155,12 +167,8 @@ def seed() -> dict[str, object]:
             if prior_summary is not None
             else {"kind": "absent"}
         )
-        current_fingerprint = media_intelligence.current_content_fingerprint(
-            db, media_id=media_id
-        )
-        abstract_text = (
-            "A compact, reusable media-intelligence abstract exposed above the dossier."
-        )
+        current_fingerprint = media_intelligence.current_content_fingerprint(db, media_id=media_id)
+        abstract_text = "A compact, reusable media-intelligence abstract exposed above the dossier."
         if prior_summary is None:
             summary_id = uuid4()
             db.execute(
@@ -253,8 +261,7 @@ def seed() -> dict[str, object]:
                         "<sup>1</sup></button>.</p></section></article>"
                     ),
                     content_text=(
-                        "Earlier fixture dossier "
-                        "The earlier synthesis cites its grounded source ."
+                        "Earlier fixture dossier The earlier synthesis cites its grounded source ."
                     ),
                     input_manifest=manifest,
                     citation_owner_user_id=owner_id,
@@ -274,8 +281,7 @@ def seed() -> dict[str, object]:
                         "<sup>1</sup></button>.</p></section></article>"
                     ),
                     content_text=(
-                        "Current fixture dossier "
-                        "The current synthesis cites its grounded source ."
+                        "Current fixture dossier The current synthesis cites its grounded source ."
                     ),
                     input_manifest=manifest,
                     citation_owner_user_id=owner_id,
@@ -342,12 +348,8 @@ def cleanup(fixture: dict[str, object]) -> None:
     session_factory = create_session_factory()
     with session_factory() as db:
         artifact_engine.on_subject_deleted(db, ResourceRef(scheme="page", id=page_id))
-        delete_edges_for_deleted_resource(
-            db, ref=ResourceRef(scheme="note_block", id=note_id)
-        )
-        delete_edges_for_deleted_resource(
-            db, ref=ResourceRef(scheme="page", id=page_id)
-        )
+        delete_edges_for_deleted_resource(db, ref=ResourceRef(scheme="note_block", id=note_id))
+        delete_edges_for_deleted_resource(db, ref=ResourceRef(scheme="page", id=page_id))
         db.execute(text("DELETE FROM note_blocks WHERE id = :id"), {"id": note_id})
         db.execute(
             text("DELETE FROM contributor_credits WHERE id = :id"),
@@ -399,10 +401,7 @@ def cleanup(fixture: dict[str, object]) -> None:
                 {"summary_id": summary_id},
             )
             db.execute(
-                text(
-                    "DELETE FROM media_summaries "
-                    "WHERE id = :summary_id AND media_id = :media_id"
-                ),
+                text("DELETE FROM media_summaries WHERE id = :summary_id AND media_id = :media_id"),
                 {"summary_id": summary_id, "media_id": media_id},
             )
         db.commit()

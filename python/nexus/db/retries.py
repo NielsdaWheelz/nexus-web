@@ -58,6 +58,7 @@ RETRYABLE_UNIQUE_CONSTRAINTS = frozenset(
         "uq_media_summaries_media",
         "uix_media_canonical_url",
         "uix_media_x_provider_id",
+        "uq_podcast_refresh_runs_user_idempotency_key",
     }
 )
 

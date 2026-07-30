@@ -47,6 +47,7 @@ from nexus.ids import new_uuid7
 from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.note_indexing import rebuild_note_content_index
+from nexus.services.podcasts.refresh import healthy_next_sync_at
 from nexus.services.resource_graph.refs import (
     ResourceRef,
     ResourceRefParseFailure,
@@ -272,9 +273,8 @@ def add_test_podcast_subscription(
     podcast_id: UUID,
     auto_queue: bool = False,
     default_playback_speed: float | None = None,
-    sync_status: str = "pending",
 ) -> UUID:
-    """Create one active target-head subscription and its pristine backfill fence."""
+    """Create one healthy target-head subscription and its pristine backfill fence."""
     now = datetime.now(UTC)
     subscription_id = new_uuid7()
     session.add(
@@ -284,7 +284,12 @@ def add_test_podcast_subscription(
             podcast_id=podcast_id,
             auto_queue=auto_queue,
             default_playback_speed=default_playback_speed,
-            sync_status=sync_status,
+            sync_status="Complete",
+            sync_generation=0,
+            next_sync_at=healthy_next_sync_at(subscription_id, now),
+            consecutive_sync_failures=0,
+            sync_completed_at=now,
+            last_checked_at=now,
         )
     )
     session.flush()

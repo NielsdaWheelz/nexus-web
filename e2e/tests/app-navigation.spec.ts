@@ -239,4 +239,175 @@ test.describe("mobile app navigation", () => {
       }),
     ).toBeVisible();
   });
+
+  test("refreshes Libraries by pull or menu while cancelling non-refresh gestures", async ({
+    page,
+  }, testInfo) => {
+    await gotoSinglePaneWorkspace(
+      page,
+      workspaceE2eDeviceId(testInfo, "e2e-app-nav-mobile-refresh"),
+      "/libraries",
+    );
+
+    const pane = page.locator('[data-pane-id][data-active="true"]');
+    const scrollport = pane.getByTestId("pane-shell-body");
+    await expect(scrollport).toHaveAttribute(
+      "data-pane-refresh-eligible",
+      "true",
+    );
+    await scrollport.evaluate((node) => {
+      node.scrollTop = 0;
+    });
+    const contentBefore = await scrollport.innerText();
+    const urlBefore = page.url();
+    const paneOptions = page.getByRole("button", { name: "Pane options" });
+    await paneOptions.focus();
+    await expect(paneOptions).toBeFocused();
+    const box = await scrollport.boundingBox();
+    expect(box).not.toBeNull();
+    if (!box) return;
+
+    const client = await page.context().newCDPSession(page);
+    const x = Math.round(box.x + box.width / 2);
+    const startY = Math.round(box.y + Math.min(40, box.height / 4));
+
+    let refreshRequestCount = 0;
+    let observeFirstRefresh!: () => void;
+    let releaseFirstRefresh!: () => void;
+    let observeSecondRefresh!: () => void;
+    let releaseSecondRefresh!: () => void;
+    const firstRefreshObserved = new Promise<void>((resolve) => {
+      observeFirstRefresh = resolve;
+    });
+    const firstRefreshGate = new Promise<void>((resolve) => {
+      releaseFirstRefresh = resolve;
+    });
+    const secondRefreshObserved = new Promise<void>((resolve) => {
+      observeSecondRefresh = resolve;
+    });
+    const secondRefreshGate = new Promise<void>((resolve) => {
+      releaseSecondRefresh = resolve;
+    });
+    await page.route(/\/api\/libraries(?:\?.*)?$/, async (route) => {
+      if (route.request().method() !== "GET") {
+        await route.continue();
+        return;
+      }
+      refreshRequestCount += 1;
+      if (refreshRequestCount === 1) {
+        observeFirstRefresh();
+        await firstRefreshGate;
+      } else if (refreshRequestCount === 2) {
+        observeSecondRefresh();
+        await secondRefreshGate;
+      }
+      await route.continue();
+    });
+
+    await client.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [
+        { x, y: startY, id: 10 },
+        { x: x + 24, y: startY, id: 11 },
+      ],
+    });
+    await expect(pane.getByTestId("pane-refresh-indicator")).toHaveAttribute(
+      "data-refresh-state",
+      "Idle",
+    );
+    await client.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [],
+    });
+
+    await client.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [{ x, y: startY, id: 1 }],
+    });
+    await client.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [{ x, y: startY + 80, id: 1 }],
+    });
+    await expect(pane.getByTestId("pane-refresh-indicator")).toHaveAttribute(
+      "data-refresh-state",
+      "Pulling",
+    );
+    await client.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [],
+    });
+    await expect(pane.getByTestId("pane-refresh-indicator")).toHaveAttribute(
+      "data-refresh-state",
+      "Idle",
+    );
+
+    await client.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [{ x, y: startY, id: 2 }],
+    });
+    await client.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [{ x: x + 100, y: startY + 20, id: 2 }],
+    });
+    await expect(pane.getByTestId("pane-refresh-indicator")).toHaveAttribute(
+      "data-refresh-state",
+      "Idle",
+    );
+    await client.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [],
+    });
+    expect(refreshRequestCount).toBe(0);
+    await expect(paneOptions).toBeFocused();
+
+    await client.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [{ x, y: startY, id: 3 }],
+    });
+    await client.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [{ x, y: startY + 180, id: 3 }],
+    });
+    await expect(pane.getByTestId("pane-refresh-indicator")).toHaveAttribute(
+      "data-refresh-state",
+      "Armed",
+    );
+    await client.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [],
+    });
+
+    await firstRefreshObserved;
+    const progress = pane.getByRole("progressbar", {
+      name: "Refreshing 0 of 1",
+    });
+    await expect(progress).toBeAttached();
+    await expect(progress).toHaveAttribute("aria-valuemin", "0");
+    await expect(progress).toHaveAttribute("aria-valuenow", "0");
+    await expect(progress).toHaveAttribute("aria-valuemax", "1");
+    const liveRegion = pane.locator('[aria-live="polite"]');
+    await expect(liveRegion).toHaveAttribute("aria-atomic", "true");
+    await expect(liveRegion).toHaveText("");
+
+    releaseFirstRefresh();
+    await expect(liveRegion).toHaveText("Libraries refreshed");
+    await expect(paneOptions).toBeFocused();
+
+    await paneOptions.tap();
+    const refreshOption = page.getByRole("menuitem", { name: "Refresh" });
+    await expect(refreshOption).toBeVisible();
+    await refreshOption.tap();
+    await secondRefreshObserved;
+    await expect(
+      pane.getByRole("progressbar", { name: "Refreshing 0 of 1" }),
+    ).toBeAttached();
+    releaseSecondRefresh();
+    await expect(liveRegion).toHaveText("Libraries refreshed");
+    expect(refreshRequestCount).toBe(2);
+    await expect(paneOptions).toBeFocused();
+
+    expect(page.url()).toBe(urlBefore);
+    expect(await scrollport.innerText()).toContain(contentBefore);
+    expect(await scrollport.evaluate((node) => node.scrollTop)).toBe(0);
+  });
 });

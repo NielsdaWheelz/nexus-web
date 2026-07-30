@@ -46,7 +46,8 @@ _BACKEND_ENV = {
     "NEXUS_FABLE_RETENTION_ACCEPTED_AT": "2026-01-01T00:00:00Z",
 }
 _WORKER_ENV = {
-    "PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS": "0",
+    "PODCAST_REFRESH_DUE_SCHEDULE_SECONDS": "900",
+    "PODCAST_REFRESH_DUE_LIMIT": "100",
     "INGEST_RECONCILE_SCHEDULE_SECONDS": "600",
     "SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS": "0",
     "BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS": "0",
@@ -265,11 +266,48 @@ def test_hetzner_sync_rejects_stored_worker_invocation_state(
     assert "scp must not run" not in result.stderr
 
 
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS", "0"),
+        ("PODCAST_ACTIVE_POLL_LIMIT", "100"),
+        ("PODCAST_ACTIVE_POLL_RUN_LEASE_SECONDS", "900"),
+        ("PODCAST_SYNC_RUNNING_LEASE_SECONDS", ""),
+    ],
+)
+def test_hetzner_sync_rejects_removed_podcast_runtime_keys(
+    tmp_path: Path,
+    key: str,
+    value: str,
+):
+    fake_bin_dir = tmp_path / "bin"
+    fake_bin_dir.mkdir()
+    _fake_bin(fake_bin_dir, "ssh")
+    _fake_bin(fake_bin_dir, "scp")
+
+    shared_env = tmp_path / "env-prod"
+    backend_env = tmp_path / "env-prod-backend"
+    worker_env = tmp_path / "env-prod-worker"
+    worker = dict(_WORKER_ENV)
+    worker[key] = value
+    _write_env(shared_env, _SHARED_ENV)
+    _write_env(backend_env, _BACKEND_ENV)
+    _write_env(worker_env, worker)
+
+    result = _run_sync(shared_env, backend_env, worker_env, fake_bin_dir)
+
+    assert result.returncode != 0
+    assert f"{key} was removed by the Podcast freshness hard cut" in result.stderr
+    assert "scp must not run" not in result.stderr
+
+
 def test_worker_env_example_uses_background_schedule_contract():
     assert _read_env_value(_WORKER_ENV_EXAMPLE, "WORKER_LANE") is None
     assert _read_env_value(_WORKER_ENV_EXAMPLE, "WORKER_ALLOWED_JOB_KINDS") is None
     assert _read_env_value(_WORKER_ENV_EXAMPLE, "NEXUS_ALLOW_WORKER_MAINTENANCE") is None
     assert _read_env_value(_WORKER_ENV_EXAMPLE, "INGEST_RECONCILE_SCHEDULE_SECONDS") == "600"
+    assert _read_env_value(_WORKER_ENV_EXAMPLE, "PODCAST_REFRESH_DUE_SCHEDULE_SECONDS") == "900"
+    assert _read_env_value(_WORKER_ENV_EXAMPLE, "PODCAST_REFRESH_DUE_LIMIT") == "100"
 
 
 def test_hetzner_sync_requires_reconciliation_schedule(tmp_path: Path):
@@ -297,7 +335,6 @@ def test_hetzner_sync_requires_reconciliation_schedule(tmp_path: Path):
 @pytest.mark.parametrize(
     "schedule_key",
     [
-        "PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS",
         "SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS",
         "BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS",
     ],
@@ -324,6 +361,41 @@ def test_hetzner_sync_rejects_positive_maintenance_schedule(
 
     assert result.returncode != 0
     assert f"{schedule_key} must be 0" in result.stderr
+    assert "scp must not run" not in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("PODCAST_REFRESH_DUE_SCHEDULE_SECONDS", "0"),
+        ("PODCAST_REFRESH_DUE_SCHEDULE_SECONDS", "0900"),
+        ("PODCAST_REFRESH_DUE_LIMIT", "0"),
+        ("PODCAST_REFRESH_DUE_LIMIT", "many"),
+    ],
+)
+def test_hetzner_sync_requires_canonical_positive_podcast_refresh_values(
+    tmp_path: Path,
+    key: str,
+    value: str,
+):
+    fake_bin_dir = tmp_path / "bin"
+    fake_bin_dir.mkdir()
+    _fake_bin(fake_bin_dir, "ssh")
+    _fake_bin(fake_bin_dir, "scp")
+
+    shared_env = tmp_path / "env-prod"
+    backend_env = tmp_path / "env-prod-backend"
+    worker_env = tmp_path / "env-prod-worker"
+    worker = dict(_WORKER_ENV)
+    worker[key] = value
+    _write_env(shared_env, _SHARED_ENV)
+    _write_env(backend_env, _BACKEND_ENV)
+    _write_env(worker_env, worker)
+
+    result = _run_sync(shared_env, backend_env, worker_env, fake_bin_dir)
+
+    assert result.returncode != 0
+    assert f"{key} must be a canonical positive integer" in result.stderr
     assert "scp must not run" not in result.stderr
 
 

@@ -255,6 +255,17 @@ reject_removed_llm_env_keys() {
   done
 }
 
+reject_removed_podcast_env_keys() {
+  local file="$1"
+  local key
+
+  for key in PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS PODCAST_ACTIVE_POLL_LIMIT PODCAST_ACTIVE_POLL_RUN_LEASE_SECONDS PODCAST_SYNC_RUNNING_LEASE_SECONDS; do
+    if env_value "$key" "$file" >/dev/null; then
+      die "${key} was removed by the Podcast freshness hard cut"
+    fi
+  done
+}
+
 require_worker_defaults() {
   local file="$1"
   local key value
@@ -265,9 +276,17 @@ require_worker_defaults() {
     fi
   done
 
-  for key in PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS; do
+  for key in SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS; do
     value="$(normalize_env_value "$(env_value "$key" "$file" || true)")"
     [ "$value" = "0" ] || die "${key} must be 0 in the normal production worker env"
+  done
+
+  for key in PODCAST_REFRESH_DUE_SCHEDULE_SECONDS PODCAST_REFRESH_DUE_LIMIT; do
+    value="$(normalize_env_value "$(env_value "$key" "$file" || true)")"
+    case "$value" in
+      ""|0|*[!0-9]*) die "${key} must be a canonical positive integer" ;;
+      0*) die "${key} must be a canonical positive integer" ;;
+    esac
   done
 
   value="$(normalize_env_value "$(env_value "INGEST_RECONCILE_SCHEDULE_SECONDS" "$file" || true)")"
@@ -315,6 +334,7 @@ require_cloudflare_r2_s3_api_origin "$tmp_file"
 reject_legacy_runtime_keys "$tmp_file"
 reject_removed_x_env_keys "$tmp_file"
 reject_removed_llm_env_keys "$tmp_file"
+reject_removed_podcast_env_keys "$tmp_file"
 require_worker_defaults "$tmp_file"
 
 scp "$tmp_file" "${SSH_TARGET}:${remote_tmp}"

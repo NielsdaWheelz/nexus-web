@@ -12,6 +12,10 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.config import get_settings
 from nexus.jobs.queue import JobExecutionContext, JobRow, RescheduleRequested
+from nexus.services.podcasts.types import (
+    PODCAST_REFRESH_RUN_PRUNE_INTERVAL_SECONDS,
+    PODCAST_SYNC_JOB_LEASE_SECONDS,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -136,7 +140,8 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             handler=_run_podcast_sync_subscription,
             max_attempts=3,
             retry_delays_seconds=(60, 300, 900),
-            lease_seconds=900,
+            lease_seconds=PODCAST_SYNC_JOB_LEASE_SECONDS,
+            dead_letter_handler=_dead_letter_podcast_sync_subscription,
         ),
         "podcast_backfill_subscription": JobDefinition(
             kind="podcast_backfill_subscription",
@@ -164,17 +169,21 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             lease_seconds=900,
             dead_letter_handler=_dead_letter_note_reindex,
         ),
-        "podcast_active_subscription_poll_job": JobDefinition(
-            kind="podcast_active_subscription_poll_job",
-            handler=_run_podcast_active_subscription_poll,
+        "podcast_refresh_due_job": JobDefinition(
+            kind="podcast_refresh_due_job",
+            handler=_run_podcast_refresh_due,
             max_attempts=1,
             retry_delays_seconds=(0,),
             lease_seconds=300,
-            periodic_interval_seconds=(
-                int(settings.podcast_active_poll_schedule_seconds)
-                if settings.podcast_active_poll_schedule_seconds > 0
-                else None
-            ),
+            periodic_interval_seconds=int(settings.podcast_refresh_due_schedule_seconds),
+        ),
+        "podcast_refresh_run_prune_job": JobDefinition(
+            kind="podcast_refresh_run_prune_job",
+            handler=_run_podcast_refresh_run_prune,
+            max_attempts=1,
+            retry_delays_seconds=(0,),
+            lease_seconds=300,
+            periodic_interval_seconds=PODCAST_REFRESH_RUN_PRUNE_INTERVAL_SECONDS,
         ),
         "reconcile_stale_ingest_media_job": JobDefinition(
             kind="reconcile_stale_ingest_media_job",
@@ -372,11 +381,13 @@ def _run_podcast_sync_subscription(
 ) -> Mapping[str, Any] | None:
     from nexus.tasks.podcast_sync_subscription import podcast_sync_subscription_job
 
-    return podcast_sync_subscription_job(
-        user_id=str(payload["user_id"]),
-        podcast_id=str(payload["podcast_id"]),
-        request_id=_optional_str(payload.get("request_id")),
-    )
+    return podcast_sync_subscription_job(payload=payload, context=context)
+
+
+def _dead_letter_podcast_sync_subscription(db: Session, job: JobRow) -> None:
+    from nexus.services.podcasts.sync import dead_letter_podcast_subscription_sync
+
+    dead_letter_podcast_subscription_sync(db, job)
 
 
 def _run_podcast_backfill_subscription(
@@ -445,15 +456,20 @@ def _dead_letter_note_reindex(db: Session, job: JobRow) -> None:
     )
 
 
-def _run_podcast_active_subscription_poll(
+def _run_podcast_refresh_due(
     *, payload: Mapping[str, Any], context: JobExecutionContext
 ) -> Mapping[str, Any] | None:
-    from nexus.tasks.podcast_active_subscription_poll import podcast_active_subscription_poll_job
+    from nexus.tasks.podcast_refresh_due import podcast_refresh_due_job
 
-    return podcast_active_subscription_poll_job(
-        request_id=_optional_str(payload.get("request_id")),
-        scheduler_identity=_optional_str(payload.get("scheduler_identity")),
-    )
+    return podcast_refresh_due_job()
+
+
+def _run_podcast_refresh_run_prune(
+    *, payload: Mapping[str, Any], context: JobExecutionContext
+) -> Mapping[str, Any] | None:
+    from nexus.tasks.podcast_refresh_run_prune import podcast_refresh_run_prune_job
+
+    return podcast_refresh_run_prune_job()
 
 
 def _run_reconcile_stale_ingest_media(

@@ -604,6 +604,21 @@ class DirectSessionManager:
 
                 if table == "users" and column == "id":
                     session.execute(
+                        text(
+                            """
+                            DELETE FROM podcast_refresh_run_items
+                            WHERE run_id IN (
+                                SELECT id FROM podcast_refresh_runs WHERE user_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM podcast_refresh_runs WHERE user_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
                         text("DELETE FROM viewer_collection_revisions WHERE viewer_id = :value"),
                         {"value": value},
                     )
@@ -896,6 +911,10 @@ class DirectSessionManager:
                     # library_entries.podcast_id is non-cascading (migration 0131).
                     session.execute(
                         text("DELETE FROM library_entries WHERE podcast_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM podcast_refresh_run_items WHERE podcast_id = :value"),
                         {"value": value},
                     )
 

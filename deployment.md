@@ -40,7 +40,9 @@ direct SSE streaming, which uses the public API domain.
 The API and both fixed production lanes are always on. The interactive and
 background sets are declared once in `python/nexus/config.py`; normal workers
 do not accept raw allowlists. Reconciliation runs every 600 seconds in the
-background lane. The four maintenance kinds are absent from both services and
+background lane. Podcast due admission runs every 900 seconds and refresh-run
+retention runs daily in that same production lane. The three maintenance kinds
+are absent from both services and
 run only in a gated one-off process.
 
 Supabase is only an identity provider in production. Use it for hosted Auth,
@@ -153,7 +155,8 @@ NEXUS_SYNC_ENV=0 ./deploy/hetzner/deploy.sh
 
 `sync-env.sh` rejects stored `WORKER_LANE`, `WORKER_ALLOWED_JOB_KINDS`, or
 `NEXUS_ALLOW_WORKER_MAINTENANCE` values. It also requires reconciliation at 600
-seconds and maintenance-only schedules at zero.
+seconds, Podcast due admission at 900 seconds with a positive bounded limit,
+and maintenance-only schedules at zero.
 
 The Hetzner scripts default to the current production IPv4 listed above. Set
 `NEXUS_HOST` to target another host, or `NEXUS_SSH_TARGET` to override the full
@@ -257,6 +260,100 @@ End maintenance only after all five checks pass. Never purge while an old
 writer can run, restart the opaque backend before the strict BFF is live, or
 deploy the strict frontend against unpurged sessions.
 
+### Podcast freshness revision 0203 hard cut
+
+Revision `0203` requires one maintenance window. Do not mix an old API or
+worker with the new schema.
+
+1. On the deployed `0202` release, set
+   `PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS=0`, sync the production env, and
+   force-recreate `worker-background`. Stop `api` so Subscribe and manual sync
+   cannot admit more old jobs; leave both workers running until the queue
+   drains.
+2. On the VPS, run both preflight queries below. Continue only when both return
+   zero rows. Then stop `worker-interactive` and `worker-background` and run the
+   queries again. Migration `0203` repeats the queue preflight and aborts before
+   changing schema if an old poll or sync job is still active.
+
+   ```bash
+   docker compose --env-file /etc/nexus/nexus.env \
+     -f deploy/hetzner/docker-compose.yml exec -T postgres \
+     sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+   SELECT kind, status, count(*)
+   FROM background_jobs
+   WHERE kind IN (
+       'podcast_active_subscription_poll_job',
+       'podcast_sync_subscription_job'
+   )
+     AND status IN ('pending', 'running', 'failed')
+   GROUP BY kind, status;
+
+   SELECT sync_status, count(*)
+   FROM podcast_subscriptions
+   WHERE sync_status IN ('pending', 'running')
+   GROUP BY sync_status;
+   SQL
+   ```
+
+3. Push the hard-cut revision and wait for its Vercel deployment to report
+   Ready while the old API remains stopped. Put the new worker env in place
+   with `PODCAST_REFRESH_DUE_SCHEDULE_SECONDS=900` and no
+   `PODCAST_ACTIVE_POLL_*` keys, then run `./deploy/hetzner/deploy.sh` for that
+   exact `CUTOVER_SHA`. The script migrates while API/workers are stopped and
+   starts the new API and both new worker lanes only after migration succeeds.
+4. Invoke **Refresh** once in Podcasts. Record the refresh-run handle, its
+   terminal SSE `done`, and the newly rendered result. Run the postflight below;
+   it must show revision `0203`, no legacy poll work or old sync payload, healthy
+   queue state, and terminal subscriptions with ordered due timestamps.
+
+   ```bash
+   docker compose --env-file /etc/nexus/nexus.env \
+     -f deploy/hetzner/docker-compose.yml exec -T postgres \
+     sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+   SELECT version_num FROM alembic_version;
+
+   SELECT count(*) AS active_legacy_jobs
+   FROM background_jobs
+   WHERE status IN ('pending', 'running', 'failed')
+     AND (
+         kind = 'podcast_active_subscription_poll_job'
+         OR (
+             kind = 'podcast_sync_subscription_job'
+             AND (
+                 NOT (
+                     payload ?& ARRAY[
+                         'subscription_id', 'user_id', 'podcast_id', 'sync_generation'
+                     ]
+                 )
+                 OR payload - ARRAY[
+                     'subscription_id', 'user_id', 'podcast_id', 'sync_generation'
+                 ] <> '{}'::jsonb
+             )
+         )
+     );
+
+   SELECT kind, status, count(*)
+   FROM background_jobs
+   GROUP BY kind, status
+   ORDER BY kind, status;
+
+   SELECT sync_status, last_checked_at, next_sync_at
+   FROM podcast_subscriptions
+   ORDER BY last_checked_at DESC NULLS LAST
+   LIMIT 10;
+
+   SELECT id, status, requested_count, finished_count, new_episode_count
+   FROM podcast_refresh_runs
+   ORDER BY created_at DESC
+   LIMIT 10;
+   SQL
+
+5. Within one due cadence, retain one terminal scheduled run
+   (`idempotency_key IS NULL`) as the scheduler proof. Do not end the release
+   gate until the manual run, scheduled run, SSE completion, subscription
+   timestamps, queue health, deployed commit identities, and absence of
+   `PODCAST_ACTIVE_POLL_*` in `/etc/nexus/nexus.env` are recorded.
+
 ## Operations
 
 SSH into the VPS:
@@ -323,7 +420,7 @@ Check non-secret worker safety env:
 
 ```bash
 docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml exec worker-interactive env | sort | rg 'WORKER_|DATABASE_STATEMENT_TIMEOUT'
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml exec worker-background env | sort | rg 'WORKER_|DATABASE_STATEMENT_TIMEOUT|PODCAST_ACTIVE|INGEST_RECONCILE|GUTENBERG|BACKGROUND_JOB_PRUNE'
+docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml exec worker-background env | sort | rg 'WORKER_|DATABASE_STATEMENT_TIMEOUT|PODCAST_REFRESH|INGEST_RECONCILE|GUTENBERG|BACKGROUND_JOB_PRUNE'
 ```
 
 Health check:
@@ -568,7 +665,6 @@ Hetzner Postgres/R2.
 Maintenance is opt-in per job kind:
 
 ```text
-podcast_active_subscription_poll_job -> PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS
 sync_gutenberg_catalog_job -> SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS
 prune_background_jobs_job -> BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS
 purge_expired_auth_handoff_codes -> registry-owned hourly schedule
