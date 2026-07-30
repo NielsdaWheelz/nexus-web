@@ -120,7 +120,7 @@ if (requestedReleaseBuild) {
 
 android {
     namespace = "app.nexus.android"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "app.nexus.android"
@@ -190,8 +190,18 @@ dependencies {
     implementation("androidx.browser:browser:1.8.0")
     implementation("androidx.credentials:credentials:1.6.0")
     implementation("androidx.credentials:credentials-play-services-auth:1.6.0")
+    implementation("androidx.media3:media3-common:1.10.1")
+    implementation("androidx.media3:media3-database:1.10.1")
+    implementation("androidx.media3:media3-datasource:1.10.1")
+    implementation("androidx.media3:media3-datasource-okhttp:1.10.1")
+    implementation("androidx.media3:media3-exoplayer:1.10.1")
+    implementation("androidx.webkit:webkit:1.14.0")
     implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
+    implementation("com.squareup.moshi:moshi:1.15.2")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20250517")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:core-ktx:1.6.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")

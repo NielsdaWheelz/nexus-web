@@ -1,21 +1,29 @@
 "use client";
 
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useRef, type ReactNode } from "react";
 import {
   FeedbackNotice,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
+import CollectionRow from "@/components/collections/CollectionRow";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
-import CollectionView from "@/components/collections/CollectionView";
+import CollectionView, {
+  type CollectionViewRowRenderProps,
+} from "@/components/collections/CollectionView";
 import type { ExhaustionState } from "@/lib/api/useExhaustivePagination";
-import { presentEpisode } from "@/lib/collections/presenters/episode";
+import {
+  presentEpisode,
+  type EpisodePresenterContext,
+  type EpisodePresenterItem,
+} from "@/lib/collections/presenters/episode";
 import {
   RESOURCE_ACTION_CATALOG,
   type ResourceActionId,
 } from "@/lib/actions/resourceActions";
 import { requireDocumentProcessingStatus } from "@/lib/media/documentReadiness";
 import type { LecternItemId } from "@/lib/lectern/contract";
+import { useOfflineMediaItem } from "@/lib/offlineMedia/OfflineMediaProvider";
 import type { ActionSelectDetail } from "@/lib/ui/actionDescriptor";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import EpisodeControls from "./EpisodeControls";
@@ -42,6 +50,51 @@ type EpisodeTranscriptController = ReturnType<
 >;
 
 type StringIdSet = ReturnType<typeof useStringIdSet>;
+type EpisodePresenterBaseContext = Omit<
+  EpisodePresenterContext,
+  "offlineDownload"
+>;
+
+interface EpisodePresentation {
+  readonly item: EpisodePresenterItem;
+  readonly context: EpisodePresenterBaseContext;
+}
+
+function OfflineEpisodeCollectionRow({
+  presentation,
+  rowRenderProps,
+}: {
+  readonly presentation: EpisodePresentation;
+  readonly rowRenderProps: CollectionViewRowRenderProps;
+}) {
+  const { item, context } = presentation;
+  const offlineMedia = useOfflineMediaItem(item.id, item.title);
+  const controller =
+    offlineMedia.capability.kind === "Ready"
+      ? offlineMedia.capability.controller
+      : null;
+  const offlineDownload =
+    controller !== null &&
+    (item.offline_download_eligible ||
+      offlineMedia.availability.kind === "Present")
+      ? {
+          kind: "Available" as const,
+          availability: offlineMedia.availability,
+          execute: {
+            download: () => controller.enqueue(item.id),
+            cancel: () => controller.cancel(item.id),
+            retry: () => controller.retry(item.id),
+            remove: () => controller.remove(item.id),
+          },
+        }
+      : { kind: "Unavailable" as const };
+  return (
+    <CollectionRow
+      {...rowRenderProps}
+      row={presentEpisode(item, { ...context, offlineDownload })}
+    />
+  );
+}
 
 interface PodcastEpisodeListProps {
   episodes: PodcastEpisodeMedia[];
@@ -134,7 +187,7 @@ export default function PodcastEpisodeList({
     [episodes],
   );
 
-  const rows = episodes.map((episode) => {
+  const rowPresentations: EpisodePresentation[] = episodes.map((episode) => {
     const panelId = `episode-panel-${episode.id}`;
     const showNotesExpanded = expandedShowNotesMediaIds.ids.has(episode.id);
     const transcriptPanelExpanded =
@@ -142,8 +195,8 @@ export default function PodcastEpisodeList({
     const lecternItemId = lecternItemsByMediaId.get(episode.id);
     const actionBusy = (actionId: ResourceActionId) =>
       busyEpisodeActionKeys.has(episodeActionBusyKey(episode.id, actionId));
-    return presentEpisode(
-      {
+    return {
+      item: {
         id: episode.id,
         title: episode.title,
         kind: episode.kind,
@@ -152,12 +205,13 @@ export default function PodcastEpisodeList({
         ),
         episode_state: deriveEpisodeState(episode),
         canonical_source_url: episode.canonical_source_url,
+        offline_download_eligible: episode.offline_download_eligible,
         contributors: episode.contributors,
         capabilities: episode.capabilities,
         publicationDate: decodeEpisodePublicationDate(episode.published_date),
         activityFacts: decodeEpisodeTimingFacts(episode.listening_state),
       },
-      {
+      context: {
         retryProcessing: episode.capabilities.can_retry
           ? {
               kind: "Available",
@@ -371,8 +425,18 @@ export default function PodcastEpisodeList({
             : []),
         ],
       },
-    );
+    };
   });
+  const presentationsByIdRef = useRef(new Map<string, EpisodePresentation>());
+  for (const presentation of rowPresentations) {
+    presentationsByIdRef.current.set(presentation.item.id, presentation);
+  }
+  const rows = rowPresentations.map((presentation) =>
+    presentEpisode(presentation.item, {
+      ...presentation.context,
+      offlineDownload: { kind: "Unavailable" },
+    }),
+  );
 
   const rowPanels = episodes.reduce<Record<string, ReactNode>>(
     (panels, episode) => {
@@ -475,6 +539,24 @@ export default function PodcastEpisodeList({
       <CollectionView
         returnScope="PodcastDetail.Episodes"
         rows={rows}
+        renderRow={(rowRenderProps) => {
+          const presentation = presentationsByIdRef.current.get(
+            rowRenderProps.row.id,
+          );
+          if (presentation === undefined) {
+            // justify-defect: CollectionView renders exactly the row ids
+            // projected from this presentation map.
+            throw new Error(
+              `Missing podcast episode presentation: ${rowRenderProps.row.id}`,
+            );
+          }
+          return (
+            <OfflineEpisodeCollectionRow
+              presentation={presentation}
+              rowRenderProps={rowRenderProps}
+            />
+          );
+        }}
         status="ready"
         collectionBusy={collectionBusy}
         footer={<CollectionExhaustionNotice state={exhaustion} />}

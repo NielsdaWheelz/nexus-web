@@ -8,6 +8,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
+import { CheckCircle2 } from "lucide-react";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import {
   isApiError,
@@ -34,6 +35,7 @@ import type {
   CollectionRowView,
   ExceptionalStatus,
 } from "@/lib/collections/types";
+import type { LocalAvailability } from "@/lib/offlineMedia/contract";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import {
   executeResourceChat,
@@ -106,6 +108,88 @@ function renderExceptionalStatus(status: ExceptionalStatus): ReactNode {
       }
     default:
       return assertNever(status, "Unsupported exceptional status");
+  }
+}
+
+function formatByteCount(bytes: number): string {
+  if (bytes < 1_000) return `${bytes} B`;
+  const units = ["KB", "MB", "GB"] as const;
+  let value = bytes / 1_000;
+  let unit: (typeof units)[number] = units[0];
+  for (const nextUnit of units.slice(1)) {
+    if (value < 1_000) break;
+    value /= 1_000;
+    unit = nextUnit;
+  }
+  return `${new Intl.NumberFormat(undefined, {
+    maximumFractionDigits: value < 10 ? 1 : 0,
+  }).format(value)} ${unit}`;
+}
+
+function localAvailabilityStatus(
+  availability: LocalAvailability,
+): { readonly visible: string; readonly accessible: string } | null {
+  switch (availability.kind) {
+    case "Resolving":
+      return {
+        visible: "Preparing download…",
+        accessible: "Preparing episode download",
+      };
+    case "Queued":
+      switch (availability.reason) {
+        case "Capacity":
+          return {
+            visible: "Download queued",
+            accessible: "Episode download queued",
+          };
+        case "WaitingForNetwork":
+          return {
+            visible: "Waiting for network",
+            accessible: "Episode download waiting for network",
+          };
+        case "WaitingForUnmetered":
+          return {
+            visible: "Waiting for Wi-Fi",
+            accessible: "Episode download waiting for Wi-Fi",
+          };
+        case "SystemLimit":
+          return {
+            visible: "Download paused by Android",
+            accessible: "Episode download paused by Android",
+          };
+      }
+    case "Downloading": {
+      const visible =
+        availability.totalBytes.kind === "Present" &&
+        availability.totalBytes.value > 0
+          ? `Downloading · ${Math.floor(
+              (Math.min(
+                availability.bytesDownloaded,
+                availability.totalBytes.value,
+              ) /
+                availability.totalBytes.value) *
+                100,
+            )}%`
+          : `Downloading · ${formatByteCount(availability.bytesDownloaded)}`;
+      return { visible, accessible: "Downloading episode" };
+    }
+    case "Restarting":
+      return {
+        visible: "Restarting download…",
+        accessible: "Restarting episode download",
+      };
+    case "Ready":
+      return null;
+    case "Failed":
+      return {
+        visible: "Download failed",
+        accessible: "Episode download failed",
+      };
+    case "Removing":
+      return {
+        visible: "Removing download…",
+        accessible: "Removing episode download",
+      };
   }
 }
 
@@ -428,6 +512,44 @@ export default function CollectionRow({
     row.exceptionalStatus.kind === "Present"
       ? renderExceptionalStatus(row.exceptionalStatus.value)
       : undefined;
+  const offlineStatus =
+    row.localAvailability.kind === "Present"
+      ? localAvailabilityStatus(row.localAvailability.value)
+      : null;
+  const downloaded =
+    row.localAvailability.kind === "Present" &&
+    row.localAvailability.value.kind === "Ready";
+  const baseStatus = offlineStatus ? (
+    <span
+      className={styles.activity}
+    >
+      <span aria-hidden="true">{offlineStatus.visible}</span>
+      <span className="sr-only">{offlineStatus.accessible}</span>
+    </span>
+  ) : (
+    (exceptionalStatus ??
+      (activity ? (
+        <span className={styles.activity}>
+          <span aria-hidden="true">{activity.visible}</span>
+          <span className="sr-only">{activity.accessible}</span>
+        </span>
+      ) : undefined))
+  );
+  const status =
+    baseStatus || downloaded ? (
+      <span className={styles.status}>
+        {baseStatus}
+        {downloaded ? (
+          <span
+            className={styles.downloaded}
+            title="Downloaded for offline"
+          >
+            <CheckCircle2 size={15} aria-hidden="true" />
+            <span className="sr-only">Downloaded for offline</span>
+          </span>
+        ) : null}
+      </span>
+    ) : undefined;
 
   const rendererView: ActionDescriptor[] = [];
   if (reorder) {
@@ -548,15 +670,7 @@ export default function CollectionRow({
       }}
       title={title}
       supporting={supporting}
-      activity={
-        activity ? (
-          <span className={styles.activity}>
-            <span aria-hidden="true">{activity.visible}</span>
-            <span className="sr-only">{activity.accessible}</span>
-          </span>
-        ) : undefined
-      }
-      exceptionalStatus={exceptionalStatus}
+      status={status}
       primaryControl={primaryControl}
       actions={actions}
       expanded={expanded}

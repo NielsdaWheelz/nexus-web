@@ -68,6 +68,7 @@ export function presentPaneFindResult({
         : absent(),
     activity: absent(),
     exceptionalStatus: absent(),
+    localAvailability: absent(),
     connections: absent(),
     relatedMediaId: absent(),
     actionPublication: { kind: "FlatMenu", actions: [] },

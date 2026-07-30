@@ -25,6 +25,7 @@ function baseRow(): CollectionRowView {
     context: absent(),
     activity: absent(),
     exceptionalStatus: absent(),
+    localAvailability: absent(),
     connections: absent(),
     relatedMediaId: absent(),
     actionPublication: {
@@ -51,6 +52,95 @@ function renderRow(ui: ReactNode) {
 }
 
 describe("CollectionRow", () => {
+  it.each([
+    [{ kind: "Resolving" }, "Preparing download…"],
+    [{ kind: "Queued", reason: "Capacity" }, "Download queued"],
+    [{ kind: "Queued", reason: "WaitingForNetwork" }, "Waiting for network"],
+    [{ kind: "Queued", reason: "WaitingForUnmetered" }, "Waiting for Wi-Fi"],
+    [{ kind: "Queued", reason: "SystemLimit" }, "Download paused by Android"],
+    [
+      {
+        kind: "Downloading",
+        bytesDownloaded: 47,
+        totalBytes: present(100),
+      },
+      "Downloading · 47%",
+    ],
+    [{ kind: "Restarting" }, "Restarting download…"],
+    [{ kind: "Failed", code: "DownloadFailed" }, "Download failed"],
+    [{ kind: "Removing" }, "Removing download…"],
+  ] as const)("renders offline row milestone %# without a row live region", (state, copy) => {
+    renderRow(
+      <ResourceList ariaLabel="Episodes">
+        <CollectionRow
+          row={{
+            ...baseRow(),
+            kind: "podcast_episode",
+            localAvailability: present(state),
+          }}
+        />
+      </ResourceList>,
+    );
+
+    expect(screen.getByText(copy)).toBeVisible();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("gives active offline state precedence over exceptional and listening state", () => {
+    renderRow(
+      <ResourceList ariaLabel="Episodes">
+        <CollectionRow
+          row={{
+            ...baseRow(),
+            kind: "podcast_episode",
+            activity: present({ kind: "Finished", modality: "Listen" }),
+            exceptionalStatus: present({
+              kind: "MediaProcessing",
+              status: "failed",
+            }),
+            localAvailability: present({
+              kind: "Failed",
+              code: "DownloadFailed",
+            }),
+          }}
+        />
+      </ResourceList>,
+    );
+
+    expect(screen.getByText("Download failed")).toBeVisible();
+    expect(screen.queryByText("Processing failed")).toBeNull();
+    expect(screen.queryByText("Finished")).toBeNull();
+  });
+
+  it("keeps Ready as a labeled indicator without hiding the base state", () => {
+    renderRow(
+      <ResourceList ariaLabel="Episodes">
+        <CollectionRow
+          row={{
+            ...baseRow(),
+            kind: "podcast_episode",
+            activity: present({ kind: "Finished", modality: "Listen" }),
+            exceptionalStatus: present({
+              kind: "MediaProcessing",
+              status: "suspended",
+            }),
+            localAvailability: present({
+              kind: "Ready",
+              sizeBytes: 42,
+              contentType: "audio/mpeg",
+              updatedAt: "2026-07-30T19:00:00Z",
+            }),
+          }}
+        />
+      </ResourceList>,
+    );
+
+    expect(screen.getByText("Processing paused")).toBeVisible();
+    expect(screen.queryByText("Finished")).toBeNull();
+    expect(screen.getByText("Downloaded for offline")).toHaveClass("sr-only");
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
   it("publishes one direct Libraries relationship action for media", async () => {
     const user = userEvent.setup();
     renderRow(

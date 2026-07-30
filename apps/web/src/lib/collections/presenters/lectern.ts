@@ -117,6 +117,7 @@ export function presentLecternItem(
         : absent(),
     activity: presentActivity(item, activityFacts),
     exceptionalStatus: absent(),
+    localAvailability: absent(),
     connections: absent(),
     relatedMediaId: absent(),
     actionPublication: {

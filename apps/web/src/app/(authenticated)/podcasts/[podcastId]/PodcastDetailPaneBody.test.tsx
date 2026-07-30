@@ -118,6 +118,9 @@ import {
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
+import { OfflineMediaProvider } from "@/lib/offlineMedia/OfflineMediaProvider";
+import type { OfflineMediaCommand } from "@/lib/offlineMedia/contract";
+import type { OfflineMediaTransport } from "@/lib/offlineMedia/transport";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import type { PanePrimaryChromePublication } from "@/lib/panes/panePublications";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
@@ -138,54 +141,97 @@ function LecternStatus() {
   );
 }
 
+class OfflineHandshakeTransport implements OfflineMediaTransport {
+  readonly commands: OfflineMediaCommand[] = [];
+  private listener: ((message: unknown) => void) | null = null;
+
+  constructor(
+    private readonly connectOutcome: Record<string, unknown> | null,
+  ) {}
+
+  start = (listener: (message: unknown) => void) => {
+    this.listener = listener;
+    return () => {
+      this.listener = null;
+    };
+  };
+
+  send = (command: OfflineMediaCommand) => {
+    this.commands.push(command);
+    if (command.kind === "Connect" && this.connectOutcome !== null) {
+      queueMicrotask(() => {
+        this.listener?.({
+          requestId: command.requestId,
+          protocolVersion: 1,
+          outcome: this.connectOutcome,
+        });
+      });
+    }
+  };
+}
+
 // Render the pane under the real Lectern + global-player providers (the pane
 // reads both through the Lectern and player providers. The fetch boundary below
 // answers the provider's initial GET /api/lectern.
 function Wrapped({
   href: hrefOverride,
   onReplacePane = vi.fn(),
+  offlineTransport,
 }: {
   readonly href?: string;
   readonly onReplacePane?: ComponentProps<
     typeof PaneRuntimeProvider
   >["onReplacePane"];
+  readonly offlineTransport?: OfflineMediaTransport;
 } = {}) {
   const podcastId = mockUsePaneParam("podcastId");
   const href =
     hrefOverride ??
     (podcastId ? `/podcasts/${podcastId}` : "/podcasts/missing");
   const routeKey = resolvePaneRouteIdentity(href).routeKey;
+  const pane = (
+    <PaneRuntimeProvider
+      paneId="pane-1"
+      visitId={TEST_VISIT_ID}
+      isActive
+      href={href}
+      routeId="podcastDetail"
+      routeKey={routeKey}
+      pathParams={podcastId ? { podcastId } : {}}
+      canGoBack={false}
+      canGoForward={false}
+      onGoBackPane={vi.fn()}
+      onGoForwardPane={vi.fn()}
+      onNavigatePane={vi.fn()}
+      onReplacePane={onReplacePane}
+      onActivateWorkspaceTarget={vi.fn(() => ({
+        kind: "Unchanged" as const,
+        paneId: "pane-1",
+      }))}
+    >
+      <LecternProvider>
+        <GlobalPlayerProvider>
+          <LibraryPlacementControllerProvider>
+            <LecternStatus />
+            <PodcastDetailPaneBody />
+          </LibraryPlacementControllerProvider>
+        </GlobalPlayerProvider>
+      </LecternProvider>
+    </PaneRuntimeProvider>
+  );
   return (
     <PaneReturnMementoProvider>
       <FeedbackProvider>
-        <PaneRuntimeProvider
-          paneId="pane-1"
-          visitId={TEST_VISIT_ID}
-          isActive
-          href={href}
-          routeId="podcastDetail"
-          routeKey={routeKey}
-          pathParams={podcastId ? { podcastId } : {}}
-          canGoBack={false}
-          canGoForward={false}
-          onGoBackPane={vi.fn()}
-          onGoForwardPane={vi.fn()}
-          onNavigatePane={vi.fn()}
-          onReplacePane={onReplacePane}
-          onActivateWorkspaceTarget={vi.fn(() => ({
-            kind: "Unchanged" as const,
-            paneId: "pane-1",
-          }))}
-        >
-          <LecternProvider>
-            <GlobalPlayerProvider>
-              <LibraryPlacementControllerProvider>
-                <LecternStatus />
-                <PodcastDetailPaneBody />
-              </LibraryPlacementControllerProvider>
-            </GlobalPlayerProvider>
-          </LecternProvider>
-        </PaneRuntimeProvider>
+        {offlineTransport === undefined ? (
+          pane
+        ) : (
+          <OfflineMediaProvider
+            accountId="11111111-1111-4111-8111-111111111111"
+            transport={offlineTransport}
+          >
+            {pane}
+          </OfflineMediaProvider>
+        )}
       </FeedbackProvider>
     </PaneReturnMementoProvider>
   );
@@ -277,6 +323,7 @@ function episodeMedia({
   canEditAuthors = false,
   contributors = [],
   audioPlayable = false,
+  offlineDownloadEligible = true,
   progressResettable = false,
   episodeState = "unplayed",
   listeningState = null,
@@ -290,6 +337,7 @@ function episodeMedia({
   canEditAuthors?: boolean;
   contributors?: unknown[];
   audioPlayable?: boolean;
+  offlineDownloadEligible?: boolean;
   progressResettable?: boolean;
   episodeState?: "unplayed" | "in_progress" | "played" | null;
   listeningState?: {
@@ -307,6 +355,7 @@ function episodeMedia({
       kind: "Present",
       value: "https://feeds.example.com/systems.xml",
     },
+    offline_download_eligible: offlineDownloadEligible,
     processing_status: "ready_for_reading",
     transcript_state: transcriptState,
     transcript_coverage: transcriptCoverage,
@@ -998,6 +1047,126 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
       );
       expect(publication?.menu?.groups?.core).toEqual([]);
     });
+  });
+
+  it("offers Download only after native handshake and server eligibility", async () => {
+    let offlineDownloadEligible = true;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input), "http://localhost");
+      if (
+        url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011"
+      ) {
+        return jsonResponse(podcastDetailResponse());
+      }
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
+      ) {
+        return jsonResponse(
+          episodePage([episodeMedia({ offlineDownloadEligible })]),
+        );
+      }
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries"
+      ) {
+        return jsonResponse({ data: [] });
+      }
+      if (url.pathname === "/api/lectern") {
+        return jsonResponse({ data: { items: [] } });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    const { unmount: unmountUnavailable } = render(
+      <Wrapped offlineTransport={new OfflineHandshakeTransport(null)} />,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "More actions for Episode 1",
+      }),
+    );
+    expect(
+      screen.queryByRole("menuitem", { name: "Download for offline" }),
+    ).not.toBeInTheDocument();
+    unmountUnavailable();
+
+    const { unmount: unmountReady } = render(
+      <Wrapped
+        offlineTransport={
+          new OfflineHandshakeTransport({
+            kind: "Connected",
+            items: [],
+            networkPolicy: "UnmeteredOnly",
+          })
+        }
+      />,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "More actions for Episode 1",
+      }),
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: "Download for offline" }),
+    ).toBeInTheDocument();
+    unmountReady();
+
+    offlineDownloadEligible = false;
+    const { unmount: unmountIneligible } = render(
+      <Wrapped
+        offlineTransport={
+          new OfflineHandshakeTransport({
+            kind: "Connected",
+            items: [],
+            networkPolicy: "UnmeteredOnly",
+          })
+        }
+      />,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "More actions for Episode 1",
+      }),
+    );
+    expect(
+      screen.queryByRole("menuitem", { name: "Download for offline" }),
+    ).not.toBeInTheDocument();
+    unmountIneligible();
+
+    render(
+      <Wrapped
+        offlineTransport={
+          new OfflineHandshakeTransport({
+            kind: "Connected",
+            items: [
+              {
+                mediaId: "00000000-0000-4000-8000-000000000111",
+                title: "Episode 1",
+                state: {
+                  kind: "Present",
+                  value: {
+                    kind: "Ready",
+                    sizeBytes: 2_000,
+                    contentType: "audio/mpeg",
+                    updatedAt: "2026-07-30T19:00:00Z",
+                  },
+                },
+              },
+            ],
+            networkPolicy: "UnmeteredOnly",
+          })
+        }
+      />,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "More actions for Episode 1",
+      }),
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: "Remove download" }),
+    ).toBeInTheDocument();
   });
 
   it("treats subscription absence as unsubscribed", async () => {

@@ -74,20 +74,18 @@ describe("ResourceRow", () => {
     expect(link).not.toHaveAttribute("data-pane-dossier-revision");
   });
 
-  it("renders one exceptional state instead of normal activity", () => {
+  it("renders the one caller-owned status", () => {
     render(
       <ResourceList ariaLabel="Resources">
         <ResourceRow
           primary={{ kind: "static" }}
           title="Static item"
-          activity={<span>Finished</span>}
-          exceptionalStatus={<span>Failed</span>}
+          status={<span>Failed</span>}
         />
       </ResourceList>,
     );
 
     expect(screen.getByText("Failed")).toBeVisible();
-    expect(screen.queryByText("Finished")).toBeNull();
   });
 
   it("does not activate a disabled primary from inert row chrome", () => {
@@ -166,7 +164,7 @@ describe("ResourceRow", () => {
               primary={{ kind: "link", href: "/media/long-row" }}
               title={titleText}
               supporting="Ada Author · February 2025 · A long compact context that must truncate"
-              activity={<span>42% · ≈5 min left</span>}
+              status={<span>42% · ≈5 min left</span>}
               primaryControl={<button type="button">Open</button>}
               actions={<button type="button">…</button>}
             />
@@ -224,7 +222,7 @@ describe("ResourceRow", () => {
           <ResourceRow
             primary={{ kind: "link", href: "/media/processing" }}
             title="A processing item with a title that uses two lines"
-            exceptionalStatus={<span>Processing</span>}
+            status={<span>Processing</span>}
             actions={<button type="button">…</button>}
           />
         </ResourceList>

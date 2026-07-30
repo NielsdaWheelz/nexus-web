@@ -491,6 +491,7 @@ def list_podcast_episodes_for_viewer(
                     if episode.canonical_source_url is not None
                     else absent()
                 ),
+                offline_download_eligible=episode.offline_download_eligible,
                 processing_status=episode.processing_status,
                 transcript_state=episode.transcript_state or "not_requested",
                 transcript_coverage=episode.transcript_coverage or "none",

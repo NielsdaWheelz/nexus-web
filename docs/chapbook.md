@@ -1033,6 +1033,14 @@ priority, download state, range/resume behavior, credential boundaries, and
 logout/revocation cleanup. Licensed or provider-controlled media can opt out
 of durable offline storage. Offline media is its own product slice.
 
+The one-user Android prototype takes a deliberately narrower first slice:
+manual, app-private, pinned progressive podcast audio; one transfer; one global
+Wi-Fi/mobile-data policy; a 512 MiB reserve; explicit account purge and Remove.
+Media3 owns its index and bytes, and the web player captures a complete local
+source only when a session starts. It does not claim cold-launch offline,
+background boot recovery, partial resume, offline metadata replication,
+automatic downloads, or a general native/web bridge.
+
 ### AI
 
 - context assembly accepts explicit Context references, permissions, token

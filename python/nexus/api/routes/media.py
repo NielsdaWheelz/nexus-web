@@ -99,6 +99,20 @@ def get_media(
     return ok(result, by_alias=True)
 
 
+@router.get("/media/{media_id}/offline-download-spec")
+def get_offline_download_spec(
+    media_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    result = media_service.get_offline_download_spec_for_viewer(
+        db,
+        viewer_id=viewer.user_id,
+        media_id=media_id,
+    )
+    return ok(result, by_alias=True)
+
+
 @router.put("/media/{media_id}/authors")
 def put_media_authors(
     media_id: UUID,

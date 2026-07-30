@@ -50,6 +50,7 @@ import {
   useLectern,
   type CanonicalInstallEvent,
 } from "@/lib/lectern/LecternProvider";
+import { useOfflineMediaStreamResolver } from "@/lib/offlineMedia/OfflineMediaProvider";
 import type {
   ChapterOut,
   LecternSnapshot,
@@ -327,6 +328,7 @@ function sessionOfState(state: PlayerSessionState): AudioSession | undefined {
 export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   const lectern = useLectern();
   const viewport = useViewportState();
+  const resolveOfflineMediaStream = useOfflineMediaStreamResolver();
   const lecternResource = lectern.resource;
   const lecternMutation = lectern.mutation;
 
@@ -976,7 +978,10 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
         userPlaybackRateRef.current = startRate;
         setPlaybackRateState(startRate);
         pendingStartRef.current = {
-          sourceUrl: descriptor.activation.streamUrl,
+          sourceUrl: resolveOfflineMediaStream(
+            descriptor.mediaId,
+            descriptor.activation.streamUrl,
+          ),
           startSeconds: startPositionMs / 1000,
           playbackRate: startRate,
         };
@@ -1018,6 +1023,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     [
       advanceRuntimeGeneration,
       latestSnapshot,
+      resolveOfflineMediaStream,
       rotateAudioElementIfRequired,
       seekToSecondsInternal,
       startHeartbeat,

@@ -50,10 +50,14 @@ technology-ownership, import, and module-boundary model.
 - Android Gradle files own Android build, signing, app-link, and release
   configuration.
 - Android code must not add product API clients, Supabase clients,
-  OAuth/PKCE exchange logic, upload clients, or JavaScript bridges without
-  updating this rule first. The single auth-bootstrap `POST /auth/native/google`
-  from `GoogleSignInController` is authorized; the OAuth/PKCE exchange itself
-  stays server-side.
+  OAuth/PKCE exchange logic, upload clients, `addJavascriptInterface`, or
+  general JavaScript bridges. Two exact native boundaries are authorized:
+  `GoogleSignInController` may make the auth-bootstrap
+  `POST /auth/native/google`, and the offline-media module may expose the
+  AndroidX WebKit, main-frame, exact-owned-origin `nexusOfflineMedia` message
+  listener plus `/_native/offline-media/{mediaId}` GET/range route. The latter
+  carries only the strict versioned download contract; it is not a native API
+  client or a general transport. OAuth/PKCE exchange remains server-side.
 - Password identities are managed via Supabase Auth's `auth.identities` table;
   the application stores no password material. Password-auth Server Actions
   live in `apps/web/src/lib/auth/password-actions.ts`.

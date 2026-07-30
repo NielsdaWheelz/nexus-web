@@ -27,6 +27,22 @@ enters URL, request, cursor, snapshot, or folio identity. The list APIs reject
 server-resolved; while a local query is active those commands remain
 discoverably disabled because rendered rows never define command scope.
 
+## Android Offline Downloads
+
+Manual episode downloads are a device capability, not Podcast domain state.
+`derive_offline_download_source` alone projects static eligibility and the
+private `GET /media/{media_id}/offline-download-spec` contract from the
+episode's HTTPS `external_playback_url`; compact episode DTOs carry only
+`offline_download_eligible`, never the URL or local state. The web
+`OfflineMediaProvider` owns command lifecycle and keyed subscriptions. Android
+`OfflineMediaStore` alone owns the durable Media3 index and bytes.
+
+Episode rows thread their keyed local availability through the episode
+presenter. That state is independent of subscription, Library, Lectern,
+listening, transcript, and later enclosure freshness. A Ready snapshot stays
+removable even if the canonical episode later loses eligibility. There is no
+server download table, migration, archive copy, or browser/PWA path.
+
 ## Browse Acquisition Boundary
 
 Browse and Preview are read-only. Preview may stream a remote episode through

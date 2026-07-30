@@ -34,6 +34,7 @@ from nexus.schemas.media import (
     MediaOut,
     MediaProcessingStatus,
     MediaReadState,
+    OfflineDownloadSpecOut,
     PodcastEpisodeChapterOut,
 )
 from nexus.schemas.presence import Absent, Present, absent, presence_from_nullable
@@ -45,6 +46,11 @@ from nexus.services.contributor_credits import (
 from nexus.services.document_embeds import (
     document_embed_summaries_for_media,
     list_document_embeds_for_fragments,
+)
+from nexus.services.offline_download_source import (
+    derive_offline_download_source,
+    derive_offline_download_title,
+    offline_download_eligible,
 )
 from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source
@@ -261,6 +267,7 @@ class CollectionMedia:
     kind: Literal["web_article", "epub", "pdf", "podcast_episode", "video"]
     title: str
     canonical_source_url: str | None
+    offline_download_eligible: bool
     processing_status: MediaProcessingStatus
     transcript_state: str | None
     transcript_coverage: str | None
@@ -528,6 +535,11 @@ def list_collection_media_for_viewer_by_ids(
                 ),
                 title=str(row["title"]),
                 canonical_source_url=cast(str | None, row["canonical_source_url"]),
+                offline_download_eligible=offline_download_eligible(
+                    kind=kind_value,
+                    title=str(row["title"]),
+                    external_playback_url=cast(str | None, row["external_playback_url"]),
+                ),
                 processing_status=cast(
                     "MediaProcessingStatus",
                     _status_to_str(row["processing_status"]),
@@ -558,6 +570,43 @@ def list_collection_media_for_viewer_by_ids(
             )
         )
     return media_list
+
+
+def get_offline_download_spec_for_viewer(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_id: UUID,
+) -> OfflineDownloadSpecOut:
+    row = (
+        db.execute(
+            text(
+                f"""
+                WITH visible_media AS (
+                    {visible_media_ids_cte_sql()}
+                )
+                SELECT m.kind, m.title, m.external_playback_url
+                FROM media m
+                JOIN visible_media vm ON vm.media_id = m.id
+                WHERE m.id = :media_id
+                """
+            ),
+            {"viewer_id": viewer_id, "media_id": media_id},
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if row is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    title = derive_offline_download_title(title=str(row["title"]))
+    return OfflineDownloadSpecOut(
+        media_id=media_id,
+        title=title,
+        source_url=derive_offline_download_source(
+            kind=_status_to_str(row["kind"]),
+            external_playback_url=cast(str | None, row["external_playback_url"]),
+        ),
+    )
 
 
 def get_media_for_viewer(

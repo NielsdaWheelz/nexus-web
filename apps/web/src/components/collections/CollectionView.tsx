@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Fragment,
   useId,
   useLayoutEffect,
   useMemo,
@@ -11,6 +12,7 @@ import {
 import PaneSurface from "@/components/ui/PaneSurface";
 import ResourceList from "@/components/ui/ResourceList";
 import SortableList from "@/components/sortable/SortableList";
+import type { SortableActivatorProps } from "@/components/sortable/SortableList";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import type { CollectionRowView } from "@/lib/collections/types";
 import {
@@ -20,6 +22,16 @@ import {
 } from "@/lib/ui/viewTransitions";
 import { usePaneReturnDescendantReady } from "@/lib/panes/paneRuntime";
 import CollectionRow from "./CollectionRow";
+
+export interface CollectionViewRowRenderProps {
+  readonly row: CollectionRowView;
+  readonly as?: "li" | "div";
+  readonly panel?: ReactNode;
+  readonly primaryControl?: ReactNode;
+  readonly reorder?: SortableActivatorProps;
+  readonly rowActionsAvailable: boolean;
+  readonly viewTransitionName?: string;
+}
 
 /**
  * Orchestrates the one canonical collection path. Panes own retrieval, toolbar,
@@ -39,6 +51,7 @@ export default function CollectionView({
   footer,
   rowPanels,
   rowControls,
+  renderRow,
   rowActionsAvailable = true,
   sortable,
   collectionBusy,
@@ -57,6 +70,7 @@ export default function CollectionView({
   readonly footer?: ReactNode;
   readonly rowPanels?: Readonly<Record<string, ReactNode>>;
   readonly rowControls?: Readonly<Record<string, ReactNode>>;
+  readonly renderRow?: (props: CollectionViewRowRenderProps) => ReactNode;
   readonly rowActionsAvailable?: boolean;
   readonly sortable?: {
     readonly disabled?: boolean;
@@ -121,6 +135,24 @@ export default function CollectionView({
   }, [rowChangePresentation, rowIds, rows, status]);
 
   const rowsForRender = status === "ready" ? displayRows : rows;
+  const renderCollectionRow = (
+    row: CollectionRowView,
+    reorder?: SortableActivatorProps,
+    as?: "li" | "div",
+  ) => {
+    const props: CollectionViewRowRenderProps = {
+      row,
+      as,
+      reorder,
+      panel: rowPanels?.[row.id],
+      primaryControl: rowControls?.[row.id],
+      rowActionsAvailable,
+      viewTransitionName: viewTransitionsReady
+        ? collectionRowViewTransitionName(transitionScopeId, row.id)
+        : undefined,
+    };
+    return renderRow ? renderRow(props) : <CollectionRow {...props} />;
+  };
   usePaneReturnDescendantReady({
     rootRef: returnScopeRef,
     ready:
@@ -144,38 +176,13 @@ export default function CollectionView({
         ariaLabel={ariaLabel}
         busy={collectionBusy}
         renderItem={({ item: row, activatorProps }) => {
-          return (
-            <CollectionRow
-              row={row}
-              reorder={activatorProps}
-              as="div"
-              panel={rowPanels?.[row.id]}
-              primaryControl={rowControls?.[row.id]}
-              rowActionsAvailable={rowActionsAvailable}
-              viewTransitionName={
-                viewTransitionsReady
-                  ? collectionRowViewTransitionName(transitionScopeId, row.id)
-                  : undefined
-              }
-            />
-          );
+          return renderCollectionRow(row, activatorProps, "div");
         }}
       />
     ) : (
       <ResourceList ariaLabel={ariaLabel} busy={collectionBusy}>
         {rowsForRender.map((row) => (
-          <CollectionRow
-            key={row.id}
-            row={row}
-            viewTransitionName={
-              viewTransitionsReady
-                ? collectionRowViewTransitionName(transitionScopeId, row.id)
-                : undefined
-            }
-            panel={rowPanels?.[row.id]}
-            primaryControl={rowControls?.[row.id]}
-            rowActionsAvailable={rowActionsAvailable}
-          />
+          <Fragment key={row.id}>{renderCollectionRow(row)}</Fragment>
         ))}
       </ResourceList>
     );

@@ -80,10 +80,11 @@ from nexus.services.llm_profiles import validate_profiles
 
 logger = get_logger(__name__)
 
-# Exact private-history paths. These responses carry per-viewer state and must
-# never be retained by a browser or intermediary.
+# Exact private response paths. These responses carry per-viewer state or
+# private source capabilities and must never be retained by an intermediary.
 PRIVATE_NO_STORE_PATH_RE = re.compile(
-    r"/media/[^/]+/reader-state|/me/reader-profile|/consumption/(activity|stats|sessions)"
+    r"/media/[^/]+/(reader-state|offline-download-spec)"
+    r"|/me/reader-profile|/consumption/(activity|stats|sessions)"
 )
 
 

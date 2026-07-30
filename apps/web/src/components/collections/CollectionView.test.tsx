@@ -124,6 +124,7 @@ function row(id: string, title: string): CollectionRowView {
     context: absent(),
     activity: absent(),
     exceptionalStatus: absent(),
+    localAvailability: absent(),
     connections: absent(),
     relatedMediaId: absent(),
     actionPublication: {

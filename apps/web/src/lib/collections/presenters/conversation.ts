@@ -31,6 +31,7 @@ export function presentConversation(
     context: present({ kind: "Text", text: presentation.metadata }),
     activity: absent(),
     exceptionalStatus: absent(),
+    localAvailability: absent(),
     connections: absent(),
     relatedMediaId: absent(),
     actionPublication: publishResourceRowActions({

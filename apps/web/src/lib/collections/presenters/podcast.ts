@@ -90,6 +90,7 @@ export function presentPodcast(
     context: absent(),
     activity: activity(item.syncStatus, item.unplayedCount),
     exceptionalStatus: exceptionalStatus(item.syncStatus),
+    localAvailability: absent(),
     connections: connectionsFromSummary(connectionSummary),
     relatedMediaId: absent(),
     actionPublication: publishResourceRowActions({

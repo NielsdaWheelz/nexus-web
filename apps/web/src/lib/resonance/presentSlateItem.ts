@@ -83,6 +83,7 @@ export function presentSlateItem(item: SlateItem): CollectionRowView {
     context: present({ kind: "Text", text: contextText }),
     activity,
     exceptionalStatus: absent(),
+    localAvailability: absent(),
     connections: absent(),
     relatedMediaId: absent(),
     actionPublication: {

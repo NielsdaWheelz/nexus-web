@@ -33,6 +33,7 @@ export function presentSettingsRow(item: SettingsPresenterItem): CollectionRowVi
         : absent(),
     activity: absent(),
     exceptionalStatus: absent(),
+    localAvailability: absent(),
     connections: absent(),
     relatedMediaId: absent(),
     actionPublication: {

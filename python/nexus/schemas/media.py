@@ -15,6 +15,10 @@ from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.presence import Presence
+from nexus.services.offline_download_source import (
+    OFFLINE_DOWNLOAD_SOURCE_URL_MAX_LENGTH,
+    OFFLINE_DOWNLOAD_TITLE_MAX_LENGTH,
+)
 
 MediaProcessingStatus = Literal[
     "pending",
@@ -96,6 +100,22 @@ class PlaybackSourceOut(BaseModel):
     provider_video_id: str | None = None
     watch_url: str | None = None
     embed_url: str | None = None
+
+
+class OfflineDownloadSpecOut(BaseModel):
+    kind: Literal["ProgressiveAudio"] = "ProgressiveAudio"
+    media_id: UUID
+    title: str = Field(min_length=1, max_length=OFFLINE_DOWNLOAD_TITLE_MAX_LENGTH)
+    source_url: str = Field(
+        min_length=1,
+        max_length=OFFLINE_DOWNLOAD_SOURCE_URL_MAX_LENGTH,
+    )
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )
 
 
 DocumentEmbedAggregateStatus = Literal[

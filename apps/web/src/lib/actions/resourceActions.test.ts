@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import { absent, present, type Presence } from "@/lib/api/presence";
+import type { LocalAvailability } from "@/lib/offlineMedia/contract";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { assumeLecternItemId } from "@/lib/lectern/contract";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
@@ -7,6 +9,7 @@ import {
   RESOURCE_ACTION_CATALOG,
   composeResourceMenu,
   conversationResourceOptions,
+  episodeOfflineDownloadOptions,
   episodeResourceOptions,
   libraryResourceOptions,
   mediaResourceOptions,
@@ -17,6 +20,7 @@ import {
   resolveUniversalResourceRelationshipActions,
   type ActionPublication,
   type ExecutableResourceAction,
+  type EpisodeOfflineDownloadAction,
   type RichResourceActionGroups,
   type ResourceActionId,
   type ResourceMenuGroups,
@@ -72,6 +76,21 @@ function command(groups: ResourceMenuGroups, id: string) {
   return action;
 }
 
+function offlineAction(
+  availability: Presence<LocalAvailability>,
+): Extract<EpisodeOfflineDownloadAction, { kind: "Available" }> {
+  return {
+    kind: "Available",
+    availability,
+    execute: {
+      download: vi.fn(),
+      cancel: vi.fn(),
+      retry: vi.fn(),
+      remove: vi.fn(),
+    },
+  };
+}
+
 describe("resource action catalog and projections", () => {
   it("owns unique dot-delimited PascalCase ids", () => {
     const ids = Object.values(RESOURCE_ACTION_CATALOG).map((entry) => entry.id);
@@ -116,6 +135,35 @@ describe("resource action catalog and projections", () => {
       id: "ResourceOperation.Media.EditAuthors",
       label: "Edit authors…",
     });
+  });
+
+  it.each([
+    [absent<LocalAvailability>(), ["ResourceOperation.Media.DownloadOffline"], ["Download for offline"], false],
+    [present<LocalAvailability>({ kind: "Resolving" }), ["ResourceOperation.Media.CancelOfflineDownload"], ["Cancel download"], false],
+    [present<LocalAvailability>({ kind: "Queued", reason: "Capacity" }), ["ResourceOperation.Media.CancelOfflineDownload"], ["Cancel download"], false],
+    [present<LocalAvailability>({ kind: "Queued", reason: "WaitingForNetwork" }), ["ResourceOperation.Media.CancelOfflineDownload"], ["Cancel download"], false],
+    [present<LocalAvailability>({ kind: "Queued", reason: "WaitingForUnmetered" }), ["ResourceOperation.Media.CancelOfflineDownload"], ["Cancel download"], false],
+    [present<LocalAvailability>({ kind: "Queued", reason: "SystemLimit" }), ["ResourceOperation.Media.CancelOfflineDownload"], ["Cancel download"], false],
+    [present<LocalAvailability>({ kind: "Downloading", bytesDownloaded: 5, totalBytes: absent() }), ["ResourceOperation.Media.CancelOfflineDownload"], ["Cancel download"], false],
+    [present<LocalAvailability>({ kind: "Restarting" }), ["ResourceOperation.Media.CancelOfflineDownload"], ["Cancel download"], false],
+    [present<LocalAvailability>({ kind: "Ready", sizeBytes: 5, contentType: "audio/mpeg", updatedAt: "2026-07-30T19:00:00Z" }), ["ResourceOperation.Media.RemoveOfflineDownload"], ["Remove download"], false],
+    [present<LocalAvailability>({ kind: "Failed", code: "DownloadFailed" }), ["ResourceOperation.Media.RetryOfflineDownload", "ResourceOperation.Media.RemoveOfflineDownload"], ["Retry download", "Remove download"], false],
+    [present<LocalAvailability>({ kind: "Removing" }), ["ResourceOperation.Media.RemoveOfflineDownload"], ["Removing download…"], true],
+  ] as const)(
+    "projects the exact offline action catalog for %#",
+    (availability, expectedIds, expectedLabels, disabled) => {
+      const options = episodeOfflineDownloadOptions(
+        offlineAction(availability),
+      );
+
+      expect(options.map((option) => option.id)).toEqual(expectedIds);
+      expect(options.map((option) => option.label)).toEqual(expectedLabels);
+      expect(options.some((option) => option.disabled === true)).toBe(disabled);
+    },
+  );
+
+  it("publishes no offline action when the capability is unavailable", () => {
+    expect(episodeOfflineDownloadOptions({ kind: "Unavailable" })).toEqual([]);
   });
 
   it("requires an accessible reason when a busy label does not explain state", () => {
@@ -612,6 +660,7 @@ describe("rich resource builders", () => {
               kind: "MarkUnplayed",
               execute: markUnplayed,
             },
+            offlineDownload: { kind: "Unavailable" },
             busyIds: noBusy,
           }),
           expected: [
@@ -737,6 +786,7 @@ describe("rich resource builders", () => {
       lecternMembership: noAction,
       removeMedia: noAction,
       playedState: { kind: "MarkPlayed", execute: vi.fn() },
+      offlineDownload: { kind: "Unavailable" },
       busyIds: noBusy,
     });
     expect(Object.keys(groups).sort()).toEqual(["operations", "relationships"]);
