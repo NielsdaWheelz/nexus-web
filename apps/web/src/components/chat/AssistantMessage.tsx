@@ -11,6 +11,7 @@ import type {
   MessageToolCall,
 } from "@/lib/conversations/types";
 import { conversationMessageText } from "@/lib/conversations/types";
+import { isAssistantPrimaryBodyVisible } from "@/lib/conversations/conversationPresentation";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import { toReaderCitationData } from "@/lib/conversations/citations";
@@ -26,10 +27,10 @@ import ForkStrip from "./ForkStrip";
 import StreamingGutterCue from "./StreamingGutterCue";
 import { useAssistantSelectionBranch } from "./useAssistantSelectionBranch";
 import styles from "./MessageRow.module.css";
-import type { ChatFindOccurrencePosition } from "./useChatScroll";
 
 export default function AssistantMessage({
   message,
+  messageOrdinal,
   forkOptions,
   switchableLeafIds,
   onSelectFork,
@@ -41,9 +42,9 @@ export default function AssistantMessage({
   onReconnectAssistant,
   onStartWalk,
   timestampLabel,
-  findOccurrence = null,
 }: {
   message: ConversationMessage;
+  messageOrdinal: number;
   forkOptions: ForkOption[];
   switchableLeafIds?: Set<string>;
   onSelectFork?: (fork: ForkOption) => void;
@@ -59,7 +60,6 @@ export default function AssistantMessage({
   onReconnectAssistant?: (assistantMessageId: string) => void;
   onStartWalk?: (citations: CitationOut[], text: string) => void;
   timestampLabel: string;
-  findOccurrence?: ChatFindOccurrencePosition | null;
 }) {
   const assistantText = conversationMessageText(message);
   const toolCalls = message.trust_trail?.tool_calls ?? [];
@@ -83,7 +83,6 @@ export default function AssistantMessage({
   const trustRun = message.trust_trail?.run;
   const failure = trustRun?.failure ?? null;
   const supportId = trustRun?.support_id ?? absent();
-  const isRefused = failure?.code === "refused";
   const isTerminalFailure =
     message.status === "error" || message.status === "cancelled";
   const showFailureCard = isTerminalFailure;
@@ -104,11 +103,7 @@ export default function AssistantMessage({
     enabled: canBranchFromAssistant,
     onReplyToAssistant,
   });
-  const renderAssistantBody = isRefused
-    ? false
-    : showFailureCard
-      ? assistantText.trim().length > 0
-      : true;
+  const renderAssistantBody = isAssistantPrimaryBodyVisible(message);
   const createBranchDraft = useCallback(
     (): BranchDraft => ({
       parentMessageId: message.id,
@@ -139,10 +134,10 @@ export default function AssistantMessage({
       {renderAssistantBody ? (
         <AssistantAnswer
           message={message}
+          messageOrdinal={messageOrdinal}
           citations={citations}
           answerRef={answerRef}
           onCitationActivate={onCitationActivate}
-          findOccurrence={findOccurrence}
         />
       ) : null}
       {trustRun?.publication_warning.kind === "Present" ? (

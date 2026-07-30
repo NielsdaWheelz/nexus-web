@@ -323,6 +323,7 @@ function fakeScrollHandle() {
     scrollToMessage: vi.fn(),
     captureReadingPosition: vi.fn(),
     restoreReadingPosition: vi.fn(),
+    getTranscriptElement: vi.fn(),
     previewFindOccurrence: vi.fn(),
     clearFindPresentation: vi.fn(),
   };

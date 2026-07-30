@@ -35,89 +35,6 @@ const remarkPlugins = [remarkGfm];
 const rehypePlugins = [rehypeHighlight];
 const CITATION_HREF_PREFIX = "#nexus-reader-citation-";
 
-interface MarkdownFindRange {
-  readonly start: number;
-  readonly end: number;
-  readonly blockIndex: number;
-  readonly locatorStart: number;
-  readonly locatorEnd: number;
-}
-
-interface FindPositionedNode {
-  type: string;
-  value?: string;
-  tagName?: string;
-  properties?: Record<string, unknown>;
-  children?: FindPositionedNode[];
-  position?: {
-    start?: { offset?: number };
-    end?: { offset?: number };
-  };
-}
-
-function rehypeFindMark({
-  renderedRange,
-  locator,
-}: {
-  readonly renderedRange: MarkdownFindRange;
-  readonly locator: MarkdownFindRange;
-}) {
-  return () => (tree: FindPositionedNode) => {
-    const visit = (node: FindPositionedNode) => {
-      if (!node.children) return;
-      for (let index = 0; index < node.children.length; index += 1) {
-        const child = node.children[index]!;
-        const startOffset = child.position?.start?.offset;
-        const endOffset = child.position?.end?.offset;
-        if (
-          child.type === "text" &&
-          typeof child.value === "string" &&
-          typeof startOffset === "number" &&
-          typeof endOffset === "number" &&
-          renderedRange.start >= startOffset &&
-          renderedRange.end <= endOffset
-        ) {
-          const relativeStart = renderedRange.start - startOffset;
-          const relativeEnd = renderedRange.end - startOffset;
-          node.children.splice(
-            index,
-            1,
-            {
-              type: "text",
-              value: child.value.slice(0, relativeStart),
-            },
-            {
-              type: "element",
-              tagName: "mark",
-              properties: {
-                className: [styles.findMark],
-                "data-find-active-mark": "true",
-                "data-find-block-index": locator.blockIndex,
-                "data-find-start": locator.locatorStart,
-                "data-find-end": locator.locatorEnd,
-                "aria-label": "Current match",
-              },
-              children: [
-                {
-                  type: "text",
-                  value: child.value.slice(relativeStart, relativeEnd),
-                },
-              ],
-            },
-            {
-              type: "text",
-              value: child.value.slice(relativeEnd),
-            },
-          );
-          return;
-        }
-        visit(child);
-      }
-    };
-    visit(tree);
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Code block with language label + copy button
 // ---------------------------------------------------------------------------
@@ -177,7 +94,10 @@ function CodeBlockWrapper({
 
   return (
     <div className={styles.codeBlock}>
-      <div className={styles.codeBlockHeader}>
+      <div
+        className={styles.codeBlockHeader}
+        data-pane-find-exclude="true"
+      >
         <span>{language}</span>
         <button type="button" className={styles.copyBtn} onClick={() => void handleCopy()}>
           {copyState === "copied"
@@ -190,6 +110,7 @@ function CodeBlockWrapper({
       <div
         ref={contentRef}
         className={styles.codeBlockContent}
+        data-pane-find-code-scroll="true"
         data-lang={language}
         data-testid="markdown-code-scroll"
       >
@@ -252,50 +173,27 @@ function citationIndexFromHref(href: string | undefined): number | null {
   return Number.isInteger(index) && index > 0 ? index : null;
 }
 
-function replaceMarkdownWithRange({
+function replaceMarkdown({
   content,
-  range,
   pattern,
   replacement,
 }: {
   readonly content: string;
-  readonly range: MarkdownFindRange | null;
   readonly pattern: RegExp;
   readonly replacement: (match: RegExpExecArray) => string;
-}): { readonly content: string; readonly range: MarkdownFindRange | null } {
+}): string {
   pattern.lastIndex = 0;
   let cursor = 0;
   let rendered = "";
-  let offsetShift = 0;
-  let renderableRange = range;
   for (let match = pattern.exec(content); match; match = pattern.exec(content)) {
     const matched = match[0];
     const next = replacement(match);
     rendered += content.slice(cursor, match.index);
     rendered += next;
-    const matchEnd = match.index + matched.length;
-    if (renderableRange && matchEnd <= range!.start) {
-      offsetShift += next.length - matched.length;
-    } else if (
-      renderableRange &&
-      match.index < range!.end &&
-      matchEnd > range!.start
-    ) {
-      renderableRange = null;
-    }
-    cursor = matchEnd;
+    cursor = match.index + matched.length;
   }
   rendered += content.slice(cursor);
-  return {
-    content: rendered,
-    range: renderableRange
-      ? {
-          ...renderableRange,
-          start: renderableRange.start + offsetShift,
-          end: renderableRange.end + offsetShift,
-        }
-      : null,
-  };
+  return rendered;
 }
 
 function CitationAwareLink({
@@ -343,7 +241,6 @@ function MarkdownMessageInner({
   content,
   citations,
   onCitationActivate,
-  findRange = null,
 }: {
   content: string;
   citations?: ReaderCitationData[];
@@ -352,7 +249,6 @@ function MarkdownMessageInner({
     target: ReaderSourceTarget | null,
     event?: React.MouseEvent,
   ) => void;
-  findRange?: MarkdownFindRange | null;
 }) {
   const citationByIndex =
     useMemo(
@@ -368,43 +264,26 @@ function MarkdownMessageInner({
   );
   const rendered = useMemo(() => {
     const withCitations = citationByIndex
-      ? replaceMarkdownWithRange({
+      ? replaceMarkdown({
           content,
-          range: findRange,
           pattern: /\[(\d+)\](?!\()/g,
           replacement: (match) =>
             `[${match[1]}](${CITATION_HREF_PREFIX}${match[1]})`,
         })
-      : { content, range: findRange };
-    return replaceMarkdownWithRange({
-      content: withCitations.content,
-      range: withCitations.range,
+      : content;
+    return replaceMarkdown({
+      content: withCitations,
       pattern: /<<cite:(\d+)>>/g,
       replacement: (match) => `\\<\\<cite:${match[1]}\\>\\>`,
     });
-  }, [citationByIndex, content, findRange]);
-  const renderedContent = rendered.content;
-  const renderedFindRange = rendered.range;
-  const activeRehypePlugins = useMemo(
-    () =>
-      renderedFindRange && findRange
-        ? [
-            ...rehypePlugins,
-            rehypeFindMark({
-              renderedRange: renderedFindRange,
-              locator: findRange,
-            }),
-          ]
-        : rehypePlugins,
-    [findRange, renderedFindRange],
-  );
+  }, [citationByIndex, content]);
   const markdown = (
     <ReactMarkdown
       remarkPlugins={remarkPlugins}
-      rehypePlugins={activeRehypePlugins}
+      rehypePlugins={rehypePlugins}
       components={citationByIndex ? citationComponents : baseComponents}
     >
-      {renderedContent}
+      {rendered}
     </ReactMarkdown>
   );
   return (

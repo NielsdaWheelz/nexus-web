@@ -8,7 +8,6 @@ import { __resetChatProfilesCacheForTests } from "@/components/chat/useChatProfi
 import { PanePrimaryChromeProvider } from "@/components/workspace/PanePrimaryChrome";
 import PaneShell from "@/components/workspace/PaneShell";
 import type { PanePrimaryChromePublicationUpdate } from "@/lib/panes/panePublications";
-import { createPaneFindResultKey } from "@/lib/panes/paneSearch";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
@@ -502,6 +501,12 @@ function renderPane(
     onPreviewTransientSecondaryResult?: ComponentProps<
       typeof PaneRuntimeProvider
     >["onPreviewTransientSecondaryResult"];
+    onRequestTransientSecondarySurface?: ComponentProps<
+      typeof PaneRuntimeProvider
+    >["onRequestTransientSecondarySurface"];
+    onCloseTransientSecondarySurface?: ComponentProps<
+      typeof PaneRuntimeProvider
+    >["onCloseTransientSecondarySurface"];
   } = {},
 ) {
   const href =
@@ -536,6 +541,12 @@ function renderPane(
       onSetPaneLabel={vi.fn()}
       onPreviewTransientSecondaryResult={
         options.onPreviewTransientSecondaryResult
+      }
+      onRequestTransientSecondarySurface={
+        options.onRequestTransientSecondarySurface
+      }
+      onCloseTransientSecondarySurface={
+        options.onCloseTransientSecondarySurface
       }
     >
       <PanePrimaryChromeProvider publish={publishPrimaryChrome}>
@@ -697,6 +708,54 @@ describe("Conversation", () => {
     ).toEqual(expect.any(String));
   });
 
+  it("keeps Find published when a rerun fails over a loaded transcript", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        if (
+          path ===
+          "/api/conversations/00000000-0000-4000-8000-000000000101/tree"
+        ) {
+          return jsonResponse({ data: failedRootRetryTree() });
+        }
+        if (
+          path ===
+          "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs"
+        ) {
+          return jsonResponse({ data: [] });
+        }
+        if (path === "/api/llm-profiles") {
+          return jsonResponse({ data: LLM_PROFILES });
+        }
+        if (path === "/api/chat-runs") {
+          return jsonResponse({ data: [] });
+        }
+        if (
+          path === "/api/messages/failed-assistant/rerun" &&
+          init?.method === "POST"
+        ) {
+          return jsonResponse(
+            { error: { code: "E_UPSTREAM", message: "Provider unavailable" } },
+            503,
+          );
+        }
+        throw new Error(`Unexpected fetch call: ${path}`);
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { publishPrimaryChrome } = renderPane();
+    expect(await screen.findByText("Original prompt")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Run again" }));
+    expect(await screen.findByText("Failed to run again")).toBeVisible();
+    await waitFor(() =>
+      expect(
+        publishPrimaryChrome.mock.calls.at(-1)?.[0].publication?.search?.kind,
+      ).toBe("FindOccurrences"),
+    );
+  });
+
   it("shows a failure card with no Run again action for a non-rerunnable failed root", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = pathOf(input);
@@ -816,6 +875,80 @@ describe("Conversation", () => {
     });
     expect(screen.queryByText("Answer B")).not.toBeInTheDocument();
     expect(scrollport.scrollTop).toBe(60);
+  });
+
+  it("closes transient Find results and reruns the retained query on a fork switch", async () => {
+    const user = userEvent.setup();
+    const onRequestTransientSecondarySurface = vi.fn();
+    const onCloseTransientSecondarySurface = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        if (
+          path ===
+          "/api/conversations/00000000-0000-4000-8000-000000000101/tree"
+        ) {
+          return jsonResponse({ data: treeResponse() });
+        }
+        if (
+          path ===
+          "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs"
+        ) {
+          return jsonResponse({ data: [] });
+        }
+        if (path === "/api/llm-profiles") {
+          return jsonResponse({ data: LLM_PROFILES });
+        }
+        if (path === "/api/chat-runs") {
+          return jsonResponse({ data: [] });
+        }
+        if (
+          path ===
+            "/api/conversations/00000000-0000-4000-8000-000000000101/active-path" &&
+          init?.method === "POST"
+        ) {
+          return jsonResponse({ data: treeResponse({ selected: "b" }) });
+        }
+        throw new Error(`Unexpected fetch call: ${path}`);
+      }),
+    );
+
+    const { publishPrimaryChrome } = renderPane({
+      onRequestTransientSecondarySurface,
+      onCloseTransientSecondarySurface,
+    });
+    expect(await screen.findByText("Answer A")).toBeVisible();
+    const currentFind = () =>
+      [...publishPrimaryChrome.mock.calls]
+        .reverse()
+        .map(([update]) => update.publication?.search)
+        .find((search) => search?.kind === "FindOccurrences");
+    await waitFor(() => expect(currentFind()?.kind).toBe("FindOccurrences"));
+    currentFind()!.onQueryChange("Answer");
+    await waitFor(() => expect(currentFind()?.result.kind).toBe("Ready"));
+    currentFind()!.onShowResults(document.createElement("button"));
+    expect(onRequestTransientSecondarySurface).toHaveBeenCalledWith(
+      "pane-1",
+      "conversation:/conversations/00000000-0000-4000-8000-000000000101",
+      "resource-search",
+      expect.any(HTMLButtonElement),
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: /switch to fork\. title: branch b/i }),
+    );
+
+    await waitFor(() => expect(screen.getByText("Answer B")).toBeVisible());
+    expect(onCloseTransientSecondarySurface).toHaveBeenCalledWith(
+      "pane-1",
+      "conversation:/conversations/00000000-0000-4000-8000-000000000101",
+    );
+    await waitFor(() => {
+      const publication = currentFind();
+      expect(publication?.query).toBe("Answer");
+      expect(publication?.result.kind).toBe("Ready");
+    });
   });
 
   it("keeps an exact-message reveal single-flight and retries after active-path rollback", async () => {
@@ -1551,7 +1684,7 @@ describe("Conversation", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    renderPane();
+    const { publishPrimaryChrome } = renderPane();
 
     expect(await screen.findByText("Loading conversation...")).toBeVisible();
     expect(
@@ -1559,6 +1692,11 @@ describe("Conversation", () => {
     ).toHaveAttribute("aria-live", "polite");
     expect(screen.getByRole("button", { name: "SEND" })).toBeDisabled();
     expect(screen.getByRole("textbox", { name: "Ask anything" })).toBeVisible();
+    expect(
+      publishPrimaryChrome.mock.calls.some(
+        ([update]) => update.publication?.search?.kind === "FindOccurrences",
+      ),
+    ).toBe(false);
   });
 
   it("shows a not-found/error notice with no composer when /tree 404s", async () => {
@@ -1600,6 +1738,11 @@ describe("Conversation", () => {
         ([update]) => update.publication?.menu?.kind === "ResourceMenu",
       ),
     ).toBe(false);
+    expect(
+      publishPrimaryChrome.mock.calls.some(
+        ([update]) => update.publication?.search?.kind === "FindOccurrences",
+      ),
+    ).toBe(false);
   });
 
   it("renders the composer immediately on the new route (no loading gate)", async () => {
@@ -1612,12 +1755,20 @@ describe("Conversation", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    renderPane({ href: "/conversations/new", pathParams: {} });
+    const { publishPrimaryChrome } = renderPane({
+      href: "/conversations/new",
+      pathParams: {},
+    });
 
     expect(
       await screen.findByRole("textbox", { name: "Ask anything" }),
     ).toBeVisible();
     expect(screen.queryByText("Loading conversation...")).toBeNull();
+    expect(
+      publishPrimaryChrome.mock.calls.some(
+        ([update]) => update.publication?.search?.kind === "FindOccurrences",
+      ),
+    ).toBe(false);
   });
 
   it("reports a malformed reader-Highlight intent hash as a route error, never degrading to generic chat", async () => {
@@ -1759,16 +1910,30 @@ describe("Conversation", () => {
     );
   });
 
-  it("keeps transient results open when exact Find activation is rejected", async () => {
-    const onPreviewTransientSecondaryResult = vi.fn();
-    const onNavigatePane = vi.fn();
+  it("publishes Find for a loaded empty existing conversation", async () => {
+    const emptyTree: ConversationTreeResponse = {
+      ...treeResponse(),
+      conversation: {
+        ...treeResponse().conversation,
+        message_count: 0,
+      },
+      selected_path: [],
+      active_leaf_message_id: null,
+      fork_options_by_parent_id: {},
+      path_cache_by_leaf_id: {},
+      branch_graph: {
+        root_message_id: null,
+        edges: [],
+        nodes: [],
+      },
+    };
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = pathOf(input);
       if (
         path ===
         "/api/conversations/00000000-0000-4000-8000-000000000101/tree"
       ) {
-        return jsonResponse({ data: treeResponse() });
+        return jsonResponse({ data: emptyTree });
       }
       if (
         path ===
@@ -1786,38 +1951,21 @@ describe("Conversation", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const { publishPrimaryChrome } = renderPane({
-      onNavigatePane,
-      onPreviewTransientSecondaryResult,
-    });
-    expect(await screen.findByText("Answer A")).toBeVisible();
+    const { publishPrimaryChrome } = renderPane();
+    expect(
+      await screen.findByRole("textbox", { name: "Ask anything" }),
+    ).toBeVisible();
     await waitFor(() =>
       expect(
-        publishPrimaryChrome.mock.calls.some(
-          ([update]) =>
-            update.publication?.search?.kind === "FindOccurrences",
-        ),
-      ).toBe(true),
+        publishPrimaryChrome.mock.calls.at(-1)?.[0].publication?.search?.kind,
+      ).toBe("FindOccurrences"),
     );
-    const publication = [...publishPrimaryChrome.mock.calls]
-      .reverse()
-      .map(([update]) => update.publication?.search)
-      .find((search) => search?.kind === "FindOccurrences");
+    const publication =
+      publishPrimaryChrome.mock.calls.at(-1)?.[0].publication?.search;
     if (publication?.kind !== "FindOccurrences") {
       throw new Error("Expected Conversation Find publication");
     }
-    const baselineFetches = fetchMock.mock.calls.length;
-
-    publication.onActivate(
-      createPaneFindResultKey({
-        source: { kind: "StaleConversation" },
-        locator: { messageId: "missing", blockIndex: 0, start: 0, end: 1 },
-      }),
-    );
-    await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
-
-    expect(onPreviewTransientSecondaryResult).not.toHaveBeenCalled();
-    expect(onNavigatePane).not.toHaveBeenCalled();
-    expect(fetchMock).toHaveBeenCalledTimes(baselineFetches);
+    expect(publication.inputLabel).toBe("Find in conversation");
+    expect(publication.placeholder).toBe("Find in conversation");
   });
 });

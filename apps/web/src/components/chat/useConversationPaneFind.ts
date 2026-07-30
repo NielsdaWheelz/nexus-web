@@ -1,195 +1,234 @@
 "use client";
 
-import { useLayoutEffect, useMemo, useRef, type RefObject } from "react";
-import type { ConversationMessage } from "@/lib/conversations/types";
+import {
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 import {
   createConversationFindSnapshot,
-  findConversationOccurrences,
+  matchConversationFindUnits,
   type ConversationFindOccurrence,
   type ConversationFindSnapshot,
 } from "@/lib/conversations/conversationFind";
-import type { PaneFindSourceKey } from "@/lib/panes/paneSearch";
+import type { ConversationMessage } from "@/lib/conversations/types";
+import type {
+  PaneFindResultKey,
+  PaneFindSourceKey,
+} from "@/lib/panes/paneSearch";
 import {
   usePaneFind,
   type PaneFindAdapter,
   type PaneFindController,
   type PaneFindPreviewReceipt,
-  type PaneFindResponse,
 } from "@/lib/panes/usePaneFind";
+import {
+  createWebFindHighlightOwner,
+  type WebFindHighlightOwner,
+} from "@/lib/reader/webFindHighlights";
 import type {
   ChatReadingPosition,
   ChatScrollHandle,
 } from "@/components/chat/useChatScroll";
+import {
+  prepareConversationFindUnits,
+  resolveConversationFindRanges,
+  type PreparedConversationFindUnit,
+} from "@/components/chat/conversationFindDom";
 
-const ENTIRE_CONVERSATION_SCOPE_ID = "EntireConversation";
+const SELECTED_PATH_SCOPE_ID = "SelectedPath";
 
-export type ConversationFindError =
-  | { readonly kind: "StaleSource" }
-  | { readonly kind: "OccurrenceUnavailable" }
-  | { readonly kind: "OriginUnavailable" };
+type ConversationFindError = {
+  readonly kind: "OriginUnavailable";
+};
 
-export interface ConversationPaneFindController extends PaneFindController {
+interface ConversationFindAdapter
+  extends PaneFindAdapter<ConversationFindError> {
+  invalidate(): void;
+  dispose(): void;
+}
+
+interface ConversationPaneFindController extends PaneFindController {
   readonly sourceKey: PaneFindSourceKey;
 }
 
 function conversationFindErrorMessage(error: ConversationFindError): string {
   switch (error.kind) {
-    case "StaleSource":
-      return "The conversation changed. Try your search again.";
-    case "OccurrenceUnavailable":
-      return "That match is no longer available.";
     case "OriginUnavailable":
       return "Your reading position could not be captured.";
   }
 }
 
-export function createConversationFindAdapter({
+function cancelled(message: string): DOMException {
+  return new DOMException(message, "AbortError");
+}
+
+function throwIfAborted(signal: AbortSignal): void {
+  if (signal.aborted) {
+    throw cancelled("Conversation Find request was cancelled.");
+  }
+}
+
+function createConversationFindAdapter({
   snapshot,
   getCurrentSourceKey,
   getScrollHandle,
+  highlightOwner,
 }: {
   readonly snapshot: ConversationFindSnapshot;
   readonly getCurrentSourceKey: () => PaneFindSourceKey;
   readonly getScrollHandle: () => ChatScrollHandle | null;
-}): PaneFindAdapter<ConversationFindError> {
-  let occurrencesByKey = new Map<string, ConversationFindOccurrence>();
+  readonly highlightOwner: WebFindHighlightOwner;
+}): ConversationFindAdapter {
+  let prepared: {
+    readonly sessionId: number;
+    readonly units: readonly PreparedConversationFindUnit[];
+  } | null = null;
+  let matchesByKey = new Map<
+    PaneFindResultKey,
+    {
+      readonly occurrence: ConversationFindOccurrence;
+      readonly ranges: readonly Range[];
+    }
+  >();
   let origin: ChatReadingPosition | null = null;
+  let generation = 0;
+  let disposed = false;
 
-  const isCurrent = (sourceKey: PaneFindSourceKey) =>
-    sourceKey === snapshot.sourceKey &&
-    sourceKey === getCurrentSourceKey();
-  const failed = ({
-    request,
-    error,
-  }: {
-    readonly request: {
-      readonly sessionId: number;
-      readonly queryId: number;
-      readonly sourceKey: PaneFindSourceKey;
-    };
-    readonly error: ConversationFindError;
-  }): PaneFindResponse<ConversationFindError> => ({
-    kind: "Failed",
-    sessionId: request.sessionId,
-    queryId: request.queryId,
-    sourceKey: request.sourceKey,
-    error,
-  });
-  const rejected = ({
-    request,
-    error,
-  }: {
-    readonly request: {
-      readonly sessionId: number;
-      readonly queryId: number;
-      readonly sourceKey: PaneFindSourceKey;
-      readonly key: Parameters<PaneFindAdapter<ConversationFindError>["preview"]>[0]["key"];
-    };
-    readonly error: ConversationFindError;
-  }): PaneFindPreviewReceipt<ConversationFindError> => ({
-    kind: "Rejected",
-    sessionId: request.sessionId,
-    queryId: request.queryId,
-    sourceKey: request.sourceKey,
-    key: request.key,
-    error,
-  });
+  const assertCurrent = (sourceKey: PaneFindSourceKey): void => {
+    if (
+      disposed ||
+      sourceKey !== snapshot.sourceKey ||
+      sourceKey !== getCurrentSourceKey()
+    ) {
+      throw cancelled("Conversation Find source was replaced.");
+    }
+  };
+  const scrollHandle = (): ChatScrollHandle => {
+    const scroll = getScrollHandle();
+    if (!scroll) {
+      throw new Error("Conversation Find scroll owner is unavailable.");
+    }
+    return scroll;
+  };
+  const allRanges = (): readonly Range[] =>
+    [...matchesByKey.values()].flatMap(({ ranges }) => ranges);
+  const invalidate = (): void => {
+    generation += 1;
+    highlightOwner.clear();
+    getScrollHandle()?.clearFindPresentation();
+    prepared = null;
+    matchesByKey = new Map();
+    origin = null;
+  };
 
   return {
     sourceKey: snapshot.sourceKey,
     async prepare(request) {
+      assertCurrent(request.sourceKey);
+      throwIfAborted(request.signal);
+      const transcript = scrollHandle().getTranscriptElement();
+      if (!transcript) {
+        throw new Error("Conversation Find transcript is unavailable.");
+      }
+      prepared = {
+        sessionId: request.sessionId,
+        units: prepareConversationFindUnits({ snapshot, transcript }),
+      };
       return {
         sessionId: request.sessionId,
         sourceKey: request.sourceKey,
         scopes: [
           {
             kind: "EntireResource",
-            id: ENTIRE_CONVERSATION_SCOPE_ID,
-            label: "Entire conversation",
+            id: SELECTED_PATH_SCOPE_ID,
+            label: "Current fork",
           },
         ],
       };
     },
     async find(request) {
-      if (!isCurrent(request.sourceKey)) {
-        return failed({ request, error: { kind: "StaleSource" } });
-      }
-      if (request.scopeId !== ENTIRE_CONVERSATION_SCOPE_ID) {
+      assertCurrent(request.sourceKey);
+      throwIfAborted(request.signal);
+      if (request.scopeId !== SELECTED_PATH_SCOPE_ID) {
         throw new Error(`Unknown Conversation Find scope: ${request.scopeId}`);
       }
-      const matches = findConversationOccurrences({
+      if (prepared?.sessionId !== request.sessionId) {
+        throw new Error("Conversation Find session was not prepared.");
+      }
+      const { units } = prepared;
+      const matches = matchConversationFindUnits({
         snapshot,
+        units,
         query: request.query,
         matchCase: request.matchCase,
         wholeWord: request.wholeWord,
       });
-      switch (matches.kind) {
-        case "NoMatches":
-          occurrencesByKey = new Map();
-          return {
-            kind: "NoMatches",
-            sessionId: request.sessionId,
-            queryId: request.queryId,
-            sourceKey: request.sourceKey,
-            completeness: "Complete",
-          };
-        case "TooManyMatches":
-          occurrencesByKey = new Map();
-          return {
-            kind: "TooManyMatches",
-            sessionId: request.sessionId,
-            queryId: request.queryId,
-            sourceKey: request.sourceKey,
-            threshold: matches.threshold,
-          };
-        case "Ready":
-          occurrencesByKey = new Map(
-            matches.occurrences.map((occurrence) => [
-              occurrence.key,
-              occurrence,
-            ]),
-          );
-          return {
-            kind: "Ready",
-            sessionId: request.sessionId,
-            queryId: request.queryId,
-            sourceKey: request.sourceKey,
-            completeness: "Complete",
-            rows: matches.occurrences.map((occurrence) => occurrence.row),
-          };
+      matchesByKey = new Map();
+      if (matches.kind !== "Ready") {
+        highlightOwner.clear();
+        return {
+          ...matches,
+          sessionId: request.sessionId,
+          queryId: request.queryId,
+          sourceKey: request.sourceKey,
+        };
       }
-    },
-    async preview(request) {
-      if (!isCurrent(request.sourceKey)) {
-        return rejected({ request, error: { kind: "StaleSource" } });
-      }
-      const occurrence = occurrencesByKey.get(request.key);
-      const scroll = getScrollHandle();
-      if (!occurrence || !scroll) {
-        return rejected({
-          request,
-          error: { kind: "OccurrenceUnavailable" },
+      for (const occurrence of matches.occurrences) {
+        matchesByKey.set(occurrence.key, {
+          occurrence,
+          ranges: resolveConversationFindRanges({ units, occurrence }),
         });
       }
+      highlightOwner.publish({ all: allRanges(), active: [] });
+      return {
+        kind: "Ready",
+        sessionId: request.sessionId,
+        queryId: request.queryId,
+        sourceKey: request.sourceKey,
+        completeness: "Complete",
+        rows: matches.occurrences.map(({ row }) => row),
+      };
+    },
+    async preview(request): Promise<
+      PaneFindPreviewReceipt<ConversationFindError>
+    > {
+      assertCurrent(request.sourceKey);
+      throwIfAborted(request.signal);
+      const match = matchesByKey.get(request.key);
+      if (!match) {
+        throw new Error("Conversation Find occurrence is unavailable.");
+      }
+      const { occurrence, ranges } = match;
+      const scroll = scrollHandle();
       const candidateOrigin = origin ?? scroll.captureReadingPosition();
       if (!candidateOrigin) {
-        return rejected({ request, error: { kind: "OriginUnavailable" } });
+        return {
+          kind: "Rejected",
+          sessionId: request.sessionId,
+          queryId: request.queryId,
+          sourceKey: request.sourceKey,
+          key: request.key,
+          error: { kind: "OriginUnavailable" },
+        };
       }
-      const previewed = await scroll.previewFindOccurrence({
-        occurrence: {
-          messageId: occurrence.messageId,
-          blockIndex: occurrence.blockIndex,
-          start: occurrence.start,
-          end: occurrence.end,
-        },
+      const previewGeneration = generation;
+      const settlement = await scroll.previewFindOccurrence({
+        messageId: occurrence.messageId,
+        ranges,
         signal: request.signal,
       });
-      if (!previewed) {
-        return rejected({
-          request,
-          error: { kind: "OccurrenceUnavailable" },
-        });
+      if (settlement.kind === "Cancelled") {
+        throw cancelled("Conversation Find preview was cancelled.");
       }
+      if (previewGeneration !== generation) {
+        throw cancelled("Conversation Find preview was invalidated.");
+      }
+      assertCurrent(request.sourceKey);
+      throwIfAborted(request.signal);
+      highlightOwner.publish({ all: allRanges(), active: ranges });
       origin ??= candidateOrigin;
       return {
         kind: "Previewed",
@@ -201,20 +240,31 @@ export function createConversationFindAdapter({
       };
     },
     async clearPresentation(request) {
-      if (isCurrent(request.sourceKey)) {
+      if (
+        !disposed &&
+        request.sourceKey === snapshot.sourceKey &&
+        request.sourceKey === getCurrentSourceKey()
+      ) {
+        highlightOwner.clear();
         getScrollHandle()?.clearFindPresentation();
       }
     },
     async returnToReadingPosition(request) {
-      if (!isCurrent(request.sourceKey)) return;
+      assertCurrent(request.sourceKey);
+      throwIfAborted(request.signal);
       if (!origin) return;
-      const scroll = getScrollHandle();
-      if (!scroll || !scroll.restoreReadingPosition(origin)) {
-        throw new Error("Conversation Find return origin is no longer renderable.");
-      }
+      const savedOrigin = origin;
+      highlightOwner.clear();
+      scrollHandle().restoreReadingPosition(savedOrigin);
       origin = null;
     },
     errorMessage: conversationFindErrorMessage,
+    invalidate,
+    dispose() {
+      if (disposed) return;
+      invalidate();
+      disposed = true;
+    },
   };
 }
 
@@ -229,30 +279,49 @@ export function useConversationPaneFind({
   readonly messages: readonly ConversationMessage[];
   readonly scrollRef: RefObject<ChatScrollHandle | null>;
 }): ConversationPaneFindController {
-  const snapshot = useMemo(
-    () =>
-      createConversationFindSnapshot({
-        conversationId,
-        activeLeafMessageId,
-        messages,
-      }),
-    [activeLeafMessageId, conversationId, messages],
-  );
-  const currentSourceKeyRef = useRef(snapshot.sourceKey);
-  currentSourceKeyRef.current = snapshot.sourceKey;
+  const candidate = createConversationFindSnapshot({
+    conversationId,
+    activeLeafMessageId,
+    messages,
+    sourceRevision: 0,
+  });
+  const [committedSnapshot, setCommittedSnapshot] = useState(candidate);
+  let snapshot = committedSnapshot;
+  if (candidate.sourceKey !== committedSnapshot.sourceKey) {
+    snapshot = {
+      ...candidate,
+      sourceRevision: committedSnapshot.sourceRevision + 1,
+    };
+    setCommittedSnapshot(snapshot);
+  }
+
+  const currentSourceKeyRef = useRef(committedSnapshot.sourceKey);
+  const highlightOwner = useMemo(() => createWebFindHighlightOwner(), []);
   const adapter = useMemo(
     () =>
       createConversationFindAdapter({
         snapshot,
         getCurrentSourceKey: () => currentSourceKeyRef.current,
         getScrollHandle: () => scrollRef.current,
+        highlightOwner,
       }),
-    [scrollRef, snapshot],
+    [highlightOwner, scrollRef, snapshot],
   );
+  const mountedAdapterRef = useRef<ConversationFindAdapter | null>(null);
   useLayoutEffect(() => {
-    const scroll = scrollRef.current;
-    scroll?.clearFindPresentation();
-    return () => scroll?.clearFindPresentation();
-  }, [scrollRef, snapshot.sourceKey]);
+    currentSourceKeyRef.current = snapshot.sourceKey;
+    mountedAdapterRef.current = adapter;
+    return () => {
+      adapter.invalidate();
+      if (mountedAdapterRef.current === adapter) {
+        mountedAdapterRef.current = null;
+      }
+      queueMicrotask(() => {
+        if (mountedAdapterRef.current !== adapter) {
+          adapter.dispose();
+        }
+      });
+    };
+  }, [adapter, snapshot.sourceKey]);
   return { ...usePaneFind({ adapter }), sourceKey: snapshot.sourceKey };
 }

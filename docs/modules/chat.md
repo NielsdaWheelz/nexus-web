@@ -58,6 +58,9 @@ Hard-cutover specs that govern chat work. Each owns one axis; they compose.
 - `docs/cutovers/chat-continuation-selection-hard-cutover.md` — causal,
   branch-correct profile/reasoning inheritance with explicit draft precedence.
   IMPLEMENTED.
+- `docs/cutovers/conversation-find-hard-cutover.md` — exact selected-path
+  Conversation Find, committed-DOM projection, reversible preview, and source
+  replacement safety. IMPLEMENTED.
 
 ## Engine, View, Adapter Split
 
@@ -165,6 +168,31 @@ state is a single `top | bottom | released` mode, not a boolean. Native
 `overflow-anchor` stays disabled; the hook owns anchoring. Streaming follow
 writes are instant and RAF-batched; `behavior: "smooth"` is only for discrete
 jumps. See `docs/cutovers/chat-scroll-anchoring-hard-cutover.md`.
+
+### Conversation Find
+
+A loaded existing Conversation publishes Pane Find on `Cmd/Ctrl+F`; global
+Search remains `Cmd/Ctrl+K`. The searchable document is the current selected
+root-to-leaf path. Terminal visible primary message blocks are independent
+literal-search units; pending/refused bodies and all auxiliary transcript
+chrome are absent.
+
+`conversationFind.ts` freezes source identity and maps the shared
+`canonicalTextFind` result. `conversationFindDom.ts` projects the committed
+message-block DOM after citation rewriting, Markdown/GFM, and syntax
+highlighting, excludes resolved citation/code-control descendants, and maps
+codepoint locators back to exact `Range`s. The shared Custom Highlight registry
+renders all matches plus the active match; no React/Markdown `<mark>` path
+exists.
+
+`useConversationPaneFind` keeps its snapshot and adapter stable while only a
+pending message streams. An effective selected-path projection change cancels
+old work and synchronously clears highlights, active-message presentation,
+the scroll preview lease, the one Return origin, and transient Companion
+results; it preserves and reruns a nonempty query once. `useChatScroll` remains
+the sole viewport owner. Find preview pauses normal pin following without
+writing progress or navigation state; Close stays at the match, and **Go back
+to reading position** restores the saved eye-line and pin mode once.
 
 ## Send Path
 

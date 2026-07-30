@@ -2,9 +2,21 @@ import { describe, expect, it, vi } from "vitest";
 import { createRef, useRef } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import ChatSurface from "@/components/chat/ChatSurface";
+import {
+  prepareConversationFindUnits,
+  resolveConversationFindRanges,
+} from "@/components/chat/conversationFindDom";
 import type { ChatScrollHandle } from "@/components/chat/useChatScroll";
 import { useConversationPaneFind } from "@/components/chat/useConversationPaneFind";
+import {
+  createConversationFindSnapshot,
+  matchConversationFindUnits,
+} from "@/lib/conversations/conversationFind";
 import type { ConversationMessage, ForkOption } from "@/lib/conversations/types";
+import {
+  WEB_FIND_ACTIVE_HIGHLIGHT_NAME,
+  WEB_FIND_ALL_HIGHLIGHT_NAME,
+} from "@/lib/reader/webFindHighlights";
 
 const baseMessage = {
   seq: 1,
@@ -97,7 +109,27 @@ function ConversationFindHarness({
       <button type="button" onClick={() => find.onStep("Next")}>
         Next match
       </button>
+      <button type="button" onClick={find.onDismiss}>
+        Close Find
+      </button>
+      <button
+        type="button"
+        disabled={find.returnToReadingPosition.kind === "Unavailable"}
+        onClick={() => {
+          if (find.returnToReadingPosition.kind === "Available") {
+            find.returnToReadingPosition.onReturn();
+          }
+        }}
+      >
+        Go back to reading position
+      </button>
       <output aria-label="Find status">{find.result.kind}</output>
+      <output aria-label="Find failure">
+        {find.result.kind === "Failed" ? find.result.message : ""}
+      </output>
+      <output aria-label="Return status">
+        {find.returnToReadingPosition.kind}
+      </output>
     </div>
   );
 }
@@ -109,6 +141,79 @@ function topOffsetWithin(element: HTMLElement, scrollport: HTMLElement): number 
   return (
     element.getBoundingClientRect().top - scrollport.getBoundingClientRect().top
   );
+}
+
+function visibleTextRange(root: Node, text: string): Range {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const nodes: Text[] = [];
+  let joined = "";
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const textNode = node as Text;
+    nodes.push(textNode);
+    joined += textNode.data;
+  }
+  const start = joined.indexOf(text);
+  if (start < 0) {
+    throw new Error(`Could not find visible text: ${text}`);
+  }
+  const end = start + text.length;
+  let offset = 0;
+  let startNode: Text | null = null;
+  let endNode: Text | null = null;
+  let startOffset = 0;
+  let endOffset = 0;
+  for (const node of nodes) {
+    const nextOffset = offset + node.length;
+    if (!startNode && start < nextOffset) {
+      startNode = node;
+      startOffset = start - offset;
+    }
+    if (end <= nextOffset) {
+      endNode = node;
+      endOffset = end - offset;
+      break;
+    }
+    offset = nextOffset;
+  }
+  if (!startNode || !endNode) {
+    throw new Error(`Could not map visible text: ${text}`);
+  }
+  const range = document.createRange();
+  range.setStart(startNode, startOffset);
+  range.setEnd(endNode, endOffset);
+  return range;
+}
+
+function manualAnimationFrames() {
+  const callbacks: FrameRequestCallback[] = [];
+  vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+    callbacks.push(callback);
+    return callbacks.length;
+  });
+  const flushOne = async () => {
+    const callback = callbacks.shift();
+    if (!callback) throw new Error("No animation frame is pending.");
+    await act(async () => {
+      callback(performance.now());
+      await Promise.resolve();
+    });
+  };
+  return {
+    get pending() {
+      return callbacks.length;
+    },
+    flushOne,
+    async flushAll() {
+      while (callbacks.length > 0) {
+        await flushOne();
+      }
+    },
+  };
+}
+
+function highlightRanges(name: string): readonly AbstractRange[] {
+  const highlight = CSS.highlights.get(name);
+  return highlight ? Array.from(highlight) : [];
 }
 
 // A pinned question sits in the top region of the scrollport: at the top edge
@@ -845,47 +950,508 @@ describe("ChatSurface", () => {
     });
   });
 
-  it("marks distinct exact occurrences when stepping within one message", async () => {
+  it("reveals exact fenced-code ranges horizontally before revealing them in the transcript", async () => {
+    const ref = createRef<ChatScrollHandle>();
+    const messages = [
+      assistantMessage(
+        "assistant-1",
+        1,
+        `\`\`\`ts\nconst x = "needle";\n\`\`\``,
+      ),
+    ];
     render(
-      <ConversationFindHarness
-        messages={[
-          assistantMessage(
-            "assistant-1",
-            1,
-            `needle ${"middle ".repeat(150)}needle`,
-          ),
-        ]}
-      />,
+      <div style={FIXED_HEIGHT}>
+        <ChatSurface
+          ref={ref}
+          messages={messages}
+          composer={null}
+        />
+      </div>,
     );
 
     const scrollport = screen.getByRole("region", {
       name: "Chat conversation",
     });
-    await waitFor(() => expect(scrollport.scrollTop).toBeGreaterThan(0));
-    const initialScrollTop = scrollport.scrollTop;
-    fireEvent.click(screen.getByRole("button", { name: "Start Find" }));
-    const first = await screen.findByLabelText("Current match");
-    expect(first).toHaveTextContent("needle");
-    const firstStart = Number(first.getAttribute("data-find-start"));
-    await waitFor(() =>
-      expect(scrollport.scrollTop).toBeLessThan(initialScrollTop),
+    const codeScroll = await screen.findByTestId("markdown-code-scroll");
+    const snapshot = createConversationFindSnapshot({
+      conversationId: "conversation-1",
+      activeLeafMessageId: "assistant-1",
+      messages,
+      sourceRevision: 1,
+    });
+    const units = prepareConversationFindUnits({
+      snapshot,
+      transcript: ref.current!.getTranscriptElement()!,
+    });
+    const matches = matchConversationFindUnits({
+      snapshot,
+      units,
+      query: "const x",
+      matchCase: false,
+      wholeWord: false,
+    });
+    if (matches.kind !== "Ready") {
+      throw new Error("Expected a fenced-code match.");
+    }
+    const ranges = resolveConversationFindRanges({
+      units,
+      occurrence: matches.occurrences[0]!,
+    });
+    expect(ranges.map((range) => range.toString())).toEqual(["const", " x"]);
+    ranges.forEach((range, index) => {
+      vi.spyOn(range, "getBoundingClientRect").mockReturnValue(
+        index === ranges.length - 1
+          ? new DOMRect(520, 420, 80, 18)
+          : new DOMRect(200, 420, 40, 18),
+      );
+    });
+    vi.spyOn(codeScroll, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(100, 120, 240, 100),
     );
-    const firstScrollTop = scrollport.scrollTop;
+    vi.spyOn(scrollport, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 20, 600, 240),
+    );
+
+    const revealOrder: string[] = [];
+    let scrollLeft = 0;
+    Object.defineProperty(codeScroll, "scrollLeft", {
+      configurable: true,
+      get: () => scrollLeft,
+      set: (value: number) => {
+        revealOrder.push("inner");
+        scrollLeft = value;
+      },
+    });
+    vi.spyOn(scrollport, "scrollTo").mockImplementation(
+      ((options: ScrollToOptions | number, y?: number) => {
+        revealOrder.push("outer");
+        scrollport.scrollTop =
+          typeof options === "number" ? (y ?? 0) : (options.top ?? 0);
+      }) as typeof scrollport.scrollTo,
+    );
+
+    let settlement: Awaited<
+      ReturnType<ChatScrollHandle["previewFindOccurrence"]>
+    > | null = null;
+    await act(async () => {
+      settlement = await ref.current!.previewFindOccurrence({
+        messageId: "assistant-1",
+        ranges,
+        signal: new AbortController().signal,
+      });
+    });
+
+    expect(settlement).toEqual({ kind: "Revealed" });
+    expect(scrollLeft).toBe(260);
+    expect(revealOrder).toEqual(["inner", "outer"]);
+    expect(
+      screen.getByRole("group", { name: "Assistant response" }),
+    ).toHaveAttribute("data-find-active", "true");
+  });
+
+  it("generation-fences a stale preview across the full double animation frame", async () => {
+    const ref = createRef<ChatScrollHandle>();
+    render(
+      <div style={FIXED_HEIGHT}>
+        <ChatSurface
+          ref={ref}
+          messages={[
+            userMessage("user-1", 1, "first needle"),
+            userMessage("user-2", 2, "second needle"),
+          ]}
+          composer={null}
+        />
+      </div>,
+    );
+    const [firstTarget, secondTarget] = screen.getAllByRole("group", {
+      name: "Your message",
+    });
+    const firstRange = visibleTextRange(firstTarget, "needle");
+    const secondRange = visibleTextRange(secondTarget, "needle");
+    const frames = manualAnimationFrames();
+
+    const firstPreview = ref.current!.previewFindOccurrence({
+      messageId: "user-1",
+      ranges: [firstRange],
+      signal: new AbortController().signal,
+    });
+    expect(frames.pending).toBe(1);
+    await frames.flushOne();
+    expect(frames.pending).toBe(1);
+    expect(firstTarget).not.toHaveAttribute("data-find-active");
+
+    const secondPreview = ref.current!.previewFindOccurrence({
+      messageId: "user-2",
+      ranges: [secondRange],
+      signal: new AbortController().signal,
+    });
+    await frames.flushAll();
+
+    await expect(firstPreview).resolves.toEqual({ kind: "Cancelled" });
+    await expect(secondPreview).resolves.toEqual({ kind: "Revealed" });
+    expect(firstTarget).not.toHaveAttribute("data-find-active");
+    expect(secondTarget).toHaveAttribute("data-find-active", "true");
+  });
+
+  it("lets genuine user input cancel a queued Find reveal", async () => {
+    const ref = createRef<ChatScrollHandle>();
+    render(
+      <div style={FIXED_HEIGHT}>
+        <ChatSurface
+          ref={ref}
+          messages={[userMessage("user-1", 1, "needle")]}
+          composer={null}
+        />
+      </div>,
+    );
+    const scrollport = screen.getByRole("region", {
+      name: "Chat conversation",
+    });
+    const target = screen.getByRole("group", { name: "Your message" });
+    const range = visibleTextRange(target, "needle");
+    const scrollTo = vi.spyOn(scrollport, "scrollTo");
+    const frames = manualAnimationFrames();
+
+    const preview = ref.current!.previewFindOccurrence({
+      messageId: "user-1",
+      ranges: [range],
+      signal: new AbortController().signal,
+    });
+    await frames.flushOne();
+    fireEvent.touchMove(scrollport);
+    await frames.flushAll();
+
+    await expect(preview).resolves.toEqual({ kind: "Cancelled" });
+    expect(scrollTo).not.toHaveBeenCalled();
+    expect(target).not.toHaveAttribute("data-find-active");
+  });
+
+  it("publishes all and active Conversation ranges, steps, and clears them on Close", async () => {
+    render(
+      <ConversationFindHarness
+        messages={[
+          userMessage("user-1", 1, "first needle"),
+          assistantMessage("assistant-1", 2, "second needle", "user-1"),
+        ]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Start Find" }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Return status")).toHaveTextContent(
+        "Available",
+      ),
+    );
+    expect(highlightRanges(WEB_FIND_ALL_HIGHLIGHT_NAME)).toHaveLength(2);
+    const firstActive = highlightRanges(WEB_FIND_ACTIVE_HIGHLIGHT_NAME);
+    expect(firstActive).toHaveLength(1);
 
     fireEvent.click(screen.getByRole("button", { name: "Next match" }));
-    await waitFor(() => {
-      expect(
-        Number(
-          screen
-            .getByLabelText("Current match")
-            .getAttribute("data-find-start"),
-        ),
-      ).toBeGreaterThan(firstStart);
-    });
-    expect(screen.getAllByLabelText("Current match")).toHaveLength(1);
     await waitFor(() =>
-      expect(scrollport.scrollTop).toBeGreaterThan(firstScrollTop),
+      expect(highlightRanges(WEB_FIND_ACTIVE_HIGHLIGHT_NAME)[0]).not.toBe(
+        firstActive[0],
+      ),
     );
+    expect(highlightRanges(WEB_FIND_ALL_HIGHLIGHT_NAME)).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole("button", { name: "Close Find" }));
+    await waitFor(() => {
+      expect(CSS.highlights.has(WEB_FIND_ALL_HIGHLIGHT_NAME)).toBe(false);
+      expect(CSS.highlights.has(WEB_FIND_ACTIVE_HIGHLIGHT_NAME)).toBe(false);
+    });
+  });
+
+  it("reports OriginUnavailable when the eye-line is wholly in the trailing spacer", async () => {
+    render(
+      <ConversationFindHarness
+        messages={[userMessage("user-1", 1, "needle")]}
+      />,
+    );
+    const scrollport = screen.getByRole("region", {
+      name: "Chat conversation",
+    });
+    const messageRow = screen.getByRole("group", { name: "Your message" });
+    Object.defineProperties(scrollport, {
+      scrollTop: {
+        configurable: true,
+        get: () => 500,
+        set: () => {},
+      },
+      clientHeight: { configurable: true, get: () => 240 },
+    });
+    Object.defineProperties(messageRow, {
+      offsetTop: { configurable: true, get: () => 0 },
+      offsetHeight: { configurable: true, get: () => 80 },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Start Find" }));
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Find status")).toHaveTextContent("Failed"),
+    );
+    expect(screen.getByLabelText("Find failure")).toHaveTextContent(
+      "Your reading position could not be captured.",
+    );
+    expect(screen.getByLabelText("Return status")).toHaveTextContent(
+      "Unavailable",
+    );
+    expect(messageRow).not.toHaveAttribute("data-find-active");
+    expect(CSS.highlights.has(WEB_FIND_ALL_HIGHLIGHT_NAME)).toBe(false);
+    expect(CSS.highlights.has(WEB_FIND_ACTIVE_HIGHLIGHT_NAME)).toBe(false);
+  });
+
+  it("holds streaming follow under a preview lease and Close leaves the revealed position released", async () => {
+    const ref = createRef<ChatScrollHandle>();
+    const turn = (answer: string): ConversationMessage[] => [
+      userMessage("user-1", 1, "needle question"),
+      {
+        ...assistantMessage("assistant-1", 2, answer, "user-1"),
+        status: "pending",
+      },
+    ];
+    const { rerender } = render(
+      <div style={FIXED_HEIGHT}>
+        <ChatSurface
+          ref={ref}
+          messages={turn(`Answer ${"streamed token ".repeat(140)}`)}
+          composer={null}
+        />
+      </div>,
+    );
+    const scrollport = screen.getByRole("region", {
+      name: "Chat conversation",
+    });
+    await waitFor(() => expect(scrollport.scrollTop).toBeGreaterThan(0));
+    const target = screen.getByRole("group", { name: "Your message" });
+    const range = visibleTextRange(target, "needle");
+    vi.spyOn(scrollport, "scrollTo").mockImplementation(
+      ((options: ScrollToOptions | number, y?: number) => {
+        scrollport.scrollTop =
+          typeof options === "number" ? (y ?? 0) : (options.top ?? 0);
+      }) as typeof scrollport.scrollTo,
+    );
+    const frames = manualAnimationFrames();
+    const firstPreview = ref.current!.previewFindOccurrence({
+      messageId: "user-1",
+      ranges: [range],
+      signal: new AbortController().signal,
+    });
+    const latestAbort = new AbortController();
+    const latestPreview = ref.current!.previewFindOccurrence({
+      messageId: "user-1",
+      ranges: [range],
+      signal: latestAbort.signal,
+    });
+    const leasedScrollTop = scrollport.scrollTop;
+
+    rerender(
+      <div style={FIXED_HEIGHT}>
+        <ChatSurface
+          ref={ref}
+          messages={turn(`Answer ${"streamed token ".repeat(220)}`)}
+          composer={null}
+        />
+      </div>,
+    );
+    expect(scrollport.scrollTop).toBe(leasedScrollTop);
+
+    latestAbort.abort();
+    await frames.flushAll();
+    await expect(firstPreview).resolves.toEqual({ kind: "Cancelled" });
+    await expect(latestPreview).resolves.toEqual({ kind: "Cancelled" });
+
+    rerender(
+      <div style={FIXED_HEIGHT}>
+        <ChatSurface
+          ref={ref}
+          messages={turn(`Answer ${"streamed token ".repeat(260)}`)}
+          composer={null}
+        />
+      </div>,
+    );
+    await waitFor(() => expect(scrollport.scrollTop).toBeGreaterThan(leasedScrollTop));
+
+    const revealed = ref.current!.previewFindOccurrence({
+      messageId: "user-1",
+      ranges: [range],
+      signal: new AbortController().signal,
+    });
+    await frames.flushAll();
+    await expect(revealed).resolves.toEqual({ kind: "Revealed" });
+    expect(target).toHaveAttribute("data-find-active", "true");
+    const revealedScrollTop = scrollport.scrollTop;
+
+    act(() => {
+      ref.current!.clearFindPresentation();
+    });
+    expect(target).not.toHaveAttribute("data-find-active");
+    rerender(
+      <div style={FIXED_HEIGHT}>
+        <ChatSurface
+          ref={ref}
+          messages={turn(`Answer ${"streamed token ".repeat(300)}`)}
+          composer={null}
+        />
+      </div>,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(Math.abs(scrollport.scrollTop - revealedScrollTop)).toBeLessThanOrEqual(
+      1,
+    );
+  });
+
+  it("retains one bottom-pinned origin across previews and Return restores it once", async () => {
+    const turn = (answer: string): ConversationMessage[] => [
+      assistantMessage(
+        "assistant-1",
+        1,
+        `first needle ${"early context ".repeat(40)}`,
+      ),
+      assistantMessage(
+        "assistant-2",
+        2,
+        `${"middle context ".repeat(70)}second needle`,
+      ),
+      userMessage("user-3", 3, "Streaming question"),
+      {
+        ...assistantMessage("assistant-4", 4, answer, "user-3"),
+        status: "pending",
+      },
+    ];
+    const initial = turn(`Answer ${"streamed token ".repeat(140)}`);
+    const { rerender } = render(
+      <ConversationFindHarness messages={initial} />,
+    );
+    const scrollport = screen.getByRole("region", {
+      name: "Chat conversation",
+    });
+    await waitFor(() => expect(scrollport.scrollTop).toBeGreaterThan(0));
+    const originScrollTop = scrollport.scrollTop;
+    const assistantTargets = screen.getAllByRole("group", {
+      name: "Assistant response",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Start Find" }));
+    await waitFor(() =>
+      expect(assistantTargets[0]).toHaveAttribute("data-find-active", "true"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Next match" }));
+    await waitFor(() =>
+      expect(assistantTargets[1]).toHaveAttribute("data-find-active", "true"),
+    );
+    expect(screen.getByLabelText("Return status")).toHaveTextContent("Available");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Go back to reading position" }),
+    );
+    await waitFor(() => {
+      expect(Math.abs(scrollport.scrollTop - originScrollTop)).toBeLessThanOrEqual(
+        2,
+      );
+      expect(screen.getByLabelText("Return status")).toHaveTextContent(
+        "Unavailable",
+      );
+    });
+    for (const target of assistantTargets) {
+      expect(target).not.toHaveAttribute("data-find-active");
+    }
+
+    rerender(
+      <ConversationFindHarness
+        messages={turn(`Answer ${"streamed token ".repeat(240)}`)}
+      />,
+    );
+    await waitFor(() => {
+      const bottom = scrollport.scrollHeight - scrollport.clientHeight;
+      expect(scrollport.scrollTop).toBeGreaterThanOrEqual(bottom - 4);
+    });
+  });
+
+  it("restores the eye-line while skipping a disconnected reading focus target", async () => {
+    const ref = createRef<ChatScrollHandle>();
+    render(
+      <div style={FIXED_HEIGHT}>
+        <ChatSurface
+          ref={ref}
+          messages={[
+            assistantMessage(
+              "assistant-1",
+              1,
+              `[Reading target](https://example.com) ${"body ".repeat(180)}`,
+            ),
+          ]}
+          composer={null}
+        />
+      </div>,
+    );
+    const scrollport = screen.getByRole("region", {
+      name: "Chat conversation",
+    });
+    await waitFor(() => expect(scrollport.scrollTop).toBeGreaterThan(0));
+    const focusTarget = screen.getByRole("link", { name: "Reading target" });
+    focusTarget.focus();
+    const originScrollTop = scrollport.scrollTop;
+    const position = ref.current!.captureReadingPosition();
+    expect(position).not.toBeNull();
+    const focus = vi.spyOn(focusTarget, "focus");
+    focusTarget.replaceWith(focusTarget.cloneNode(true));
+    focus.mockClear();
+    vi.spyOn(scrollport, "scrollTo").mockImplementation(
+      ((options: ScrollToOptions | number, y?: number) => {
+        scrollport.scrollTop =
+          typeof options === "number" ? (y ?? 0) : (options.top ?? 0);
+      }) as typeof scrollport.scrollTo,
+    );
+    act(() => {
+      scrollport.scrollTop = 0;
+      ref.current!.restoreReadingPosition(position!);
+    });
+
+    await waitFor(() =>
+      expect(Math.abs(scrollport.scrollTop - originScrollTop)).toBeLessThanOrEqual(
+        2,
+      ),
+    );
+    expect(focusTarget.isConnected).toBe(false);
+    expect(focus).not.toHaveBeenCalled();
+  });
+
+  it("defects on missing same-source preview ranges and message anchors", async () => {
+    const ref = createRef<ChatScrollHandle>();
+    render(
+      <div style={FIXED_HEIGHT}>
+        <ChatSurface
+          ref={ref}
+          messages={[userMessage("user-1", 1, "needle")]}
+          composer={null}
+        />
+      </div>,
+    );
+    const target = screen.getByRole("group", { name: "Your message" });
+    const range = visibleTextRange(target, "needle");
+
+    await expect(
+      ref.current!.previewFindOccurrence({
+        messageId: "missing-message",
+        ranges: [range],
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("Conversation Find message anchor is unavailable.");
+    await expect(
+      ref.current!.previewFindOccurrence({
+        messageId: "user-1",
+        ranges: [],
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("Conversation Find ranges are unavailable.");
+    expect(() =>
+      ref.current!.restoreReadingPosition({
+        anchorMessageId: "missing-message",
+        anchorOffsetTop: 0,
+        focusTarget: null,
+        pinMode: "released",
+      }),
+    ).toThrow("Conversation Find return anchor is unavailable.");
   });
 
   it("rejects an invisible Markdown-syntax match without moving the transcript", async () => {
@@ -909,10 +1475,12 @@ describe("ChatSurface", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Start Find" }));
     await waitFor(() =>
-      expect(screen.getByLabelText("Find status")).toHaveTextContent("Failed"),
+      expect(screen.getByLabelText("Find status")).toHaveTextContent("NoMatches"),
     );
 
-    expect(screen.queryByLabelText("Current match")).toBeNull();
+    expect(
+      screen.getByRole("group", { name: "Assistant response" }),
+    ).not.toHaveAttribute("data-find-active");
     expect(scrollport.scrollTop).toBe(initialScrollTop);
   });
 });

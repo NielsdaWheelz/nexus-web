@@ -3643,7 +3643,7 @@ export default function MediaPaneBody() {
     renderedHtml,
   ]);
 
-  const transcriptFindSnapshot = useMemo(
+  const transcriptFindSnapshotCandidate = useMemo(
     () =>
       isTranscriptMedia &&
       canRead &&
@@ -3667,11 +3667,22 @@ export default function MediaPaneBody() {
       transcriptState,
     ],
   );
+  const transcriptFindSnapshotRef = useRef(transcriptFindSnapshotCandidate);
+  if (
+    transcriptFindSnapshotRef.current?.sourceKey !==
+    transcriptFindSnapshotCandidate?.sourceKey
+  ) {
+    transcriptFindSnapshotRef.current = transcriptFindSnapshotCandidate;
+  }
+  const transcriptFindSnapshot = transcriptFindSnapshotRef.current;
   const transcriptFindSourceKeyRef = useRef<PaneFindSourceKey | null>(null);
   const transcriptFindActiveFragmentIdRef = useRef<string | null>(null);
-  transcriptFindSourceKeyRef.current = transcriptFindSnapshot?.sourceKey ?? null;
-  transcriptFindActiveFragmentIdRef.current =
-    activeTranscriptFragment?.id ?? null;
+  useLayoutEffect(() => {
+    transcriptFindSourceKeyRef.current =
+      transcriptFindSnapshot?.sourceKey ?? null;
+    transcriptFindActiveFragmentIdRef.current =
+      activeTranscriptFragment?.id ?? null;
+  }, [activeTranscriptFragment?.id, transcriptFindSnapshot?.sourceKey]);
   const handleTranscriptFindMatchElement = useCallback(
     (key: PaneFindResultKey, element: HTMLSpanElement | null) => {
       if (element) {

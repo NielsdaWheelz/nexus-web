@@ -29,27 +29,28 @@ export interface ChatScrollHandle {
   /** Capture one exact visible transcript eye-line before a Find preview. */
   captureReadingPosition: () => ChatReadingPosition | null;
   /** Restore a previously captured Find eye-line and reading focus exactly. */
-  restoreReadingPosition: (position: ChatReadingPosition) => boolean;
+  restoreReadingPosition: (position: ChatReadingPosition) => void;
+  /** Return the instance-scoped committed transcript root for DOM projection. */
+  getTranscriptElement: () => HTMLDivElement | null;
   /** Preview one revision-scoped Find occurrence without navigation. */
   previewFindOccurrence: (request: {
-    readonly occurrence: ChatFindOccurrencePosition;
+    readonly messageId: string;
+    readonly ranges: readonly Range[];
     readonly signal: AbortSignal;
-  }) => Promise<boolean>;
+  }) => Promise<ChatFindPreviewSettlement>;
   /** Remove transient Find presentation without moving the transcript. */
   clearFindPresentation: () => void;
 }
 
-export interface ChatFindOccurrencePosition {
-  readonly messageId: string;
-  readonly blockIndex: number;
-  readonly start: number;
-  readonly end: number;
-}
+export type ChatFindPreviewSettlement =
+  | { readonly kind: "Revealed" }
+  | { readonly kind: "Cancelled" };
 
 export interface ChatReadingPosition {
   readonly anchorMessageId: string;
   readonly anchorOffsetTop: number;
   readonly focusTarget: HTMLElement | null;
+  readonly pinMode: PinMode;
 }
 
 /** The eye-line snapshot used for branch-switch and load-older restores. */
@@ -89,10 +90,10 @@ interface UseChatScroll {
   scrollToMessage: ChatScrollHandle["scrollToMessage"];
   captureReadingPosition: ChatScrollHandle["captureReadingPosition"];
   restoreReadingPosition: ChatScrollHandle["restoreReadingPosition"];
+  getTranscriptElement: ChatScrollHandle["getTranscriptElement"];
   previewFindOccurrence: ChatScrollHandle["previewFindOccurrence"];
   clearFindPresentation: ChatScrollHandle["clearFindPresentation"];
   setReadingFocusTarget: (target: HTMLElement | null) => void;
-  activeFindOccurrence: ChatFindOccurrencePosition | null;
 }
 
 function findMessage(scrollport: HTMLElement, messageId: string) {
@@ -121,8 +122,6 @@ export function useChatScroll(
 ): UseChatScroll {
   const [spacerHeight, setSpacerHeight] = useState(0);
   const [isLatestBelowFold, setIsLatestBelowFold] = useState(false);
-  const [activeFindOccurrence, setActiveFindOccurrence] =
-    useState<ChatFindOccurrencePosition | null>(null);
 
   // Current pin anchor (latest user message), the active pin mode, the live
   // spacer height, the pending eye-line snapshot, and first-layout tracking.
@@ -139,10 +138,8 @@ export function useChatScroll(
   // drag) and re-engages or releases following (see onScroll).
   const programmaticTargetRef = useRef<number | null>(null);
   const activeFindMessageRef = useRef<HTMLElement | null>(null);
-  const activeFindOccurrenceRef = useRef<ChatFindOccurrencePosition | null>(
-    null,
-  );
   const findPreviewGenerationRef = useRef(0);
+  const findPreviewLeaseRef = useRef(false);
   const readingFocusTargetRef = useRef<HTMLElement | null>(null);
 
   const topInset = useCallback(() => {
@@ -216,7 +213,7 @@ export function useChatScroll(
   // frame. `released` is left untouched (a user gesture owns the viewport).
   const holdPin = useCallback(() => {
     const scrollport = scrollportRef.current;
-    if (!scrollport) return;
+    if (!scrollport || findPreviewLeaseRef.current) return;
 
     if (pinModeRef.current === "top") {
       const anchorId = anchorMessageIdRef.current;
@@ -303,6 +300,7 @@ export function useChatScroll(
         focusTarget?.isConnected === true && scrollport.contains(focusTarget)
           ? focusTarget
           : null,
+      pinMode: pinModeRef.current,
     };
   }, [scrollportRef]);
 
@@ -311,28 +309,52 @@ export function useChatScroll(
     const active = activeFindMessageRef.current;
     if (active) {
       delete active.dataset.findActive;
-      delete active.dataset.findBlockIndex;
-      delete active.dataset.findStart;
-      delete active.dataset.findEnd;
     }
     activeFindMessageRef.current = null;
-    activeFindOccurrenceRef.current = null;
-    setActiveFindOccurrence(null);
+    if (findPreviewLeaseRef.current) {
+      findPreviewLeaseRef.current = false;
+      pinModeRef.current = "released";
+    }
   }, []);
+
+  const yieldFindPreview = useCallback(() => {
+    findPreviewGenerationRef.current += 1;
+    findPreviewLeaseRef.current = false;
+  }, []);
+
+  const getTranscriptElement = useCallback(
+    () => transcriptRef.current,
+    [transcriptRef],
+  );
 
   const previewFindOccurrence = useCallback<
     ChatScrollHandle["previewFindOccurrence"]
   >(
-    async ({ occurrence, signal }) => {
+    async ({ messageId, ranges, signal }) => {
       const scrollport = scrollportRef.current;
-      if (!scrollport || signal.aborted) return false;
-      const target = findMessage(scrollport, occurrence.messageId);
-      if (!target) return false;
+      if (!scrollport) {
+        throw new Error("Conversation Find scroll owner is unavailable.");
+      }
+      if (signal.aborted) return { kind: "Cancelled" };
+      const target = findMessage(scrollport, messageId);
+      if (!target) {
+        throw new Error("Conversation Find message anchor is unavailable.");
+      }
+      if (
+        ranges.length === 0 ||
+        ranges.some(
+          (range) =>
+            !range.startContainer.isConnected ||
+            !range.endContainer.isConnected ||
+            !target.contains(range.startContainer) ||
+            !target.contains(range.endContainer),
+        )
+      ) {
+        throw new Error("Conversation Find ranges are unavailable.");
+      }
       const generation = findPreviewGenerationRef.current + 1;
       findPreviewGenerationRef.current = generation;
-      const previousOccurrence = activeFindOccurrenceRef.current;
-      activeFindOccurrenceRef.current = occurrence;
-      setActiveFindOccurrence(occurrence);
+      findPreviewLeaseRef.current = true;
       await new Promise<void>((resolve) =>
         requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
       );
@@ -341,43 +363,53 @@ export function useChatScroll(
         findPreviewGenerationRef.current !== generation
       ) {
         if (findPreviewGenerationRef.current === generation) {
-          activeFindOccurrenceRef.current = previousOccurrence;
-          setActiveFindOccurrence(previousOccurrence);
+          findPreviewLeaseRef.current = false;
         }
-        return false;
-      }
-      const mark = Array.from(
-        target.querySelectorAll<HTMLElement>("[data-find-active-mark='true']"),
-      ).find(
-        (candidate) =>
-          candidate.dataset.findBlockIndex === String(occurrence.blockIndex) &&
-          candidate.dataset.findStart === String(occurrence.start) &&
-          candidate.dataset.findEnd === String(occurrence.end),
-      );
-      if (!mark) {
-        activeFindOccurrenceRef.current = previousOccurrence;
-        setActiveFindOccurrence(previousOccurrence);
-        return false;
+        return { kind: "Cancelled" };
       }
       const priorMessage = activeFindMessageRef.current;
       if (priorMessage && priorMessage !== target) {
         delete priorMessage.dataset.findActive;
-        delete priorMessage.dataset.findBlockIndex;
-        delete priorMessage.dataset.findStart;
-        delete priorMessage.dataset.findEnd;
       }
       target.dataset.findActive = "true";
-      target.dataset.findBlockIndex = String(occurrence.blockIndex);
-      target.dataset.findStart = String(occurrence.start);
-      target.dataset.findEnd = String(occurrence.end);
       activeFindMessageRef.current = target;
-      pinModeRef.current = "released";
-      const markTop =
+
+      const firstRange = ranges[0]!;
+      const firstRangeElement =
+        firstRange.startContainer.nodeType === Node.ELEMENT_NODE
+          ? (firstRange.startContainer as Element)
+          : firstRange.startContainer.parentElement;
+      const codeScroll = firstRangeElement?.closest<HTMLElement>(
+        "[data-pane-find-code-scroll='true']",
+      );
+      if (codeScroll && target.contains(codeScroll)) {
+        const rangeRects = ranges
+          .filter((range) => {
+            const element =
+              range.startContainer.nodeType === Node.ELEMENT_NODE
+                ? (range.startContainer as Element)
+                : range.startContainer.parentElement;
+            return (
+              element?.closest("[data-pane-find-code-scroll='true']") ===
+              codeScroll
+            );
+          })
+          .map((range) => range.getBoundingClientRect());
+        const rangeLeft = Math.min(...rangeRects.map((rect) => rect.left));
+        const rangeRight = Math.max(...rangeRects.map((rect) => rect.right));
+        const codeRect = codeScroll.getBoundingClientRect();
+        if (rangeLeft < codeRect.left) {
+          codeScroll.scrollLeft += rangeLeft - codeRect.left;
+        } else if (rangeRight > codeRect.right) {
+          codeScroll.scrollLeft += rangeRight - codeRect.right;
+        }
+      }
+      const rangeTop =
         scrollport.scrollTop +
-        mark.getBoundingClientRect().top -
+        firstRange.getBoundingClientRect().top -
         scrollport.getBoundingClientRect().top;
-      scrollTo(markTop - topInset());
-      return true;
+      scrollTo(rangeTop - topInset());
+      return { kind: "Revealed" };
     },
     [scrollTo, scrollportRef, topInset],
   );
@@ -387,21 +419,22 @@ export function useChatScroll(
   >(
     (position) => {
       const scrollport = scrollportRef.current;
-      if (!scrollport) return false;
+      if (!scrollport) {
+        throw new Error("Conversation Find scroll owner is unavailable.");
+      }
       const target = findMessage(scrollport, position.anchorMessageId);
-      if (!target) return false;
-      if (
-        position.focusTarget !== null &&
-        (!position.focusTarget.isConnected ||
-          !scrollport.contains(position.focusTarget))
-      ) {
-        return false;
+      if (!target) {
+        throw new Error("Conversation Find return anchor is unavailable.");
       }
       clearFindPresentation();
-      pinModeRef.current = "released";
+      pinModeRef.current = position.pinMode;
       scrollTo(target.offsetTop - position.anchorOffsetTop);
-      position.focusTarget?.focus({ preventScroll: true });
-      return true;
+      if (
+        position.focusTarget?.isConnected === true &&
+        scrollport.contains(position.focusTarget)
+      ) {
+        position.focusTarget.focus({ preventScroll: true });
+      }
     },
     [clearFindPresentation, scrollTo, scrollportRef],
   );
@@ -594,6 +627,7 @@ export function useChatScroll(
         programmaticTargetRef.current = null;
       }
     } else if (scrollport) {
+      yieldFindPreview();
       const maxScrollTop = Math.max(
         0,
         scrollport.scrollHeight - scrollport.clientHeight,
@@ -604,7 +638,7 @@ export function useChatScroll(
           : "released";
     }
     measureLatestBelowFold();
-  }, [scrollportRef, measureLatestBelowFold]);
+  }, [scrollportRef, measureLatestBelowFold, yieldFindPreview]);
 
   // A user input gesture (wheel / touch / key) is taking over the viewport. Drop
   // the programmatic-settle marker so the resulting scroll is read by `onScroll`
@@ -614,7 +648,8 @@ export function useChatScroll(
   // (e.g. a wheel at the bottom) must not drop an active follow.
   const beginUserScroll = useCallback(() => {
     programmaticTargetRef.current = null;
-  }, []);
+    yieldFindPreview();
+  }, [yieldFindPreview]);
 
   const onComposerWheel = useCallback(
     (event: WheelEvent<HTMLElement>) => {
@@ -643,10 +678,11 @@ export function useChatScroll(
         return;
       }
       programmaticTargetRef.current = null;
+      yieldFindPreview();
       scrollport.scrollTop += event.deltaY;
       event.preventDefault();
     },
-    [scrollportRef],
+    [scrollportRef, yieldFindPreview],
   );
 
   return {
@@ -660,9 +696,9 @@ export function useChatScroll(
     scrollToMessage,
     captureReadingPosition,
     restoreReadingPosition,
+    getTranscriptElement,
     previewFindOccurrence,
     clearFindPresentation,
     setReadingFocusTarget,
-    activeFindOccurrence,
   };
 }

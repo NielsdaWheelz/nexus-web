@@ -805,7 +805,9 @@ export default function Conversation() {
   );
   usePanePrimaryChrome({
     search:
-      convo.conversationId && !convo.loading && !convo.error
+      convo.conversationId &&
+      !convo.loading &&
+      !(conversationId !== null && convo.messages.length === 0 && convo.error)
         ? findPublication
         : undefined,
     actions: inspector.companionAction ? [inspector.companionAction] : [],

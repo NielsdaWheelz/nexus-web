@@ -4,18 +4,6 @@ import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { MarkdownMessage } from "@/components/ui/MarkdownMessage";
 import type { ReaderCitationData } from "@/lib/conversations/readerCitation";
 
-function findRange(content: string, exact: string) {
-  const start = content.indexOf(exact);
-  if (start < 0) throw new Error(`Missing test range: ${exact}`);
-  return {
-    start,
-    end: start + exact.length,
-    blockIndex: 0,
-    locatorStart: start,
-    locatorEnd: start + exact.length,
-  };
-}
-
 const citation: ReaderCitationData = {
   index: 1,
   preview: { title: "Source" },
@@ -28,54 +16,47 @@ const citation: ReaderCitationData = {
   target: null,
 };
 
-describe("MarkdownMessage Find projection", () => {
-  it("marks exact visible text inside Markdown formatting", () => {
-    const content = "Before **needle** after";
+describe("MarkdownMessage", () => {
+  it("renders GFM labels without exposing Markdown syntax or link destinations", () => {
     render(
       <MarkdownMessage
-        content={content}
-        findRange={findRange(content, "needle")}
+        content={
+          "**Bold label** and [Visible link](https://hidden.example/path)"
+        }
       />,
     );
 
-    const mark = screen.getByLabelText("Current match");
-    expect(mark).toHaveTextContent("needle");
-    expect(mark).toHaveAttribute(
-      "data-find-start",
-      String(content.indexOf("needle")),
+    expect(screen.getByText("Bold label")).toHaveProperty(
+      "tagName",
+      "STRONG",
     );
+    expect(screen.getByRole("link", { name: "Visible link" })).toHaveAttribute(
+      "href",
+      "https://hidden.example/path",
+    );
+    expect(screen.queryByText(/\*\*/)).toBeNull();
+    expect(screen.queryByText(/hidden\.example/)).toBeNull();
   });
 
-  it("does not fabricate a mark for invisible Markdown link syntax", () => {
-    const content = "[Visible label](https://hidden.example/path)";
-    render(
-      <MarkdownMessage
-        content={content}
-        findRange={findRange(content, "hidden.example")}
-      />,
-    );
-
-    expect(screen.queryByLabelText("Current match")).toBeNull();
-    expect(screen.getByRole("link", { name: "Visible label" })).toBeVisible();
-  });
-
-  it("keeps the exact source locator after citation substitution shifts rendered offsets", () => {
-    const content = "Evidence [1] then needle";
+  it("renders resolved citations as excluded controls and omits unresolved markers", () => {
+    const content = "Evidence [1], missing [2], literal <<cite:3>>.";
     render(
       <FeedbackProvider>
         <MarkdownMessage
           content={content}
           citations={[citation]}
-          findRange={findRange(content, "needle")}
         />
       </FeedbackProvider>,
     );
 
-    const mark = screen.getByLabelText("Current match");
-    expect(mark).toHaveTextContent("needle");
-    expect(mark).toHaveAttribute(
-      "data-find-start",
-      String(content.indexOf("needle")),
+    expect(
+      screen.getByRole("link", { name: "Open citation 1" }),
+    ).toHaveAttribute("data-pane-find-exclude", "true");
+    expect(screen.queryByText("2")).toBeNull();
+    expect(screen.getByText("<<cite:3>>", { exact: false })).toBeVisible();
+    expect(screen.queryByText(/nexus-reader-citation/)).toBeNull();
+    expect(screen.getByText(/Evidence/)).toHaveTextContent(
+      "Evidence 1, missing , literal <<cite:3>>.",
     );
   });
 });

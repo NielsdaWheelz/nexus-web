@@ -97,6 +97,38 @@ describe("usePaneFind", () => {
     expect(result.current).toBe(controller);
   });
 
+  it("retains the prepared adapter across same-source producer rerenders", async () => {
+    const firstOwner = adapter();
+    const replacementOwner = adapter();
+    const { result, rerender } = renderHook(
+      ({ owner }) => usePaneFind({ adapter: owner }),
+      { initialProps: { owner: firstOwner } },
+    );
+    await settlePreparation();
+    act(() => result.current.onQueryChange("needle"));
+    await waitFor(() =>
+      expect(result.current.returnToReadingPosition.kind).toBe("Available"),
+    );
+    const controller = result.current;
+    const firstPreviewCount = vi.mocked(firstOwner.preview).mock.calls.length;
+
+    rerender({ owner: replacementOwner });
+
+    expect(result.current).toBe(controller);
+    expect(replacementOwner.prepare).not.toHaveBeenCalled();
+    expect(replacementOwner.find).not.toHaveBeenCalled();
+    expect(replacementOwner.preview).not.toHaveBeenCalled();
+    expect(result.current.query).toBe("needle");
+    expect(result.current.result.kind).toBe("Ready");
+    expect(result.current.returnToReadingPosition.kind).toBe("Available");
+
+    act(() => result.current.onStep("Next"));
+    await waitFor(() =>
+      expect(firstOwner.preview).toHaveBeenCalledTimes(firstPreviewCount + 1),
+    );
+    expect(replacementOwner.preview).not.toHaveBeenCalled();
+  });
+
   it("reprepares from the live position when Find opens without a Return origin", async () => {
     const owner = adapter();
     const { result } = renderHook(() => usePaneFind({ adapter: owner }));
@@ -267,6 +299,45 @@ describe("usePaneFind", () => {
     );
   });
 
+  it("keeps the prior active result when a replacement preview is cancelled", async () => {
+    const owner = adapter();
+    const { result } = renderHook(() => usePaneFind({ adapter: owner }));
+    await settlePreparation();
+    act(() => result.current.onQueryChange("needle"));
+    await waitFor(() =>
+      expect(result.current.returnToReadingPosition.kind).toBe("Available"),
+    );
+
+    let cancelPreview: (() => void) | undefined;
+    vi.mocked(owner.preview).mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          cancelPreview = () =>
+            reject(new DOMException("Preview cancelled.", "AbortError"));
+        }),
+    );
+    let activation: Promise<boolean>;
+    act(() => {
+      activation = result.current.onActivate(SECOND);
+    });
+    await waitFor(() => expect(cancelPreview).toBeTypeOf("function"));
+    expect(
+      result.current.result.kind === "Ready"
+        ? result.current.result.activeKey
+        : null,
+    ).toBe(FIRST);
+
+    await act(async () => {
+      cancelPreview?.();
+      await expect(activation!).resolves.toBe(false);
+    });
+    expect(
+      result.current.result.kind === "Ready"
+        ? result.current.result.activeKey
+        : null,
+    ).toBe(FIRST);
+  });
+
   it("serializes query and preview commands while Return restores", async () => {
     let finishReturn: (() => void) | undefined;
     const owner = adapter();
@@ -434,7 +505,7 @@ describe("usePaneFind", () => {
     );
   });
 
-  it("retires all hook-owned state when the source revision changes", async () => {
+  it("preserves and reruns a nonempty query when the source revision changes", async () => {
     const firstOwner = adapter();
     const secondOwner = adapter(undefined, OTHER_SOURCE);
     const { result, rerender } = renderHook(
@@ -442,18 +513,40 @@ describe("usePaneFind", () => {
       { initialProps: { owner: firstOwner } },
     );
     await settlePreparation();
-    act(() => result.current.onQueryChange("needle"));
+    act(() => {
+      result.current.onQueryChange("needle");
+      result.current.onMatchCaseChange(true);
+      result.current.onWholeWordChange(true);
+    });
     await waitFor(() =>
       expect(result.current.returnToReadingPosition.kind).toBe("Available"),
     );
+    const firstPrepareSignal = vi.mocked(firstOwner.prepare).mock.calls[0]![0]
+      .signal;
+    const firstFindSignal = vi.mocked(firstOwner.find).mock.calls[0]![0].signal;
+    const firstPreviewSignal = vi.mocked(firstOwner.preview).mock.calls[0]![0]
+      .signal;
 
     rerender({ owner: secondOwner });
 
-    await waitFor(() => expect(secondOwner.prepare).toHaveBeenCalled());
-    expect(result.current.query).toBe("");
-    expect(result.current.result.kind).toBe("Idle");
-    expect(result.current.matchCase).toBe(false);
-    expect(result.current.wholeWord).toBe(false);
+    expect(firstPrepareSignal.aborted).toBe(true);
+    expect(firstFindSignal.aborted).toBe(true);
+    expect(firstPreviewSignal.aborted).toBe(true);
+    expect(result.current.query).toBe("needle");
+    expect(result.current.matchCase).toBe(true);
+    expect(result.current.wholeWord).toBe(true);
+    expect(result.current.result.kind).toBe("Searching");
     expect(result.current.returnToReadingPosition.kind).toBe("Unavailable");
+    await waitFor(() => expect(secondOwner.prepare).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(secondOwner.find).toHaveBeenCalledTimes(1));
+    expect(secondOwner.find).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceKey: OTHER_SOURCE,
+        query: "needle",
+        matchCase: true,
+        wholeWord: true,
+      }),
+    );
+    await waitFor(() => expect(result.current.result.kind).toBe("Ready"));
   });
 });

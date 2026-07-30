@@ -4,17 +4,16 @@ import type { ConversationMessage } from "@/lib/conversations/types";
 import { conversationMessageText } from "@/lib/conversations/types";
 import ChatFailureCard from "./ChatFailureCard";
 import ConversationMessageText from "./ConversationMessageText";
-import type { ChatFindOccurrencePosition } from "./useChatScroll";
 import styles from "./MessageRow.module.css";
 
 export default function SystemMessage({
   message,
+  messageOrdinal,
   timestampLabel,
-  findOccurrence = null,
 }: {
   message: ConversationMessage;
+  messageOrdinal: number;
   timestampLabel: string;
-  findOccurrence?: ChatFindOccurrencePosition | null;
 }) {
   const isTerminalFailure =
     message.status === "error" || message.status === "cancelled";
@@ -25,7 +24,7 @@ export default function SystemMessage({
         {conversationMessageText(message) ? (
           <ConversationMessageText
             message={message}
-            findOccurrence={findOccurrence}
+            messageOrdinal={messageOrdinal}
           />
         ) : message.status === "pending" ? (
           "..."

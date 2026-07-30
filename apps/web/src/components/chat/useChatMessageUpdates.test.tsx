@@ -153,7 +153,7 @@ function CitationIndexHarness() {
         Fold one
       </button>
       <FeedbackProvider>
-        <AssistantAnswer message={message} citations={citations} />
+        <AssistantAnswer messageOrdinal={1} message={message} citations={citations} />
       </FeedbackProvider>
       <ul aria-label="folded citations">
         {(message.citations ?? []).map((citation) => (

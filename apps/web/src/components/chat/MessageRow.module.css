@@ -23,10 +23,10 @@
   outline-offset: var(--space-2);
 }
 
-.findMark {
-  color: inherit;
-  background: var(--highlight-yellow);
-  border-radius: 0.12em;
+@media (forced-colors: active) {
+  .message[data-find-active="true"] {
+    outline-color: Highlight;
+  }
 }
 
 @keyframes messageIn {
@@ -66,6 +66,27 @@
   min-inline-size: 0;
   max-inline-size: var(--chat-prose-measure);
   color: var(--ink);
+}
+
+.assistantBlock + .assistantBlock {
+  margin-top: var(--space-4);
+}
+
+/* Preserve the Markdown margins that collapsed across the former joined
+   `\n\n` block boundary while keeping each source block independently
+   projectable. */
+.assistantBlock:has(> div > :is(h1, h2, h3, h4):last-child)
+  + .assistantBlock:not(
+    :has(> div > :is(h1, h2, h3, h4, hr):first-child)
+  ) {
+  margin-top: var(--space-2);
+}
+
+.assistantBlock + .assistantBlock:has(
+  > div > :is(h1, h2, h3, h4, hr):first-child
+),
+.assistantBlock:has(> div > hr:last-child) + .assistantBlock {
+  margin-top: var(--space-5);
 }
 
 .systemBody {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { useState } from "react";
+import { StrictMode, type PropsWithChildren, useState } from "react";
 import { buildCanonicalCursor } from "@/lib/highlights/canonicalCursor";
 import type { Fragment } from "@/lib/media/transcriptView";
 import type { ReaderNavigationSection } from "@/lib/media/readerNavigation";
@@ -727,5 +727,74 @@ describe("useMediaPaneFind", () => {
     unsubscribe();
     lease.acquire();
     expect(lease.isActive()).toBe(true);
+  });
+
+  it("survives Strict Mode and equivalent same-source producer rerenders", async () => {
+    vi.spyOn(Range.prototype, "getBoundingClientRect").mockReturnValue({
+      top: 70,
+      bottom: 88,
+      left: 10,
+      right: 20,
+      height: 18,
+      width: 10,
+    } as DOMRect);
+    const source = [fragment("fragment-1", 0, "Find needle")];
+    const renderedStateRef: { current: WebFindRenderedState | null } = {
+      current: rendered("fragment-1", "Find needle"),
+    };
+    const lease = createMediaFindPreviewLease();
+    const view = renderHook(
+      ({
+        fragments,
+        focusReaderViewport,
+      }: {
+        fragments: readonly Fragment[];
+        focusReaderViewport: () => void;
+      }) => {
+        const [previewFragmentId, setPreviewFragmentId] = useState<
+          string | null
+        >(null);
+        const find = useMediaPaneFind({
+          mediaId: "media-1",
+          fragments,
+          sections: [],
+          renderedStateRef,
+          previewFragmentId,
+          setPreviewFragmentId,
+          focusReaderViewport,
+          previewLease: lease,
+          transcriptAdapter: null,
+        });
+        return find;
+      },
+      {
+        initialProps: {
+          fragments: source as readonly Fragment[],
+          focusReaderViewport: vi.fn(),
+        },
+        wrapper: ({ children }: PropsWithChildren) => (
+          <StrictMode>{children}</StrictMode>
+        ),
+      },
+    );
+
+    act(() => view.result.current.onQueryChange("needle"));
+    await waitFor(() => expect(view.result.current.result.kind).toBe("Ready"));
+    const ready = view.result.current.result;
+    if (ready.kind !== "Ready") {
+      throw new Error("Expected Web Find results.");
+    }
+
+    view.rerender({
+      fragments: source.map((item) => ({ ...item })),
+      focusReaderViewport: vi.fn(),
+    });
+
+    let previewed = false;
+    await act(async () => {
+      previewed = await view.result.current.onActivate(ready.rows[0]!.key);
+    });
+    expect(previewed).toBe(true);
+    expect(view.result.current.result.kind).toBe("Ready");
   });
 });

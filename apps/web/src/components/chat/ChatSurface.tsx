@@ -90,10 +90,10 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
       scrollToMessage,
       captureReadingPosition,
       restoreReadingPosition,
+      getTranscriptElement,
       previewFindOccurrence,
       clearFindPresentation,
       setReadingFocusTarget,
-      activeFindOccurrence,
     } = useChatScroll(scrollportRef, transcriptRef, messages, historyLoading);
     const requestedTargetMessageIdRef = useRef<string | null>(null);
     const activatedTargetMessageIdRef = useRef<string | null>(null);
@@ -132,6 +132,7 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
         scrollToMessage,
         captureReadingPosition,
         restoreReadingPosition,
+        getTranscriptElement,
         previewFindOccurrence,
         clearFindPresentation,
       }),
@@ -139,6 +140,7 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
         captureAnchor,
         captureReadingPosition,
         clearFindPresentation,
+        getTranscriptElement,
         previewFindOccurrence,
         restoreReadingPosition,
         scrollToMessage,
@@ -184,10 +186,11 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
               <div className={styles.emptyState}>{emptyState}</div>
             ) : null}
 
-            {messages.map((msg) => (
+            {messages.map((msg, messageIndex) => (
               <MessageRow
                 key={msg.id}
                 message={msg}
+                messageOrdinal={messageIndex + 1}
                 forkOptions={forkOptionsByParentId[msg.id] ?? NO_FORKS}
                 switchableLeafIds={switchableLeafIds}
                 onSelectFork={onSelectFork}
@@ -198,11 +201,6 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
                 onReconnectAssistant={onReconnectAssistant}
                 onReaderSourceActivate={onReaderSourceActivate}
                 onStartWalk={onStartWalk}
-                findOccurrence={
-                  activeFindOccurrence?.messageId === msg.id
-                    ? activeFindOccurrence
-                    : null
-                }
               />
             ))}
 

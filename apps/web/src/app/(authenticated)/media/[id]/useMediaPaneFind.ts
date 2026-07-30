@@ -104,6 +104,8 @@ interface PreparedSectionScope {
 export interface WebFindAdapter
   extends PaneFindAdapter<MediaPaneFindError> {
   rebuildPresentation(): void;
+  resume(): void;
+  invalidate(): void;
   dispose(): void;
 }
 
@@ -324,6 +326,7 @@ export function createWebFindAdapter({
   let occurrencesByKey = new Map<PaneFindResultKey, WebFindOccurrence>();
   let activeOccurrence: WebFindOccurrence | null = null;
   let origin: WebFindOrigin | null = null;
+  let leaseRetired = false;
   let disposed = false;
 
   const assertCurrent = (sourceKey: PaneFindSourceKey) => {
@@ -361,6 +364,17 @@ export function createWebFindAdapter({
           ? resolveOccurrence(activeOccurrence)
           : [],
     });
+  };
+  const invalidate = (): void => {
+    preparedScopeBySession.clear();
+    occurrencesByKey.clear();
+    activeOccurrence = null;
+    origin = null;
+    highlightOwner.clear();
+    if (!leaseRetired) {
+      previewLease.retire();
+      leaseRetired = true;
+    }
   };
 
   return {
@@ -649,14 +663,14 @@ export function createWebFindAdapter({
         publishRenderedRanges(rendered);
       }
     },
+    resume() {
+      leaseRetired = false;
+    },
+    invalidate,
     dispose() {
+      if (disposed) return;
+      invalidate();
       disposed = true;
-      preparedScopeBySession.clear();
-      occurrencesByKey.clear();
-      activeOccurrence = null;
-      origin = null;
-      highlightOwner.clear();
-      previewLease.retire();
     },
   };
 }
@@ -713,22 +727,40 @@ export function useMediaPaneFind({
   );
   const findSnapshotRef = useRef(snapshot);
   if (
-    previewFragmentId === null ||
-    findSnapshotRef.current.sourceKey === snapshot.sourceKey
+    previewFragmentId === null &&
+    findSnapshotRef.current.sourceKey !== snapshot.sourceKey
   ) {
     findSnapshotRef.current = snapshot;
   }
   const findSnapshot = findSnapshotRef.current;
   const sourceKeyRef = useRef(snapshot.sourceKey);
-  sourceKeyRef.current = snapshot.sourceKey;
+  useLayoutEffect(() => {
+    sourceKeyRef.current = snapshot.sourceKey;
+  }, [snapshot.sourceKey]);
   const highlightOwner = useMemo(() => createWebFindHighlightOwner(), []);
+  const liveInputsRef = useRef({
+    renderedStateRef,
+    setPreviewFragmentId,
+    focusReaderViewport,
+  });
+  useLayoutEffect(() => {
+    liveInputsRef.current = {
+      renderedStateRef,
+      setPreviewFragmentId,
+      focusReaderViewport,
+    };
+  }, [focusReaderViewport, renderedStateRef, setPreviewFragmentId]);
   const getRenderedState = useCallback(
-    () => renderedStateRef.current,
-    [renderedStateRef],
+    () => liveInputsRef.current.renderedStateRef.current,
+    [],
+  );
+  const clearPreviewFragment = useCallback(
+    () => liveInputsRef.current.setPreviewFragmentId(null),
+    [],
   );
   const showPreviewFragment = useCallback(
     async (fragmentId: string, signal: AbortSignal) => {
-      setPreviewFragmentId(fragmentId);
+      liveInputsRef.current.setPreviewFragmentId(fragmentId);
       return waitForRenderedFragment({
         fragmentId,
         snapshot: findSnapshot,
@@ -736,7 +768,7 @@ export function useMediaPaneFind({
         getRenderedState,
       });
     },
-    [findSnapshot, getRenderedState, setPreviewFragmentId],
+    [findSnapshot, getRenderedState],
   );
   const adapter = useMemo(
     () =>
@@ -745,55 +777,64 @@ export function useMediaPaneFind({
         getCurrentSourceKey: () => sourceKeyRef.current,
         getRenderedState,
         showPreviewFragment,
-        clearPreviewFragment: () => setPreviewFragmentId(null),
-        focusReaderViewport,
+        clearPreviewFragment,
+        focusReaderViewport: () =>
+          liveInputsRef.current.focusReaderViewport(),
         previewLease,
         highlightOwner,
       }),
     [
-      focusReaderViewport,
+      clearPreviewFragment,
       getRenderedState,
       highlightOwner,
       previewLease,
-      setPreviewFragmentId,
       showPreviewFragment,
       findSnapshot,
     ],
   );
   const activeAdapter = transcriptAdapter ?? adapter;
   const paneFind = usePaneFind({ adapter: activeAdapter });
-  const begunWebAdapterRef = useRef<typeof adapter | null>(null);
   useLayoutEffect(() => {
     if (
       !transcriptAdapter &&
       findSnapshot.sourceKey !== snapshot.sourceKey
     ) {
-      setPreviewFragmentId(null);
+      clearPreviewFragment();
     }
   }, [
+    clearPreviewFragment,
     findSnapshot.sourceKey,
-    setPreviewFragmentId,
     snapshot.sourceKey,
     transcriptAdapter,
   ]);
+  const mountedAdapterRef = useRef<typeof activeAdapter | null>(null);
   useLayoutEffect(() => {
-    if (transcriptAdapter) {
-      return () => transcriptAdapter.dispose();
+    mountedAdapterRef.current = activeAdapter;
+    if (!transcriptAdapter) {
+      clearPreviewFragment();
+      previewLease.beginSource();
+      adapter.resume();
     }
-    setPreviewFragmentId(null);
-    return () => adapter.dispose();
-  }, [adapter, setPreviewFragmentId, transcriptAdapter]);
-  useLayoutEffect(() => {
-    if (
-      transcriptAdapter ||
-      previewFragmentId !== null ||
-      begunWebAdapterRef.current === adapter
-    ) {
-      return;
-    }
-    begunWebAdapterRef.current = adapter;
-    previewLease.beginSource();
-  }, [adapter, previewFragmentId, previewLease, transcriptAdapter]);
+    return () => {
+      if (!transcriptAdapter) {
+        adapter.invalidate();
+      }
+      if (mountedAdapterRef.current === activeAdapter) {
+        mountedAdapterRef.current = null;
+      }
+      queueMicrotask(() => {
+        if (mountedAdapterRef.current !== activeAdapter) {
+          activeAdapter.dispose();
+        }
+      });
+    };
+  }, [
+    activeAdapter,
+    adapter,
+    clearPreviewFragment,
+    previewLease,
+    transcriptAdapter,
+  ]);
   return {
     ...paneFind,
     sourceKey: activeAdapter.sourceKey,

@@ -162,6 +162,7 @@ describe("AssistantMessage", () => {
 
     render(
       <AssistantMessage
+        messageOrdinal={1}
         message={message}
         forkOptions={[]}
         timestampLabel={timestampLabel}
@@ -193,6 +194,7 @@ describe("AssistantMessage", () => {
 
     render(
       <AssistantMessage
+        messageOrdinal={1}
         message={message}
         forkOptions={[]}
         timestampLabel={timestampLabel}
@@ -217,6 +219,7 @@ describe("AssistantMessage", () => {
 
     render(
       <AssistantMessage
+        messageOrdinal={1}
         message={message}
         forkOptions={[]}
         timestampLabel={timestampLabel}
@@ -243,6 +246,7 @@ describe("AssistantMessage", () => {
 
     render(
       <AssistantMessage
+        messageOrdinal={1}
         message={message}
         forkOptions={[]}
         timestampLabel={timestampLabel}
@@ -266,6 +270,7 @@ describe("AssistantMessage", () => {
 
     render(
       <AssistantMessage
+        messageOrdinal={1}
         message={message}
         forkOptions={[]}
         timestampLabel={timestampLabel}
@@ -292,6 +297,7 @@ describe("AssistantMessage", () => {
 
     render(
       <AssistantMessage
+        messageOrdinal={1}
         message={message}
         forkOptions={[]}
         timestampLabel={timestampLabel}
@@ -314,6 +320,7 @@ describe("AssistantMessage", () => {
 
     render(
       <AssistantMessage
+        messageOrdinal={1}
         message={message}
         forkOptions={[]}
         timestampLabel={timestampLabel}
@@ -340,6 +347,7 @@ describe("AssistantMessage", () => {
 
     render(
       <AssistantMessage
+        messageOrdinal={1}
         message={message}
         forkOptions={[]}
         timestampLabel={timestampLabel}
@@ -361,6 +369,7 @@ describe("AssistantMessage", () => {
 
     render(
       <AssistantMessage
+        messageOrdinal={1}
         message={assistantMessage()}
         forkOptions={[]}
         timestampLabel={timestampLabel}
@@ -400,6 +409,7 @@ describe("AssistantMessage", () => {
     );
     render(
       <AssistantMessage
+        messageOrdinal={1}
         message={assistantMessage()}
         forkOptions={[]}
         timestampLabel={timestampLabel}
@@ -568,6 +578,7 @@ describe("AssistantMessage", () => {
 
     render(
       <AssistantMessage
+        messageOrdinal={1}
         message={message}
         forkOptions={[]}
         timestampLabel={timestampLabel}
@@ -627,6 +638,7 @@ describe("AssistantMessage", () => {
 
     render(
       <AssistantMessage
+        messageOrdinal={1}
         message={message}
         forkOptions={[]}
         timestampLabel={timestampLabel}
@@ -673,6 +685,7 @@ describe("AssistantMessage", () => {
 
     render(
       <AssistantMessage
+        messageOrdinal={1}
         message={message}
         forkOptions={[]}
         timestampLabel={timestampLabel}
@@ -712,6 +725,7 @@ describe("AssistantMessage", () => {
 
     render(
       <AssistantMessage
+        messageOrdinal={1}
         message={message}
         forkOptions={[]}
         timestampLabel={timestampLabel}
@@ -755,6 +769,7 @@ describe("AssistantMessage", () => {
 
     render(
       <AssistantMessage
+        messageOrdinal={1}
         message={message}
         forkOptions={[]}
         timestampLabel={timestampLabel}
@@ -774,6 +789,7 @@ describe("AssistantMessage", () => {
   it("uses normal assistant prose with an accessible role group and a quiet timestamp", () => {
     render(
       <AssistantMessage
+        messageOrdinal={1}
         message={assistantMessage()}
         forkOptions={[]}
         timestampLabel={timestampLabel}
@@ -841,6 +857,7 @@ describe("AssistantMessage", () => {
   it("keeps Sources and Details closed while preserving their content", () => {
     render(
       <AssistantMessage
+        messageOrdinal={1}
         message={completedWithRun()}
         forkOptions={[]}
         timestampLabel={timestampLabel}
@@ -888,6 +905,7 @@ describe("AssistantMessage", () => {
         style={{ width: "320px", maxWidth: "320px" }}
       >
         <AssistantMessage
+        messageOrdinal={1}
           message={message}
           forkOptions={[]}
           timestampLabel={timestampLabel}

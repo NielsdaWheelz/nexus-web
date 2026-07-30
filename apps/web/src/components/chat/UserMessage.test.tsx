@@ -37,6 +37,7 @@ describe("chat human rows keep their timestamp", () => {
   it("user row renders its timestamp in the normal chat register", () => {
     render(
       <UserMessage
+        messageOrdinal={1}
         message={message("user-1", "user", "What is the capital of France?")}
         timestampLabel="Jun 3"
       />,
@@ -55,6 +56,7 @@ describe("chat human rows keep their timestamp", () => {
   it("system row renders its timestamp", () => {
     render(
       <SystemMessage
+        messageOrdinal={1}
         message={message("system-1", "system", "Conversation renamed.")}
         timestampLabel="Jun 4"
       />,
@@ -101,6 +103,7 @@ describe("UserMessage sent reader-quote card", () => {
 
     render(
       <UserMessage
+        messageOrdinal={1}
         message={quoted}
         timestampLabel="Jun 3"
         onReaderSourceActivate={onReaderSourceActivate}
@@ -135,6 +138,7 @@ describe("UserMessage sent reader-quote card", () => {
   it("renders no quote card for an ordinary user message", () => {
     render(
       <UserMessage
+        messageOrdinal={1}
         message={message("user-2", "user", "Just a plain question.")}
         timestampLabel="Jun 3"
       />,

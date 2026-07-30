@@ -1,5 +1,5 @@
-import type { EmphasisSegment } from "@/lib/ui/emphasis";
 import type { ConversationMessage } from "@/lib/conversations/types";
+import { isAssistantPrimaryBodyVisible } from "@/lib/conversations/conversationPresentation";
 import {
   createPaneFindResultKey,
   createPaneFindSourceKey,
@@ -8,243 +8,260 @@ import {
   type PaneFindResultRow,
   type PaneFindSourceKey,
 } from "@/lib/panes/paneSearch";
+import { canonicalTextFind } from "@/lib/reader/canonicalTextFind";
 
-export const CONVERSATION_FIND_MATCH_THRESHOLD = 2_000;
+type ConversationFindTerminalStatus = Exclude<
+  ConversationMessage["status"],
+  "pending"
+>;
 
-const SNIPPET_CONTEXT_CODEPOINTS = 48;
-const WORD_CODEPOINT =
-  /[\p{Letter}\p{Number}\p{Mark}\p{Connector_Punctuation}]/u;
-
-interface ConversationFindBlock {
+interface ConversationFindSourceBlock {
+  readonly unitId: string;
   readonly blockIndex: number;
-  readonly format: "plain" | "markdown";
-  readonly text: string;
 }
 
 interface ConversationFindMessage {
   readonly id: string;
   readonly seq: number;
   readonly role: ConversationMessage["role"];
-  readonly blocks: readonly ConversationFindBlock[];
-  readonly sourceIdentity: PaneFindIdentityValue;
+  readonly status: ConversationFindTerminalStatus;
+  readonly messageOrdinal: number;
+  readonly blocks: readonly ConversationFindSourceBlock[];
 }
 
 export interface ConversationFindSnapshot {
-  readonly sourceIdentity: PaneFindIdentityValue;
+  readonly conversationId: string | null;
   readonly sourceKey: PaneFindSourceKey;
+  readonly sourceRevision: number;
   readonly messages: readonly ConversationFindMessage[];
+}
+
+export interface ConversationFindUnit {
+  readonly unitId: string;
+  readonly messageId: string;
+  readonly messageOrdinal: number;
+  readonly blockIndex: number;
+  readonly role: ConversationMessage["role"];
+  readonly text: string;
 }
 
 export interface ConversationFindOccurrence {
   readonly key: PaneFindResultKey;
   readonly messageId: string;
   readonly blockIndex: number;
-  readonly start: number;
-  readonly end: number;
+  readonly startCp: number;
+  readonly endCp: number;
   readonly row: PaneFindResultRow;
 }
 
-export type ConversationFindMatches =
-  | { readonly kind: "NoMatches" }
+type ConversationFindMatches =
+  | {
+      readonly kind: "NoMatches";
+      readonly completeness: "Complete";
+    }
   | {
       readonly kind: "Ready";
+      readonly completeness: "Complete";
       readonly occurrences: readonly ConversationFindOccurrence[];
     }
-  | { readonly kind: "TooManyMatches"; readonly threshold: number };
+  | { readonly kind: "TooManyMatches"; readonly threshold: 2_000 };
 
-function roleLabel(role: ConversationMessage["role"]): string {
-  switch (role) {
-    case "user":
-      return "Your message";
-    case "assistant":
-      return "Assistant response";
-    case "system":
-      return "System message";
-  }
+function resolvedCitationOrdinals(
+  message: ConversationMessage,
+): readonly number[] {
+  return [...new Set((message.citations ?? []).map(({ ordinal }) => ordinal))].sort(
+    (left, right) => left - right,
+  );
 }
 
 export function createConversationFindSnapshot({
   conversationId,
   activeLeafMessageId,
   messages,
+  sourceRevision,
 }: {
   readonly conversationId: string | null;
   readonly activeLeafMessageId: string | null;
   readonly messages: readonly ConversationMessage[];
+  readonly sourceRevision: number;
 }): ConversationFindSnapshot {
-  const searchableMessages = messages.map((message) => {
-    const blocks = (message.message_document?.blocks ?? []).map(
-      (block, blockIndex) => ({
-        blockIndex,
-        format: block.format,
-        text: block.text,
-      }),
+  if (!Number.isSafeInteger(sourceRevision) || sourceRevision < 0) {
+    throw new Error(
+      "Conversation Find source revision must be a nonnegative safe integer.",
     );
-    return {
+  }
+
+  const sourceMessages: PaneFindIdentityValue[] = [];
+  const searchableMessages: ConversationFindMessage[] = [];
+  messages.forEach((message, messageIndex) => {
+    const terminal = message.status !== "pending";
+    const bodyVisible =
+      message.role !== "assistant" || isAssistantPrimaryBodyVisible(message);
+    const searchable = terminal && bodyVisible;
+    const sourceBlocks = searchable
+      ? (message.message_document?.blocks ?? []).map((block, blockIndex) => ({
+          blockIndex,
+          format: block.format,
+          text: block.text,
+        }))
+      : [];
+    const blocks = sourceBlocks.map(({ blockIndex }) => ({
+      unitId: JSON.stringify([message.id, blockIndex]),
+      blockIndex,
+    }));
+    const citationOrdinals =
+      searchable && message.role === "assistant"
+        ? resolvedCitationOrdinals(message)
+        : [];
+
+    sourceMessages.push({
       id: message.id,
       seq: message.seq,
       role: message.role,
+      status: message.status,
+      primaryBodyVisible: bodyVisible,
+      blocks: sourceBlocks,
+      resolvedCitationOrdinals: citationOrdinals,
+    });
+    if (message.status === "pending" || !bodyVisible) return;
+    searchableMessages.push({
+      id: message.id,
+      seq: message.seq,
+      role: message.role,
+      status: message.status,
+      messageOrdinal: messageIndex + 1,
       blocks,
-      sourceIdentity: {
-        kind: "ConversationMessage",
-        conversationId,
-        messageId: message.id,
-        seq: message.seq,
-        role: message.role,
-        blocks,
-      },
-    };
+    });
   });
-  const sourceIdentity = {
-    kind: "ConversationTranscript",
-    conversationId,
-    activeLeafMessageId,
-    messages: searchableMessages.map((message) => ({
-      id: message.id,
-      seq: message.seq,
-      role: message.role,
-      blocks: message.blocks.map((block) => ({
-        blockIndex: block.blockIndex,
-        format: block.format,
-        text: block.text,
-      })),
-    })),
-  };
+
   return {
-    sourceIdentity,
-    sourceKey: createPaneFindSourceKey(sourceIdentity),
+    conversationId,
+    sourceKey: createPaneFindSourceKey({
+      kind: "ConversationFindSource",
+      conversationId,
+      activeLeafMessageId,
+      messages: sourceMessages,
+    }),
+    sourceRevision,
     messages: searchableMessages,
   };
 }
 
-function codePointBefore(text: string, offset: number): string {
-  return Array.from(text.slice(0, offset)).at(-1) ?? "";
+function roleLabel(role: ConversationMessage["role"]): string {
+  switch (role) {
+    case "user":
+      return "You";
+    case "assistant":
+      return "Assistant";
+    case "system":
+      return "System";
+  }
 }
 
-function codePointAfter(text: string, offset: number): string {
-  return Array.from(text.slice(offset))[0] ?? "";
-}
-
-function isWholeWord(text: string, start: number, end: number): boolean {
-  const before = codePointBefore(text, start);
-  const after = codePointAfter(text, end);
-  return (
-    (!before || !WORD_CODEPOINT.test(before)) &&
-    (!after || !WORD_CODEPOINT.test(after))
+function expectedUnits(
+  snapshot: ConversationFindSnapshot,
+): readonly Omit<ConversationFindUnit, "text">[] {
+  return snapshot.messages.flatMap((message) =>
+    message.blocks.map((block) => ({
+      unitId: block.unitId,
+      messageId: message.id,
+      messageOrdinal: message.messageOrdinal,
+      blockIndex: block.blockIndex,
+      role: message.role,
+    })),
   );
 }
 
-function literalMatches(
-  candidate: string,
-  query: string,
-  matchCase: boolean,
-): boolean {
-  if (matchCase) return candidate === query;
-  // The fixed-length candidate window keeps source offsets exact. Unicode
-  // lowercase mappings that expand (for example, Turkish capital dotted I)
-  // intentionally do not match a shorter query.
-  return candidate.toLowerCase() === query.toLowerCase();
+function assertExactProjectedUnits(
+  snapshot: ConversationFindSnapshot,
+  units: readonly ConversationFindUnit[],
+): void {
+  const expected = expectedUnits(snapshot);
+  if (units.length !== expected.length) {
+    throw new Error(
+      "Conversation Find projected units must cover every searchable block exactly once.",
+    );
+  }
+  for (let index = 0; index < expected.length; index += 1) {
+    const actual = units[index]!;
+    const source = expected[index]!;
+    if (
+      actual.unitId !== source.unitId ||
+      actual.messageId !== source.messageId ||
+      actual.messageOrdinal !== source.messageOrdinal ||
+      actual.blockIndex !== source.blockIndex ||
+      actual.role !== source.role
+    ) {
+      throw new Error(
+        "Conversation Find projected units must preserve source block identity and order.",
+      );
+    }
+  }
 }
 
-function snippetStart(text: string, start: number): number {
-  const context = Array.from(text.slice(0, start))
-    .slice(-SNIPPET_CONTEXT_CODEPOINTS)
-    .join("");
-  return start - context.length;
-}
-
-function snippetEnd(text: string, end: number): number {
-  return (
-    end +
-    Array.from(text.slice(end))
-      .slice(0, SNIPPET_CONTEXT_CODEPOINTS)
-      .join("").length
-  );
-}
-
-function snippetSegments(
-  text: string,
-  start: number,
-  end: number,
-): readonly EmphasisSegment[] {
-  const from = snippetStart(text, start);
-  const to = snippetEnd(text, end);
-  const segments = [
-    { text: text.slice(from, start), emphasized: false },
-    { text: text.slice(start, end), emphasized: true },
-    { text: text.slice(end, to), emphasized: false },
-  ];
-  return segments.filter((segment) => segment.text.length > 0);
-}
-
-export function findConversationOccurrences({
+export function matchConversationFindUnits({
   snapshot,
+  units,
   query,
   matchCase,
   wholeWord,
 }: {
   readonly snapshot: ConversationFindSnapshot;
+  readonly units: readonly ConversationFindUnit[];
   readonly query: string;
   readonly matchCase: boolean;
   readonly wholeWord: boolean;
 }): ConversationFindMatches {
-  if (query.length === 0) {
-    throw new Error("Conversation Find requires a non-empty literal query.");
+  assertExactProjectedUnits(snapshot, units);
+  if (snapshot.conversationId === null) {
+    throw new Error(
+      "Conversation Find matching requires a loaded existing conversation.",
+    );
   }
-  const occurrences: ConversationFindOccurrence[] = [];
-  for (
-    let messageIndex = 0;
-    messageIndex < snapshot.messages.length;
-    messageIndex += 1
-  ) {
-    const message = snapshot.messages[messageIndex]!;
-    for (const block of message.blocks) {
-      let offset = 0;
-      while (offset <= block.text.length - query.length) {
-        const end = offset + query.length;
-        const candidate = block.text.slice(offset, end);
-        if (
-          literalMatches(candidate, query, matchCase) &&
-          (!wholeWord || isWholeWord(block.text, offset, end))
-        ) {
-          if (occurrences.length === CONVERSATION_FIND_MATCH_THRESHOLD) {
-            return {
-              kind: "TooManyMatches",
-              threshold: CONVERSATION_FIND_MATCH_THRESHOLD,
-            };
-          }
-          const key = createPaneFindResultKey({
-            source: message.sourceIdentity,
-            locator: {
-              messageId: message.id,
-              blockIndex: block.blockIndex,
-              start: offset,
-              end,
-            },
-          });
-          occurrences.push({
-            key,
-            messageId: message.id,
-            blockIndex: block.blockIndex,
-            start: offset,
-            end,
-            row: {
-              key,
-              context: [
-                roleLabel(message.role),
-                `Message ${messageIndex + 1}`,
-              ],
-              snippet: snippetSegments(block.text, offset, end),
-            },
-          });
-          offset = end;
-          continue;
-        }
-        offset += 1;
+  const result = canonicalTextFind({
+    units: units.map(({ unitId: id, text }) => ({ id, text })),
+    query,
+    matchCase,
+    wholeWord,
+    completeness: "Complete",
+  });
+  if (result.kind === "TooManyMatches") return result;
+  if (result.kind === "NoMatches") {
+    return { kind: "NoMatches", completeness: "Complete" };
+  }
+
+  const unitById = new Map(units.map((unit) => [unit.unitId, unit]));
+  const source = {
+    kind: "ConversationFindSnapshot",
+    conversationId: snapshot.conversationId,
+    sourceRevision: snapshot.sourceRevision,
+  } as const;
+  return {
+    kind: "Ready",
+    completeness: "Complete",
+    occurrences: result.occurrences.map((occurrence) => {
+      const unit = unitById.get(occurrence.unitId);
+      if (!unit) {
+        throw new Error(
+          "Canonical Conversation Find returned an unknown projected unit.",
+        );
       }
-    }
-  }
-  return occurrences.length === 0
-    ? { kind: "NoMatches" }
-    : { kind: "Ready", occurrences };
+      const locator = {
+        messageId: unit.messageId,
+        blockIndex: unit.blockIndex,
+        startCp: occurrence.startCp,
+        endCp: occurrence.endCp,
+      };
+      const key = createPaneFindResultKey({ source, locator });
+      return {
+        key,
+        ...locator,
+        row: {
+          key,
+          context: [roleLabel(unit.role), `Message ${unit.messageOrdinal}`],
+          snippet: occurrence.snippet,
+        },
+      };
+    }),
+  };
 }

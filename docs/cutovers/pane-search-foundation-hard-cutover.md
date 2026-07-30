@@ -1,6 +1,6 @@
 # Pane Search Foundation Hard Cutover
 
-Status: IMPLEMENTED
+Status: IMPLEMENTED (base + same-pane source-replacement amendment)
 Type: hard cutover
 Date: 2026-07-29
 
@@ -113,8 +113,11 @@ is not permission to migrate every domain in one change.
     The revealed location and **Go back to reading position** remain.
 11. First successful occurrence activation captures an exact origin before
     moving. Later activations retain it. Return restores once and retires it.
-12. Route/source/revision replacement cancels query work, marks, result surface,
-    and origin. Pane inactivity alone does not.
+12. Route-key exit/unmount cancels query work, marks, result surface, origin,
+    and query. A mounted producer's same-pane source/revision replacement
+    cancels old work/presentation/origin, preserves a nonempty query plus match
+    options, prepares the new source, and reruns once. Pane inactivity alone
+    does not.
 13. Count/status uses a polite live region. A rejected activation moves
     nothing and announces through that same region. Preview never steals focus
     from the query or result row; Close returns focus to Search; Return
@@ -174,10 +177,10 @@ route/domain owner
 | shortcut arbitration | `WorkspaceHost` |
 | expanded state, focus, shared controls/actions | `PaneShell` / `PaneSearchBar` |
 | FilterRows collapsed-state marker and spoken status | `PaneShell` / `PaneSearchBar` |
-| query generations, active occurrence, wrap | `usePaneFind` |
+| query generations, active occurrence, wrap, same-pane preserve/reprepare | `usePaneFind` |
 | rows, filters, sorts | collection/domain owner |
 | searchable source, matcher, scopes, locator, preview | dependent format adapter |
-| origin and progress/playback fence | mounted reader/format owner |
+| origin, presentation invalidation, and progress/playback fence | mounted reader/format owner |
 | transient result presentation | Resource Inspector + workspace host |
 | global retrieval | Nexus and `/search`, unchanged |
 
@@ -324,6 +327,17 @@ Once Return begins, `usePaneFind` cancels queued/in-flight query, preview, and
 presentation-clear work and rejects every new Find command until restoration
 settles. Return and preview/query mutation never overlap.
 
+Adapter lifecycle is keyed by `adapter.sourceKey`, never adapter object
+identity. Producer rerenders with the same source key retain the prepared
+adapter, occurrence map, query, results, and origin. A new key in the same
+mounted producer aborts and generation-fences the old session, retires results
+and Return, preserves query/Match case/Whole word, prepares the new adapter,
+and reruns one retained nonempty query. The format owner synchronously clears
+marks, preview leases, and other external presentation on that key change;
+`usePaneFind` cannot own DOM/frame/scroll side effects. Initial mount,
+route-key exit/unmount, Dismiss, and explicit empty query retain reset
+semantics.
+
 Preview positioning is side-effect-free by construction. Where a format has no
 such path today — EPUB cross-section movement exists only as navigation that
 writes progress and URL — the child builds one as new construction; it never
@@ -337,6 +351,16 @@ closed-to-open transition before focusing the query. `usePaneFind` reprepares
 only when no Return origin exists; an existing origin retains its session.
 Every producer, including Chat, forwards the callback. Refocusing an already
 open bar does not reprepare.
+
+### Conversation same-pane source-replacement amendment
+
+The Conversation Find cutover hard-cuts the source-key lifecycle immediately
+above into the shared `usePaneFind` owner. This corrects the implemented
+adapter-object effect, which otherwise treats same-source producer rerenders as
+new sources and silently clears a query on an actual revision. This is shared
+Find behavior, not a Conversation option or compatibility branch. Existing
+format-owned source-key cleanup effects remain authoritative for marks, frame
+state, preview leases, and reading origins.
 
 ### Implemented collection FilterRows successor amendment
 
@@ -605,16 +629,18 @@ Dependent format/list files belong only in their named child cutover. Update
 2. Filter panes render only matching local rows, preserve domain order, reuse
    existing filters/sorts, expose no Find-only controls, mark active collapsed
    domain state, and announce debounced Partial/Complete row status.
-3. Find panes expose the shared controls, wrap correctly, announce state, and
-   reject stale session/query/source results.
+3. Find panes expose the shared controls, wrap correctly, announce state,
+   reject stale session/query/source results, and retain one prepared adapter
+   across same-source producer rerenders.
 4. Companion results are ordered, typed, keyboard reachable, activate exact
    occurrences, restore prior Companion state, and never persist.
 5. First preview captures one exact origin; repeated jumps do not replace it;
    Close does not return; Return restores once; no Continue action exists.
 6. Preview/return causes no progress/activity/completion/playback/URL/history
    change, including lifecycle flush. Genuine later input resumes normal rules.
-7. Route/source/revision changes clear all ephemeral state; pane inactivity does
-   not corrupt it.
+7. Route-key exit/unmount clears all ephemeral state. Same-pane source/revision
+   replacement clears old work/presentation/origin, preserves and reruns a
+   nonempty query with its match options, and pane inactivity corrupts neither.
 8. Page/Note filtering is direct-item-only and never calls global Search or
    traverses the graph.
 9. No backend, database, URL, workspace schema, new secondary group, generic

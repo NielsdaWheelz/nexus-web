@@ -12,23 +12,22 @@ import type { ResourceActivation } from "@/lib/resources/activation";
 import ChatFailureCard from "./ChatFailureCard";
 import QuotedPassageCard from "./QuotedPassageCard";
 import ConversationMessageText from "./ConversationMessageText";
-import type { ChatFindOccurrencePosition } from "./useChatScroll";
 import styles from "./MessageRow.module.css";
 
 export default function UserMessage({
   message,
+  messageOrdinal,
   timestampLabel,
   onReaderSourceActivate,
-  findOccurrence = null,
 }: {
   message: ConversationMessage;
+  messageOrdinal: number;
   timestampLabel: string;
   onReaderSourceActivate?: (
     activation: ResourceActivation,
     target: ReaderSourceTarget | null,
     event?: React.MouseEvent,
   ) => void;
-  findOccurrence?: ChatFindOccurrencePosition | null;
 }) {
   const text = conversationMessageText(message);
   const content = text || (message.status === "pending" ? "..." : "");
@@ -74,7 +73,7 @@ export default function UserMessage({
           {text ? (
             <ConversationMessageText
               message={message}
-              findOccurrence={findOccurrence}
+              messageOrdinal={messageOrdinal}
             />
           ) : (
             content

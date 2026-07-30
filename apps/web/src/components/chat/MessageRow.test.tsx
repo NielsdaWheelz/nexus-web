@@ -97,7 +97,7 @@ describe("MessageRow memoization (streaming AC-10)", () => {
       return (
         <>
           {messages.map((msg) => (
-            <MessageRow key={msg.id} message={msg} />
+            <MessageRow messageOrdinal={1} key={msg.id} message={msg} />
           ))}
         </>
       );

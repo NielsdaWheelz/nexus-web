@@ -1,16 +1,12 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
+import { StrictMode, type PropsWithChildren } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  createConversationFindAdapter,
-  useConversationPaneFind,
-} from "@/components/chat/useConversationPaneFind";
+import { useConversationPaneFind } from "@/components/chat/useConversationPaneFind";
 import type {
   ChatReadingPosition,
   ChatScrollHandle,
 } from "@/components/chat/useChatScroll";
-import { createConversationFindSnapshot } from "@/lib/conversations/conversationFind";
 import type { ConversationMessage } from "@/lib/conversations/types";
-import { createPaneFindSourceKey } from "@/lib/panes/paneSearch";
 
 const timestamp = "2026-07-29T00:00:00Z";
 
@@ -19,6 +15,7 @@ function message(
   seq: number,
   role: ConversationMessage["role"],
   text: string,
+  status: ConversationMessage["status"] = "complete",
 ): ConversationMessage {
   return {
     id,
@@ -35,128 +32,132 @@ function message(
       ],
     },
     trust_trail: null,
-    status: "complete",
+    status,
     can_rerun: false,
     created_at: timestamp,
     updated_at: timestamp,
   };
 }
 
-function scrollHandle() {
+function transcript(messages: readonly ConversationMessage[]): HTMLDivElement {
+  const root = document.createElement("div");
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
+    const item = messages[messageIndex]!;
+    const row = document.createElement("div");
+    row.dataset.messageId = item.id;
+    for (const [blockIndex, block] of (
+      item.message_document?.blocks ?? []
+    ).entries()) {
+      const blockRoot = document.createElement("span");
+      blockRoot.dataset.paneFindBlock = "true";
+      blockRoot.dataset.paneFindMessageId = item.id;
+      blockRoot.dataset.paneFindMessageOrdinal = String(messageIndex + 1);
+      blockRoot.dataset.paneFindBlockIndex = String(blockIndex);
+      blockRoot.dataset.paneFindRole = item.role;
+      blockRoot.textContent = block.text;
+      row.append(blockRoot);
+    }
+    root.append(row);
+  }
+  document.body.append(root);
+  return root;
+}
+
+function scrollHandle(root: HTMLDivElement) {
   const origin: ChatReadingPosition = {
     anchorMessageId: "user-1",
     anchorOffsetTop: 12,
     focusTarget: null,
+    pinMode: "released",
   };
   const handle: ChatScrollHandle = {
     captureAnchor: vi.fn(),
     scrollToMessage: vi.fn(),
     captureReadingPosition: vi.fn(() => origin),
-    restoreReadingPosition: vi.fn(() => true),
-    previewFindOccurrence: vi.fn(async () => true),
+    restoreReadingPosition: vi.fn(),
+    getTranscriptElement: vi.fn(() => root),
+    previewFindOccurrence: vi.fn(async () => ({
+      kind: "Revealed" as const,
+    })),
     clearFindPresentation: vi.fn(),
   };
   return { handle, origin };
 }
 
+afterEach(() => {
+  document.body.innerHTML = "";
+  vi.restoreAllMocks();
+});
+
 describe("Conversation Pane Find", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it("rejects an adapter request whose exact transcript source is stale", async () => {
-    const snapshot = createConversationFindSnapshot({
-      conversationId: "conversation-1",
-      activeLeafMessageId: "assistant-1",
-      messages: [message("user-1", 1, "user", "needle")],
-    });
-    const { handle } = scrollHandle();
-    const adapter = createConversationFindAdapter({
-      snapshot,
-      getCurrentSourceKey: () =>
-        createPaneFindSourceKey({
-          kind: "ConversationTranscript",
-          revision: "newer",
-        }),
-      getScrollHandle: () => handle,
-    });
-
-    const response = await adapter.find({
-      sessionId: 1,
-      queryId: 1,
-      sourceKey: snapshot.sourceKey,
-      signal: new AbortController().signal,
-      query: "needle",
-      scopeId: "EntireConversation",
-      matchCase: false,
-      wholeWord: false,
-    });
-
-    expect(response).toMatchObject({
-      kind: "Failed",
-      error: { kind: "StaleSource" },
-    });
-    expect(handle.captureReadingPosition).not.toHaveBeenCalled();
-    expect(handle.previewFindOccurrence).not.toHaveBeenCalled();
-  });
-
-  it("captures the initial reading origin once, previews repeated jumps, closes without returning, and returns once", async () => {
-    const { handle, origin } = scrollHandle();
-    const fetchSpy = vi.spyOn(window, "fetch");
-    const pushStateSpy = vi.spyOn(window.history, "pushState");
-    const replaceStateSpy = vi.spyOn(window.history, "replaceState");
-    const initialHref = window.location.href;
-    const messages = [
-      message("user-1", 1, "user", "needle first"),
-      message("assistant-1", 2, "assistant", "needle second"),
-    ];
+  it("is Strict Mode safe, keeps pending token churn in one session, then reruns once on terminalization", async () => {
+    const complete = message("user-1", 1, "user", "needle");
+    const firstPending = message(
+      "assistant-1",
+      2,
+      "assistant",
+      "stream",
+      "pending",
+    );
+    let root = transcript([complete, firstPending]);
+    const { handle } = scrollHandle(root);
     const scrollRef = { current: handle };
-    const { result } = renderHook(() =>
-      useConversationPaneFind({
-        conversationId: "conversation-1",
-        activeLeafMessageId: "assistant-1",
-        messages,
-        scrollRef,
-      }),
+    const fetchSpy = vi.spyOn(window, "fetch");
+    const initialHref = window.location.href;
+    const view = renderHook(
+      ({ messages }: { messages: readonly ConversationMessage[] }) =>
+        useConversationPaneFind({
+          conversationId: "conversation-1",
+          activeLeafMessageId: "assistant-1",
+          messages,
+          scrollRef,
+        }),
+      {
+        initialProps: { messages: [complete, firstPending] },
+        wrapper: ({ children }: PropsWithChildren) => (
+          <StrictMode>{children}</StrictMode>
+        ),
+      },
     );
 
-    act(() => result.current.onQueryChange("needle"));
-    await waitFor(() => expect(result.current.result.kind).toBe("Ready"));
-    await waitFor(() =>
-      expect(handle.previewFindOccurrence).toHaveBeenCalledTimes(1),
-    );
-    expect(handle.captureReadingPosition).toHaveBeenCalledTimes(1);
+    act(() => view.result.current.onQueryChange("needle"));
+    await waitFor(() => expect(view.result.current.result.kind).toBe("Ready"));
+    const stableSourceKey = view.result.current.sourceKey;
+    const previewCount = vi.mocked(handle.previewFindOccurrence).mock.calls
+      .length;
 
-    act(() => result.current.onStep("Next"));
-    await waitFor(() =>
-      expect(handle.previewFindOccurrence).toHaveBeenCalledTimes(2),
-    );
-    act(() => result.current.onStep("Previous"));
-    await waitFor(() =>
-      expect(handle.previewFindOccurrence).toHaveBeenCalledTimes(3),
-    );
-    expect(handle.captureReadingPosition).toHaveBeenCalledTimes(1);
-
-    act(() => result.current.onDismiss());
-    await waitFor(() => expect(result.current.result.kind).toBe("Idle"));
-    expect(handle.clearFindPresentation).toHaveBeenCalled();
-    expect(handle.restoreReadingPosition).not.toHaveBeenCalled();
-    expect(result.current.returnToReadingPosition.kind).toBe("Available");
-
-    act(() => {
-      if (result.current.returnToReadingPosition.kind === "Available") {
-        result.current.returnToReadingPosition.onReturn();
-      }
+    view.rerender({
+      messages: [
+        complete,
+        message("assistant-1", 2, "assistant", "streaming delta", "pending"),
+      ],
     });
-    await waitFor(() =>
-      expect(result.current.returnToReadingPosition.kind).toBe("Unavailable"),
-    );
-    expect(handle.restoreReadingPosition).toHaveBeenCalledTimes(1);
-    expect(handle.restoreReadingPosition).toHaveBeenCalledWith(origin);
+    expect(view.result.current.sourceKey).toBe(stableSourceKey);
+    expect(view.result.current.query).toBe("needle");
+    expect(view.result.current.result.kind).toBe("Ready");
+    expect(handle.previewFindOccurrence).toHaveBeenCalledTimes(previewCount);
 
+    root.remove();
+    const terminal = message(
+      "assistant-1",
+      2,
+      "assistant",
+      "terminal needle",
+    );
+    root = transcript([complete, terminal]);
+    vi.mocked(handle.getTranscriptElement).mockImplementation(() => root);
+    view.rerender({ messages: [complete, terminal] });
+
+    await waitFor(() =>
+      expect(
+        view.result.current.result.kind === "Ready" &&
+          view.result.current.result.rows.length,
+      ).toBe(2),
+    );
+    expect(view.result.current.sourceKey).not.toBe(stableSourceKey);
+    expect(view.result.current.query).toBe("needle");
+    expect(handle.clearFindPresentation).toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(pushStateSpy).not.toHaveBeenCalled();
-    expect(replaceStateSpy).not.toHaveBeenCalled();
     expect(window.location.href).toBe(initialHref);
   });
 });

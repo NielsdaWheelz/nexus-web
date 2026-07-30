@@ -11,13 +11,13 @@ import type {
   ForkOption,
 } from "@/lib/conversations/types";
 import type { CitationOut } from "@/lib/conversations/citationOut";
-import type { ChatFindOccurrencePosition } from "./useChatScroll";
 import AssistantMessage from "./AssistantMessage";
 import SystemMessage from "./SystemMessage";
 import UserMessage from "./UserMessage";
 
 interface MessageRowProps {
   message: ConversationMessage;
+  messageOrdinal: number;
   forkOptions?: ForkOption[];
   switchableLeafIds?: Set<string>;
   onSelectFork?: (fork: ForkOption) => void;
@@ -34,7 +34,6 @@ interface MessageRowProps {
     event?: React.MouseEvent,
   ) => void;
   onStartWalk?: (citations: CitationOut[], text: string) => void;
-  findOccurrence?: ChatFindOccurrencePosition | null;
 }
 
 // Memoized so a streaming text delta — which replaces only the streaming
@@ -42,6 +41,7 @@ interface MessageRowProps {
 // re-renders just that one row, not the whole transcript (AC-10).
 export const MessageRow = memo(function MessageRow({
   message,
+  messageOrdinal,
   forkOptions = [],
   switchableLeafIds,
   onSelectFork,
@@ -52,7 +52,6 @@ export const MessageRow = memo(function MessageRow({
   onReconnectAssistant,
   onReaderSourceActivate,
   onStartWalk,
-  findOccurrence = null,
 }: MessageRowProps) {
   const display = useRenderEnvironment();
   const activateTarget = useCallback(
@@ -75,15 +74,16 @@ export const MessageRow = memo(function MessageRow({
       return (
         <UserMessage
           message={message}
+          messageOrdinal={messageOrdinal}
           timestampLabel={timestampLabel}
           onReaderSourceActivate={activateTarget}
-          findOccurrence={findOccurrence}
         />
       );
     case "assistant":
       return (
         <AssistantMessage
           message={message}
+          messageOrdinal={messageOrdinal}
           forkOptions={forkOptions}
           switchableLeafIds={switchableLeafIds}
           onSelectFork={onSelectFork}
@@ -95,15 +95,14 @@ export const MessageRow = memo(function MessageRow({
           onReconnectAssistant={onReconnectAssistant}
           onStartWalk={onStartWalk}
           timestampLabel={timestampLabel}
-          findOccurrence={findOccurrence}
         />
       );
     case "system":
       return (
         <SystemMessage
           message={message}
+          messageOrdinal={messageOrdinal}
           timestampLabel={timestampLabel}
-          findOccurrence={findOccurrence}
         />
       );
   }

@@ -38,6 +38,18 @@
   overflow-anchor: none;
 }
 
+.transcript::highlight(nexus-find-all) {
+  background: var(--highlight-yellow);
+  color: inherit;
+}
+
+.transcript::highlight(nexus-find-active) {
+  background: var(--highlight-yellow);
+  color: inherit;
+  text-decoration: underline double currentColor;
+  text-underline-offset: 0.14em;
+}
+
 /* Reserved space so a short turn can still place the question at the top inset. */
 .spacer {
   flex: 0 0 auto;
@@ -94,5 +106,17 @@
 
   .scrollport {
     scroll-padding-bottom: var(--mobile-content-bottom-clearance);
+  }
+}
+
+@media (forced-colors: active) {
+  .transcript::highlight(nexus-find-all),
+  .transcript::highlight(nexus-find-active) {
+    background: Highlight;
+    color: HighlightText;
+  }
+
+  .transcript::highlight(nexus-find-active) {
+    text-decoration: underline double HighlightText;
   }
 }

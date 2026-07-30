@@ -203,6 +203,7 @@ export default function ReaderCitation({
             });
           }}
           data-workspace-rich-target="true"
+          data-pane-find-exclude="true"
         >
           {index}
         </a>
@@ -229,6 +230,7 @@ export default function ReaderCitation({
             onClick={(event) => {
               onActivate(activation, activationTarget, event);
             }}
+            data-pane-find-exclude="true"
           >
             {index}
           </button>
@@ -262,6 +264,7 @@ export default function ReaderCitation({
             });
           }}
           data-workspace-rich-target="true"
+          data-pane-find-exclude="true"
         >
           {index}
         </a>
@@ -278,6 +281,7 @@ export default function ReaderCitation({
         aria-label={label}
         onPointerEnter={openWithDelay}
         onPointerLeave={cancelHoverTimer}
+        data-pane-find-exclude="true"
       >
         {index}
       </sup>
