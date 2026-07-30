@@ -526,7 +526,7 @@ def test_library_slate_excludes_complete_membership_beyond_the_loaded_page(
         params={"limit": 1},
     )
     assert first_page.status_code == 200, first_page.text
-    assert first_page.json()["page"]["has_more"] is True
+    assert first_page.json()["data"]["nextCursor"]["kind"] == "Present"
 
     response = auth_client.get(f"/libraries/{library_id}/slate", headers=auth_headers(user_id))
     assert response.status_code == 200, response.text

@@ -378,26 +378,18 @@ def _preflight_and_census(session: Session) -> dict[str, int]:
 
 # ---------------------------------------------------------------------------
 # Per-kind covered_targets -> typed input_manifest adapters (spec §934). Library
-# and Conversation shapes are NEVER interchangeable.
+# and Conversation shapes are NEVER interchangeable. Keep these historical v1
+# payloads local: importing current application models makes a clean migration
+# chain depend on contracts that later hard cutovers are allowed to remove.
 # ---------------------------------------------------------------------------
 def _build_input_manifest(subject_scheme: str, subject_id, covered_targets) -> dict:
-    from nexus.schemas.presence import absent
-    from nexus.services.artifacts.manifests import (
-        ConversationCompletenessReason,
-        ConversationIncomplete,
-        ConversationInputManifestV1,
-        LibraryInputManifestV1,
-        MediaDisposition,
-        MediaManifestEntry,
-    )
-
     if subject_scheme == "library":
         disposition_of = {
-            "included": MediaDisposition.Included,
-            "no_ready_unit": MediaDisposition.OmittedNoReadyUnit,
-            "omitted_budget": MediaDisposition.OmittedBudget,
+            "included": "Included",
+            "no_ready_unit": "OmittedNoReadyUnit",
+            "omitted_budget": "OmittedBudget",
         }
-        entries: list[MediaManifestEntry] = []
+        entries: list[dict] = []
         for member in covered_targets or []:
             if member.get("kind") != "media":
                 _fail(
@@ -412,28 +404,34 @@ def _build_input_manifest(subject_scheme: str, subject_id, covered_targets) -> d
                     f" {member.get('id')!r}",
                 )
             entries.append(
-                MediaManifestEntry(
-                    media_ref=f"media:{member['id']}",
-                    content_fingerprint=member.get("fingerprint") or "",
-                    disposition=disposition,
-                )
+                {
+                    "media_ref": f"media:{member['id']}",
+                    "content_fingerprint": member.get("fingerprint") or "",
+                    "disposition": disposition,
+                }
             )
-        return LibraryInputManifestV1(
-            library_ref=f"library:{subject_id}", media=entries
-        ).model_dump(mode="json")
+        return {
+            "version": "v1",
+            "kind": "library",
+            "library_ref": f"library:{subject_id}",
+            "media": entries,
+        }
 
     if subject_scheme == "conversation":
         # New binding requires all branches + Context; the migrated manifest is
         # deterministically incomplete (old leaf/count -> support provenance only).
-        return ConversationInputManifestV1(
-            conversation_ref=f"conversation:{subject_id}",
-            message_refs=[],
-            context_refs=[],
-            topology_fingerprint=absent(),
-            completeness=ConversationIncomplete(
-                reason=ConversationCompletenessReason.MigratedCoverageGap
-            ),
-        ).model_dump(mode="json")
+        return {
+            "version": "v1",
+            "kind": "conversation",
+            "conversation_ref": f"conversation:{subject_id}",
+            "message_refs": [],
+            "context_refs": [],
+            "topology_fingerprint": {"kind": "Absent"},
+            "completeness": {
+                "kind": "Incomplete",
+                "reason": "MigratedCoverageGap",
+            },
+        }
 
     _fail(
         "transform",

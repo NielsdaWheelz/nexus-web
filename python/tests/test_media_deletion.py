@@ -1405,7 +1405,7 @@ def test_delete_library_applies_graph_cleanup_two_rules(
     direct_db.register_cleanup("resource_edges", "user_id", user_id)
 
     delete_response = auth_client.delete(f"/libraries/{library_id}", headers=auth_headers(user_id))
-    assert delete_response.status_code == 204, delete_response.text
+    assert delete_response.status_code == 200, delete_response.text
 
     with direct_db.session() as session:
         assert_no_dangling_bare_edges(session, ref=ResourceRef(scheme="library", id=library_id))

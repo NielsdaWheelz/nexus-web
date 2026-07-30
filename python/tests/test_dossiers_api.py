@@ -258,7 +258,7 @@ def test_generic_head_build_replay_cancel_contract(
             f"/conversations/{conversation_id}",
             headers=auth_headers(user_id),
         )
-        assert deleted.status_code == 204, deleted.text
+        assert deleted.status_code == 200, deleted.text
 
 
 def test_generic_dossier_api_masks_subject_and_requires_idempotency_key(
@@ -296,7 +296,7 @@ def test_generic_dossier_api_masks_subject_and_requires_idempotency_key(
             f"/conversations/{conversation_id}",
             headers=auth_headers(owner_id),
         )
-        assert deleted.status_code == 204, deleted.text
+        assert deleted.status_code == 200, deleted.text
 
 
 def test_revision_and_history_reauthorize_subject_visibility(

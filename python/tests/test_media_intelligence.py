@@ -33,7 +33,7 @@ from nexus.services import media_intelligence
 from nexus.services.artifacts import coordination
 from nexus.services.artifacts.bindings.library import BINDING as LIBRARY_BINDING
 from nexus.services.artifacts.dossier_types import AudienceLibrary, DossierBuildFailureCode
-from nexus.services.artifacts.subject_policy import ResolvedSubject
+from nexus.services.artifacts.subject_policy import ResolvedResourceSubject
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.content_indexing import rebuild_fragment_content_index
@@ -944,7 +944,7 @@ class TestRunMediaUnitBuild:
         collected = asyncio.run(
             LIBRARY_BINDING.collect(
                 db_session,
-                resolved=ResolvedSubject(
+                resolved=ResolvedResourceSubject(
                     scheme="library",
                     subject_id=library_id,
                     ref=ResourceRef(scheme="library", id=library_id),

@@ -7823,8 +7823,8 @@ class TestMigration0026SemanticChunkBackfill:
             )
             session.commit()
 
-        result = run_alembic_command("upgrade head")
-        assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+        result = run_alembic_command("upgrade 0200")
+        assert result.returncode == 0, f"upgrade 0200 failed: {result.stderr}"
 
         with Session(migration_engine) as session:
             state_row = session.execute(
@@ -8855,12 +8855,28 @@ class TestEpubNavSourceCutoverMigration:
         assert source == "fragment_fallback"
 
 
+@pytest.fixture(scope="class")
+def migration_0113_engine():
+    """Run the schema assertions against the revision that owns this table."""
+    reset_test_schema()
+    result = run_alembic_command("upgrade 0113")
+    if result.returncode != 0:
+        pytest.fail(f"Migration 0113 upgrade failed: {result.stderr}")
+    engine = create_engine(get_test_database_url())
+    yield engine
+    engine.dispose()
+    reset_test_schema()
+    result = run_alembic_command("upgrade head")
+    if result.returncode != 0:
+        pytest.fail(f"Migration head restore failed: {result.stderr}")
+
+
 class TestPodcastSubscriptionLibrariesMigration0113:
     """Schema assertions for migration 0113 (podcast_subscription_libraries)."""
 
-    def test_migration_0113_creates_podcast_subscription_libraries(self, migrated_engine):
-        """Head migration must materialize the table, composite PK, FK cascade, and index."""
-        with Session(migrated_engine) as session:
+    def test_migration_0113_creates_podcast_subscription_libraries(self, migration_0113_engine):
+        """Migration 0113 materializes the table, composite PK, FK cascade, and index."""
+        with Session(migration_0113_engine) as session:
             columns = session.execute(
                 text(
                     """
@@ -8951,9 +8967,9 @@ class TestPodcastSubscriptionLibrariesMigration0113:
             f"FK to libraries must cascade-delete, got {delete_actions['libraries']}"
         )
 
-    def test_migration_0113_pk_rejects_duplicate_composite(self, migrated_engine):
+    def test_migration_0113_pk_rejects_duplicate_composite(self, migration_0113_engine):
         """The composite primary key prevents inserting the same triple twice."""
-        with Session(migrated_engine) as session:
+        with Session(migration_0113_engine) as session:
             user_id = uuid4()
             podcast_id = uuid4()
             library_id = uuid4()
@@ -9035,9 +9051,9 @@ class TestPodcastSubscriptionLibrariesMigration0113:
                 session.commit()
             session.rollback()
 
-    def test_migration_0113_subscription_delete_cascades_to_join_table(self, migrated_engine):
+    def test_migration_0113_subscription_delete_cascades_to_join_table(self, migration_0113_engine):
         """Deleting a podcast_subscription must remove its podcast_subscription_libraries rows."""
-        with Session(migrated_engine) as session:
+        with Session(migration_0113_engine) as session:
             user_id = uuid4()
             podcast_id = uuid4()
             library_id = uuid4()
@@ -9126,9 +9142,9 @@ class TestPodcastSubscriptionLibrariesMigration0113:
             f"deleting a podcast_subscription must cascade-delete join rows; got {remaining}"
         )
 
-    def test_migration_0113_library_delete_cascades_to_join_table(self, migrated_engine):
+    def test_migration_0113_library_delete_cascades_to_join_table(self, migration_0113_engine):
         """Deleting a library must remove its podcast_subscription_libraries rows."""
-        with Session(migrated_engine) as session:
+        with Session(migration_0113_engine) as session:
             user_id = uuid4()
             podcast_id = uuid4()
             library_id = uuid4()
@@ -19319,7 +19335,7 @@ class TestMigration0183DefaultLibraryVirtualization:
     @pytest.fixture(scope="class")
     def head_engine(self):
         reset_test_schema()
-        result = run_alembic_command("upgrade head")
+        result = run_alembic_command("upgrade 0183")
         if result.returncode != 0:
             pytest.fail(f"Migration upgrade failed: {result.stderr}")
         engine = create_engine(get_test_database_url())
@@ -19411,8 +19427,8 @@ class TestMigration0183DefaultLibraryVirtualization:
                 self._insert_cursor(session, user_id, media_id, 0.42, updated_at)
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+            result = run_alembic_command("upgrade 0183")
+            assert result.returncode == 0, f"upgrade 0183 failed: {result.stderr}"
 
             row = self._engagement_row(engine, user_id, media_id)
             assert row is not None, "cursor-only document must survive the backfill"
@@ -19445,8 +19461,8 @@ class TestMigration0183DefaultLibraryVirtualization:
                 self._insert_session(session, user_id, media_id, later, 0.33)
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+            result = run_alembic_command("upgrade 0183")
+            assert result.returncode == 0, f"upgrade 0183 failed: {result.stderr}"
 
             row = self._engagement_row(engine, user_id, media_id)
             assert row is not None, "attention-only document must survive the backfill"
@@ -19476,8 +19492,8 @@ class TestMigration0183DefaultLibraryVirtualization:
                 self._insert_session(session, user_id, media_id, session_active_at, 0.8)
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+            result = run_alembic_command("upgrade 0183")
+            assert result.returncode == 0, f"upgrade 0183 failed: {result.stderr}"
 
             row = self._engagement_row(engine, user_id, media_id)
             assert row is not None
@@ -19511,8 +19527,8 @@ class TestMigration0183DefaultLibraryVirtualization:
                 self._insert_session(session, user_id, media_id, session_active_at, 0.1)
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+            result = run_alembic_command("upgrade 0183")
+            assert result.returncode == 0, f"upgrade 0183 failed: {result.stderr}"
 
             row = self._engagement_row(engine, user_id, media_id)
             assert row is not None
@@ -19549,8 +19565,8 @@ class TestMigration0183DefaultLibraryVirtualization:
                 self._insert_session(session, user_id, media_id, session_active_at, 0.77)
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+            result = run_alembic_command("upgrade 0183")
+            assert result.returncode == 0, f"upgrade 0183 failed: {result.stderr}"
 
             row = self._engagement_row(engine, user_id, media_id)
             assert row is not None
@@ -19582,8 +19598,8 @@ class TestMigration0183DefaultLibraryVirtualization:
                 self._insert_session(session, user_id, media_id, now, 0.5)
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+            result = run_alembic_command("upgrade 0183")
+            assert result.returncode == 0, f"upgrade 0183 failed: {result.stderr}"
 
             row = self._engagement_row(engine, user_id, media_id)
             assert row is None, (
@@ -19617,8 +19633,8 @@ class TestMigration0183DefaultLibraryVirtualization:
                 self._insert_session(session, user_id, session_only_media_id, now, 0.15)
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+            result = run_alembic_command("upgrade 0183")
+            assert result.returncode == 0, f"upgrade 0183 failed: {result.stderr}"
 
             cursor_row = self._engagement_row(engine, user_id, cursor_only_media_id)
             session_row = self._engagement_row(engine, user_id, session_only_media_id)
@@ -19668,7 +19684,7 @@ class TestMigration0183DefaultLibraryVirtualization:
                 )
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
+            result = run_alembic_command("upgrade 0183")
             assert result.returncode != 0, (
                 "upgrade must abort on a podcast entry inside a default library"
             )
@@ -19727,7 +19743,7 @@ class TestMigration0183DefaultLibraryVirtualization:
                 )
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
+            result = run_alembic_command("upgrade 0183")
             assert result.returncode != 0, "upgrade must abort on an orphan intrinsic"
             combined = (result.stdout or "") + (result.stderr or "")
             assert str(default_library_id) in combined
@@ -19844,8 +19860,8 @@ class TestMigration0183DefaultLibraryVirtualization:
                 )
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+            result = run_alembic_command("upgrade 0183")
+            assert result.returncode == 0, f"upgrade 0183 failed: {result.stderr}"
 
             with Session(engine) as session:
                 closure_only_survives = session.execute(
@@ -19937,8 +19953,8 @@ class TestMigration0183DefaultLibraryVirtualization:
                 )
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+            result = run_alembic_command("upgrade 0183")
+            assert result.returncode == 0, f"upgrade 0183 failed: {result.stderr}"
 
             with Session(engine) as session:
                 survives = session.execute(
@@ -19976,14 +19992,14 @@ class TestMigration0183DefaultLibraryVirtualization:
     def test_downgrade_raises_not_implemented(self):
         reset_test_schema()
         try:
-            assert run_alembic_command("upgrade head").returncode == 0
+            assert run_alembic_command("upgrade 0183").returncode == 0
             result = run_alembic_command("downgrade 0182")
             assert result.returncode != 0, "0183 downgrade must be blocked"
             combined = (result.stdout or "") + (result.stderr or "")
             assert "hard cutover" in combined.lower()
         finally:
             reset_test_schema()
-            run_alembic_command("upgrade head")
+            run_alembic_command("upgrade 0183")
 
 
 @MIGRATION_CI_LATE
@@ -22639,8 +22655,8 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
     # ================================================================== #
     def test_0190_artifacts_head_reshaped(self):
         reset_test_schema()
-        result = run_alembic_command("upgrade head")
-        assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+        result = run_alembic_command("upgrade 0190")
+        assert result.returncode == 0, f"upgrade 0190 failed: {result.stderr}"
         engine = create_engine(get_test_database_url())
         try:
             with Session(engine) as session:
@@ -22662,13 +22678,13 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 assert "uq_artifacts_subject_kind" not in connames
         finally:
             reset_test_schema()
-            run_alembic_command("upgrade head")
+            run_alembic_command("upgrade 0190")
             engine.dispose()
 
     def test_0190_artifact_builds_table_shape(self):
         reset_test_schema()
-        result = run_alembic_command("upgrade head")
-        assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+        result = run_alembic_command("upgrade 0190")
+        assert result.returncode == 0, f"upgrade 0190 failed: {result.stderr}"
         engine = create_engine(get_test_database_url())
         try:
             with Session(engine) as session:
@@ -22694,13 +22710,13 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
         finally:
             reset_test_schema()
-            run_alembic_command("upgrade head")
+            run_alembic_command("upgrade 0190")
             engine.dispose()
 
     def test_0190_artifact_revisions_renormalized(self):
         reset_test_schema()
-        result = run_alembic_command("upgrade head")
-        assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+        result = run_alembic_command("upgrade 0190")
+        assert result.returncode == 0, f"upgrade 0190 failed: {result.stderr}"
         engine = create_engine(get_test_database_url())
         try:
             with Session(engine) as session:
@@ -22731,13 +22747,13 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
         finally:
             reset_test_schema()
-            run_alembic_command("upgrade head")
+            run_alembic_command("upgrade 0190")
             engine.dispose()
 
     def test_0190_terminal_children_and_events_tables(self):
         reset_test_schema()
-        result = run_alembic_command("upgrade head")
-        assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+        result = run_alembic_command("upgrade 0190")
+        assert result.returncode == 0, f"upgrade 0190 failed: {result.stderr}"
         engine = create_engine(get_test_database_url())
         try:
             with Session(engine) as session:
@@ -22787,13 +22803,13 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
         finally:
             reset_test_schema()
-            run_alembic_command("upgrade head")
+            run_alembic_command("upgrade 0190")
             engine.dispose()
 
     def test_0190_attribution_fks_require_explicit_user_teardown(self):
         reset_test_schema()
-        result = run_alembic_command("upgrade head")
-        assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+        result = run_alembic_command("upgrade 0190")
+        assert result.returncode == 0, f"upgrade 0190 failed: {result.stderr}"
         engine = create_engine(get_test_database_url())
         try:
             with Session(engine) as session:
@@ -22842,13 +22858,13 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
         finally:
             reset_test_schema()
-            run_alembic_command("upgrade head")
+            run_alembic_command("upgrade 0190")
             engine.dispose()
 
     def test_0190_llm_calls_owner_kind_admits_build_rejects_revision(self):
         reset_test_schema()
-        result = run_alembic_command("upgrade head")
-        assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+        result = run_alembic_command("upgrade 0190")
+        assert result.returncode == 0, f"upgrade 0190 failed: {result.stderr}"
         engine = create_engine(get_test_database_url())
         try:
             allowed_owner = uuid4()
@@ -22881,13 +22897,13 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 assert "ck_llm_calls_owner_kind" in str(exc_info.value)
         finally:
             reset_test_schema()
-            run_alembic_command("upgrade head")
+            run_alembic_command("upgrade 0190")
             engine.dispose()
 
     def test_0190_media_projection_unchanged(self):
         reset_test_schema()
-        result = run_alembic_command("upgrade head")
-        assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+        result = run_alembic_command("upgrade 0190")
+        assert result.returncode == 0, f"upgrade 0190 failed: {result.stderr}"
         engine = create_engine(get_test_database_url())
         try:
             with Session(engine) as session:
@@ -22901,13 +22917,13 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 ), "media_claims unique(summary_id, ordinal) must be unchanged"
         finally:
             reset_test_schema()
-            run_alembic_command("upgrade head")
+            run_alembic_command("upgrade 0190")
             engine.dispose()
 
     def test_0190_notify_channel_rebuilt(self):
         reset_test_schema()
-        result = run_alembic_command("upgrade head")
-        assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+        result = run_alembic_command("upgrade 0190")
+        assert result.returncode == 0, f"upgrade 0190 failed: {result.stderr}"
         engine = create_engine(get_test_database_url())
         try:
             with Session(engine) as session:
@@ -23014,7 +23030,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 assert notification.payload == str(build_id)
         finally:
             reset_test_schema()
-            run_alembic_command("upgrade head")
+            run_alembic_command("upgrade 0190")
             engine.dispose()
 
     # ================================================================== #
@@ -23023,8 +23039,8 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
     def test_0190_downgrade_is_blocked(self):
         """0190 is a hard cutover: downgrading off it surfaces NotImplementedError."""
         reset_test_schema()
-        result = run_alembic_command("upgrade head")
-        assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+        result = run_alembic_command("upgrade 0190")
+        assert result.returncode == 0, f"upgrade 0190 failed: {result.stderr}"
         try:
             result = run_alembic_command("downgrade 0189")
             assert result.returncode != 0
@@ -23036,7 +23052,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
             ), f"stdout={result.stdout!r} stderr={result.stderr!r}"
         finally:
             reset_test_schema()
-            run_alembic_command("upgrade head")
+            run_alembic_command("upgrade 0190")
 
     # ================================================================== #
     # T3 -- per-row data transform
@@ -23128,8 +23144,8 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade head (0190) failed: {result.stderr}"
+            result = run_alembic_command("upgrade 0190")
+            assert result.returncode == 0, f"upgrade 0190 (0190) failed: {result.stderr}"
 
             with Session(engine) as session:
                 assert self._table_exists(session, "artifact_builds"), "0190 must create builds"
@@ -23245,7 +23261,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
         finally:
             reset_test_schema()
-            run_alembic_command("upgrade head")
+            run_alembic_command("upgrade 0190")
             engine.dispose()
 
     def test_0190_clears_cross_artifact_current_revision_pointer(self):
@@ -23320,8 +23336,8 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 self._set_current(session, second_artifact_id, second_revision_id)
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade head (0190) failed: {result.stderr}"
+            result = run_alembic_command("upgrade 0190")
+            assert result.returncode == 0, f"upgrade 0190 (0190) failed: {result.stderr}"
 
             with Session(engine) as session:
                 current_by_head = dict(
@@ -23357,7 +23373,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 }, "both ready cited revisions remain owned by their original heads"
         finally:
             reset_test_schema()
-            run_alembic_command("upgrade head")
+            run_alembic_command("upgrade 0190")
             engine.dispose()
 
     def test_0190_library_dossier_ready_zero_citation_incomplete(self):
@@ -23417,8 +23433,8 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade head (0190) failed: {result.stderr}"
+            result = run_alembic_command("upgrade 0190")
+            assert result.returncode == 0, f"upgrade 0190 (0190) failed: {result.stderr}"
 
             with Session(engine) as session:
                 assert self._table_exists(session, "artifact_builds"), "0190 must create builds"
@@ -23480,7 +23496,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 ), "edge view state is removed before its graph edge"
         finally:
             reset_test_schema()
-            run_alembic_command("upgrade head")
+            run_alembic_command("upgrade 0190")
             engine.dispose()
 
     def test_0190_failed_revision_becomes_migrated_failure(self):
@@ -23531,8 +23547,8 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade head (0190) failed: {result.stderr}"
+            result = run_alembic_command("upgrade 0190")
+            assert result.returncode == 0, f"upgrade 0190 (0190) failed: {result.stderr}"
 
             with Session(engine) as session:
                 assert self._table_exists(session, "artifact_builds"), "0190 must create builds"
@@ -23550,7 +23566,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 assert terminal == ["Failed"]
         finally:
             reset_test_schema()
-            run_alembic_command("upgrade head")
+            run_alembic_command("upgrade 0190")
             engine.dispose()
 
     def test_0190_building_revision_becomes_migrated_incomplete(self):
@@ -23593,8 +23609,8 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade head (0190) failed: {result.stderr}"
+            result = run_alembic_command("upgrade 0190")
+            assert result.returncode == 0, f"upgrade 0190 (0190) failed: {result.stderr}"
 
             with Session(engine) as session:
                 assert self._table_exists(session, "artifact_builds"), "0190 must create builds"
@@ -23621,7 +23637,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 assert terminal == ["Failed"], "a never-finished build terminalizes Failed"
         finally:
             reset_test_schema()
-            run_alembic_command("upgrade head")
+            run_alembic_command("upgrade 0190")
             engine.dispose()
 
     def test_0190_conversation_distillate_audience_and_manifest(self):
@@ -23669,8 +23685,8 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade head (0190) failed: {result.stderr}"
+            result = run_alembic_command("upgrade 0190")
+            assert result.returncode == 0, f"upgrade 0190 (0190) failed: {result.stderr}"
 
             with Session(engine) as session:
                 assert self._table_exists(session, "artifact_builds"), "0190 must create builds"
@@ -23728,7 +23744,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
         finally:
             reset_test_schema()
-            run_alembic_command("upgrade head")
+            run_alembic_command("upgrade 0190")
             engine.dispose()
 
     def test_0190_missing_idempotency_key_backfills_migrated_fallback(self):
@@ -23772,8 +23788,8 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade head (0190) failed: {result.stderr}"
+            result = run_alembic_command("upgrade 0190")
+            assert result.returncode == 0, f"upgrade 0190 (0190) failed: {result.stderr}"
 
             with Session(engine) as session:
                 assert self._table_exists(session, "artifact_builds"), "0190 must create builds"
@@ -23787,7 +23803,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
         finally:
             reset_test_schema()
-            run_alembic_command("upgrade head")
+            run_alembic_command("upgrade 0190")
             engine.dispose()
 
     def test_0190_llm_calls_reattributed_to_build_and_operation_rewritten(self):
@@ -23882,8 +23898,8 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade head (0190) failed: {result.stderr}"
+            result = run_alembic_command("upgrade 0190")
+            assert result.returncode == 0, f"upgrade 0190 (0190) failed: {result.stderr}"
 
             with Session(engine) as session:
                 assert self._table_exists(session, "artifact_builds"), "0190 must create builds"
@@ -23928,7 +23944,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
         finally:
             reset_test_schema()
-            run_alembic_command("upgrade head")
+            run_alembic_command("upgrade 0190")
             engine.dispose()
 
     def test_0190_revision_events_rekeyed_and_terminalized(self):
@@ -23980,8 +23996,8 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                     )
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade head (0190) failed: {result.stderr}"
+            result = run_alembic_command("upgrade 0190")
+            assert result.returncode == 0, f"upgrade 0190 (0190) failed: {result.stderr}"
 
             with Session(engine) as session:
                 assert not self._table_exists(session, "artifact_revision_events"), (
@@ -24010,29 +24026,35 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                     f"exactly one terminal event (Succeeded) for a preserved success; got {types}"
                 )
 
-                from nexus.services.artifacts.dossier_types import (
-                    DeltaEventPayload,
-                    ProgressEventPayload,
-                    StartedEventPayload,
-                    SucceededEventPayload,
-                )
                 from nexus.services.artifacts.handles import parse_artifact_build_handle
 
                 payload_by_type = {row["event_type"]: row["payload"] for row in rows}
-                started = StartedEventPayload.model_validate(payload_by_type["Started"])
-                parsed_handle = parse_artifact_build_handle(started.build_handle)
+                started = payload_by_type["Started"]
+                assert set(started) == {
+                    "build_handle",
+                    "artifact_ref",
+                    "subject_locator",
+                }
+                parsed_handle = parse_artifact_build_handle(started["build_handle"])
                 assert parsed_handle.build_id == build_id, (
                     "migrated Started carries the real sealed identity of its build"
                 )
-                assert started.artifact_ref == f"artifact:{artifact_id}"
-                assert started.subject_locator.ref == f"library:{library_id}"
-                ProgressEventPayload.model_validate(payload_by_type["Progress"])
-                DeltaEventPayload.model_validate(payload_by_type["Delta"])
-                succeeded = SucceededEventPayload.model_validate(payload_by_type["Succeeded"])
-                assert succeeded.artifact_revision_ref == (f"artifact_revision:{revision_id}")
+                assert started["artifact_ref"] == f"artifact:{artifact_id}"
+                assert started["subject_locator"] == {
+                    "kind": "Resource",
+                    "ref": f"library:{library_id}",
+                }
+                assert payload_by_type["Progress"] == {
+                    "phase": "migrated",
+                    "message": "",
+                }
+                assert payload_by_type["Delta"] == {"appended_text": ""}
+                assert payload_by_type["Succeeded"] == {
+                    "artifact_revision_ref": f"artifact_revision:{revision_id}"
+                }
         finally:
             reset_test_schema()
-            run_alembic_command("upgrade head")
+            run_alembic_command("upgrade 0190")
             engine.dispose()
 
     def test_0190_full_census_mixed_population_counts_match(self):
@@ -24113,8 +24135,8 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 self._set_current(session, artifact_id, rev_ready_cited)
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade head (0190) failed: {result.stderr}"
+            result = run_alembic_command("upgrade 0190")
+            assert result.returncode == 0, f"upgrade 0190 (0190) failed: {result.stderr}"
 
             with Session(engine) as session:
                 assert self._table_exists(session, "artifact_builds"), "0190 must create builds"
@@ -24202,7 +24224,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
         finally:
             reset_test_schema()
-            run_alembic_command("upgrade head")
+            run_alembic_command("upgrade 0190")
             engine.dispose()
 
     # ================================================================== #
@@ -24228,7 +24250,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
+            result = run_alembic_command("upgrade 0190")
             assert result.returncode != 0, (
                 "0190 must not turn a nonexistent Library id into an audience"
             )
@@ -24239,7 +24261,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
         finally:
             reset_test_schema()
-            run_alembic_command("upgrade head")
+            run_alembic_command("upgrade 0190")
             engine.dispose()
 
     @pytest.mark.parametrize(
@@ -24277,7 +24299,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
+            result = run_alembic_command("upgrade 0190")
             assert result.returncode != 0, f"0190 must reject {legacy_kind!r} on {subject_scheme!r}"
             with Session(engine) as session:
                 assert (
@@ -24286,7 +24308,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
         finally:
             reset_test_schema()
-            run_alembic_command("upgrade head")
+            run_alembic_command("upgrade 0190")
             engine.dispose()
 
     def test_0190_aborts_on_ambiguous_head_collision(self):
@@ -24316,7 +24338,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                     )
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
+            result = run_alembic_command("upgrade 0190")
             assert result.returncode != 0, (
                 "0190 must defect before an ambiguous resource-plus-audience merge"
             )
@@ -24327,7 +24349,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
         finally:
             reset_test_schema()
-            run_alembic_command("upgrade head")
+            run_alembic_command("upgrade 0190")
             engine.dispose()
 
     def test_0190_aborts_on_unmappable_ledger_operation(self):
@@ -24368,7 +24390,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
+            result = run_alembic_command("upgrade 0190")
             assert result.returncode != 0, (
                 "0190 must not retain an operation outside the exact legacy mapping"
             )
@@ -24379,7 +24401,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
         finally:
             reset_test_schema()
-            run_alembic_command("upgrade head")
+            run_alembic_command("upgrade 0190")
             engine.dispose()
 
     def test_0190_aborts_on_missing_audience_subject(self):
@@ -24425,7 +24447,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
+            result = run_alembic_command("upgrade 0190")
             assert result.returncode != 0, "0190 must abort when a subject/audience is underivable"
 
             with Session(engine) as session:
@@ -24435,7 +24457,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 assert version == "0189", "a defected 0190 must leave the schema at 0189"
         finally:
             reset_test_schema()
-            run_alembic_command("upgrade head")
+            run_alembic_command("upgrade 0190")
             engine.dispose()
 
     def test_0190_aborts_on_unmappable_ledger_row(self):
@@ -24490,7 +24512,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
+            result = run_alembic_command("upgrade 0190")
             assert result.returncode != 0, "0190 must abort on an unmappable ledger row"
 
             with Session(engine) as session:
@@ -24500,7 +24522,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 assert version == "0189", "a defected 0190 must leave the schema at 0189"
         finally:
             reset_test_schema()
-            run_alembic_command("upgrade head")
+            run_alembic_command("upgrade 0190")
             engine.dispose()
 
     def test_0190_aborts_on_citation_owner_mismatch(self):
@@ -24550,7 +24572,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
+            result = run_alembic_command("upgrade 0190")
             assert result.returncode != 0, "0190 must abort on a citation-owner mismatch"
 
             with Session(engine) as session:
@@ -24560,7 +24582,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 assert version == "0189", "a defected 0190 must leave the schema at 0189"
         finally:
             reset_test_schema()
-            run_alembic_command("upgrade head")
+            run_alembic_command("upgrade 0190")
             engine.dispose()
 
 

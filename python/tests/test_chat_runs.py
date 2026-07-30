@@ -1043,7 +1043,7 @@ class TestChatRunCreate:
             headers=auth_headers(user_id),
         )
 
-        assert deleted.status_code == 204, (
+        assert deleted.status_code == 200, (
             f"Expected conversation delete to succeed, got {deleted.status_code}: {deleted.text}"
         )
         with direct_db.session() as session:

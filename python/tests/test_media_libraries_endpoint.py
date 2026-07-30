@@ -560,8 +560,9 @@ class TestDeleteMediaLibraryEndpoint:
             f"/media/{media_id}/libraries/{library_id}",
             headers=auth_headers(viewer_id),
         )
-        assert response.status_code == 204, response.text
-        assert response.content == b""
+        assert response.status_code == 200, response.text
+        assert set(response.json()["data"]) == {"libraryEntriesCollectionRevision"}
+        assert response.json()["data"]["libraryEntriesCollectionRevision"] >= 1
 
         memberships = auth_client.get(
             f"/media/{media_id}/libraries", headers=auth_headers(viewer_id)
@@ -601,8 +602,8 @@ class TestDeleteMediaLibraryEndpoint:
                 f"/media/{media_id}/libraries/{library_id}",
                 headers=auth_headers(viewer_id),
             )
-            assert response.status_code == 204, response.text
-            assert response.content == b""
+            assert response.status_code == 200, response.text
+            assert set(response.json()["data"]) == {"libraryEntriesCollectionRevision"}
         assert _library_entry_ids_for_media(direct_db, private_media_id) == {private_library_id}
 
     def test_member_only_library_is_forbidden_without_a_media_oracle(
@@ -711,8 +712,10 @@ class TestDeleteMediaLibraryEndpoint:
         endpoint = f"/media/{media_id}/libraries/{visible_library_id}"
         first = auth_client.delete(endpoint, headers=auth_headers(viewer_id))
         replay = auth_client.delete(endpoint, headers=auth_headers(viewer_id))
-        assert first.status_code == 204, first.text
-        assert replay.status_code == 204, replay.text
+        assert first.status_code == 200, first.text
+        assert replay.status_code == 200, replay.text
+        assert first.json() == replay.json()
+        assert set(first.json()["data"]) == {"libraryEntriesCollectionRevision"}
         assert (
             auth_client.get(f"/media/{media_id}", headers=auth_headers(viewer_id)).status_code
             == 404
