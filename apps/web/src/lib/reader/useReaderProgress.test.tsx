@@ -48,6 +48,7 @@ function baseOptions(overrides: Partial<Options> = {}): Options {
     captureCurrentLocator: () => null,
     applyCursor: async () => "applied",
     onTerminalWriteAcknowledged: () => {},
+    previewLease: { isActive: () => false },
     ...overrides,
   };
 }
@@ -765,6 +766,114 @@ describe("useReaderProgress: capability Unavailable", () => {
 });
 
 describe("useReaderProgress: lifecycle capture", () => {
+  it("does not capture, move, or engage a clean Web preview", async () => {
+    const scripted = createScriptedFetch();
+    scripted.pushGetJson({ state: "Positioned", revision: 1, locator: START });
+    const captureCurrentLocator = vi.fn(() => CAP);
+    const previewLease = { isActive: () => true };
+
+    const { result } = renderHook(() =>
+      useReaderProgress(
+        baseOptions({
+          apiFetch: scripted.apiFetch,
+          captureCurrentLocator,
+          previewLease,
+        }),
+      ),
+    );
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    act(() => {
+      result.current.reportMovement(A);
+      window.dispatchEvent(new Event("pagehide"));
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(captureCurrentLocator).not.toHaveBeenCalled();
+    expect(scripted.calls.filter(isPut)).toHaveLength(0);
+  });
+
+  it.each(["visibility", "pane", "unmount"] as const)(
+    "does not capture or write the preview on %s teardown",
+    async (trigger) => {
+      const scripted = createScriptedFetch();
+      scripted.pushGetJson({
+        state: "Positioned",
+        revision: 1,
+        locator: START,
+      });
+      const captureCurrentLocator = vi.fn(() => TERMINAL_WEB);
+      const options = {
+        apiFetch: scripted.apiFetch,
+        captureCurrentLocator,
+        previewLease: { isActive: () => true },
+      };
+      const view = renderHook(
+        ({ active }: { active: boolean }) =>
+          useReaderProgress(
+            baseOptions({ ...options, isPaneActive: active }),
+          ),
+        { initialProps: { active: true } },
+      );
+      await waitFor(() => expect(view.result.current.status).toBe("ready"));
+
+      act(() => {
+        view.result.current.reportMovement(TERMINAL_WEB);
+      });
+      if (trigger === "visibility") {
+        Object.defineProperty(document, "visibilityState", {
+          configurable: true,
+          value: "hidden",
+        });
+        act(() => {
+          document.dispatchEvent(new Event("visibilitychange"));
+        });
+      } else if (trigger === "pane") {
+        view.rerender({ active: false });
+      } else {
+        view.unmount();
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(captureCurrentLocator).not.toHaveBeenCalled();
+      expect(scripted.calls.filter(isPut)).toHaveLength(0);
+    },
+  );
+
+  it("flushes a dirty pre-preview locator unchanged without capturing the preview", async () => {
+    const scripted = createScriptedFetch();
+    scripted.pushGetJson({ state: "Positioned", revision: 1, locator: START });
+    const captureCurrentLocator = vi.fn(() => CAP);
+    let previewActive = false;
+
+    const { result } = renderHook(() =>
+      useReaderProgress(
+        baseOptions({
+          apiFetch: scripted.apiFetch,
+          captureCurrentLocator,
+          previewLease: { isActive: () => previewActive },
+        }),
+      ),
+    );
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    act(() => {
+      result.current.reportMovement(A);
+    });
+    previewActive = true;
+    scripted.pushPutJson({ state: "Positioned", revision: 2, locator: A });
+    act(() => {
+      window.dispatchEvent(new Event("pagehide"));
+    });
+
+    await waitFor(() => expect(scripted.calls.filter(isPut)).toHaveLength(1));
+    expect(putBody(scripted.calls.find(isPut))).toEqual({
+      locator: A,
+      base_revision: 1,
+    });
+    expect(captureCurrentLocator).not.toHaveBeenCalled();
+  });
+
   it("promotes the freshest synchronously captured locator on pagehide with keepalive", async () => {
     const scripted = createScriptedFetch();
     scripted.pushGetJson({ state: "Positioned", revision: 1, locator: START });

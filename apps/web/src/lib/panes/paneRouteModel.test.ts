@@ -78,6 +78,7 @@ describe("pane route model", () => {
       definition: {
         bodyMode: "standard",
         queryNavigation: "in-place",
+        secondaryGroups: ["resource-inspector"],
       },
     });
   });

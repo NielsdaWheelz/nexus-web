@@ -124,6 +124,7 @@ describe("selectionIntersectsCodeBlock", () => {
   it("returns false for empty cursor nodes", () => {
     const cursor: CanonicalCursorResult = {
       nodes: [],
+      provenance: [],
       emitted: "",
       length: 0,
     };

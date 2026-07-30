@@ -11,6 +11,7 @@ import {
   useEffect,
   useState,
   useCallback,
+  useLayoutEffect,
   useRef,
   useMemo,
   lazy,
@@ -170,11 +171,17 @@ import {
 } from "@/lib/panes/paneRuntime";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
+import PaneSearchResults from "@/components/resource-inspector/PaneSearchResults";
 import { usePaneMobileChromeController } from "@/lib/workspace/mobileChrome";
 import type { MobileChromeScrollSnapshot } from "@/lib/workspace/mobileChrome";
 import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
 import { usePaneFixedChrome } from "@/components/workspace/PaneFixedChrome";
 import type { PanePrimaryChromePublication } from "@/lib/panes/panePublications";
+import type {
+  PaneFindOccurrencesPublication,
+  PaneFindResultKey,
+  PaneFindSourceKey,
+} from "@/lib/panes/paneSearch";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import {
   artifactPaneHref,
@@ -247,7 +254,18 @@ import TextDocumentReader, {
 } from "./TextDocumentReader";
 import TranscriptPlaybackPanel from "./TranscriptPlaybackPanel";
 import { useReaderActivityAdapter } from "./ReaderActivityAdapter";
-import TranscriptContentPanel from "./TranscriptContentPanel";
+import {
+  createMediaFindPreviewLease,
+  useMediaPaneFind,
+  type WebFindRenderedState,
+} from "./useMediaPaneFind";
+import TranscriptContentPanel, {
+  type TranscriptFindPresentation,
+} from "./TranscriptContentPanel";
+import {
+  createTranscriptFindAdapter,
+  createTranscriptFindSnapshot,
+} from "./transcriptPaneFind";
 import TranscriptStatePanel from "./TranscriptStatePanel";
 import {
   type Fragment,
@@ -471,6 +489,8 @@ const READER_APPARATUS_FOCUS_CLASS = "reader-apparatus-focused";
 const READER_APPARATUS_HOVER_CLASS = "reader-apparatus-hover";
 const READER_APPARATUS_PULSE_CLASS = "reader-apparatus-pulse";
 const READER_APPARATUS_PULSE_MS = 1200;
+const EMPTY_MEDIA_FRAGMENTS: readonly Fragment[] = [];
+const EMPTY_WEB_SECTIONS: readonly ReaderNavigationSection[] = [];
 
 interface ReaderApparatusPreviewState {
   itemId: string;
@@ -619,6 +639,7 @@ function evidenceItemSnippet(item: ReaderEvidenceItem): string | null {
 
 export default function MediaPaneBody() {
   const paneRuntime = requirePaneRuntime(usePaneRuntime(), "MediaPaneBody");
+  const activatePaneTarget = paneRuntime.activateTarget;
   const id = usePaneParam("id");
   if (!id) {
     throw new Error("media route requires an id");
@@ -629,12 +650,12 @@ export default function MediaPaneBody() {
   const mediaReaderViewTransition = useMediaReaderViewTransition(id);
   const activateForkTarget = useCallback(
     (href: string, labelHint?: string) => {
-      paneRuntime.activateTarget({
+      activatePaneTarget({
         target: { href, ...(labelHint ? { labelHint } : {}) },
         disposition: { kind: "Fork" },
       });
     },
-    [paneRuntime],
+    [activatePaneTarget],
   );
   const setPaneLayout = paneRuntime.setPaneLayout;
   const requestSecondarySurface = paneRuntime.requestSecondarySurface;
@@ -657,6 +678,10 @@ export default function MediaPaneBody() {
   );
   const paneMobileChrome = usePaneMobileChromeController();
   const transcriptViewportRef = useRef<HTMLDivElement | null>(null);
+  const transcriptSegmentListRef = useRef<HTMLDivElement | null>(null);
+  const transcriptFindMatchElementsRef = useRef(
+    new Map<PaneFindResultKey, HTMLSpanElement>(),
+  );
   const viewport = useViewportState();
   const {
     target,
@@ -690,9 +715,14 @@ export default function MediaPaneBody() {
   } = useReaderContext();
   const scrollRestoreAppliedRef = useRef(false);
   const lastSavedTextAnchorOffsetRef = useRef<number | null>(null);
-  // One-shot: URL-driven (history/cold-query) navigation seeds the capture
-  // baseline instead of persisting; only genuine input after it may promote.
-  const suppressNextTextCaptureRef = useRef(false);
+  const mediaFindPreviewLease = useMemo(
+    () => createMediaFindPreviewLease(),
+    [],
+  );
+  useEffect(
+    () => () => mediaFindPreviewLease.retire(),
+    [mediaFindPreviewLease],
+  );
   const textRestoreSettledRef = useRef(false);
   const [readerLayoutReady, setReaderLayoutReady] = useState(false);
   const lectern = useLectern();
@@ -994,6 +1024,8 @@ export default function MediaPaneBody() {
   const [activeTranscriptFragmentId, setActiveTranscriptFragmentId] = useState<
     string | null
   >(null);
+  const [transcriptFindPresentation, setTranscriptFindPresentation] =
+    useState<TranscriptFindPresentation>({ kind: "Text" });
 
   // ---- EPUB state ----
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
@@ -1009,6 +1041,9 @@ export default function MediaPaneBody() {
   const [activeWebSectionId, setActiveWebSectionId] = useState<string | null>(
     null,
   );
+  const [webSearchPreviewFragmentId, setWebSearchPreviewFragmentId] = useState<
+    string | null
+  >(null);
   const [pdfControlsState, setPdfControlsState] =
     useState<PdfReaderControlsState | null>(null);
   const [pdfIntrinsicWidthPx, setPdfIntrinsicWidthPx] = useState<number | null>(
@@ -1077,6 +1112,7 @@ export default function MediaPaneBody() {
       [],
     ),
     onTerminalWriteAcknowledged: handleTerminalWriteAcknowledged,
+    previewLease: mediaFindPreviewLease,
   });
   // A canonical Empty cursor is a tombstone, not a locator. Its revision keys
   // an actual cold mount so every reader format reuses its existing beginning
@@ -1424,6 +1460,7 @@ export default function MediaPaneBody() {
   const textViewportRef = useRef<HTMLDivElement>(null);
   const textEndRef = useRef<HTMLElement>(null);
   const cursorRef = useRef<CanonicalCursorResult | null>(null);
+  const webFindRenderedStateRef = useRef<WebFindRenderedState | null>(null);
   const textProgressGenerationRef = useRef(0);
   const hasTrustedForwardTextScrollIntentRef = useRef(false);
   const terminalReportedGenerationRef = useRef<number | null>(null);
@@ -1666,16 +1703,25 @@ export default function MediaPaneBody() {
     webNavigationResource.status === "ready"
       ? webNavigationResource.data.toc
       : null;
-  const readerEvidence =
+  const readerDocumentMapStatus = readerDocumentMapResource.status;
+  const readerDocumentMapData =
     readerDocumentMapResource.status === "ready"
-      ? readerDocumentMapResource.data.evidence
+      ? readerDocumentMapResource.data
       : null;
-  const documentMapError =
+  const readerDocumentMapFailure =
     readerDocumentMapResource.status === "error"
-      ? toFeedback(readerDocumentMapResource.error, {
-          fallback: "Document Map could not be loaded.",
-        })
+      ? readerDocumentMapResource.error
       : null;
+  const readerEvidence = readerDocumentMapData?.evidence ?? null;
+  const documentMapError = useMemo(
+    () =>
+      readerDocumentMapFailure
+        ? toFeedback(readerDocumentMapFailure, {
+            fallback: "Document Map could not be loaded.",
+          })
+        : null,
+    [readerDocumentMapFailure],
+  );
   const evidenceProjection = useMemo<EvidencePaneProjection>(() => {
     if (!media) return { kind: "Processing", source: "evidence" };
     if (!documentMapAvailable) {
@@ -1715,7 +1761,7 @@ export default function MediaPaneBody() {
         }
       }
     }
-    switch (readerDocumentMapResource.status) {
+    switch (readerDocumentMapStatus) {
       case "idle":
       case "loading":
         return { kind: "Processing", source: "evidence" };
@@ -1730,15 +1776,18 @@ export default function MediaPaneBody() {
             } satisfies FeedbackContent),
         };
       case "ready":
-        return readerDocumentMapResource.data.status === "empty"
+        if (!readerDocumentMapData) {
+          throw new Error("Ready Media Evidence requires Document Map data");
+        }
+        return readerDocumentMapData.status === "empty"
           ? { kind: "Empty" }
           : {
               kind: "Ready",
-              evidence: readerDocumentMapResource.data.evidence,
-              aggregateStatus: readerDocumentMapResource.data.status,
+              evidence: readerDocumentMapData.evidence,
+              aggregateStatus: readerDocumentMapData.status,
             };
       default: {
-        const exhaustive: never = readerDocumentMapResource;
+        const exhaustive: never = readerDocumentMapStatus;
         throw new Error(
           `Unsupported Media Evidence resource state: ${JSON.stringify(exhaustive)}`,
         );
@@ -1748,14 +1797,12 @@ export default function MediaPaneBody() {
     documentMapAvailable,
     documentMapError,
     media,
-    readerDocumentMapResource,
+    readerDocumentMapData,
+    readerDocumentMapStatus,
   ]);
   const documentMapMarkers = useMemo(
-    () =>
-      readerDocumentMapResource.status === "ready"
-        ? readerDocumentMapResource.data.markers
-        : [],
-    [readerDocumentMapResource],
+    () => readerDocumentMapData?.markers ?? [],
+    [readerDocumentMapData],
   );
 
   // Active content
@@ -1776,7 +1823,11 @@ export default function MediaPaneBody() {
     const frag = isTranscriptMedia
       ? activeTranscriptFragment
       : (fragments.find(
-          (fragment) => fragment.id === activeRequestedFragmentId,
+          (fragment) =>
+            fragment.id ===
+            (media?.kind === "web_article" && webSearchPreviewFragmentId
+              ? webSearchPreviewFragmentId
+              : activeRequestedFragmentId),
         ) ??
         fragments[0] ??
         null);
@@ -1802,7 +1853,9 @@ export default function MediaPaneBody() {
     activeEpubSection,
     activeTranscriptFragment,
     fragments,
+    media?.kind,
     media?.capabilities?.can_read_embeds,
+    webSearchPreviewFragmentId,
   ]);
 
   const activeTextSource = useMemo(() => {
@@ -2431,7 +2484,7 @@ export default function MediaPaneBody() {
     // input: the first capture after it seeds the baseline instead of
     // persisting. Direct TOC commands pre-mark appliedRequestedReaderLocRef
     // and never reach this branch.
-    suppressNextTextCaptureRef.current = true;
+    mediaFindPreviewLease.armNextCaptureSuppression();
     beginRestoreSession("opening_target");
     setActiveSectionId(section.section_id);
     setEpubRestoreRequest(
@@ -2446,6 +2499,7 @@ export default function MediaPaneBody() {
     epubRestoreRequest?.source,
     epubSections,
     isEpub,
+    mediaFindPreviewLease,
   ]);
 
   useEffect(() => {
@@ -2457,7 +2511,6 @@ export default function MediaPaneBody() {
     webSectionScrollKeyRef.current = null;
     scrollRestoreAppliedRef.current = false;
     lastSavedTextAnchorOffsetRef.current = null;
-    suppressNextTextCaptureRef.current = false;
     setFocusedApparatusItemId(null);
     setHoveredApparatusItemId(null);
     textRestoreSettledRef.current = false;
@@ -3563,6 +3616,117 @@ export default function MediaPaneBody() {
     mismatchLoggedFragmentRef.current = null;
   }, [activeContent?.fragmentId]);
 
+  useEffect(() => {
+    const cursor = cursorRef.current;
+    const viewport = textViewportRef.current;
+    if (
+      media?.kind !== "web_article" ||
+      !activeContent ||
+      !cursor ||
+      !viewport ||
+      isMismatchDisabled
+    ) {
+      webFindRenderedStateRef.current = null;
+      return;
+    }
+    webFindRenderedStateRef.current = {
+      fragmentId: activeContent.fragmentId,
+      canonicalText: activeContent.canonicalText,
+      cursor,
+      viewport,
+    };
+  }, [
+    activeContent,
+    isMismatchDisabled,
+    media?.kind,
+    readerLayoutReady,
+    renderedHtml,
+  ]);
+
+  const transcriptFindSnapshot = useMemo(
+    () =>
+      isTranscriptMedia &&
+      canRead &&
+      fragments.length > 0 &&
+      (transcriptState === "ready" || transcriptState === "partial")
+        ? createTranscriptFindSnapshot({
+            mediaId: id,
+            transcriptState,
+            transcriptCoverage,
+            fragments,
+            chapters: media?.chapters ?? [],
+          })
+        : null,
+    [
+      canRead,
+      fragments,
+      id,
+      isTranscriptMedia,
+      media?.chapters,
+      transcriptCoverage,
+      transcriptState,
+    ],
+  );
+  const transcriptFindSourceKeyRef = useRef<PaneFindSourceKey | null>(null);
+  const transcriptFindActiveFragmentIdRef = useRef<string | null>(null);
+  transcriptFindSourceKeyRef.current = transcriptFindSnapshot?.sourceKey ?? null;
+  transcriptFindActiveFragmentIdRef.current =
+    activeTranscriptFragment?.id ?? null;
+  const handleTranscriptFindMatchElement = useCallback(
+    (key: PaneFindResultKey, element: HTMLSpanElement | null) => {
+      if (element) {
+        transcriptFindMatchElementsRef.current.set(key, element);
+      } else {
+        transcriptFindMatchElementsRef.current.delete(key);
+      }
+    },
+    [],
+  );
+  const transcriptFindAdapter = useMemo(
+    () =>
+      transcriptFindSnapshot
+        ? createTranscriptFindAdapter({
+            snapshot: transcriptFindSnapshot,
+            getCurrentSourceKey: () => transcriptFindSourceKeyRef.current,
+            getActiveFragmentId: () =>
+              transcriptFindActiveFragmentIdRef.current,
+            setActiveFragmentId: setActiveTranscriptFragmentId,
+            getSegmentList: () => transcriptSegmentListRef.current,
+            getMatchElement: (key) =>
+              transcriptFindMatchElementsRef.current.get(key) ?? null,
+            publishPresentation: setTranscriptFindPresentation,
+          })
+        : null,
+    [transcriptFindSnapshot],
+  );
+
+  const mediaPaneFind = useMediaPaneFind({
+    mediaId: id,
+    fragments:
+      media?.kind === "web_article" ? fragments : EMPTY_MEDIA_FRAGMENTS,
+    sections:
+      media?.kind === "web_article"
+        ? (webSections ?? EMPTY_WEB_SECTIONS)
+        : EMPTY_WEB_SECTIONS,
+    renderedStateRef: webFindRenderedStateRef,
+    previewFragmentId: webSearchPreviewFragmentId,
+    setPreviewFragmentId: setWebSearchPreviewFragmentId,
+    focusReaderViewport,
+    previewLease: mediaFindPreviewLease,
+    transcriptAdapter: transcriptFindAdapter,
+  });
+  const rebuildMediaFindPresentation = mediaPaneFind.rebuildPresentation;
+  useEffect(() => {
+    if (media?.kind === "web_article") {
+      rebuildMediaFindPresentation();
+    }
+  }, [
+    activeContent?.fragmentId,
+    media?.kind,
+    rebuildMediaFindPresentation,
+    renderedHtml,
+  ]);
+
   // ==========================================================================
   // Focus Sync
   // ==========================================================================
@@ -4335,7 +4499,7 @@ export default function MediaPaneBody() {
           href: `/media/${id}`,
         }).ref,
         openConversation: (conversationId) => {
-          paneRuntime.activateTarget({
+          activatePaneTarget({
             target: {
               href: `/conversations/${conversationId}`,
               labelHint: "Chat",
@@ -4355,7 +4519,7 @@ export default function MediaPaneBody() {
     } finally {
       keyboardChatBusyRef.current = false;
     }
-  }, [feedback, id, paneRuntime]);
+  }, [activatePaneTarget, feedback, id]);
 
   // ==========================================================================
   // EPUB Section Navigation
@@ -4583,6 +4747,7 @@ export default function MediaPaneBody() {
     pdfContentRef,
     activeContent,
     pdfControls: pdfControlsState,
+    previewLease: mediaFindPreviewLease,
   });
   const focusModeForRoot = readerProfile.focus_mode;
   const hyphenationForRoot = readerProfile.hyphenation;
@@ -4892,6 +5057,9 @@ export default function MediaPaneBody() {
       ready: boolean,
       trustedIntent: boolean,
     ) => {
+      if (mediaFindPreviewLease.isActive()) {
+        return;
+      }
       pendingTextViewportPublicationRef.current = {
         snapshot,
         ready:
@@ -4908,6 +5076,9 @@ export default function MediaPaneBody() {
         const publication = pendingTextViewportPublicationRef.current;
         pendingTextViewportPublicationRef.current = null;
         if (!publication) {
+          return;
+        }
+        if (mediaFindPreviewLease.isActive()) {
           return;
         }
 
@@ -4929,7 +5100,7 @@ export default function MediaPaneBody() {
               publication.trustedIntent &&
               hasTrustedForwardTextScrollIntentRef.current;
             if (!publication.trustedIntent) {
-              suppressNextTextCaptureRef.current = true;
+              mediaFindPreviewLease.armNextCaptureSuppression();
             }
             resetTextProgressGeneration();
             // A real forward input can share the frame that first observes a
@@ -5026,12 +5197,13 @@ export default function MediaPaneBody() {
         if (lastSavedTextAnchorOffsetRef.current === anchorOffset) {
           return;
         }
-        if (suppressNextTextCaptureRef.current) {
-          suppressNextTextCaptureRef.current = false;
-          if (!publication.trustedIntent) {
-            lastSavedTextAnchorOffsetRef.current = anchorOffset;
-            return;
-          }
+        if (
+          mediaFindPreviewLease.consumeNextCaptureSuppression(
+            publication.trustedIntent,
+          )
+        ) {
+          lastSavedTextAnchorOffsetRef.current = anchorOffset;
+          return;
         }
         lastSavedTextAnchorOffsetRef.current = anchorOffset;
         reportReaderMovement(locator);
@@ -5048,6 +5220,7 @@ export default function MediaPaneBody() {
       isMismatchDisabled,
       isPdf,
       isTranscriptMedia,
+      mediaFindPreviewLease,
       publishTextMeasurement,
       reportReaderMovement,
       resetTextProgressGeneration,
@@ -5071,6 +5244,7 @@ export default function MediaPaneBody() {
   );
   const handleTrustedTextScrollIntent = useCallback(
     (direction: TrustedScrollDirection) => {
+      mediaFindPreviewLease.releaseForGenuineInput();
       noteGenuineReaderInput();
       noteGenuineReaderActivityInput();
       if (
@@ -5099,6 +5273,7 @@ export default function MediaPaneBody() {
     },
     [
       cancelRestoreSession,
+      mediaFindPreviewLease,
       noteGenuineReaderActivityInput,
       noteGenuineReaderInput,
       restorePhase,
@@ -5156,7 +5331,7 @@ export default function MediaPaneBody() {
       ) {
         return;
       }
-      suppressNextTextCaptureRef.current = true;
+      mediaFindPreviewLease.armNextCaptureSuppression();
       resetTextProgressGeneration();
       textViewportDimensionsRef.current = dimensions;
       scheduleTextViewportCapture(
@@ -5175,6 +5350,7 @@ export default function MediaPaneBody() {
     hyphenationForRoot,
     readerLayoutKey,
     renderedHtml,
+    mediaFindPreviewLease,
     resetTextProgressGeneration,
     scheduleTextViewportCapture,
   ]);
@@ -5226,7 +5402,7 @@ export default function MediaPaneBody() {
   const quoteHighlightToNewChat = useCallback(
     (highlightId: string) => {
       refreshMediaHighlights();
-      paneRuntime.activateTarget({
+      activatePaneTarget({
         target: {
           href: readerHighlightChatIntentHref(
             readerHighlightChatIntent(
@@ -5239,7 +5415,7 @@ export default function MediaPaneBody() {
         disposition: { kind: "Adopt" },
       });
     },
-    [id, paneRuntime, refreshMediaHighlights],
+    [activatePaneTarget, id, refreshMediaHighlights],
   );
 
   // "Ask in existing chat…": open the destination picker over this Highlight.
@@ -5267,7 +5443,7 @@ export default function MediaPaneBody() {
       })
         .then((outcome) => {
           feedback.dismissByDedupeKey(feedbackKey);
-          paneRuntime.activateTarget({
+          activatePaneTarget({
             target: {
               href: artifactPaneHref(outcome.artifactRef),
               labelHint: "Lesson",
@@ -5288,7 +5464,7 @@ export default function MediaPaneBody() {
           console.error("learn_dossier_failed", error);
         });
     },
-    [feedback, paneRuntime],
+    [activatePaneTarget, feedback],
   );
 
   const handleSelectExistingChatDestination = useCallback(
@@ -5296,7 +5472,7 @@ export default function MediaPaneBody() {
       const highlightId = pendingExistingChatHighlightId;
       setPendingExistingChatHighlightId(null);
       if (highlightId === null) return;
-      paneRuntime.activateTarget({
+      activatePaneTarget({
         target: {
           href: readerHighlightChatIntentHref(
             readerHighlightChatIntent(
@@ -5309,7 +5485,7 @@ export default function MediaPaneBody() {
         disposition: { kind: "Adopt" },
       });
     },
-    [id, paneRuntime, pendingExistingChatHighlightId],
+    [activatePaneTarget, id, pendingExistingChatHighlightId],
   );
 
   const handleDismissSynapse = useCallback(async (edgeId: string) => {
@@ -5635,9 +5811,9 @@ export default function MediaPaneBody() {
   const handleOpenNoteLink = useCallback(
     (href: string, disposition: WorkspaceTargetDisposition) => {
       if (disposition.kind === "Fork") activateForkTarget(href);
-      else paneRuntime.activateTarget({ target: { href }, disposition });
+      else activatePaneTarget({ target: { href }, disposition });
     },
-    [activateForkTarget, paneRuntime],
+    [activateForkTarget, activatePaneTarget],
   );
 
   const contentsSurfaceBody = useMemo(
@@ -6057,12 +6233,15 @@ export default function MediaPaneBody() {
     setPdfRefreshToken((version) => version + 1);
   }, [refreshMediaHighlights]);
 
+  const openEvidenceForLink = useCallback(() => {
+    requestSecondarySurface("resource-evidence");
+  }, [requestSecondarySurface]);
   const linkComposer = useLinkComposer({
     onLinked: refreshLinkedReaderState,
     // The Connection's note lives on the Evidence sidecar's Link card, where the
     // Add/Edit/Remove-note controls are hosted; both toast affordances open it.
-    onAddLinkNote: () => requestSecondarySurface("resource-evidence"),
-    onViewConnection: () => requestSecondarySurface("resource-evidence"),
+    onAddLinkNote: openEvidenceForLink,
+    onViewConnection: openEvidenceForLink,
   });
 
   // Open the Link session with a source built from the gesture — an existing
@@ -6474,11 +6653,9 @@ export default function MediaPaneBody() {
       }
       if (marker.kind === "Embed") {
         const embed =
-          readerDocumentMapResource.status === "ready"
-            ? readerDocumentMapResource.data.embeds.find(
-                (entry) => `embed:${entry.id}` === marker.item_id,
-              )
-            : null;
+          readerDocumentMapData?.embeds.find(
+            (entry) => `embed:${entry.id}` === marker.item_id,
+          ) ?? null;
         const fragmentId = embed?.fragment_id;
         if (!embed || !fragmentId) return;
         if (fragmentId === activeContent?.fragmentId) {
@@ -6513,7 +6690,7 @@ export default function MediaPaneBody() {
       navigateToSection,
       navigateToWebSection,
       readerEvidence,
-      readerDocumentMapResource,
+      readerDocumentMapData,
       replaceReaderLocation,
       requestSecondarySurface,
       scrollDocumentEmbedIntoView,
@@ -6543,14 +6720,14 @@ export default function MediaPaneBody() {
     (object: ReaderEvidenceObject, disposition: WorkspaceTargetDisposition) => {
       const activated = activateResource(object.activation, {
         labelHint: object.label,
-        activateTarget: paneRuntime.activateTarget,
+        activateTarget: activatePaneTarget,
         disposition: {
           kind: object.kind === "Chat" ? "Adopt" : disposition.kind,
         },
       });
       if (activated) closeSecondaryOnMobile();
     },
-    [closeSecondaryOnMobile, paneRuntime],
+    [activatePaneTarget, closeSecondaryOnMobile],
   );
 
   const handleActivateEvidenceSourceTarget = useCallback(
@@ -6568,15 +6745,15 @@ export default function MediaPaneBody() {
       const activated = activateResource(target.activation, {
         labelHint:
           target.label.kind === "Present" ? target.label.value : "Source",
-        activateTarget: paneRuntime.activateTarget,
+        activateTarget: activatePaneTarget,
         disposition,
       });
       if (activated) closeSecondaryOnMobile();
     },
     [
       activateEvidenceSourceTargetResolution,
+      activatePaneTarget,
       closeSecondaryOnMobile,
-      paneRuntime,
     ],
   );
 
@@ -6670,14 +6847,113 @@ export default function MediaPaneBody() {
       startEditBounds,
     ],
   );
-  const { companionAction } = useResourceInspector({
+  const webFindAvailable =
+    media?.kind === "web_article" && canRead && fragments.length > 0;
+  const transcriptFindAvailable = transcriptFindAdapter !== null;
+  const mediaFindAvailable = webFindAvailable || transcriptFindAvailable;
+  const mediaFindInputLabel = transcriptFindAvailable
+    ? "Find in transcript"
+    : "Find in article";
+  const searchCommandsRef = useRef<
+    Pick<
+      ReturnType<typeof useResourceInspector>,
+      | "openSearchResults"
+      | "closeSearchResults"
+      | "previewSearchResult"
+    >
+  >(null);
+  const dismissPaneFind = mediaPaneFind.onDismiss;
+  const activatePaneFind = mediaPaneFind.onActivate;
+  const dismissFind = useCallback(() => {
+    dismissPaneFind();
+    searchCommandsRef.current?.closeSearchResults();
+  }, [dismissPaneFind]);
+  const showFindResults = useCallback((trigger: HTMLButtonElement | null) => {
+    searchCommandsRef.current?.openSearchResults(trigger);
+  }, []);
+  const activateFindResult = useCallback(
+    (key: Parameters<PaneFindOccurrencesPublication["onActivate"]>[0]) => {
+      void activatePaneFind(key).then((previewed) => {
+        if (previewed) searchCommandsRef.current?.previewSearchResult();
+      });
+    },
+    [activatePaneFind],
+  );
+  const findPublicationBase = useMemo(
+    () => ({
+      kind: "FindOccurrences" as const,
+      query: mediaPaneFind.query,
+      partialSourceLabel: transcriptFindAvailable
+        ? "available transcript"
+        : undefined,
+      inputLabel: mediaFindInputLabel,
+      placeholder: mediaFindInputLabel,
+      onOpen: mediaPaneFind.onOpen,
+      onQueryChange: mediaPaneFind.onQueryChange,
+      onDismiss: dismissFind,
+      result: mediaPaneFind.result,
+      scope: mediaPaneFind.scope,
+      matchCase: mediaPaneFind.matchCase,
+      wholeWord: mediaPaneFind.wholeWord,
+      onMatchCaseChange: mediaPaneFind.onMatchCaseChange,
+      onWholeWordChange: mediaPaneFind.onWholeWordChange,
+      onStep: mediaPaneFind.onStep,
+      onActivate: activateFindResult,
+      onShowResults: showFindResults,
+      returnToReadingPosition: mediaPaneFind.returnToReadingPosition,
+    }),
+    [
+      activateFindResult,
+      dismissFind,
+      mediaPaneFind.matchCase,
+      mediaPaneFind.onMatchCaseChange,
+      mediaPaneFind.onOpen,
+      mediaPaneFind.onQueryChange,
+      mediaPaneFind.onStep,
+      mediaPaneFind.onWholeWordChange,
+      mediaPaneFind.query,
+      mediaPaneFind.result,
+      mediaPaneFind.returnToReadingPosition,
+      mediaPaneFind.scope,
+      mediaPaneFind.wholeWord,
+      mediaFindInputLabel,
+      showFindResults,
+      transcriptFindAvailable,
+    ],
+  );
+  const searchResultsBody = useMemo(
+    () =>
+      mediaFindAvailable ? (
+        <PaneSearchResults
+          publication={{ ...findPublicationBase, resultsExpanded: true }}
+        />
+      ) : undefined,
+    [findPublicationBase, mediaFindAvailable],
+  );
+  const inspector = useResourceInspector({
     scheme: "media",
     handle: id,
     bodies: {
       contents: contentsAvailable ? contentsSurfaceBody : undefined,
       linkedItems: evidenceSurfaceBody,
     },
+    searchResults: searchResultsBody,
   });
+  searchCommandsRef.current = inspector;
+  const previousMediaFindSourceRef = useRef(mediaPaneFind.sourceKey);
+  useLayoutEffect(() => {
+    if (previousMediaFindSourceRef.current === mediaPaneFind.sourceKey) return;
+    previousMediaFindSourceRef.current = mediaPaneFind.sourceKey;
+    inspector.closeSearchResults();
+  }, [inspector, mediaPaneFind.sourceKey]);
+  const findPublication = useMemo<PaneFindOccurrencesPublication>(
+    () => ({
+      ...findPublicationBase,
+      resultsExpanded: inspector.searchResultsExpanded,
+    }),
+    [findPublicationBase, inspector.searchResultsExpanded],
+  );
+  const { companionAction } = inspector;
   const primaryChromePublication = useMemo<PanePrimaryChromePublication>(
     () => ({
       ...(mediaResourceHeader
@@ -6689,6 +6965,7 @@ export default function MediaPaneBody() {
           }
         : {}),
       ...(mediaToolbar ? { toolbar: mediaToolbar } : {}),
+      search: mediaFindAvailable ? findPublication : undefined,
       actions: companionAction ? [companionAction] : [],
       menu: media
         ? {
@@ -6704,11 +6981,13 @@ export default function MediaPaneBody() {
     }),
     [
       companionAction,
+      findPublication,
       id,
       media,
       mediaHeaderGroups,
       mediaResourceHeader,
       mediaToolbar,
+      mediaFindAvailable,
     ],
   );
   usePanePrimaryChrome(primaryChromePublication);
@@ -6916,6 +7195,9 @@ export default function MediaPaneBody() {
       evidenceStartMs={resolvedEvidenceStartMs}
       evidenceEndMs={resolvedEvidenceEndMs}
       contentRef={contentRef}
+      segmentListRef={transcriptSegmentListRef}
+      findPresentation={transcriptFindPresentation}
+      onFindMatchElement={handleTranscriptFindMatchElement}
       onSegmentSelect={handleTranscriptSegmentSelect}
       onSeek={handleTranscriptSeek}
       onContentClick={handleReaderContentClick}

@@ -13,7 +13,7 @@
  * @see python/nexus/services/canonicalize.py
  */
 
-import { isWsCp, normalizeWhitespace } from "./canonicalText";
+import { isWsCp } from "./canonicalText";
 
 import { codepointLength } from "./codepoints";
 
@@ -31,11 +31,24 @@ export type CanonicalNode = {
   trimLeadCp: number; // leading codepoints stripped by trim (for raw→trimmed offset conversion)
 };
 
+export type CanonicalDomSpan = {
+  node: Text;
+  startUtf16: number;
+  endUtf16: number;
+};
+
+export type CanonicalProvenanceSpan = {
+  start: number;
+  end: number;
+  spans: CanonicalDomSpan[];
+};
+
 /**
  * Result of building the canonical cursor.
  */
 export type CanonicalCursorResult = {
   nodes: CanonicalNode[];
+  provenance: CanonicalProvenanceSpan[];
   emitted: string; // the reconstructed canonical text
   length: number; // codepoint length of emitted
 };
@@ -99,39 +112,101 @@ function isHidden(element: Element): boolean {
   }
   return false;
 }
-
-
-
-/**
- * Normalize a string to NFC form.
- */
-function normalizeNFC(str: string): string {
-  return str.normalize("NFC");
-}
-
 // =============================================================================
 // Part Collector (matches backend algorithm)
 // =============================================================================
 
 /**
- * Part with optional source text node.
- * We track source nodes for TEXT parts to enable offset mapping.
+ * Internal DOM source span. `order` preserves source-document order after NFC
+ * reorders combining marks; `nodeCanonicalStart` retains the existing
+ * whitespace-only node mapping used by selection/highlight owners.
  */
-type Part = {
-  text: string;
-  sourceNode?: Text;
+type SourceSpan = CanonicalDomSpan & {
+  order: number;
+  nodeCanonicalStart: number;
 };
+
+type Token = {
+  ch: string;
+  spans: SourceSpan[];
+};
+
+type Part = {
+  tokens: Token[];
+};
+
+function normalizedTextTokens(
+  node: Text,
+  nextSourceOrder: () => number,
+): Token[] {
+  const text = node.data;
+  const tokens: Token[] = [];
+  let utf16Offset = 0;
+  let nodeCanonicalOffset = 0;
+
+  while (utf16Offset < text.length) {
+    const codepoint = String.fromCodePoint(text.codePointAt(utf16Offset)!);
+    if (!isWsCp(codepoint)) {
+      const endUtf16 = utf16Offset + codepoint.length;
+      tokens.push({
+        ch: codepoint,
+        spans: [
+          {
+            node,
+            startUtf16: utf16Offset,
+            endUtf16,
+            order: nextSourceOrder(),
+            nodeCanonicalStart: nodeCanonicalOffset,
+          },
+        ],
+      });
+      utf16Offset = endUtf16;
+      nodeCanonicalOffset += 1;
+      continue;
+    }
+
+    const startUtf16 = utf16Offset;
+    while (utf16Offset < text.length) {
+      const whitespace = String.fromCodePoint(text.codePointAt(utf16Offset)!);
+      if (!isWsCp(whitespace)) {
+        break;
+      }
+      utf16Offset += whitespace.length;
+    }
+    tokens.push({
+      ch: " ",
+      spans: [
+        {
+          node,
+          startUtf16,
+          endUtf16: utf16Offset,
+          order: nextSourceOrder(),
+          nodeCanonicalStart: nodeCanonicalOffset,
+        },
+      ],
+    });
+    nodeCanonicalOffset += 1;
+  }
+
+  return tokens;
+}
 
 /**
  * Walk a DOM tree and collect parts following backend algorithm exactly.
  */
 function collectParts(root: Element): Part[] {
   const parts: Part[] = [];
+  let sourceOrder = 0;
+  const nextSourceOrder = () => {
+    const current = sourceOrder;
+    sourceOrder += 1;
+    return current;
+  };
 
   function getLastPartChar(): string {
     if (parts.length === 0) return "";
     const lastPart = parts[parts.length - 1];
-    return lastPart.text.slice(-1);
+    return lastPart.tokens[lastPart.tokens.length - 1]?.ch ?? "";
   }
 
   function walkElement(element: Element): void {
@@ -151,7 +226,7 @@ function collectParts(root: Element): Part[] {
 
     // Handle <br> specially - adds newline
     if (tagName === "br") {
-      parts.push({ text: "\n" });
+      parts.push({ tokens: [{ ch: "\n", spans: [] }] });
       return;
     }
 
@@ -159,7 +234,7 @@ function collectParts(root: Element): Part[] {
     if (isBlock && parts.length > 0) {
       const lastChar = getLastPartChar();
       if (lastChar !== "\n" && lastChar !== "") {
-        parts.push({ text: "\n" });
+        parts.push({ tokens: [{ ch: "\n", spans: [] }] });
       }
     }
 
@@ -167,10 +242,9 @@ function collectParts(root: Element): Part[] {
     for (const child of Array.from(element.childNodes)) {
       if (child.nodeType === Node.TEXT_NODE) {
         const textNode = child as Text;
-        const text = textNode.textContent || "";
-        const normalized = normalizeWhitespace(text);
-        if (normalized) {
-          parts.push({ text: normalized, sourceNode: textNode });
+        const tokens = normalizedTextTokens(textNode, nextSourceOrder);
+        if (tokens.length > 0) {
+          parts.push({ tokens });
         }
       } else if (child.nodeType === Node.ELEMENT_NODE) {
         walkElement(child as Element);
@@ -181,7 +255,7 @@ function collectParts(root: Element): Part[] {
     if (isBlock && parts.length > 0) {
       const lastChar = getLastPartChar();
       if (lastChar !== "\n" && lastChar !== "") {
-        parts.push({ text: "\n" });
+        parts.push({ tokens: [{ ch: "\n", spans: [] }] });
       }
     }
   }
@@ -189,6 +263,86 @@ function collectParts(root: Element): Part[] {
   walkElement(root);
 
   return parts;
+}
+
+function sourceSpanKey(span: SourceSpan): string {
+  return `${span.order}:${span.startUtf16}:${span.endUtf16}`;
+}
+
+function uniqueSourceSpans(spans: SourceSpan[]): SourceSpan[] {
+  const unique = new Map<string, SourceSpan>();
+  for (const span of spans) {
+    unique.set(sourceSpanKey(span), span);
+  }
+  return Array.from(unique.values()).sort(
+    (left, right) =>
+      left.order - right.order ||
+      left.startUtf16 - right.startUtf16 ||
+      left.endUtf16 - right.endUtf16,
+  );
+}
+
+/**
+ * Apply NFC once to the complete collected stream, matching the backend. NFD
+ * provides a deterministic bridge from normalized output codepoints back to
+ * every contributing raw DOM span, including composition and canonical mark
+ * reordering across inline text nodes.
+ */
+function normalizeNfcWithProvenance(tokens: Token[]): Token[] {
+  const text = tokens.map((token) => token.ch).join("");
+  if (!text) {
+    return [];
+  }
+
+  const decomposedByCodepoint = new Map<
+    string,
+    { tokens: Token[]; nextIndex: number }
+  >();
+  for (const token of tokens) {
+    for (const ch of Array.from(token.ch.normalize("NFD"))) {
+      const queue = decomposedByCodepoint.get(ch);
+      const decomposed = { ch, spans: token.spans };
+      if (queue) {
+        queue.tokens.push(decomposed);
+      } else {
+        decomposedByCodepoint.set(ch, {
+          tokens: [decomposed],
+          nextIndex: 0,
+        });
+      }
+    }
+  }
+
+  const reorderedNfd = Array.from(text.normalize("NFD")).map((ch) => {
+    const queue = decomposedByCodepoint.get(ch);
+    const token = queue?.tokens[queue.nextIndex];
+    if (!token) {
+      throw new Error("Canonical NFC provenance decomposition drifted.");
+    }
+    queue.nextIndex += 1;
+    return token;
+  });
+
+  const normalized: Token[] = [];
+  let nfdOffset = 0;
+  for (const ch of Array.from(text.normalize("NFC"))) {
+    const decomposition = Array.from(ch.normalize("NFD"));
+    const spans: SourceSpan[] = [];
+    for (const expected of decomposition) {
+      const token = reorderedNfd[nfdOffset];
+      if (!token || token.ch !== expected) {
+        throw new Error("Canonical NFC provenance composition drifted.");
+      }
+      spans.push(...token.spans);
+      nfdOffset += 1;
+    }
+    normalized.push({ ch, spans: uniqueSourceSpans(spans) });
+  }
+
+  if (nfdOffset !== reorderedNfd.length) {
+    throw new Error("Canonical NFC provenance left unconsumed source text.");
+  }
+  return normalized;
 }
 
 // =============================================================================
@@ -210,36 +364,15 @@ function collectParts(root: Element): Part[] {
  * const container = document.createElement('div');
  * container.innerHTML = '<p>Hello</p><p>World</p>';
  * const result = buildCanonicalCursor(container);
- * // result.emitted === "Hello\n\nWorld"
+ * // result.emitted === "Hello\nWorld"
  * // result.nodes maps each text node to its offset range
  * ```
  */
 export function buildCanonicalCursor(root: Element): CanonicalCursorResult {
   const parts = collectParts(root);
-  type Token = {
-    ch: string;
-    node: Text | null;
-    nodeCpIdx: number;
-  };
-
-  const joinedTokens: Token[] = [];
-  for (const part of parts) {
-    const normalizedPart = normalizeNFC(part.text);
-    if (!normalizedPart) {
-      continue;
-    }
-    if (!part.sourceNode) {
-      for (const ch of [...normalizedPart]) {
-        joinedTokens.push({ ch, node: null, nodeCpIdx: -1 });
-      }
-      continue;
-    }
-    let nodeCpIdx = 0;
-    for (const ch of [...normalizedPart]) {
-      joinedTokens.push({ ch, node: part.sourceNode, nodeCpIdx });
-      nodeCpIdx += 1;
-    }
-  }
+  const joinedTokens = normalizeNfcWithProvenance(
+    parts.flatMap((part) => part.tokens),
+  );
 
   const collapsedTokens: Token[] = [];
   for (let i = 0; i < joinedTokens.length;) {
@@ -259,8 +392,8 @@ export function buildCanonicalCursor(root: Element): CanonicalCursorResult {
       j += 1;
     }
     if (newlineCount >= 2) {
-      collapsedTokens.push({ ch: "\n", node: null, nodeCpIdx: -1 });
-      collapsedTokens.push({ ch: "\n", node: null, nodeCpIdx: -1 });
+      collapsedTokens.push({ ch: "\n", spans: [] });
+      collapsedTokens.push({ ch: "\n", spans: [] });
       i = j;
       continue;
     }
@@ -289,7 +422,7 @@ export function buildCanonicalCursor(root: Element): CanonicalCursorResult {
       lineTrimmedTokens.push(collapsedTokens[j]);
     }
     if (i < collapsedTokens.length) {
-      lineTrimmedTokens.push({ ch: "\n", node: null, nodeCpIdx: -1 });
+      lineTrimmedTokens.push({ ch: "\n", spans: [] });
     }
     lineStart = i + 1;
   }
@@ -307,29 +440,55 @@ export function buildCanonicalCursor(root: Element): CanonicalCursorResult {
   const emitted = finalTokens.map((token) => token.ch).join("");
 
   const nodes: CanonicalNode[] = [];
-  const nodeMap = new Map<Text, CanonicalNode>();
+  const nodeMap = new Map<
+    Text,
+    CanonicalNode & { firstSourceOrder: number }
+  >();
   for (let i = 0; i < finalTokens.length; i++) {
     const token = finalTokens[i];
-    if (!token.node) {
-      continue;
+    for (const span of token.spans) {
+      const existing = nodeMap.get(span.node);
+      if (!existing) {
+        const nodeEntry = {
+          node: span.node,
+          start: i,
+          end: i + 1,
+          trimLeadCp: span.nodeCanonicalStart,
+          firstSourceOrder: span.order,
+        };
+        nodeMap.set(span.node, nodeEntry);
+        continue;
+      }
+      existing.start = Math.min(existing.start, i);
+      existing.end = Math.max(existing.end, i + 1);
+      existing.trimLeadCp = Math.min(
+        existing.trimLeadCp,
+        span.nodeCanonicalStart,
+      );
+      existing.firstSourceOrder = Math.min(existing.firstSourceOrder, span.order);
     }
-    const existing = nodeMap.get(token.node);
-    if (!existing) {
-      const nodeEntry: CanonicalNode = {
-        node: token.node,
-        start: i,
-        end: i + 1,
-        trimLeadCp: token.nodeCpIdx,
-      };
-      nodeMap.set(token.node, nodeEntry);
-      nodes.push(nodeEntry);
-      continue;
-    }
-    existing.end = i + 1;
   }
+  nodes.push(
+    ...Array.from(nodeMap.values())
+      .sort((left, right) => left.firstSourceOrder - right.firstSourceOrder)
+      .map(({ firstSourceOrder: _firstSourceOrder, ...node }) => node),
+  );
+
+  const provenance = finalTokens.map<CanonicalProvenanceSpan>(
+    (token, index) => ({
+      start: index,
+      end: index + 1,
+      spans: token.spans.map(({ node, startUtf16, endUtf16 }) => ({
+        node,
+        startUtf16,
+        endUtf16,
+      })),
+    }),
+  );
 
   return {
     nodes,
+    provenance,
     emitted,
     length: codepointLength(emitted),
   };

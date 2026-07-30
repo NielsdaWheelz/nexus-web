@@ -73,6 +73,10 @@ interface UseReaderProgressOptions {
   applyCursor: (command: ApplyCursorCommand) => Promise<ApplyCursorResult>;
   /** A terminal web/EPUB cursor write was durably acknowledged by the server. */
   onTerminalWriteAcknowledged: () => void;
+  /** Route-local programmatic Find movement fence. */
+  previewLease: {
+    isActive(): boolean;
+  };
 }
 
 export interface ReaderProgress {
@@ -469,6 +473,17 @@ export function useReaderProgress(options: UseReaderProgressOptions): ReaderProg
       // A save is already in flight; its own response settles engagement.
       return;
     }
+    if (options.previewLease.isActive()) {
+      // A dirty locator predating the preview may still be flushed unchanged.
+      // A clean reader must not capture or engage the preview viewport.
+      if (
+        current.local.status === "dirty" ||
+        current.local.status === "save_failed"
+      ) {
+        void sendCursor(saveBaseRevision(current), true);
+      }
+      return;
+    }
     if (current.local.status === "dirty" || current.local.status === "save_failed") {
       if (!isTerminalReaderLocator(current.local.locator)) {
         const captured = captureRef.current();
@@ -490,7 +505,7 @@ export function useReaderProgress(options: UseReaderProgressOptions): ReaderProg
     }
     apply({ type: "moved", locator: captured });
     void sendCursor(saveBaseRevision(current), true);
-  }, [apply, readableMediaId, sendCursor]);
+  }, [apply, options.previewLease, readableMediaId, sendCursor]);
 
   // Generation lifecycle: reset and (re)establish authority per readable
   // media/locator-kind; Unavailable performs no progress I/O.
@@ -610,6 +625,9 @@ export function useReaderProgress(options: UseReaderProgressOptions): ReaderProg
 
   const reportMovement = useCallback(
     (locator: ReaderResumeState) => {
+      if (options.previewLease.isActive()) {
+        return;
+      }
       inputSeqRef.current += 1;
       const current = stateRef.current;
       const canonical =
@@ -626,7 +644,7 @@ export function useReaderProgress(options: UseReaderProgressOptions): ReaderProg
       lastMovedAtRef.current = Date.now();
       apply({ type: "moved", locator });
     },
-    [apply],
+    [apply, options.previewLease],
   );
 
   const noteGenuineInput = useCallback(() => {

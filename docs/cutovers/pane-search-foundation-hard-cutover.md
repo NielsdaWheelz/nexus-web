@@ -129,7 +129,10 @@ filtering receives a nonvisual polite count/status announcement.
 1. **Search** is the umbrella interaction. Inventory behavior is **Filter**;
    document behavior is **Find**. Global Nexus retrieval remains **Search**.
 2. Query text is literal data. The foundation neither parses operators nor
-   sends query text to generated code, selectors, HTML, or regex source.
+   sends unescaped query text to generated code, selectors, HTML, or regex
+   source. A child may place a fully escaped literal in a fixed regex solely
+   to obtain the runtime's Unicode simple case folding; query regex syntax and
+   operators remain impossible.
 3. Find defaults to case-insensitive, Whole word off, and Entire resource.
    The shared input boundary caps queries at 256 codepoints; empty is idle and
    one codepoint is valid. Child specs define exact Unicode matching against
@@ -273,17 +276,18 @@ type PaneFindScopeControl =
 ```
 
 `PaneFindResultKey` is an opaque branded string. The adapter constructs it from
-its frozen source identity and logical locator through a canonical, injective
-encoding — canonical JSON of the structured identity, never ad hoc delimiter
-concatenation — so distinct locators cannot collide. Consumers compare but
-never parse it; the single brand cast carries the repository-standard
-assertion token. `Ready` requires non-empty, unique ordered rows and an
-`activeKey` present exactly once. `Selectable` requires one selected option
-and one `EntireResource` option; format specs own any additional option. Scope
-ids are adapter-owned opaque tokens. With no exact narrow scope, publish
-`EntireResource` and render no selector. `Unavailable`/`Available` reuses the
-existing capability pairing; do not mint `Absent` or optional-callback
-variants.
+a compact, exact occurrence-source identity plus its logical locator through
+`createPaneFindResultKey`'s canonical, injective encoding — never ad hoc
+delimiter concatenation. The separately fenced `PaneFindSourceKey` owns the
+complete frozen source identity; do not repeat a large source snapshot in
+every result row. Consumers compare keys but never parse them; the constructor's
+single brand cast carries the repository-standard assertion token. `Ready`
+requires non-empty, unique ordered rows and an `activeKey` present exactly
+once. `Selectable` requires one selected option and one `EntireResource`
+option; format specs own any additional option. Scope ids are adapter-owned
+opaque tokens. With no exact narrow scope, publish `EntireResource` and render
+no selector. `Unavailable`/`Available` reuses the existing capability pairing;
+do not mint `Absent` or optional-callback variants.
 
 `usePaneFind(adapter)` owns session/query generations, abort, stale-settlement
 rejection, input scheduling (one named duration constant), active key,
@@ -295,24 +299,44 @@ The adapter owns preparation, literal matching, exact preview, presentation
 clear, and return:
 
 ```ts
-interface PaneFindAdapter {
+interface PaneFindAdapter<TError> {
+  readonly sourceKey: PaneFindSourceKey;
   prepare(request: PaneFindPrepareRequest): Promise<PaneFindSession>;
-  find(request: PaneFindRequest): Promise<PaneFindResponse>;
-  preview(request: PaneFindPreviewRequest): Promise<PaneFindPreviewReceipt>;
+  find(request: PaneFindRequest): Promise<PaneFindResponse<TError>>;
+  preview(
+    request: PaneFindPreviewRequest,
+  ): Promise<PaneFindPreviewReceipt<TError>>;
   clearPresentation(request: PaneFindSessionRequest): Promise<void>;
   returnToReadingPosition(request: PaneFindSessionRequest): Promise<void>;
+  errorMessage(error: TError): string;
 }
 ```
 
-Every request carries `sessionId`, exact source identity, and `AbortSignal`;
-queries and previews also carry `queryId`. Responses echo the relevant
-identities. Abort where possible and reject every late identity regardless.
-Dependent specs close the request/response unions; no optional capability bags.
+This is the exact implemented interface in `usePaneFind.ts`.
+`PaneFindResponse<TError>` closes `Ready`, `NoMatches`, `TooManyMatches`, and
+`Failed`; `PaneFindPreviewReceipt<TError>` closes `Previewed` and `Rejected`.
+Every request carries `sessionId`, `sourceKey`, and `AbortSignal`; queries and
+previews also carry `queryId`. Responses echo the relevant identities. Abort
+where possible and reject every late identity regardless. Dependent specs
+close `TError`; no optional capability bags.
+
+Once Return begins, `usePaneFind` cancels queued/in-flight query, preview, and
+presentation-clear work and rejects every new Find command until restoration
+settles. Return and preview/query mutation never overlap.
 
 Preview positioning is side-effect-free by construction. Where a format has no
 such path today — EPUB cross-section movement exists only as navigation that
 writes progress and URL — the child builds one as new construction; it never
 reuses navigation, restore-session, or seek paths.
+
+### Canonical-text session reprepare amendment
+
+The canonical text surfaces cutover hard-cuts required `onOpen()` into
+`PaneFindController` and `FindOccurrences`. `PaneShell` invokes it once per
+closed-to-open transition before focusing the query. `usePaneFind` reprepares
+only when no Return origin exists; an existing origin retains its session.
+Every producer, including Chat, forwards the callback. Refocusing an already
+open bar does not reprepare.
 
 ### Implemented collection FilterRows successor amendment
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createLink, deleteLink } from "@/lib/resourceGraph/links";
@@ -127,5 +127,8 @@ export function useLinkComposer({
     [committing, feedback, onAddLinkNote, onLinked, onViewConnection, source, undo],
   );
 
-  return { open, sourceRef, committing, openLink, close, confirm };
+  return useMemo(
+    () => ({ open, sourceRef, committing, openLink, close, confirm }),
+    [close, committing, confirm, open, openLink, sourceRef],
+  );
 }

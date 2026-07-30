@@ -58,6 +58,7 @@ function FindHarness() {
     query,
     inputLabel: "Find in document",
     placeholder: "Find in this document",
+    onOpen: () => {},
     onQueryChange: setQuery,
     onDismiss: () => setQuery(""),
     result: {
@@ -111,6 +112,31 @@ function FindHarness() {
       <output aria-label="Last action">{lastAction}</output>
     </>
   );
+}
+
+function PartialFindHarness() {
+  const publication: PaneSearchPublication = {
+    kind: "FindOccurrences",
+    query: "missing",
+    partialSourceLabel: "available transcript",
+    inputLabel: "Find in transcript",
+    placeholder: "Find in transcript",
+    onOpen: () => {},
+    onQueryChange: () => {},
+    onDismiss: () => {},
+    result: { kind: "NoMatches", completeness: "Partial" },
+    scope: { kind: "EntireResource" },
+    matchCase: false,
+    wholeWord: false,
+    onMatchCaseChange: () => {},
+    onWholeWordChange: () => {},
+    onStep: () => {},
+    onActivate: () => {},
+    onShowResults: () => {},
+    resultsExpanded: false,
+    returnToReadingPosition: { kind: "Unavailable" },
+  };
+  return <PaneSearchBar publication={publication} onClose={() => {}} />;
 }
 
 describe("PaneSearchBar", () => {
@@ -275,6 +301,7 @@ describe("PaneSearchBar", () => {
       query: "river",
       inputLabel: "Find in document",
       placeholder: "Find in this document",
+      onOpen: () => {},
       onQueryChange: () => {},
       onDismiss: () => {},
       result: {
@@ -307,5 +334,16 @@ describe("PaneSearchBar", () => {
 
     await user.click(screen.getByRole("searchbox", { name: "Find in document" }));
     await user.keyboard("{Enter}");
+  });
+
+  it("names the partial transcript when zero available matches exist", () => {
+    render(<PartialFindHarness />);
+
+    expect(
+      screen.getByText(
+        "No matches in the available transcript; results are incomplete",
+        { selector: "[role='status']" },
+      ),
+    ).toBeInTheDocument();
   });
 });

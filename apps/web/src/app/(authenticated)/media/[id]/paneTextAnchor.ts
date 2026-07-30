@@ -6,9 +6,10 @@
  * canonical text offsets in the reader.
  */
 
-import { type CanonicalCursorResult } from "@/lib/highlights/canonicalCursor";
-import { canonicalCpToRawCp } from "@/lib/highlights/canonicalText";
-import { codepointToUtf16 } from "@/lib/highlights/codepoints";
+import {
+  type CanonicalCursorResult,
+  type CanonicalDomSpan,
+} from "@/lib/highlights/canonicalCursor";
 import {
   getPaneScrollContainer,
   getPaneScrollTopPaddingPx,
@@ -74,6 +75,20 @@ export function findFirstVisibleCanonicalOffset(
       Math.max(8, Math.floor(containerRect.height * 0.12)),
     );
 
+  const isVisibleOffset = (offset: number): boolean => {
+    const ranges = resolveCanonicalTextRanges(cursor, offset, offset + 1);
+    if (!ranges) return false;
+    return ranges.some((range) => {
+      const rect = range.getBoundingClientRect();
+      return (
+        rect.bottom > probeTop &&
+        rect.top < containerRect.bottom &&
+        rect.right > containerRect.left &&
+        rect.left < containerRect.right
+      );
+    });
+  };
+
   for (const entry of cursor.nodes) {
     const anchorElement = entry.node.parentElement;
     if (!anchorElement) {
@@ -86,66 +101,212 @@ export function findFirstVisibleCanonicalOffset(
     if ((entry.node.textContent ?? "").trim().length === 0) {
       continue;
     }
-    return entry.start;
+    let low = entry.start;
+    let high = entry.end;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      const ranges = resolveCanonicalTextRanges(cursor, middle, middle + 1);
+      const reachesVisibleTop =
+        ranges?.some(
+          (range) => range.getBoundingClientRect().bottom > probeTop,
+        ) ?? false;
+      if (reachesVisibleTop) {
+        high = middle;
+      } else {
+        low = middle + 1;
+      }
+    }
+    // A composed codepoint may span nodes and synthetic boundaries are not
+    // renderable. Probe the small boundary neighborhood, then scan forward.
+    for (
+      let offset = Math.max(entry.start, low - 2);
+      offset < entry.end;
+      offset += 1
+    ) {
+      if (isVisibleOffset(offset)) return offset;
+    }
   }
   return null;
 }
 
-type CanonicalAnchor = {
-  node: CanonicalCursorResult["nodes"][number];
+export type CanonicalTextAnchor = {
+  node: Text;
   rawUtf16Offset: number;
 };
 
-function resolveCanonicalAnchor(
+export type CanonicalTextAnchorAffinity = "Forward" | "Backward";
+
+function firstSourceAnchor(
   cursor: CanonicalCursorResult,
-  canonicalOffset: number,
-): CanonicalAnchor | null {
-  if (cursor.nodes.length === 0) {
-    return null;
+  startIndex: number,
+): CanonicalTextAnchor | null {
+  for (let index = startIndex; index < cursor.provenance.length; index += 1) {
+    const span = cursor.provenance[index]?.spans[0];
+    if (span) {
+      return { node: span.node, rawUtf16Offset: span.startUtf16 };
+    }
   }
-
-  const clampedOffset = Math.max(0, Math.min(canonicalOffset, cursor.length));
-  const node =
-    cursor.nodes.find(
-      (entry) => clampedOffset >= entry.start && clampedOffset < entry.end,
-    ) ??
-    cursor.nodes.find((entry) => entry.start >= clampedOffset) ??
-    cursor.nodes[cursor.nodes.length - 1];
-
-  if (!node) {
-    return null;
-  }
-
-  const rawText = node.node.textContent ?? "";
-  const nodeCanonicalLength = Math.max(0, node.end - node.start);
-  const localCanonicalOffset = Math.max(
-    0,
-    Math.min(clampedOffset - node.start, nodeCanonicalLength),
-  );
-  const localRawCpOffset = canonicalCpToRawCp(
-    rawText,
-    localCanonicalOffset,
-    node.trimLeadCp,
-  );
-  const rawUtf16Offset = Math.max(
-    0,
-    Math.min(codepointToUtf16(rawText, localRawCpOffset), rawText.length),
-  );
-
-  return { node, rawUtf16Offset };
+  return null;
 }
 
-function anchorRect(anchor: CanonicalAnchor): {
+function lastSourceAnchor(
+  cursor: CanonicalCursorResult,
+  startIndex: number,
+): CanonicalTextAnchor | null {
+  for (let index = startIndex; index >= 0; index -= 1) {
+    const spans = cursor.provenance[index]?.spans;
+    const span = spans?.[spans.length - 1];
+    if (span) {
+      return { node: span.node, rawUtf16Offset: span.endUtf16 };
+    }
+  }
+  return null;
+}
+
+export function resolveCanonicalTextAnchor(
+  cursor: CanonicalCursorResult,
+  canonicalOffset: number,
+  affinity: CanonicalTextAnchorAffinity,
+): CanonicalTextAnchor | null {
+  if (
+    !Number.isInteger(canonicalOffset) ||
+    canonicalOffset < 0 ||
+    canonicalOffset > cursor.length
+  ) {
+    return null;
+  }
+
+  if (affinity === "Forward") {
+    return (
+      firstSourceAnchor(cursor, canonicalOffset) ??
+      lastSourceAnchor(cursor, canonicalOffset - 1)
+    );
+  }
+  return (
+    lastSourceAnchor(cursor, canonicalOffset - 1) ??
+    firstSourceAnchor(cursor, canonicalOffset)
+  );
+}
+
+function compareDomSpans(left: CanonicalDomSpan, right: CanonicalDomSpan): number {
+  if (left.node === right.node) {
+    return (
+      left.startUtf16 - right.startUtf16 || left.endUtf16 - right.endUtf16
+    );
+  }
+  const position = left.node.compareDocumentPosition(right.node);
+  if (position & Node.DOCUMENT_POSITION_FOLLOWING) {
+    return -1;
+  }
+  if (position & Node.DOCUMENT_POSITION_PRECEDING) {
+    return 1;
+  }
+  throw new Error("Canonical provenance spans must share one document tree.");
+}
+
+function mergeDomSpans(spans: CanonicalDomSpan[]): CanonicalDomSpan[] {
+  const ordered = [...spans].sort(compareDomSpans);
+  const merged: CanonicalDomSpan[] = [];
+  for (const span of ordered) {
+    const previous = merged[merged.length - 1];
+    if (
+      previous?.node === span.node &&
+      span.startUtf16 <= previous.endUtf16
+    ) {
+      previous.endUtf16 = Math.max(previous.endUtf16, span.endUtf16);
+      continue;
+    }
+    merged.push({ ...span });
+  }
+  return merged;
+}
+
+export function resolveCanonicalTextRanges(
+  cursor: CanonicalCursorResult,
+  startCanonicalOffset: number,
+  endCanonicalOffset: number,
+): Range[] | null {
+  if (
+    !Number.isInteger(startCanonicalOffset) ||
+    !Number.isInteger(endCanonicalOffset) ||
+    startCanonicalOffset < 0 ||
+    endCanonicalOffset <= startCanonicalOffset ||
+    endCanonicalOffset > cursor.length
+  ) {
+    return null;
+  }
+
+  const spans = mergeDomSpans(
+    cursor.provenance
+      .slice(startCanonicalOffset, endCanonicalOffset)
+      .flatMap((entry) => entry.spans),
+  );
+  if (spans.length === 0) {
+    return null;
+  }
+
+  return spans.map((span) => {
+    const range = span.node.ownerDocument.createRange();
+    range.setStart(span.node, span.startUtf16);
+    range.setEnd(span.node, span.endUtf16);
+    return range;
+  });
+}
+
+function anchorRect(anchor: CanonicalTextAnchor): {
   rect: DOMRect;
   fallbackElement: HTMLElement | null;
 } {
-  const range = document.createRange();
-  range.setStart(anchor.node.node, anchor.rawUtf16Offset);
+  const range = anchor.node.ownerDocument.createRange();
+  range.setStart(anchor.node, anchor.rawUtf16Offset);
   range.collapse(true);
   return {
     rect: range.getBoundingClientRect(),
-    fallbackElement: anchor.node.node.parentElement,
+    fallbackElement: anchor.node.parentElement,
   };
+}
+
+export function measureCanonicalTextAnchorViewportDelta(
+  container: HTMLElement,
+  cursor: CanonicalCursorResult,
+  canonicalOffset: number,
+): number | null {
+  const anchor = resolveCanonicalTextAnchor(cursor, canonicalOffset, "Forward");
+  if (!anchor) return null;
+  const { rect } = anchorRect(anchor);
+  const containerRect = container.getBoundingClientRect();
+  const delta = rect.top - containerRect.top;
+  return Number.isFinite(delta) ? delta : null;
+}
+
+export function restoreCanonicalTextAnchorViewportPosition(
+  container: HTMLElement,
+  cursor: CanonicalCursorResult,
+  canonicalOffset: number,
+  viewportTopDeltaPx: number,
+  scrollLeft: number,
+): boolean {
+  if (!Number.isFinite(viewportTopDeltaPx) || !Number.isFinite(scrollLeft)) {
+    return false;
+  }
+  const currentDelta = measureCanonicalTextAnchorViewportDelta(
+    container,
+    cursor,
+    canonicalOffset,
+  );
+  if (currentDelta === null) return false;
+  container.scrollTop += currentDelta - viewportTopDeltaPx;
+  container.scrollLeft = scrollLeft;
+  const restoredDelta = measureCanonicalTextAnchorViewportDelta(
+    container,
+    cursor,
+    canonicalOffset,
+  );
+  return (
+    restoredDelta !== null &&
+    Math.abs(restoredDelta - viewportTopDeltaPx) <= 1 &&
+    Math.abs(container.scrollLeft - scrollLeft) <= 1
+  );
 }
 
 export function scrollToCanonicalTextAnchor(
@@ -153,7 +314,7 @@ export function scrollToCanonicalTextAnchor(
   cursor: CanonicalCursorResult,
   canonicalOffset: number,
 ): boolean {
-  const anchor = resolveCanonicalAnchor(cursor, canonicalOffset);
+  const anchor = resolveCanonicalTextAnchor(cursor, canonicalOffset, "Forward");
   if (!anchor) {
     return false;
   }
@@ -174,12 +335,39 @@ export function scrollToCanonicalTextAnchor(
   return false;
 }
 
+export function scrollToExactCanonicalTextAnchor(
+  container: HTMLElement,
+  cursor: CanonicalCursorResult,
+  canonicalOffset: number,
+): boolean {
+  const anchor = resolveCanonicalTextAnchor(cursor, canonicalOffset, "Forward");
+  if (!anchor) {
+    return false;
+  }
+  const range = anchor.node.ownerDocument.createRange();
+  range.setStart(anchor.node, anchor.rawUtf16Offset);
+  range.collapse(true);
+  const targetTop = range.getBoundingClientRect().top;
+  const containerTop = container.getBoundingClientRect().top;
+  if (!Number.isFinite(targetTop) || !Number.isFinite(containerTop)) {
+    return false;
+  }
+  container.scrollTop = Math.max(
+    0,
+    container.scrollTop +
+      targetTop -
+      containerTop -
+      getPaneScrollTopPaddingPx(container),
+  );
+  return true;
+}
+
 export function isCanonicalTextAnchorVisible(
   container: HTMLElement,
   cursor: CanonicalCursorResult,
   canonicalOffset: number,
 ): boolean {
-  const anchor = resolveCanonicalAnchor(cursor, canonicalOffset);
+  const anchor = resolveCanonicalTextAnchor(cursor, canonicalOffset, "Forward");
   if (!anchor) {
     return false;
   }

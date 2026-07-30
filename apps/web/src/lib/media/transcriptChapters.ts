@@ -7,6 +7,8 @@
  * from `lib/player/chapters.ts` because the two carry different fields.
  */
 
+import { absent, present, type Presence } from "@/lib/api/presence";
+
 export interface GlobalPlayerChapter {
   chapter_idx: number;
   title: string;
@@ -23,6 +25,13 @@ export interface ChapterInput {
   t_end_ms?: number | null;
   url?: string | null;
   image_url?: string | null;
+}
+
+export interface TranscriptChapterInterval {
+  readonly ordinal: number;
+  readonly chapter: GlobalPlayerChapter;
+  readonly startMs: number;
+  readonly endMs: Presence<number>;
 }
 
 export function normalizeTrackChapters(
@@ -57,4 +66,63 @@ export function normalizeTrackChapters(
         ? lhs.chapter_idx - rhs.chapter_idx
         : lhs.t_start_ms - rhs.t_start_ms,
     );
+}
+
+export function resolveTranscriptChapterInterval({
+  chapters,
+  timestampMs,
+}: {
+  readonly chapters: readonly GlobalPlayerChapter[];
+  readonly timestampMs: number | null | undefined;
+}): TranscriptChapterInterval | null {
+  if (
+    typeof timestampMs !== "number" ||
+    !Number.isFinite(timestampMs) ||
+    timestampMs < 0
+  ) {
+    return null;
+  }
+
+  const distinctStarts = [
+    ...new Set(chapters.map(({ t_start_ms }) => t_start_ms)),
+  ];
+  const nextLaterStart = new Map<number, number | null>(
+    distinctStarts.map((startMs, index) => [
+      startMs,
+      distinctStarts[index + 1] ?? null,
+    ]),
+  );
+  let resolved: TranscriptChapterInterval | null = null;
+
+  for (let ordinal = 0; ordinal < chapters.length; ordinal += 1) {
+    const chapter = chapters[ordinal]!;
+    const explicitEndMs =
+      chapter.t_end_ms !== null && chapter.t_end_ms > chapter.t_start_ms
+        ? chapter.t_end_ms
+        : null;
+    const laterStartMs = nextLaterStart.get(chapter.t_start_ms) ?? null;
+    const endMs =
+      explicitEndMs === null
+        ? laterStartMs
+        : laterStartMs === null
+          ? explicitEndMs
+          : Math.min(explicitEndMs, laterStartMs);
+    const contains =
+      timestampMs >= chapter.t_start_ms &&
+      (endMs === null || timestampMs < endMs);
+    if (!contains) {
+      continue;
+    }
+    if (resolved !== null) {
+      return null;
+    }
+    resolved = {
+      ordinal,
+      chapter,
+      startMs: chapter.t_start_ms,
+      endMs: endMs === null ? absent() : present(endMs),
+    };
+  }
+
+  return resolved;
 }

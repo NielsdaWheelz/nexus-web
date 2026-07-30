@@ -128,5 +128,43 @@ describe("Pane Search contract", () => {
         rowStatus: { ...partial.rowStatus, loadedCount: 5 },
       }),
     ).toBe(false);
+
+    const findPublication: PaneSearchPublication = {
+      kind: "FindOccurrences",
+      query: "",
+      inputLabel: "Find in document",
+      placeholder: "Find",
+      onOpen: vi.fn(),
+      onQueryChange,
+      onDismiss,
+      result: { kind: "Idle" },
+      scope: { kind: "EntireResource" },
+      matchCase: false,
+      wholeWord: false,
+      onMatchCaseChange: vi.fn(),
+      onWholeWordChange: vi.fn(),
+      onStep: vi.fn(),
+      onActivate: vi.fn(),
+      onShowResults: vi.fn(),
+      resultsExpanded: false,
+      returnToReadingPosition: { kind: "Unavailable" },
+    };
+    expect(
+      arePaneSearchPublicationsEqual(findPublication, {
+        ...findPublication,
+      }),
+    ).toBe(true);
+    expect(
+      arePaneSearchPublicationsEqual(findPublication, {
+        ...findPublication,
+        onOpen: vi.fn(),
+      }),
+    ).toBe(false);
+    expect(
+      arePaneSearchPublicationsEqual(findPublication, {
+        ...findPublication,
+        partialSourceLabel: "available transcript",
+      }),
+    ).toBe(false);
   });
 });

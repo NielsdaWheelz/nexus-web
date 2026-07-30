@@ -523,5 +523,84 @@ describe("buildCanonicalCursor", () => {
       expect(result.length).toBe(4);
     });
   });
-});
 
+  describe("Canonical DOM provenance", () => {
+    it("maps one NFC-composed codepoint to every contributing inline node", () => {
+      const root = html("<p><span>e</span><em>\u0301</em></p>");
+      const first = root.querySelector("span")!.firstChild as Text;
+      const second = root.querySelector("em")!.firstChild as Text;
+
+      const result = buildCanonicalCursor(root);
+
+      expect(result.emitted).toBe("\u00e9");
+      expect(result.provenance).toEqual([
+        {
+          start: 0,
+          end: 1,
+          spans: [
+            { node: first, startUtf16: 0, endUtf16: 1 },
+            { node: second, startUtf16: 0, endUtf16: 1 },
+          ],
+        },
+      ]);
+    });
+
+    it("preserves source spans when NFC reorders combining marks across nodes", () => {
+      const root = html("<p><span>a\u0315</span><em>\u0300</em></p>");
+      const first = root.querySelector("span")!.firstChild as Text;
+      const second = root.querySelector("em")!.firstChild as Text;
+
+      const result = buildCanonicalCursor(root);
+
+      expect(result.emitted).toBe("\u00e0\u0315");
+      expect(result.provenance).toEqual([
+        {
+          start: 0,
+          end: 1,
+          spans: [
+            { node: first, startUtf16: 0, endUtf16: 1 },
+            { node: second, startUtf16: 0, endUtf16: 1 },
+          ],
+        },
+        {
+          start: 1,
+          end: 2,
+          spans: [{ node: first, startUtf16: 1, endUtf16: 2 }],
+        },
+      ]);
+    });
+
+    it("retains collapsed-whitespace spans and marks block separators synthetic", () => {
+      const root = html("<p>  A   B </p><p>C</p>");
+      const first = root.querySelector("p")!.firstChild as Text;
+      const second = root.querySelectorAll("p")[1]!.firstChild as Text;
+
+      const result = buildCanonicalCursor(root);
+
+      expect(result.emitted).toBe("A B\nC");
+      expect(result.provenance).toEqual([
+        {
+          start: 0,
+          end: 1,
+          spans: [{ node: first, startUtf16: 2, endUtf16: 3 }],
+        },
+        {
+          start: 1,
+          end: 2,
+          spans: [{ node: first, startUtf16: 3, endUtf16: 6 }],
+        },
+        {
+          start: 2,
+          end: 3,
+          spans: [{ node: first, startUtf16: 6, endUtf16: 7 }],
+        },
+        { start: 3, end: 4, spans: [] },
+        {
+          start: 4,
+          end: 5,
+          spans: [{ node: second, startUtf16: 0, endUtf16: 1 }],
+        },
+      ]);
+    });
+  });
+});

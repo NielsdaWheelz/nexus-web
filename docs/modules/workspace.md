@@ -161,6 +161,11 @@ a durable tab explicitly ends the transient presentation and selects that tab.
 Transient-only publication is valid while active and renders without a durable
 tab strip.
 
+Standalone Artifact panes use that transient-only form directly. The active
+accepted Dossier revision owns its opaque-frame Find capability; the Artifact
+route publishes contextual results without `useResourceInspector`, a durable
+Dossier tab, workspace persistence, or a second secondary group.
+
 An expanded secondary region uses
 `paneSecondaryRegionId(primaryPaneId, groupId)`. Disclosure actions expose that
 id only while the region exists. Mobile open requests may carry the exact trigger
@@ -198,6 +203,12 @@ opens `/artifacts/artifact:<id>` as a standalone resource pane after its durable
 Highlight-to-Idea command succeeds. Artifact revision navigation is in-place:
 `?revision=artifact_revision:<id>` changes the viewed revision without changing
 the pane's Artifact resource identity or creating a duplicate pane.
+
+Pane Find movement is reversible inspection, not pane navigation. Web,
+transcript, and accepted Artifact previews write no pane href or history
+entry. Their single **Go back to reading position** origin is ephemeral,
+revision-bound presentation state retired by Return, source replacement, or
+route exit.
 
 `targetLinkActivation.ts` is the one browser gesture adapter. Plain click and
 `Enter` are `Follow`; `Shift`+click is `Fork`; Meta/Ctrl/Alt, middle-click,

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import DossierSurface from "@/components/dossier/DossierSurface";
 import { absent, present } from "@/lib/api/presence";
@@ -114,6 +114,27 @@ describe("DossierSurface", () => {
     );
     expect(screen.getByLabelText("Dossier instruction")).toHaveTextContent(
       "Focus on the central evidence.",
+    );
+  });
+
+  it("relays only the exact rendered revision capability without publishing Find", async () => {
+    const store = storeFor(readyMediaState());
+    const onFindCapabilityChange = vi.fn();
+    render(
+      <DossierSurface
+        store={store}
+        onViewMediaEvidence={vi.fn()}
+        onFindCapabilityChange={onFindCapabilityChange}
+        onFindRequested={vi.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(onFindCapabilityChange).toHaveBeenCalledWith(
+        expect.objectContaining({
+          revisionRef: "artifact_revision:revision-1",
+        }),
+      ),
     );
   });
 

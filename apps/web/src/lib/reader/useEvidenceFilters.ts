@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type {
   ReaderEvidenceItem,
   ReaderEvidenceSemanticKind,
@@ -43,5 +43,8 @@ export function useEvidenceFilters(): EvidenceFilters {
     setFilter(ALL_EVIDENCE_FILTERS);
   }, []);
 
-  return { filter, toggleFilter, showAll };
+  return useMemo(
+    () => ({ filter, toggleFilter, showAll }),
+    [filter, showAll, toggleFilter],
+  );
 }

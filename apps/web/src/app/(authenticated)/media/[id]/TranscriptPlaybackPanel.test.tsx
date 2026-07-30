@@ -64,4 +64,50 @@ describe("TranscriptPlaybackPanel", () => {
       "imported-deep",
     );
   });
+
+  it("marks only the exact active chapter when chapter indices repeat", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ data: { items: [] } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    render(
+      <LecternProvider>
+        <GlobalPlayerProvider>
+          <TranscriptPlaybackPanel
+            mediaId="episode-1"
+            mediaKind="podcast_episode"
+            playbackSource={{
+              kind: "external_audio",
+              stream_url: "https://media.example/episode.mp3",
+              source_url: "https://media.example/episode",
+            }}
+            canonicalSourceUrl="https://media.example/episode"
+            chapters={[
+              { chapter_idx: 0, title: "Opening", t_start_ms: 0 },
+              { chapter_idx: 0, title: "Later", t_start_ms: 5_000 },
+            ]}
+            playerDescriptor={null}
+            videoSeekTargetMs={null}
+            onSeek={vi.fn()}
+          />
+        </GlobalPlayerProvider>
+      </LecternProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Add to Lectern" })).toBeEnabled(),
+    );
+    expect(
+      screen.getByRole("button", { name: "Jump to chapter 1: Opening" }),
+    ).toHaveAttribute("aria-current", "true");
+    expect(
+      screen.getByRole("button", { name: "Jump to chapter 1: Later" }),
+    ).not.toHaveAttribute("aria-current");
+  });
 });

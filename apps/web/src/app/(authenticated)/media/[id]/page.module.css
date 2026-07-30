@@ -777,6 +777,49 @@
   line-height: var(--leading-snug);
 }
 
+.transcriptFindMatch {
+  border-radius: var(--radius-xs);
+  background: var(--highlight-yellow);
+  color: inherit;
+}
+
+.transcriptFindActiveMatch {
+  outline: 2px solid currentColor;
+  outline-offset: 1px;
+  text-decoration: underline double;
+}
+
+.fragments::highlight(nexus-find-all) {
+  background: var(--highlight-yellow);
+  color: inherit;
+}
+
+.fragments::highlight(nexus-find-active) {
+  background: var(--highlight-yellow);
+  color: var(--reader-text, var(--ink));
+  text-decoration: underline double currentColor;
+  text-underline-offset: 0.14em;
+  text-shadow: 0 0 0.08em currentColor;
+}
+
+@media (forced-colors: active) {
+  .transcriptFindMatch {
+    background: Mark;
+    color: MarkText;
+  }
+
+  .transcriptFindActiveMatch {
+    outline-color: Highlight;
+  }
+
+  .fragments::highlight(nexus-find-all),
+  .fragments::highlight(nexus-find-active) {
+    background: Highlight;
+    color: HighlightText;
+    text-decoration: underline double HighlightText;
+  }
+}
+
 .inlineChapterDivider {
   display: flex;
   align-items: center;

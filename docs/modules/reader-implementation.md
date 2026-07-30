@@ -61,16 +61,22 @@ contract.
 
 The shared Pane Search foundation defines `FindOccurrences`, exact
 revision-scoped result keys, one immutable **Go back to reading position**
-origin, and transient Companion results. Readable media formats are not migrated
-by that foundation cutover; their format-specific cutovers must add a
-`SearchPreview` lease beside the existing progress/activity owner.
+origin, and transient Companion results. Web articles and readable
+video/podcast transcripts are migrated; EPUB and PDF are not.
 
-That lease captures the live origin before the first move and fences both cursor
-persistence (including lifecycle flush) and activity measurement until the next
-trusted reader input. Preview must not call navigation, URL replacement,
-transcript seek, playback, or resume paths. Close clears marks without
-returning; Return restores and retires the origin once. A reader format must not
-publish Pane Find until those invariants have focused lifecycle proof.
+`MediaPaneBody` selects one route-local adapter under one `usePaneFind`
+controller. Web searches every loaded canonical fragment and uses one
+`SearchPreview` lease beside the existing progress/activity owners. The lease
+captures the live origin before the first move and fences cursor persistence
+(including lifecycle flush), completion, and activity until the next trusted
+reader input. Preview and Return use exact canonical DOM anchors and never call
+navigation or URL replacement.
+
+Transcript Find searches timeline-ordered readable fragments and changes only
+the active transcript row and nested segment-list scroll. It never seeks,
+plays, resumes, mounts a progress seam, or creates an activity seam. Partial
+coverage is explicit in both zero and nonzero result states. Close clears marks
+without returning; Return restores and retires the one origin.
 
 ### natural document completion
 

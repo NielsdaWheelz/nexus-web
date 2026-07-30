@@ -57,6 +57,8 @@ export default function PaneSearchResults({
   readonly publication: FindPublication;
 }) {
   const { result } = publication;
+  const partialSourceLabel =
+    publication.partialSourceLabel ?? "available content";
 
   switch (result.kind) {
     case "Idle":
@@ -72,7 +74,7 @@ export default function PaneSearchResults({
         <p className={styles.message}>
           {result.completeness === "Complete"
             ? "No matches."
-            : "No matches found so far."}
+            : `No matches in the ${partialSourceLabel}. Results are incomplete.`}
         </p>
       );
     case "TooManyMatches":
@@ -96,7 +98,8 @@ export default function PaneSearchResults({
         <div className={styles.results}>
           {result.completeness === "Partial" ? (
             <p className={styles.partialNotice}>
-              Showing matches found so far.
+              Showing matches in the {partialSourceLabel}. Results are
+              incomplete.
             </p>
           ) : null}
           <ResourceList ariaLabel="Search results">

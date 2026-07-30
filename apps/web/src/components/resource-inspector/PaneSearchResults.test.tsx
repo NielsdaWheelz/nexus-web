@@ -22,12 +22,15 @@ type FindPublication = Extract<
 function publicationFor(
   result: PaneFindResult,
   onActivate: FindPublication["onActivate"] = () => {},
+  partialSourceLabel?: string,
 ): FindPublication {
   return {
     kind: "FindOccurrences",
     query: "river",
+    partialSourceLabel,
     inputLabel: "Find in document",
     placeholder: "Find in this document",
+    onOpen: () => {},
     onQueryChange: () => {},
     onDismiss: () => {},
     result,
@@ -137,15 +140,23 @@ describe("PaneSearchResults", () => {
     const { rerender } = render(
       <>
         <PaneSearchResults
-          publication={publicationFor({
-            kind: "NoMatches",
-            completeness: "Partial",
-          })}
+          publication={publicationFor(
+            {
+              kind: "NoMatches",
+              completeness: "Partial",
+            },
+            () => {},
+            "available transcript",
+          )}
         />
         <output aria-label="Retry state">None</output>
       </>,
     );
-    expect(screen.getByText("No matches found so far.")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "No matches in the available transcript. Results are incomplete.",
+      ),
+    ).toBeInTheDocument();
 
     rerender(
       <>

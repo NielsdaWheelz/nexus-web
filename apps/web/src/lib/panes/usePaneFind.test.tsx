@@ -84,6 +84,145 @@ async function settlePreparation(): Promise<void> {
 }
 
 describe("usePaneFind", () => {
+  it("keeps its controller identity stable across owner-only rerenders", async () => {
+    const owner = adapter();
+    const { result, rerender } = renderHook(() =>
+      usePaneFind({ adapter: owner }),
+    );
+    await settlePreparation();
+    const controller = result.current;
+
+    rerender();
+
+    expect(result.current).toBe(controller);
+  });
+
+  it("reprepares from the live position when Find opens without a Return origin", async () => {
+    const owner = adapter();
+    const { result } = renderHook(() => usePaneFind({ adapter: owner }));
+    await settlePreparation();
+    expect(owner.prepare).toHaveBeenCalledTimes(1);
+
+    act(() => result.current.onOpen());
+
+    await waitFor(() => expect(owner.prepare).toHaveBeenCalledTimes(2));
+    expect(owner.prepare).toHaveBeenLastCalledWith(
+      expect.objectContaining({ sessionId: 2, sourceKey: SOURCE }),
+    );
+  });
+
+  it("retains the prepared session while Return exists and reprepares after Return", async () => {
+    const owner = adapter();
+    const { result } = renderHook(() => usePaneFind({ adapter: owner }));
+    await settlePreparation();
+
+    act(() => result.current.onQueryChange("needle"));
+    await waitFor(() =>
+      expect(result.current.returnToReadingPosition.kind).toBe("Available"),
+    );
+    vi.mocked(owner.prepare).mockClear();
+
+    act(() => {
+      result.current.onDismiss();
+      result.current.onOpen();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(owner.prepare).not.toHaveBeenCalled();
+    expect(result.current.returnToReadingPosition.kind).toBe("Available");
+
+    act(() => {
+      if (result.current.returnToReadingPosition.kind === "Available") {
+        result.current.returnToReadingPosition.onReturn();
+      }
+    });
+    await waitFor(() =>
+      expect(result.current.returnToReadingPosition.kind).toBe("Unavailable"),
+    );
+
+    act(() => result.current.onOpen());
+    await waitFor(() => expect(owner.prepare).toHaveBeenCalledTimes(1));
+  });
+
+  it("retains the session when close and reopen follow Previewed before React commits", async () => {
+    let settlePreview: (() => void) | undefined;
+    const owner: PaneFindAdapter<ExpectedError> = {
+      ...adapter(),
+      preview: vi.fn<PaneFindAdapter<ExpectedError>["preview"]>(
+        (request) =>
+          new Promise((resolve) => {
+            settlePreview = () =>
+              resolve({
+                kind: "Previewed",
+                sessionId: request.sessionId,
+                queryId: request.queryId,
+                sourceKey: request.sourceKey,
+                key: request.key,
+                returnAvailable: true,
+              });
+          }),
+      ),
+    };
+    const { result } = renderHook(() => usePaneFind({ adapter: owner }));
+    await settlePreparation();
+    act(() => result.current.onQueryChange("needle"));
+    await waitFor(() => expect(settlePreview).toBeTypeOf("function"));
+
+    await act(async () => {
+      settlePreview?.();
+      await new Promise<void>((resolve) => {
+        queueMicrotask(() => {
+          result.current.onDismiss();
+          result.current.onOpen();
+          resolve();
+        });
+      });
+    });
+
+    expect(owner.prepare).toHaveBeenCalledTimes(1);
+    expect(result.current.returnToReadingPosition.kind).toBe("Available");
+  });
+
+  it("defers reprepare while an aborted preview can still establish Return", async () => {
+    let settlePreview: (() => void) | undefined;
+    const owner: PaneFindAdapter<ExpectedError> = {
+      ...adapter(),
+      preview: vi.fn<PaneFindAdapter<ExpectedError>["preview"]>(
+        (request) =>
+          new Promise((resolve) => {
+            settlePreview = () =>
+              resolve({
+                kind: "Previewed",
+                sessionId: request.sessionId,
+                queryId: request.queryId,
+                sourceKey: request.sourceKey,
+                key: request.key,
+                returnAvailable: true,
+              });
+          }),
+      ),
+    };
+    const { result } = renderHook(() => usePaneFind({ adapter: owner }));
+    await settlePreparation();
+    act(() => result.current.onQueryChange("needle"));
+    await waitFor(() => expect(settlePreview).toBeTypeOf("function"));
+
+    act(() => {
+      result.current.onDismiss();
+      result.current.onOpen();
+    });
+    expect(owner.prepare).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      settlePreview?.();
+      await Promise.resolve();
+    });
+
+    expect(owner.prepare).toHaveBeenCalledTimes(1);
+    expect(result.current.returnToReadingPosition.kind).toBe("Available");
+  });
+
   it("finds, previews the first result, wraps, and returns once", async () => {
     const owner = adapter();
     const { result } = renderHook(() => usePaneFind({ adapter: owner }));
@@ -125,6 +264,61 @@ describe("usePaneFind", () => {
     );
     await waitFor(() =>
       expect(result.current.returnToReadingPosition.kind).toBe("Unavailable"),
+    );
+  });
+
+  it("serializes query and preview commands while Return restores", async () => {
+    let finishReturn: (() => void) | undefined;
+    const owner = adapter();
+    vi.mocked(owner.returnToReadingPosition).mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finishReturn = resolve;
+        }),
+    );
+    const { result } = renderHook(() => usePaneFind({ adapter: owner }));
+    await settlePreparation();
+
+    act(() => result.current.onQueryChange("needle"));
+    await waitFor(() =>
+      expect(result.current.returnToReadingPosition.kind).toBe("Available"),
+    );
+    const previewCalls = vi.mocked(owner.preview).mock.calls.length;
+
+    act(() => {
+      if (result.current.returnToReadingPosition.kind === "Available") {
+        result.current.returnToReadingPosition.onReturn();
+      }
+    });
+    await waitFor(() => expect(finishReturn).toBeTypeOf("function"));
+
+    let activated = true;
+    await act(async () => {
+      activated = await result.current.onActivate(SECOND);
+      result.current.onStep("Next");
+      result.current.onQueryChange("replacement");
+      result.current.onMatchCaseChange(true);
+      result.current.onWholeWordChange(true);
+      result.current.onDismiss();
+    });
+
+    expect(activated).toBe(false);
+    expect(owner.preview).toHaveBeenCalledTimes(previewCalls);
+    expect(result.current.query).toBe("needle");
+    expect(result.current.matchCase).toBe(false);
+    expect(result.current.wholeWord).toBe(false);
+
+    await act(async () => {
+      finishReturn?.();
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(result.current.returnToReadingPosition.kind).toBe("Unavailable"),
+    );
+
+    act(() => result.current.onStep("Next"));
+    await waitFor(() =>
+      expect(owner.preview).toHaveBeenCalledTimes(previewCalls + 1),
     );
   });
 

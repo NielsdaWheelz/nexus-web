@@ -7,6 +7,7 @@ This document records the reader constraints we ship and the system shape they i
 - improve long-form reading comfort on desktop and mobile
 - preserve comprehension under reflow
 - keep resume deterministic across web, transcript, epub, and pdf
+- make text lookup reversible without redefining reading progress
 - keep the reader system small enough to understand quickly
 
 ## distilled constraints
@@ -86,6 +87,15 @@ font-size, line-height, and column-width settings can be applied without
 touching app theme tokens.
 
 ## shipped architecture
+
+### reversible inspection
+
+Pane Find is inspection, not navigation or reading intent. The first exact
+preview captures one immutable origin; later previews reuse it, Close leaves
+the discovered passage visible, and **Go back to reading position** restores
+and retires it. Preview and Return do not write progress, activity, completion,
+playback, URL, or pane history. This separation lets a reader explore evidence
+without corrupting the answer to “where was I reading?”
 
 ### global reader profile
 

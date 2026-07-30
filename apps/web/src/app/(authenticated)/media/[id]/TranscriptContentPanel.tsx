@@ -4,6 +4,7 @@ import type { CSSProperties, MouseEvent, PointerEvent, RefObject } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import Button from "@/components/ui/Button";
 import { normalizeTrackChapters } from "@/lib/media/transcriptChapters";
+import type { PaneFindResultKey } from "@/lib/panes/paneSearch";
 import {
   formatTranscriptTimestampMs,
   type TranscriptChapter,
@@ -12,6 +13,29 @@ import {
   type TranscriptState,
 } from "@/lib/media/transcriptView";
 import styles from "./page.module.css";
+
+export interface TranscriptFindOccurrenceRange {
+  readonly key: PaneFindResultKey;
+  readonly fragmentId: string;
+  readonly startCp: number;
+  readonly endCp: number;
+}
+
+export type TranscriptFindPresentation =
+  | { readonly kind: "Text" }
+  | {
+      readonly kind: "Matches";
+      readonly occurrences: readonly TranscriptFindOccurrenceRange[];
+      readonly activeKey: PaneFindResultKey;
+    };
+
+type TranscriptTextRun =
+  | { readonly kind: "Text"; readonly text: string }
+  | {
+      readonly kind: "Match" | "ActiveMatch";
+      readonly key: PaneFindResultKey;
+      readonly text: string;
+    };
 
 interface TranscriptContentPanelProps {
   mediaId: string;
@@ -28,11 +52,108 @@ interface TranscriptContentPanelProps {
   evidenceStartMs?: number | null;
   evidenceEndMs?: number | null;
   contentRef: RefObject<HTMLDivElement | null>;
+  segmentListRef: RefObject<HTMLDivElement | null>;
+  findPresentation: TranscriptFindPresentation;
+  onFindMatchElement: (
+    key: PaneFindResultKey,
+    element: HTMLSpanElement | null,
+  ) => void;
   onSegmentSelect: (fragment: TranscriptFragment) => void;
   onSeek: (timestampMs: number | null | undefined) => void;
   onContentClick: (event: MouseEvent<HTMLDivElement>) => void;
   onContentPointerOver: (event: PointerEvent<HTMLDivElement>) => void;
   onContentPointerOut: (event: PointerEvent<HTMLDivElement>) => void;
+}
+
+function transcriptTextRuns({
+  fragments,
+  presentation,
+}: {
+  readonly fragments: readonly TranscriptFragment[];
+  readonly presentation: TranscriptFindPresentation;
+}): ReadonlyMap<string, readonly TranscriptTextRun[]> {
+  const runsByFragmentId = new Map<string, readonly TranscriptTextRun[]>();
+  if (presentation.kind === "Text") {
+    for (const fragment of fragments) {
+      runsByFragmentId.set(fragment.id, [
+        { kind: "Text", text: fragment.canonical_text },
+      ]);
+    }
+    return runsByFragmentId;
+  }
+
+  const fragmentById = new Map(
+    fragments.map((fragment) => [fragment.id, fragment]),
+  );
+  const occurrencesByFragmentId = new Map<
+    string,
+    TranscriptFindOccurrenceRange[]
+  >();
+  const keys = new Set<PaneFindResultKey>();
+  let activeCount = 0;
+  for (const occurrence of presentation.occurrences) {
+    if (keys.has(occurrence.key)) {
+      throw new Error("Transcript Find occurrence keys must be unique.");
+    }
+    keys.add(occurrence.key);
+    if (occurrence.key === presentation.activeKey) {
+      activeCount += 1;
+    }
+    if (!fragmentById.has(occurrence.fragmentId)) {
+      throw new Error("Transcript Find occurrence must name a loaded fragment.");
+    }
+    const existing = occurrencesByFragmentId.get(occurrence.fragmentId) ?? [];
+    existing.push(occurrence);
+    occurrencesByFragmentId.set(occurrence.fragmentId, existing);
+  }
+  if (presentation.occurrences.length === 0 || activeCount !== 1) {
+    throw new Error(
+      "Transcript Find matches require occurrences and one exact active key.",
+    );
+  }
+
+  for (const fragment of fragments) {
+    const codePoints = [...fragment.canonical_text];
+    const occurrences = occurrencesByFragmentId.get(fragment.id) ?? [];
+    const runs: TranscriptTextRun[] = [];
+    let cursorCp = 0;
+    for (const occurrence of occurrences) {
+      if (
+        !Number.isSafeInteger(occurrence.startCp) ||
+        !Number.isSafeInteger(occurrence.endCp) ||
+        occurrence.startCp < cursorCp ||
+        occurrence.endCp <= occurrence.startCp ||
+        occurrence.endCp > codePoints.length
+      ) {
+        throw new Error(
+          "Transcript Find ranges must be ordered, non-overlapping codepoint ranges.",
+        );
+      }
+      if (cursorCp < occurrence.startCp) {
+        runs.push({
+          kind: "Text",
+          text: codePoints.slice(cursorCp, occurrence.startCp).join(""),
+        });
+      }
+      runs.push({
+        kind:
+          occurrence.key === presentation.activeKey ? "ActiveMatch" : "Match",
+        key: occurrence.key,
+        text: codePoints
+          .slice(occurrence.startCp, occurrence.endCp)
+          .join(""),
+      });
+      cursorCp = occurrence.endCp;
+    }
+    if (cursorCp < codePoints.length) {
+      runs.push({
+        kind: "Text",
+        text: codePoints.slice(cursorCp).join(""),
+      });
+    }
+    runsByFragmentId.set(fragment.id, runs);
+  }
+  return runsByFragmentId;
 }
 
 export default function TranscriptContentPanel({
@@ -50,6 +171,9 @@ export default function TranscriptContentPanel({
   evidenceStartMs,
   evidenceEndMs,
   contentRef,
+  segmentListRef,
+  findPresentation,
+  onFindMatchElement,
   onSegmentSelect,
   onSeek,
   onContentClick,
@@ -57,11 +181,16 @@ export default function TranscriptContentPanel({
   onContentPointerOut,
 }: TranscriptContentPanelProps) {
   const normalizedChapters = normalizeTrackChapters(chapters);
+  const textRunsByFragmentId = transcriptTextRuns({
+    fragments,
+    presentation: findPresentation,
+  });
   const isReadablePartialTranscript =
     transcriptState === "partial" || transcriptCoverage === "partial";
   const timeline: Array<
     | {
         kind: "chapter";
+        chapterOrdinal: number;
         chapterIdx: number;
         chapterTitle: string;
         chapterStartMs: number;
@@ -90,6 +219,7 @@ export default function TranscriptContentPanel({
         const chapter = normalizedChapters[chapterCursor];
         timeline.push({
           kind: "chapter",
+          chapterOrdinal: chapterCursor,
           chapterIdx: chapter.chapter_idx,
           chapterTitle: chapter.title,
           chapterStartMs: chapter.t_start_ms,
@@ -104,6 +234,7 @@ export default function TranscriptContentPanel({
       const chapter = normalizedChapters[chapterCursor];
       timeline.push({
         kind: "chapter",
+        chapterOrdinal: chapterCursor,
         chapterIdx: chapter.chapter_idx,
         chapterTitle: chapter.title,
         chapterStartMs: chapter.t_start_ms,
@@ -116,7 +247,10 @@ export default function TranscriptContentPanel({
     <div className={readerSurfaceClassName} style={readerSurfaceStyle}>
       {isReadablePartialTranscript ? (
         <div className={styles.partialCoverageWarning}>
-          <p>Transcript is partial; search and highlights may miss sections.</p>
+          <p>
+            Transcript is partial; search and highlights cover only the
+            available transcript.
+          </p>
         </div>
       ) : null}
 
@@ -126,7 +260,13 @@ export default function TranscriptContentPanel({
         </div>
       ) : (
         <div className={styles.transcriptLayout}>
-          <div className={styles.transcriptSegments}>
+          <div
+            ref={segmentListRef}
+            className={styles.transcriptSegments}
+            role="region"
+            aria-label="Transcript segments"
+            tabIndex={-1}
+          >
             {timeline.map((entry) => {
               if (entry.kind === "chapter") {
                 const chapterTimestamp = formatTranscriptTimestampMs(
@@ -134,7 +274,7 @@ export default function TranscriptContentPanel({
                 );
                 return (
                   <div
-                    key={`inline-chapter-${entry.chapterIdx}-${entry.chapterStartMs}`}
+                    key={`inline-chapter-${entry.chapterOrdinal}`}
                     className={styles.inlineChapterDivider}
                   >
                     <span className={styles.inlineChapterTitle}>
@@ -180,10 +320,20 @@ export default function TranscriptContentPanel({
                   normalizedSegmentText.includes(normalizedEvidenceText),
               );
               const hasEvidence = evidenceTimeMatches || evidenceTextMatches;
+              const textRuns = textRunsByFragmentId.get(entry.fragment.id);
+              if (!textRuns) {
+                throw new Error(
+                  "Transcript text presentation must cover every loaded fragment.",
+                );
+              }
+              const activeMatch = textRuns.find(
+                (run) => run.kind === "ActiveMatch",
+              );
               const segmentLabel = [
                 timestamp ?? "Transcript segment",
                 entry.fragment.speaker_label,
                 hasEvidence ? "Evidence source" : null,
+                activeMatch ? `Current match: ${activeMatch.text}` : null,
                 entry.fragment.canonical_text,
               ]
                 .filter(Boolean)
@@ -220,7 +370,42 @@ export default function TranscriptContentPanel({
                     ) : null}
                   </span>
                   <span className={styles.segmentText}>
-                    {entry.fragment.canonical_text}
+                    {textRuns.map((run, runIndex) => {
+                      switch (run.kind) {
+                        case "Text":
+                          return (
+                            <span key={`text-${runIndex}`}>{run.text}</span>
+                          );
+                        case "Match":
+                          return (
+                            <span
+                              key={run.key}
+                              ref={(element) =>
+                                onFindMatchElement(run.key, element)
+                              }
+                              className={styles.transcriptFindMatch}
+                              role="mark"
+                            >
+                              {run.text}
+                            </span>
+                          );
+                        case "ActiveMatch":
+                          return (
+                            <span
+                              key={run.key}
+                              ref={(element) =>
+                                onFindMatchElement(run.key, element)
+                              }
+                              className={`${styles.transcriptFindMatch} ${styles.transcriptFindActiveMatch}`}
+                              role="mark"
+                              aria-current="true"
+                              aria-label={`Current match: ${run.text}`}
+                            >
+                              {run.text}
+                            </span>
+                          );
+                      }
+                    })}
                   </span>
                 </Button>
               );

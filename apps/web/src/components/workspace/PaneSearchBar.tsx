@@ -36,7 +36,10 @@ function assertUnreachableRowStatus(status: never): never {
   );
 }
 
-function resultStatus(result: PaneFindResult): string {
+function resultStatus(
+  result: PaneFindResult,
+  partialSourceLabel?: string,
+): string {
   switch (result.kind) {
     case "Idle":
       return "Enter a search term";
@@ -45,7 +48,9 @@ function resultStatus(result: PaneFindResult): string {
     case "NoMatches":
       return result.completeness === "Complete"
         ? "No matches"
-        : "No matches found so far";
+        : partialSourceLabel
+          ? `No matches in the ${partialSourceLabel}; results are incomplete`
+          : "No matches found so far";
     case "Ready": {
       const activeIndex = result.rows.findIndex(
         (row) => row.key === result.activeKey,
@@ -53,9 +58,13 @@ function resultStatus(result: PaneFindResult): string {
       const ordinal = `${activeIndex + 1} of ${result.rows.length}`;
       return result.completeness === "Complete"
         ? `${ordinal} ${result.rows.length === 1 ? "match" : "matches"}`
-        : `${ordinal} ${
-            result.rows.length === 1 ? "match" : "matches"
-          } found so far`;
+        : partialSourceLabel
+          ? `${ordinal} ${
+              result.rows.length === 1 ? "match" : "matches"
+            } in the ${partialSourceLabel}; results are incomplete`
+          : `${ordinal} ${
+              result.rows.length === 1 ? "match" : "matches"
+            } found so far`;
     }
     case "TooManyMatches":
       return `More than ${result.threshold} matches. Refine your search.`;
@@ -248,7 +257,10 @@ function FindControls({
 }) {
   const ready = publication.result.kind === "Ready";
   const status = [
-    resultStatus(publication.result),
+    resultStatus(
+      publication.result,
+      publication.partialSourceLabel,
+    ),
     ready ? wrapAnnouncement : "",
   ]
     .filter(Boolean)

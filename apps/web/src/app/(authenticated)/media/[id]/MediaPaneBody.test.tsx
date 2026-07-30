@@ -9,7 +9,10 @@ import {
 } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
+import {
+  PaneRuntimeProvider,
+  type PaneRuntimeTransientSecondarySurface,
+} from "@/lib/panes/paneRuntime";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
@@ -18,6 +21,7 @@ import { PaneFixedChromeContext } from "@/components/workspace/PaneFixedChrome";
 import { PaneSecondaryContext } from "@/components/workspace/PaneSecondary";
 import {
   getPublishedSecondarySurface,
+  getPublishedTransientSecondarySurface,
   type PanePrimaryChromePublication,
   type PaneSecondaryPublication,
 } from "@/lib/panes/panePublications";
@@ -60,6 +64,17 @@ const testState = vi.hoisted(() => ({
     | "future_kind",
   canRead: true,
   canPlay: false,
+  transcriptState: null as
+    | "not_requested"
+    | "queued"
+    | "running"
+    | "failed_provider"
+    | "failed_quota"
+    | "unavailable"
+    | "ready"
+    | "partial"
+    | null,
+  transcriptCoverage: null as "none" | "partial" | "full" | null,
   processingStatus: "ready_for_reading" as
     "pending" | "extracting" | "ready_for_reading" | "failed" | "suspended",
   retrievalStatus: "ready",
@@ -96,6 +111,7 @@ const testState = vi.hoisted(() => ({
   documentMapDocumentItems: null as unknown[] | null,
   documentMapPassageGroups: null as unknown[] | null,
   documentMapEmbeds: null as DocumentEmbed[] | null,
+  documentMapFailure: null as { status: number; code: string } | null,
   readerFocusMode: "off" as
     "off" | "distraction_free" | "paragraph" | "sentence",
   readerPersistence: { state: "Clean" } as
@@ -644,6 +660,8 @@ function mediaResponse() {
       can_read_embeds: testState.mediaKind === "web_article",
       can_edit_authors: testState.canEditAuthors,
     },
+    transcript_state: testState.transcriptState,
+    transcript_coverage: testState.transcriptCoverage,
     episode_state: testState.episodeState,
     read_state: canonicalAfterReset?.readState ?? testState.readState,
     progress_resettable:
@@ -984,6 +1002,7 @@ function renderMediaPane(
     pathMediaId?: string;
     isActive?: boolean;
     secondaryPane?: WorkspaceAttachedSecondaryPaneState | null;
+    transientSecondarySurface?: PaneRuntimeTransientSecondarySurface | null;
     renderSecondarySurfaceId?: WorkspaceSecondarySurfaceId;
   } = {},
 ) {
@@ -991,6 +1010,7 @@ function renderMediaPane(
   const onSetPaneLabel = vi.fn();
   const onNavigatePane = vi.fn();
   const onRequestSecondarySurface = vi.fn();
+  const onRequestTransientSecondarySurface = vi.fn();
   const onCloseSecondaryPane = vi.fn();
   const onActivateWorkspaceTarget = vi.fn(() => ({
     kind: "ActivatedExisting" as const,
@@ -1016,6 +1036,9 @@ function renderMediaPane(
                 routeId={identity.routeId}
                 routeKey={identity.routeKey}
                 secondaryPane={nextOptions.secondaryPane ?? null}
+                transientSecondarySurface={
+                  nextOptions.transientSecondarySurface ?? null
+                }
                 canGoBack={false}
                 canGoForward={false}
                 onGoBackPane={vi.fn()}
@@ -1031,6 +1054,9 @@ function renderMediaPane(
                 onSetPaneLabel={onSetPaneLabel}
                 onSetPaneLayout={onSetPaneLayout}
                 onRequestSecondarySurface={onRequestSecondarySurface}
+                onRequestTransientSecondarySurface={
+                  onRequestTransientSecondarySurface
+                }
                 onCloseSecondaryPane={onCloseSecondaryPane}
               >
                 <PaneSecondaryTestHost
@@ -1056,6 +1082,7 @@ function renderMediaPane(
     onSetPaneLabel,
     onNavigatePane,
     onRequestSecondarySurface,
+    onRequestTransientSecondarySurface,
     onCloseSecondaryPane,
     onActivateWorkspaceTarget,
     onSetPaneSecondary,
@@ -1088,8 +1115,11 @@ describe("MediaPaneBody pane sizing", () => {
     testState.documentMapDocumentItems = null;
     testState.documentMapPassageGroups = null;
     testState.documentMapEmbeds = null;
+    testState.documentMapFailure = null;
     testState.canRead = true;
     testState.canPlay = false;
+    testState.transcriptState = null;
+    testState.transcriptCoverage = null;
     testState.processingStatus = "ready_for_reading";
     testState.retrievalStatus = "ready";
     testState.lastErrorCode = null;
@@ -1314,6 +1344,12 @@ describe("MediaPaneBody pane sizing", () => {
           path ===
           "/api/media/00000000-0000-4000-8000-000000000001/document-map"
         ) {
+          if (testState.documentMapFailure) {
+            throw {
+              ...testState.documentMapFailure,
+              message: "Document Map failed",
+            };
+          }
           return jsonResponse(readerDocumentMapResponse());
         }
         if (
@@ -1482,6 +1518,227 @@ describe("MediaPaneBody pane sizing", () => {
     await user.wheel(viewport, { delta: { y: 1 } });
     await new Promise((resolve) => window.setTimeout(resolve, 600));
     expect(readerStatePutCalls()).toHaveLength(1);
+  });
+
+  it("drops a pre-scheduled terminal capture when Web Find acquires its preview lease", async () => {
+    testState.mediaKind = "web_article";
+    testState.fragmentCanonicalText = "Readable text.";
+    testState.renderHtmlInMock = true;
+    renderMediaPane();
+
+    await screen.findByText("End of article");
+    const viewport = setTextViewportGeometry({
+      atEnd: false,
+      scrollHeight: 200,
+    });
+    await waitFor(() => {
+      expect(latestPrimaryChrome()?.search?.kind).toBe("FindOccurrences");
+      expect(
+        apiCallsForPath(
+          "/api/media/00000000-0000-4000-8000-000000000001/reader-state",
+        ),
+      ).not.toHaveLength(0);
+    });
+    vi.spyOn(Range.prototype, "getBoundingClientRect").mockReturnValue({
+      top: 10,
+      bottom: 30,
+      left: 10,
+      right: 120,
+      width: 110,
+      height: 20,
+    } as DOMRect);
+    const user = userEvent.setup();
+    await user.wheel(viewport, { delta: { y: 1 } });
+    await new Promise((resolve) => window.requestAnimationFrame(resolve));
+    testState.apiFetch.mockClear();
+
+    const requestAnimationFrame = window.requestAnimationFrame.bind(window);
+    let queuedFrame: FrameRequestCallback | null = null;
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      if (queuedFrame === null) {
+        queuedFrame = callback;
+        return 1;
+      }
+      return requestAnimationFrame(callback);
+    });
+    setTextViewportGeometry({ atEnd: true, scrollHeight: 100 });
+    fireEvent.scroll(viewport);
+    expect(queuedFrame).not.toBeNull();
+    const search = latestPrimaryChrome()?.search;
+    if (search?.kind !== "FindOccurrences") {
+      throw new Error("Expected Web Find publication");
+    }
+    act(() => search.onQueryChange("Readable"));
+    await waitFor(() => {
+      const publication = latestPrimaryChrome()?.search;
+      expect(publication?.kind).toBe("FindOccurrences");
+      if (publication?.kind === "FindOccurrences") {
+        expect(publication.returnToReadingPosition.kind).toBe("Available");
+      }
+    });
+
+    const updatesBeforeFlush = paneChromeMocks.updateReaderScroll.mock.calls.length;
+    const terminalCapture = queuedFrame as FrameRequestCallback | null;
+    if (!terminalCapture) {
+      throw new Error("Expected a queued terminal capture");
+    }
+    act(() => {
+      terminalCapture(performance.now());
+    });
+    await new Promise((resolve) => window.setTimeout(resolve, 600));
+
+    expect(readerStatePutCalls()).toHaveLength(0);
+    expect(paneChromeMocks.updateReaderScroll).toHaveBeenCalledTimes(
+      updatesBeforeFlush,
+    );
+  });
+
+  it("publishes current Web Find rows and requests the transient results surface", async () => {
+    testState.mediaKind = "web_article";
+    testState.fragmentCanonicalText = "Readable text.";
+    testState.renderHtmlInMock = true;
+    const {
+      onRequestTransientSecondarySurface,
+      onSetPaneSecondary,
+      routeKey,
+      rerender,
+    } = renderMediaPane({
+      secondaryPane: {
+        ...readerEvidenceSecondaryPane(),
+        visibility: "collapsed",
+      },
+    });
+
+    await waitFor(() => {
+      expect(latestPrimaryChrome()?.search?.kind).toBe("FindOccurrences");
+    });
+    const search = latestPrimaryChrome()?.search;
+    if (search?.kind !== "FindOccurrences") {
+      throw new Error("Expected Web Find publication");
+    }
+    act(() => search.onQueryChange("Readable"));
+
+    await waitFor(() => {
+      const current = latestPrimaryChrome()?.search;
+      expect(current?.kind).toBe("FindOccurrences");
+      if (current?.kind === "FindOccurrences") {
+        expect(current.result.kind).toBe("Ready");
+      }
+    });
+    const current = latestPrimaryChrome()?.search;
+    if (current?.kind !== "FindOccurrences") {
+      throw new Error("Expected current Web Find publication");
+    }
+    const publicationBeforeOpen =
+      latestSecondaryPublication(onSetPaneSecondary);
+    const publicationCountBeforeOpen =
+      onSetPaneSecondary.mock.calls.length;
+    act(() => current.onShowResults(null));
+    expect(onRequestTransientSecondarySurface).toHaveBeenCalledWith(
+      "pane-1",
+      routeKey,
+      "resource-search",
+      null,
+    );
+    for (let rerenderIndex = 0; rerenderIndex < 3; rerenderIndex += 1) {
+      rerender({
+        transientSecondarySurface: {
+          id: "resource-search",
+          expanded: true,
+        },
+      });
+    }
+    await waitFor(() => {
+      const expanded = latestPrimaryChrome()?.search;
+      expect(expanded?.kind).toBe("FindOccurrences");
+      if (expanded?.kind === "FindOccurrences") {
+        expect(expanded.resultsExpanded).toBe(true);
+      }
+    });
+    expect(onSetPaneSecondary).toHaveBeenCalledTimes(
+      publicationCountBeforeOpen,
+    );
+    expect(
+      latestSecondaryPublication(onSetPaneSecondary),
+    ).toBe(publicationBeforeOpen);
+
+    let resultsBody: ReactNode = null;
+    await waitFor(() => {
+      resultsBody =
+        getPublishedTransientSecondarySurface(
+          latestSecondaryPublication(onSetPaneSecondary),
+          "resource-search",
+        )?.body ?? null;
+      expect(resultsBody).not.toBeNull();
+    });
+    render(<>{resultsBody}</>);
+    expect(screen.getByRole("list", { name: "Search results" })).toBeVisible();
+    expect(screen.getByRole("listitem")).toBeVisible();
+  });
+
+  it("keeps the secondary publication stable when Document Map loading fails", async () => {
+    testState.mediaKind = "web_article";
+    testState.fragmentCanonicalText = "Readable text.";
+    testState.renderHtmlInMock = true;
+    testState.documentMapFailure = {
+      status: 500,
+      code: "E_TEST_DOCUMENT_MAP",
+    };
+    const { onSetPaneSecondary } = renderMediaPane({
+      renderSecondarySurfaceId: "resource-evidence",
+    });
+
+    await screen.findByText("Document Map could not be loaded.", undefined, {
+      timeout: 10_000,
+    });
+    const publication = latestSecondaryPublication(onSetPaneSecondary);
+    const publicationCount = onSetPaneSecondary.mock.calls.length;
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(onSetPaneSecondary).toHaveBeenCalledTimes(publicationCount);
+    expect(latestSecondaryPublication(onSetPaneSecondary)).toBe(publication);
+  });
+
+  it("composes one partial-transcript Find publication and its exact row mark", async () => {
+    testState.mediaKind = "video";
+    testState.transcriptState = "partial";
+    testState.transcriptCoverage = "partial";
+    testState.fragmentCanonicalText = "Readable text.";
+    testState.renderHtmlInMock = true;
+    renderMediaPane();
+
+    await waitFor(() => {
+      const search = latestPrimaryChrome()?.search;
+      expect(search?.kind).toBe("FindOccurrences");
+      if (search?.kind === "FindOccurrences") {
+        expect(search.inputLabel).toBe("Find in transcript");
+        expect(search.partialSourceLabel).toBe("available transcript");
+      }
+    });
+    const search = latestPrimaryChrome()?.search;
+    if (search?.kind !== "FindOccurrences") {
+      throw new Error("Expected Transcript Find publication");
+    }
+    act(() => search.onQueryChange("Readable"));
+
+    await waitFor(() => {
+      const result = latestPrimaryChrome()?.search;
+      expect(result?.kind).toBe("FindOccurrences");
+      if (result?.kind === "FindOccurrences") {
+        expect(result.result).toMatchObject({
+          kind: "Ready",
+          completeness: "Partial",
+          rows: [{}],
+        });
+      }
+    });
+    expect(screen.getAllByRole("mark")).toHaveLength(1);
+    expect(
+      screen.getByRole("mark", { name: "Current match: Readable" }),
+    ).toHaveAttribute("aria-current", "true");
   });
 
   it("preserves an exact terminal locator through lifecycle capture and conflict Stay", async () => {

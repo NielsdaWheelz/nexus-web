@@ -1,8 +1,9 @@
 import { createRef, type CSSProperties } from "react";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import TranscriptContentPanel from "./TranscriptContentPanel";
 import type { TranscriptFragment } from "@/lib/media/transcriptView";
+import { createPaneFindResultKey } from "@/lib/panes/paneSearch";
 import styles from "./page.module.css";
 
 const READER_SURFACE_STYLE = {
@@ -50,6 +51,9 @@ function renderPanel(
     readerSurfaceClassName: READER_SURFACE_CLASS_NAME,
     readerSurfaceStyle: READER_SURFACE_STYLE,
     contentRef: createRef<HTMLDivElement>(),
+    segmentListRef: createRef<HTMLDivElement>(),
+    findPresentation: { kind: "Text" },
+    onFindMatchElement: vi.fn(),
     onSegmentSelect,
     onSeek,
     onContentClick,
@@ -114,7 +118,7 @@ describe("TranscriptContentPanel", () => {
     renderPanel({ transcriptCoverage: "partial" });
 
     const warning = screen.getByText(
-      "Transcript is partial; search and highlights may miss sections.",
+      "Transcript is partial; search and highlights cover only the available transcript.",
     );
     // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: asserting the warning sits inside the themed reader root, a CSS-module class with no ARIA role/label
     expect(warning.closest(`.${styles.readerThemeDark}`)).not.toBeNull();
@@ -143,5 +147,93 @@ describe("TranscriptContentPanel", () => {
     // inside it — only the prose block gets the column-width constraint.
     // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: confirming the timeline is NOT wrapped by the prose-only inner column
     expect(firstSegment.closest(`.${styles.readerContentInner}`)).toBeNull();
+  });
+
+  it("exposes the segment list as the programmatic reading-focus target", () => {
+    const segmentListRef = createRef<HTMLDivElement>();
+    renderPanel({ segmentListRef });
+
+    const segmentList = screen.getByRole("region", {
+      name: "Transcript segments",
+    });
+    expect(segmentListRef.current).toBe(segmentList);
+    segmentList.focus();
+    expect(segmentList).toHaveFocus();
+  });
+
+  it("renders only exact supplied occurrences and labels the active match", () => {
+    const firstKey = createPaneFindResultKey({
+      source: { fragmentId: "frag-1" },
+      locator: { startCp: 0, endCp: 6 },
+    });
+    const activeKey = createPaneFindResultKey({
+      source: { fragmentId: "frag-1" },
+      locator: { startCp: 14, endCp: 20 },
+    });
+    const onFindMatchElement = vi.fn();
+    renderPanel({
+      fragments: [
+        {
+          ...FRAGMENTS[0],
+          canonical_text: "needle needle needle",
+        },
+      ],
+      activeFragment: {
+        ...FRAGMENTS[0],
+        canonical_text: "needle needle needle",
+      },
+      findPresentation: {
+        kind: "Matches",
+        activeKey,
+        occurrences: [
+          {
+            key: firstKey,
+            fragmentId: "frag-1",
+            startCp: 0,
+            endCp: 6,
+          },
+          {
+            key: activeKey,
+            fragmentId: "frag-1",
+            startCp: 14,
+            endCp: 20,
+          },
+        ],
+      },
+      onFindMatchElement,
+    });
+
+    const marks = screen.getAllByRole("mark");
+    expect(marks).toHaveLength(2);
+    expect(marks[0]).toHaveTextContent("needle");
+    expect(marks[0]).not.toHaveAttribute("aria-current");
+    expect(marks[1]).toHaveTextContent("needle");
+    expect(marks[1]).toHaveAttribute("aria-current", "true");
+    expect(marks[1]).toHaveAccessibleName("Current match: needle");
+    expect(
+      screen.getByRole("button", { name: /Current match: needle/ }),
+    ).toBeVisible();
+    expect(screen.getAllByText("needle")).toHaveLength(3);
+
+    const registered = onFindMatchElement.mock.calls
+      .filter(([, element]) => element !== null)
+      .map(([key, element]) => ({ key, element }));
+    expect(registered).toEqual([
+      { key: firstKey, element: marks[0] },
+      { key: activeKey, element: marks[1] },
+    ]);
+  });
+
+  it("keeps ordinary segment selection and seek behavior unchanged", () => {
+    const { onSegmentSelect, onSeek } = renderPanel();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "00:00:04 Speaker B Second segment text.",
+      }),
+    );
+
+    expect(onSegmentSelect).toHaveBeenCalledWith(FRAGMENTS[1]);
+    expect(onSeek).toHaveBeenCalledWith(4_000);
   });
 });

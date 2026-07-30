@@ -13,7 +13,7 @@ import { parseMediaRef } from "@/lib/consumption/activityContract";
 import { useViewportState } from "@/lib/renderEnvironment/provider";
 import {
   normalizeTrackChapters,
-  type GlobalPlayerChapter,
+  resolveTranscriptChapterInterval,
 } from "@/lib/media/transcriptChapters";
 import {
   formatTranscriptTimestampMs,
@@ -32,28 +32,6 @@ function toSeekSeconds(timestampMs: number | null | undefined): number | null {
     return null;
   }
   return Math.floor(timestampMs / 1000);
-}
-
-function resolveActiveChapter(
-  chapters: GlobalPlayerChapter[],
-  currentTimeSeconds: number,
-): GlobalPlayerChapter | null {
-  if (chapters.length === 0) {
-    return null;
-  }
-
-  const currentMs = Math.max(0, Math.floor(currentTimeSeconds * 1000));
-  let active: GlobalPlayerChapter | null = null;
-
-  for (const chapter of chapters) {
-    if (chapter.t_start_ms <= currentMs) {
-      active = chapter;
-      continue;
-    }
-    break;
-  }
-
-  return active;
 }
 
 export function isAllowedYoutubeEmbedUrl(rawUrl: string): boolean {
@@ -283,8 +261,6 @@ export default function TranscriptPlaybackPanel({
     paneActive,
     playbackError,
   };
-  const currentTimeSeconds = presentation.positionMs / 1000;
-
   // Play and Lectern mutations wait for the canonical snapshot to be Ready (spec
   // §6): playAudio/placeItems both defect if invoked before Ready, so their
   // affordances are disabled until then.
@@ -320,12 +296,15 @@ export default function TranscriptPlaybackPanel({
     () => normalizeTrackChapters(chapters),
     [chapters],
   );
-  const activeChapter = useMemo(
+  const activeChapterInterval = useMemo(
     () =>
       mediaKind === "podcast_episode"
-        ? resolveActiveChapter(normalizedChapters, currentTimeSeconds)
+        ? resolveTranscriptChapterInterval({
+            chapters: normalizedChapters,
+            timestampMs: presentation.positionMs,
+          })
         : null,
-    [currentTimeSeconds, mediaKind, normalizedChapters],
+    [mediaKind, normalizedChapters, presentation.positionMs],
   );
   const showNotesHtml = useMemo(() => {
     if (mediaKind !== "podcast_episode") {
@@ -551,14 +530,14 @@ export default function TranscriptPlaybackPanel({
         <section className={styles.chapterPanel} aria-label="Episode chapters">
           <h2 className={styles.chapterHeading}>Chapters</h2>
           <ol className={styles.chapterList}>
-            {normalizedChapters.map((chapter) => {
+            {normalizedChapters.map((chapter, chapterOrdinal) => {
               const timestamp = formatTranscriptTimestampMs(chapter.t_start_ms);
               const isActiveChapter =
-                activeChapter?.chapter_idx === chapter.chapter_idx;
+                activeChapterInterval?.ordinal === chapterOrdinal;
 
               return (
                 <li
-                  key={`${chapter.chapter_idx}-${chapter.t_start_ms}`}
+                  key={`chapter-${chapterOrdinal}`}
                   className={styles.chapterItem}
                 >
                   {chapter.image_url ? (

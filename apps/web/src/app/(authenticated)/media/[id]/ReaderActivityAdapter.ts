@@ -31,6 +31,11 @@ interface UseReaderActivityAdapterInput {
   pdfContentRef: RefObject<HTMLDivElement | null>;
   activeContent: ReaderActivityText | null;
   pdfControls: ReaderActivityPdfControls | null;
+  previewLease: {
+    isActive(): boolean;
+    releaseForGenuineInput(): void;
+    subscribe(listener: () => void): () => void;
+  };
 }
 
 interface ReaderActivityTextMeasurement {
@@ -75,6 +80,7 @@ export function useReaderActivityAdapter({
   pdfContentRef,
   activeContent,
   pdfControls,
+  previewLease,
 }: UseReaderActivityAdapterInput): ReaderActivityAdapter {
   const lastGenuineInputMonoRef = useRef<number | undefined>(undefined);
   const textMeasurementRef = useRef<ReaderActivityTextMeasurement>({
@@ -123,6 +129,7 @@ export function useReaderActivityAdapter({
         deviceClass: viewport.kind === "mobile" ? "Mobile" : "Desktop",
         eligible:
           paneActive &&
+          !previewLease.isActive() &&
           document.visibilityState === "visible" &&
           document.hasFocus() &&
           lastGenuineInputMono !== undefined &&
@@ -153,10 +160,12 @@ export function useReaderActivityAdapter({
     const noteInput = (event: Event) => {
       if (!event.isTrusted) return;
       if (event instanceof KeyboardEvent && !isPdfScrollKey(event)) return;
+      previewLease.releaseForGenuineInput();
       lastGenuineInputMonoRef.current = performance.now();
       update();
     };
     updateRef.current = update;
+    const unsubscribePreviewLease = previewLease.subscribe(update);
     root.addEventListener("pointerdown", noteInput, { passive: true });
     if (isPdf) {
       root.addEventListener("touchstart", noteInput, { passive: true });
@@ -180,6 +189,7 @@ export function useReaderActivityAdapter({
       window.removeEventListener("focus", update);
       window.removeEventListener("blur", update);
       updateRef.current = () => undefined;
+      unsubscribePreviewLease();
       unregister();
     };
   }, [
@@ -191,6 +201,7 @@ export function useReaderActivityAdapter({
     paneActive,
     pdfContentRef,
     pdfControls,
+    previewLease,
     readerRootRef,
     viewport.hydrated,
     viewport.kind,

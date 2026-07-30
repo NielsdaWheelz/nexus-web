@@ -639,6 +639,62 @@ describe("PaneShell", () => {
     );
   });
 
+  it("opens Find once before focus and only refocuses while already open", async () => {
+    const onOpen = vi.fn(() => {
+      expect(
+        screen.queryByRole("searchbox", { name: "Find in document" }),
+      ).toBeNull();
+    });
+    render(
+      paneTree({
+        isActive: true,
+        children: (
+          <PrimaryChromeProbe
+            publication={{
+              search: {
+                kind: "FindOccurrences",
+                query: "needle",
+                inputLabel: "Find in document",
+                placeholder: "Find",
+                onOpen,
+                onQueryChange: vi.fn(),
+                onDismiss: vi.fn(),
+                result: { kind: "Idle" },
+                scope: { kind: "EntireResource" },
+                matchCase: false,
+                wholeWord: false,
+                onMatchCaseChange: vi.fn(),
+                onWholeWordChange: vi.fn(),
+                onStep: vi.fn(),
+                onActivate: vi.fn(),
+                onShowResults: vi.fn(),
+                resultsExpanded: false,
+                returnToReadingPosition: { kind: "Unavailable" },
+              },
+            }}
+          />
+        ),
+      }),
+    );
+
+    const findAction = await screen.findByRole("button", { name: "Find" });
+    fireEvent.click(findAction);
+    const input = await screen.findByRole("searchbox", {
+      name: "Find in document",
+    });
+    await waitFor(() => expect(input).toHaveFocus());
+    expect(onOpen).toHaveBeenCalledTimes(1);
+
+    input.blur();
+    expect(dispatchPaneSearchRequest()).toBe(true);
+    await waitFor(() => expect(input).toHaveFocus());
+    expect(onOpen).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Close search" }));
+    fireEvent.click(findAction);
+    await waitFor(() => expect(onOpen).toHaveBeenCalledTimes(2));
+  });
+
   it("keeps the reading-position action after Find and invokes Return once", async () => {
     const onReturn = vi.fn();
     render(
@@ -652,6 +708,7 @@ describe("PaneShell", () => {
                 query: "",
                 inputLabel: "Find in document",
                 placeholder: "Find",
+                onOpen: vi.fn(),
                 onQueryChange: vi.fn(),
                 onDismiss: vi.fn(),
                 result: { kind: "Idle" },

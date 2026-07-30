@@ -297,6 +297,8 @@ export default function PaneShell({
         expandedSearchIdentity.continuityKey === filterRowsContinuityKey
       : expandedSearchIdentity?.kind === "Route" &&
         expandedSearchIdentity.routeKey === routeKey);
+  const searchExpandedRef = useRef(searchExpanded);
+  searchExpandedRef.current = searchExpanded;
   const focusSearchInput = useCallback(() => {
     window.requestAnimationFrame(() => {
       searchInputRef.current?.focus({ preventScroll: true });
@@ -312,19 +314,24 @@ export default function PaneShell({
   const openSearch = useCallback(() => {
     const publication = acceptedSearchRef.current;
     if (!isActiveRef.current || !publication) return false;
-    setExpandedSearchIdentity(
-      publication.kind === "FilterRows"
-        ? {
-            kind: "FilterRows",
-            continuityKey: currentFilterRowsContinuityKeyRef.current,
-          }
-        : { kind: "Route", routeKey: currentRouteKeyRef.current },
-    );
+    if (!searchExpandedRef.current) {
+      if (publication.kind === "FindOccurrences") publication.onOpen();
+      searchExpandedRef.current = true;
+      setExpandedSearchIdentity(
+        publication.kind === "FilterRows"
+          ? {
+              kind: "FilterRows",
+              continuityKey: currentFilterRowsContinuityKeyRef.current,
+            }
+          : { kind: "Route", routeKey: currentRouteKeyRef.current },
+      );
+    }
     focusSearchInput();
     return true;
   }, [focusSearchInput]);
   usePaneSearchRequested(openSearch);
   const closeSearch = useCallback(() => {
+    searchExpandedRef.current = false;
     setExpandedSearchIdentity(null);
     window.requestAnimationFrame(() => {
       const retainedTrigger = searchTriggerRef.current;

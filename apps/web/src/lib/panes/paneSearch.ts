@@ -97,6 +97,8 @@ export type PaneFilterRowsStatus =
 
 export type PaneFindOccurrencesPublication = PaneSearchBase & {
   readonly kind: "FindOccurrences";
+  readonly partialSourceLabel?: string;
+  readonly onOpen: () => void;
   readonly result: PaneFindResult;
   readonly scope: PaneFindScopeControl;
   readonly matchCase: boolean;
@@ -232,6 +234,8 @@ export function arePaneSearchPublicationsEqual(
   }
   if (right.kind !== "FindOccurrences") return false;
   if (
+    left.onOpen !== right.onOpen ||
+    left.partialSourceLabel !== right.partialSourceLabel ||
     left.result !== right.result ||
     !areScopeControlsEqual(left.scope, right.scope) ||
     left.matchCase !== right.matchCase ||

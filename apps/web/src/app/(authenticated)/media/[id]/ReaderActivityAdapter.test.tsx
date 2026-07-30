@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { userEvent } from "vitest/browser";
 import { useReaderActivityAdapter } from "./ReaderActivityAdapter";
+import { createMediaFindPreviewLease } from "./useMediaPaneFind";
 
 const recorder = vi.hoisted(() => ({
   observe: vi.fn(),
@@ -37,10 +38,20 @@ function ReaderHarness({
   isPdf = false,
   paneActive = true,
   totalProgression = 0.25,
+  previewLease = {
+    isActive: () => false,
+    releaseForGenuineInput: () => {},
+    subscribe: () => () => {},
+  },
 }: {
   isPdf?: boolean;
   paneActive?: boolean;
   totalProgression?: number;
+  previewLease?: {
+    isActive(): boolean;
+    releaseForGenuineInput(): void;
+    subscribe(listener: () => void): () => void;
+  };
 }) {
   const readerRootRef = useRef<HTMLDivElement>(null);
   const pdfContentRef = useRef<HTMLDivElement>(null);
@@ -63,6 +74,7 @@ function ReaderHarness({
           numPages: 4,
         }
       : null,
+    previewLease,
     });
   useEffect(() => {
     if (!isPdf) {
@@ -157,6 +169,25 @@ describe("useReaderActivityAdapter", () => {
     );
     await waitFor(() => expect(latestReadingObservation().eligible).toBe(true));
     expect(latestReadingObservation().measurement.progress).toBe(0.25);
+  });
+
+  it("becomes ineligible immediately while previewing and releases on reader pointer input", async () => {
+    const previewLease = createMediaFindPreviewLease();
+    const release = vi.spyOn(previewLease, "releaseForGenuineInput");
+    render(<ReaderHarness previewLease={previewLease} />);
+    const root = screen.getByTestId("reader-root");
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Trusted viewport intent" }),
+    );
+    await waitFor(() => expect(latestReadingObservation().eligible).toBe(true));
+
+    previewLease.acquire();
+    await waitFor(() => expect(latestReadingObservation().eligible).toBe(false));
+
+    await userEvent.click(root);
+    await waitFor(() => expect(latestReadingObservation().eligible).toBe(true));
+    expect(release).toHaveBeenCalledTimes(1);
   });
 
   it("publishes PDF progression without a word position", async () => {

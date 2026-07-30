@@ -167,6 +167,7 @@ export const PANE_ROUTE_MODELS = [
     queryNavigation: "in-place",
     returnMemento: { kind: "ShellScroll" },
     bodyMode: "standard",
+    secondaryGroups: ["resource-inspector"],
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({

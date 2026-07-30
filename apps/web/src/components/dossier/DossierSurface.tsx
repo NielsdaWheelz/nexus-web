@@ -33,7 +33,9 @@ import {
   type DossierViewModel,
 } from "@/components/dossier/dossierViewModel";
 import { dossierCoverageLabel } from "@/components/dossier/dossierCoverage";
-import DossierDocumentFrame from "@/components/dossier/DossierDocumentFrame";
+import DossierDocumentFrame, {
+  type DossierDocumentFindCapability,
+} from "@/components/dossier/DossierDocumentFrame";
 import styles from "./DossierSurface.module.css";
 
 export type DossierCitationActivate = (
@@ -48,6 +50,12 @@ interface DossierSurfaceProps {
   /** Wired by the pane/controller to route citation clicks through the pane
    * router; defaults to reader-source dispatch for in-document targets. */
   onCitationActivate?: DossierCitationActivate;
+  /** Relays the exact rendered revision's frame-owned Find capability. */
+  onFindCapabilityChange?: (
+    capability: DossierDocumentFindCapability | null,
+  ) => void;
+  /** Relays a validated iframe Cmd/Ctrl+F request to the pane owner. */
+  onFindRequested?: () => void;
   /** Standalone Artifact panes project revision selection into `?revision=`.
    * Resource Companion surfaces omit this and retain their local controller. */
   onRevisionSelect?: (revisionRef: string | null) => void;
@@ -57,10 +65,17 @@ const defaultCitationActivate: DossierCitationActivate = (_activation, target) =
   if (target) dispatchReaderSourceActivation(target);
 };
 
+const ignoreFindCapability = (
+  _capability: DossierDocumentFindCapability | null,
+) => {};
+const ignoreFindRequest = () => {};
+
 export default function DossierSurface({
   store,
   onViewMediaEvidence,
   onCitationActivate = defaultCitationActivate,
+  onFindCapabilityChange = ignoreFindCapability,
+  onFindRequested = ignoreFindRequest,
   onRevisionSelect,
 }: DossierSurfaceProps) {
   // A14: connect on mount / disconnect the CLIENT stream on unmount — the
@@ -210,6 +225,8 @@ export default function DossierSurface({
           body={vm.body}
           documentTitle={documentTitle}
           onCitationActivate={onCitationActivate}
+          onFindCapabilityChange={onFindCapabilityChange}
+          onFindRequested={onFindRequested}
           onRevisionSelect={onRevisionSelect}
         />
       </div>
@@ -275,12 +292,18 @@ function DossierBody({
   body,
   documentTitle,
   onCitationActivate,
+  onFindCapabilityChange,
+  onFindRequested,
   onRevisionSelect,
 }: {
   store: DossierControllerStore;
   body: DossierBodyView;
   documentTitle: string;
   onCitationActivate: DossierCitationActivate;
+  onFindCapabilityChange: (
+    capability: DossierDocumentFindCapability | null,
+  ) => void;
+  onFindRequested: () => void;
   onRevisionSelect?: (revisionRef: string | null) => void;
 }) {
   switch (body.kind) {
@@ -355,7 +378,10 @@ function DossierBody({
           <MachineText origin={{ label: "Dossier" }}>
             <DossierDocumentFrame
               title={documentTitle}
+              revisionRef={body.revision.revisionRef}
               contentHtml={body.revision.contentHtml}
+              onFindCapabilityChange={onFindCapabilityChange}
+              onFindRequested={onFindRequested}
               onCitation={(ordinal) => {
                 const citation = body.revision.citations.find(
                   (entry) => entry.ordinal === ordinal,
