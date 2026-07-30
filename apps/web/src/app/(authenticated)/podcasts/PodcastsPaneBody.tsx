@@ -9,6 +9,7 @@ import {
   useState,
   type SetStateAction,
 } from "react";
+import Link from "next/link";
 import { apiFetch } from "@/lib/api/client";
 import {
   decodeCollectionPage,
@@ -46,7 +47,6 @@ import {
   listMemberLibraries,
   type MemberLibrary,
 } from "@/lib/libraries/client";
-import { requestNexusOpen } from "@/lib/nexus/events";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
 import { findPaneSearchFocusTarget } from "@/lib/workspace/paneDom";
@@ -760,17 +760,8 @@ export default function PodcastsPaneBody() {
               heading="Podcasts"
               actions={
                 <>
-                  <Button
-                    variant="primary"
-                    size="md"
-                    onClick={() =>
-                      requestNexusOpen({
-                        kind: "QuickAction",
-                        actionId: "Nexus.Quick.Podcast",
-                      })
-                    }
-                  >
-                    Browse
+                  <Button asChild variant="primary" size="md">
+                    <Link href="/browse?kind=Podcast">Browse</Link>
                   </Button>
                   <ActionMenu
                     label="Podcast page actions"
@@ -824,17 +815,14 @@ export default function PodcastsPaneBody() {
                 <>
                   No followed podcasts yet.{" "}
                   <Button
+                    asChild
                     variant="ghost"
                     size="sm"
                     className={styles.inlineButton}
-                    onClick={() =>
-                      requestNexusOpen({
-                        kind: "QuickAction",
-                        actionId: "Nexus.Quick.Podcast",
-                      })
-                    }
                   >
-                    Browse podcasts
+                    <Link href="/browse?kind=Podcast">
+                      Browse podcasts
+                    </Link>
                   </Button>
                 </>
               )}

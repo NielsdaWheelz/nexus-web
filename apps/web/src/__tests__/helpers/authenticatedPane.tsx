@@ -27,6 +27,7 @@ interface RenderHydratedPaneOptions {
   children: ReactNode;
   paneId?: string;
   pathParams?: Record<string, string>;
+  canGoBack?: boolean;
 }
 
 export function renderHydratedPane({
@@ -35,6 +36,7 @@ export function renderHydratedPane({
   children,
   paneId = "pane-1",
   pathParams,
+  canGoBack = false,
 }: RenderHydratedPaneOptions): RenderResult & {
   onNavigatePane: ReturnType<typeof vi.fn>;
   onReplacePane: ReturnType<typeof vi.fn>;
@@ -77,7 +79,7 @@ export function renderHydratedPane({
               routeId={identity.routeId}
               routeKey={identity.routeKey}
               secondaryPane={null}
-              canGoBack={false}
+	              canGoBack={canGoBack}
               canGoForward={false}
               pathParams={pathParams ?? route.params}
               onNavigatePane={onNavigatePane}

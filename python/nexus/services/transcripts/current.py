@@ -34,6 +34,7 @@ TranscriptRequestReason = Literal[
     "operator_requeue",
     "rss_feed",
 ]
+TranscriptOrigin = Literal["Publisher", "Imported", "Generated"]
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,7 @@ def write_current_transcript(
     request_reason: TranscriptRequestReason,
     transcript_coverage: Literal["partial", "full"],
     transcript_segments: Sequence[TranscriptSegmentInput],
+    transcript_origin: TranscriptOrigin,
     now: datetime,
 ) -> CurrentTranscriptWriteResult:
     """Publish a non-source transcript and make the media readable."""
@@ -58,6 +60,7 @@ def write_current_transcript(
         request_reason=request_reason,
         transcript_coverage=transcript_coverage,
         transcript_segments=transcript_segments,
+        transcript_origin=transcript_origin,
         now=now,
         enqueue_semantic=True,
     )
@@ -72,6 +75,7 @@ def publish_source_transcript(
     request_reason: TranscriptRequestReason,
     transcript_coverage: Literal["partial", "full"],
     transcript_segments: Sequence[TranscriptSegmentInput],
+    transcript_origin: TranscriptOrigin,
     now: datetime,
 ) -> CurrentTranscriptWriteResult:
     """Publish source artifacts without crossing the source-success boundary."""
@@ -81,6 +85,7 @@ def publish_source_transcript(
         request_reason=request_reason,
         transcript_coverage=transcript_coverage,
         transcript_segments=transcript_segments,
+        transcript_origin=transcript_origin,
         now=now,
         enqueue_semantic=False,
     )
@@ -93,6 +98,7 @@ def _publish_current_transcript_artifacts(
     request_reason: TranscriptRequestReason,
     transcript_coverage: Literal["partial", "full"],
     transcript_segments: Sequence[TranscriptSegmentInput],
+    transcript_origin: TranscriptOrigin,
     now: datetime,
     enqueue_semantic: bool,
 ) -> CurrentTranscriptWriteResult:
@@ -167,6 +173,7 @@ def _publish_current_transcript_artifacts(
         semantic_status="pending",
         last_request_reason=request_reason,
         last_error_code=None,
+        transcript_origin=transcript_origin,
         now=now,
     )
     if enqueue_semantic:
@@ -195,16 +202,33 @@ def set_media_transcript_state(
     semantic_status: str | None = None,
     last_request_reason: str | None = None,
     last_error_code: str | None = None,
+    transcript_origin: TranscriptOrigin | None = None,
     now: datetime,
 ) -> None:
     """Insert or update the media_transcript_states row on a transcript write.
 
     `None` for semantic_status / last_request_reason preserves the existing value.
     """
-    existing = db.scalar(
-        text("SELECT media_id FROM media_transcript_states WHERE media_id = :media_id"),
-        {"media_id": media_id},
+    existing = (
+        db.execute(
+            text(
+                """
+                SELECT media_id, transcript_origin
+                FROM media_transcript_states
+                WHERE media_id = :media_id
+                """
+            ),
+            {"media_id": media_id},
+        )
+        .mappings()
+        .first()
     )
+    readable = transcript_state in {"ready", "partial"}
+    existing_origin = existing["transcript_origin"] if existing is not None else None
+    if readable and transcript_origin is None and existing_origin is None:
+        raise AssertionError("readable transcript state requires an owned transcript origin")
+    if not readable and transcript_origin is not None:
+        raise AssertionError("non-readable transcript state cannot carry transcript origin")
     params = {
         "media_id": media_id,
         "transcript_state": transcript_state,
@@ -212,6 +236,7 @@ def set_media_transcript_state(
         "semantic_status": semantic_status,
         "last_request_reason": last_request_reason,
         "last_error_code": last_error_code,
+        "transcript_origin": transcript_origin,
         "now": now,
     }
     if existing is None:
@@ -220,12 +245,19 @@ def set_media_transcript_state(
                 """
                 INSERT INTO media_transcript_states (
                     media_id, transcript_state, transcript_coverage, semantic_status,
-                    last_request_reason, last_error_code, created_at, updated_at
+                    last_request_reason, last_error_code, transcript_origin,
+                    created_at, updated_at
                 )
                 VALUES (
                     :media_id, :transcript_state, :transcript_coverage,
                     COALESCE(:semantic_status, 'none'),
-                    :last_request_reason, :last_error_code, :now, :now
+                    :last_request_reason, :last_error_code,
+                    CASE
+                        WHEN :transcript_state IN ('ready', 'partial')
+                        THEN CAST(:transcript_origin AS text)
+                        ELSE NULL
+                    END,
+                    :now, :now
                 )
                 """
             ),
@@ -241,6 +273,12 @@ def set_media_transcript_state(
                 semantic_status = COALESCE(:semantic_status, semantic_status),
                 last_request_reason = COALESCE(:last_request_reason, last_request_reason),
                 last_error_code = :last_error_code,
+                transcript_origin = CASE
+                    WHEN :transcript_state NOT IN ('ready', 'partial') THEN NULL
+                    WHEN CAST(:transcript_origin AS text) IS NOT NULL
+                    THEN CAST(:transcript_origin AS text)
+                    ELSE transcript_origin
+                END,
                 updated_at = :now
             WHERE media_id = :media_id
             """

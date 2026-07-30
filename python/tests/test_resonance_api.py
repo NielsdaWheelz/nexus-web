@@ -8,6 +8,7 @@ from sqlalchemy import text
 
 from tests.factories import (
     add_media_to_library,
+    add_test_podcast_subscription,
     create_normalized_fragment_highlight,
     create_test_fragment,
     create_test_library,
@@ -43,17 +44,10 @@ def _seed_podcast_subscription(
             "feed_url": f"https://example.com/{podcast_id}.xml",
         },
     )
-    session.execute(
-        text("""
-            INSERT INTO podcast_subscriptions (user_id, podcast_id, status)
-            VALUES (:viewer_id, :podcast_id, :status)
-        """),
-        {
-            "viewer_id": viewer_id,
-            "podcast_id": podcast_id,
-            "status": status,
-        },
-    )
+    if status == "active":
+        add_test_podcast_subscription(session, user_id=viewer_id, podcast_id=podcast_id)
+    else:
+        assert status == "unsubscribed"
     return podcast_id
 
 

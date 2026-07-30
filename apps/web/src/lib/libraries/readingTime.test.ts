@@ -46,8 +46,8 @@ function mediaEntry(overrides: Record<string, unknown> = {}) {
 function podcastEntry(overrides: Record<string, unknown> = {}) {
   return {
     kind: "podcast" as const,
-    podcast: { unplayed_count: 0 },
-    subscription: { status: "active", sync_status: "complete" },
+    podcast: { title: "Show" },
+    subscription: { kind: "Absent" },
     readingTimeEstimate: absent,
     ...overrides,
   };
@@ -264,53 +264,10 @@ describe("decodeLibraryReadingTimeEntry", () => {
     });
   });
 
-  it("constructs rich podcast facts at the Library boundary", () => {
-    expect(
-      decodeLibraryReadingTimeEntry(
-        podcastEntry({ podcast: { unplayed_count: 3 } }),
-      ).podcast,
-    ).toMatchObject({
-      unplayedCount: { kind: "Present", value: { value: 3 } },
-      syncStatus: { kind: "Present", value: "complete" },
+  it("preserves already-decoded podcast facts", () => {
+    expect(decodeLibraryReadingTimeEntry(podcastEntry()).podcast).toEqual({
+      title: "Show",
     });
-
-    for (const subscription of [
-      null,
-      { status: "unsubscribed", sync_status: "complete" },
-    ]) {
-      expect(
-        decodeLibraryReadingTimeEntry(
-          podcastEntry({ subscription }),
-        ).podcast.syncStatus,
-      ).toEqual(absent);
-    }
-  });
-
-  it("rejects malformed podcast presenter facts", () => {
-    expect(() =>
-      decodeLibraryReadingTimeEntry(
-        podcastEntry({ podcast: { unplayed_count: Number.NaN } }),
-      ),
-    ).toThrow();
-    expect(() =>
-      decodeLibraryReadingTimeEntry(
-        podcastEntry({
-          subscription: { status: "active", sync_status: "stale" },
-        }),
-      ),
-    ).toThrow(/subscription.sync_status/);
-    expect(() =>
-      decodeLibraryReadingTimeEntry(
-        podcastEntry({
-          subscription: { status: "archived", sync_status: "complete" },
-        }),
-      ),
-    ).toThrow(/subscription.status/);
-    expect(() =>
-      decodeLibraryReadingTimeEntry(
-        podcastEntry({ subscription: undefined }),
-      ),
-    ).toThrow(/subscription/);
   });
 
   it("rejects removed root consumption fields", () => {

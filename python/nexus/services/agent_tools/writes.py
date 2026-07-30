@@ -419,13 +419,18 @@ def _add_to_library(db: Session, viewer_id: UUID, args: dict[str, Any]) -> _Hand
     if ref.scheme == "media":
         outcome = library_entries.ensure_media_in_library(db, viewer_id, library_id, ref.id)
     else:
-        outcome = library_entries.add_podcast_to_library(db, viewer_id, library_id, ref.id)
+        outcome = library_entries.place_subscribed_podcast_in_named_library_in_current_transaction(
+            db,
+            viewer_id=viewer_id,
+            library_id=library_id,
+            podcast_id=ref.id,
+        )
 
     library_name = db.execute(
         text("SELECT name FROM libraries WHERE id = :id"), {"id": library_id}
     ).scalar_one()
 
-    if not outcome.inserted:
+    if outcome.kind != "Added":
         # Already filed here (by the user earlier, or a prior run). Record NO ref
         # so a later Undo can never delete a filing the assistant did not create
         # (R-5); the tool still reports success to the model.
@@ -435,6 +440,7 @@ def _add_to_library(db: Session, viewer_id: UUID, args: dict[str, Any]) -> _Hand
                 "filed_to": library_name,
                 "library_id": str(library_id),
                 "already_present": True,
+                "outcome": outcome.kind,
             },
         )
 
@@ -706,11 +712,11 @@ def _revert_ref(db: Session, *, viewer_id: UUID, ref: dict[str, Any]) -> None:
                     UUID(ref["library_id"]),
                 )
             elif target_scheme == "podcast":
-                library_entries.remove_podcast_from_library(
+                library_entries.undo_podcast_filing_for_viewer_in_current_transaction(
                     db,
-                    viewer_id,
-                    UUID(ref["library_id"]),
-                    UUID(ref["target_id"]),
+                    viewer_id=viewer_id,
+                    library_id=UUID(ref["library_id"]),
+                    podcast_id=UUID(ref["target_id"]),
                 )
             else:
                 # justify-defect: add_to_library records only the closed media/podcast

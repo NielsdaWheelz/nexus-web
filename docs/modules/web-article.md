@@ -39,6 +39,22 @@ source attempt instead of dropping the capture. Retrieval failure never rewrites
 successful source truth; its current durable job is pending, running, or visibly
 suspended.
 
+## Browse And Preview
+
+Browse composes the read-only Brave helper for external Web Article search and
+the Nexus adapter for already-owned articles. Brave results carry sealed
+discovery targets; Preview safe-fetches current provider/source truth, proxies
+remote artwork, and exposes **Open source**. Arbitrary web content is never
+framed. Browse and Preview write no Media, source attempt, Library entry, job,
+or progress/activity fact.
+
+Owned collisions open the canonical Media pane. External Add supplies the
+server-resolved canonical URL to `/media/from_url`, so the existing URL
+validation, safe fetch, dedupe, source-attempt, Library assignment, and worker
+owners above remain the acquisition path. The read-only Brave helper may also
+be composed by chat/Dossier web research; that does not recreate a standalone
+Web Search product surface.
+
 ## Reader Apparatus
 
 Web article reader apparatus extraction is owned by the web article structure

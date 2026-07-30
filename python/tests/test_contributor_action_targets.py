@@ -37,19 +37,19 @@ def test_resource_target_uses_typed_media_identity() -> None:
 
 
 @pytest.mark.unit
-def test_gutenberg_target_is_explicit_external_bridge_route() -> None:
+def test_gutenberg_target_is_truthful_external_source() -> None:
     target = _contributor_work_action_target(
         STATIC_ROUTE_SESSION,
         viewer_id=VIEWER_ID,
         media_id=None,
         podcast_id=None,
         gutenberg_ebook_id=84,
-        href="/browse/gutenberg/84",
+        href="https://www.gutenberg.org/ebooks/84",
     )
 
     assert target.model_dump(mode="json", by_alias=True) == {
         "kind": "External",
-        "href": "/browse/gutenberg/84",
+        "href": "https://www.gutenberg.org/ebooks/84",
     }
 
 

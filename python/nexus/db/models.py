@@ -2558,17 +2558,17 @@ class PodcastSubscription(Base):
 
     __tablename__ = "podcast_subscriptions"
 
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
     user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
-        primary_key=True,
+        nullable=False,
     )
     podcast_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("podcasts.id", ondelete="CASCADE"),
-        primary_key=True,
+        nullable=False,
     )
-    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="active")
     auto_queue: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     default_playback_speed: Mapped[float | None] = mapped_column(Float, nullable=True)
     sync_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
@@ -2597,9 +2597,10 @@ class PodcastSubscription(Base):
     )
 
     __table_args__ = (
-        CheckConstraint(
-            "status IN ('active', 'unsubscribed')",
-            name="ck_podcast_subscriptions_status",
+        UniqueConstraint(
+            "user_id",
+            "podcast_id",
+            name="uq_podcast_subscriptions_user_podcast",
         ),
         CheckConstraint(
             "sync_status IN ('pending', 'running', 'partial', 'complete', 'source_limited', 'failed')",
@@ -2618,37 +2619,40 @@ class PodcastSubscription(Base):
     podcast: Mapped["Podcast"] = relationship("Podcast")
 
 
-class PodcastSubscriptionLibrary(Base):
-    """Join row attaching a podcast subscription to a non-default library."""
+class PodcastSubscriptionBackfill(Base):
+    """One fenced historical traversal for one active subscription."""
 
-    __tablename__ = "podcast_subscription_libraries"
+    __tablename__ = "podcast_subscription_backfills"
 
-    subscription_user_id: Mapped[UUID] = mapped_column(
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    subscription_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        primary_key=True,
+        ForeignKey("podcast_subscriptions.id"),
+        nullable=False,
+        unique=True,
     )
-    subscription_podcast_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
+    cutoff_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    step_no: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    cursor: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    processed_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    added_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    source_limited_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
     )
-    library_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("libraries.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
+    failed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
     )
-
-    __table_args__ = (
-        ForeignKeyConstraint(
-            ["subscription_user_id", "subscription_podcast_id"],
-            ["podcast_subscriptions.user_id", "podcast_subscriptions.podcast_id"],
-            ondelete="CASCADE",
-        ),
-        Index("ix_podcast_subscription_libraries_library_id", "library_id"),
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
     )
 
 
@@ -2755,9 +2759,6 @@ class PodcastEpisode(Base):
         ForeignKey("podcasts.id", ondelete="CASCADE"),
         nullable=False,
     )
-    provider_episode_id: Mapped[str] = mapped_column(Text, nullable=False)
-    guid: Mapped[str | None] = mapped_column(Text, nullable=True)
-    fallback_identity: Mapped[str] = mapped_column(Text, nullable=False)
     published_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     description_html: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -2772,29 +2773,56 @@ class PodcastEpisode(Base):
     __table_args__ = (
         UniqueConstraint(
             "podcast_id",
-            "provider_episode_id",
-            name="uq_podcast_episodes_podcast_provider_episode_id",
-        ),
-        UniqueConstraint(
-            "podcast_id",
-            "fallback_identity",
-            name="uq_podcast_episodes_podcast_fallback_identity",
+            "media_id",
+            name="uq_podcast_episodes_podcast_media",
         ),
         CheckConstraint(
             "duration_seconds IS NULL OR duration_seconds > 0",
             name="ck_podcast_episodes_duration_positive",
         ),
-        Index(
-            "uq_podcast_episodes_podcast_guid_not_null",
-            "podcast_id",
-            "guid",
-            unique=True,
-            postgresql_where=text("guid IS NOT NULL"),
-        ),
     )
 
     media: Mapped["Media"] = relationship("Media", back_populates="podcast_episode")
     podcast: Mapped["Podcast"] = relationship("Podcast", back_populates="episodes")
+
+
+class PodcastEpisodeIdentity(Base):
+    """A stable provider/feed alias proving one acquired episode identity."""
+
+    __tablename__ = "podcast_episode_identities"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    podcast_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("podcasts.id"),
+        nullable=False,
+    )
+    scheme: Mapped[str] = mapped_column(Text, nullable=False)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    episode_media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "podcast_id",
+            "scheme",
+            "value",
+            name="uq_podcast_episode_identities_alias",
+        ),
+        ForeignKeyConstraint(
+            ["podcast_id", "episode_media_id"],
+            ["podcast_episodes.podcast_id", "podcast_episodes.media_id"],
+            name="fk_podcast_episode_identities_episode",
+        ),
+        Index(
+            "ix_podcast_episode_identities_episode_media_id",
+            "episode_media_id",
+        ),
+    )
 
 
 class PodcastEpisodeChapter(Base):
@@ -3796,6 +3824,7 @@ class MediaTranscriptState(Base):
         server_default=SemanticStatus.none.value,
     )
     last_request_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    transcript_origin: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),

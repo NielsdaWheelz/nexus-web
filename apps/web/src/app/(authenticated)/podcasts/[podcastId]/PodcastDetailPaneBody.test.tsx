@@ -100,10 +100,10 @@ vi.mock("@/lib/billing/useBillingAccount", () => ({
   }),
 }));
 
-vi.mock("../podcastSubscriptions", async () => {
+vi.mock("@/lib/podcasts/acquisition", async () => {
   const actual = await vi.importActual<
-    typeof import("../podcastSubscriptions")
-  >("../podcastSubscriptions");
+    typeof import("@/lib/podcasts/acquisition")
+  >("@/lib/podcasts/acquisition");
   return {
     ...actual,
     subscribeToPodcast: (...args: unknown[]) => subscribeToPodcastMock(...args),
@@ -116,10 +116,7 @@ import {
   RETURN_JOURNEY_VISIT_ID,
 } from "@/__tests__/helpers/paneReturnJourney";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
-import {
-  LecternProvider,
-  useLectern,
-} from "@/lib/lectern/LecternProvider";
+import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import type { PanePrimaryChromePublication } from "@/lib/panes/panePublications";
@@ -173,7 +170,10 @@ function Wrapped({
           onGoForwardPane={vi.fn()}
           onNavigatePane={vi.fn()}
           onReplacePane={onReplacePane}
-          onActivateWorkspaceTarget={vi.fn(() => ({ kind: "Unchanged" as const, paneId: "pane-1" }))}
+          onActivateWorkspaceTarget={vi.fn(() => ({
+            kind: "Unchanged" as const,
+            paneId: "pane-1",
+          }))}
         >
           <LecternProvider>
             <GlobalPlayerProvider>
@@ -222,6 +222,20 @@ function podcastDetailResponse({
   title?: string;
   subscription?: unknown;
 } = {}) {
+  const normalizedSubscription =
+    typeof subscription === "object" &&
+    subscription !== null &&
+    !Array.isArray(subscription)
+      ? {
+          backfill: {
+            id: "00000000-0000-4000-8000-000000000099",
+            state: "Complete",
+            processed_count: 24,
+            added_count: 20,
+          },
+          ...subscription,
+        }
+      : subscription;
   return {
     data: {
       podcast: {
@@ -237,7 +251,7 @@ function podcastDetailResponse({
         created_at: "2026-03-06T00:00:00Z",
         updated_at: "2026-03-06T00:00:00Z",
       },
-      subscription,
+      subscription: normalizedSubscription,
     },
   };
 }
@@ -328,7 +342,10 @@ function episodeMedia({
   };
 }
 
-function episodePage(items: unknown[], nextCursor: unknown = { kind: "Absent" }) {
+function episodePage(
+  items: unknown[],
+  nextCursor: unknown = { kind: "Absent" },
+) {
   return {
     data: {
       items,
@@ -345,15 +362,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     shareControllerMock.openShare.mockReset();
     subscribeToPodcastMock.mockReset();
     subscribeToPodcastMock.mockResolvedValue({
-      podcast_id: "00000000-0000-4000-8000-000000000011",
-      subscription_created: true,
-      sync_status: "pending",
-      sync_enqueued: true,
-      sync_error_code: null,
-      sync_error_message: null,
-      sync_attempts: 0,
-      last_synced_at: null,
-      window_size: 0,
+      href: "/podcasts/00000000-0000-4000-8000-000000000011",
     });
     mockUsePaneParam.mockImplementation((paramName) =>
       paramName === "podcastId" ? "00000000-0000-4000-8000-000000000011" : null,
@@ -379,7 +388,10 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
       ) {
         return jsonResponse(episodePage([]));
       }
-      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries"
+      ) {
         return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/lectern") {
@@ -456,7 +468,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     expect(subscribeButton).toBeInTheDocument();
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Libraries: No libraries selected" }),
+      screen.getByRole("button", { name: "Also add to Libraries" }),
     );
     fireEvent.click(await screen.findByRole("option", { name: "Research" }));
     fireEvent.click(await screen.findByRole("option", { name: "Books" }));
@@ -472,9 +484,101 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     });
 
     const payload = subscribeToPodcastMock.mock.calls[0][0] as {
-      library_ids: string[];
+      namedLibraryIds: string[];
+      target: unknown;
     };
-    expect(payload.library_ids).toEqual(["lib-research", "lib-books"]);
+    expect(payload.namedLibraryIds).toEqual(["lib-research", "lib-books"]);
+    expect(payload.target).toEqual({
+      kind: "Canonical",
+      podcastId: "00000000-0000-4000-8000-000000000011",
+    });
+  });
+
+  it("shows canonical backfill counters and offers Failed-only Retry backlog", async () => {
+    const retryRequests: RequestInit[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      if (
+        url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011"
+      ) {
+        return jsonResponse(
+          podcastDetailResponse({
+            subscription: {
+              podcast_id: "00000000-0000-4000-8000-000000000011",
+              user_id: "user-1",
+              default_playback_speed: null,
+              auto_queue: false,
+              sync_status: "complete",
+              sync_error_code: null,
+              sync_error_message: null,
+              sync_attempts: 1,
+              sync_started_at: null,
+              sync_completed_at: null,
+              last_synced_at: null,
+              updated_at: "2026-01-01T00:00:00Z",
+              backfill: {
+                id: "00000000-0000-4000-8000-000000000099",
+                state: "Failed",
+                processed_count: 12,
+                added_count: 9,
+              },
+            },
+          }),
+        );
+      }
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
+      ) {
+        return jsonResponse(episodePage([]));
+      }
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries"
+      ) {
+        return jsonResponse({ data: [] });
+      }
+      if (
+        url.pathname ===
+        "/api/podcasts/subscriptions/00000000-0000-4000-8000-000000000011/backfill/retry"
+      ) {
+        retryRequests.push(init ?? {});
+        return jsonResponse({
+          data: {
+            podcastId: "00000000-0000-4000-8000-000000000011",
+            outcome: "Retried",
+            backfill: {
+              id: "00000000-0000-4000-8000-000000000100",
+              state: "Pending",
+              processedCount: 0,
+              addedCount: 0,
+            },
+          },
+        });
+      }
+      if (url.pathname === "/api/lectern") {
+        return jsonResponse({ data: { items: [] } });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(<Wrapped />);
+
+    expect(
+      await screen.findByText("Backfill failed · 12 processed · 9 added"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry backlog" }));
+
+    expect(
+      await screen.findByText("Backfill pending · 0 processed · 0 added"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Retry backlog" }),
+    ).not.toBeInTheDocument();
+    expect(retryRequests).toHaveLength(1);
+    expect(
+      new Headers(retryRequests[0]!.headers).get("Idempotency-Key"),
+    ).toMatch(/^[0-9a-f-]{36}$/u);
   });
 
   it("does not recapture sync-patched detail while refresh reconciliation is pending", async () => {
@@ -494,7 +598,6 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
             subscription: {
               podcast_id: "00000000-0000-4000-8000-000000000011",
               user_id: "user-1",
-              status: "active",
               default_playback_speed: null,
               auto_queue: false,
               sync_status: detailCalls === 1 ? "complete" : "pending",
@@ -548,13 +651,13 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
           },
         });
       }
-      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
-        return jsonResponse({ data: [] });
-      }
       if (
         url.pathname ===
-        "/api/media/00000000-0000-4000-8000-000000000111"
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries"
       ) {
+        return jsonResponse({ data: [] });
+      }
+      if (url.pathname === "/api/media/00000000-0000-4000-8000-000000000111") {
         return jsonResponse({
           data: { description_text: "Detailed show notes" },
         });
@@ -632,7 +735,10 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
       ) {
         return jsonResponse(episodePage([episodeMedia()]));
       }
-      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries"
+      ) {
         return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/media/transcript/forecasts") {
@@ -667,40 +773,19 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     });
   });
 
-  it("treats an unsubscribed detail row as unavailable for subscription operations", async () => {
+  it("treats subscription absence as unsubscribed", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = new URL(String(input), "http://localhost");
       if (
         url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011"
       ) {
-        return jsonResponse(
-          podcastDetailResponse({
-            subscription: {
-              podcast_id: "00000000-0000-4000-8000-000000000011",
-              user_id: "user-1",
-              status: "unsubscribed",
-              default_playback_speed: null,
-              auto_queue: false,
-              sync_status: "complete",
-              sync_error_code: null,
-              sync_error_message: null,
-              sync_attempts: 1,
-              sync_started_at: null,
-              sync_completed_at: null,
-              last_synced_at: null,
-              updated_at: "2026-01-01T00:00:00Z",
-            },
-          }),
-        );
+        return jsonResponse(podcastDetailResponse({ subscription: null }));
       }
       if (
         url.pathname ===
         "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
       ) {
         return jsonResponse(episodePage([]));
-      }
-      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
-        return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/lectern") {
         return jsonResponse({ data: { items: [] } });
@@ -748,15 +833,15 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
           ]),
         );
       }
-      if (
-        url.pathname ===
-        "/api/media/00000000-0000-4000-8000-000000000111"
-      ) {
+      if (url.pathname === "/api/media/00000000-0000-4000-8000-000000000111") {
         return jsonResponse({
           data: { description_text: "Detailed show notes" },
         });
       }
-      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries"
+      ) {
         return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/lectern") {
@@ -817,7 +902,10 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
       ) {
         return jsonResponse(episodePage([episodeMedia()]));
       }
-      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries"
+      ) {
         return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/lectern") {
@@ -924,7 +1012,10 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
           ]),
         );
       }
-      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries"
+      ) {
         return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/lectern") {
@@ -934,7 +1025,10 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
         url.pathname === "/api/consumption/commands" &&
         init?.method === "POST"
       ) {
-        const command = JSON.parse(String(init.body)) as Record<string, unknown>;
+        const command = JSON.parse(String(init.body)) as Record<
+          string,
+          unknown
+        >;
         commandBodies.push(command);
         resetCommitted = true;
         return jsonResponse({
@@ -1024,7 +1118,10 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
       ) {
         return jsonResponse({ data: { accepted: true } });
       }
-      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries"
+      ) {
         return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/lectern") {
@@ -1088,7 +1185,10 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
       ) {
         return metadataResponse.promise;
       }
-      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries"
+      ) {
         return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/lectern") {
@@ -1148,7 +1248,10 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
           episodePage([episodeMedia({ canEditAuthors: true })]),
         );
       }
-      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries"
+      ) {
         return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/lectern") {
@@ -1185,9 +1288,11 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
         return handle;
       },
     );
-    vi.spyOn(globalThis, "cancelAnimationFrame").mockImplementation((handle) => {
-      animationFrames.delete(handle);
-    });
+    vi.spyOn(globalThis, "cancelAnimationFrame").mockImplementation(
+      (handle) => {
+        animationFrames.delete(handle);
+      },
+    );
     const flushAnimationFrames = () => {
       const callbacks = [...animationFrames.values()];
       animationFrames.clear();
@@ -1229,7 +1334,10 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
           ]),
         );
       }
-      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries"
+      ) {
         return jsonResponse({ data: [] });
       }
       if (
@@ -1299,7 +1407,10 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
       ) {
         return jsonResponse(episodePage([episodeMedia()]));
       }
-      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries"
+      ) {
         return jsonResponse({ data: [] });
       }
       if (
@@ -1438,7 +1549,10 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
           ),
         );
       }
-      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries"
+      ) {
         return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/lectern") {
@@ -1548,10 +1662,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
           return oldContinuation.promise;
         }
         return jsonResponse(
-          episodePage(
-            [episodeMedia()],
-            { kind: "Present", value: "page-2" },
-          ),
+          episodePage([episodeMedia()], { kind: "Present", value: "page-2" }),
         );
       }
       if (
@@ -1637,7 +1748,10 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
           ]),
         );
       }
-      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries"
+      ) {
         return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/lectern") {
@@ -1708,7 +1822,10 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
           ]),
         );
       }
-      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries"
+      ) {
         return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/media/transcript/forecasts") {
@@ -1788,7 +1905,10 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
           ]),
         );
       }
-      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries"
+      ) {
         return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/lectern") {
@@ -1856,7 +1976,9 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
 
     render(<Wrapped />);
     await waitFor(() => {
-      expect(primaryChromeMock.publish.mock.lastCall?.[0]?.search).toBeDefined();
+      expect(
+        primaryChromeMock.publish.mock.lastCall?.[0]?.search,
+      ).toBeDefined();
     });
     act(() => publishedEpisodeFilterRows().onQueryChange("missing"));
 

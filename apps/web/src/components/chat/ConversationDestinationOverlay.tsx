@@ -146,6 +146,7 @@ function DestinationPicker({ onSelect }: { onSelect: (conversationId: string) =>
   const { items, status, error, hasMore, loadingMore, loadMore, retry } =
     useCursorPagination<ConversationListItem>({
       firstPage,
+      initialMoreError: null,
       buildMoreHref: (cursor) => buildListHref(debouncedQuery, cursor),
     });
 

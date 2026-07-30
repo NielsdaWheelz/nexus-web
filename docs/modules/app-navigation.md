@@ -13,12 +13,13 @@ Neither is a directory of every feature.
 
 - **Lectern is home.** `/lectern` is the canonical authenticated home, the brand
   destination, and the first visible navigation item.
-- **Podcasts and Chats remain primary.** Atlas and Oracle are present but do not
-  displace the frequent listening and conversation tasks.
-- **Desktop rail order is exact and flat:** Lectern, Libraries, Podcasts, Chats,
-  Notes, Stats, Atlas, Oracle.
-- **Mobile Places order is exact and flat:** Lectern, Libraries, Podcasts,
-  Chats, Notes. Stats, Atlas, and Oracle remain retrievable through Find.
+- **Browse, Podcasts, and Chats remain primary.** Atlas and Oracle are present
+  but do not displace discovery, listening, and conversation tasks.
+- **Desktop rail order is exact and flat:** Lectern, Libraries, Browse, Podcasts,
+  Chats, Notes, Stats, Atlas, Oracle.
+- **Mobile Places order is exact and flat:** Lectern, Libraries, Browse,
+  Podcasts, Chats, Notes. Stats, Atlas, and Oracle remain retrievable through
+  Find.
 - **Fixed navigation is not customizable.** Pinning is not part of this
   contract. Personalized retrieval belongs in the Lectern Reading Slate and
   Nexus, where it can scale without destabilizing spatial memory.
@@ -54,9 +55,11 @@ The primary label remains dominant. Nexus never invents a summary, confidence,
 activity state, or type decoration merely to fill a row. Search-source failures
 say either **Couldn’t search your resources** or **Couldn’t search inside your
 library**, retain successful rows, and expose a source-specific **Retry** outside
-the listbox. The explicit Web Search page says **Web Search**, `Results for
-“{query}”`, and on failure **Couldn’t search the web. Retry**. A Web result is
-an Import-URL candidate, never a silently ingested document.
+the listbox. External retrieval leaves Nexus through an explicit Browse href.
+“Search the web…” targets `/browse?kind=WebArticle&q={query}` and Podcast
+discovery targets `/browse?kind=Podcast`; neither invokes a provider-spending
+bare All query. Browse candidates open owned content directly or a read-only
+Preview. They are never silently ingested.
 
 The listbox has no nested controls: one result equals one primary activation.
 The selected result's **Actions** control is outside it and remains pointer
@@ -101,6 +104,7 @@ Section routes derive it from their one `header.destinationId`; resource routes
 declare `sectionDestinationId` because their header has no section identity:
 
 - `/media/{id}` and `/libraries/{id}` keep **Libraries** active;
+- `/browse` and `/browse/preview` keep **Browse** active;
 - `/podcasts/{id}` keeps **Podcasts** active;
 - chat detail and new-chat panes keep **Chats** active;
 - pages and note blocks keep **Notes** active;

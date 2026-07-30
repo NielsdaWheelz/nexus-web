@@ -1,20 +1,19 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
+import {
+  buildMediaImageProxySrc,
+  parseMediaImageProxySrc,
+} from "@/lib/media/imageProxy";
 import { buildOraclePlateImageSrc } from "@/lib/media/oraclePlateImage";
 import MediaImage from "./MediaImage";
 
 describe("MediaImage", () => {
   it("kind=owned renders the src verbatim without routing through the proxy", () => {
-    const src = buildOraclePlateImageSrc("123e4567-e89b-12d3-a456-426614174000");
+    const src = buildOraclePlateImageSrc(
+      "123e4567-e89b-12d3-a456-426614174000",
+    );
     render(
-      <MediaImage
-        kind="owned"
-        src={src}
-        alt="plate"
-        width={36}
-        height={48}
-      />,
+      <MediaImage kind="owned" src={src} alt="plate" width={36} height={48} />,
     );
 
     const img = screen.getByRole("img", { name: "plate" });
@@ -36,6 +35,25 @@ describe("MediaImage", () => {
 
     const img = screen.getByRole("img", { name: "cover" });
     expect(img).toHaveAttribute("src", buildMediaImageProxySrc(remoteUrl));
+    expect(img).toHaveAttribute("data-unoptimized");
+  });
+
+  it("kind=proxy-src renders an already-proxied source exactly once", () => {
+    const src = parseMediaImageProxySrc(
+      "/api/media/image?url=https%3A%2F%2Fexample.com%2Fcover.jpg",
+    );
+    render(
+      <MediaImage
+        kind="proxy-src"
+        src={src}
+        alt="preview cover"
+        width={40}
+        height={40}
+      />,
+    );
+
+    const img = screen.getByRole("img", { name: "preview cover" });
+    expect(img).toHaveAttribute("src", src);
     expect(img).toHaveAttribute("data-unoptimized");
   });
 });

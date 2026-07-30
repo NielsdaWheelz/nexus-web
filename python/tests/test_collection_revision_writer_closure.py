@@ -11,7 +11,7 @@ from nexus.db.models import Media
 from nexus.errors import ApiErrorCode, ConflictError
 from nexus.schemas.consumption import EnsureMediaFinishedCommand
 from nexus.schemas.podcast import (
-    PodcastSubscribeRequest,
+    PodcastSourceFacts,
     PodcastSubscriptionSettingsPatchRequest,
 )
 from nexus.schemas.presence import Present
@@ -33,6 +33,7 @@ from nexus.services.podcasts.subscriptions import (
 from nexus.services.sealed_handles import seal_library_invitation
 from tests.factories import (
     add_media_to_library,
+    add_test_podcast_subscription,
     create_test_library,
     create_test_media,
 )
@@ -229,9 +230,7 @@ def test_membership_acceptance_and_removal_advance_library_entries(
         )
         for family in affected_families
     }
-    assert after_accept == {
-        family: revision + 1 for family, revision in before_accept.items()
-    }
+    assert after_accept == {family: revision + 1 for family, revision in before_accept.items()}
 
     library_governance.remove_library_member(
         db_session,
@@ -269,7 +268,7 @@ def test_podcast_identity_changes_advance_every_viewers_dependent_collections(
 
     upsert_podcast(
         db_session,
-        PodcastSubscribeRequest(
+        PodcastSourceFacts(
             provider_podcast_id=f"writer-closure-{uuid4()}",
             title="Revision closure",
             feed_url=f"https://example.com/{uuid4()}.xml",
@@ -295,35 +294,18 @@ def test_subscription_settings_advance_library_entries_and_subscription_index(
     viewer_id, _ = _seed_user(db_session)
     podcast_id = upsert_podcast(
         db_session,
-        PodcastSubscribeRequest(
+        PodcastSourceFacts(
             provider_podcast_id=f"settings-closure-{uuid4()}",
             title="Settings closure",
             feed_url=f"https://example.com/{uuid4()}.xml",
         ),
         now=datetime.now(UTC),
     )
-    db_session.execute(
-        text(
-            """
-            INSERT INTO podcast_subscriptions (
-                user_id,
-                podcast_id,
-                status,
-                default_playback_speed,
-                auto_queue,
-                sync_status
-            )
-            VALUES (
-                :viewer_id,
-                :podcast_id,
-                'active',
-                1.0,
-                false,
-                'pending'
-            )
-            """
-        ),
-        {"viewer_id": viewer_id, "podcast_id": podcast_id},
+    add_test_podcast_subscription(
+        db_session,
+        user_id=viewer_id,
+        podcast_id=podcast_id,
+        default_playback_speed=1.0,
     )
     db_session.commit()
     before = {
@@ -363,35 +345,19 @@ def test_unsubscribe_returns_the_rebased_subscription_revision(
     viewer_id, _ = _seed_user(db_session)
     podcast_id = upsert_podcast(
         db_session,
-        PodcastSubscribeRequest(
+        PodcastSourceFacts(
             provider_podcast_id=f"unsubscribe-closure-{uuid4()}",
             title="Unsubscribe closure",
             feed_url=f"https://example.com/{uuid4()}.xml",
         ),
         now=datetime.now(UTC),
     )
-    db_session.execute(
-        text(
-            """
-            INSERT INTO podcast_subscriptions (
-                user_id,
-                podcast_id,
-                status,
-                default_playback_speed,
-                auto_queue,
-                sync_status
-            )
-            VALUES (
-                :viewer_id,
-                :podcast_id,
-                'active',
-                1.0,
-                false,
-                'complete'
-            )
-            """
-        ),
-        {"viewer_id": viewer_id, "podcast_id": podcast_id},
+    add_test_podcast_subscription(
+        db_session,
+        user_id=viewer_id,
+        podcast_id=podcast_id,
+        default_playback_speed=1.0,
+        sync_status="complete",
     )
     db_session.commit()
     before = read_collection_revision(
@@ -401,7 +367,12 @@ def test_unsubscribe_returns_the_rebased_subscription_revision(
     )
     db_session.commit()
 
-    response = unsubscribe_from_podcast(db_session, viewer_id, podcast_id)
+    response = unsubscribe_from_podcast(
+        db_session,
+        viewer_id,
+        podcast_id,
+        idempotency_key=f"writer-closure-{uuid4()}",
+    )
 
     assert response.collection_revision == before + 1
     assert response.collection_revision == read_collection_revision(

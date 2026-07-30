@@ -57,6 +57,11 @@ const EXPECTED_ROUTE_DEFAULTS = {
   lectern: none("Lectern"),
   libraries: none("Libraries"),
   library: none("Libraries"),
+  browse: none("Browse"),
+  browsePreview: {
+    kind: "resource",
+    resource: { status: "pending", accessibleLabel: "Loading preview…" },
+  },
   media: {
     kind: "resource",
     resource: { status: "pending", accessibleLabel: "Loading media…" },

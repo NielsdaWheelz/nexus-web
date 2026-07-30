@@ -23,23 +23,29 @@ export interface CursorPage<T> {
 // accumulate in local state, reset whenever the page-1 data reference changes.
 export function useCursorPagination<T>(args: {
   firstPage: AsyncResource<CursorPage<T>>;
+  initialMoreError: ApiError | null;
   buildMoreHref: (cursor: string) => string;
+  loadMorePage?: (
+    href: string,
+    signal: AbortSignal,
+  ) => Promise<CursorPage<T>>;
 }): {
   items: T[];
   status: "loading" | "error" | "ready";
   error: ApiError | null;
   hasMore: boolean;
+  nextCursor: string | null;
   loadingMore: boolean;
   loadMore: () => void;
   retry: () => void;
 } {
-  const { firstPage, buildMoreHref } = args;
+  const { firstPage, initialMoreError, buildMoreHref, loadMorePage } = args;
   const firstData = firstPage.status === "ready" ? firstPage.data : null;
 
   const [appended, setAppended] = useState<T[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [moreError, setMoreError] = useState<ApiError | null>(null);
+  const [moreError, setMoreError] = useState<ApiError | null>(initialMoreError);
 
   // Reset appended pages when page 1 changes identity (new firstPage.data ref).
   const seenRef = useRef<CursorPage<T> | null>(null);
@@ -65,14 +71,16 @@ export function useCursorPagination<T>(args: {
     setAppended([]);
     setCursor(firstData.page.next_cursor);
     setLoadingMore(false);
-    setMoreError(null);
-  }, [firstData]);
+    setMoreError(initialMoreError);
+  }, [firstData, initialMoreError]);
 
   const cursorRef = useRef(effectiveCursor);
   cursorRef.current = effectiveCursor;
   const loadingRef = useRef(false);
   const buildRef = useRef(buildMoreHref);
   buildRef.current = buildMoreHref;
+  const loadRef = useRef(loadMorePage);
+  loadRef.current = loadMorePage;
 
   const abortRef = useRef<AbortController | null>(null);
   const generationRef = useRef(0);
@@ -97,10 +105,12 @@ export function useCursorPagination<T>(args: {
     abortRef.current = controller;
     void (async () => {
       try {
-        const page = await apiFetch<CursorPage<T>>(
-          buildRef.current(next) as ApiPath,
-          { signal: controller.signal },
-        );
+        const href = buildRef.current(next);
+        const page = loadRef.current
+          ? await loadRef.current(href, controller.signal)
+          : await apiFetch<CursorPage<T>>(href as ApiPath, {
+              signal: controller.signal,
+            });
         if (controller.signal.aborted || generation !== generationRef.current) return;
         setAppended((prev) => [...prev, ...page.data]);
         setCursor(page.page.next_cursor);
@@ -135,6 +145,7 @@ export function useCursorPagination<T>(args: {
         status: "loading",
         error: null,
         hasMore: false,
+        nextCursor: null,
         loadingMore: false,
         loadMore,
         retry: () => {},
@@ -145,6 +156,7 @@ export function useCursorPagination<T>(args: {
         status: "error",
         error: firstPage.error,
         hasMore: false,
+        nextCursor: null,
         loadingMore: false,
         loadMore,
         retry: firstPage.retry,
@@ -154,7 +166,8 @@ export function useCursorPagination<T>(args: {
         items,
         status: "ready",
         error: firstDataIsCurrent ? moreError : null,
-        hasMore: effectiveCursor !== null,
+      hasMore: effectiveCursor !== null,
+      nextCursor: effectiveCursor,
         loadingMore: firstDataIsCurrent ? loadingMore : false,
         loadMore,
         retry: loadMore,

@@ -352,8 +352,9 @@ describe("Nexus result composition", () => {
       "Continuation:SeeAll",
     ]);
     expect(entries.at(-2)?.primaryAction.target).toEqual({
-      kind: "OpenWebSearch",
-      query: "notes",
+      kind: "InternalHref",
+      href: "/browse?kind=WebArticle&q=notes",
+      labelHint: "Browse",
     });
   });
 

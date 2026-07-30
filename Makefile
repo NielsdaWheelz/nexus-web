@@ -474,7 +474,7 @@ test-live-providers:
 _test-live-providers-raw:
 	make _ensure-node-ingest
 	mkdir -p test-results
-	cd python && NEXUS_ENV=local PODCAST_INITIAL_EPISODE_WINDOW=1 uv run pytest -v --tb=short \
+	cd python && NEXUS_ENV=local uv run pytest -v --tb=short \
 		--basetemp=../test-results/live-providers \
 		-m live_provider
 
@@ -542,7 +542,10 @@ _test-csp-raw:
 	@echo "Running strict-CSP e2e with API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT)" && \
 	cd e2e && \
 	API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) NEXUS_ENV=test E2E_REAL_MEDIA=0 bunx playwright install --with-deps chromium && \
-	API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) NEXUS_ENV=test E2E_REAL_MEDIA=0 bun run test:csp -- $(PLAYWRIGHT_ARGS)
+	API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) NEXUS_ENV=test E2E_REAL_MEDIA=0 \
+	REAL_MEDIA_PROVIDER_FIXTURES=1 \
+	REAL_MEDIA_FIXTURE_DIR=$$PWD/../python/tests/fixtures/real_media \
+	bun run test:csp -- $(PLAYWRIGHT_ARGS)
 
 _test-real-media-e2e-raw:
 	@echo "Running real-media e2e with API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT) READER_PROXY_PORT=$(READER_PROXY_PORT)" && \

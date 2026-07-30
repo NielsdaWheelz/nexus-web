@@ -309,11 +309,14 @@ def engagement_fact_rows_sql() -> str:
     ``media_id``, ``read_state`` (``Unread``/``InProgress``/``Finished``),
     ``progress_fraction``, ``progress_resettable``, and ``last_engaged_at``.
     The derivation is identical to :func:`media_read_states`; visibility and
-    destination policy belong to the composing caller.
+    destination policy belong to the composing caller. The candidate-id union
+    is materialized once because this relation is commonly composed as a joined
+    subquery; allowing PostgreSQL to inline it can re-run the union once per
+    outer Media candidate.
     """
     duration_ms = "COALESCE(pls.duration_ms, pe.duration_seconds * 1000)"
     return f"""
-        WITH consumption_media_ids AS (
+        WITH consumption_media_ids AS MATERIALIZED (
             SELECT media_id
             FROM consumption_overrides
             WHERE user_id = :viewer_id

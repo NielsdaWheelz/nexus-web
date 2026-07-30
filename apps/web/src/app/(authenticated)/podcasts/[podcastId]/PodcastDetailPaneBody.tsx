@@ -46,7 +46,12 @@ import {
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import { useBillingAccount } from "@/lib/billing/useBillingAccount";
-import { useGlobalPlayer } from "@/lib/player/globalPlayer";
+import {
+  canonicalSessionOfGlobalState,
+  useGlobalPlayer,
+} from "@/lib/player/globalPlayer";
+import { formatSubscriptionPlaybackSummary } from "@/lib/player/subscriptionPlaybackSpeed";
+import { pluralize } from "@/lib/text/pluralize";
 import { useLectern } from "@/lib/lectern/LecternProvider";
 import { useCompletionUndo } from "@/lib/lectern/useCompletionUndo";
 import { runProgressReset } from "@/lib/consumption/progressReset";
@@ -56,14 +61,10 @@ import {
   type Placement,
 } from "@/lib/lectern/contract";
 import { useStringIdSet } from "@/lib/useStringIdSet";
-import PodcastSummaryCard from "./PodcastSummaryCard";
+import PodcastOverview from "@/components/podcasts/PodcastOverview";
+import AcquisitionControl from "@/components/browse/AcquisitionControl";
 import PodcastEpisodeList from "./PodcastEpisodeList";
 import PodcastSubscriptionSettingsModal from "../PodcastSubscriptionSettingsModal";
-import LibraryDestinationField from "@/components/libraries/LibraryDestinationField";
-import {
-  createLibrary,
-  type LibraryDestinationSelection,
-} from "@/lib/libraries/client";
 import PaneSection from "@/components/ui/PaneSection";
 import SectionOpener from "@/components/ui/SectionOpener";
 import {
@@ -79,10 +80,13 @@ import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { useConnectionsComposerController } from "@/components/connections/connectionsComposerController";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import {
+  decodePodcastDetailResponse,
   getPodcastSubscriptionSettingsPatch,
-  subscribeToPodcast,
+  retryPodcastSubscriptionBackfill,
+  type PodcastBackfillRecord,
   type PodcastDetailResponse,
 } from "../podcastSubscriptions";
+import { subscribeToPodcast } from "@/lib/podcasts/acquisition";
 import {
   listLibraryPlacements,
   type LibraryPlacementOption,
@@ -140,6 +144,16 @@ const PODCAST_DETAIL_VISIT_DATA = definePaneVisitDataKey<PodcastDetailSnapshot>(
 );
 const EMPTY_PODCAST_EPISODES: PodcastEpisodeMedia[] = [];
 const EMPTY_PODCAST_LIBRARIES: LibraryPlacementOption[] = [];
+
+function formatBackfillFact(backfill: PodcastBackfillRecord): string {
+  const label =
+    backfill.state === "Running"
+      ? "Backfilling"
+      : backfill.state === "SourceLimited"
+        ? "Backfill source limited"
+        : `Backfill ${backfill.state.toLowerCase()}`;
+  return `${label} · ${backfill.processed_count} processed · ${backfill.added_count} added`;
+}
 
 export default function PodcastDetailPaneBody() {
   const podcastId = usePaneParam("podcastId");
@@ -281,13 +295,8 @@ export default function PodcastDetailPaneBody() {
     restored !== null,
   );
   const [error, setError] = useState<FeedbackContent | null>(null);
-  const [subscribeBusy, setSubscribeBusy] = useState(false);
-  const [creatingDestination, setCreatingDestination] = useState(false);
-  const destinationCreateIds = useRef<Map<string, string>>(new Map());
-  const [selectedDestinations, setSelectedDestinations] = useState<
-    readonly LibraryDestinationSelection[]
-  >([]);
   const [reloadNonce, setReloadNonce] = useState(0);
+  const [backfillRetryBusy, setBackfillRetryBusy] = useState(false);
   const actions = usePodcastSubscriptionActions(setError);
   const refreshSyncBusy = podcastId
     ? actions.refreshingPodcastIds.ids.has(podcastId)
@@ -389,10 +398,7 @@ export default function PodcastDetailPaneBody() {
 
       const fetchOptions = signal ? { signal } : undefined;
       const [detailResp, episodesResp] = await Promise.all([
-        apiFetch<{ data: PodcastDetailResponse }>(
-          `/api/podcasts/${podcastId}`,
-          fetchOptions,
-        ),
+        apiFetch<unknown>(`/api/podcasts/${podcastId}`, fetchOptions),
         apiFetch<unknown>(
           `/api/podcasts/${podcastId}/episodes?${episodeParams}`,
           fetchOptions,
@@ -401,19 +407,17 @@ export default function PodcastDetailPaneBody() {
       if (signal?.aborted) {
         throw signal.reason ?? new DOMException("Aborted", "AbortError");
       }
+      const decodedDetail = decodePodcastDetailResponse(detailResp);
       let podcastLibraries: LibraryPlacementOption[] = [];
-      if (detailResp.data.subscription) {
+      if (decodedDetail.subscription) {
         podcastLibraries = await listLibraryPlacements(
           { kind: "Podcast", id: podcastId },
           { signal },
         );
       }
       return {
-        detail: detailResp.data,
-        episodes: decodeCollectionPage(
-          episodesResp,
-          decodePodcastEpisodeMedia,
-        ),
+        detail: decodedDetail,
+        episodes: decodeCollectionPage(episodesResp, decodePodcastEpisodeMedia),
         podcastLibraries,
       };
     },
@@ -512,12 +516,7 @@ export default function PodcastDetailPaneBody() {
       : undefined;
     episodeUrlSyncedRef.current = true;
     paneRouter.replace(nextHref, transitionOptions);
-  }, [
-    episodeSort,
-    episodeStateFilter,
-    paneRouter,
-    podcastId,
-  ]);
+  }, [episodeSort, episodeStateFilter, paneRouter, podcastId]);
 
   const loadEpisodePage = useCallback(
     async (
@@ -577,12 +576,9 @@ export default function PodcastDetailPaneBody() {
       controller !== null &&
       controller.queryIdentity === episodeQueryIdentity &&
       !reconciliationPendingRef.current,
-    chainKey: [
-      podcastId,
-      episodeStateFilter,
-      episodeSort,
-      chainEpoch,
-    ].join(":"),
+    chainKey: [podcastId, episodeStateFilter, episodeSort, chainEpoch].join(
+      ":",
+    ),
     cursor: controller?.nextCursor ?? { kind: "Absent" },
     collectionRevision:
       controller?.collectionRevision ?? (0 as CollectionRevision),
@@ -779,39 +775,8 @@ export default function PodcastDetailPaneBody() {
     return () => cancelAnimationFrame(pendingFocusRafRef.current);
   }, [paneRuntime.paneId, visibleEpisodeSignature]);
 
-  const handleSubscribe = useCallback(async () => {
-    if (!detail) {
-      return;
-    }
-    setSubscribeBusy(true);
-    setError(null);
-    try {
-      await subscribeToPodcast({
-        provider_podcast_id: detail.podcast.provider_podcast_id,
-        title: detail.podcast.title,
-        contributors: detail.podcast.contributors,
-        feed_url: detail.podcast.feed_url,
-        website_url: detail.podcast.website_url,
-        image_url: detail.podcast.image_url,
-        description: detail.podcast.description,
-        library_ids: selectedDestinations.map((destination) => destination.id),
-      });
-      setSelectedDestinations([]);
-      reload();
-    } catch (subscribeError) {
-      if (handleUnauthenticatedApiError(subscribeError)) return;
-      setError(
-        toFeedback(subscribeError, {
-          fallback: "Failed to subscribe to podcast",
-        }),
-      );
-    } finally {
-      setSubscribeBusy(false);
-    }
-  }, [detail, reload, selectedDestinations]);
-
   const refreshPodcastSync = useCallback(async () => {
-    if (!podcastId || detail?.subscription?.status !== "active") {
+    if (!podcastId || !detail?.subscription) {
       return;
     }
     await actions.refreshSync(podcastId, (patch) => {
@@ -825,7 +790,7 @@ export default function PodcastDetailPaneBody() {
   }, [actions, detail?.subscription, podcastId, reload, setDetail]);
 
   const unsubscribePodcast = useCallback(async () => {
-    if (!podcastId || detail?.subscription?.status !== "active") {
+    if (!podcastId || !detail?.subscription) {
       return;
     }
     await actions.unsubscribe(podcastId, detail.podcast.title, (libraries) => {
@@ -846,11 +811,67 @@ export default function PodcastDetailPaneBody() {
   ]);
 
   const openSettingsModal = useCallback(() => {
-    if (detail?.subscription?.status !== "active") {
+    if (!detail?.subscription) {
       return;
     }
     settingsModal.open(detail.subscription);
   }, [detail, settingsModal]);
+
+  const retryBackfill = useCallback(async () => {
+    if (
+      !podcastId ||
+      detail?.subscription?.backfill.state !== "Failed" ||
+      backfillRetryBusy
+    ) {
+      return;
+    }
+    setBackfillRetryBusy(true);
+    setError(null);
+    try {
+      const result = await retryPodcastSubscriptionBackfill(podcastId);
+      if (result.podcastId !== podcastId) {
+        throw new TypeError("Podcast backfill Retry changed identity");
+      }
+      setDetail((current) =>
+        current?.subscription
+          ? {
+              ...current,
+              subscription: {
+                ...current.subscription,
+                backfill: {
+                  id: result.backfill.id,
+                  state: result.backfill.state,
+                  processed_count: result.backfill.processedCount,
+                  added_count: result.backfill.addedCount,
+                },
+              },
+            }
+          : current,
+      );
+      clearAllVisitData();
+      setError({
+        severity: result.outcome === "Retried" ? "success" : "info",
+        title:
+          result.outcome === "Retried"
+            ? "Backlog retry started."
+            : "Backlog no longer needs retry.",
+      });
+    } catch (caught) {
+      if (handleUnauthenticatedApiError(caught)) return;
+      if (!isApiError(caught) || isSameSystemApiDefect(caught)) throw caught;
+      setError(
+        toFeedback(caught, { fallback: "Couldn’t retry the podcast backlog." }),
+      );
+    } finally {
+      setBackfillRetryBusy(false);
+    }
+  }, [
+    backfillRetryBusy,
+    clearAllVisitData,
+    detail?.subscription?.backfill.state,
+    podcastId,
+    setDetail,
+  ]);
 
   const handleRetryEpisodeProcessing = useCallback(
     async (mediaId: string) => {
@@ -1332,12 +1353,8 @@ export default function PodcastDetailPaneBody() {
   // "Play next" is disabled/no-op for the media that is the active Lectern
   // origin's descriptor (spec §5.1 "targeting the current origin is disabled").
   const playNextDisabledMediaId = useMemo<string | null>(() => {
-    const state = player.state;
-    if (state.kind === "Absent") {
-      return null;
-    }
-    const { session } = state;
-    return session.origin.kind === "Lectern"
+    const session = canonicalSessionOfGlobalState(player.state);
+    return session?.origin.kind === "Lectern"
       ? session.descriptor.mediaId
       : null;
   }, [player.state]);
@@ -1372,8 +1389,7 @@ export default function PodcastDetailPaneBody() {
 
   const handlePlayNext = useCallback(
     async (mediaId: string) => {
-      const state = player.state;
-      const session = state.kind === "Absent" ? undefined : state.session;
+      const session = canonicalSessionOfGlobalState(player.state);
       const placement: Placement =
         session && session.origin.kind === "Lectern"
           ? { kind: "After", itemId: session.origin.itemId }
@@ -1419,8 +1435,7 @@ export default function PodcastDetailPaneBody() {
     },
     [lectern, runEpisodeLecternMutation],
   );
-  const activeSubscription =
-    detail?.subscription?.status === "active" ? detail.subscription : null;
+  const activeSubscription = detail?.subscription ?? null;
   const paneBusyIds = new Set<ResourceActionId>();
   if (refreshSyncBusy) {
     paneBusyIds.add(RESOURCE_ACTION_CATALOG.RefreshPodcast.id);
@@ -1553,66 +1568,90 @@ export default function PodcastDetailPaneBody() {
             Podcasts
           </Link>
           <div className={styles.headerButtons}>
-            {activeSubscription ? null : (
-              <div className={styles.subscriptionActions}>
-                <LibraryDestinationField
-                  label="Libraries"
-                  emptyLabel="No libraries selected"
-                  selected={selectedDestinations}
-                  onChange={setSelectedDestinations}
-                  interaction={
-                    creatingDestination
-                      ? { kind: "Creating" }
-                      : subscribeBusy
-                        ? { kind: "Disabled" }
-                        : { kind: "Enabled" }
-                  }
-                  onCreateDestination={async (name) => {
-                    setCreatingDestination(true);
-                    const normalizedName = name.trim();
-                    const libraryId =
-                      destinationCreateIds.current.get(normalizedName) ??
-                      crypto.randomUUID();
-                    destinationCreateIds.current.set(
-                      normalizedName,
-                      libraryId,
-                    );
-                    try {
-                      const library = await createLibrary({
-                        libraryId,
-                        name: normalizedName,
-                      });
-                      destinationCreateIds.current.delete(normalizedName);
-                      clearAllVisitData();
-                      return library;
-                    } finally {
-                      setCreatingDestination(false);
-                    }
-                  }}
-                  layer="modal"
-                />
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => void handleSubscribe()}
-                  disabled={subscribeBusy || creatingDestination || !detail}
-                >
-                  {subscribeBusy ? "Subscribing..." : "Subscribe"}
-                </Button>
-              </div>
-            )}
+            {detail ? (
+              <AcquisitionControl
+                kind="Subscribe"
+                subscribed={activeSubscription !== null}
+                commit={async (command) => {
+                  const result = await subscribeToPodcast({
+                    target: { kind: "Canonical", podcastId },
+                    namedLibraryIds: command.namedLibraryIds,
+                    replacementConfirmation: command.replacementConfirmation,
+                    idempotencyKey: command.idempotencyKey,
+                  });
+                  return { href: result.href };
+                }}
+                onCommitted={() => {
+                  clearAllVisitData();
+                  reload();
+                }}
+              />
+            ) : null}
           </div>
         </div>
         <PaneSection>
           {loading && <PaneLoadingState />}
           {error && <FeedbackNotice feedback={error} />}
           {!loading && detail && (
-            <PodcastSummaryCard
-              detail={detail}
-              activeSubscription={activeSubscription}
-              podcastLibraryCount={podcastLibraryCount}
+            <PodcastOverview
+              title={detail.podcast.title}
+              image={
+                detail.podcast.image_url
+                  ? { kind: "Remote", url: detail.podcast.image_url }
+                  : { kind: "Absent" }
+              }
+              contributors={detail.podcast.contributors}
+              description={detail.podcast.description}
+              facts={[
+                activeSubscription ? "Subscribed" : "Not subscribed",
+                `In ${pluralize(podcastLibraryCount, "library", "libraries")}`,
+                ...(activeSubscription
+                  ? [
+                      `Sync ${activeSubscription.sync_status}`,
+                      formatBackfillFact(activeSubscription.backfill),
+                      formatSubscriptionPlaybackSummary(
+                        activeSubscription.default_playback_speed,
+                        activeSubscription.auto_queue,
+                      ),
+                    ]
+                  : []),
+              ]}
+              links={[
+                ...(detail.podcast.feed_url
+                  ? [{ label: "RSS feed", href: detail.podcast.feed_url }]
+                  : []),
+                ...(detail.podcast.website_url
+                  ? [{ label: "Website", href: detail.podcast.website_url }]
+                  : []),
+              ]}
+              note={
+                activeSubscription
+                  ? "Subscription is active. Manage playback defaults, sync, and library membership from this header."
+                  : "Subscribe to save playback defaults and add this show to your libraries."
+              }
+              error={
+                activeSubscription?.sync_error_code
+                  ? `${activeSubscription.sync_error_code}${
+                      activeSubscription.sync_error_message
+                        ? `: ${activeSubscription.sync_error_message}`
+                        : ""
+                    }`
+                  : undefined
+              }
             />
           )}
+          {activeSubscription?.backfill.state === "Failed" ? (
+            <div className={styles.headerButtons}>
+              <Button
+                size="sm"
+                variant="secondary"
+                loading={backfillRetryBusy}
+                onClick={() => void retryBackfill()}
+              >
+                Retry backlog
+              </Button>
+            </div>
+          ) : null}
         </PaneSection>
         <PaneSection>{episodePaneContent}</PaneSection>
       </div>

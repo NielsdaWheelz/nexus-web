@@ -4,8 +4,14 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import MediaImage from "@/components/ui/MediaImage";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import Button from "@/components/ui/Button";
-import { YOUTUBE_EMBED_HOSTS } from "@/lib/security/youtube";
-import { useGlobalPlayer } from "@/lib/player/globalPlayer";
+import YouTubeEmbedFrame, {
+  buildYoutubeEmbedSrc,
+  isAllowedYoutubeEmbedUrl,
+} from "@/components/media/YouTubeEmbedFrame";
+import {
+  canonicalSessionOfGlobalState,
+  useGlobalPlayer,
+} from "@/lib/player/globalPlayer";
 import { useLectern } from "@/lib/lectern/LecternProvider";
 import { parseMediaId, type PlayerDescriptor } from "@/lib/lectern/contract";
 import { activityRecorder } from "@/lib/consumption/activityRecorder";
@@ -22,56 +28,7 @@ import {
 } from "@/lib/media/transcriptView";
 import styles from "./page.module.css";
 
-// Host allowlist derived from the shared CSP frame-src origins (lib/security/youtube.ts);
-// the iframe `allow="…"` feature list below mirrors the Permissions-Policy delegation.
-const YOUTUBE_EMBED_HOST_ALLOWLIST = new Set(YOUTUBE_EMBED_HOSTS);
 const SHOW_NOTES_TIMESTAMP_REGEX = /\b\d{1,2}:\d{2}(?::\d{2})?\b/g;
-
-function toSeekSeconds(timestampMs: number | null | undefined): number | null {
-  if (timestampMs == null || timestampMs < 0) {
-    return null;
-  }
-  return Math.floor(timestampMs / 1000);
-}
-
-export function isAllowedYoutubeEmbedUrl(rawUrl: string): boolean {
-  try {
-    const parsed = new URL(rawUrl);
-    if (parsed.protocol !== "https:") {
-      return false;
-    }
-    if (!YOUTUBE_EMBED_HOST_ALLOWLIST.has(parsed.hostname)) {
-      return false;
-    }
-    if (parsed.username || parsed.password) {
-      return false;
-    }
-    if (!/^\/embed\/[^/]+\/?$/.test(parsed.pathname)) {
-      return false;
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export function buildYoutubeEmbedSrc(
-  embedUrl: string,
-  seekTargetMs: number | null,
-): string {
-  const url = new URL(embedUrl);
-  const startSeconds = toSeekSeconds(seekTargetMs);
-
-  if (startSeconds !== null && startSeconds > 0) {
-    url.searchParams.set("start", startSeconds.toString());
-    url.searchParams.set("autoplay", "1");
-  } else {
-    url.searchParams.delete("start");
-    url.searchParams.delete("autoplay");
-  }
-
-  return url.toString();
-}
 
 function resolveSafeVideoEmbedUrl(
   playbackSource: TranscriptPlaybackSource | null,
@@ -268,9 +225,9 @@ export default function TranscriptPlaybackPanel({
 
   // "Play next": After the active exact Lectern origin, else First; a no-op when
   // it would target the current origin's own media.
-  const activeOrigin = state.kind === "Absent" ? null : state.session.origin;
-  const activeMediaId =
-    state.kind === "Absent" ? null : state.session.descriptor.mediaId;
+  const activeSession = canonicalSessionOfGlobalState(state);
+  const activeOrigin = activeSession?.origin ?? null;
+  const activeMediaId = activeSession?.descriptor.mediaId ?? null;
   const playNextDisabled =
     !lecternReady ||
     (activeOrigin?.kind === "Lectern" && activeMediaId === mediaId);
@@ -484,14 +441,11 @@ export default function TranscriptPlaybackPanel({
             </div>
           </div>
         ) : mediaKind === "video" && iframeSrc ? (
-          <iframe
+          <YouTubeEmbedFrame
             ref={iframeRef}
-            title="YouTube video player"
-            src={iframeSrc}
+            embedUrl={safeEmbedUrl!}
+            seekTargetMs={videoSeekTargetMs}
             className={styles.playerFrame}
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-            referrerPolicy="strict-origin-when-cross-origin"
-            allowFullScreen
             onError={() => {
               setPlaybackError(true);
               setIframeLoaded(false);

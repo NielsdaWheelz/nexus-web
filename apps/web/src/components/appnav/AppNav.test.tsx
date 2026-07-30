@@ -122,6 +122,7 @@ describe("AppNav (desktop rail)", () => {
       "Nexus — Home",
       "Lectern",
       "Libraries",
+      "Browse",
       "Podcasts",
       "Chats",
       "Notes",

@@ -1,7 +1,5 @@
 /**
- * PodcastsPaneBody — focused browser tests for the Nexus podcast entry point.
- * Renders the full pane body with stubbed fetch and asserts that the Browse toolbar button
- * requests the registered podcast discovery action.
+ * PodcastsPaneBody — focused browser tests for the Browse podcast entry point.
  */
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -10,8 +8,6 @@ import {
   PaneReturnJourneyHarness,
   RETURN_JOURNEY_VISIT_ID,
 } from "@/__tests__/helpers/paneReturnJourney";
-import { NEXUS_OPEN_REQUESTED_EVENT } from "@/lib/nexus/events";
-import type { NexusOpenIntent } from "@/lib/nexus/model";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import type { PaneReturnMementoCommands } from "@/lib/workspace/paneReturnMemento";
 import { PanePrimaryChromeProvider } from "@/components/workspace/PanePrimaryChrome";
@@ -122,29 +118,13 @@ describe("PodcastsPaneBody — Nexus podcast integration", () => {
     vi.unstubAllGlobals();
   });
 
-  it("Browse toolbar button requests podcast discovery", async () => {
-    const dispatched: NexusOpenIntent[] = [];
-    const handler = (event: Event) => {
-      dispatched.push((event as CustomEvent<NexusOpenIntent>).detail);
-    };
-    window.addEventListener(NEXUS_OPEN_REQUESTED_EVENT, handler);
+  it("Browse toolbar link opens the canonical Podcast Browse facet", async () => {
+    renderPodcastsPane();
 
-    try {
-      renderPodcastsPane();
-
-      const browseBtn = await screen.findByRole("button", { name: "Browse" });
-      fireEvent.click(browseBtn);
-
-      await waitFor(() => {
-        expect(dispatched).toHaveLength(1);
-      });
-      expect(dispatched[0]).toEqual({
-        kind: "QuickAction",
-        actionId: "Nexus.Quick.Podcast",
-      });
-    } finally {
-      window.removeEventListener(NEXUS_OPEN_REQUESTED_EVENT, handler);
-    }
+    expect(await screen.findByRole("link", { name: "Browse" })).toHaveAttribute(
+      "href",
+      "/browse?kind=Podcast",
+    );
   });
 
   it("shows Partial filter feedback beside the initial loading state", async () => {
@@ -388,7 +368,7 @@ describe("PodcastsPaneBody — Nexus podcast integration", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Unsubscribe" }));
     await waitFor(() => expect(confirm).toHaveBeenCalledOnce());
 
-    const browse = screen.getByRole("button", { name: "Browse" });
+    const browse = screen.getByRole("link", { name: "Browse" });
     browse.focus();
     act(() => publishedFilterRows().onQueryChange("history"));
     await act(

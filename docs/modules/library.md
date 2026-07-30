@@ -26,7 +26,7 @@ created_at DESC, id DESC"`), the locked `ensure_entry` append, deletes and
   `add_podcast_to_library`, `remove_podcast_from_library`, `reorder_entries`,
   `ensure_media_in_libraries_for_viewer`,
   `ensure_media_absent_from_library_for_viewer`, `assign_libraries_for_media`,
-  `set_subscription_libraries`, `remove_user_podcast_subscription_libraries`, …).
+  named Podcast placement/compaction, and unsubscribe placement teardown).
   It also composes, for reads only, the factual view lenses (Title/Creator/
   Published/Added, each ascending or descending) and a hide-finished
   completion filter — see
@@ -132,15 +132,18 @@ Every INSERT/UPDATE/DELETE on `library_entries` goes through
 ## The default library's virtual read surface
 
 The default library holds no provenance, closure, or backfill machinery. Its
-read surface — "personal All" — is a live query, computed on every read, over
-`library_entries` + `memberships`: the distinct media reachable through any of
-the viewer's _current_ non-system memberships, deduplicated by `media_id` (a
-direct entry in the viewer's own default library wins the tie over an
-indirect one reached through a shared library; ties within a kind resolve by
-earliest entry). There is no separate table recording _why_ a work is
-visible there and nothing to keep in sync — losing a membership (leaving,
-being removed, or a shared library being deleted) removes that library's
-contribution the moment it is gone, on the very next read.
+read surface — "personal All" — is a live union, computed on every read, of:
+
+1. the distinct Media reachable through the viewer's current non-system
+   memberships; and
+2. the viewer's active Podcast subscriptions.
+
+Media is deduplicated by `media_id` (a direct entry in the viewer's own default
+library wins over an indirect shared-Library entry; ties within a kind resolve
+by earliest entry). The Podcast arm is virtual: Default stores no Podcast
+`library_entries` row and the DTO exposes `placement: Absent`, never a fabricated
+entry ID or position. Losing a membership removes that Library's Media
+contribution on the next read; unsubscribing removes the virtual show row.
 
 - **The one actor-authorized filing command.**
   `library_entries.ensure_media_in_library` is the sole path that files media
@@ -172,6 +175,13 @@ contribution the moment it is gone, on the very next read.
   `limit + 1`. These are URL-owned query projections — not Libraries, saved
   searches, or persisted collections — and there is deliberately no generic
   smart-view platform behind them.
+- **Podcast placement and child subsumption.** Named Podcast placement is exactly
+  `library_entries(podcast_id)`. In one named Library, a Podcast entry and direct
+  entries for its episodes are mutually exclusive. Subscribe/filing confirms
+  and compacts direct child placements through the Library owner; later removing
+  the parent does not recreate them. Adding an episode to a Library that already
+  contains its Podcast returns `IncludedThroughPodcast` rather than creating a
+  redundant child entry.
 - **Media deletion counts physical references only.** Whether a document
   media has any reference left — the question that gates last-reference
   teardown — is answered by counting physical `library_entries` rows for
@@ -222,10 +232,11 @@ non-default library reject it with `400 E_NAME_INVALID`
 (`library_governance._validate_library_name`).
 
 Writable destination selection describes selected, additional, non-default
-Libraries only. `LibraryDestinationField` requires a caller-supplied
+Libraries only. Default/All is implicit for acquired Media and active Podcast
+subscriptions. `LibraryDestinationField` requires a caller-supplied
 `emptyLabel` and defines no semantic default: Media intake and Android Share
-pass **No additional libraries**; podcast subscription and OPML pass **No
-libraries selected**.
+pass **No additional libraries**; Podcast Subscribe, episode Add, and OPML pass
+**No libraries selected**.
 
 ## Frontend entry-view lifecycle
 
@@ -324,8 +335,9 @@ library the viewer can read.
   list contract for destination pickers (`LibraryDestinationField` +
   `LibraryChooserSurface` + `LibraryDestinationPicker` adapter on the
   frontend). It excludes the default library and member-only libraries,
-  performs server-side search, and pages with the opaque `library_destinations:v2`
-  keyset cursor (rank + `lower(name)` + name + id, ascending). A blank query is
+  performs server-side search, and pages with the opaque
+  `library_destinations:v2` keyset cursor (rank + `lower(name)` + name + id,
+  ascending). A blank query is
   alphabetical; a non-empty query ranks exact → prefix → contains matches, then
   alphabetically within each rank. Only `:v2` is accepted — a pre-cutover or
   malformed cursor returns `400 E_INVALID_CURSOR`; there is no compatibility

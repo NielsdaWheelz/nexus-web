@@ -18,6 +18,7 @@
  */
 
 import { decodePresence, type Presence } from "@/lib/api/presence";
+import { asRecord, exactKeys } from "@/lib/api/exact";
 import {
   decodeCollectionRevision,
   type CollectionRevision,
@@ -26,7 +27,6 @@ import type {
   PositiveMinutes,
   ProgressFraction,
 } from "@/lib/consumption/activityFacts";
-import { isRecord } from "@/lib/validation";
 import {
   routeResourceActionSubject,
   type ResourceActionSubject,
@@ -297,23 +297,6 @@ const MAX_CHAPTER_TITLE = 300;
 const INT32_MAX = 2_147_483_647;
 
 // --- Scalar decoders ---------------------------------------------------------
-
-function asRecord(raw: unknown, ctx: string): Record<string, unknown> {
-  if (!isRecord(raw)) {
-    const got = raw === null ? "null" : Array.isArray(raw) ? "array" : typeof raw;
-    throw new Error(`Invalid ${ctx}: expected an object, got ${got}`);
-  }
-  return raw;
-}
-
-function exactKeys(rec: Record<string, unknown>, expected: readonly string[], ctx: string): void {
-  const keys = Object.keys(rec);
-  if (keys.length !== expected.length || !expected.every((key) => key in rec)) {
-    throw new Error(
-      `Invalid ${ctx}: expected keys [${expected.join(", ")}], got [${keys.join(", ")}]`,
-    );
-  }
-}
 
 function asString(raw: unknown, ctx: string): string {
   if (typeof raw !== "string") {

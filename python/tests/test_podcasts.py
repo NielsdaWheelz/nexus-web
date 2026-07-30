@@ -4,6 +4,7 @@ import json
 import os
 import threading
 from datetime import UTC, date, datetime, timedelta
+from unittest.mock import patch
 from uuid import UUID, uuid4
 
 import lxml.etree as etree
@@ -15,15 +16,25 @@ from nexus.config import clear_settings_cache, get_settings
 from nexus.db.models import Media, MediaKind, PodcastEpisode, ProcessingStatus
 from nexus.db.session import get_engine
 from nexus.errors import ApiError, ApiErrorCode
+from nexus.schemas.contributors import ContributorCreditIn
 from nexus.services.billing_entitlements import (
     grant_entitlement_override,
     revoke_entitlement_override,
 )
+from nexus.services.browse.models import podcast_target, seal_target
 from nexus.services.net.safe_fetch import SafeFetchResult
 from nexus.services.podcasts.deepgram_adapter import TranscriptionResult
+from nexus.services.podcasts.identity import (
+    apply_podcast_contributor_credits_in_current_transaction,
+)
 from nexus.services.podcasts.transcription import TranscriptionRunResult
 from nexus.services.transcript_segments import TranscriptSegmentInput
-from tests.factories import add_media_to_library as seed_media_in_library
+from tests.factories import (
+    add_media_to_library as seed_media_in_library,
+)
+from tests.factories import (
+    add_test_podcast_episode_identity,
+)
 from tests.helpers import auth_headers, create_test_user_id
 from tests.support.source_jobs import (
     run_queued_source_attempt,
@@ -80,9 +91,10 @@ def test_direct_semantic_repair_rebuilds_ready_transcript_with_stale_embedding_m
                 transcript_state,
                 transcript_coverage,
                 semantic_status,
-                last_request_reason
+                last_request_reason,
+                transcript_origin
             )
-            VALUES (:media_id, 'ready', 'full', 'ready', 'search')
+            VALUES (:media_id, 'ready', 'full', 'ready', 'search', 'Generated')
             """
         ),
         {"media_id": media_id},
@@ -246,9 +258,7 @@ class TestPodcastUxHardening:
         )
         assert rejected_offset.status_code == 400
 
-    def test_alpha_subscription_cursor_serializes_postgres_sort_key(
-        self, auth_client, monkeypatch
-    ):
+    def test_alpha_subscription_cursor_serializes_postgres_sort_key(self, auth_client, monkeypatch):
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
         payloads = [
@@ -261,8 +271,7 @@ class TestPodcastUxHardening:
             episodes_by_podcast={},
         )
         expected_ids = {
-            _subscribe(auth_client, user_id, payload)["podcast_id"]
-            for payload in payloads
+            _subscribe(auth_client, user_id, payload)["podcastId"] for payload in payloads
         }
 
         seen_ids: list[str] = []
@@ -301,13 +310,12 @@ class TestPodcastUxHardening:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=3,
         )
 
         provider_podcast_id = f"episodes-offset-{uuid4()}"
         episodes = [
             {
-                "provider_episode_id": f"{provider_podcast_id}-ep-{idx}",
+                "podcast_index_episode_ref": f"{provider_podcast_id}-ep-{idx}",
                 "guid": f"{provider_podcast_id}-guid-{idx}",
                 "title": f"Episode {idx}",
                 "description": f"Episode {idx} description",
@@ -338,7 +346,7 @@ class TestPodcastUxHardening:
             user_id,
             _podcast_payload(provider_podcast_id, "Episode Offset Show"),
         )
-        podcast_id = UUID(subscribe_data["podcast_id"])
+        podcast_id = UUID(subscribe_data["podcastId"])
         _run_subscription_sync(
             direct_db,
             user_id,
@@ -392,7 +400,7 @@ class TestPodcastUxHardening:
         )
         second_data = second_page.json()["data"]
         second_rows = second_data["items"]
-        assert len(second_rows) == 1, f"expected 1 episode on second page, got {len(second_rows)}"
+        assert len(second_rows) == 2, f"expected 2 episodes on second page, got {len(second_rows)}"
 
         first_ids = {row["id"] for row in first_rows}
         second_ids = {row["id"] for row in second_rows}
@@ -400,7 +408,22 @@ class TestPodcastUxHardening:
             "expected paginated episode pages to be non-overlapping, "
             f"got overlap: {first_ids.intersection(second_ids)}"
         )
-        assert second_data["nextCursor"] == {"kind": "Absent"}
+        third_page = auth_client.get(
+            f"/podcasts/{podcast_id}/episodes",
+            params={
+                "limit": "2",
+                "cursor": second_data["nextCursor"]["value"],
+                "collection_revision": str(second_data["collectionRevision"]),
+            },
+            headers=auth_headers(user_id),
+        )
+        assert third_page.status_code == 200, third_page.text
+        third_data = third_page.json()["data"]
+        third_rows = third_data["items"]
+        assert len(third_rows) == 1
+        assert first_ids.isdisjoint({row["id"] for row in third_rows})
+        assert second_ids.isdisjoint({row["id"] for row in third_rows})
+        assert third_data["nextCursor"] == {"kind": "Absent"}
         rejected_offset = auth_client.get(
             f"/podcasts/{podcast_id}/episodes?offset=0",
             headers=auth_headers(user_id),
@@ -425,7 +448,7 @@ class TestPodcastUxHardening:
             user_id,
             _podcast_payload(provider_podcast_id, "Refresh Show"),
         )
-        podcast_id = UUID(subscribe_data["podcast_id"])
+        podcast_id = UUID(subscribe_data["podcastId"])
 
         with direct_db.session() as session:
             session.execute(
@@ -513,9 +536,8 @@ def _set_plan(
     *,
     plan_tier: str,
     transcription_minutes_limit_monthly: int | None,
-    initial_episode_window: int,
 ) -> None:
-    _ = actor_user_id, initial_episode_window
+    _ = actor_user_id
     if plan_tier == "ai_plus":
         os.environ["BILLING_AI_PLUS_TRANSCRIPTION_MINUTES_MONTHLY"] = str(
             transcription_minutes_limit_monthly
@@ -575,11 +597,15 @@ def _mock_podcast_index(
     # EXTERNAL SEAM EXCEPTION:
     # PodcastIndex is an external API boundary; this seam avoids real network I/O
     # while preserving backend behavior assertions.
-    def fake_search(self, query: str, limit: int) -> list[dict]:
-        return podcasts[:limit]
-
     def fake_fetch(self, provider_podcast_id: str, limit: int) -> list[dict]:
         return episodes_by_podcast[str(provider_podcast_id)][:limit]
+
+    def fake_browse_podcast(self, podcast_ref: str) -> dict[str, object]:
+        podcast = next(
+            (row for row in podcasts if str(row["provider_podcast_id"]) == str(podcast_ref)),
+            None,
+        )
+        return {"feed": None} if podcast is None else _podcast_browse_payload(podcast)
 
     # EXTERNAL SEAM EXCEPTION:
     # Podcast transcription is an external provider boundary. This default
@@ -626,11 +652,12 @@ def _mock_podcast_index(
         )
 
     monkeypatch.setattr(
-        "nexus.services.podcasts.provider.PodcastIndexClient.search_podcasts", fake_search
-    )
-    monkeypatch.setattr(
         "nexus.services.podcasts.provider.PodcastIndexClient.fetch_recent_episodes",
         fake_fetch,
+    )
+    monkeypatch.setattr(
+        "nexus.services.podcasts.provider.PodcastIndexClient.browse_podcast_payload",
+        fake_browse_podcast,
     )
     monkeypatch.setattr(
         "nexus.services.podcasts.deepgram_adapter.DeepgramClient.transcribe",
@@ -639,16 +666,95 @@ def _mock_podcast_index(
     )
 
 
-def _subscribe(auth_client, user_id: UUID, payload: dict) -> dict:
-    response = auth_client.post(
-        "/podcasts/subscriptions",
-        json=payload,
-        headers=auth_headers(user_id),
-    )
+def _subscribe_request(payload: dict) -> dict[str, object]:
+    provider_podcast_id = str(payload["provider_podcast_id"])
+    library_ids = payload.get("named_library_ids", [])
+    return {
+        "target": {
+            "kind": "Discovery",
+            "target": seal_target(podcast_target(provider_podcast_id)),
+        },
+        "namedLibraryIds": library_ids,
+        "replacementConfirmation": {"kind": "Absent"},
+    }
+
+
+def _podcast_browse_payload(payload: dict) -> dict[str, object]:
+    contributors = payload.get("contributors")
+    author = None
+    if isinstance(contributors, list) and contributors:
+        first = contributors[0]
+        if isinstance(first, dict):
+            author = first.get("credited_name")
+    return {
+        "feed": {
+            "id": payload["provider_podcast_id"],
+            "title": payload["title"],
+            "url": payload["feed_url"],
+            "author": author,
+            "link": payload.get("website_url"),
+            "image": payload.get("image_url"),
+            "description": payload.get("description"),
+        }
+    }
+
+
+def _subscribe(
+    auth_client,
+    user_id: UUID,
+    payload: dict,
+    *,
+    idempotency_key: str | None = None,
+) -> dict:
+    with patch(
+        "nexus.services.podcasts.provider.PodcastIndexClient.browse_podcast_payload",
+        lambda _self, _podcast_ref: _podcast_browse_payload(payload),
+    ):
+        response = auth_client.post(
+            "/podcasts/subscriptions",
+            json=_subscribe_request(payload),
+            headers={
+                **auth_headers(user_id),
+                "Idempotency-Key": idempotency_key or f"podcast-subscribe-{uuid4()}",
+            },
+        )
     assert response.status_code == 200, (
         f"subscribe failed unexpectedly: {response.status_code} {response.text}"
     )
-    return response.json()["data"]
+    data = response.json()["data"]
+    assert set(data) == {
+        "href",
+        "podcastId",
+        "outcome",
+        "destinations",
+        "backfill",
+        "collectionRevision",
+        "libraryEntriesCollectionRevision",
+    }
+    return data
+
+
+def _file_canonical_podcast(
+    auth_client,
+    user_id: UUID,
+    podcast_id: UUID,
+    library_ids: list[UUID],
+):
+    return auth_client.post(
+        "/podcasts/subscriptions",
+        json={
+            "target": {
+                "kind": "Canonical",
+                "podcastId": str(podcast_id),
+            },
+            "namedLibraryIds": [str(library_id) for library_id in library_ids],
+            "replacementConfirmation": {"kind": "Absent"},
+        },
+        headers={
+            **auth_headers(user_id),
+            "Idempotency-Key": f"file-podcast-{uuid4()}",
+        },
+    )
 
 
 def _run_queued_podcast_source(
@@ -766,7 +872,7 @@ def _run_subscription_sync(
                 ).scalars()
             )
             for media_id in candidate_media_ids:
-                admission = podcast_transcript_service.request_podcast_transcript_for_viewer(
+                admission = podcast_transcript_service.request_media_transcript_for_viewer(
                     session,
                     viewer_id=user_id,
                     media_id=media_id,
@@ -844,183 +950,6 @@ def _run_concurrent_workers(worker_count: int, worker) -> list[BaseException]:
     return errors
 
 
-class TestPodcastDiscovery:
-    def test_discovery_is_global_metadata_only(self, auth_client, monkeypatch, direct_db):
-        user_id = create_test_user_id()
-        _bootstrap_user(auth_client, user_id)
-
-        provider_podcast_id = f"discover-{uuid4()}"
-        podcast = _podcast_payload(provider_podcast_id, "Systems Thinking Weekly")
-        preview_author = f"Discovery Preview Author {uuid4()}"
-        podcast["author"] = preview_author
-        # Simulate upstream over-sharing payload; route must still return metadata-only.
-        podcast["episodes"] = [{"id": "ep-1"}]
-        podcast["media_id"] = "should-not-leak"
-
-        _mock_podcast_index(
-            monkeypatch,
-            podcasts=[podcast],
-            episodes_by_podcast={provider_podcast_id: []},
-        )
-        with direct_db.session() as session:
-            contributor_count_before = int(
-                session.execute(
-                    text("SELECT count(*) FROM contributors WHERE display_name = :display_name"),
-                    {"display_name": preview_author},
-                ).scalar_one()
-            )
-
-        response = auth_client.get(
-            "/podcasts/discover?q=systems&limit=10",
-            headers=auth_headers(user_id),
-        )
-        assert response.status_code == 200, (
-            f"discover failed: {response.status_code} {response.text}"
-        )
-        data = response.json()["data"]
-        assert len(data) == 1
-        item = data[0]
-
-        assert item["provider_podcast_id"] == provider_podcast_id
-        assert item["title"] == "Systems Thinking Weekly"
-        assert len(item["contributors"]) == 1
-        assert item["contributors"][0]["credited_name"] == preview_author
-        assert item["contributors"][0]["contributor_display_name"] == preview_author
-        assert item["contributors"][0]["role"] == "author"
-        # `source`/`resolution_status` were dropped from the embedded credit DTO
-        # (D-33); the narrowed shape carries no storage/provenance facts.
-        assert "source" not in item["contributors"][0]
-        assert "resolution_status" not in item["contributors"][0]
-        assert "episodes" not in item, "discovery response leaked episode rows"
-        assert "media_id" not in item, "discovery response leaked media identity"
-        with direct_db.session() as session:
-            contributor_count_after = int(
-                session.execute(
-                    text("SELECT count(*) FROM contributors WHERE display_name = :display_name"),
-                    {"display_name": preview_author},
-                ).scalar_one()
-            )
-        assert contributor_count_after == contributor_count_before, (
-            "podcast discovery must not persist contributor preview rows. "
-            f"before={contributor_count_before} after={contributor_count_after}"
-        )
-
-    def test_subscribe_accepts_discovered_contributors(self, auth_client, monkeypatch):
-        user_id = create_test_user_id()
-        _bootstrap_user(auth_client, user_id)
-
-        provider_podcast_id = f"discover-subscribe-{uuid4()}"
-        podcast = _podcast_payload(provider_podcast_id, "Discovered Contributor Subscribe")
-        podcast["author"] = f"Discovery Subscribe Author {uuid4()}"
-
-        _mock_podcast_index(
-            monkeypatch,
-            podcasts=[podcast],
-            episodes_by_podcast={provider_podcast_id: []},
-        )
-
-        discover_response = auth_client.get(
-            "/podcasts/discover?q=discovered&limit=10",
-            headers=auth_headers(user_id),
-        )
-        assert discover_response.status_code == 200, (
-            f"discover failed: {discover_response.status_code} {discover_response.text}"
-        )
-        discovered = discover_response.json()["data"][0]
-        assert discovered["contributors"], "test setup must discover contributor previews"
-
-        # The subscribe payload rides the snake-strict ContributorCreditIn v2 (D-4):
-        # the client maps the discovery response's embedded credits down to the typed
-        # input shape (credited_name/role), exactly as toPodcastContributorInputs does.
-        subscribe_response = auth_client.post(
-            "/podcasts/subscriptions",
-            json={
-                "provider_podcast_id": discovered["provider_podcast_id"],
-                "title": discovered["title"],
-                "contributors": [
-                    {"credited_name": credit["credited_name"], "role": credit["role"]}
-                    for credit in discovered["contributors"]
-                ],
-                "feed_url": discovered["feed_url"],
-                "website_url": discovered["website_url"],
-                "image_url": discovered["image_url"],
-                "description": discovered["description"],
-                "auto_queue": False,
-            },
-            headers=auth_headers(user_id),
-        )
-
-        assert subscribe_response.status_code == 200, (
-            f"subscribe should accept the typed contributor payload, "
-            f"got {subscribe_response.status_code}: {subscribe_response.text}"
-        )
-
-    def test_discovery_includes_local_podcast_id_when_known(
-        self, auth_client, monkeypatch, direct_db
-    ):
-        user_id = create_test_user_id()
-        _bootstrap_user(auth_client, user_id)
-
-        provider_podcast_id = f"discover-local-{uuid4()}"
-        podcast = _podcast_payload(provider_podcast_id, "Local Systems Thinking Weekly")
-        podcast_id = uuid4()
-
-        with direct_db.session() as session:
-            session.execute(
-                text(
-                    """
-                    INSERT INTO podcasts (
-                        id,
-                        provider,
-                        provider_podcast_id,
-                        title,
-                        feed_url,
-                        website_url,
-                        image_url,
-                        description
-                    )
-                    VALUES (
-                        :id,
-                        'podcast_index',
-                        :provider_podcast_id,
-                        :title,
-                        :feed_url,
-                        :website_url,
-                        :image_url,
-                        :description
-                    )
-                    """
-                ),
-                {
-                    "id": podcast_id,
-                    "provider_podcast_id": podcast["provider_podcast_id"],
-                    "title": podcast["title"],
-                    "feed_url": podcast["feed_url"],
-                    "website_url": podcast["website_url"],
-                    "image_url": podcast["image_url"],
-                    "description": podcast["description"],
-                },
-            )
-            session.commit()
-
-        _mock_podcast_index(
-            monkeypatch,
-            podcasts=[podcast],
-            episodes_by_podcast={provider_podcast_id: []},
-        )
-
-        response = auth_client.get(
-            "/podcasts/discover?q=systems&limit=10",
-            headers=auth_headers(user_id),
-        )
-        assert response.status_code == 200, (
-            f"discover failed: {response.status_code} {response.text}"
-        )
-        item = response.json()["data"][0]
-        assert item["podcast_id"] == str(podcast_id)
-        assert item["provider_podcast_id"] == provider_podcast_id
-
-
 class TestPodcastContributorObservation:
     """Subscribe/OPML contributor observation lane (spec 2.1/2.4/2.5, D-3/D-4/D-5)."""
 
@@ -1040,21 +969,33 @@ class TestPodcastContributorObservation:
     def test_subscribe_creates_typed_role_slices_and_author_refresh_preserves_them(
         self, auth_client, direct_db
     ):
-        # AC-11: a typed role-capable podcast payload creates host/guest/translator
-        # slices; a later author-only refresh replaces only the author slice and
-        # preserves the undeclared roles.
+        # AC-11: every typed observation uses the unified seam. Podcast Index can
+        # observe only author, while richer ingest sources may observe additional
+        # roles; a later author-only refresh must preserve those undeclared roles.
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
 
         payload = _podcast_payload(f"role-slices-{uuid4()}", "Role Slices Podcast")
-        payload["contributors"] = [
-            {"credited_name": "Ada Host", "role": "host"},
-            {"credited_name": "Ben Guest", "role": "guest"},
-            {"credited_name": "Cy Translator", "role": "translator"},
-        ]
-        podcast_id = UUID(_subscribe(auth_client, user_id, payload)["podcast_id"])
+        payload["contributors"] = [{"credited_name": "Initial Author", "role": "author"}]
+        podcast_id = UUID(_subscribe(auth_client, user_id, payload)["podcastId"])
+
+        with direct_db.session() as session:
+            apply_podcast_contributor_credits_in_current_transaction(
+                session,
+                podcast_id=podcast_id,
+                contributors=[
+                    ContributorCreditIn(credited_name="Ada Host", role="host"),
+                    ContributorCreditIn(credited_name="Ben Guest", role="guest"),
+                    ContributorCreditIn(
+                        credited_name="Cy Translator",
+                        role="translator",
+                    ),
+                ],
+            )
+            session.commit()
 
         assert self._podcast_credits(direct_db, podcast_id) == {
+            ("author", "Initial Author"),
             ("host", "Ada Host"),
             ("guest", "Ben Guest"),
             ("translator", "Cy Translator"),
@@ -1082,7 +1023,7 @@ class TestPodcastContributorObservation:
 
         payload = _podcast_payload(f"preserve-{uuid4()}", "Preserve Podcast")
         payload["contributors"] = [{"credited_name": "Stable Author", "role": "author"}]
-        podcast_id = UUID(_subscribe(auth_client, user_id, payload)["podcast_id"])
+        podcast_id = UUID(_subscribe(auth_client, user_id, payload)["podcastId"])
 
         _subscribe(auth_client, user_id, {**payload, "contributors": []})
 
@@ -1097,7 +1038,7 @@ class TestPodcastContributorObservation:
 
         payload = _podcast_payload(f"no-memo-{uuid4()}", "No Memo Podcast")
         payload["contributors"] = [{"credited_name": "Memoless Author", "role": "author"}]
-        podcast_id = UUID(_subscribe(auth_client, user_id, payload)["podcast_id"])
+        podcast_id = UUID(_subscribe(auth_client, user_id, payload)["podcastId"])
 
         with direct_db.session() as session:
             memo_count = int(
@@ -1112,18 +1053,22 @@ class TestPodcastContributorObservation:
             "automatic podcast contributor observation must write no resource_mutations (D-43)"
         )
 
-    def test_subscribe_rejects_unknown_contributor_field(self, auth_client):
-        # D-4: the subscribe payload is snake-strict; a dropped server fact (source)
-        # on a contributor is an unknown field -> 400 E_INVALID_REQUEST.
+    def test_subscribe_rejects_unknown_provider_fact(self, auth_client):
+        # Provider facts are resolved server-side from the authenticated target;
+        # clients cannot smuggle contributor observations into the command.
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
 
         payload = _podcast_payload(f"strict-{uuid4()}", "Strict Podcast")
-        payload["contributors"] = [
-            {"credited_name": "X", "role": "author", "source": "podcast_index"}
-        ]
+        request = _subscribe_request(payload)
+        request["contributors"] = [{"credited_name": "X", "role": "author"}]
         response = auth_client.post(
-            "/podcasts/subscriptions", json=payload, headers=auth_headers(user_id)
+            "/podcasts/subscriptions",
+            json=request,
+            headers={
+                **auth_headers(user_id),
+                "Idempotency-Key": f"strict-provider-facts-{uuid4()}",
+            },
         )
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
@@ -1139,7 +1084,7 @@ class TestPodcastContributorObservation:
                 auth_client,
                 user_id,
                 _podcast_payload(f"machine-owned-{uuid4()}", "Machine Owned"),
-            )["podcast_id"]
+            )["podcastId"]
         )
         for method in ("put", "patch", "post"):
             response = getattr(auth_client, method)(
@@ -1260,10 +1205,8 @@ class TestPodcastContributorObservation:
     def test_opml_import_reports_author_observation_failure_per_feed(
         self, auth_client, monkeypatch, direct_db
     ):
-        # The subscription commits before the post-commit author observation, so a
-        # failed observation must not fail the import — but the outcome must be
-        # honest: the feed counts as imported AND an error row names it (nothing
-        # else re-observes podcast-level credits until a resubscribe/re-import).
+        # Contributor observation is part of the resolved per-feed transaction.
+        # Failure rolls back that feed without failing the remaining OPML batch.
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
 
@@ -1279,12 +1222,13 @@ class TestPodcastContributorObservation:
             raising=False,
         )
 
-        def failing_observation(podcast_id, contributors):
-            _ = podcast_id, contributors
+        def failing_observation(db, *, podcast_id, contributors):
+            _ = db, podcast_id, contributors
             raise RuntimeError("simulated author-op failure")
 
         monkeypatch.setattr(
-            "nexus.services.podcasts.subscriptions.observe_podcast_contributor_credits",
+            "nexus.services.podcasts.subscriptions."
+            "apply_podcast_contributor_credits_in_current_transaction",
             failing_observation,
         )
 
@@ -1302,31 +1246,31 @@ class TestPodcastContributorObservation:
         )
         assert response.status_code == 200, response.text
         data = response.json()["data"]
-        assert data["imported"] == 1, "the committed subscription survives the author-op failure"
-        assert [
-            (err["feed_url"], "contributor" in err["error"].lower()) for err in data["errors"]
-        ] == [(feed_url, True)], data["errors"]
+        assert data["imported"] == 0
+        assert [(err["feed_url"], err["error"]) for err in data["errors"]] == [
+            (feed_url, "Unexpected OPML import error")
+        ]
 
         with direct_db.session() as session:
-            subscription_status = session.execute(
+            subscription_exists = session.execute(
                 text(
                     """
-                    SELECT ps.status
-                    FROM podcast_subscriptions ps
-                    JOIN podcasts p ON p.id = ps.podcast_id
-                    WHERE ps.user_id = :user_id AND p.feed_url = :feed_url
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM podcast_subscriptions ps
+                        JOIN podcasts p ON p.id = ps.podcast_id
+                        WHERE ps.user_id = :user_id AND p.feed_url = :feed_url
+                    )
                     """
                 ),
                 {"user_id": user_id, "feed_url": feed_url},
             ).scalar_one()
-            podcast_id = session.execute(
-                text("SELECT id FROM podcasts WHERE feed_url = :feed_url"),
+            podcast_exists = session.execute(
+                text("SELECT EXISTS (SELECT 1 FROM podcasts WHERE feed_url = :feed_url)"),
                 {"feed_url": feed_url},
             ).scalar_one()
-        assert subscription_status == "active"
-        assert self._podcast_credits(direct_db, podcast_id) == set(), (
-            "no credit lands when the observation failed"
-        )
+        assert subscription_exists is False
+        assert podcast_exists is False
 
 
 class TestPodcastSubscriptionSyncLifecycle:
@@ -1341,13 +1285,16 @@ class TestPodcastSubscriptionSyncLifecycle:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=2,
         )
-        monkeypatch.setenv("PODCAST_INITIAL_EPISODE_WINDOW", "2")
         clear_settings_cache()
 
         provider_podcast_id = f"control-plane-{uuid4()}"
         payload = _podcast_payload(provider_podcast_id, "Control Plane Podcast")
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast={provider_podcast_id: []},
+        )
 
         def fail_if_called(self, provider_id: str, limit: int) -> list[dict]:
             _ = self, provider_id, limit
@@ -1360,32 +1307,61 @@ class TestPodcastSubscriptionSyncLifecycle:
 
         response = auth_client.post(
             "/podcasts/subscriptions",
-            json=payload,
-            headers=auth_headers(user_id),
+            json=_subscribe_request(payload),
+            headers={
+                **auth_headers(user_id),
+                "Idempotency-Key": f"control-plane-{uuid4()}",
+            },
         )
         assert response.status_code == 200, (
             "subscribe should acknowledge control-plane create/enqueue without data-plane work, "
             f"got {response.status_code}: {response.text}"
         )
         data = response.json()["data"]
-        assert data["sync_status"] == "pending"
-        assert data["sync_enqueued"] is True
+        assert data["outcome"] == "Subscribed"
+        assert data["backfill"]["state"] == "Pending"
 
         with direct_db.session() as session:
-            episode_count = session.execute(
+            episode_count, sync_status, sync_job_count = session.execute(
                 text(
                     """
-                    SELECT COUNT(*)
-                    FROM podcast_episodes pe
-                    JOIN podcasts p ON p.id = pe.podcast_id
-                    WHERE p.provider_podcast_id = :provider_podcast_id
+                    SELECT
+                        (
+                            SELECT COUNT(*)
+                            FROM podcast_episodes pe
+                            JOIN podcasts p ON p.id = pe.podcast_id
+                            WHERE p.provider_podcast_id = :provider_podcast_id
+                        ),
+                        (
+                            SELECT sync_status
+                            FROM podcast_subscriptions
+                            WHERE user_id = :user_id
+                              AND podcast_id = :podcast_id
+                        ),
+                        (
+                            SELECT COUNT(*)
+                            FROM background_jobs
+                            WHERE kind = 'podcast_sync_subscription_job'
+                              AND payload->>'user_id' = :user_id_text
+                              AND payload->>'podcast_id' = :podcast_id_text
+                        )
                     """
                 ),
-                {"provider_podcast_id": provider_podcast_id},
-            ).scalar()
+                {
+                    "provider_podcast_id": provider_podcast_id,
+                    "user_id": user_id,
+                    "podcast_id": UUID(data["podcastId"]),
+                    "user_id_text": str(user_id),
+                    "podcast_id_text": data["podcastId"],
+                },
+            ).one()
         assert episode_count == 0, "control-plane subscribe must not ingest episodes inline"
+        assert sync_status == "pending"
+        assert sync_job_count == 1
 
-    def test_concurrent_duplicate_subscribe_is_idempotent(self, auth_client, direct_db):
+    def test_concurrent_duplicate_subscribe_is_idempotent(
+        self, auth_client, direct_db, monkeypatch
+    ):
         from nexus.schemas.podcast import PodcastSubscribeRequest
         from nexus.services.podcasts.subscriptions import subscribe_to_podcast
 
@@ -1395,14 +1371,24 @@ class TestPodcastSubscriptionSyncLifecycle:
         provider_podcast_id = f"concurrent-subscribe-{uuid4()}"
         payload = _podcast_payload(provider_podcast_id, "Concurrent Subscribe Podcast")
         payload["contributors"] = []
-        body = PodcastSubscribeRequest(**payload)
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast={provider_podcast_id: []},
+        )
+        body = PodcastSubscribeRequest(**_subscribe_request(payload))
 
         results = []
         result_lock = threading.Lock()
 
         def subscribe_once(_index: int) -> None:
             with direct_db.session() as session:
-                result = subscribe_to_podcast(session, user_id, body)
+                result = subscribe_to_podcast(
+                    session,
+                    user_id,
+                    body,
+                    idempotency_key=f"concurrent-{_index}-{uuid4()}",
+                )
             with result_lock:
                 results.append(result)
 
@@ -1416,9 +1402,9 @@ class TestPodcastSubscriptionSyncLifecycle:
             "concurrent duplicate subscribes should all resolve to the same podcast row, "
             f"got {returned_podcast_ids}"
         )
-        assert sum(1 for result in results if result.subscription_created) == 1, (
+        assert sum(1 for result in results if result.outcome == "Subscribed") == 1, (
             "exactly one concurrent subscribe should create the subscription; "
-            f"got {[result.subscription_created for result in results]}"
+            f"got {[result.outcome for result in results]}"
         )
 
         podcast_id = next(iter(returned_podcast_ids))
@@ -1476,19 +1462,27 @@ class TestPodcastSubscriptionSyncLifecycle:
         provider_id = f"response-loss-subscribe-{uuid4()}"
         payload = {
             **_podcast_payload(provider_id, "Response Loss Subscription"),
-            "library_ids": [str(library_id)],
+            "named_library_ids": [str(library_id)],
         }
 
-        first = _subscribe(auth_client, user_id, payload)
-        second = _subscribe(auth_client, user_id, payload)
-        assert first["podcast_id"] == second["podcast_id"]
-        assert first["subscription_created"] is True
-        assert second["subscription_created"] is False
-
-        podcast_id = UUID(first["podcast_id"])
-        direct_db.register_cleanup(
-            "podcast_subscription_libraries", "subscription_podcast_id", podcast_id
+        replay_key = f"response-loss-{uuid4()}"
+        first = _subscribe(
+            auth_client,
+            user_id,
+            payload,
+            idempotency_key=replay_key,
         )
+        second = _subscribe(
+            auth_client,
+            user_id,
+            payload,
+            idempotency_key=replay_key,
+        )
+        assert first == second
+        assert first["outcome"] == "Subscribed"
+
+        podcast_id = UUID(first["podcastId"])
+        direct_db.register_cleanup("library_entries", "podcast_id", podcast_id)
         direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
         direct_db.register_cleanup("podcasts", "id", podcast_id)
         with direct_db.session() as session:
@@ -1504,9 +1498,8 @@ class TestPodcastSubscriptionSyncLifecycle:
                         ),
                         (
                             SELECT count(*)
-                            FROM podcast_subscription_libraries
-                            WHERE subscription_user_id = :user_id
-                              AND subscription_podcast_id = :podcast_id
+                            FROM library_entries
+                            WHERE podcast_id = :podcast_id
                               AND library_id = :library_id
                         )
                     """
@@ -1519,27 +1512,33 @@ class TestPodcastSubscriptionSyncLifecycle:
             ).one()
         assert counts == (1, 1)
 
-    def test_subscribe_rejects_invalid_feed_url(self, auth_client):
+    def test_subscribe_rejects_invalid_feed_url(self, auth_client, monkeypatch):
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
 
         provider_podcast_id = f"invalid-feed-{uuid4()}"
         payload = _podcast_payload(provider_podcast_id, "Invalid Feed Podcast")
         payload["feed_url"] = "ftp://feeds.example.com/invalid.xml"
-
-        response = auth_client.post(
-            "/podcasts/subscriptions",
-            json=payload,
-            headers=auth_headers(user_id),
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast={provider_podcast_id: []},
         )
-        assert response.status_code == 400, (
-            "subscribe must reject non-http(s) feed URLs to keep downstream fetches safe, "
-            f"got {response.status_code}: {response.text}"
-        )
-        error = response.json()["error"]
-        assert error["code"] == "E_INVALID_REQUEST"
 
-    def test_sync_job_ingests_window_and_marks_subscription_complete(
+        with pytest.raises(
+            RuntimeError,
+            match="Podcast Index returned an invalid feed URL",
+        ):
+            auth_client.post(
+                "/podcasts/subscriptions",
+                json=_subscribe_request(payload),
+                headers={
+                    **auth_headers(user_id),
+                    "Idempotency-Key": f"invalid-feed-{uuid4()}",
+                },
+            )
+
+    def test_sync_job_ingests_entire_exposed_feed_and_marks_subscription_complete(
         self, auth_client, monkeypatch, direct_db
     ):
         # Data-plane worker path should ingest episodes and transition pending -> complete.
@@ -1553,16 +1552,14 @@ class TestPodcastSubscriptionSyncLifecycle:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=2,
         )
-        monkeypatch.setenv("PODCAST_INITIAL_EPISODE_WINDOW", "2")
         clear_settings_cache()
 
         provider_podcast_id = f"sync-complete-{uuid4()}"
         payload = _podcast_payload(provider_podcast_id, "Sync Complete Podcast")
         episodes = [
             {
-                "provider_episode_id": "ep-old",
+                "podcast_index_episode_ref": "ep-old",
                 "guid": "guid-old",
                 "title": "Episode Old",
                 "audio_url": "https://cdn.example.com/old.mp3",
@@ -1571,7 +1568,7 @@ class TestPodcastSubscriptionSyncLifecycle:
                 "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 1000, "text": "old"}],
             },
             {
-                "provider_episode_id": "ep-newer",
+                "podcast_index_episode_ref": "ep-newer",
                 "guid": "guid-newer",
                 "title": "Episode Newer",
                 "audio_url": "https://cdn.example.com/newer.mp3",
@@ -1580,7 +1577,7 @@ class TestPodcastSubscriptionSyncLifecycle:
                 "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 1000, "text": "newer"}],
             },
             {
-                "provider_episode_id": "ep-newest",
+                "podcast_index_episode_ref": "ep-newest",
                 "guid": "guid-newest",
                 "title": "Episode Newest",
                 "audio_url": "https://cdn.example.com/newest.mp3",
@@ -1595,13 +1592,7 @@ class TestPodcastSubscriptionSyncLifecycle:
             episodes_by_podcast={provider_podcast_id: episodes},
         )
 
-        subscribe = auth_client.post(
-            "/podcasts/subscriptions",
-            json=payload,
-            headers=auth_headers(user_id),
-        )
-        assert subscribe.status_code == 200
-        podcast_id = subscribe.json()["data"]["podcast_id"]
+        podcast_id = _subscribe(auth_client, user_id, payload)["podcastId"]
 
         with direct_db.session() as session:
             job_result = run_podcast_subscription_sync_now(
@@ -1640,7 +1631,11 @@ class TestPodcastSubscriptionSyncLifecycle:
 
         assert status_row is not None
         assert status_row[0] == "complete"
-        assert [row[0] for row in media_rows] == ["Episode Newer", "Episode Newest"]
+        assert [row[0] for row in media_rows] == [
+            "Episode Newer",
+            "Episode Newest",
+            "Episode Old",
+        ]
 
     def test_sync_job_auto_queue_opt_in_appends_new_episodes_to_playback_queue(
         self, auth_client, monkeypatch, direct_db
@@ -1658,14 +1653,13 @@ class TestPodcastSubscriptionSyncLifecycle:
                 user_id,
                 plan_tier="ai_plus",
                 transcription_minutes_limit_monthly=None,
-                initial_episode_window=2,
             )
 
         provider_podcast_id = f"auto-queue-{uuid4()}"
         payload = _podcast_payload(provider_podcast_id, "Auto Queue Podcast")
         episodes = [
             {
-                "provider_episode_id": "ep-1",
+                "podcast_index_episode_ref": "ep-1",
                 "guid": "guid-1",
                 "title": "Episode One",
                 "audio_url": "https://cdn.example.com/one.mp3",
@@ -1674,7 +1668,7 @@ class TestPodcastSubscriptionSyncLifecycle:
                 "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 1000, "text": "one"}],
             },
             {
-                "provider_episode_id": "ep-2",
+                "podcast_index_episode_ref": "ep-2",
                 "guid": "guid-2",
                 "title": "Episode Two",
                 "audio_url": "https://cdn.example.com/two.mp3",
@@ -1689,24 +1683,14 @@ class TestPodcastSubscriptionSyncLifecycle:
             episodes_by_podcast={provider_podcast_id: episodes},
         )
 
-        opted_in_subscribe = auth_client.post(
-            "/podcasts/subscriptions",
-            json={**payload, "auto_queue": True},
+        opted_in_podcast_id = UUID(_subscribe(auth_client, opted_in_user, payload)["podcastId"])
+        settings = auth_client.patch(
+            f"/podcasts/subscriptions/{opted_in_podcast_id}/settings",
+            json={"auto_queue": True},
             headers=auth_headers(opted_in_user),
         )
-        assert opted_in_subscribe.status_code == 200, (
-            f"Expected 200 subscribe for auto_queue opt-in, got {opted_in_subscribe.status_code}: "
-            f"{opted_in_subscribe.text}"
-        )
-        opted_in_podcast_id = UUID(opted_in_subscribe.json()["data"]["podcast_id"])
-
-        opted_out_subscribe = auth_client.post(
-            "/podcasts/subscriptions",
-            json=payload,
-            headers=auth_headers(opted_out_user),
-        )
-        assert opted_out_subscribe.status_code == 200
-        opted_out_podcast_id = UUID(opted_out_subscribe.json()["data"]["podcast_id"])
+        assert settings.status_code == 200, settings.text
+        opted_out_podcast_id = UUID(_subscribe(auth_client, opted_out_user, payload)["podcastId"])
 
         with direct_db.session() as session:
             run_podcast_subscription_sync_now(
@@ -1765,17 +1749,15 @@ class TestPodcastSubscriptionSyncLifecycle:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=1,
         )
 
-        monkeypatch.setenv("PODCAST_INGEST_PREFETCH_LIMIT", "150")
         clear_settings_cache()
 
         provider_podcast_id = f"source-limited-{uuid4()}"
         payload = _podcast_payload(provider_podcast_id, "Source Limited Podcast")
         capped_rows = [
             {
-                "provider_episode_id": f"provider-{idx}",
+                "podcast_index_episode_ref": f"provider-{idx}",
                 "guid": f"provider-guid-{idx}",
                 "title": f"Episode {idx}",
                 "audio_url": f"https://cdn.example.com/provider-{idx}.mp3",
@@ -1816,13 +1798,7 @@ class TestPodcastSubscriptionSyncLifecycle:
 
         monkeypatch.setattr("nexus.services.podcasts.feed.safe_get", fake_safe_get)
 
-        subscribe = auth_client.post(
-            "/podcasts/subscriptions",
-            json=payload,
-            headers=auth_headers(user_id),
-        )
-        assert subscribe.status_code == 200
-        podcast_id = subscribe.json()["data"]["podcast_id"]
+        podcast_id = _subscribe(auth_client, user_id, payload)["podcastId"]
 
         with direct_db.session() as session:
             job_result = run_podcast_subscription_sync_now(
@@ -1851,18 +1827,22 @@ class TestPodcastSubscribeIngest:
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
         payload = _podcast_payload(f"subscribe-author-scalar-{uuid4()}", "Author Scalar Podcast")
-        payload["author"] = "Author Scalar"
+        request = _subscribe_request(payload)
+        request["author"] = "Author Scalar"
 
         response = auth_client.post(
             "/podcasts/subscriptions",
-            json=payload,
-            headers=auth_headers(user_id),
+            json=request,
+            headers={
+                **auth_headers(user_id),
+                "Idempotency-Key": f"author-scalar-{uuid4()}",
+            },
         )
 
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
-    def test_subscribe_uses_configured_prefetch_limit(self, auth_client, monkeypatch, direct_db):
+    def test_live_sync_uses_fixed_provider_page_size(self, auth_client, monkeypatch, direct_db):
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
         _set_plan(
@@ -1871,40 +1851,32 @@ class TestPodcastSubscribeIngest:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=1,
         )
 
-        monkeypatch.setenv("PODCAST_INGEST_PREFETCH_LIMIT", "7")
         clear_settings_cache()
 
-        provider_podcast_id = f"prefetch-{uuid4()}"
-        payload = _podcast_payload(provider_podcast_id, "Prefetch Podcast")
+        provider_podcast_id = f"full-feed-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, "Full Feed Podcast")
         observed: dict[str, int] = {"limit": -1}
 
         # EXTERNAL SEAM EXCEPTION:
-        # Assert the configured prefetch limit is passed through to provider fetch.
-        def fake_search(self, query: str, limit: int) -> list[dict]:
-            return [payload]
-
+        # The provider page size is a source-adapter bound, not a user/plan window.
         def fake_fetch(self, provider_id: str, limit: int) -> list[dict]:
             observed["limit"] = limit
             return [
                 {
-                    "provider_episode_id": "ep-prefetch-1",
-                    "guid": "guid-prefetch-1",
-                    "title": "Prefetch Episode",
-                    "audio_url": "https://cdn.example.com/prefetch.mp3",
+                    "podcast_index_episode_ref": "ep-full-feed-1",
+                    "guid": "guid-full-feed-1",
+                    "title": "Full Feed Episode",
+                    "audio_url": "https://cdn.example.com/full-feed.mp3",
                     "published_at": "2026-03-02T00:00:00Z",
                     "duration_seconds": 120,
                     "transcript_segments": [
-                        {"t_start_ms": 0, "t_end_ms": 1000, "text": "prefetch"},
+                        {"t_start_ms": 0, "t_end_ms": 1000, "text": "full feed"},
                     ],
                 }
             ]
 
-        monkeypatch.setattr(
-            "nexus.services.podcasts.provider.PodcastIndexClient.search_podcasts", fake_search
-        )
         monkeypatch.setattr(
             "nexus.services.podcasts.provider.PodcastIndexClient.fetch_recent_episodes", fake_fetch
         )
@@ -1913,14 +1885,13 @@ class TestPodcastSubscribeIngest:
         _run_subscription_sync(
             direct_db,
             user_id,
-            UUID(subscribe_data["podcast_id"]),
+            UUID(subscribe_data["podcastId"]),
             run_transcription_jobs=False,
         )
 
-        assert observed["limit"] == 7, (
-            "expected subscribe ingest prefetch limit to come from config, "
-            f"got limit={observed['limit']}"
-        )
+        from nexus.services.podcasts.provider import PODCAST_INDEX_EPISODE_PAGE_SIZE
+
+        assert observed["limit"] == PODCAST_INDEX_EPISODE_PAGE_SIZE
 
     def test_subscribe_feed_pagination_augments_provider_candidates(
         self, auth_client, monkeypatch, direct_db
@@ -1933,12 +1904,9 @@ class TestPodcastSubscribeIngest:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=2,
         )
-        monkeypatch.setenv("PODCAST_INITIAL_EPISODE_WINDOW", "2")
         clear_settings_cache()
 
-        monkeypatch.setenv("PODCAST_INGEST_PREFETCH_LIMIT", "150")
         clear_settings_cache()
 
         provider_podcast_id = f"feed-pages-{uuid4()}"
@@ -1948,7 +1916,7 @@ class TestPodcastSubscribeIngest:
         # Simulate provider hard-cap (100 episodes) where newest feed items are missing.
         old_provider_rows = [
             {
-                "provider_episode_id": f"provider-{idx}",
+                "podcast_index_episode_ref": f"provider-{idx}",
                 "guid": f"provider-guid-{idx}",
                 "title": f"Episode Old {idx}",
                 "audio_url": f"https://cdn.example.com/provider-{idx}.mp3",
@@ -2027,7 +1995,7 @@ class TestPodcastSubscribeIngest:
         _run_subscription_sync(
             direct_db,
             user_id,
-            UUID(subscribe_data["podcast_id"]),
+            UUID(subscribe_data["podcastId"]),
             run_transcription_jobs=False,
         )
 
@@ -2047,12 +2015,11 @@ class TestPodcastSubscribeIngest:
             ).fetchall()
 
         titles = [row[0] for row in rows]
-        assert titles == ["Episode Newer", "Episode Newest"], (
-            "expected feed pagination fallback to recover newest episodes beyond provider cap, "
-            f"got titles={titles}"
-        )
+        assert len(titles) == 102
+        assert {"Episode Newer", "Episode Newest"}.issubset(titles)
+        assert {f"Episode Old {idx}" for idx in range(100)}.issubset(titles)
 
-    def test_subscribe_ingests_only_newest_plan_window(self, auth_client, monkeypatch, direct_db):
+    def test_live_sync_ingests_every_exposed_episode(self, auth_client, monkeypatch, direct_db):
         user_id = create_test_user_id()
         default_library_id = _bootstrap_user(auth_client, user_id)
         _set_plan(
@@ -2061,16 +2028,14 @@ class TestPodcastSubscribeIngest:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=2,
         )
-        monkeypatch.setenv("PODCAST_INITIAL_EPISODE_WINDOW", "2")
         clear_settings_cache()
 
         provider_podcast_id = f"window-{uuid4()}"
         payload = _podcast_payload(provider_podcast_id, "Windowed Podcast")
         episodes = [
             {
-                "provider_episode_id": "ep-old",
+                "podcast_index_episode_ref": "ep-old",
                 "guid": "guid-old",
                 "title": "Episode Old",
                 "audio_url": "https://cdn.example.com/old.mp3",
@@ -2081,7 +2046,7 @@ class TestPodcastSubscribeIngest:
                 ],
             },
             {
-                "provider_episode_id": "ep-newer",
+                "podcast_index_episode_ref": "ep-newer",
                 "guid": "guid-newer",
                 "title": "Episode Newer",
                 "audio_url": "https://cdn.example.com/newer.mp3",
@@ -2092,7 +2057,7 @@ class TestPodcastSubscribeIngest:
                 ],
             },
             {
-                "provider_episode_id": "ep-newest",
+                "podcast_index_episode_ref": "ep-newest",
                 "guid": "guid-newest",
                 "title": "Episode Newest",
                 "audio_url": "https://cdn.example.com/newest.mp3",
@@ -2110,7 +2075,7 @@ class TestPodcastSubscribeIngest:
         )
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcast_id"]))
+        _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcastId"]))
 
         with direct_db.session() as session:
             rows = session.execute(
@@ -2128,8 +2093,8 @@ class TestPodcastSubscribeIngest:
             ).fetchall()
 
         titles = [row[0] for row in rows]
-        assert titles == ["Episode Newer", "Episode Newest"], (
-            f"expected only newest two episodes under plan window=2, got titles={titles}"
+        assert titles == ["Episode Newer", "Episode Newest", "Episode Old"], (
+            f"expected the entire safely exposed feed, got titles={titles}"
         )
 
     def test_guid_identity_prevents_duplicates_across_retries(
@@ -2143,14 +2108,13 @@ class TestPodcastSubscribeIngest:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=1,
         )
 
         provider_podcast_id = f"guid-{uuid4()}"
         payload = _podcast_payload(provider_podcast_id, "Guid Podcast")
         episodes = [
             {
-                "provider_episode_id": "ep-guid-1",
+                "podcast_index_episode_ref": "ep-guid-1",
                 "guid": "global-guid-1",
                 "title": "Guid Episode",
                 "audio_url": "https://cdn.example.com/guid.mp3",
@@ -2171,14 +2135,14 @@ class TestPodcastSubscribeIngest:
         _run_subscription_sync(
             direct_db,
             user_id,
-            UUID(subscribe_data["podcast_id"]),
+            UUID(subscribe_data["podcastId"]),
             run_transcription_jobs=False,
         )
         subscribe_data = _subscribe(auth_client, user_id, payload)
         _run_subscription_sync(
             direct_db,
             user_id,
-            UUID(subscribe_data["podcast_id"]),
+            UUID(subscribe_data["podcastId"]),
             run_transcription_jobs=False,
         )
 
@@ -2189,8 +2153,12 @@ class TestPodcastSubscribeIngest:
                     SELECT COUNT(*)
                     FROM podcast_episodes pe
                     JOIN podcasts p ON p.id = pe.podcast_id
+                    JOIN podcast_episode_identities pei
+                      ON pei.episode_media_id = pe.media_id
+                     AND pei.podcast_id = pe.podcast_id
                     WHERE p.provider_podcast_id = :provider_podcast_id
-                      AND pe.guid = 'global-guid-1'
+                      AND pei.scheme = 'RssGuid'
+                      AND pei.value = 'global-guid-1'
                     """
                 ),
                 {"provider_podcast_id": provider_podcast_id},
@@ -2198,7 +2166,7 @@ class TestPodcastSubscribeIngest:
 
         assert count == 1, f"expected one GUID-identified episode row, got {count}"
 
-    def test_fallback_identity_prevents_duplicates_when_guid_missing(
+    def test_enclosure_identity_prevents_duplicates_when_strong_aliases_missing(
         self, auth_client, monkeypatch, direct_db
     ):
         user_id = create_test_user_id()
@@ -2209,26 +2177,18 @@ class TestPodcastSubscribeIngest:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=1,
         )
 
         provider_podcast_id = f"fallback-{uuid4()}"
         payload = _podcast_payload(provider_podcast_id, "Fallback Podcast")
 
-        state = {"calls": 0}
-
         # EXTERNAL SEAM EXCEPTION:
-        # Alternate external API payloads across calls to verify deterministic
-        # fallback identity is stable even when provider_episode_id changes.
-        def fake_search(self, query: str, limit: int) -> list[dict]:
-            return [payload]
-
+        # Repeat a weak RSS-shaped provider row to prove canonical enclosure
+        # identity converges when neither Podcast Index nor GUID is available.
         def fake_fetch(self, provider_id: str, limit: int) -> list[dict]:
-            state["calls"] += 1
-            provider_episode_id = "ep-a" if state["calls"] == 1 else "ep-b"
+            _ = self, provider_id, limit
             return [
                 {
-                    "provider_episode_id": provider_episode_id,
                     "guid": None,
                     "title": "No GUID Episode",
                     "audio_url": "https://cdn.example.com/no-guid.mp3",
@@ -2241,9 +2201,6 @@ class TestPodcastSubscribeIngest:
             ]
 
         monkeypatch.setattr(
-            "nexus.services.podcasts.provider.PodcastIndexClient.search_podcasts", fake_search
-        )
-        monkeypatch.setattr(
             "nexus.services.podcasts.provider.PodcastIndexClient.fetch_recent_episodes", fake_fetch
         )
 
@@ -2251,14 +2208,14 @@ class TestPodcastSubscribeIngest:
         _run_subscription_sync(
             direct_db,
             user_id,
-            UUID(subscribe_data["podcast_id"]),
+            UUID(subscribe_data["podcastId"]),
             run_transcription_jobs=False,
         )
         subscribe_data = _subscribe(auth_client, user_id, payload)
         _run_subscription_sync(
             direct_db,
             user_id,
-            UUID(subscribe_data["podcast_id"]),
+            UUID(subscribe_data["podcastId"]),
             run_transcription_jobs=False,
         )
 
@@ -2275,7 +2232,7 @@ class TestPodcastSubscribeIngest:
                 {"provider_podcast_id": provider_podcast_id},
             ).scalar()
 
-        assert count == 1, f"expected one fallback-identified episode row, got {count}"
+        assert count == 1, f"expected one enclosure-identified episode row, got {count}"
 
     def test_second_subscriber_reuses_episode_without_redundant_transcription_job(
         self, auth_client, monkeypatch, direct_db
@@ -2291,7 +2248,6 @@ class TestPodcastSubscribeIngest:
             user_a,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=1,
         )
         _set_plan(
             auth_client,
@@ -2299,14 +2255,13 @@ class TestPodcastSubscribeIngest:
             user_b,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=1,
         )
 
         provider_podcast_id = f"shared-{uuid4()}"
         payload = _podcast_payload(provider_podcast_id, "Shared Episode Podcast")
         episodes = [
             {
-                "provider_episode_id": "ep-shared-1",
+                "podcast_index_episode_ref": "ep-shared-1",
                 "guid": "shared-guid-1",
                 "title": "Shared Episode",
                 "audio_url": "https://cdn.example.com/shared.mp3",
@@ -2324,9 +2279,9 @@ class TestPodcastSubscribeIngest:
         )
 
         subscribe_a = _subscribe(auth_client, user_a, payload)
-        _run_subscription_sync(direct_db, user_a, UUID(subscribe_a["podcast_id"]))
+        _run_subscription_sync(direct_db, user_a, UUID(subscribe_a["podcastId"]))
         subscribe_b = _subscribe(auth_client, user_b, payload)
-        _run_subscription_sync(direct_db, user_b, UUID(subscribe_b["podcast_id"]))
+        _run_subscription_sync(direct_db, user_b, UUID(subscribe_b["podcastId"]))
 
         with direct_db.session() as session:
             media_a = session.execute(
@@ -2384,14 +2339,13 @@ class TestPodcastBillingQuota:
             user_id,
             plan_tier="free",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=1,
         )
 
         provider_podcast_id = f"quota-{uuid4()}"
         payload = _podcast_payload(provider_podcast_id, "Quota Podcast")
         episodes = [
             {
-                "provider_episode_id": "ep-quota-1",
+                "podcast_index_episode_ref": "ep-quota-1",
                 "guid": "guid-quota-1",
                 "title": "Too Long Episode",
                 "audio_url": "https://cdn.example.com/long.mp3",
@@ -2408,22 +2362,13 @@ class TestPodcastBillingQuota:
             episodes_by_podcast={provider_podcast_id: episodes},
         )
 
-        response = auth_client.post(
-            "/podcasts/subscriptions",
-            json=payload,
-            headers=auth_headers(user_id),
-        )
-        assert response.status_code == 200, (
-            "subscribe should acknowledge and enqueue sync in control plane, "
-            f"got {response.status_code}: {response.text}"
-        )
-        data = response.json()["data"]
-        assert data["sync_status"] == "pending"
+        data = _subscribe(auth_client, user_id, payload)
+        assert data["backfill"]["state"] == "Pending"
 
         sync_result = _run_subscription_sync(
             direct_db,
             user_id,
-            UUID(data["podcast_id"]),
+            UUID(data["podcastId"]),
             run_transcription_jobs=False,
         )
         assert sync_result["sync_status"] == "complete"
@@ -2472,14 +2417,13 @@ class TestPodcastBillingQuota:
             user_id,
             plan_tier="free",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=1,
         )
 
         provider_podcast_id = f"plan-shift-{uuid4()}"
         payload = _podcast_payload(provider_podcast_id, "Plan Shift Podcast")
         episodes = [
             {
-                "provider_episode_id": "ep-plan-1",
+                "podcast_index_episode_ref": "ep-plan-1",
                 "guid": "guid-plan-1",
                 "title": "Paid Plan Unlock",
                 "audio_url": "https://cdn.example.com/paid.mp3",
@@ -2496,17 +2440,11 @@ class TestPodcastBillingQuota:
             episodes_by_podcast={provider_podcast_id: episodes},
         )
 
-        blocked = auth_client.post(
-            "/podcasts/subscriptions",
-            json=payload,
-            headers=auth_headers(user_id),
-        )
-        assert blocked.status_code == 200
-        blocked_data = blocked.json()["data"]
+        blocked_data = _subscribe(auth_client, user_id, payload)
         blocked_result = _run_subscription_sync(
             direct_db,
             user_id,
-            UUID(blocked_data["podcast_id"]),
+            UUID(blocked_data["podcastId"]),
             run_transcription_jobs=False,
         )
         assert blocked_result["sync_status"] == "complete"
@@ -2539,7 +2477,6 @@ class TestPodcastBillingQuota:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=1,
         )
 
         allowed_request = auth_client.post(
@@ -2561,7 +2498,6 @@ class TestPodcastBillingQuota:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=1,
         )
 
         monthly_limit = get_settings().billing_ai_plus_transcription_minutes_monthly
@@ -2593,7 +2529,7 @@ class TestPodcastBillingQuota:
         payload = _podcast_payload(provider_podcast_id, "UTC Reset Podcast")
         episodes = [
             {
-                "provider_episode_id": "ep-utc-1",
+                "podcast_index_episode_ref": "ep-utc-1",
                 "guid": "guid-utc-1",
                 "title": "Today Episode",
                 "audio_url": "https://cdn.example.com/today.mp3",
@@ -2610,20 +2546,11 @@ class TestPodcastBillingQuota:
             episodes_by_podcast={provider_podcast_id: episodes},
         )
 
-        response = auth_client.post(
-            "/podcasts/subscriptions",
-            json=payload,
-            headers=auth_headers(user_id),
-        )
-        assert response.status_code == 200, (
-            "expected metadata sync to stay available even when monthly transcription is spent; "
-            f"got {response.status_code}: {response.text}"
-        )
-        data = response.json()["data"]
+        data = _subscribe(auth_client, user_id, payload)
         sync_result = _run_subscription_sync(
             direct_db,
             user_id,
-            UUID(data["podcast_id"]),
+            UUID(data["podcastId"]),
             run_transcription_jobs=False,
         )
         assert sync_result["sync_status"] == "complete"
@@ -2659,14 +2586,13 @@ class TestPodcastBillingQuota:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=1,
         )
 
         provider_podcast_id = f"utc-ledger-{uuid4()}"
         payload = _podcast_payload(provider_podcast_id, "UTC Ledger Podcast")
         episodes = [
             {
-                "provider_episode_id": "ep-utc-ledger-1",
+                "podcast_index_episode_ref": "ep-utc-ledger-1",
                 "guid": "guid-utc-ledger-1",
                 "title": "UTC Ledger Episode",
                 "audio_url": "https://cdn.example.com/utc-ledger.mp3",
@@ -2702,7 +2628,7 @@ class TestPodcastBillingQuota:
         monkeypatch.setattr("nexus.services.podcasts.transcription.datetime", FixedDatetime)
         monkeypatch.setattr("nexus.services.podcasts.transcription.date", WrongLocalDate)
 
-        _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcast_id"]))
+        _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcastId"]))
 
         with direct_db.session() as session:
             usage_date = session.execute(
@@ -2992,14 +2918,13 @@ class TestPodcastTranscriptRequestAdmission:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=transcription_minutes_limit_monthly,
-            initial_episode_window=1,
         )
 
         provider_podcast_id = f"metadata-only-{uuid4()}"
         payload = _podcast_payload(provider_podcast_id, "Metadata-Only Podcast")
         episodes = [
             {
-                "provider_episode_id": "ep-metadata-only-1",
+                "podcast_index_episode_ref": "ep-metadata-only-1",
                 "guid": "guid-metadata-only-1",
                 "title": "Metadata-Only Episode",
                 "audio_url": "https://cdn.example.com/metadata-only.mp3",
@@ -3017,7 +2942,7 @@ class TestPodcastTranscriptRequestAdmission:
         )
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        podcast_id = UUID(subscribe_data["podcast_id"])
+        podcast_id = UUID(subscribe_data["podcastId"])
         sync_result = _run_subscription_sync(
             direct_db,
             user_id,
@@ -3123,6 +3048,7 @@ class TestPodcastTranscriptRequestAdmission:
                         transcript_coverage = 'full',
                         semantic_status = :semantic_status,
                         last_request_reason = 'search',
+                        transcript_origin = 'Generated',
                         last_error_code = :last_error_code,
                         updated_at = :now
                     WHERE media_id = :media_id
@@ -3853,7 +3779,6 @@ class TestPodcastTranscriptRequestAdmission:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=1,
         )
 
         media_id = uuid4()
@@ -4060,7 +3985,6 @@ class TestPodcastTranscriptPersistence:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=1,
         )
 
         provider_podcast_id = f"provider-source-{uuid4()}"
@@ -4068,7 +3992,7 @@ class TestPodcastTranscriptPersistence:
         audio_url = "https://cdn.example.com/provider-source.mp3"
         episodes = [
             {
-                "provider_episode_id": "ep-provider-source-1",
+                "podcast_index_episode_ref": "ep-provider-source-1",
                 "guid": "guid-provider-source-1",
                 "title": "Provider Source Episode",
                 "audio_url": audio_url,
@@ -4108,7 +4032,7 @@ class TestPodcastTranscriptPersistence:
         )
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcast_id"]))
+        _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcastId"]))
 
         with direct_db.session() as session:
             media_id = session.execute(
@@ -4149,14 +4073,13 @@ class TestPodcastTranscriptPersistence:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=1,
         )
 
         provider_podcast_id = f"segments-{uuid4()}"
         payload = _podcast_payload(provider_podcast_id, "Segments Podcast")
         episodes = [
             {
-                "provider_episode_id": "ep-segments-1",
+                "podcast_index_episode_ref": "ep-segments-1",
                 "guid": "guid-segments-1",
                 "title": "Ordered Segment Episode",
                 "audio_url": "https://cdn.example.com/segments.mp3",
@@ -4186,7 +4109,7 @@ class TestPodcastTranscriptPersistence:
         )
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcast_id"]))
+        _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcastId"]))
 
         with direct_db.session() as session:
             media_id = session.execute(
@@ -4231,14 +4154,13 @@ class TestPodcastTranscriptPersistence:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=1,
         )
 
         provider_podcast_id = f"unavailable-{uuid4()}"
         payload = _podcast_payload(provider_podcast_id, "Unavailable Transcript Podcast")
         episodes = [
             {
-                "provider_episode_id": "ep-unavailable-1",
+                "podcast_index_episode_ref": "ep-unavailable-1",
                 "guid": "guid-unavailable-1",
                 "title": "Unavailable Transcript Episode",
                 "audio_url": "https://cdn.example.com/playable.mp3",
@@ -4254,7 +4176,7 @@ class TestPodcastTranscriptPersistence:
         )
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcast_id"]))
+        _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcastId"]))
 
         with direct_db.session() as session:
             media_id = session.execute(
@@ -4294,7 +4216,6 @@ class TestPodcastTranscriptPersistence:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=1,
         )
 
         provider_podcast_id = f"diarization-fallback-{uuid4()}"
@@ -4302,7 +4223,7 @@ class TestPodcastTranscriptPersistence:
         audio_url = "https://cdn.example.com/diarization-fallback.mp3"
         episodes = [
             {
-                "provider_episode_id": "ep-diarization-fallback-1",
+                "podcast_index_episode_ref": "ep-diarization-fallback-1",
                 "guid": "guid-diarization-fallback-1",
                 "title": "Diarization Fallback Episode",
                 "audio_url": audio_url,
@@ -4333,7 +4254,7 @@ class TestPodcastTranscriptPersistence:
         )
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcast_id"]))
+        _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcastId"]))
 
         with direct_db.session() as session:
             media_row = session.execute(
@@ -4387,14 +4308,13 @@ class TestPodcastTranscriptPersistence:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=1,
         )
 
         provider_podcast_id = f"provider-error-{provider_error_code.lower()}-{uuid4()}"
         payload = _podcast_payload(provider_podcast_id, "Provider Error Podcast")
         episodes = [
             {
-                "provider_episode_id": f"ep-{provider_error_code.lower()}",
+                "podcast_index_episode_ref": f"ep-{provider_error_code.lower()}",
                 "guid": f"guid-{provider_error_code.lower()}",
                 "title": "Provider Error Episode",
                 "audio_url": "https://cdn.example.com/provider-error.mp3",
@@ -4425,7 +4345,7 @@ class TestPodcastTranscriptPersistence:
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
         with pytest.raises(ApiError) as raised:
-            _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcast_id"]))
+            _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcastId"]))
         assert raised.value.code is ApiErrorCode(provider_error_code)
 
         with direct_db.session() as session:
@@ -4486,7 +4406,6 @@ class TestPodcastTranscriptPersistence:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=1,
         )
 
         provider_podcast_id = f"canonicalize-{uuid4()}"
@@ -4519,7 +4438,7 @@ class TestPodcastTranscriptPersistence:
         ]
         episodes = [
             {
-                "provider_episode_id": "ep-canonicalize-1",
+                "podcast_index_episode_ref": "ep-canonicalize-1",
                 "guid": "guid-canonicalize-1",
                 "title": "Canonicalization Episode",
                 "audio_url": "https://cdn.example.com/canonicalize.mp3",
@@ -4543,7 +4462,7 @@ class TestPodcastTranscriptPersistence:
         )
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcast_id"]))
+        _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcastId"]))
 
         with direct_db.session() as session:
             media_id = session.execute(
@@ -4592,7 +4511,7 @@ class TestPodcastEpisodeMetadataPersistence:
         payload = _podcast_payload(provider_podcast_id, "Episode Metadata Podcast")
         episodes = [
             {
-                "provider_episode_id": "ep-authors-1",
+                "podcast_index_episode_ref": "ep-authors-1",
                 "guid": "guid-authors-1",
                 "title": "Metadata-rich Episode",
                 "authors": ["Episode Host", "Guest Analyst"],
@@ -4611,7 +4530,7 @@ class TestPodcastEpisodeMetadataPersistence:
         )
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        podcast_id = UUID(subscribe_data["podcast_id"])
+        podcast_id = UUID(subscribe_data["podcastId"])
         _run_subscription_sync(
             direct_db,
             user_id,
@@ -4683,7 +4602,7 @@ class TestPodcastEpisodeMetadataPersistence:
         payload["contributors"] = [{"credited_name": "Show Level Author", "role": "author"}]
         episodes = [
             {
-                "provider_episode_id": "ep-inherit-1",
+                "podcast_index_episode_ref": "ep-inherit-1",
                 "guid": "guid-inherit-1",
                 "title": "Authorless Episode",
                 "audio_url": "https://cdn.example.com/episode-inherit.mp3",
@@ -4699,7 +4618,7 @@ class TestPodcastEpisodeMetadataPersistence:
         )
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        podcast_id = UUID(subscribe_data["podcast_id"])
+        podcast_id = UUID(subscribe_data["podcastId"])
         _run_subscription_sync(direct_db, user_id, podcast_id, run_transcription_jobs=False)
 
         with direct_db.session() as session:
@@ -4722,7 +4641,7 @@ class TestPodcastEpisodeMetadataPersistence:
         provider_podcast_id = f"episode-pin-{uuid4()}"
         payload = _podcast_payload(provider_podcast_id, "Pinned Episode Podcast")
         episode = {
-            "provider_episode_id": "ep-pin-1",
+            "podcast_index_episode_ref": "ep-pin-1",
             "guid": "guid-pin-1",
             "title": "Pinnable Episode",
             "authors": ["Original RSS Author"],
@@ -4738,7 +4657,7 @@ class TestPodcastEpisodeMetadataPersistence:
         )
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        podcast_id = UUID(subscribe_data["podcast_id"])
+        podcast_id = UUID(subscribe_data["podcastId"])
         _run_subscription_sync(direct_db, user_id, podcast_id, run_transcription_jobs=False)
 
         with direct_db.session() as session:
@@ -4866,7 +4785,6 @@ class TestPodcastMediaDetailContract:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=1,
         )
 
         provider_podcast_id = f"contract-{uuid4()}"
@@ -4874,7 +4792,7 @@ class TestPodcastMediaDetailContract:
         audio_url = "https://cdn.example.com/contract.mp3"
         episodes = [
             {
-                "provider_episode_id": "ep-contract-1",
+                "podcast_index_episode_ref": "ep-contract-1",
                 "guid": "guid-contract-1",
                 "title": "Playback Contract Episode",
                 "audio_url": audio_url,
@@ -4892,7 +4810,7 @@ class TestPodcastMediaDetailContract:
         )
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcast_id"]))
+        _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcastId"]))
 
         with direct_db.session() as session:
             media_id = session.execute(
@@ -4969,7 +4887,6 @@ class TestPodcastPollingOrchestration:
             user_id,
             plan_tier="free",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=1,
         )
 
         provider_podcast_id = f"scheduled-failure-{uuid4()}"
@@ -4977,7 +4894,7 @@ class TestPodcastPollingOrchestration:
         episodes_by_podcast = {
             provider_podcast_id: [
                 {
-                    "provider_episode_id": "ep-failure-1",
+                    "podcast_index_episode_ref": "ep-failure-1",
                     "guid": "guid-failure-1",
                     "title": "Over Quota Episode",
                     "audio_url": "https://cdn.example.com/over-quota.mp3",
@@ -4994,24 +4911,25 @@ class TestPodcastPollingOrchestration:
         )
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        podcast_id = UUID(subscribe_data["podcast_id"])
+        podcast_id = UUID(subscribe_data["podcastId"])
 
-        # Keep this assertion deterministic even when this class runs after other
-        # podcast tests that may leave active subscriptions behind.
+        # Row presence is active after the hard cutover. Keep unrelated fixture
+        # subscriptions healthy-running so this run owns exactly one due row.
         with direct_db.session() as session:
             session.execute(
                 text(
                     """
                     UPDATE podcast_subscriptions
-                    SET status = 'unsubscribed',
-                        updated_at = :updated_at
+                    SET sync_status = 'running',
+                        sync_started_at = now(),
+                        sync_completed_at = NULL,
+                        updated_at = now()
                     WHERE NOT (user_id = :user_id AND podcast_id = :podcast_id)
                     """
                 ),
                 {
                     "user_id": user_id,
                     "podcast_id": podcast_id,
-                    "updated_at": datetime.now(UTC),
                 },
             )
             session.commit()
@@ -5257,7 +5175,6 @@ class TestPodcastPollingOrchestration:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=1,
         )
 
         provider_podcast_id = f"stale-running-{uuid4()}"
@@ -5265,7 +5182,7 @@ class TestPodcastPollingOrchestration:
         episodes_by_podcast = {
             provider_podcast_id: [
                 {
-                    "provider_episode_id": "ep-stale-1",
+                    "podcast_index_episode_ref": "ep-stale-1",
                     "guid": "guid-stale-1",
                     "title": "Recovered Episode",
                     "audio_url": "https://cdn.example.com/recovered.mp3",
@@ -5283,9 +5200,25 @@ class TestPodcastPollingOrchestration:
             episodes_by_podcast=episodes_by_podcast,
         )
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        podcast_id = UUID(subscribe_data["podcast_id"])
+        podcast_id = UUID(subscribe_data["podcastId"])
 
         with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    UPDATE podcast_subscriptions
+                    SET sync_status = 'running',
+                        sync_started_at = now(),
+                        sync_completed_at = NULL,
+                        updated_at = now()
+                    WHERE NOT (user_id = :user_id AND podcast_id = :podcast_id)
+                    """
+                ),
+                {
+                    "user_id": user_id,
+                    "podcast_id": podcast_id,
+                },
+            )
             session.execute(
                 text(
                     """
@@ -5362,20 +5295,21 @@ class TestPodcastPollingOrchestration:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=1,
         )
 
         provider_podcast_id = f"healthy-running-{uuid4()}"
         payload = _podcast_payload(provider_podcast_id, "Healthy Running Claim Podcast")
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        podcast_id = UUID(subscribe_data["podcast_id"])
+        podcast_id = UUID(subscribe_data["podcastId"])
 
         with direct_db.session() as session:
             session.execute(
                 text(
                     """
                     UPDATE podcast_subscriptions
-                    SET status = 'unsubscribed',
+                    SET sync_status = 'running',
+                        sync_started_at = now(),
+                        sync_completed_at = NULL,
                         updated_at = now()
                     WHERE NOT (user_id = :user_id AND podcast_id = :podcast_id)
                     """
@@ -5448,7 +5382,6 @@ class TestPodcastPollingOrchestration:
             user_a,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=1,
         )
         _set_plan(
             auth_client,
@@ -5456,7 +5389,6 @@ class TestPodcastPollingOrchestration:
             user_b,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=1,
         )
 
         provider_a = f"bounded-a-{uuid4()}"
@@ -5470,7 +5402,7 @@ class TestPodcastPollingOrchestration:
             episodes_by_podcast={
                 provider_a: [
                     {
-                        "provider_episode_id": "ep-bound-a-1",
+                        "podcast_index_episode_ref": "ep-bound-a-1",
                         "guid": "guid-bound-a-1",
                         "title": "Bounded Episode A",
                         "audio_url": "https://cdn.example.com/bounded-a.mp3",
@@ -5481,7 +5413,7 @@ class TestPodcastPollingOrchestration:
                 ],
                 provider_b: [
                     {
-                        "provider_episode_id": "ep-bound-b-1",
+                        "podcast_index_episode_ref": "ep-bound-b-1",
                         "guid": "guid-bound-b-1",
                         "title": "Bounded Episode B",
                         "audio_url": "https://cdn.example.com/bounded-b.mp3",
@@ -5529,12 +5461,11 @@ class TestPodcastSubscriptionLifecycleClosure:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=3,
         )
         payload = _podcast_payload(provider_podcast_id, title)
         episodes = [
             {
-                "provider_episode_id": f"ep-{provider_podcast_id}-1",
+                "podcast_index_episode_ref": f"ep-{provider_podcast_id}-1",
                 "guid": f"guid-{provider_podcast_id}-1",
                 "title": episode_title,
                 "audio_url": audio_url,
@@ -5552,7 +5483,7 @@ class TestPodcastSubscriptionLifecycleClosure:
         )
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        podcast_id = UUID(subscribe_data["podcast_id"])
+        podcast_id = UUID(subscribe_data["podcastId"])
         _run_subscription_sync(direct_db, user_id, podcast_id)
 
         with direct_db.session() as session:
@@ -5582,13 +5513,12 @@ class TestPodcastSubscriptionLifecycleClosure:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=2,
         )
         payload = _podcast_payload(provider_podcast_id, "Mode 1 Podcast")
         episodes_by_podcast = {
             provider_podcast_id: [
                 {
-                    "provider_episode_id": "ep-m1-1",
+                    "podcast_index_episode_ref": "ep-m1-1",
                     "guid": "guid-m1-1",
                     "title": "Episode One",
                     "audio_url": "https://cdn.example.com/m1-1.mp3",
@@ -5606,12 +5536,12 @@ class TestPodcastSubscriptionLifecycleClosure:
         _ensure_library_entries_table(direct_db)
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        podcast_id = UUID(subscribe_data["podcast_id"])
+        podcast_id = UUID(subscribe_data["podcastId"])
         _run_subscription_sync(direct_db, user_id, podcast_id)
 
         episodes_by_podcast[provider_podcast_id].append(
             {
-                "provider_episode_id": "ep-m1-2",
+                "podcast_index_episode_ref": "ep-m1-2",
                 "guid": "guid-m1-2",
                 "title": "Episode Two",
                 "audio_url": "https://cdn.example.com/m1-2.mp3",
@@ -5623,15 +5553,18 @@ class TestPodcastSubscriptionLifecycleClosure:
 
         unsubscribe = auth_client.delete(
             f"/podcasts/subscriptions/{podcast_id}",
-            headers=auth_headers(user_id),
+            headers={
+                **auth_headers(user_id),
+                "Idempotency-Key": f"unsubscribe-{uuid4()}",
+            },
         )
         assert unsubscribe.status_code == 200, (
             f"expected unsubscribe 200, got {unsubscribe.status_code}: {unsubscribe.text}"
         )
         unsubscribed_data = unsubscribe.json()["data"]
-        assert unsubscribed_data["status"] == "unsubscribed"
-        assert unsubscribed_data["removed_from_library_count"] == 0
-        assert unsubscribed_data["retained_shared_library_count"] == 0
+        assert unsubscribed_data["outcome"] == "Unsubscribed"
+        assert unsubscribed_data["removed_placement_count"] == 0
+        assert unsubscribed_data["retained_shared_count"] == 0
         assert unsubscribed_data["collectionRevision"] >= 1
         assert "collection_revision" not in unsubscribed_data
 
@@ -5643,7 +5576,7 @@ class TestPodcastSubscriptionLifecycleClosure:
             "podcast detail should remain readable after unsubscribe, "
             f"got {detail_after_unsubscribe.status_code}: {detail_after_unsubscribe.text}"
         )
-        assert detail_after_unsubscribe.json()["data"]["subscription"]["status"] == "unsubscribed"
+        assert detail_after_unsubscribe.json()["data"]["subscription"] is None
 
         # Count any sync jobs already enqueued for this podcast (e.g. from the initial
         # subscribe sync) so we can prove the post-unsubscribe poll adds none.
@@ -5663,8 +5596,8 @@ class TestPodcastSubscriptionLifecycleClosure:
                 ).scalar_one()
             )
 
-        # The poll is now a pure scheduler whose scan filters status = 'active'. The
-        # unsubscribed podcast is not scanned, so the poll enqueues nothing for it.
+        # Active subscriptions are rows, so deletion makes this Podcast ineligible
+        # for the scheduler and the poll enqueues nothing for it.
         # Other active subscriptions in the shared test DB may also be enqueued; the
         # scoped check below proves the UNSUBSCRIBED podcast specifically is not.
         _run_active_subscription_poll(direct_db, limit=100)
@@ -5713,7 +5646,7 @@ class TestPodcastSubscriptionLifecycleClosure:
         user_id = create_test_user_id()
         shared_admin_owner_id = create_test_user_id()
         shared_member_owner_id = create_test_user_id()
-        _bootstrap_user(auth_client, user_id)
+        default_library_id = _bootstrap_user(auth_client, user_id)
         _bootstrap_user(auth_client, shared_admin_owner_id)
         _bootstrap_user(auth_client, shared_member_owner_id)
 
@@ -5824,13 +5757,16 @@ class TestPodcastSubscriptionLifecycleClosure:
 
         unsubscribe = auth_client.delete(
             f"/podcasts/subscriptions/{podcast_id}",
-            headers=auth_headers(user_id),
+            headers={
+                **auth_headers(user_id),
+                "Idempotency-Key": f"unsubscribe-placements-{uuid4()}",
+            },
         )
         assert unsubscribe.status_code == 200
         data = unsubscribe.json()["data"]
-        assert data["status"] == "unsubscribed"
-        assert data["removed_from_library_count"] == 2
-        assert data["retained_shared_library_count"] == 1
+        assert data["outcome"] == "Unsubscribed"
+        assert data["removed_placement_count"] == 1
+        assert data["retained_shared_count"] == 2
 
         with direct_db.session() as session:
             remaining_library_ids = session.execute(
@@ -5864,10 +5800,24 @@ class TestPodcastSubscriptionLifecycleClosure:
                 ),
                 {"library_id": shared_admin_library_id, "media_id": media_id},
             ).fetchone()
+            default_media_row = session.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM library_entries
+                    WHERE library_id = :library_id AND media_id = :media_id
+                    """
+                ),
+                {"library_id": default_library_id, "media_id": media_id},
+            ).fetchone()
 
-        assert [UUID(str(row[0])) for row in remaining_library_ids] == [shared_member_library_id]
-        assert owned_media_row is not None
-        assert shared_admin_media_row is not None
+        assert {UUID(str(row[0])) for row in remaining_library_ids} == {
+            shared_admin_library_id,
+            shared_member_library_id,
+        }
+        assert owned_media_row is None
+        assert shared_admin_media_row is None
+        assert default_media_row is not None
 
     def test_unsubscribe_renormalizes_remaining_entry_positions_to_canonical_order(
         self, auth_client, monkeypatch, direct_db
@@ -5895,7 +5845,6 @@ class TestPodcastSubscriptionLifecycleClosure:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=1,
         )
 
         # Create four real, distinct podcasts (target + three fillers) so every
@@ -5910,7 +5859,7 @@ class TestPodcastSubscriptionLifecycleClosure:
         episodes_by_podcast = {
             provider_id: [
                 {
-                    "provider_episode_id": f"ep-{provider_id}-1",
+                    "podcast_index_episode_ref": f"ep-{provider_id}-1",
                     "guid": f"guid-{provider_id}-1",
                     "title": f"Renorm Episode {idx}",
                     "audio_url": f"https://cdn.example.com/{provider_id}.mp3",
@@ -5929,7 +5878,7 @@ class TestPodcastSubscriptionLifecycleClosure:
                 episodes_by_podcast=episodes_by_podcast,
             )
             subscribe_data = _subscribe(auth_client, user_id, payload)
-            podcast_ids.append(UUID(subscribe_data["podcast_id"]))
+            podcast_ids.append(UUID(subscribe_data["podcastId"]))
 
         target_podcast_id = podcast_ids[0]
         surviving_podcast_ids = podcast_ids[1:]
@@ -5969,12 +5918,15 @@ class TestPodcastSubscriptionLifecycleClosure:
 
         unsubscribe = auth_client.delete(
             f"/podcasts/subscriptions/{target_podcast_id}",
-            headers=auth_headers(user_id),
+            headers={
+                **auth_headers(user_id),
+                "Idempotency-Key": f"unsubscribe-renormalize-{uuid4()}",
+            },
         )
         assert unsubscribe.status_code == 200, (
             f"expected unsubscribe 200, got {unsubscribe.status_code}: {unsubscribe.text}"
         )
-        assert unsubscribe.json()["data"]["removed_from_library_count"] == 1
+        assert unsubscribe.json()["data"]["removed_placement_count"] == 1
 
         # (a) positions are exactly 0..n-1 contiguous with no gaps, ordered by position.
         with direct_db.session() as session:
@@ -6010,7 +5962,11 @@ class TestPodcastSubscriptionLifecycleClosure:
                 ),
                 limit=200,
             )
-        canonical_entry_ids = [entry.id for entry in canonical_page.items]
+        canonical_entry_ids = [
+            entry.placement.value.library_entry_id
+            for entry in canonical_page.items
+            if entry.placement.kind == "Present"
+        ]
         raw_entry_ids_by_position = [UUID(str(row[0])) for row in raw_rows]
         assert canonical_entry_ids == raw_entry_ids_by_position, (
             "after renormalization, position order must equal the canonical "
@@ -6040,7 +5996,6 @@ class TestPodcastSubscriptionLifecycleClosure:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=2,
         )
 
         provider_podcast_id = f"poll-{uuid4()}"
@@ -6048,7 +6003,7 @@ class TestPodcastSubscriptionLifecycleClosure:
         episodes_by_podcast = {
             provider_podcast_id: [
                 {
-                    "provider_episode_id": "ep-poll-1",
+                    "podcast_index_episode_ref": "ep-poll-1",
                     "guid": "guid-poll-1",
                     "title": "Poll Episode One",
                     "audio_url": "https://cdn.example.com/poll-1.mp3",
@@ -6065,12 +6020,12 @@ class TestPodcastSubscriptionLifecycleClosure:
         )
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        podcast_id = UUID(subscribe_data["podcast_id"])
+        podcast_id = UUID(subscribe_data["podcastId"])
         _run_subscription_sync(direct_db, user_id, podcast_id)
 
         episodes_by_podcast[provider_podcast_id].append(
             {
-                "provider_episode_id": "ep-poll-2",
+                "podcast_index_episode_ref": "ep-poll-2",
                 "guid": "guid-poll-2",
                 "title": "Poll Episode Two",
                 "audio_url": "https://cdn.example.com/poll-2.mp3",
@@ -6131,13 +6086,12 @@ class TestPodcastApiSurface:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=5,
         )
         payload = _podcast_payload(provider_podcast_id, title)
         episodes_by_podcast: dict[str, list[dict[str, object]]] = {
             provider_podcast_id: [
                 {
-                    "provider_episode_id": f"{provider_podcast_id}-ep-1",
+                    "podcast_index_episode_ref": f"{provider_podcast_id}-ep-1",
                     "guid": f"{provider_podcast_id}-guid-1",
                     "title": "Episode 1",
                     "audio_url": "https://cdn.example.com/podcast-ep-1.mp3",
@@ -6146,7 +6100,7 @@ class TestPodcastApiSurface:
                     "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 800, "text": "ep1"}],
                 },
                 {
-                    "provider_episode_id": f"{provider_podcast_id}-ep-2",
+                    "podcast_index_episode_ref": f"{provider_podcast_id}-ep-2",
                     "guid": f"{provider_podcast_id}-guid-2",
                     "title": "Episode 2",
                     "audio_url": "https://cdn.example.com/podcast-ep-2.mp3",
@@ -6162,7 +6116,7 @@ class TestPodcastApiSurface:
             episodes_by_podcast=episodes_by_podcast,
         )
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        podcast_id = UUID(subscribe_data["podcast_id"])
+        podcast_id = UUID(subscribe_data["podcastId"])
         _run_subscription_sync(direct_db, user_id, podcast_id)
         return podcast_id, episodes_by_podcast
 
@@ -6216,8 +6170,9 @@ class TestPodcastApiSurface:
         assert data["podcast"]["id"] == str(podcast_id)
         assert data["podcast"]["provider_podcast_id"] == provider_podcast_id
         assert data["podcast"]["title"] == "Detail Podcast"
-        assert data["subscription"]["status"] == "active"
         assert data["subscription"]["podcast_id"] == str(podcast_id)
+        assert data["subscription"]["sync_status"] in {"complete", "source_limited"}
+        assert data["subscription"]["backfill"]["state"] == "Pending"
 
     def test_get_podcast_episodes_returns_visible_episode_media(
         self, auth_client, monkeypatch, direct_db
@@ -6387,8 +6342,7 @@ class TestPodcastApiSurface:
             episodes_by_podcast={provider_podcast_id: []},
         )
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        podcast_id = subscribe_data["podcast_id"]
-
+        podcast_id = subscribe_data["podcastId"]
         too_low = auth_client.patch(
             f"/podcasts/subscriptions/{podcast_id}/settings",
             headers=auth_headers(user_id),
@@ -6436,8 +6390,7 @@ class TestPodcastApiSurface:
             episodes_by_podcast={provider_podcast_id: []},
         )
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        podcast_id = subscribe_data["podcast_id"]
-
+        podcast_id = subscribe_data["podcastId"]
         removed_field = auth_client.patch(
             f"/podcasts/subscriptions/{podcast_id}/settings",
             headers=auth_headers(user_id),
@@ -6508,7 +6461,7 @@ class TestPodcastApiSurface:
         assert no_transcript_episode is not None
         assert no_transcript_episode["rss_transcript_refs"] is None
 
-    def test_sync_persists_rss_vtt_transcript_without_jobs_or_quota_spend(
+    def test_sync_records_rss_vtt_reference_without_materializing_transcript(
         self, auth_client, monkeypatch, direct_db
     ):
         user_id = create_test_user_id()
@@ -6519,7 +6472,6 @@ class TestPodcastApiSurface:
             user_id,
             plan_tier="free",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=1,
         )
 
         provider_podcast_id = f"rss-vtt-sync-{uuid4()}"
@@ -6528,7 +6480,7 @@ class TestPodcastApiSurface:
         episodes_by_podcast = {
             provider_podcast_id: [
                 {
-                    "provider_episode_id": f"{provider_podcast_id}-ep-1",
+                    "podcast_index_episode_ref": f"{provider_podcast_id}-ep-1",
                     "guid": f"{provider_podcast_id}-guid-1",
                     "title": "RSS VTT Episode",
                     "audio_url": episode_audio_url,
@@ -6565,8 +6517,11 @@ class TestPodcastApiSurface:
 <v Host>hello rss
 """
 
+        fetched_urls: list[str] = []
+
         def fake_safe_get(url: str, **kwargs: object) -> SafeFetchResult:
             _ = kwargs
+            fetched_urls.append(url)
             if url == payload["feed_url"]:
                 return SafeFetchResult(
                     final_url=url,
@@ -6587,7 +6542,7 @@ class TestPodcastApiSurface:
         monkeypatch.setattr("nexus.services.rss_transcript_fetch.safe_get", fake_safe_get)
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        podcast_id = UUID(subscribe_data["podcast_id"])
+        podcast_id = UUID(subscribe_data["podcastId"])
         _run_subscription_sync(
             direct_db,
             user_id,
@@ -6608,20 +6563,22 @@ class TestPodcastApiSurface:
             ).scalar()
             assert media_id is not None
 
-            semantic_result = run_queued_transcript_semantic_reindex(
-                session,
-                media_id=media_id,
-            )
-            assert semantic_result["status"] == "completed"
-
-            media_status = session.execute(
-                text("SELECT processing_status FROM media WHERE id = :media_id"),
+            episode_state = session.execute(
+                text(
+                    """
+                    SELECT episode.rss_transcript_url, media.processing_status
+                    FROM podcast_episodes episode
+                    JOIN media ON media.id = episode.media_id
+                    WHERE episode.media_id = :media_id
+                    """
+                ),
                 {"media_id": media_id},
-            ).scalar()
+            ).fetchone()
             transcript_state = session.execute(
                 text(
                     """
-                    SELECT transcript_state, transcript_coverage, last_request_reason
+                    SELECT transcript_state, transcript_coverage,
+                           last_request_reason, transcript_origin
                     FROM media_transcript_states
                     WHERE media_id = :media_id
                     """
@@ -6662,19 +6619,18 @@ class TestPodcastApiSurface:
                 {"user_id": user_id, "usage_date": datetime.now(UTC).date()},
             ).fetchone()
 
-        assert media_status == "ready_for_reading"
-        assert transcript_state == ("ready", "full", "rss_feed"), (
-            f"expected RSS VTT transcript to make episode readable with full coverage, got {transcript_state}"
-        )
-        assert fragment_count == 1
-        assert segment_count == 1
-        assert chunk_count == 1
-        assert job_count == 0, "RSS transcript sync should not enqueue transcription jobs"
+        assert episode_state == (transcript_url, "pending")
+        assert transcript_state == ("not_requested", "none", None, None)
+        assert fragment_count == 0
+        assert segment_count == 0
+        assert chunk_count == 0
+        assert job_count == 0
+        assert transcript_url not in fetched_urls
         assert usage_row in {None, (0, 0)}, (
-            "RSS transcript sync should not spend or reserve quota usage"
+            "RSS transcript discovery must not spend or reserve quota usage"
         )
 
-    def test_resync_upgrades_not_requested_episode_when_rss_transcript_appears(
+    def test_resync_records_new_rss_transcript_reference_without_materializing(
         self, auth_client, monkeypatch, direct_db
     ):
         user_id = create_test_user_id()
@@ -6685,7 +6641,6 @@ class TestPodcastApiSurface:
             user_id,
             plan_tier="free",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=1,
         )
 
         provider_podcast_id = f"rss-upgrade-{uuid4()}"
@@ -6694,7 +6649,7 @@ class TestPodcastApiSurface:
         episodes_by_podcast = {
             provider_podcast_id: [
                 {
-                    "provider_episode_id": f"{provider_podcast_id}-ep-1",
+                    "podcast_index_episode_ref": f"{provider_podcast_id}-ep-1",
                     "guid": f"{provider_podcast_id}-guid-1",
                     "title": "RSS Upgrade Episode",
                     "audio_url": episode_audio_url,
@@ -6745,8 +6700,11 @@ upgrade now
 """
         state = {"rss_enabled": False}
 
+        fetched_urls: list[str] = []
+
         def fake_safe_get(url: str, **kwargs: object) -> SafeFetchResult:
             _ = kwargs
+            fetched_urls.append(url)
             if url == payload["feed_url"]:
                 feed_body = (
                     feed_with_transcript if state["rss_enabled"] else feed_without_transcript
@@ -6770,7 +6728,7 @@ upgrade now
         monkeypatch.setattr("nexus.services.rss_transcript_fetch.safe_get", fake_safe_get)
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        podcast_id = UUID(subscribe_data["podcast_id"])
+        podcast_id = UUID(subscribe_data["podcastId"])
 
         _run_subscription_sync(
             direct_db,
@@ -6826,10 +6784,17 @@ upgrade now
                 ),
                 {"media_id": media_id},
             ).fetchone()
-            media_status = session.execute(
-                text("SELECT processing_status FROM media WHERE id = :media_id"),
+            episode_state = session.execute(
+                text(
+                    """
+                    SELECT episode.rss_transcript_url, media.processing_status
+                    FROM podcast_episodes episode
+                    JOIN media ON media.id = episode.media_id
+                    WHERE episode.media_id = :media_id
+                    """
+                ),
                 {"media_id": media_id},
-            ).scalar()
+            ).fetchone()
             transcript_reason = session.execute(
                 text(
                     "SELECT last_request_reason FROM media_transcript_states WHERE media_id = :media_id"
@@ -6841,12 +6806,11 @@ upgrade now
                 {"media_id": media_id},
             ).scalar()
 
-        assert upgraded_state == ("ready", "full"), (
-            f"expected re-sync to upgrade not_requested episode when RSS transcript appears, got {upgraded_state}"
-        )
-        assert media_status == "ready_for_reading"
-        assert transcript_reason == "rss_feed"
+        assert upgraded_state == ("not_requested", "none")
+        assert episode_state == (transcript_url, "pending")
+        assert transcript_reason is None
         assert job_count == 0
+        assert transcript_url not in fetched_urls
 
     def test_sync_extracts_podcasting20_chapters_and_exposes_episode_and_media_contract(
         self, auth_client, monkeypatch, direct_db
@@ -6858,7 +6822,7 @@ upgrade now
         episodes_by_podcast = {
             provider_podcast_id: [
                 {
-                    "provider_episode_id": f"{provider_podcast_id}-ep-1",
+                    "podcast_index_episode_ref": f"{provider_podcast_id}-ep-1",
                     "guid": f"{provider_podcast_id}-guid-1",
                     "title": "Chapter Episode",
                     "audio_url": "https://cdn.example.com/chapter-episode.mp3",
@@ -6935,7 +6899,7 @@ upgrade now
         monkeypatch.setattr("nexus.services.podcasts.feed.safe_get", fake_safe_get)
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        podcast_id = UUID(subscribe_data["podcast_id"])
+        podcast_id = UUID(subscribe_data["podcastId"])
         _run_subscription_sync(
             direct_db,
             user_id,
@@ -7016,7 +6980,7 @@ upgrade now
         episodes_by_podcast = {
             provider_podcast_id: [
                 {
-                    "provider_episode_id": f"{provider_podcast_id}-ep-1",
+                    "podcast_index_episode_ref": f"{provider_podcast_id}-ep-1",
                     "guid": f"{provider_podcast_id}-guid-1",
                     "title": "Podlove Episode",
                     "audio_url": "https://cdn.example.com/podlove-episode.mp3",
@@ -7070,7 +7034,7 @@ upgrade now
         monkeypatch.setattr("nexus.services.podcasts.feed.safe_get", fake_safe_get)
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        podcast_id = UUID(subscribe_data["podcast_id"])
+        podcast_id = UUID(subscribe_data["podcastId"])
         _run_subscription_sync(
             direct_db,
             user_id,
@@ -7166,7 +7130,7 @@ upgrade now
         episodes_by_podcast = {
             provider_podcast_id: [
                 {
-                    "provider_episode_id": f"{provider_podcast_id}-ep-alpha",
+                    "podcast_index_episode_ref": f"{provider_podcast_id}-ep-alpha",
                     "guid": f"{provider_podcast_id}-guid-alpha",
                     "title": "Interview Alpha",
                     "audio_url": "https://cdn.example.com/state-alpha.mp3",
@@ -7175,7 +7139,7 @@ upgrade now
                     "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 700, "text": "alpha"}],
                 },
                 {
-                    "provider_episode_id": f"{provider_podcast_id}-ep-daily",
+                    "podcast_index_episode_ref": f"{provider_podcast_id}-ep-daily",
                     "guid": f"{provider_podcast_id}-guid-daily",
                     "title": "Daily Roundup",
                     "audio_url": "https://cdn.example.com/state-daily.mp3",
@@ -7184,7 +7148,7 @@ upgrade now
                     "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 700, "text": "daily"}],
                 },
                 {
-                    "provider_episode_id": f"{provider_podcast_id}-ep-gamma",
+                    "podcast_index_episode_ref": f"{provider_podcast_id}-ep-gamma",
                     "guid": f"{provider_podcast_id}-guid-gamma",
                     "title": "Interview Gamma",
                     "audio_url": "https://cdn.example.com/state-gamma.mp3",
@@ -7200,7 +7164,7 @@ upgrade now
             episodes_by_podcast=episodes_by_podcast,
         )
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        podcast_id = UUID(subscribe_data["podcast_id"])
+        podcast_id = UUID(subscribe_data["podcastId"])
         _run_subscription_sync(
             direct_db,
             user_id,
@@ -7345,7 +7309,7 @@ upgrade now
         episodes_by_podcast = {
             provider_alpha: [
                 {
-                    "provider_episode_id": f"{provider_alpha}-ep-1",
+                    "podcast_index_episode_ref": f"{provider_alpha}-ep-1",
                     "guid": f"{provider_alpha}-guid-1",
                     "title": "Alpha Episode 1",
                     "audio_url": "https://cdn.example.com/alpha-1.mp3",
@@ -7354,7 +7318,7 @@ upgrade now
                     "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 700, "text": "alpha1"}],
                 },
                 {
-                    "provider_episode_id": f"{provider_alpha}-ep-2",
+                    "podcast_index_episode_ref": f"{provider_alpha}-ep-2",
                     "guid": f"{provider_alpha}-guid-2",
                     "title": "Alpha Episode 2",
                     "audio_url": "https://cdn.example.com/alpha-2.mp3",
@@ -7365,7 +7329,7 @@ upgrade now
             ],
             provider_beta: [
                 {
-                    "provider_episode_id": f"{provider_beta}-ep-1",
+                    "podcast_index_episode_ref": f"{provider_beta}-ep-1",
                     "guid": f"{provider_beta}-guid-1",
                     "title": "Beta Episode 1",
                     "audio_url": "https://cdn.example.com/beta-1.mp3",
@@ -7374,7 +7338,7 @@ upgrade now
                     "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 700, "text": "beta1"}],
                 },
                 {
-                    "provider_episode_id": f"{provider_beta}-ep-2",
+                    "podcast_index_episode_ref": f"{provider_beta}-ep-2",
                     "guid": f"{provider_beta}-guid-2",
                     "title": "Beta Episode 2",
                     "audio_url": "https://cdn.example.com/beta-2.mp3",
@@ -7392,8 +7356,8 @@ upgrade now
 
         alpha_subscribe = _subscribe(auth_client, user_id, alpha_payload)
         beta_subscribe = _subscribe(auth_client, user_id, beta_payload)
-        alpha_podcast_id = UUID(alpha_subscribe["podcast_id"])
-        beta_podcast_id = UUID(beta_subscribe["podcast_id"])
+        alpha_podcast_id = UUID(alpha_subscribe["podcastId"])
+        beta_podcast_id = UUID(beta_subscribe["podcastId"])
 
         _run_subscription_sync(
             direct_db,
@@ -7495,7 +7459,7 @@ upgrade now
         episodes_by_podcast = {
             alpha_provider: [
                 {
-                    "provider_episode_id": f"{alpha_provider}-ep-1",
+                    "podcast_index_episode_ref": f"{alpha_provider}-ep-1",
                     "guid": f"{alpha_provider}-guid-1",
                     "title": "Alpha Episode 1",
                     "audio_url": "https://cdn.example.com/filter-alpha-1.mp3",
@@ -7506,7 +7470,7 @@ upgrade now
             ],
             bravo_provider: [
                 {
-                    "provider_episode_id": f"{bravo_provider}-ep-1",
+                    "podcast_index_episode_ref": f"{bravo_provider}-ep-1",
                     "guid": f"{bravo_provider}-guid-1",
                     "title": "Bravo Episode 1",
                     "audio_url": "https://cdn.example.com/filter-bravo-1.mp3",
@@ -7517,7 +7481,7 @@ upgrade now
             ],
             charlie_provider: [
                 {
-                    "provider_episode_id": f"{charlie_provider}-ep-1",
+                    "podcast_index_episode_ref": f"{charlie_provider}-ep-1",
                     "guid": f"{charlie_provider}-guid-1",
                     "title": "Charlie Episode 1",
                     "audio_url": "https://cdn.example.com/filter-charlie-1.mp3",
@@ -7533,9 +7497,9 @@ upgrade now
             episodes_by_podcast=episodes_by_podcast,
         )
 
-        alpha_podcast_id = UUID(_subscribe(auth_client, user_id, alpha_payload)["podcast_id"])
-        bravo_podcast_id = UUID(_subscribe(auth_client, user_id, bravo_payload)["podcast_id"])
-        charlie_podcast_id = UUID(_subscribe(auth_client, user_id, charlie_payload)["podcast_id"])
+        alpha_podcast_id = UUID(_subscribe(auth_client, user_id, alpha_payload)["podcastId"])
+        bravo_podcast_id = UUID(_subscribe(auth_client, user_id, bravo_payload)["podcastId"])
+        charlie_podcast_id = UUID(_subscribe(auth_client, user_id, charlie_payload)["podcastId"])
 
         _run_subscription_sync(direct_db, user_id, alpha_podcast_id, run_transcription_jobs=False)
         _run_subscription_sync(direct_db, user_id, bravo_podcast_id, run_transcription_jobs=False)
@@ -7544,21 +7508,23 @@ upgrade now
         alpha_library_id = _create_library(auth_client, user_id, name=f"alpha-{alpha_provider}")
         bravo_library_id = _create_library(auth_client, user_id, name=f"bravo-{bravo_provider}")
 
-        add_alpha_to_library = auth_client.post(
-            f"/libraries/{alpha_library_id}/podcasts",
-            headers=auth_headers(user_id),
-            json={"podcast_id": str(alpha_podcast_id)},
+        add_alpha_to_library = _file_canonical_podcast(
+            auth_client,
+            user_id,
+            alpha_podcast_id,
+            [alpha_library_id],
         )
-        assert add_alpha_to_library.status_code == 204, (
+        assert add_alpha_to_library.status_code == 200, (
             "adding alpha podcast to a non-default library should succeed before scope assertions, "
             f"got {add_alpha_to_library.status_code}: {add_alpha_to_library.text}"
         )
-        add_bravo_to_library = auth_client.post(
-            f"/libraries/{bravo_library_id}/podcasts",
-            headers=auth_headers(user_id),
-            json={"podcast_id": str(bravo_podcast_id)},
+        add_bravo_to_library = _file_canonical_podcast(
+            auth_client,
+            user_id,
+            bravo_podcast_id,
+            [bravo_library_id],
         )
-        assert add_bravo_to_library.status_code == 204, (
+        assert add_bravo_to_library.status_code == 200, (
             "adding bravo podcast to a non-default library should succeed before scope assertions, "
             f"got {add_bravo_to_library.status_code}: {add_bravo_to_library.text}"
         )
@@ -7625,45 +7591,6 @@ upgrade now
         library_scope_rows = library_scope_response.json()["data"]["items"]
         assert [row["title"] for row in library_scope_rows] == ["Alpha Systems"]
         assert "visible_libraries" not in library_scope_rows[0]
-
-    def test_discover_retries_transient_provider_timeout_before_failing(
-        self, auth_client, monkeypatch
-    ):
-        user_id = create_test_user_id()
-        _bootstrap_user(auth_client, user_id)
-        monkeypatch.setenv("PODCAST_INDEX_API_KEY", "test-key")
-        monkeypatch.setenv("PODCAST_INDEX_API_SECRET", "test-secret")
-        clear_settings_cache()
-
-        # The retry/backoff loop now lives in `get_json_with_retry`, which the provider
-        # calls at its network boundary. Patch THAT seam, not the underlying HTTP client
-        # method: the FastAPI TestClient drives the app over the same `httpx` client, so
-        # patching the client method would intercept this test's own request to the app
-        # rather than the provider's outbound call. Raising the provider-unavailable
-        # ApiError here simulates retry exhaustion: `get_json_with_retry` has already
-        # burned through its attempts and is surfacing the terminal failure.
-        def fake(*args: object, **kwargs: object) -> dict[str, object]:
-            _ = args, kwargs
-            raise ApiError(
-                ApiErrorCode.E_PODCAST_PROVIDER_UNAVAILABLE,
-                "Podcast provider timed out after exhausting retries",
-            )
-
-        monkeypatch.setattr("nexus.services.podcasts.provider.get_json_with_retry", fake)
-        response = auth_client.get(
-            "/podcasts/discover?q=retry&limit=10", headers=auth_headers(user_id)
-        )
-        # Retry-count behavior (transient timeout -> backoff -> retry) is now owned and
-        # covered by the `get_json_with_retry` seam; this test pins only the failure
-        # OUTCOME the provider surfaces once retries are exhausted: a 503 provider-
-        # unavailable error bubbling out of discover.
-        assert response.status_code == 503, (
-            "discover should surface provider-unavailable once retries are exhausted; "
-            f"got {response.status_code}: {response.text}"
-        )
-        assert (
-            response.json()["error"]["code"] == ApiErrorCode.E_PODCAST_PROVIDER_UNAVAILABLE.value
-        ), f"expected provider-unavailable error code, got {response.text}"
 
 
 class TestPodcastOpmlImportExport:
@@ -8005,13 +7932,11 @@ class TestPodcastOpmlImportExport:
         provider_id = f"response-loss-opml-{uuid4()}"
         payload = {
             **_podcast_payload(provider_id, "Response Loss OPML"),
-            "library_ids": [str(old_library_id)],
+            "named_library_ids": [str(old_library_id)],
         }
         subscribed = _subscribe(auth_client, user_id, payload)
-        podcast_id = UUID(subscribed["podcast_id"])
-        direct_db.register_cleanup(
-            "podcast_subscription_libraries", "subscription_podcast_id", podcast_id
-        )
+        podcast_id = UUID(subscribed["podcastId"])
+        direct_db.register_cleanup("library_entries", "podcast_id", podcast_id)
         direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
         direct_db.register_cleanup("podcasts", "id", podcast_id)
 
@@ -8051,15 +7976,14 @@ class TestPodcastOpmlImportExport:
                     text(
                         """
                         SELECT library_id
-                        FROM podcast_subscription_libraries
-                        WHERE subscription_user_id = :user_id
-                          AND subscription_podcast_id = :podcast_id
+                        FROM library_entries
+                        WHERE podcast_id = :podcast_id
                         """
                     ),
                     {"user_id": user_id, "podcast_id": podcast_id},
                 ).all()
             }
-        assert replayed_library_ids == {requested_library_id}
+        assert replayed_library_ids == {old_library_id, requested_library_id}
 
     def test_import_opml_rejects_non_xml_payload(self, auth_client):
         user_id = create_test_user_id()
@@ -8159,7 +8083,10 @@ class TestPodcastOpmlImportExport:
 
         unsubscribe_response = auth_client.delete(
             f"/podcasts/subscriptions/{second_sub['podcast_id']}",
-            headers=auth_headers(user_id),
+            headers={
+                **auth_headers(user_id),
+                "Idempotency-Key": f"unsubscribe-opml-{uuid4()}",
+            },
         )
         assert unsubscribe_response.status_code == 200, (
             f"unsubscribe setup failed: {unsubscribe_response.status_code} {unsubscribe_response.text}"
@@ -8202,7 +8129,7 @@ class TestPodcastOpmlImportExport:
             "export should include podcast title in OPML text attribute, "
             f"got titles={exported_titles}"
         )
-        assert str(first_sub["podcast_id"]) != str(second_sub["podcast_id"])
+        assert str(first_sub["podcastId"]) != str(second_sub["podcastId"])
 
 
 class TestPodcastTranscriptionAsyncLifecycle:
@@ -8222,7 +8149,6 @@ class TestPodcastTranscriptionAsyncLifecycle:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=1,
         )
 
         provider_podcast_id = f"tx-lifecycle-{uuid4()}"
@@ -8230,7 +8156,7 @@ class TestPodcastTranscriptionAsyncLifecycle:
         episodes_by_podcast = {
             provider_podcast_id: [
                 {
-                    "provider_episode_id": f"{provider_podcast_id}-ep-1",
+                    "podcast_index_episode_ref": f"{provider_podcast_id}-ep-1",
                     "guid": f"{provider_podcast_id}-guid-1",
                     "title": "Lifecycle Episode",
                     "audio_url": "https://cdn.example.com/lifecycle-1.mp3",
@@ -8247,7 +8173,7 @@ class TestPodcastTranscriptionAsyncLifecycle:
         )
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        podcast_id = UUID(subscribe_data["podcast_id"])
+        podcast_id = UUID(subscribe_data["podcastId"])
         _run_subscription_sync(
             direct_db,
             user_id,
@@ -8273,7 +8199,7 @@ class TestPodcastTranscriptionAsyncLifecycle:
             from nexus.services.podcasts import transcription as podcast_transcript_service
 
             with direct_db.session() as session:
-                podcast_transcript_service.request_podcast_transcript_for_viewer(
+                podcast_transcript_service.request_media_transcript_for_viewer(
                     session,
                     viewer_id=user_id,
                     media_id=media_id,
@@ -8482,7 +8408,6 @@ class TestPodcastShowNotesAndBatchCutover:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=transcription_minutes_limit_monthly,
-            initial_episode_window=5,
         )
         payload = _podcast_payload(provider_podcast_id, "Show Notes Podcast")
         _mock_podcast_index(
@@ -8491,7 +8416,7 @@ class TestPodcastShowNotesAndBatchCutover:
             episodes_by_podcast={
                 provider_podcast_id: [
                     {
-                        "provider_episode_id": f"{provider_podcast_id}-ep-1",
+                        "podcast_index_episode_ref": f"{provider_podcast_id}-ep-1",
                         "guid": f"{provider_podcast_id}-guid-1",
                         "title": "Show Notes Episode",
                         "audio_url": f"https://cdn.example.com/{provider_podcast_id}-ep-1.mp3",
@@ -8518,7 +8443,7 @@ class TestPodcastShowNotesAndBatchCutover:
 
         monkeypatch.setattr("nexus.services.podcasts.feed.safe_get", fake_safe_get)
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        podcast_id = UUID(subscribe_data["podcast_id"])
+        podcast_id = UUID(subscribe_data["podcastId"])
         _run_subscription_sync(
             direct_db,
             user_id,
@@ -8688,9 +8613,7 @@ class TestPodcastShowNotesAndBatchCutover:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=1,
-            initial_episode_window=5,
         )
-        monkeypatch.setenv("PODCAST_INITIAL_EPISODE_WINDOW", "5")
         clear_settings_cache()
         provider_podcast_id = f"batch-request-{uuid4()}"
         payload = _podcast_payload(provider_podcast_id, "Batch Transcript Podcast")
@@ -8698,7 +8621,7 @@ class TestPodcastShowNotesAndBatchCutover:
         for idx in range(5):
             episodes.append(
                 {
-                    "provider_episode_id": f"{provider_podcast_id}-ep-{idx}",
+                    "podcast_index_episode_ref": f"{provider_podcast_id}-ep-{idx}",
                     "guid": f"{provider_podcast_id}-guid-{idx}",
                     "title": f"Batch Episode {idx}",
                     "audio_url": f"https://cdn.example.com/{provider_podcast_id}/{idx}.mp3",
@@ -8713,7 +8636,7 @@ class TestPodcastShowNotesAndBatchCutover:
             episodes_by_podcast={provider_podcast_id: episodes},
         )
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        podcast_id = UUID(subscribe_data["podcast_id"])
+        podcast_id = UUID(subscribe_data["podcastId"])
         _run_subscription_sync(
             direct_db,
             user_id,
@@ -8729,8 +8652,12 @@ class TestPodcastShowNotesAndBatchCutover:
                         """
                         SELECT pe.media_id
                         FROM podcast_episodes pe
+                        JOIN podcast_episode_identities pei
+                          ON pei.episode_media_id = pe.media_id
+                         AND pei.podcast_id = pe.podcast_id
+                         AND pei.scheme = 'PodcastIndex'
                         WHERE pe.podcast_id = :podcast_id
-                        ORDER BY pe.provider_episode_id ASC
+                        ORDER BY pei.value ASC
                         """
                     ),
                     {"podcast_id": podcast_id},
@@ -8749,6 +8676,7 @@ class TestPodcastShowNotesAndBatchCutover:
                 session,
                 media_id=ready_media_id,
                 request_reason="search",
+                transcript_origin="Generated",
                 transcript_coverage="full",
                 transcript_segments=[
                     TranscriptSegmentInput(
@@ -8933,14 +8861,13 @@ class TestPodcastTranscriptStateVersioningAndAudit:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=1,
         )
 
         provider_podcast_id = f"state-version-{uuid4()}"
         payload = _podcast_payload(provider_podcast_id, "State Version Podcast")
         episodes = [
             {
-                "provider_episode_id": "ep-state-version-1",
+                "podcast_index_episode_ref": "ep-state-version-1",
                 "guid": "guid-state-version-1",
                 "title": "State Version Episode",
                 "audio_url": "https://cdn.example.com/state-version.mp3",
@@ -8956,7 +8883,7 @@ class TestPodcastTranscriptStateVersioningAndAudit:
         )
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        podcast_id = UUID(subscribe_data["podcast_id"])
+        podcast_id = UUID(subscribe_data["podcastId"])
         _run_subscription_sync(
             direct_db,
             user_id,
@@ -9699,6 +9626,7 @@ class TestPodcastTranscriptStateVersioningAndAudit:
                 session,
                 media_id=media_id,
                 request_reason="episode_open",
+                transcript_origin="Generated",
                 transcript_coverage="full",
                 transcript_segments=[
                     TranscriptSegmentInput(
@@ -9718,6 +9646,7 @@ class TestPodcastTranscriptStateVersioningAndAudit:
                 session,
                 media_id=media_id,
                 request_reason="search",
+                transcript_origin="Generated",
                 transcript_coverage="full",
                 transcript_segments=[
                     TranscriptSegmentInput(
@@ -9770,6 +9699,7 @@ class TestPodcastTranscriptStateVersioningAndAudit:
                     session,
                     media_id=media_id,
                     request_reason="episode_open",
+                    transcript_origin="Generated",
                     transcript_coverage="full",
                     transcript_segments=[
                         TranscriptSegmentInput(
@@ -9831,13 +9761,13 @@ def _library_entries_for_media(direct_db, media_id: UUID) -> set[UUID]:
     return {UUID(str(row[0])) for row in rows}
 
 
-class TestSubscribeWithLibraryIds:
-    """Podcast subscribe + sync with `library_ids` per spec §13.1."""
+class TestSubscribeWithNamedLibraries:
+    """Podcast subscription placement and episode/default-library projection."""
 
-    def test_subscribe_with_library_ids_populates_join_table(
+    def test_subscribe_with_library_ids_places_podcast_in_named_libraries(
         self, auth_client, monkeypatch, direct_db
     ):
-        """Subscribe with library_ids inserts one row per id in podcast_subscription_libraries."""
+        """Subscribe places the Podcast resource in every named destination."""
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
 
@@ -9850,7 +9780,7 @@ class TestSubscribeWithLibraryIds:
 
         provider_podcast_id = f"sub-libs-{uuid4()}"
         payload = _podcast_payload(provider_podcast_id, "Subscribe Libs Podcast")
-        payload["library_ids"] = [str(lib_a), str(lib_b)]
+        payload["named_library_ids"] = [str(lib_a), str(lib_b)]
         _mock_podcast_index(
             monkeypatch,
             podcasts=[payload],
@@ -9858,28 +9788,25 @@ class TestSubscribeWithLibraryIds:
         )
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        podcast_id = UUID(subscribe_data["podcast_id"])
+        podcast_id = UUID(subscribe_data["podcastId"])
         direct_db.register_cleanup("podcasts", "id", podcast_id)
         direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
-        direct_db.register_cleanup(
-            "podcast_subscription_libraries", "subscription_podcast_id", podcast_id
-        )
+        direct_db.register_cleanup("library_entries", "podcast_id", podcast_id)
 
         with direct_db.session() as session:
             rows = session.execute(
                 text(
                     """
                     SELECT library_id
-                    FROM podcast_subscription_libraries
-                    WHERE subscription_user_id = :user_id
-                      AND subscription_podcast_id = :podcast_id
+                    FROM library_entries
+                    WHERE podcast_id = :podcast_id
                     """
                 ),
                 {"user_id": user_id, "podcast_id": podcast_id},
             ).fetchall()
         library_ids_on_subscription = {UUID(str(row[0])) for row in rows}
         assert library_ids_on_subscription == {lib_a, lib_b}, (
-            "podcast_subscription_libraries must have exactly one row per subscribed library id, "
+            "library_entries must have exactly one Podcast row per named destination, "
             f"got {library_ids_on_subscription}"
         )
 
@@ -9900,7 +9827,7 @@ class TestSubscribeWithLibraryIds:
         expected_status: int,
         expected_code: str,
     ):
-        """Subscribe library_ids are writable destinations, not defaults or member-only libs."""
+        """Named destinations are writable non-default Libraries without duplicates."""
         from tests.factories import add_library_member
 
         user_id = create_test_user_id()
@@ -9920,11 +9847,11 @@ class TestSubscribeWithLibraryIds:
         provider_podcast_id = f"reject-libs-{case}-{uuid4()}"
         payload = _podcast_payload(provider_podcast_id, f"Reject Libs {case}")
         if case == "default":
-            payload["library_ids"] = [str(default_library_id)]
+            payload["named_library_ids"] = [str(default_library_id)]
         elif case == "duplicate":
-            payload["library_ids"] = [str(writable_id), str(writable_id)]
+            payload["named_library_ids"] = [str(writable_id), str(writable_id)]
         else:
-            payload["library_ids"] = [str(member_only_id)]
+            payload["named_library_ids"] = [str(member_only_id)]
 
         _mock_podcast_index(
             monkeypatch,
@@ -9934,17 +9861,20 @@ class TestSubscribeWithLibraryIds:
 
         response = auth_client.post(
             "/podcasts/subscriptions",
-            json=payload,
-            headers=auth_headers(user_id),
+            json=_subscribe_request(payload),
+            headers={
+                **auth_headers(user_id),
+                "Idempotency-Key": f"reject-libraries-{uuid4()}",
+            },
         )
 
         assert response.status_code == expected_status, response.text
         assert response.json()["error"]["code"] == expected_code
 
-    def test_subscribe_backfills_existing_episodes_to_libraries(
+    def test_subscription_places_podcast_named_and_ingested_episodes_default_only(
         self, auth_client, monkeypatch, direct_db
     ):
-        """Initial sync backfills existing episodes into the subscription's libraries."""
+        """Named Libraries contain the Podcast; ingested episodes project through Default."""
         from nexus.services.podcasts.poll import run_podcast_subscription_sync_now
 
         user_id = create_test_user_id()
@@ -9955,7 +9885,6 @@ class TestSubscribeWithLibraryIds:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=5,
         )
 
         with direct_db.session() as session:
@@ -9967,10 +9896,10 @@ class TestSubscribeWithLibraryIds:
 
         provider_podcast_id = f"backfill-libs-{uuid4()}"
         payload = _podcast_payload(provider_podcast_id, "Backfill Libs Podcast")
-        payload["library_ids"] = [str(lib_a), str(lib_b)]
+        payload["named_library_ids"] = [str(lib_a), str(lib_b)]
         episodes = [
             {
-                "provider_episode_id": "backfill-ep-1",
+                "podcast_index_episode_ref": "backfill-ep-1",
                 "guid": "backfill-guid-1",
                 "title": "Backfill Episode 1",
                 "audio_url": "https://cdn.example.com/backfill-ep-1.mp3",
@@ -9979,7 +9908,7 @@ class TestSubscribeWithLibraryIds:
                 "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 800, "text": "ep1"}],
             },
             {
-                "provider_episode_id": "backfill-ep-2",
+                "podcast_index_episode_ref": "backfill-ep-2",
                 "guid": "backfill-guid-2",
                 "title": "Backfill Episode 2",
                 "audio_url": "https://cdn.example.com/backfill-ep-2.mp3",
@@ -9995,12 +9924,10 @@ class TestSubscribeWithLibraryIds:
         )
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        podcast_id = UUID(subscribe_data["podcast_id"])
+        podcast_id = UUID(subscribe_data["podcastId"])
         direct_db.register_cleanup("podcasts", "id", podcast_id)
         direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
-        direct_db.register_cleanup(
-            "podcast_subscription_libraries", "subscription_podcast_id", podcast_id
-        )
+        direct_db.register_cleanup("library_entries", "podcast_id", podcast_id)
 
         with direct_db.session() as session:
             sync_result = run_podcast_subscription_sync_now(
@@ -10030,16 +9957,27 @@ class TestSubscribeWithLibraryIds:
         assert len(episode_ids) >= 2, f"expected at least two episodes, got {episode_ids}"
 
         for episode_id in episode_ids:
-            memberships = _library_entries_for_media(direct_db, episode_id)
-            assert {default_library_id, lib_a, lib_b}.issubset(memberships), (
-                "each backfilled episode media row must belong to default + subscription libs, "
-                f"got {memberships} for {episode_id}"
-            )
+            assert _library_entries_for_media(direct_db, episode_id) == {default_library_id}
+        with direct_db.session() as session:
+            podcast_destinations = {
+                UUID(str(row[0]))
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT library_id
+                        FROM library_entries
+                        WHERE podcast_id = :podcast_id
+                        """
+                    ),
+                    {"podcast_id": podcast_id},
+                ).all()
+            }
+        assert podcast_destinations == {lib_a, lib_b}
 
-    def test_sync_new_episodes_inherit_subscription_libraries(
+    def test_sync_new_episodes_remain_default_only_under_named_podcast_placement(
         self, auth_client, monkeypatch, direct_db
     ):
-        """New episodes synced into an existing subscription inherit its library set."""
+        """A named Podcast placement never creates redundant named episode entries."""
         from nexus.services.podcasts.poll import run_podcast_subscription_sync_now
 
         user_id = create_test_user_id()
@@ -10050,7 +9988,6 @@ class TestSubscribeWithLibraryIds:
             user_id,
             plan_tier="ai_plus",
             transcription_minutes_limit_monthly=None,
-            initial_episode_window=5,
         )
 
         with direct_db.session() as session:
@@ -10062,11 +9999,11 @@ class TestSubscribeWithLibraryIds:
 
         provider_podcast_id = f"inherit-libs-{uuid4()}"
         payload = _podcast_payload(provider_podcast_id, "Inherit Libs Podcast")
-        payload["library_ids"] = [str(lib_a), str(lib_b)]
+        payload["named_library_ids"] = [str(lib_a), str(lib_b)]
 
         initial_episodes = [
             {
-                "provider_episode_id": "inherit-ep-1",
+                "podcast_index_episode_ref": "inherit-ep-1",
                 "guid": "inherit-guid-1",
                 "title": "Inherit Episode 1",
                 "audio_url": "https://cdn.example.com/inherit-ep-1.mp3",
@@ -10085,12 +10022,10 @@ class TestSubscribeWithLibraryIds:
         )
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        podcast_id = UUID(subscribe_data["podcast_id"])
+        podcast_id = UUID(subscribe_data["podcastId"])
         direct_db.register_cleanup("podcasts", "id", podcast_id)
         direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
-        direct_db.register_cleanup(
-            "podcast_subscription_libraries", "subscription_podcast_id", podcast_id
-        )
+        direct_db.register_cleanup("library_entries", "podcast_id", podcast_id)
 
         with direct_db.session() as session:
             run_podcast_subscription_sync_now(
@@ -10106,12 +10041,11 @@ class TestSubscribeWithLibraryIds:
             user_id,
             plan_tier="free",
             transcription_minutes_limit_monthly=0,
-            initial_episode_window=5,
         )
 
         # Add a NEW episode to the mocked feed for the next sync run.
         new_episode = {
-            "provider_episode_id": "inherit-ep-2",
+            "podcast_index_episode_ref": "inherit-ep-2",
             "guid": "inherit-guid-2",
             "title": "Inherit Episode 2 (NEW)",
             "audio_url": "https://cdn.example.com/inherit-ep-2.mp3",
@@ -10147,11 +10081,7 @@ class TestSubscribeWithLibraryIds:
 
         assert second_sync_episode_ids, "second sync must yield at least one episode media row"
         for episode_id in second_sync_episode_ids:
-            memberships = _library_entries_for_media(direct_db, episode_id)
-            assert {default_library_id, lib_a, lib_b}.issubset(memberships), (
-                "every episode media row synced under a subscription with library_ids "
-                f"must inherit those libraries; got {memberships} for {episode_id}"
-            )
+            assert _library_entries_for_media(direct_db, episode_id) == {default_library_id}
 
     def test_opml_import_per_feed_override_wins_over_default(
         self, auth_client, monkeypatch, direct_db
@@ -10225,9 +10155,7 @@ class TestSubscribeWithLibraryIds:
         for podcast_id in (podcast_one, podcast_two):
             direct_db.register_cleanup("podcasts", "id", podcast_id)
             direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
-            direct_db.register_cleanup(
-                "podcast_subscription_libraries", "subscription_podcast_id", podcast_id
-            )
+            direct_db.register_cleanup("library_entries", "podcast_id", podcast_id)
 
         with direct_db.session() as session:
             feed_one_libs = {
@@ -10236,9 +10164,8 @@ class TestSubscribeWithLibraryIds:
                     text(
                         """
                         SELECT library_id
-                        FROM podcast_subscription_libraries
-                        WHERE subscription_user_id = :user_id
-                          AND subscription_podcast_id = :podcast_id
+                        FROM library_entries
+                        WHERE podcast_id = :podcast_id
                         """
                     ),
                     {"user_id": user_id, "podcast_id": podcast_one},
@@ -10250,9 +10177,8 @@ class TestSubscribeWithLibraryIds:
                     text(
                         """
                         SELECT library_id
-                        FROM podcast_subscription_libraries
-                        WHERE subscription_user_id = :user_id
-                          AND subscription_podcast_id = :podcast_id
+                        FROM library_entries
+                        WHERE podcast_id = :podcast_id
                         """
                     ),
                     {"user_id": user_id, "podcast_id": podcast_two},
@@ -10286,7 +10212,7 @@ def _seed_watermark_podcast(auth_client, direct_db, monkeypatch, *, user_id):
     payload = _podcast_payload(provider_id, "Watermark Podcast")
     _mock_podcast_index(monkeypatch, podcasts=[payload], episodes_by_podcast={provider_id: []})
     data = _subscribe(auth_client, user_id, {**payload, "auto_queue": True})
-    return UUID(data["podcast_id"])
+    return UUID(data["podcastId"])
 
 
 def _seed_watermark_episode(session, *, podcast_id, user_id, published_at, title="WM Episode"):
@@ -10307,15 +10233,19 @@ def _seed_watermark_episode(session, *, podcast_id, user_id, published_at, title
         PodcastEpisode(
             media_id=media_id,
             podcast_id=podcast_id,
-            provider_episode_id=tag,
-            guid=tag,
-            fallback_identity=tag,
             published_at=published_at,
             duration_seconds=60,
             created_at=datetime.now(UTC),
         )
     )
     session.flush()
+    add_test_podcast_episode_identity(
+        session,
+        podcast_id=podcast_id,
+        media_id=media_id,
+        scheme="RssGuid",
+        value=tag,
+    )
     return media_id
 
 
@@ -10379,7 +10309,7 @@ def _subscription_state(direct_db, user_id, podcast_id):
 
 
 class TestAutoSubscriptionWatermark:
-    def test_eligible_null_watermark_selects_initial_window_oldest_first(self, direct_db):
+    def test_eligible_null_watermark_selects_all_eligible_oldest_first(self, direct_db):
         from nexus.services.podcasts.poll import _eligible_auto_subscription_media
 
         user_id = create_test_user_id()
@@ -10410,16 +10340,16 @@ class TestAutoSubscriptionWatermark:
                 for days in (40, 30, 20, 10)
             ]
             session.commit()
-        # eps are [oldest(40d)..newest(10d)]; window=2 -> two most recent, oldest-first.
+        # The hard cutover removed the sync window: every eligible row is returned,
+        # oldest-first, for deterministic queue insertion.
         with direct_db.session() as session:
             eligible = _eligible_auto_subscription_media(
                 session,
                 podcast_id=podcast_id,
                 sync_cutoff_at=cutoff,
                 watermark=None,
-                initial_episode_window=2,
             )
-        assert eligible == [eps[2], eps[3]]
+        assert eligible == eps
 
     def test_eligible_cutoff_boundary_and_missing_published_at(self, direct_db):
         from nexus.services.podcasts.poll import _eligible_auto_subscription_media
@@ -10461,7 +10391,6 @@ class TestAutoSubscriptionWatermark:
                 podcast_id=podcast_id,
                 sync_cutoff_at=cutoff,
                 watermark=None,
-                initial_episode_window=10,
             )
         # published_at == cutoff is eligible; > cutoff excluded; NULL excluded.
         assert eligible == [at_cutoff]
@@ -10504,7 +10433,6 @@ class TestAutoSubscriptionWatermark:
                 podcast_id=podcast_id,
                 sync_cutoff_at=cutoff,
                 watermark=watermark,
-                initial_episode_window=10,
             )
         assert eligible == [after]
 
@@ -10543,7 +10471,6 @@ class TestAutoSubscriptionWatermark:
             sync_cutoff_at=started,
             sync_status_on_complete="complete",
             sync_lease_seconds=3600,
-            initial_episode_window=3,
             now=started,
         )
         assert _queue_media_ids(direct_db, user_id) == []
@@ -10588,7 +10515,6 @@ class TestAutoSubscriptionWatermark:
                 sync_cutoff_at=started,
                 sync_status_on_complete="complete",
                 sync_lease_seconds=3600,
-                initial_episode_window=3,
                 now=started,
             )
 
@@ -10646,7 +10572,6 @@ class TestAutoSubscriptionWatermark:
             sync_cutoff_at=second_cutoff,
             sync_status_on_complete="complete",
             sync_lease_seconds=3600,
-            initial_episode_window=3,
             now=second_cutoff,
         )
         queued = _queue_media_ids(direct_db, user_id)
@@ -10692,7 +10617,6 @@ class TestAutoSubscriptionWatermark:
                 sync_cutoff_at=started,
                 sync_status_on_complete="complete",
                 sync_lease_seconds=3600,
-                initial_episode_window=3,
                 now=started,
             )
         assert _queue_media_ids(direct_db, user_id) == [], "reclaimed worker writes no rows"
@@ -10725,6 +10649,13 @@ class TestAutoSubscriptionWatermark:
             watermark=None,
             sync_started_at=started,
         )
+        with direct_db.session() as session:
+            memo_rows_before = int(
+                session.execute(
+                    text("SELECT count(*) FROM resource_mutations WHERE user_id = :u"),
+                    {"u": user_id},
+                ).scalar_one()
+            )
         _advance_auto_subscription_after_sync(
             user_id=user_id,
             podcast_id=podcast_id,
@@ -10732,7 +10663,6 @@ class TestAutoSubscriptionWatermark:
             sync_cutoff_at=started,
             sync_status_on_complete="complete",
             sync_lease_seconds=3600,
-            initial_episode_window=3,
             now=started,
         )
         assert len(_queue_media_ids(direct_db, user_id)) == 1
@@ -10741,4 +10671,7 @@ class TestAutoSubscriptionWatermark:
                 text("SELECT count(*) FROM resource_mutations WHERE user_id = :u"),
                 {"u": user_id},
             ).scalar_one()
-        assert memo_rows == 0, "the trusted ensure persists no replay memo (spec §5.3)"
+        assert memo_rows == memo_rows_before, (
+            "the trusted advancement persists no replay memo; setup Podcast controls "
+            "retain their own replay facts"
+        )

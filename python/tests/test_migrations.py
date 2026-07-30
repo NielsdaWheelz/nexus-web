@@ -480,6 +480,551 @@ class TestMigrationUpgradeDowngrade:
             f"stdout={result.stdout!r} stderr={result.stderr!r}"
         )
 
+    def test_0201_browse_cutover_chain_preserves_report_and_finalizes_exactly(self):
+        from nexus.ops.browse_cutover import (
+            ClearTranscript,
+            EpisodeIdentityRemediation,
+            Manifest,
+            SetOrigin,
+            apply,
+            enqueue,
+            preflight,
+        )
+
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0200")
+        assert result.returncode == 0, f"upgrade 0200 failed: {result.stderr}"
+
+        engine = create_engine(get_test_database_url())
+        user_id = uuid4()
+        named_library_id = uuid4()
+        default_library_id = uuid4()
+        active_podcast_id = uuid4()
+        inactive_podcast_id = uuid4()
+        manual_episode_id = uuid4()
+        rss_episode_id = uuid4()
+        set_origin_media_id = uuid4()
+        clear_transcript_media_id = uuid4()
+        unrelated_media_id = uuid4()
+        active_parent_entry_id = uuid4()
+        rss_child_entry_id = uuid4()
+        inactive_parent_entry_id = uuid4()
+        try:
+            with Session(engine) as session:
+                session.execute(
+                    text("INSERT INTO users (id) VALUES (:user_id)"),
+                    {"user_id": user_id},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO libraries (
+                            id, owner_user_id, name, is_default
+                        )
+                        VALUES
+                            (:named_id, :user_id, 'Named', false),
+                            (:default_id, :user_id, 'Default', true)
+                        """
+                    ),
+                    {
+                        "named_id": named_library_id,
+                        "default_id": default_library_id,
+                        "user_id": user_id,
+                    },
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO memberships (library_id, user_id, role)
+                        VALUES
+                            (:named_id, :user_id, 'admin'),
+                            (:default_id, :user_id, 'admin')
+                        """
+                    ),
+                    {
+                        "named_id": named_library_id,
+                        "default_id": default_library_id,
+                        "user_id": user_id,
+                    },
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO podcasts (
+                            id, provider, provider_podcast_id, title, feed_url
+                        )
+                        VALUES
+                            (
+                                :active_id,
+                                'podcast_index',
+                                'active-podcast',
+                                'Active Podcast',
+                                'https://example.com/active.xml'
+                            ),
+                            (
+                                :inactive_id,
+                                'podcast_index',
+                                'inactive-podcast',
+                                'Inactive Podcast',
+                                'https://example.com/inactive.xml'
+                            )
+                        """
+                    ),
+                    {
+                        "active_id": active_podcast_id,
+                        "inactive_id": inactive_podcast_id,
+                    },
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO podcast_subscriptions (
+                            user_id, podcast_id, status
+                        )
+                        VALUES
+                            (:user_id, :active_id, 'active'),
+                            (:user_id, :inactive_id, 'unsubscribed')
+                        """
+                    ),
+                    {
+                        "user_id": user_id,
+                        "active_id": active_podcast_id,
+                        "inactive_id": inactive_podcast_id,
+                    },
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO media (
+                            id, kind, title, external_playback_url
+                        )
+                        VALUES
+                            (:manual_id, 'podcast_episode', 'Manual identity', NULL),
+                            (
+                                :rss_id,
+                                'podcast_episode',
+                                'RSS identity',
+                                'https://cdn.example.com/rss.mp3'
+                            ),
+                            (:set_id, 'web_article', 'Set origin', NULL),
+                            (:clear_id, 'web_article', 'Clear transcript', NULL),
+                            (:unrelated_id, 'web_article', 'Unrelated entry', NULL)
+                        """
+                    ),
+                    {
+                        "manual_id": manual_episode_id,
+                        "rss_id": rss_episode_id,
+                        "set_id": set_origin_media_id,
+                        "clear_id": clear_transcript_media_id,
+                        "unrelated_id": unrelated_media_id,
+                    },
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO podcast_episodes (
+                            media_id,
+                            podcast_id,
+                            provider_episode_id,
+                            guid,
+                            fallback_identity
+                        )
+                        VALUES
+                            (
+                                :manual_id,
+                                :podcast_id,
+                                'legacy-manual-provider-id',
+                                NULL,
+                                'manual-fallback'
+                            ),
+                            (
+                                :rss_id,
+                                :podcast_id,
+                                'legacy-rss-provider-id',
+                                'rss-guid',
+                                'rss-fallback'
+                            )
+                        """
+                    ),
+                    {
+                        "manual_id": manual_episode_id,
+                        "rss_id": rss_episode_id,
+                        "podcast_id": active_podcast_id,
+                    },
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO podcast_subscription_libraries (
+                            subscription_user_id,
+                            subscription_podcast_id,
+                            library_id
+                        )
+                        VALUES
+                            (:user_id, :active_id, :library_id),
+                            (:user_id, :inactive_id, :library_id)
+                        """
+                    ),
+                    {
+                        "user_id": user_id,
+                        "active_id": active_podcast_id,
+                        "inactive_id": inactive_podcast_id,
+                        "library_id": named_library_id,
+                    },
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO library_entries (
+                            id, library_id, media_id, podcast_id, position
+                        )
+                        VALUES
+                            (
+                                :unrelated_entry_id,
+                                :library_id,
+                                :unrelated_media_id,
+                                NULL,
+                                0
+                            ),
+                            (
+                                :rss_child_entry_id,
+                                :library_id,
+                                :rss_media_id,
+                                NULL,
+                                1
+                            ),
+                            (
+                                :active_parent_entry_id,
+                                :library_id,
+                                NULL,
+                                :active_podcast_id,
+                                2
+                            ),
+                            (
+                                :inactive_parent_entry_id,
+                                :library_id,
+                                NULL,
+                                :inactive_podcast_id,
+                                3
+                            )
+                        """
+                    ),
+                    {
+                        "unrelated_entry_id": uuid4(),
+                        "library_id": named_library_id,
+                        "unrelated_media_id": unrelated_media_id,
+                        "rss_child_entry_id": rss_child_entry_id,
+                        "rss_media_id": rss_episode_id,
+                        "active_parent_entry_id": active_parent_entry_id,
+                        "active_podcast_id": active_podcast_id,
+                        "inactive_parent_entry_id": inactive_parent_entry_id,
+                        "inactive_podcast_id": inactive_podcast_id,
+                    },
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO media_transcript_states (
+                            media_id,
+                            transcript_state,
+                            transcript_coverage,
+                            semantic_status,
+                            last_request_reason
+                        )
+                        VALUES
+                            (:rss_id, 'ready', 'full', 'ready', 'rss_feed'),
+                            (:set_id, 'ready', 'full', 'ready', 'search'),
+                            (:clear_id, 'partial', 'partial', 'failed', 'highlight')
+                        """
+                    ),
+                    {
+                        "rss_id": rss_episode_id,
+                        "set_id": set_origin_media_id,
+                        "clear_id": clear_transcript_media_id,
+                    },
+                )
+                session.commit()
+
+            with Session(engine) as session:
+                legacy_report = preflight(session)
+                assert legacy_report["schemaPhase"] == "Legacy"
+                assert legacy_report["counts"]["active_subscriptions"] == 1
+                assert legacy_report["counts"]["inactive_subscriptions"] == 1
+                assert legacy_report["unresolvedEpisodes"] == [
+                    {
+                        "podcastId": str(active_podcast_id),
+                        "mediaId": str(manual_episode_id),
+                    }
+                ]
+                assert set(legacy_report["ambiguousTranscripts"]) == {
+                    str(set_origin_media_id),
+                    str(clear_transcript_media_id),
+                }
+                assert {row["source"] for row in legacy_report["inactivePlacementRows"]} == {
+                    "podcast_subscription_libraries",
+                    "library_entries",
+                }
+                reconciliation = {
+                    row["sourceRowId"]: (row["action"], row["reason"])
+                    for row in legacy_report["placementReconciliationRows"]
+                }
+                assert reconciliation[f"{user_id}:{inactive_podcast_id}:{named_library_id}"] == (
+                    "Discard",
+                    "InactiveSubscription",
+                )
+                assert reconciliation[str(inactive_parent_entry_id)] == (
+                    "Discard",
+                    "NoActiveSubscriberMember",
+                )
+                assert [
+                    row["entryId"] for row in legacy_report["compactedEpisodePlacementRows"]
+                ] == [str(rss_child_entry_id)]
+                with pytest.raises(RuntimeError, match="requires revision 0201"):
+                    apply(session, Manifest())
+                with pytest.raises(RuntimeError, match="requires revision 0202"):
+                    enqueue(session)
+                session.rollback()
+
+            result = run_alembic_command("upgrade 0201")
+            assert result.returncode == 0, f"upgrade 0201 failed: {result.stderr}"
+
+            with Session(engine) as session:
+                prepared_report = preflight(session)
+                assert prepared_report["schemaPhase"] == "Prepared"
+                report = apply(
+                    session,
+                    Manifest(
+                        episode_identities=[
+                            EpisodeIdentityRemediation(
+                                episode_media_id=manual_episode_id,
+                                scheme="PodcastIndex",
+                                value="verified-manual-episode",
+                            )
+                        ],
+                        transcripts=[
+                            SetOrigin(
+                                action="SetOrigin",
+                                media_id=set_origin_media_id,
+                                origin="Imported",
+                            ),
+                            ClearTranscript(
+                                action="ClearTranscript",
+                                media_id=clear_transcript_media_id,
+                            ),
+                        ],
+                    ),
+                )
+                assert report["beforeHash"] == prepared_report["reportHash"]
+                assert report["placementReconciliation"] == {
+                    "inactiveLegacyRowsDiscarded": 1,
+                    "currentParentRowsDiscarded": 1,
+                    "parentRowsInserted": 0,
+                    "namedChildRowsCompacted": 1,
+                    "defaultChildRowsInserted": 2,
+                }
+                assert report["destructiveTranscriptClears"] == [str(clear_transcript_media_id)]
+                assert report["after"]["unresolvedEpisodes"] == []
+                assert report["after"]["ambiguousTranscripts"] == []
+
+                aliases = {
+                    (str(row.scheme), str(row.value), UUID(str(row.episode_media_id)))
+                    for row in session.execute(
+                        text(
+                            """
+                            SELECT scheme, value, episode_media_id
+                            FROM podcast_episode_identities
+                            """
+                        )
+                    )
+                }
+                assert aliases == {
+                    ("PodcastIndex", "verified-manual-episode", manual_episode_id),
+                    ("RssGuid", "rss-guid", rss_episode_id),
+                    (
+                        "RssEnclosure",
+                        "https://cdn.example.com/rss.mp3",
+                        rss_episode_id,
+                    ),
+                }
+                origins = dict(
+                    session.execute(
+                        text(
+                            """
+                            SELECT media_id, transcript_origin
+                            FROM media_transcript_states
+                            WHERE media_id IN (:rss_id, :set_id)
+                            """
+                        ),
+                        {
+                            "rss_id": rss_episode_id,
+                            "set_id": set_origin_media_id,
+                        },
+                    )
+                    .tuples()
+                    .all()
+                )
+                assert origins == {
+                    rss_episode_id: "Publisher",
+                    set_origin_media_id: "Imported",
+                }
+                cleared = session.execute(
+                    text(
+                        """
+                        SELECT
+                            transcript_state,
+                            transcript_coverage,
+                            semantic_status,
+                            transcript_origin
+                        FROM media_transcript_states
+                        WHERE media_id = :media_id
+                        """
+                    ),
+                    {"media_id": clear_transcript_media_id},
+                ).one()
+                assert tuple(cleared) == ("not_requested", "none", "none", None)
+                assert (
+                    session.scalar(
+                        text(
+                            """
+                        SELECT count(*)
+                        FROM library_entries
+                        WHERE library_id = :library_id
+                          AND media_id = :media_id
+                        """
+                        ),
+                        {
+                            "library_id": named_library_id,
+                            "media_id": rss_episode_id,
+                        },
+                    )
+                    == 0
+                )
+                named_rows = list(
+                    session.execute(
+                        text(
+                            """
+                            SELECT media_id, podcast_id, position
+                            FROM library_entries
+                            WHERE library_id = :library_id
+                            ORDER BY position
+                            """
+                        ),
+                        {"library_id": named_library_id},
+                    )
+                )
+                assert len(named_rows) == 2
+                assert named_rows[0].media_id == unrelated_media_id
+                assert named_rows[0].position == 0
+                assert named_rows[1].podcast_id == active_podcast_id
+                assert named_rows[1].position == 1
+                assert (
+                    session.scalar(
+                        text(
+                            """
+                        SELECT count(*)
+                        FROM library_entries
+                        WHERE library_id = :library_id
+                          AND podcast_id IS NULL
+                          AND media_id IN (:manual_id, :rss_id)
+                        """
+                        ),
+                        {
+                            "library_id": default_library_id,
+                            "manual_id": manual_episode_id,
+                            "rss_id": rss_episode_id,
+                        },
+                    )
+                    == 2
+                )
+                subscription_id = session.scalar(text("SELECT id FROM podcast_subscriptions"))
+                assert UUID(str(subscription_id)).version == 7
+                assert (
+                    session.scalar(
+                        text(
+                            """
+                        SELECT count(*)
+                        FROM podcast_subscription_backfills
+                        WHERE subscription_id = :subscription_id
+                          AND step_no = 0
+                          AND cursor IS NULL
+                          AND processed_count = 0
+                          AND added_count = 0
+                        """
+                        ),
+                        {"subscription_id": subscription_id},
+                    )
+                    == 1
+                )
+                with pytest.raises(RuntimeError, match="requires revision 0202"):
+                    enqueue(session)
+                session.rollback()
+
+            result = run_alembic_command("upgrade 0202")
+            assert result.returncode == 0, f"upgrade 0202 failed: {result.stderr}"
+
+            with Session(engine) as session:
+                with pytest.raises(RuntimeError, match="must run before revision 0202"):
+                    preflight(session)
+                assert (
+                    session.scalar(
+                        text("SELECT to_regclass('public.podcast_subscription_libraries')")
+                    )
+                    is None
+                )
+                assert (
+                    session.scalar(
+                        text(
+                            """
+                        SELECT count(*)
+                        FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND table_name = 'podcast_episodes'
+                          AND column_name IN (
+                              'provider_episode_id',
+                              'guid',
+                              'fallback_identity'
+                          )
+                        """
+                        )
+                    )
+                    == 0
+                )
+                session.rollback()
+
+            with Session(engine) as session:
+                first_enqueue = enqueue(session)
+                assert first_enqueue["backfillJobsInserted"] == 1
+                assert first_enqueue["liveJobsInserted"] == 1
+                second_enqueue = enqueue(session)
+                assert second_enqueue["backfillJobsInserted"] == 0
+                assert second_enqueue["liveJobsInserted"] == 0
+                jobs = dict(
+                    session.execute(
+                        text(
+                            """
+                            SELECT kind, count(*)
+                            FROM background_jobs
+                            WHERE kind IN (
+                                'podcast_backfill_subscription',
+                                'podcast_sync_subscription_job'
+                            )
+                            GROUP BY kind
+                            """
+                        )
+                    )
+                    .tuples()
+                    .all()
+                )
+                assert jobs == {
+                    "podcast_backfill_subscription": 1,
+                    "podcast_sync_subscription_job": 1,
+                }
+        finally:
+            engine.dispose()
+            reset_test_schema()
+            restore = run_alembic_command("upgrade head")
+            assert restore.returncode == 0, f"restore head failed: {restore.stderr}"
+
     def test_0185_drops_user_pinned_objects(self):
         reset_test_schema()
         result = run_alembic_command("upgrade 0184")

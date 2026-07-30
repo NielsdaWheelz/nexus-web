@@ -43,10 +43,6 @@ export function parseNexusUrlIntent(
   switch (intent) {
     case "Root":
       return query === null && action === null ? { kind: "Root" } : null;
-    case "WebSearch":
-      return query !== null && query.trim().length > 0 && action === null
-        ? { kind: "WebSearch", query: query.trim() }
-        : null;
     case "QuickAction":
       return query === null &&
         action !== null &&
@@ -54,7 +50,7 @@ export function parseNexusUrlIntent(
         ? { kind: "QuickAction", actionId: action }
         : null;
     default:
-      return null;
+      return { kind: "UnsupportedLink" };
   }
 }
 

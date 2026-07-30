@@ -28,6 +28,8 @@ from nexus.services.sealed_handles import (
 )
 from tests.factories import (
     add_media_to_library,
+    add_test_podcast_episode_identity,
+    add_test_podcast_subscription,
     create_test_fragment,
     create_test_library,
     create_test_media,
@@ -42,6 +44,29 @@ pytestmark = pytest.mark.integration
 
 def _library_create_body(name: str) -> dict[str, str]:
     return {"library_id": str(uuid4()), "name": name}
+
+
+def _file_podcast_in_libraries(
+    auth_client,
+    user_id: UUID,
+    podcast_id: UUID,
+    library_ids: list[UUID],
+):
+    return auth_client.post(
+        "/podcasts/subscriptions",
+        json={
+            "target": {
+                "kind": "Canonical",
+                "podcastId": str(podcast_id),
+            },
+            "namedLibraryIds": [str(library_id) for library_id in library_ids],
+            "replacementConfirmation": {"kind": "Absent"},
+        },
+        headers={
+            **auth_headers(user_id),
+            "Idempotency-Key": f"file-podcast-{uuid4()}",
+        },
+    )
 
 
 def _user_handle(user_id: UUID) -> str:
@@ -155,6 +180,12 @@ def _entry_cursor(response) -> str | None:
         return None
     assert presence["kind"] == "Present"
     return presence["value"]
+
+
+def _entry_placement_id(row: dict) -> str:
+    placement = row["placement"]
+    assert placement["kind"] == "Present", row
+    return placement["value"]["libraryEntryId"]
 
 
 def _library_entry_media_ids(rows: list[dict]) -> list[str]:
@@ -1062,10 +1093,8 @@ class TestSystemLibraryMutationGuards:
         direct_db.register_cleanup("memberships", "library_id", system_id)
         direct_db.register_cleanup("libraries", "id", system_id)
 
-        entries = _entry_items(
-            _list_library_entries(auth_client, owner_id, str(system_id))
-        )
-        entry_ids = [row["id"] for row in entries]
+        entries = _entry_items(_list_library_entries(auth_client, owner_id, str(system_id)))
+        entry_ids = [_entry_placement_id(row) for row in entries]
         assert entry_ids, "expected a seeded system-library entry"
 
         mutation_responses = [
@@ -1598,30 +1627,23 @@ class TestPodcastLibraryEntries:
                 """),
                 {"id": podcast_id},
             )
-            session.execute(
-                text("""
-                    INSERT INTO podcast_subscriptions (user_id, podcast_id, status)
-                    VALUES (:user_id, :podcast_id, 'active')
-                """),
-                {"user_id": user_id, "podcast_id": podcast_id},
-            )
+            add_test_podcast_subscription(session, user_id=user_id, podcast_id=podcast_id)
             session.commit()
 
         direct_db.register_cleanup("library_entries", "podcast_id", podcast_id)
         direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
         direct_db.register_cleanup("podcasts", "id", podcast_id)
 
-        response = auth_client.post(
-            f"/libraries/{library_id}/podcasts",
-            json={"podcast_id": str(podcast_id)},
-            headers=auth_headers(user_id),
+        response = _file_podcast_in_libraries(
+            auth_client,
+            user_id,
+            podcast_id,
+            [UUID(library_id)],
         )
 
-        assert response.status_code == 204
-        assert response.content == b""
-        entries = _entry_items(
-            _list_library_entries(auth_client, user_id, library_id)
-        )
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["outcome"] == "DestinationsAdded"
+        entries = _entry_items(_list_library_entries(auth_client, user_id, library_id))
         data = next(row for row in entries if row["kind"] == "podcast")
         assert data["podcast"]["id"] == str(podcast_id)
         assert data["readingTimeEstimate"] == {"kind": "Absent"}
@@ -1645,26 +1667,21 @@ class TestPodcastLibraryEntries:
                 """),
                 {"id": podcast_id},
             )
-            session.execute(
-                text("""
-                    INSERT INTO podcast_subscriptions (user_id, podcast_id, status)
-                    VALUES (:user_id, :podcast_id, 'active')
-                """),
-                {"user_id": user_id, "podcast_id": podcast_id},
-            )
+            add_test_podcast_subscription(session, user_id=user_id, podcast_id=podcast_id)
             session.commit()
 
         direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
         direct_db.register_cleanup("podcasts", "id", podcast_id)
 
-        response = auth_client.post(
-            f"/libraries/{default_library_id}/podcasts",
-            json={"podcast_id": str(podcast_id)},
-            headers=auth_headers(user_id),
+        response = _file_podcast_in_libraries(
+            auth_client,
+            user_id,
+            podcast_id,
+            [UUID(default_library_id)],
         )
 
-        assert response.status_code == 403
-        assert response.json()["error"]["code"] == "E_DEFAULT_LIBRARY_FORBIDDEN"
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
     def test_remove_podcast_success(self, auth_client, direct_db: DirectSessionManager):
         user_id = create_test_user_id()
@@ -1687,31 +1704,30 @@ class TestPodcastLibraryEntries:
                 """),
                 {"id": podcast_id},
             )
-            session.execute(
-                text("""
-                    INSERT INTO podcast_subscriptions (user_id, podcast_id, status)
-                    VALUES (:user_id, :podcast_id, 'active')
-                """),
-                {"user_id": user_id, "podcast_id": podcast_id},
-            )
+            add_test_podcast_subscription(session, user_id=user_id, podcast_id=podcast_id)
             session.commit()
 
         direct_db.register_cleanup("library_entries", "podcast_id", podcast_id)
         direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
         direct_db.register_cleanup("podcasts", "id", podcast_id)
 
-        add_resp = auth_client.post(
-            f"/libraries/{library_id}/podcasts",
-            json={"podcast_id": str(podcast_id)},
-            headers=auth_headers(user_id),
+        add_resp = _file_podcast_in_libraries(
+            auth_client,
+            user_id,
+            podcast_id,
+            [UUID(library_id)],
         )
-        assert add_resp.status_code == 204
+        assert add_resp.status_code == 200, add_resp.text
 
         remove_resp = auth_client.delete(
             f"/libraries/{library_id}/podcasts/{podcast_id}",
-            headers=auth_headers(user_id),
+            headers={
+                **auth_headers(user_id),
+                "Idempotency-Key": f"remove-podcast-{uuid4()}",
+            },
         )
         assert remove_resp.status_code == 200
+        assert remove_resp.json()["data"]["outcome"] == "Removed"
         assert remove_resp.json()["data"]["libraryEntriesCollectionRevision"] >= 1
 
 
@@ -1959,7 +1975,7 @@ class TestListLibraryMedia:
         media_id = uuid4()
         podcast_id = uuid4()
         provider_podcast_id = f"library-hydration-{podcast_id}"
-        provider_episode_id = f"episode-{media_id}"
+        episode_ref = f"episode-{media_id}"
 
         with direct_db.session() as session:
             session.execute(
@@ -2008,12 +2024,12 @@ class TestListLibraryMedia:
                         'ready_for_reading',
                         'https://cdn.example.com/library-hydration-episode.mp3',
                         'podcast_index',
-                        :provider_episode_id
+                        :episode_ref
                     )
                 """),
                 {
                     "media_id": media_id,
-                    "provider_episode_id": provider_episode_id,
+                    "episode_ref": episode_ref,
                 },
             )
             session.execute(
@@ -2021,9 +2037,6 @@ class TestListLibraryMedia:
                     INSERT INTO podcast_episodes (
                         media_id,
                         podcast_id,
-                        provider_episode_id,
-                        guid,
-                        fallback_identity,
                         published_at,
                         duration_seconds,
                         description_html,
@@ -2031,9 +2044,6 @@ class TestListLibraryMedia:
                     ) VALUES (
                         :media_id,
                         :podcast_id,
-                        :provider_episode_id,
-                        :guid,
-                        :fallback_identity,
                         '2026-03-22T00:00:00Z',
                         180,
                         '<p>Episode HTML description</p>',
@@ -2043,10 +2053,13 @@ class TestListLibraryMedia:
                 {
                     "media_id": media_id,
                     "podcast_id": podcast_id,
-                    "provider_episode_id": provider_episode_id,
-                    "guid": f"guid-{provider_episode_id}",
-                    "fallback_identity": f"fallback-{provider_episode_id}",
                 },
+            )
+            add_test_podcast_episode_identity(
+                session,
+                podcast_id=podcast_id,
+                media_id=media_id,
+                value=episode_ref,
             )
             session.execute(
                 text("""
@@ -2054,12 +2067,14 @@ class TestListLibraryMedia:
                         media_id,
                         transcript_state,
                         transcript_coverage,
-                        semantic_status
+                        semantic_status,
+                        transcript_origin
                     ) VALUES (
                         :media_id,
                         'ready',
                         'full',
-                        'ready'
+                        'ready',
+                        'Generated'
                     )
                 """),
                 {"media_id": media_id},
@@ -2099,23 +2114,11 @@ class TestListLibraryMedia:
                 """),
                 {"media_id": media_id},
             )
-            session.execute(
-                text("""
-                    INSERT INTO podcast_subscriptions (
-                        user_id,
-                        podcast_id,
-                        status,
-                        default_playback_speed,
-                        auto_queue
-                    ) VALUES (
-                        :user_id,
-                        :podcast_id,
-                        'active',
-                        1.5,
-                        false
-                    )
-                """),
-                {"user_id": user_id, "podcast_id": podcast_id},
+            add_test_podcast_subscription(
+                session,
+                user_id=user_id,
+                podcast_id=podcast_id,
+                default_playback_speed=1.5,
             )
             session.execute(
                 text("""
@@ -2161,14 +2164,18 @@ class TestListLibraryMedia:
 
         assert response.status_code == 200
         data = _entry_items(response)
-        assert len(data) == 1
-        media = data[0]["media"]
+        media_rows = [row for row in data if row["kind"] == "media"]
+        podcast_rows = [row for row in data if row["kind"] == "podcast"]
+        assert len(media_rows) == 1
+        assert [row["podcast"]["id"] for row in podcast_rows] == [str(podcast_id)]
+        media_row = media_rows[0]
+        media = media_row["media"]
         assert media["id"] == str(media_id)
         assert media["read_state"] == "in_progress"
         assert media["progress_fraction"] == pytest.approx(12000 / 180000)
-        assert "read_state" not in data[0]
-        assert "progress_fraction" not in data[0]
-        assert data[0]["readingTimeEstimate"] == {"kind": "Absent"}
+        assert "read_state" not in media_row
+        assert "progress_fraction" not in media_row
+        assert media_row["readingTimeEstimate"] == {"kind": "Absent"}
         assert {
             "transcript_state",
             "transcript_coverage",
@@ -2504,9 +2511,9 @@ class TestListLibraryMedia:
         assert _entry_cursor(second) is None
 
         # The tombstoned entry never surfaces on any page.
-        assert str(tombstoned_media_id) not in _library_entry_media_ids(_entry_items(first)) and str(
-            tombstoned_media_id
-        ) not in _library_entry_media_ids(_entry_items(second))
+        assert str(tombstoned_media_id) not in _library_entry_media_ids(
+            _entry_items(first)
+        ) and str(tombstoned_media_id) not in _library_entry_media_ids(_entry_items(second))
 
     def test_list_media_rejects_invalid_cursor(self, auth_client):
         user_id = create_test_user_id()
@@ -2645,9 +2652,7 @@ class TestDefaultLibraryVirtualView:
         assert response.status_code == 200
         data = _entry_items(response)
         assert _library_entry_media_ids(data) == [str(media_id)]
-        # The representative entry is the direct default one, not the shared
-        # library's row.
-        assert data[0]["id"] != _entry_items(shared_only)[0]["id"]
+        assert data[0]["placement"] == {"kind": "Absent"}
 
     def test_viewer_tombstone_hides_media_from_default(
         self, auth_client, direct_db: DirectSessionManager
@@ -2826,24 +2831,17 @@ class TestReorderLibraryMedia:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        entries = _entry_items(
-            _list_library_entries(auth_client, user_id, library_id)
-        )
-        entry_id = next(row["id"] for row in entries)
-
         # A malformed body (wrong set) against Default still yields the Default
         # rejection, not the exact-set 400 — the guard runs first.
         response = auth_client.patch(
             f"/libraries/{library_id}/entries/reorder",
-            json={"entry_ids": [entry_id, str(uuid4())]},
+            json={"entry_ids": [str(uuid4()), str(uuid4())]},
             headers=auth_headers(user_id),
         )
         assert response.status_code == 403
         assert response.json()["error"]["code"] == "E_DEFAULT_LIBRARY_FORBIDDEN"
 
-        after = _entry_items(
-            _list_library_entries(auth_client, user_id, library_id)
-        )
+        after = _entry_items(_list_library_entries(auth_client, user_id, library_id))
         assert _library_entry_media_ids(after) == [str(media_id)]
 
     def test_reorder_library_entries_replaces_order(
@@ -2866,7 +2864,7 @@ class TestReorderLibraryMedia:
         list_resp = _list_library_entries(auth_client, user_id, library_id)
         existing_entries = _entry_items(list_resp)
         media_entry_id_by_media_id = {
-            row["media"]["id"]: row["id"]
+            row["media"]["id"]: _entry_placement_id(row)
             for row in existing_entries
             if row["kind"] == "media" and row["media"] is not None
         }
@@ -2919,7 +2917,7 @@ class TestReorderLibraryMedia:
         list_resp = _list_library_entries(auth_client, user_id, library_id)
         existing_entries = _entry_items(list_resp)
         media_entry_id_by_media_id = {
-            row["media"]["id"]: row["id"]
+            row["media"]["id"]: _entry_placement_id(row)
             for row in existing_entries
             if row["kind"] == "media" and row["media"] is not None
         }
@@ -2950,7 +2948,7 @@ class TestReorderLibraryMedia:
 
         first_page = _list_library_entries(auth_client, user_id, library_id, limit=2)
         assert _entry_cursor(first_page) is not None
-        partial_ids = [row["id"] for row in _entry_items(first_page)]
+        partial_ids = [_entry_placement_id(row) for row in _entry_items(first_page)]
 
         response = auth_client.patch(
             f"/libraries/{library_id}/entries/reorder",
@@ -3001,7 +2999,7 @@ class TestReorderLibraryMedia:
         list_resp = _list_library_entries(auth_client, owner_id, library_id)
         existing_entries = _entry_items(list_resp)
         media_entry_id_by_media_id = {
-            row["media"]["id"]: row["id"]
+            row["media"]["id"]: _entry_placement_id(row)
             for row in existing_entries
             if row["kind"] == "media" and row["media"] is not None
         }
@@ -3039,13 +3037,7 @@ class TestReorderLibraryMedia:
                 """),
                 {"id": podcast_id},
             )
-            session.execute(
-                text("""
-                    INSERT INTO podcast_subscriptions (user_id, podcast_id, status)
-                    VALUES (:user_id, :podcast_id, 'active')
-                """),
-                {"user_id": user_id, "podcast_id": podcast_id},
-            )
+            add_test_podcast_subscription(session, user_id=user_id, podcast_id=podcast_id)
             add_media_to_library(session, UUID(library_id), media_id)
             session.commit()
 
@@ -3055,20 +3047,23 @@ class TestReorderLibraryMedia:
         direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
         direct_db.register_cleanup("podcasts", "id", podcast_id)
 
-        assert (
-            auth_client.post(
-                f"/libraries/{library_id}/podcasts",
-                json={"podcast_id": str(podcast_id)},
-                headers=auth_headers(user_id),
-            ).status_code
-            == 204
+        placement = _file_podcast_in_libraries(
+            auth_client,
+            user_id,
+            podcast_id,
+            [UUID(library_id)],
         )
+        assert placement.status_code == 200, placement.text
 
-        entries = _entry_items(
-            _list_library_entries(auth_client, user_id, library_id)
+        entries = _entry_items(_list_library_entries(auth_client, user_id, library_id))
+        media_entry_id = next(
+            row["placement"]["value"]["libraryEntryId"] for row in entries if row["kind"] == "media"
         )
-        media_entry_id = next(row["id"] for row in entries if row["kind"] == "media")
-        podcast_entry_id = next(row["id"] for row in entries if row["kind"] == "podcast")
+        podcast_entry_id = next(
+            row["placement"]["value"]["libraryEntryId"]
+            for row in entries
+            if row["kind"] == "podcast"
+        )
 
         reorder_resp = auth_client.patch(
             f"/libraries/{library_id}/entries/reorder",
@@ -3078,11 +3073,12 @@ class TestReorderLibraryMedia:
         assert reorder_resp.status_code == 204, reorder_resp.text
         assert reorder_resp.content == b""
 
-        after = _entry_items(
-            _list_library_entries(auth_client, user_id, library_id)
-        )
-        assert [row["id"] for row in after] == [podcast_entry_id, media_entry_id]
-        assert [row["position"] for row in after] == [0, 1]
+        after = _entry_items(_list_library_entries(auth_client, user_id, library_id))
+        assert [row["placement"]["value"]["libraryEntryId"] for row in after] == [
+            podcast_entry_id,
+            media_entry_id,
+        ]
+        assert [row["placement"]["value"]["position"] for row in after] == [0, 1]
 
     @pytest.mark.parametrize("bad_set_kind", ["duplicate", "foreign"])
     def test_reorder_library_entries_rejects_bad_sets(
@@ -3103,11 +3099,11 @@ class TestReorderLibraryMedia:
             direct_db.register_cleanup("library_entries", "media_id", media_id)
             direct_db.register_cleanup("media", "id", media_id)
 
-        entries = _entry_items(
-            _list_library_entries(auth_client, user_id, library_id)
-        )
+        entries = _entry_items(_list_library_entries(auth_client, user_id, library_id))
         entry_id_a = next(
-            row["id"] for row in entries if row["media"] and row["media"]["id"] == str(media_a)
+            _entry_placement_id(row)
+            for row in entries
+            if row["media"] and row["media"]["id"] == str(media_a)
         )
         bad_entry_ids = (
             [entry_id_a, entry_id_a] if bad_set_kind == "duplicate" else [entry_id_a, str(uuid4())]
@@ -3121,9 +3117,7 @@ class TestReorderLibraryMedia:
         assert resp.status_code == 400
         assert resp.json()["error"]["code"] == "E_INVALID_REQUEST"
 
-        after = _entry_items(
-            _list_library_entries(auth_client, user_id, library_id)
-        )
+        after = _entry_items(_list_library_entries(auth_client, user_id, library_id))
         assert _library_entry_media_ids(after) == [str(media_a), str(media_b)]
 
 
@@ -5335,9 +5329,7 @@ class TestLibraryInviteAccept:
         invitation_handle = self._create_invite(auth_client, owner_id, invitee_id, library_id)
 
         # Before accept: shared media is absent from invitee's Default.
-        before = _entry_items(
-            _list_library_entries(auth_client, invitee_id, default_library_id)
-        )
+        before = _entry_items(_list_library_entries(auth_client, invitee_id, default_library_id))
         assert str(media_id) not in _library_entry_media_ids(before)
 
         auth_client.post(
@@ -6600,9 +6592,11 @@ class TestLibraryEntryViewLenses:
         assert _view_ids(page) == [str(y), str(z)]
         assert _entry_cursor(page) is None
 
-    def test_hide_finished_keeps_podcast_shows(self, auth_client, direct_db):
-        """AC8: podcast-show rows always remain under completion=unfinished; a
-        finished media alongside them drops out."""
+    def test_hide_finished_excludes_podcast_shows_without_completion_facts(
+        self, auth_client, direct_db
+    ):
+        """AC8: completion=unfinished excludes shows and finished media because
+        subscriptions have no honest completion fact."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
         library_id, (media_finished,) = _seed_view_library(
@@ -6630,6 +6624,11 @@ class TestLibraryEntryViewLenses:
                 ),
                 {"lib": library_id, "pid": podcast_id},
             )
+            add_test_podcast_subscription(
+                session,
+                user_id=user_id,
+                podcast_id=podcast_id,
+            )
             session.execute(
                 text(
                     "INSERT INTO consumption_overrides (user_id, media_id, status) "
@@ -6645,7 +6644,7 @@ class TestLibraryEntryViewLenses:
         assert page.status_code == 200, page.text
         rows = _entry_items(page)
         podcast_ids = [row["podcast"]["id"] for row in rows if row["kind"] == "podcast"]
-        assert podcast_ids == [str(podcast_id)]
+        assert podcast_ids == []
         assert str(media_finished) not in _view_ids(page)
 
 
@@ -7055,7 +7054,7 @@ class TestLibraryEntryProjectionPagination:
         assert collected == [str(a), str(c)]
 
 
-class TestLibraryEntryCursorV2:
+class TestLibraryEntryCursor:
     """The v2 view cursor is authenticated and bound to the exact
     viewer/library/view; it is non-coercing and hides the viewer UUID (spec
     AC10). No v1 code or v1-specific test remains."""

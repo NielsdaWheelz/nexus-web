@@ -1,6 +1,5 @@
 "use client";
 
-import { PanelsTopLeft } from "lucide-react";
 import type { MouseEvent, ReactNode } from "react";
 import MobileSheet from "@/components/ui/MobileSheet";
 import AccountMenu from "@/components/appnav/AccountMenu";
@@ -14,10 +13,8 @@ import type { NexusController } from "@/components/nexus/useNexusController";
 import CreateLibraryPanel from "./CreateLibraryPanel";
 import SwitchboardActions from "./SwitchboardActions";
 import SwitchboardFind from "./SwitchboardFind";
-import SwitchboardPodcastPanel from "./SwitchboardPodcastPanel";
 import SwitchboardRecovery from "./SwitchboardRecovery";
 import SwitchboardRoot from "./SwitchboardRoot";
-import SwitchboardRow from "./SwitchboardRow";
 import { useSwitchboardController } from "./useSwitchboardController";
 import styles from "./switchboard.module.css";
 
@@ -188,77 +185,28 @@ export default function SwitchboardSheet({
             onSelect={controller.runAction}
           />
         );
-      case "WebSearch": {
-        if (controller.webSearch === null) {
-          throw new Error("Nexus Web Search projection is unavailable");
-        }
-        const webSearch = controller.webSearch;
+      case "UnsupportedLink":
         return (
           <div className={styles.page}>
             <header className={styles.header}>
-              <button
-                type="button"
-                className={styles.textButton}
-                onClick={controller.back}
-              >
-                Back
-              </button>
               <h2 tabIndex={-1} data-switchboard-heading>
-                Web search
+                This link is no longer supported
               </h2>
             </header>
-            <label className={styles.findInput}>
-              <span className={styles.srOnly}>Search the web</span>
-              <input
-                type="search"
-                value={webSearch.query}
-                onChange={(event) =>
-                  controller.setWebQuery(event.currentTarget.value)
-                }
-              />
-            </label>
-            {webSearch.status === "RetryableFailure" ? (
-              <p role="status">
-                Couldn’t search the web.{" "}
-                <button
-                  type="button"
-                  onClick={controller.retryWebSearch}
-                >
-                  Retry
-                </button>
-              </p>
-            ) : null}
-            <ul className={styles.rows}>
-              {webSearch.results.map((result) => (
-                <SwitchboardRow
-                  key={result.id}
-                  id={`WebResult:${result.id}`}
-                  label={result.title}
-                  metadata={result.source}
-                  onSelect={() =>
-                    controller.selectMobileWebResult(result.id, false)
-                  }
-                  actions={[
-                    {
-                      kind: "command",
-                      id: `fork-${result.id}`,
-                      label: "Open another tab",
-                      icon: <PanelsTopLeft size={16} aria-hidden="true" />,
-                      onSelect: () =>
-                        controller.selectMobileWebResult(result.id, true),
-                    },
-                  ]}
-                />
-              ))}
-            </ul>
-            <div className={styles.liveRegion} aria-live="polite">
-              {webSearch.status === "Loading"
-                ? "Searching the web…"
-                : ""}
-            </div>
+            <button
+              type="button"
+              onClick={() =>
+                controller.openTarget({
+                  kind: "InternalHref",
+                  href: "/browse",
+                  labelHint: "Browse",
+                })
+              }
+            >
+              Open Browse
+            </button>
           </div>
         );
-      }
       case "TodayCapture":
         return (
           <TodayCapturePanel
@@ -306,20 +254,6 @@ export default function SwitchboardSheet({
               onDefect={onAddDefect}
             />
           </AddPanelBoundary>
-        );
-      case "PodcastDiscovery":
-        return (
-          <SwitchboardPodcastPanel
-            query={page.query}
-            results={controller.podcastResults}
-            busy={controller.podcastBusy}
-            subscribingId={controller.podcastSubscribingId}
-            failed={controller.podcastFailed}
-            onBack={controller.back}
-            onQuery={controller.setPodcastQuery}
-            onSelect={controller.selectPodcast}
-            onRetry={controller.retryPodcastSearch}
-          />
         );
       case "ActivationBlocked":
         return (

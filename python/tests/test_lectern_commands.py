@@ -24,7 +24,7 @@ from nexus.errors import ApiErrorCode, ConflictError
 from nexus.ids import new_uuid7
 from nexus.services.consumption import _lectern_store
 from nexus.services.consumption import service as consumption_service
-from tests.factories import add_media_to_library
+from tests.factories import add_media_to_library, add_test_podcast_episode_identity
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -99,7 +99,7 @@ def _create_podcast_episode(
 ) -> UUID:
     media_id = uuid4()
     podcast_id = uuid4()
-    provider_episode_id = f"episode-{media_id}"
+    episode_ref = f"episode-{media_id}"
     with direct_db.session() as session:
         session.add(
             Podcast(
@@ -119,14 +119,12 @@ def _create_podcast_episode(
                 # derive_playback_source() falls back to canonical_source_url when
                 # external_playback_url is absent, so a genuinely audio-less
                 # episode (no enclosure/stream) must leave BOTH unset.
-                canonical_source_url=(
-                    f"https://example.com/{provider_episode_id}" if with_audio else None
-                ),
+                canonical_source_url=(f"https://example.com/{episode_ref}" if with_audio else None),
                 external_playback_url=(
                     f"https://cdn.example.com/{media_id}.mp3" if with_audio else None
                 ),
                 provider="podcast_index",
-                provider_id=provider_episode_id,
+                provider_id=episode_ref,
                 processing_status=ProcessingStatus.ready_for_reading,
             )
         )
@@ -134,12 +132,15 @@ def _create_podcast_episode(
             PodcastEpisode(
                 media_id=media_id,
                 podcast_id=podcast_id,
-                provider_episode_id=provider_episode_id,
-                guid=f"guid-{provider_episode_id}",
-                fallback_identity=f"fallback-{provider_episode_id}",
                 published_at="2026-03-22T00:00:00Z",
                 duration_seconds=duration_seconds,
             )
+        )
+        add_test_podcast_episode_identity(
+            session,
+            podcast_id=podcast_id,
+            media_id=media_id,
+            value=episode_ref,
         )
         session.commit()
     _register_media_cleanup(direct_db, media_id)

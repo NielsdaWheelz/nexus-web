@@ -79,11 +79,9 @@ describe("LibraryChooserSurface", () => {
 
     const combobox = await screen.findByRole("combobox", { name: "Search" });
     await waitFor(() => expect(combobox).toHaveFocus());
-    // eslint-disable-next-line testing-library/no-node-access -- the desktop panel is intentionally roleless; assert its layer token
-    expect(combobox.closest("[data-layer]")).toHaveAttribute(
-      "data-layer",
-      "palette",
-    );
+    const dialog = screen.getByRole("dialog", { name: "Libraries" });
+    expect(dialog).toHaveAttribute("data-layer", "palette");
+    expect(dialog).toContainElement(combobox);
   });
 
   it("closes on Escape from within the panel", async () => {

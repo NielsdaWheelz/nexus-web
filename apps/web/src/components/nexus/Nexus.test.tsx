@@ -59,7 +59,6 @@ let requests: RecordedRequest[] = [];
 let openablesResponse:
   | Promise<Response>
   | ((init: RequestInit | undefined) => Promise<Response>);
-let webSearchResults: unknown[] = [];
 let viewport: ReturnType<typeof mockViewport>;
 
 function jsonResponse(body: unknown): Response {
@@ -115,39 +114,6 @@ function openablePageResult() {
   };
 }
 
-function webSearchResult() {
-  return {
-    type: "web_result",
-    id: "provider:1",
-    result_type: "web_result",
-    result_ref: "provider:1",
-    source_id: "provider:1",
-    title: "A web result",
-    url: "https://example.com/story",
-    display_url: "example.com/story",
-    deep_link: "https://example.com/story",
-    citation_target: "external_snapshot:provider:1",
-    locator: {
-      type: "external_url",
-      url: "https://example.com/story",
-      title: "A web result",
-      display_url: "example.com/story",
-    },
-    snippet: "An excerpt",
-    extra_snippets: [],
-    published_at: null,
-    source_name: "Example",
-    rank: 1,
-    provider: "provider",
-    provider_request_id: null,
-    context_ref: { type: "web_result", id: "provider:1" },
-    media_id: null,
-    media_kind: null,
-    score: 1,
-    selected: false,
-  };
-}
-
 function mockApi() {
   openablesResponse = Promise.resolve(
     jsonResponse({ data: { items: [] } }),
@@ -183,9 +149,6 @@ function mockApi() {
           results: [],
           page: { has_more: false, next_cursor: null },
         });
-      }
-      if (url.pathname === "/api/web/search") {
-        return jsonResponse({ data: { results: webSearchResults } });
       }
       if (url.pathname === "/api/libraries/writable-destinations") {
         return jsonResponse({
@@ -343,7 +306,6 @@ beforeEach(() => {
   localStorage.clear();
   window.history.replaceState({}, "", "/");
   requests = [];
-  webSearchResults = [];
   mockApi();
 });
 
@@ -368,7 +330,7 @@ describe("Nexus shell contracts", () => {
     expect(window.location.hash).toBe("#reader");
   });
 
-  it("consumes the exact WebSearch URL intent into the explicit Web page", async () => {
+  it("consumes a retired WebSearch URL intent into explicit recovery", async () => {
     window.history.replaceState(
       {},
       "",
@@ -379,16 +341,17 @@ describe("Nexus shell contracts", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "Nexus" });
     expect(
-      within(dialog).getByRole("heading", { name: "Web Search" }),
+      within(dialog).getByRole("heading", {
+        name: "This link is no longer supported",
+      }),
     ).toBeVisible();
     expect(
-      within(dialog).getByRole("combobox", { name: "Search the web" }),
-    ).toHaveValue("design systems");
+      within(dialog).getByRole("button", { name: "Open Browse" }),
+    ).toBeVisible();
     expect(window.location.search).toBe("");
   });
 
-  it("runs the same WebSearch URL intent through the live provider on mobile", async () => {
-    webSearchResults = [webSearchResult()];
+  it("does not recover the old WebSearch query or call its provider on mobile", async () => {
     window.history.replaceState(
       {},
       "",
@@ -399,25 +362,11 @@ describe("Nexus shell contracts", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "Nexus" });
     expect(
-      within(dialog).getByRole("searchbox", { name: "Search the web" }),
-    ).toHaveValue("epistemology");
-    await waitFor(() =>
-      expect(
-        requests.some(
-          ({ url }) =>
-            url.pathname === "/api/web/search" &&
-            url.searchParams.get("q") === "epistemology",
-        ),
-      ).toBe(true),
-    );
-    await userEvent.click(
-      await within(dialog).findByRole("button", {
-        name: "Actions for A web result",
+      within(dialog).getByRole("heading", {
+        name: "This link is no longer supported",
       }),
-    );
-    expect(
-      await screen.findByRole("menuitem", { name: "Open another tab" }),
     ).toBeVisible();
+    expect(within(dialog).queryByText("epistemology")).not.toBeInTheDocument();
   });
 
   it("uses Nexus.Open to open the shell, enter available actions, and no-op without actions", async () => {

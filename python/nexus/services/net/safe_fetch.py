@@ -42,6 +42,16 @@ class SafeFetchResult:
     text: str
 
 
+class SafeFetchNotFound(ApiError):
+    """The public target is explicitly gone (HTTP 404/410)."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            ApiErrorCode.E_SOURCE_FETCH_FAILED,
+            "Upstream target no longer exists",
+        )
+
+
 def _reject_unless_public(url: str) -> None:
     try:
         validate_requested_url(url)
@@ -74,6 +84,8 @@ def safe_get(
                             )
                         current_url = urljoin(str(response.url), location)
                         continue
+                    if response.status_code in {404, 410}:
+                        raise SafeFetchNotFound
                     if response.status_code >= 400:
                         raise ApiError(
                             ApiErrorCode.E_SOURCE_FETCH_FAILED,

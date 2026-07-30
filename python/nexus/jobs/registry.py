@@ -138,6 +138,16 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             retry_delays_seconds=(60, 300, 900),
             lease_seconds=900,
         ),
+        "podcast_backfill_subscription": JobDefinition(
+            kind="podcast_backfill_subscription",
+            handler=_run_podcast_backfill_subscription,
+            max_attempts=3,
+            retry_delays_seconds=(60, 300, 900),
+            lease_seconds=900,
+            failed_result_statuses=("failed",),
+            dead_letter_handler=_dead_letter_podcast_backfill,
+            never_prune_dead=True,
+        ),
         "podcast_reindex_semantic_job": JobDefinition(
             kind="podcast_reindex_semantic_job",
             handler=_run_podcast_reindex_semantic,
@@ -367,6 +377,20 @@ def _run_podcast_sync_subscription(
         podcast_id=str(payload["podcast_id"]),
         request_id=_optional_str(payload.get("request_id")),
     )
+
+
+def _run_podcast_backfill_subscription(
+    *, payload: Mapping[str, Any], context: JobExecutionContext
+) -> Mapping[str, Any] | None:
+    from nexus.tasks.podcast_backfill_subscription import podcast_backfill_subscription
+
+    return podcast_backfill_subscription(payload=payload, context=context)
+
+
+def _dead_letter_podcast_backfill(db: Session, job: JobRow) -> None:
+    from nexus.tasks.podcast_backfill_subscription import dead_letter_podcast_backfill
+
+    dead_letter_podcast_backfill(db, job)
 
 
 def _run_podcast_reindex_semantic(

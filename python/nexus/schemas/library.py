@@ -16,7 +16,6 @@ LibraryRole = Literal["admin", "member"]
 LibraryInvitationStatusValue = Literal["pending", "accepted", "declined", "revoked"]
 LibraryGovernanceCursor = Annotated[str, Field(min_length=1)]
 LibraryEntryKind = Literal["media", "podcast"]
-PodcastSubscriptionStatusValue = Literal["active", "unsubscribed"]
 PodcastSyncStatusValue = Literal[
     "pending", "running", "partial", "complete", "source_limited", "failed"
 ]
@@ -38,10 +37,6 @@ class UpdateLibraryRequest(BaseModel):
     )
 
 
-class AddPodcastRequest(BaseModel):
-    podcast_id: UUID = Field(..., description="ID of the podcast to add")
-
-
 _LIBRARY_MUTATION_OUT_CONFIG = ConfigDict(
     alias_generator=to_camel,
     populate_by_name=True,
@@ -59,6 +54,13 @@ class LibraryDeleteOut(BaseModel):
 class LibraryEntryRemovalOut(BaseModel):
     model_config = _LIBRARY_MUTATION_OUT_CONFIG
 
+    library_entries_collection_revision: CollectionRevision
+
+
+class PodcastPlacementRemovalOut(BaseModel):
+    model_config = _LIBRARY_MUTATION_OUT_CONFIG
+
+    outcome: Literal["Removed", "AlreadyAbsent"]
     library_entries_collection_revision: CollectionRevision
 
 
@@ -161,17 +163,25 @@ class LibraryEntryPodcastOut(BaseModel):
     title: str
     contributors: list[ContributorCreditOut] = Field(default_factory=list)
     unplayed_count: int = Field(ge=0, default=0)
+    published_date: Presence[datetime]
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )
 
 
 class LibraryEntryPodcastSubscriptionOut(BaseModel):
-    status: PodcastSubscriptionStatusValue
     default_playback_speed: float | None = Field(default=None, ge=0.5, le=3.0)
     auto_queue: bool = False
     sync_status: PodcastSyncStatusValue
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )
 
 
 class LibraryEntryMediaCapabilitiesOut(BaseModel):
@@ -217,31 +227,48 @@ class ReadingTimeEstimateOut(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
 
 
-class LibraryMediaListItemOut(BaseModel):
-    id: UUID
-    kind: Literal["media"]
+class LibraryEntryPlacementOut(BaseModel):
+    library_entry_id: UUID
     position: int = Field(ge=0)
-    created_at: datetime
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )
+
+
+class LibraryMediaListItemOut(BaseModel):
+    kind: Literal["media"]
+    placement: Presence[LibraryEntryPlacementOut]
+    added_at: datetime
     media: LibraryEntryMediaOut
     reading_time_estimate: Presence[ReadingTimeEstimateOut] = Field(
         serialization_alias="readingTimeEstimate"
     )
 
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )
 
 
 class LibraryPodcastListItemOut(BaseModel):
-    id: UUID
     kind: Literal["podcast"]
-    position: int = Field(ge=0)
-    created_at: datetime
+    placement: Presence[LibraryEntryPlacementOut]
+    added_at: datetime
     podcast: LibraryEntryPodcastOut
-    subscription: LibraryEntryPodcastSubscriptionOut | None
+    subscription: Presence[LibraryEntryPodcastSubscriptionOut]
     reading_time_estimate: Presence[ReadingTimeEstimateOut] = Field(
         serialization_alias="readingTimeEstimate"
     )
 
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )
 
 
 LibraryEntryListItemOut = Annotated[

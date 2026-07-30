@@ -22,6 +22,7 @@ describe("app navigation model", () => {
     expect(NAV_MODEL.map(({ id }) => id)).toEqual([
       "lectern",
       "libraries",
+      "browse",
       "podcasts",
       "chats",
       "notes",

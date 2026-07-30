@@ -1,9 +1,9 @@
-"""Podcast discovery and subscription routes."""
+"""Podcast subscription and episode routes."""
 
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 
@@ -13,13 +13,14 @@ from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import ok
 from nexus.schemas.collection_page import parse_collection_query
 from nexus.schemas.podcast import (
+    PodcastEpisodeFromDiscoveryRequest,
     PodcastEpisodeSelection,
     PodcastOpmlImportRequest,
     PodcastSubscribeRequest,
     PodcastSubscriptionSettingsPatchRequest,
 )
 from nexus.services import library_entries
-from nexus.services.podcasts import discovery as podcast_discovery_service
+from nexus.services.podcasts import episode_acquisition as podcast_episode_acquisition_service
 from nexus.services.podcasts import episodes as podcast_episodes_service
 from nexus.services.podcasts import poll as podcast_sync_service
 from nexus.services.podcasts import subscriptions as podcast_subscription_service
@@ -28,28 +29,37 @@ from nexus.services.podcasts import subscriptions_query as podcast_subscriptions
 router = APIRouter(tags=["podcasts"])
 
 
-@router.get("/podcasts/discover")
-def discover_podcasts(
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    q: str = Query(min_length=1),
-    limit: int = Query(default=10, ge=1, le=50),
-) -> dict:
-    """Discover podcasts globally (not library-scoped)."""
-    _ = viewer
-    rows = podcast_discovery_service.discover_podcasts(db, q, limit=limit)
-    return ok(rows)
-
-
 @router.post("/podcasts/subscriptions")
 def subscribe_to_podcast(
     body: PodcastSubscribeRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=200)],
 ) -> dict:
     """Subscribe viewer and enqueue async data-plane podcast sync."""
-    out = podcast_subscription_service.subscribe_to_podcast(db, viewer.user_id, body)
-    return ok(out)
+    out = podcast_subscription_service.subscribe_to_podcast(
+        db,
+        viewer.user_id,
+        body,
+        idempotency_key=idempotency_key,
+    )
+    return ok(out, by_alias=True)
+
+
+@router.post("/podcast-episodes/from-discovery")
+def acquire_podcast_episode(
+    body: PodcastEpisodeFromDiscoveryRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=200)],
+) -> dict:
+    out = podcast_episode_acquisition_service.acquire_episode_from_discovery(
+        db,
+        viewer_id=viewer.user_id,
+        body=body,
+        idempotency_key=idempotency_key,
+    )
+    return ok(out, by_alias=True)
 
 
 @router.get("/podcasts/subscriptions")
@@ -138,6 +148,23 @@ def get_subscription_status(
     return ok(out)
 
 
+@router.post("/podcasts/subscriptions/{podcast_id}/backfill/retry")
+def retry_subscription_backfill(
+    podcast_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=200)],
+) -> dict:
+    """Restart only a persistently failed historical backfill."""
+    out = podcast_subscription_service.retry_subscription_backfill(
+        db,
+        viewer.user_id,
+        podcast_id,
+        idempotency_key=idempotency_key,
+    )
+    return ok(out, by_alias=True)
+
+
 @router.get("/podcasts/{podcast_id}/libraries")
 def get_podcast_libraries(
     podcast_id: UUID,
@@ -187,12 +214,14 @@ def unsubscribe_from_podcast(
     podcast_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=200)],
 ) -> dict:
     """Unsubscribe viewer and remove removable podcast library entries."""
     out = podcast_subscription_service.unsubscribe_from_podcast(
         db,
         viewer.user_id,
         podcast_id,
+        idempotency_key=idempotency_key,
     )
     return ok(out, by_alias=True)
 

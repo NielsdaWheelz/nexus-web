@@ -326,6 +326,59 @@ class DirectSessionManager:
 
         with Session(self.engine) as session:
             for table, column, value in reversed(self._cleanup_items):
+                if table == "podcast_subscriptions" and column == "podcast_id":
+                    # Target-head backfills deliberately retain a non-cascading
+                    # fence FK. Clear the dependent fence before this generic
+                    # registered subscription predicate removes its parent.
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM podcast_subscription_backfills
+                            WHERE subscription_id IN (
+                                SELECT id FROM podcast_subscriptions
+                                WHERE podcast_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+
+                if table == "podcast_episodes" and column in {"media_id", "podcast_id"}:
+                    # Aliases point at the composite episode identity without a
+                    # cascade, so test teardown must remove aliases first.
+                    session.execute(
+                        text(
+                            f"""
+                            DELETE FROM podcast_episode_identities
+                            WHERE {"episode_media_id" if column == "media_id" else column} = :value
+                            """
+                        ),
+                        {"value": value},
+                    )
+
+                if table == "podcasts" and column == "id":
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM podcast_subscription_backfills
+                            WHERE subscription_id IN (
+                                SELECT id FROM podcast_subscriptions
+                                WHERE podcast_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM podcast_episode_identities
+                            WHERE podcast_id = :value
+                            """
+                        ),
+                        {"value": value},
+                    )
+
                 if table == "highlights" and column == "fragment_anchor_fragment_id":
                     # Highlight-family FKs no longer cascade: delete the anchor
                     # child rows first, then the highlight roots they pointed at.
@@ -551,10 +604,7 @@ class DirectSessionManager:
 
                 if table == "users" and column == "id":
                     session.execute(
-                        text(
-                            "DELETE FROM viewer_collection_revisions "
-                            "WHERE viewer_id = :value"
-                        ),
+                        text("DELETE FROM viewer_collection_revisions WHERE viewer_id = :value"),
                         {"value": value},
                     )
                     _delete_note_owned_content(

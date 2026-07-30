@@ -14,7 +14,7 @@ dynamic routes (/libraries/{library_id}) to prevent UUID path capture.
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
@@ -23,7 +23,6 @@ from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.responses import ok, ok_page
 from nexus.schemas.collection_page import parse_collection_query
 from nexus.schemas.library import (
-    AddPodcastRequest,
     CreateLibraryInviteRequest,
     CreateLibraryRequest,
     LibraryEntryOrderRequest,
@@ -421,27 +420,20 @@ def patch_library_entry_order(
     return Response(status_code=204)
 
 
-@router.post("/libraries/{library_id}/podcasts", status_code=204)
-def add_podcast_to_library(
-    library_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    body: AddPodcastRequest,
-    db: Annotated[Session, Depends(get_db)],
-) -> Response:
-    """Add a subscribed podcast reference to a non-default library."""
-    library_entries.add_podcast_to_library(db, viewer.user_id, library_id, body.podcast_id)
-    return Response(status_code=204)
-
-
 @router.delete("/libraries/{library_id}/podcasts/{podcast_id}")
 def remove_podcast_from_library(
     library_id: UUID,
     podcast_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=200)],
 ) -> dict:
     """Remove a podcast reference from one non-default library."""
     result = library_entries.remove_podcast_from_library(
-        db, viewer.user_id, library_id, podcast_id
+        db,
+        viewer.user_id,
+        library_id,
+        podcast_id,
+        idempotency_key=idempotency_key,
     )
     return ok(result, by_alias=True)

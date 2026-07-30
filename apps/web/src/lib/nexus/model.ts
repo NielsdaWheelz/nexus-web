@@ -87,9 +87,7 @@ export type NexusTarget =
   | { kind: "OpenAdd"; seed: AddSeed }
   | { kind: "OpenTodayCapture" }
   | { kind: "CreatePage" }
-  | { kind: "CreateLibrary" }
-  | { kind: "PodcastDiscovery" }
-  | { kind: "OpenWebSearch"; query: string };
+  | { kind: "CreateLibrary" };
 
 export interface NexusAction {
   readonly id: string;
@@ -131,16 +129,14 @@ export type NexusQuickActionId =
   | "Nexus.Quick.Page"
   | "Nexus.Quick.Chat"
   | "Nexus.Quick.Library"
-  | "Nexus.Quick.Import"
-  | "Nexus.Quick.Podcast";
+  | "Nexus.Quick.Import";
 
 export type NexusQuickActionTarget =
   | { kind: "TodayCapture" }
   | { kind: "CreatePage" }
   | { kind: "CreateChat" }
   | { kind: "CreateLibrary" }
-  | { kind: "Import"; seed: AddSeed }
-  | { kind: "PodcastDiscovery" };
+  | { kind: "Import"; seed: AddSeed };
 
 export interface NexusQuickAction {
   readonly id: NexusQuickActionId;
@@ -169,8 +165,7 @@ export type CommittedWorkflow =
   | { kind: "TodayCapture"; replayId: string }
   | { kind: "Page"; replayId: string }
   | { kind: "Library"; replayId: string }
-  | { kind: "Import"; replayId: string }
-  | { kind: "PodcastSubscription"; replayId: string };
+  | { kind: "Import"; replayId: string };
 
 export interface RetainedActivation {
   readonly target: WorkspaceTarget;
@@ -182,32 +177,21 @@ export interface RetainedActivation {
     | "Page"
     | "Chat"
     | "Library"
-    | "Import"
-    | "Podcast";
+    | "Import";
   readonly completion: Presence<CommittedWorkflow>;
   readonly returnTo:
     | { kind: "Root" }
     | { kind: "Find"; query: string; scope: NexusFindScope };
 }
 
-export type NexusSourceStatus =
-  | "Idle"
-  | "Loading"
-  | "Ready"
-  | "RetryableFailure";
-
 export type NexusPage =
   | { kind: "Root" }
+  | { kind: "UnsupportedLink" }
   | { kind: "Find"; query: string; scope: NexusFindScope }
   | {
       kind: "Actions";
       entry: NexusEntry;
       actions: readonly NexusAction[];
-    }
-  | {
-      kind: "WebSearch";
-      query: string;
-      status: NexusSourceStatus;
     }
   | {
       kind: "TodayCapture";
@@ -232,12 +216,6 @@ export type NexusPage =
       sessionId: string;
       activation: NexusTargetActivation;
     }
-  | {
-      kind: "PodcastDiscovery";
-      query: string;
-      sessionId: string;
-      activation: NexusTargetActivation;
-    }
   | { kind: "ActivationBlocked"; retained: RetainedActivation }
   | { kind: "ManageTabs"; retained: RetainedActivation };
 
@@ -245,4 +223,4 @@ export type NexusOpenIntent =
   | { kind: "Root" }
   | { kind: "Add"; seed: AddSeed }
   | { kind: "QuickAction"; actionId: NexusQuickActionId }
-  | { kind: "WebSearch"; query: string };
+  | { kind: "UnsupportedLink" };

@@ -143,10 +143,12 @@ function mediaEntryWire(
   } = {},
 ) {
   return {
-    id,
     kind: "media",
-    position: 0,
-    created_at: options.createdAt ?? "2026-01-01T00:00:00Z",
+    placement: { kind: "Absent" },
+    addedAt:
+      options.mediaCreatedAt ??
+      options.createdAt ??
+      "2026-01-01T00:00:00Z",
     media: {
       id: mediaId,
       kind: "web_article",
@@ -155,9 +157,6 @@ function mediaEntryWire(
       author_mode: "automatic",
       published_date: null,
       canonical_source_url: null,
-      // Distinct from the entry-level created_at above: the default library's
-      // "Added" order keys the row line off *this* instant (see addedContext
-      // in LibraryPaneBody.tsx), not the physical entry's created_at.
       created_at:
         options.mediaCreatedAt ?? options.createdAt ?? "2026-01-01T00:00:00Z",
       processing_status: "ready_for_reading",

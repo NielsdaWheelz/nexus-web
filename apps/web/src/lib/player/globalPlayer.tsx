@@ -40,6 +40,10 @@ import {
   type Presence,
 } from "@/lib/api/presence";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import type {
+  DiscoveryTargetHandle,
+  PreviewAudioDescriptor,
+} from "@/lib/browse/contract";
 import { clamp } from "@/lib/clamp";
 import { isAbortError } from "@/lib/errors";
 import {
@@ -136,7 +140,41 @@ export type GlobalPlayerState =
       error: PlayerError;
       retry: () => void;
     }
-  | { kind: "PausedAtEnd"; session: AudioSession };
+  | { kind: "PausedAtEnd"; session: AudioSession }
+  | {
+      kind: "PreviewAudio";
+      session: PreviewAudioSession;
+      phase: PlaybackPhase;
+    }
+  | {
+      kind: "PreviewAudioFailed";
+      session: PreviewAudioSession;
+      error: PlayerError;
+      retry: () => void;
+    }
+  | { kind: "PreviewAudioAtEnd"; session: PreviewAudioSession };
+
+export interface PreviewAudioSession {
+  descriptor: PreviewAudioDescriptor;
+}
+
+export interface PreviewAudioPosition {
+  positionMs: number;
+  durationMs: Presence<number>;
+}
+
+type PreviewAudioState =
+  | {
+      kind: "PreviewAudio";
+      session: PreviewAudioSession;
+      phase: PlaybackPhase;
+    }
+  | {
+      kind: "PreviewAudioFailed";
+      session: PreviewAudioSession;
+      error: PlayerError;
+    }
+  | { kind: "PreviewAudioAtEnd"; session: PreviewAudioSession };
 
 export type PlayerPersistence =
   | { kind: "Ready" }
@@ -167,6 +205,8 @@ export interface GlobalPlayerCapability {
   /** The presentation-only manual-Next target (footer preview line). */
   nextPreview: NextPreview;
   playAudio(input: PlayerDescriptor): void;
+  playPreviewAudio(input: PreviewAudioDescriptor): void;
+  stopPreviewAudio(target: DiscoveryTargetHandle): PreviewAudioPosition | null;
   resume(): void;
   pause(): void;
   seekTo(positionMs: number): void;
@@ -221,6 +261,46 @@ function assertNever(value: never): never {
   throw new Error(`Unhandled player session state: ${JSON.stringify(value)}`);
 }
 
+export function canonicalSessionOfGlobalState(
+  state: GlobalPlayerState,
+): AudioSession | null {
+  switch (state.kind) {
+    case "Absent":
+    case "PreviewAudio":
+    case "PreviewAudioFailed":
+    case "PreviewAudioAtEnd":
+      return null;
+    case "Active":
+    case "Completing":
+    case "CompletionFailed":
+    case "PlaybackFailed":
+    case "PausedAtEnd":
+      return state.session;
+    default:
+      return assertNever(state);
+  }
+}
+
+export function previewSessionOfGlobalState(
+  state: GlobalPlayerState,
+): PreviewAudioSession | null {
+  switch (state.kind) {
+    case "PreviewAudio":
+    case "PreviewAudioFailed":
+    case "PreviewAudioAtEnd":
+      return state.session;
+    case "Absent":
+    case "Active":
+    case "Completing":
+    case "CompletionFailed":
+    case "PlaybackFailed":
+    case "PausedAtEnd":
+      return null;
+    default:
+      return assertNever(state);
+  }
+}
+
 /** The audio session a state carries, or `undefined` when Absent. */
 function sessionOfState(state: PlayerSessionState): AudioSession | undefined {
   return state.kind === "Absent" ? undefined : state.session;
@@ -236,6 +316,8 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   const [sessionState, setSessionState] = useState<PlayerSessionState>({
     kind: "Absent",
   });
+  const [previewAudioState, setPreviewAudioState] =
+    useState<PreviewAudioState | null>(null);
   const [history, setHistory] = useState<PlayerHistory>(EMPTY_HISTORY);
   const [persistence, setPersistence] = useState<PlayerPersistence>({
     kind: "Ready",
@@ -261,6 +343,10 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   // Latest-value refs read by async callbacks (audio events, heartbeat, RAF).
   const sessionStateRef = useRef<PlayerSessionState>(sessionState);
   sessionStateRef.current = sessionState;
+  const previewAudioStateRef = useRef<PreviewAudioState | null>(
+    previewAudioState,
+  );
+  previewAudioStateRef.current = previewAudioState;
   const historyRef = useRef<PlayerHistory>(history);
   historyRef.current = history;
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
@@ -848,6 +934,16 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   const handleEnded = useCallback(() => {
     setActivityAudioPlaying(false);
     stopSilenceTrimming();
+    const preview = previewAudioStateRef.current;
+    if (preview?.kind === "PreviewAudio") {
+      const ended: PreviewAudioState = {
+        kind: "PreviewAudioAtEnd",
+        session: preview.session,
+      };
+      previewAudioStateRef.current = ended;
+      setPreviewAudioState(ended);
+      return;
+    }
     const state = sessionStateRef.current;
     if (state.kind !== "Active") return;
     if (completionInFlightRef.current) return;
@@ -888,6 +984,16 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   const retryPlayback = useCallback(() => {
     const audio = audioElementRef.current;
     if (!audio) return;
+    const preview = previewAudioStateRef.current;
+    if (preview?.kind === "PreviewAudioFailed") {
+      const buffering: PreviewAudioState = {
+        kind: "PreviewAudio",
+        session: preview.session,
+        phase: "Buffering",
+      };
+      previewAudioStateRef.current = buffering;
+      setPreviewAudioState(buffering);
+    }
     setSessionState((prev) =>
       prev.kind === "PlaybackFailed"
         ? { kind: "Active", session: prev.session, phase: "Buffering" }
@@ -908,6 +1014,72 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     void audio.play().catch(() => {});
   }, [resumeAudioEffectsGraphIfRequired, startSilenceTrimming]);
 
+  const playPreviewAudio = useCallback(
+    (descriptor: PreviewAudioDescriptor) => {
+      if (transportLocked()) return;
+      stopHeartbeat(false);
+      setPersistence({ kind: "Ready" });
+      setSessionState({ kind: "Absent" });
+      sessionStateRef.current = { kind: "Absent" };
+      const preview: PreviewAudioState = {
+        kind: "PreviewAudio",
+        session: { descriptor },
+        phase: "Buffering",
+      };
+      previewAudioStateRef.current = preview;
+      setPreviewAudioState(preview);
+      const startRate = DEFAULT_PLAYBACK_RATE;
+      userPlaybackRateRef.current = startRate;
+      setPlaybackRateState(startRate);
+      pendingStartRef.current = {
+        startSeconds: 0,
+        playbackRate: startRate,
+      };
+      setCurrentTimeSeconds(0);
+      setDurationSeconds(
+        descriptor.durationMs.kind === "Present"
+          ? descriptor.durationMs.value / 1000
+          : 0,
+      );
+      setBufferedSeconds(0);
+      setStartEpoch((value) => value + 1);
+    },
+    [stopHeartbeat, transportLocked],
+  );
+
+  const stopPreviewAudio = useCallback(
+    (target: DiscoveryTargetHandle): PreviewAudioPosition | null => {
+      const preview = previewAudioStateRef.current;
+      if (!preview || preview.session.descriptor.target !== target) return null;
+      const audio = audioElementRef.current;
+      const positionMs = Math.max(
+        0,
+        Math.round((audio?.currentTime ?? currentTimeSeconds) * 1000),
+      );
+      const observedDuration = audio?.duration;
+      const durationMs: Presence<number> =
+        observedDuration !== undefined &&
+        Number.isFinite(observedDuration) &&
+        observedDuration > 0
+          ? present(Math.round(observedDuration * 1000))
+          : preview.session.descriptor.durationMs;
+      stopSilenceTrimming();
+      audio?.pause();
+      if (audio) {
+        audio.removeAttribute("src");
+        audio.load();
+      }
+      pendingStartRef.current = null;
+      previewAudioStateRef.current = null;
+      setPreviewAudioState(null);
+      setCurrentTimeSeconds(0);
+      setDurationSeconds(0);
+      setBufferedSeconds(0);
+      return { positionMs, durationMs };
+    },
+    [currentTimeSeconds, stopSilenceTrimming],
+  );
+
   const playAudio = useCallback(
     (descriptor: PlayerDescriptor) => {
       // Play waits for Ready (spec §6): origin resolution needs the canonical
@@ -920,6 +1092,8 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
         );
       }
       if (transportLocked()) return;
+      previewAudioStateRef.current = null;
+      setPreviewAudioState(null);
       resumeAudioEffectsGraphIfRequired();
       pendingStartRef.current = null;
       applyTransition(
@@ -941,7 +1115,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   );
 
   const previous = useCallback(() => {
-    if (transportLocked()) return;
+    if (transportLocked() || previewAudioStateRef.current !== null) return;
     const positionMs = Math.max(
       0,
       Math.round((audioElementRef.current?.currentTime ?? 0) * 1000),
@@ -957,7 +1131,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   }, [applyTransition, latestSnapshot, transportLocked]);
 
   const next = useCallback(() => {
-    if (transportLocked()) return;
+    if (transportLocked() || previewAudioStateRef.current !== null) return;
     applyTransition(
       manualNext(sessionStateRef.current, historyRef.current, latestSnapshot()),
     );
@@ -1044,24 +1218,39 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   // --- Media Session ---------------------------------------------------------
 
   const currentSession = sessionOfState(sessionState);
-  const mediaSessionTrack = useMemo(
-    () =>
-      currentSession
-        ? {
-            title: currentSession.descriptor.title,
-            podcast_title: presenceValueOr(
-              currentSession.descriptor.subtitle,
-              null,
-            ),
-            image_url: presenceValueOr(
-              currentSession.descriptor.activation.artworkUrl,
-              null,
-            ),
-          }
-        : null,
-    [currentSession],
-  );
+  const currentPreviewSession = previewAudioState?.session ?? null;
+  const mediaSessionTrack = useMemo(() => {
+    if (currentPreviewSession) {
+      const imageUrl = presenceValueOr(
+        currentPreviewSession.descriptor.imageUrl,
+        null,
+      );
+      return {
+        title: currentPreviewSession.descriptor.title,
+        podcast_title: currentPreviewSession.descriptor.source,
+        image:
+          imageUrl === null
+            ? null
+            : { kind: "Proxied" as const, url: imageUrl },
+      };
+    }
+    if (!currentSession) return null;
+    const imageUrl = presenceValueOr(
+      currentSession.descriptor.activation.artworkUrl,
+      null,
+    );
+    return {
+      title: currentSession.descriptor.title,
+      podcast_title: presenceValueOr(currentSession.descriptor.subtitle, null),
+      image:
+        imageUrl === null ? null : { kind: "Remote" as const, url: imageUrl },
+    };
+  }, [currentPreviewSession, currentSession]);
   const isPlaying =
+    (sessionState.kind === "Active" && sessionState.phase === "Playing") ||
+    (previewAudioState?.kind === "PreviewAudio" &&
+      previewAudioState.phase === "Playing");
+  const canonicalIsPlaying =
     sessionState.kind === "Active" && sessionState.phase === "Playing";
   isPlayingRef.current = isPlaying;
   const activityMediaId = currentSession?.descriptor.mediaId;
@@ -1125,6 +1314,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     useMediaSessionAdapter({
       track: mediaSessionTrack,
       isPlaying,
+      positionEnabled: previewAudioState?.kind !== "PreviewAudioAtEnd",
       audioElement,
       playbackRateRef: userPlaybackRateRef,
       handlers: {
@@ -1132,8 +1322,8 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
         pause,
         skipBackward: () => skipBy(-PLAYER_SKIP_BACK_SECONDS * 1000),
         skipForward: () => skipBy(PLAYER_SKIP_FORWARD_SECONDS * 1000),
-        previous,
-        next,
+        previous: currentPreviewSession ? null : previous,
+        next: currentPreviewSession ? null : next,
         seekToSeconds: (seconds) => seekTo(seconds * 1000),
       },
     });
@@ -1231,6 +1421,13 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   // --- Audio element events --------------------------------------------------
 
   const setPhase = useCallback((phase: PlaybackPhase) => {
+    const preview = previewAudioStateRef.current;
+    if (preview?.kind === "PreviewAudio") {
+      const next: PreviewAudioState = { ...preview, phase };
+      previewAudioStateRef.current = next;
+      setPreviewAudioState(next);
+      return;
+    }
     setSessionState((prev) =>
       prev.kind === "Active" ? { ...prev, phase } : prev,
     );
@@ -1250,7 +1447,12 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     };
     const handlePause = () => {
       setActivityAudioPlaying(false);
-      if (sessionStateRef.current.kind === "Active") setPhase("Paused");
+      if (
+        sessionStateRef.current.kind === "Active" ||
+        previewAudioStateRef.current?.kind === "PreviewAudio"
+      ) {
+        setPhase("Paused");
+      }
       stopSilenceTrimming();
       heartbeatRef.current?.tick();
     };
@@ -1318,7 +1520,21 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       setActivityAudioPlaying(false);
       const errorCode = audioElement.error?.code ?? 0;
       const state = sessionStateRef.current;
+      const preview = previewAudioStateRef.current;
       stopSilenceTrimming();
+      if (preview?.kind === "PreviewAudio") {
+        const failed: PreviewAudioState = {
+          kind: "PreviewAudioFailed",
+          session: preview.session,
+          error: {
+            code: String(errorCode),
+            message: mapPlaybackErrorMessage(errorCode),
+          },
+        };
+        previewAudioStateRef.current = failed;
+        setPreviewAudioState(failed);
+        return;
+      }
       // Only ACTIVE playback fails into PlaybackFailed. A late element error on
       // an ended/completing session (the stream already finished or the terminal
       // command owns the dock) never repaints PausedAtEnd/Completing.
@@ -1412,7 +1628,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   // justify-polling: the heartbeat cadence is a fixed-interval position push
   // (spec §5.4), not a data poll; the engine coalesces and single-flights sends.
   useIntervalPoll({
-    enabled: isPlaying,
+    enabled: canonicalIsPlaying,
     onPoll: () => heartbeatRef.current?.tick(),
     pollIntervalMs: SYNC_INTERVAL_MS,
   });
@@ -1489,7 +1705,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   // --- Keyboard shortcuts ----------------------------------------------------
 
   usePlayerKeyboardShortcuts({
-    enabled: sessionState.kind !== "Absent",
+    enabled: sessionState.kind !== "Absent" || previewAudioState !== null,
     isPlaying,
     play: resume,
     pause,
@@ -1510,6 +1726,11 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   }, [currentSession, currentTimeSeconds]);
 
   const publicState = useMemo<GlobalPlayerState>(() => {
+    if (previewAudioState) {
+      return previewAudioState.kind === "PreviewAudioFailed"
+        ? { ...previewAudioState, retry: retryPlayback }
+        : previewAudioState;
+    }
     const state = sessionState;
     switch (state.kind) {
       case "Absent":
@@ -1562,11 +1783,14 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       default:
         return assertNever(state);
     }
-  }, [sessionState, lecternMutation, retryPlayback]);
+  }, [previewAudioState, sessionState, lecternMutation, retryPlayback]);
 
   const nextPreview = useMemo<NextPreview>(
-    () => previewNextDescriptor(sessionState, history, latestSnapshot()),
-    [sessionState, history, latestSnapshot],
+    () =>
+      previewAudioState
+        ? { kind: "None" }
+        : previewNextDescriptor(sessionState, history, latestSnapshot()),
+    [previewAudioState, sessionState, history, latestSnapshot],
   );
 
   const presentation = useMemo<PlayerPresentation>(
@@ -1608,6 +1832,8 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       presentation,
       nextPreview,
       playAudio,
+      playPreviewAudio,
+      stopPreviewAudio,
       resume,
       pause,
       seekTo,
@@ -1625,6 +1851,8 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       presentation,
       nextPreview,
       playAudio,
+      playPreviewAudio,
+      stopPreviewAudio,
       resume,
       pause,
       seekTo,

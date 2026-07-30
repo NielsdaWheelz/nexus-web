@@ -35,6 +35,7 @@ export interface LibraryDestinationPickerProps {
     | { kind: "Disabled" }
     | { kind: "Creating" };
   onCreateDestination: (name: string) => Promise<LibraryDestinationSelection>;
+  panelId?: string;
 }
 
 function toItem(
@@ -69,6 +70,7 @@ export default function LibraryDestinationPicker({
   onChange,
   interaction,
   onCreateDestination,
+  panelId,
 }: LibraryDestinationPickerProps) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<LibraryDestinationSelection[]>([]);
@@ -307,6 +309,7 @@ export default function LibraryDestinationPicker({
       layer={layer}
       anchor={anchor}
       title={title}
+      panelId={panelId}
     >
       <LibraryChooser
         query={query}

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Presence } from "@/lib/api/presence";
+import { hasExactKeys } from "@/lib/api/exact";
 import type { EmphasisSegment } from "@/lib/ui/emphasis";
 import {
   machineDocumentStyles,
@@ -221,17 +222,6 @@ type IncomingMessage =
   | { readonly kind: "FindRequested" }
   | { readonly kind: "Citation"; readonly ordinal: number };
 
-function exactKeys(
-  value: Record<string, unknown>,
-  expected: readonly string[],
-): boolean {
-  const keys = Object.keys(value);
-  return (
-    keys.length === expected.length &&
-    keys.every((key) => expected.includes(key))
-  );
-}
-
 function isPositiveSafeInteger(value: unknown): value is number {
   return (
     typeof value === "number" &&
@@ -267,7 +257,7 @@ function decodeSectionInfo(
 ): DossierDocumentFindSectionInfo | null {
   if (
     !isRecord(value) ||
-    !exactKeys(value, ["id", "title"]) ||
+    !hasExactKeys(value, ["id", "title"]) ||
     !boundedString(value.id, 1, SECTION_ID_MAX_CODEPOINTS) ||
     !boundedString(value.title, 1, SECTION_TITLE_MAX_CODEPOINTS)
   ) {
@@ -280,11 +270,11 @@ function decodeSectionPresence(
   value: unknown,
 ): Presence<DossierDocumentFindSectionInfo> | null {
   if (!isRecord(value)) return null;
-  if (exactKeys(value, ["kind"]) && value.kind === "Absent") {
+  if (hasExactKeys(value, ["kind"]) && value.kind === "Absent") {
     return { kind: "Absent" };
   }
   if (
-    exactKeys(value, ["kind", "value"]) &&
+    hasExactKeys(value, ["kind", "value"]) &&
     value.kind === "Present"
   ) {
     const section = decodeSectionInfo(value.value);
@@ -305,7 +295,7 @@ function decodeSnippet(value: unknown): readonly EmphasisSegment[] | null {
     const raw = value[index];
     if (
       !isRecord(raw) ||
-      !exactKeys(raw, ["text", "emphasized"]) ||
+      !hasExactKeys(raw, ["text", "emphasized"]) ||
       typeof raw.text !== "string" ||
       raw.text.length === 0 ||
       typeof raw.emphasized !== "boolean"
@@ -334,18 +324,18 @@ function decodeSnippet(value: unknown): readonly EmphasisSegment[] | null {
 
 function decodeFindResult(value: unknown): DossierDocumentFindResult | null {
   if (!isRecord(value)) return null;
-  if (exactKeys(value, ["kind"]) && value.kind === "NoMatches") {
+  if (hasExactKeys(value, ["kind"]) && value.kind === "NoMatches") {
     return { kind: "NoMatches" };
   }
   if (
-    exactKeys(value, ["kind", "threshold"]) &&
+    hasExactKeys(value, ["kind", "threshold"]) &&
     value.kind === "TooManyMatches" &&
     value.threshold === MATCH_THRESHOLD
   ) {
     return { kind: "TooManyMatches", threshold: MATCH_THRESHOLD };
   }
   if (
-    !exactKeys(value, ["kind", "occurrences"]) ||
+    !hasExactKeys(value, ["kind", "occurrences"]) ||
     value.kind !== "Ready" ||
     !Array.isArray(value.occurrences) ||
     value.occurrences.length < 1 ||
@@ -359,7 +349,7 @@ function decodeFindResult(value: unknown): DossierDocumentFindResult | null {
     const raw = value.occurrences[index];
     if (
       !isRecord(raw) ||
-      !exactKeys(raw, [
+      !hasExactKeys(raw, [
         "ordinal",
         "startCp",
         "endCp",
@@ -417,26 +407,26 @@ function decodeIncoming(
 ): IncomingMessage | null {
   if (!isRecord(value) || value.channel !== channel) return null;
   if (
-    exactKeys(value, ["channel", "kind"]) &&
+    hasExactKeys(value, ["channel", "kind"]) &&
     value.kind === "FindReady"
   ) {
     return { kind: "FindReady" };
   }
   if (
-    exactKeys(value, ["channel", "kind"]) &&
+    hasExactKeys(value, ["channel", "kind"]) &&
     value.kind === "FindRequested"
   ) {
     return { kind: "FindRequested" };
   }
   if (
-    exactKeys(value, ["channel", "kind", "ordinal"]) &&
+    hasExactKeys(value, ["channel", "kind", "ordinal"]) &&
     value.kind === "Citation" &&
     isPositiveSafeInteger(value.ordinal)
   ) {
     return { kind: "Citation", ordinal: value.ordinal };
   }
   if (
-    exactKeys(value, [
+    hasExactKeys(value, [
       "channel",
       "kind",
       "sessionId",
@@ -459,7 +449,7 @@ function decodeIncoming(
       : null;
   }
   if (
-    exactKeys(value, [
+    hasExactKeys(value, [
       "channel",
       "kind",
       "sessionId",
@@ -481,7 +471,7 @@ function decodeIncoming(
       : null;
   }
   if (
-    exactKeys(value, [
+    hasExactKeys(value, [
       "channel",
       "kind",
       "sessionId",
@@ -501,7 +491,7 @@ function decodeIncoming(
     };
   }
   if (
-    exactKeys(value, [
+    hasExactKeys(value, [
       "channel",
       "kind",
       "sessionId",
@@ -524,7 +514,7 @@ function decodeIncoming(
     };
   }
   if (
-    exactKeys(value, ["channel", "kind", "sessionId", "queryId"]) &&
+    hasExactKeys(value, ["channel", "kind", "sessionId", "queryId"]) &&
     value.kind === "FindCleared" &&
     isPositiveSafeInteger(value.sessionId) &&
     isPositiveSafeInteger(value.queryId)
@@ -536,14 +526,14 @@ function decodeIncoming(
     };
   }
   if (
-    exactKeys(value, ["channel", "kind", "sessionId"]) &&
+    hasExactKeys(value, ["channel", "kind", "sessionId"]) &&
     value.kind === "FindReturned" &&
     isPositiveSafeInteger(value.sessionId)
   ) {
     return { kind: "FindReturned", sessionId: value.sessionId };
   }
   if (
-    exactKeys(value, ["channel", "kind", "sessionId", "reason"]) &&
+    hasExactKeys(value, ["channel", "kind", "sessionId", "reason"]) &&
     value.kind === "FindReturnRejected" &&
     value.reason === "OriginUnavailable" &&
     isPositiveSafeInteger(value.sessionId)

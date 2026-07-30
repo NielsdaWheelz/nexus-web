@@ -39,6 +39,7 @@ BACKGROUND_WORKER_JOB_KINDS: tuple[str, ...] = (
     "enrich_metadata",
     "media_unit_build",
     "note_reindex_job",
+    "podcast_backfill_subscription",
     "podcast_reindex_semantic_job",
     "synapse_scan",
     "dawn_write_job",
@@ -255,8 +256,6 @@ class Settings(BaseSettings):
     podcast_transcription_timeout_seconds: float = Field(
         default=90.0, alias="PODCAST_TRANSCRIPTION_TIMEOUT_SECONDS"
     )
-    podcast_initial_episode_window: int = Field(default=3, alias="PODCAST_INITIAL_EPISODE_WINDOW")
-    podcast_ingest_prefetch_limit: int = Field(default=50, alias="PODCAST_INGEST_PREFETCH_LIMIT")
     podcast_active_poll_schedule_seconds: int = Field(
         default=0, alias="PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS"
     )
@@ -666,8 +665,6 @@ class Settings(BaseSettings):
             if value < 1:
                 raise ValueError(f"{field_name.upper()}={value} must be >= 1.")
 
-        if self.podcast_initial_episode_window < 1:
-            raise ValueError("PODCAST_INITIAL_EPISODE_WINDOW must be >= 1.")
         if self.billing_ai_plus_platform_token_limit_monthly < 0:
             raise ValueError("BILLING_AI_PLUS_PLATFORM_TOKEN_LIMIT_MONTHLY must be >= 0.")
         if self.billing_ai_pro_platform_token_limit_monthly < 0:
@@ -683,8 +680,6 @@ class Settings(BaseSettings):
             )
         if self.transcript_embedding_timeout_seconds <= 0:
             raise ValueError("TRANSCRIPT_EMBEDDING_TIMEOUT_SECONDS must be > 0.")
-        if self.podcast_ingest_prefetch_limit < 1:
-            raise ValueError("PODCAST_INGEST_PREFETCH_LIMIT must be >= 1.")
         if self.podcast_active_poll_schedule_seconds < 0:
             raise ValueError("PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS must be >= 0.")
         if self.podcast_active_poll_limit < 1:

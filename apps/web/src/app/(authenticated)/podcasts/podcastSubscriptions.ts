@@ -29,6 +29,23 @@ import {
 
 export type PodcastSubscriptionSyncStatus = PodcastSyncStatus;
 
+export type PodcastBackfillState =
+  "Pending" | "Running" | "Complete" | "SourceLimited" | "Failed";
+
+export type PodcastBackfillRecord = {
+  id: string;
+  state: PodcastBackfillState;
+  processed_count: number;
+  added_count: number;
+};
+
+export type PodcastBackfill = {
+  id: string;
+  state: PodcastBackfillState;
+  processedCount: number;
+  addedCount: number;
+};
+
 export type PodcastSummary = {
   id: string;
   provider: string;
@@ -45,7 +62,6 @@ export type PodcastSummary = {
 
 export type PodcastSubscriptionRecord = {
   podcast_id: string;
-  status: "active" | "unsubscribed";
   default_playback_speed?: number | null;
   auto_queue?: boolean;
   sync_status: PodcastSubscriptionSyncStatus;
@@ -56,6 +72,7 @@ export type PodcastSubscriptionRecord = {
   sync_completed_at: string | null;
   last_synced_at: string | null;
   updated_at: string;
+  backfill: PodcastBackfillRecord;
 };
 
 type PodcastSubscriptionDetail = PodcastSubscriptionRecord & {
@@ -66,6 +83,181 @@ export type PodcastDetailResponse = {
   podcast: PodcastSummary;
   subscription: PodcastSubscriptionDetail | null;
 };
+
+function decodePodcastBackfillState(
+  raw: unknown,
+  context: string,
+): PodcastBackfillState {
+  const state = expectString(raw, context);
+  if (
+    state !== "Pending" &&
+    state !== "Running" &&
+    state !== "Complete" &&
+    state !== "SourceLimited" &&
+    state !== "Failed"
+  ) {
+    throw new TypeError(`${context} is invalid`);
+  }
+  return state;
+}
+
+function decodePodcastBackfillRecord(
+  raw: unknown,
+  context: string,
+): PodcastBackfillRecord {
+  const value = expectExactRecord(
+    raw,
+    ["id", "state", "processed_count", "added_count"],
+    context,
+  );
+  return {
+    id: expectString(value.id, `${context}.id`),
+    state: decodePodcastBackfillState(value.state, `${context}.state`),
+    processed_count: expectNonnegativeInteger(
+      value.processed_count,
+      `${context}.processed_count`,
+    ),
+    added_count: expectNonnegativeInteger(
+      value.added_count,
+      `${context}.added_count`,
+    ),
+  };
+}
+
+export function decodePodcastDetailResponse(
+  raw: unknown,
+): PodcastDetailResponse {
+  const data = expectExactRecord(
+    expectExactRecord(raw, ["data"], "PodcastDetailResponse").data,
+    ["podcast", "subscription"],
+    "PodcastDetailResponse.data",
+  );
+  const podcast = expectExactRecord(
+    data.podcast,
+    [
+      "id",
+      "provider",
+      "provider_podcast_id",
+      "title",
+      "contributors",
+      "feed_url",
+      "website_url",
+      "image_url",
+      "description",
+      "created_at",
+      "updated_at",
+    ],
+    "PodcastDetailResponse.podcast",
+  );
+  const subscription =
+    data.subscription === null
+      ? null
+      : expectExactRecord(
+          data.subscription,
+          [
+            "user_id",
+            "podcast_id",
+            "default_playback_speed",
+            "auto_queue",
+            "sync_status",
+            "sync_error_code",
+            "sync_error_message",
+            "sync_attempts",
+            "sync_started_at",
+            "sync_completed_at",
+            "last_synced_at",
+            "updated_at",
+            "backfill",
+          ],
+          "PodcastDetailResponse.subscription",
+        );
+  return {
+    podcast: {
+      id: expectString(podcast.id, "podcast.id"),
+      provider: expectString(podcast.provider, "podcast.provider"),
+      provider_podcast_id: expectString(
+        podcast.provider_podcast_id,
+        "podcast.provider_podcast_id",
+      ),
+      title: expectString(podcast.title, "podcast.title"),
+      contributors: expectArray(
+        podcast.contributors,
+        (credit, index) =>
+          decodeContributorCredit(credit, index, "Podcast detail contributors"),
+        "podcast.contributors",
+      ),
+      feed_url: expectString(podcast.feed_url, "podcast.feed_url"),
+      website_url: expectNullableString(
+        podcast.website_url,
+        "podcast.website_url",
+      ),
+      image_url: expectNullableString(podcast.image_url, "podcast.image_url"),
+      description: expectNullableString(
+        podcast.description,
+        "podcast.description",
+      ),
+      created_at: expectString(podcast.created_at, "podcast.created_at"),
+      updated_at: expectString(podcast.updated_at, "podcast.updated_at"),
+    },
+    subscription:
+      subscription === null
+        ? null
+        : {
+            user_id: expectString(subscription.user_id, "subscription.user_id"),
+            podcast_id: expectString(
+              subscription.podcast_id,
+              "subscription.podcast_id",
+            ),
+            default_playback_speed:
+              subscription.default_playback_speed === null
+                ? null
+                : expectFiniteNumber(
+                    subscription.default_playback_speed,
+                    "subscription.default_playback_speed",
+                  ),
+            auto_queue: expectBoolean(
+              subscription.auto_queue,
+              "subscription.auto_queue",
+            ),
+            sync_status: decodePodcastSyncStatus(
+              subscription.sync_status,
+              "subscription.sync_status",
+            ),
+            sync_error_code: expectNullableString(
+              subscription.sync_error_code,
+              "subscription.sync_error_code",
+            ),
+            sync_error_message: expectNullableString(
+              subscription.sync_error_message,
+              "subscription.sync_error_message",
+            ),
+            sync_attempts: expectNonnegativeInteger(
+              subscription.sync_attempts,
+              "subscription.sync_attempts",
+            ),
+            sync_started_at: expectNullableString(
+              subscription.sync_started_at,
+              "subscription.sync_started_at",
+            ),
+            sync_completed_at: expectNullableString(
+              subscription.sync_completed_at,
+              "subscription.sync_completed_at",
+            ),
+            last_synced_at: expectNullableString(
+              subscription.last_synced_at,
+              "subscription.last_synced_at",
+            ),
+            updated_at: expectString(
+              subscription.updated_at,
+              "subscription.updated_at",
+            ),
+            backfill: decodePodcastBackfillRecord(
+              subscription.backfill,
+              "subscription.backfill",
+            ),
+          },
+  };
+}
 
 export type PodcastSubscriptionListItemWire = {
   podcast_id: string;
@@ -170,7 +362,6 @@ type PodcastSubscriptionSettingsDraft = {
 export type PodcastSubscriptionSettingsResponse = {
   user_id: string;
   podcast_id: string;
-  status: "active" | "unsubscribed";
   default_playback_speed: number | null;
   auto_queue: boolean;
   sync_status: PodcastSubscriptionSyncStatus;
@@ -181,8 +372,15 @@ export type PodcastSubscriptionSettingsResponse = {
   sync_completed_at: string | null;
   last_synced_at: string | null;
   updated_at: string;
+  backfill: PodcastBackfill;
   collectionRevision: CollectionRevision;
   libraryEntriesCollectionRevision: CollectionRevision;
+};
+
+export type PodcastBackfillRetryResult = {
+  podcastId: string;
+  outcome: "Retried" | "NotEligible";
+  backfill: PodcastBackfill;
 };
 
 export type PodcastSubscriptionSyncRefreshResult = {
@@ -196,64 +394,21 @@ export type PodcastSubscriptionSyncRefreshResult = {
   libraryEntriesCollectionRevision: CollectionRevision;
 };
 
-export type PodcastUnsubscribeResult = {
-  podcast_id: string;
-  status: "unsubscribed";
-  removed_from_library_count: number;
-  retained_shared_library_count: number;
-  collectionRevision: CollectionRevision;
-  libraryEntriesCollectionRevision: CollectionRevision;
-};
-
-type PodcastSubscribeInput = {
-  provider_podcast_id: string;
-  title: string;
-  contributors: ContributorCredit[];
-  feed_url: string;
-  website_url: string | null;
-  image_url: string | null;
-  description: string | null;
-  library_ids: string[];
-};
-
-export type PodcastSubscribeResult = {
-  podcast_id: string;
-  subscription_created: boolean;
-  sync_status: PodcastSubscriptionSyncStatus;
-  sync_enqueued: boolean;
-  sync_error_code: string | null;
-  sync_error_message: string | null;
-  sync_attempts: number;
-  last_synced_at: string | null;
-  window_size: number;
-};
-
-// v2 subscribe payload (D-4): the strict snake-case `ContributorCreditIn`. The
-// server owns ordinal (list order), source, source_ref, and confidence — the
-// client sends only the observed credit facts.
-type ContributorCreditInput = {
-  credited_name: string;
-  role: string;
-  raw_role?: string;
-};
-
-export function toPodcastContributorInputs(
-  contributors: ContributorCredit[],
-): ContributorCreditInput[] {
-  return contributors.map((credit) => {
-    const creditedName = credit.credited_name.trim();
-    const role = credit.role?.trim();
-    if (!creditedName || !role) {
-      throw new Error("Contributor credit payload is malformed");
+export type PodcastUnsubscribeResult =
+  | {
+      readonly outcome: "Unsubscribed";
+      readonly podcast_id: string;
+      readonly removed_placement_count: number;
+      readonly retained_shared_count: number;
+      readonly collectionRevision: CollectionRevision;
+      readonly libraryEntriesCollectionRevision: CollectionRevision;
     }
-
-    return {
-      credited_name: creditedName,
-      role,
-      ...(credit.raw_role?.trim() ? { raw_role: credit.raw_role.trim() } : {}),
+  | {
+      readonly outcome: "AlreadyUnsubscribed";
+      readonly podcast_id: string;
+      readonly collectionRevision: CollectionRevision;
+      readonly libraryEntriesCollectionRevision: CollectionRevision;
     };
-  });
-}
 
 export function getPodcastSubscriptionSettingsDraft(
   subscription: PodcastSubscriptionSettingsFields | null | undefined,
@@ -348,7 +503,6 @@ function decodePodcastSubscriptionSettingsResponse(
     [
       "user_id",
       "podcast_id",
-      "status",
       "default_playback_speed",
       "auto_queue",
       "sync_status",
@@ -359,19 +513,15 @@ function decodePodcastSubscriptionSettingsResponse(
       "sync_completed_at",
       "last_synced_at",
       "updated_at",
+      "backfill",
       "collectionRevision",
       "libraryEntriesCollectionRevision",
     ],
     "PodcastSubscriptionSettingsResponse.data",
   );
-  const status = expectString(data.status, "status");
-  if (status !== "active" && status !== "unsubscribed") {
-    throw new TypeError("Podcast subscription settings status is invalid");
-  }
   return {
     user_id: expectString(data.user_id, "user_id"),
     podcast_id: expectString(data.podcast_id, "podcast_id"),
-    status,
     default_playback_speed:
       data.default_playback_speed === null
         ? null
@@ -401,11 +551,9 @@ function decodePodcastSubscriptionSettingsResponse(
       data.sync_completed_at,
       "sync_completed_at",
     ),
-    last_synced_at: expectNullableString(
-      data.last_synced_at,
-      "last_synced_at",
-    ),
+    last_synced_at: expectNullableString(data.last_synced_at, "last_synced_at"),
     updated_at: expectString(data.updated_at, "updated_at"),
+    backfill: decodePodcastBackfill(data.backfill, "backfill"),
     collectionRevision: decodeCollectionRevision(data.collectionRevision),
     libraryEntriesCollectionRevision: decodeCollectionRevision(
       data.libraryEntriesCollectionRevision,
@@ -413,14 +561,52 @@ function decodePodcastSubscriptionSettingsResponse(
   };
 }
 
+function decodePodcastBackfill(raw: unknown, context: string): PodcastBackfill {
+  const value = expectExactRecord(
+    raw,
+    ["id", "state", "processedCount", "addedCount"],
+    context,
+  );
+  return {
+    id: expectString(value.id, `${context}.id`),
+    state: decodePodcastBackfillState(value.state, `${context}.state`),
+    processedCount: expectNonnegativeInteger(
+      value.processedCount,
+      `${context}.processedCount`,
+    ),
+    addedCount: expectNonnegativeInteger(
+      value.addedCount,
+      `${context}.addedCount`,
+    ),
+  };
+}
+
+function decodePodcastBackfillRetryResult(
+  raw: unknown,
+): PodcastBackfillRetryResult {
+  const data = expectExactRecord(
+    expectExactRecord(raw, ["data"], "PodcastBackfillRetryResult").data,
+    ["podcastId", "outcome", "backfill"],
+    "PodcastBackfillRetryResult.data",
+  );
+  const outcome = expectString(data.outcome, "outcome");
+  if (outcome !== "Retried" && outcome !== "NotEligible") {
+    throw new TypeError("Podcast backfill Retry outcome is invalid");
+  }
+  return {
+    podcastId: expectString(data.podcastId, "podcastId"),
+    outcome,
+    backfill: decodePodcastBackfill(data.backfill, "backfill"),
+  };
+}
+
 export async function refreshPodcastSubscriptionSync(
   podcastId: string,
 ): Promise<PodcastSubscriptionSyncRefreshResult> {
   return decodePodcastSubscriptionSyncRefreshResult(
-    await apiFetch<unknown>(
-      `/api/podcasts/subscriptions/${podcastId}/sync`,
-      { method: "POST" },
-    ),
+    await apiFetch<unknown>(`/api/podcasts/subscriptions/${podcastId}/sync`, {
+      method: "POST",
+    }),
   );
 }
 
@@ -448,6 +634,20 @@ export async function savePodcastSubscriptionSettings(
   );
 }
 
+export async function retryPodcastSubscriptionBackfill(
+  podcastId: string,
+): Promise<PodcastBackfillRetryResult> {
+  return decodePodcastBackfillRetryResult(
+    await apiFetch<unknown>(
+      `/api/podcasts/subscriptions/${podcastId}/backfill/retry`,
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": crypto.randomUUID() },
+      },
+    ),
+  );
+}
+
 export async function unsubscribeFromPodcast(
   podcastId: string,
 ): Promise<PodcastUnsubscribeResult> {
@@ -455,6 +655,7 @@ export async function unsubscribeFromPodcast(
     `/api/podcasts/subscriptions/${podcastId}`,
     {
       method: "DELETE",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
     },
   );
   const envelope = expectExactRecord(
@@ -464,62 +665,55 @@ export async function unsubscribeFromPodcast(
   );
   const data = expectExactRecord(
     envelope.data,
-    [
-      "podcast_id",
-      "status",
-      "removed_from_library_count",
-      "retained_shared_library_count",
-      "collectionRevision",
-      "libraryEntriesCollectionRevision",
-    ],
+    Object.prototype.hasOwnProperty.call(
+      envelope.data,
+      "removed_placement_count",
+    )
+      ? [
+          "outcome",
+          "podcast_id",
+          "removed_placement_count",
+          "retained_shared_count",
+          "collectionRevision",
+          "libraryEntriesCollectionRevision",
+        ]
+      : [
+          "outcome",
+          "podcast_id",
+          "collectionRevision",
+          "libraryEntriesCollectionRevision",
+        ],
     "PodcastUnsubscribeResult.data",
   );
-  const collectionRevision = expectNonnegativeInteger(
-    data.collectionRevision,
-    "PodcastUnsubscribeResult.data.collectionRevision",
-  );
-  if (!Number.isSafeInteger(collectionRevision)) {
-    throw new Error("Podcast unsubscribe revision must be a safe integer");
-  }
-  const status = expectString(data.status, "status");
-  if (status !== "unsubscribed") {
-    throw new Error("Podcast unsubscribe status is invalid");
-  }
-  const result: PodcastUnsubscribeResult = {
+  const outcome = expectString(data.outcome, "outcome");
+  const common = {
     podcast_id: expectString(data.podcast_id, "podcast_id"),
-    status,
-    removed_from_library_count: expectNonnegativeInteger(
-      data.removed_from_library_count,
-      "removed_from_library_count",
-    ),
-    retained_shared_library_count: expectNonnegativeInteger(
-      data.retained_shared_library_count,
-      "retained_shared_library_count",
-    ),
-    collectionRevision: collectionRevision as CollectionRevision,
+    collectionRevision: decodeCollectionRevision(data.collectionRevision),
     libraryEntriesCollectionRevision: decodeCollectionRevision(
       data.libraryEntriesCollectionRevision,
     ),
   };
+  const result: PodcastUnsubscribeResult =
+    outcome === "Unsubscribed"
+      ? {
+          outcome,
+          ...common,
+          removed_placement_count: expectNonnegativeInteger(
+            data.removed_placement_count,
+            "removed_placement_count",
+          ),
+          retained_shared_count: expectNonnegativeInteger(
+            data.retained_shared_count,
+            "retained_shared_count",
+          ),
+        }
+      : outcome === "AlreadyUnsubscribed"
+        ? { outcome, ...common }
+        : (() => {
+            throw new TypeError("Podcast unsubscribe outcome is invalid");
+          })();
   publishLibraryPlacementChange("Unknown");
   return result;
-}
-
-export async function subscribeToPodcast(
-  input: PodcastSubscribeInput,
-): Promise<PodcastSubscribeResult> {
-  const response = await apiFetch<{ data: PodcastSubscribeResult }>(
-    "/api/podcasts/subscriptions",
-    {
-      method: "POST",
-      body: JSON.stringify({
-        ...input,
-        contributors: toPodcastContributorInputs(input.contributors),
-      }),
-    },
-  );
-  publishLibraryPlacementChange([...input.library_ids]);
-  return response.data;
 }
 
 export function buildPodcastUnsubscribeConfirmation(

@@ -7,7 +7,6 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 from nexus.coerce import coerce_positive_int
 from nexus.config import get_settings, real_media_provider_fixtures_requested
@@ -63,59 +62,96 @@ class PodcastIndexClient:
             honor_retry_after=True,
         )
 
-    def search_podcasts(self, query: str, limit: int) -> list[dict[str, Any]]:
+    def browse_search_payload(self, query: str, limit: int) -> dict[str, Any]:
+        """Return the provider payload for Browse's strict adapter to parse."""
         if real_media_provider_fixtures_requested():
             settings = get_settings()
-            if not settings.real_media_provider_fixtures:
-                payload = None
-            elif "houston we have a podcast" not in str(query or "").casefold():
-                return []
-            else:
-                payload = _read_real_media_json_fixture(
+            if (
+                not settings.real_media_provider_fixtures
+                or "houston we have a podcast" not in query.casefold()
+            ):
+                return {"feeds": []}
+            return _read_real_media_json_fixture(
+                settings.real_media_fixture_dir,
+                "nasa-hwhap-podcast-index-search.json",
+                548,
+            )
+        return self._get_json(
+            "/search/byterm",
+            params={"q": query, "max": max(1, min(limit, 100))},
+        )
+
+    def browse_podcast_payload(self, podcast_ref: str) -> dict[str, Any]:
+        """Return one Podcast Index feed payload without domain parsing."""
+        if real_media_provider_fixtures_requested():
+            settings = get_settings()
+            if not settings.real_media_provider_fixtures or podcast_ref != "nasa-hwhap-real-media":
+                return {"feed": None}
+            return _read_real_media_json_fixture(
+                settings.real_media_fixture_dir,
+                "nasa-hwhap-podcast-index-byfeedurl.json",
+                522,
+            )
+        return self._get_json("/podcasts/byfeedid", params={"id": podcast_ref})
+
+    def browse_episode_page_payload(
+        self,
+        podcast_ref: str,
+        limit: int,
+        before_published: int | None,
+    ) -> dict[str, Any]:
+        """Return a provider episode page without domain parsing."""
+        if real_media_provider_fixtures_requested():
+            settings = get_settings()
+            if not settings.real_media_provider_fixtures or podcast_ref != "nasa-hwhap-real-media":
+                return {"items": []}
+            payload = _read_real_media_json_fixture(
+                settings.real_media_fixture_dir,
+                "nasa-hwhap-podcast-index-episodes.json",
+                706,
+            )
+            items = payload.get("items")
+            if not isinstance(items, list):
+                return {"items": []}
+            return {
+                "items": [
+                    item
+                    for item in items
+                    if isinstance(item, dict)
+                    and (
+                        before_published is None
+                        or int(item.get("datePublished") or 0) < before_published
+                    )
+                ][: max(1, min(limit, PODCAST_INDEX_EPISODE_PAGE_SIZE))]
+            }
+        params: dict[str, Any] = {
+            "id": podcast_ref,
+            "max": max(1, min(limit, PODCAST_INDEX_EPISODE_PAGE_SIZE)),
+        }
+        if before_published is not None:
+            params["before"] = before_published
+        return self._get_json("/episodes/byfeedid", params=params)
+
+    def browse_episode_payload(self, episode_ref: str) -> dict[str, Any]:
+        """Return one Podcast Index episode payload without domain parsing."""
+        if real_media_provider_fixtures_requested():
+            settings = get_settings()
+            payload = (
+                _read_real_media_json_fixture(
                     settings.real_media_fixture_dir,
-                    "nasa-hwhap-podcast-index-search.json",
-                    548,
+                    "nasa-hwhap-podcast-index-episodes.json",
+                    706,
                 )
-        else:
-            payload = None
-
-        if payload is None:
-            payload = self._get_json(
-                "/search/byterm",
-                params={"q": query, "max": max(1, min(limit, 100))},
+                if settings.real_media_provider_fixtures
+                else {"items": []}
             )
-        feeds = payload.get("feeds", [])
-        if not isinstance(feeds, list):
-            return []
-
-        results: list[dict[str, Any]] = []
-        for feed in feeds:
-            if not isinstance(feed, dict):
-                continue
-            provider_podcast_id = str(feed.get("id") or "").strip()
-            feed_url = str(feed.get("url") or "").strip()
-            if not provider_podcast_id or not feed_url:
-                continue
-            results.append(
-                {
-                    "provider_podcast_id": provider_podcast_id,
-                    "title": str(feed.get("title") or "Untitled Podcast"),
-                    "author": (str(feed.get("author")) if feed.get("author") is not None else None),
-                    "feed_url": feed_url,
-                    "website_url": (
-                        str(feed.get("link")) if feed.get("link") is not None else None
-                    ),
-                    "image_url": (
-                        str(feed.get("image")) if feed.get("image") is not None else None
-                    ),
-                    "description": (
-                        str(feed.get("description"))
-                        if feed.get("description") is not None
-                        else None
-                    ),
-                }
-            )
-        return results[: max(1, min(limit, 100))]
+            items = payload.get("items")
+            if isinstance(items, list):
+                for item in items:
+                    if isinstance(item, dict) and str(item.get("id")) == episode_ref:
+                        return {"episode": item}
+            return {"episode": None}
+        return self._get_json("/episodes/byid", params={"id": episode_ref})
 
     def lookup_podcast_by_feed_url(self, feed_url: str) -> dict[str, Any] | None:
         if real_media_provider_fixtures_requested():
@@ -208,9 +244,7 @@ class PodcastIndexClient:
         for item in items:
             if not isinstance(item, dict):
                 continue
-            provider_episode_id = str(item.get("id") or item.get("guid") or "").strip()
-            if not provider_episode_id:
-                provider_episode_id = f"episode-{uuid4()}"
+            podcast_index_episode_ref = str(item.get("id") or "").strip()
 
             guid_raw = item.get("guid")
             guid = str(guid_raw).strip() if guid_raw is not None and str(guid_raw).strip() else None
@@ -223,7 +257,7 @@ class PodcastIndexClient:
 
             episodes.append(
                 {
-                    "provider_episode_id": provider_episode_id,
+                    "podcast_index_episode_ref": podcast_index_episode_ref or None,
                     "guid": guid,
                     "title": str(item.get("title") or "Untitled Episode"),
                     "authors": (

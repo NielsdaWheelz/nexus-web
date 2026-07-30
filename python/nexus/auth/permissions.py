@@ -212,7 +212,6 @@ def visible_podcast_ids_cte_sql() -> str:
         SELECT ps.podcast_id
         FROM podcast_subscriptions ps
         WHERE ps.user_id = :viewer_id
-          AND ps.status = 'active'
 
         UNION
 
@@ -231,7 +230,6 @@ def active_podcast_subscription_exists_sql(podcast_id_expr: str = "p.id") -> str
         FROM podcast_subscriptions ps
         WHERE ps.podcast_id = {podcast_id_expr}
           AND ps.user_id = :viewer_id
-          AND ps.status = 'active'
     )"""
 
 

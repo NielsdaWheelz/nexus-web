@@ -37,15 +37,15 @@ describe("presentContributorWork", () => {
         href: "/media/not-an-identity-source",
         actionTarget: {
           kind: "External",
-          href: "/browse/gutenberg/84",
+          href: "https://www.gutenberg.org/ebooks/84",
         },
       }),
     );
 
-    expect(row.id).toBe("/browse/gutenberg/84");
+    expect(row.id).toBe("https://www.gutenberg.org/ebooks/84");
     expect(row.primary).toEqual({
       kind: "link",
-      href: "/browse/gutenberg/84",
+      href: "https://www.gutenberg.org/ebooks/84",
       paneLabelHint: "A Work",
     });
   });

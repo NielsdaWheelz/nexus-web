@@ -187,6 +187,64 @@ def record_heartbeat_in_txn(
     )
 
 
+def install_preview_position_if_empty_in_txn(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_id: UUID,
+    position_ms: int,
+    duration_ms: int | None,
+) -> bool:
+    """Install post-acquisition Preview progress without replacing owned progress."""
+    current = load_state(db, viewer_id=viewer_id, media_id=media_id)
+    if position_ms == 0 or (
+        current is not None and (current.position_ms > 0 or current.is_completed)
+    ):
+        return False
+    if current is None:
+        db.execute(
+            text(
+                """
+                INSERT INTO podcast_listening_states (
+                    user_id, media_id, position_ms, duration_ms, playback_speed,
+                    is_completed, write_revision, reset_epoch, updated_at, last_engaged_at
+                )
+                VALUES (
+                    :viewer_id, :media_id, :position_ms, :duration_ms, 1.0,
+                    false, 1, 0, now(), now()
+                )
+                """
+            ),
+            {
+                "viewer_id": viewer_id,
+                "media_id": media_id,
+                "position_ms": position_ms,
+                "duration_ms": duration_ms,
+            },
+        )
+        return True
+    db.execute(
+        text(
+            """
+            UPDATE podcast_listening_states
+            SET position_ms = :position_ms,
+                duration_ms = COALESCE(:duration_ms, duration_ms),
+                write_revision = write_revision + 1,
+                updated_at = now(),
+                last_engaged_at = now()
+            WHERE user_id = :viewer_id AND media_id = :media_id
+            """
+        ),
+        {
+            "viewer_id": viewer_id,
+            "media_id": media_id,
+            "position_ms": position_ms,
+            "duration_ms": duration_ms,
+        },
+    )
+    return True
+
+
 def mark_completed_in_txn(db: Session, *, viewer_id: UUID, media_id: UUID) -> None:
     """Set ``is_completed=true`` without moving position; create at zero if absent."""
     db.execute(

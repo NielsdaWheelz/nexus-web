@@ -56,7 +56,7 @@ plus the structured synthesis call plus the one bounded repair round
 
 ### Dead-lettering
 
-Exhausted retries dead-letter the row. Four kinds register a finalizer:
+Exhausted retries dead-letter the row. Five kinds register a finalizer:
 
 - `chat_run` (`_dead_letter_chat_run`) writes an errored assistant message so the
   user sees a terminal failure.
@@ -67,6 +67,9 @@ Exhausted retries dead-letter the row. Four kinds register a finalizer:
   unlock another Generate.
 - `media_teardown` (`_dead_letter_media_teardown`) voids only the exact
   still-current teardown intent so a newer lifecycle cannot be overwritten.
+- `podcast_backfill_subscription` (`_dead_letter_podcast_backfill`) stamps the
+  current backfill fence Failed only when the dead job still names its exact
+  backfill ID, step, and cursor digest; dead rows remain operator-visible.
 
 Other kinds have no finalizer; their failure is recorded on their own domain row.
 
@@ -92,17 +95,17 @@ kind; queue completion is not a claim that the answer published.
 
 `config.py` declares one complete topology:
 
-- `INTERACTIVE_WORKER_JOB_KINDS`: ingest, chat, Dossier, subscription sync, and
-  Oracle generation;
+- `INTERACTIVE_WORKER_JOB_KINDS`: ingest, chat, Dossier, subscription live sync,
+  and Oracle generation;
 - `BACKGROUND_WORKER_JOB_KINDS`: content indexing, enrichment, derived units,
-  semantic indexing, ambient generation, teardown, storage cleanup, and
-  reconciliation;
+  semantic indexing, subscription backfill, ambient generation, teardown,
+  storage cleanup, and reconciliation;
 - `MAINTENANCE_JOB_KINDS`: podcast polling, Gutenberg catalog sync, queue
   pruning, and expired auth-handoff purge.
 
-The two production lanes are non-empty, disjoint, and together equal the
-17-kind `PRODUCTION_ENABLED_JOB_KINDS`. Production plus the four maintenance
-kinds equals the complete registry. The worker entrypoint defects on drift.
+The two production lanes are non-empty, disjoint, and together equal
+`PRODUCTION_ENABLED_JOB_KINDS`. Production plus the maintenance kinds equals the
+complete registry. The worker entrypoint defects on drift.
 Only the background lane can claim or schedule production periodic work.
 Production deploys exactly `worker-interactive` and `worker-background`; there
 is no undifferentiated `worker` service.
@@ -123,6 +126,27 @@ author identity is resolved inline, synchronously, inside the ingest/enrichment
 lane's own fresh SERIALIZABLE-retried transaction (`nexus.services.contributors`)
 at the moment credits are written, not proposed to a queue and reconciled
 later.
+
+## Podcast Live Sync And Backfill
+
+`podcast_sync_subscription_job` is the current-window live path. Scheduled poll
+and manual refresh enqueue the same per-subscription job; its subscription claim
+fences duplicate live work.
+
+`podcast_backfill_subscription` is a separate durable history traversal seeded
+once by Subscribe. Each payload carries `backfillId`, `expectedStepNo`, and
+`expectedCursorDigest`. The handler fetches outside the DB transaction, renews
+the exact queue claim, locks and revalidates the backfill/subscription fence,
+commits one bounded metadata batch, advances counters/cursor, and enqueues at
+most one successor in that transaction. Stale claims, removed subscriptions,
+and already-applied steps terminate without writes. Future steps and same-step
+cursor mismatches fail closed. Exhausted retries use the dead-letter finalizer
+above; the explicit idempotent Retry command replaces only a current Failed
+backfill and starts one new step-zero chain.
+
+Live and backlog failure are independent. Both persist episode identities,
+metadata, chapters, playback URLs, and RSS transcript references only; neither
+downloads enclosures, queues historical episodes, or materializes transcripts.
 
 ## SERIALIZABLE retries (`db/retries.py`)
 

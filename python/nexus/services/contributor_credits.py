@@ -222,7 +222,8 @@ def distinct_visible_works_sql() -> str:
                     THEN '/media/' || vcc.media_id::text
                 WHEN vcc.podcast_id IS NOT NULL
                     THEN '/podcasts/' || vcc.podcast_id::text
-                ELSE '/browse/gutenberg/' || vcc.project_gutenberg_catalog_ebook_id::text
+                ELSE 'https://www.gutenberg.org/ebooks/'
+                    || vcc.project_gutenberg_catalog_ebook_id::text
             END AS href,
             COALESCE(m.title, p.title, pg.title, '') AS title,
             CASE

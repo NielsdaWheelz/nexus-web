@@ -67,7 +67,6 @@ def active_subscription_rows_sql() -> str:
         SELECT ps.podcast_id
         FROM podcast_subscriptions ps
         WHERE ps.user_id = :viewer_id
-          AND ps.status = 'active'
     """
 
 
@@ -368,8 +367,8 @@ def list_subscriptions(
         if not scoped_podcast_ids:
             return CollectionPage(
                 items=[],
-                collection_revision=revision,
-                next_cursor=absent(),
+                collectionRevision=revision,
+                nextCursor=absent(),
             )
         library_scope_sql = "ps.podcast_id = ANY(:scoped_podcast_ids)"
     else:
@@ -423,7 +422,6 @@ def list_subscriptions(
                 LEFT JOIN episode_states es
                   ON es.podcast_id = ps.podcast_id
                 WHERE ps.user_id = :user_id
-                  AND ps.status = 'active'
                 GROUP BY ps.podcast_id
             ),
             ordered_subscriptions AS (
@@ -443,7 +441,6 @@ def list_subscriptions(
                 JOIN podcasts p ON p.id = ps.podcast_id
                 LEFT JOIN subscription_aggregates sa ON sa.podcast_id = ps.podcast_id
                 WHERE ps.user_id = :user_id
-                  AND ps.status = 'active'
                   AND {filter_sql}
                   AND {library_scope_sql}
             )
@@ -495,8 +492,8 @@ def list_subscriptions(
     )
     return CollectionPage(
         items=out,
-        collection_revision=revision,
-        next_cursor=next_cursor,
+        collectionRevision=revision,
+        nextCursor=next_cursor,
     )
 
 
@@ -520,8 +517,8 @@ def get_podcast_detail_for_viewer(
                 p.created_at,
                 p.updated_at,
                 ps.user_id,
+                ps.id,
                 ps.podcast_id,
-                ps.status,
                 ps.default_playback_speed,
                 ps.auto_queue,
                 ps.sync_status,
@@ -551,10 +548,11 @@ def get_podcast_detail_for_viewer(
     )
     subscription: PodcastSubscriptionStatusOut | None = None
     if row[10] is not None:
+        from nexus.services.podcasts.subscriptions import _load_backfill_out
+
         subscription = PodcastSubscriptionStatusOut(
             user_id=row[10],
-            podcast_id=row[11],
-            status=row[12],
+            podcast_id=row[12],
             default_playback_speed=float(row[13]) if row[13] is not None else None,
             auto_queue=bool(row[14]),
             sync_status=row[15],
@@ -565,5 +563,6 @@ def get_podcast_detail_for_viewer(
             sync_completed_at=row[20],
             last_synced_at=row[21],
             updated_at=row[22],
+            backfill=_load_backfill_out(db, subscription_id=UUID(str(row[11]))),
         )
     return PodcastDetailOut(podcast=podcast, subscription=subscription)

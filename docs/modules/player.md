@@ -9,8 +9,9 @@ agent, and Nexus actions address the ordered list. The Resonance subsystem's
 read-only **At hand** Slate is adjacent to the Lectern but does not become
 another queue or acquire mutation ownership. The player is the consumer of
 podcast episodes (and YouTube videos) for playback; the
-[podcast module](podcast.md) owns discovery, sync, and transcription, and
-hands episodes to the Lectern via auto-subscription.
+[Browse capability](../cutovers/browse-discovery-preview-acquisition-hard-cutover.md)
+owns external discovery and Preview, while the [podcast module](podcast.md)
+owns acquisition, sync/backfill, and explicit transcription.
 
 Full behavioral contracts, wire shapes, and acceptance criteria:
 `docs/cutovers/lectern-player-lifecycle-hard-cutover.md` and
@@ -44,7 +45,10 @@ split by storage and query concern:
 - `_listening_store.py` — sole DML owner of `podcast_listening_states`
   (position/duration/speed, completion flag, and the heartbeat fencing tokens
   `write_revision`/`reset_epoch`). `last_engaged_at` is advanced by successful
-  heartbeats only. The separate operational `updated_at` still advances for
+  heartbeats and by the one post-acquisition Preview-position transfer. The
+  transfer installs only when no owned progress exists and never overwrites a
+  listening position or completion. The separate operational `updated_at`
+  still advances for
   manual Finished and `ResetProgress`; Finished preserves `last_engaged_at`,
   Reset clears it, and a new manual-Finished row starts with it absent.
   Migration 0186 seeds the new clock from operational `updated_at` only when
@@ -110,6 +114,7 @@ POST /lectern/commands
 POST /consumption/commands
 GET  /media/{id}/listening-state
 PUT  /media/{id}/listening-state
+POST /media/{id}/preview-position
 ```
 
 `python/nexus/api/routes/lectern.py` owns the Lectern reads and two
@@ -132,6 +137,12 @@ no other table's write. Reader cursor and engagement writes share their own
 atomic Consumption transaction (see
 [reader-implementation.md](reader-implementation.md)), independent of the
 listening heartbeat.
+
+The Preview-position POST is a replayable post-acquisition command keyed by the
+required `Idempotency-Key` header. It accepts only an owned Podcast-episode
+Media, clamps the observed position to a present duration, and installs it only
+when no positive listening position or completion exists. It is the sole
+permitted bridge from ephemeral Browse playback into owned progress.
 
 `SetUnread` and batch Unread change only explicit status. `ResetProgress` is
 the sole progress-clearing command: it clears the override, writes a revisioned
@@ -187,21 +198,29 @@ GET) above `GlobalPlayerProvider` (one `PlayerSession`), which wraps
   effects graph, OS media-session integration), plus `audioEffects.ts`,
   `chapters.ts`, `mediaSession.ts`, `subscriptionPlaybackSpeed.ts`, and
   `usePlayerKeyboardShortcuts.ts`.
+- `globalPlayer.tsx` also owns the exhaustive `PreviewAudio` session variant.
+  It uses the same provider and `<audio>` element but has no Media ID, Lectern
+  origin/history, heartbeat, completion command, activity observation, queue,
+  or previous/next capability. Natural end is local `PreviewAudioAtEnd`.
+  Stopping Preview returns one in-memory position snapshot and clears OS Media
+  Session position state.
 - `globalPlayer.tsx` publishes owned `<audio>` playing/pause/buffering/end
   observations to the single Consumption recorder. The heartbeat persists
   current position; it never carries elapsed-time activity or a raw device id.
 - `apps/web/src/components/GlobalPlayerFooter.tsx` — transport, Walknotes
   entry points, and the read-only "Next on the Lectern" / "Forward: _title_"
   preview. The dock is not an editor; all "Open Lectern" affordances navigate
-  through workspace target activation.
+  through workspace target activation. For `PreviewAudio`, the footer exposes
+  title, source, **Open source**, and **Open Preview** only; it emits no Media
+  href or acquisition mutation.
 
 ## Boundary With Podcast Sync
 
-Playback never fetches feeds or writes transcripts. On sync, the podcast
-module persists the episode + its `external_playback_url`; auto-subscription
-(`services/podcasts/poll.py`) composes `ensure_missing_items_in_txn` in the
-same transaction as advancing `podcast_subscriptions.auto_queue_watermark_at`,
-so insertion and watermark are one database fact. The Lectern then resolves
-and streams that source and the listening heartbeat records position. The
-transcript shown alongside playback is the current transcript rendered from
-media fragments; the player does not own transcript state.
+Playback never fetches feeds or writes transcripts. Live sync and historical
+backfill may both persist episode metadata plus `external_playback_url`, but
+neither fetches or publishes a transcript. Live sync alone may compose the
+auto-queue watermark step; backlog does not enqueue historical episodes.
+Canonical playback resolves and streams the owned source, and the listening
+heartbeat records position. A transcript appears only after explicit Transcribe
+and is rendered from current media fragments; the player never owns transcript
+state.

@@ -39,6 +39,7 @@ from nexus.services.web_article_structure import prepare_web_article_fragment
 from nexus.storage.paths import build_epub_asset_storage_path
 from tests.factories import (
     add_media_to_library,
+    add_test_podcast_episode_identity,
     create_failed_epub_media,
     create_ready_epub_with_chapters,
     create_seeded_test_media,
@@ -2720,15 +2721,11 @@ def _create_podcast_media_for_refresh(
             INSERT INTO podcast_episodes (
                 media_id,
                 podcast_id,
-                provider_episode_id,
-                fallback_identity,
                 duration_seconds
             )
             VALUES (
                 :media_id,
                 :podcast_id,
-                :provider_episode_id,
-                :fallback_identity,
                 1800
             )
             """
@@ -2736,9 +2733,13 @@ def _create_podcast_media_for_refresh(
         {
             "media_id": media_id,
             "podcast_id": podcast_id,
-            "provider_episode_id": f"episode-{media_id}",
-            "fallback_identity": f"fallback-{media_id}",
         },
+    )
+    add_test_podcast_episode_identity(
+        session,
+        podcast_id=podcast_id,
+        media_id=media_id,
+        value=f"episode-{media_id}",
     )
     source_attempt_status = "failed" if processing_status == "failed" else "succeeded"
     session.execute(

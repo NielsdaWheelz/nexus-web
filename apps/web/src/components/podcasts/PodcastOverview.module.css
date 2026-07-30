@@ -1,0 +1,71 @@
+.root {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.artwork,
+.fallback {
+  width: 5.5rem;
+  height: 5.5rem;
+  border-radius: var(--radius-md);
+}
+
+.artwork {
+  object-fit: cover;
+}
+
+.fallback {
+  display: grid;
+  place-items: center;
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  font-weight: 650;
+}
+
+.copy {
+  min-width: 0;
+}
+
+.copy p,
+.note,
+.error {
+  margin: var(--space-2) 0 0;
+  overflow-wrap: anywhere;
+}
+
+.byline {
+  color: var(--text-secondary);
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.badge {
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+}
+
+.error {
+  color: var(--text-danger);
+}
+
+@media (max-width: 360px) {
+  .header {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

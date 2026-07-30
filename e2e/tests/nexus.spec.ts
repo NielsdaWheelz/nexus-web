@@ -76,7 +76,7 @@ test.describe("desktop Nexus", () => {
     await expect(page).toHaveURL(/\/notes$/);
   });
 
-  test("WebSearch intent opens the explicit web page", async ({
+  test("retired WebSearch intent opens the explicit recovery state", async ({
     page,
   }) => {
     await page.goto("/libraries?nexus=1&intent=WebSearch&q=epistemology");
@@ -84,10 +84,14 @@ test.describe("desktop Nexus", () => {
     const dialog = desktopNexusDialog(page);
     await expect(
       dialog.getByRole("heading", { name: "Web Search" }),
-    ).toBeVisible();
+    ).toHaveCount(0);
     await expect(
-      dialog.getByRole("combobox", { name: "Search the web" }),
-    ).toHaveValue("epistemology");
+      dialog.getByRole("heading", {
+        name: "This link is no longer supported",
+      }),
+    ).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Open Browse" })).toBeVisible();
+    await expect(dialog.getByText("epistemology")).toHaveCount(0);
   });
 
   test("Actions remains pointer reachable at a narrow desktop width", async ({

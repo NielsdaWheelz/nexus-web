@@ -50,7 +50,6 @@ import {
   type NexusOpenIntent,
   type NexusPage,
   type NexusQuickAction,
-  type NexusSourceStatus,
   type NexusTarget,
   type NexusTargetActivation,
   type RetainedActivation,
@@ -87,15 +86,9 @@ import {
   getQuickAction,
   SWITCHBOARD_QUICK_ACTION_IDS,
 } from "@/lib/nexus/quickActions";
-import {
-  NexusWebContractDefect,
-  searchNexusWeb,
-  webResultAddSeed,
-} from "@/lib/nexus/webSearch";
 import type {
   DesktopNexusController,
   DesktopNexusModality,
-  DesktopNexusWebResult,
 } from "./desktop/types";
 import { paneStatusLabel } from "@/lib/switchboard/paneStatusLabel";
 import { DESTINATIONS } from "@/lib/navigation/destinations";
@@ -118,8 +111,6 @@ import {
 } from "@/lib/workspace/store";
 import { useShareController } from "@/lib/sharing/controller";
 import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
-import type { BrowseResult } from "@/lib/browse/types";
-import { fetchPodcastBrowseResults } from "@/lib/browse/client";
 import {
   ResourceOpenablesContractDefect,
   searchOpenableResources,
@@ -148,8 +139,6 @@ import { absent, present, type Presence } from "@/lib/api/presence";
 import { createNotePage } from "@/lib/notes/api";
 import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import { createLibrary } from "@/lib/libraries/client";
-import { createRandomId } from "@/lib/createRandomId";
-import { subscribeToPodcast } from "@/app/(authenticated)/podcasts/podcastSubscriptions";
 import {
   resolveAddPanelInitialFocus,
   type AddDismissalConfirmation,
@@ -178,7 +167,6 @@ const SWITCHBOARD_BUSY_DELAY_MS = 150;
 const EMPTY_RECENT: NexusRecentTarget[] = [];
 const EMPTY_FRECENCY: Record<string, number> = {};
 const EMPTY_SEARCH: SearchResultRowViewModel[] = [];
-const DEFAULT_LIBRARY_IDS: string[] = [];
 
 function isRetryableWorkflowFailure(error: unknown): boolean {
   return (
@@ -186,18 +174,6 @@ function isRetryableWorkflowFailure(error: unknown): boolean {
     error instanceof TypeError ||
     error instanceof DOMException
   );
-}
-
-function nexusSourceStatus(input: {
-  enabled: boolean;
-  loading: boolean;
-  ready: boolean;
-  failed: boolean;
-}): NexusSourceStatus {
-  if (!input.enabled) return "Idle";
-  if (input.loading) return "Loading";
-  if (input.failed) return "RetryableFailure";
-  return input.ready ? "Ready" : "Idle";
 }
 
 function desktopPaneTargetId(
@@ -220,11 +196,6 @@ function desktopPaneTargetId(
   }
   return null;
 }
-
-type PodcastBrowseResult = Extract<
-  BrowseResult,
-  { type: "podcasts" | "podcast_episodes" }
->;
 
 export interface SwitchboardPane {
   id: string;
@@ -349,11 +320,6 @@ export interface NexusController {
   focusKey: string;
   dismissalConfirmation: AddDismissalConfirmation;
   desktop: DesktopNexusController;
-  webSearch: {
-    readonly query: string;
-    readonly status: NexusSourceStatus;
-    readonly results: readonly DesktopNexusWebResult[];
-  } | null;
   switchboardPanes: readonly SwitchboardPane[];
   switchboardClosedPanes: readonly SwitchboardClosedPane[];
   switchboardPlaces: readonly Destination[];
@@ -367,10 +333,6 @@ export interface NexusController {
   switchboardFindPending: boolean;
   switchboardOpenablesFailed: boolean;
   switchboardDeepFailed: boolean;
-  podcastResults: readonly PodcastBrowseResult[];
-  podcastBusy: boolean;
-  podcastSubscribingId: string | null;
-  podcastFailed: boolean;
   setQuery(next: string): void;
   openTarget(target: NexusTarget): void;
   openAddTarget(target: NexusTarget): void;
@@ -392,12 +354,6 @@ export interface NexusController {
   setLibraryNameDraft(name: string): void;
   submitLibrary(): void;
   retryPageCreation(): void;
-  setPodcastQuery(query: string): void;
-  selectPodcast(result: PodcastBrowseResult): void;
-  retryPodcastSearch(): void;
-  setWebQuery(next: string): void;
-  retryWebSearch(): void;
-  selectMobileWebResult(id: string, fork: boolean): void;
   manageTabs(): void;
   retryRetainedActivation(): void;
   cancelRetainedActivation(): void;
@@ -460,20 +416,13 @@ export function useNexusController(): NexusController {
     });
   const [desktopOpenablesRetry, setDesktopOpenablesRetry] = useState(0);
   const [desktopSearchRetry, setDesktopSearchRetry] = useState(0);
-  const [webRetry, setWebRetry] = useState(0);
-  const [activeWebResultId, setActiveWebResultId] =
-    useState<string | null>(null);
   const [pendingDismissal, setPendingDismissal] =
     useState<PendingDismissal | null>(null);
   const [switchboardFindActiveId, setSwitchboardFindActiveId] =
     useState<string | null>(null);
   const [openablesRetry, setOpenablesRetry] = useState(0);
   const [deepRetry, setDeepRetry] = useState(0);
-  const [podcastRetry, setPodcastRetry] = useState(0);
-  const [podcastSubscribingId, setPodcastSubscribingId] =
-    useState<string | null>(null);
   const [showSwitchboardBusy, setShowSwitchboardBusy] = useState(false);
-  const podcastSubscribeRunningRef = useRef(new Set<string>());
   const userMovedRef = useRef(false);
   // Close reason for the dialog's return-focus. Reset to the a11y default (restore the
   // opener) on every open; a navigating dispatch flips it true just before it closes so
@@ -673,23 +622,6 @@ export function useNexusController(): NexusController {
       identity: desktopSearchIdentity,
     },
   );
-  const webQuery =
-    page.kind === "WebSearch" ? page.query.trim() : "";
-  const webIdentity =
-    open && page.kind === "WebSearch" && webQuery.length > 0
-      ? webQuery
-      : null;
-  const webFetch = useDebouncedFetch(
-    webIdentity !== null
-      ? `${webQuery}:${webRetry}`
-      : null,
-    (signal) => searchNexusWeb({ query: webQuery, signal }),
-    {
-      debounceMs: NEXUS_SEARCH_DEBOUNCE_MS,
-      identity: webIdentity,
-    },
-  );
-
   const mobileFindQuery =
     page.kind === "Find" ? page.query.trim() : "";
   const mobileFindScope =
@@ -741,28 +673,6 @@ export function useNexusController(): NexusController {
     },
   );
 
-  const podcastQuery =
-    page.kind === "PodcastDiscovery" ? page.query.trim() : "";
-  const podcastIdentity =
-    open &&
-    page.kind === "PodcastDiscovery" &&
-    podcastQuery.length >= 1
-      ? podcastQuery
-      : null;
-  const podcastFetch = useDebouncedFetch(
-    podcastIdentity !== null
-      ? `${podcastQuery}:${podcastRetry}`
-      : null,
-    (signal) =>
-      fetchPodcastBrowseResults({
-        query: podcastQuery,
-        signal,
-      }),
-    {
-      debounceMs: SWITCHBOARD_DEEP_DEBOUNCE_MS,
-      identity: podcastIdentity,
-    },
-  );
   const desktopOpenablesData =
     desktopOpenablesFetch.dataIdentity === desktopOpenablesIdentity
       ? desktopOpenablesFetch.data
@@ -779,10 +689,6 @@ export function useNexusController(): NexusController {
     desktopSearchFetch.errorIdentity === desktopSearchIdentity
       ? desktopSearchFetch.error
       : null;
-  const webData =
-    webFetch.dataIdentity === webIdentity ? webFetch.data : null;
-  const webError =
-    webFetch.errorIdentity === webIdentity ? webFetch.error : null;
   const openablesData =
     openablesFetch.dataIdentity === openablesIdentity
       ? openablesFetch.data
@@ -795,14 +701,6 @@ export function useNexusController(): NexusController {
     deepFetch.dataIdentity === deepIdentity ? deepFetch.data : null;
   const deepError =
     deepFetch.errorIdentity === deepIdentity ? deepFetch.error : null;
-  const podcastData =
-    podcastFetch.dataIdentity === podcastIdentity
-      ? podcastFetch.data
-      : null;
-  const podcastError =
-    podcastFetch.errorIdentity === podcastIdentity
-      ? podcastFetch.error
-      : null;
   useLayoutEffect(() => {
     if (openablesData !== null) {
       completeSwitchboardPerformance(NEXUS_OPENABLES_PERFORMANCE);
@@ -822,7 +720,7 @@ export function useNexusController(): NexusController {
   }
 
   const mobileRemoteBusy =
-    openablesFetch.loading || deepFetch.loading || podcastFetch.loading;
+    openablesFetch.loading || deepFetch.loading;
   useEffect(() => {
     if (!mobileRemoteBusy) {
       setShowSwitchboardBusy(false);
@@ -1667,14 +1565,6 @@ export function useNexusController(): NexusController {
             activation: adopt,
           });
           return;
-        case "PodcastDiscovery":
-          setPage({
-            kind: "PodcastDiscovery",
-            query: "",
-            sessionId: createRandomId("podcast-discovery"),
-            activation: adopt,
-          });
-          return;
         default: {
           const _exhaustive: never = action.target;
           return _exhaustive;
@@ -1682,105 +1572,6 @@ export function useNexusController(): NexusController {
       }
     },
     [dispatchWorkspaceTarget, runPageCreation, startAddSession, todaySession],
-  );
-
-  const selectPodcast = useCallback(
-    (result: PodcastBrowseResult) => {
-      const title =
-        result.type === "podcasts" ? result.title : result.podcast_title;
-      if (result.podcast_id) {
-        dispatchWorkspaceTarget({
-          target: {
-            href: `/podcasts/${result.podcast_id}`,
-            labelHint: title,
-          },
-          source: "Podcast",
-          returnTo: { kind: "Root" },
-          activation:
-            page.kind === "PodcastDiscovery"
-              ? page.activation
-              : PROGRAMMATIC_ADOPT_NEXUS_TARGET_ACTIVATION,
-        });
-        return;
-      }
-      const subscriptionKey = result.provider_podcast_id;
-      if (podcastSubscribeRunningRef.current.size > 0) return;
-      podcastSubscribeRunningRef.current.add(subscriptionKey);
-      setPodcastSubscribingId(subscriptionKey);
-      const replayId =
-        page.kind === "PodcastDiscovery"
-          ? `${page.sessionId}:${subscriptionKey}`
-          : createRandomId("podcast-discovery");
-      const podcast =
-        result.type === "podcasts"
-          ? {
-              provider_podcast_id: result.provider_podcast_id,
-              title: result.title,
-              contributors: result.contributors,
-              feed_url: result.feed_url,
-              website_url: result.website_url,
-              image_url: result.image_url,
-              description: result.description,
-            }
-          : {
-              provider_podcast_id: result.provider_podcast_id,
-              title: result.podcast_title,
-              contributors: result.podcast_contributors,
-              feed_url: result.feed_url,
-              website_url: result.website_url,
-              image_url: result.podcast_image_url,
-              description: null,
-            };
-      void subscribeToPodcast({
-        ...podcast,
-        library_ids: DEFAULT_LIBRARY_IDS,
-      })
-        .then((subscribed) => {
-          invalidateDesktopOpenablesCache();
-          dispatchWorkspaceTarget({
-            target: {
-              href: `/podcasts/${subscribed.podcast_id}`,
-              labelHint: title,
-            },
-            source: "Podcast",
-            completion: present({
-              kind: "PodcastSubscription",
-              replayId,
-            }),
-            returnTo: { kind: "Root" },
-            activation:
-              page.kind === "PodcastDiscovery"
-                ? page.activation
-                : PROGRAMMATIC_ADOPT_NEXUS_TARGET_ACTIVATION,
-          });
-        })
-        .catch((error: unknown) => {
-          if (handleUnauthenticatedApiError(error)) return;
-          if (
-            isSameSystemApiDefect(error) ||
-            !isRetryableWorkflowFailure(error)
-          ) {
-            throw error;
-          }
-          feedback.show(
-            toFeedback(error, {
-              fallback: "Podcast could not be subscribed. Retry",
-            }),
-          );
-        })
-        .finally(() => {
-          podcastSubscribeRunningRef.current.delete(subscriptionKey);
-          setPodcastSubscribingId((current) =>
-            current === subscriptionKey ? null : current,
-          );
-        });
-    },
-    [
-      dispatchWorkspaceTarget,
-      feedback,
-      invalidateDesktopOpenablesCache,
-      page,
-    ],
   );
 
   const handleWorkflowRequest = useCallback(
@@ -1816,22 +1607,6 @@ export function useNexusController(): NexusController {
             libraryId: crypto.randomUUID(),
             submit: { kind: "Ready" },
             activation,
-          });
-          return;
-        case "PodcastDiscovery":
-          setPage({
-            kind: "PodcastDiscovery",
-            query: "",
-            sessionId: createRandomId("podcast-discovery"),
-            activation,
-          });
-          return;
-        case "OpenWebSearch":
-          setActiveWebResultId(null);
-          setPage({
-            kind: "WebSearch",
-            query: target.query,
-            status: "Idle",
           });
           return;
       }
@@ -2098,14 +1873,9 @@ export function useNexusController(): NexusController {
             discardAddSession();
             runSwitchboardQuickAction(getQuickAction(detail.actionId));
             setQueryState("");
-          } else if (detail.kind === "WebSearch") {
+          } else if (detail.kind === "UnsupportedLink") {
             discardAddSession();
-            setActiveWebResultId(null);
-            setPage({
-              kind: "WebSearch",
-              query: detail.query,
-              status: "Idle",
-            });
+            setPage({ kind: "UnsupportedLink" });
             setQueryState("");
           } else {
             discardAddSession();
@@ -2226,11 +1996,6 @@ export function useNexusController(): NexusController {
       runPageCreation(page.pageId, page.activation);
     }
   }, [page, runPageCreation]);
-  const setPodcastQuery = useCallback((query: string) => {
-    setPage((current) =>
-      current.kind === "PodcastDiscovery" ? { ...current, query } : current,
-    );
-  }, []);
   const manageTabs = useCallback(() => {
     setPage((current) =>
       current.kind === "ActivationBlocked"
@@ -2409,11 +2174,6 @@ export function useNexusController(): NexusController {
           "[data-switchboard-library-name]",
         );
       }
-      if (page.kind === "PodcastDiscovery") {
-        return container.querySelector<HTMLElement>(
-          "[data-switchboard-podcast-query]",
-        );
-      }
       if (page.kind === "ManageTabs") {
         return container.querySelector<HTMLElement>(
           "[data-switchboard-open-heading]",
@@ -2530,66 +2290,15 @@ export function useNexusController(): NexusController {
       : desktopSearchError instanceof SearchContractDefect ||
           isSameSystemApiDefect(desktopSearchError)
         ? desktopSearchError
-        : webError instanceof NexusWebContractDefect ||
-            isSameSystemApiDefect(webError)
-          ? webError
-          : null;
+        : null;
   if (desktopContractDefect !== null) throw desktopContractDefect;
 
-  const setWebQuery = useCallback((next: string) => {
-    setActiveWebResultId(null);
-    setPage((current) =>
-      current.kind === "WebSearch"
-        ? { ...current, query: next, status: "Idle" }
-        : current,
-    );
-  }, []);
-  const selectWebResult = useCallback(
-    (
-      id: string,
-      disposition: "Follow" | "Fork",
-      modality: DesktopNexusModality,
-    ) => {
-      const result = (webData ?? []).find(
-        (candidate) => candidate.id === id,
-      );
-      if (!result) return;
-      setPage({
-        kind: "Add",
-        sessionId: startAddSession(webResultAddSeed(result)),
-        activation: {
-          disposition: { kind: disposition },
-          modality,
-        },
-      });
-    },
-    [startAddSession, webData],
-  );
-  const selectMobileWebResult = useCallback(
-    (id: string, fork: boolean) => {
-      const result = (webData ?? []).find(
-        (candidate) => candidate.id === id,
-      );
-      if (!result) return;
-      setPage({
-        kind: "Add",
-        sessionId: startAddSession(webResultAddSeed(result)),
-        activation: {
-          disposition: { kind: fork ? "Fork" : "Adopt" },
-          modality: "Pointer",
-        },
-      });
-    },
-    [startAddSession, webData],
-  );
   const retryDesktop = useCallback(
-    (source: "Openables" | "Owned" | "Web") => {
+    (source: "Openables" | "Owned") => {
       if (source === "Openables") {
         invalidateDesktopOpenablesCache();
-      } else if (source === "Owned") {
-        setDesktopSearchRetry((current) => current + 1);
       } else {
-        setWebRetry((current) => current + 1);
+        setDesktopSearchRetry((current) => current + 1);
       }
     },
     [invalidateDesktopOpenablesCache],
@@ -2640,53 +2349,24 @@ export function useNexusController(): NexusController {
         })),
       };
     }
-    if (page.kind === "WebSearch") {
-      return {
-        kind: "WebSearch",
-        query: page.query,
-        status: nexusSourceStatus({
-          enabled: page.query.trim().length > 0,
-          loading: webFetch.loading,
-          ready: webData !== null,
-          failed: webError !== null,
-        }),
-        results: (webData ?? []).map((result) => ({
-          id: result.id,
-          title: result.title,
-          url: result.url,
-          source: result.sourceName ?? result.displayUrl,
-          excerpt: result.snippet || undefined,
-        })),
-      };
-    }
     return { kind: query.trim() ? "Find" : "Root" };
-  }, [
-    page,
-    query,
-    webData,
-    webError,
-    webFetch.loading,
-  ]);
+  }, [page, query]);
   const desktop: DesktopNexusController = {
     open,
     page: desktopPage,
     query,
     entries: desktopEntries,
     activeEntryKey: desktopCommit.activeKey,
-    activeWebResultId,
     failures: desktopFailures,
     busy:
       desktopOpenablesFetch.loading || desktopSearchFetch.loading,
     focusKey,
     inputReady,
     setQuery,
-    setWebQuery,
     setActiveEntry,
-    setActiveWebResult: setActiveWebResultId,
     selectEntry,
     openActions,
     runAction: runDesktopAction,
-    selectWebResult,
     retry: retryDesktop,
     back,
     escape,
@@ -2704,14 +2384,6 @@ export function useNexusController(): NexusController {
     focusKey,
     dismissalConfirmation,
     desktop,
-    webSearch:
-      desktopPage.kind === "WebSearch"
-        ? {
-            query: desktopPage.query,
-            status: desktopPage.status,
-            results: desktopPage.results,
-          }
-        : null,
     switchboardPanes,
     switchboardClosedPanes,
     switchboardPlaces: SWITCHBOARD_PLACES,
@@ -2725,10 +2397,6 @@ export function useNexusController(): NexusController {
     switchboardFindPending: openablesFetch.loading || deepFetch.loading,
     switchboardOpenablesFailed: openablesError !== null,
     switchboardDeepFailed: deepError !== null,
-    podcastResults: podcastData ?? [],
-    podcastBusy: showSwitchboardBusy && podcastFetch.loading,
-    podcastSubscribingId,
-    podcastFailed: podcastError !== null,
     setQuery,
     openTarget,
     openAddTarget,
@@ -2752,13 +2420,6 @@ export function useNexusController(): NexusController {
     setLibraryNameDraft,
     submitLibrary,
     retryPageCreation,
-    setPodcastQuery,
-    selectPodcast,
-    retryPodcastSearch: () =>
-      setPodcastRetry((current) => current + 1),
-    setWebQuery,
-    retryWebSearch: () => retryDesktop("Web"),
-    selectMobileWebResult,
     manageTabs,
     retryRetainedActivation,
     cancelRetainedActivation,

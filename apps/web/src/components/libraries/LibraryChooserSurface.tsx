@@ -30,6 +30,7 @@ export interface LibraryChooserSurfaceProps {
   focusKey?: unknown;
   /** Stable test id for the mobile sheet panel. */
   panelTestId?: string;
+  panelId?: string;
   /** The LibraryChooser. */
   children: ReactNode;
 }
@@ -52,6 +53,7 @@ export default function LibraryChooserSurface({
   title,
   focusKey,
   panelTestId,
+  panelId,
   children,
 }: LibraryChooserSurfaceProps) {
   const isMobile = useIsMobileViewport();
@@ -114,7 +116,9 @@ export default function LibraryChooserSurface({
     desktopActive && anchorEl && typeof document !== "undefined"
       ? createPortal(
           <div
+            id={panelId}
             ref={panelRef}
+            role="dialog"
             className={styles.surface}
             style={style}
             data-layer={layer}
@@ -136,6 +140,7 @@ export default function LibraryChooserSurface({
         ariaLabel={title}
         focusKey={focusKey}
         panelTestId={panelTestId}
+        panelId={panelId}
         initialFocus={(container) => container}
         returnFocusTo={anchor}
         returnFocusFallback={returnFocusFallback}

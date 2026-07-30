@@ -239,6 +239,7 @@ class MediaOut(BaseModel):
     processing_status: MediaProcessingStatus
     transcript_state: str | None = None
     transcript_coverage: str | None = None
+    transcript_origin: Presence[Literal["Publisher", "Imported", "Generated"]]
     retrieval_status: str | None = None
     retrieval_status_reason: str | None = None
     failure_stage: str | None = None

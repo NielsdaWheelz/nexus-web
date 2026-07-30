@@ -175,6 +175,28 @@ disconnects.
 
 Do not introduce another workspace mobile drawer or sheet owner.
 
+## Browse And Preview Panes
+
+Browse is a standard section pane at `/browse`; Preview is a standard resource
+pane at `/browse/preview`. Both use `PaneShell` as their vertical scroll owner.
+The Browse visit identity is the exact normalized `q`, `kind`, `source`, and
+`sort` query. Its route-owned memento captures the committed section pages and
+cursors together with focus and scroll, so Back restores the accepted snapshot
+without refanning provider requests.
+
+Preview identity is its sealed discovery target. It re-resolves provider truth
+and publishes title/source credit plus an explicit acquisition action, but no
+canonical resource target before acquisition. Open/reload/play/leave Preview
+writes no Media, subscription, Library entry, job, progress, completion, or
+activity fact. Successful Add or Subscribe replaces Preview with the canonical
+owned pane after any eligible one-shot position transfer; failure leaves Preview
+and its staged destination choices intact.
+
+Browse and Preview intentionally publish no pane-local `FilterRows` or
+`FindOccurrences` capability. Their own query, facets, section continuation,
+and Preview episode list remain route/body-owned controls rather than a second
+Pane Search implementation.
+
 ## Target Activation
 
 The workspace owns cross-pane product-target activation through

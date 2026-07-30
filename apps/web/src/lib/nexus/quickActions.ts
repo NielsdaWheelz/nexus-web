@@ -3,7 +3,6 @@ import {
   FileText,
   Library,
   MessageSquarePlus,
-  Mic,
   Upload,
 } from "lucide-react";
 import type {
@@ -59,14 +58,6 @@ export const QUICK_ACTION_REGISTRY = {
       },
     },
   },
-  "Nexus.Quick.Podcast": {
-    id: "Nexus.Quick.Podcast",
-    label: "Podcast",
-    icon: Mic,
-    keywords: ["discover", "subscribe", "feed"],
-    category: "Acquire",
-    target: { kind: "PodcastDiscovery" },
-  },
 } as const satisfies Record<NexusQuickActionId, NexusQuickAction>;
 
 export const SWITCHBOARD_QUICK_ACTION_IDS = [
@@ -75,7 +66,6 @@ export const SWITCHBOARD_QUICK_ACTION_IDS = [
   "Nexus.Quick.Chat",
   "Nexus.Quick.Library",
   "Nexus.Quick.Import",
-  "Nexus.Quick.Podcast",
 ] as const satisfies readonly NexusQuickActionId[];
 
 export const NEXUS_ZERO_STATE_ACTION_IDS = [

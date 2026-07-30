@@ -296,8 +296,10 @@ def test_real_web_article_library_removal_hides_scope_without_deleting_evidence(
         f"/media/{media_id}/libraries/{library_id}",
         headers=headers,
     )
-    assert remove_response.status_code == 204, remove_response.text
-    assert remove_response.content == b""
+    assert remove_response.status_code == 200, remove_response.text
+    remove_data = remove_response.json()["data"]
+    assert set(remove_data) == {"libraryEntriesCollectionRevision"}
+    assert remove_data["libraryEntriesCollectionRevision"] >= 1
 
     removed_scope_search = auth_client.get(
         "/search",

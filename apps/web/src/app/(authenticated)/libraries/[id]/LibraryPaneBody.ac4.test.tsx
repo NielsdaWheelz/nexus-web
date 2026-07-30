@@ -296,10 +296,12 @@ function mediaEntryWire(
   } = {},
 ) {
   return {
-    id,
     kind: "media",
-    position: 0,
-    created_at: options.createdAt ?? "2026-01-01T00:00:00Z",
+    placement: {
+      kind: "Present",
+      value: { libraryEntryId: id, position: 0 },
+    },
+    addedAt: options.createdAt ?? "2026-01-01T00:00:00Z",
     media: {
       id: mediaId,
       kind: options.kind ?? "web_article",
@@ -346,24 +348,30 @@ function seededMediaEntry(...args: Parameters<typeof mediaEntryWire>) {
 
 function seededPodcastEntry() {
   return {
-    id: "33333333-3333-4333-8333-333333333333",
     kind: "podcast",
-    position: 0,
-    created_at: "2026-01-01T00:00:00Z",
+    placement: {
+      kind: "Present",
+      value: {
+        libraryEntryId: "33333333-3333-4333-8333-333333333333",
+        position: 0,
+      },
+    },
+    addedAt: "2026-01-01T00:00:00Z",
     podcast: {
       id: SETTINGS_PODCAST_ID,
       title: "Settings Podcast",
       contributors: [],
-      unplayed_count: 2,
       unplayedCount: { kind: "Present", value: { value: 2 } },
       publicationDate: { kind: "Absent" },
       syncStatus: { kind: "Present", value: "complete" },
     },
     subscription: {
-      status: "active",
-      default_playback_speed: 1.5,
-      auto_queue: true,
-      sync_status: "complete",
+      kind: "Present",
+      value: {
+        defaultPlaybackSpeed: 1.5,
+        autoQueue: true,
+        syncStatus: "complete",
+      },
     },
     readingTimeEstimate: { kind: "Absent" },
   };
@@ -1106,7 +1114,7 @@ exhaustion: "Partial",
       restoredSecondTitle.closest<HTMLElement>("[data-collection-row-id]");
     expect(restoredSecondRow).toHaveAttribute(
       "data-collection-row-id",
-      "entry-2",
+      "22222222-2222-4222-8222-222222222222",
     );
     expect(
       // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: row ids are collision-safe only together with their nearest published scope.
@@ -1426,7 +1434,9 @@ exhaustion: "Complete",
     ).toBeInTheDocument();
     await waitFor(() => expect(commands).not.toBeNull());
     const sourceScrollport = screen.getByTestId("return-journey-scrollport");
-    definePaneReturnGeometry(sourceScrollport, { "entry-oversized": 120 });
+    definePaneReturnGeometry(sourceScrollport, {
+      "66666666-6666-4666-8666-666666666666": 120,
+    });
     act(() => {
       sourceScrollport.scrollTop = 100;
       commands?.capturePane({

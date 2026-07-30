@@ -38,6 +38,7 @@ export const APP_NAVIGATION = {
   destinations: [
     { id: "lectern" },
     { id: "libraries" },
+    { id: "browse" },
     { id: "podcasts" },
     { id: "chats" },
     { id: "notes" },

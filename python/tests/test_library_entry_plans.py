@@ -288,6 +288,16 @@ class _PlanEvidence:
         # generously (8x total media) so healthy plans pass with wide margin
         # while an O(N^2) per-candidate re-scan trips it.
         self.loop_bound: int = max(total_media * 8, 256)
+        self.hot_loop_nodes: tuple[str, ...] = tuple(
+            (
+                f"{node.get('Node Type')}["
+                f"{node.get('Relation Name') or node.get('CTE Name') or node.get('Alias') or '?'}"
+                f"]={int(node.get('Actual Loops', 1))}"
+            )
+            for node in nodes
+            if node.get("Node Type") not in _CACHE_NODE_TYPES
+            and int(node.get("Actual Loops", 1)) > self.loop_bound
+        )
 
 
 def _run_case(
@@ -327,6 +337,7 @@ def _run_case(
         f"rows={evidence.rows:4d} sharedHit={evidence.shared_hit:6d} "
         f"sharedRead={evidence.shared_read:5d} workLoops={evidence.max_loops:5d} "
         f"(bound {evidence.loop_bound}) cachedReplayLoops={evidence.max_loops_cached}"
+        + (f" hotLoopNodes={','.join(evidence.hot_loop_nodes)}" if evidence.hot_loop_nodes else "")
     )
     return evidence, page_info
 

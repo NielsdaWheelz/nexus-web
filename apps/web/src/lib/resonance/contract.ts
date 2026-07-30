@@ -1,6 +1,7 @@
 /** Strict same-system transport contract for Resonance reading slates. */
 
 import { decodePresence, type Presence } from "@/lib/api/presence";
+import { asRecord, exactKeys } from "@/lib/api/exact";
 import type { ProgressFraction } from "@/lib/consumption/activityFacts";
 import {
   decodePublicationDate,
@@ -10,7 +11,6 @@ import { assumeAppHref, type AppHref } from "@/lib/lectern/contract";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
-import { isRecord } from "@/lib/validation";
 
 const SLATE_LIMIT = 10;
 const MEDIA_KINDS = [
@@ -79,30 +79,6 @@ export interface SlateItem {
 
 export interface SlateSnapshot {
   items: SlateItem[];
-}
-
-function asRecord(raw: unknown, context: string): Record<string, unknown> {
-  if (!isRecord(raw)) {
-    throw new Error(`Invalid ${context}: expected an object`);
-  }
-  return raw;
-}
-
-function exactKeys(
-  value: Record<string, unknown>,
-  expected: readonly string[],
-  context: string,
-): void {
-  const actual = Object.keys(value).sort();
-  const wanted = [...expected].sort();
-  if (
-    actual.length !== wanted.length ||
-    actual.some((key, index) => key !== wanted[index])
-  ) {
-    throw new Error(
-      `Invalid ${context}: expected keys [${wanted.join(", ")}], got [${actual.join(", ")}]`,
-    );
-  }
 }
 
 function asString(raw: unknown, context: string): string {

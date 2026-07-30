@@ -55,6 +55,7 @@ from nexus.schemas.consumption import (
     PlacedOutcome,
     PlaceItemsCommand,
     PlayerDescriptor,
+    PreviewPositionIn,
     RemovedOutcome,
     RemoveItemCommand,
     ResetProgressCommand,
@@ -127,6 +128,7 @@ from nexus.services.resource_mutation_replay import (
 LECTERN_SCOPE = "Lectern.Commands"
 CONSUMPTION_SCOPE = "Consumption.Commands"
 CONSUMPTION_ACTIVITY_SCOPE = "Consumption.Activity"
+PREVIEW_POSITION_SCOPE = "Consumption.PreviewPosition"
 CONSUMPTION_STATS_LATENCY_BUDGET_MS = 500
 _ACTIVITY_MAX_AGE = timedelta(days=1)
 _ACTIVITY_MAX_FUTURE_SKEW = timedelta(minutes=5)
@@ -1391,6 +1393,103 @@ def _record_heartbeat_op(
         heartbeat_generation=heartbeat.heartbeat_generation,
         heartbeat_sequence=heartbeat.heartbeat_sequence,
     )
+
+
+def install_preview_position(
+    viewer_id: UUID,
+    media_id: UUID,
+    *,
+    client_mutation_id: UUID,
+    position: PreviewPositionIn,
+) -> None:
+    """Transfer Preview progress once after acquisition without overwriting progress."""
+    fresh = _fresh_session()
+    try:
+        retry_serializable(
+            fresh,
+            "install_preview_position",
+            partial(
+                _install_preview_position_op,
+                fresh,
+                viewer_id,
+                media_id,
+                client_mutation_id,
+                position,
+            ),
+        )
+    finally:
+        fresh.close()
+
+
+def _install_preview_position_op(
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+    client_mutation_id: UUID,
+    position: PreviewPositionIn,
+) -> None:
+    _lock_viewer(db, viewer_id)
+    request_bytes = canonical_json_bytes(
+        {
+            "mediaId": str(media_id),
+            "position": position.model_dump(mode="json", by_alias=True),
+        }
+    )
+    stored = lookup_replay(
+        db,
+        viewer_id=viewer_id,
+        scope=PREVIEW_POSITION_SCOPE,
+        client_mutation_id=str(client_mutation_id),
+        request_bytes=request_bytes,
+    )
+    if stored is not None:
+        db.rollback()
+        return
+    if not can_read_media(db, viewer_id, media_id):
+        db.rollback()
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    media_kind = db.execute(
+        text("SELECT kind FROM media WHERE id = :media_id"),
+        {"media_id": media_id},
+    ).scalar_one()
+    if media_kind != MediaKind.podcast_episode.value:
+        db.rollback()
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Preview position is supported only for Podcast episodes",
+        )
+    duration_ms = nullable_from_presence(position.duration_ms)
+    installed = _listening_store.install_preview_position_if_empty_in_txn(
+        db,
+        viewer_id=viewer_id,
+        media_id=media_id,
+        position_ms=(
+            min(position.position_ms, duration_ms)
+            if duration_ms is not None
+            else position.position_ms
+        ),
+        duration_ms=duration_ms,
+    )
+    if installed:
+        bump_collection_families(
+            db,
+            viewer_ids=(viewer_id,),
+            families=(
+                CollectionFamily.LibraryEntries,
+                CollectionFamily.PodcastEpisodes,
+                CollectionFamily.PodcastSubscriptions,
+            ),
+        )
+    record_replay(
+        db,
+        viewer_id=viewer_id,
+        scope=PREVIEW_POSITION_SCOPE,
+        client_mutation_id=str(client_mutation_id),
+        request_bytes=request_bytes,
+        response_json={},
+        changed_lanes={},
+    )
+    db.commit()
 
 
 # ---------------------------------------------------------------------------

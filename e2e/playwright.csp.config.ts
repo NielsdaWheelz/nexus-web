@@ -95,6 +95,11 @@ export default defineConfig({
         ...appRuntimeEnv,
         NEXUS_ENV: "test",
         SIGNED_URL_EXPIRY_S: process.env.SIGNED_URL_EXPIRY_S ?? "8",
+        REAL_MEDIA_PROVIDER_FIXTURES:
+          process.env.REAL_MEDIA_PROVIDER_FIXTURES ?? "0",
+        REAL_MEDIA_FIXTURE_DIR:
+          process.env.REAL_MEDIA_FIXTURE_DIR ??
+          path.join(ROOT_DIR, "python", "tests", "fixtures", "real_media"),
       },
     },
   ],

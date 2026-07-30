@@ -61,12 +61,8 @@ def _seed_podcast(direct_db: DirectSessionManager, *, subscriber_id: UUID | None
             },
         )
         if subscriber_id is not None:
-            session.execute(
-                text("""
-                    INSERT INTO podcast_subscriptions (user_id, podcast_id, status)
-                    VALUES (:user_id, :podcast_id, 'active')
-                """),
-                {"user_id": subscriber_id, "podcast_id": podcast_id},
+            factories.add_test_podcast_subscription(
+                session, user_id=subscriber_id, podcast_id=podcast_id
             )
         session.commit()
     direct_db.register_cleanup("library_entries", "podcast_id", podcast_id)
@@ -584,8 +580,7 @@ def test_add_to_library_rejects_system_library_destination(direct_db):
 
 
 def test_add_to_library_rejects_podcast_into_default(direct_db):
-    """Parity gap (spec S4.3 rule 4): a podcast can never land in Default, even
-    filed by the agent with an active subscription."""
+    """A Podcast cannot be selected as a named Default destination."""
     user_id, default_library_id = _seed_user_with_default_library(direct_db)
     run = _seed_run(direct_db, user_id)
     podcast_id = _seed_podcast(direct_db, subscriber_id=user_id)
@@ -599,13 +594,13 @@ def test_add_to_library_rejects_podcast_into_default(direct_db):
             args={"resource_uri": f"podcast:{podcast_id}", "library_id": str(default_library_id)},
         )
     assert outcome.is_error
-    assert outcome.error_code == "E_DEFAULT_LIBRARY_FORBIDDEN"
+    assert outcome.error_code == "E_INVALID_REQUEST"
 
 
 def test_add_to_library_rejects_podcast_without_active_subscription(direct_db):
     """Parity gap (spec S4.3 rule 4): the agent path had no subscription check at
     all before this fix."""
-    user_id = _seed_user(direct_db)
+    user_id, _default_library_id = _seed_user_with_default_library(direct_db)
     run = _seed_run(direct_db, user_id)
     with direct_db.session() as session:
         target_library = factories.create_test_library(session, user_id, name="Podcasts")
@@ -624,6 +619,87 @@ def test_add_to_library_rejects_podcast_without_active_subscription(direct_db):
         )
     assert outcome.is_error
     assert outcome.error_code == "E_NOT_FOUND"
+
+
+def test_add_to_library_files_subscribed_podcast_and_undo_removes_only_agent_entry(
+    direct_db,
+):
+    user_id, _default_library_id = _seed_user_with_default_library(direct_db)
+    run = _seed_run(direct_db, user_id)
+    podcast_id = _seed_podcast(direct_db, subscriber_id=user_id)
+    with direct_db.session() as session:
+        target_library = factories.create_test_library(
+            session,
+            user_id,
+            name="Agent Podcasts",
+        )
+    direct_db.register_cleanup("library_entries", "library_id", target_library)
+    direct_db.register_cleanup("memberships", "library_id", target_library)
+    direct_db.register_cleanup("libraries", "id", target_library)
+
+    with direct_db.session() as session:
+        outcome = writes.execute_write_tool(
+            session,
+            run=run,
+            tool_call_index=0,
+            tool_name=writes.ADD_TO_LIBRARY_TOOL_NAME,
+            args={
+                "resource_uri": f"podcast:{podcast_id}",
+                "library_id": str(target_library),
+            },
+        )
+    assert not outcome.is_error
+    assert outcome.created_refs == [
+        {
+            "kind": "entry",
+            "library_id": str(target_library),
+            "target_scheme": "podcast",
+            "target_id": str(podcast_id),
+            "label": "Agent Podcasts",
+        }
+    ]
+
+    with direct_db.session() as session:
+        writes.undo_tool_call(
+            session,
+            viewer_id=user_id,
+            conversation_id=run.conversation_id,
+            tool_call_id=outcome.tool_call_id,
+        )
+        assert (
+            session.execute(
+                text(
+                    """
+                    SELECT count(*)
+                    FROM library_entries
+                    WHERE library_id = :library_id
+                      AND podcast_id = :podcast_id
+                    """
+                ),
+                {
+                    "library_id": target_library,
+                    "podcast_id": podcast_id,
+                },
+            ).scalar_one()
+            == 0
+        )
+        assert (
+            session.execute(
+                text(
+                    """
+                    SELECT count(*)
+                    FROM podcast_subscriptions
+                    WHERE user_id = :user_id
+                      AND podcast_id = :podcast_id
+                    """
+                ),
+                {
+                    "user_id": user_id,
+                    "podcast_id": podcast_id,
+                },
+            ).scalar_one()
+            == 1
+        )
 
 
 def test_add_to_library_restores_tombstoned_media_and_clears_tombstone(direct_db):

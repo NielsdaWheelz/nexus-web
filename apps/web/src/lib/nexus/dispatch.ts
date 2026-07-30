@@ -68,9 +68,7 @@ export type NexusDispatchOutcome =
             | "OpenAdd"
             | "OpenTodayCapture"
             | "CreatePage"
-            | "CreateLibrary"
-            | "PodcastDiscovery"
-            | "OpenWebSearch";
+            | "CreateLibrary";
         }
       >;
       activation: NexusTargetActivation;
@@ -149,8 +147,6 @@ export function nexusTargetNavigates(target: NexusTarget): boolean {
     case "OpenTodayCapture":
     case "CreatePage":
     case "CreateLibrary":
-    case "PodcastDiscovery":
-    case "OpenWebSearch":
       return false;
   }
 }
@@ -316,8 +312,6 @@ export async function dispatchNexusTarget(
     case "OpenTodayCapture":
     case "CreatePage":
     case "CreateLibrary":
-    case "PodcastDiscovery":
-    case "OpenWebSearch":
       return { kind: "WorkflowRequested", target, activation };
   }
 }

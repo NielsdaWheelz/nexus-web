@@ -3,11 +3,6 @@ import type {
   PositiveMinutes,
   ProgressFraction,
 } from "@/lib/consumption/activityFacts";
-import { decodePodcastUnplayedCount } from "@/lib/podcasts/activityFacts";
-import {
-  decodePodcastSyncStatus,
-  type PodcastSyncStatus,
-} from "@/lib/status/podcastSync";
 import {
   decodeOptionalPublicationDate,
   type PublicationDate,
@@ -61,11 +56,7 @@ type DecodedReadingTimeEntry<T> = T extends {
     }
   : T extends { kind: "podcast"; podcast: infer Podcast }
     ? Omit<T, "podcast" | "readingTimeEstimate"> & {
-        podcast: Podcast & {
-          unplayedCount: ReturnType<typeof decodePodcastUnplayedCount>;
-          publicationDate: Presence<PublicationDate>;
-          syncStatus: Presence<PodcastSyncStatus>;
-        };
+        podcast: Podcast;
         readingTimeEstimate: ReadingTimeEstimatePresence;
       }
     : T extends object
@@ -152,36 +143,8 @@ export function decodeLibraryReadingTimeEntry(
     if (estimate.kind === "Present") {
       throw new TypeError("Podcast Library entries cannot carry reading time");
     }
-    const podcast = expectRecord(entry.podcast, "Library entry podcast");
-    const syncStatus: Presence<PodcastSyncStatus> =
-      entry.subscription === null
-        ? { kind: "Absent" }
-        : (() => {
-            const subscription = expectRecord(
-              entry.subscription,
-              "Library entry subscription",
-            );
-            const status = expectOneOf(
-              subscription.status,
-              ["active", "unsubscribed"] as const,
-              "Library entry subscription.status",
-            );
-            const decodedSyncStatus = decodePodcastSyncStatus(
-              subscription.sync_status,
-              "Library entry subscription.sync_status",
-            );
-            return status === "active"
-              ? { kind: "Present", value: decodedSyncStatus }
-              : { kind: "Absent" };
-          })();
     const decoded = {
       ...raw,
-      podcast: {
-        ...podcast,
-        unplayedCount: decodePodcastUnplayedCount(podcast.unplayed_count),
-        publicationDate: { kind: "Absent" as const },
-        syncStatus,
-      },
       readingTimeEstimate: estimate,
     };
     return decoded;

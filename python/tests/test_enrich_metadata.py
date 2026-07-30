@@ -53,6 +53,7 @@ from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.contributor_credits import load_contributor_credits_for_media
 from nexus.services.llm_profiles import operation_profile
 from nexus.services.rate_limit import RateLimiter, get_rate_limiter, set_rate_limiter
+from tests.factories import add_test_podcast_episode_identity
 from tests.helpers import create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -363,10 +364,10 @@ class TestEnrichMetadata:
                 text(
                     """
                     INSERT INTO podcast_episodes (
-                        media_id, podcast_id, provider_episode_id, fallback_identity,
+                        media_id, podcast_id,
                         description_text
                     ) VALUES (
-                        :media_id, :podcast_id, :provider_episode_id, :fallback_identity,
+                        :media_id, :podcast_id,
                         :description_text
                     )
                     """
@@ -374,10 +375,14 @@ class TestEnrichMetadata:
                 {
                     "media_id": media_id,
                     "podcast_id": podcast_id,
-                    "provider_episode_id": "ep-enrich-1",
-                    "fallback_identity": f"fallback-{uuid4()}",
                     "description_text": "Show notes about resilient systems and feedback loops.",
                 },
+            )
+            add_test_podcast_episode_identity(
+                session,
+                podcast_id=podcast_id,
+                media_id=media_id,
+                value="ep-enrich-1",
             )
             session.commit()
         _grant_ai_entitlement(direct_db, user_id)

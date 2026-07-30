@@ -1,11 +1,14 @@
-import type { Presence } from "@/lib/api/presence";
+import { decodePresence, type Presence } from "@/lib/api/presence";
 import type {
   PositiveCount,
   ProgressFraction,
 } from "@/lib/consumption/activityFacts";
 import { decodeContributorCredit } from "@/lib/contributors/credit";
 import type { ContributorCredit } from "@/lib/contributors/types";
-import type { PublicationDate } from "@/lib/dates/publicationDate";
+import {
+  decodePublicationDate,
+  type PublicationDate,
+} from "@/lib/dates/publicationDate";
 import type { MediaActionCapabilities } from "@/lib/media/ingestionClient";
 import type { PodcastSyncStatus } from "@/lib/status/podcastSync";
 import {
@@ -41,7 +44,6 @@ const PROCESSING_STATUSES = [
 ] as const;
 const READ_STATES = ["unread", "in_progress", "finished"] as const;
 const AUTHOR_MODES = ["automatic", "manual"] as const;
-const SUBSCRIPTION_STATUSES = ["active", "unsubscribed"] as const;
 const SYNC_STATUSES = [
   "pending",
   "running",
@@ -83,23 +85,25 @@ export interface LibraryPodcastListValue {
   readonly id: string;
   readonly title: string;
   readonly contributors: ContributorCredit[];
-  readonly unplayed_count: number;
   readonly unplayedCount: Presence<PositiveCount>;
   readonly publicationDate: Presence<PublicationDate>;
   readonly syncStatus: Presence<PodcastSyncStatus>;
 }
 
 export interface LibraryPodcastSubscriptionValue {
-  readonly status: "active" | "unsubscribed";
-  readonly default_playback_speed: number | null;
-  readonly auto_queue: boolean;
-  readonly sync_status: (typeof SYNC_STATUSES)[number];
+  readonly defaultPlaybackSpeed: number | null;
+  readonly autoQueue: boolean;
+  readonly syncStatus: (typeof SYNC_STATUSES)[number];
+}
+
+export interface LibraryEntryPlacement {
+  readonly libraryEntryId: string;
+  readonly position: number;
 }
 
 interface LibraryEntryBase {
-  readonly id: string;
-  readonly position: number;
-  readonly created_at: string;
+  readonly placement: Presence<LibraryEntryPlacement>;
+  readonly addedAt: string;
   readonly readingTimeEstimate: ReadingTimeEstimatePresence;
 }
 
@@ -111,7 +115,7 @@ export interface LibraryMediaListItem extends LibraryEntryBase {
 export interface LibraryPodcastListItem extends LibraryEntryBase {
   readonly kind: "podcast";
   readonly podcast: LibraryPodcastListValue;
-  readonly subscription: LibraryPodcastSubscriptionValue | null;
+  readonly subscription: Presence<LibraryPodcastSubscriptionValue>;
 }
 
 export type LibraryEntryListItem =
@@ -122,11 +126,6 @@ type LibraryMediaListWire = Omit<
   LibraryMediaListValue,
   "publicationDate" | "sourceHost" | "progressFraction"
 >;
-type LibraryPodcastListWire = Omit<
-  LibraryPodcastListValue,
-  "unplayedCount" | "publicationDate" | "syncStatus"
->;
-
 function decodeMedia(raw: unknown): LibraryMediaListWire {
   const media = expectExactRecord(
     raw,
@@ -245,11 +244,18 @@ function decodeMedia(raw: unknown): LibraryMediaListWire {
   };
 }
 
-function decodePodcast(raw: unknown): LibraryPodcastListWire {
+function decodePodcast(
+  raw: unknown,
+  subscription: Presence<LibraryPodcastSubscriptionValue>,
+): LibraryPodcastListValue {
   const podcast = expectExactRecord(
     raw,
-    ["id", "title", "contributors", "unplayed_count"],
+    ["id", "title", "contributors", "unplayedCount", "publishedDate"],
     "Library podcast list item",
+  );
+  const unplayedCount = expectInteger(
+    podcast.unplayedCount,
+    "Library podcast list item.unplayedCount",
   );
   return {
     id: expectString(podcast.id, "Library podcast list item.id"),
@@ -264,45 +270,76 @@ function decodePodcast(raw: unknown): LibraryPodcastListWire {
         ),
       "Library podcast list item.contributors",
     ),
-    unplayed_count: expectInteger(
-      podcast.unplayed_count,
-      "Library podcast list item.unplayed_count",
+    unplayedCount:
+      unplayedCount === 0
+        ? { kind: "Absent" }
+        : { kind: "Present", value: { value: unplayedCount } },
+    publicationDate: decodePresence(
+      podcast.publishedDate,
+      (value) =>
+        decodePublicationDate(
+          value,
+          "Library podcast list item.publishedDate.value",
+        ),
     ),
+    syncStatus:
+      subscription.kind === "Present"
+        ? { kind: "Present", value: subscription.value.syncStatus }
+        : { kind: "Absent" },
   };
 }
 
 function decodeSubscription(
   raw: unknown,
-): LibraryPodcastSubscriptionValue | null {
-  if (raw === null) return null;
-  const subscription = expectExactRecord(
+): Presence<LibraryPodcastSubscriptionValue> {
+  return decodePresence(
     raw,
-    ["status", "default_playback_speed", "auto_queue", "sync_status"],
-    "Library podcast subscription",
+    (value) => {
+      const subscription = expectExactRecord(
+        value,
+        ["defaultPlaybackSpeed", "autoQueue", "syncStatus"],
+        "Library podcast subscription",
+      );
+      return {
+        defaultPlaybackSpeed:
+          subscription.defaultPlaybackSpeed === null
+            ? null
+            : expectFiniteNumber(
+                subscription.defaultPlaybackSpeed,
+                "Library podcast subscription.defaultPlaybackSpeed",
+              ),
+        autoQueue: expectBoolean(
+          subscription.autoQueue,
+          "Library podcast subscription.autoQueue",
+        ),
+        syncStatus: expectOneOf(
+          subscription.syncStatus,
+          SYNC_STATUSES,
+          "Library podcast subscription.syncStatus",
+        ),
+      };
+    },
   );
-  return {
-    status: expectOneOf(
-      subscription.status,
-      SUBSCRIPTION_STATUSES,
-      "Library podcast subscription.status",
-    ),
-    default_playback_speed:
-      subscription.default_playback_speed === null
-        ? null
-        : expectFiniteNumber(
-            subscription.default_playback_speed,
-            "Library podcast subscription.default_playback_speed",
-          ),
-    auto_queue: expectBoolean(
-      subscription.auto_queue,
-      "Library podcast subscription.auto_queue",
-    ),
-    sync_status: expectOneOf(
-      subscription.sync_status,
-      SYNC_STATUSES,
-      "Library podcast subscription.sync_status",
-    ),
-  };
+}
+
+function decodePlacement(raw: unknown): Presence<LibraryEntryPlacement> {
+  return decodePresence(raw, (value) => {
+    const placement = expectExactRecord(
+      value,
+      ["libraryEntryId", "position"],
+      "Library entry placement",
+    );
+    return {
+      libraryEntryId: expectString(
+        placement.libraryEntryId,
+        "Library entry placement.libraryEntryId",
+      ),
+      position: expectInteger(
+        placement.position,
+        "Library entry placement.position",
+      ),
+    };
+  });
 }
 
 export function decodeLibraryEntryListItem(
@@ -315,15 +352,14 @@ export function decodeLibraryEntryListItem(
     "Library entry.kind",
   );
   const common = {
-    id: expectString(entry.id, "Library entry.id"),
-    position: expectInteger(entry.position, "Library entry.position"),
-    created_at: expectString(entry.created_at, "Library entry.created_at"),
+    placement: decodePlacement(entry.placement),
+    addedAt: expectString(entry.addedAt, "Library entry.addedAt"),
   };
 
   if (kind === "media") {
     const mediaEntry = expectExactRecord(
       raw,
-      ["id", "kind", "position", "created_at", "media", "readingTimeEstimate"],
+      ["kind", "placement", "addedAt", "media", "readingTimeEstimate"],
       "Library media entry",
     );
     return decodeLibraryReadingTimeEntry({
@@ -337,21 +373,21 @@ export function decodeLibraryEntryListItem(
   const podcastEntry = expectExactRecord(
     raw,
     [
-      "id",
       "kind",
-      "position",
-      "created_at",
+      "placement",
+      "addedAt",
       "podcast",
       "subscription",
       "readingTimeEstimate",
     ],
     "Library podcast entry",
   );
+  const subscription = decodeSubscription(podcastEntry.subscription);
   return decodeLibraryReadingTimeEntry({
     ...common,
     kind,
-    podcast: decodePodcast(podcastEntry.podcast),
-    subscription: decodeSubscription(podcastEntry.subscription),
+    podcast: decodePodcast(podcastEntry.podcast, subscription),
+    subscription,
     readingTimeEstimate: podcastEntry.readingTimeEstimate,
   });
 }

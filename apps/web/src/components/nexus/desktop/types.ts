@@ -37,25 +37,11 @@ export interface DesktopNexusAction {
   readonly icon: ReactNode;
 }
 
-export interface DesktopNexusWebResult {
-  readonly id: string;
-  readonly title: string;
-  readonly url: string;
-  readonly source: string;
-  readonly excerpt?: string;
-}
-
 export type DesktopNexusSource = "Openables" | "Owned";
 
 export type DesktopNexusPage =
   | { readonly kind: "Root" | "Find" }
-  | { readonly kind: "Actions"; readonly label: string; readonly actions: readonly DesktopNexusAction[] }
-  | {
-      readonly kind: "WebSearch";
-      readonly query: string;
-      readonly status: "Idle" | "Loading" | "Ready" | "RetryableFailure";
-      readonly results: readonly DesktopNexusWebResult[];
-    };
+  | { readonly kind: "Actions"; readonly label: string; readonly actions: readonly DesktopNexusAction[] };
 
 export interface DesktopNexusController {
   readonly open: boolean;
@@ -63,16 +49,13 @@ export interface DesktopNexusController {
   readonly query: string;
   readonly entries: readonly DesktopNexusEntry[];
   readonly activeEntryKey: string | null;
-  readonly activeWebResultId: string | null;
   readonly failures: ReadonlySet<DesktopNexusSource>;
   readonly busy: boolean;
   readonly focusKey: string;
   /** A retained workflow panel owned by the shared controller. */
   readonly workflow?: ReactNode;
   setQuery(query: string): void;
-  setWebQuery(query: string): void;
   setActiveEntry(key: string): void;
-  setActiveWebResult(id: string): void;
   selectEntry(
     key: string,
     disposition: "Follow" | "Fork",
@@ -80,14 +63,9 @@ export interface DesktopNexusController {
   ): void;
   openActions(): void;
   runAction(actionId: string): void;
-  selectWebResult(
-    id: string,
-    disposition: "Follow" | "Fork",
-    modality: DesktopNexusModality,
-  ): void;
   /** The adapter calls this only after the real desktop input receives focus. */
   inputReady?(): void;
-  retry(source: DesktopNexusSource | "Web"): void;
+  retry(source: DesktopNexusSource): void;
   back(): void;
   escape(): void;
   shouldSuppressReturnFocusOnClose(): boolean;

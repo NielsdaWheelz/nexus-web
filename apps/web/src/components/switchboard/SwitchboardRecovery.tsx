@@ -16,8 +16,6 @@ function completionLabel(retained: RetainedActivation): string {
       return "Your library was created.";
     case "Import":
       return "Your import completed.";
-    case "PodcastSubscription":
-      return "Your podcast was subscribed.";
   }
 }
 

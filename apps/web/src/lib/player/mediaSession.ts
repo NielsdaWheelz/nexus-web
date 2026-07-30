@@ -1,11 +1,6 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  type RefObject,
-} from "react";
+import { useCallback, useEffect, useRef, type RefObject } from "react";
 import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
 
 const POSITION_UPDATE_INTERVAL_MS = 1_000;
@@ -59,7 +54,8 @@ function normalize(value: string | null | undefined): string | undefined {
 interface MediaSessionTrack {
   title: string;
   podcast_title?: string | null;
-  image_url?: string | null;
+  image:
+    { kind: "Remote"; url: string } | { kind: "Proxied"; url: string } | null;
 }
 
 interface MediaSessionHandlers {
@@ -67,8 +63,8 @@ interface MediaSessionHandlers {
   pause: () => void;
   skipBackward: () => void;
   skipForward: () => void;
-  previous: () => void | Promise<void>;
-  next: () => void | Promise<void>;
+  previous: (() => void | Promise<void>) | null;
+  next: (() => void | Promise<void>) | null;
   /** seekTime in seconds, as supplied by the Media Session API. */
   seekToSeconds: (seekTimeSeconds: number) => void;
 }
@@ -84,16 +80,19 @@ interface MediaSessionHandlers {
 export function useMediaSessionAdapter(args: {
   track: MediaSessionTrack | null;
   isPlaying: boolean;
+  positionEnabled: boolean;
   audioElement: HTMLAudioElement | null;
   playbackRateRef: RefObject<number>;
   handlers: MediaSessionHandlers;
 }): { updatePositionState: (force?: boolean) => void } {
-  const { track, isPlaying } = args;
+  const { track, isPlaying, positionEnabled } = args;
 
   const audioElementRef = useRef(args.audioElement);
   audioElementRef.current = args.audioElement;
   const trackRef = useRef(args.track);
   trackRef.current = args.track;
+  const positionEnabledRef = useRef(args.positionEnabled);
+  positionEnabledRef.current = args.positionEnabled;
   const handlersRef = useRef(args.handlers);
   handlersRef.current = args.handlers;
   const playbackRateRef = args.playbackRateRef;
@@ -105,11 +104,20 @@ export function useMediaSessionAdapter(args: {
       const ms = getMediaSession();
       const audio = audioElementRef.current;
       const liveTrack = trackRef.current;
-      if (!ms || !audio || !liveTrack || !("setPositionState" in ms)) {
+      if (
+        !ms ||
+        !audio ||
+        !liveTrack ||
+        !positionEnabledRef.current ||
+        !("setPositionState" in ms)
+      ) {
         return;
       }
       const now = Date.now();
-      if (!force && now - lastUpdateAtRef.current < POSITION_UPDATE_INTERVAL_MS) {
+      if (
+        !force &&
+        now - lastUpdateAtRef.current < POSITION_UPDATE_INTERVAL_MS
+      ) {
         return;
       }
       const duration = Number.isFinite(audio.duration) ? audio.duration : null;
@@ -145,6 +153,17 @@ export function useMediaSessionAdapter(args: {
   }, [track]);
 
   useEffect(() => {
+    if (!track || positionEnabled) return;
+    const ms = getMediaSession();
+    if (!ms || !("setPositionState" in ms)) return;
+    try {
+      ms.setPositionState();
+    } catch {
+      // Ignore clients that cannot clear position state.
+    }
+  }, [positionEnabled, track]);
+
+  useEffect(() => {
     const ms = getMediaSession();
     if (!ms) return;
     if (!track) {
@@ -153,6 +172,13 @@ export function useMediaSessionAdapter(args: {
       } catch {
         // Ignore metadata assignment failures on unsupported clients.
       }
+      if ("setPositionState" in ms) {
+        try {
+          ms.setPositionState();
+        } catch {
+          // Ignore clients that cannot clear position state.
+        }
+      }
       return;
     }
     const artist = normalize(track.podcast_title);
@@ -160,10 +186,13 @@ export function useMediaSessionAdapter(args: {
       title: track.title,
       artist,
       album: artist,
-      artwork: track.image_url
+      artwork: track.image
         ? [
             {
-              src: buildMediaImageProxySrc(track.image_url),
+              src:
+                track.image.kind === "Proxied"
+                  ? track.image.url
+                  : buildMediaImageProxySrc(track.image.url),
             },
           ]
         : [],
@@ -212,12 +241,24 @@ export function useMediaSessionAdapter(args: {
     setActionHandler(ms, "seekforward", () => {
       handlersRef.current.skipForward();
     });
-    setActionHandler(ms, "previoustrack", () => {
-      void handlersRef.current.previous();
-    });
-    setActionHandler(ms, "nexttrack", () => {
-      void handlersRef.current.next();
-    });
+    setActionHandler(
+      ms,
+      "previoustrack",
+      handlersRef.current.previous
+        ? () => {
+            void handlersRef.current.previous?.();
+          }
+        : null,
+    );
+    setActionHandler(
+      ms,
+      "nexttrack",
+      handlersRef.current.next
+        ? () => {
+            void handlersRef.current.next?.();
+          }
+        : null,
+    );
     setActionHandler(ms, "seekto", (details) => {
       if (
         typeof details?.seekTime !== "number" ||

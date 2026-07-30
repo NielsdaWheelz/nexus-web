@@ -3,7 +3,6 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import NexusButton from "@/components/switchboard/NexusButton";
 import CreateLibraryPanel from "@/components/switchboard/CreateLibraryPanel";
-import SwitchboardPodcastPanel from "@/components/switchboard/SwitchboardPodcastPanel";
 import SwitchboardRecovery from "@/components/switchboard/SwitchboardRecovery";
 import SwitchboardRoot from "@/components/switchboard/SwitchboardRoot";
 import SwitchboardSheet from "@/components/switchboard/SwitchboardSheet";
@@ -37,8 +36,26 @@ function desktopWorkflow(input: {
     case "Root":
     case "Find":
     case "Actions":
-    case "WebSearch":
       return undefined;
+    case "UnsupportedLink":
+      content = (
+        <section>
+          <h2>This link is no longer supported</h2>
+          <button
+            type="button"
+            onClick={() =>
+              controller.openTarget({
+                kind: "InternalHref",
+                href: "/browse",
+                labelHint: "Browse",
+              })
+            }
+          >
+            Open Browse
+          </button>
+        </section>
+      );
+      break;
     case "TodayCapture":
       content = (
         <TodayCapturePanel
@@ -97,21 +114,6 @@ function desktopWorkflow(input: {
             onDefect={onAddDefect}
           />
         </AddPanelBoundary>
-      );
-      break;
-    case "PodcastDiscovery":
-      content = (
-        <SwitchboardPodcastPanel
-          query={page.query}
-          results={controller.podcastResults}
-          busy={controller.podcastBusy}
-          subscribingId={controller.podcastSubscribingId}
-          failed={controller.podcastFailed}
-          onBack={controller.back}
-          onQuery={controller.setPodcastQuery}
-          onSelect={controller.selectPodcast}
-          onRetry={controller.retryPodcastSearch}
-        />
       );
       break;
     case "ActivationBlocked":

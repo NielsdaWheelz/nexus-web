@@ -28,6 +28,7 @@ from datetime import UTC, datetime
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 import httpx
+from nexus.services.default_library_closure import ensure_default_intrinsic
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -48,13 +49,17 @@ from nexus.db.models import (
     Podcast,
     PodcastEpisode,
     PodcastSubscription,
+    PodcastSubscriptionBackfill,
     ProcessingStatus,
 )
 from nexus.db.session import create_session_factory
 from nexus.services import library_entries
 from nexus.services.bootstrap import ensure_user_and_default_library
-from nexus.services.default_library_closure import ensure_default_intrinsic
 from nexus.services.notes import set_highlight_note_body
+from nexus.services.podcasts.episode_identity import (
+    EpisodeAlias,
+    attach_episode_aliases_in_current_transaction,
+)
 
 DEV_EMAIL = "dev@nexus.local"
 DEV_PASSWORD = "devdevdev"
@@ -239,7 +244,9 @@ def main() -> None:
 
     with session_factory() as db:
         # ── Nexus user + default library ──────────────────────────────
-        default_library_id = ensure_user_and_default_library(db, user_id, email=DEV_EMAIL)
+        default_library_id = ensure_user_and_default_library(
+            db, user_id, email=DEV_EMAIL
+        )
 
         # ── Research library ──────────────────────────────────────────
         research_lib_id = _sid("library:research")
@@ -776,8 +783,6 @@ def main() -> None:
                     PodcastEpisode(
                         media_id=ep_media_id,
                         podcast_id=podcast_id,
-                        provider_episode_id=f"hh-bfa-{ep_idx + 1}",
-                        fallback_identity=f"hh-bfa-{ep_idx + 1}",
                         duration_seconds=ep_dur,
                         published_at=datetime(2013, 10 + ep_idx, 15, tzinfo=UTC),
                         description_text=f"Part {ep_idx + 1} of Dan Carlin's epic series on World War I.",
@@ -827,6 +832,12 @@ def main() -> None:
                 track(f"media: {ep_title} (episode, 2 fragments)", True)
             else:
                 track(f"media: {ep_title} (episode)", False)
+            attach_episode_aliases_in_current_transaction(
+                db,
+                podcast_id=podcast_id,
+                media_id=ep_media_id,
+                aliases=(EpisodeAlias("RssGuid", f"nexus-dev-hh-bfa-{ep_idx + 1}"),),
+            )
 
         # ── Podcast subscription + library membership ─────────────────
         existing_sub = db.execute(
@@ -836,19 +847,39 @@ def main() -> None:
             )
         ).scalar_one_or_none()
         if not existing_sub:
-            db.add(
-                PodcastSubscription(
-                    user_id=user_id,
-                    podcast_id=podcast_id,
-                    status="active",
-                    auto_queue=True,
-                    sync_status="complete",
-                )
+            subscription_id = _sid("subscription:hardcore-history")
+            existing_sub = PodcastSubscription(
+                id=subscription_id,
+                user_id=user_id,
+                podcast_id=podcast_id,
+                auto_queue=True,
+                sync_status="complete",
             )
+            db.add(existing_sub)
             db.flush()
             track("subscription: Hardcore History", True)
         else:
             track("subscription: Hardcore History", False)
+        existing_backfill = db.execute(
+            select(PodcastSubscriptionBackfill).where(
+                PodcastSubscriptionBackfill.subscription_id == existing_sub.id
+            )
+        ).scalar_one_or_none()
+        if existing_backfill is None:
+            now = datetime.now(UTC)
+            db.add(
+                PodcastSubscriptionBackfill(
+                    id=_sid("subscription-backfill:hardcore-history"),
+                    subscription_id=existing_sub.id,
+                    cutoff_at=now,
+                    step_no=0,
+                    processed_count=len(episode_media_ids),
+                    added_count=len(episode_media_ids),
+                    started_at=now,
+                    completed_at=now,
+                )
+            )
+            db.flush()
 
         created_podcast_entry = library_entries.ensure_entry(
             db,

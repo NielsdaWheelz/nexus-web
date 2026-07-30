@@ -61,14 +61,19 @@ def test_live_podcast_episode_transcribes_and_indexes_real_episode(
     direct_db.register_cleanup("users", "id", user_id)
     grant_ai_plus(direct_db, user_id)
 
-    discover_response = auth_client.get(
-        "/podcasts/discover",
-        params={"q": "Houston We Have a Podcast", "limit": 10},
+    browse_response = auth_client.get(
+        "/browse",
+        params={
+            "q": "Houston We Have a Podcast",
+            "kind": "Podcast",
+            "source": "PodcastIndex",
+            "limit": 10,
+        },
         headers=headers,
     )
-    assert discover_response.status_code == 200, discover_response.text
-    candidates = discover_response.json()["data"]
-    podcast = next(
+    assert browse_response.status_code == 200, browse_response.text
+    candidates = browse_response.json()["data"]["items"]
+    candidate = next(
         (
             candidate
             for candidate in candidates
@@ -76,41 +81,26 @@ def test_live_podcast_episode_transcribes_and_indexes_real_episode(
         ),
         None,
     )
-    assert podcast is not None, candidates
-
-    contributors = []
-    for credit in podcast["contributors"]:
-        contributor = {
-            "credited_name": credit["credited_name"],
-            "role": credit["role"],
-            "source": credit["source"],
-        }
-        if credit.get("raw_role"):
-            contributor["raw_role"] = credit["raw_role"]
-        if isinstance(credit.get("ordinal"), int):
-            contributor["ordinal"] = credit["ordinal"]
-        if credit.get("source_ref"):
-            contributor["source_ref"] = credit["source_ref"]
-        if credit.get("confidence") is not None:
-            contributor["confidence"] = credit["confidence"]
-        contributors.append(contributor)
+    assert candidate is not None, candidates
+    assert candidate["resolution"]["kind"] == "Preview", candidate
 
     subscribe_response = auth_client.post(
         "/podcasts/subscriptions",
         json={
-            "provider_podcast_id": podcast["provider_podcast_id"],
-            "title": podcast["title"],
-            "contributors": contributors,
-            "feed_url": podcast["feed_url"],
-            "website_url": podcast["website_url"],
-            "image_url": podcast["image_url"],
-            "description": podcast["description"],
-            "auto_queue": False,
+            "target": {
+                "kind": "Discovery",
+                "target": candidate["resolution"]["target"],
+            },
+            "namedLibraryIds": [],
+            "replacementConfirmation": {"kind": "Absent"},
         },
-        headers=headers,
+        headers={
+            **headers,
+            "Idempotency-Key": "live-provider-podcast-subscribe",
+        },
     )
     assert subscribe_response.status_code == 200, subscribe_response.text
-    podcast_id = UUID(subscribe_response.json()["data"]["podcast_id"])
+    podcast_id = UUID(subscribe_response.json()["data"]["href"].rsplit("/", 1)[-1])
     register_podcast_cleanup(direct_db, podcast_id)
 
     sync_response = auth_client.post(
@@ -191,7 +181,7 @@ def test_live_podcast_episode_transcribes_and_indexes_real_episode(
         tmp_path,
         "live-podcast-hwhap-trace.json",
         {
-            "podcast_title": podcast["title"],
+            "podcast_title": candidate["title"],
             "podcast_id": str(podcast_id),
             "media": media_trace,
             "evidence": evidence_trace,

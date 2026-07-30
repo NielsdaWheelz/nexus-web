@@ -1,20 +1,21 @@
-"""Unit tests for PodcastIndex provider retry and parsing behavior.
+"""Unit tests for PodcastIndex raw Browse transport and retry behavior.
 
 The retry/backoff/Retry-After loop lives in `nexus.services.net.http_retry`
 (`get_json_with_retry`), which `provider._get_json` delegates to. These tests drive
-the public `search_podcasts` and patch the HTTP + sleep seams inside that helper, so
-they exercise the real retry logic end-to-end through the provider.
+the raw Browse search payload seam and patch the HTTP + sleep owners beneath it.
 """
 
 from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 
+from nexus.config import clear_settings_cache
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.services.podcasts.provider import (
     PODCAST_PROVIDER_MAX_ATTEMPTS,
@@ -83,46 +84,39 @@ def _assert_provider_unavailable(callable_under_test: Callable[[], Any]) -> None
     assert exc_info.value.code == ApiErrorCode.E_PODCAST_PROVIDER_UNAVAILABLE
 
 
-def test_search_podcasts_returns_parsed_rows_on_success(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_browse_search_returns_raw_provider_payload_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = {
+        "feeds": [
+            {
+                "id": 123,
+                "url": "https://feeds.example.com/systems.xml",
+                "title": "Systems Podcast",
+                "author": "Systems Team",
+                "link": "https://example.com/systems",
+                "image": "https://example.com/systems.png",
+                "description": "Deep systems analysis",
+            }
+        ]
+    }
     calls = _install_sequence_get(
         monkeypatch,
         [
             _json_response(
                 status_code=200,
-                payload={
-                    "feeds": [
-                        {
-                            "id": 123,
-                            "url": "https://feeds.example.com/systems.xml",
-                            "title": "Systems Podcast",
-                            "author": "Systems Team",
-                            "link": "https://example.com/systems",
-                            "image": "https://example.com/systems.png",
-                            "description": "Deep systems analysis",
-                        }
-                    ]
-                },
+                payload=payload,
             )
         ],
     )
 
-    results = _client().search_podcasts("systems", 10)
+    result = _client().browse_search_payload("systems", 10)
 
     assert len(calls) == 1
-    assert results == [
-        {
-            "provider_podcast_id": "123",
-            "title": "Systems Podcast",
-            "author": "Systems Team",
-            "feed_url": "https://feeds.example.com/systems.xml",
-            "website_url": "https://example.com/systems",
-            "image_url": "https://example.com/systems.png",
-            "description": "Deep systems analysis",
-        }
-    ]
+    assert result == payload
 
 
-def test_search_podcasts_retries_429_with_retry_after_then_succeeds(
+def test_browse_search_retries_429_with_retry_after_then_succeeds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = _install_sequence_get(
@@ -138,14 +132,14 @@ def test_search_podcasts_retries_429_with_retry_after_then_succeeds(
     )
     delays = _capture_sleep(monkeypatch)
 
-    results = _client().search_podcasts("systems", 5)
+    result = _client().browse_search_payload("systems", 5)
 
-    assert results == []
+    assert result == {"feeds": []}
     assert len(calls) == 2
     assert delays == [0.01]
 
 
-def test_search_podcasts_retries_500_then_fails_after_max_attempts(
+def test_browse_search_retries_500_then_fails_after_max_attempts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = _install_sequence_get(
@@ -157,36 +151,36 @@ def test_search_podcasts_retries_500_then_fails_after_max_attempts(
     )
     delays = _capture_sleep(monkeypatch)
 
-    _assert_provider_unavailable(lambda: _client().search_podcasts("systems", 3))
+    _assert_provider_unavailable(lambda: _client().browse_search_payload("systems", 3))
 
     assert len(calls) == PODCAST_PROVIDER_MAX_ATTEMPTS
     assert len(delays) == PODCAST_PROVIDER_MAX_ATTEMPTS - 1
 
 
-def test_search_podcasts_retries_timeout_then_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_browse_search_retries_timeout_then_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = _install_sequence_get(
         monkeypatch,
         [httpx.TimeoutException("timeout")] * PODCAST_PROVIDER_MAX_ATTEMPTS,
     )
     delays = _capture_sleep(monkeypatch)
 
-    _assert_provider_unavailable(lambda: _client().search_podcasts("systems", 3))
+    _assert_provider_unavailable(lambda: _client().browse_search_payload("systems", 3))
 
     assert len(calls) == PODCAST_PROVIDER_MAX_ATTEMPTS
     assert len(delays) == PODCAST_PROVIDER_MAX_ATTEMPTS - 1
 
 
-def test_search_podcasts_fails_gracefully_on_malformed_json(
+def test_browse_search_fails_gracefully_on_malformed_json(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     request = httpx.Request("GET", "https://podcastindex.test/api/1.0/search/byterm")
     malformed = httpx.Response(status_code=200, request=request, content=b"{not-json")
     _install_sequence_get(monkeypatch, [malformed])
 
-    _assert_provider_unavailable(lambda: _client().search_podcasts("systems", 3))
+    _assert_provider_unavailable(lambda: _client().browse_search_payload("systems", 3))
 
 
-def test_search_podcasts_returns_empty_list_for_empty_feeds(
+def test_browse_search_returns_empty_payload_for_empty_feeds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _install_sequence_get(
@@ -194,14 +188,40 @@ def test_search_podcasts_returns_empty_list_for_empty_feeds(
         [_json_response(status_code=200, payload={"feeds": []})],
     )
 
-    assert _client().search_podcasts("systems", 3) == []
+    assert _client().browse_search_payload("systems", 3) == {"feeds": []}
 
 
-def test_search_podcasts_fails_on_non_dict_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_browse_search_fails_on_non_dict_payload(monkeypatch: pytest.MonkeyPatch) -> None:
     # get_json_with_retry rejects a non-object JSON body as a provider error.
     _install_sequence_get(
         monkeypatch,
         [_json_response(status_code=200, payload=["unexpected", "array"])],
     )
 
-    _assert_provider_unavailable(lambda: _client().search_podcasts("systems", 3))
+    _assert_provider_unavailable(lambda: _client().browse_search_payload("systems", 3))
+
+
+def test_raw_browse_methods_preserve_real_media_fixture_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture_dir = Path(__file__).parent / "fixtures" / "real_media"
+    monkeypatch.setenv("REAL_MEDIA_PROVIDER_FIXTURES", "true")
+    monkeypatch.setenv("REAL_MEDIA_FIXTURE_DIR", str(fixture_dir))
+    clear_settings_cache()
+    try:
+        client = _client()
+        search = client.browse_search_payload("Houston We Have a Podcast", 5)
+        podcast = client.browse_podcast_payload("nasa-hwhap-real-media")
+        episodes = client.browse_episode_page_payload(
+            "nasa-hwhap-real-media",
+            5,
+            None,
+        )
+        episode = client.browse_episode_payload("nasa-hwhap-crew4")
+    finally:
+        clear_settings_cache()
+
+    assert search["feeds"][0]["id"] == "nasa-hwhap-real-media"
+    assert podcast["feed"]["id"] == "nasa-hwhap-real-media"
+    assert episodes["items"][0]["id"] == "nasa-hwhap-crew4"
+    assert episode["episode"]["id"] == "nasa-hwhap-crew4"

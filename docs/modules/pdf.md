@@ -16,6 +16,14 @@ PDF source acceptance is owned by `media_source_ingest.py`.
 Retry and refresh create a new source attempt. Routes and UI clients do not
 enqueue source-specific or retrieval jobs directly.
 
+## Browse
+
+PDF Browse is Nexus-only. The read-only Nexus adapter searches viewer-visible
+owned PDF Media and resolves results directly to canonical `/media/{id}` panes.
+There is no external PDF provider, guessed remote PDF candidate, or external PDF
+Preview/acquisition path in Browse. URL, upload, and browser-file acquisition
+remain solely with the source-acceptance owners above.
+
 ## Reader Apparatus
 
 PDF reader apparatus is intentionally conservative.

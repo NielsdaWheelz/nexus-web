@@ -1,0 +1,39 @@
+.root {
+  display: grid;
+  gap: var(--space-3);
+  justify-items: start;
+}
+
+.split {
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.primary {
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
+}
+
+.chevron {
+  display: inline-flex;
+  min-width: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.15rem;
+  border: 0;
+  border-inline-start: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  cursor: pointer;
+}
+
+.chevron:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.chevron:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}

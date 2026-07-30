@@ -24,7 +24,11 @@ from nexus.schemas.resource_graph import CreateLinkRequest
 from nexus.services.consumption import service
 from nexus.services.consumption._activity_stats import ActivityQuery
 from nexus.services.resource_graph import user_relations
-from tests.factories import add_media_to_library, get_user_default_library
+from tests.factories import (
+    add_media_to_library,
+    add_test_podcast_episode_identity,
+    get_user_default_library,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -345,11 +349,16 @@ def test_contributor_attribution_dedupes_direct_and_parent_podcast_roles(
     )
     db_session.execute(
         text(
-            """INSERT INTO podcast_episodes
-                (media_id, podcast_id, provider_episode_id, fallback_identity)
-                VALUES (:media_id, :podcast_id, 'episode', 'episode')"""
+            """INSERT INTO podcast_episodes (media_id, podcast_id)
+                VALUES (:media_id, :podcast_id)"""
         ),
         {"media_id": media_id, "podcast_id": podcast_id},
+    )
+    add_test_podcast_episode_identity(
+        db_session,
+        podcast_id=podcast_id,
+        media_id=media_id,
+        value="episode",
     )
     db_session.execute(
         text("INSERT INTO contributors (id, handle, display_name) VALUES (:id, 'ada', 'Ada')"),

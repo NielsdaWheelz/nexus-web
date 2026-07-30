@@ -714,6 +714,28 @@ def revoke_jobs_by_dedupe_keys(
     )
 
 
+def revoke_jobs_for_payload(
+    db: Session,
+    *,
+    kind: str,
+    expected_payload_match: Mapping[str, Any],
+) -> None:
+    """Delete queue rows selected by an owned exact JSON payload subset."""
+    db.execute(
+        text(
+            """
+            DELETE FROM background_jobs
+            WHERE kind = :kind
+              AND payload @> CAST(:expected_payload_match AS jsonb)
+            """
+        ),
+        {
+            "kind": kind,
+            "expected_payload_match": json.dumps(dict(expected_payload_match)),
+        },
+    )
+
+
 def reschedule_running_job(
     db: Session,
     *,

@@ -7,6 +7,10 @@ The visibility readers in `auth/permissions.py` and the search/object modules re
 the table under an explicit allowlist (see the cutover spec).
 """
 
+import base64
+import hashlib
+import hmac
+import json
 import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -25,6 +29,8 @@ from nexus.auth.permissions import (
     visible_media_ids_cte_sql,
     visible_podcast_ids_cte_sql,
 )
+from nexus.config import get_settings
+from nexus.db.errors import TransactionRestart
 from nexus.db.retries import retry_read_committed
 from nexus.db.session import transaction
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
@@ -41,12 +47,14 @@ from nexus.schemas.library import (
     LibraryEntryMediaCapabilitiesOut,
     LibraryEntryMediaOut,
     LibraryEntryOrderRequest,
+    LibraryEntryPlacementOut,
     LibraryEntryPodcastOut,
     LibraryEntryPodcastSubscriptionOut,
     LibraryEntryRemovalOut,
     LibraryMediaListItemOut,
     LibraryPlacementOptionOut,
     LibraryPodcastListItemOut,
+    PodcastPlacementRemovalOut,
     ReadingTimeEstimateOut,
 )
 from nexus.schemas.podcast import PodcastSubscriptionVisibleLibraryOut
@@ -66,6 +74,10 @@ from nexus.services.contributor_credits import (
 )
 from nexus.services.media_document_metrics import load_media_word_counts
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
+from nexus.services.resource_mutation_replay import (
+    lookup_replay,
+    record_replay,
+)
 from nexus.services.signed_keyset_cursor import (
     KeysetValue,
     KeysetValueKind,
@@ -500,14 +512,23 @@ class PodcastLibraryRemovalResult:
 
 @dataclass(frozen=True)
 class LibraryFilingOutcome:
-    """The idempotent inserted-only outcome a filing command returns.
+    """Closed result for one Library filing."""
 
-    `inserted` is False when the physical entry already existed
-    (re-file/idempotent path); `agent_tools.writes` reads it so Undo never
-    deletes a filing it did not itself create.
-    """
+    kind: Literal["Added", "AlreadyPresent", "IncludedThroughPodcast"]
 
-    inserted: bool
+
+@dataclass(frozen=True, slots=True)
+class PodcastPlacementConflict:
+    library_id: UUID
+    library_name: str
+    episode_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class PodcastPlacementResult:
+    added_library_ids: tuple[UUID, ...]
+    already_present_library_ids: tuple[UUID, ...]
+    removed_episode_entry_count: int
 
 
 def _display_reading_minutes(word_count: int, fraction: float) -> int:
@@ -625,6 +646,24 @@ def lock_media_rows_in_order(db: Session, media_ids: Sequence[UUID]) -> list[UUI
         {"media_ids": ordered_ids},
     ).fetchall()
     return [UUID(str(row[0])) for row in rows]
+
+
+def _lock_parent_podcast_for_media(db: Session, media_id: UUID) -> UUID | None:
+    podcast_id = db.scalar(
+        text("SELECT podcast_id FROM podcast_episodes WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    if podcast_id is None:
+        return None
+    locked = db.scalar(
+        text("SELECT id FROM podcasts WHERE id = :podcast_id FOR UPDATE"),
+        {"podcast_id": podcast_id},
+    )
+    if locked is None:
+        # justify-service-invariant-check: podcast_episodes owns a non-null FK.
+        # justify-defect: a trusted episode cannot point at a missing Podcast.
+        raise AssertionError("Podcast episode points at missing Podcast")
+    return UUID(str(locked))
 
 
 def ensure_entry(db: Session, library_id: UUID, target: EntryTarget) -> bool:
@@ -852,17 +891,22 @@ def hydrate_entry_page(
             "podcast_id": fact.target.id if fact.target.kind == "podcast" else None,
             "created_at": fact.created_at,
             "position": fact.position,
+            "added_at": fact.created_at,
+            "is_virtual": False,
         }
         for fact in facts
     ]
     entries = _hydrate_entry_rows(db, viewer_id=viewer_id, rows=rows)
-    expected_ids = [fact.id for fact in facts]
-    actual_ids = [entry.id for entry in entries]
-    if actual_ids != expected_ids:
+    expected_targets = [fact.target for fact in facts]
+    actual_targets = [
+        EntryTarget(entry.kind, entry.media.id if entry.kind == "media" else entry.podcast.id)
+        for entry in entries
+    ]
+    if actual_targets != expected_targets:
         # justify-defect: the composing repeatable-read query already proved every
         # typed target visible; hydration must preserve its exact cardinality/order.
         raise AssertionError(
-            f"Library entry hydration drifted: expected {expected_ids}, got {actual_ids}"
+            f"Library entry hydration drifted: expected {expected_targets}, got {actual_targets}"
         )
     return entries
 
@@ -975,13 +1019,20 @@ def _hydrate_entry_rows(
                 SELECT
                     p.id AS podcast_id,
                     p.title AS title,
+                    latest_episode.published_at AS latest_episode_published_at,
                     COALESCE(pu.unplayed_count, 0) AS unplayed_count,
-                    ps.status AS sub_status,
+                    ps.id AS sub_id,
                     ps.default_playback_speed AS sub_default_playback_speed,
                     ps.auto_queue AS sub_auto_queue,
                     ps.sync_status AS sub_sync_status
                 FROM podcasts p
                 LEFT JOIN podcast_unplayed pu ON pu.podcast_id = p.id
+                LEFT JOIN (
+                    SELECT podcast_id, max(published_at) AS published_at
+                    FROM podcast_episodes
+                    WHERE podcast_id = ANY(:podcast_ids)
+                    GROUP BY podcast_id
+                ) latest_episode ON latest_episode.podcast_id = p.id
                 LEFT JOIN podcast_subscriptions ps
                   ON ps.podcast_id = p.id AND ps.user_id = :viewer_id
                 WHERE p.id = ANY(:podcast_ids)
@@ -1004,10 +1055,18 @@ def _hydrate_entry_rows(
                 continue
             hydrated.append(
                 LibraryMediaListItemOut(
-                    id=UUID(str(row["id"])),
                     kind="media",
-                    position=int(row["position"]),
-                    created_at=row["created_at"],
+                    placement=(
+                        absent()
+                        if bool(row["is_virtual"])
+                        else present(
+                            LibraryEntryPlacementOut(
+                                library_entry_id=UUID(str(row["id"])),
+                                position=int(row["position"]),
+                            )
+                        )
+                    ),
+                    added_at=row["added_at"],
                     media=LibraryEntryMediaOut(
                         id=media.id,
                         kind=cast(
@@ -1049,28 +1108,42 @@ def _hydrate_entry_rows(
         if podcast_row is None:
             continue
 
-        subscription = None
-        if podcast_row["sub_status"] is not None:
-            subscription = LibraryEntryPodcastSubscriptionOut(
-                status=podcast_row["sub_status"],
-                default_playback_speed=float(podcast_row["sub_default_playback_speed"])
-                if podcast_row["sub_default_playback_speed"] is not None
-                else None,
-                auto_queue=bool(podcast_row["sub_auto_queue"]),
-                sync_status=podcast_row["sub_sync_status"],
+        subscription: Presence[LibraryEntryPodcastSubscriptionOut] = absent()
+        if podcast_row["sub_id"] is not None:
+            subscription = present(
+                LibraryEntryPodcastSubscriptionOut(
+                    default_playback_speed=float(podcast_row["sub_default_playback_speed"])
+                    if podcast_row["sub_default_playback_speed"] is not None
+                    else None,
+                    auto_queue=bool(podcast_row["sub_auto_queue"]),
+                    sync_status=podcast_row["sub_sync_status"],
+                )
             )
 
         hydrated.append(
             LibraryPodcastListItemOut(
-                id=UUID(str(row["id"])),
                 kind="podcast",
-                position=int(row["position"]),
-                created_at=row["created_at"],
+                placement=(
+                    absent()
+                    if bool(row["is_virtual"])
+                    else present(
+                        LibraryEntryPlacementOut(
+                            library_entry_id=UUID(str(row["id"])),
+                            position=int(row["position"]),
+                        )
+                    )
+                ),
+                added_at=row["added_at"],
                 podcast=LibraryEntryPodcastOut(
                     id=podcast_id,
                     title=podcast_row["title"],
                     contributors=contributors_by_podcast_id.get(podcast_id, []),
                     unplayed_count=int(podcast_row["unplayed_count"] or 0),
+                    published_date=(
+                        present(podcast_row["latest_episode_published_at"])
+                        if podcast_row["latest_episode_published_at"] is not None
+                        else absent()
+                    ),
                 ),
                 subscription=subscription,
                 reading_time_estimate=absent(),
@@ -1165,9 +1238,7 @@ def ensure_media_in_library(
     can file a stale or unauthorized media_id (no existence leak: unauthorized
     looks identical to nonexistent).
 
-    Ordering is load-bearing: the media-teardown barrier must run before any
-    library lock (spec S3/S4.3), so this locks/checks the media row FIRST and
-    only then locks/revalidates the destination library.
+    Podcast episodes lock their parent Podcast before Media and Library.
     """
     from nexus.services.media_deletion import clear_user_media_deletion
 
@@ -1183,6 +1254,7 @@ def ensure_media_in_library(
             or can_read_media(db, viewer_id, media_id, include_tearing_down=True)
         ):
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+        parent_podcast_id = _lock_parent_podcast_for_media(db, media_id)
         _lock_authorized_media_for_filing(
             db,
             viewer_id,
@@ -1195,6 +1267,13 @@ def ensure_media_in_library(
         governance.require_not_system(ctx.system_key)
 
         target = media_target(media_id)
+        if (
+            parent_podcast_id is not None
+            and not ctx.is_default
+            and entry_exists(db, library_id, podcast_target(parent_podcast_id))
+        ):
+            clear_user_media_deletion(db, viewer_id, media_id)
+            return LibraryFilingOutcome(kind="IncludedThroughPodcast")
         if not ctx.is_default and not entry_exists(db, library_id, target):
             _require_share_entitlement_for_access_increase(
                 db, actor_user_id=viewer_id, library_id=library_id
@@ -1205,7 +1284,7 @@ def ensure_media_in_library(
         clear_user_media_deletion(db, viewer_id, media_id)
         _bump_entry_visibility_revisions(db)
 
-    return LibraryFilingOutcome(inserted=inserted)
+    return LibraryFilingOutcome(kind="Added" if inserted else "AlreadyPresent")
 
 
 def ensure_media_absent_from_library_for_viewer(
@@ -1310,41 +1389,6 @@ def _ensure_media_absent_from_library_for_viewer(
     return retry_read_committed(db, retry_label, attempt)
 
 
-def add_podcast_to_library(
-    db: Session, viewer_id: UUID, library_id: UUID, podcast_id: UUID
-) -> LibraryFilingOutcome:
-    """Add a podcast to a non-default library. Admin-only; default forbidden
-    (spec S4.3 rule 4); requires an ACTIVE subscription. No closure."""
-    with transaction(db):
-        ctx = governance.lock_library_for_member(db, viewer_id, library_id)
-        governance.require_admin(ctx.role)
-        governance.require_non_default(ctx.is_default)
-        governance.require_not_system(ctx.system_key)
-
-        podcast_row = db.execute(
-            text("""
-                SELECT p.id
-                FROM podcasts p
-                JOIN podcast_subscriptions ps
-                  ON ps.podcast_id = p.id AND ps.user_id = :viewer_id AND ps.status = 'active'
-                WHERE p.id = :podcast_id
-            """),
-            {"viewer_id": viewer_id, "podcast_id": podcast_id},
-        ).fetchone()
-        if podcast_row is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Active podcast subscription not found")
-
-        target = podcast_target(podcast_id)
-        if not entry_exists(db, library_id, target):
-            _require_share_entitlement_for_access_increase(
-                db, actor_user_id=viewer_id, library_id=library_id
-            )
-        inserted = ensure_entry(db, library_id, target)
-        if inserted:
-            _bump_entry_visibility_revisions(db)
-    return LibraryFilingOutcome(inserted=inserted)
-
-
 def seed_media_into_system_library(db: Session, library_id: UUID, media_id: UUID) -> bool:
     """The narrow trusted system command for corpus seeding (Oracle ingest, spec
     S4.3). No actor/membership authorization — the caller IS the trusted system
@@ -1365,26 +1409,86 @@ def seed_media_into_system_library(db: Session, library_id: UUID, media_id: UUID
 
 
 def remove_podcast_from_library(
-    db: Session, viewer_id: UUID, library_id: UUID, podcast_id: UUID
-) -> LibraryEntryRemovalOut:
+    db: Session,
+    viewer_id: UUID,
+    library_id: UUID,
+    podcast_id: UUID,
+    *,
+    idempotency_key: str,
+) -> PodcastPlacementRemovalOut:
     """Remove a podcast from a non-default library. Admin-only; default forbidden."""
-    with transaction(db):
-        ctx = governance.lock_library_for_member(db, viewer_id, library_id)
-        governance.require_admin(ctx.role)
-        governance.require_non_default(ctx.is_default)
-        governance.require_not_system(ctx.system_key)
-        if not _remove_podcast_from_library_in_txn(
-            db, library_id=library_id, podcast_id=podcast_id
-        ):
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found in library")
-        _bump_entry_visibility_revisions(db)
-        return LibraryEntryRemovalOut(
-            library_entries_collection_revision=read_collection_revision(
+    from nexus.services.podcasts.control_replay import (
+        PODCAST_CONTROL_REPLAY_SCOPE,
+        podcast_control_request_bytes,
+    )
+
+    if not idempotency_key.strip():
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Idempotency-Key must be nonblank",
+        )
+    path = f"/libraries/{library_id}/podcasts/{podcast_id}"
+    request_bytes = podcast_control_request_bytes(
+        method="DELETE",
+        path=path,
+    )
+    try:
+        replay = lookup_replay(
+            db,
+            viewer_id=viewer_id,
+            scope=PODCAST_CONTROL_REPLAY_SCOPE,
+            client_mutation_id=idempotency_key,
+            request_bytes=request_bytes,
+        )
+    finally:
+        db.rollback()
+    if replay is not None:
+        return PodcastPlacementRemovalOut.model_validate(replay)
+
+    def attempt() -> PodcastPlacementRemovalOut:
+        with transaction(db):
+            db.execute(
+                text("SELECT id FROM podcasts WHERE id = :podcast_id FOR UPDATE"),
+                {"podcast_id": podcast_id},
+            ).first()
+            ctx = governance.lock_library_for_member(db, viewer_id, library_id)
+            governance.require_admin(ctx.role)
+            governance.require_non_default(ctx.is_default)
+            governance.require_not_system(ctx.system_key)
+            replay = lookup_replay(
                 db,
                 viewer_id=viewer_id,
-                family=CollectionFamily.LibraryEntries,
+                scope=PODCAST_CONTROL_REPLAY_SCOPE,
+                client_mutation_id=idempotency_key,
+                request_bytes=request_bytes,
             )
-        )
+            if replay is not None:
+                return PodcastPlacementRemovalOut.model_validate(replay)
+            removed = _remove_podcast_from_library_in_txn(
+                db, library_id=library_id, podcast_id=podcast_id
+            )
+            if removed:
+                _bump_entry_visibility_revisions(db)
+            response = PodcastPlacementRemovalOut(
+                outcome="Removed" if removed else "AlreadyAbsent",
+                library_entries_collection_revision=read_collection_revision(
+                    db,
+                    viewer_id=viewer_id,
+                    family=CollectionFamily.LibraryEntries,
+                ),
+            )
+            record_replay(
+                db,
+                viewer_id=viewer_id,
+                scope=PODCAST_CONTROL_REPLAY_SCOPE,
+                client_mutation_id=idempotency_key,
+                request_bytes=request_bytes,
+                response_json=response.model_dump(mode="json", by_alias=True),
+                changed_lanes={},
+            )
+            return response
+
+    return retry_read_committed(db, "remove_podcast_from_library", attempt)
 
 
 def _remove_podcast_from_library_in_txn(db: Session, *, library_id: UUID, podcast_id: UUID) -> bool:
@@ -1396,16 +1500,324 @@ def _remove_podcast_from_library_in_txn(db: Session, *, library_id: UUID, podcas
     return removed
 
 
-def remove_user_podcast_subscription_libraries(
+def undo_podcast_filing_for_viewer_in_current_transaction(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    library_id: UUID,
+    podcast_id: UUID,
+) -> PodcastPlacementRemovalOut:
+    """Undo one agent-created Podcast placement inside the agent transaction."""
+    db.execute(
+        text("SELECT id FROM podcasts WHERE id = :podcast_id FOR UPDATE"),
+        {"podcast_id": podcast_id},
+    ).first()
+    context = governance.lock_library_for_member(db, viewer_id, library_id)
+    governance.require_admin(context.role)
+    governance.require_non_default(context.is_default)
+    governance.require_not_system(context.system_key)
+    removed = _remove_podcast_from_library_in_txn(
+        db,
+        library_id=library_id,
+        podcast_id=podcast_id,
+    )
+    if removed:
+        _bump_entry_visibility_revisions(db)
+    return PodcastPlacementRemovalOut(
+        outcome="Removed" if removed else "AlreadyAbsent",
+        library_entries_collection_revision=read_collection_revision(
+            db,
+            viewer_id=viewer_id,
+            family=CollectionFamily.LibraryEntries,
+        ),
+    )
+
+
+def _podcast_child_conflict_rows(
+    db: Session,
+    *,
+    podcast_id: UUID,
+    library_ids: Sequence[UUID],
+) -> list[Any]:
+    if not library_ids:
+        return []
+    return list(
+        db.execute(
+            text(
+                """
+                SELECT
+                    le.id AS entry_id,
+                    le.library_id,
+                    le.media_id,
+                    le.position
+                FROM library_entries le
+                JOIN podcast_episodes pe ON pe.media_id = le.media_id
+                WHERE pe.podcast_id = :podcast_id
+                  AND le.library_id = ANY(:library_ids)
+                ORDER BY le.media_id, le.library_id, le.id
+                """
+            ),
+            {
+                "podcast_id": podcast_id,
+                "library_ids": list(library_ids),
+            },
+        )
+        .mappings()
+        .all()
+    )
+
+
+def _podcast_placement_conflict_fingerprint(
+    *,
+    viewer_id: UUID,
+    podcast_id: UUID,
+    library_ids: Sequence[UUID],
+    entry_ids: Sequence[UUID],
+) -> str:
+    payload = json.dumps(
+        {
+            "actor": str(viewer_id),
+            "podcast": str(podcast_id),
+            "libraries": [str(value) for value in sorted(library_ids)],
+            "entries": [str(value) for value in sorted(entry_ids)],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    key = base64.b64decode(
+        get_settings().effective_stream_token_signing_key,
+        validate=True,
+    )
+    return hmac.new(
+        key,
+        b"nexus-podcast-placement-conflict\0" + payload,
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def place_podcast_in_named_libraries_in_current_transaction(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    podcast_id: UUID,
+    library_ids: list[UUID],
+    confirmation_fingerprint: str | None,
+) -> PodcastPlacementResult:
+    targets = governance.resolve_writable_non_default_library_ids(
+        db,
+        viewer_id,
+        library_ids,
+    )
+    podcast = db.execute(
+        text("SELECT 1 FROM podcasts WHERE id = :podcast_id FOR UPDATE"),
+        {"podcast_id": podcast_id},
+    ).fetchone()
+    if podcast is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
+
+    conflict_rows = _podcast_child_conflict_rows(
+        db,
+        podcast_id=podcast_id,
+        library_ids=targets,
+    )
+    child_media_ids = sorted({UUID(str(row["media_id"])) for row in conflict_rows})
+    if lock_media_rows_in_order(db, child_media_ids) != child_media_ids:
+        raise TransactionRestart("Podcast child Media set changed")
+
+    default_library_id = governance.default_library_id_for_user(db, viewer_id)
+    locked_library_ids = sorted({default_library_id, *targets})
+    if governance.lock_library_rows_in_order(db, locked_library_ids) != locked_library_ids:
+        raise TransactionRestart("Podcast destination Library set changed")
+    contexts = {
+        library_id: governance.lock_library_for_member(db, viewer_id, library_id, lock=False)
+        for library_id in targets
+    }
+    for context in contexts.values():
+        governance.require_admin(context.role)
+        governance.require_non_default(context.is_default)
+        governance.require_not_system(context.system_key)
+
+    current_conflicts = _podcast_child_conflict_rows(
+        db,
+        podcast_id=podcast_id,
+        library_ids=targets,
+    )
+    if {UUID(str(row["entry_id"])) for row in current_conflicts} != {
+        UUID(str(row["entry_id"])) for row in conflict_rows
+    }:
+        raise TransactionRestart("Podcast child entry set changed")
+
+    fingerprint = _podcast_placement_conflict_fingerprint(
+        viewer_id=viewer_id,
+        podcast_id=podcast_id,
+        library_ids=targets,
+        entry_ids=[UUID(str(row["entry_id"])) for row in current_conflicts],
+    )
+    if current_conflicts and confirmation_fingerprint != fingerprint:
+        counts: dict[UUID, int] = {}
+        for row in current_conflicts:
+            library_id = UUID(str(row["library_id"]))
+            counts[library_id] = counts.get(library_id, 0) + 1
+        conflicts = [
+            {
+                "libraryId": str(library_id),
+                "libraryName": contexts[library_id].name,
+                "episodeCount": counts[library_id],
+            }
+            for library_id in targets
+            if library_id in counts
+        ]
+        raise ConflictError(
+            ApiErrorCode.E_PODCAST_REPLACES_EPISODES,
+            "Podcast placement replaces direct episode placements",
+            details={
+                "conflicts": conflicts,
+                "conflictFingerprint": fingerprint,
+            },
+        )
+
+    conflicts_by_library: dict[UUID, list[UUID]] = {}
+    earliest_position: dict[UUID, int] = {}
+    for row in current_conflicts:
+        library_id = UUID(str(row["library_id"]))
+        conflicts_by_library.setdefault(library_id, []).append(UUID(str(row["entry_id"])))
+        position = int(row["position"])
+        earliest_position[library_id] = min(
+            earliest_position.get(library_id, position),
+            position,
+        )
+
+    added: list[UUID] = []
+    present: list[UUID] = []
+    for library_id in targets:
+        target = podcast_target(podcast_id)
+        if entry_exists(db, library_id, target):
+            present.append(library_id)
+            continue
+        _require_share_entitlement_for_access_increase(
+            db,
+            actor_user_id=viewer_id,
+            library_id=library_id,
+        )
+        position = earliest_position.get(library_id, _next_position(db, library_id))
+        db.execute(
+            text(
+                """
+                INSERT INTO library_entries (
+                    library_id, media_id, podcast_id, position
+                )
+                VALUES (:library_id, NULL, :podcast_id, :position)
+                """
+            ),
+            {
+                "library_id": library_id,
+                "podcast_id": podcast_id,
+                "position": position,
+            },
+        )
+        added.append(library_id)
+
+    for media_id in child_media_ids:
+        ensure_entry(db, default_library_id, media_target(media_id))
+    if current_conflicts:
+        db.execute(
+            text(
+                """
+                DELETE FROM library_entries
+                WHERE id = ANY(:entry_ids)
+                """
+            ),
+            {"entry_ids": [UUID(str(row["entry_id"])) for row in current_conflicts]},
+        )
+    for library_id in targets:
+        if library_id in conflicts_by_library:
+            normalize_positions(db, library_id)
+    if added or current_conflicts:
+        _bump_entry_visibility_revisions(db)
+    return PodcastPlacementResult(
+        added_library_ids=tuple(added),
+        already_present_library_ids=tuple(present),
+        removed_episode_entry_count=len(current_conflicts),
+    )
+
+
+def place_subscribed_podcast_in_named_library_in_current_transaction(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    library_id: UUID,
+    podcast_id: UUID,
+) -> LibraryFilingOutcome:
+    """File one active subscription through the canonical Podcast placement owner."""
+    subscription = db.execute(
+        text(
+            """
+            SELECT id
+            FROM podcast_subscriptions
+            WHERE user_id = :viewer_id
+              AND podcast_id = :podcast_id
+            FOR UPDATE
+            """
+        ),
+        {
+            "viewer_id": viewer_id,
+            "podcast_id": podcast_id,
+        },
+    ).first()
+    if subscription is None:
+        raise NotFoundError(
+            ApiErrorCode.E_NOT_FOUND,
+            "Active Podcast subscription not found",
+        )
+    placement = place_podcast_in_named_libraries_in_current_transaction(
+        db,
+        viewer_id=viewer_id,
+        podcast_id=podcast_id,
+        library_ids=[library_id],
+        confirmation_fingerprint=None,
+    )
+    return LibraryFilingOutcome(kind="Added" if placement.added_library_ids else "AlreadyPresent")
+
+
+def remove_unsubscribed_podcast_placements(
     db: Session, *, viewer_id: UUID, podcast_id: UUID
 ) -> PodcastLibraryRemovalResult:
     """Sole owner of the unsubscribe library teardown. Classifies the viewer's
     library_entries for this podcast (admin-owned non-default → removable; foreign-owned
     shared → retained and counted), deletes the removable entries, and renormalizes each
     affected library via the one canonical ordering. Runs in the caller's transaction."""
+    snapshot_library_ids = sorted(
+        {
+            UUID(str(row[0]))
+            for row in db.execute(
+                text(
+                    """
+                    SELECT entry.library_id
+                    FROM library_entries entry
+                    JOIN memberships membership
+                      ON membership.library_id = entry.library_id
+                     AND membership.user_id = :viewer_id
+                    WHERE entry.podcast_id = :podcast_id
+                    """
+                ),
+                {"viewer_id": viewer_id, "podcast_id": podcast_id},
+            ).all()
+        }
+    )
+    if governance.lock_library_rows_in_order(db, snapshot_library_ids) != snapshot_library_ids:
+        raise TransactionRestart("Podcast placement Library set changed")
+
     rows = db.execute(
         text("""
-            SELECT le.library_id, l.owner_user_id, l.is_default, m.role
+            SELECT
+                le.library_id,
+                l.owner_user_id,
+                l.is_default,
+                (
+                    SELECT COUNT(*)
+                    FROM memberships other_membership
+                    WHERE other_membership.library_id = l.id
+                ) AS member_count
             FROM library_entries le
             JOIN libraries l ON l.id = le.library_id
             JOIN memberships m
@@ -1415,19 +1827,23 @@ def remove_user_podcast_subscription_libraries(
         """),
         {"viewer_id": viewer_id, "podcast_id": podcast_id},
     ).fetchall()
+    current_library_ids = sorted({UUID(str(row[0])) for row in rows})
+    if current_library_ids != snapshot_library_ids:
+        raise TransactionRestart("Podcast placement Library set changed")
 
     removable_library_ids: set[UUID] = set()
     retained_shared_library_count = 0
-    for library_id, owner_user_id, is_default, role in rows:
+    for library_id, owner_user_id, is_default, member_count in rows:
         if bool(is_default):
             continue
-        if str(role) == "admin":
+        if owner_user_id == viewer_id and int(member_count) == 1:
             removable_library_ids.add(UUID(str(library_id)))
-        elif owner_user_id != viewer_id:
+        else:
             retained_shared_library_count += 1
 
     for library_id in sorted(removable_library_ids):
-        delete_entry(db, library_id, podcast_target(podcast_id))
+        if not delete_entry(db, library_id, podcast_target(podcast_id)):
+            raise AssertionError("locked Podcast placement disappeared before unsubscribe delete")
         normalize_positions(db, library_id)
     if removable_library_ids:
         _bump_entry_visibility_revisions(db)
@@ -1450,40 +1866,42 @@ class _SortKey:
 
 def _plan(order: LibraryEntryOrder, *, is_default: bool) -> list[_SortKey]:
     """The total, stable sort-key plan that drives ORDER BY, the keyset, and the
-    cursor `after`. The identity tie-break is ALWAYS ``sort_identity DESC``
-    (stable regardless of primary direction); missing-rank keys are ALWAYS ASC so
+    cursor `after`. Every plan ends in the heterogeneous target identity
+    ``target_kind ASC, target_id DESC``; missing-rank keys are ALWAYS ASC so
     missing sorts last in both directions (0=present, 1=missing)."""
-    identity = _SortKey("sort_identity", "desc", KeysetValueKind.Uuid)
+    identity = [
+        _SortKey("target_kind", "asc", KeysetValueKind.Text),
+        _SortKey("target_id", "desc", KeysetValueKind.Uuid),
+    ]
     match order:
         case Canonical():
             if is_default:
                 return [
-                    _SortKey("media_created_at", "desc", KeysetValueKind.DateTime),
-                    identity,
+                    _SortKey("added_at", "desc", KeysetValueKind.DateTime),
+                    *identity,
                 ]
             return [
                 _SortKey("position", "asc", KeysetValueKind.Int),
-                _SortKey("created_at", "desc", KeysetValueKind.DateTime),
-                identity,
+                *identity,
             ]
         case Title(direction):
-            return [_SortKey("title_key", direction, KeysetValueKind.Text), identity]
+            return [_SortKey("title_key", direction, KeysetValueKind.Text), *identity]
         case Creator(direction):
             return [
                 _SortKey("creator_missing", "asc", KeysetValueKind.Int),
                 _SortKey("creator_name", direction, KeysetValueKind.TextOrNull),
                 _SortKey("title_key", "asc", KeysetValueKind.Text),
-                identity,
+                *identity,
             ]
         case Published(direction):
             return [
                 _SortKey("published_missing", "asc", KeysetValueKind.Int),
                 _SortKey("published_date", direction, KeysetValueKind.TextOrNull),
                 _SortKey("title_key", "asc", KeysetValueKind.Text),
-                identity,
+                *identity,
             ]
         case Added(direction):
-            return [_SortKey("added_at", direction, KeysetValueKind.DateTime), identity]
+            return [_SortKey("added_at", direction, KeysetValueKind.DateTime), *identity]
         case _:
             assert_never(order)
 
@@ -1539,9 +1957,18 @@ def _cursor_query(
     viewer_id: UUID,
     library_id: UUID,
     view: LibraryEntryView,
+    plan: Sequence[_SortKey],
 ) -> dict[str, object]:
     return {
         "libraryId": str(library_id),
+        "plan": [
+            {
+                "column": key.column,
+                "direction": key.direction,
+                "valueKind": key.value.value,
+            }
+            for key in plan
+        ],
         "view": _view_json(view),
         "viewerId": str(viewer_id),
     }
@@ -1552,7 +1979,12 @@ def _encode_view_cursor(
 ) -> str:
     return encode_signed_keyset_cursor(
         family=CollectionFamily.LibraryEntries.value,
-        query=_cursor_query(viewer_id=viewer_id, library_id=library_id, view=view),
+        query=_cursor_query(
+            viewer_id=viewer_id,
+            library_id=library_id,
+            view=view,
+            plan=plan,
+        ),
         after=tuple(KeysetValue(key.value, row[key.column]) for key in plan),
     )
 
@@ -1568,7 +2000,12 @@ def _decode_view_cursor(
     values = decode_signed_keyset_cursor(
         cursor,
         family=CollectionFamily.LibraryEntries.value,
-        query=_cursor_query(viewer_id=viewer_id, library_id=library_id, view=view),
+        query=_cursor_query(
+            viewer_id=viewer_id,
+            library_id=library_id,
+            view=view,
+            plan=plan,
+        ),
         expected_kinds=tuple(key.value for key in plan),
     )
     return {f"ks_{key.column}": value for key, value in zip(plan, values, strict=True)}
@@ -1606,11 +2043,22 @@ def _membership_cte_sql(*, is_default: bool, unfiled: bool) -> str:
     candidate group is true exactly when it has a direct-Default entry AND no
     other non-system membership entry. Shared-only media never enter the group
     with ``is_direct_default`` true, so they are excluded; system and
-    inaccessible-foreign libraries are already outside ``candidate_entries``."""
-    entry_cols = "le.id, le.library_id, le.media_id, le.podcast_id, le.created_at, le.position"
+    inaccessible-foreign libraries are already outside ``candidate_entries``.
+    The final relation is materialized once so consumption-filtered views cannot
+    inline and re-run Library/Media membership work per engagement candidate."""
+    entry_cols = """
+        le.id,
+        le.library_id,
+        le.media_id,
+        le.podcast_id,
+        le.created_at,
+        le.position,
+        le.created_at AS added_at,
+        false AS is_virtual
+    """
     if not is_default:
         return f"""
-            membership AS (
+            membership AS MATERIALIZED (
                 SELECT {entry_cols}
                 FROM library_entries le
                 WHERE le.library_id = :library_id
@@ -1627,6 +2075,24 @@ def _membership_cte_sql(*, is_default: bool, unfiled: bool) -> str:
         else ""
     )
     unfiled_restrict = "WHERE media_id IN (SELECT media_id FROM unfiled_media)" if unfiled else ""
+    subscription_union = (
+        ""
+        if unfiled
+        else """
+            UNION ALL
+            SELECT
+                subscription.id,
+                :library_id AS library_id,
+                NULL::uuid AS media_id,
+                subscription.podcast_id,
+                subscription.created_at,
+                NULL::integer AS position,
+                subscription.created_at AS added_at,
+                true AS is_virtual
+            FROM podcast_subscriptions subscription
+            WHERE subscription.user_id = :viewer_id
+        """
+    )
     return f"""
         default_media AS (
             {library_media_ids_cte_sql()}
@@ -1649,10 +2115,20 @@ def _membership_cte_sql(*, is_default: bool, unfiled: bool) -> str:
             {unfiled_restrict}
             ORDER BY media_id, is_direct_default DESC, entry_created_at ASC, entry_id ASC
         ),
-        membership AS (
-            SELECT {entry_cols}
+        membership AS MATERIALIZED (
+            SELECT
+                le.id,
+                le.library_id,
+                le.media_id,
+                le.podcast_id,
+                le.created_at,
+                le.position,
+                md.created_at AS added_at,
+                true AS is_virtual
             FROM ranked r
             JOIN library_entries le ON le.id = r.entry_id
+            JOIN media md ON md.id = le.media_id
+            {subscription_union}
         )
     """
 
@@ -1695,13 +2171,19 @@ def _query_view_page(
     creator_name_expr = (
         "COALESCE(mc.primary_name, pc.primary_name)" if needs_creator else "NULL::text"
     )
-    added_at_expr = "md.created_at" if is_default else "membership.created_at"
-    sort_identity_expr = "membership.media_id" if is_default else "membership.id"
+    added_at_expr = "membership.added_at"
     read_state_expr = "eng.read_state" if needs_eng else "NULL::text"
 
     facts_joins = [
         "LEFT JOIN media md ON md.id = membership.media_id",
         "LEFT JOIN podcasts pod ON pod.id = membership.podcast_id",
+        """
+        LEFT JOIN (
+            SELECT podcast_id, max(published_at) AS published_at
+            FROM podcast_episodes
+            GROUP BY podcast_id
+        ) latest_episode ON latest_episode.podcast_id = membership.podcast_id
+        """,
     ]
     if needs_creator:
         facts_joins.append(
@@ -1723,7 +2205,7 @@ def _query_view_page(
     # podcast-show rows are excluded (spec AC7).
     if unfinished:
         projection_clause = (
-            "AND (facts.podcast_id IS NOT NULL OR facts.read_state IS DISTINCT FROM 'Finished')"
+            "AND facts.media_id IS NOT NULL AND facts.read_state IS DISTINCT FROM 'Finished'"
         )
     elif in_progress:
         projection_clause = "AND facts.read_state = 'InProgress'"
@@ -1752,22 +2234,37 @@ def _query_view_page(
                         membership.podcast_id,
                         membership.created_at,
                         membership.position,
+                        membership.is_virtual,
                         md.created_at AS media_created_at,
                         {added_at_expr} AS added_at,
+                        CASE
+                            WHEN membership.media_id IS NOT NULL THEN 'media'
+                            ELSE 'podcast'
+                        END AS target_kind,
+                        COALESCE(membership.media_id, membership.podcast_id) AS target_id,
                         lower(btrim(COALESCE(md.title, pod.title))) AS title_key,
                         {creator_name_expr} AS creator_name,
                         ({creator_name_expr} IS NULL)::int AS creator_missing,
-                        md.published_date AS published_date,
-                        (md.published_date IS NULL)::int AS published_missing,
-                        {sort_identity_expr} AS sort_identity,
+                        COALESCE(
+                            md.published_date,
+                            to_char(
+                                latest_episode.published_at AT TIME ZONE 'UTC',
+                                'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+                            )
+                        ) AS published_date,
+                        (
+                            md.published_date IS NULL
+                            AND latest_episode.published_at IS NULL
+                        )::int AS published_missing,
                         {read_state_expr} AS read_state
                     FROM membership
                     {" ".join(facts_joins)}
                 )
                 SELECT
                     id, library_id, media_id, podcast_id, created_at, position,
+                    is_virtual, target_kind, target_id,
                     media_created_at, added_at, title_key, creator_name, creator_missing,
-                    published_date, published_missing, sort_identity
+                    published_date, published_missing
                 FROM facts
                 WHERE 1 = 1
                   {projection_clause}
@@ -1919,7 +2416,7 @@ def reorder_entries(
 # ---------------------------------------------------------------------------
 
 
-def ensure_media_in_default_library(db: Session, user_id: UUID, media_id: UUID) -> None:
+def ensure_media_in_default_library(db: Session, user_id: UUID, media_id: UUID) -> bool:
     """Ensure media has a direct physical entry in the user's default library."""
     from nexus.services.media_deletion import clear_user_media_deletion
 
@@ -1928,6 +2425,7 @@ def ensure_media_in_default_library(db: Session, user_id: UUID, media_id: UUID) 
     clear_user_media_deletion(db, user_id, media_id)
     if inserted:
         _bump_entry_visibility_revisions(db)
+    return inserted
 
 
 def ensure_media_in_libraries_for_viewer(
@@ -1944,6 +2442,7 @@ def ensure_media_in_libraries_for_viewer(
             or can_read_media(db, viewer_id, media_id, include_tearing_down=True)
         ):
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+        parent_podcast_id = _lock_parent_podcast_for_media(db, media_id)
         _lock_authorized_media_for_filing(
             db,
             viewer_id,
@@ -1951,12 +2450,23 @@ def ensure_media_in_libraries_for_viewer(
             authorization="filable",
         )
         targets = governance.resolve_writable_non_default_library_ids(db, viewer_id, library_ids)
-        _add_media_to_resolved_libraries(db, viewer_id, media_id, targets)
+        _add_media_to_resolved_libraries(
+            db,
+            viewer_id,
+            media_id,
+            targets,
+            parent_podcast_id=parent_podcast_id,
+        )
         _bump_entry_visibility_revisions(db)
 
 
 def _add_media_to_resolved_libraries(
-    db: Session, viewer_id: UUID, media_id: UUID, library_ids: list[UUID]
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+    library_ids: list[UUID],
+    *,
+    parent_podcast_id: UUID | None,
 ) -> None:
     if not library_ids:
         return
@@ -1977,12 +2487,19 @@ def _add_media_to_resolved_libraries(
 
     target = media_target(media_id)
     for library_id in library_ids:
+        if parent_podcast_id is not None and entry_exists(
+            db, library_id, podcast_target(parent_podcast_id)
+        ):
+            continue
         if not entry_exists(db, library_id, target):
             _require_share_entitlement_for_access_increase(
                 db, actor_user_id=viewer_id, library_id=library_id
             )
     for library_id in library_ids:
-        ensure_entry(db, library_id, target)
+        if parent_podcast_id is None or not entry_exists(
+            db, library_id, podcast_target(parent_podcast_id)
+        ):
+            ensure_entry(db, library_id, target)
     clear_user_media_deletion(db, viewer_id, media_id)
 
 
@@ -2003,135 +2520,41 @@ def assign_libraries_for_media_in_current_transaction(
 ) -> None:
     targets = governance.resolve_writable_non_default_library_ids(db, viewer_id, library_ids)
     default_library_id = governance.default_library_id_for_user(db, viewer_id)
+    parent_podcast_id = _lock_parent_podcast_for_media(db, media_id)
     raise_if_media_teardown_pending(db, media_id)
     governance.lock_library_rows_in_order(db, [default_library_id, *targets])
     ensure_media_in_default_library(db, viewer_id, media_id)
-    _add_media_to_resolved_libraries(db, viewer_id, media_id, targets)
+    _add_media_to_resolved_libraries(
+        db,
+        viewer_id,
+        media_id,
+        targets,
+        parent_podcast_id=parent_podcast_id,
+    )
     _bump_entry_visibility_revisions(db)
 
 
-def materialize_subscription_episode_libraries_in_current_transaction(
+def ensure_subscription_episode_default_in_current_transaction(
     db: Session,
     subscription_user_id: UUID,
     subscription_podcast_id: UUID,
     media_id: UUID,
-) -> None:
-    """File one episode through an already-admitted subscription relationship."""
-    target_library_ids = [
-        UUID(str(row[0]))
-        for row in db.execute(
-            text("""
-                SELECT psl.library_id
-                FROM podcast_subscription_libraries psl
-                JOIN podcast_episodes pe
-                  ON pe.podcast_id = psl.subscription_podcast_id
-                 AND pe.media_id = :media_id
-                JOIN libraries l
-                  ON l.id = psl.library_id
-                 AND l.is_default = false
-                 AND l.system_key IS NULL
-                JOIN memberships membership
-                  ON membership.library_id = psl.library_id
-                 AND membership.user_id = psl.subscription_user_id
-                 AND membership.role = 'admin'
-                WHERE psl.subscription_user_id = :user_id
-                  AND psl.subscription_podcast_id = :podcast_id
-                ORDER BY psl.library_id
-            """),
-            {
-                "user_id": subscription_user_id,
-                "podcast_id": subscription_podcast_id,
-                "media_id": media_id,
-            },
-        ).fetchall()
-    ]
+) -> bool:
+    """Ensure one acquired episode is in All; named Podcast placement is not closure."""
+    locked_podcast_id = _lock_parent_podcast_for_media(db, media_id)
+    if locked_podcast_id != subscription_podcast_id:
+        # justify-service-invariant-check: the caller carries the subscription's
+        # Podcast id separately from the episode's FK.
+        # justify-defect: ingest routed one episode through the wrong Podcast.
+        raise AssertionError("subscription episode Podcast identity mismatch")
+    if lock_media_rows_in_order(db, [media_id]) != [media_id]:
+        raise AssertionError("subscription episode Media disappeared during filing")
     default_library_id = governance.default_library_id_for_user(db, subscription_user_id)
     raise_if_media_teardown_pending(db, media_id)
-    governance.lock_library_rows_in_order(db, [default_library_id, *target_library_ids])
-    ensure_media_in_default_library(db, subscription_user_id, media_id)
-    target = media_target(media_id)
-    for library_id in target_library_ids:
-        ensure_entry(db, library_id, target)
+    governance.lock_library_rows_in_order(db, [default_library_id])
+    inserted = ensure_media_in_default_library(db, subscription_user_id, media_id)
     _bump_entry_visibility_revisions(db)
-
-
-def set_subscription_libraries(
-    db: Session,
-    subscription_user_id: UUID,
-    subscription_podcast_id: UUID,
-    library_ids: list[UUID],
-) -> None:
-    """Replace the writable non-default library set attached to a subscription.
-
-    Standalone replacement owns its transaction. Subscription workflows that
-    already own a transaction must call
-    `set_subscription_libraries_in_current_transaction`.
-    """
-    with transaction(db):
-        set_subscription_libraries_in_current_transaction(
-            db, subscription_user_id, subscription_podcast_id, library_ids
-        )
-
-
-def set_subscription_libraries_in_current_transaction(
-    db: Session,
-    subscription_user_id: UUID,
-    subscription_podcast_id: UUID,
-    library_ids: list[UUID],
-) -> None:
-    targets = governance.resolve_writable_non_default_library_ids(
-        db, subscription_user_id, library_ids
-    )
-    contexts = {
-        library_id: governance.lock_library_for_member(db, subscription_user_id, library_id)
-        for library_id in sorted(targets)
-    }
-    for context in contexts.values():
-        governance.require_admin(context.role)
-        governance.require_non_default(context.is_default)
-        governance.require_not_system(context.system_key)
-    existing_targets = {
-        UUID(str(row[0]))
-        for row in db.execute(
-            text("""
-                SELECT library_id
-                FROM podcast_subscription_libraries
-                WHERE subscription_user_id = :user_id
-                  AND subscription_podcast_id = :podcast_id
-            """),
-            {"user_id": subscription_user_id, "podcast_id": subscription_podcast_id},
-        ).fetchall()
-    }
-    for library_id in targets:
-        if library_id not in existing_targets:
-            _require_share_entitlement_for_access_increase(
-                db,
-                actor_user_id=subscription_user_id,
-                library_id=library_id,
-            )
-    db.execute(
-        text("""
-            DELETE FROM podcast_subscription_libraries
-            WHERE subscription_user_id = :user_id
-              AND subscription_podcast_id = :podcast_id
-        """),
-        {"user_id": subscription_user_id, "podcast_id": subscription_podcast_id},
-    )
-    for library_id in targets:
-        db.execute(
-            text("""
-                INSERT INTO podcast_subscription_libraries
-                    (subscription_user_id, subscription_podcast_id, library_id)
-                VALUES (:user_id, :podcast_id, :library_id)
-            """),
-            {
-                "user_id": subscription_user_id,
-                "podcast_id": subscription_podcast_id,
-                "library_id": library_id,
-            },
-        )
-    if set(targets) != existing_targets:
-        _bump_entry_visibility_revisions(db)
+    return inserted
 
 
 # ---------------------------------------------------------------------------

@@ -140,8 +140,6 @@ function quickActionTarget(quickAction: NexusQuickAction): NexusAction["target"]
       return { kind: "CreateLibrary" };
     case "Import":
       return { kind: "OpenAdd", seed: quickAction.target.seed };
-    case "PodcastDiscovery":
-      return { kind: "PodcastDiscovery" };
   }
 }
 
@@ -559,8 +557,9 @@ function continuationEntries(
       typeLabel: "Web",
       icon: Globe,
       primaryAction: action("search-web", "Search the web", Globe, {
-        kind: "OpenWebSearch",
-        query,
+        kind: "InternalHref",
+        href: `/browse?kind=WebArticle&q=${encodeURIComponent(query)}`,
+        labelHint: "Browse",
       }),
       secondaryActions: [],
       rank: { tier: "FullText", score: 0, frecency: 0 },

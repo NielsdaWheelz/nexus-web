@@ -59,6 +59,21 @@ describe("pane route model", () => {
         returnMemento: { kind: "ShellScroll" },
       },
     });
+    expect(resolvePaneRouteModel("/browse?kind=Video&q=nexus")).toMatchObject({
+      id: "browse",
+      definition: {
+        queryNavigation: "in-place",
+        returnMemento: { kind: "ShellScroll" },
+      },
+    });
+    expect(
+      resolvePaneRouteModel("/browse/preview?target=ndt1.example.example"),
+    ).toMatchObject({
+      id: "browsePreview",
+      definition: {
+        returnMemento: { kind: "ShellScroll" },
+      },
+    });
     expect(resolvePaneRouteModel(`/pages/${PAGE_ID}`)).toMatchObject({
       id: "page",
       params: { pageId: PAGE_ID },
@@ -160,6 +175,8 @@ describe("pane route model", () => {
       "lectern",
       "libraries",
       "library",
+      "browse",
+      "browsePreview",
       "artifact",
       "conversations",
       "podcasts",

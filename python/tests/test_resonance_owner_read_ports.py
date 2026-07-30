@@ -23,7 +23,6 @@ from nexus.db.models import (
     Podcast,
     PodcastEpisode,
     PodcastListeningState,
-    PodcastSubscription,
     ProcessingStatus,
     ReaderEngagementState,
     UserMediaDeletion,
@@ -43,6 +42,8 @@ from nexus.services.resonance import service as resonance_service
 from nexus.services.resource_graph import connection_summaries, resolve
 from tests.factories import (
     add_media_to_library,
+    add_test_podcast_episode_identity,
+    add_test_podcast_subscription,
     create_searchable_media,
     create_test_highlight_note,
     create_test_library,
@@ -405,18 +406,16 @@ def test_podcast_relations_expose_exact_publication_subscription_and_compact_tar
         PodcastEpisode(
             media_id=media_id,
             podcast_id=podcast_id,
-            provider_episode_id=f"episode-{media_id}",
-            fallback_identity=f"fallback-{media_id}",
             published_at=published_at,
         )
     )
-    db_session.add(
-        PodcastSubscription(
-            user_id=bootstrapped_user,
-            podcast_id=podcast_id,
-            status="active",
-        )
+    add_test_podcast_episode_identity(
+        db_session,
+        podcast_id=podcast_id,
+        media_id=media_id,
+        value=f"episode-{media_id}",
     )
+    add_test_podcast_subscription(db_session, user_id=bootstrapped_user, podcast_id=podcast_id)
     db_session.flush()
     add_media_to_library(db_session, _default_library(db_session, bootstrapped_user), media_id)
     db_session.commit()
@@ -521,55 +520,47 @@ def test_library_slate_ignores_hidden_and_future_episode_publications(
             created_at=as_of - timedelta(days=180),
         )
     )
-    db_session.add_all(
-        [
-            PodcastSubscription(
-                user_id=bootstrapped_user,
-                podcast_id=podcast_id,
-                status="active",
-            )
-            for podcast_id in podcast_ids
-        ]
-    )
+    for podcast_id in podcast_ids:
+        add_test_podcast_subscription(db_session, user_id=bootstrapped_user, podcast_id=podcast_id)
     db_session.add_all(
         [
             PodcastEpisode(
                 media_id=visible_episode_ids[0],
                 podcast_id=podcast_ids[0],
-                provider_episode_id=f"visible-{visible_episode_ids[0]}",
-                fallback_identity=f"visible-{visible_episode_ids[0]}",
                 published_at=as_of - timedelta(days=120),
             ),
             PodcastEpisode(
                 media_id=hidden_episode_ids[0],
                 podcast_id=podcast_ids[0],
-                provider_episode_id=f"hidden-{hidden_episode_ids[0]}",
-                fallback_identity=f"hidden-{hidden_episode_ids[0]}",
                 published_at=as_of - timedelta(days=1),
             ),
             PodcastEpisode(
                 media_id=visible_episode_ids[1],
                 podcast_id=podcast_ids[1],
-                provider_episode_id=f"visible-{visible_episode_ids[1]}",
-                fallback_identity=f"visible-{visible_episode_ids[1]}",
                 published_at=as_of - timedelta(days=20),
             ),
             PodcastEpisode(
                 media_id=future_episode_id,
                 podcast_id=podcast_ids[1],
-                provider_episode_id=f"future-{future_episode_id}",
-                fallback_identity=f"future-{future_episode_id}",
                 published_at=as_of + timedelta(days=10),
             ),
             PodcastEpisode(
                 media_id=visible_episode_ids[2],
                 podcast_id=podcast_ids[2],
-                provider_episode_id=f"visible-{visible_episode_ids[2]}",
-                fallback_identity=f"visible-{visible_episode_ids[2]}",
                 published_at=as_of - timedelta(days=40),
             ),
         ]
     )
+    for podcast_id, media_id, alias in (
+        (podcast_ids[0], visible_episode_ids[0], f"visible-{visible_episode_ids[0]}"),
+        (podcast_ids[0], hidden_episode_ids[0], f"hidden-{hidden_episode_ids[0]}"),
+        (podcast_ids[1], visible_episode_ids[1], f"visible-{visible_episode_ids[1]}"),
+        (podcast_ids[1], future_episode_id, f"future-{future_episode_id}"),
+        (podcast_ids[2], visible_episode_ids[2], f"visible-{visible_episode_ids[2]}"),
+    ):
+        add_test_podcast_episode_identity(
+            db_session, podcast_id=podcast_id, media_id=media_id, value=alias
+        )
     for media_id in [
         *visible_episode_ids,
         *hidden_episode_ids,

@@ -18,6 +18,19 @@ It calls the EPUB extraction task after the accepted source bytes are durable.
 Source success atomically requests `media_content_reindex_job`; routes and UI
 clients do not enqueue source-specific or retrieval jobs directly.
 
+## Browse And Preview
+
+Browse searches owned EPUBs through the Nexus adapter and external public-domain
+books through the Project Gutenberg adapter. External candidates carry a sealed
+Gutenberg identity. Preview refetches catalog truth, proxies remote artwork, and
+exposes the provider's canonical import/source URL without creating Media,
+Library entries, files, source attempts, or jobs. It never exposes a fabricated
+`/browse/gutenberg/{id}` download path.
+
+Add passes the Preview-resolved canonical EPUB URL to `/media/from_url`; normal
+remote-file validation, durable source acceptance, dedupe, Library assignment,
+and `ingest_media_source` processing remain the only acquisition path.
+
 ## Asset Lane
 
 EPUB resources are served through

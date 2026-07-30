@@ -25,12 +25,17 @@ from nexus.errors import ApiErrorCode, InvalidRequestError
 _ENTITY_ID_BYTES = 16
 _ENTITY_TAG_BYTES = 16
 _ENTITY_PART_CHARS = 22
+_DISCOVERY_TARGET_MAX_BYTES = 4_096
+_DISCOVERY_TARGET_TAG_BYTES = 32
 _SHARE_TOKEN_BYTES = 32
 _SHARE_TOKEN_CHARS = 43
 _ENTITY_HANDLE_INPUT_PREFIX = b"nexus-handle\0"
 _ENTITY_KEY_INPUT_PREFIX = b"nexus-handle-key\0"
 _SHARE_TOKEN_HASH_PREFIX = b"nexus-share-token\0v1\0"
+_DISCOVERY_TARGET_INPUT_PREFIX = b"nexus-discovery-target\0"
+_DISCOVERY_TARGET_KEY_INPUT = b"nexus-handle-key\0browse-discovery-target"
 _B64URL_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_DISCOVERY_TARGET_RE = re.compile(r"^ndt1\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]{43})$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +70,14 @@ class InvalidSealedHandle(InvalidRequestError):
 class InvalidShareToken(InvalidRequestError):
     def __init__(self) -> None:
         super().__init__(ApiErrorCode.E_INVALID_REQUEST, "Invalid share token")
+
+
+class InvalidDiscoveryTargetHandle(InvalidRequestError):
+    def __init__(self) -> None:
+        super().__init__(
+            ApiErrorCode.E_INVALID_DISCOVERY_TARGET,
+            "Invalid discovery target",
+        )
 
 
 class _CanonicalEntityHandle(str):
@@ -103,6 +116,24 @@ class ShareToken(str):
     @classmethod
     def _validate(cls, value: str) -> ShareToken:
         return parse_share_token(value)
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls,
+        _source_type: object,
+        _handler: object,
+    ) -> core_schema.CoreSchema:
+        return core_schema.no_info_after_validator_function(
+            cls._validate,
+            core_schema.str_schema(),
+        )
+
+
+class DiscoveryTargetHandle(str):
+    @classmethod
+    def _validate(cls, value: str) -> DiscoveryTargetHandle:
+        _parse_discovery_target_wire(value)
+        return cls(value)
 
     @classmethod
     def __get_pydantic_core_schema__(
@@ -181,6 +212,22 @@ def _decode_canonical_b64url(value: str, *, expected_bytes: int) -> bytes:
     return decoded
 
 
+def _decode_variable_canonical_b64url(value: str) -> bytes:
+    if not _B64URL_RE.fullmatch(value):
+        raise ValueError("invalid base64url alphabet")
+    try:
+        decoded = base64.b64decode(
+            value + "=" * (-len(value) % 4),
+            altchars=b"-_",
+            validate=True,
+        )
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("invalid base64url") from exc
+    if not decoded or len(decoded) > _DISCOVERY_TARGET_MAX_BYTES or _b64url(decoded) != value:
+        raise ValueError("noncanonical discovery target payload")
+    return decoded
+
+
 def _parse_entity_wire(raw: str, spec: _EntityHandleSpec) -> tuple[UUID, bytes]:
     if not spec.pattern.fullmatch(raw):
         raise ValueError("invalid entity handle grammar")
@@ -190,6 +237,31 @@ def _parse_entity_wire(raw: str, spec: _EntityHandleSpec) -> tuple[UUID, bytes]:
     return (
         UUID(bytes=_decode_canonical_b64url(id_part, expected_bytes=_ENTITY_ID_BYTES)),
         _decode_canonical_b64url(tag_part, expected_bytes=_ENTITY_TAG_BYTES),
+    )
+
+
+def _discovery_target_key() -> bytes:
+    return hmac.new(_root_key(), _DISCOVERY_TARGET_KEY_INPUT, hashlib.sha256).digest()
+
+
+def _discovery_target_tag(payload: bytes) -> bytes:
+    return hmac.new(
+        _discovery_target_key(),
+        _DISCOVERY_TARGET_INPUT_PREFIX + payload,
+        hashlib.sha256,
+    ).digest()
+
+
+def _parse_discovery_target_wire(raw: str) -> tuple[bytes, bytes]:
+    match = _DISCOVERY_TARGET_RE.fullmatch(raw)
+    if match is None:
+        raise ValueError("invalid discovery target handle grammar")
+    return (
+        _decode_variable_canonical_b64url(match.group(1)),
+        _decode_canonical_b64url(
+            match.group(2),
+            expected_bytes=_DISCOVERY_TARGET_TAG_BYTES,
+        ),
     )
 
 
@@ -253,6 +325,24 @@ def parse_library_invitation_handle(raw: str) -> LibraryInvitationHandle:
 
 def unseal_library_invitation(raw: str) -> UUID:
     return _unseal(raw, _LIBRARY_INVITATION, "Invalid library invitation handle")
+
+
+def seal_discovery_target(canonical_payload: bytes) -> DiscoveryTargetHandle:
+    if not canonical_payload or len(canonical_payload) > _DISCOVERY_TARGET_MAX_BYTES:
+        raise ValueError("Invalid discovery target payload")
+    return DiscoveryTargetHandle(
+        f"ndt1.{_b64url(canonical_payload)}.{_b64url(_discovery_target_tag(canonical_payload))}"
+    )
+
+
+def unseal_discovery_target(raw: str) -> bytes:
+    try:
+        payload, presented_tag = _parse_discovery_target_wire(raw)
+    except ValueError as exc:
+        raise InvalidDiscoveryTargetHandle from exc
+    if not hmac.compare_digest(presented_tag, _discovery_target_tag(payload)):
+        raise InvalidDiscoveryTargetHandle
+    return payload
 
 
 def new_share_token() -> ShareToken:

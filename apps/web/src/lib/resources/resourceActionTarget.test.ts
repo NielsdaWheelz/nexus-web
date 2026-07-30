@@ -29,9 +29,12 @@ describe("decodeStandingActionTarget", () => {
     expect(
       decodeStandingActionTarget({
         kind: "External",
-        href: "/browse/gutenberg/84",
+        href: "https://www.gutenberg.org/ebooks/84",
       }),
-    ).toEqual({ kind: "External", href: "/browse/gutenberg/84" });
+    ).toEqual({
+      kind: "External",
+      href: "https://www.gutenberg.org/ebooks/84",
+    });
   });
 
   it.each([
@@ -55,7 +58,11 @@ describe("decodeStandingActionTarget", () => {
     ],
     [
       "extra target key",
-      { kind: "External", href: "/browse/gutenberg/84", ref: "media:anything" },
+      {
+        kind: "External",
+        href: "https://www.gutenberg.org/ebooks/84",
+        ref: "media:anything",
+      },
     ],
   ])("rejects %s", (_name, value) => {
     expect(() => decodeStandingActionTarget(value)).toThrow();

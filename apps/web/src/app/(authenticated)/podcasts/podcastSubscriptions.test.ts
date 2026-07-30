@@ -5,8 +5,8 @@ import {
   getPodcastSubscriptionSettingsPatch,
   getPodcastSubscriptionSyncPatch,
   parsePodcastSubscriptionDefaultPlaybackSpeed,
+  retryPodcastSubscriptionBackfill,
   savePodcastSubscriptionSettings,
-  subscribeToPodcast,
   unsubscribeFromPodcast,
 } from "./podcastSubscriptions";
 import type { LibraryPlacementOption } from "@/lib/libraries/libraryPlacement";
@@ -39,7 +39,7 @@ describe("podcastSubscriptions helpers", () => {
       getPodcastSubscriptionSettingsDraft({
         default_playback_speed: 1.8,
         auto_queue: true,
-      })
+      }),
     ).toEqual({
       defaultSpeed: "1.8",
       autoQueue: true,
@@ -62,7 +62,7 @@ describe("podcastSubscriptions helpers", () => {
         sync_enqueued: true,
         collectionRevision: REVISION,
         libraryEntriesCollectionRevision: REVISION,
-      })
+      }),
     ).toEqual({
       sync_status: "running",
       sync_error_code: "timeout",
@@ -75,7 +75,6 @@ describe("podcastSubscriptions helpers", () => {
         response: {
           user_id: "user-1",
           podcast_id: "podcast-1",
-          status: "active",
           default_playback_speed: 1.25,
           auto_queue: true,
           sync_status: "complete",
@@ -86,11 +85,17 @@ describe("podcastSubscriptions helpers", () => {
           sync_completed_at: null,
           last_synced_at: null,
           updated_at: "2026-04-22T00:00:00Z",
+          backfill: {
+            id: "backfill-1",
+            state: "Complete",
+            processedCount: 10,
+            addedCount: 8,
+          },
           collectionRevision: REVISION,
           libraryEntriesCollectionRevision: REVISION,
         },
         updatedAt: "2026-01-01T00:00:00Z",
-      })
+      }),
     ).toEqual({
       default_playback_speed: 1.25,
       auto_queue: true,
@@ -124,35 +129,12 @@ describe("podcastSubscriptions helpers", () => {
 describe("podcastSubscriptions placement revision publishing", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("publishes the selected library ids after subscribe", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      Response.json({ data: {} }),
-    );
-    const before = libraryPlacementSnapshot().revision;
-
-    await subscribeToPodcast({
-      provider_podcast_id: "provider-podcast-1",
-      title: "Show",
-      contributors: [],
-      feed_url: "https://example.com/feed.xml",
-      website_url: null,
-      image_url: null,
-      description: null,
-      library_ids: ["library-1", "library-2"],
-    });
-
-    const after = libraryPlacementSnapshot();
-    expect(after.revision).toBe(before + 1);
-    expect(after.affectedLibraryIds).toEqual(["library-1", "library-2"]);
-  });
-
   it("strictly decodes the revision-bearing settings response", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       Response.json({
         data: {
           user_id: "user-1",
           podcast_id: "podcast-1",
-          status: "active",
           default_playback_speed: 1.5,
           auto_queue: true,
           sync_status: "complete",
@@ -163,6 +145,12 @@ describe("podcastSubscriptions placement revision publishing", () => {
           sync_completed_at: null,
           last_synced_at: null,
           updated_at: "2026-07-29T00:00:00Z",
+          backfill: {
+            id: "backfill-1",
+            state: "Running",
+            processedCount: 5,
+            addedCount: 4,
+          },
           collectionRevision: 7,
           libraryEntriesCollectionRevision: 11,
         },
@@ -179,7 +167,49 @@ describe("podcastSubscriptions placement revision publishing", () => {
       podcast_id: "podcast-1",
       collectionRevision: 7,
       libraryEntriesCollectionRevision: 11,
+      backfill: {
+        id: "backfill-1",
+        state: "Running",
+        processedCount: 5,
+        addedCount: 4,
+      },
     });
+  });
+
+  it("strictly decodes Failed backfill Retry and sends one header idempotency key", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        data: {
+          podcastId: "podcast-1",
+          outcome: "Retried",
+          backfill: {
+            id: "backfill-2",
+            state: "Pending",
+            processedCount: 0,
+            addedCount: 0,
+          },
+        },
+      }),
+    );
+
+    await expect(
+      retryPodcastSubscriptionBackfill("podcast-1"),
+    ).resolves.toEqual({
+      podcastId: "podcast-1",
+      outcome: "Retried",
+      backfill: {
+        id: "backfill-2",
+        state: "Pending",
+        processedCount: 0,
+        addedCount: 0,
+      },
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [, init] = fetchSpy.mock.calls[0]!;
+    expect(init?.method).toBe("POST");
+    expect(new Headers(init?.headers).get("Idempotency-Key")).toMatch(
+      /^[0-9a-f-]{36}$/u,
+    );
   });
 
   it("publishes one Unknown placement change after unsubscribe", async () => {
@@ -187,10 +217,10 @@ describe("podcastSubscriptions placement revision publishing", () => {
       new Response(
         JSON.stringify({
           data: {
+            outcome: "Unsubscribed",
             podcast_id: "podcast-1",
-            status: "unsubscribed",
-            removed_from_library_count: 2,
-            retained_shared_library_count: 1,
+            removed_placement_count: 2,
+            retained_shared_count: 1,
             collectionRevision: 7,
             libraryEntriesCollectionRevision: 11,
           },
@@ -204,10 +234,10 @@ describe("podcastSubscriptions placement revision publishing", () => {
     const before = libraryPlacementSnapshot().revision;
 
     await expect(unsubscribeFromPodcast("podcast-1")).resolves.toEqual({
+      outcome: "Unsubscribed",
       podcast_id: "podcast-1",
-      status: "unsubscribed",
-      removed_from_library_count: 2,
-      retained_shared_library_count: 1,
+      removed_placement_count: 2,
+      retained_shared_count: 1,
       collectionRevision: 7,
       libraryEntriesCollectionRevision: 11,
     });

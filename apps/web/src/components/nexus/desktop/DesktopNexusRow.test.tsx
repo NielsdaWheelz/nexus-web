@@ -21,13 +21,12 @@ function controller(): DesktopNexusController {
     query: "alpha",
     entries: [entry],
     activeEntryKey: entry.key,
-    activeWebResultId: null,
     failures: new Set(),
     busy: false,
     focusKey: "Find",
-    setQuery: vi.fn(), setWebQuery: vi.fn(), setActiveEntry: vi.fn(),
-    setActiveWebResult: vi.fn(), selectEntry: vi.fn(), openActions: vi.fn(),
-    runAction: vi.fn(), selectWebResult: vi.fn(), retry: vi.fn(), back: vi.fn(),
+    setQuery: vi.fn(), setActiveEntry: vi.fn(),
+    selectEntry: vi.fn(), openActions: vi.fn(),
+    runAction: vi.fn(), retry: vi.fn(), back: vi.fn(),
     escape: vi.fn(), shouldSuppressReturnFocusOnClose: () => false,
   };
 }

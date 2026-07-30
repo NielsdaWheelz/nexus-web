@@ -264,18 +264,21 @@ const EMPTY_LIBRARY_ENTRIES: LibraryEntry[] = [];
 const NO_COLLECTION_CURSOR: Presence<CollectionCursor> = { kind: "Absent" };
 const ZERO_COLLECTION_REVISION = 0 as CollectionRevision;
 
-// The default library's read surface is a deduplicated virtual set: the server
-// can hand back a different representative entry id for the same underlying
-// media across paginated fetches, so Default rows/merges key by `media.id`.
-// Non-default libraries key by the physical entry id, unchanged.
-function libraryRowKey(entry: LibraryEntry, isDefaultLibrary: boolean): string {
-  return isDefaultLibrary && entry.kind === "media" ? entry.media.id : entry.id;
+function libraryTargetId(entry: LibraryEntry): string {
+  return entry.kind === "media" ? entry.media.id : entry.podcast.id;
+}
+
+function libraryRowKey(
+  entry: LibraryEntry,
+  _isDefaultLibrary: boolean,
+): string {
+  return libraryTargetId(entry);
 }
 
 function appendUniqueEntries(
   current: LibraryEntry[],
   next: readonly LibraryEntry[],
-  keyOf: (entry: LibraryEntry) => string = (entry) => entry.id,
+  keyOf: (entry: LibraryEntry) => string = libraryTargetId,
 ): LibraryEntry[] {
   const seen = new Set(current.map(keyOf));
   const merged = [...current];
@@ -1632,7 +1635,7 @@ export default function LibraryPaneBody() {
       const previous = new Map<string, LibraryMediaConsumption>();
       for (const entry of entries) {
         if (entry.kind === "media" && entry.media.id === mediaId) {
-          previous.set(entry.id, {
+          previous.set(libraryTargetId(entry), {
             read_state: entry.media.read_state,
             progress_fraction: entry.media.progress_fraction,
           });
@@ -1686,7 +1689,7 @@ export default function LibraryPaneBody() {
         }
         setEntries((current) =>
           current.map((entry) => {
-            const fields = previous.get(entry.id);
+            const fields = previous.get(libraryTargetId(entry));
             return entry.kind === "media" &&
               entry.media.id === mediaId &&
               fields
@@ -1864,12 +1867,16 @@ export default function LibraryPaneBody() {
                   ...candidate.podcast,
                   syncStatus: present(syncStatus),
                 },
-                subscription: candidate.subscription
-                  ? {
-                      ...candidate.subscription,
-                      sync_status: result.sync_status,
-                    }
-                  : null,
+                subscription:
+                  candidate.subscription.kind === "Present"
+                    ? {
+                        kind: "Present",
+                        value: {
+                          ...candidate.subscription.value,
+                          syncStatus: result.sync_status,
+                        },
+                      }
+                    : candidate.subscription,
               }
             : candidate,
         ),
@@ -1924,9 +1931,18 @@ export default function LibraryPaneBody() {
           ) {
             return [candidate];
           }
-          return currentPlacement?.canRemove
+          return isDefaultLibrary || currentPlacement?.canRemove
             ? []
-            : [{ ...candidate, subscription: null }];
+            : [
+                {
+                  ...candidate,
+                  subscription: { kind: "Absent" as const },
+                  podcast: {
+                    ...candidate.podcast,
+                    syncStatus: { kind: "Absent" as const },
+                  },
+                },
+              ];
         }),
       );
       committedRevisionsRef.current = {
@@ -2121,7 +2137,14 @@ export default function LibraryPaneBody() {
     setError(null);
     void apiFetch(`/api/libraries/${id}/entries/reorder`, {
       method: "PATCH",
-      body: JSON.stringify({ entry_ids: nextEntries.map((entry) => entry.id) }),
+      body: JSON.stringify({
+        entry_ids: nextEntries.map((entry) => {
+          if (entry.placement.kind !== "Present") {
+            throw new Error("Virtual Library rows cannot be reordered");
+          }
+          return entry.placement.value.libraryEntryId;
+        }),
+      }),
     })
       .then(() => {
         if (generation !== reorderGenerationRef.current) return;
@@ -2210,7 +2233,7 @@ export default function LibraryPaneBody() {
   // that is no longer in_progress (Mark Finished/Unread/Reset) drops out.
   const isVisibleEntry = useCallback(
     (entry: LibraryEntry): boolean => {
-      if (removedEntryIds.ids.has(entry.id)) return false;
+      if (removedEntryIds.ids.has(libraryTargetId(entry))) return false;
       if (entry.kind !== "media") return true;
       if (hideFinished && entry.media.read_state === "finished") {
         return false;
@@ -2667,10 +2690,7 @@ export default function LibraryPaneBody() {
     ) : null;
 
   const addedContext = (entry: LibraryEntry): Presence<CollectionContext> => {
-    const iso =
-      isDefaultLibrary && entry.kind === "media"
-        ? entry.media.created_at
-        : entry.created_at;
+    const iso = entry.addedAt;
     const label = isDefaultLibrary ? "Added to Nexus " : "Added ";
     return present({ kind: "Text", text: `${label}${formatAdded(iso)}` });
   };
@@ -2689,27 +2709,32 @@ export default function LibraryPaneBody() {
         },
         {
           settings:
-            viewIsCommitted && item.subscription?.status === "active"
+            viewIsCommitted && item.subscription.kind === "Present"
               ? {
                   kind: "Available",
                   execute: () =>
                     podcastSettingsModal.open({
                       podcast_id: item.podcast.id,
                       default_playback_speed:
-                        item.subscription?.default_playback_speed,
-                      auto_queue: item.subscription?.auto_queue,
+                        item.subscription.kind === "Present"
+                          ? item.subscription.value.defaultPlaybackSpeed
+                          : null,
+                      auto_queue:
+                        item.subscription.kind === "Present"
+                          ? item.subscription.value.autoQueue
+                          : false,
                     }),
                 }
               : { kind: "Unavailable" },
           refreshSync:
-            viewIsCommitted && item.subscription?.status === "active"
+            viewIsCommitted && item.subscription.kind === "Present"
               ? {
                   kind: "Available",
                   execute: () => handleRefreshPodcast(item),
                 }
               : { kind: "Unavailable" },
           subscription:
-            viewIsCommitted && item.subscription?.status === "active"
+            viewIsCommitted && item.subscription.kind === "Present"
               ? {
                   kind: "Subscribed",
                   execute: () => handleUnsubscribePodcast(item),
@@ -2727,7 +2752,7 @@ export default function LibraryPaneBody() {
       );
       return {
         ...row,
-        id: item.id,
+        id: libraryRowKey(item, isDefaultLibrary),
         context: showAdded ? addedContext(item) : row.context,
       };
     }
@@ -2969,7 +2994,10 @@ export default function LibraryPaneBody() {
               disabled: reorderBusy,
               onReorder: (nextRows) => {
                 const byEntryId = new Map(
-                  filteredEntries.map((entry) => [entry.id, entry]),
+                  filteredEntries.map((entry) => [
+                    libraryRowKey(entry, isDefaultLibrary),
+                    entry,
+                  ]),
                 );
                 const nextEntries = nextRows
                   .map((row) => byEntryId.get(row.id))

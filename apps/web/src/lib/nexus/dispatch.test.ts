@@ -173,8 +173,6 @@ describe("Nexus dispatch", () => {
       { kind: "OpenTodayCapture" },
       { kind: "CreatePage" },
       { kind: "CreateLibrary" },
-      { kind: "PodcastDiscovery" },
-      { kind: "OpenWebSearch", query: "nexus" },
     ];
     for (const target of workflows) {
       await expect(

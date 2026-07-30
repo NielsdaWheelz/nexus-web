@@ -1,14 +1,18 @@
+from uuid import uuid4
+
 import pytest
 from pydantic import ValidationError
 
-from nexus.schemas.podcast import PodcastEpisodeSelection, PodcastSubscribeRequest
+from nexus.schemas.podcast import (
+    PodcastEpisodeSelection,
+    PodcastSourceFacts,
+    PodcastSubscribeRequest,
+)
 
 pytestmark = pytest.mark.unit
 
 
-def _podcast_payload() -> dict[str, object]:
-    # Credits ride the snake-strict ContributorCreditIn v2 (D-4): credited_name,
-    # role, raw_role only. The former output-field scrub is gone (S4).
+def _podcast_source_facts_payload() -> dict[str, object]:
     return {
         "provider_podcast_id": "podcast-1",
         "title": "Podcast",
@@ -22,8 +26,19 @@ def _podcast_payload() -> dict[str, object]:
     }
 
 
-def test_podcast_write_request_parses_typed_contributor_payload():
-    request = PodcastSubscribeRequest(**_podcast_payload())
+def _subscribe_payload() -> dict[str, object]:
+    return {
+        "target": {
+            "kind": "Canonical",
+            "podcastId": str(uuid4()),
+        },
+        "namedLibraryIds": [],
+        "replacementConfirmation": {"kind": "Absent"},
+    }
+
+
+def test_podcast_source_facts_parse_typed_contributor_payload():
+    request = PodcastSourceFacts(**_podcast_source_facts_payload())
 
     assert request.contributors[0].credited_name == "Host"
     assert request.contributors[0].role == "host"
@@ -31,17 +46,17 @@ def test_podcast_write_request_parses_typed_contributor_payload():
 
 
 def test_podcast_write_request_forbids_unknown_top_level_field():
-    payload = _podcast_payload()
+    payload = _subscribe_payload()
     payload["unexpected"] = True
 
     with pytest.raises(ValidationError):
         PodcastSubscribeRequest(**payload)
 
 
-def test_podcast_write_request_forbids_unknown_contributor_field():
+def test_podcast_source_facts_forbid_unknown_contributor_field():
     # A stale output-shaped credit (contributorHandle) or a dropped server fact
     # (source/ordinal) is now an unknown field on the strict input model (D-4).
-    payload = _podcast_payload()
+    payload = _podcast_source_facts_payload()
     payload["contributors"] = [
         {
             "credited_name": "Host",
@@ -51,15 +66,15 @@ def test_podcast_write_request_forbids_unknown_contributor_field():
     ]
 
     with pytest.raises(ValidationError):
-        PodcastSubscribeRequest(**payload)
+        PodcastSourceFacts(**payload)
 
 
-def test_podcast_write_request_rejects_unknown_role():
-    payload = _podcast_payload()
+def test_podcast_source_facts_reject_unknown_role():
+    payload = _podcast_source_facts_payload()
     payload["contributors"] = [{"credited_name": "Host", "role": "not-a-real-role"}]
 
     with pytest.raises(ValidationError):
-        PodcastSubscribeRequest(**payload)
+        PodcastSourceFacts(**payload)
 
 
 def test_podcast_episode_selection_is_state_only():

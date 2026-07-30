@@ -1,11 +1,8 @@
-"""Podcast identity ownership: podcast-row upsert, identity lookups, and the
-post-commit contributor observation for the subscribe/OPML boundary.
+"""Podcast identity ownership and transaction-critical contributor application.
 
-The podcast row's own identity recovery still uses ``begin_nested`` (podcast-row
-identity against ``uq_podcasts_*``, explicitly not the author path). Contributor
-credits are no longer written inside the upsert transaction: the typed payload is
-turned into one observation and applied through the author facade in a fresh
-session *after* the caller's transaction commits (spec 2.1/2.4, D-3/D-4/D-5).
+Podcast row identity recovery uses ``begin_nested`` against ``uq_podcasts_*``.
+Callers apply typed contributor observations through the unified contributor
+port inside the same fenced domain transaction.
 """
 
 from __future__ import annotations
@@ -23,13 +20,19 @@ from sqlalchemy.orm import Session
 from nexus.db.errors import integrity_constraint_name
 from nexus.logging import get_logger
 from nexus.schemas.contributors import ContributorCreditIn
-from nexus.schemas.podcast import PodcastSubscribeRequest
+from nexus.schemas.podcast import PodcastSourceFacts
 from nexus.services.collection_revisions import (
     CollectionFamily,
     bump_all_collection_families,
 )
+from nexus.services.contributor_observation_seam import (
+    ContributorObservation,
+    apply_contributor_observation_in_current_transaction,
+)
+from nexus.services.contributor_observation_seam import (
+    PodcastTarget as ObservationPodcastTarget,
+)
 from nexus.services.contributor_taxonomy import RawCreditEntry, build_observation
-from nexus.services.contributors import PodcastTarget, replace_observed_role_slices
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 
 from .provider import PODCAST_PROVIDER
@@ -39,7 +42,7 @@ logger = get_logger(__name__)
 
 def upsert_podcast(
     db: Session,
-    body: PodcastSubscribeRequest,
+    body: PodcastSourceFacts,
     *,
     now: datetime,
 ) -> UUID:
@@ -198,24 +201,13 @@ def validate_and_normalize_feed_url(feed_url: str) -> str:
     return urlunsplit((split.scheme, split.netloc, normalized_path, split.query, ""))
 
 
-def observe_podcast_contributor_credits(
+def apply_podcast_contributor_credits_in_current_transaction(
+    db: Session,
+    *,
     podcast_id: UUID,
     contributors: Sequence[ContributorCreditIn],
 ) -> None:
-    """Post-commit author step for the subscribe/OPML boundary (spec 2.1, D-3/D-4/D-5).
-
-    Turns the typed payload into one observation — ``managedRoles`` = the roles
-    present in the payload (§2.1) — and applies it through the author facade in a
-    fresh session. Callers MUST invoke this only after their podcast-upsert
-    transaction commits (the facade opens its own fresh serializable session and
-    asserts no open transaction, D-22).
-
-    An empty or fully-cleaned-away payload yields ``NOT_OBSERVED``, so prior
-    provider credits are preserved rather than erased (D-5). This boundary carries
-    no identity key (spec 5): the typed payload structurally has none, so future
-    same-name observations resolve by name, and an observed spelling is stored
-    only as a searchable non-resolving alias.
-    """
+    """Apply trusted show credits inside the owning acquisition transaction."""
     role_to_entries: dict[str, list[RawCreditEntry]] = {}
     for credit in contributors:
         role_to_entries.setdefault(credit.role, []).append(
@@ -228,10 +220,13 @@ def observe_podcast_contributor_credits(
             podcast_id=str(podcast_id),
             truncated=truncated,
         )
-    replace_observed_role_slices(
-        target=PodcastTarget(podcast_id),
-        observation=observation,
-        source=PODCAST_PROVIDER,
+    apply_contributor_observation_in_current_transaction(
+        db,
+        ContributorObservation(
+            target=ObservationPodcastTarget(podcast_id),
+            observation=observation,
+            source=PODCAST_PROVIDER,
+        ),
     )
 
 
@@ -239,7 +234,7 @@ def update_podcast_metadata(
     db: Session,
     *,
     podcast_id: UUID,
-    body: PodcastSubscribeRequest,
+    body: PodcastSourceFacts,
     now: datetime,
     set_feed_url: bool = False,
     set_provider_podcast_id: bool = False,

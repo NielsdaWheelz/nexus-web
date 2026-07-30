@@ -68,6 +68,10 @@ from nexus.services.highlights import create_highlight_for_fragment
 from nexus.services.media_source_ingest import accept_url_source, confirm_uploaded_source
 from nexus.services.note_indexing import rebuild_note_content_index
 from nexus.services.notes import pm_doc_from_text, set_highlight_note_body_pm_json
+from nexus.services.podcasts.episode_identity import (
+    EpisodeAlias,
+    attach_episode_aliases_in_current_transaction,
+)
 from nexus.services.reader_apparatus import replace_media_apparatus, source_fingerprint
 from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
 from nexus.services.resource_graph.refs import ResourceRef
@@ -1009,6 +1013,7 @@ def _seed_youtube_transcript_media(session_factory, user_id: UUID) -> None:
             media_id=transcript_media_id,
             request_reason="episode_open",
             transcript_coverage="full",
+            transcript_origin="Imported",
             transcript_segments=transcript_segments,
             now=now,
         )
@@ -1517,9 +1522,6 @@ def _seed_activity_audio_media(session_factory, user_id: UUID) -> None:
                 PodcastEpisode(
                     media_id=media_id,
                     podcast_id=podcast_id,
-                    provider_episode_id="activity-audio-episode",
-                    guid="nexus-e2e-activity-audio",
-                    fallback_identity="activity-audio-episode",
                     published_at=datetime(2026, 1, 1, tzinfo=UTC),
                     duration_seconds=ACTIVITY_AUDIO_DURATION_SECONDS,
                     description_text="Deterministic background-listening fixture.",
@@ -1527,6 +1529,13 @@ def _seed_activity_audio_media(session_factory, user_id: UUID) -> None:
             )
         else:
             episode.duration_seconds = ACTIVITY_AUDIO_DURATION_SECONDS
+        db.flush()
+        attach_episode_aliases_in_current_transaction(
+            db,
+            podcast_id=podcast_id,
+            media_id=media_id,
+            aliases=(EpisodeAlias("RssGuid", "nexus-e2e-activity-audio"),),
+        )
         library_entries.ensure_entry(
             db,
             default_library_id,

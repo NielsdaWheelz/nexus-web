@@ -36,10 +36,14 @@ from nexus.db.models import (
     NoteBlock,
     Page,
     PdfPageTextSpan,
+    PodcastEpisodeIdentity,
+    PodcastSubscription,
+    PodcastSubscriptionBackfill,
     ProcessingStatus,
     ResourceEdge,
     SynthesisArtifact,
 )
+from nexus.ids import new_uuid7
 from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.note_indexing import rebuild_note_content_index
@@ -232,6 +236,70 @@ def create_test_conversation_with_message(
 # =============================================================================
 # Media
 # =============================================================================
+
+
+def add_test_podcast_episode_identity(
+    session: Session,
+    *,
+    podcast_id: UUID,
+    media_id: UUID,
+    value: str,
+    scheme: str = "PodcastIndex",
+) -> UUID:
+    """Attach one target-head Podcast episode alias to an existing episode."""
+    # The alias owns a composite FK to the PodcastEpisode row. Flush any
+    # caller-staged Podcast/Media/Episode graph before adding the alias so the
+    # fixture does not depend on ORM mapper-relationship ordering.
+    session.flush()
+    identity_id = new_uuid7()
+    session.add(
+        PodcastEpisodeIdentity(
+            id=identity_id,
+            podcast_id=podcast_id,
+            episode_media_id=media_id,
+            scheme=scheme,
+            value=value,
+        )
+    )
+    session.flush()
+    return identity_id
+
+
+def add_test_podcast_subscription(
+    session: Session,
+    *,
+    user_id: UUID,
+    podcast_id: UUID,
+    auto_queue: bool = False,
+    default_playback_speed: float | None = None,
+    sync_status: str = "pending",
+) -> UUID:
+    """Create one active target-head subscription and its pristine backfill fence."""
+    now = datetime.now(UTC)
+    subscription_id = new_uuid7()
+    session.add(
+        PodcastSubscription(
+            id=subscription_id,
+            user_id=user_id,
+            podcast_id=podcast_id,
+            auto_queue=auto_queue,
+            default_playback_speed=default_playback_speed,
+            sync_status=sync_status,
+        )
+    )
+    session.flush()
+    session.add(
+        PodcastSubscriptionBackfill(
+            id=new_uuid7(),
+            subscription_id=subscription_id,
+            cutoff_at=now,
+            step_no=0,
+            processed_count=0,
+            added_count=0,
+        )
+    )
+    session.flush()
+    return subscription_id
 
 
 def create_test_media(

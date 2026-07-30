@@ -53,13 +53,17 @@ from nexus.services.collection_revisions import (
     CollectionFamily,
     bump_all_collection_families,
 )
+from nexus.services.contributor_observation_seam import (
+    ContributorObservation,
+    MediaTarget,
+    observe_contributors_under_source_fence,
+)
 from nexus.services.contributor_taxonomy import (
     NOT_OBSERVED,
     ContributorObservationBatch,
     RawCreditEntry,
     build_observation,
 )
-from nexus.services.contributors import MediaTarget, replace_source_observed_role_slices
 from nexus.services.file_ingest_validation import (
     has_valid_file_signature,
     validate_file_ingest_request,
@@ -1434,10 +1438,13 @@ def _run_claimed_source_attempt(
         # failure; a crash leaves the attempt running for exact job replay.
         try:
             for observed_media_id, observation, source in observations:
-                replace_source_observed_role_slices(
-                    target=MediaTarget(observed_media_id or terminal_media_id),
-                    observation=observation,
-                    source=source,
+                observe_contributors_under_source_fence(
+                    session_factory=session_factory,
+                    item=ContributorObservation(
+                        target=MediaTarget(observed_media_id or terminal_media_id),
+                        observation=observation,
+                        source=source,
+                    ),
                     fence=fence,
                     publication_media_ids=publication_media_ids,
                 )

@@ -98,6 +98,23 @@ describe("library placement contract", () => {
 });
 
 describe("library placement commands", () => {
+  const subscriptionResponse = {
+    data: {
+      href: "/podcasts/podcast-1",
+      podcastId: "podcast-1",
+      outcome: "DestinationsAdded",
+      destinations: [{ libraryId: "library-1", outcome: "Added" }],
+      backfill: {
+        id: "backfill-1",
+        state: "Running",
+        processedCount: 10,
+        addedCount: 4,
+      },
+      collectionRevision: 3,
+      libraryEntriesCollectionRevision: 4,
+    },
+  };
+
   it.each([
     {
       name: "add media",
@@ -128,9 +145,13 @@ describe("library placement commands", () => {
           { kind: "Podcast", id: "podcast-1" },
           "library-1",
         ),
-      path: "/api/libraries/library-1/podcasts",
+      path: "/api/podcasts/subscriptions",
       method: "POST",
-      body: { podcast_id: "podcast-1" },
+      body: {
+        target: { kind: "Canonical", podcastId: "podcast-1" },
+        namedLibraryIds: ["library-1"],
+        replacementConfirmation: { kind: "Absent" },
+      },
     },
     {
       name: "remove podcast",
@@ -144,6 +165,7 @@ describe("library placement commands", () => {
       body: undefined,
     },
   ])("executes $name against its canonical response contract", async ({
+    name,
     run,
     path,
     method,
@@ -152,9 +174,17 @@ describe("library placement commands", () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(
-        method === "DELETE"
+        name === "add podcast"
+          ? Response.json(subscriptionResponse)
+          : method === "DELETE"
           ? Response.json({
-              data: { libraryEntriesCollectionRevision: 4 },
+              data:
+                name === "remove podcast"
+                  ? {
+                      outcome: "Removed",
+                      libraryEntriesCollectionRevision: 4,
+                    }
+                  : { libraryEntriesCollectionRevision: 4 },
             })
           : new Response(null, { status: 204 }),
       );
@@ -194,11 +224,9 @@ describe("library placement commands", () => {
     );
   });
 
-  it.each([200, 205])("defects when a command returns %s", async (status) => {
+  it("defects on a malformed successful Podcast acquisition response", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      status === 200
-        ? Response.json({ data: {} })
-        : new Response(null, { status }),
+      Response.json({ data: {} }),
     );
 
     await expect(
@@ -206,7 +234,19 @@ describe("library placement commands", () => {
         { kind: "Podcast", id: "podcast-1" },
         "library-1",
       ),
-    ).rejects.toMatchObject({ code: "E_INVALID_RESPONSE", status });
+    ).rejects.toBeInstanceOf(TypeError);
+  });
+
+  it("defects when the Podcast command returns 205", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(null, { status: 205 }),
+    );
+    await expect(
+      addLibraryPlacement(
+        { kind: "Podcast", id: "podcast-1" },
+        "library-1",
+      ),
+    ).rejects.toBeInstanceOf(TypeError);
   });
 
   it.each([
@@ -246,9 +286,17 @@ describe("library placement commands", () => {
     "$name publishes exactly one placement revision with its scope",
     async ({ name, run, affected }) => {
       vi.spyOn(globalThis, "fetch").mockResolvedValue(
-        name.startsWith("remove")
+        name === "addLibraryPlacement(Podcast)"
+          ? Response.json(subscriptionResponse)
+          : name.startsWith("remove")
           ? Response.json({
-              data: { libraryEntriesCollectionRevision: 5 },
+              data:
+                name === "removeLibraryPlacement(Podcast)"
+                  ? {
+                      outcome: "Removed",
+                      libraryEntriesCollectionRevision: 5,
+                    }
+                  : { libraryEntriesCollectionRevision: 5 },
             })
           : new Response(null, { status: 204 }),
       );

@@ -108,7 +108,7 @@ scaffolding.
    External: OpenAI / Anthropic / Gemini / Moonshot (LLM; OpenAI also
              embeddings + transcription); OpenRouter is a hidden, uncertified
              operator route only — no product profile targets it,
-             Brave (web search), Podcast Index, Deepgram, YouTube Data API
+             Brave (Browse + agent research), Podcast Index, Deepgram, YouTube Data API
              plus YouTube transcript/caption egress,
              Stripe (billing), Cloudflare R2.
 ```
@@ -443,14 +443,19 @@ message API responses include a
 `trust_trail` read model assembled from these durable rows; persisted
 `message_document` blocks are text-only.
 
-**Podcasts / playback** — `podcasts`, `podcast_subscriptions`
-(`auto_queue_watermark_at`), `podcast_subscription_libraries`,
-`podcast_episodes` (PK = `media_id`), `podcast_episode_chapters`,
+**Podcasts / playback** — `podcasts`, active-only `podcast_subscriptions`
+(`id` PK, unique viewer/Podcast relationship, live `sync_status`, and
+`auto_queue_watermark_at`), `podcast_subscription_backfills` (the separate
+durable history-traversal fence), `podcast_episodes` (PK = `media_id`),
+`podcast_episode_identities` (stable PodcastIndex/RSS aliases),
+`podcast_episode_chapters`,
 `podcast_listening_states` (position/duration/speed +
 `write_revision`/`reset_epoch` heartbeat fencing plus heartbeat-only
 `last_engaged_at`; operational `updated_at` is not engagement),
 `podcast_transcription_jobs`,
-`podcast_transcription_usage_daily`, `podcast_transcript_segments`.
+`podcast_transcription_usage_daily`, `podcast_transcript_segments`. Named
+Podcast placement is only `library_entries(podcast_id)`; Default/All is virtual
+and stores no Podcast entry.
 
 **Reader cursor / Lectern / consumption** — `reader_media_state` (the canonical
 revision-fenced resume cursor, including persisted `Empty` reset tombstones;
@@ -559,15 +564,15 @@ same entrypoint with fixed `interactive` and `background` lanes:
   flips it to `running` with a lease, dispatches to the registered handler under a
   heartbeat thread, then commits a terminal/retry transition. Retries are bounded
   per-kind (`max_attempts`, `retry_delays_seconds`, `lease_seconds`); exhaustion
-  dead-letters the row. Two kinds register a dead-letter finalizer: `chat_run`
-  writes an errored assistant message, and `note_reindex_job` marks the note's
-  content index `failed`.
+  dead-letters the row. Domain finalizers close or suspend current Chat, Note,
+  Dossier, Media teardown, and Podcast-backfill state without overwriting newer
+  lifecycle facts.
 - **Scheduler loop**: the background lane enqueues production periodic jobs
   into fixed time slots with deterministic dedupe keys. The interactive lane
   has no periodic kinds.
 
 The **registry** (`jobs/registry.py`) is the source of truth mapping job kind →
-handler + policy. `config.py` owns the disjoint/exhaustive 17-kind production
+handler + policy. `config.py` owns the disjoint/exhaustive 18-kind production
 topology and separate four-kind maintenance declaration. The entrypoint rejects
 missing/unknown lanes, registry drift, and raw allowlists on normal lanes.
 `get_task_contract_version()` fingerprints the registry's per-kind
@@ -579,6 +584,7 @@ Task catalog (each is a thin handler in `tasks/` that wraps a service):
 `oracle_reading_generate`, `dossier_build`,
 `media_content_reindex_job`, `media_unit_build`, `note_reindex_job`,
 `podcast_sync_subscription_job`,
+`podcast_backfill_subscription`,
 `podcast_reindex_semantic_job`, `podcast_active_subscription_poll_job`
 (periodic), `reconcile_stale_ingest_media_job` (periodic),
 `sync_gutenberg_catalog_job` (periodic), `prune_background_jobs_job`
@@ -837,12 +843,11 @@ capability-owned:
   billing/auth/rate-limit/timeout failures are typed and recorded in
   `external_provider_events`. There is no scraping, oEmbed, or generic article
   fallback for X URLs.
-- `youtube_video_ingest.py`: YouTube metadata/transcript materialization for
-  queued source attempts. Metadata uses the YouTube Data API; transcript/caption
-  acquisition is a separate egress boundary that may require
-  `YOUTUBE_TRANSCRIPT_PROXY_URL` from datacenter hosts. It is called by
-  `media_source_ingest.py`, not registered as a separate source-acquisition job
-  lane.
+- `youtube_video_ingest.py`: playable YouTube metadata materialization for
+  queued source attempts using the YouTube Data API. Add never initializes or
+  fetches a transcript. The explicit canonical Transcribe command separately
+  composes `youtube_transcripts.py`; caption acquisition may require
+  `YOUTUBE_TRANSCRIPT_PROXY_URL` from datacenter hosts.
 - `remote_file_client.py`: PDF/EPUB URL outbound policy, SSRF-safe streaming to
   storage, byte-size accounting, and signature validation for queued source
   attempts.
@@ -1056,7 +1061,7 @@ predicates in `auth/permissions.py`; the search/object readers read
 `library_entries` under an explicit Tier-R allowlist.
 
 - Every user has one **default library** (special: can't be renamed/deleted/shared
-  or receive podcasts) plus shareable libraries with `memberships`
+  or receive physical Podcast entries) plus shareable libraries with `memberships`
   (`admin`/`member` roles; owner is a distinct concept layered on admin).
   `library_entries` point at exactly one media or podcast and carry an integer
   `position` (a per-library `UNIQUE (library_id, position) DEFERRABLE` DB
@@ -1084,15 +1089,14 @@ predicates in `auth/permissions.py`; the search/object readers read
   libraries, duplicate IDs, and inaccessible IDs are not valid write
   destinations.
 - **The default library's read surface is a live, deduplicated personal
-  "All" query**, not a materialized or backfilled set. It has no closure,
-  intrinsic, or snapshot table and no backfill worker: `GET` against the
-  default library computes, at read time, the distinct media reachable
-  through any of the viewer's _current_ non-system memberships (their own
-  default-library entries plus every non-system library they belong to),
+  "All" query**, not a materialized or backfilled set. It is the union of the
+  distinct Media reachable through the viewer's _current_ non-system
+  memberships and the viewer's active Podcast subscriptions. Media is
   deduplicated by `media_id` — a direct default entry wins the tie, else the
-  earliest entry. Losing a membership (leave, be removed, library deleted)
-  removes that library's contribution on the next read with no separate
-  cleanup step. Filing media into the default library directly — the one
+  earliest entry. Losing a membership removes that Library's Media contribution
+  on the next read; deleting a subscription removes its virtual Podcast row.
+  Default Podcast rows expose absent placement rather than a fabricated entry
+  ID or position. Filing media into the default library directly — the one
   actor-authorized filing command in `library_entries.ensure_media_in_library`
   — always inserts (or idempotently keeps) a physical `library_entries` row
   there; a work already visible virtually through another membership can
@@ -1103,16 +1107,15 @@ predicates in `auth/permissions.py`; the search/object readers read
   while the domain object, storage row, and API fields keep their internal
   Default identity; `All` is a reserved library name (`400 E_NAME_INVALID` on
   any non-default create/rename). Pagination over any library — default or
-  not — is stateless keyset pagination with one authenticated cursor family,
-  `library_entries:view:v2`: canonical-JSON `{v, q, after}` bodies signed with
-  a domain-separated HMAC-SHA256 key derived from the stream-token signing
-  root, where `q` binds the exact `(viewer, library, view)` without
-  serializing the viewer UUID; any mismatch — wrong viewer, library, order,
-  projection, completion, or a pre-cutover cursor — is a clean
+  not — is stateless keyset pagination with the unversioned authenticated
+  `LibraryEntries` cursor family. Its query digest binds viewer, Library, view,
+  order, completion, and a named keyset plan; any wrong family, digest, plan,
+  or scalar kind is a clean
   `400 E_INVALID_CURSOR`, never a silent reinterpretation. Canonical order is
-  the durable authored order (non-default position order; Default
-  media-recency). A `view` is the order plus a fixed entry projection:
-  `All items` (optionally hide-finished), `Unfiled` (Default only — direct
+  the durable authored order for named Libraries and
+  `(addedAt DESC, targetKind ASC, targetId DESC)` for Default. A `view` is the
+  order plus a fixed entry projection: `All items (all)` includes Podcast
+  shows, while `All items (unfinished)`, `Unfiled` (Default only — direct
   Default media with no other current, non-system placement), or
   `In Progress` (canonical consumption `read_state = 'InProgress'`; podcast
   show rows never match, and the completion filter is unrepresentable with
@@ -1221,17 +1224,21 @@ cross-note merge, or full-list replacement semantics.
 
 ### 8.8 Lectern & podcast playback
 
-`services/podcasts/*`: discover via Podcast Index, subscribe (optionally scoped
-to libraries + auto-queue), sync episodes into `media` rows of kind
-`podcast_episode`, and transcribe. Transcripts come from **RSS sidecar files**
-(eager, during sync) or **Deepgram** (on-demand per viewer, gated by
-`can_transcribe` + a daily quota; diarized with non-diarized fallback). New
-episodes stay `pending` until a viewer requests transcription. Auto-subscription
-composes the consumption owner's `ensure_missing_items_in_txn` in the same
-transaction that advances `podcast_subscriptions.auto_queue_watermark_at`
-(`podcasts/poll.py`), so insertion and watermark are one database fact; a
-stale/reclaimed sync worker's lease check rolls the whole step back rather than
-double-inserting.
+`services/browse/*` owns Podcast Index discovery and read-only Preview.
+`services/podcasts/*` owns Subscribe/unsubscribe, OPML, canonical Podcast and
+episode identity, live feed sync, the independent historical backfill, and
+explicit Transcribe after acquisition. A subscription exists exactly while its
+row exists. Named Podcast placement is only `library_entries(podcast_id)`;
+Default/All projects active subscriptions virtually.
+
+Subscribe enqueues one live sync and one `podcast_subscription_backfills` chain.
+The live path keeps current episodes fresh while the backfill walks history in
+fenced, retryable steps, and either path may continue when the other fails.
+Both paths ingest metadata, stable aliases, chapters, playback URLs, and RSS
+transcript references only. They never fetch or publish a transcript. Explicit
+Episode Transcribe prefers a publisher sidecar, then the quota-gated Deepgram
+path; explicit Video Transcribe uses the YouTube caption provider. Current
+transcript origin is exactly `Publisher | Imported | Generated`.
 
 The **Lectern** is the one ordered, mixed-media list of outstanding intentions
 (podcast, video, reader, agent, and Nexus actions all address it); **Now
@@ -1283,7 +1290,11 @@ OS media-session integration, and a single-flight, generation-keyed
 15s-cadence listening heartbeat (`lib/player/listeningHeartbeat.ts`). See
 [`modules/player.md`](modules/player.md) and
 [`modules/consumption-activity.md`](modules/consumption-activity.md) for the
-full file map. The shared
+full file map. The shared player also owns an exhaustive ephemeral
+`PreviewAudio` session: it has no Media ID, queue/history origin, heartbeat,
+activity/completion writes, or previous/next behavior. After Episode Add, the
+consumption owner may install the observed Preview position once, only when
+owned progress is still empty. The shared
 `ReadingSlateSection` consumes an optional Lectern first-paint seed and
 otherwise queries only while its pane is active. It delegates Add to the
 existing Lectern or library mutation owner and owns deterministic stable
@@ -1299,7 +1310,7 @@ the visible embedded-video pane; it never exposes the raw `nx_device` value.
 breakdowns, derived sessions, and a deterministic Year in Reading view. The
 full contract is [`modules/consumption-activity.md`](modules/consumption-activity.md).
 
-### 8.10 Search, desktop Nexus, and mobile Switchboard
+### 8.10 Search, Browse, desktop Nexus, and mobile Switchboard
 
 The same `search()` backs the `/search` results page, mobile Switchboard deep
 results, desktop Nexus results, and the chat `app_search` tool. All consume
@@ -1307,9 +1318,11 @@ the canonical frontend `SearchQuery` model. Desktop **Nexus**
 (`components/nexus/`, `lib/nexus/`) is a controlled switchboard presentation
 over explicit result projections, not a second search model: its zero state is
 existing opens plus New Chat, New Note, New Page, and Import; Find consumes
-the canonical search projection; Web Search is an explicit Import-URL
-candidate. Enter/click follows the selected identity and Shift+Enter/Shift+click
-forks it.
+the canonical search projection. “Search the web…” commits to
+`/browse?kind=WebArticle&q=…`; Podcast discovery commits to
+`/browse?kind=Podcast`. Enter/click follows the selected identity and
+Shift+Enter/Shift+click forks it. There is no standalone Web Search product
+surface or Add-before-Preview path.
 
 Mobile uses the **Nexus Switchboard** (`components/switchboard/`,
 `lib/switchboard/`) instead of an app-navigation drawer.
@@ -1320,9 +1333,24 @@ preserving pane, destination, occurrence-resource, owner-resource, and
 activation-route identities. All owned-resource opens use workspace `Adopt`;
 external discovery remains in explicit acquisition workflows.
 
-The **browse** service is a global acquisition search across documents,
-videos, and podcasts. Switchboard uses its extracted frontend client only for
-the explicit Podcast acquisition workflow.
+**Browse** is a fixed desktop/mobile destination and a read-only discovery
+boundary. `/browse` owns exact `q`, `kind`, `source`, and `sort` URL state; the
+browser fans All out into concrete requests for PDF (Nexus), EPUB
+(Nexus/Project Gutenberg), Web Article (Nexus/Brave), Video (Nexus/YouTube), and
+Podcast (Podcast Index). `/browse/preview` re-resolves a sealed
+`DiscoveryTarget` against provider truth and writes nothing. Owned results open
+their canonical pane; external results open Preview before explicit Add or
+Subscribe. Preview proxies remote images, never frames arbitrary web, loads the
+official YouTube iframe only after action, and starts remote Podcast audio only
+after action. `BrowseSearch` and `BrowsePreviewEpisodes` are signed, unversioned,
+query/plan-bound cursor families.
+
+Acquisition reuses canonical owners: URL Add calls `/media/from_url`, episode
+Add calls `/podcast-episodes/from-discovery`, and Subscribe calls
+`/podcasts/subscriptions`. Replayable commands use the required
+`Idempotency-Key`, stage Default/All plus named destinations, and replace Preview
+with the canonical owned pane only after success. Browse and Preview deliberately
+publish no Pane Search/Find capability.
 
 ---
 
@@ -1534,7 +1562,7 @@ linear `NNNN_*` numbering, no autogenerate). Dev: `make migrate`. Test: a dedica
 ([`rules/codebase.md`](rules/codebase.md)); `make setup` generates local
 `.env` + `apps/web/.env.local`. Major groups: app/env, database + pool, Supabase
 Auth (issuer/JWKS/audiences), internal secret, encryption key, LLM providers +
-flags + rate limits, Brave web search, streaming (token signing key + base URL +
+flags + rate limits, Brave Browse/chat search, streaming (token signing key + base URL +
 CORS), podcasts, browse providers, worker schedules, Stripe. Worker lanes are
 Compose-owned rather than stored in the merged production env.
 E2E local Supabase is owned by `scripts/with_supabase_services.sh` plus

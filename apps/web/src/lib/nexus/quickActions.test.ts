@@ -11,7 +11,7 @@ describe("quick action projections", () => {
       SWITCHBOARD_QUICK_ACTION_IDS.map(
         (id) => QUICK_ACTION_REGISTRY[id].label,
       ),
-    ).toEqual(["Note", "Page", "Chat", "Library", "Import", "Podcast"]);
+    ).toEqual(["Note", "Page", "Chat", "Library", "Import"]);
   });
 
   it("keeps the desktop zero-state actions exact", () => {

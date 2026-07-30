@@ -14,6 +14,7 @@ import {
 const FIXED_DESTINATION_LABELS = [
   "Lectern",
   "Libraries",
+  "Browse",
   "Podcasts",
   "Chats",
   "Notes",
@@ -75,7 +76,7 @@ test.describe("app navigation", () => {
 
     const navigation = primaryNavigation(page);
     await expect(navigation).toBeVisible();
-    await expect(navigation.getByRole("link")).toHaveCount(9);
+    await expect(navigation.getByRole("link")).toHaveCount(10);
     expect(
       await navigation
         .getByRole("link")
@@ -214,7 +215,14 @@ test.describe("mobile app navigation", () => {
         .evaluateAll((buttons) =>
           buttons.map((button) => button.textContent?.trim()),
         ),
-    ).toEqual(["Lectern", "Libraries", "Podcasts", "Chats", "Notes"]);
+    ).toEqual([
+      "Lectern",
+      "Libraries",
+      "Browse",
+      "Podcasts",
+      "Chats",
+      "Notes",
+    ]);
     await expect(places.getByRole("button", { name: "Stats" })).toHaveCount(0);
     await expect(places.getByRole("button", { name: "Atlas" })).toHaveCount(0);
     await expect(places.getByRole("button", { name: "Oracle" })).toHaveCount(0);

@@ -347,3 +347,12 @@ class ListeningHeartbeatResult(BaseModel):
     listening_state: ListeningStateOut
     heartbeat_generation: UUID
     heartbeat_sequence: _NonNegInt32
+
+
+class PreviewPositionIn(BaseModel):
+    """One post-acquisition transfer from an ephemeral Preview audio session."""
+
+    model_config = _IN_CONFIG
+
+    position_ms: _NonNegInt32
+    duration_ms: Presence[_NonNegInt32]

@@ -22,7 +22,10 @@ from nexus.storage.paths import (
     get_file_extension,
 )
 from tests.real_media.assertions import assert_fragment_content_contains
-from tests.support.source_jobs import run_queued_source_pipeline
+from tests.support.source_jobs import (
+    run_queued_source_pipeline,
+    run_queued_transcript_semantic_reindex,
+)
 from tests.utils.db import DirectSessionManager
 
 REAL_MEDIA_FIXTURES_DIR = Path(__file__).parents[1] / "fixtures" / "real_media"
@@ -234,15 +237,48 @@ def create_nasa_captioned_video(
     result = run_source_attempt_for_media(direct_db, media_id)
     if result["status"] == "skipped":
         assert result.get("reason") == "already_ready", result
-        with direct_db.session() as session:
-            result["segment_count"] = session.execute(
-                text("SELECT count(*) FROM podcast_transcript_segments WHERE media_id = :media_id"),
-                {"media_id": media_id},
-            ).scalar_one()
     else:
         assert result["status"] == "success", result
-    assert result["segment_count"] >= 20, result
-    return media_id, result
+    with direct_db.session() as session:
+        segment_count = session.execute(
+            text("SELECT count(*) FROM podcast_transcript_segments WHERE media_id = :media_id"),
+            {"media_id": media_id},
+        ).scalar_one()
+    assert segment_count == 0, "Video Add/source ingest must remain playable-only"
+
+    transcript_request = auth_client.post(
+        f"/media/{media_id}/transcript/request",
+        json={"reason": "episode_open"},
+        headers=headers,
+    )
+    assert transcript_request.status_code == 200, transcript_request.text
+    transcript_response = transcript_request.json()["data"]
+    assert transcript_response["request_enqueued"] is False, transcript_response
+    assert transcript_response["transcript_state"] == "ready", transcript_response
+    with direct_db.session() as session:
+        semantic_result = run_queued_transcript_semantic_reindex(session, media_id=media_id)
+    assert semantic_result["status"] == "completed", semantic_result
+    with direct_db.session() as session:
+        transcript = session.execute(
+            text(
+                """
+                SELECT state.transcript_origin, count(segment.id)
+                FROM media_transcript_states state
+                LEFT JOIN podcast_transcript_segments segment
+                  ON segment.media_id = state.media_id
+                WHERE state.media_id = :media_id
+                GROUP BY state.transcript_origin
+                """
+            ),
+            {"media_id": media_id},
+        ).one()
+    assert transcript[0] == "Imported"
+    assert int(transcript[1]) >= 20
+    return media_id, {
+        "status": "completed",
+        "transcript": transcript_response,
+        "semantic": semantic_result,
+    }
 
 
 def create_nasa_podcast_episode(
@@ -262,45 +298,45 @@ def create_nasa_podcast_episode(
         "57769de7add45b9393be2ea4ad23131a197511805920b1612c6bc91e3ed0b953"
     )
 
-    discover_response = auth_client.get(
-        "/podcasts/discover",
-        params={"q": "Houston We Have a Podcast", "limit": 5},
+    browse_response = auth_client.get(
+        "/browse",
+        params={
+            "q": "Houston We Have a Podcast",
+            "kind": "Podcast",
+            "source": "PodcastIndex",
+            "limit": 5,
+        },
         headers=headers,
     )
-    assert discover_response.status_code == 200, discover_response.text
-    podcast = next(
+    assert browse_response.status_code == 200, browse_response.text
+    candidate = next(
         (
             row
-            for row in discover_response.json()["data"]
-            if row["provider_podcast_id"] == "nasa-hwhap-real-media"
+            for row in browse_response.json()["data"]["items"]
+            if row["kindFacts"]["podcastRef"] == "nasa-hwhap-real-media"
         ),
         None,
     )
-    assert podcast is not None, discover_response.json()
+    assert candidate is not None, browse_response.json()
+    assert candidate["resolution"]["kind"] == "Preview", candidate
 
     subscribe_response = auth_client.post(
         "/podcasts/subscriptions",
-        headers=headers,
+        headers={
+            **headers,
+            "Idempotency-Key": "real-media-nasa-podcast-subscribe",
+        },
         json={
-            "provider_podcast_id": podcast["provider_podcast_id"],
-            "title": podcast["title"],
-            "contributors": [
-                {
-                    "credited_name": contributor["credited_name"],
-                    "role": contributor["role"],
-                    "raw_role": contributor.get("raw_role"),
-                }
-                for contributor in podcast["contributors"]
-            ],
-            "feed_url": podcast["feed_url"],
-            "website_url": podcast["website_url"],
-            "image_url": podcast["image_url"],
-            "description": podcast["description"],
-            "auto_queue": False,
+            "target": {
+                "kind": "Discovery",
+                "target": candidate["resolution"]["target"],
+            },
+            "namedLibraryIds": [],
+            "replacementConfirmation": {"kind": "Absent"},
         },
     )
     assert subscribe_response.status_code == 200, subscribe_response.text
-    podcast_id = UUID(subscribe_response.json()["data"]["podcast_id"])
+    podcast_id = UUID(subscribe_response.json()["data"]["href"].rsplit("/", 1)[-1])
     register_podcast_cleanup(direct_db, podcast_id)
 
     sync_response = auth_client.post(
@@ -343,13 +379,21 @@ def create_nasa_podcast_episode(
     episode = next(
         (
             row
-            for row in episodes_response.json()["data"]
+            for row in episodes_response.json()["data"]["items"]
             if row["title"] == "The Crew-4 Astronauts"
         ),
         None,
     )
     assert episode is not None, episodes_response.json()
     media_id = UUID(episode["id"])
+    with direct_db.session() as session:
+        assert (
+            session.execute(
+                text("SELECT count(*) FROM podcast_transcript_segments WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            ).scalar_one()
+            == 0
+        ), "Podcast Subscribe/live sync must not eagerly materialize a transcript"
 
     transcript_request = auth_client.post(
         f"/media/{media_id}/transcript/request",
@@ -366,6 +410,14 @@ def create_nasa_podcast_episode(
             request_id="real-media-podcast-transcript-fixture",
         )
     assert transcription_result["status"] == "completed", transcription_result
+    with direct_db.session() as session:
+        origin = session.execute(
+            text(
+                "SELECT transcript_origin FROM media_transcript_states WHERE media_id = :media_id"
+            ),
+            {"media_id": media_id},
+        ).scalar_one()
+    assert origin == "Generated"
 
     assert_fragment_content_contains(direct_db, media_id, "International Space Station")
     register_media_cleanup(direct_db, media_id)

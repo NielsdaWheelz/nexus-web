@@ -29,13 +29,7 @@ from nexus.services.source_publication import (
     SourcePublicationFence,
     run_source_publication_phase,
 )
-from nexus.services.transcript_segments import normalize_transcript_segments
-from nexus.services.transcripts.current import (
-    publish_source_transcript,
-    set_media_transcript_state,
-)
 from nexus.services.youtube_identity import classify_youtube_url
-from nexus.services.youtube_transcripts import fetch_youtube_transcript
 
 logger = get_logger(__name__)
 
@@ -48,31 +42,7 @@ def run_youtube_video_ingest(
     *,
     publication_fence: SourcePublicationFence,
 ) -> dict[str, Any]:
-    """Materialize one accepted YouTube source attempt."""
-
-    def publish_running_state(db: Session, _attempt: object) -> None:
-        media = db.get(Media, media_id)
-        if media is None:
-            raise ApiError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-        set_media_transcript_state(
-            db,
-            media_id=media_id,
-            transcript_state="running",
-            transcript_coverage="none",
-            semantic_status="pending",
-            last_request_reason="episode_open",
-            last_error_code=None,
-            now=datetime.now(UTC),
-        )
-
-    run_source_publication_phase(
-        session_factory=session_factory,
-        label="publish_youtube_transcript_running",
-        fence=publication_fence,
-        media_ids=(media_id,),
-        mutate=publish_running_state,
-    )
-
+    """Materialize playable YouTube Media without implicit transcript work."""
     snapshot = session_factory()
     try:
         media = snapshot.get(Media, media_id)
@@ -88,87 +58,47 @@ def run_youtube_video_ingest(
         snapshot.close()
 
     metadata = fetch_youtube_metadata(provider_video_id)
-    author_observation: ContributorObservationBatch = NOT_OBSERVED
-    transcript_result = fetch_youtube_transcript(provider_video_id)
-    transcript_status = str(transcript_result.get("status") or "")
-    if transcript_status not in {"completed", "failed"}:
-        raise RuntimeError("YouTube transcript provider returned an unknown status")
-    transcript_segments = normalize_transcript_segments(transcript_result.get("segments"))
-    error_code = _normalize_terminal_error_code(transcript_result.get("error_code"))
-    error_message = str(transcript_result.get("error_message") or "").strip()
 
-    if transcript_status == "completed" and transcript_segments:
+    def publish_playable_media(db: Session, _attempt: object) -> ContributorObservationBatch:
+        now = datetime.now(UTC)
+        media = db.get(Media, media_id)
+        if media is None:
+            raise ApiError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+        observation: ContributorObservationBatch = NOT_OBSERVED
+        if metadata is not None:
+            observation = _persist_youtube_metadata(db, media_id, metadata)
+        media.provider = "youtube"
+        media.provider_id = provider_video_id
+        if watch_url is not None:
+            media.canonical_url = watch_url
+            media.canonical_source_url = watch_url
+            media.external_playback_url = watch_url
+        media.updated_at = now
+        return observation
 
-        def publish_transcript(db: Session, _attempt: object) -> ContributorObservationBatch:
-            now = datetime.now(UTC)
-            publish_source_transcript(
-                db,
-                media_id=media_id,
-                request_reason="episode_open",
-                transcript_coverage="full",
-                transcript_segments=transcript_segments,
-                now=now,
-            )
-            media = db.get(Media, media_id)
-            if media is None:
-                raise ApiError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-            observation: ContributorObservationBatch = NOT_OBSERVED
-            if metadata is not None:
-                observation = _persist_youtube_metadata(db, media_id, metadata)
-            media.provider = "youtube"
-            media.provider_id = provider_video_id
-            if watch_url is not None:
-                media.canonical_url = watch_url
-                media.canonical_source_url = watch_url
-                media.external_playback_url = watch_url
-            media.updated_at = now
-            return observation
-
-        author_observation = run_source_publication_phase(
-            session_factory=session_factory,
-            label="publish_youtube_transcript_artifacts",
-            fence=publication_fence,
-            media_ids=(media_id,),
-            mutate=publish_transcript,
-        )
-        logger.info(
-            "youtube_video_ingest_success",
-            media_id=str(media_id),
-            actor_user_id=str(actor_user_id),
-            request_id=request_id,
-            segment_count=len(transcript_segments),
-        )
-        result: dict[str, Any] = {
-            "status": "success",
-            "segment_count": len(transcript_segments),
-            "provider_fixture": transcript_result.get("provider_fixture"),
-            "metadata_enrichment": True,
-            "transcript_semantic_intent": True,
-            "transcript_request_reason": "episode_open",
-        }
-        attach_author_observation(
-            result,
-            observation=author_observation,
-            source="youtube_metadata",
-        )
-        return result
-
-    if transcript_status == "completed":
-        raise RuntimeError("YouTube transcript completed without valid segments")
-    if error_code != ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value:
-        raise RuntimeError(
-            f"YouTube transcript provider returned unexpected failure code: {error_code!r}"
-        )
-    if not error_message:
-        error_message = "Transcript unavailable"
+    author_observation = run_source_publication_phase(
+        session_factory=session_factory,
+        label="publish_youtube_playable_media",
+        fence=publication_fence,
+        media_ids=(media_id,),
+        mutate=publish_playable_media,
+    )
     logger.info(
-        "youtube_video_ingest_failed",
+        "youtube_video_ingest_success",
         media_id=str(media_id),
         actor_user_id=str(actor_user_id),
         request_id=request_id,
-        error_code=error_code,
     )
-    raise ApiError(_source_api_error_code(error_code), error_message)
+    result: dict[str, Any] = {
+        "status": "success",
+        "metadata_enrichment": metadata is not None,
+    }
+    attach_author_observation(
+        result,
+        observation=author_observation,
+        source="youtube_metadata",
+    )
+    return result
 
 
 def fetch_youtube_metadata(provider_video_id: str) -> dict[str, str] | None:
@@ -272,22 +202,6 @@ def _resolve_provider_identity(media: Media) -> tuple[str | None, str | None]:
     return identity.provider_video_id, identity.watch_url
 
 
-def _normalize_terminal_error_code(raw_value: Any) -> str | None:
-    if raw_value is None:
-        return None
-    value = str(raw_value).strip()
-    if not value:
-        return None
-    allowed = {
-        ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value,
-        ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
-        ApiErrorCode.E_TRANSCRIPTION_TIMEOUT.value,
-    }
-    if value in allowed:
-        return value
-    return ApiErrorCode.E_TRANSCRIPTION_FAILED.value
-
-
 def _persist_youtube_metadata(
     db: Session, media_id: UUID, metadata: dict[str, str]
 ) -> ContributorObservationBatch:
@@ -344,29 +258,3 @@ def _build_youtube_observation(
     if truncated:
         logger.info("youtube_author_truncated", truncated=truncated)
     return batch
-
-
-def _mark_transcript_failed(db: Session, media_id: UUID, error_code: str, message: str) -> None:
-    now = datetime.now(UTC)
-    transcript_state = (
-        "unavailable"
-        if error_code == ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value
-        else "failed_provider"
-    )
-    set_media_transcript_state(
-        db,
-        media_id=media_id,
-        transcript_state=transcript_state,
-        transcript_coverage="none",
-        semantic_status="failed",
-        last_request_reason="episode_open",
-        last_error_code=error_code,
-        now=now,
-    )
-
-
-def _source_api_error_code(error_code: str | None) -> ApiErrorCode:
-    try:
-        return ApiErrorCode(str(error_code or ""))
-    except ValueError:
-        return ApiErrorCode.E_TRANSCRIPTION_FAILED

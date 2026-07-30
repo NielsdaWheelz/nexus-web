@@ -1,14 +1,19 @@
-"""Integration tests for browse acquisition routes."""
+"""API/DB proof for concrete independent Browse sections and zero-write Preview."""
 
-from uuid import UUID, uuid4
+from __future__ import annotations
+
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
+from web_search_tool.types import (
+    WebSearchError,
+    WebSearchErrorCode,
+    WebSearchRequest,
+    WebSearchResponse,
+)
 
-from nexus.schemas.podcast import PodcastDiscoveryOut
-from nexus.services import browse as browse_service
-from nexus.services import contributors as contributors_service
-from nexus.services.contributor_taxonomy import ContributorObservation, ObservedRoleSlices
+from nexus.services.browse.models import gutenberg_target, seal_target
 from tests.factories import create_searchable_media
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -16,36 +21,197 @@ from tests.utils.db import DirectSessionManager
 pytestmark = pytest.mark.integration
 
 
-def _observe_media_author(media_id: UUID, name: str, *, role: str, source: str) -> None:
-    """Observe one credited name for a media via the facade (fresh session inside)."""
-    contributors_service.replace_observed_role_slices(
-        target=contributors_service.MediaTarget(media_id),
-        observation=ObservedRoleSlices(
-            managed_roles=frozenset({role}),
-            credits=(
-                ContributorObservation(
-                    credited_name=name, role=role, raw_role=None, identity_key=None
-                ),
-            ),
-        ),
-        source=source,
+class _RecordingProvider:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.requests: list[WebSearchRequest] = []
+
+    async def search(self, request: WebSearchRequest) -> WebSearchResponse:
+        self.requests.append(request)
+        if self.fail:
+            raise WebSearchError(
+                WebSearchErrorCode.PROVIDER_DOWN,
+                "down",
+                provider="fixture",
+            )
+        return WebSearchResponse(
+            results=(),
+            provider="fixture",
+            provider_request_id="fixture-request",
+        )
+
+
+def test_legacy_discovery_product_routes_are_not_registered(auth_client) -> None:
+    route_paths = {getattr(route, "path", None) for route in auth_client.app.routes}
+    assert "/web/search" not in route_paths
+    assert "/podcasts/discover" not in route_paths
+
+
+def _bootstrap(auth_client, user_id) -> dict[str, str]:
+    headers = auth_headers(user_id)
+    response = auth_client.get("/me", headers=headers)
+    assert response.status_code == 200, response.text
+    return headers
+
+
+def _counts(direct_db: DirectSessionManager) -> dict[str, int]:
+    tables = (
+        "media",
+        "podcasts",
+        "podcast_subscriptions",
+        "podcast_subscription_backfills",
+        "podcast_episodes",
+        "library_entries",
+        "consumption_activity_spans",
+    )
+    with direct_db.session() as session:
+        existing_tables = {
+            table
+            for table in tables
+            if session.scalar(text("SELECT to_regclass(:table)"), {"table": table}) is not None
+        }
+        return {
+            table: int(session.scalar(text(f"SELECT COUNT(*) FROM {table}")) or 0)
+            for table in existing_tables
+        }
+
+
+def test_invalid_or_duplicate_browse_state_calls_no_provider(auth_client) -> None:
+    user_id = create_test_user_id()
+    headers = _bootstrap(auth_client, user_id)
+    provider = _RecordingProvider()
+    auth_client.app.state.web_search_provider = provider
+
+    response = auth_client.get(
+        "/browse?q=one&q=two&kind=WebArticle&source=Brave&limit=10",
+        headers=headers,
     )
 
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "E_INVALID_BROWSE_QUERY"
+    assert provider.requests == []
 
-def _bootstrap_user(auth_client, user_id):
-    response = auth_client.get("/me", headers=auth_headers(user_id))
-    assert response.status_code == 200
+
+def test_inapplicable_preview_cursor_is_invalid_before_resolution(auth_client) -> None:
+    user_id = create_test_user_id()
+    headers = _bootstrap(auth_client, user_id)
+    target = seal_target(gutenberg_target("1342"))
+
+    response = auth_client.get(
+        "/browse/preview",
+        params={"target": target, "limit": "10", "cursor": "abc"},
+        headers=headers,
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "E_INVALID_DISCOVERY_TARGET"
 
 
-def _insert_gutenberg_catalog_row(
+def test_tampered_preview_target_is_terminal_before_provider_resolution(auth_client) -> None:
+    user_id = create_test_user_id()
+    headers = _bootstrap(auth_client, user_id)
+    target = seal_target(gutenberg_target("1342"))
+    replacement = "A" if target[-1] != "A" else "B"
+
+    response = auth_client.get(
+        "/browse/preview",
+        params={"target": f"{target[:-1]}{replacement}", "limit": "10"},
+        headers=headers,
+    )
+
+    assert response.status_code == 400, response.text
+    error = response.json()["error"]
+    assert error["code"] == "E_INVALID_DISCOVERY_TARGET"
+    assert error["message"] == "Invalid discovery target"
+
+
+def test_missing_preview_target_is_terminal_and_writes_nothing(
+    auth_client,
     direct_db: DirectSessionManager,
-    *,
-    ebook_id: int,
-    title: str,
-    subjects: str = "Fiction",
-    bookshelves: str = "Classics",
-    download_count: int = 42,
 ) -> None:
+    user_id = create_test_user_id()
+    headers = _bootstrap(auth_client, user_id)
+    target = seal_target(gutenberg_target("2147483647"))
+
+    before = _counts(direct_db)
+    response = auth_client.get(
+        "/browse/preview",
+        params={"target": target, "limit": "10"},
+        headers=headers,
+    )
+    after = _counts(direct_db)
+
+    assert response.status_code == 404, response.text
+    error = response.json()["error"]
+    assert error["code"] == "E_NOT_FOUND"
+    assert error["message"] == "No longer available"
+    assert after == before
+
+
+def test_one_source_failure_does_not_erase_an_independent_nexus_section(
+    auth_client,
+    direct_db: DirectSessionManager,
+) -> None:
+    user_id = create_test_user_id()
+    headers = _bootstrap(auth_client, user_id)
+    title = f"Independent Browse {uuid4()}"
+    with direct_db.session() as session:
+        media_id = create_searchable_media(session, user_id, title=title)
+    direct_db.register_cleanup("fragments", "media_id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("media", "id", media_id)
+
+    auth_client.app.state.web_search_provider = _RecordingProvider(fail=True)
+    failed = auth_client.get(
+        "/browse",
+        params={
+            "q": "independent",
+            "kind": "WebArticle",
+            "source": "Brave",
+            "limit": "10",
+        },
+        headers=headers,
+    )
+    nexus = auth_client.get(
+        "/browse",
+        params={
+            "q": "independent",
+            "kind": "WebArticle",
+            "source": "Nexus",
+            "limit": "10",
+        },
+        headers=headers,
+    )
+
+    assert failed.status_code == 503, failed.text
+    error = failed.json()["error"]
+    assert error["code"] == "E_BROWSE_PROVIDER_UNAVAILABLE"
+    assert error["message"] == "Browse provider request failed"
+    assert error["details"] == {"kind": "Unavailable"}
+    assert nexus.status_code == 200, nexus.text
+    page = nexus.json()["data"]
+    assert set(page) == {
+        "query",
+        "kind",
+        "source",
+        "sort",
+        "items",
+        "nextCursor",
+    }
+    row = next(item for item in page["items"] if item["title"] == title)
+    assert row["resolution"] == {
+        "kind": "InNexus",
+        "href": f"/media/{media_id}",
+    }
+
+
+def test_gutenberg_preview_refetches_provider_truth_and_writes_nothing(
+    auth_client,
+    direct_db: DirectSessionManager,
+) -> None:
+    user_id = create_test_user_id()
+    headers = _bootstrap(auth_client, user_id)
+    ebook_id = 900_000 + uuid4().int % 90_000
     direct_db.register_cleanup("project_gutenberg_catalog", "ebook_id", ebook_id)
     with direct_db.session() as session:
         session.execute(
@@ -65,9 +231,9 @@ def _insert_gutenberg_catalog_row(
                 VALUES (
                     :ebook_id,
                     :title,
-                    :subjects,
-                    :bookshelves,
-                    :download_count,
+                    'Systems',
+                    'Reference',
+                    1,
                     '{}'::jsonb,
                     now(),
                     now(),
@@ -75,466 +241,41 @@ def _insert_gutenberg_catalog_row(
                 )
                 """
             ),
-            {
-                "ebook_id": ebook_id,
-                "title": title,
-                "subjects": subjects,
-                "bookshelves": bookshelves,
-                "download_count": download_count,
-            },
+            {"ebook_id": ebook_id, "title": "Fixture Systems Book"},
         )
         session.commit()
 
+    before = _counts(direct_db)
+    target = seal_target(gutenberg_target(str(ebook_id)))
+    response = auth_client.get(
+        "/browse/preview",
+        params={"target": target, "limit": "10"},
+        headers=headers,
+    )
+    after = _counts(direct_db)
 
-class _FakePodcastClient:
-    def __init__(self, episode_rows):
-        self._episode_rows = episode_rows
-
-    def fetch_recent_episodes(self, provider_podcast_id: str, limit: int):
-        return self._episode_rows.get(provider_podcast_id, [])[:limit]
-
-
-class TestBrowse:
-    def test_browse_initial_search_returns_grouped_sections_for_all_types(
-        self, auth_client, monkeypatch
-    ):
-        user_id = create_test_user_id()
-        _bootstrap_user(auth_client, user_id)
-
-        provider_podcast_id = f"browse-{uuid4()}"
-        monkeypatch.setattr(
-            browse_service,
-            "_search_nexus_document_rows",
-            lambda db, viewer_id, query, *, limit, offset: [
-                {
-                    "type": "documents",
-                    "title": "Imported Agents Guide",
-                    "description": "Already in Nexus.",
-                    "url": "https://nexus.example.com/agents.pdf",
-                    "document_kind": "pdf",
-                    "site_name": "nexus.example.com",
-                    "source_label": "Nexus",
-                    "source_type": "nexus",
-                    "media_id": "media-1",
-                }
-            ],
-        )
-        monkeypatch.setattr(
-            browse_service,
-            "_search_project_gutenberg_rows",
-            lambda db, viewer_id, query, *, limit, offset: [
-                {
-                    "type": "documents",
-                    "title": "Pride and Prejudice",
-                    "description": "Austen, Jane",
-                    "url": "https://www.gutenberg.org/ebooks/1342.epub.noimages",
-                    "document_kind": "epub",
-                    "site_name": "gutenberg.org",
-                    "source_label": "Project Gutenberg",
-                    "source_type": "project_gutenberg",
-                    "media_id": None,
-                }
-            ],
-        )
-        monkeypatch.setattr(
-            browse_service,
-            "_search_video_rows",
-            lambda query, *, limit, page_token: (
-                [
-                    {
-                        "type": "videos",
-                        "provider_video_id": "yt-1",
-                        "title": "Agent Systems",
-                        "description": "Video summary",
-                        "watch_url": "https://www.youtube.com/watch?v=yt-1",
-                        "channel_title": "Nexus",
-                        "published_at": "2026-04-18T00:00:00Z",
-                        "thumbnail_url": "https://img.youtube.com/vi/yt-1/hqdefault.jpg",
-                    }
-                ],
-                "video-page-2",
-            ),
-        )
-        monkeypatch.setattr(
-            browse_service.podcast_discovery_service,
-            "discover_podcasts",
-            lambda db, query, limit: [
-                PodcastDiscoveryOut(
-                    podcast_id=None,
-                    provider_podcast_id=provider_podcast_id,
-                    title="AI Systems Weekly",
-                    feed_url="https://example.com/ai.xml",
-                    website_url="https://example.com/ai",
-                    image_url="https://example.com/ai.png",
-                    description="Systems podcast",
-                )
-            ],
-        )
-        monkeypatch.setattr(
-            browse_service.podcast_provider_service,
-            "get_podcast_index_client",
-            lambda: _FakePodcastClient(
-                {
-                    provider_podcast_id: [
-                        {
-                            "provider_episode_id": "ep-1",
-                            "title": "Episode one",
-                            "audio_url": "https://cdn.example.com/ep-1.mp3",
-                            "published_at": "2026-04-18T00:00:00Z",
-                            "duration_seconds": 1800,
-                        }
-                    ]
-                }
-            ),
-        )
-
-        response = auth_client.get("/browse?q=agents&limit=2", headers=auth_headers(user_id))
-
-        assert response.status_code == 200, response.text
-        data = response.json()["data"]
-        assert data["query"] == "agents"
-        assert set(data["sections"]) == {"documents", "videos", "podcasts", "podcast_episodes"}
-        assert data["sections"]["documents"]["results"] == [
-            {
-                "type": "documents",
-                "title": "Imported Agents Guide",
-                "description": "Already in Nexus.",
-                "url": "https://nexus.example.com/agents.pdf",
-                "document_kind": "pdf",
-                "site_name": "nexus.example.com",
-                "source_label": "Nexus",
-                "source_type": "nexus",
-                "media_id": "media-1",
-            },
-            {
-                "type": "documents",
-                "title": "Pride and Prejudice",
-                "description": "Austen, Jane",
-                "url": "https://www.gutenberg.org/ebooks/1342.epub.noimages",
-                "document_kind": "epub",
-                "site_name": "gutenberg.org",
-                "source_label": "Project Gutenberg",
-                "source_type": "project_gutenberg",
-                "media_id": None,
-            },
-        ]
-        assert (
-            data["sections"]["videos"]["results"][0]["watch_url"]
-            == "https://www.youtube.com/watch?v=yt-1"
-        )
-        assert data["sections"]["podcasts"]["results"][0]["title"] == "AI Systems Weekly"
-        assert data["sections"]["podcast_episodes"]["results"][0]["title"] == "Episode one"
-
-    def test_browse_initial_search_queries_all_providers_once(self, auth_client, monkeypatch):
-        user_id = create_test_user_id()
-        _bootstrap_user(auth_client, user_id)
-
-        provider_podcast_id = f"browse-{uuid4()}"
-        calls: list[tuple[str, object]] = []
-
-        def fake_nexus_documents(db, viewer_id, query, *, limit, offset):
-            calls.append(("nexus_documents", (viewer_id, query, limit, offset)))
-            return []
-
-        def fake_gutenberg_documents(db, viewer_id, query, *, limit, offset):
-            calls.append(("gutenberg_documents", (query, limit, offset)))
-            return []
-
-        def fake_videos(query, *, limit, page_token):
-            calls.append(("videos", (query, limit, page_token)))
-            return [], None
-
-        def fake_discover_podcasts(db, query, limit):
-            calls.append(("podcasts", (query, limit)))
-            return [
-                PodcastDiscoveryOut(
-                    podcast_id=None,
-                    provider_podcast_id=provider_podcast_id,
-                    title="AI Systems Weekly",
-                    feed_url="https://example.com/ai.xml",
-                    website_url="https://example.com/ai",
-                    image_url="https://example.com/ai.png",
-                    description="Systems podcast",
-                )
-            ]
-
-        monkeypatch.setattr(browse_service, "_search_nexus_document_rows", fake_nexus_documents)
-        monkeypatch.setattr(
-            browse_service,
-            "_search_project_gutenberg_rows",
-            fake_gutenberg_documents,
-        )
-        monkeypatch.setattr(browse_service, "_search_video_rows", fake_videos)
-        monkeypatch.setattr(
-            browse_service.podcast_discovery_service,
-            "discover_podcasts",
-            fake_discover_podcasts,
-        )
-        monkeypatch.setattr(
-            browse_service.podcast_provider_service,
-            "get_podcast_index_client",
-            lambda: _FakePodcastClient({provider_podcast_id: []}),
-        )
-
-        response = auth_client.get("/browse?q=systems&limit=3", headers=auth_headers(user_id))
-
-        assert response.status_code == 200, response.text
-        assert ("nexus_documents", (user_id, "systems", 4, 0)) in calls
-        assert ("gutenberg_documents", ("systems", 4, 0)) in calls
-        assert ("videos", ("systems", 3, None)) in calls
-        assert ("podcasts", ("systems", 10)) in calls
-
-    def test_browse_page_type_paginates_only_requested_section_and_transitions_sources(
-        self, auth_client, monkeypatch
-    ):
-        user_id = create_test_user_id()
-        _bootstrap_user(auth_client, user_id)
-
-        nexus_calls: list[tuple[str, UUID, int, int]] = []
-        gutenberg_calls: list[tuple[str, int, int]] = []
-        video_calls: list[tuple[str, int, str | None]] = []
-        podcast_calls: list[tuple[str, int]] = []
-
-        def fake_nexus_documents(db, viewer_id, query, *, limit, offset):
-            nexus_calls.append((query, viewer_id, limit, offset))
-            if offset == 0:
-                return [
-                    {
-                        "type": "documents",
-                        "title": "Nexus Handbook",
-                        "description": "Visible workspace document.",
-                        "url": "https://nexus.example.com/handbook",
-                        "document_kind": "web_article",
-                        "site_name": "nexus.example.com",
-                        "source_label": "Nexus",
-                        "source_type": "nexus",
-                        "media_id": "media-nexus",
-                    }
-                ]
-            return []
-
-        def fake_gutenberg_documents(db, viewer_id, query, *, limit, offset):
-            gutenberg_calls.append((query, limit, offset))
-            rows = [
-                {
-                    "type": "documents",
-                    "title": "Gutenberg One",
-                    "description": "Author One",
-                    "url": "https://www.gutenberg.org/ebooks/1.epub.noimages",
-                    "document_kind": "epub",
-                    "site_name": "gutenberg.org",
-                    "source_label": "Project Gutenberg",
-                    "source_type": "project_gutenberg",
-                    "media_id": None,
-                },
-                {
-                    "type": "documents",
-                    "title": "Gutenberg Two",
-                    "description": "Author Two",
-                    "url": "https://www.gutenberg.org/ebooks/2.epub.noimages",
-                    "document_kind": "epub",
-                    "site_name": "gutenberg.org",
-                    "source_label": "Project Gutenberg",
-                    "source_type": "project_gutenberg",
-                    "media_id": None,
-                },
-                {
-                    "type": "documents",
-                    "title": "Gutenberg Three",
-                    "description": "Author Three",
-                    "url": "https://www.gutenberg.org/ebooks/3.epub.noimages",
-                    "document_kind": "epub",
-                    "site_name": "gutenberg.org",
-                    "source_label": "Project Gutenberg",
-                    "source_type": "project_gutenberg",
-                    "media_id": None,
-                },
-            ]
-            return rows[offset : offset + limit]
-
-        def fake_videos(query, *, limit, page_token):
-            video_calls.append((query, limit, page_token))
-            return [], None
-
-        def fake_discover_podcasts(db, query, limit):
-            podcast_calls.append((query, limit))
-            return []
-
-        monkeypatch.setattr(browse_service, "_search_nexus_document_rows", fake_nexus_documents)
-        monkeypatch.setattr(
-            browse_service,
-            "_search_project_gutenberg_rows",
-            fake_gutenberg_documents,
-        )
-        monkeypatch.setattr(browse_service, "_search_video_rows", fake_videos)
-        monkeypatch.setattr(
-            browse_service.podcast_discovery_service,
-            "discover_podcasts",
-            fake_discover_podcasts,
-        )
-
-        first_response = auth_client.get("/browse?q=docs&limit=2", headers=auth_headers(user_id))
-        first_cursor = first_response.json()["data"]["sections"]["documents"]["page"]["next_cursor"]
-
-        page_response = auth_client.get(
-            f"/browse?q=docs&limit=2&page_type=documents&cursor={first_cursor}",
-            headers=auth_headers(user_id),
-        )
-
-        assert page_response.status_code == 200, page_response.text
-        data = page_response.json()["data"]
-        assert set(data["sections"]) == {"documents"}
-        assert [row["title"] for row in data["sections"]["documents"]["results"]] == [
-            "Gutenberg Two",
-            "Gutenberg Three",
-        ]
-        assert nexus_calls == [("docs", user_id, 3, 0)]
-        assert gutenberg_calls == [("docs", 2, 0), ("docs", 3, 1)]
-        assert video_calls == [("docs", 2, None)]
-        assert podcast_calls == [("docs", 10)]
-
-    def test_browse_documents_include_visible_nexus_docs_and_gutenberg_rows_only(
-        self,
-        auth_client,
-        direct_db: DirectSessionManager,
-        monkeypatch,
-    ):
-        user_id = create_test_user_id()
-        other_user_id = create_test_user_id()
-        _bootstrap_user(auth_client, user_id)
-        _bootstrap_user(auth_client, other_user_id)
-
-        with direct_db.session() as session:
-            visible_media_id = create_searchable_media(
-                session,
-                user_id,
-                title="Agents Handbook Visible",
-            )
-            hidden_media_id = create_searchable_media(
-                session,
-                other_user_id,
-                title="Agents Handbook Hidden",
-            )
-
-        visible_author = f"Visible Browse Author {uuid4()}"
-        direct_db.register_cleanup("contributors", "display_name", visible_author)
-        direct_db.register_cleanup("contributor_aliases", "alias", visible_author)
-        _observe_media_author(visible_media_id, visible_author, role="author", source="epub_opf")
-
-        direct_db.register_cleanup("fragments", "media_id", visible_media_id)
-        direct_db.register_cleanup("library_entries", "media_id", visible_media_id)
-        direct_db.register_cleanup("media", "id", visible_media_id)
-        direct_db.register_cleanup("fragments", "media_id", hidden_media_id)
-        direct_db.register_cleanup("library_entries", "media_id", hidden_media_id)
-        direct_db.register_cleanup("media", "id", hidden_media_id)
-        _insert_gutenberg_catalog_row(
-            direct_db,
-            ebook_id=1342,
-            title="Agents in Literature",
-        )
-
-        monkeypatch.setattr(
-            browse_service,
-            "_search_video_rows",
-            lambda query, *, limit, page_token: ([], None),
-        )
-        monkeypatch.setattr(
-            browse_service.podcast_discovery_service,
-            "discover_podcasts",
-            lambda db, query, limit: [],
-        )
-        monkeypatch.setattr(
-            browse_service.podcast_provider_service,
-            "get_podcast_index_client",
-            lambda: _FakePodcastClient({}),
-        )
-
-        response = auth_client.get("/browse?q=agents", headers=auth_headers(user_id))
-
-        assert response.status_code == 200, response.text
-        document_rows = response.json()["data"]["sections"]["documents"]["results"]
-        titles = [row["title"] for row in document_rows]
-        assert "Agents Handbook Visible" in titles
-        assert "Agents Handbook Hidden" not in titles
-        assert "Agents in Literature" in titles
-
-        visible_row = next(
-            row for row in document_rows if row["title"] == "Agents Handbook Visible"
-        )
-        gutenberg_row = next(row for row in document_rows if row["title"] == "Agents in Literature")
-
-        assert visible_row["document_kind"] == "web_article"
-        assert visible_row["source_type"] == "nexus"
-        assert visible_row["media_id"] == str(visible_media_id)
-        assert visible_row["contributors"][0]["credited_name"] == visible_author
-        assert visible_row["contributors"][0]["href"].startswith("/authors/")
-        assert gutenberg_row["source_type"] == "project_gutenberg"
-        assert gutenberg_row["url"] == "https://www.gutenberg.org/ebooks/1342.epub.noimages"
-
-    def test_browse_video_rows_include_existing_nexus_contributors(
-        self,
-        auth_client,
-        direct_db: DirectSessionManager,
-        monkeypatch,
-    ):
-        user_id = create_test_user_id()
-        _bootstrap_user(auth_client, user_id)
-
-        with direct_db.session() as session:
-            media_id = create_searchable_media(session, user_id, title="Existing Video")
-            session.execute(
-                text(
-                    """
-                    UPDATE media
-                    SET kind = 'video',
-                        provider = 'youtube',
-                        provider_id = 'yt-1',
-                        canonical_source_url = 'https://www.youtube.com/watch?v=yt-1',
-                        external_playback_url = 'https://www.youtube.com/watch?v=yt-1'
-                    WHERE id = :media_id
-                    """
-                ),
-                {"media_id": media_id},
-            )
-            session.commit()
-
-        video_author = f"Visible Video Channel {uuid4()}"
-        direct_db.register_cleanup("contributors", "display_name", video_author)
-        direct_db.register_cleanup("contributor_aliases", "alias", video_author)
-        direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-        _observe_media_author(media_id, video_author, role="channel", source="youtube_metadata")
-
-        monkeypatch.setattr(
-            browse_service,
-            "_search_video_rows",
-            lambda query, *, limit, page_token: (
-                [
-                    {
-                        "type": "videos",
-                        "provider_video_id": "yt-1",
-                        "title": "Existing Video",
-                        "description": "Video summary",
-                        "watch_url": "https://www.youtube.com/watch?v=yt-1",
-                        "channel_title": "Raw Channel",
-                        "published_at": "2026-04-18T00:00:00Z",
-                        "thumbnail_url": None,
-                        "media_id": None,
-                        "contributors": [],
-                    }
-                ],
-                None,
-            ),
-        )
-
-        response = auth_client.get(
-            "/browse?q=video&limit=2&page_type=videos",
-            headers=auth_headers(user_id),
-        )
-
-        assert response.status_code == 200, response.text
-        video_row = response.json()["data"]["sections"]["videos"]["results"][0]
-        assert video_row["media_id"] == str(media_id)
-        assert video_row["contributors"][0]["credited_name"] == video_author
-        assert video_row["contributors"][0]["role"] == "channel"
+    assert response.status_code == 200, response.text
+    preview = response.json()["data"]
+    assert set(preview) == {
+        "kind",
+        "source",
+        "target",
+        "title",
+        "contributors",
+        "description",
+        "publishedAt",
+        "image",
+        "sourceHref",
+        "resolution",
+        "kindFacts",
+    }
+    assert preview["kind"] == "Epub"
+    assert preview["source"] == "ProjectGutenberg"
+    assert preview["target"] == target
+    assert preview["title"] == "Fixture Systems Book"
+    assert preview["resolution"] == {"kind": "Preview", "target": target}
+    assert preview["kindFacts"] == {
+        "ebookRef": str(ebook_id),
+        "importHref": (f"https://www.gutenberg.org/ebooks/{ebook_id}.epub.noimages"),
+    }
+    assert after == before

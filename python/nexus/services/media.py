@@ -165,6 +165,7 @@ _MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
     "pe.description_text AS podcast_description_text",
     "mts.transcript_state",
     "mts.transcript_coverage",
+    "mts.transcript_origin",
     """CASE
         WHEN EXISTS(
             SELECT 1
@@ -187,7 +188,6 @@ _MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
         JOIN podcast_subscriptions ps
           ON ps.podcast_id = pe_sub.podcast_id
          AND ps.user_id = :viewer_id
-         AND ps.status = 'active'
         WHERE pe_sub.media_id = m.id
         LIMIT 1
     ) AS subscription_default_playback_speed""",
@@ -223,6 +223,7 @@ _COLLECTION_MEDIA_SELECT_COLUMNS: tuple[str, ...] = (
     f"{_SOURCE_REFRESH_AVAILABLE_SQL} AS source_refresh_available",
     "mts.transcript_state",
     "mts.transcript_coverage",
+    "mts.transcript_origin",
     f"{_CAN_DELETE_SQL} AS can_delete",
     *_MEDIA_LISTENING_STATE_SELECT_COLUMNS,
 )
@@ -773,6 +774,7 @@ def _media_out_from_row(
         processing_status=processing_status,
         transcript_state=row["transcript_state"],
         transcript_coverage=row["transcript_coverage"],
+        transcript_origin=presence_from_nullable(row["transcript_origin"]),
         retrieval_status=row["retrieval_status"],
         retrieval_status_reason=row["retrieval_status_reason"],
         failure_stage=row["failure_stage"],

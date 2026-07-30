@@ -6,6 +6,7 @@ import {
 import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { isRecord } from "@/lib/validation";
+import { subscribeToPodcast } from "@/lib/podcasts/acquisition";
 
 export type LibraryPlacementTarget =
   | { kind: "Media"; id: string }
@@ -135,11 +136,12 @@ export async function addLibraryPlacement(
       await addMediaToLibraries(target.id, [libraryId]);
       return;
     case "Podcast":
-      await apiCommand204(`/api/libraries/${libraryId}/podcasts`, {
-        method: "POST",
-        body: JSON.stringify({ podcast_id: target.id }),
+      await subscribeToPodcast({
+        target: { kind: "Canonical", podcastId: target.id },
+        namedLibraryIds: [libraryId],
+        replacementConfirmation: { kind: "Absent" },
+        idempotencyKey: crypto.randomUUID(),
       });
-      publishLibraryPlacementChange([libraryId]);
       return;
   }
 }
@@ -163,7 +165,11 @@ export async function removeLibraryPlacement(
     case "Podcast":
       response = await apiFetch<unknown>(
         `/api/libraries/${libraryId}/podcasts/${target.id}`,
-        { method: "DELETE", signal },
+        {
+          method: "DELETE",
+          headers: { "Idempotency-Key": crypto.randomUUID() },
+          signal,
+        },
       );
       break;
   }
@@ -180,9 +186,19 @@ export async function removeLibraryPlacement(
   }
   requireExactKeys(
     response.data,
-    ["libraryEntriesCollectionRevision"],
-    "LibraryEntryRemovalOut.data",
+    target.kind === "Podcast"
+      ? ["outcome", "libraryEntriesCollectionRevision"]
+      : ["libraryEntriesCollectionRevision"],
+    "Library placement removal data",
   );
+  if (target.kind === "Podcast") {
+    const outcome = response.data.outcome;
+    if (outcome !== "Removed" && outcome !== "AlreadyAbsent") {
+      throw new LibraryPlacementContractDefect(
+        "Invalid PodcastPlacementRemovalOut outcome",
+      );
+    }
+  }
   const revision = decodeCollectionRevision(
     response.data.libraryEntriesCollectionRevision,
   );

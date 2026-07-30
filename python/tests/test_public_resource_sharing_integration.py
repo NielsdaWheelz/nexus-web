@@ -26,7 +26,7 @@ from nexus.db.models import (
     ProcessingStatus,
 )
 from nexus.services import locator_resolver, public_resource_sharing
-from tests.factories import add_media_to_library
+from tests.factories import add_media_to_library, add_test_podcast_episode_identity
 from tests.helpers import auth_headers, create_test_user_id
 from tests.support.storage import FakeStorageClient
 
@@ -295,8 +295,6 @@ def test_db_backed_public_projection_matrix_and_bearer_reauthorization(
                 PodcastEpisode(
                     media_id=episode.id,
                     podcast_id=podcast.id,
-                    provider_episode_id=f"episode-{uuid4()}",
-                    fallback_identity=f"fallback-{uuid4()}",
                     duration_seconds=3,
                 ),
                 MediaFile(
@@ -315,6 +313,12 @@ def test_db_backed_public_projection_matrix_and_bearer_reauthorization(
                     page_rotation_degrees=0,
                 ),
             ]
+        )
+        add_test_podcast_episode_identity(
+            db,
+            podcast_id=podcast.id,
+            media_id=episode.id,
+            value=f"episode-{episode.id}",
         )
         direct_db.register_cleanup("podcasts", "id", podcast.id)
         direct_db.register_cleanup("epub_fragment_sources", "media_id", epub.id)

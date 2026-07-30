@@ -9,7 +9,7 @@ afterEach(() => {
 });
 
 describe("Nexus URL intent", () => {
-  it("accepts only the exact Root, WebSearch, and registered QuickAction shapes", () => {
+  it("accepts Root and registered QuickAction shapes and retires WebSearch links", () => {
     expect(
       parseNexusUrlIntent(
         new URLSearchParams("nexus=1&intent=Root"),
@@ -21,7 +21,7 @@ describe("Nexus URL intent", () => {
           "nexus=1&intent=WebSearch&q=design%20systems",
         ),
       ),
-    ).toEqual({ kind: "WebSearch", query: "design systems" });
+    ).toEqual({ kind: "UnsupportedLink" });
     expect(
       parseNexusUrlIntent(
         new URLSearchParams(
@@ -37,9 +37,6 @@ describe("Nexus URL intent", () => {
   it("rejects missing, blank, duplicate, mixed, and unknown payloads", () => {
     const rejected = [
       "nexus=1&intent=Root&q=x",
-      "nexus=1&intent=WebSearch",
-      "nexus=1&intent=WebSearch&q=%20",
-      "nexus=1&intent=WebSearch&q=x&action=Nexus.Quick.Note",
       "nexus=1&intent=QuickAction&action=Unknown",
       "nexus=1&nexus=1&intent=Root",
       "nexus=1&intent=Root&intent=WebSearch",
@@ -67,10 +64,7 @@ describe("Nexus URL intent", () => {
       },
     });
 
-    expect(consumeNexusUrlIntent()).toEqual({
-      kind: "WebSearch",
-      query: "design",
-    });
+    expect(consumeNexusUrlIntent()).toEqual({ kind: "UnsupportedLink" });
     expect(replaceState).toHaveBeenCalledWith(
       state,
       "",

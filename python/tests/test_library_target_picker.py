@@ -1,4 +1,4 @@
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import text
@@ -6,6 +6,7 @@ from sqlalchemy import text
 from nexus.services import library_entries, library_governance
 from tests.factories import (
     add_library_member,
+    add_test_podcast_subscription,
     create_test_library,
     create_test_media,
 )
@@ -179,62 +180,40 @@ class TestLibraryPlacementOptions:
         direct_db.register_cleanup("libraries", "id", shared_member_library_id)
         direct_db.register_cleanup("memberships", "library_id", shared_member_library_id)
 
-        subscribe_response = auth_client.post(
-            "/podcasts/subscriptions",
-            json={
-                "provider_podcast_id": "picker-read-target",
-                "title": "Picker Read Podcast",
-                "contributors": [
-                    {
-                        "credited_name": "Nexus",
-                        "role": "author",
-                    }
-                ],
-                "feed_url": "https://feeds.example.com/picker-read.xml",
-                "website_url": "https://example.com/picker-read",
-                "image_url": "https://example.com/picker-read.png",
-                "description": "Podcast picker read test",
-                "library_ids": [str(owned_in_library_id)],
-            },
-            headers=auth_headers(viewer_id),
-        )
-
-        assert subscribe_response.status_code == 200, (
-            "podcast setup subscribe failed unexpectedly: "
-            f"{subscribe_response.status_code} {subscribe_response.text}"
-        )
-        podcast_id = UUID(subscribe_response.json()["data"]["podcast_id"])
+        podcast_id = uuid4()
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcasts (
+                        id, provider, provider_podcast_id, title, feed_url
+                    )
+                    VALUES (
+                        :podcast_id,
+                        'podcast_index',
+                        'picker-read-target',
+                        'Picker Read Podcast',
+                        'https://feeds.example.com/picker-read.xml'
+                    )
+                    """
+                ),
+                {"podcast_id": podcast_id},
+            )
+            add_test_podcast_subscription(
+                session,
+                user_id=viewer_id,
+                podcast_id=podcast_id,
+            )
+            library_entries.ensure_entry(
+                session,
+                owned_in_library_id,
+                library_entries.podcast_target(podcast_id),
+            )
+            session.commit()
 
         direct_db.register_cleanup("podcasts", "id", podcast_id)
         direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
         direct_db.register_cleanup("library_entries", "podcast_id", podcast_id)
-
-        add_response = auth_client.post(
-            f"/libraries/{owned_in_library_id}/podcasts",
-            json={"podcast_id": str(podcast_id)},
-            headers=auth_headers(viewer_id),
-        )
-        assert add_response.status_code == 204, (
-            "podcast setup library attach failed unexpectedly: "
-            f"{add_response.status_code} {add_response.text}"
-        )
-
-        with direct_db.session() as session:
-            job_ids = session.execute(
-                text(
-                    """
-                    SELECT id
-                    FROM background_jobs
-                    WHERE kind = 'podcast_sync_subscription_job'
-                      AND payload->>'user_id' = :user_id
-                      AND payload->>'podcast_id' = :podcast_id
-                    """
-                ),
-                {"user_id": str(viewer_id), "podcast_id": str(podcast_id)},
-            ).fetchall()
-
-        for job_id in job_ids:
-            direct_db.register_cleanup("background_jobs", "id", job_id[0])
 
         response = auth_client.get(
             f"/podcasts/{podcast_id}/libraries",
@@ -281,10 +260,21 @@ class TestLibraryPlacementOptions:
             session.execute(
                 text(
                     """
-                    UPDATE podcast_subscriptions
-                    SET status = 'unsubscribed'
-                    WHERE user_id = :viewer_id
-                      AND podcast_id = :podcast_id
+                    DELETE FROM podcast_subscription_backfills
+                    WHERE subscription_id IN (
+                        SELECT id
+                        FROM podcast_subscriptions
+                        WHERE user_id = :viewer_id AND podcast_id = :podcast_id
+                    )
+                    """
+                ),
+                {"viewer_id": viewer_id, "podcast_id": podcast_id},
+            )
+            session.execute(
+                text(
+                    """
+                    DELETE FROM podcast_subscriptions
+                    WHERE user_id = :viewer_id AND podcast_id = :podcast_id
                     """
                 ),
                 {"viewer_id": viewer_id, "podcast_id": podcast_id},

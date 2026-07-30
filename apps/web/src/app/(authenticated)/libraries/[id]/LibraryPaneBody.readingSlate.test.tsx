@@ -127,10 +127,12 @@ function entryWire(
   } = {},
 ) {
   return {
-    id,
     kind: "media",
-    position: 0,
-    created_at: "2026-01-01T00:00:00Z",
+    placement: {
+      kind: "Present",
+      value: { libraryEntryId: id, position: 0 },
+    },
+    addedAt: "2026-01-01T00:00:00Z",
     media: {
       id: mediaId,
       kind: "web_article",
@@ -503,11 +505,28 @@ describe("LibraryPaneBody Reading Slate host", () => {
         });
       }
       if (
-        path === `/api/libraries/${LIBRARY_ID}/podcasts` &&
+        path === "/api/podcasts/subscriptions" &&
         method === "POST"
       ) {
         podcastBodies.push(String(init?.body));
-        return new Response(null, { status: 204 });
+        return response({
+          data: {
+            href: `/podcasts/${SUGGESTED_PODCAST_ID}`,
+            podcastId: SUGGESTED_PODCAST_ID,
+            outcome: "DestinationsAdded",
+            destinations: [
+              { libraryId: LIBRARY_ID, outcome: "Added" },
+            ],
+            backfill: {
+              id: "backfill-1",
+              state: "Running",
+              processedCount: 2,
+              addedCount: 1,
+            },
+            collectionRevision: 2,
+            libraryEntriesCollectionRevision: 2,
+          },
+        });
       }
       throw new Error(`Unexpected fetch: ${method} ${path}`);
     });
@@ -527,7 +546,14 @@ describe("LibraryPaneBody Reading Slate host", () => {
 
     await waitFor(() => expect(slateReads).toBe(2));
     expect(podcastBodies).toEqual([
-      JSON.stringify({ podcast_id: SUGGESTED_PODCAST_ID }),
+      JSON.stringify({
+        target: {
+          kind: "Canonical",
+          podcastId: SUGGESTED_PODCAST_ID,
+        },
+        namedLibraryIds: [LIBRARY_ID],
+        replacementConfirmation: { kind: "Absent" },
+      }),
     ]);
     expect(await screen.findByText("Added to Research")).toBeVisible();
   });

@@ -33,7 +33,6 @@ from nexus.services.collection_revisions import (
     read_collection_revision,
 )
 from nexus.services.consumption import service as consumption_service
-from nexus.services.contributors import MediaTarget, replace_observed_role_slices
 
 from ._normalize import (
     parse_iso_datetime,
@@ -274,8 +273,7 @@ def poll_active_subscriptions_once(
             f"""
             SELECT user_id, podcast_id
             FROM podcast_subscriptions
-            WHERE status = 'active'
-              AND (
+            WHERE (
                   sync_status <> 'running'
                   OR ({_SYNC_RUNNING_STALE_SQL})
               )
@@ -314,7 +312,6 @@ def poll_active_subscriptions_once(
                             updated_at = now()
                         WHERE user_id = :user_id
                           AND podcast_id = :podcast_id
-                          AND status = 'active'
                           AND (
                               sync_status <> 'running'
                               OR ({_SYNC_RUNNING_STALE_SQL})
@@ -581,48 +578,48 @@ def run_podcast_subscription_sync_now(
     sync_cutoff_at = claim.sync_started_at
 
     try:
-        window_size = settings.podcast_initial_episode_window
-        prefetch_limit = max(window_size, settings.podcast_ingest_prefetch_limit)
-
         podcast = _get_podcast_sync_metadata(db, podcast_id)
         client = get_podcast_index_client()
         provider_episode_candidates = client.fetch_recent_episodes(
-            podcast["provider_podcast_id"], prefetch_limit
+            podcast["provider_podcast_id"], PODCAST_INDEX_EPISODE_PAGE_SIZE
         )
-        episode_candidates = augment_provider_episodes_with_feed_pagination(
+        candidates = augment_provider_episodes_with_feed_pagination(
             provider_episode_candidates=provider_episode_candidates,
             feed_url=podcast["feed_url"],
-            prefetch_limit=prefetch_limit,
         )
         selected_episodes = sorted(
-            episode_candidates,
+            candidates.episodes,
             key=lambda ep: parse_iso_datetime(ep.get("published_at"))
             or datetime.min.replace(tzinfo=UTC),
             reverse=True,
-        )[:window_size]
+        )
         selected_episodes = hydrate_selected_episode_chapters_from_feed(
             selected_episodes=selected_episodes,
             feed_url=podcast["feed_url"],
         )
-        source_limited = (
-            len(provider_episode_candidates) >= PODCAST_INDEX_EPISODE_PAGE_SIZE
-            and len(episode_candidates) < prefetch_limit
-        )
+        source_limited = candidates.source_limited
 
         logger.info(
             "podcast_sync_episode_selection",
             viewer_id=str(user_id),
             podcast_id=str(podcast_id),
-            prefetch_limit=prefetch_limit,
+            provider_limit=PODCAST_INDEX_EPISODE_PAGE_SIZE,
             provider_candidate_count=len(provider_episode_candidates),
-            candidate_count=len(episode_candidates),
-            window_size=window_size,
+            candidate_count=len(candidates.episodes),
             selected_count=len(selected_episodes),
             source_limited=source_limited,
         )
 
         sync_now = datetime.now(UTC)
         with transaction(db):
+            # Fence the subscription before alias/Podcast/Media/Library mutation.
+            _revalidate_sync_fence_for_ingest(
+                db,
+                user_id=user_id,
+                podcast_id=podcast_id,
+                claim=claim,
+                sync_lease_seconds=sync_lease_seconds,
+            )
             ingest_result = sync_subscription_ingest(
                 db=db,
                 viewer_id=user_id,
@@ -631,32 +628,7 @@ def run_podcast_subscription_sync_now(
                 selected_episodes=selected_episodes,
                 now=sync_now,
             )
-            # Immediately before commit, revalidate this worker's exact claim under
-            # a subscription row lock retained through commit (spec §5.3). A
-            # reclaimed/expired claim rolls back the whole ingest transaction.
-            _revalidate_sync_fence_for_ingest(
-                db,
-                user_id=user_id,
-                podcast_id=podcast_id,
-                claim=claim,
-                sync_lease_seconds=sync_lease_seconds,
-            )
-
-        # The ingest transaction is closed; now apply each touched episode's author
-        # slice through the facade in a fresh session (spec 2.4, D-16). This gates
-        # completion: a failed author op raises, the sync is marked failed below,
-        # and the JOB completes without a job-level retry (the failed result is not
-        # in failed_result_statuses and a retry could not re-claim a 'failed' sync
-        # anyway). Durable convergence (AC 9) is the next periodic poll — it
-        # re-marks any non-running sync 'pending' — or a user refresh; both re-run
-        # the sync, rebuild observations for reused episodes, and re-apply them,
-        # which the resolver's determinism + no-DML-when-unchanged make safe.
-        for media_id, observation in ingest_result.author_observations:
-            replace_observed_role_slices(
-                target=MediaTarget(media_id),
-                observation=observation,
-                source="rss",
-            )
+            source_limited = source_limited or ingest_result.source_limited
 
         sync_status: str = "source_limited" if source_limited else "complete"
         # One fresh, top-level serializable step (never inside an open txn): revalidate
@@ -669,7 +641,6 @@ def run_podcast_subscription_sync_now(
             sync_cutoff_at=sync_cutoff_at,
             sync_status_on_complete=sync_status,
             sync_lease_seconds=sync_lease_seconds,
-            initial_episode_window=window_size,
             now=sync_now,
         )
 
@@ -741,9 +712,7 @@ def refresh_subscription_sync_for_viewer(
         row = db.execute(
             text(
                 f"""
-                SELECT
-                    status,
-                    (
+                SELECT (
                         sync_status = 'running'
                         AND NOT ({_SYNC_RUNNING_STALE_SQL})
                     ) AS running_and_healthy
@@ -757,10 +726,10 @@ def refresh_subscription_sync_for_viewer(
                 "sync_lease_seconds": sync_lease_seconds,
             },
         ).fetchone()
-        if row is None or row[0] != "active":
+        if row is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast subscription not found")
 
-        if not bool(row[1]):
+        if not bool(row[0]):
             updated = db.execute(
                 text(
                     f"""
@@ -774,7 +743,6 @@ def refresh_subscription_sync_for_viewer(
                         updated_at = now()
                     WHERE user_id = :user_id
                       AND podcast_id = :podcast_id
-                      AND status = 'active'
                       AND (
                           sync_status <> 'running'
                           OR ({_SYNC_RUNNING_STALE_SQL})
@@ -904,7 +872,6 @@ def _claim_subscription_sync_pending(
                 updated_at = now()
             WHERE user_id = :user_id
               AND podcast_id = :podcast_id
-              AND status = 'active'
               AND (
                   sync_status = 'pending'
                   OR (
@@ -1026,7 +993,6 @@ def _revalidate_sync_fence_for_ingest(
             FROM podcast_subscriptions
             WHERE user_id = :user_id
               AND podcast_id = :podcast_id
-              AND status = 'active'
               AND sync_status = 'running'
               AND sync_attempts = :sync_attempts
               AND sync_started_at = :sync_started_at
@@ -1056,7 +1022,6 @@ def _advance_auto_subscription_after_sync(
     sync_cutoff_at: datetime,
     sync_status_on_complete: str,
     sync_lease_seconds: int,
-    initial_episode_window: int,
     now: datetime,
 ) -> None:
     """Run the fenced watermark step on a fresh serializable transaction (spec §5.3).
@@ -1079,7 +1044,6 @@ def _advance_auto_subscription_after_sync(
                 sync_cutoff_at,
                 sync_status_on_complete,
                 sync_lease_seconds,
-                initial_episode_window,
                 now,
             ),
         )
@@ -1095,7 +1059,6 @@ def _advance_auto_subscription_op(
     sync_cutoff_at: datetime,
     sync_status_on_complete: str,
     sync_lease_seconds: int,
-    initial_episode_window: int,
     now: datetime,
 ) -> None:
     row = db.execute(
@@ -1105,7 +1068,6 @@ def _advance_auto_subscription_op(
             FROM podcast_subscriptions
             WHERE user_id = :user_id
               AND podcast_id = :podcast_id
-              AND status = 'active'
               AND sync_status = 'running'
               AND sync_attempts = :sync_attempts
               AND sync_started_at = :sync_started_at
@@ -1140,7 +1102,6 @@ def _advance_auto_subscription_op(
             podcast_id=podcast_id,
             sync_cutoff_at=sync_cutoff_at,
             watermark=watermark,
-            initial_episode_window=initial_episode_window,
         )
         if eligible:
             consumption_service.ensure_missing_items_in_txn(
@@ -1184,12 +1145,11 @@ def _eligible_auto_subscription_media(
     podcast_id: UUID,
     sync_cutoff_at: datetime,
     watermark: datetime | None,
-    initial_episode_window: int,
 ) -> list[UUID]:
     """Episodes eligible for auto-subscription at this cutoff (published_at bound).
 
-    Null watermark selects the most recent ``initial_episode_window`` episodes at or
-    before the cutoff; later runs select ``watermark < published_at <= cutoff``.
+    Null watermark selects every acquired episode at or before the cutoff; later
+    runs select ``watermark < published_at <= cutoff``.
     Missing ``published_at`` is ineligible. Ordered oldest-first for insertion."""
     if watermark is None:
         rows = db.execute(
@@ -1200,17 +1160,15 @@ def _eligible_auto_subscription_media(
                 WHERE podcast_id = :podcast_id
                   AND published_at IS NOT NULL
                   AND published_at <= :cutoff
-                ORDER BY published_at DESC, media_id DESC
-                LIMIT :window
+                ORDER BY published_at ASC, media_id ASC
                 """
             ),
             {
                 "podcast_id": podcast_id,
                 "cutoff": sync_cutoff_at,
-                "window": initial_episode_window,
             },
         ).fetchall()
-        return [UUID(str(row[0])) for row in reversed(rows)]
+        return [UUID(str(row[0])) for row in rows]
 
     rows = db.execute(
         text(

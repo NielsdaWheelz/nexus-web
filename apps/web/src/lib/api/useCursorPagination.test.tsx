@@ -46,6 +46,7 @@ describe("useCursorPagination", () => {
       ({ firstPage }) =>
         useCursorPagination({
           firstPage,
+          initialMoreError: null,
           buildMoreHref: (cursor) => `/api/things?cursor=${cursor}`,
         }),
       { initialProps: { firstPage: readyPage(["first"], "cursor-1") } },
@@ -79,6 +80,7 @@ describe("useCursorPagination", () => {
       ({ firstPage }) =>
         useCursorPagination({
           firstPage,
+          initialMoreError: null,
           buildMoreHref: (cursor) => `/api/things?cursor=${cursor}`,
         }),
       { initialProps: { firstPage: readyPage(["first"], "cursor-1") } },

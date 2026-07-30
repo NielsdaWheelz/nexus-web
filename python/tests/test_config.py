@@ -216,7 +216,7 @@ class TestWorkerMaintenanceConfiguration:
             f"production worker lanes overlap: {sorted(interactive & background)}"
         )
         assert interactive | background == production
-        assert len(production) == 17
+        assert len(production) == 18
         assert len(maintenance) == 4
         assert not production & maintenance, (
             f"production and maintenance job sets overlap: {sorted(production & maintenance)}"
@@ -229,6 +229,14 @@ class TestWorkerMaintenanceConfiguration:
 
     def test_dawn_write_is_background_work(self):
         assert "dawn_write_job" in BACKGROUND_WORKER_JOB_KINDS
+
+    def test_podcast_backfill_is_declared_background_work(self):
+        from nexus.jobs.registry import get_default_registry
+
+        assert "podcast_backfill_subscription" in BACKGROUND_WORKER_JOB_KINDS
+        definition = get_default_registry()["podcast_backfill_subscription"]
+        assert definition.failed_result_statuses == ("failed",)
+        assert definition.dead_letter_handler is not None
 
     def test_zero_schedule_values_are_valid_disabled_state(self):
         settings = _make_settings(

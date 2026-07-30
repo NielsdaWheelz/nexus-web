@@ -1,7 +1,7 @@
 """Pydantic schemas for podcast discovery, subscription, and plan policy."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -14,28 +14,11 @@ from nexus.schemas.contributors import (
 )
 from nexus.schemas.media import MediaProcessingStatus
 from nexus.schemas.presence import Presence
+from nexus.services.sealed_handles import DiscoveryTargetHandle
 
 
-class PodcastDiscoveryOut(BaseModel):
-    podcast_id: UUID | None = None
-    provider_podcast_id: str
-    title: str
-    contributors: list[ContributorCreditOut] = Field(default_factory=list)
-    feed_url: str
-    website_url: str | None = None
-    image_url: str | None = None
-    description: str | None = None
-
-
-class _PodcastWritePayload(BaseModel):
-    """Podcast write boundary (subscribe/OPML).
-
-    ``contributors`` rides the snake-strict :class:`ContributorCreditIn` v2 (D-4):
-    ``{credited_name, role, raw_role}`` only, ``extra="forbid"`` — an unknown
-    field (a stale ``source``/``ordinal``/output-shaped key) is a 400. The former
-    ``contributor_credit_write_payload`` output-field scrub is gone; clients send
-    the typed input shape.
-    """
+class PodcastSourceFacts(BaseModel):
+    """Trusted provider facts after Podcast discovery or OPML resolution."""
 
     provider_podcast_id: str = Field(min_length=1)
     title: str = Field(min_length=1)
@@ -48,9 +31,61 @@ class _PodcastWritePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class PodcastSubscribeRequest(_PodcastWritePayload):
-    auto_queue: bool = False
-    library_ids: list[UUID] = Field(default_factory=list)
+class PodcastDiscoveryCommitTarget(BaseModel):
+    kind: Literal["Discovery"] = "Discovery"
+    target: DiscoveryTargetHandle
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class PodcastCanonicalCommitTarget(BaseModel):
+    kind: Literal["Canonical"] = "Canonical"
+    podcast_id: UUID
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )
+
+
+PodcastCommitTarget = Annotated[
+    PodcastDiscoveryCommitTarget | PodcastCanonicalCommitTarget,
+    Field(discriminator="kind"),
+]
+
+
+class PodcastReplacementConfirmation(BaseModel):
+    conflict_fingerprint: str = Field(min_length=64, max_length=64)
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )
+
+
+class PodcastSubscribeRequest(BaseModel):
+    target: PodcastCommitTarget
+    named_library_ids: list[UUID] = Field(default_factory=list)
+    replacement_confirmation: Presence[PodcastReplacementConfirmation]
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )
+
+
+class PodcastEpisodeFromDiscoveryRequest(BaseModel):
+    target: DiscoveryTargetHandle
+    named_library_ids: list[UUID] = Field(default_factory=list)
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )
 
 
 class PodcastOpmlImportRequest(BaseModel):
@@ -61,17 +96,80 @@ class PodcastOpmlImportRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class PodcastSubscribeOut(BaseModel):
+class PodcastBackfillOut(BaseModel):
+    id: UUID
+    state: Literal["Pending", "Running", "Complete", "SourceLimited", "Failed"]
+    processed_count: int = Field(ge=0)
+    added_count: int = Field(ge=0)
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )
+
+
+class PodcastBackfillRetryOut(BaseModel):
     podcast_id: UUID
-    subscription_created: bool
-    auto_queue: bool
-    sync_status: Literal["pending", "running", "partial", "complete", "source_limited", "failed"]
-    sync_enqueued: bool
-    sync_error_code: str | None = None
-    sync_error_message: str | None = None
-    sync_attempts: int
-    last_synced_at: datetime | None = None
-    window_size: int
+    outcome: Literal["Retried", "NotEligible"]
+    backfill: PodcastBackfillOut
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )
+
+
+class PodcastDestinationOutcomeOut(BaseModel):
+    library_id: UUID
+    outcome: Literal["Added", "AlreadyPresent", "IncludedThroughPodcast"]
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )
+
+
+class PodcastSubscribeDestinationOutcomeOut(BaseModel):
+    library_id: UUID
+    outcome: Literal["Added", "AlreadyPresent"]
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )
+
+
+class PodcastSubscribeOut(BaseModel):
+    href: str
+    podcast_id: UUID
+    outcome: Literal["Subscribed", "AlreadySubscribed", "DestinationsAdded"]
+    destinations: list[PodcastSubscribeDestinationOutcomeOut]
+    backfill: PodcastBackfillOut
+    collection_revision: CollectionRevision
+    library_entries_collection_revision: CollectionRevision
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )
+
+
+class PodcastEpisodeFromDiscoveryOut(BaseModel):
+    href: str
+    media_id: UUID
+    destination_outcomes: list[PodcastDestinationOutcomeOut]
+    collection_revision: CollectionRevision
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )
 
 
 class PodcastSubscriptionSettingsPatchRequest(BaseModel):
@@ -108,7 +206,6 @@ class PodcastOpmlImportOut(BaseModel):
 class PodcastSubscriptionStatusOut(BaseModel):
     user_id: UUID
     podcast_id: UUID
-    status: Literal["active", "unsubscribed"]
     default_playback_speed: float | None = Field(default=None, ge=0.5, le=3.0)
     auto_queue: bool = False
     sync_status: Literal["pending", "running", "partial", "complete", "source_limited", "failed"]
@@ -119,6 +216,7 @@ class PodcastSubscriptionStatusOut(BaseModel):
     sync_completed_at: datetime | None = None
     last_synced_at: datetime | None = None
     updated_at: datetime
+    backfill: PodcastBackfillOut
 
 
 class PodcastSubscriptionSettingsOut(PodcastSubscriptionStatusOut):
@@ -289,17 +387,34 @@ class PodcastDetailOut(BaseModel):
     subscription: PodcastSubscriptionStatusOut | None
 
 
-class PodcastUnsubscribeOut(BaseModel):
+class PodcastUnsubscribedOut(BaseModel):
+    outcome: Literal["Unsubscribed"] = "Unsubscribed"
     podcast_id: UUID
-    status: Literal["unsubscribed"]
-    removed_from_library_count: int = Field(ge=0)
-    retained_shared_library_count: int = Field(ge=0)
+    removed_placement_count: int = Field(ge=0)
+    retained_shared_count: int = Field(ge=0)
     collection_revision: CollectionRevision = Field(alias="collectionRevision")
     library_entries_collection_revision: CollectionRevision = Field(
         alias="libraryEntriesCollectionRevision"
     )
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+class PodcastAlreadyUnsubscribedOut(BaseModel):
+    outcome: Literal["AlreadyUnsubscribed"] = "AlreadyUnsubscribed"
+    podcast_id: UUID
+    collection_revision: CollectionRevision = Field(alias="collectionRevision")
+    library_entries_collection_revision: CollectionRevision = Field(
+        alias="libraryEntriesCollectionRevision"
+    )
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+PodcastUnsubscribeOut = Annotated[
+    PodcastUnsubscribedOut | PodcastAlreadyUnsubscribedOut,
+    Field(discriminator="outcome"),
+]
 
 
 class PodcastSubscriptionSyncRefreshOut(BaseModel):

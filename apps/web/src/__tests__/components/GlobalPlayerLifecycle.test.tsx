@@ -23,6 +23,7 @@ import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
 import { MobileViewportProvider } from "@/lib/mobileViewport/MobileViewportProvider";
 import { WorkspaceTestProvider } from "@/__tests__/helpers/WorkspaceTestProvider";
 import {
+  canonicalSessionOfGlobalState,
   GlobalPlayerProvider,
   useGlobalPlayer,
 } from "@/lib/player/globalPlayer";
@@ -175,7 +176,7 @@ function installMock(config: MockConfig) {
 
 function Probes() {
   const { state } = useGlobalPlayer();
-  const origin = state.kind === "Absent" ? "none" : state.session.origin.kind;
+  const origin = canonicalSessionOfGlobalState(state)?.origin.kind ?? "none";
   const phase = state.kind === "Active" ? state.phase : "none";
   return (
     <>

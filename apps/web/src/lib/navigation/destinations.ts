@@ -28,6 +28,11 @@ export const DESTINATION_REGISTRY = {
     href: "/libraries",
     keywords: ["collections", "sources"],
   },
+  browse: {
+    label: "Browse",
+    href: "/browse",
+    keywords: ["discover", "external", "find"],
+  },
   podcasts: {
     label: "Podcasts",
     href: "/podcasts",

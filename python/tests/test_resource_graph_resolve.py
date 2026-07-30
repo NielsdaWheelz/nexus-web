@@ -34,7 +34,6 @@ from nexus.db.models import (
     PassageAnchor,
     PdfPageTextSpan,
     Podcast,
-    PodcastSubscription,
     ProcessingStatus,
     ResourceEdge,
     ResourceExternalSnapshot,
@@ -58,6 +57,7 @@ from nexus.services.resource_graph.resolve import (
 from nexus.services.resource_items.routing import route_for_ref
 from tests.factories import (
     add_media_to_library,
+    add_test_podcast_subscription,
     create_test_conversation,
     create_test_library,
     create_test_media,
@@ -1571,9 +1571,7 @@ def test_resolve_podcast_subscribed_returns_title(db_session: Session, bootstrap
     )
     db_session.add(podcast)
     db_session.flush()
-    db_session.add(
-        PodcastSubscription(user_id=bootstrapped_user, podcast_id=podcast.id, status="active")
-    )
+    add_test_podcast_subscription(db_session, user_id=bootstrapped_user, podcast_id=podcast.id)
     db_session.commit()
 
     resolved = _resolve(db_session, f"podcast:{podcast.id}", viewer_id=bootstrapped_user)

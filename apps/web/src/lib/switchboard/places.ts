@@ -7,6 +7,7 @@ import {
 export const SWITCHBOARD_PLACE_IDS = [
   "lectern",
   "libraries",
+  "browse",
   "podcasts",
   "chats",
   "notes",

@@ -11,7 +11,6 @@ import {
 import DesktopNexusActionsPage from "./DesktopNexusActionsPage";
 import DesktopNexusInput from "./DesktopNexusInput";
 import DesktopNexusResults from "./DesktopNexusResults";
-import DesktopNexusWebSearch from "./DesktopNexusWebSearch";
 import type { DesktopNexusController } from "./types";
 import styles from "./desktopNexus.module.css";
 
@@ -71,8 +70,6 @@ export default function DesktopNexus({
             controller.workflow
           ) : controller.page.kind === "Actions" ? (
             <DesktopNexusActionsPage controller={controller} />
-          ) : controller.page.kind === "WebSearch" ? (
-            <DesktopNexusWebSearch controller={controller} />
           ) : (
             <>
               <h2 className="sr-only">Nexus</h2>

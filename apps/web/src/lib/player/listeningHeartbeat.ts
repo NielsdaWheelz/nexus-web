@@ -17,6 +17,7 @@
  */
 
 import { ApiError, apiFetch, apiKeepaliveJson, isApiError, type ApiPath } from "@/lib/api/client";
+import { asRecord, exactKeys } from "@/lib/api/exact";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { publishConsumptionProjectionChange } from "@/lib/consumption/projectionRevision";
 import type { Presence } from "@/lib/api/presence";
@@ -26,7 +27,6 @@ import {
   type MediaId,
 } from "@/lib/lectern/contract";
 import type { OverlayEntry } from "@/lib/player/playerSession";
-import { isRecord } from "@/lib/validation";
 
 /** Per-request browser deadline; a slow PUT/GET is aborted and treated as an
  * ambiguous outcome (spec §5.4 "named 20-second browser deadline"). */
@@ -91,20 +91,6 @@ interface HeartbeatResult {
 }
 
 // --- Strict decoders (same-system: any shape violation is a defect) ---------
-
-function asRecord(raw: unknown, ctx: string): Record<string, unknown> {
-  if (!isRecord(raw)) {
-    throw new Error(`Invalid ${ctx}: expected an object, got ${raw === null ? "null" : typeof raw}`);
-  }
-  return raw;
-}
-
-function exactKeys(rec: Record<string, unknown>, expected: readonly string[], ctx: string): void {
-  const keys = Object.keys(rec);
-  if (keys.length !== expected.length || !expected.every((key) => key in rec)) {
-    throw new Error(`Invalid ${ctx}: expected keys [${expected.join(", ")}], got [${keys.join(", ")}]`);
-  }
-}
 
 function asString(raw: unknown, ctx: string): string {
   if (typeof raw !== "string") throw new Error(`Invalid ${ctx}: expected a string, got ${typeof raw}`);

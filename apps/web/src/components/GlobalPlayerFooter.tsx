@@ -15,11 +15,16 @@ import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscap
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { isPositiveFinite } from "@/lib/validation";
 import {
+  canonicalSessionOfGlobalState,
   PLAYER_SKIP_BACK_SECONDS,
   PLAYER_SKIP_FORWARD_SECONDS,
+  previewSessionOfGlobalState,
   useGlobalPlayer,
 } from "@/lib/player/globalPlayer";
-import { chapterIndexAtPositionMs, chapterMarkers } from "@/lib/player/chapters";
+import {
+  chapterIndexAtPositionMs,
+  chapterMarkers,
+} from "@/lib/player/chapters";
 import {
   SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS,
   formatPlaybackSpeedLabel,
@@ -46,7 +51,10 @@ import styles from "./GlobalPlayerFooter.module.css";
 
 const MARK_HOLD_THRESHOLD_MS = 500;
 
-const VOLUME_BOOST_OPTIONS: Array<{ value: AudioEffectsVolumeBoost; label: string }> = [
+const VOLUME_BOOST_OPTIONS: Array<{
+  value: AudioEffectsVolumeBoost;
+  label: string;
+}> = [
   { value: "off", label: "Off" },
   { value: "low", label: "Low (+3dB)" },
   { value: "medium", label: "Medium (+6dB)" },
@@ -73,7 +81,9 @@ function EffectsPanel({
   return (
     <section className={styles.effectsPanel} aria-label="Audio effects panel">
       {!audioEffectsAvailable && (
-        <p className={styles.effectsUnavailable}>Audio effects unavailable for this source.</p>
+        <p className={styles.effectsUnavailable}>
+          Audio effects unavailable for this source.
+        </p>
       )}
 
       <label className={styles.effectsToggle}>
@@ -125,9 +135,15 @@ function EffectsPanel({
       </label>
 
       <p className={styles.effectsMeta}>
-        Time saved: {isPositiveFinite(silenceTimeSavedSeconds) ? silenceTimeSavedSeconds.toFixed(1) : "0.0"}s
+        Time saved:{" "}
+        {isPositiveFinite(silenceTimeSavedSeconds)
+          ? silenceTimeSavedSeconds.toFixed(1)
+          : "0.0"}
+        s
       </p>
-      {isSilenceTrimming && <span className={styles.trimmingBadge}>Trimming silence</span>}
+      {isSilenceTrimming && (
+        <span className={styles.trimmingBadge}>Trimming silence</span>
+      )}
     </section>
   );
 }
@@ -151,8 +167,14 @@ function StatusArea({
 }) {
   if (playbackError) {
     return (
-      <div className={styles.playbackErrorArea} role="status" aria-live="polite">
-        <span className={styles.playbackErrorMessage}>{playbackError.message}</span>
+      <div
+        className={styles.playbackErrorArea}
+        role="status"
+        aria-live="polite"
+      >
+        <span className={styles.playbackErrorMessage}>
+          {playbackError.message}
+        </span>
         <Button
           variant="secondary"
           size="sm"
@@ -176,8 +198,14 @@ function StatusArea({
   }
   if (completionRetry) {
     return (
-      <div className={styles.playbackErrorArea} role="status" aria-live="polite">
-        <span className={styles.playbackErrorMessage}>Couldn’t save your progress.</span>
+      <div
+        className={styles.playbackErrorArea}
+        role="status"
+        aria-live="polite"
+      >
+        <span className={styles.playbackErrorMessage}>
+          Couldn’t save your progress.
+        </span>
         <Button
           variant="secondary"
           size="sm"
@@ -193,7 +221,11 @@ function StatusArea({
   return (
     <span className={styles.timecode}>
       {isBuffering && (
-        <span className={styles.bufferingIndicator} role="status" aria-live="polite">
+        <span
+          className={styles.bufferingIndicator}
+          role="status"
+          aria-live="polite"
+        >
           <span className={styles.bufferingDot} aria-hidden="true" />
           Buffering...
         </span>
@@ -204,16 +236,19 @@ function StatusArea({
 }
 
 /** The read-only "Next" preview line (spec §6). */
-function nextPreviewText(preview: ReturnType<typeof useGlobalPlayer>["nextPreview"]): string | null {
+function nextPreviewText(
+  preview: ReturnType<typeof useGlobalPlayer>["nextPreview"],
+): string | null {
   if (preview.kind === "Forward") return `Forward: ${preview.descriptor.title}`;
-  if (preview.kind === "Lectern") return `Next on the Lectern: ${preview.descriptor.title}`;
+  if (preview.kind === "Lectern")
+    return `Next on the Lectern: ${preview.descriptor.title}`;
   return null;
 }
 
 export default function GlobalPlayerFooter() {
   const workspace = useWorkspaceStore();
   const mobileViewport = useMobileViewport();
-  const activateMediaTarget = useCallback(
+  const activatePlayerTarget = useCallback(
     (event: ReactMouseEvent<HTMLAnchorElement>, href: string) => {
       activateTargetLink({
         event,
@@ -251,6 +286,7 @@ export default function GlobalPlayerFooter() {
     nextPreview,
     bindAudioElement,
     playAudio,
+    playPreviewAudio,
     resume,
     pause,
     previous,
@@ -262,36 +298,69 @@ export default function GlobalPlayerFooter() {
     setAudioEffects,
   } = useGlobalPlayer();
 
-  const session = state.kind === "Absent" ? null : state.session;
-  const descriptor = session?.descriptor ?? null;
-  const currentMediaId = descriptor?.mediaId ?? null;
+  const canonicalSession = canonicalSessionOfGlobalState(state);
+  const previewSession = previewSessionOfGlobalState(state);
+  const canonicalDescriptor = canonicalSession?.descriptor ?? null;
+  const previewDescriptor = previewSession?.descriptor ?? null;
+  const activeDescriptor = canonicalDescriptor
+    ? { kind: "Canonical" as const, value: canonicalDescriptor }
+    : previewDescriptor
+      ? { kind: "Preview" as const, value: previewDescriptor }
+      : null;
+  const currentMediaId = canonicalDescriptor?.mediaId ?? null;
+  const isPreview = activeDescriptor?.kind === "Preview";
+  const title = activeDescriptor?.value.title ?? null;
 
-  const isPlaying = state.kind === "Active" && state.phase === "Playing";
-  const isBuffering = state.kind === "Active" && state.phase === "Buffering";
-  const playbackError = state.kind === "PlaybackFailed" ? { message: state.error.message } : null;
-  const completionRetry = state.kind === "CompletionFailed" ? state.retry : null;
-  const retryPlayback = state.kind === "PlaybackFailed" ? state.retry : () => {};
+  const isPlaying =
+    (state.kind === "Active" || state.kind === "PreviewAudio") &&
+    state.phase === "Playing";
+  const isBuffering =
+    (state.kind === "Active" || state.kind === "PreviewAudio") &&
+    state.phase === "Buffering";
+  const playbackError =
+    state.kind === "PlaybackFailed" || state.kind === "PreviewAudioFailed"
+      ? { message: state.error.message }
+      : null;
+  const completionRetry =
+    state.kind === "CompletionFailed" ? state.retry : null;
+  const retryPlayback =
+    state.kind === "PlaybackFailed" || state.kind === "PreviewAudioFailed"
+      ? state.retry
+      : () => {};
   // Session-replacing transport is disabled while a completion is in flight/failed.
-  const transportLocked = state.kind === "Completing" || state.kind === "CompletionFailed";
+  const transportLocked =
+    state.kind === "Completing" || state.kind === "CompletionFailed";
 
   useLayoutEffect(() => {
     const footer = footerRef.current;
-    if (!isMobile || descriptor === null || footer === null) {
+    if (!isMobile || title === null || footer === null) {
       return;
     }
     return mobileViewport.registerFixedObstruction("Player", footer);
-  }, [descriptor, isMobile, mobileViewport]);
+  }, [title, isMobile, mobileViewport]);
+
+  useEffect(() => {
+    if (!isPreview) return;
+    setWalknoteReviewOpen(false);
+    setEffectsOpen(false);
+    setMoreOpen(false);
+  }, [isPreview]);
 
   const currentTimeSeconds = presentation.positionMs / 1000;
   const durationSeconds = presentation.durationMs / 1000;
   const bufferedSeconds = presentation.bufferedMs / 1000;
 
-  const chapters = descriptor?.activation.chapters ?? [];
-  const currentChapterIndex = chapterIndexAtPositionMs(chapters, presentation.positionMs);
+  const chapters = canonicalDescriptor?.activation.chapters ?? [];
+  const currentChapterIndex = chapterIndexAtPositionMs(
+    chapters,
+    presentation.positionMs,
+  );
   const currentChapter = presentation.currentChapter;
   const markers = chapterMarkers(chapters, presentation.durationMs);
 
-  const selectedPlaybackRateOption = isSubscriptionSpeed(presentation.playbackRate)
+  const selectedPlaybackRateOption = isSubscriptionSpeed(
+    presentation.playbackRate,
+  )
     ? presentation.playbackRate
     : 1;
 
@@ -308,18 +377,23 @@ export default function GlobalPlayerFooter() {
   const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const holdFiredRef = useRef(false);
   const recordingWaypointIdRef = useRef<string | null>(null);
-  const pointerDownCaptureRef = useRef<{ mediaId: string; posMs: number } | null>(null);
+  const pointerDownCaptureRef = useRef<{
+    mediaId: string;
+    posMs: number;
+  } | null>(null);
 
   // Announce track changes politely (spec §6 "Now playing: …").
   const announcedMediaRef = useRef<string | null>(null);
   useEffect(() => {
-    if (descriptor && descriptor.mediaId !== announcedMediaRef.current) {
-      announcedMediaRef.current = descriptor.mediaId;
-      setNowPlaying(`Now playing: ${descriptor.title}`);
-    } else if (!descriptor) {
+    const identity =
+      canonicalDescriptor?.mediaId ?? previewDescriptor?.target ?? null;
+    if (identity && identity !== announcedMediaRef.current) {
+      announcedMediaRef.current = identity;
+      setNowPlaying(`Now playing: ${title}`);
+    } else if (!identity) {
       announcedMediaRef.current = null;
     }
-  }, [descriptor]);
+  }, [canonicalDescriptor, previewDescriptor, title]);
 
   const closeMobileExpanded = () => {
     setMobileExpanded(false);
@@ -377,7 +451,14 @@ export default function GlobalPlayerFooter() {
         });
       }, MARK_HOLD_THRESHOLD_MS);
     },
-    [currentMediaId, currentTimeSeconds, canTranscribe, addWaypoint, updateWaypointVoice, voiceRecorder]
+    [
+      currentMediaId,
+      currentTimeSeconds,
+      canTranscribe,
+      addWaypoint,
+      updateWaypointVoice,
+      voiceRecorder,
+    ],
   );
 
   const handleMarkPointerUp = useCallback(() => {
@@ -432,35 +513,62 @@ export default function GlobalPlayerFooter() {
       const waypointId = recordingWaypointIdRef.current;
       recordingWaypointIdRef.current = null;
       setIsRecording(false);
-      void voiceRecorder.stop().then(({ blob }) => {
-        updateWaypointVoice(waypointId, "transcribing");
-        setLiveStatus("Transcribing");
-        return transcribeAudio(blob);
-      }).then((text) => {
-        updateWaypointVoice(waypointId, "done", text);
-        setLiveStatus("");
-      }).catch(() => {
-        updateWaypointVoice(waypointId, "failed");
-        setLiveStatus("Transcription failed");
-      });
+      void voiceRecorder
+        .stop()
+        .then(({ blob }) => {
+          updateWaypointVoice(waypointId, "transcribing");
+          setLiveStatus("Transcribing");
+          return transcribeAudio(blob);
+        })
+        .then((text) => {
+          updateWaypointVoice(waypointId, "done", text);
+          setLiveStatus("");
+        })
+        .catch(() => {
+          updateWaypointVoice(waypointId, "failed");
+          setLiveStatus("Transcription failed");
+        });
     }
   }, [isRecording, voiceRecorder, updateWaypointVoice]);
 
   // The dock is activity-conditional: it renders for every non-Absent session
   // (including PausedAtEnd / Completing / CompletionFailed / PlaybackFailed).
-  if (state.kind === "Absent" || descriptor === null) {
+  if (state.kind === "Absent" || activeDescriptor === null || title === null) {
     return null;
   }
 
   const durationSafe = isPositiveFinite(durationSeconds) ? durationSeconds : 0;
   const currentSafe = Math.max(0, currentTimeSeconds);
   const bufferedSafe = Math.max(0, bufferedSeconds);
-  const progressPercent = durationSafe > 0 ? Math.min(100, (currentSafe / durationSafe) * 100) : 0;
-  const bufferedPercent = durationSafe > 0 ? Math.min(100, (bufferedSafe / durationSafe) * 100) : 0;
-  const seekSliderValue = durationSafe > 0 ? Math.min(durationSafe, currentSafe) : 0;
-  const artworkUrl = presenceValueOr(descriptor.activation.artworkUrl, undefined);
-  const sourceUrl = descriptor.activation.sourceUrl;
-  const streamUrl = descriptor.activation.streamUrl;
+  const progressPercent =
+    durationSafe > 0 ? Math.min(100, (currentSafe / durationSafe) * 100) : 0;
+  const bufferedPercent =
+    durationSafe > 0 ? Math.min(100, (bufferedSafe / durationSafe) * 100) : 0;
+  const seekSliderValue =
+    durationSafe > 0 ? Math.min(durationSafe, currentSafe) : 0;
+  const artwork = (() => {
+    if (activeDescriptor.kind === "Canonical") {
+      const url = presenceValueOr(
+        activeDescriptor.value.activation.artworkUrl,
+        null,
+      );
+      return url === null ? null : { kind: "Remote" as const, url };
+    }
+    const url = presenceValueOr(activeDescriptor.value.imageUrl, null);
+    return url === null ? null : { kind: "Proxied" as const, url };
+  })();
+  const sourceUrl =
+    activeDescriptor.kind === "Canonical"
+      ? activeDescriptor.value.activation.sourceUrl
+      : activeDescriptor.value.sourceHref;
+  const streamUrl =
+    activeDescriptor.kind === "Canonical"
+      ? activeDescriptor.value.activation.streamUrl
+      : activeDescriptor.value.audioUrl;
+  const targetHref =
+    activeDescriptor.kind === "Canonical"
+      ? `/media/${activeDescriptor.value.mediaId}`
+      : activeDescriptor.value.previewHref;
   const seekTrackStyle = {
     "--progress-percent": `${progressPercent}%`,
     "--buffered-percent": `${Math.max(progressPercent, bufferedPercent)}%`,
@@ -468,7 +576,10 @@ export default function GlobalPlayerFooter() {
 
   const onSeek = (nextValueSeconds: number) => {
     if (durationSafe <= 0) return;
-    const clampedSeconds = Math.max(0, Math.min(durationSafe, nextValueSeconds));
+    const clampedSeconds = Math.max(
+      0,
+      Math.min(durationSafe, nextValueSeconds),
+    );
     seekTo(Math.floor(clampedSeconds * 1000));
   };
 
@@ -479,16 +590,27 @@ export default function GlobalPlayerFooter() {
       pause();
       return;
     }
+    if (state.kind === "PreviewAudioAtEnd") {
+      playPreviewAudio(state.session.descriptor);
+      return;
+    }
+    if (state.kind === "PreviewAudioFailed") {
+      state.retry();
+      return;
+    }
     if (state.kind === "PausedAtEnd" || state.kind === "PlaybackFailed") {
-      playAudio(descriptor);
+      playAudio(state.session.descriptor);
       return;
     }
     resume();
   };
   const playPauseLabel = isPlaying ? "Pause" : "Play";
 
-  const hasActiveAudioEffects = areAudioEffectsActive(presentation.audioEffects);
-  const nextDisabled = transportLocked || nextPreview.kind === "None";
+  const hasActiveAudioEffects = areAudioEffectsActive(
+    presentation.audioEffects,
+  );
+  const nextDisabled =
+    isPreview || transportLocked || nextPreview.kind === "None";
   const previewText = nextPreviewText(nextPreview);
   const silenceTimeSavedSeconds = presentation.silenceTimeSavedMs / 1000;
 
@@ -526,7 +648,9 @@ export default function GlobalPlayerFooter() {
       className={styles.footer}
       role="region"
       aria-label="Media player"
-      data-mobile-view={isMobile ? (mobileExpanded ? "expanded" : "minibar") : undefined}
+      data-mobile-view={
+        isMobile ? (mobileExpanded ? "expanded" : "minibar") : undefined
+      }
     >
       {/* Polite live region for walknote status + track-change announcements. */}
       <span role="status" aria-live="polite" className={styles.srOnly}>
@@ -541,7 +665,9 @@ export default function GlobalPlayerFooter() {
           {/* Mini progress bar at top edge */}
           <div
             className={styles.miniProgressBar}
-            style={{ "--progress-percent": `${progressPercent}%` } as CSSProperties}
+            style={
+              { "--progress-percent": `${progressPercent}%` } as CSSProperties
+            }
             aria-hidden="true"
           />
 
@@ -554,19 +680,33 @@ export default function GlobalPlayerFooter() {
               onClick={() => setMobileExpanded(true)}
               aria-label="Expand player"
             >
-              {artworkUrl ? (
-                <MediaImage
-                  kind="proxied"
-                  remoteUrl={artworkUrl}
-                  alt=""
-                  width={40}
-                  height={40}
-                  className={styles.miniArtwork}
-                />
+              {artwork ? (
+                artwork.kind === "Proxied" ? (
+                  <MediaImage
+                    kind="proxy-src"
+                    src={artwork.url}
+                    alt=""
+                    width={40}
+                    height={40}
+                    className={styles.miniArtwork}
+                  />
+                ) : (
+                  <MediaImage
+                    kind="proxied"
+                    remoteUrl={artwork.url}
+                    alt=""
+                    width={40}
+                    height={40}
+                    className={styles.miniArtwork}
+                  />
+                )
               ) : (
-                <div className={styles.miniArtworkFallback} aria-hidden="true" />
+                <div
+                  className={styles.miniArtworkFallback}
+                  aria-hidden="true"
+                />
               )}
-              <span className={styles.miniTitle}>{descriptor.title}</span>
+              <span className={styles.miniTitle}>{title}</span>
             </Button>
             <Button
               variant="secondary"
@@ -592,43 +732,68 @@ export default function GlobalPlayerFooter() {
         <>
           {/* Desktop: full footer layout */}
           <div className={styles.metaRow}>
-            {artworkUrl && (
-              <MediaImage
-                kind="proxied"
-                remoteUrl={artworkUrl}
-                alt=""
-                width={32}
-                height={32}
-                className={styles.desktopArtwork}
-              />
-            )}
+            {artwork &&
+              (artwork.kind === "Proxied" ? (
+                <MediaImage
+                  kind="proxy-src"
+                  src={artwork.url}
+                  alt=""
+                  width={32}
+                  height={32}
+                  className={styles.desktopArtwork}
+                />
+              ) : (
+                <MediaImage
+                  kind="proxied"
+                  remoteUrl={artwork.url}
+                  alt=""
+                  width={32}
+                  height={32}
+                  className={styles.desktopArtwork}
+                />
+              ))}
             <span className={styles.kicker}>Now playing</span>
             <div className={styles.metaText}>
               <a
-                href={`/media/${descriptor.mediaId}`}
+                href={targetHref}
                 className={styles.trackLink}
-                onClick={(event) =>
-                  activateMediaTarget(event, `/media/${descriptor.mediaId}`)
-                }
+                onClick={(event) => activatePlayerTarget(event, targetHref)}
               >
-                {descriptor.title}
+                {title}
               </a>
-              {chapterLabel && <span className={styles.chapterLabel}>{chapterLabel}</span>}
+              {previewDescriptor && (
+                <span className={styles.chapterLabel}>
+                  Preview from {previewDescriptor.source} ·{" "}
+                  <a href={sourceUrl} target="_blank" rel="noopener noreferrer">
+                    Open source
+                  </a>
+                </span>
+              )}
+              {chapterLabel && (
+                <span className={styles.chapterLabel}>{chapterLabel}</span>
+              )}
               {previewText && (
-                <span className={styles.nextPreview} data-testid="player-next-preview">
+                <span
+                  className={styles.nextPreview}
+                  data-testid="player-next-preview"
+                >
                   {previewText}
                 </span>
               )}
             </div>
           </div>
 
-          <div className={styles.controlsRow} role="group" aria-label="Media player controls">
+          <div
+            className={styles.controlsRow}
+            role="group"
+            aria-label="Media player controls"
+          >
             <Button
               variant="secondary"
               size="sm"
               className={styles.transportButton}
               onClick={previous}
-              disabled={transportLocked}
+              disabled={isPreview || transportLocked}
               aria-label="Previous"
             >
               ⏮
@@ -649,7 +814,9 @@ export default function GlobalPlayerFooter() {
               size="sm"
               className={styles.transportButton}
               onClick={onPlayPause}
-              aria-label={isPlaying ? "Pause media player" : "Play media player"}
+              aria-label={
+                isPlaying ? "Pause media player" : "Play media player"
+              }
             >
               {playPauseLabel}
             </Button>
@@ -675,33 +842,43 @@ export default function GlobalPlayerFooter() {
               ⏭
             </Button>
 
-            <Button
-              ref={markButtonDesktopRef}
-              variant="secondary"
-              size="sm"
-              className={styles.transportButton}
-              aria-label="Mark waypoint"
-              data-recording={isRecording ? "true" : "false"}
-              onPointerDown={handleMarkPointerDown}
-              onPointerUp={handleMarkPointerUp}
-              onPointerCancel={handleMarkPointerCancel}
-            >
-              Mark
-            </Button>
+            {!isPreview && (
+              <>
+                <Button
+                  ref={markButtonDesktopRef}
+                  variant="secondary"
+                  size="sm"
+                  className={styles.transportButton}
+                  aria-label="Mark waypoint"
+                  data-recording={isRecording ? "true" : "false"}
+                  onPointerDown={handleMarkPointerDown}
+                  onPointerUp={handleMarkPointerUp}
+                  onPointerCancel={handleMarkPointerCancel}
+                >
+                  Mark
+                </Button>
 
-            <Button
-              variant="secondary"
-              size="sm"
-              className={styles.walknoteButton}
-              onClick={() => setWalknoteReviewOpen(true)}
-              aria-label={`Review waypoints (${waypointCount})`}
-            >
-              Waypoints
-              <span className={styles.walknoteBadge} aria-hidden="true">{waypointCount}</span>
-            </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className={styles.walknoteButton}
+                  onClick={() => setWalknoteReviewOpen(true)}
+                  aria-label={`Review waypoints (${waypointCount})`}
+                >
+                  Waypoints
+                  <span className={styles.walknoteBadge} aria-hidden="true">
+                    {waypointCount}
+                  </span>
+                </Button>
+              </>
+            )}
 
             <div className={styles.seekArea}>
-              <div className={styles.seekTrack} style={seekTrackStyle} aria-hidden="true" />
+              <div
+                className={styles.seekTrack}
+                style={seekTrackStyle}
+                aria-hidden="true"
+              />
               {markers.length > 0 && (
                 <div className={styles.chapterTicks} aria-hidden="true">
                   {markers.map((chapter) => (
@@ -758,7 +935,9 @@ export default function GlobalPlayerFooter() {
                   size="sm"
                   aria-label="Playback speed"
                   value={selectedPlaybackRateOption.toString()}
-                  onChange={(event) => setPlaybackRate(Number(event.currentTarget.value))}
+                  onChange={(event) =>
+                    setPlaybackRate(Number(event.currentTarget.value))
+                  }
                   className={styles.select}
                 >
                   {SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS.map((option) => (
@@ -777,7 +956,9 @@ export default function GlobalPlayerFooter() {
                   max={1}
                   step={0.01}
                   value={presentation.volume}
-                  onInput={(event) => setVolume(Number(event.currentTarget.value))}
+                  onInput={(event) =>
+                    setVolume(Number(event.currentTarget.value))
+                  }
                   className={styles.volumeSlider}
                   aria-label="Volume"
                 />
@@ -794,18 +975,43 @@ export default function GlobalPlayerFooter() {
                   onClick={() => setEffectsOpen((previous) => !previous)}
                 >
                   Effects
-                  <span className={styles.effectsIndicator} aria-hidden="true" />
+                  <span
+                    className={styles.effectsIndicator}
+                    aria-hidden="true"
+                  />
                 </Button>
 
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className={styles.walknoteButton}
-                  onClick={openLecternFromDesktopMore}
-                  aria-label="Open Lectern"
-                >
-                  Open Lectern
-                </Button>
+                {isPreview ? (
+                  <>
+                    <a
+                      href={targetHref}
+                      className={styles.trackLink}
+                      onClick={(event) =>
+                        activatePlayerTarget(event, targetHref)
+                      }
+                    >
+                      Open Preview
+                    </a>
+                    <a
+                      href={sourceUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={styles.trackLink}
+                    >
+                      Open source
+                    </a>
+                  </>
+                ) : (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className={styles.walknoteButton}
+                    onClick={openLecternFromDesktopMore}
+                    aria-label="Open Lectern"
+                  >
+                    Open Lectern
+                  </Button>
+                )}
               </div>
 
               {effectsOpen && (
@@ -840,35 +1046,60 @@ export default function GlobalPlayerFooter() {
             Close
           </Button>
 
-          {artworkUrl ? (
-            <MediaImage
-              kind="proxied"
-              remoteUrl={artworkUrl}
-              alt={descriptor.title}
-              width={240}
-              height={240}
-              className={styles.expandedArtwork}
-            />
+          {artwork ? (
+            artwork.kind === "Proxied" ? (
+              <MediaImage
+                kind="proxy-src"
+                src={artwork.url}
+                alt={title}
+                width={240}
+                height={240}
+                className={styles.expandedArtwork}
+              />
+            ) : (
+              <MediaImage
+                kind="proxied"
+                remoteUrl={artwork.url}
+                alt={title}
+                width={240}
+                height={240}
+                className={styles.expandedArtwork}
+              />
+            )
           ) : (
-            <div className={styles.expandedArtworkFallback} aria-hidden="true" />
+            <div
+              className={styles.expandedArtworkFallback}
+              aria-hidden="true"
+            />
           )}
 
           <div className={styles.expandedMeta}>
             <a
-              href={`/media/${descriptor.mediaId}`}
+              href={targetHref}
               className={styles.trackLink}
-              onClick={(event) =>
-                activateMediaTarget(event, `/media/${descriptor.mediaId}`)
-              }
+              onClick={(event) => activatePlayerTarget(event, targetHref)}
             >
-              {descriptor.title}
+              {title}
             </a>
-            {chapterLabel && <span className={styles.chapterLabel}>{chapterLabel}</span>}
-            {previewText && <span className={styles.nextPreview}>{previewText}</span>}
+            {previewDescriptor && (
+              <span className={styles.chapterLabel}>
+                Preview from {previewDescriptor.source}
+              </span>
+            )}
+            {chapterLabel && (
+              <span className={styles.chapterLabel}>{chapterLabel}</span>
+            )}
+            {previewText && (
+              <span className={styles.nextPreview}>{previewText}</span>
+            )}
           </div>
 
           <div className={styles.seekArea}>
-            <div className={styles.seekTrack} style={seekTrackStyle} aria-hidden="true" />
+            <div
+              className={styles.seekTrack}
+              style={seekTrackStyle}
+              aria-hidden="true"
+            />
             {markers.length > 0 && (
               <div className={styles.chapterTicks} aria-hidden="true">
                 {markers.map((chapter) => (
@@ -910,7 +1141,7 @@ export default function GlobalPlayerFooter() {
               size="sm"
               className={styles.transportButton}
               onClick={previous}
-              disabled={transportLocked}
+              disabled={isPreview || transportLocked}
               aria-label="Previous"
             >
               ⏮
@@ -961,7 +1192,9 @@ export default function GlobalPlayerFooter() {
                 size="sm"
                 aria-label="Playback speed"
                 value={selectedPlaybackRateOption.toString()}
-                onChange={(event) => setPlaybackRate(Number(event.currentTarget.value))}
+                onChange={(event) =>
+                  setPlaybackRate(Number(event.currentTarget.value))
+                }
                 className={styles.select}
               >
                 {SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS.map((option) => (
@@ -985,40 +1218,64 @@ export default function GlobalPlayerFooter() {
               <span className={styles.effectsIndicator} aria-hidden="true" />
             </Button>
 
-            <Button
-              variant="secondary"
-              size="sm"
-              className={styles.walknoteButton}
-              onClick={openLecternFromMobileExpanded}
-              aria-label="Open Lectern"
-            >
-              Open Lectern
-            </Button>
+            {isPreview ? (
+              <>
+                <a
+                  href={targetHref}
+                  className={styles.trackLink}
+                  onClick={(event) => activatePlayerTarget(event, targetHref)}
+                >
+                  Open Preview
+                </a>
+                <a
+                  href={sourceUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={styles.trackLink}
+                >
+                  Open source
+                </a>
+              </>
+            ) : (
+              <>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className={styles.walknoteButton}
+                  onClick={openLecternFromMobileExpanded}
+                  aria-label="Open Lectern"
+                >
+                  Open Lectern
+                </Button>
 
-            <Button
-              ref={markButtonMobileRef}
-              variant="secondary"
-              size="sm"
-              className={styles.transportButton}
-              aria-label="Mark waypoint"
-              data-recording={isRecording ? "true" : "false"}
-              onPointerDown={handleMarkPointerDown}
-              onPointerUp={handleMarkPointerUp}
-              onPointerCancel={handleMarkPointerCancel}
-            >
-              Mark
-            </Button>
+                <Button
+                  ref={markButtonMobileRef}
+                  variant="secondary"
+                  size="sm"
+                  className={styles.transportButton}
+                  aria-label="Mark waypoint"
+                  data-recording={isRecording ? "true" : "false"}
+                  onPointerDown={handleMarkPointerDown}
+                  onPointerUp={handleMarkPointerUp}
+                  onPointerCancel={handleMarkPointerCancel}
+                >
+                  Mark
+                </Button>
 
-            <Button
-              variant="secondary"
-              size="sm"
-              className={styles.walknoteButton}
-              onClick={() => setWalknoteReviewOpen(true)}
-              aria-label={`Review waypoints (${waypointCount})`}
-            >
-              Waypoints
-              <span className={styles.walknoteBadge} aria-hidden="true">{waypointCount}</span>
-            </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className={styles.walknoteButton}
+                  onClick={() => setWalknoteReviewOpen(true)}
+                  aria-label={`Review waypoints (${waypointCount})`}
+                >
+                  Waypoints
+                  <span className={styles.walknoteBadge} aria-hidden="true">
+                    {waypointCount}
+                  </span>
+                </Button>
+              </>
+            )}
           </div>
 
           {effectsOpen && (
@@ -1041,12 +1298,14 @@ export default function GlobalPlayerFooter() {
         aria-label="Media player audio"
       />
 
-      {walknoteReviewOpen && (
+      {!isPreview && walknoteReviewOpen && (
         <WalknoteReviewPanel
           onClose={() => setWalknoteReviewOpen(false)}
           returnFocusFallback={getWalknoteReviewReturnFocusTarget}
           onMaterializeComplete={(n) =>
-            setLiveStatus(n === 1 ? "1 highlight created" : `${n} highlights created`)
+            setLiveStatus(
+              n === 1 ? "1 highlight created" : `${n} highlights created`,
+            )
           }
         />
       )}

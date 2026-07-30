@@ -2,6 +2,7 @@
 
 import {
   BookOpen,
+  Compass,
   ChartColumn,
   CreditCard,
   FileText,
@@ -70,6 +71,12 @@ const PANE_ROUTE_META: Record<PaneRouteId, PaneRouteMeta> = {
   },
   library: {
     icon: Library,
+  },
+  browse: {
+    icon: Compass,
+  },
+  browsePreview: {
+    icon: Compass,
   },
   media: {
     icon: FileText,

@@ -6,6 +6,11 @@ import { WorkspaceTestProvider } from "@/__tests__/helpers/WorkspaceTestProvider
 import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
 import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
 import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer";
+import {
+  assumeDiscoveryTargetHandle,
+  browsePreviewHref,
+} from "@/lib/browse/contract";
+import { absent, present } from "@/lib/api/presence";
 import { withRenderEnvironment } from "../helpers/renderEnvironment";
 import {
   FOOTER_AUDIO_LABEL,
@@ -30,6 +35,9 @@ const MEDIA_SESSION_ACTIONS = [
   "nexttrack",
   "seekto",
 ] as const;
+const PREVIEW_TARGET = assumeDiscoveryTargetHandle(
+  "ndt1.e30.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+);
 
 function installMediaSessionHarness(): MediaSessionHarness {
   const actionHandlers = new Map<string, MediaSessionActionHandler | null>();
@@ -95,7 +103,12 @@ function installMediaSessionHarness(): MediaSessionHarness {
 }
 
 function Harness() {
-  const { playAudio } = useGlobalPlayer();
+  const {
+    state,
+    playAudio,
+    playPreviewAudio,
+    stopPreviewAudio,
+  } = useGlobalPlayer();
   const { resource } = useLectern();
   return (
     <>
@@ -113,6 +126,27 @@ function Harness() {
       >
         Play episode
       </button>
+      <button
+        type="button"
+        onClick={() =>
+          playPreviewAudio({
+            target: PREVIEW_TARGET,
+            previewHref: browsePreviewHref(PREVIEW_TARGET),
+            title: "External episode",
+            source: "Podcast Index",
+            sourceHref: "https://example.com/episode",
+            audioUrl: "https://cdn.example.com/external.mp3",
+            imageUrl: absent(),
+            durationMs: present(120_000),
+          })
+        }
+      >
+        Play preview
+      </button>
+      <button type="button" onClick={() => stopPreviewAudio(PREVIEW_TARGET)}>
+        Stop preview
+      </button>
+      <span data-testid="player-state">{state.kind}</span>
       <MobileViewportProvider>
         <GlobalPlayerFooter />
       </MobileViewportProvider>
@@ -258,6 +292,60 @@ describe("GlobalPlayer MediaSession integration", () => {
       await waitFor(() => {
         expect(Math.floor(audio.currentTime)).toBe(0);
       });
+    } finally {
+      unmount?.();
+      mediaSession.restore();
+    }
+  });
+
+  it("keeps Preview audio ephemeral and clears OS position state on stop", async () => {
+    const mediaSession = installMediaSessionHarness();
+    let unmount: (() => void) | null = null;
+    try {
+      ({ unmount } = render(withRenderEnvironment(<App />)));
+      fireEvent.click(screen.getByRole("button", { name: "Play preview" }));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("player-state")).toHaveTextContent(
+          "PreviewAudio",
+        );
+        expect(mediaSession.actionHandlers.get("previoustrack")).toBeNull();
+        expect(mediaSession.actionHandlers.get("nexttrack")).toBeNull();
+      });
+      expect(
+        screen.getByRole("link", { name: "External episode" }),
+      ).toHaveAttribute(
+        "href",
+        `/browse/preview?target=${PREVIEW_TARGET}`,
+      );
+      expect(
+        screen.getByRole("link", { name: "Open source" }),
+      ).toHaveAttribute("href", "https://example.com/episode");
+
+      const audio = screen.getByLabelText(FOOTER_AUDIO_LABEL) as HTMLAudioElement;
+      setAudioMetrics(audio, { duration: 120, currentTime: 40 });
+      fireEvent(audio, new Event("timeupdate"));
+      mediaSession.setPositionStateSpy.mockClear();
+      fireEvent(audio, new Event("ended"));
+      expect(screen.getByTestId("player-state")).toHaveTextContent(
+        "PreviewAudioAtEnd",
+      );
+      await waitFor(() => {
+        expect(mediaSession.setPositionStateSpy).toHaveBeenCalledWith(undefined);
+      });
+
+      mediaSession.setPositionStateSpy.mockClear();
+      fireEvent.click(screen.getByRole("button", { name: "Stop preview" }));
+      await waitFor(() => {
+        expect(screen.getByTestId("player-state")).toHaveTextContent("Absent");
+        expect(mediaSession.setPositionStateSpy).toHaveBeenCalledWith(undefined);
+      });
+
+      const writes = vi.mocked(globalThis.fetch).mock.calls.filter(([, init]) => {
+        const method = init?.method ?? "GET";
+        return method !== "GET" && method !== "HEAD";
+      });
+      expect(writes).toHaveLength(0);
     } finally {
       unmount?.();
       mediaSession.restore();

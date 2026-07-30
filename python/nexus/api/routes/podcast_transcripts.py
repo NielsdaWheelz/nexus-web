@@ -1,4 +1,4 @@
-"""Podcast transcript routes: admit/forecast transcript generation for episodes.
+"""Media transcript routes and Podcast episode batch admission.
 
 Transport-only: validate input, call the transcription service, return the
 envelope. The batch/forecast paths own static `/media/transcript/...` prefixes,
@@ -22,7 +22,7 @@ from nexus.schemas.podcast import (
     PodcastEpisodeQueryTranscriptRequest,
     PodcastEpisodeQueryTranscriptTarget,
 )
-from nexus.services.podcasts import transcription as podcast_transcript_service
+from nexus.services.podcasts import transcription as transcription_service
 
 router = APIRouter(tags=["media"])
 
@@ -34,7 +34,7 @@ def request_podcast_transcript_batch(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     """Admit one fingerprinted Podcast episode-query transcript request."""
-    result = podcast_transcript_service.request_podcast_episode_query_transcripts(
+    result = transcription_service.request_podcast_episode_query_transcripts(
         db=db,
         viewer_id=viewer.user_id,
         target=body.target,
@@ -50,7 +50,7 @@ def forecast_podcast_transcripts(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     """Forecast one server-resolved Podcast episode-query transcript request."""
-    result = podcast_transcript_service.forecast_podcast_episode_query_transcripts(
+    result = transcription_service.forecast_podcast_episode_query_transcripts(
         db=db,
         viewer_id=viewer.user_id,
         target=body,
@@ -59,15 +59,15 @@ def forecast_podcast_transcripts(
 
 
 @router.post("/media/{media_id}/transcript/request")
-def request_podcast_transcript(
+def request_media_transcript(
     media_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
     body: Annotated[TranscriptRequestRequest | None, Body()] = None,
 ) -> Response:
-    """Admit (or forecast) an explicit transcript request for a podcast episode."""
+    """Admit or forecast an explicit transcript request for supported Media."""
     transcript_request = body if body is not None else TranscriptRequestRequest()
-    result = podcast_transcript_service.request_podcast_transcript_for_viewer(
+    result = transcription_service.request_media_transcript_for_viewer(
         db=db,
         viewer_id=viewer.user_id,
         media_id=media_id,

@@ -2,15 +2,16 @@
 
 ## Scope
 
-The podcast module owns podcast discovery, subscribe/unsubscribe, OPML import/export, RSS
-feed sync, episode + chapter ingest, listening state, transcription (Deepgram + RSS
-sidecar), and the per-subscription job orchestration. Playback (the global player, queue,
-and `external_audio` resolution) is owned by the [player module](player.md); transcript
-chunk indexing is owned by `content_indexing`.
+The podcast module owns Subscribe/unsubscribe, OPML import/export, canonical
+Podcast and episode identity, RSS feed sync, episode + chapter ingest, the
+independent per-subscription history backfill, and explicit episode Transcribe.
+Podcast Index search and read-only Preview are owned by
+`python/nexus/services/browse/*`. Listening state, the global player, queue, and
+`external_audio` resolution are owned by the [player module](player.md);
+transcript chunk indexing is owned by `content_indexing`.
 
 Backend owners live under `python/nexus/services/podcasts/*`, the media-level
-`python/nexus/services/transcripts/*`, the YouTube transcript owners
-`python/nexus/services/youtube_video_ingest.py` and
+`python/nexus/services/transcripts/*`, the YouTube transcript owner
 `python/nexus/services/youtube_transcripts.py`, and the egress helpers under
 `python/nexus/services/net/*`. Frontend podcast-management owners live under
 `apps/web/src/app/(authenticated)/podcasts/*`. The Nexus Import session composes
@@ -26,6 +27,21 @@ enters URL, request, cursor, snapshot, or folio identity. The list APIs reject
 server-resolved; while a local query is active those commands remain
 discoverably disabled because rendered rows never define command scope.
 
+## Browse Acquisition Boundary
+
+Browse and Preview are read-only. Preview may stream a remote episode through
+the player's ephemeral `PreviewAudio`, but open, reload, playback, and natural
+end create no Podcast, episode Media, subscription, Library entry, queue item,
+progress, transcript, or job.
+
+Episode Add uses `POST /podcast-episodes/from-discovery`; Subscribe uses
+`POST /podcasts/subscriptions`; failed-backfill repair uses
+`POST /podcasts/subscriptions/{podcastId}/backfill/retry`. Each command accepts
+the sealed provider target or canonical Podcast identity defined by its route,
+re-resolves provider truth before a first write, and is replayable through the
+required `Idempotency-Key`. Named Library inputs are additive. Selecting or
+opening a discovery result never auto-subscribes.
+
 ## One Owner Per Concern
 
 This subsystem was consolidated so each piece of state has exactly one owner. The rules
@@ -35,32 +51,39 @@ that matter:
   a `podcasts` row. Resolution precedence is **`provider_podcast_id` first, then normalized
   `feed_url`** (the Podcast Index id is the stable catalog identity; `feed_url` is a mutable
   ref). When the two disagree, the provider-matched row wins and the other row's `feed_url`
-  is left untouched. Subscribe (Discovery) and OPML import both route through
-  `upsert_podcast`, so importing a feed already subscribed via Discovery resolves to the
+  is left untouched. Browse Subscribe and OPML import both route through
+  `upsert_podcast`, so importing a feed already subscribed via Browse resolves to the
   same `podcast_id`. OPML synthesizes a deterministic
   `opml-feed-url={normalized_feed_url}` `provider_podcast_id` only when the
-  provider has none; a later Discovery subscribe with the real provider id
+  provider has none; a later Browse Subscribe with the real provider id
   converges the row onto it.
+
+- **Episode identity — `episode_identity.py`.** Every acquired episode resolves
+  through stable `PodcastIndex | RssGuid | RssEnclosure` aliases in
+  `podcast_episode_identities`. Provider ref, GUID, and enclosure aliases are
+  normalized and locked before probing; title, publication time, and random
+  values are never identity. Alias collisions fail closed instead of selecting
+  a winner.
 
 - **Current transcript writer — `transcripts.current.write_current_transcript`.** This is the
   single, advisory-locked writer of `podcast_transcript_segments`, `fragments`, and
-  `media_transcript_states`. It is media-kind agnostic: podcast RSS sync, on-demand podcast
-  transcription, and YouTube ingest all call it; none re-implements the replace → insert →
-  index sequence. It holds `pg_advisory_xact_lock('transcript-current:{media_id}')` for the
+  `media_transcript_states`. It is media-kind agnostic: explicit Podcast and
+  Video Transcribe call it; neither re-implements the replace → insert → index
+  sequence. It holds `pg_advisory_xact_lock('transcript-current:{media_id}')` for the
   whole sequence and runs in the caller's transaction (`transaction()` is non-reentrant).
 
 - **There is no active transcript pointer or version table.** The current transcript is the
   set of `podcast_transcript_segments` and `fragments` for the media. Re-transcription
   deletes those rows and installs replacements in the same locked writer path.
 
-- **Library entries — `library_entries.*`.** Subscribe/unsubscribe and OPML routing call the
-  library-entries service (the sole writer of `library_entries`); `services/podcasts/` writes
-  no library tables. The unsubscribe teardown is
-  `library_entries.remove_user_podcast_subscription_libraries` (classify admin-owned
-  non-default → removable, foreign-owned shared → retained; delete; renormalize via the one
-  canonical ordering `library_entries.normalize_positions`). The subscription-list reads
-  (`library_entries.podcast_ids_in_libraries_for_viewer` /
-  `visible_non_default_libraries_for_viewer`) and `set_subscription_libraries` live there too.
+- **Subscription and Library facts.** A `podcast_subscriptions` row means active;
+  unsubscribe deletes it. Named placement is only
+  `library_entries(podcast_id)`, with `library_entries.py` as sole writer.
+  Default/All projects active subscriptions virtually and stores no Podcast
+  entry. Subscribe and OPML add named destinations; unsubscribe uses
+  `remove_unsubscribed_podcast_placements` to remove viewer-owned unshared
+  placements and report retained shared placements. Within a named Library,
+  parent Podcast placement subsumes direct episode placement.
 
 - **Feed-controlled fetches — `net.safe_fetch.safe_get`.** Every fetch of a feed-controlled
   URL (RSS feed pages, Podcasting 2.0 chapter JSON, transcript sidecars) goes through one
@@ -78,22 +101,34 @@ it claims each due active subscription (`sync_status -> 'pending'`) and enqueues
 `podcast_sync_subscription_job` per subscription, then records run telemetry and returns. It
 performs no feed I/O. Manual refresh enqueues the same job. The per-subscription job claims
 `pending -> running` (`_claim_subscription_sync_pending`), so exactly one sync runs per claim
-— a second poll tick or a concurrent manual refresh can never double-write transcript
-state. The poll is off by default. A bounded operator run requires the
+— a second poll tick or a concurrent manual refresh cannot duplicate the live
+metadata step. The poll is off by default. A bounded operator run requires the
 `maintenance` worker lane, its explicit authorization gate, the exact
 `podcast_active_subscription_poll_job` allowlist, and a positive
 `PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS`.
 
+Subscribe also creates one `podcast_subscription_backfills` row and enqueues
+`podcast_backfill_subscription`. Its immutable cutoff separates pre-subscription
+history from live sync. Each job names the backfill ID, expected step, and cursor
+digest; the queue claim plus row fence makes replay `Applied`,
+`AlreadyApplied`, `StaleJobAttempt`, or `StaleOrUnsubscribed` without a second
+write. Every committed nonterminal page enqueues exactly one successor. Exhausted
+retries stamp the current fence Failed and retain the dead job for operator
+repair; the idempotent Retry command replaces only that failed fence. Live sync
+continues while backfill is running, source-limited, or failed.
+
 ## Transcription
 
-Admission/quota/entitlement (`request_*`, reservation, `can_transcribe`) is unchanged; the
-only consolidation is that every path writes the current transcript rows. On-demand
-transcription runs Deepgram, normalizes segments (`transcript_segments.normalize_*`), and
-calls the writer; RSS sync fetches a sidecar via `safe_get`, parses it
-(`rss_transcript_fetch`), and calls the writer with `request_reason="rss_feed"`. Transcript
-chunks flow into the shared `content_chunks` index via
+Add, Subscribe, live sync, and backfill store RSS sidecar references but never
+fetch or publish transcript content. Only explicit canonical Transcribe enters
+this boundary. Episode Transcribe first tries a valid publisher sidecar through
+`safe_get`; if unavailable it applies entitlement/quota admission and runs
+Deepgram. Both paths normalize segments and call the current transcript writer.
+Transcript chunks flow into the shared `content_chunks` index via
 `content_indexing.rebuild_transcript_content_index`; semantic readiness is keyed by the
-current embedding provider/model.
+current embedding provider/model. `media_transcript_states.transcript_origin`
+records exactly `Publisher`, `Imported`, or `Generated` while transcript state
+is Ready/Partial and is absent otherwise.
 
 `podcasts.deepgram_adapter` is a documented non-LLM provider port, not part of the shared
 generation runtime. It owns Deepgram diarization fallback, fixture normalization, and podcast
@@ -104,9 +139,10 @@ proof for this adapter.
 YouTube video transcripts are a separate non-LLM transcript provider path. The Google
 YouTube Data API key proves metadata access only; public transcript/caption acquisition is
 performed by the YouTube transcript provider and may be blocked from datacenter IP ranges.
-Production deployments that ingest arbitrary YouTube transcripts should configure
+Production deployments that explicitly transcribe arbitrary YouTube videos should configure
 `YOUTUBE_TRANSCRIPT_PROXY_URL` with an operator-owned egress/proxy that is allowed to fetch
-public captions; otherwise YouTube ingest fails closed as `E_TRANSCRIPT_UNAVAILABLE`. The
+public captions; otherwise Video Transcribe fails closed as
+`E_TRANSCRIPT_UNAVAILABLE`. The
 YouTube transcript live proof skips when this proxy is not configured because
 the YouTube Data API key proves only metadata and caption-track listing, not
 caption download.

@@ -4,7 +4,6 @@ from uuid import UUID
 
 from fastapi import Request
 from provider_runtime import ProviderRuntime
-from web_search_tool.types import WebSearchProvider
 
 from nexus.auth.bearer import parse_bearer_token
 from nexus.config import get_settings
@@ -29,21 +28,6 @@ def get_stream_viewer(request: Request) -> UUID:
     verified = stream_tokens.verify_stream_token(token)
     set_stream_jti(verified.jti)
     return verified.user_id
-
-
-def get_web_search_provider(request: Request) -> WebSearchProvider:
-    """Get the shared web-search provider from app state.
-
-    Initialized at app startup over the shared httpx client, the same instance the
-    chat ``web_search`` tool uses. ``None`` means no provider key is configured.
-    """
-    provider = request.app.state.web_search_provider
-    if provider is None:
-        raise ApiError(
-            ApiErrorCode.E_BROWSE_PROVIDER_UNAVAILABLE,
-            "Web search provider is not configured",
-        )
-    return provider
 
 
 def get_execution_runtime(request: Request) -> ExecutionRuntime:

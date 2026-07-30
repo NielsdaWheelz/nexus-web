@@ -21,6 +21,9 @@ const PANE_LOADERS: Record<PaneRouteId, PaneLoader> = {
   lectern: () => import("@/app/(authenticated)/lectern/LecternPaneBody"),
   libraries: () => import("@/app/(authenticated)/libraries/LibrariesPaneBody"),
   library: () => import("@/app/(authenticated)/libraries/[id]/LibraryPaneBody"),
+  browse: () => import("@/app/(authenticated)/browse/BrowsePaneBody"),
+  browsePreview: () =>
+    import("@/app/(authenticated)/browse/preview/BrowsePreviewPaneBody"),
   media: () => import("@/app/(authenticated)/media/[id]/MediaPaneBody"),
   artifact: () =>
     import("@/app/(authenticated)/artifacts/[artifactRef]/ArtifactPaneBody"),
