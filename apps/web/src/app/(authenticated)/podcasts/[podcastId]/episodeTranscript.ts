@@ -39,6 +39,28 @@ export type EpisodeState = "unplayed" | "in_progress" | "played";
 export type EpisodeStateFilter = "all" | EpisodeState;
 export type EpisodeSort = "newest" | "oldest" | "duration_asc" | "duration_desc";
 
+export const EPISODE_WIDE_COMMAND_LABELS = {
+  all: {
+    transcript: "Transcribe all episodes",
+    markPlayed: "Mark all episodes as played",
+  },
+  unplayed: {
+    transcript: "Transcribe all unplayed episodes",
+    markPlayed: "Mark all unplayed episodes as played",
+  },
+  in_progress: {
+    transcript: "Transcribe all in-progress episodes",
+    markPlayed: "Mark all in-progress episodes as played",
+  },
+  played: {
+    transcript: "Transcribe all played episodes",
+    markPlayed: "All played episodes are already played",
+  },
+} as const satisfies Record<
+  EpisodeStateFilter,
+  { readonly transcript: string; readonly markPlayed: string }
+>;
+
 export interface PodcastEpisodeListPlayerDescriptor {
   kind: "FooterAudio";
   mediaId: string;

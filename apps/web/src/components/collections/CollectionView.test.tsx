@@ -221,6 +221,62 @@ describe("canonical CollectionView", () => {
     expect(startViewTransition).toHaveBeenCalledOnce();
   });
 
+  it("commits query-key row changes immediately without a view transition", async () => {
+    installMatchMedia(false);
+    const startViewTransition = installStartViewTransition();
+    const view = renderView({
+      rowChangePresentation: {
+        kind: "ImmediateOnKeyChange",
+        key: "",
+      },
+    });
+
+    view.rerender(
+      <CollectionView
+        returnScope="Test.Documents"
+        rows={[ROWS[1]]}
+        status="ready"
+        ariaLabel="Documents"
+        surface={false}
+        rowChangePresentation={{
+          kind: "ImmediateOnKeyChange",
+          key: "second",
+        }}
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "Second document" })).toBeVisible();
+    expect(startViewTransition).not.toHaveBeenCalled();
+  });
+
+  it("retains transition classification for row changes under the same query key", async () => {
+    installMatchMedia(false);
+    const startViewTransition = installStartViewTransition();
+    const rowChangePresentation = {
+      kind: "ImmediateOnKeyChange" as const,
+      key: "second",
+    };
+    const view = renderView({ rowChangePresentation });
+
+    view.rerender(
+      <CollectionView
+        returnScope="Test.Documents"
+        rows={[ROWS[2], ROWS[0]]}
+        status="ready"
+        ariaLabel="Documents"
+        surface={false}
+        rowChangePresentation={rowChangePresentation}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole("link").map((link) => link.textContent),
+      ).toEqual(["Third document", "First document"]),
+    );
+    expect(startViewTransition).toHaveBeenCalledOnce();
+  });
+
   it("commits a pure suffix without a view transition or moving focus", async () => {
     installMatchMedia(false);
     const startViewTransition = installStartViewTransition();

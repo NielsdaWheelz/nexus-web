@@ -46,6 +46,8 @@ import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import MobilePaneBar from "@/components/appnav/MobilePaneBar";
 
 const LIBRARY_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const PODCAST_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const OTHER_PODCAST_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const MEDIA_ID_1 = "11111111-1111-4111-8111-111111111111";
 const MEDIA_ID_2 = "22222222-2222-4222-8222-222222222222";
 const MEDIA_ID_3 = "33333333-3333-4333-8333-333333333333";
@@ -215,7 +217,11 @@ function mediaRoute(href: string) {
 
 function routeForHostTest(href: string) {
   const resolvedRoute = resolvePaneRouteModel(href);
-  if (resolvedRoute.id === "library") {
+  if (
+    resolvedRoute.id === "library" ||
+    resolvedRoute.id === "podcasts" ||
+    resolvedRoute.id === "podcastDetail"
+  ) {
     return resolvedRoute;
   }
   const route = mediaRoute(href);
@@ -793,6 +799,13 @@ describe("WorkspaceHost pane route lifecycle", () => {
         placeholder: "Filter",
         onQueryChange: vi.fn(),
         onDismiss: vi.fn(),
+        rowStatus: {
+          kind: "Complete",
+          visibleCount: 1,
+          totalCount: 1,
+          unit: { singular: "item", plural: "items" },
+        },
+        activeDomainControlCount: 0,
       },
     });
     render(
@@ -907,6 +920,110 @@ describe("WorkspaceHost pane route lifecycle", () => {
     expect(hostMocks.mountedBodyIds).toHaveLength(1);
     expect(hostMocks.unmountedBodyIds).toEqual([]);
   });
+
+  it.each([
+    [
+      "Podcast subscriptions",
+      "/podcasts?q=legacy&sort=alpha&unknown=value",
+      "/podcasts?sort=alpha",
+      `/podcasts/${PODCAST_ID}?state=all&sort=newest`,
+    ],
+    [
+      "Podcast detail",
+      `/podcasts/${PODCAST_ID}?q=legacy&state=played&unknown=value&sort=oldest`,
+      `/podcasts/${PODCAST_ID}?state=played&sort=oldest`,
+      `/podcasts/${OTHER_PODCAST_ID}?state=all&sort=newest`,
+    ],
+  ])(
+    "keeps %s mount canonicalization in place and remounts a new path visit",
+    async (_route, initialHref, canonicalHref, nextPathHref) => {
+      hostMocks.useActualPaneShell = true;
+      hostMocks.primaryChromePublicationByPaneId.set("pane-1", {
+        search: {
+          kind: "FilterRows",
+          query: "retained query",
+          inputLabel: "Filter podcast rows",
+          placeholder: "Filter",
+          onQueryChange: vi.fn(),
+          onDismiss: vi.fn(),
+          rowStatus: {
+            kind: "Complete",
+            visibleCount: 1,
+            totalCount: 1,
+            unit: { singular: "row", plural: "rows" },
+          },
+          activeDomainControlCount: 1,
+          filters: (
+            <label>
+              Podcast sort
+              <select aria-label="Podcast sort" defaultValue="alpha">
+                <option value="alpha">Alphabetical</option>
+                <option value="recent">Recent</option>
+              </select>
+            </label>
+          ),
+        },
+      });
+      setPaneHref(initialHref);
+      const view = render(
+        <MobileChromeProvider>
+          <WorkspaceHost />
+        </MobileChromeProvider>,
+      );
+      const firstBody = screen.getByTestId("route-body");
+      const firstInstance = firstBody.dataset.instanceId;
+
+      fireEvent.click(
+        await screen.findByRole("button", { name: /^Filter/ }),
+      );
+      const search = await screen.findByRole("searchbox", {
+        name: "Filter podcast rows",
+      });
+      const sort = screen.getByRole("combobox", { name: "Podcast sort" });
+      sort.focus();
+      expect(sort).toHaveFocus();
+      expect(search).toHaveValue("retained query");
+
+      replaceCurrentPaneHref(canonicalHref);
+      view.rerender(
+        <MobileChromeProvider>
+          <WorkspaceHost />
+        </MobileChromeProvider>,
+      );
+
+      expect(screen.getByTestId("route-body")).toBe(firstBody);
+      expect(screen.getByTestId("route-body")).toHaveAttribute(
+        "data-instance-id",
+        firstInstance,
+      );
+      expect(
+        screen.getByRole("searchbox", { name: "Filter podcast rows" }),
+      ).toBe(search);
+      expect(
+        screen.getByRole("combobox", { name: "Podcast sort" }),
+      ).toBe(sort);
+      expect(sort).toHaveFocus();
+      expect(search).toHaveValue("retained query");
+      expect(hostMocks.mountedBodyIds).toHaveLength(1);
+      expect(hostMocks.unmountedBodyIds).toEqual([]);
+
+      setPaneHref(nextPathHref);
+      view.rerender(
+        <MobileChromeProvider>
+          <WorkspaceHost />
+        </MobileChromeProvider>,
+      );
+
+      expect(screen.getByTestId("route-body")).not.toBe(firstBody);
+      expect(screen.getByTestId("route-body")).not.toHaveAttribute(
+        "data-instance-id",
+        firstInstance,
+      );
+      expect(screen.queryByTestId("pane-search-toolbar")).toBeNull();
+      expect(hostMocks.mountedBodyIds).toHaveLength(2);
+      expect(hostMocks.unmountedBodyIds).toEqual([Number(firstInstance)]);
+    },
+  );
 
   it("does not reset Library ShellScroll when only the query changes", () => {
     hostMocks.useActualPaneShell = true;

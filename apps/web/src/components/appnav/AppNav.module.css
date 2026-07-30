@@ -472,8 +472,20 @@
 }
 
 .topBarOptions > button {
+  position: relative;
   min-width: 48px;
   min-height: 48px;
+}
+
+.topBarFilterMarker {
+  position: absolute;
+  top: calc(var(--space-3) - var(--stroke-hairline));
+  right: calc(var(--space-3) - var(--stroke-hairline));
+  width: calc(var(--space-1) + 2 * var(--stroke-hairline));
+  height: calc(var(--space-1) + 2 * var(--stroke-hairline));
+  border: var(--stroke-hairline) solid var(--surface-2);
+  border-radius: 50%;
+  background: var(--accent);
 }
 
 .topBarTitle {

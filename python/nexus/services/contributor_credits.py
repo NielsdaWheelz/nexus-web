@@ -291,28 +291,6 @@ def contributor_fts_text_sql() -> str:
     """
 
 
-def podcast_credit_text_match_sql(podcast_id_expr: str = "p.id") -> str:
-    """EXISTS predicate: a podcast credit matches ``:q_pattern`` (D-40).
-
-    Matches credited names, canonical display names, and EVERY alias (resolving
-    and not — spec §4 "Search reads every alias"). ``podcast_id_expr`` is the
-    outer query's podcast-id SQL expression. Consumed by the podcast
-    subscriptions list query (S5).
-    """
-    return f"""EXISTS (
-        SELECT 1
-        FROM contributor_credits cc
-        JOIN contributors c ON c.id = cc.contributor_id
-        LEFT JOIN contributor_aliases ca ON ca.contributor_id = c.id
-        WHERE cc.podcast_id = {podcast_id_expr}
-          AND (
-                cc.credited_name ILIKE :q_pattern
-                OR c.display_name ILIKE :q_pattern
-                OR ca.alias ILIKE :q_pattern
-          )
-    )"""
-
-
 def contributor_credits_rollup_cte_sql(owner_column: Literal["media_id", "podcast_id"]) -> str:
     """Return SQL for a CTE that pre-aggregates contributor credits per owner row.
 

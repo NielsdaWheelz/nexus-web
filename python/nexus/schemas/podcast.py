@@ -228,10 +228,9 @@ class PodcastEpisodeListItemOut(BaseModel):
 
 
 class PodcastEpisodeSelection(BaseModel):
-    """Membership-defining episode query shared by list-wide commands."""
+    """Membership-defining episode state shared by list-wide commands."""
 
     state: Literal["all", "unplayed", "in_progress", "played"]
-    query: Presence[str]
 
     model_config = ConfigDict(extra="forbid")
 

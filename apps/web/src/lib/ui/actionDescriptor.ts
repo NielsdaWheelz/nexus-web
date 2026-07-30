@@ -90,6 +90,7 @@ interface ActionDescriptorBase {
   readonly id: string;
   readonly label: string;
   readonly icon?: ReactElement;
+  readonly indicator?: { readonly kind: "Status" };
   readonly disabled?: boolean;
   readonly disabledReason?: string;
   readonly tone?: "default" | "danger";

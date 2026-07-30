@@ -26,6 +26,13 @@ function FilterHarness() {
     placeholder: "Filter this library",
     onQueryChange: setQuery,
     onDismiss: () => setQuery(""),
+    rowStatus: {
+      kind: "Complete",
+      visibleCount: query.length === 0 ? 4 : 1,
+      totalCount: 4,
+      unit: { singular: "item", plural: "items" },
+    },
+    activeDomainControlCount: 0,
     filters: <button type="button">Unread only</button>,
     controls: <button type="button">Newest first</button>,
   };
@@ -121,6 +128,13 @@ describe("PaneSearchBar", () => {
             placeholder: "Filter this library",
             onQueryChange: () => {},
             onDismiss: () => {},
+            rowStatus: {
+              kind: "Complete",
+              visibleCount: 4,
+              totalCount: 4,
+              unit: { singular: "item", plural: "items" },
+            },
+            activeDomainControlCount: 0,
             filters: <button type="button">Unread only</button>,
           }}
           onClose={() => {}}
@@ -154,6 +168,52 @@ describe("PaneSearchBar", () => {
     await user.click(screen.getByRole("button", { name: "Unread only" }));
     await user.keyboard("{Escape}");
     expect(screen.getByText("Search closed")).toBeInTheDocument();
+  });
+
+  it("announces debounced Partial and Complete filter counts without visible chrome", async () => {
+    const publication: Extract<PaneSearchPublication, { kind: "FilterRows" }> =
+      {
+        kind: "FilterRows",
+        query: "needle",
+        inputLabel: "Filter episodes",
+        placeholder: "Filter",
+        onQueryChange: () => {},
+        onDismiss: () => {},
+        rowStatus: {
+          kind: "Partial",
+          visibleCount: 1,
+          loadedCount: 8,
+          unit: { singular: "episode", plural: "episodes" },
+        },
+        activeDomainControlCount: 0,
+      };
+    const view = render(
+      <PaneSearchBar publication={publication} onClose={() => {}} />,
+    );
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("");
+    expect(status).toHaveClass("sr-only");
+    await expect
+      .poll(() => status.textContent)
+      .toBe("1 matching episode among 8 loaded; loading remaining episodes.");
+
+    view.rerender(
+      <PaneSearchBar
+        publication={{
+          ...publication,
+          rowStatus: {
+            kind: "Complete",
+            visibleCount: 0,
+            totalCount: 12,
+            unit: { singular: "episode", plural: "episodes" },
+          },
+        }}
+        onClose={() => {}}
+      />,
+    );
+    await expect
+      .poll(() => status.textContent)
+      .toBe("0 matching episodes of 12 total.");
   });
 
   it("presents Find controls, keyboard stepping, results, and return as one interaction", async () => {

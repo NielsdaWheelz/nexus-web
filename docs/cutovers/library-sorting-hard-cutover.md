@@ -2,6 +2,13 @@
 
 Status: APPROVED SPEC — 2026-07-22
 
+> **Pane Filter update (2026-07-29):**
+> [`collection-pane-search-filter-sort-hard-cutover.md`](collection-pane-search-filter-sort-hard-cutover.md)
+> moves `Sort by` and `Hide finished` into expanded Pane Search and changes the
+> final empty-neighbor focus target to Pane Search input/Filter action. Labels,
+> view semantics, URL ownership, and zero-row availability remain authoritative
+> here.
+
 Type: hard cutover. No compatibility decoding, legacy cursor support,
 fallbacks, dual paths, feature flag, or released intermediate state.
 

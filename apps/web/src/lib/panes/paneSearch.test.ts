@@ -49,14 +49,21 @@ describe("Pane Search contract", () => {
   it("compares the owned publication values", () => {
     const onQueryChange = vi.fn();
     const onDismiss = vi.fn();
-    const publication: PaneSearchPublication = {
+    const publication = {
       kind: "FilterRows",
       query: "needle",
       inputLabel: "Search this list",
       placeholder: "Search",
       onQueryChange,
       onDismiss,
-    };
+      rowStatus: {
+        kind: "Complete",
+        visibleCount: 2,
+        totalCount: 4,
+        unit: { singular: "item", plural: "items" },
+      },
+      activeDomainControlCount: 1,
+    } satisfies PaneSearchPublication;
     expect(
       arePaneSearchPublicationsEqual(publication, { ...publication }),
     ).toBe(true);
@@ -64,6 +71,61 @@ describe("Pane Search contract", () => {
       arePaneSearchPublicationsEqual(publication, {
         ...publication,
         query: "other",
+      }),
+    ).toBe(false);
+    expect(
+      arePaneSearchPublicationsEqual(publication, {
+        ...publication,
+        rowStatus: {
+          ...publication.rowStatus,
+          visibleCount: 1,
+        },
+      }),
+    ).toBe(false);
+    expect(
+      arePaneSearchPublicationsEqual(publication, {
+        ...publication,
+        activeDomainControlCount: 2,
+      }),
+    ).toBe(false);
+    expect(
+      arePaneSearchPublicationsEqual(publication, {
+        ...publication,
+        rowStatus: {
+          ...publication.rowStatus,
+          totalCount: 5,
+        },
+      }),
+    ).toBe(false);
+    expect(
+      arePaneSearchPublicationsEqual(publication, {
+        ...publication,
+        rowStatus: {
+          ...publication.rowStatus,
+          unit: { singular: "result", plural: "results" },
+        },
+      }),
+    ).toBe(false);
+
+    const partial = {
+      ...publication,
+      rowStatus: {
+        kind: "Partial",
+        visibleCount: 2,
+        loadedCount: 4,
+        unit: { singular: "item", plural: "items" },
+      },
+    } satisfies PaneSearchPublication;
+    expect(
+      arePaneSearchPublicationsEqual(partial, {
+        ...partial,
+        rowStatus: { ...partial.rowStatus },
+      }),
+    ).toBe(true);
+    expect(
+      arePaneSearchPublicationsEqual(partial, {
+        ...partial,
+        rowStatus: { ...partial.rowStatus, loadedCount: 5 },
       }),
     ).toBe(false);
   });

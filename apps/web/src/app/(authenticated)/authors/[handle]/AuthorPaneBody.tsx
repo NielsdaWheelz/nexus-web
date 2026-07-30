@@ -50,7 +50,11 @@ import type {
 } from "@/lib/contributors/types";
 import { presentContributorWork } from "@/lib/collections/presenters/presentContributorWork";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
-import { paneResourceLoaders, type AuthorPaneSeed } from "@/lib/panes/paneResourceLoaders";
+import {
+  paneResourceLoaders,
+  type AuthorPaneSeed,
+} from "@/lib/panes/paneResourceLoaders";
+import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import {
   definePaneVisitDataKey,
   type PaneResourceStatus,
@@ -62,6 +66,7 @@ import {
   usePaneVisitData,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
+import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { emptyResourceMenuGroups } from "@/lib/actions/resourceActions";
 import styles from "./page.module.css";
@@ -107,16 +112,10 @@ function resolveAuthorConnectionsResource(
 export default function AuthorPaneBody() {
   const handle = usePaneParam("handle");
   const paneRuntime = usePaneRuntime();
-  const runtime = requirePaneRuntime(
-    paneRuntime,
-    "AuthorPaneBody",
-  );
+  const runtime = requirePaneRuntime(paneRuntime, "AuthorPaneBody");
   const activateTarget = runtime.activateTarget;
   const committedSnapshotRef = useRef<AuthorPaneSeed | null>(null);
-  const captureCommitted = useCallback(
-    () => committedSnapshotRef.current,
-    [],
-  );
+  const captureCommitted = useCallback(() => committedSnapshotRef.current, []);
   const restored = usePaneVisitData(AUTHOR_VISIT_DATA, captureCommitted);
   if (committedSnapshotRef.current === null && restored !== null) {
     committedSnapshotRef.current = restored;
@@ -133,10 +132,9 @@ export default function AuthorPaneBody() {
           : `${contributorResource.cacheKey({ handle })}:collection:${firstPageVersion}`
         : null,
     load: (signal) =>
-      paneResourceLoaders.author!.load(
-        clientResourceFetcher(signal),
-        { handle: handle! },
-      ) as Promise<AuthorPaneSeed>,
+      paneResourceLoaders.author!.load(clientResourceFetcher(signal), {
+        handle: handle!,
+      }) as Promise<AuthorPaneSeed>,
   });
 
   const [data, setData] = useState<AuthorPaneSeed | null>(restored);
@@ -150,16 +148,15 @@ export default function AuthorPaneBody() {
   // never bleeds across panes while the next initial load runs.
   useEffect(() => {
     if (restored === null) setData(null);
-    setError(handle ? null : { severity: "error", title: "Author handle is missing" });
+    setError(
+      handle ? null : { severity: "error", title: "Author handle is missing" },
+    );
     setRenameOpen(false);
   }, [handle, restored]);
 
   // Seed the local copy from the initial resource's ready/error branch.
   useEffect(() => {
-    if (
-      initialAuthor.status === "ready" &&
-      allowResourceAdoptionRef.current
-    ) {
+    if (initialAuthor.status === "ready" && allowResourceAdoptionRef.current) {
       allowResourceAdoptionRef.current = false;
       committedSnapshotRef.current = initialAuthor.data;
       setData(initialAuthor.data);
@@ -169,7 +166,11 @@ export default function AuthorPaneBody() {
       initialAuthor.status === "error" &&
       allowResourceAdoptionRef.current
     ) {
-      setError(toFeedback(initialAuthor.error, { fallback: "Couldn't load this author." }));
+      setError(
+        toFeedback(initialAuthor.error, {
+          fallback: "Couldn't load this author.",
+        }),
+      );
     }
   }, [initialAuthor]);
 
@@ -206,8 +207,7 @@ export default function AuthorPaneBody() {
         ...current,
         works,
         nextCursor: page.nextCursor,
-        exhaustion:
-          page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
+        exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
       };
       committedSnapshotRef.current = next;
       setData(next);
@@ -216,10 +216,7 @@ export default function AuthorPaneBody() {
     [],
   );
   const exhaustion = useExhaustivePagination<ContributorWorkItem>({
-    active:
-      runtime.isActive &&
-      data !== null &&
-      data.detail.handle === handle,
+    active: runtime.isActive && data !== null && data.detail.handle === handle,
     chainKey: `${handle ?? ""}:${chainEpoch}`,
     cursor: data?.nextCursor ?? NO_CURSOR,
     collectionRevision: data?.collectionRevision ?? ZERO_REVISION,
@@ -239,6 +236,43 @@ export default function AuthorPaneBody() {
   const workRows = useMemo(
     () => data?.works.map(presentContributorWork) ?? [],
     [data?.works],
+  );
+  const getFilterStatus = useCallback(
+    (query: string) => {
+      const visibleCount =
+        data?.works.filter((work) =>
+          matchesPaneFilterQuery(query, [work.title]),
+        ).length ?? 0;
+      const unit = { singular: "work", plural: "works" };
+      return exhaustion.kind === "Complete"
+        ? {
+            kind: "Complete" as const,
+            visibleCount,
+            totalCount: workCount,
+            unit,
+          }
+        : {
+            kind: "Partial" as const,
+            visibleCount,
+            loadedCount: workCount,
+            unit,
+          };
+    },
+    [data?.works, exhaustion.kind, workCount],
+  );
+  const { query: filterQuery, publication: search } = usePaneFilterRows({
+    sourceKey: `Author.Works:${handle ?? ""}`,
+    inputLabel: "Filter works",
+    placeholder: "Filter works",
+    getRowStatus: getFilterStatus,
+    activeDomainControlCount: 0,
+  });
+  const filteredWorkRows = useMemo(
+    () =>
+      workRows.filter((row) =>
+        matchesPaneFilterQuery(filterQuery, [row.title.text]),
+      ),
+    [filterQuery, workRows],
   );
   const canonicalHandle = data?.detail.handle ?? null;
   const connectionsComposerController = useConnectionsComposerController({
@@ -276,6 +310,7 @@ export default function AuthorPaneBody() {
     bodies: { linkedItems: connectionsBody },
   });
   usePanePrimaryChrome({
+    search,
     actions: companionAction ? [companionAction] : [],
     menu: data
       ? {
@@ -290,7 +325,7 @@ export default function AuthorPaneBody() {
         exhaustion.kind === "Complete"
           ? { kind: "count", value: workCount, unit: "work" }
           : { kind: "none" },
-      pending: loading || exhaustion.kind === "Draining",
+      pending: loading || exhaustion.kind !== "Complete",
     },
   });
 
@@ -313,6 +348,12 @@ export default function AuthorPaneBody() {
         loading || (error && !data) ? (
           <>
             {loading ? <PaneLoadingState /> : null}
+            {loading && filterQuery.trim() ? (
+              <FeedbackNotice
+                severity="neutral"
+                title="No matching work found so far."
+              />
+            ) : null}
             {error && !data ? <FeedbackNotice feedback={error} /> : null}
           </>
         ) : null
@@ -353,15 +394,35 @@ export default function AuthorPaneBody() {
           <section aria-label="Works">
             <CollectionView
               returnScope="Author.Works"
-              rows={workRows}
+              rows={filteredWorkRows}
               status="ready"
               ariaLabel="Works"
+              rowChangePresentation={{
+                kind: "ImmediateOnKeyChange",
+                key: filterQuery.trim(),
+              }}
               collectionBusy={exhaustion.kind === "Draining"}
               surface={false}
               notice={
                 error && data ? <FeedbackNotice feedback={error} /> : undefined
               }
-              empty={<p className={styles.empty}>No works yet.</p>}
+              empty={
+                filterQuery.trim() ? (
+                  exhaustion.kind === "Complete" ? (
+                    <FeedbackNotice
+                      severity="neutral"
+                      title="No works match this filter."
+                    />
+                  ) : (
+                    <FeedbackNotice
+                      severity="neutral"
+                      title="No matching work found so far."
+                    />
+                  )
+                ) : (
+                  <p className={styles.empty}>No works yet.</p>
+                )
+              }
               footer={<CollectionExhaustionNotice state={exhaustion} />}
             />
           </section>
@@ -433,7 +494,9 @@ function RenameAuthorDialog({
         if (renameError.code === "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH") {
           intentRef.current.rotate();
         }
-        setNotice(toFeedback(renameError, { fallback: "Couldn't update the name." }));
+        setNotice(
+          toFeedback(renameError, { fallback: "Couldn't update the name." }),
+        );
       } else {
         // Transport/timeout: the server may have committed. Keep the same key so a
         // retry replays idempotently and resolves the ambiguity (DP-1).
@@ -470,7 +533,13 @@ function RenameAuthorDialog({
           <Button type="button" variant="secondary" size="md" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" variant="primary" size="md" disabled={!canSave} loading={saving}>
+          <Button
+            type="submit"
+            variant="primary"
+            size="md"
+            disabled={!canSave}
+            loading={saving}
+          >
             Save
           </Button>
         </div>

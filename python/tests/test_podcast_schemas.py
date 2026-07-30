@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from nexus.schemas.podcast import PodcastSubscribeRequest
+from nexus.schemas.podcast import PodcastEpisodeSelection, PodcastSubscribeRequest
 
 pytestmark = pytest.mark.unit
 
@@ -60,3 +60,17 @@ def test_podcast_write_request_rejects_unknown_role():
 
     with pytest.raises(ValidationError):
         PodcastSubscribeRequest(**payload)
+
+
+def test_podcast_episode_selection_is_state_only():
+    selection = PodcastEpisodeSelection.model_validate({"state": "in_progress"})
+
+    assert selection.model_dump() == {"state": "in_progress"}
+
+    with pytest.raises(ValidationError):
+        PodcastEpisodeSelection.model_validate(
+            {
+                "state": "in_progress",
+                "query": {"kind": "Present", "value": "episode"},
+            }
+        )

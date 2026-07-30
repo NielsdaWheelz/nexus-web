@@ -1,5 +1,6 @@
 import {
   Component,
+  useCallback,
   useLayoutEffect,
   useRef,
   useState,
@@ -32,12 +33,17 @@ import {
   publishLibraryPlacementChange,
   resetLibraryPlacementRevisionForTest,
 } from "@/lib/libraries/placementRevision";
-import {
-  NEXUS_OPEN_REQUESTED_EVENT,
-} from "@/lib/nexus/events";
+import { NEXUS_OPEN_REQUESTED_EVENT } from "@/lib/nexus/events";
 import type { NexusOpenIntent } from "@/lib/nexus/model";
-import { PanePrimaryChromeProvider } from "@/components/workspace/PanePrimaryChrome";
-import type { PanePrimaryChromePublicationUpdate } from "@/lib/panes/panePublications";
+import {
+  PanePrimaryChromeProvider,
+  usePanePrimaryChrome,
+} from "@/components/workspace/PanePrimaryChrome";
+import PaneSearchBar from "@/components/workspace/PaneSearchBar";
+import type {
+  PanePrimaryChromePublication,
+  PanePrimaryChromePublicationUpdate,
+} from "@/lib/panes/panePublications";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { decodeLibraryReadingTimeEntry } from "@/lib/libraries/readingTime";
 import { assumePaneVisitId } from "@/lib/workspace/schema";
@@ -51,6 +57,39 @@ import { ShareControllerProvider } from "@/lib/sharing/controller";
 import LibraryPaneBody from "./LibraryPaneBody";
 
 const TEST_VISIT_ID = assumePaneVisitId("00000000-0000-4000-8000-000000000001");
+
+function ExpandedPaneSearchHarness({ children }: { children: ReactNode }) {
+  const [publication, setPublication] =
+    useState<PanePrimaryChromePublication | null>(null);
+  usePanePrimaryChrome(publication);
+  const publish = useCallback(
+    (update: PanePrimaryChromePublicationUpdate) =>
+      setPublication(update.publication),
+    [],
+  );
+  return (
+    <PanePrimaryChromeProvider publish={publish}>
+      {publication?.search ? (
+        <PaneSearchBar publication={publication.search} onClose={() => {}} />
+      ) : null}
+      {children}
+    </PanePrimaryChromeProvider>
+  );
+}
+
+function getLibraryViewStatus() {
+  const status = screen
+    .getAllByRole("status")
+    .find((candidate) => candidate.hasAttribute("aria-controls"));
+  if (!status) {
+    throw new Error("Expected the Library view lifecycle status.");
+  }
+  return status;
+}
+
+async function findLibraryViewStatus() {
+  return waitFor(getLibraryViewStatus);
+}
 
 // A pane host whose href is real state, so a pane-router replace (the library
 // view codec's write path) re-decodes the view and drives the entries endpoint
@@ -89,7 +128,10 @@ function StatefulLibraryPane({
               canGoForward={false}
               onNavigatePane={(_paneId: string, next: string) => setHref(next)}
               onReplacePane={(_paneId: string, next: string) => setHref(next)}
-              onActivateWorkspaceTarget={vi.fn(() => ({ kind: "Unchanged" as const, paneId: "pane-1" }))}
+              onActivateWorkspaceTarget={vi.fn(() => ({
+                kind: "Unchanged" as const,
+                paneId: "pane-1",
+              }))}
               onGoBackPane={vi.fn()}
               onGoForwardPane={vi.fn()}
             >
@@ -102,7 +144,9 @@ function StatefulLibraryPane({
                     data-pane-content="true"
                     data-testid="library-pane-scrollport"
                   >
+                    <ExpandedPaneSearchHarness>
                     <LibraryPaneBody />
+                    </ExpandedPaneSearchHarness>
                   </div>
                 </LibraryPlacementControllerProvider>
               </LecternProvider>
@@ -353,7 +397,9 @@ const paneWithLectern = (
   <LecternProvider>
     <LibraryPlacementControllerProvider>
       <LecternStatusProbe />
+      <ExpandedPaneSearchHarness>
       <LibraryPaneBody />
+      </ExpandedPaneSearchHarness>
     </LibraryPlacementControllerProvider>
   </LecternProvider>
 );
@@ -503,14 +549,14 @@ exhaustion: "Complete",
         ),
       });
 
-      expect(await screen.findByRole("link", { name: longTitle })).toBeVisible();
+      expect(
+        await screen.findByRole("link", { name: longTitle }),
+      ).toBeVisible();
       const host = screen.getByTestId(`library-host-${width}`);
       expect(host.clientWidth).toBe(width);
       expect(host.scrollWidth).toBeLessThanOrEqual(host.clientWidth + 1);
       expect(horizontallyScrollableElements(host)).toEqual([]);
-      expect(
-        screen.getByRole("list", { name: LIBRARY_NAME }),
-      ).toBeVisible();
+      expect(screen.getByRole("list", { name: LIBRARY_NAME })).toBeVisible();
       expect(screen.queryByRole("img")).toBeNull();
       expect(screen.queryByRole("progressbar")).toBeNull();
     },
@@ -565,6 +611,35 @@ exhaustion: "Complete",
       `/api/libraries/${LIBRARY_ID}`,
     );
     expect(libraryCalls).toHaveLength(0);
+  });
+
+  it("shows the Partial no-match copy while the initial library page is loading", async () => {
+    const user = userEvent.setup();
+    const pending = new Promise<Response>(() => undefined);
+    stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      return pending;
+    });
+
+    renderHydratedPane({
+      href: `/libraries/${LIBRARY_ID}`,
+      resources: {},
+      children: paneWithLectern,
+    });
+
+    const filter = await screen.findByRole("searchbox", {
+      name: "Filter library entries",
+    });
+    await user.type(filter, "missing");
+
+    expect(
+      await screen.findByText("No matching entry found so far."),
+    ).toBeVisible();
+    expect(screen.getAllByText("No matching entry found so far.")).toHaveLength(
+      1,
+    );
+    expect(screen.getByText("Loading…")).toBeVisible();
   });
 
   it("seeds editable library context into direct Add intent", async () => {
@@ -644,6 +719,7 @@ exhaustion: "Complete",
   });
 
   it("publishes no count until exhaustive loading completes", async () => {
+    const user = userEvent.setup();
     let resolveContinuation!: (response: Response) => void;
     const continuation = new Promise<Response>((resolve) => {
       resolveContinuation = resolve;
@@ -693,8 +769,7 @@ exhaustion: "Complete",
       const pendingHeader = publish.mock.calls
         .map(([update]) => update.publication?.header)
         .find(
-          (header) =>
-            header?.kind === "section" && header.pending === true,
+          (header) => header?.kind === "section" && header.pending === true,
         );
       expect(pendingHeader).toEqual({
         kind: "section",
@@ -702,6 +777,14 @@ exhaustion: "Complete",
         pending: true,
       });
     });
+    const filter = screen.getByRole("searchbox", {
+      name: "Filter library entries",
+    });
+    await user.type(filter, "missing");
+    expect(
+      await screen.findByText("No matching entry found so far."),
+    ).toBeVisible();
+    await user.clear(filter);
 
     resolveContinuation(
       Response.json({
@@ -757,7 +840,9 @@ exhaustion: "Complete",
       children: paneWithLectern,
     });
 
-    expect(await screen.findByRole("link", { name: "Corpus Work" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Corpus Work" }),
+    ).toBeInTheDocument();
 
     await user.click(
       await screen.findByRole("button", {
@@ -850,13 +935,17 @@ exhaustion: "Complete",
         `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2&collection_revision=1&limit=100`
       ) {
         return Response.json({
-          data: { items: [
+          data: {
+            items: [
             mediaEntryWire(
               "entry-2",
               "22222222-2222-4222-8222-222222222222",
               "Second Page Work",
             ),
-          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+            ],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         });
       }
       return new Response("{}", {
@@ -886,9 +975,13 @@ exhaustion: "Partial",
       children: paneWithLectern,
     });
 
-    expect(await screen.findByRole("link", { name: "First Page Work" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "First Page Work" }),
+    ).toBeInTheDocument();
 
-    expect(await screen.findByRole("link", { name: "Second Page Work" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Second Page Work" }),
+    ).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
       `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2&collection_revision=1&limit=100`,
       expect.objectContaining({ method: "GET" }),
@@ -902,16 +995,23 @@ exhaustion: "Partial",
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
       const path = fetchInputPathWithSearch(input);
-      if (path === `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2&collection_revision=1&limit=100`) {
+      if (
+        path ===
+        `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2&collection_revision=1&limit=100`
+      ) {
         loadMoreRequests += 1;
         return Response.json({
-          data: { items: [
+          data: {
+            items: [
             mediaEntryWire(
               "entry-2",
               "22222222-2222-4222-8222-222222222222",
               "Second Page Work",
             ),
-          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+            ],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         });
       }
       if (
@@ -920,9 +1020,13 @@ exhaustion: "Partial",
       ) {
         primaryResourceRequests += 1;
         return Response.json({
-          data: { items: [
+          data: {
+            items: [
             mediaEntryWire("replacement", "replacement", "Replacement Work"),
-          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+            ],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         });
       }
       throw new Error(`Unexpected fetch call: ${path}`);
@@ -964,8 +1068,12 @@ exhaustion: "Partial",
     );
     const view = render(journey(0));
 
-    expect(await screen.findByRole("link", { name: "First Page Work" })).toBeInTheDocument();
-    expect(await screen.findByRole("link", { name: "Second Page Work" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "First Page Work" }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Second Page Work" }),
+    ).toBeInTheDocument();
     await waitFor(() => expect(commands).not.toBeNull());
     await act(
       () =>
@@ -990,12 +1098,12 @@ exhaustion: "Partial",
     expect(
       await screen.findByRole("link", { name: "Second Page Work" }),
     ).toBeInTheDocument();
-    const restoredSecondTitle = screen.getByRole("link", { name: "Second Page Work" });
+    const restoredSecondTitle = screen.getByRole("link", {
+      name: "Second Page Work",
+    });
     const restoredSecondRow =
       // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: the scoped semantic-anchor attributes are the observable restoration contract under test.
-      restoredSecondTitle.closest<HTMLElement>(
-        "[data-collection-row-id]",
-      );
+      restoredSecondTitle.closest<HTMLElement>("[data-collection-row-id]");
     expect(restoredSecondRow).toHaveAttribute(
       "data-collection-row-id",
       "entry-2",
@@ -1007,15 +1115,18 @@ exhaustion: "Partial",
     expect(loadMoreRequests).toBe(1);
     expect(primaryResourceRequests).toBe(0);
     expect(screen.queryByText("Replacement Work")).not.toBeInTheDocument();
-    expect(screen.getAllByRole("link", { name: "First Page Work" })).toHaveLength(1);
-    expect(screen.getAllByRole("link", { name: "Second Page Work" })).toHaveLength(1);
+    expect(
+      screen.getAllByRole("link", { name: "First Page Work" }),
+    ).toHaveLength(1);
+    expect(
+      screen.getAllByRole("link", { name: "Second Page Work" }),
+    ).toHaveLength(1);
   });
 
   it("captures only a coherent committed factual view and its loaded pages", async () => {
     const canonicalHref = `/libraries/${LIBRARY_ID}`;
     const factualHref = `${canonicalHref}?sort=title&direction=asc`;
-    const factualPath =
-      `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`;
+    const factualPath = `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`;
     const factualPageTwoPath = `${factualPath}&cursor=cursor-factual-2&collection_revision=1&limit=100`;
     let resolveSupersededRequest!: (response: Response) => void;
     const supersededRequest = new Promise<Response>((resolve) => {
@@ -1047,36 +1158,48 @@ exhaustion: "Partial",
           );
         }
         return Response.json({
-          data: { items: [
+          data: {
+            items: [
             mediaEntryWire(
               "entry-factual-1",
               "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
               "Committed Factual Work",
             ),
-          ], collectionRevision: 1, nextCursor: { kind: "Present", value: String("cursor-factual-2") } },
+            ],
+            collectionRevision: 1,
+            nextCursor: { kind: "Present", value: String("cursor-factual-2") },
+          },
         });
       }
       if (path === factualPageTwoPath) {
         factualPageTwoRequests += 1;
         return Response.json({
-          data: { items: [
+          data: {
+            items: [
             mediaEntryWire(
               "entry-factual-2",
               "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
               "Committed Factual Page Two",
             ),
-          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+            ],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         });
       }
       if (path === `/api/libraries/${LIBRARY_ID}/entries`) {
         return Response.json({
-          data: { items: [
+          data: {
+            items: [
             mediaEntryWire(
               "entry-canonical-network",
               "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
               "Canonical Network Work",
             ),
-          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+            ],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         });
       }
       if (fetchInputPath(input) === "/api/resource-graph/connections/summary") {
@@ -1121,13 +1244,15 @@ exhaustion: "Complete",
     const view = render(journey(canonicalHref, 0, seededResources));
     const factualRouteKey = resolvePaneRouteIdentity(factualHref).routeKey;
 
-    expect(await screen.findByRole("link", { name: "Canonical Work" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Canonical Work" }),
+    ).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByTestId("lectern-status")).toHaveTextContent("ready"),
     );
     await waitFor(() => expect(commands).not.toBeNull());
     view.rerender(journey(factualHref, 0, seededResources));
-    expect(await screen.findByRole("status")).toHaveTextContent(
+    expect(await findLibraryViewStatus()).toHaveTextContent(
       "Loading All items · Title — A–Z. Showing All items · Custom order.",
     );
     act(() => {
@@ -1202,20 +1327,26 @@ exhaustion: "Complete",
 
     resolveSupersededRequest(
       Response.json({
-        data: { items: [
+        data: {
+          items: [
           mediaEntryWire(
             "entry-stale",
             "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
             "Superseded Factual Work",
           ),
-        ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+          ],
+          collectionRevision: 1,
+          nextCursor: { kind: "Absent" },
+        },
       }),
     );
     await act(async () => {
       await supersededRequest;
       await Promise.resolve();
     });
-    expect(screen.queryByText("Superseded Factual Work")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Superseded Factual Work"),
+    ).not.toBeInTheDocument();
   });
 
   it("refetches after an over-budget snapshot while preserving the final raw return clamp", async () => {
@@ -1244,13 +1375,17 @@ exhaustion: "Complete",
       if (path === `/api/libraries/${LIBRARY_ID}/entries`) {
         entriesRequests += 1;
         return Response.json({
-          data: { items: [
+          data: {
+            items: [
             mediaEntryWire(
               "entry-replacement",
               "77777777-7777-4777-8777-777777777777",
               "Replacement Work",
             ),
-          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+            ],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         });
       }
       throw new Error(`Unexpected fetch call: ${path}`);
@@ -1286,7 +1421,9 @@ exhaustion: "Complete",
     );
     const view = render(journey(0));
 
-    expect(await screen.findByRole("link", { name: "Oversized Work" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Oversized Work" }),
+    ).toBeInTheDocument();
     await waitFor(() => expect(commands).not.toBeNull());
     const sourceScrollport = screen.getByTestId("return-journey-scrollport");
     definePaneReturnGeometry(sourceScrollport, { "entry-oversized": 120 });
@@ -1304,7 +1441,9 @@ exhaustion: "Complete",
 
     const restoredScrollport = screen.getByTestId("return-journey-scrollport");
     definePaneReturnGeometry(restoredScrollport, {});
-    expect(await screen.findByRole("link", { name: "Replacement Work" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Replacement Work" }),
+    ).toBeInTheDocument();
     await waitFor(() => expect(restoredScrollport.scrollTop).toBe(100));
     expect(libraryRequests).toBe(1);
     expect(entriesRequests).toBe(1);
@@ -1320,13 +1459,17 @@ exhaustion: "Complete",
         path === `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`
       ) {
         return Response.json({
-          data: { items: [
+          data: {
+            items: [
             mediaEntryWire(
               "entry-t1",
               "44444444-4444-4444-8444-444444444444",
               "Alpha Work",
             ),
-          ], collectionRevision: 1, nextCursor: { kind: "Present", value: String("cursor-2") } },
+            ],
+            collectionRevision: 1,
+            nextCursor: { kind: "Present", value: String("cursor-2") },
+          },
         });
       }
       if (
@@ -1334,13 +1477,17 @@ exhaustion: "Complete",
         `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc&cursor=cursor-2&collection_revision=1&limit=100`
       ) {
         return Response.json({
-          data: { items: [
+          data: {
+            items: [
             mediaEntryWire(
               "entry-t2",
               "55555555-5555-4555-8555-555555555555",
               "Beta Work",
             ),
-          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+            ],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         });
       }
       return new Response("{}", {
@@ -1370,10 +1517,14 @@ exhaustion: "Complete",
     });
 
     // The factual first page comes from the endpoint, not the canonical seed.
-    expect(await screen.findByRole("link", { name: "Alpha Work" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Alpha Work" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Canonical Seed")).not.toBeInTheDocument();
 
-    expect(await screen.findByRole("link", { name: "Beta Work" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Beta Work" }),
+    ).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
       `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc&cursor=cursor-2&collection_revision=1&limit=100`,
       expect.objectContaining({ method: "GET" }),
@@ -1396,7 +1547,11 @@ exhaustion: "Complete",
         );
         Reflect.deleteProperty(invalid, "readingTimeEstimate");
         return Response.json({
-          data: { items: [invalid], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+          data: {
+            items: [invalid],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         });
       }
       return new Response("{}", {
@@ -1423,16 +1578,16 @@ exhaustion: "Partial",
         },
       },
       children: (
-        <DefectBoundary onDefect={onDefect}>
-          {paneWithLectern}
-        </DefectBoundary>
+        <DefectBoundary onDefect={onDefect}>{paneWithLectern}</DefectBoundary>
       ),
     });
 
     expect(
       await screen.findByRole("link", { name: "Valid Work" }),
     ).toBeInTheDocument();
-    expect(await screen.findByText("Library defect boundary")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Library defect boundary"),
+    ).toBeInTheDocument();
     expect(onDefect).toHaveBeenCalledWith(
       expect.objectContaining({ code: "E_INVALID_RESPONSE" }),
     );
@@ -1455,7 +1610,11 @@ exhaustion: "Partial",
         );
         Reflect.deleteProperty(invalid, "readingTimeEstimate");
         return Response.json({
-          data: { items: [invalid], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+          data: {
+            items: [invalid],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         });
       }
       return new Response("{}", {
@@ -1482,9 +1641,7 @@ exhaustion: "Complete",
         },
       },
       children: (
-        <DefectBoundary onDefect={onDefect}>
-          {paneWithLectern}
-        </DefectBoundary>
+        <DefectBoundary onDefect={onDefect}>{paneWithLectern}</DefectBoundary>
       ),
     });
 
@@ -1510,15 +1667,22 @@ exhaustion: "Complete",
       if (path === "/api/consumption/commands") {
         return pendingConsumption;
       }
-      if (path === `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2&collection_revision=1&limit=100`) {
+      if (
+        path ===
+        `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2&collection_revision=1&limit=100`
+      ) {
         return Response.json({
-          data: { items: [
+          data: {
+            items: [
             mediaEntryWire(
               "entry-2",
               "22222222-2222-4222-8222-222222222222",
               "Concurrent Work",
             ),
-          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+            ],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         });
       }
       return new Response("{}", {
@@ -1558,7 +1722,9 @@ exhaustion: "Partial",
       await screen.findByRole("menuitem", { name: "Mark as finished" }),
     );
     expect(await screen.findByText("Finished")).toBeInTheDocument();
-    expect(await screen.findByRole("link", { name: "Concurrent Work" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Concurrent Work" }),
+    ).toBeInTheDocument();
 
     resolveConsumption(
       Response.json(
@@ -1568,7 +1734,9 @@ exhaustion: "Partial",
     );
 
     expect(await screen.findByText("50% · ≈5 min left")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Concurrent Work" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Concurrent Work" }),
+    ).toBeInTheDocument();
   });
 
   it("guards same-media read-state re-entry while a command is pending", async () => {
@@ -1667,14 +1835,18 @@ exhaustion: "Complete",
         path === `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`
       ) {
         return Response.json({
-          data: { items: [
+          data: {
+            items: [
             mediaEntryWire("entry-t1", ACTION_MEDIA_ID, "Refreshing Work", {
               readState: "in_progress",
               progressFraction: 0.5,
               remainingMinutes: 5,
               capabilities: { can_refresh_source: true },
             }),
-          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+            ],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         });
       }
       if (path === `/api/media/${ACTION_MEDIA_ID}/refresh`) {
@@ -1926,7 +2098,9 @@ exhaustion: "Complete",
       />,
     );
 
-    expect(await screen.findByRole("link", { name: "First Canonical Work" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "First Canonical Work" }),
+    ).toBeInTheDocument();
     await user.click(
       screen.getByRole("button", {
         name: "More actions for First Canonical Work",
@@ -1956,15 +2130,20 @@ exhaustion: "Complete",
     expect(screen.getByTestId("library-pane-href")).toHaveTextContent(
       `/libraries/${LIBRARY_ID}?sort=title&direction=asc`,
     );
-    expect(screen.getByRole("link", { name: "First Canonical Work" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Second Canonical Work" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "First Canonical Work" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Second Canonical Work" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent(
+    expect(getLibraryViewStatus()).toHaveTextContent(
       "Loading All items · Title — A–Z. Showing All items · Custom order.",
     );
-    expect(
-      screen.getByRole("region", { name: LIBRARY_NAME }),
-    ).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("region", { name: LIBRARY_NAME })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
     expect(
       screen.getByRole("link", { name: "First Canonical Work" }),
     ).toBeVisible();
@@ -1975,17 +2154,23 @@ exhaustion: "Complete",
     ).not.toBeInTheDocument();
     resolveTitle(
       Response.json({
-        data: { items: [
+        data: {
+          items: [
           mediaEntryWire(
             "entry-t1",
             "44444444-4444-4444-8444-444444444444",
             "Titled Work",
           ),
-        ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+          ],
+          collectionRevision: 1,
+          nextCursor: { kind: "Absent" },
+        },
       }),
     );
 
-    expect(await screen.findByRole("link", { name: "Titled Work" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Titled Work" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText("First Canonical Work")).not.toBeInTheDocument();
     expect(sortSelect).toHaveFocus();
     await waitFor(() => expect(scrollport.scrollTop).toBe(180));
@@ -1995,24 +2180,32 @@ exhaustion: "Complete",
 
     await user.selectOptions(sortSelect, "creator-asc");
 
-    expect(screen.getByRole("link", { name: "Titled Work" })).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent(
+    expect(
+      screen.getByRole("link", { name: "Titled Work" }),
+    ).toBeInTheDocument();
+    expect(getLibraryViewStatus()).toHaveTextContent(
       "Loading All items · Creator — A–Z. Showing All items · Title — A–Z.",
     );
 
     resolveCreator(
       Response.json({
-        data: { items: [
+        data: {
+          items: [
           mediaEntryWire(
             "entry-c1",
             "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
             "Creator Work",
           ),
-        ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+          ],
+          collectionRevision: 1,
+          nextCursor: { kind: "Absent" },
+        },
       }),
     );
 
-    expect(await screen.findByRole("link", { name: "Creator Work" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Creator Work" }),
+    ).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
       `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`,
       expect.objectContaining({ method: "GET" }),
@@ -2042,13 +2235,17 @@ exhaustion: "Complete",
           );
         }
         return Response.json({
-          data: { items: [
+          data: {
+            items: [
             mediaEntryWire(
               "entry-t1",
               "44444444-4444-4444-8444-444444444444",
               "Recovered Title Work",
             ),
-          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+            ],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         });
       }
       return new Response("{}", {
@@ -2078,15 +2275,19 @@ exhaustion: "Complete",
       />,
     );
 
-    expect(await screen.findByRole("link", { name: "Canonical Seed" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Canonical Seed" }),
+    ).toBeInTheDocument();
     const sortSelect = screen.getByRole("combobox", { name: "Sort by" });
     await user.selectOptions(sortSelect, "title-asc");
 
-    const failedStatus = await screen.findByRole("status");
+    const failedStatus = await findLibraryViewStatus();
     expect(failedStatus).toHaveTextContent(
       "Could not load All items · Title — A–Z. Showing All items · Custom order.",
     );
-    expect(screen.getByRole("link", { name: "Canonical Seed" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Canonical Seed" }),
+    ).toBeInTheDocument();
     expect(sortSelect).toHaveValue("title-asc");
     expect(screen.getByTestId("library-pane-href")).toHaveTextContent(
       `/libraries/${LIBRARY_ID}?sort=title&direction=asc`,
@@ -2097,7 +2298,9 @@ exhaustion: "Complete",
 
     await user.click(screen.getByRole("button", { name: "Retry" }));
 
-    expect(await screen.findByRole("link", { name: "Recovered Title Work" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Recovered Title Work" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Canonical Seed")).not.toBeInTheDocument();
     expect(
       fetchCallsForPath(fetchMock, `/api/libraries/${LIBRARY_ID}/entries`),
@@ -2139,13 +2342,17 @@ exhaustion: "Complete",
           );
         }
         return Response.json({
-          data: { items: [
+          data: {
+            items: [
             mediaEntryWire(
               "entry-c1",
               "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
               "Recovered Creator Work",
             ),
-          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+            ],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         });
       }
       return new Response("{}", {
@@ -2176,13 +2383,15 @@ exhaustion: "Complete",
     );
     const view = render(renderPane());
 
-    expect(await screen.findByRole("link", { name: "Canonical Seed" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Canonical Seed" }),
+    ).toBeInTheDocument();
     const sortSelect = screen.getByRole("combobox", { name: "Sort by" });
     await user.selectOptions(sortSelect, "title-asc");
     await waitFor(() => expect(titleSignal).not.toBeNull());
     await user.selectOptions(sortSelect, "creator-asc");
 
-    expect(await screen.findByRole("status")).toHaveTextContent(
+    expect(await findLibraryViewStatus()).toHaveTextContent(
       "Could not load All items · Creator — A–Z. Showing All items · Custom order.",
     );
     expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
@@ -2197,7 +2406,11 @@ exhaustion: "Complete",
     await act(async () => {
       resolveTitle(
         Response.json({
-          data: { items: [malformedTitle], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+          data: {
+            items: [malformedTitle],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         }),
       );
       await pendingTitle;
@@ -2205,14 +2418,16 @@ exhaustion: "Complete",
     });
     view.rerender(renderPane());
 
-    expect(screen.getByRole("status")).toHaveTextContent(
+    expect(getLibraryViewStatus()).toHaveTextContent(
       "Could not load All items · Creator — A–Z. Showing All items · Custom order.",
     );
     expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
     expect(screen.queryByText("Malformed stale title")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Retry" }));
-    expect(await screen.findByRole("link", { name: "Recovered Creator Work" })).toBeVisible();
+    expect(
+      await screen.findByRole("link", { name: "Recovered Creator Work" }),
+    ).toBeVisible();
     expect(creatorAttempts).toBe(2);
     expect(
       fetchMock.mock.calls.filter(
@@ -2242,13 +2457,17 @@ exhaustion: "Complete",
       }
       if (path === canonicalPath) {
         return Response.json({
-          data: { items: [
+          data: {
+            items: [
             mediaEntryWire(
               "entry-fresh",
               "99999999-9999-4999-8999-999999999999",
               "Fresh Canonical Work",
             ),
-          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+            ],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         });
       }
       return new Response("{}", {
@@ -2289,8 +2508,12 @@ exhaustion: "Complete",
 
     await user.selectOptions(sortSelect, "canonical");
 
-    expect(await screen.findByRole("link", { name: "Fresh Canonical Work" })).toBeInTheDocument();
-    expect(screen.queryByText("Bootstrap Canonical Work")).not.toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Fresh Canonical Work" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Bootstrap Canonical Work"),
+    ).not.toBeInTheDocument();
     expect(
       fetchMock.mock.calls.filter(
         ([input]) => fetchInputPathWithSearch(input) === canonicalPath,
@@ -2300,20 +2523,26 @@ exhaustion: "Complete",
 
     resolveTitle(
       Response.json({
-        data: { items: [
+        data: {
+          items: [
           mediaEntryWire(
             "entry-stale",
             "44444444-4444-4444-8444-444444444444",
             "Stale Title Work",
           ),
-        ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+          ],
+          collectionRevision: 1,
+          nextCursor: { kind: "Absent" },
+        },
       }),
     );
     await act(async () => {
       await pendingTitle;
       await Promise.resolve();
     });
-    expect(screen.getByRole("link", { name: "Fresh Canonical Work" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Fresh Canonical Work" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Stale Title Work")).not.toBeInTheDocument();
   });
 
@@ -2327,13 +2556,17 @@ exhaustion: "Complete",
         path === `/api/libraries/${LIBRARY_ID}/entries?completion=unfinished`
       ) {
         return Response.json({
-          data: { items: [
+          data: {
+            items: [
             mediaEntryWire(
               "entry-u1",
               "88888888-8888-4888-8888-888888888888",
               "Unfinished Work",
             ),
-          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+            ],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         });
       }
       return new Response("{}", {
@@ -2363,10 +2596,14 @@ exhaustion: "Complete",
       />,
     );
 
-    expect(await screen.findByRole("link", { name: "Canonical Seed" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Canonical Seed" }),
+    ).toBeInTheDocument();
     await user.click(screen.getByRole("checkbox", { name: "Hide finished" }));
 
-    expect(await screen.findByRole("link", { name: "Unfinished Work" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Unfinished Work" }),
+    ).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
       `/api/libraries/${LIBRARY_ID}/entries?completion=unfinished`,
       expect.objectContaining({ method: "GET" }),
@@ -2379,20 +2616,30 @@ exhaustion: "Complete",
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
       const path = fetchInputPathWithSearch(input);
-      if (path === `/api/libraries/${LIBRARY_ID}/entries?completion=unfinished`) {
+      if (
+        path === `/api/libraries/${LIBRARY_ID}/entries?completion=unfinished`
+      ) {
         return Response.json({
-          data: { items: [], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+          data: {
+            items: [],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         });
       }
       if (path === `/api/libraries/${LIBRARY_ID}/entries`) {
         return Response.json({
-          data: { items: [
+          data: {
+            items: [
             mediaEntryWire(
               "entry-current",
               "77777777-7777-4777-8777-777777777777",
               "Current Canonical Work",
             ),
-          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+            ],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         });
       }
       return new Response("{}", {
@@ -2429,7 +2676,9 @@ exhaustion: "Complete",
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Show finished" }));
 
-    expect(await screen.findByRole("link", { name: "Current Canonical Work" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Current Canonical Work" }),
+    ).toBeInTheDocument();
     expect(
       fetchMock.mock.calls.filter(
         ([input]) =>
@@ -2480,7 +2729,9 @@ exhaustion: "Complete",
     ).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Reset view" }));
 
-    expect(await screen.findByRole("link", { name: "Canonical Seed" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Canonical Seed" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Invalid library view")).not.toBeInTheDocument();
   });
 
@@ -2499,7 +2750,8 @@ exhaustion: "Complete",
         `/api/libraries/${LIBRARY_ID}/entries?sort=added&direction=desc`
       ) {
         return Response.json({
-          data: { items: [
+          data: {
+            items: [
             mediaEntryWire(
               "entry-a1",
               "99999999-9999-4999-8999-999999999999",
@@ -2508,7 +2760,10 @@ exhaustion: "Complete",
                 createdAt: addedIso,
               },
             ),
-          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+            ],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         });
       }
       return new Response("{}", {
@@ -2541,7 +2796,9 @@ exhaustion: "Complete",
         }}
       />,
     );
-    expect(await screen.findByRole("link", { name: "Canonical Seed" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Canonical Seed" }),
+    ).toBeInTheDocument();
     expect(
       screen.queryByText(`Added ${expectedAdded}`),
     ).not.toBeInTheDocument();
@@ -2568,7 +2825,9 @@ exhaustion: "Complete",
         }}
       />,
     );
-    expect(await screen.findByRole("link", { name: "Dated Work" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Dated Work" }),
+    ).toBeInTheDocument();
     expect(screen.getByText(`Added ${expectedAdded}`)).toBeInTheDocument();
   });
 
@@ -2581,7 +2840,8 @@ exhaustion: "Complete",
         `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`
       ) {
         return Response.json({
-          data: { items: [
+          data: {
+            items: [
             mediaEntryWire(
               "entry-t1",
               "44444444-4444-4444-8444-444444444444",
@@ -2592,7 +2852,10 @@ exhaustion: "Complete",
               "55555555-5555-4555-8555-555555555555",
               "Beta Work",
             ),
-          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+            ],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         });
       }
       return new Response("{}", {
@@ -2621,7 +2884,9 @@ exhaustion: "Complete",
       children: paneWithLectern,
     });
 
-    expect(await screen.findByRole("link", { name: "Alpha Work" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Alpha Work" }),
+    ).toBeInTheDocument();
     // Reorder is gated to the canonical/all view, so no per-row Move up/down.
     await userEvent
       .setup()
@@ -2690,15 +2955,14 @@ exhaustion: "Complete",
       />,
     );
 
-    expect(await screen.findByRole("link", { name: "Canonical Seed" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Canonical Seed" }),
+    ).toBeInTheDocument();
     const sortSelect = screen.getByRole("combobox", { name: "Sort by" });
     await user.selectOptions(sortSelect, "title-asc");
     await waitFor(() =>
       expect(
-        fetchCallsForPath(
-          fetchMock,
-          `/api/libraries/${LIBRARY_ID}/entries`,
-        ),
+        fetchCallsForPath(fetchMock, `/api/libraries/${LIBRARY_ID}/entries`),
       ).toHaveLength(1),
     );
 
@@ -2707,26 +2971,36 @@ exhaustion: "Complete",
 
     resolveCreator(
       Response.json({
-        data: { items: [
+        data: {
+          items: [
           mediaEntryWire(
             "entry-c1",
             "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
             "Creator Work",
           ),
-        ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+          ],
+          collectionRevision: 1,
+          nextCursor: { kind: "Absent" },
+        },
       }),
     );
 
-    expect(await screen.findByRole("link", { name: "Creator Work" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Creator Work" }),
+    ).toBeInTheDocument();
     resolveTitle(
       Response.json({
-        data: { items: [
+        data: {
+          items: [
           mediaEntryWire(
             "entry-t1",
             "44444444-4444-4444-8444-444444444444",
             "Stale Title Work",
           ),
-        ], collectionRevision: 1, nextCursor: { kind: "Present", value: String("cursor-title-2") } },
+          ],
+          collectionRevision: 1,
+          nextCursor: { kind: "Present", value: String("cursor-title-2") },
+        },
       }),
     );
 
@@ -2734,7 +3008,9 @@ exhaustion: "Complete",
       await pendingTitle;
       await Promise.resolve();
     });
-    expect(screen.getByRole("link", { name: "Creator Work" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Creator Work" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Stale Title Work")).not.toBeInTheDocument();
     expect(sortSelect).toHaveValue("creator-asc");
   });
@@ -2764,7 +3040,9 @@ exhaustion: "Complete",
     });
 
     const viewSelect = await screen.findByRole("combobox", { name: "View" });
-    expect(within(viewSelect).getByRole("option", { name: "All items" })).toBeInTheDocument();
+    expect(
+      within(viewSelect).getByRole("option", { name: "All items" }),
+    ).toBeInTheDocument();
     expect(
       within(viewSelect).getByRole("option", { name: "In Progress" }),
     ).toBeInTheDocument();
@@ -2783,7 +3061,9 @@ exhaustion: "Complete",
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
       const path = fetchInputPathWithSearch(input);
-      if (path === `/api/libraries/${LIBRARY_ID}/entries?projection=in-progress`) {
+      if (
+        path === `/api/libraries/${LIBRARY_ID}/entries?projection=in-progress`
+      ) {
         return pendingInProgress;
       }
       return new Response("{}", {
@@ -2835,25 +3115,30 @@ exhaustion: "Complete",
     expect(
       screen.getByRole("link", { name: "Canonical Work" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent(
+    expect(getLibraryViewStatus()).toHaveTextContent(
       "Loading In Progress · Custom order. Showing All items · Custom order.",
     );
-    expect(
-      screen.getByRole("region", { name: LIBRARY_NAME }),
-    ).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("region", { name: LIBRARY_NAME })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
     expect(
       screen.queryByRole("checkbox", { name: "Hide finished" }),
     ).not.toBeInTheDocument();
 
     resolveInProgress(
       Response.json({
-        data: { items: [
+        data: {
+          items: [
           mediaEntryWire("entry-p", ACTION_MEDIA_ID, "In Progress Work", {
             readState: "in_progress",
             progressFraction: 0.4,
             remainingMinutes: 9,
           }),
-        ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+          ],
+          collectionRevision: 1,
+          nextCursor: { kind: "Absent" },
+        },
       }),
     );
     expect(
@@ -2874,7 +3159,9 @@ exhaustion: "Complete",
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
       const path = fetchInputPathWithSearch(input);
-      if (path === `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`) {
+      if (
+        path === `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`
+      ) {
         return pendingTitle;
       }
       return new Response("{}", {
@@ -2912,7 +3199,7 @@ exhaustion: "Complete",
       "title-asc",
     );
 
-    const status = screen.getByRole("status");
+    const status = getLibraryViewStatus();
     const region = screen.getByRole("region", { name: LIBRARY_NAME });
     // The status node points at the busy region and is not nested inside it.
     expect(status).toHaveAttribute("aria-controls", region.id);
@@ -2921,13 +3208,17 @@ exhaustion: "Complete",
 
     resolveTitle(
       Response.json({
-        data: { items: [
+        data: {
+          items: [
           mediaEntryWire(
             "entry-t",
             "44444444-4444-4444-8444-444444444444",
             "Titled Work",
           ),
-        ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+          ],
+          collectionRevision: 1,
+          nextCursor: { kind: "Absent" },
+        },
       }),
     );
     expect(
@@ -2941,20 +3232,30 @@ exhaustion: "Complete",
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
       const path = fetchInputPathWithSearch(input);
-      if (path === `/api/libraries/${LIBRARY_ID}/entries?projection=in-progress`) {
+      if (
+        path === `/api/libraries/${LIBRARY_ID}/entries?projection=in-progress`
+      ) {
         return Response.json({
-          data: { items: [], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+          data: {
+            items: [],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         });
       }
       if (path === `/api/libraries/${LIBRARY_ID}/entries`) {
         return Response.json({
-          data: { items: [
+          data: {
+            items: [
             mediaEntryWire(
               "entry-all",
               "77777777-7777-4777-8777-777777777777",
               "All Items Work",
             ),
-          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+            ],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         });
       }
       return new Response("{}", {
@@ -3002,6 +3303,98 @@ exhaustion: "Complete",
     );
   });
 
+  it("clears the local query and resets the complete domain view", async () => {
+    const user = userEvent.setup();
+    const factualPath = `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc&projection=unfiled&completion=unfinished`;
+    const fetchMock = stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      const path = fetchInputPathWithSearch(input);
+      if (path === factualPath) {
+        return Response.json({
+          data: {
+            items: [
+              mediaEntryWire(
+                "entry-unfiled",
+                "77777777-7777-4777-8777-777777777777",
+                "Needle Unfiled Work",
+              ),
+            ],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
+        });
+      }
+      if (path === `/api/libraries/${LIBRARY_ID}/entries`) {
+        return Response.json({
+          data: {
+            items: [
+              mediaEntryWire(
+                "entry-canonical",
+                "88888888-8888-4888-8888-888888888888",
+                "Canonical Work",
+              ),
+            ],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
+        });
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    render(
+      <StatefulLibraryPane
+        initialHref={`/libraries/${LIBRARY_ID}?sort=title&direction=asc&projection=unfiled&completion=unfinished`}
+        resources={{
+          [LIBRARY_ID]: {
+            library: seededLibrary(),
+            entries: [],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+            exhaustion: "Complete",
+          },
+        }}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("link", { name: "Needle Unfiled Work" }),
+    ).toBeInTheDocument();
+    const filter = screen.getByRole("searchbox", {
+      name: "Filter library entries",
+    });
+    await user.type(filter, "needle");
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+
+    expect(
+      await screen.findByRole("link", { name: "Canonical Work" }),
+    ).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/libraries/${LIBRARY_ID}/entries`,
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(screen.getByTestId("library-pane-href")).toHaveTextContent(
+      `/libraries/${LIBRARY_ID}`,
+    );
+    expect(filter).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "View" })).toHaveValue(
+      "all-items",
+    );
+    expect(screen.getByRole("combobox", { name: "Sort by" })).toHaveValue(
+      "canonical",
+    );
+    expect(
+      screen.getByRole("checkbox", { name: "Hide finished" }),
+    ).not.toBeChecked();
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "View" })).toHaveFocus(),
+    );
+  });
+
   it("recovers a stale continuation cursor with Refresh list", async () => {
     const user = userEvent.setup();
     let firstPageReads = 0;
@@ -3009,7 +3402,10 @@ exhaustion: "Complete",
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
       const path = fetchInputPathWithSearch(input);
-      if (path === `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-stale&collection_revision=1&limit=100`) {
+      if (
+        path ===
+        `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-stale&collection_revision=1&limit=100`
+      ) {
         return Response.json(
           { error: { code: "E_INVALID_CURSOR", message: "Invalid cursor" } },
           { status: 400 },
@@ -3018,13 +3414,17 @@ exhaustion: "Complete",
       if (path === `/api/libraries/${LIBRARY_ID}/entries`) {
         firstPageReads += 1;
         return Response.json({
-          data: { items: [
+          data: {
+            items: [
             mediaEntryWire(
               "entry-fresh",
               "88888888-8888-4888-8888-888888888888",
               "Refreshed Work",
             ),
-          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+            ],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         });
       }
       return new Response("{}", {
@@ -3084,13 +3484,17 @@ exhaustion: "Partial",
       if (fetchInputPath(input) === `/api/libraries/${LIBRARY_ID}/entries`) {
         entriesReads += 1;
         return Response.json({
-          data: { items: [
+          data: {
+            items: [
             mediaEntryWire(
               "entry-new",
               "22222222-2222-4222-8222-222222222291",
               "Newly Filed",
             ),
-          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+            ],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         });
       }
       return new Response("{}", {
@@ -3140,13 +3544,17 @@ exhaustion: "Complete",
       if (fetchInputPath(input) === `/api/libraries/${LIBRARY_ID}/entries`) {
         entriesReads += 1;
         return Response.json({
-          data: { items: [
+          data: {
+            items: [
             mediaEntryWire(
               "entry-fresh",
               "22222222-2222-4222-8222-222222222292",
               "Endpoint First Page",
             ),
-          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+            ],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         });
       }
       return new Response("{}", {
@@ -3190,13 +3598,17 @@ exhaustion: "Complete",
       if (fetchInputPath(input) === `/api/libraries/${LIBRARY_ID}/entries`) {
         entriesReads += 1;
         return Response.json({
-          data: { items: [
+          data: {
+            items: [
             mediaEntryWire(
               "entry-reconciled",
               "22222222-2222-4222-8222-222222222293",
               "Reconciled Work",
             ),
-          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+            ],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         });
       }
       return new Response("{}", {
@@ -3209,7 +3621,9 @@ exhaustion: "Complete",
     const publishCommands = (next: PaneReturnMementoCommands) => {
       commands = next;
     };
-    const routeKey = resolvePaneRouteIdentity(`/libraries/${LIBRARY_ID}`).routeKey;
+    const routeKey = resolvePaneRouteIdentity(
+      `/libraries/${LIBRARY_ID}`,
+    ).routeKey;
     const seededResources = {
       [LIBRARY_ID]: {
         library: seededLibrary(),
@@ -3305,13 +3719,17 @@ exhaustion: "Complete",
         titleAttempts += 1;
         if (titleAttempts === 1) return pendingTitle;
         return Response.json({
-          data: { items: [
+          data: {
+            items: [
             mediaEntryWire(
               "entry-ok",
               "22222222-2222-4222-8222-222222222294",
               "Loaded Work",
             ),
-          ], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+            ],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         });
       }
       return new Response("{}", {
@@ -3340,11 +3758,13 @@ exhaustion: "Complete",
     // Metadata known, no page committed yet: the single polite status node shows
     // EXACTLY "Loading {requested}." (no committed view to "show"), and the
     // View / Sort by / Hide finished controls are rendered around the busy region.
-    const pending = await screen.findByRole("status");
+    const pending = await findLibraryViewStatus();
     expect(pending).toHaveTextContent("Loading All items · Title — A–Z.");
     expect(pending).not.toHaveTextContent("Showing");
     expect(screen.getByRole("combobox", { name: "View" })).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Sort by" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: "Sort by" }),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("checkbox", { name: "Hide finished" }),
     ).toBeInTheDocument();
@@ -3360,14 +3780,16 @@ exhaustion: "Complete",
     );
 
     await waitFor(() =>
-      expect(screen.getByRole("status")).toHaveTextContent(
+      expect(getLibraryViewStatus()).toHaveTextContent(
         "Could not load All items · Title — A–Z.",
       ),
     );
-    expect(screen.getByRole("status")).not.toHaveTextContent("Showing");
+    expect(getLibraryViewStatus()).not.toHaveTextContent("Showing");
     // Controls survive the failure.
     expect(screen.getByRole("combobox", { name: "View" })).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Sort by" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: "Sort by" }),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Retry" }));
 
@@ -3386,7 +3808,10 @@ exhaustion: "Complete",
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
       const path = fetchInputPathWithSearch(input);
-      if (path === `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-stale&collection_revision=1&limit=100`) {
+      if (
+        path ===
+        `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-stale&collection_revision=1&limit=100`
+      ) {
         return Response.json(
           { error: { code: "E_INVALID_CURSOR", message: "Invalid cursor" } },
           { status: 400 },
@@ -3464,11 +3889,18 @@ exhaustion: "Partial",
       if (fetchInputPath(input) === `/api/libraries/${LIBRARY_ID}/entries`) {
         entriesRequests += 1;
         return Response.json({
-          data: { items: [], collectionRevision: 1, nextCursor: { kind: "Absent" } },
+          data: {
+            items: [],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         });
       }
       if (fetchInputPath(input) === "/api/consumption/commands") {
-        const command = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        const command = JSON.parse(String(init?.body)) as Record<
+          string,
+          unknown
+        >;
         commands.push(command);
         return Response.json({
           data: {
@@ -3525,7 +3957,9 @@ exhaustion: "Complete",
       expect(screen.getByTestId("lectern-status")).toHaveTextContent("ready"),
     );
     await user.click(
-      screen.getByRole("button", { name: "More actions for Resettable Episode" }),
+      screen.getByRole("button", {
+        name: "More actions for Resettable Episode",
+      }),
     );
     await user.click(
       await screen.findByRole("menuitem", { name: "Reset progress" }),
@@ -3552,7 +3986,9 @@ exhaustion: "Complete",
       screen.getByRole("link", { name: "Resettable Episode" }),
     ).toBeInTheDocument();
     await user.click(
-      screen.getByRole("button", { name: "More actions for Resettable Episode" }),
+      screen.getByRole("button", {
+        name: "More actions for Resettable Episode",
+      }),
     );
     expect(
       screen.getByRole("menuitem", { name: "Reset progress" }),
@@ -3594,7 +4030,11 @@ exhaustion: "Complete",
                 ),
               ];
         return Response.json({
-          data: { items: rows, collectionRevision: 1, nextCursor: { kind: "Absent" } },
+          data: {
+            items: rows,
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         });
       }
       if (path === "/api/consumption/commands") {
@@ -3626,7 +4066,9 @@ exhaustion: "Complete",
       children: paneWithLectern,
     });
 
-    expect(await screen.findByRole("link", { name: "First Work" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "First Work" }),
+    ).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByTestId("lectern-status")).toHaveTextContent("ready"),
     );
@@ -3645,9 +4087,7 @@ exhaustion: "Complete",
       ).not.toBeInTheDocument(),
     );
     await waitFor(() =>
-      expect(
-        screen.getByRole("link", { name: "Second Work" }),
-      ).toHaveFocus(),
+      expect(screen.getByRole("link", { name: "Second Work" })).toHaveFocus(),
     );
     await waitFor(() =>
       expect(screen.getByTestId("lectern-mutation")).toHaveTextContent("Idle"),
@@ -3734,7 +4174,9 @@ exhaustion: "Complete",
     expect(firstPageReads).toBe(1);
 
     await user.click(
-      screen.getByRole("button", { name: "More actions for Second Unfinished" }),
+      screen.getByRole("button", {
+        name: "More actions for Second Unfinished",
+      }),
     );
     await user.click(
       await screen.findByRole("menuitem", { name: "Mark as finished" }),
@@ -3793,7 +4235,11 @@ exhaustion: "Complete",
                 }),
               ];
         return Response.json({
-          data: { items: rows, collectionRevision: 1, nextCursor: { kind: "Absent" } },
+          data: {
+            items: rows,
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
         });
       }
       if (path === "/api/consumption/commands") {
@@ -3865,9 +4311,7 @@ exhaustion: "Complete",
       ).not.toBeInTheDocument(),
     );
     await waitFor(() =>
-      expect(
-        screen.getByRole("link", { name: "Sibling Row" }),
-      ).toHaveFocus(),
+      expect(screen.getByRole("link", { name: "Sibling Row" })).toHaveFocus(),
     );
     confirmSpy.mockRestore();
   });

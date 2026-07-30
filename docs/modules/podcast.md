@@ -18,6 +18,14 @@ the OPML import boundary from `apps/web/src/lib/podcasts/opmlImport.ts`; it owns
 local file admission, one destination set, and aggregate result presentation,
 while the podcast backend remains the sole XML/feed/import policy owner.
 
+Followed-show and episode pane text filtering is local Pane Search over the
+exhaustively loaded current domain view. It matches title and contributor
+display/credited names, preserves the server-owned state/sort order, and never
+enters URL, request, cursor, snapshot, or folio identity. The list APIs reject
+`q`. Episode-wide Mark Played and transcript selection is state-only and
+server-resolved; while a local query is active those commands remain
+discoverably disabled because rendered rows never define command scope.
+
 ## One Owner Per Concern
 
 This subsystem was consolidated so each piece of state has exactly one owner. The rules

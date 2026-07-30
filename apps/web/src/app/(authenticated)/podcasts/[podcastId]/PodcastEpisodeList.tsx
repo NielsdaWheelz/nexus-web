@@ -1,19 +1,11 @@
 "use client";
 
-import {
-  useMemo,
-  type Dispatch,
-  type ReactNode,
-  type SetStateAction,
-} from "react";
+import { useMemo, type ReactNode } from "react";
 import {
   FeedbackNotice,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
-import Button from "@/components/ui/Button";
-import Input from "@/components/ui/Input";
-import Select from "@/components/ui/Select";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
 import type { ExhaustionState } from "@/lib/api/useExhaustivePagination";
@@ -28,13 +20,13 @@ import type { ActionSelectDetail } from "@/lib/ui/actionDescriptor";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import EpisodeControls from "./EpisodeControls";
 import {
+  EPISODE_WIDE_COMMAND_LABELS,
   deriveEpisodeState,
   decodeEpisodeTimingFacts,
   decodeEpisodePublicationDate,
   episodePlayerDescriptor,
   canRequestTranscriptForEpisode,
   shouldPollTranscriptProvisioningForEpisode,
-  type EpisodeSort,
   type EpisodeStateFilter,
   type PodcastEpisodeMedia,
 } from "./episodeTranscript";
@@ -53,14 +45,10 @@ type StringIdSet = ReturnType<typeof useStringIdSet>;
 
 interface PodcastEpisodeListProps {
   episodes: PodcastEpisodeMedia[];
+  filterQuery: string;
   loading: boolean;
   error: FeedbackContent | null;
   episodeStateFilter: EpisodeStateFilter;
-  setEpisodeStateFilter: (filter: EpisodeStateFilter) => void;
-  episodeSort: EpisodeSort;
-  setEpisodeSort: (sort: EpisodeSort) => void;
-  episodeSearchInput: string;
-  setEpisodeSearchInput: Dispatch<SetStateAction<string>>;
   transcript: EpisodeTranscriptController;
   transcriptionAllowed: boolean;
   busyEpisodeActionKeys: StringIdSet;
@@ -74,7 +62,7 @@ interface PodcastEpisodeListProps {
   markAllAsPlayedBusy: boolean;
   collectionBusy: boolean;
   exhaustion: ExhaustionState;
-  onMarkAllMatchingAsPlayed: () => void;
+  onMarkAllAsPlayed: () => void;
   onToggleShowNotes: (mediaId: string) => void;
   onPlayNext: (mediaId: string) => Promise<void>;
   onAddToLectern: (mediaId: string) => Promise<void>;
@@ -99,14 +87,10 @@ interface PodcastEpisodeListProps {
 
 export default function PodcastEpisodeList({
   episodes,
+  filterQuery,
   loading,
   error,
   episodeStateFilter,
-  setEpisodeStateFilter,
-  episodeSort,
-  setEpisodeSort,
-  episodeSearchInput,
-  setEpisodeSearchInput,
   transcript,
   transcriptionAllowed,
   busyEpisodeActionKeys,
@@ -119,7 +103,7 @@ export default function PodcastEpisodeList({
   markAllAsPlayedBusy,
   collectionBusy,
   exhaustion,
-  onMarkAllMatchingAsPlayed,
+  onMarkAllAsPlayed,
   onToggleShowNotes,
   onPlayNext,
   onAddToLectern,
@@ -132,14 +116,9 @@ export default function PodcastEpisodeList({
   onTogglePlayed,
   onResetProgress,
 }: PodcastEpisodeListProps) {
-  const selectionIsNarrowed =
-    episodeStateFilter !== "all" || episodeSearchInput.trim().length > 0;
-  const transcriptCommandLabel = selectionIsNarrowed
-    ? "Transcribe matching episodes"
-    : "Transcribe all episodes";
-  const markPlayedCommandLabel = selectionIsNarrowed
-    ? "Mark matching episodes as played"
-    : "Mark all episodes as played";
+  const localFilterActive = filterQuery.trim().length > 0;
+  const commandLabels = EPISODE_WIDE_COMMAND_LABELS[episodeStateFilter];
+  const localFilterDisabledReason = "Clear Filter to use episode-wide actions";
   // Playback presence gates playback-only view actions. Lectern relationship
   // applicability comes exclusively from the ready membership snapshot, just
   // as it does in the opened media pane.
@@ -426,90 +405,65 @@ export default function PodcastEpisodeList({
   return (
     <div className={styles.episodePaneContent}>
       <div className={styles.episodePaneHeaderRow}>
-        <div className={styles.episodeHeaderActions}>
-          {!loading && error === null && exhaustion.kind === "Complete" ? (
-            <span>{exhaustion.itemCount} episodes</span>
-          ) : null}
-        </div>
         <ActionMenu
           label="Episode actions"
           options={[
             {
               kind: "command",
-              id: "transcribe-unplayed",
+              id: "transcribe-episodes",
               label: transcript.batchTranscriptBusy
                 ? "Transcribing..."
-                : transcriptCommandLabel,
+                : commandLabels.transcript,
               disabled:
+                localFilterActive ||
                 transcript.batchTranscriptBusy ||
                 !transcriptionAllowed ||
                 matchingEpisodeCount === 0,
-              onSelect: () => void transcript.handleBatchTranscriptRequest(),
+              disabledReason: localFilterActive
+                ? localFilterDisabledReason
+                : undefined,
+              onSelect: () => {
+                if (
+                  localFilterActive ||
+                  transcript.batchTranscriptBusy ||
+                  !transcriptionAllowed ||
+                  matchingEpisodeCount === 0
+                ) {
+                  return;
+                }
+                void transcript.handleBatchTranscriptRequest();
+              },
             },
             {
               kind: "command",
               id: "mark-all-played",
               label: markAllAsPlayedBusy
                 ? "Marking..."
-                : markPlayedCommandLabel,
+                : commandLabels.markPlayed,
               disabled:
-                markAllAsPlayedBusy || matchingEpisodeCount === 0,
-              onSelect: () => onMarkAllMatchingAsPlayed(),
+                localFilterActive ||
+                markAllAsPlayedBusy ||
+                matchingEpisodeCount === 0 ||
+                episodeStateFilter === "played",
+              disabledReason: localFilterActive
+                ? localFilterDisabledReason
+                : episodeStateFilter === "played"
+                  ? "Every episode in this state is already played."
+                  : undefined,
+              onSelect: () => {
+                if (
+                  localFilterActive ||
+                  markAllAsPlayedBusy ||
+                  matchingEpisodeCount === 0 ||
+                  episodeStateFilter === "played"
+                ) {
+                  return;
+                }
+                onMarkAllAsPlayed();
+              },
             },
           ]}
         />
-      </div>
-
-      <div className={styles.episodeFilterBar}>
-        <div className={styles.episodeFilterPills}>
-          {(
-            [
-              ["all", "All"],
-              ["unplayed", "Unplayed"],
-              ["in_progress", "In Progress"],
-              ["played", "Played"],
-            ] as const
-          ).map(([value, label]) => (
-            <Button
-              key={value}
-              variant="pill"
-              size="sm"
-              className={styles.episodeFilterPill}
-              aria-pressed={episodeStateFilter === value}
-              onClick={() => setEpisodeStateFilter(value)}
-            >
-              {label}
-            </Button>
-          ))}
-        </div>
-        <label className={styles.episodeSortLabel}>
-          Episode sort
-          <Select
-            size="sm"
-            aria-label="Episode sort"
-            value={episodeSort}
-            onChange={(event) =>
-              setEpisodeSort(event.target.value as EpisodeSort)
-            }
-          >
-            <option value="newest">Newest</option>
-            <option value="oldest">Oldest</option>
-            <option value="duration_asc">Shortest</option>
-            <option value="duration_desc">Longest</option>
-          </Select>
-        </label>
-        <label className={styles.episodeSearchLabel}>
-          Search episodes
-          <Input
-            size="sm"
-            type="search"
-            aria-label="Search episodes"
-            className={styles.episodeSearchInput}
-            placeholder="Search titles..."
-            value={episodeSearchInput}
-            onChange={(event) => setEpisodeSearchInput(event.target.value)}
-          />
-        </label>
       </div>
 
       {transcript.batchTranscriptSummary && (
@@ -527,13 +481,23 @@ export default function PodcastEpisodeList({
         ariaLabel="Episodes"
         rowPanels={rowPanels}
         empty={
-          !loading && !error ? (
+          !error && (localFilterActive || !loading) ? (
             <FeedbackNotice
               severity="neutral"
-              title="No episodes found for this podcast."
+              title={
+                localFilterActive
+                  ? !loading && exhaustion.kind === "Complete"
+                    ? "No episodes match this filter."
+                    : "No matching episode found so far."
+                  : "No episodes found for this podcast."
+              }
             />
           ) : null
         }
+        rowChangePresentation={{
+          kind: "ImmediateOnKeyChange",
+          key: filterQuery.trim(),
+        }}
       />
     </div>
   );

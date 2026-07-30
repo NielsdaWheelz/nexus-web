@@ -32,10 +32,7 @@ from nexus.services.collection_revisions import (
     require_collection_revision,
 )
 from nexus.services.consumption import service as consumption_service
-from nexus.services.contributor_credits import (
-    load_contributor_credits_for_podcasts,
-    podcast_credit_text_match_sql,
-)
+from nexus.services.contributor_credits import load_contributor_credits_for_podcasts
 from nexus.services.signed_keyset_cursor import (
     KeysetValue,
     KeysetValueKind,
@@ -158,14 +155,12 @@ def _subscription_query_identity(
     viewer_id: UUID,
     sort: PodcastSubscriptionSort,
     filter: PodcastSubscriptionFilter,
-    query: str | None,
     library_id: UUID | None,
 ) -> dict[str, object]:
     return {
         "viewerId": str(viewer_id),
         "sort": sort,
         "filter": filter,
-        "query": query,
         "libraryId": str(library_id) if library_id is not None else None,
     }
 
@@ -298,7 +293,6 @@ def list_subscriptions(
     cursor: CollectionCursor | None,
     collection_revision: CollectionRevision | None,
     sort: PodcastSubscriptionSort,
-    q: str | None = None,
     filter: PodcastSubscriptionFilter,
     library_id: UUID | None = None,
 ) -> CollectionPage[PodcastSubscriptionListItemOut]:
@@ -312,15 +306,10 @@ def list_subscriptions(
             ApiErrorCode.E_INVALID_REQUEST,
             "Invalid podcast subscriptions filter option",
         )
-    q = q.strip() if q is not None else None
-    if q == "":
-        q = None
-
     query_identity = _subscription_query_identity(
         viewer_id=viewer_id,
         sort=sort,
         filter=filter,
-        query=q,
         library_id=library_id,
     )
     order_by_sql, cursor_kinds = _subscription_order(sort)
@@ -391,9 +380,6 @@ def list_subscriptions(
         "user_id": viewer_id,
         "viewer_id": viewer_id,  # required by the embedded visible_media CTE
         "page_limit": limit + 1,
-        "has_query": q is not None,
-        "q": q,
-        "q_pattern": f"%{q}%" if q is not None else None,
         "in_library_podcast_ids": in_library_podcast_ids,
         "scoped_podcast_ids": scoped_podcast_ids,
     }
@@ -458,11 +444,6 @@ def list_subscriptions(
                 LEFT JOIN subscription_aggregates sa ON sa.podcast_id = ps.podcast_id
                 WHERE ps.user_id = :user_id
                   AND ps.status = 'active'
-                  AND (
-                        :has_query IS FALSE
-                        OR p.title ILIKE :q_pattern
-                        OR {podcast_credit_text_match_sql("p.id")}
-                    )
                   AND {filter_sql}
                   AND {library_scope_sql}
             )

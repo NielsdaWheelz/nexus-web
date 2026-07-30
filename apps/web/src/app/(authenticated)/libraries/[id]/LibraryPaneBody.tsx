@@ -86,7 +86,6 @@ import SectionOpener from "@/components/ui/SectionOpener";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import ReadingSlateSection from "@/components/collections/ReadingSlateSection";
-import PaneToolbar from "@/components/ui/PaneToolbar";
 import type {
   CollectionContext,
   CollectionRowView,
@@ -143,6 +142,8 @@ import {
   useConsumptionProjectionRevision,
 } from "@/lib/consumption/projectionRevision";
 import type { ContributorCredit, MediaAuthors } from "@/lib/contributors/types";
+import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
+import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
 import type {
   ActionDescriptor,
   ActionSelectDetail,
@@ -160,6 +161,7 @@ import {
 import { decodePodcastSyncStatus } from "@/lib/status/podcastSync";
 import { slateTargetId } from "@/lib/resonance/contract";
 import type { ReadingSlateAccept } from "@/lib/resonance/useReadingSlate";
+import { findPaneSearchFocusTarget } from "@/lib/workspace/paneDom";
 import styles from "./LibraryPaneBody.module.css";
 
 const MediaAuthorsEditor = lazy(
@@ -310,6 +312,17 @@ function formatAdded(iso: string): string {
   return new Intl.DateTimeFormat(undefined, ADDED_DATE_FORMAT).format(date);
 }
 
+function libraryEntryFilterFields(entry: LibraryEntry): readonly string[] {
+  const item = entry.kind === "media" ? entry.media : entry.podcast;
+  return [
+    item.title,
+    ...item.contributors.flatMap((credit) => [
+      credit.contributor_display_name ?? "",
+      credit.credited_name,
+    ]),
+  ];
+}
+
 // A canonical/all view is exactly the server's default order that the bootstrap
 // `libraryResource` already seeded; any factual order, projection, or unfinished
 // filter is a different first page fetched from the entries endpoint.
@@ -456,8 +469,7 @@ export default function LibraryPaneBody() {
         : [...controller.entries.entries],
     [controller],
   );
-  const entryCursor =
-    controller?.entries.nextCursor ?? NO_COLLECTION_CURSOR;
+  const entryCursor = controller?.entries.nextCursor ?? NO_COLLECTION_CURSOR;
   const setLibrary: Dispatch<SetStateAction<Library | null>> = useCallback(
     (update) => {
       setController((current) => {
@@ -565,9 +577,7 @@ export default function LibraryPaneBody() {
             : candidate,
         ),
       );
-      installEntryCollectionRevision(
-        response.libraryEntriesCollectionRevision,
-      );
+      installEntryCollectionRevision(response.libraryEntriesCollectionRevision);
       reconcileAfterMutationRef.current("SafeRebase");
     },
     [installEntryCollectionRevision, setEntries],
@@ -580,6 +590,9 @@ export default function LibraryPaneBody() {
   const [authorsEditorMediaId, setAuthorsEditorMediaId] = useState<
     string | null
   >(null);
+  const [authorsEditorRowKey, setAuthorsEditorRowKey] = useState<string | null>(
+    null,
+  );
   const [authorsEditorTrigger, setAuthorsEditorTrigger] =
     useState<HTMLButtonElement | null>(null);
   const authorsEditorMedia =
@@ -588,8 +601,9 @@ export default function LibraryPaneBody() {
         entry.kind === "media" && entry.media.id === authorsEditorMediaId,
     )?.media ?? null;
   const openAuthorsEditor = useCallback(
-    (mediaId: string, { triggerEl }: ActionSelectDetail) => {
+    (mediaId: string, rowKey: string, { triggerEl }: ActionSelectDetail) => {
       setAuthorsEditorMediaId(mediaId);
+      setAuthorsEditorRowKey(rowKey);
       setAuthorsEditorTrigger(triggerEl);
       setAuthorsEditorMounted(true);
       setAuthorsEditorOpen(true);
@@ -597,7 +611,7 @@ export default function LibraryPaneBody() {
     [],
   );
   // Focus continuity: when an action removes the focused row, move focus to the
-  // next visible row, else the previous, else the "View" select, then "Sort by".
+  // next filtered row, else the previous, else the canonical Pane Search target.
   const listRegionRef = useRef<HTMLDivElement | null>(null);
   const viewSelectRef = useRef<HTMLSelectElement | null>(null);
   const sortSelectRef = useRef<HTMLSelectElement | null>(null);
@@ -621,6 +635,10 @@ export default function LibraryPaneBody() {
   }, [hideFinishedInputId]);
   const pendingFocusNeighborRef = useRef<string | null | undefined>(undefined);
   const pendingFocusRafRef = useRef(0);
+  const filterQueryRef = useRef("");
+  const clearPendingFocusNeighbor = useCallback(() => {
+    pendingFocusNeighborRef.current = undefined;
+  }, []);
   const captureFocusNeighbor = useCallback((removedKey: string) => {
     const region = listRegionRef.current;
     if (!region) {
@@ -659,7 +677,6 @@ export default function LibraryPaneBody() {
   const handleAuthorsSaved = useCallback(
     (result: MediaAuthors) => {
       if (authorsEditorMediaId === null) return;
-      patchMediaInViews(authorsEditorMediaId, (media) => {
         const authorCredits: ContributorCredit[] = result.authors.map(
           (author, index) => ({
             contributor_handle: author.contributorHandle,
@@ -670,12 +687,30 @@ export default function LibraryPaneBody() {
             ordinal: index,
           }),
         );
+      const contributors = [
+        ...authorCredits,
+        ...(authorsEditorMedia?.contributors.filter(
+          (credit) => credit.role !== "author",
+        ) ?? []),
+      ];
+      if (
+        authorsEditorMedia !== null &&
+        authorsEditorRowKey !== null &&
+        filterQueryRef.current.trim() &&
+        !matchesPaneFilterQuery(filterQueryRef.current, [
+          authorsEditorMedia.title,
+          ...contributors.flatMap((credit) => [
+            credit.contributor_display_name ?? "",
+            credit.credited_name,
+          ]),
+        ])
+      ) {
+        captureFocusNeighbor(authorsEditorRowKey);
+      }
+      patchMediaInViews(authorsEditorMediaId, (media) => {
         return {
           ...media,
-          contributors: [
-            ...authorCredits,
-            ...media.contributors.filter((credit) => credit.role !== "author"),
-          ],
+          contributors,
           author_mode: result.authorMode,
         };
       });
@@ -683,7 +718,14 @@ export default function LibraryPaneBody() {
       clearAllVisitData();
       reconcileAfterMutationRef.current("Unknown");
     },
-    [authorsEditorMediaId, clearAllVisitData, patchMediaInViews],
+    [
+      authorsEditorMediaId,
+      authorsEditorMedia,
+      authorsEditorRowKey,
+      captureFocusNeighbor,
+      clearAllVisitData,
+      patchMediaInViews,
+    ],
   );
   const libraryResource = useResource<LibraryPaneResource, { id: string }>({
     descriptor: libraryResourceDescriptor,
@@ -944,16 +986,12 @@ export default function LibraryPaneBody() {
       const current = controllerRef.current;
       if (!viewIsCommitted) {
         pendingMutationEffectRef.current =
-          pendingMutationEffectRef.current === "Unknown"
-            ? "Unknown"
-            : effect;
+          pendingMutationEffectRef.current === "Unknown" ? "Unknown" : effect;
         return;
       }
       if (entryReconciliationRequestRef.current !== null) {
         pendingMutationEffectRef.current =
-          pendingMutationEffectRef.current === "Unknown"
-            ? "Unknown"
-            : effect;
+          pendingMutationEffectRef.current === "Unknown" ? "Unknown" : effect;
         return;
       }
       if (current === null) {
@@ -963,10 +1001,7 @@ export default function LibraryPaneBody() {
         clearAllVisitData();
         return;
       }
-      if (
-        effect === "SafePatch" &&
-        current.entries.exhaustion === "Complete"
-      ) {
+      if (effect === "SafePatch" && current.entries.exhaustion === "Complete") {
         committedSnapshotRef.current = null;
         clearAllVisitData();
         return;
@@ -990,11 +1025,7 @@ export default function LibraryPaneBody() {
     const effect = pendingMutationEffectRef.current;
     pendingMutationEffectRef.current = null;
     reconcileAfterMutation(effect);
-  }, [
-    entryReconciliationRequest,
-    reconcileAfterMutation,
-    viewIsCommitted,
-  ]);
+  }, [entryReconciliationRequest, reconcileAfterMutation, viewIsCommitted]);
   const entryReconciliationParams: LibraryEntriesResourceParams | null =
     entryReconciliationRequest
       ? {
@@ -1019,9 +1050,7 @@ export default function LibraryPaneBody() {
       }
       return {
         request,
-        page: decodeLibraryEntryPage(
-          await apiFetch<unknown>(path, { signal }),
-        ),
+        page: decodeLibraryEntryPage(await apiFetch<unknown>(path, { signal })),
       };
     },
     { debounceMs: 0 },
@@ -1275,8 +1304,7 @@ export default function LibraryPaneBody() {
       entries: {
         view: firstPageResource.data.view,
         entries: firstPageResource.data.page.items,
-        collectionRevision:
-          firstPageResource.data.page.collectionRevision,
+        collectionRevision: firstPageResource.data.page.collectionRevision,
         nextCursor: firstPageResource.data.page.nextCursor,
         exhaustion:
           firstPageResource.data.page.nextCursor.kind === "Absent"
@@ -1537,6 +1565,7 @@ export default function LibraryPaneBody() {
           confirmRemoval: (message) => window.confirm(message),
         });
         if (outcome.kind === "Cancelled") return;
+        captureFocusNeighbor(libraryRowKey(entry, isDefaultLibrary));
         const { result } = outcome;
         // The row leaves the pane whether the media was removed, hidden, or is
         // still being deleted server-side.
@@ -1581,9 +1610,11 @@ export default function LibraryPaneBody() {
     },
     [
       clearAllVisitData,
+      captureFocusNeighbor,
       deletingMediaIds,
       feedback,
       installEntryCollectionRevision,
+      isDefaultLibrary,
       setEntries,
     ],
   );
@@ -1594,6 +1625,7 @@ export default function LibraryPaneBody() {
         updatingConsumptionMediaIds.has(mediaId) ||
         resettingProgressMediaIds.has(mediaId)
       ) {
+        clearPendingFocusNeighbor();
         return;
       }
       updatingConsumptionMediaIds.add(mediaId);
@@ -1607,6 +1639,7 @@ export default function LibraryPaneBody() {
         }
       }
       if (previous.size === 0) {
+        clearPendingFocusNeighbor();
         updatingConsumptionMediaIds.remove(mediaId);
         throw new Error(`Library media ${mediaId} is not present`);
       }
@@ -1642,11 +1675,10 @@ export default function LibraryPaneBody() {
           ...committedRevisionsRef.current,
           consumption: consumptionProjectionSnapshot().revision,
         };
-        installEntryCollectionRevision(
-          result.libraryEntriesCollectionRevision,
-        );
+        installEntryCollectionRevision(result.libraryEntriesCollectionRevision);
         reconcileAfterMutationRef.current("SafeRebase");
       } catch (err) {
+        clearPendingFocusNeighbor();
         if (
           consumptionOperationTokensRef.current.get(mediaId) !== operationToken
         ) {
@@ -1678,6 +1710,7 @@ export default function LibraryPaneBody() {
     },
     [
       entries,
+      clearPendingFocusNeighbor,
       feedback,
       installEntryCollectionRevision,
       lectern,
@@ -1690,14 +1723,22 @@ export default function LibraryPaneBody() {
   );
 
   const handleResetProgress = useCallback(
-    async (mediaId: string, isVideo: boolean) => {
+    async (
+      mediaId: string,
+      isVideo: boolean,
+      removedRowKey: string | null,
+    ) => {
       if (
         resettingProgressMediaIds.has(mediaId) ||
         updatingConsumptionMediaIds.has(mediaId)
       ) {
+        clearPendingFocusNeighbor();
         return;
       }
-      if (!viewIsCommitted || committedView === null) return;
+      if (!viewIsCommitted || committedView === null) {
+        clearPendingFocusNeighbor();
+        return;
+      }
       resettingProgressMediaIds.add(mediaId);
       try {
         const outcome = await runProgressReset({
@@ -1706,7 +1747,13 @@ export default function LibraryPaneBody() {
           confirmReset: (message) => window.confirm(message),
           resetProgress: lectern.resetProgress,
         });
-        if (outcome.kind === "Cancelled") return;
+        if (outcome.kind === "Cancelled") {
+          clearPendingFocusNeighbor();
+          return;
+        }
+        if (removedRowKey !== null) {
+          captureFocusNeighbor(removedRowKey);
+        }
         // Immediate local patch: Reset removes the row from an In Progress view.
         // lectern.resetProgress already published the consumption revision, so a
         // consumption-sensitive view reconciles against fresh truth.
@@ -1724,6 +1771,7 @@ export default function LibraryPaneBody() {
         );
         reconcileAfterMutationRef.current("SafeRebase");
       } catch (error) {
+        clearPendingFocusNeighbor();
         if (handleUnauthenticatedApiError(error)) return;
         if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
         feedback.show(
@@ -1735,6 +1783,8 @@ export default function LibraryPaneBody() {
     },
     [
       committedView,
+      clearPendingFocusNeighbor,
+      captureFocusNeighbor,
       feedback,
       installEntryCollectionRevision,
       lectern.resetProgress,
@@ -1824,9 +1874,7 @@ export default function LibraryPaneBody() {
             : candidate,
         ),
       );
-      installEntryCollectionRevision(
-        result.libraryEntriesCollectionRevision,
-      );
+      installEntryCollectionRevision(result.libraryEntriesCollectionRevision);
       reconcileAfterMutationRef.current("SafeRebase");
     } catch (refreshError) {
       if (handleUnauthenticatedApiError(refreshError)) return;
@@ -1865,6 +1913,9 @@ export default function LibraryPaneBody() {
       const currentPlacement = placements.find(
         (placement) => placement.id === id,
       );
+      if (currentPlacement?.canRemove) {
+        captureFocusNeighbor(libraryRowKey(entry, isDefaultLibrary));
+      }
       setEntries((current) =>
         current.flatMap((candidate) => {
           if (
@@ -1882,9 +1933,7 @@ export default function LibraryPaneBody() {
         ...committedRevisionsRef.current,
         placement: libraryPlacementSnapshot().revision,
       };
-      installEntryCollectionRevision(
-        result.libraryEntriesCollectionRevision,
-      );
+      installEntryCollectionRevision(result.libraryEntriesCollectionRevision);
       reconcileAfterMutationRef.current("SafeRebase");
     } catch (unsubscribeError) {
       if (handleUnauthenticatedApiError(unsubscribeError)) return;
@@ -2007,8 +2056,7 @@ export default function LibraryPaneBody() {
     },
     [id],
   );
-  const commitEntryPage = useCallback(
-    (page: LibraryEntryPage): number => {
+  const commitEntryPage = useCallback((page: LibraryEntryPage): number => {
       const current = controllerRef.current;
       if (
         current === null ||
@@ -2027,17 +2075,14 @@ export default function LibraryPaneBody() {
           ...current.entries,
           entries: merged,
           nextCursor: page.nextCursor,
-          exhaustion:
-            page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
+        exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
         },
       };
       controllerRef.current = next;
       committedSnapshotRef.current = next;
       setController(next);
       return merged.length;
-    },
-    [],
-  );
+  }, []);
   const entryExhaustion = useExhaustivePagination({
     active:
       isPaneActive &&
@@ -2177,10 +2222,153 @@ export default function LibraryPaneBody() {
     },
     [hideFinished, isInProgressView, removedEntryIds.ids],
   );
-  const visibleEntries = entries.filter(isVisibleEntry);
-  const entryFolio =
+  const visibleEntries = useMemo(
+    () => entries.filter(isVisibleEntry),
+    [entries, isVisibleEntry],
+  );
+  const entryCollectionComplete =
     controller?.entries.exhaustion === "Complete" &&
-    entryExhaustion.kind === "Complete"
+    entryExhaustion.kind === "Complete";
+  const invalidView = decodedView.kind === "Invalid" || viewInvalid;
+  const orderPresetIds = useMemo(
+    () => orderPresetIdsFor(isDefaultLibrary),
+    [isDefaultLibrary],
+  );
+  const projectionOptions = useMemo(
+    () => projectionOptionsFor(isDefaultLibrary),
+    [isDefaultLibrary],
+  );
+  const dismissFilterQueryRef = useRef<() => void>(() => undefined);
+  const clearDomainFilters = useCallback(() => {
+    dismissFilterQueryRef.current();
+    pendingCommitFocusRef.current = "View";
+    setView(CANONICAL_VIEW);
+  }, [setView]);
+  const domainFilterControls = useMemo(
+    () =>
+      invalidView || view === null ? undefined : (
+        <>
+          <label className={styles.selectField}>
+            <span>View</span>
+            <Select
+              ref={viewSelectRef}
+              value={projectionOptionOf(view)}
+              onChange={(event) => {
+                pendingCommitFocusRef.current = null;
+                setView(
+                  withProjectionOption(
+                    view,
+                    event.target.value as ProjectionOptionId,
+                  ),
+                );
+              }}
+            >
+              {projectionOptions.map((optionId) => (
+                <option key={optionId} value={optionId}>
+                  {projectionOptionLabel(optionId)}
+                </option>
+              ))}
+            </Select>
+          </label>
+          <label className={styles.selectField}>
+            <span>Sort by</span>
+            <Select
+              ref={sortSelectRef}
+              value={orderToPresetId(view.order)}
+              onChange={(event) => {
+                pendingCommitFocusRef.current = null;
+                setView({
+                  order: presetIdToOrder(
+                    event.target.value as LibraryOrderPresetId,
+                  ),
+                  projection: view.projection,
+                });
+              }}
+            >
+              {orderPresetIds.map((presetId) => (
+                <option key={presetId} value={presetId}>
+                  {presetLabel(presetId, isDefaultLibrary)}
+                </option>
+              ))}
+            </Select>
+          </label>
+          {projectionSupportsCompletion(view) ? (
+            <Toggle
+              id={hideFinishedInputId}
+              checked={completionOf(view) === "unfinished"}
+              onCheckedChange={(checked) => {
+                pendingCommitFocusRef.current = null;
+                setView(withCompletion(view, checked ? "unfinished" : "all"));
+              }}
+              label="Hide finished"
+            />
+          ) : null}
+          {projectionOptionOf(view) !== "all-items" ||
+          view.order.kind !== "Canonical" ||
+          completionOf(view) === "unfinished" ? (
+            <Button variant="secondary" size="sm" onClick={clearDomainFilters}>
+              Clear filters
+            </Button>
+          ) : null}
+        </>
+      ),
+    [
+      clearDomainFilters,
+      hideFinishedInputId,
+      invalidView,
+      isDefaultLibrary,
+      orderPresetIds,
+      projectionOptions,
+      setView,
+      view,
+    ],
+  );
+  const activeDomainControlCount =
+    view === null
+      ? 0
+      : Number(projectionOptionOf(view) !== "all-items") +
+        Number(view.order.kind !== "Canonical") +
+        Number(completionOf(view) === "unfinished");
+  const getFilterStatus = useCallback(
+    (query: string) => {
+      const visibleCount = visibleEntries.filter((entry) =>
+        matchesPaneFilterQuery(query, libraryEntryFilterFields(entry)),
+      ).length;
+      const unit = { singular: "entry", plural: "entries" };
+      return entryCollectionComplete
+        ? {
+            kind: "Complete" as const,
+            visibleCount,
+            totalCount: visibleEntries.length,
+            unit,
+          }
+        : {
+            kind: "Partial" as const,
+            visibleCount,
+            loadedCount: visibleEntries.length,
+            unit,
+          };
+    },
+    [entryCollectionComplete, visibleEntries],
+  );
+  const { query: filterQuery, publication: search } = usePaneFilterRows({
+    sourceKey: `Library.Entries:${id}`,
+    inputLabel: "Filter library entries",
+    placeholder: "Filter entries",
+    getRowStatus: getFilterStatus,
+    activeDomainControlCount,
+    filters: domainFilterControls,
+  });
+  dismissFilterQueryRef.current = search.onDismiss;
+  filterQueryRef.current = filterQuery;
+  const filteredEntries = useMemo(
+    () =>
+      visibleEntries.filter((entry) =>
+        matchesPaneFilterQuery(filterQuery, libraryEntryFilterFields(entry)),
+      ),
+    [filterQuery, visibleEntries],
+  );
+  const entryFolio = entryCollectionComplete
       ? {
           kind: "count" as const,
           value: visibleEntries.length,
@@ -2222,6 +2410,7 @@ export default function LibraryPaneBody() {
     },
   });
   usePanePrimaryChrome({
+    search,
     actions: companionAction ? [companionAction] : [],
     menu:
       currentLibrary && paneResourceGroups
@@ -2243,18 +2432,19 @@ export default function LibraryPaneBody() {
     header: {
       kind: "section",
       folio: entryFolio,
-      pending: loading || entryExhaustion.kind === "Draining",
+      pending: loading || !entryCollectionComplete,
     },
   });
 
-  const visibleRowSignature = visibleEntries
+  const visibleRowSignature = filteredEntries
     .map((entry) => libraryRowKey(entry, isDefaultLibrary))
     .join("");
   useEffect(() => {
     const neighborKey = pendingFocusNeighborRef.current;
     if (neighborKey === undefined) return;
-    pendingFocusNeighborRef.current = undefined;
     const moveFocus = () => {
+      if (pendingFocusNeighborRef.current !== neighborKey) return;
+      pendingFocusNeighborRef.current = undefined;
       const region = listRegionRef.current;
       const focusInRow = (key: string): boolean => {
         const rowEl = region?.querySelector<HTMLElement>(
@@ -2270,11 +2460,7 @@ export default function LibraryPaneBody() {
         return false;
       };
       if (neighborKey !== null && focusInRow(neighborKey)) return;
-      if (viewSelectRef.current) {
-        viewSelectRef.current.focus();
-        return;
-      }
-      sortSelectRef.current?.focus();
+      findPaneSearchFocusTarget(paneId)?.focus();
     };
     // Defer past the menu's own focus-restore and the row-removal reflow so the
     // sibling (not the vanished trigger) ends up focused.
@@ -2284,14 +2470,24 @@ export default function LibraryPaneBody() {
     });
     pendingFocusRafRef.current = outer;
     return () => cancelAnimationFrame(pendingFocusRafRef.current);
-  }, [visibleRowSignature]);
+  }, [paneId, visibleRowSignature]);
 
   if (firstPageDefect !== null) {
     throw firstPageDefect;
   }
 
   if (loading) {
-    return <PaneLoadingState />;
+    return (
+      <>
+        <PaneLoadingState />
+        {filterQuery.trim() && filteredEntries.length === 0 ? (
+          <FeedbackNotice
+            severity="neutral"
+            title="No matching entry found so far."
+          />
+        ) : null}
+      </>
+    );
   }
 
   // Pre-metadata only: no committed page AND no route-resource metadata. Once
@@ -2304,9 +2500,10 @@ export default function LibraryPaneBody() {
           <Button
             variant="secondary"
             size="sm"
-            onClick={() =>
-              setDecodedView({ kind: "Valid", view: CANONICAL_VIEW })
-            }
+            onClick={() => {
+              search.onDismiss();
+              setDecodedView({ kind: "Valid", view: CANONICAL_VIEW });
+            }}
           >
             Reset view
           </Button>
@@ -2333,7 +2530,6 @@ export default function LibraryPaneBody() {
     );
   }
 
-  const invalidView = decodedView.kind === "Invalid" || viewInvalid;
   const entryRegionId = `library-entry-region-${id}`;
   // Reorder exists only for a fully loaded editable non-default
   // Canonical + AllItems(All) list.
@@ -2345,21 +2541,12 @@ export default function LibraryPaneBody() {
     committedView.projection.completion === "all" &&
     controller?.entries.exhaustion === "Complete" &&
     entryExhaustion.kind === "Complete";
-  const entryFooter = (
-    <CollectionExhaustionNotice state={entryExhaustion} />
-  );
-  const entryReconciliationNotice =
-    entryReconciliationRequest ? (
+  const entryFooter = <CollectionExhaustionNotice state={entryExhaustion} />;
+  const entryReconciliationNotice = entryReconciliationRequest ? (
       entryReconciliationFetch.error === null ? (
-        <FeedbackNotice
-          severity="neutral"
-          title="Refreshing library entries…"
-        />
+      <FeedbackNotice severity="neutral" title="Refreshing library entries…" />
       ) : entryReconciliationRequest.recovery === "RefreshList" ? (
-        <FeedbackNotice
-          severity="warning"
-          title="List changed while loading"
-        >
+      <FeedbackNotice severity="warning" title="List changed while loading">
           <Button
             ref={refreshListRecoveryButtonRef}
             variant="secondary"
@@ -2577,7 +2764,12 @@ export default function LibraryPaneBody() {
         viewIsCommitted && item.media.capabilities.can_edit_authors
           ? {
               kind: "Available",
-              execute: (detail) => openAuthorsEditor(item.media.id, detail),
+              execute: (detail) =>
+                openAuthorsEditor(
+                  item.media.id,
+                  libraryRowKey(item, isDefaultLibrary),
+                  detail,
+                ),
             }
           : { kind: "Unavailable" },
       removeMedia:
@@ -2594,14 +2786,12 @@ export default function LibraryPaneBody() {
           ? {
               kind: "Available",
               execute: () => {
-                // Reset drops the row from an In Progress view (read_state ->
-                // unread); capture the focus neighbor before it leaves.
-                if (isInProgressView) {
-                  captureFocusNeighbor(libraryRowKey(item, isDefaultLibrary));
-                }
                 return handleResetProgress(
                   item.media.id,
                   item.media.kind === "video",
+                  isInProgressView
+                    ? libraryRowKey(item, isDefaultLibrary)
+                    : null,
                 );
               },
             }
@@ -2680,74 +2870,7 @@ export default function LibraryPaneBody() {
       context: showAdded ? addedContext(item) : row.context,
     };
   };
-  const visibleEntryRows = visibleEntries.map(entryRowView);
-
-  const orderPresetIds = orderPresetIdsFor(isDefaultLibrary);
-  const projectionOptions = projectionOptionsFor(isDefaultLibrary);
-  const toolbar =
-    invalidView || view === null ? undefined : (
-      <PaneToolbar
-        filters={
-          <>
-            <label className={styles.selectField}>
-              <span>View</span>
-              <Select
-                ref={viewSelectRef}
-                value={projectionOptionOf(view)}
-                onChange={(event) => {
-                  pendingCommitFocusRef.current = null;
-                  setView(
-                    withProjectionOption(
-                      view,
-                      event.target.value as ProjectionOptionId,
-                    ),
-                  );
-                }}
-              >
-                {projectionOptions.map((optionId) => (
-                  <option key={optionId} value={optionId}>
-                    {projectionOptionLabel(optionId)}
-                  </option>
-                ))}
-              </Select>
-            </label>
-            <label className={styles.selectField}>
-              <span>Sort by</span>
-              <Select
-                ref={sortSelectRef}
-                value={orderToPresetId(view.order)}
-                onChange={(event) => {
-                  pendingCommitFocusRef.current = null;
-                  setView({
-                    order: presetIdToOrder(
-                      event.target.value as LibraryOrderPresetId,
-                    ),
-                    projection: view.projection,
-                  });
-                }}
-              >
-                {orderPresetIds.map((presetId) => (
-                  <option key={presetId} value={presetId}>
-                    {presetLabel(presetId, isDefaultLibrary)}
-                  </option>
-                ))}
-              </Select>
-            </label>
-            {projectionSupportsCompletion(view) ? (
-              <Toggle
-                id={hideFinishedInputId}
-                checked={completionOf(view) === "unfinished"}
-                onCheckedChange={(checked) => {
-                  pendingCommitFocusRef.current = null;
-                  setView(withCompletion(view, checked ? "unfinished" : "all"));
-                }}
-                label="Hide finished"
-              />
-            ) : null}
-          </>
-        }
-      />
-    );
+  const visibleEntryRows = filteredEntries.map(entryRowView);
 
   const entriesAccessibleName = libraryPresentation(knownLibrary).name;
   // Both recoveries request AllItems(All) preserving order and focus View; the
@@ -2786,7 +2909,11 @@ export default function LibraryPaneBody() {
         </FeedbackNotice>
       ) : (
         <FeedbackNotice severity="neutral" title="No unfinished unfiled items.">
-          <Button variant="secondary" size="sm" onClick={recoverToAllItems}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={clearDomainFilters}
+          >
             Clear filters
           </Button>
         </FeedbackNotice>
@@ -2814,35 +2941,42 @@ export default function LibraryPaneBody() {
       <Button
         variant="secondary"
         size="sm"
-        onClick={() => setDecodedView({ kind: "Valid", view: CANONICAL_VIEW })}
+        onClick={() => {
+          search.onDismiss();
+          setDecodedView({ kind: "Valid", view: CANONICAL_VIEW });
+        }}
       >
         Reset view
       </Button>
     </FeedbackNotice>
-  ) : visibleEntries.length > 0 ? (
+  ) : filteredEntries.length > 0 ? (
     <CollectionView
       returnScope="Library.Entries"
       rows={visibleEntryRows}
       status="ready"
       ariaLabel={entriesAccessibleName}
+      rowChangePresentation={{
+        kind: "ImmediateOnKeyChange",
+        key: filterQuery.trim(),
+      }}
       rowActionsAvailable={viewIsCommitted}
       footer={entryFooter}
       collectionBusy={entryExhaustion.kind === "Draining"}
       surface={false}
       sortable={
-        canReorderVisibleEntries
+        canReorderVisibleEntries && !filterQuery.trim()
           ? {
               disabled: reorderBusy,
               onReorder: (nextRows) => {
                 const byEntryId = new Map(
-                  visibleEntries.map((entry) => [entry.id, entry]),
+                  filteredEntries.map((entry) => [entry.id, entry]),
                 );
                 const nextEntries = nextRows
                   .map((row) => byEntryId.get(row.id))
                   .filter(
                     (entry): entry is LibraryEntry => entry !== undefined,
                   );
-                if (nextEntries.length === visibleEntries.length) {
+                if (nextEntries.length === filteredEntries.length) {
                   handleReorderEntries(nextEntries);
                 }
               },
@@ -2850,9 +2984,23 @@ export default function LibraryPaneBody() {
           : undefined
       }
     />
+  ) : filterQuery.trim() ? (
+    entryCollectionComplete ? (
+      <FeedbackNotice
+        severity="neutral"
+        title="No entries match this filter."
+      />
+    ) : (
+      <>
+        <FeedbackNotice
+          severity="neutral"
+          title="No matching entry found so far."
+        />
+        {entryFooter}
+      </>
+    )
   ) : currentLibrary ===
-    null ? // Metadata known but no page has committed yet: the busy region stays empty
-  // (rows/empty-state only); the polite status node carries "Loading …" /
+    null ? // (rows/empty-state only); the polite status node carries "Loading …" / // Metadata known but no page has committed yet: the busy region stays empty
   // "Could not load …". No false empty-state notice before the first commit.
   null : entryExhaustion.kind !== "Complete" ? (
     entryFooter
@@ -2873,7 +3021,6 @@ export default function LibraryPaneBody() {
     <>
       <PaneSurface
         opener={<SectionOpener heading={entriesAccessibleName} scale="title" />}
-        toolbar={toolbar}
         state={
           error || entryReconciliationNotice ? (
             <>

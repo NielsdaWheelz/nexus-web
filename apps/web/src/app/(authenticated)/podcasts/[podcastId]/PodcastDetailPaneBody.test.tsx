@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ComponentProps } from "react";
 import {
   act,
   fireEvent,
@@ -121,6 +122,7 @@ import {
 } from "@/lib/lectern/LecternProvider";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
+import type { PanePrimaryChromePublication } from "@/lib/panes/panePublications";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import {
@@ -140,9 +142,19 @@ function LecternStatus() {
 // Render the pane under the real Lectern + global-player providers (the pane
 // reads both via useLectern()/useGlobalPlayer()). The fetch boundary below
 // answers the provider's initial GET /api/lectern.
-function Wrapped() {
+function Wrapped({
+  href: hrefOverride,
+  onReplacePane = vi.fn(),
+}: {
+  readonly href?: string;
+  readonly onReplacePane?: ComponentProps<
+    typeof PaneRuntimeProvider
+  >["onReplacePane"];
+} = {}) {
   const podcastId = mockUsePaneParam("podcastId");
-  const href = podcastId ? `/podcasts/${podcastId}` : "/podcasts/missing";
+  const href =
+    hrefOverride ??
+    (podcastId ? `/podcasts/${podcastId}` : "/podcasts/missing");
   const routeKey = resolvePaneRouteIdentity(href).routeKey;
   return (
     <PaneReturnMementoProvider>
@@ -160,7 +172,7 @@ function Wrapped() {
           onGoBackPane={vi.fn()}
           onGoForwardPane={vi.fn()}
           onNavigatePane={vi.fn()}
-          onReplacePane={vi.fn()}
+          onReplacePane={onReplacePane}
           onActivateWorkspaceTarget={vi.fn(() => ({ kind: "Unchanged" as const, paneId: "pane-1" }))}
         >
           <LecternProvider>
@@ -190,6 +202,15 @@ function deferredResponse() {
     resolve = next;
   });
   return { promise, resolve };
+}
+
+function publishedEpisodeFilterRows() {
+  const publication = primaryChromeMock.publish.mock.lastCall?.[0] as
+    PanePrimaryChromePublication | undefined;
+  if (publication?.search?.kind !== "FilterRows") {
+    throw new Error("Podcast detail did not publish FilterRows");
+  }
+  return publication.search;
 }
 
 function podcastDetailResponse({
@@ -229,6 +250,7 @@ function episodeMedia({
   transcriptCoverage = "full",
   canRetryMetadata = false,
   canEditAuthors = false,
+  contributors = [],
   audioPlayable = false,
   progressResettable = false,
   episodeState = "unplayed",
@@ -241,6 +263,7 @@ function episodeMedia({
   transcriptCoverage?: string;
   canRetryMetadata?: boolean;
   canEditAuthors?: boolean;
+  contributors?: unknown[];
   audioPlayable?: boolean;
   progressResettable?: boolean;
   episodeState?: "unplayed" | "in_progress" | "played" | null;
@@ -297,7 +320,7 @@ function episodeMedia({
       can_edit_authors: canEditAuthors,
       can_delete: false,
     },
-    contributors: [],
+    contributors,
     author_mode: "automatic",
     published_date: { kind: "Absent" },
     duration_seconds: { kind: "Present", value: 60 },
@@ -339,6 +362,46 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("canonicalizes legacy and unknown episode URL params on mount", async () => {
+    const onReplacePane = vi.fn();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input), "http://localhost");
+      if (
+        url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011"
+      ) {
+        return jsonResponse(podcastDetailResponse());
+      }
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
+      ) {
+        return jsonResponse(episodePage([]));
+      }
+      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
+        return jsonResponse({ data: [] });
+      }
+      if (url.pathname === "/api/lectern") {
+        return jsonResponse({ data: { items: [] } });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(
+      <Wrapped
+        href="/podcasts/00000000-0000-4000-8000-000000000011?q=legacy&state=played&unknown=value&sort=oldest"
+        onReplacePane={onReplacePane}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(onReplacePane).toHaveBeenCalledWith(
+        "pane-1",
+        "/podcasts/00000000-0000-4000-8000-000000000011?state=played&sort=oldest",
+        { modality: "Programmatic" },
+      );
+    });
   });
 
   it("sends selected library_ids on subscribe", async () => {
@@ -1110,6 +1173,115 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     ).toBeVisible();
   });
 
+  it("recovers focus after a rapid visible-signature change follows an author edit", async () => {
+    const editedMediaId = "00000000-0000-4000-8000-000000000111";
+    const animationFrames = new Map<number, FrameRequestCallback>();
+    let nextAnimationFrame = 1;
+    vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation(
+      (callback) => {
+        const handle = nextAnimationFrame;
+        nextAnimationFrame += 1;
+        animationFrames.set(handle, callback);
+        return handle;
+      },
+    );
+    vi.spyOn(globalThis, "cancelAnimationFrame").mockImplementation((handle) => {
+      animationFrames.delete(handle);
+    });
+    const flushAnimationFrames = () => {
+      const callbacks = [...animationFrames.values()];
+      animationFrames.clear();
+      callbacks.forEach((callback) => callback(0));
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      if (
+        url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011"
+      ) {
+        return jsonResponse(podcastDetailResponse());
+      }
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
+      ) {
+        return jsonResponse(
+          episodePage([
+            episodeMedia({
+              id: editedMediaId,
+              title: "First Episode",
+              canEditAuthors: true,
+              contributors: [
+                {
+                  contributor_handle: "ada-lovelace",
+                  contributor_display_name: "Ada Lovelace",
+                  href: "/authors/ada-lovelace",
+                  credited_name: "Ada Lovelace",
+                  role: "author",
+                  raw_role: null,
+                  ordinal: 0,
+                },
+              ],
+            }),
+            episodeMedia({
+              id: "00000000-0000-4000-8000-000000000112",
+              title: "Ada Neighbor",
+            }),
+          ]),
+        );
+      }
+      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
+        return jsonResponse({ data: [] });
+      }
+      if (
+        url.pathname === `/api/media/${editedMediaId}/authors` &&
+        init?.method === "PUT"
+      ) {
+        return jsonResponse({
+          data: {
+            authorMode: "manual",
+            authors: [],
+            canEditAuthors: true,
+          },
+        });
+      }
+      if (url.pathname === "/api/lectern") {
+        return jsonResponse({ data: { items: [] } });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(<Wrapped />);
+    await screen.findByRole("link", { name: "First Episode" });
+    act(() => publishedEpisodeFilterRows().onQueryChange("ada"));
+    fireEvent.click(
+      screen.getByRole("button", { name: "More actions for First Episode" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Edit authors…" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Remove Ada Lovelace" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("link", { name: "First Episode" }),
+      ).not.toBeInTheDocument();
+    });
+    act(() => publishedEpisodeFilterRows().onQueryChange("missing"));
+    expect(
+      screen.queryByRole("link", { name: "Ada Neighbor" }),
+    ).not.toBeInTheDocument();
+    act(() => publishedEpisodeFilterRows().onQueryChange("neighbor"));
+    const neighbor = screen.getByRole("link", { name: "Ada Neighbor" });
+
+    act(flushAnimationFrames);
+    act(flushAnimationFrames);
+
+    expect(neighbor).toHaveFocus();
+  });
+
   it("projects Remove from ready Lectern membership without a player descriptor", async () => {
     const itemId = "aaaaaaaa-0000-4000-8000-000000000001";
     const mediaId = "00000000-0000-4000-8000-000000000111";
@@ -1349,7 +1521,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     });
   });
 
-  it("commits the new query before continuing a partial episode chain", async () => {
+  it("commits the new domain view before continuing a partial episode chain", async () => {
     const oldContinuation = deferredResponse();
     const newFirstPage = deferredResponse();
     const requests: Array<{ cursor: string | null; sort: string | null }> = [];
@@ -1405,6 +1577,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
       }),
     );
 
+    render(<>{publishedEpisodeFilterRows().filters}</>);
     fireEvent.change(screen.getByLabelText("Episode sort"), {
       target: { value: "oldest" },
     });
@@ -1511,7 +1684,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     ).toBeInTheDocument();
   });
 
-  it("does not forecast transcripts eagerly while the episode query changes", async () => {
+  it("does not forecast transcripts eagerly while the episode domain view changes", async () => {
     let forecastCalls = 0;
     const calls: string[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -1558,6 +1731,8 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
 
     render(<Wrapped />);
 
+    await screen.findByRole("link", { name: "Episode 1" });
+    render(<>{publishedEpisodeFilterRows().filters}</>);
     expect(forecastCalls).toBe(0);
     fireEvent.change(screen.getByLabelText("Episode sort"), {
       target: { value: "oldest" },
@@ -1575,8 +1750,8 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     expect(forecastCalls).toBe(0);
   });
 
-  it("does not derive the query-wide transcript command from rendered rows", async () => {
-    const continuation = deferredResponse();
+  it("filters complete episode rows by title and contributor without adding q", async () => {
+    const episodeRequestQueries: string[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = new URL(String(input), "http://localhost");
       if (
@@ -1588,15 +1763,33 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
         url.pathname ===
         "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
       ) {
-        if (url.searchParams.has("cursor")) {
-          return continuation.promise.then((response) => response.clone());
-        }
+        episodeRequestQueries.push(url.search);
         return jsonResponse(
-          episodePage(
-            [episodeMedia({ transcriptState: "ready" })],
-            { kind: "Present", value: "next-episodes" },
-          ),
+          episodePage([
+            episodeMedia({
+              id: "00000000-0000-4000-8000-000000000111",
+              title: "Signal Theory",
+            }),
+            episodeMedia({
+              id: "00000000-0000-4000-8000-000000000112",
+              title: "Release Notes",
+              contributors: [
+                {
+                  contributor_handle: "grace-hopper",
+                  contributor_display_name: "Grace Hopper",
+                  href: "/authors/grace-hopper",
+                  credited_name: "Grace Hopper",
+                  role: "author",
+                  raw_role: null,
+                  ordinal: 0,
+                },
+              ],
+            }),
+          ]),
         );
+      }
+      if (url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries") {
+        return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/lectern") {
         return jsonResponse({ data: { items: [] } });
@@ -1606,8 +1799,150 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
 
     render(<Wrapped />);
     expect(
+      await screen.findByRole("link", { name: "Signal Theory" }),
+    ).toBeVisible();
+    expect(screen.getByRole("link", { name: "Release Notes" })).toBeVisible();
+
+    act(() => publishedEpisodeFilterRows().onQueryChange("signal"));
+    expect(screen.getByRole("link", { name: "Signal Theory" })).toBeVisible();
+    expect(
+      screen.queryByRole("link", { name: "Release Notes" }),
+    ).not.toBeInTheDocument();
+
+    act(() => publishedEpisodeFilterRows().onQueryChange("grace"));
+    expect(
+      screen.queryByRole("link", { name: "Signal Theory" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Release Notes" })).toBeVisible();
+
+    act(() => publishedEpisodeFilterRows().onQueryChange("missing"));
+    expect(screen.getByText("No episodes match this filter.")).toBeVisible();
+    expect(
+      screen.queryByText("No episodes found for this podcast."),
+    ).not.toBeInTheDocument();
+    expect(
+      episodeRequestQueries.every(
+        (query) => !new URLSearchParams(query).has("q"),
+      ),
+    ).toBe(true);
+  });
+
+  it("shows Partial episode-filter feedback beside the initial loading state", async () => {
+    const initialEpisodes = deferredResponse();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input), "http://localhost");
+      if (
+        url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011"
+      ) {
+        return jsonResponse(podcastDetailResponse());
+      }
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
+      ) {
+        return initialEpisodes.promise.then((response) => response.clone());
+      }
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/libraries"
+      ) {
+        return jsonResponse({ data: [] });
+      }
+      if (url.pathname === "/api/lectern") {
+        return jsonResponse({ data: { items: [] } });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(<Wrapped />);
+    await waitFor(() => {
+      expect(primaryChromeMock.publish.mock.lastCall?.[0]?.search).toBeDefined();
+    });
+    act(() => publishedEpisodeFilterRows().onQueryChange("missing"));
+
+    expect(
+      screen.getByText("No matching episode found so far."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("No episodes found for this podcast."),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Loading…")).toBeInTheDocument();
+
+    await act(async () => {
+      initialEpisodes.resolve(jsonResponse(episodePage([])));
+      await initialEpisodes.promise;
+    });
+  });
+
+  it("keeps episode-wide commands server-selected and accessible during local filtering", async () => {
+    const continuation = deferredResponse();
+    const episodeRequestQueries: string[] = [];
+    let forecastCalls = 0;
+    let markPlayedCalls = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input), "http://localhost");
+      if (
+        url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011"
+      ) {
+        return jsonResponse(podcastDetailResponse());
+      }
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
+      ) {
+        episodeRequestQueries.push(url.search);
+        if (url.searchParams.has("cursor")) {
+          return continuation.promise.then((response) => response.clone());
+        }
+        return jsonResponse(
+          episodePage([episodeMedia({ transcriptState: "ready" })], {
+            kind: "Present",
+            value: "next-episodes",
+          }),
+        );
+      }
+      if (url.pathname === "/api/lectern") {
+        return jsonResponse({ data: { items: [] } });
+      }
+      if (url.pathname === "/api/media/transcript/forecasts") {
+        forecastCalls += 1;
+        return jsonResponse({
+          data: {
+            eligibleCount: 1,
+            requiredMinutes: 1,
+            remainingMinutes: { kind: "Present", value: 100 },
+            fitsBudget: true,
+            selectionFingerprint: "a".repeat(64),
+          },
+        });
+      }
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes/mark-played"
+      ) {
+        markPlayedCalls += 1;
+        return jsonResponse({
+          data: {
+            matchedCount: 1,
+            changedCount: 1,
+            collectionRevision: 2,
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(<Wrapped />);
+    expect(
       await screen.findByRole("link", { name: "Episode 1" }),
     ).toBeInTheDocument();
+    expect(primaryChromeMock.publish.mock.lastCall?.[0]).toMatchObject({
+      header: {
+        kind: "section",
+        folio: { kind: "none" },
+        pending: true,
+      },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Episode actions" }));
     expect(
       screen.getByRole("menuitem", { name: "Transcribe all episodes" }),
@@ -1617,17 +1952,76 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
         name: "Mark all episodes as played",
       }),
     ).not.toBeDisabled();
+    render(<>{publishedEpisodeFilterRows().filters}</>);
     fireEvent.click(screen.getByRole("button", { name: "Unplayed" }));
     expect(
       screen.getByRole("menuitem", {
-        name: "Transcribe matching episodes",
+        name: "Transcribe all unplayed episodes",
       }),
     ).not.toBeDisabled();
     expect(
       screen.getByRole("menuitem", {
-        name: "Mark matching episodes as played",
+        name: "Mark all unplayed episodes as played",
       }),
     ).not.toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "In Progress" }));
+    expect(
+      screen.getByRole("menuitem", {
+        name: "Transcribe all in-progress episodes",
+      }),
+    ).not.toBeDisabled();
+    expect(
+      screen.getByRole("menuitem", {
+        name: "Mark all in-progress episodes as played",
+      }),
+    ).not.toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Played" }));
+    expect(
+      screen.getByRole("menuitem", {
+        name: "Transcribe all played episodes",
+      }),
+    ).not.toBeDisabled();
+    const playedMark = screen.getByRole("menuitem", {
+      name: "All played episodes are already played",
+    });
+    expect(playedMark).toHaveAttribute("aria-disabled", "true");
+    expect(playedMark).toHaveAccessibleDescription(
+      "Every episode in this state is already played.",
+    );
+
+    const requestCountBeforeLocalFilter = episodeRequestQueries.length;
+    act(() => publishedEpisodeFilterRows().onQueryChange("Episode"));
+    const transcriptWhileFiltering = screen.getByRole("menuitem", {
+      name: "Transcribe all played episodes",
+    });
+    const markWhileFiltering = screen.getByRole("menuitem", {
+      name: "All played episodes are already played",
+    });
+    expect(transcriptWhileFiltering).toHaveAttribute("aria-disabled", "true");
+    expect(markWhileFiltering).toHaveAttribute("aria-disabled", "true");
+    expect(transcriptWhileFiltering).toHaveAccessibleDescription(
+      "Clear Filter to use episode-wide actions",
+    );
+    expect(markWhileFiltering).toHaveAccessibleDescription(
+      "Clear Filter to use episode-wide actions",
+    );
+    const actionMenu = screen.getByRole("menu", { name: "Episode actions" });
+    fireEvent.keyDown(actionMenu, { key: "Home" });
+    expect(transcriptWhileFiltering).toHaveFocus();
+    fireEvent.keyDown(transcriptWhileFiltering, { key: "Enter" });
+    fireEvent.click(transcriptWhileFiltering);
+    fireEvent.keyDown(transcriptWhileFiltering, { key: "ArrowDown" });
+    expect(markWhileFiltering).toHaveFocus();
+    fireEvent.keyDown(markWhileFiltering, { key: "Enter" });
+    fireEvent.click(markWhileFiltering);
+    expect(forecastCalls).toBe(0);
+    expect(markPlayedCalls).toBe(0);
+    expect(episodeRequestQueries).toHaveLength(requestCountBeforeLocalFilter);
+    expect(
+      episodeRequestQueries.every(
+        (query) => !new URLSearchParams(query).has("q"),
+      ),
+    ).toBe(true);
 
     await act(async () => {
       continuation.resolve(
@@ -1643,6 +2037,15 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
         ),
       );
       await continuation.promise;
+    });
+    await waitFor(() => {
+      expect(primaryChromeMock.publish.mock.lastCall?.[0]).toMatchObject({
+        header: {
+          kind: "section",
+          folio: { kind: "count", value: 2, unit: "episode" },
+          pending: false,
+        },
+      });
     });
   });
 });

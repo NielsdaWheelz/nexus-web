@@ -45,9 +45,18 @@ describe("pane route model", () => {
       params: { podcastId: PODCAST_ID },
       definition: {
         bodyMode: "standard",
+        queryNavigation: "in-place",
         returnMemento: { kind: "ShellScroll" },
         maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
         allowsIntrinsicPrimaryWidth: false,
+      },
+    });
+    expect(resolvePaneRouteModel("/podcasts?sort=alpha")).toMatchObject({
+      id: "podcasts",
+      params: {},
+      definition: {
+        queryNavigation: "in-place",
+        returnMemento: { kind: "ShellScroll" },
       },
     });
     expect(resolvePaneRouteModel(`/pages/${PAGE_ID}`)).toMatchObject({

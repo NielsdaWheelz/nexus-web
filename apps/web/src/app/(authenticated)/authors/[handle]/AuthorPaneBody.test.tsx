@@ -314,6 +314,15 @@ describe("AuthorPaneBody", () => {
     const tryAgain = await screen.findByRole("button", { name: "Retry" });
     // Existing rows survive the failure.
     expect(screen.getByRole("link", { name: "First Page Work" })).toBeVisible();
+    await waitFor(() =>
+      expect(
+        primaryChromeMocks.usePanePrimaryChrome.mock.calls.at(-1)?.[0]?.header,
+      ).toEqual({
+        kind: "section",
+        folio: { kind: "none" },
+        pending: true,
+      }),
+    );
 
     expect(continuationRequests).toBeGreaterThanOrEqual(3);
     recovering = true;

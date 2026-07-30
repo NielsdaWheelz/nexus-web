@@ -1,6 +1,7 @@
 import { Component, type ComponentProps, type ReactNode } from "react";
 import Link from "next/link";
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -19,7 +20,10 @@ import type {
   PaneHeaderAction,
 } from "@/lib/ui/actionDescriptor";
 import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
-import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
+import {
+  findPaneChromeFocusTarget,
+  findPaneSearchFocusTarget,
+} from "@/lib/workspace/paneDom";
 import type { EffectivePaneSizing } from "@/lib/workspace/paneSizing";
 import { assumePaneVisitId } from "@/lib/workspace/schema";
 import { routeShareTarget } from "@/lib/sharing/targets";
@@ -129,10 +133,12 @@ function RuntimeRoute({
   children,
   routeKey,
   paneId = "pane-a",
+  href = "/media/media-1",
 }: {
   readonly children: ReactNode;
   readonly routeKey: string;
   readonly paneId?: string;
+  readonly href?: string;
 }) {
   return (
     <PaneReturnMementoProvider>
@@ -141,7 +147,7 @@ function RuntimeRoute({
           paneId={paneId}
           visitId={TEST_VISIT_ID}
           isActive
-          href="/media/media-1"
+          href={href}
           routeId="media"
           routeKey={routeKey}
           canGoBack
@@ -159,7 +165,10 @@ function RuntimeRoute({
   );
 }
 
-function paneTree(overrides: Partial<PaneProps> = {}) {
+function paneTree(
+  overrides: Partial<PaneProps> = {},
+  runtimeHref = "/media/media-1",
+) {
   const { children = <div>Body content</div>, ...paneOverrides } = overrides;
   const props: PaneProps = {
     ...defaultPaneProps,
@@ -167,7 +176,11 @@ function paneTree(overrides: Partial<PaneProps> = {}) {
     children,
   };
   return (
-    <RuntimeRoute paneId={props.paneId} routeKey={props.routeKey}>
+    <RuntimeRoute
+      paneId={props.paneId}
+      routeKey={props.routeKey}
+      href={runtimeHref}
+    >
       <PaneShell {...props} />
     </RuntimeRoute>
   );
@@ -180,6 +193,27 @@ function PrimaryChromeProbe({
 }) {
   usePanePrimaryChrome(publication);
   return <div>Published body</div>;
+}
+
+function latestMobilePaneSearchAction(): Extract<
+  PaneHeaderAction,
+  { kind: "command" }
+> {
+  for (
+    let index = mobileChromeMock.setPaneChrome.mock.calls.length - 1;
+    index >= 0;
+    index -= 1
+  ) {
+    const chrome = mobileChromeMock.setPaneChrome.mock.calls[index]?.[0] as
+      | MobilePaneChrome
+      | null;
+    const action = chrome?.actions.find(
+      (candidate) =>
+        candidate.kind === "command" && candidate.id === "Pane.Search",
+    );
+    if (action?.kind === "command") return action;
+  }
+  throw new Error("Mobile Pane Search action was not published");
 }
 
 function readyResource(title: string): PanePrimaryChromePublication {
@@ -271,6 +305,13 @@ describe("PaneShell", () => {
                 placeholder: "Filter",
                 onQueryChange,
                 onDismiss,
+                rowStatus: {
+                  kind: "Complete",
+                  visibleCount: 1,
+                  totalCount: 1,
+                  unit: { singular: "item", plural: "items" },
+                },
+                activeDomainControlCount: 0,
               },
             }}
           />
@@ -306,6 +347,295 @@ describe("PaneShell", () => {
       expect(
         within(paneActions).getByRole("button", { name: "Filter" }),
       ).toHaveFocus(),
+    );
+  });
+
+  it("returns mobile shortcut-opened Filter focus to the Options trigger", async () => {
+    const onDismiss = vi.fn();
+    render(
+      <>
+        <header data-pane-chrome-for="pane-a">
+          <button type="button" data-pane-options-trigger="pane-a">
+            Pane options
+          </button>
+        </header>
+        {paneTree({
+          isActive: true,
+          isMobile: true,
+          children: (
+            <PrimaryChromeProbe
+              publication={{
+                search: {
+                  kind: "FilterRows",
+                  query: "",
+                  inputLabel: "Filter items",
+                  placeholder: "Filter",
+                  onQueryChange: vi.fn(),
+                  onDismiss,
+                  rowStatus: {
+                    kind: "Complete",
+                    visibleCount: 1,
+                    totalCount: 1,
+                    unit: { singular: "item", plural: "items" },
+                  },
+                  activeDomainControlCount: 0,
+                },
+              }}
+            />
+          ),
+        })}
+      </>,
+    );
+
+    await waitFor(() => expect(mobileChromeMock.setPaneChrome).toHaveBeenCalled());
+    expect(dispatchPaneSearchRequest()).toBe(true);
+    const input = await screen.findByRole("searchbox", {
+      name: "Filter items",
+    });
+    await waitFor(() => expect(input).toHaveFocus());
+
+    fireEvent.keyDown(input, { key: "Escape" });
+
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Pane options" }),
+      ).toHaveFocus(),
+    );
+  });
+
+  it("focuses a mobile shortcut-opened Filter after the row commits", async () => {
+    const requestAnimationFrame = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback) => {
+        callback(0);
+        return 1;
+      });
+    try {
+      render(
+        paneTree({
+          isActive: true,
+          isMobile: true,
+          children: (
+            <PrimaryChromeProbe
+              publication={{
+                search: {
+                  kind: "FilterRows",
+                  query: "",
+                  inputLabel: "Filter items",
+                  placeholder: "Filter",
+                  onQueryChange: vi.fn(),
+                  onDismiss: vi.fn(),
+                  rowStatus: {
+                    kind: "Complete",
+                    visibleCount: 1,
+                    totalCount: 1,
+                    unit: { singular: "item", plural: "items" },
+                  },
+                  activeDomainControlCount: 0,
+                },
+              }}
+            />
+          ),
+        }),
+      );
+
+      await waitFor(() => expect(dispatchPaneSearchRequest()).toBe(true));
+      expect(
+        await screen.findByRole("searchbox", { name: "Filter items" }),
+      ).toHaveFocus();
+    } finally {
+      requestAnimationFrame.mockRestore();
+    }
+  });
+
+  it("ignores a transient mobile menu row when closing Filter", async () => {
+    render(
+      <>
+        <header data-pane-chrome-for="pane-a">
+          <button type="button" data-pane-options-trigger="pane-a">
+            Pane options
+          </button>
+        </header>
+        {paneTree({
+          isActive: true,
+          isMobile: true,
+          children: (
+            <PrimaryChromeProbe
+              publication={{
+                search: {
+                  kind: "FilterRows",
+                  query: "",
+                  inputLabel: "Filter items",
+                  placeholder: "Filter",
+                  onQueryChange: vi.fn(),
+                  onDismiss: vi.fn(),
+                  rowStatus: {
+                    kind: "Complete",
+                    visibleCount: 1,
+                    totalCount: 1,
+                    unit: { singular: "item", plural: "items" },
+                  },
+                  activeDomainControlCount: 0,
+                },
+              }}
+            />
+          ),
+        })}
+      </>,
+    );
+
+    await waitFor(() => latestMobilePaneSearchAction());
+    const transientMenuRow = document.createElement("button");
+    act(() =>
+      latestMobilePaneSearchAction().onSelect({
+        triggerEl: transientMenuRow,
+      }),
+    );
+    await screen.findByRole("searchbox", { name: "Filter items" });
+
+    act(() =>
+      latestMobilePaneSearchAction().onSelect({
+        triggerEl: transientMenuRow,
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Pane options" }),
+      ).toHaveFocus(),
+    );
+  });
+
+  it("marks collapsed non-default Filter controls and restores the exact label after Close", async () => {
+    render(
+      paneTree({
+        isActive: true,
+        children: (
+          <PrimaryChromeProbe
+            publication={{
+              search: {
+                kind: "FilterRows",
+                query: "",
+                inputLabel: "Filter items",
+                placeholder: "Filter",
+                onQueryChange: vi.fn(),
+                onDismiss: vi.fn(),
+                rowStatus: {
+                  kind: "Complete",
+                  visibleCount: 4,
+                  totalCount: 4,
+                  unit: { singular: "item", plural: "items" },
+                },
+                activeDomainControlCount: 2,
+              },
+            }}
+          />
+        ),
+      }),
+    );
+
+    const paneActions = await screen.findByRole("group", {
+      name: "Pane actions",
+    });
+    const collapsed = within(paneActions).getByRole("button", {
+      name: "Filter, 2 controls active",
+    });
+    expect(screen.getByTestId("pane-filter-active-marker")).toBeVisible();
+
+    fireEvent.click(collapsed);
+    const expanded = within(paneActions).getByRole("button", {
+      name: "Filter",
+    });
+    fireEvent.click(expanded);
+    await waitFor(() =>
+      expect(
+        within(paneActions).getByRole("button", {
+          name: "Filter, 2 controls active",
+        }),
+      ).toHaveFocus(),
+    );
+  });
+
+  it("keeps an expanded Filter mounted and focused across in-place domain URL state", async () => {
+    const onQueryChange = vi.fn();
+    const onDismiss = vi.fn();
+    const publication = (sort: "recent" | "alpha") =>
+      ({
+        search: {
+          kind: "FilterRows",
+          query: "needle",
+          inputLabel: "Filter libraries",
+          placeholder: "Filter",
+          onQueryChange,
+          onDismiss,
+          rowStatus: {
+            kind: "Complete",
+            visibleCount: 1,
+            totalCount: 2,
+            unit: { singular: "library", plural: "libraries" },
+          },
+          activeDomainControlCount: Number(sort !== "recent"),
+          filters: (
+            <label>
+              Sort
+              <select aria-label="Sort" value={sort} onChange={() => {}}>
+                <option value="recent">Recent</option>
+                <option value="alpha">A-Z</option>
+              </select>
+            </label>
+          ),
+        },
+      }) satisfies PanePrimaryChromePublication;
+    const view = render(
+      paneTree({
+        routeKey: "libraries:/libraries",
+        isActive: true,
+        children: <PrimaryChromeProbe publication={publication("recent")} />,
+      }),
+    );
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Filter" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("searchbox", { name: "Filter libraries" }),
+      ).toHaveFocus(),
+    );
+    const sort = await screen.findByRole("combobox", { name: "Sort" });
+    sort.focus();
+    expect(sort).toHaveFocus();
+
+    view.rerender(
+      paneTree({
+        routeKey: "libraries:/libraries?sort=alpha",
+        isActive: true,
+        children: <PrimaryChromeProbe publication={publication("alpha")} />,
+      }),
+    );
+
+    const retainedSort = await screen.findByRole("combobox", { name: "Sort" });
+    expect(retainedSort).toBe(sort);
+    expect(retainedSort).toHaveValue("alpha");
+    expect(retainedSort).toHaveFocus();
+    expect(
+      screen.getByRole("searchbox", { name: "Filter libraries" }),
+    ).toHaveValue("needle");
+
+    view.rerender(
+      paneTree(
+        {
+          routeKey: "libraries:/libraries/library-b",
+          isActive: true,
+          children: <PrimaryChromeProbe publication={publication("recent")} />,
+        },
+        "/libraries/library-b",
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("searchbox", { name: "Filter libraries" }),
+      ).toBeNull(),
     );
   });
 
@@ -926,6 +1256,43 @@ describe("PaneShell", () => {
 
     const sentinel = screen.getByTestId("pane-chrome-sentinel");
     expect(findPaneChromeFocusTarget("pane-a")).toBe(sentinel);
+  });
+
+  it("resolves the expanded Filter input before the collapsed Filter action", () => {
+    const view = render(
+      <div data-pane-id="pane-a">
+        <button type="button" data-action-id="Pane.Search">
+          Filter
+        </button>
+        <input data-pane-search-input="true" aria-label="Filter items" />
+      </div>,
+    );
+
+    const input = screen.getByRole("textbox", { name: "Filter items" });
+    expect(findPaneSearchFocusTarget("pane-a")).toBe(input);
+    view.rerender(
+      <div data-pane-id="pane-a">
+        <button type="button" data-action-id="Pane.Search">
+          Filter
+        </button>
+      </div>,
+    );
+    expect(findPaneSearchFocusTarget("pane-a")).toBe(
+      screen.getByRole("button", { name: "Filter" }),
+    );
+  });
+
+  it("uses the mounted mobile Options trigger when Filter is folded into its menu", () => {
+    render(
+      <header data-pane-chrome-for="pane-a">
+        <button type="button" data-pane-options-trigger="pane-a">
+          Pane options
+        </button>
+      </header>,
+    );
+
+    const options = screen.getByRole("button", { name: "Pane options" });
+    expect(findPaneSearchFocusTarget("pane-a")).toBe(options);
   });
 
   it("publishes keyed Chat busy state and guards rapid re-entry", async () => {

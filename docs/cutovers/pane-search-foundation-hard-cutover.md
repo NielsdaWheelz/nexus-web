@@ -44,7 +44,8 @@ old search and Pane Search together.
 ## Goals
 
 - One learnable header affordance and shortcut across pane-local search.
-- Local, immediate row filtering after complete-list hydration.
+- Local, immediate row filtering during existing exhaustive hydration and after
+  completion.
 - Exact, ordered document occurrences with contextual Companion rows.
 - One immutable **Go back to reading position** origin; no return stack.
 - Search previews never become reading progress, engagement, completion,
@@ -119,6 +120,10 @@ is not permission to migrate every domain in one change.
     from the query or result row; Close returns focus to Search; Return
     restores the format-owned reading focus when the origin contains one.
 
+The approved collection successor amendment below extends items 4 and 13 for
+`FilterRows`: collapsed domain state remains discoverable, and immediate row
+filtering receives a nonvisual polite count/status announcement.
+
 ## Product Rules
 
 1. **Search** is the umbrella interaction. Inventory behavior is **Filter**;
@@ -165,6 +170,7 @@ route/domain owner
 | active-pane request event | `paneSearchEvents.ts` |
 | shortcut arbitration | `WorkspaceHost` |
 | expanded state, focus, shared controls/actions | `PaneShell` / `PaneSearchBar` |
+| FilterRows collapsed-state marker and spoken status | `PaneShell` / `PaneSearchBar` |
 | query generations, active occurrence, wrap | `usePaneFind` |
 | rows, filters, sorts | collection/domain owner |
 | searchable source, matcher, scopes, locator, preview | dependent format adapter |
@@ -308,8 +314,69 @@ such path today — EPUB cross-section movement exists only as navigation that
 writes progress and URL — the child builds one as new construction; it never
 reuses navigation, restore-session, or seek paths.
 
+### Implemented collection FilterRows successor amendment
+
+The collection cutover owns this hard-cut amendment to the implemented
+`FilterRows` branch:
+
+```ts
+interface PaneFilterRowsUnit {
+  readonly singular: string;
+  readonly plural: string;
+}
+
+type PaneFilterRowsStatus =
+  | {
+      readonly kind: "Partial";
+      readonly visibleCount: number;
+      readonly loadedCount: number;
+      readonly unit: PaneFilterRowsUnit;
+    }
+  | {
+      readonly kind: "Complete";
+      readonly visibleCount: number;
+      readonly totalCount: number;
+      readonly unit: PaneFilterRowsUnit;
+    };
+
+type PaneFilterRowsPublication = PaneSearchBase & {
+  readonly kind: "FilterRows";
+  readonly rowStatus: PaneFilterRowsStatus;
+  readonly activeDomainControlCount: number;
+  readonly filters?: ReactNode;
+  readonly controls?: ReactNode;
+};
+```
+
+Counts are non-negative integers. `activeDomainControlCount` counts domain
+View/Filter/Sort controls whose value differs from that surface's canonical
+default; the local query is excluded. The domain owns these projections.
+
+`PaneShell` renders one persistent visual marker and changes the accessible
+label to **Filter, N controls active** whenever a collapsed Filter has active
+domain controls. It does not force the row open. The same descriptor drives
+desktop and mobile chrome.
+
+`PaneSearchBar` derives one visually hidden, atomic, polite announcement from
+`rowStatus` while the effective query is nonempty:
+
+- Partial:
+  **N matching {unit} among L loaded; loading remaining {plural unit}.**
+- Complete: **N matching {unit} of M total.**
+
+Only the announcement is debounced through one named short duration; row
+filtering remains synchronous. This live region is accessibility feedback, not
+visible result-count chrome or a Find ordinal. Empty query is silent. Canonical
+publication equality includes every scalar status/control value; producers
+still memoize React nodes and callbacks. `{unit}` uses singular only when N is
+one; otherwise it uses plural.
+
 `FilterRows` deliberately has no adapter interface. Its owner derives visible
-rows from already-hydrated canonical rows and publishes existing controls.
+rows from canonical rows, publishes existing domain controls, and may report
+Partial until the existing exhaustive-list owner reports Complete. This
+subsection is implemented in source by
+`collection-pane-search-filter-sort-hard-cutover.md`; its production deployment
+remains part of that child cutover's atomic release gate.
 
 ## Collection, Page, And Note Boundary
 
@@ -318,8 +385,11 @@ inventories filter locally; Pane Search does not call their list endpoints.
 Existing domain sort/filter state remains authoritative and composes as:
 
 ```text
-complete canonical rows -> domain filters -> literal query -> domain sort/order
+loaded canonical rows -> domain filters -> literal query -> domain sort/order
 ```
+
+The exhaustive-list owner alone advances Partial to Complete. Pane Search
+neither starts nor keys that loading.
 
 The collection cutover defines searchable row fields and filter combinations.
 No universal row schema enters this foundation.
@@ -444,9 +514,9 @@ No search field enters:
   client use of server-list query filtering, duplicate filter/sort chrome,
   shortcut listener, matcher, highlight layer, and stale tests in its dependent
   cutover.
-- Re-home the non-search use of `PaneToolbar`'s `search` slot (the
-  create-library name form) in the first child so `search` means Pane Search
-  only.
+- Re-home the create-Library form from `PaneToolbar.filters` to
+  `SectionOpener.actions` in the first child; the current form is an action, not
+  a Filter control.
 - Delete duplicate snippet segment types/renderers when the foundation lands.
 - Extend canonical publication equality; do not compare search values in
   `PaneShell`, hooks, or producers.
@@ -509,7 +579,8 @@ Dependent format/list files belong only in their named child cutover. Update
 1. Search action, `Cmd/Ctrl+F`, and Nexus command open/focus only the active
    capable pane; `Cmd/Ctrl+K` and unsupported-pane native Find remain unchanged.
 2. Filter panes render only matching local rows, preserve domain order, reuse
-   existing filters/sorts, and expose no Find-only controls.
+   existing filters/sorts, expose no Find-only controls, mark active collapsed
+   domain state, and announce debounced Partial/Complete row status.
 3. Find panes expose the shared controls, wrap correctly, announce state, and
    reject stale session/query/source results.
 4. Companion results are ordered, typed, keyboard reachable, activate exact

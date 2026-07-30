@@ -7,11 +7,23 @@ import ResourceSurfaceEditor from "@/components/resource-surface/ResourceSurface
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { consumePendingNoteActivation } from "@/lib/reader/pendingNoteActivation";
-import { useNotePulseHighlight, type NotePulseTarget } from "@/lib/reader/pulseEvent";
+import {
+  useNotePulseHighlight,
+  type NotePulseTarget,
+} from "@/lib/reader/pulseEvent";
 import { emptyResourceMenuGroups } from "@/lib/actions/resourceActions";
-import type { PaneFilterRowsPublication } from "@/lib/panes/paneSearch";
+import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
+import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
-import { requirePaneRuntime, usePaneParam, usePaneReturnReady, usePaneRuntime, useSetPaneLabel } from "@/lib/panes/paneRuntime";
+import type { ResourceSurface } from "@/lib/resources/resourceItems";
+import {
+  requirePaneRuntime,
+  usePaneParam,
+  usePaneReturnReady,
+  usePaneRuntime,
+  useSetPaneLabel,
+} from "@/lib/panes/paneRuntime";
+import { resourceSurfaceFilterFields } from "@/components/resource-surface/resourceSurfaceFilterFields";
 
 export default function NotePaneBody() {
   const blockId = usePaneParam("blockId");
@@ -21,34 +33,58 @@ export default function NotePaneBody() {
     "NotePaneBody",
   ).activateTarget;
   const sourceRef = `note_block:${blockId}`;
-  const [filterState, setFilterState] = useState({
+  const [filterRowsState, setFilterRowsState] = useState<{
+    sourceRef: string;
+    ready: boolean;
+    fields: readonly (readonly string[])[];
+  }>({
     sourceRef,
-    query: "",
+    ready: false,
+    fields: [],
   });
-  const filterQuery =
-    filterState.sourceRef === sourceRef ? filterState.query : "";
-  const onFilterQueryChange = useCallback(
-    (query: string) => setFilterState({ sourceRef, query }),
-    [sourceRef],
+  if (filterRowsState.sourceRef !== sourceRef) {
+    setFilterRowsState({ sourceRef, ready: false, fields: [] });
+  }
+  const filterRows = useMemo(
+    () =>
+      filterRowsState.sourceRef === sourceRef ? filterRowsState.fields : [],
+    [filterRowsState, sourceRef],
   );
-  const dismissFilter = useCallback(
-    () => setFilterState({ sourceRef, query: "" }),
-    [sourceRef],
+  const ready =
+    filterRowsState.sourceRef === sourceRef && filterRowsState.ready;
+  const getFilterStatus = useCallback(
+    (query: string) => {
+      const visibleCount = filterRows.filter((fields) =>
+        matchesPaneFilterQuery(query, fields),
+      ).length;
+      const unit = { singular: "item", plural: "items" };
+      return ready
+        ? {
+            kind: "Complete" as const,
+            visibleCount,
+            totalCount: filterRows.length,
+            unit,
+          }
+        : {
+            kind: "Partial" as const,
+            visibleCount,
+            loadedCount: filterRows.length,
+            unit,
+          };
+    },
+    [filterRows, ready],
   );
-  const search = useMemo<PaneFilterRowsPublication>(
-    () => ({
-      kind: "FilterRows",
-      query: filterQuery,
+  const { query: filterQuery, publication: search } = usePaneFilterRows({
+    sourceKey: sourceRef,
       inputLabel: "Filter note items",
       placeholder: "Filter items",
-      onQueryChange: onFilterQueryChange,
-      onDismiss: dismissFilter,
-    }),
-    [dismissFilter, filterQuery, onFilterQueryChange],
-  );
+    getRowStatus: getFilterStatus,
+    activeDomainControlCount: 0,
+  });
   const [label, setLabel] = useState<string | null>(null);
-  const [ready, setReady] = useState(false);
-  const [pulse, setPulse] = useState<NotePulseTarget & { pulseId: number } | null>(null);
+  const [pulse, setPulse] = useState<
+    (NotePulseTarget & { pulseId: number }) | null
+  >(null);
   const pulseIdRef = useRef(0);
   usePaneReturnReady(ready);
   useSetPaneLabel(label);
@@ -57,30 +93,72 @@ export default function NotePaneBody() {
     pulseIdRef.current = next;
     setPulse({ ...target, pulseId: next });
   }, []);
-  useNotePulseHighlight((target) => { if (target.blockId === blockId) setPulseTarget(target); });
+  useNotePulseHighlight((target) => {
+    if (target.blockId === blockId) setPulseTarget(target);
+  });
   useEffect(() => {
     const pending = consumePendingNoteActivation(blockId);
     if (pending) setPulseTarget(pending);
   }, [blockId, setPulseTarget]);
-  const composer = useConnectionsComposerController({ scheme: "note_block", id: blockId });
+  const composer = useConnectionsComposerController({
+    scheme: "note_block",
+    id: blockId,
+  });
   const connections = useMemo(
-    () => <ConnectionsSurface resourceRef={{ scheme: "note_block", id: blockId }} composerController={composer} activateTarget={activateTarget} />,
+    () => (
+      <ConnectionsSurface
+        resourceRef={{ scheme: "note_block", id: blockId }}
+        composerController={composer}
+        activateTarget={activateTarget}
+      />
+    ),
     [activateTarget, blockId, composer],
   );
-  const { companionAction } = useResourceInspector({ scheme: "note_block", handle: blockId, bodies: { linkedItems: connections } });
+  const { companionAction } = useResourceInspector({
+    scheme: "note_block",
+    handle: blockId,
+    bodies: { linkedItems: connections },
+  });
+  const handleSurfaceChange = useCallback(
+    (surface: ResourceSurface) => {
+      setFilterRowsState({
+        sourceRef,
+        ready: true,
+        fields: surface.orderedItems.map(resourceSurfaceFilterFields),
+      });
+      if (surface.source.content.kind === "note_body") {
+        setLabel(surface.source.content.bodyText.trim() || "Note");
+      }
+    },
+    [sourceRef],
+  );
   usePanePrimaryChrome({
     search,
     actions: companionAction ? [companionAction] : [],
-    menu: ready ? { kind: "ResourceMenu", target: routeResourceActionSubject({ scheme: "note_block", id: blockId, href: `/notes/${blockId}` }), groups: emptyResourceMenuGroups() } : undefined,
+    menu: ready
+      ? {
+          kind: "ResourceMenu",
+          target: routeResourceActionSubject({
+            scheme: "note_block",
+            id: blockId,
+            href: `/notes/${blockId}`,
+          }),
+          groups: emptyResourceMenuGroups(),
+        }
+      : undefined,
   });
-  return <ResourceSurfaceEditor
+  return (
+    <>
+      {!ready && filterQuery.trim() ? (
+        <p role="status">No matching item found so far.</p>
+      ) : null}
+      <ResourceSurfaceEditor
     sourceRef={sourceRef}
     rowFilterQuery={filterQuery}
-    onSurfaceReady={(surface) => {
-      setReady(true);
-      if (surface.source.content.kind === "note_body") setLabel(surface.source.content.bodyText.trim() || "Note");
-    }}
+        onSurfaceChange={handleSurfaceChange}
     activateTarget={activateTarget}
     notePulseTarget={pulse}
-  />;
+      />
+    </>
+  );
 }

@@ -5,6 +5,7 @@
 
 .inputField {
   flex: 1;
+  min-width: 0;
 }
 
 .createHint {
@@ -67,5 +68,12 @@
 
   .invitationActions {
     justify-content: flex-start;
+  }
+}
+
+@media (max-width: 34rem) {
+  .createForm {
+    flex-direction: column;
+    inline-size: 9rem;
   }
 }

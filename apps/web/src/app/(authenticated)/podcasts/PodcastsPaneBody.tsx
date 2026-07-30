@@ -21,12 +21,9 @@ import { useExhaustivePagination } from "@/lib/api/useExhaustivePagination";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import { useResource } from "@/lib/api/useResource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { pluralize } from "@/lib/text/pluralize";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
-import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
-import PaneToolbar from "@/components/ui/PaneToolbar";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import SectionOpener from "@/components/ui/SectionOpener";
@@ -50,11 +47,16 @@ import {
   type MemberLibrary,
 } from "@/lib/libraries/client";
 import { requestNexusOpen } from "@/lib/nexus/events";
+import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
+import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
+import { findPaneSearchFocusTarget } from "@/lib/workspace/paneDom";
 import {
   definePaneVisitDataKey,
   useClearAllPaneVisitData,
   usePaneReturnReady,
+  usePaneRouter,
   usePaneRuntime,
+  usePaneSearchParams,
   requirePaneRuntime,
   usePaneVisitData,
 } from "@/lib/panes/paneRuntime";
@@ -68,14 +70,12 @@ type SubscriptionFilter = "all" | "has_new" | "not_in_library";
 interface PodcastListUrlState {
   sort: SubscriptionSort;
   filter: SubscriptionFilter;
-  query: string;
   libraryId: string;
 }
 
 const DEFAULT_PODCAST_LIST_STATE: PodcastListUrlState = {
   sort: "recent_episode",
   filter: "all",
-  query: "",
   libraryId: "",
 };
 
@@ -90,6 +90,7 @@ interface PodcastsSnapshot {
 
 const PODCASTS_VISIT_DATA =
   definePaneVisitDataKey<PodcastsSnapshot>("Podcasts.Subscriptions");
+const EMPTY_SUBSCRIPTIONS: readonly PodcastSubscriptionListItem[] = [];
 const EMPTY_MEMBER_LIBRARIES: readonly MemberLibrary[] = [];
 
 function decodePodcastListState(params: URLSearchParams): PodcastListUrlState {
@@ -104,16 +105,14 @@ function decodePodcastListState(params: URLSearchParams): PodcastListUrlState {
       rawFilter === "has_new" || rawFilter === "not_in_library"
         ? rawFilter
         : DEFAULT_PODCAST_LIST_STATE.filter,
-    query: params.get("q")?.trim() ?? "",
     libraryId: params.get("library_id")?.trim() ?? "",
   };
 }
 
 function encodePodcastListState(
   state: PodcastListUrlState,
-  currentParams: URLSearchParams,
 ): URLSearchParams {
-  const next = new URLSearchParams(currentParams);
+  const next = new URLSearchParams();
   if (state.sort === DEFAULT_PODCAST_LIST_STATE.sort) {
     next.delete("sort");
   } else {
@@ -123,12 +122,6 @@ function encodePodcastListState(
     next.delete("filter");
   } else {
     next.set("filter", state.filter);
-  }
-  const query = state.query.trim();
-  if (query) {
-    next.set("q", query);
-  } else {
-    next.delete("q");
   }
   if (state.libraryId) {
     next.set("library_id", state.libraryId);
@@ -140,6 +133,8 @@ function encodePodcastListState(
 
 export default function PodcastsPaneBody() {
   const paneRuntime = requirePaneRuntime(usePaneRuntime(), "PodcastsPaneBody");
+  const paneRouter = usePaneRouter();
+  const paneSearchParams = usePaneSearchParams();
   const podcastListCodec = useMemo(
     () => ({
       basePath: "/podcasts",
@@ -153,15 +148,23 @@ export default function PodcastsPaneBody() {
   );
   const { state: podcastListState, setState: setPodcastListState } =
     usePaneUrlState(podcastListCodec);
+  const canonicalPodcastListSearch =
+    encodePodcastListState(podcastListState).toString();
+  useEffect(() => {
+    if (paneSearchParams.toString() === canonicalPodcastListSearch) return;
+    paneRouter.replace(
+      canonicalPodcastListSearch
+        ? `/podcasts?${canonicalPodcastListSearch}`
+        : "/podcasts",
+    );
+  }, [canonicalPodcastListSearch, paneRouter, paneSearchParams]);
   const subscriptionSort = podcastListState.sort;
   const subscriptionFilter = podcastListState.filter;
-  const appliedSearch = podcastListState.query;
   const selectedLibraryId = podcastListState.libraryId;
   const subscriptionQueryIdentity = [
     subscriptionSort,
     subscriptionFilter,
     selectedLibraryId,
-    appliedSearch,
   ].join("\u0000");
   const committedSnapshotRef = useRef<PodcastsSnapshot | null>(null);
   const captureCommitted = useCallback(
@@ -230,10 +233,28 @@ export default function PodcastsPaneBody() {
   );
   const [error, setError] = useState<FeedbackContent | null>(null);
   const actions = usePodcastSubscriptionActions(setError);
+  const listRegionRef = useRef<HTMLDivElement | null>(null);
+  const pendingFocusNeighborRef = useRef<string | null | undefined>(undefined);
+  const pendingFocusRafRef = useRef(0);
+  const captureFocusNeighbor = useCallback((removedId: string) => {
+    const region = listRegionRef.current;
+    const row = region?.querySelector<HTMLElement>(
+      `[data-collection-row-id="${CSS.escape(removedId)}"]`,
+    );
+    if (!region || !row) {
+      pendingFocusNeighborRef.current = undefined;
+      return;
+    }
+    const rows = Array.from(
+      region.querySelectorAll<HTMLElement>("[data-collection-row-id]"),
+    );
+    const index = rows.indexOf(row);
+    const neighbor = rows[index + 1] ?? rows[index - 1] ?? null;
+    pendingFocusNeighborRef.current = neighbor?.dataset.collectionRowId ?? null;
+  }, []);
   const previousSubscriptionQueryIdentityRef = useRef(
     subscriptionQueryIdentity,
   );
-  const [searchText, setSearchText] = useState(appliedSearch);
   const [librariesLoading, setLibrariesLoading] = useState(restored === null);
   const settingsModal = usePodcastSubscriptionSettingsModal({
     onSaved: (response) => {
@@ -259,13 +280,9 @@ export default function PodcastsPaneBody() {
     },
   });
 
-  const rows = controller?.subscriptions ?? [];
+  const rows = controller?.subscriptions ?? EMPTY_SUBSCRIPTIONS;
   const libraries = controller?.libraries ?? EMPTY_MEMBER_LIBRARIES;
   const loading = controller === null && error === null;
-
-  useEffect(() => {
-    setSearchText(appliedSearch);
-  }, [appliedSearch]);
 
   useLayoutEffect(() => {
     if (
@@ -288,7 +305,6 @@ export default function PodcastsPaneBody() {
             subscriptionSort,
             subscriptionFilter,
             selectedLibraryId,
-            appliedSearch,
             reloadNonce,
           ].join(":")
         : null,
@@ -298,9 +314,6 @@ export default function PodcastsPaneBody() {
         sort: subscriptionSort,
         filter: subscriptionFilter,
       });
-      if (appliedSearch) {
-        params.set("q", appliedSearch);
-      }
       if (selectedLibraryId) {
         params.set("library_id", selectedLibraryId);
       }
@@ -379,9 +392,6 @@ export default function PodcastsPaneBody() {
         cursor,
         collection_revision: String(revision),
       });
-      if (appliedSearch) {
-        params.set("q", appliedSearch);
-      }
       if (selectedLibraryId) {
         params.set("library_id", selectedLibraryId);
       }
@@ -392,7 +402,6 @@ export default function PodcastsPaneBody() {
       return decodeCollectionPage(response, decodePodcastSubscriptionListItem);
     },
     [
-      appliedSearch,
       selectedLibraryId,
       subscriptionFilter,
       subscriptionSort,
@@ -436,7 +445,6 @@ export default function PodcastsPaneBody() {
       subscriptionSort,
       subscriptionFilter,
       selectedLibraryId,
-      appliedSearch,
       chainEpoch,
     ].join(":"),
     cursor: controller?.nextCursor ?? { kind: "Absent" },
@@ -449,24 +457,30 @@ export default function PodcastsPaneBody() {
   });
 
   const unsubscribePodcast = useCallback(
-    (row: PodcastSubscriptionListItem) =>
-      actions.unsubscribe(row.podcast_id, row.title, (_libraries, result) => {
-        setController((current) => {
-          if (current === null) return current;
-          const next = {
-            ...current,
-            subscriptions: current.subscriptions.filter(
-              (candidate) => candidate.podcast_id !== row.podcast_id,
-            ),
-            collectionRevision: result.collectionRevision,
-          };
-          controllerRef.current = next;
-          return next;
-        });
-        setChainEpoch((epoch) => epoch + 1);
-        clearAllVisitData();
-      }),
-    [actions, clearAllVisitData],
+    (row: PodcastSubscriptionListItem) => {
+      return actions.unsubscribe(
+        row.podcast_id,
+        row.title,
+        (_libraries, result) => {
+          captureFocusNeighbor(row.podcast_id);
+          setController((current) => {
+            if (current === null) return current;
+            const next = {
+              ...current,
+              subscriptions: current.subscriptions.filter(
+                (candidate) => candidate.podcast_id !== row.podcast_id,
+              ),
+              collectionRevision: result.collectionRevision,
+            };
+            controllerRef.current = next;
+            return next;
+          });
+          setChainEpoch((epoch) => epoch + 1);
+          clearAllVisitData();
+        },
+      );
+    },
+    [actions, captureFocusNeighbor, clearAllVisitData],
   );
 
   const refreshPodcastSync = useCallback(
@@ -486,6 +500,193 @@ export default function PodcastsPaneBody() {
     !loading && exhaustion.kind === "Complete"
       ? exhaustion.itemCount
       : null;
+  const settingsRow =
+    settingsModal.podcastId !== null
+      ? (rows.find((row) => row.podcast_id === settingsModal.podcastId) ?? null)
+      : null;
+  const hasActiveDomainFilters =
+    subscriptionFilter !== "all" ||
+    selectedLibraryId.length > 0 ||
+    subscriptionSort !== DEFAULT_PODCAST_LIST_STATE.sort;
+  const dismissFilterRowsRef = useRef<() => void>(() => undefined);
+  const clearFilters = useCallback(() => {
+    dismissFilterRowsRef.current();
+    setPodcastListState({
+      ...podcastListState,
+      sort: DEFAULT_PODCAST_LIST_STATE.sort,
+      filter: "all",
+      libraryId: "",
+    });
+  }, [podcastListState, setPodcastListState]);
+  const subscriptionFilterNodes = useMemo(
+    () => (
+      <>
+        <label className={styles.selectField}>
+          <span>Filter</span>
+          <Select
+            value={subscriptionFilter}
+            onChange={(event) =>
+              setPodcastListState({
+                ...podcastListState,
+                filter: event.target.value as SubscriptionFilter,
+              })
+            }
+          >
+            <option value="all">All</option>
+            <option value="has_new">Has New</option>
+            <option value="not_in_library">Not In Library</option>
+          </Select>
+        </label>
+
+        <label className={styles.selectField}>
+          <span>Library</span>
+          <Select
+            value={selectedLibraryId}
+            onChange={(event) =>
+              setPodcastListState({
+                ...podcastListState,
+                libraryId: event.target.value,
+              })
+            }
+            disabled={librariesLoading}
+          >
+            <option value="">All libraries</option>
+            {libraries.map((library) => (
+              <option key={library.id} value={library.id}>
+                {library.name}
+              </option>
+            ))}
+          </Select>
+        </label>
+
+        <label className={styles.selectField}>
+          <span>Sort</span>
+          <Select
+            value={subscriptionSort}
+            onChange={(event) =>
+              setPodcastListState({
+                ...podcastListState,
+                sort: event.target.value as SubscriptionSort,
+              })
+            }
+          >
+            <option value="recent_episode">Recent Episode</option>
+            <option value="unplayed_count">Most Unplayed</option>
+            <option value="alpha">A-Z</option>
+          </Select>
+        </label>
+      </>
+    ),
+    [
+      libraries,
+      librariesLoading,
+      podcastListState,
+      selectedLibraryId,
+      setPodcastListState,
+      subscriptionFilter,
+      subscriptionSort,
+    ],
+  );
+  const subscriptionControlNodes = useMemo(
+    () => (
+      <>
+        {hasActiveDomainFilters ? (
+          <Button variant="secondary" size="md" onClick={clearFilters}>
+            Clear filters
+          </Button>
+        ) : null}
+      </>
+    ),
+    [clearFilters, hasActiveDomainFilters],
+  );
+  const getSubscriptionRowStatus = useCallback(
+    (query: string) => {
+      const visibleCount = rows.filter((row) =>
+        matchesPaneFilterQuery(query, [
+          row.title,
+          ...row.contributors.flatMap((credit) => [
+            credit.contributor_display_name ?? "",
+            credit.credited_name,
+          ]),
+        ]),
+      ).length;
+      return exhaustion.kind === "Complete"
+        ? {
+            kind: "Complete" as const,
+            visibleCount,
+            totalCount: rows.length,
+            unit: { singular: "show", plural: "shows" },
+          }
+        : {
+            kind: "Partial" as const,
+            visibleCount,
+            loadedCount: rows.length,
+            unit: { singular: "show", plural: "shows" },
+          };
+    },
+    [exhaustion.kind, rows],
+  );
+  const subscriptionFilterRows = usePaneFilterRows({
+    sourceKey: "Podcasts.Subscriptions",
+    inputLabel: "Filter followed podcasts",
+    placeholder: "Filter shows",
+    getRowStatus: getSubscriptionRowStatus,
+    activeDomainControlCount:
+      Number(subscriptionFilter !== "all") +
+      Number(selectedLibraryId.length > 0) +
+      Number(subscriptionSort !== DEFAULT_PODCAST_LIST_STATE.sort),
+    filters: subscriptionFilterNodes,
+    controls: subscriptionControlNodes,
+  });
+  dismissFilterRowsRef.current = subscriptionFilterRows.publication.onDismiss;
+  const visibleRows = useMemo(
+    () =>
+      rows.filter((row) =>
+        matchesPaneFilterQuery(subscriptionFilterRows.query, [
+          row.title,
+          ...row.contributors.flatMap((credit) => [
+            credit.contributor_display_name ?? "",
+            credit.credited_name,
+          ]),
+        ]),
+      ),
+    [rows, subscriptionFilterRows.query],
+  );
+  const initialFilterNoMatch =
+    loading &&
+    subscriptionFilterRows.query.trim().length > 0 &&
+    visibleRows.length === 0;
+  const visibleRowSignature = visibleRows
+    .map((row) => row.podcast_id)
+    .join("\u001f");
+  useEffect(() => {
+    const neighborId = pendingFocusNeighborRef.current;
+    if (neighborId === undefined) return;
+    const moveFocus = () => {
+      if (pendingFocusNeighborRef.current !== neighborId) return;
+      pendingFocusNeighborRef.current = undefined;
+      const neighbor =
+        neighborId === null
+          ? null
+          : listRegionRef.current?.querySelector<HTMLElement>(
+              `[data-collection-row-id="${CSS.escape(neighborId)}"]`,
+            );
+      const target = neighbor?.querySelector<HTMLElement>(
+        'a, button, [tabindex]:not([tabindex="-1"])',
+      );
+      if (target) {
+        target.focus();
+        return;
+      }
+      findPaneSearchFocusTarget(paneRuntime.paneId)?.focus();
+    };
+    const outer = requestAnimationFrame(() => {
+      pendingFocusRafRef.current = requestAnimationFrame(moveFocus);
+    });
+    pendingFocusRafRef.current = outer;
+    return () => cancelAnimationFrame(pendingFocusRafRef.current);
+  }, [paneRuntime.paneId, visibleRowSignature]);
+
   usePanePrimaryChrome({
     header: {
       kind: "section",
@@ -493,28 +694,12 @@ export default function PodcastsPaneBody() {
         finalCount === null
           ? { kind: "none" }
           : { kind: "count", value: finalCount, unit: "show" },
-      pending: loading || exhaustion.kind === "Draining",
+      pending: loading || exhaustion.kind !== "Complete",
     },
+    search: subscriptionFilterRows.publication,
   });
-  const settingsRow =
-    settingsModal.podcastId !== null
-      ? (rows.find((row) => row.podcast_id === settingsModal.podcastId) ?? null)
-      : null;
-  const hasActiveFilters =
-    appliedSearch.length > 0 ||
-    subscriptionFilter !== "all" ||
-    selectedLibraryId.length > 0;
-  const clearFilters = () => {
-    setSearchText("");
-    setPodcastListState({
-      ...podcastListState,
-      filter: "all",
-      query: "",
-      libraryId: "",
-    });
-  };
 
-  const collectionRows = rows.map((row) => {
+  const collectionRows = visibleRows.map((row) => {
     const rowBusy = actions.unsubscribingPodcastIds.ids.has(row.podcast_id);
     const rowRefreshing = actions.refreshingPodcastIds.ids.has(row.podcast_id);
     return presentPodcast(
@@ -564,172 +749,101 @@ export default function PodcastsPaneBody() {
 
   return (
     <>
-      <CollectionView
-        returnScope="Podcasts.Subscriptions"
-        rows={collectionRows}
-        status={loading ? "loading" : "ready"}
-        ariaLabel="Followed podcasts"
-        opener={<SectionOpener heading="Podcasts" />}
-        toolbar={
-          <PaneToolbar
-            search={
-              <form
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  setPodcastListState({
-                    ...podcastListState,
-                    query: searchText.trim(),
-                  });
-                }}
-                style={{ display: "flex", gap: "var(--space-2)" }}
-              >
-                <Input
-                  type="search"
-                  value={searchText}
-                  placeholder="Search followed podcasts..."
-                  onChange={(event) => setSearchText(event.target.value)}
-                  style={{ flex: 1 }}
-                />
-                <Button type="submit" variant="primary" size="md">
-                  Search
-                </Button>
-              </form>
-            }
-            filters={
-              <>
-                <label className={styles.selectField}>
-                  <span>Filter</span>
-                  <Select
-                    value={subscriptionFilter}
-                    onChange={(event) =>
-                      setPodcastListState({
-                        ...podcastListState,
-                        filter: event.target.value as SubscriptionFilter,
+      <div ref={listRegionRef} style={{ display: "contents" }}>
+        <CollectionView
+          returnScope="Podcasts.Subscriptions"
+          rows={collectionRows}
+          status={loading ? "loading" : "ready"}
+          ariaLabel="Followed podcasts"
+          opener={
+            <SectionOpener
+              heading="Podcasts"
+              actions={
+                <>
+                  <Button
+                    variant="primary"
+                    size="md"
+                    onClick={() =>
+                      requestNexusOpen({
+                        kind: "QuickAction",
+                        actionId: "Nexus.Quick.Podcast",
                       })
                     }
                   >
-                    <option value="all">All</option>
-                    <option value="has_new">Has New</option>
-                    <option value="not_in_library">Not In Library</option>
-                  </Select>
-                </label>
-
-                <label className={styles.selectField}>
-                  <span>Library</span>
-                  <Select
-                    value={selectedLibraryId}
-                    onChange={(event) =>
-                      setPodcastListState({
-                        ...podcastListState,
-                        libraryId: event.target.value,
-                      })
-                    }
-                    disabled={librariesLoading}
+                    Browse
+                  </Button>
+                  <ActionMenu
+                    label="Podcast page actions"
+                    options={[
+                      {
+                        kind: "link",
+                        id: "export-opml",
+                        label: "Export OPML",
+                        href: "/api/podcasts/export/opml",
+                      },
+                    ]}
+                  />
+                </>
+              }
+            />
+          }
+          rowChangePresentation={{
+            kind: "ImmediateOnKeyChange",
+            key: subscriptionFilterRows.query.trim(),
+          }}
+          notice={
+            error ? (
+              <FeedbackNotice feedback={error} />
+            ) : initialFilterNoMatch ? (
+              <FeedbackNotice severity="neutral">
+                No matching show found so far.
+              </FeedbackNotice>
+            ) : undefined
+          }
+          empty={
+            <FeedbackNotice severity="neutral">
+              {subscriptionFilterRows.query.trim() ? (
+                exhaustion.kind === "Complete" ? (
+                  "No shows match this filter."
+                ) : (
+                  "No matching show found so far."
+                )
+              ) : hasActiveDomainFilters ? (
+                <>
+                  No podcasts match the current filters.{" "}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className={styles.inlineButton}
+                    onClick={clearFilters}
                   >
-                    <option value="">All libraries</option>
-                    {libraries.map((library) => (
-                      <option key={library.id} value={library.id}>
-                        {library.name}
-                      </option>
-                    ))}
-                  </Select>
-                </label>
-
-                <label className={styles.selectField}>
-                  <span>Sort</span>
-                  <Select
-                    value={subscriptionSort}
-                    onChange={(event) =>
-                      setPodcastListState({
-                        ...podcastListState,
-                        sort: event.target.value as SubscriptionSort,
-                      })
-                    }
-                  >
-                    <option value="recent_episode">Recent Episode</option>
-                    <option value="unplayed_count">Most Unplayed</option>
-                    <option value="alpha">A-Z</option>
-                  </Select>
-                </label>
-              </>
-            }
-            controls={
-              <>
-                {finalCount === null ? null : (
-                  <span className={styles.summaryCount}>
-                    {pluralize(finalCount, "followed show")}
-                  </span>
-                )}
-                {hasActiveFilters ? (
-                  <Button variant="secondary" size="md" onClick={clearFilters}>
                     Clear filters
                   </Button>
-                ) : null}
-                <Button
-                  variant="primary"
-                  size="md"
-                  onClick={() =>
-                    requestNexusOpen({
-                      kind: "QuickAction",
-                      actionId: "Nexus.Quick.Podcast",
-                    })
-                  }
-                >
-                  Browse
-                </Button>
-                <ActionMenu
-                  label="Podcast page actions"
-                  options={[
-                    {
-                      kind: "link",
-                      id: "export-opml",
-                      label: "Export OPML",
-                      href: "/api/podcasts/export/opml",
-                    },
-                  ]}
-                />
-              </>
-            }
-          />
-        }
-        notice={error ? <FeedbackNotice feedback={error} /> : undefined}
-        empty={
-          <FeedbackNotice severity="neutral">
-            {hasActiveFilters ? (
-              <>
-                No podcasts match the current filters.{" "}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className={styles.inlineButton}
-                  onClick={clearFilters}
-                >
-                  Clear filters
-                </Button>
-              </>
-            ) : (
-              <>
-                No followed podcasts yet.{" "}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className={styles.inlineButton}
-                  onClick={() =>
-                    requestNexusOpen({
-                      kind: "QuickAction",
-                      actionId: "Nexus.Quick.Podcast",
-                    })
-                  }
-                >
-                  Browse podcasts
-                </Button>
-              </>
-            )}
-          </FeedbackNotice>
-        }
-        collectionBusy={exhaustion.kind === "Draining"}
-        footer={<CollectionExhaustionNotice state={exhaustion} />}
-      />
+                </>
+              ) : (
+                <>
+                  No followed podcasts yet.{" "}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className={styles.inlineButton}
+                    onClick={() =>
+                      requestNexusOpen({
+                        kind: "QuickAction",
+                        actionId: "Nexus.Quick.Podcast",
+                      })
+                    }
+                  >
+                    Browse podcasts
+                  </Button>
+                </>
+              )}
+            </FeedbackNotice>
+          }
+          collectionBusy={exhaustion.kind === "Draining"}
+          footer={<CollectionExhaustionNotice state={exhaustion} />}
+        />
+      </div>
 
       <PodcastSubscriptionSettingsModal
         podcastTitle={settingsRow?.title ?? null}

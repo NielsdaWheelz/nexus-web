@@ -11,13 +11,31 @@ import {
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import ActionMenu from "@/components/ui/ActionMenu";
 import PaneHeaderIdentity from "@/components/ui/PaneHeaderIdentity";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import type {
+  ActionDescriptor,
+  PaneHeaderAction,
+} from "@/lib/ui/actionDescriptor";
 import {
   useMobileChrome,
   useMobileChromeSurface,
 } from "@/lib/workspace/mobileChrome";
 import { usePaneWarm } from "@/lib/panes/paneWarm";
 import styles from "./AppNav.module.css";
+
+function activeCollapsedFilterAction(
+  actions: readonly PaneHeaderAction[],
+): PaneHeaderAction | null {
+  return (
+    actions.find(
+      (action) =>
+        action.kind === "command" &&
+        action.id === "Pane.Search" &&
+        action.state?.kind === "disclosure" &&
+        !action.state.expanded &&
+        action.indicator?.kind === "Status",
+    ) ?? null
+  );
+}
 
 export default function MobilePaneBar() {
   const { motionPhase, paneChrome, acquireVisibleLock, finishSettle } =
@@ -54,6 +72,12 @@ export default function MobilePaneBar() {
       ...(paneChrome?.options ?? []),
     ];
   }, [navigation, paneChrome?.actions, paneChrome?.options]);
+  const activeFilterAction = activeCollapsedFilterAction(
+    paneChrome?.actions ?? [],
+  );
+  const optionsLabel = activeFilterAction
+    ? `Pane options, ${activeFilterAction.label}`
+    : "Pane options";
   const controlsHidden = motionPhase.kind === "Hidden";
   const handleActionMenuOpenChange = useCallback(
     (open: boolean) => {
@@ -152,12 +176,26 @@ export default function MobilePaneBar() {
         {paneChrome ? (
           <ActionMenu
             options={menuOptions}
-            label="Pane options"
+            label={optionsLabel}
             className={styles.topBarOptions}
             triggerAttributes={{
               "data-pane-options-trigger": paneChrome?.paneId,
             }}
             onOpenChange={handleActionMenuOpenChange}
+            renderTrigger={
+              activeFilterAction
+                ? (props) => (
+                    <button {...props}>
+                      &hellip;
+                      <span
+                        className={styles.topBarFilterMarker}
+                        data-testid="pane-filter-active-marker"
+                        aria-hidden="true"
+                      />
+                    </button>
+                  )
+                : undefined
+            }
           />
         ) : null}
       </div>

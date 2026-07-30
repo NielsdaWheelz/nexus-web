@@ -70,9 +70,30 @@ interface PaneSearchBase {
 
 export type PaneFilterRowsPublication = PaneSearchBase & {
   readonly kind: "FilterRows";
+  readonly rowStatus: PaneFilterRowsStatus;
+  readonly activeDomainControlCount: number;
   readonly filters?: ReactNode;
   readonly controls?: ReactNode;
 };
+
+export interface PaneFilterRowsUnit {
+  readonly singular: string;
+  readonly plural: string;
+}
+
+export type PaneFilterRowsStatus =
+  | {
+      readonly kind: "Partial";
+      readonly visibleCount: number;
+      readonly loadedCount: number;
+      readonly unit: PaneFilterRowsUnit;
+    }
+  | {
+      readonly kind: "Complete";
+      readonly visibleCount: number;
+      readonly totalCount: number;
+      readonly unit: PaneFilterRowsUnit;
+    };
 
 export type PaneFindOccurrencesPublication = PaneSearchBase & {
   readonly kind: "FindOccurrences";
@@ -173,6 +194,26 @@ function arePaneSearchBasesEqual(
   );
 }
 
+function areFilterRowsStatusesEqual(
+  left: PaneFilterRowsStatus,
+  right: PaneFilterRowsStatus,
+): boolean {
+  if (
+    left.kind !== right.kind ||
+    left.visibleCount !== right.visibleCount ||
+    left.unit.singular !== right.unit.singular ||
+    left.unit.plural !== right.unit.plural
+  ) {
+    return false;
+  }
+  switch (left.kind) {
+    case "Partial":
+      return right.kind === "Partial" && left.loadedCount === right.loadedCount;
+    case "Complete":
+      return right.kind === "Complete" && left.totalCount === right.totalCount;
+  }
+}
+
 export function arePaneSearchPublicationsEqual(
   left: PaneSearchPublication | undefined,
   right: PaneSearchPublication | undefined,
@@ -183,6 +224,8 @@ export function arePaneSearchPublicationsEqual(
   if (left.kind === "FilterRows") {
     return (
       right.kind === "FilterRows" &&
+      areFilterRowsStatusesEqual(left.rowStatus, right.rowStatus) &&
+      left.activeDomainControlCount === right.activeDomainControlCount &&
       left.filters === right.filters &&
       left.controls === right.controls
     );

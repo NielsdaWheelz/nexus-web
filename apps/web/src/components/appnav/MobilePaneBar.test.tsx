@@ -45,6 +45,51 @@ function PublishChrome() {
   return null;
 }
 
+function PublishActiveFilterChrome() {
+  const { setPaneChrome } = useMobileChrome();
+  useEffect(() => {
+    setPaneChrome({
+      paneId: "pane-a",
+      routeKey: "libraries:/libraries",
+      identityId: "pane-a-identity",
+      header: {
+        kind: "section",
+        standingHead: "Libraries",
+        folio: { kind: "count", value: 37, unit: "source" },
+        pending: false,
+      },
+      activateIdentityAnchor: noopActivateIdentityAnchor,
+      navigation: {
+        canGoBack: false,
+        canGoForward: false,
+        onBack: () => {},
+        onForward: () => {},
+      },
+      actions: [
+        {
+          kind: "command",
+          id: "Pane.Search",
+          label: "Filter, 2 controls active",
+          indicator: { kind: "Status" },
+          icon: <span aria-hidden="true">filter</span>,
+          state: {
+            kind: "disclosure",
+            expanded: false,
+            menuLabels: {
+              collapsed: "Filter, 2 controls active",
+              expanded: "Close filter",
+            },
+          },
+          onSelect: () => {},
+        },
+      ],
+      options: [],
+    });
+    return () => setPaneChrome(null);
+  }, [setPaneChrome]);
+  return null;
+}
+
 function PublishResourceChrome({
   activateIdentityAnchor = noopActivateIdentityAnchor,
 }: {
@@ -209,6 +254,28 @@ describe("MobilePaneBar", () => {
 
     expect(screen.getByText("Libraries")).toBeInTheDocument();
     expect(screen.getByText("37 sources")).toBeInTheDocument();
+  });
+
+  it("marks and names Options when the collapsed Filter has active controls", () => {
+    render(
+      <MobileChromeProvider>
+        <PublishActiveFilterChrome />
+        <MobilePaneBar />
+      </MobileChromeProvider>,
+    );
+
+    const options = screen.getByRole("button", {
+      name: "Pane options, Filter, 2 controls active",
+    });
+    expect(options).toBeVisible();
+    expect(screen.getByTestId("pane-filter-active-marker")).toBeVisible();
+
+    fireEvent.click(options);
+    expect(
+      screen.getByRole("menuitem", {
+        name: "Filter, 2 controls active",
+      }),
+    ).toBeVisible();
   });
 
   it("keeps Back in chrome and moves Forward into the pane menu", () => {

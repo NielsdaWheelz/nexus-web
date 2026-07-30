@@ -8,11 +8,6 @@
   font-weight: var(--weight-semibold);
 }
 
-.summaryCount {
-  color: var(--ink-faint);
-  font-size: var(--text-sm);
-}
-
 .inlineButton {
   height: auto;
   padding: 0;

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { act, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
 import { PanePrimaryChromeProvider } from "@/components/workspace/PanePrimaryChrome";
@@ -42,19 +42,9 @@ function librariesPage<T>(
 
 describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
   it("paints the seeded library and never fetches /api/libraries", async () => {
+    const user = userEvent.setup();
     const publish = vi.fn();
-    const fetchSpy = stubFetch(async (input) => {
-      if (fetchInputPathWithSearch(input) === "/api/libraries/invites") {
-        return Response.json({ data: [] });
-      }
-      throw new Error("unexpected client fetch on a hydration hit");
-    });
-
-    renderHydratedPane({
-      href: "/libraries",
-      resources: {
-        "libraries:0": librariesPage([
-          {
+    const library = {
             id: "00000000-0000-4000-8000-000000000201",
             name: "Bootstrapped Reading Room",
             color: null,
@@ -69,13 +59,42 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
             canEditEntries: true,
             canManageMembers: true,
             canTransferOwnership: true,
+    };
+    const neighbor = {
+      ...library,
+      id: "00000000-0000-4000-8000-000000000202",
+      name: "Neighbor Reading Room",
+    };
+    const fetchSpy = stubFetch(async (input, init) => {
+      const path = fetchInputPathWithSearch(input);
+      if (path === "/api/libraries/invites") {
+        return Response.json({ data: [] });
+      }
+      if (
+        path === `/api/libraries/${library.id}` &&
+        init?.method === "PATCH"
+      ) {
+        return Response.json({
+          data: {
+            library: { ...library, name: "Renamed" },
+            collectionRevision: 2,
           },
-        ]),
+        });
+      }
+      throw new Error("unexpected client fetch on a hydration hit");
+    });
+
+    renderHydratedPane({
+      href: "/libraries",
+      resources: {
+        "libraries:0": librariesPage([library, neighbor]),
       },
       children: (
         <LibraryPlacementControllerProvider>
           <PanePrimaryChromeProvider publish={publish}>
+            <div data-pane-id="pane-1">
             <LibrariesPaneBody />
+            </div>
           </PanePrimaryChromeProvider>
         </LibraryPlacementControllerProvider>
       ),
@@ -89,6 +108,43 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
     // (b) No client fetch to the libraries list endpoint — the seed was the source.
     const fetchedLibraries = wasFetchPathCalled(fetchSpy, "/api/libraries");
     expect(fetchedLibraries).toBe(false);
+
+    await vi.waitFor(() =>
+      expect(
+        publish.mock.calls
+          .map(([update]) => update.publication?.search)
+          .findLast((search) => search?.kind === "FilterRows"),
+      ).toBeDefined(),
+    );
+    const search = publish.mock.calls
+      .map(([update]) => update.publication?.search)
+      .findLast((candidate) => candidate?.kind === "FilterRows");
+    if (search?.kind !== "FilterRows") {
+      throw new Error("Expected LibrariesPaneBody to publish FilterRows.");
+    }
+    act(() => search.onQueryChange("reading room"));
+    await user.click(
+      screen.getByRole("button", {
+        name: "More actions for Bootstrapped Reading Room",
+      }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "Settings" }));
+    const name = screen.getByLabelText("Library name");
+    await user.clear(name);
+    await user.type(name, "Renamed");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(
+      await screen.findByRole("link", { name: "Neighbor Reading Room" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("link", { name: "Bootstrapped Reading Room" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Close dialog" }));
+    await vi.waitFor(() =>
+      expect(
+        screen.getByRole("link", { name: "Neighbor Reading Room" }),
+      ).toHaveFocus(),
+    );
   });
 
   it("retains an id across a response-loss retry and rotates it when the draft changes", async () => {
@@ -183,6 +239,7 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
   });
 
   it("presents the default library as the All view", async () => {
+    const publish = vi.fn();
     stubFetch(async (input) => {
       if (fetchInputPathWithSearch(input) === "/api/libraries/invites") {
         return Response.json({ data: [] });
@@ -214,7 +271,9 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
       },
       children: (
         <LibraryPlacementControllerProvider>
+          <PanePrimaryChromeProvider publish={publish}>
           <LibrariesPaneBody />
+          </PanePrimaryChromeProvider>
         </LibraryPlacementControllerProvider>
       ),
     });
@@ -226,6 +285,32 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Across your libraries")).toBeInTheDocument();
     expect(screen.queryByText("My Library")).not.toBeInTheDocument();
+
+    await vi.waitFor(() =>
+      expect(
+        publish.mock.calls
+          .map(([update]) => update.publication?.search)
+          .findLast((search) => search !== undefined),
+      ).toBeDefined(),
+    );
+    const search = publish.mock.calls
+      .map(([update]) => update.publication?.search)
+      .findLast((candidate) => candidate !== undefined);
+    act(() => search?.onQueryChange("all"));
+    expect(
+      await screen.findByRole("link", { name: "All" }),
+    ).toBeInTheDocument();
+    await vi.waitFor(() => {
+      const updatedSearch = publish.mock.calls
+        .map(([update]) => update.publication?.search)
+        .findLast((candidate) => candidate !== undefined);
+      expect(updatedSearch?.rowStatus).toEqual({
+        kind: "Complete",
+        visibleCount: 1,
+        totalCount: 1,
+        unit: { singular: "library", plural: "libraries" },
+      });
+    });
   });
 
   it("blocks creating a library named All and explains why", async () => {
@@ -262,6 +347,11 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
   });
 
   it("automatically exhausts another library page from the hydrated cursor", async () => {
+    let resolveContinuation!: (response: Response) => void;
+    const continuation = new Promise<Response>((resolve) => {
+      resolveContinuation = resolve;
+    });
+    const publish = vi.fn();
     const fetchSpy = stubFetch(async (input) => {
       if (fetchInputPathWithSearch(input) === "/api/libraries/invites") {
         return Response.json({ data: [] });
@@ -270,26 +360,7 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
         fetchInputPathWithSearch(input) ===
         "/api/libraries?cursor=cursor-2&collection_revision=1&limit=100"
       ) {
-        return Response.json({
-          data: librariesPage([
-            {
-              id: "00000000-0000-4000-8000-000000000202",
-              name: "Second Page Library",
-              color: null,
-              ownerUserHandle: OWNER_USER_HANDLE,
-              isDefault: false,
-              role: "admin",
-              createdAt: "2026-01-02T00:00:00Z",
-              updatedAt: "2026-01-02T00:00:00Z",
-              systemKey: null,
-              canRename: true,
-              canDelete: true,
-              canEditEntries: true,
-              canManageMembers: true,
-              canTransferOwnership: true,
-            },
-          ]),
-        });
+        return continuation;
       }
       throw new Error(`unexpected fetch: ${String(input)}`);
     });
@@ -321,11 +392,49 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
       },
       children: (
         <LibraryPlacementControllerProvider>
+          <PanePrimaryChromeProvider publish={publish}>
           <LibrariesPaneBody />
+          </PanePrimaryChromeProvider>
         </LibraryPlacementControllerProvider>
       ),
     });
 
+    expect(
+      await screen.findByRole("link", { name: "Bootstrapped Reading Room" }),
+    ).toBeVisible();
+    await vi.waitFor(() =>
+      expect(
+        publish.mock.calls
+          .map(([update]) => update.publication?.header)
+          .findLast((header) => header?.kind === "section"),
+      ).toEqual({
+        kind: "section",
+        folio: { kind: "none" },
+        pending: true,
+      }),
+    );
+    resolveContinuation(
+      Response.json({
+        data: librariesPage([
+          {
+            id: "00000000-0000-4000-8000-000000000202",
+            name: "Second Page Library",
+            color: null,
+            ownerUserHandle: OWNER_USER_HANDLE,
+            isDefault: false,
+            role: "admin",
+            createdAt: "2026-01-02T00:00:00Z",
+            updatedAt: "2026-01-02T00:00:00Z",
+            systemKey: null,
+            canRename: true,
+            canDelete: true,
+            canEditEntries: true,
+            canManageMembers: true,
+            canTransferOwnership: true,
+          },
+        ]),
+      }),
+    );
     expect(
       await screen.findByRole("link", { name: "Second Page Library" }),
     ).toBeInTheDocument();
@@ -445,7 +554,9 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
       },
       children: (
         <LibraryPlacementControllerProvider>
+          <div data-pane-id="pane-1">
           <LibrariesPaneBody />
+          </div>
         </LibraryPlacementControllerProvider>
       ),
     });
@@ -468,8 +579,13 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
     expect(
       await screen.findByRole("link", { name: "Continued Library" }),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Delete Me" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "Delete Me" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Keep Me" })).toBeInTheDocument();
+    await vi.waitFor(() =>
+      expect(screen.getByRole("link", { name: "Keep Me" })).toHaveFocus(),
+    );
     expect(
       fetchSpy.mock.calls.some(([input, init]) => {
         const url = new URL(

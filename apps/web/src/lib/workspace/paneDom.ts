@@ -29,3 +29,19 @@ export function findPaneChromeFocusTarget(
     null
   );
 }
+
+export function findPaneSearchFocusTarget(
+  paneId: string | null | undefined,
+): HTMLElement | null {
+  if (!paneId) return null;
+  const pane = Array.from(
+    document.querySelectorAll<HTMLElement>("[data-pane-id]"),
+  ).find((candidate) => candidate.dataset.paneId === paneId);
+  const input = pane?.querySelector<HTMLElement>("[data-pane-search-input]");
+  if (input?.isConnected && !input.closest("[inert]")) return input;
+  const action = pane?.querySelector<HTMLElement>(
+    '[data-action-id="Pane.Search"]',
+  );
+  if (action?.isConnected && !action.closest("[inert]")) return action;
+  return findPaneChromeFocusTarget(paneId);
+}

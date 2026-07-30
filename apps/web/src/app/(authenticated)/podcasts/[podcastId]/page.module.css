@@ -19,7 +19,7 @@
 .episodePaneHeaderRow {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 8px;
   margin-bottom: 12px;
 }
@@ -45,20 +45,6 @@
   gap: 8px;
 }
 
-.episodeHeaderActions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.episodeFilterBar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: flex-end;
-  margin-bottom: 12px;
-}
-
 .episodeFilterPills {
   display: flex;
   flex-wrap: wrap;
@@ -70,17 +56,12 @@
   color: var(--accent);
 }
 
-.episodeSortLabel,
-.episodeSearchLabel {
+.episodeSortLabel {
   display: flex;
   flex-direction: column;
   gap: 4px;
   font-size: var(--text-xs);
   color: var(--ink-faint);
-}
-
-.episodeSearchInput {
-  min-width: 200px;
 }
 
 .unsubscribedLabel {

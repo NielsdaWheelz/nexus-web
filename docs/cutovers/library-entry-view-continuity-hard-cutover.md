@@ -10,6 +10,12 @@ Status: IMPLEMENTED AND VERIFIED — 2026-07-24
 > `Could not load {requested}. Showing {committed}.`, and binds result commits
 > to placement/consumption revisions. The in-place lifecycle, latest-wins
 > commit, and retained-row rules below otherwise stand.
+>
+> **Pane Filter update (2026-07-29):**
+> [`collection-pane-search-filter-sort-hard-cutover.md`](collection-pane-search-filter-sort-hard-cutover.md)
+> changes only physical control placement and the final empty-neighbor focus
+> target. Requested/committed ownership, retained rows, and exact-view commits
+> remain authoritative here.
 
 Type: hard cutover. No feature flag, compatibility branch, legacy lifecycle,
 silent fallback, or released intermediate state.

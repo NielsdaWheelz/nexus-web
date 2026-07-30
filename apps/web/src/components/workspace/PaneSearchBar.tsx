@@ -2,6 +2,7 @@
 
 import {
   forwardRef,
+  useEffect,
   useId,
   useState,
   type KeyboardEvent,
@@ -26,6 +27,14 @@ import type {
 } from "@/lib/panes/paneSearch";
 import { truncatePaneSearchQuery } from "@/lib/panes/paneSearch";
 import styles from "./PaneSearchBar.module.css";
+
+const PANE_FILTER_ROWS_ANNOUNCEMENT_DEBOUNCE_MS = 160;
+
+function assertUnreachableRowStatus(status: never): never {
+  throw new Error(
+    `Unreachable Pane Filter row status: ${JSON.stringify(status)}`,
+  );
+}
 
 function resultStatus(result: PaneFindResult): string {
   switch (result.kind) {
@@ -100,11 +109,64 @@ function SearchInput({
       autoComplete="off"
       autoCapitalize="none"
       spellCheck={false}
+      data-pane-search-input="true"
       onChange={(event) =>
         onQueryChange(truncatePaneSearchQuery(event.target.value))
       }
       onKeyDown={handleKeyDown}
     />
+  );
+}
+
+function FilterRowsStatus({
+  publication,
+  statusId,
+}: {
+  readonly publication: Extract<PaneSearchPublication, { kind: "FilterRows" }>;
+  readonly statusId: string;
+}) {
+  const [announcement, setAnnouncement] = useState("");
+  const { query, rowStatus } = publication;
+  const effectiveQuery = query.trim();
+
+  useEffect(() => {
+    if (effectiveQuery.length === 0) {
+      setAnnouncement("");
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      const unit =
+        rowStatus.visibleCount === 1
+          ? rowStatus.unit.singular
+          : rowStatus.unit.plural;
+      switch (rowStatus.kind) {
+        case "Partial":
+          setAnnouncement(
+            `${rowStatus.visibleCount} matching ${unit} among ${rowStatus.loadedCount} loaded; loading remaining ${rowStatus.unit.plural}.`,
+          );
+          break;
+        case "Complete":
+          setAnnouncement(
+            `${rowStatus.visibleCount} matching ${unit} of ${rowStatus.totalCount} total.`,
+          );
+          break;
+        default:
+          assertUnreachableRowStatus(rowStatus);
+      }
+    }, PANE_FILTER_ROWS_ANNOUNCEMENT_DEBOUNCE_MS);
+    return () => window.clearTimeout(timeout);
+  }, [effectiveQuery, rowStatus]);
+
+  return (
+    <span
+      id={statusId}
+      className="sr-only"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    >
+      {effectiveQuery.length > 0 ? announcement : ""}
+    </span>
   );
 }
 
@@ -311,6 +373,7 @@ const PaneSearchBar = forwardRef<
       filters = publication.filters;
       controls = (
         <>
+          <FilterRowsStatus publication={publication} statusId={statusId} />
           {publication.controls}
           <CloseButton onDismiss={dismiss} />
         </>

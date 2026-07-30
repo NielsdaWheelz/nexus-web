@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { horizontallyScrollableElements } from "@/__tests__/helpers/horizontalOverflow";
@@ -8,13 +8,21 @@ const PAGE_REF = "page:11111111-1111-4111-8111-111111111111";
 const NOTE_REF = "note_block:22222222-2222-4222-8222-222222222222";
 
 function response(data: unknown) {
-  return new Response(JSON.stringify({ data }), { status: 200, headers: { "Content-Type": "application/json" } });
+  return new Response(JSON.stringify({ data }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 function item(ref: string, scheme: string, id: string, label = "") {
   const href = scheme === "media" ? `/media/${id}` : null;
   return {
-    ref, scheme, id, label, summary: "", route: href,
+    ref,
+    scheme,
+    id,
+    label,
+    summary: "",
+    route: href,
     activation: {
       resourceRef: ref,
       kind: scheme === "media" ? "route" : "none",
@@ -53,13 +61,42 @@ afterEach(() => vi.unstubAllGlobals());
 describe("ResourceSurfaceEditor", () => {
   it("renders only direct ordered rows below the page masthead", async () => {
     const activateTarget = vi.fn();
-    const fetchMock = vi.fn(async () => response({
-      source: { item: item(PAGE_REF, "page", PAGE_REF.slice(5)), content: { kind: "page_title", title: "Today" } },
+    const fetchMock = vi.fn(async () =>
+      response({
+        source: {
+          item: item(PAGE_REF, "page", PAGE_REF.slice(5)),
+          content: { kind: "page_title", title: "Today" },
+        },
       ordered_items: [
-        { occurrence_id: "edge-note", target: { item: item(NOTE_REF, "note_block", NOTE_REF.slice(11)), content: { kind: "note_body", body_pm_json: { type: "paragraph", content: [{ type: "text", text: "First" }] }, body_text: "First" } } },
-        { occurrence_id: "edge-media", target: { item: item("media:33333333-3333-4333-8333-333333333333", "media", "33333333-3333-4333-8333-333333333333", "Reading"), content: { kind: "resource_summary" } } },
+          {
+            occurrence_id: "edge-note",
+            target: {
+              item: item(NOTE_REF, "note_block", NOTE_REF.slice(11)),
+              content: {
+                kind: "note_body",
+                body_pm_json: {
+                  type: "paragraph",
+                  content: [{ type: "text", text: "First" }],
+                },
+                body_text: "First",
+              },
+            },
+          },
+          {
+            occurrence_id: "edge-media",
+            target: {
+              item: item(
+                "media:33333333-3333-4333-8333-333333333333",
+                "media",
+                "33333333-3333-4333-8333-333333333333",
+                "Reading",
+              ),
+              content: { kind: "resource_summary" },
+            },
+          },
       ],
-    }));
+      }),
+    );
     vi.stubGlobal("fetch", fetchMock);
     render(
       <div data-testid="mobile-host" style={{ width: 390, maxWidth: 390 }}>
@@ -70,9 +107,15 @@ describe("ResourceSurfaceEditor", () => {
       </div>,
     );
 
-    expect(await screen.findByRole("textbox", { name: "Page title" })).toHaveValue("Today");
-    expect(screen.getByRole("region", { name: "Ordered resources" })).toBeVisible();
-    expect(await screen.findByRole("textbox", { name: "Edit note 1" })).toBeVisible();
+    expect(
+      await screen.findByRole("textbox", { name: "Page title" }),
+    ).toHaveValue("Today");
+    expect(
+      screen.getByRole("region", { name: "Ordered resources" }),
+    ).toBeVisible();
+    expect(
+      await screen.findByRole("textbox", { name: "Edit note 1" }),
+    ).toBeVisible();
     const reading = screen.getByRole("button", { name: "Open Reading" });
     expect(reading).toBeVisible();
     await userEvent.click(reading);
@@ -113,7 +156,8 @@ describe("ResourceSurfaceEditor", () => {
         },
       ],
     };
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method !== "POST") return response(firstSurface);
       const request = JSON.parse(String(init.body)) as {
         command: { note_id: string };
@@ -149,7 +193,8 @@ describe("ResourceSurfaceEditor", () => {
           ],
         },
       });
-    });
+      },
+    );
     vi.stubGlobal("fetch", fetchMock);
     render(
       <ResourceSurfaceEditor sourceRef={PAGE_REF} activateTarget={vi.fn()} />,
@@ -167,8 +212,7 @@ describe("ResourceSurfaceEditor", () => {
   });
 
   it("filters an optimistic inserted note before the server echoes it without search or graph calls", async () => {
-    const filterPageRef =
-      "page:77777777-7777-4777-8777-777777777777";
+    const filterPageRef = "page:77777777-7777-4777-8777-777777777777";
     const initialSurface = {
       source: {
         item: item(filterPageRef, "page", filterPageRef.slice(5)),
@@ -211,8 +255,25 @@ describe("ResourceSurfaceEditor", () => {
     expect(
       screen.getByRole("textbox", { name: "Edit note 1" }),
     ).toHaveTextContent("Local comet");
-    const requestedPaths = fetchMock.mock.calls.map(([input]) =>
-      new URL(String(input), "http://localhost").pathname,
+    expect(
+      screen.getByRole("textbox", { name: "Page title" }),
+    ).not.toHaveAttribute("readonly");
+    expect(
+      screen.getByRole("textbox", { name: "Edit note 1" }),
+    ).toHaveAttribute("contenteditable", "false");
+    expect(
+      screen.getByText(
+        "Filtered view is inspection only — clear Filter to edit.",
+      ),
+    ).toHaveAttribute("role", "status");
+    expect(
+      screen.queryByRole("button", { name: "Add a note" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Add item" }),
+    ).not.toBeInTheDocument();
+    const requestedPaths = fetchMock.mock.calls.map(
+      ([input]) => new URL(String(input), "http://localhost").pathname,
     );
     expect(requestedPaths[0]).toBe(
       `/api/resource-items/${encodeURIComponent(filterPageRef)}/surface`,
@@ -225,6 +286,91 @@ describe("ResourceSurfaceEditor", () => {
     ).toBe(true);
   });
 
+  it("never publishes a previous source surface during A to B to A replacement", async () => {
+    const pageARef = "page:99999999-9999-4999-8999-999999999999";
+    const pageBRef = "page:88888888-8888-4888-8888-888888888888";
+    let resolvePageB!: (value: Response) => void;
+    let resolveSecondPageA!: (value: Response) => void;
+    let pageAReads = 0;
+    const surface = (sourceRef: string, title: string) => ({
+      source: {
+        item: item(sourceRef, "page", sourceRef.slice(5)),
+        content: { kind: "page_title", title },
+      },
+      ordered_items: [],
+    });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = decodeURIComponent(String(input));
+      if (path.includes(pageBRef)) {
+        return await new Promise<Response>((resolve) => {
+          resolvePageB = resolve;
+        });
+      }
+      pageAReads += 1;
+      if (pageAReads === 1) return response(surface(pageARef, "Page A first"));
+      return await new Promise<Response>((resolve) => {
+        resolveSecondPageA = resolve;
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const onSurfaceChange = vi.fn();
+    const view = render(
+      <ResourceSurfaceEditor
+        sourceRef={pageARef}
+        activateTarget={vi.fn()}
+        onSurfaceChange={onSurfaceChange}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("textbox", { name: "Page title" }),
+    ).toHaveValue("Page A first");
+    await vi.waitFor(() => expect(onSurfaceChange).toHaveBeenCalled());
+
+    view.rerender(
+      <ResourceSurfaceEditor
+        sourceRef={pageBRef}
+        activateTarget={vi.fn()}
+        onSurfaceChange={onSurfaceChange}
+      />,
+    );
+    expect(
+      screen.queryByRole("textbox", { name: "Page title" }),
+    ).not.toBeInTheDocument();
+    expect(
+      onSurfaceChange.mock.calls
+        .map(([next]) => next.source.item.ref)
+        .every((ref) => ref === pageARef),
+    ).toBe(true);
+
+    view.rerender(
+      <ResourceSurfaceEditor
+        sourceRef={pageARef}
+        activateTarget={vi.fn()}
+        onSurfaceChange={onSurfaceChange}
+      />,
+    );
+    expect(
+      screen.queryByRole("textbox", { name: "Page title" }),
+    ).not.toBeInTheDocument();
+    await act(async () => {
+      resolveSecondPageA(response(surface(pageARef, "Page A refreshed")));
+    });
+    expect(
+      await screen.findByRole("textbox", { name: "Page title" }),
+    ).toHaveValue("Page A refreshed");
+
+    await act(async () => {
+      resolvePageB(response(surface(pageBRef, "Stale Page B")));
+    });
+    expect(screen.queryByDisplayValue("Stale Page B")).not.toBeInTheDocument();
+    expect(
+      onSurfaceChange.mock.calls
+        .map(([next]) => next.source.item.ref)
+        .every((ref) => ref === pageARef),
+    ).toBe(true);
+  });
+
   it("resolves a note object reference through the required target capability", async () => {
     const activateTarget = vi.fn();
     const pageId = "33333333-3333-4333-8333-333333333333";
@@ -232,7 +378,8 @@ describe("ResourceSurfaceEditor", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       if (String(input).includes("/locators/resolve")) {
         return response({
-          resolutions: [{
+          resolutions: [
+            {
             locator: { kind: "resource_ref", ref: pageRef },
             resourceItem: {
               ...item(pageRef, "page", pageId, "Project"),
@@ -245,7 +392,8 @@ describe("ResourceSurfaceEditor", () => {
               },
             },
             canonicalHref: `/pages/${pageId}`,
-          }],
+            },
+          ],
         });
       }
       return response({
@@ -255,10 +403,16 @@ describe("ResourceSurfaceEditor", () => {
             kind: "note_body",
             body_pm_json: {
               type: "paragraph",
-              content: [{
+              content: [
+                {
                 type: "object_ref",
-                attrs: { objectType: "page", objectId: pageId, label: "Project" },
-              }],
+                  attrs: {
+                    objectType: "page",
+                    objectId: pageId,
+                    label: "Project",
+                  },
+                },
+              ],
             },
             body_text: "Project",
           },
@@ -268,10 +422,15 @@ describe("ResourceSurfaceEditor", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     render(
-      <ResourceSurfaceEditor sourceRef={NOTE_REF} activateTarget={activateTarget} />,
+      <ResourceSurfaceEditor
+        sourceRef={NOTE_REF}
+        activateTarget={activateTarget}
+      />,
     );
 
-    await userEvent.click(await screen.findByRole("link", { name: "Open Project" }));
+    await userEvent.click(
+      await screen.findByRole("link", { name: "Open Project" }),
+    );
 
     await vi.waitFor(() =>
       expect(activateTarget).toHaveBeenCalledWith({

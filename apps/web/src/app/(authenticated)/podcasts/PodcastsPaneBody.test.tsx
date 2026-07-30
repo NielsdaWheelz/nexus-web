@@ -3,7 +3,7 @@
  * Renders the full pane body with stubbed fetch and asserts that the Browse toolbar button
  * requests the registered podcast discovery action.
  */
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
 import {
@@ -14,11 +14,14 @@ import { NEXUS_OPEN_REQUESTED_EVENT } from "@/lib/nexus/events";
 import type { NexusOpenIntent } from "@/lib/nexus/model";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import type { PaneReturnMementoCommands } from "@/lib/workspace/paneReturnMemento";
+import { PanePrimaryChromeProvider } from "@/components/workspace/PanePrimaryChrome";
+import type { PanePrimaryChromePublication } from "@/lib/panes/panePublications";
 import PodcastsPaneBody from "./PodcastsPaneBody";
 
 const PODCASTS_HREF = "/podcasts";
 const PODCASTS_ROUTE_KEY =
   resolvePaneRouteIdentity(PODCASTS_HREF).routeKey;
+let publishedPrimaryChrome: PanePrimaryChromePublication | null = null;
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -70,8 +73,23 @@ function renderPodcastsPane() {
   return renderHydratedPane({
     href: "/podcasts",
     resources: {},
-    children: <PodcastsPaneBody />,
+    children: (
+      <PanePrimaryChromeProvider
+        publish={(update) => {
+          publishedPrimaryChrome = update.publication;
+        }}
+      >
+        <PodcastsPaneBody />
+      </PanePrimaryChromeProvider>
+    ),
   });
+}
+
+function publishedFilterRows() {
+  if (publishedPrimaryChrome?.search?.kind !== "FilterRows") {
+    throw new Error("Podcast subscriptions did not publish FilterRows");
+  }
+  return publishedPrimaryChrome.search;
 }
 
 function podcastSubscription(index: number) {
@@ -96,6 +114,7 @@ function podcastSubscription(index: number) {
 describe("PodcastsPaneBody — Nexus podcast integration", () => {
   beforeEach(() => {
     window.history.replaceState({}, "", "/podcasts");
+    publishedPrimaryChrome = null;
     stubFetch();
   });
 
@@ -126,6 +145,316 @@ describe("PodcastsPaneBody — Nexus podcast integration", () => {
     } finally {
       window.removeEventListener(NEXUS_OPEN_REQUESTED_EVENT, handler);
     }
+  });
+
+  it("shows Partial filter feedback beside the initial loading state", async () => {
+    const initialPage = deferredResponse();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo) => {
+        const url = new URL(String(input), "http://localhost");
+        if (url.pathname === "/api/podcasts/subscriptions") {
+          return initialPage.promise.then((response) => response.clone());
+        }
+        if (url.pathname === "/api/libraries") {
+          return jsonResponse({
+            data: {
+              items: [],
+              collectionRevision: 1,
+              nextCursor: { kind: "Absent" },
+            },
+          });
+        }
+        throw new Error(`Unexpected fetch: ${url.pathname}`);
+      }),
+    );
+
+    renderPodcastsPane();
+    await waitFor(() => expect(publishedPrimaryChrome?.search).toBeDefined());
+    act(() => publishedFilterRows().onQueryChange("missing"));
+
+    expect(
+      screen.getByText("No matching show found so far."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/No followed podcasts yet/),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Loading Followed podcasts…")).toBeInTheDocument();
+
+    await act(async () => {
+      initialPage.resolve(
+        jsonResponse({
+          data: {
+            items: [],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
+        }),
+      );
+      await initialPage.promise;
+    });
+  });
+
+  it("filters complete local rows without adding q to requests", async () => {
+    const subscriptionRequests: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo) => {
+        const url = new URL(String(input), "http://localhost");
+        if (url.pathname === "/api/podcasts/subscriptions") {
+          subscriptionRequests.push(url.search);
+          return jsonResponse({
+            data: {
+              items: [
+                {
+                  ...podcastSubscription(1),
+                  title: "Systems Show",
+                },
+                {
+                  ...podcastSubscription(2),
+                  title: "History Hour",
+                  contributors: [
+                    {
+                      contributor_handle: "ada-lovelace",
+                      contributor_display_name: "Ada Lovelace",
+                      href: "/authors/ada-lovelace",
+                      credited_name: "A. Lovelace",
+                      role: "host",
+                      raw_role: null,
+                      ordinal: 0,
+                    },
+                  ],
+                },
+              ],
+              collectionRevision: 1,
+              nextCursor: { kind: "Absent" },
+            },
+          });
+        }
+        if (url.pathname === "/api/libraries") {
+          return jsonResponse({
+            data: {
+              items: [],
+              collectionRevision: 1,
+              nextCursor: { kind: "Absent" },
+            },
+          });
+        }
+        throw new Error(`Unexpected fetch: ${url.pathname}${url.search}`);
+      }),
+    );
+
+    renderPodcastsPane();
+    expect(
+      await screen.findByRole("link", { name: "Systems Show" }),
+    ).toBeVisible();
+    expect(screen.getByRole("link", { name: "History Hour" })).toBeVisible();
+    await waitFor(() => expect(publishedPrimaryChrome).not.toBeNull());
+    const requestCount = subscriptionRequests.length;
+
+    act(() => publishedFilterRows().onQueryChange("systems"));
+    expect(screen.getByRole("link", { name: "Systems Show" })).toBeVisible();
+    expect(
+      screen.queryByRole("link", { name: "History Hour" }),
+    ).not.toBeInTheDocument();
+    expect(subscriptionRequests).toHaveLength(requestCount);
+
+    act(() => publishedFilterRows().onQueryChange("lovelace"));
+    expect(
+      screen.queryByRole("link", { name: "Systems Show" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "History Hour" })).toBeVisible();
+    expect(subscriptionRequests).toHaveLength(requestCount);
+    expect(
+      subscriptionRequests.every(
+        (query) => !new URLSearchParams(query).has("q"),
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps the subscription folio pending until exhaustion completes", async () => {
+    const continuation = deferredResponse();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo) => {
+        const url = new URL(String(input), "http://localhost");
+        if (url.pathname === "/api/podcasts/subscriptions") {
+          if (url.searchParams.has("cursor")) {
+            return continuation.promise.then((response) => response.clone());
+          }
+          return jsonResponse({
+            data: {
+              items: [podcastSubscription(1)],
+              collectionRevision: 1,
+              nextCursor: { kind: "Present", value: "next-shows" },
+            },
+          });
+        }
+        if (url.pathname === "/api/libraries") {
+          return jsonResponse({
+            data: {
+              items: [],
+              collectionRevision: 1,
+              nextCursor: { kind: "Absent" },
+            },
+          });
+        }
+        if (url.pathname.startsWith("/api/resource-graph/connections")) {
+          return jsonResponse({ data: {} });
+        }
+        throw new Error(`Unexpected fetch: ${url.pathname}`);
+      }),
+    );
+
+    renderPodcastsPane();
+    await screen.findByRole("link", { name: "Restored Podcast First" });
+    expect(publishedPrimaryChrome).toMatchObject({
+      header: {
+        kind: "section",
+        folio: { kind: "none" },
+        pending: true,
+      },
+    });
+
+    await act(async () => {
+      continuation.resolve(
+        jsonResponse({
+          data: {
+            items: [podcastSubscription(2)],
+            collectionRevision: 1,
+            nextCursor: { kind: "Absent" },
+          },
+        }),
+      );
+      await continuation.promise;
+    });
+    await waitFor(() => {
+      expect(publishedPrimaryChrome).toMatchObject({
+        header: {
+          kind: "section",
+          folio: { kind: "count", value: 2, unit: "show" },
+          pending: false,
+        },
+      });
+    });
+  });
+
+  it("does not retain focus recovery after unsubscribe is cancelled", async () => {
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal("confirm", confirm);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo) => {
+        const url = new URL(String(input), "http://localhost");
+        if (url.pathname === "/api/podcasts/subscriptions") {
+          return jsonResponse({
+            data: {
+              items: [
+                { ...podcastSubscription(1), title: "Systems Show" },
+                { ...podcastSubscription(2), title: "History Hour" },
+              ],
+              collectionRevision: 1,
+              nextCursor: { kind: "Absent" },
+            },
+          });
+        }
+        if (url.pathname === "/api/libraries") {
+          return jsonResponse({
+            data: {
+              items: [],
+              collectionRevision: 1,
+              nextCursor: { kind: "Absent" },
+            },
+          });
+        }
+        if (
+          url.pathname ===
+          "/api/podcasts/00000000-0000-4000-8000-000000000001/libraries"
+        ) {
+          return jsonResponse({ data: [] });
+        }
+        if (url.pathname.startsWith("/api/resource-graph/connections")) {
+          return jsonResponse({ data: {} });
+        }
+        throw new Error(`Unexpected fetch: ${url.pathname}`);
+      }),
+    );
+
+    renderPodcastsPane();
+    await screen.findByRole("link", { name: "Systems Show" });
+    fireEvent.click(
+      screen.getByRole("button", { name: "More actions for Systems Show" }),
+    );
+    fireEvent.click(screen.getByRole("menuitem", { name: "Unsubscribe" }));
+    await waitFor(() => expect(confirm).toHaveBeenCalledOnce());
+
+    const browse = screen.getByRole("button", { name: "Browse" });
+    browse.focus();
+    act(() => publishedFilterRows().onQueryChange("history"));
+    await act(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }),
+    );
+
+    expect(browse).toHaveFocus();
+    expect(screen.getByRole("link", { name: "History Hour" })).toBeVisible();
+  });
+
+  it("Clear filters resets non-default sort and the local query", async () => {
+    const view = renderHydratedPane({
+      href: "/podcasts?sort=alpha",
+      resources: {},
+      children: (
+        <PanePrimaryChromeProvider
+          publish={(update) => {
+            publishedPrimaryChrome = update.publication;
+          }}
+        >
+          <PodcastsPaneBody />
+        </PanePrimaryChromeProvider>
+      ),
+    });
+    await waitFor(() => {
+      expect(publishedFilterRows().activeDomainControlCount).toBe(1);
+    });
+    act(() => publishedFilterRows().onQueryChange("systems"));
+    await waitFor(() => expect(publishedFilterRows().query).toBe("systems"));
+
+    render(<>{publishedFilterRows().controls}</>);
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+
+    await waitFor(() => expect(publishedFilterRows().query).toBe(""));
+    await waitFor(() => {
+      expect(view.onReplacePane).toHaveBeenCalledWith("pane-1", "/podcasts", {
+        modality: "Programmatic",
+      });
+    });
+  });
+
+  it("canonicalizes legacy and unknown subscription URL params on mount", async () => {
+    const view = renderHydratedPane({
+      href: "/podcasts?sort=alpha&q=legacy&unknown=value",
+      resources: {},
+      children: (
+        <PanePrimaryChromeProvider
+          publish={(update) => {
+            publishedPrimaryChrome = update.publication;
+          }}
+        >
+          <PodcastsPaneBody />
+        </PanePrimaryChromeProvider>
+      ),
+    });
+
+    await waitFor(() => {
+      expect(view.onReplacePane).toHaveBeenCalledWith(
+        "pane-1",
+        "/podcasts?sort=alpha",
+        { modality: "Programmatic" },
+      );
+    });
   });
 
   it("restores the captured subscription controller without initial settlement collapsing it", async () => {
@@ -238,7 +567,7 @@ describe("PodcastsPaneBody — Nexus podcast integration", () => {
     });
   });
 
-  it("commits the new query before continuing a partial subscription chain", async () => {
+  it("commits the new domain view before continuing a partial subscription chain", async () => {
     const oldContinuation = deferredResponse();
     const newFirstPage = deferredResponse();
     const requests: Array<{ cursor: string | null; sort: string | null }> = [];

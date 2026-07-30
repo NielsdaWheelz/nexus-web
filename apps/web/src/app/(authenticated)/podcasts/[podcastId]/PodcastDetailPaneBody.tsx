@@ -73,6 +73,7 @@ import {
 } from "@/components/feedback/Feedback";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import Button from "@/components/ui/Button";
+import Select from "@/components/ui/Select";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { useConnectionsComposerController } from "@/components/connections/connectionsComposerController";
@@ -90,6 +91,7 @@ import { usePodcastSubscriptionActions } from "../usePodcastSubscriptionActions"
 import { useEpisodeTranscriptController } from "./useEpisodeTranscriptController";
 import { usePodcastSubscriptionSettingsModal } from "../usePodcastSubscriptionSettingsModal";
 import {
+  EPISODE_WIDE_COMMAND_LABELS,
   deriveEpisodeState,
   decodePodcastEpisodeMedia,
   episodeMatchesFilter,
@@ -106,9 +108,11 @@ import styles from "./page.module.css";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { ContributorCredit, MediaAuthors } from "@/lib/contributors/types";
 import type { ActionSelectDetail } from "@/lib/ui/actionDescriptor";
+import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
+import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
+import { findPaneSearchFocusTarget } from "@/lib/workspace/paneDom";
 
 const EPISODES_PAGE_SIZE = 100;
-const EPISODE_SEARCH_DEBOUNCE_MS = 300;
 
 const MediaAuthorsEditor = lazy(
   () =>
@@ -230,19 +234,31 @@ export default function PodcastDetailPaneBody() {
     }
     return "newest";
   });
-  const [episodeSearchInput, setEpisodeSearchInput] = useState(
-    () => paneSearchParams.get("q") ?? "",
-  );
-  const [episodeSearchQuery, setEpisodeSearchQuery] = useState(
-    () => paneSearchParams.get("q") ?? "",
-  );
   const episodeQueryIdentity = [
     podcastId,
     episodeStateFilter,
     episodeSort,
-    episodeSearchQuery.trim(),
   ].join("\u0000");
   const busyEpisodeActionKeys = useStringIdSet();
+  const episodeListRegionRef = useRef<HTMLDivElement | null>(null);
+  const pendingFocusNeighborRef = useRef<string | null | undefined>(undefined);
+  const pendingFocusRafRef = useRef(0);
+  const captureEpisodeFocusNeighbor = useCallback((removedId: string) => {
+    const region = episodeListRegionRef.current;
+    const row = region?.querySelector<HTMLElement>(
+      `[data-collection-row-id="${CSS.escape(removedId)}"]`,
+    );
+    if (!region || !row) {
+      pendingFocusNeighborRef.current = undefined;
+      return;
+    }
+    const rows = Array.from(
+      region.querySelectorAll<HTMLElement>("[data-collection-row-id]"),
+    );
+    const index = rows.indexOf(row);
+    const neighbor = rows[index + 1] ?? rows[index - 1] ?? null;
+    pendingFocusNeighborRef.current = neighbor?.dataset.collectionRowId ?? null;
+  }, []);
   const beginEpisodeAction = useCallback(
     (mediaId: string, actionId: EpisodeActionId): string | null => {
       const key = episodeActionBusyKey(mediaId, actionId);
@@ -316,40 +332,6 @@ export default function PodcastDetailPaneBody() {
     },
     [],
   );
-  const handleEpisodeAuthorsSaved = useCallback(
-    (result: MediaAuthors) => {
-      if (authorsEditorMediaId === null) return;
-      const authorCredits: ContributorCredit[] = result.authors.map(
-        (author, index) => ({
-          contributor_handle: author.contributorHandle,
-          contributor_display_name: author.displayName,
-          credited_name: author.creditedName,
-          role: "author",
-          href: author.href,
-          ordinal: index,
-        }),
-      );
-      setEpisodes((current) =>
-        current.map((episode) =>
-          episode.id === authorsEditorMediaId
-            ? {
-                ...episode,
-                contributors: [
-                  ...authorCredits,
-                  ...episode.contributors.filter(
-                    (credit) => credit.role !== "author",
-                  ),
-                ],
-                author_mode: result.authorMode,
-              }
-            : episode,
-        ),
-      );
-      setAuthorsEditorOpen(false);
-      clearAllVisitData();
-    },
-    [authorsEditorMediaId, clearAllVisitData, setEpisodes],
-  );
   const transcriptionAllowed = billingAccount?.can_transcribe === true;
 
   useSetPaneLabel(detail?.podcast.title ?? (loading ? null : "Podcast"));
@@ -363,7 +345,6 @@ export default function PodcastDetailPaneBody() {
           podcastId,
           episodeStateFilter,
           episodeSort,
-          episodeSearchQuery.trim(),
           reloadNonce,
         ].join(":")
       : null;
@@ -385,12 +366,7 @@ export default function PodcastDetailPaneBody() {
 
   const transcript = useEpisodeTranscriptController({
     podcastId: podcastId ?? "",
-    selection: {
-      state: episodeStateFilter,
-      query: episodeSearchQuery.trim()
-        ? { kind: "Present", value: episodeSearchQuery.trim() }
-        : { kind: "Absent" },
-    },
+    selection: { state: episodeStateFilter },
     episodes,
     setEpisodes,
     transcriptionAllowed,
@@ -410,9 +386,6 @@ export default function PodcastDetailPaneBody() {
         state: episodeStateFilter,
         sort: episodeSort,
       });
-      if (episodeSearchQuery.trim()) {
-        episodeParams.set("q", episodeSearchQuery.trim());
-      }
 
       const fetchOptions = signal ? { signal } : undefined;
       const [detailResp, episodesResp] = await Promise.all([
@@ -444,7 +417,7 @@ export default function PodcastDetailPaneBody() {
         podcastLibraries,
       };
     },
-    [episodeSearchQuery, episodeSort, episodeStateFilter, podcastId],
+    [episodeSort, episodeStateFilter, podcastId],
   );
 
   const applyPodcastDetailLoad = useCallback(
@@ -527,24 +500,12 @@ export default function PodcastDetailPaneBody() {
   usePaneReturnReady((!loading && controller !== null) || error !== null);
 
   useEffect(() => {
-    const debounceTimer = setTimeout(() => {
-      setEpisodeSearchQuery(episodeSearchInput.trim());
-    }, EPISODE_SEARCH_DEBOUNCE_MS);
-    return () => {
-      clearTimeout(debounceTimer);
-    };
-  }, [episodeSearchInput]);
-
-  useEffect(() => {
     if (!podcastId) {
       return;
     }
     const params = new URLSearchParams();
     params.set("state", episodeStateFilter);
     params.set("sort", episodeSort);
-    if (episodeSearchQuery) {
-      params.set("q", episodeSearchQuery);
-    }
     const nextHref = `/podcasts/${podcastId}?${params.toString()}`;
     const transitionOptions = episodeUrlSyncedRef.current
       ? { viewTransition: { kind: "collection-reflow" as const } }
@@ -552,7 +513,6 @@ export default function PodcastDetailPaneBody() {
     episodeUrlSyncedRef.current = true;
     paneRouter.replace(nextHref, transitionOptions);
   }, [
-    episodeSearchQuery,
     episodeSort,
     episodeStateFilter,
     paneRouter,
@@ -575,16 +535,13 @@ export default function PodcastDetailPaneBody() {
         cursor,
         collection_revision: String(revision),
       });
-      if (episodeSearchQuery.trim()) {
-        episodeParams.set("q", episodeSearchQuery.trim());
-      }
       const response = await apiFetch<unknown>(
         `/api/podcasts/${podcastId}/episodes?${episodeParams}`,
         { signal },
       );
       return decodeCollectionPage(response, decodePodcastEpisodeMedia);
     },
-    [episodeSearchQuery, episodeSort, episodeStateFilter, podcastId],
+    [episodeSort, episodeStateFilter, podcastId],
   );
   const commitEpisodePage = useCallback(
     (page: CollectionPage<PodcastEpisodeMedia>) => {
@@ -624,7 +581,6 @@ export default function PodcastDetailPaneBody() {
       podcastId,
       episodeStateFilter,
       episodeSort,
-      episodeSearchQuery,
       chainEpoch,
     ].join(":"),
     cursor: controller?.nextCursor ?? { kind: "Absent" },
@@ -635,6 +591,193 @@ export default function PodcastDetailPaneBody() {
     commitPage: commitEpisodePage,
     refresh: reload,
   });
+  const episodeFilterNodes = useMemo(
+    () => (
+      <>
+        <div className={styles.episodeFilterPills}>
+          {(
+            [
+              ["all", "All"],
+              ["unplayed", "Unplayed"],
+              ["in_progress", "In Progress"],
+              ["played", "Played"],
+            ] as const
+          ).map(([value, label]) => (
+            <Button
+              key={value}
+              variant="pill"
+              size="sm"
+              className={styles.episodeFilterPill}
+              aria-pressed={episodeStateFilter === value}
+              onClick={() => setEpisodeStateFilter(value)}
+            >
+              {label}
+            </Button>
+          ))}
+        </div>
+        <label className={styles.episodeSortLabel}>
+          Episode sort
+          <Select
+            size="sm"
+            aria-label="Episode sort"
+            value={episodeSort}
+            onChange={(event) =>
+              setEpisodeSort(event.target.value as EpisodeSort)
+            }
+          >
+            <option value="newest">Newest</option>
+            <option value="oldest">Oldest</option>
+            <option value="duration_asc">Shortest</option>
+            <option value="duration_desc">Longest</option>
+          </Select>
+        </label>
+      </>
+    ),
+    [episodeSort, episodeStateFilter],
+  );
+  const getEpisodeRowStatus = useCallback(
+    (query: string) => {
+      const visibleCount = episodes.filter((episode) =>
+        matchesPaneFilterQuery(query, [
+          episode.title,
+          ...episode.contributors.flatMap((credit) => [
+            credit.contributor_display_name ?? "",
+            credit.credited_name,
+          ]),
+        ]),
+      ).length;
+      return episodeExhaustion.kind === "Complete"
+        ? {
+            kind: "Complete" as const,
+            visibleCount,
+            totalCount: episodes.length,
+            unit: { singular: "episode", plural: "episodes" },
+          }
+        : {
+            kind: "Partial" as const,
+            visibleCount,
+            loadedCount: episodes.length,
+            unit: { singular: "episode", plural: "episodes" },
+          };
+    },
+    [episodeExhaustion.kind, episodes],
+  );
+  const episodeFilterRows = usePaneFilterRows({
+    sourceKey: `PodcastDetail.Episodes:${podcastId ?? ""}`,
+    inputLabel: "Filter podcast episodes",
+    placeholder: "Filter episodes",
+    getRowStatus: getEpisodeRowStatus,
+    activeDomainControlCount:
+      Number(episodeStateFilter !== "all") + Number(episodeSort !== "newest"),
+    filters: episodeFilterNodes,
+  });
+  const visibleEpisodes = useMemo(
+    () =>
+      episodes.filter((episode) =>
+        matchesPaneFilterQuery(episodeFilterRows.query, [
+          episode.title,
+          ...episode.contributors.flatMap((credit) => [
+            credit.contributor_display_name ?? "",
+            credit.credited_name,
+          ]),
+        ]),
+      ),
+    [episodeFilterRows.query, episodes],
+  );
+  const handleEpisodeAuthorsSaved = useCallback(
+    (result: MediaAuthors) => {
+      if (authorsEditorMediaId === null) return;
+      const authorCredits: ContributorCredit[] = result.authors.map(
+        (author, index) => ({
+          contributor_handle: author.contributorHandle,
+          contributor_display_name: author.displayName,
+          credited_name: author.creditedName,
+          role: "author",
+          href: author.href,
+          ordinal: index,
+        }),
+      );
+      const editedEpisode = episodes.find(
+        (episode) => episode.id === authorsEditorMediaId,
+      );
+      const nextContributors = editedEpisode
+        ? [
+            ...authorCredits,
+            ...editedEpisode.contributors.filter(
+              (credit) => credit.role !== "author",
+            ),
+          ]
+        : [];
+      if (
+        editedEpisode &&
+        !matchesPaneFilterQuery(episodeFilterRows.query, [
+          editedEpisode.title,
+          ...nextContributors.flatMap((credit) => [
+            credit.contributor_display_name ?? "",
+            credit.credited_name,
+          ]),
+        ])
+      ) {
+        captureEpisodeFocusNeighbor(authorsEditorMediaId);
+      }
+      setEpisodes((current) =>
+        current.map((episode) =>
+          episode.id === authorsEditorMediaId
+            ? {
+                ...episode,
+                contributors: [
+                  ...authorCredits,
+                  ...episode.contributors.filter(
+                    (credit) => credit.role !== "author",
+                  ),
+                ],
+                author_mode: result.authorMode,
+              }
+            : episode,
+        ),
+      );
+      setAuthorsEditorOpen(false);
+      clearAllVisitData();
+    },
+    [
+      authorsEditorMediaId,
+      captureEpisodeFocusNeighbor,
+      clearAllVisitData,
+      episodeFilterRows.query,
+      episodes,
+      setEpisodes,
+    ],
+  );
+  const visibleEpisodeSignature = visibleEpisodes
+    .map((episode) => episode.id)
+    .join("\u001f");
+  useEffect(() => {
+    const neighborId = pendingFocusNeighborRef.current;
+    if (neighborId === undefined) return;
+    const moveFocus = () => {
+      if (pendingFocusNeighborRef.current !== neighborId) return;
+      pendingFocusNeighborRef.current = undefined;
+      const neighbor =
+        neighborId === null
+          ? null
+          : episodeListRegionRef.current?.querySelector<HTMLElement>(
+              `[data-collection-row-id="${CSS.escape(neighborId)}"]`,
+            );
+      const target = neighbor?.querySelector<HTMLElement>(
+        'a, button, [tabindex]:not([tabindex="-1"])',
+      );
+      if (target) {
+        target.focus();
+        return;
+      }
+      findPaneSearchFocusTarget(paneRuntime.paneId)?.focus();
+    };
+    const outer = requestAnimationFrame(() => {
+      pendingFocusRafRef.current = requestAnimationFrame(moveFocus);
+    });
+    pendingFocusRafRef.current = outer;
+    return () => cancelAnimationFrame(pendingFocusRafRef.current);
+  }, [paneRuntime.paneId, visibleEpisodeSignature]);
 
   const handleSubscribe = useCallback(async () => {
     if (!detail) {
@@ -880,6 +1023,7 @@ export default function PodcastDetailPaneBody() {
           confirmRemoval: (message) => window.confirm(message),
         });
         if (outcome.kind === "Cancelled") return;
+        captureEpisodeFocusNeighbor(episode.id);
         setEpisodes((prev) =>
           prev.filter((candidate) => candidate.id !== episode.id),
         );
@@ -899,6 +1043,7 @@ export default function PodcastDetailPaneBody() {
     },
     [
       beginEpisodeAction,
+      captureEpisodeFocusNeighbor,
       clearAllVisitData,
       finishEpisodeAction,
       reload,
@@ -931,6 +1076,9 @@ export default function PodcastDetailPaneBody() {
   const handleMarkEpisodeCompletion = useCallback(
     async (episode: PodcastEpisodeMedia, isCompleted: boolean) => {
       const mediaId = episode.id;
+      if (episodeStateFilter !== "all") {
+        captureEpisodeFocusNeighbor(mediaId);
+      }
       markingEpisodeIds.add(mediaId);
       setError(null);
       const previousEpisodes = episodes;
@@ -998,6 +1146,7 @@ export default function PodcastDetailPaneBody() {
     [
       applyEpisodeCompletionState,
       clearAllVisitData,
+      captureEpisodeFocusNeighbor,
       episodeStateFilter,
       episodes,
       lectern,
@@ -1024,6 +1173,12 @@ export default function PodcastDetailPaneBody() {
           resetProgress: lectern.resetProgress,
         });
         if (outcome.kind === "Cancelled") return;
+        if (
+          episodeStateFilter === "in_progress" ||
+          episodeStateFilter === "played"
+        ) {
+          captureEpisodeFocusNeighbor(mediaId);
+        }
         const progressState = outcome.result.progressState.value;
         const listeningState = progressState.listeningState;
         if (listeningState.kind === "Absent") {
@@ -1068,6 +1223,7 @@ export default function PodcastDetailPaneBody() {
     },
     [
       beginEpisodeAction,
+      captureEpisodeFocusNeighbor,
       episodeStateFilter,
       finishEpisodeAction,
       lectern.resetProgress,
@@ -1114,17 +1270,18 @@ export default function PodcastDetailPaneBody() {
     [episodes, expandedShowNotesMediaIds, setEpisodes],
   );
 
-  const handleMarkAllMatchingAsPlayed = useCallback(async () => {
-    if (episodes.length === 0 || !podcastId) {
+  const handleMarkAllAsPlayed = useCallback(async () => {
+    if (
+      episodes.length === 0 ||
+      !podcastId ||
+      episodeFilterRows.query.trim() ||
+      episodeStateFilter === "played"
+    ) {
       return;
     }
-    const filtered =
-      episodeStateFilter !== "all" || episodeSearchQuery.trim().length > 0;
     if (
       !window.confirm(
-        filtered
-          ? "Mark matching episodes as played?"
-          : "Mark all episodes as played?",
+        `${EPISODE_WIDE_COMMAND_LABELS[episodeStateFilter].markPlayed}?`,
       )
     ) {
       return;
@@ -1132,21 +1289,13 @@ export default function PodcastDetailPaneBody() {
     setMarkAllAsPlayedBusy(true);
     setError(null);
     try {
-      await apiFetch(
-        `/api/podcasts/${podcastId}/episodes/mark-played`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            state: episodeStateFilter,
-            query: episodeSearchQuery.trim()
-              ? { kind: "Present", value: episodeSearchQuery.trim() }
-              : { kind: "Absent" },
-          }),
-        },
-      );
-      reconciliationSuccessRef.current = filtered
-        ? "Matching episodes marked as played."
-        : "All episodes marked as played.";
+      await apiFetch(`/api/podcasts/${podcastId}/episodes/mark-played`, {
+        method: "POST",
+        body: JSON.stringify({
+          state: episodeStateFilter,
+        }),
+      });
+      reconciliationSuccessRef.current = "Episodes marked as played.";
       reload();
     } catch (markError) {
       if (handleUnauthenticatedApiError(markError)) return;
@@ -1159,7 +1308,7 @@ export default function PodcastDetailPaneBody() {
       setMarkAllAsPlayedBusy(false);
     }
   }, [
-    episodeSearchQuery,
+    episodeFilterRows.query,
     episodeStateFilter,
     episodes,
     podcastId,
@@ -1339,51 +1488,48 @@ export default function PodcastDetailPaneBody() {
               unit: "episode",
             }
           : { kind: "none" },
-      pending: loading || episodeExhaustion.kind === "Draining",
+      pending: loading || episodeExhaustion.kind !== "Complete",
     },
+    search: episodeFilterRows.publication,
   });
 
   const podcastLibraryCount = podcastLibraries.filter(
     (library) => library.isInLibrary,
   ).length;
   const episodePaneContent = (
-    <PodcastEpisodeList
-      episodes={episodes}
-      loading={loading}
-      error={error}
-      episodeStateFilter={episodeStateFilter}
-      setEpisodeStateFilter={setEpisodeStateFilter}
-      episodeSort={episodeSort}
-      setEpisodeSort={setEpisodeSort}
-      episodeSearchInput={episodeSearchInput}
-      setEpisodeSearchInput={setEpisodeSearchInput}
-      transcript={transcript}
-      transcriptionAllowed={transcriptionAllowed}
-      busyEpisodeActionKeys={busyEpisodeActionKeys}
-      markingEpisodeIds={markingEpisodeIds}
-      expandedShowNotesMediaIds={expandedShowNotesMediaIds}
-      lecternItemsByMediaId={lecternItemsByMediaId}
-      playNextDisabledMediaId={playNextDisabledMediaId}
-      lecternReady={lectern.resource.status === "ready"}
-      matchingEpisodeCount={episodes.length}
-      markAllAsPlayedBusy={markAllAsPlayedBusy}
-      collectionBusy={episodeExhaustion.kind === "Draining"}
-      exhaustion={episodeExhaustion}
-      onMarkAllMatchingAsPlayed={() =>
-        void handleMarkAllMatchingAsPlayed()
-      }
-      onToggleShowNotes={toggleEpisodeShowNotesExpansion}
-      onPlayNext={handlePlayNext}
-      onAddToLectern={handleAddToLectern}
-      onRemoveFromLectern={handleRemoveFromLectern}
-      onRetry={handleRetryEpisodeProcessing}
-      onRefreshSource={handleRefreshEpisodeSource}
-      onRetryMetadata={handleRetryEpisodeMetadata}
-      onEditAuthors={openEpisodeAuthorsEditor}
-      onDelete={handleDeleteEpisode}
-      onTogglePlayed={handleMarkEpisodeCompletion}
-      onResetProgress={handleResetEpisodeProgress}
-    />
+    <div ref={episodeListRegionRef} style={{ display: "contents" }}>
+      <PodcastEpisodeList
+        episodes={visibleEpisodes}
+        filterQuery={episodeFilterRows.query}
+        loading={loading}
+        error={error}
+        episodeStateFilter={episodeStateFilter}
+        transcript={transcript}
+        transcriptionAllowed={transcriptionAllowed}
+        busyEpisodeActionKeys={busyEpisodeActionKeys}
+        markingEpisodeIds={markingEpisodeIds}
+        expandedShowNotesMediaIds={expandedShowNotesMediaIds}
+        lecternItemsByMediaId={lecternItemsByMediaId}
+        playNextDisabledMediaId={playNextDisabledMediaId}
+        lecternReady={lectern.resource.status === "ready"}
+        matchingEpisodeCount={episodes.length}
+        markAllAsPlayedBusy={markAllAsPlayedBusy}
+        collectionBusy={episodeExhaustion.kind === "Draining"}
+        exhaustion={episodeExhaustion}
+        onMarkAllAsPlayed={() => void handleMarkAllAsPlayed()}
+        onToggleShowNotes={toggleEpisodeShowNotesExpansion}
+        onPlayNext={handlePlayNext}
+        onAddToLectern={handleAddToLectern}
+        onRemoveFromLectern={handleRemoveFromLectern}
+        onRetry={handleRetryEpisodeProcessing}
+        onRefreshSource={handleRefreshEpisodeSource}
+        onRetryMetadata={handleRetryEpisodeMetadata}
+        onEditAuthors={openEpisodeAuthorsEditor}
+        onDelete={handleDeleteEpisode}
+        onTogglePlayed={handleMarkEpisodeCompletion}
+        onResetProgress={handleResetEpisodeProgress}
+      />
+    </div>
   );
 
   if (!podcastId) {

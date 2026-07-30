@@ -6,6 +6,13 @@
 > continuation recovery. Exact Library view identity and ordering remain owned
 > here.
 >
+> **Pane Filter update (2026-07-29):**
+> [`collection-pane-search-filter-sort-hard-cutover.md`](collection-pane-search-filter-sort-hard-cutover.md)
+> moves `View`, `Sort by`, and `Hide finished` into expanded Pane Search and
+> replaces the final control-specific focus fallback. Options, labels, URL
+> state, request lifecycle, 320px reflow, and zero-row availability remain
+> authoritative here.
+
 Status: IMPLEMENTED — 2026-07-27 (source cutover complete and focus-verified;
 the production preflight, production-fixture query-plan comparison, and the
 backend-first Hetzner/Vercel release in §Production Release remain release-time

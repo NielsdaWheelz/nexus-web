@@ -132,6 +132,74 @@ test.describe("libraries", () => {
     }
   });
 
+  test("filters the active Libraries pane locally at desktop and mobile widths", async ({
+    page,
+  }, testInfo) => {
+    await gotoSinglePaneWorkspace(
+      page,
+      workspaceE2eDeviceId(testInfo, "e2e-libraries-filter"),
+      "/libraries",
+    );
+    let createdId: string | null = null;
+    try {
+      const created = await createLibraryViaUi(page, "Filter Target");
+      createdId = created.id;
+      let pane = activeWorkspacePane(page);
+      await expect(
+        pane.getByRole("link", { name: created.name, exact: true }),
+      ).toBeVisible();
+      await page.waitForLoadState("networkidle");
+
+      const listRequests: string[] = [];
+      page.on("request", (request) => {
+        const url = new URL(request.url());
+        if (request.method() === "GET" && url.pathname === "/api/libraries") {
+          listRequests.push(url.toString());
+        }
+      });
+      const paneUrl = page.url();
+
+      await pane.getByRole("button", { name: "Filter", exact: true }).click();
+      let filter = pane.getByRole("searchbox", { name: "Filter libraries" });
+      await filter.fill(created.name);
+      await expect(
+        pane.getByRole("link", { name: created.name, exact: true }),
+      ).toBeVisible();
+      await expect(
+        pane.getByRole("link", { name: "All", exact: true }),
+      ).toHaveCount(0);
+
+      await filter.fill("does not exist in this pane");
+      await expect(
+        pane.getByText("No libraries match this filter.", { exact: true }),
+      ).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(filter).toHaveCount(0);
+
+      await page.setViewportSize({ width: 390, height: 844 });
+      pane = activeWorkspacePane(page);
+      await page.keyboard.press("Control+f");
+      filter = pane.getByRole("searchbox", { name: "Filter libraries" });
+      await expect(filter).toBeFocused();
+      await filter.fill("All");
+      await expect(
+        pane.getByRole("link", { name: "All", exact: true }),
+      ).toBeVisible();
+      await expect(
+        pane.getByRole("link", { name: created.name, exact: true }),
+      ).toHaveCount(0);
+
+      expect(page.url()).toBe(paneUrl);
+      expect(listRequests).toEqual([]);
+    } finally {
+      if (createdId) {
+        await page.request.delete(`/api/libraries/${createdId}`, {
+          headers: stateChangingApiHeaders(),
+        });
+      }
+    }
+  });
+
   test("browse and select library", async ({ page }, testInfo) => {
     await gotoSinglePaneWorkspace(
       page,

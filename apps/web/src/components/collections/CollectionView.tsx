@@ -43,6 +43,7 @@ export default function CollectionView({
   sortable,
   collectionBusy,
   surface = true,
+  rowChangePresentation,
 }: {
   readonly returnScope: string;
   readonly rows: readonly CollectionRowView[];
@@ -63,6 +64,10 @@ export default function CollectionView({
   };
   readonly collectionBusy?: boolean;
   readonly surface?: boolean;
+  readonly rowChangePresentation?: {
+    readonly kind: "ImmediateOnKeyChange";
+    readonly key: string;
+  };
 }) {
   const transitionScopeId = useId();
   const returnScopeRef = useRef<HTMLDivElement | null>(null);
@@ -73,11 +78,22 @@ export default function CollectionView({
   const latestRowsRef = useRef(rows);
   const latestRowIdsRef = useRef(rowIds);
   const transitionUpdatePendingRef = useRef(false);
+  const displayedRowChangeKeyRef = useRef(rowChangePresentation?.key);
   latestRowsRef.current = rows;
   latestRowIdsRef.current = rowIds;
 
   useLayoutEffect(() => {
     if (status !== "ready") {
+      displayedRowChangeKeyRef.current = rowChangePresentation?.key;
+      displayRowIdsRef.current = rowIds;
+      setDisplayRows(rows);
+      return;
+    }
+    if (
+      rowChangePresentation?.kind === "ImmediateOnKeyChange" &&
+      displayedRowChangeKeyRef.current !== rowChangePresentation.key
+    ) {
+      displayedRowChangeKeyRef.current = rowChangePresentation.key;
       displayRowIdsRef.current = rowIds;
       setDisplayRows(rows);
       return;
@@ -102,7 +118,7 @@ export default function CollectionView({
       displayRowIdsRef.current = latestRowIdsRef.current;
       setDisplayRows(latestRowsRef.current);
     });
-  }, [rowIds, rows, status]);
+  }, [rowChangePresentation, rowIds, rows, status]);
 
   const rowsForRender = status === "ready" ? displayRows : rows;
   usePaneReturnDescendantReady({

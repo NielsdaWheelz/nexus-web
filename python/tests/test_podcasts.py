@@ -3247,7 +3247,7 @@ class TestPodcastTranscriptRequestAdmission:
         target = {
             "kind": "PodcastEpisodeQuery",
             "podcastId": str(podcast_id),
-            "selection": {"state": "all", "query": {"kind": "Absent"}},
+            "selection": {"state": "all"},
             "reason": "search",
         }
         batch_response = auth_client.post(
@@ -3294,7 +3294,7 @@ class TestPodcastTranscriptRequestAdmission:
             headers=auth_headers(user_id),
         )
         assert request_response.status_code == 200, (
-            "fingerprinted query request should queue the server-resolved selection, "
+            "fingerprinted episode-state request should queue the server-resolved selection, "
             f"got {request_response.status_code}: {request_response.text}"
         )
         request_payload = request_response.json()["data"]
@@ -7156,7 +7156,7 @@ upgrade now
         )
         assert episodes_response.json()["data"]["items"] == []
 
-    def test_get_podcast_episodes_supports_state_sort_search_and_derived_episode_state(
+    def test_get_podcast_episodes_supports_state_sort_and_derived_episode_state(
         self, auth_client, monkeypatch, direct_db
     ):
         user_id = create_test_user_id()
@@ -7267,18 +7267,25 @@ upgrade now
             f"got {played_put.status_code}: {played_put.text}"
         )
 
-        filtered_response = auth_client.get(
+        stale_query_response = auth_client.get(
             f"/podcasts/{podcast_id}/episodes?state=unplayed&sort=oldest&q=interview",
             headers=auth_headers(user_id),
         )
+        assert stale_query_response.status_code == 400
+        assert stale_query_response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+        filtered_response = auth_client.get(
+            f"/podcasts/{podcast_id}/episodes?state=unplayed&sort=oldest",
+            headers=auth_headers(user_id),
+        )
         assert filtered_response.status_code == 200, (
-            f"expected filtered/sorted/search episodes list to succeed, got "
+            f"expected state-filtered/sorted episodes list to succeed, got "
             f"{filtered_response.status_code}: {filtered_response.text}"
         )
         filtered_rows = filtered_response.json()["data"]["items"]
         assert [row["title"] for row in filtered_rows] == ["Interview Alpha"], (
-            "state=unplayed + sort=oldest + q=interview should return only the oldest matching "
-            f"unplayed row, got {[row['title'] for row in filtered_rows]}"
+            "state=unplayed + sort=oldest should return only the oldest unplayed row, "
+            f"got {[row['title'] for row in filtered_rows]}"
         )
         assert filtered_rows[0]["episode_state"] == "unplayed"
         assert filtered_rows[0]["listening_state"] == {"kind": "Absent"}
@@ -7314,19 +7321,16 @@ upgrade now
             "duration_desc should return longest-to-shortest ordering"
         )
 
-        mark_matching_response = auth_client.post(
+        mark_state_response = auth_client.post(
             f"/podcasts/{podcast_id}/episodes/mark-played",
-            json={
-                "state": "unplayed",
-                "query": {"kind": "Present", "value": "  interview  "},
-            },
+            json={"state": "unplayed"},
             headers=auth_headers(user_id),
         )
-        assert mark_matching_response.status_code == 200
-        mark_matching_payload = mark_matching_response.json()["data"]
-        assert mark_matching_payload["matchedCount"] == 1
-        assert mark_matching_payload["changedCount"] == 1
-        assert mark_matching_payload["collectionRevision"] >= 1
+        assert mark_state_response.status_code == 200
+        mark_state_payload = mark_state_response.json()["data"]
+        assert mark_state_payload["matchedCount"] == 1
+        assert mark_state_payload["changedCount"] == 1
+        assert mark_state_payload["collectionRevision"] >= 1
 
     def test_list_subscriptions_returns_unplayed_count_and_supports_sort_modes(
         self, auth_client, monkeypatch, direct_db
@@ -7476,7 +7480,7 @@ upgrade now
         )
         assert all(row["latest_episode_published_at"]["kind"] == "Present" for row in default_rows)
 
-    def test_list_subscriptions_supports_query_filter_library_scope_and_visible_libraries(
+    def test_list_subscriptions_supports_filter_library_scope_and_visible_libraries(
         self, auth_client, monkeypatch, direct_db
     ):
         user_id = create_test_user_id()
@@ -7578,17 +7582,12 @@ upgrade now
             f"got {mark_bravo_played.status_code}: {mark_bravo_played.text}"
         )
 
-        search_response = auth_client.get(
+        stale_query_response = auth_client.get(
             "/podcasts/subscriptions?q=orphan&sort=alpha",
             headers=auth_headers(user_id),
         )
-        assert search_response.status_code == 200, (
-            "subscriptions search should succeed with q filter, "
-            f"got {search_response.status_code}: {search_response.text}"
-        )
-        assert [row["title"] for row in search_response.json()["data"]["items"]] == [
-            "Charlie Orphan"
-        ]
+        assert stale_query_response.status_code == 400
+        assert stale_query_response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
         has_new_response = auth_client.get(
             "/podcasts/subscriptions?filter=has_new&sort=alpha",
@@ -8882,7 +8881,7 @@ class TestPodcastShowNotesAndBatchCutover:
         target = {
             "kind": "PodcastEpisodeQuery",
             "podcastId": str(podcast_id),
-            "selection": {"state": "all", "query": {"kind": "Absent"}},
+            "selection": {"state": "all"},
             "reason": "search",
         }
 
@@ -8895,7 +8894,7 @@ class TestPodcastShowNotesAndBatchCutover:
             headers=auth_headers(user_id),
         )
         assert batch_response.status_code == 409, (
-            "batch transcript request must reject a stale query fingerprint, "
+            "batch transcript request must reject a stale selection fingerprint, "
             f"got {batch_response.status_code}: {batch_response.text}"
         )
         assert batch_response.json()["error"]["code"] == "E_SELECTION_CHANGED"

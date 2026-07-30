@@ -28,8 +28,13 @@ workspace mobile secondary sheet.
 Pane-local Search is visit-local chrome, not pane history or workspace state.
 Only the active capable `PaneShell` consumes Cmd/Ctrl+F; inactive panes retain
 their mounted query/result state, while route/source replacement retires it.
-Unsupported panes leave native browser Find untouched. Page and Note currently
-publish local direct-item `FilterRows`; Conversation publishes
+Unsupported panes leave native browser Find untouched. Collection-shaped
+Author, Conversations-index, Library, Podcast, and Notes-index panes publish
+`FilterRows` over their loaded canonical rows; Page and Note publish it over
+their direct ordered surface items. Filtering is synchronous and local, never
+request or URL identity. Domain View/Filter/Sort controls live in the expanded
+row; collapsed Filter chrome marks any applied non-default domain state.
+Document-shaped panes, including an individual Conversation, publish
 `FindOccurrences` with transient Companion results.
 
 Open-pane management belongs to the Nexus Switchboard Root. It renders all

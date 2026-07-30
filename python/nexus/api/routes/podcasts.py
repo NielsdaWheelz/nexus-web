@@ -61,7 +61,7 @@ def list_subscriptions(
     """List active podcast subscriptions for the viewer."""
     parsed = parse_collection_query(
         request.query_params.multi_items(),
-        domain_keys=frozenset({"sort", "filter", "q", "library_id"}),
+        domain_keys=frozenset({"sort", "filter", "library_id"}),
     )
     sort = parsed.parameters.get("sort", "recent_episode")
     filter_value = parsed.parameters.get("filter", "all")
@@ -90,7 +90,6 @@ def list_subscriptions(
         cursor=parsed.cursor,
         collection_revision=parsed.collection_revision,
         sort=sort,  # type: ignore[arg-type]
-        q=parsed.parameters.get("q"),
         filter=filter_value,  # type: ignore[arg-type]
         library_id=library_id,
     )
@@ -221,7 +220,7 @@ def list_podcast_episodes(
     """List viewer-visible episodes for one podcast."""
     parsed = parse_collection_query(
         request.query_params.multi_items(),
-        domain_keys=frozenset({"state", "sort", "q"}),
+        domain_keys=frozenset({"state", "sort"}),
     )
     state = parsed.parameters.get("state", "all")
     sort = parsed.parameters.get("sort", "newest")
@@ -244,7 +243,6 @@ def list_podcast_episodes(
         collection_revision=parsed.collection_revision,
         state=state,  # type: ignore[arg-type]
         sort=sort,  # type: ignore[arg-type]
-        q=parsed.parameters.get("q"),
     )
     return ok(page, by_alias=True)
 

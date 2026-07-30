@@ -271,6 +271,15 @@ only]` view formatting.
   zero; the client claims that seed only while both process revisions remain
   zero.
 
+Pane-local Filter is a visit-local view over the committed rows. It matches
+presented entry title and contributor display/credited names after the
+server-owned projection and before the existing order. It never enters
+`LibraryEntryView`, request, cursor, snapshot, or folio identity. `View`, `Sort
+by`, and `Hide finished` render in expanded Pane Search; when collapsed, the
+Filter action marks their non-default state. A query-key row change bypasses
+the collection View Transition, while domain commits and mutations retain the
+existing transition and requested/committed lifecycle.
+
 See
 [library-entry-view-continuity-hard-cutover.md](../cutovers/library-entry-view-continuity-hard-cutover.md).
 

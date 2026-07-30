@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.db.session import transaction
-from nexus.db.sql_patterns import escape_ilike_pattern
 from nexus.errors import (
     ApiErrorCode,
     InvalidRequestError,
@@ -26,7 +25,7 @@ from nexus.schemas.podcast import (
     PodcastEpisodeMarkPlayedOut,
     PodcastEpisodeSelection,
 )
-from nexus.schemas.presence import Present, absent, present
+from nexus.schemas.presence import absent, present
 from nexus.services import media as media_service
 from nexus.services.collection_revisions import (
     CollectionFamily,
@@ -63,39 +62,18 @@ def episode_publication_rows_sql() -> str:
     """
 
 
-def normalize_episode_query(query: str | None) -> str | None:
-    normalized = query.strip() if query is not None else None
-    return normalized or None
-
-
-def episode_selection(*, state: PodcastEpisodeState, query: str | None) -> PodcastEpisodeSelection:
-    normalized = normalize_episode_query(query)
-    return PodcastEpisodeSelection(
-        state=state,
-        query=present(normalized) if normalized is not None else absent(),
-    )
-
-
-def _selection_query_value(selection: PodcastEpisodeSelection) -> str | None:
-    return normalize_episode_query(
-        selection.query.value if isinstance(selection.query, Present) else None
-    )
-
-
 def _episode_query_identity(
     *,
     viewer_id: UUID,
     podcast_id: UUID,
     state: PodcastEpisodeState,
     sort: PodcastEpisodeSort,
-    query: str | None,
 ) -> dict[str, object]:
     return {
         "viewerId": str(viewer_id),
         "podcastId": str(podcast_id),
         "state": state,
         "sort": sort,
-        "query": query,
     }
 
 
@@ -213,18 +191,14 @@ def _episode_after_values(
     )
 
 
-def _episode_selection_sql(
+def _episode_state_predicate(
     *,
     state: PodcastEpisodeState,
-    query: str | None,
     params: dict[str, object],
-) -> tuple[str, str]:
+) -> str:
     state_predicate = "TRUE" if state == "all" else "episode_state = :episode_state"
     params["episode_state"] = state
-    if query is None:
-        return state_predicate, "TRUE"
-    params["query_pattern"] = f"%{escape_ilike_pattern(query)}%"
-    return state_predicate, r"m.title ILIKE :query_pattern ESCAPE '\'"
+    return state_predicate
 
 
 def resolve_episode_selection_ids(
@@ -234,15 +208,13 @@ def resolve_episode_selection_ids(
     podcast_id: UUID,
     selection: PodcastEpisodeSelection,
 ) -> list[UUID]:
-    """Resolve one normalized membership relation for query-wide commands."""
-    query = _selection_query_value(selection)
+    """Resolve one state-scoped membership relation for episode-wide commands."""
     params: dict[str, object] = {
         "viewer_id": viewer_id,
         "podcast_id": podcast_id,
     }
-    state_sql, query_sql = _episode_selection_sql(
+    state_sql = _episode_state_predicate(
         state=selection.state,
-        query=query,
         params=params,
     )
     rows = db.execute(
@@ -263,7 +235,6 @@ def resolve_episode_selection_ids(
             } AS episode_state
                 FROM podcast_episodes pe
                 JOIN visible_media vm ON vm.media_id = pe.media_id
-                JOIN media m ON m.id = pe.media_id
                 {
                 consumption_service.episode_state_joins_sql(
                     user_param=":viewer_id",
@@ -273,7 +244,6 @@ def resolve_episode_selection_ids(
                 )
             }
                 WHERE pe.podcast_id = :podcast_id
-                  AND ({query_sql})
             )
             SELECT media_id
             FROM selected
@@ -368,7 +338,6 @@ def list_podcast_episodes_for_viewer(
     collection_revision: CollectionRevision | None,
     state: PodcastEpisodeState,
     sort: PodcastEpisodeSort,
-    q: str | None = None,
 ) -> CollectionPage[PodcastEpisodeListItemOut]:
     if state not in PODCAST_EPISODE_STATES:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid podcast episode state")
@@ -390,13 +359,11 @@ def list_podcast_episodes_for_viewer(
     if podcast_exists is None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
 
-    normalized_query = normalize_episode_query(q)
     query_identity = _episode_query_identity(
         viewer_id=viewer_id,
         podcast_id=podcast_id,
         state=state,
         sort=sort,
-        query=normalized_query,
     )
     order_by_sql, cursor_kinds = _episode_order(sort)
     after = (
@@ -428,9 +395,8 @@ def list_podcast_episodes_for_viewer(
         "podcast_id": podcast_id,
         "page_limit": limit + 1,
     }
-    state_sql, query_sql = _episode_selection_sql(
+    state_sql = _episode_state_predicate(
         state=state,
-        query=normalized_query,
         params=params,
     )
     keyset_sql = _episode_keyset_predicate(sort, after, params)
@@ -461,8 +427,6 @@ def list_podcast_episodes_for_viewer(
                 FROM podcast_episodes pe
                 JOIN visible_media vm
                   ON vm.media_id = pe.media_id
-                JOIN media m
-                  ON m.id = pe.media_id
                 {
                     consumption_service.episode_state_joins_sql(
                         user_param=":viewer_id",
@@ -472,7 +436,6 @@ def list_podcast_episodes_for_viewer(
                     )
                 }
                 WHERE pe.podcast_id = :podcast_id
-                  AND ({query_sql})
             )
             SELECT *
             FROM episode_rows

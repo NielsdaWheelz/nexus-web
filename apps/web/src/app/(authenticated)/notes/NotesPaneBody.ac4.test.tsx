@@ -1,7 +1,8 @@
-import { fireEvent, screen } from "@testing-library/react";
+import { act, fireEvent, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
 import { stubFetch, wasFetchPathCalled } from "@/__tests__/helpers/fetch";
+import { PanePrimaryChromeProvider } from "@/components/workspace/PanePrimaryChrome";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { ResolvedPaneBodyMarker } from "@/lib/panes/paneRenderRegistry";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
@@ -145,6 +146,88 @@ describe("NotesPaneBody (AC-4 hydration hit)", () => {
     // (b) No client fetch to the notes pages endpoint — the seed was the source.
     const fetchedPages = wasFetchPathCalled(fetchSpy, "/api/notes/pages");
     expect(fetchedPages).toBe(false);
+  });
+
+  it("keeps the folio pending and count-free until page loading completes", async () => {
+    let resolvePages!: (response: Response) => void;
+    const pendingPages = new Promise<Response>((resolve) => {
+      resolvePages = resolve;
+    });
+    const publish = vi.fn();
+    stubFetch(async (input) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/notes/pages") return pendingPages;
+      throw new Error(`Unexpected fetch: ${url.pathname}`);
+    });
+
+    renderHydratedPane({
+      href: "/notes",
+      resources: {},
+      children: (
+        <PanePrimaryChromeProvider publish={publish}>
+          <NotesPaneBody />
+        </PanePrimaryChromeProvider>
+      ),
+    });
+
+    await vi.waitFor(() =>
+      expect(
+        publish.mock.calls
+          .map(([update]) => update.publication?.header)
+          .find(
+            (header) => header?.kind === "section" && header.pending === true,
+          ),
+      ).toEqual({
+        kind: "section",
+        folio: { kind: "none" },
+        pending: true,
+      }),
+    );
+    const search = publish.mock.calls
+      .map(([update]) => update.publication?.search)
+      .findLast((candidate) => candidate?.kind === "FilterRows");
+    if (search?.kind !== "FilterRows") {
+      throw new Error("Expected NotesPaneBody to publish FilterRows.");
+    }
+    act(() => search.onQueryChange("missing"));
+    expect(
+      await screen.findByText("No matching page found so far."),
+    ).toBeVisible();
+    act(() => search.onQueryChange(""));
+
+    resolvePages(
+      Response.json({
+        data: {
+          pages: [
+            {
+              id: HYDRATED_PAGE_ID,
+              title: "Loaded Note Page",
+              updated_at: "2026-06-02T12:00:00.000Z",
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(
+      await screen.findByRole("link", { name: "Loaded Note Page" }),
+    ).toBeVisible();
+    await vi.waitFor(() =>
+      expect(
+        publish.mock.calls
+          .map(([update]) => update.publication?.header)
+          .find(
+            (header) =>
+              header?.kind === "section" &&
+              header.pending === false &&
+              header.folio.kind === "count",
+          ),
+      ).toEqual({
+        kind: "section",
+        folio: { kind: "count", value: 1, unit: "page" },
+        pending: false,
+      }),
+    );
   });
 });
 

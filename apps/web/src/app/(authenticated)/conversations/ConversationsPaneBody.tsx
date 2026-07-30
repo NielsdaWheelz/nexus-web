@@ -9,10 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
-import {
-  isApiError,
-  isSameSystemApiDefect,
-} from "@/lib/api/client";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import {
   type CollectionCursor,
   type CollectionPage,
@@ -25,7 +22,11 @@ import { useResource } from "@/lib/api/useResource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
-import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
+import {
+  FeedbackNotice,
+  toFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import SectionOpener from "@/components/ui/SectionOpener";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
@@ -45,11 +46,15 @@ import {
   usePaneVisitData,
 } from "@/lib/panes/paneRuntime";
 import type { ConversationsPaneSeed } from "@/lib/panes/paneResourceLoaders";
+import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
 import { useStringIdSet } from "@/lib/useStringIdSet";
+import { findPaneSearchFocusTarget } from "@/lib/workspace/paneDom";
 
-const CONVERSATIONS_VISIT_DATA =
-  definePaneVisitDataKey<ConversationsPaneSeed>("Conversations.Pagination");
+const CONVERSATIONS_VISIT_DATA = definePaneVisitDataKey<ConversationsPaneSeed>(
+  "Conversations.Pagination",
+);
 const NO_CURSOR: Presence<CollectionCursor> = { kind: "Absent" };
 const ZERO_REVISION = 0 as CollectionRevision;
 const PAGE_SIZE = 100;
@@ -61,31 +66,33 @@ function seedFromPage(
     conversations: page.items,
     collectionRevision: page.collectionRevision,
     nextCursor: page.nextCursor,
-    exhaustion:
-      page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
+    exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
   };
 }
 
 export default function ConversationsPaneBody() {
-  const runtime = requirePaneRuntime(
-    usePaneRuntime(),
-    "ConversationsPaneBody",
-  );
+  const runtime = requirePaneRuntime(usePaneRuntime(), "ConversationsPaneBody");
+  const visibleRowIdsRef = useRef<readonly string[]>([]);
+  const pendingFocusNeighborRef = useRef<string | null | undefined>(undefined);
+  const pendingFocusRafRef = useRef(0);
+  const setFocusNeighbor = useCallback((removedId: string) => {
+    const visibleIds = visibleRowIdsRef.current;
+    const index = visibleIds.indexOf(removedId);
+    pendingFocusNeighborRef.current =
+      index < 0
+        ? null
+        : (visibleIds[index + 1] ?? visibleIds[index - 1] ?? null);
+  }, []);
   const renderEnvironment = useRenderEnvironment();
   const committedSnapshotRef = useRef<ConversationsPaneSeed | null>(null);
-  const captureCommitted = useCallback(
-    () => committedSnapshotRef.current,
-    [],
-  );
-  const restored = usePaneVisitData(
-    CONVERSATIONS_VISIT_DATA,
-    captureCommitted,
-  );
+  const captureCommitted = useCallback(() => committedSnapshotRef.current, []);
+  const restored = usePaneVisitData(CONVERSATIONS_VISIT_DATA, captureCommitted);
   const allowResourceAdoptionRef = useRef(restored === null);
   const [firstPageVersion, setFirstPageVersion] = useState(0);
   const [chainEpoch, setChainEpoch] = useState(0);
-  const [controller, setController] =
-    useState<ConversationsPaneSeed | null>(restored);
+  const [controller, setController] = useState<ConversationsPaneSeed | null>(
+    restored,
+  );
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
   const deletingConversationIds = useStringIdSet();
   const clearAllVisitData = useClearAllPaneVisitData();
@@ -127,9 +134,7 @@ export default function ConversationsPaneBody() {
     committedSnapshotRef.current = controller;
   }, [controller]);
 
-  usePaneReturnReady(
-    controller !== null || initial.status === "error",
-  );
+  usePaneReturnReady(controller !== null || initial.status === "error");
 
   const refreshIndex = useCallback(() => {
     allowResourceAdoptionRef.current = true;
@@ -145,7 +150,9 @@ export default function ConversationsPaneBody() {
         current === null ||
         current.collectionRevision !== page.collectionRevision
       ) {
-        throw new Error("Conversation continuation settled for a stale collection");
+        throw new Error(
+          "Conversation continuation settled for a stale collection",
+        );
       }
       const seen = new Set(
         current.conversations.map((conversation) => conversation.id),
@@ -160,8 +167,7 @@ export default function ConversationsPaneBody() {
         conversations,
         collectionRevision: page.collectionRevision,
         nextCursor: page.nextCursor,
-        exhaustion:
-          page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
+        exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
       };
       committedSnapshotRef.current = next;
       setController(next);
@@ -174,8 +180,7 @@ export default function ConversationsPaneBody() {
     active: runtime.isActive && controller !== null,
     chainKey: `mine:${chainEpoch}`,
     cursor: controller?.nextCursor ?? NO_CURSOR,
-    collectionRevision:
-      controller?.collectionRevision ?? ZERO_REVISION,
+    collectionRevision: controller?.collectionRevision ?? ZERO_REVISION,
     itemCount: controller?.conversations.length ?? 0,
     loadPage: (cursor, collectionRevision, signal) =>
       fetchConversationIndex({
@@ -189,12 +194,23 @@ export default function ConversationsPaneBody() {
   });
 
   const handleDelete = useCallback(
-    async (id: string) => {
+    async (id: string, triggerEl: HTMLButtonElement | null) => {
       if (!confirm("Delete this conversation? This cannot be undone.")) return;
       if (deletingConversationIds.has(id)) return;
       deletingConversationIds.add(id);
       try {
         const collectionRevision = await deleteConversation(id);
+        await new Promise<void>((resolve) =>
+          requestAnimationFrame(() => resolve()),
+        );
+        const activeElement = document.activeElement;
+        if (
+          activeElement === document.body ||
+          activeElement === triggerEl ||
+          (activeElement instanceof HTMLElement && !activeElement.isConnected)
+        ) {
+          setFocusNeighbor(id);
+        }
         setController((current) => {
           if (current === null) return current;
           const next = {
@@ -210,6 +226,7 @@ export default function ConversationsPaneBody() {
         setChainEpoch((epoch) => epoch + 1);
         clearAllVisitData();
       } catch (error) {
+        pendingFocusNeighborRef.current = undefined;
         if (handleUnauthenticatedApiError(error)) return;
         if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
         setFeedback(
@@ -221,7 +238,7 @@ export default function ConversationsPaneBody() {
         deletingConversationIds.remove(id);
       }
     },
-    [clearAllVisitData, deletingConversationIds],
+    [clearAllVisitData, deletingConversationIds, setFocusNeighbor],
   );
 
   const rows = useMemo(
@@ -232,7 +249,8 @@ export default function ConversationsPaneBody() {
           {
             deleteConversation: {
               kind: "Available",
-              execute: () => handleDelete(conversation.id),
+              execute: ({ triggerEl }) =>
+                handleDelete(conversation.id, triggerEl),
             },
             busyIds: deletingConversationIds.ids.has(conversation.id)
               ? new Set([RESOURCE_ACTION_CATALOG.DeleteConversation.id])
@@ -258,24 +276,97 @@ export default function ConversationsPaneBody() {
     controller !== null && exhaustion.kind === "Complete"
       ? exhaustion.itemCount
       : null;
+  const getFilterStatus = useCallback(
+    (query: string) => {
+      const visibleCount = rows.filter((row) =>
+        matchesPaneFilterQuery(query, [row.title.text]),
+      ).length;
+      const unit = { singular: "chat", plural: "chats" };
+      return exhaustion.kind === "Complete"
+        ? {
+            kind: "Complete" as const,
+            visibleCount,
+            totalCount: rows.length,
+            unit,
+          }
+        : {
+            kind: "Partial" as const,
+            visibleCount,
+            loadedCount: rows.length,
+            unit,
+          };
+    },
+    [exhaustion.kind, rows],
+  );
+  const { query: filterQuery, publication: search } = usePaneFilterRows({
+    sourceKey: "Conversations:mine",
+    inputLabel: "Filter chats",
+    placeholder: "Filter chats",
+    getRowStatus: getFilterStatus,
+    activeDomainControlCount: 0,
+  });
+  const filteredRows = useMemo(
+    () =>
+      rows.filter((row) =>
+        matchesPaneFilterQuery(filterQuery, [row.title.text]),
+      ),
+    [filterQuery, rows],
+  );
+  visibleRowIdsRef.current = filteredRows.map((row) => row.id);
+  const visibleRowSignature = visibleRowIdsRef.current.join("\u001f");
+  useEffect(() => {
+    const neighborId = pendingFocusNeighborRef.current;
+    if (neighborId === undefined) return;
+    const focus = () => {
+      if (pendingFocusNeighborRef.current !== neighborId) return;
+      pendingFocusNeighborRef.current = undefined;
+      const pane = Array.from(
+        document.querySelectorAll<HTMLElement>("[data-pane-id]"),
+      ).find((candidate) => candidate.dataset.paneId === runtime.paneId);
+      const row =
+        neighborId === null
+          ? null
+          : pane?.querySelector<HTMLElement>(
+              `[data-collection-row-id="${CSS.escape(neighborId)}"]`,
+            );
+      const focusable = row?.querySelector<HTMLElement>(
+        'a, button, [tabindex]:not([tabindex="-1"])',
+      );
+      if (focusable) {
+        focusable.focus();
+        return;
+      }
+      findPaneSearchFocusTarget(runtime.paneId)?.focus();
+    };
+    const outer = requestAnimationFrame(() => {
+      pendingFocusRafRef.current = requestAnimationFrame(focus);
+    });
+    pendingFocusRafRef.current = outer;
+    return () => cancelAnimationFrame(pendingFocusRafRef.current);
+  }, [runtime.paneId, visibleRowSignature]);
 
   usePanePrimaryChrome({
+    search,
     header: {
       kind: "section",
       folio:
         finalCount === null
           ? { kind: "none" }
           : { kind: "count", value: finalCount, unit: "chat" },
-      pending: status === "loading" || exhaustion.kind === "Draining",
+      pending: status === "loading" || exhaustion.kind !== "Complete",
     },
   });
 
   return (
     <CollectionView
       returnScope="Conversations.Items"
-      rows={rows}
+      rows={filteredRows}
       status={status}
       ariaLabel="Conversations"
+      rowChangePresentation={{
+        kind: "ImmediateOnKeyChange",
+        key: filterQuery.trim(),
+      }}
       collectionBusy={exhaustion.kind === "Draining"}
       opener={
         <SectionOpener
@@ -288,21 +379,37 @@ export default function ConversationsPaneBody() {
         />
       }
       notice={
-        controller !== null && feedback
-          ? <FeedbackNotice feedback={feedback} />
-          : undefined
+        controller !== null && feedback ? (
+          <FeedbackNotice feedback={feedback} />
+        ) : controller === null && status === "loading" && filterQuery.trim() ? (
+          <FeedbackNotice
+            severity="neutral"
+            title="No matching chat found so far."
+          />
+        ) : undefined
       }
       error={
-        controller === null && feedback
-          ? <FeedbackNotice feedback={feedback} />
-          : undefined
+        controller === null && feedback ? (
+          <FeedbackNotice feedback={feedback} />
+        ) : undefined
       }
       empty={
+        filterQuery.trim() ? (
+          <FeedbackNotice
+            severity="neutral"
+            title={
+              exhaustion.kind === "Complete"
+                ? "No chats match this filter."
+                : "No matching chat found so far."
+            }
+          />
+        ) : (
         <FeedbackNotice
           severity="neutral"
           title="No chats yet."
           message="Choose New chat to begin."
         />
+        )
       }
       footer={<CollectionExhaustionNotice state={exhaustion} />}
     />

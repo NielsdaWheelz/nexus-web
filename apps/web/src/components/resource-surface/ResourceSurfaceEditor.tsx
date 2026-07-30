@@ -2,8 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Button from "@/components/ui/Button";
-import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
-import NoteBodyEditor, { type NoteBodyChange, type NotePulseEditorTarget } from "@/components/notes/NoteBodyEditor";
+import {
+  FeedbackNotice,
+  toFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
+import NoteBodyEditor, {
+  type NoteBodyChange,
+  type NotePulseEditorTarget,
+} from "@/components/notes/NoteBodyEditor";
 import ResourceSurfaceBodyEditor from "@/components/resource-surface/ResourceSurfaceBodyEditor";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { createRandomId } from "@/lib/createRandomId";
@@ -30,7 +37,7 @@ export default function ResourceSurfaceEditor({
   editable = true,
   focusMastheadSerial = 0,
   focusBodySerial = 0,
-  onSurfaceReady,
+  onSurfaceChange,
   activateTarget,
   notePulseTarget,
 }: {
@@ -39,33 +46,53 @@ export default function ResourceSurfaceEditor({
   editable?: boolean;
   focusMastheadSerial?: number;
   focusBodySerial?: number;
-  onSurfaceReady?: (surface: ResourceSurface) => void;
+  onSurfaceChange?: (surface: ResourceSurface) => void;
   activateTarget: (input: {
     target: WorkspaceTarget;
     disposition: WorkspaceTargetDisposition;
   }) => void;
   notePulseTarget?: NotePulseEditorTarget | null;
 }) {
-  const [loaded, setLoaded] = useState<ResourceSurface | null>(null);
-  const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
-  const [bodyFocus, setBodyFocus] = useState({ occurrenceId: null as string | null, serial: 0 });
+  const [loadedState, setLoadedState] = useState<{
+    sourceRef: string;
+    surface: ResourceSurface;
+  } | null>(null);
+  const [feedbackState, setFeedbackState] = useState<{
+    sourceRef: string;
+    feedback: FeedbackContent;
+  } | null>(null);
+  const [bodyFocus, setBodyFocus] = useState({
+    occurrenceId: null as string | null,
+    serial: 0,
+  });
   const titleRef = useRef<HTMLInputElement | null>(null);
-  const onSurfaceReadyRef = useRef(onSurfaceReady);
-  onSurfaceReadyRef.current = onSurfaceReady;
+  const loaded =
+    loadedState?.sourceRef === sourceRef ? loadedState.surface : null;
+  const feedback =
+    feedbackState?.sourceRef === sourceRef ? feedbackState.feedback : null;
+  const setFeedback = useCallback(
+    (next: FeedbackContent | null) =>
+      setFeedbackState(next === null ? null : { sourceRef, feedback: next }),
+    [sourceRef],
+  );
 
   useEffect(() => {
     let active = true;
-    setLoaded(null);
-    setFeedback(null);
+    setLoadedState(null);
+    setFeedbackState(null);
     void fetchResourceSurface(sourceRef)
       .then((surface) => {
         if (!active) return;
-        setLoaded(surface);
-        onSurfaceReadyRef.current?.(surface);
+        setLoadedState({ sourceRef, surface });
       })
       .catch((error: unknown) => {
         if (!active || handleUnauthenticatedApiError(error)) return;
-        setFeedback(toFeedback(error, { fallback: "This surface could not be loaded." }));
+        setFeedbackState({
+          sourceRef,
+          feedback: toFeedback(error, {
+            fallback: "This surface could not be loaded.",
+          }),
+        });
       });
     return () => {
       active = false;
@@ -74,7 +101,8 @@ export default function ResourceSurfaceEditor({
 
   if (feedback && !loaded) return <FeedbackNotice {...feedback} />;
   if (!loaded) return <PaneLoadingState />;
-  return <LoadedResourceSurfaceEditor
+  return (
+    <LoadedResourceSurfaceEditor
     key={sourceRef}
     sourceRef={sourceRef}
     rowFilterQuery={rowFilterQuery}
@@ -89,7 +117,9 @@ export default function ResourceSurfaceEditor({
     setFeedback={setFeedback}
     activateTarget={activateTarget}
     notePulseTarget={notePulseTarget}
-  />;
+      onSurfaceChange={onSurfaceChange}
+    />
+  );
 }
 
 function LoadedResourceSurfaceEditor({
@@ -106,6 +136,7 @@ function LoadedResourceSurfaceEditor({
   setFeedback,
   activateTarget,
   notePulseTarget,
+  onSurfaceChange,
 }: {
   sourceRef: string;
   rowFilterQuery: string;
@@ -115,23 +146,35 @@ function LoadedResourceSurfaceEditor({
   focusBodySerial: number;
   titleRef: React.RefObject<HTMLInputElement | null>;
   bodyFocus: { occurrenceId: string | null; serial: number };
-  setBodyFocus: React.Dispatch<React.SetStateAction<{ occurrenceId: string | null; serial: number }>>;
+  setBodyFocus: React.Dispatch<
+    React.SetStateAction<{ occurrenceId: string | null; serial: number }>
+  >;
   feedback: FeedbackContent | null;
-  setFeedback: React.Dispatch<React.SetStateAction<FeedbackContent | null>>;
+  setFeedback: (feedback: FeedbackContent | null) => void;
   activateTarget: (input: {
     target: WorkspaceTarget;
     disposition: WorkspaceTargetDisposition;
   }) => void;
   notePulseTarget?: NotePulseEditorTarget | null;
+  onSurfaceChange?: (surface: ResourceSurface) => void;
 }) {
   const session = useResourceSurfaceSession({
     sourceRef,
     initialSurface,
     onError: (error) => {
       if (handleUnauthenticatedApiError(error)) return;
-      setFeedback(toFeedback(error, { fallback: "Changes are saved on this device until you retry." }));
+      setFeedback(
+        toFeedback(error, {
+          fallback: "Changes are saved on this device until you retry.",
+        }),
+      );
     },
   });
+  const onSurfaceChangeRef = useRef(onSurfaceChange);
+  onSurfaceChangeRef.current = onSurfaceChange;
+  useEffect(() => {
+    onSurfaceChangeRef.current?.(session.surface);
+  }, [session.surface]);
 
   useEffect(() => {
     if (!focusMastheadSerial) return;
@@ -142,16 +185,31 @@ function LoadedResourceSurfaceEditor({
   useEffect(() => {
     if (!focusBodySerial) return;
     const first = session.surface.orderedItems[0];
-    setBodyFocus({ occurrenceId: first?.occurrenceId ?? null, serial: focusBodySerial });
+    setBodyFocus({
+      occurrenceId: first?.occurrenceId ?? null,
+      serial: focusBodySerial,
+    });
   }, [focusBodySerial, session.surface.orderedItems, setBodyFocus]);
 
-  const insertNote = useCallback((position: { kind: "start" } | { kind: "after"; occurrenceId: string }) => {
+  const insertNote = useCallback(
+    (position: { kind: "start" } | { kind: "after"; occurrenceId: string }) => {
     const noteId = createRandomId();
-    session.command({ type: "insert_note", noteId, position, bodyPmJson: EMPTY_NOTE_BODY });
-    setBodyFocus({ occurrenceId: `local:${noteId}`, serial: bodyFocus.serial + 1 });
-  }, [bodyFocus.serial, session, setBodyFocus]);
+      session.command({
+        type: "insert_note",
+        noteId,
+        position,
+        bodyPmJson: EMPTY_NOTE_BODY,
+      });
+      setBodyFocus({
+        occurrenceId: `local:${noteId}`,
+        serial: bodyFocus.serial + 1,
+      });
+    },
+    [bodyFocus.serial, session, setBodyFocus],
+  );
 
-  const splitNote = useCallback((input: {
+  const splitNote = useCallback(
+    (input: {
     occurrenceId: string;
     leftBodyPmJson: Record<string, unknown>;
     rightBodyPmJson: Record<string, unknown>;
@@ -168,28 +226,48 @@ function LoadedResourceSurfaceEditor({
       occurrenceId: `local:${noteId}`,
       serial: bodyFocus.serial + 1,
     });
-  }, [bodyFocus.serial, session, setBodyFocus]);
+    },
+    [bodyFocus.serial, session, setBodyFocus],
+  );
 
-  const onTitleKeyDown = useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+  const onTitleKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (
+        event.key !== "Enter" ||
+        event.shiftKey ||
+        event.nativeEvent.isComposing
+      )
+        return;
     event.preventDefault();
     const first = session.surface.orderedItems[0];
     if (first?.target.content.kind === "note_body") {
-      setBodyFocus({ occurrenceId: first.occurrenceId, serial: bodyFocus.serial + 1 });
+        setBodyFocus({
+          occurrenceId: first.occurrenceId,
+          serial: bodyFocus.serial + 1,
+        });
       return;
     }
     insertNote({ kind: "start" });
-  }, [bodyFocus.serial, insertNote, session.surface.orderedItems, setBodyFocus]);
+    },
+    [bodyFocus.serial, insertNote, session.surface.orderedItems, setBodyFocus],
+  );
 
-  const activate = useCallback((item: ResourceSurface["orderedItems"][number]["target"]["item"], disposition: WorkspaceTargetDisposition) => {
+  const activate = useCallback(
+    (
+      item: ResourceSurface["orderedItems"][number]["target"]["item"],
+      disposition: WorkspaceTargetDisposition,
+    ) => {
     activateResource(item.activation, {
       labelHint: item.label,
       activateTarget,
       disposition,
     });
-  }, [activateTarget]);
+    },
+    [activateTarget],
+  );
 
-  const openObject = useCallback(async (
+  const openObject = useCallback(
+    async (
     objectType: string,
     objectId: string,
     disposition: WorkspaceTargetDisposition,
@@ -211,12 +289,17 @@ function LoadedResourceSurfaceEditor({
       activateTarget({ target: { href }, disposition });
     } catch (error: unknown) {
       if (handleUnauthenticatedApiError(error)) return;
-      setFeedback(toFeedback(error, { fallback: "Linked object could not be opened." }));
+        setFeedback(
+          toFeedback(error, { fallback: "Linked object could not be opened." }),
+        );
     }
-  }, [activateTarget, setFeedback]);
+    },
+    [activateTarget, setFeedback],
+  );
 
   const source = session.surface.source;
-  const masthead = source.content.kind === "page_title" ? (
+  const masthead =
+    source.content.kind === "page_title" ? (
     <input
       ref={titleRef}
       className={styles.title}
@@ -235,11 +318,19 @@ function LoadedResourceSurfaceEditor({
       editable={editable}
       ariaLabel="Note content"
       notePulseTarget={notePulseTarget}
-      onBodyChange={(change: NoteBodyChange) => session.updateSourceNoteBody(change)}
-      onBlurFlush={(change: NoteBodyChange) => session.updateSourceNoteBody({ ...change, flush: true })}
+        onBodyChange={(change: NoteBodyChange) =>
+          session.updateSourceNoteBody(change)
+        }
+        onBlurFlush={(change: NoteBodyChange) =>
+          session.updateSourceNoteBody({ ...change, flush: true })
+        }
       onOpenObject={openObject}
       onFeedback={setFeedback}
-      onError={(error) => setFeedback(toFeedback(error, { fallback: "This note could not be edited." }))}
+        onError={(error) =>
+          setFeedback(
+            toFeedback(error, { fallback: "This note could not be edited." }),
+          )
+        }
     />
   ) : null;
 
@@ -247,14 +338,39 @@ function LoadedResourceSurfaceEditor({
   const recovery = failed || session.hasRecoveredDraft;
   return (
     <div className={styles.surface}>
-      {recovery ? <div className={styles.recovery} data-state={failed ? "failed" : "recovered"} role={failed ? "alert" : "status"} aria-live="polite">
-        <span>{failed ? "Changes are saved here until you retry." : "Recovered unsaved changes."}</span>
+      {recovery ? (
+        <div
+          className={styles.recovery}
+          data-state={failed ? "failed" : "recovered"}
+          role={failed ? "alert" : "status"}
+          aria-live="polite"
+        >
+          <span>
+            {failed
+              ? "Changes are saved here until you retry."
+              : "Recovered unsaved changes."}
+          </span>
         <span className={styles.recoveryActions}>
-          <Button size="sm" variant="secondary" onClick={session.retry}>Retry</Button>
-          <Button size="sm" variant="ghost" onClick={() => void session.reload()}>Reload</Button>
-          <Button size="sm" variant="ghost" onClick={() => void session.copyRecovery()}>Copy</Button>
+            <Button size="sm" variant="secondary" onClick={session.retry}>
+              Retry
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => void session.reload()}
+            >
+              Reload
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => void session.copyRecovery()}
+            >
+              Copy
+            </Button>
         </span>
-      </div> : null}
+        </div>
+      ) : null}
       {feedback ? <FeedbackNotice {...feedback} /> : null}
       <div className={styles.masthead}>{masthead}</div>
       <ResourceSurfaceBodyEditor
@@ -265,15 +381,27 @@ function LoadedResourceSurfaceEditor({
         focusRequest={bodyFocus}
         onInsertNote={insertNote}
         onSplitNote={splitNote}
-        onMoveOccurrence={({ occurrenceId, position }) => session.command({ type: "move_occurrence", occurrenceId, position })}
-        onRemoveOccurrence={(occurrenceId) => session.command({ type: "remove_occurrence", occurrenceId })}
-        onInsertResource={({ targetRef, position }) => session.command({ type: "insert_resource", targetRef, position })}
+        onMoveOccurrence={({ occurrenceId, position }) =>
+          session.command({ type: "move_occurrence", occurrenceId, position })
+        }
+        onRemoveOccurrence={(occurrenceId) =>
+          session.command({ type: "remove_occurrence", occurrenceId })
+        }
+        onInsertResource={({ targetRef, position }) =>
+          session.command({ type: "insert_resource", targetRef, position })
+        }
         onBodyChange={(change) => session.updateBody(change)}
         onBodyBlur={(change) => session.updateBody({ ...change, flush: true })}
         onActivate={activate}
         onOpenObject={openObject}
         onFeedback={setFeedback}
-        onError={(error) => setFeedback(toFeedback(error, { fallback: "This surface could not be edited." }))}
+        onError={(error) =>
+          setFeedback(
+            toFeedback(error, {
+              fallback: "This surface could not be edited.",
+            }),
+          )
+        }
       />
     </div>
   );

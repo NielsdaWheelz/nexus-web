@@ -8,6 +8,7 @@ import {
 } from "@/__tests__/helpers/paneReturnJourney";
 import ConversationsPaneBody from "@/app/(authenticated)/conversations/ConversationsPaneBody";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
+import { PanePrimaryChromeProvider } from "@/components/workspace/PanePrimaryChrome";
 import PaneRouteBoundary from "@/components/workspace/PaneRouteBoundary";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
@@ -217,6 +218,258 @@ describe("ConversationsPaneBody", () => {
     ).toBeInTheDocument();
   });
 
+  it("filters chats by presented title without querying the server", async () => {
+    const publish = vi.fn();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = pathOf(input);
+      if (path === "/api/conversations") {
+        return collectionPage([
+          conversation(
+            "22222222-0000-4000-8000-000000000002",
+            "Alpha planning",
+          ),
+          conversation(
+            "33333333-0000-4000-8000-000000000003",
+            "Beta review",
+          ),
+        ]);
+      }
+      throw new Error(`Unexpected fetch call: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      withPaneRuntime(
+        <PanePrimaryChromeProvider publish={publish}>
+          <ConversationsPaneBody />
+        </PanePrimaryChromeProvider>,
+      ),
+    );
+
+    expect(
+      await screen.findByRole("link", { name: "Alpha planning" }),
+    ).toBeVisible();
+    expect(screen.getByRole("link", { name: "Beta review" })).toBeVisible();
+    await waitFor(() =>
+      expect(
+        publish.mock.calls
+          .map(([update]) => update.publication?.search)
+          .findLast((search) => search?.kind === "FilterRows"),
+      ).toBeDefined(),
+    );
+    const search = publish.mock.calls
+      .map(([update]) => update.publication?.search)
+      .findLast((candidate) => candidate?.kind === "FilterRows");
+    if (search?.kind !== "FilterRows") {
+      throw new Error("Expected ConversationsPaneBody to publish FilterRows.");
+    }
+
+    act(() => search.onQueryChange("beta"));
+    expect(
+      screen.queryByRole("link", { name: "Alpha planning" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Beta review" })).toBeVisible();
+
+    // Row metadata is deliberately outside the title-only match contract.
+    act(() => search.onQueryChange("2 messages"));
+    expect(await screen.findByText("No chats match this filter.")).toBeVisible();
+    await waitFor(() => {
+      const updatedSearch = publish.mock.calls
+        .map(([update]) => update.publication?.search)
+        .findLast((candidate) => candidate?.kind === "FilterRows");
+      expect(updatedSearch).toMatchObject({
+        kind: "FilterRows",
+        query: "2 messages",
+        rowStatus: {
+          kind: "Complete",
+          visibleCount: 0,
+          totalCount: 2,
+          unit: { singular: "chat", plural: "chats" },
+        },
+      });
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("focuses the next visible semantic neighbor after deleting a filtered row", async () => {
+    const publish = vi.fn();
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        if (
+          path ===
+            "/api/conversations/22222222-0000-4000-8000-000000000002" &&
+          init?.method === "DELETE"
+        ) {
+          return jsonResponse({ data: { collectionRevision: 2 } });
+        }
+        if (path === "/api/conversations") {
+          return collectionPage([
+            conversation(
+              "22222222-0000-4000-8000-000000000002",
+              "Visible removal",
+            ),
+            conversation(
+              "33333333-0000-4000-8000-000000000003",
+              "Hidden intervening row",
+            ),
+            conversation(
+              "44444444-0000-4000-8000-000000000004",
+              "Visible neighbor",
+            ),
+          ]);
+        }
+        throw new Error(`Unexpected fetch call: ${path}`);
+      }),
+    );
+
+    render(
+      withPaneRuntime(
+        <PanePrimaryChromeProvider publish={publish}>
+          <div data-pane-id="pane-1">
+            <ConversationsPaneBody />
+          </div>
+        </PanePrimaryChromeProvider>,
+      ),
+    );
+
+    expect(
+      await screen.findByRole("link", { name: "Visible removal" }),
+    ).toBeVisible();
+    await waitFor(() =>
+      expect(
+        publish.mock.calls
+          .map(([update]) => update.publication?.search)
+          .findLast((search) => search?.kind === "FilterRows"),
+      ).toBeDefined(),
+    );
+    const search = publish.mock.calls
+      .map(([update]) => update.publication?.search)
+      .findLast((candidate) => candidate?.kind === "FilterRows");
+    if (search?.kind !== "FilterRows") {
+      throw new Error("Expected ConversationsPaneBody to publish FilterRows.");
+    }
+    act(() => search.onQueryChange("visible"));
+    expect(
+      screen.queryByRole("link", { name: "Hidden intervening row" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "More actions for Visible removal",
+      }),
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Delete conversation" }),
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("link", { name: "Visible removal" }),
+      ).not.toBeInTheDocument(),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("link", { name: "Visible neighbor" }),
+      ).toHaveFocus(),
+    );
+  });
+
+  it("does not arm focus recovery while deletion is awaiting the server", async () => {
+    const publish = vi.fn();
+    let resolveDelete!: (response: Response) => void;
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        if (
+          path ===
+            "/api/conversations/22222222-0000-4000-8000-000000000002" &&
+          init?.method === "DELETE"
+        ) {
+          return await new Promise<Response>((resolve) => {
+            resolveDelete = resolve;
+          });
+        }
+        if (path === "/api/conversations") {
+          return collectionPage([
+            conversation(
+              "22222222-0000-4000-8000-000000000002",
+              "Pending removal",
+            ),
+            conversation(
+              "33333333-0000-4000-8000-000000000003",
+              "Stable neighbor",
+            ),
+          ]);
+        }
+        throw new Error(`Unexpected fetch call: ${path}`);
+      }),
+    );
+
+    render(
+      withPaneRuntime(
+        <PanePrimaryChromeProvider publish={publish}>
+          <div data-pane-id="pane-1">
+            <button type="button">Stable focus</button>
+            <ConversationsPaneBody />
+          </div>
+        </PanePrimaryChromeProvider>,
+      ),
+    );
+    expect(
+      await screen.findByRole("link", { name: "Pending removal" }),
+    ).toBeVisible();
+    await waitFor(() =>
+      expect(
+        publish.mock.calls
+          .map(([update]) => update.publication?.search)
+          .findLast((search) => search?.kind === "FilterRows"),
+      ).toBeDefined(),
+    );
+    const search = publish.mock.calls
+      .map(([update]) => update.publication?.search)
+      .findLast((candidate) => candidate?.kind === "FilterRows");
+    if (search?.kind !== "FilterRows") {
+      throw new Error("Expected ConversationsPaneBody to publish FilterRows.");
+    }
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "More actions for Pending removal",
+      }),
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Delete conversation" }),
+    );
+    await waitFor(() => expect(resolveDelete).toBeTypeOf("function"));
+
+    const stableFocus = screen.getByRole("button", { name: "Stable focus" });
+    stableFocus.focus();
+    act(() => search.onQueryChange("neighbor"));
+    expect(stableFocus).toHaveFocus();
+    expect(
+      screen.queryByRole("link", { name: "Pending removal" }),
+    ).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveDelete(jsonResponse({ data: { collectionRevision: 2 } }));
+    });
+    await waitFor(() => {
+      const updatedSearch = publish.mock.calls
+        .map(([update]) => update.publication?.search)
+        .findLast((candidate) => candidate?.kind === "FilterRows");
+      expect(updatedSearch).toMatchObject({
+        kind: "FilterRows",
+        rowStatus: { kind: "Complete", totalCount: 1 },
+      });
+    });
+    expect(stableFocus).toHaveFocus();
+  });
+
   it("aborts the in-flight list request on unmount", async () => {
     let requestSignal: AbortSignal | undefined;
     vi.stubGlobal(
@@ -249,6 +502,7 @@ describe("ConversationsPaneBody", () => {
       "Active second page",
     );
     const calls: string[] = [];
+    const publish = vi.fn();
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -270,19 +524,42 @@ describe("ConversationsPaneBody", () => {
       paneId: "pane",
     }));
     const view = render(
-      withPaneRuntime(<ConversationsPaneBody />, activateTarget, false),
+      withPaneRuntime(
+        <PanePrimaryChromeProvider publish={publish}>
+          <ConversationsPaneBody />
+        </PanePrimaryChromeProvider>,
+        activateTarget,
+        false,
+      ),
     );
 
     expect(
       await screen.findByRole("link", { name: first.title }),
     ).toBeInTheDocument();
     await waitFor(() => expect(calls).toHaveLength(1));
+    await waitFor(() =>
+      expect(
+        publish.mock.calls
+          .map(([update]) => update.publication?.header)
+          .findLast((header) => header?.kind === "section"),
+      ).toEqual({
+        kind: "section",
+        folio: { kind: "none" },
+        pending: true,
+      }),
+    );
     expect(
       screen.queryByRole("link", { name: second.title }),
     ).not.toBeInTheDocument();
 
     view.rerender(
-      withPaneRuntime(<ConversationsPaneBody />, activateTarget, true),
+      withPaneRuntime(
+        <PanePrimaryChromeProvider publish={publish}>
+          <ConversationsPaneBody />
+        </PanePrimaryChromeProvider>,
+        activateTarget,
+        true,
+      ),
     );
 
     expect(

@@ -139,12 +139,74 @@ describe("ResourceSurfaceBodyEditor", () => {
       ),
     );
 
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "No items match this filter.",
+    expect(screen.getByText("No items match this filter.")).toHaveAttribute(
+      "role",
+      "status",
     );
     expect(
       screen.queryByRole("button", { name: "Open Second item" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("makes a filtered direct-item view inspection only", async () => {
+    const onSplitNote = vi.fn();
+    const onMoveOccurrence = vi.fn();
+    const onRemoveOccurrence = vi.fn();
+    const emptyMatchingNote = noteOccurrence(
+      "occ-empty",
+      "Matching empty note",
+      "77777777-7777-4777-8777-777777777777",
+    );
+    if (emptyMatchingNote.target.content.kind !== "note_body") {
+      throw new Error("Expected a note occurrence.");
+    }
+    emptyMatchingNote.target.content.bodyPmJson = { type: "paragraph" };
+    renderEditor(
+      [
+        noteOccurrence("occ-note", "Matching note"),
+        emptyMatchingNote,
+        resourceOccurrence("occ-media", "Matching paper"),
+      ],
+      {
+        rowFilterQuery: "matching",
+        onSplitNote,
+        onMoveOccurrence,
+        onRemoveOccurrence,
+      },
+    );
+
+    expect(
+      screen.getByText(
+        "Filtered view is inspection only — clear Filter to edit.",
+      ),
+    ).toHaveAttribute("role", "status");
+    expect(
+      screen.getByRole("textbox", { name: "Edit note 1" }),
+    ).toHaveAttribute("contenteditable", "false");
+    expect(
+      screen.getByRole("button", { name: "Open Matching paper" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Actions for Matching paper" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Add a note" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Add item" }),
+    ).not.toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("textbox", { name: "Edit note 1" }),
+    );
+    await userEvent.keyboard("{Enter}{Alt>}{ArrowDown}{/Alt}");
+    await userEvent.click(
+      screen.getByRole("textbox", { name: "Edit note 2" }),
+    );
+    await userEvent.keyboard("{Backspace}");
+    expect(onSplitNote).not.toHaveBeenCalled();
+    expect(onMoveOccurrence).not.toHaveBeenCalled();
+    expect(onRemoveOccurrence).not.toHaveBeenCalled();
   });
 
   it("forks only a Shift pointer activation", () => {
@@ -275,10 +337,7 @@ function noteOccurrence(
   return {
     occurrenceId,
     target: {
-      item: resourceItem(
-        `note_block:${noteId}`,
-        "First note",
-      ),
+      item: resourceItem(`note_block:${noteId}`, "First note"),
       content: {
         kind: "note_body",
         bodyPmJson: {
@@ -298,10 +357,7 @@ function resourceOccurrence(
   return {
     occurrenceId,
     target: {
-      item: resourceItem(
-        "media:33333333-3333-4333-8333-333333333333",
-        label,
-      ),
+      item: resourceItem("media:33333333-3333-4333-8333-333333333333", label),
       content: { kind: "resource_summary" },
     },
   };
@@ -309,7 +365,8 @@ function resourceOccurrence(
 
 function resourceItem(ref: string, label: string): ResourceItem {
   const parsed = parseResourceRef(ref);
-  if (parsed === null) throw new TypeError("test resource ref must be canonical");
+  if (parsed === null)
+    throw new TypeError("test resource ref must be canonical");
   return {
     ref,
     scheme: parsed.scheme,

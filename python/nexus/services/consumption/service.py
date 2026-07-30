@@ -959,7 +959,7 @@ def set_podcast_episode_states_in_txn(
     media_ids: list[UUID],
     state: Literal["Finished", "Unread"],
 ) -> int:
-    """Apply an already-resolved Podcast query selection in the caller's txn."""
+    """Apply already-resolved Podcast episode IDs in the caller's transaction."""
     normalized_ids = _dedupe(media_ids)
     if not normalized_ids:
         return 0

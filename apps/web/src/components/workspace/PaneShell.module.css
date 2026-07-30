@@ -47,6 +47,22 @@
   border-bottom: 1px solid var(--edge-subtle);
 }
 
+.searchActionIcon {
+  position: relative;
+  display: inline-flex;
+}
+
+.searchActionMarker {
+  position: absolute;
+  top: calc(-1 * var(--stroke-hairline));
+  right: calc(-1 * var(--stroke-hairline));
+  width: calc(var(--space-1) + 2 * var(--stroke-hairline));
+  height: calc(var(--space-1) + 2 * var(--stroke-hairline));
+  border: var(--stroke-hairline) solid var(--surface-canvas);
+  border-radius: 50%;
+  background: var(--accent);
+}
+
 .body {
   min-width: 0;
   min-height: 0;

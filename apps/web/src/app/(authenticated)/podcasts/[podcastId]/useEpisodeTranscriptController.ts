@@ -22,7 +22,6 @@ interface UseEpisodeTranscriptControllerArgs {
   podcastId: string;
   selection: {
     state: "all" | "unplayed" | "in_progress" | "played";
-    query: { kind: "Absent" } | { kind: "Present"; value: string };
   };
   episodes: PodcastEpisodeMedia[];
   setEpisodes: Dispatch<SetStateAction<PodcastEpisodeMedia[]>>;

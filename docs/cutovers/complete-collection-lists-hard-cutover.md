@@ -2,6 +2,13 @@
 
 Status: IMPLEMENTED — validated 2026-07-29; deployment pending.
 
+> **Pane Filter update (2026-07-29):**
+> [`collection-pane-search-filter-sort-hard-cutover.md`](collection-pane-search-filter-sort-hard-cutover.md)
+> replaces Podcast subscription/episode `q` identities and predicates,
+> `PodcastEpisodeSelection.query`, query-based folios, and “matching” command
+> copy. Exhaustive loading, revision fencing, state/sort identity, and
+> server-resolved command selection remain authoritative here.
+
 Type: hard cutover. No flag, legacy path, fallback, dual schema, offset
 compatibility, old-cursor decoder, or backward compatibility.
 
