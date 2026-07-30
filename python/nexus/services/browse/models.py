@@ -174,6 +174,10 @@ _TARGET_KEYS = {
 }
 
 
+def _reject_json_constant(_: str) -> object:
+    raise ValueError("non-finite JSON literal")
+
+
 def _canonical_json(value: object) -> bytes:
     return json.dumps(
         value,
@@ -194,10 +198,7 @@ def seal_target(target: DiscoveryTarget) -> DiscoveryTargetHandle:
 def unseal_target(handle: str) -> DiscoveryTarget:
     payload = unseal_discovery_target(handle)
     try:
-        raw = json.loads(
-            payload,
-            parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()),
-        )
+        raw = json.loads(payload, parse_constant=_reject_json_constant)
         if (
             not isinstance(raw, dict)
             or not isinstance(raw.get("kind"), str)

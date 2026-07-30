@@ -5,7 +5,6 @@ import MediaImage from "@/components/ui/MediaImage";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import Button from "@/components/ui/Button";
 import YouTubeEmbedFrame, {
-  buildYoutubeEmbedSrc,
   isAllowedYoutubeEmbedUrl,
 } from "@/components/media/YouTubeEmbedFrame";
 import {
@@ -295,13 +294,12 @@ export default function TranscriptPlaybackPanel({
   }, [descriptionHtml, descriptionText, mediaKind]);
 
   const safeEmbedUrl = resolveSafeVideoEmbedUrl(playbackSource);
-  const iframeSrc = safeEmbedUrl
-    ? buildYoutubeEmbedSrc(safeEmbedUrl, videoSeekTargetMs)
-    : null;
   const fallbackSourceUrl = playbackSource?.source_url || canonicalSourceUrl;
   const playerUnavailable =
     mediaKind === "video" &&
-    (!playbackSource || playbackSource.kind !== "external_video" || !iframeSrc);
+    (!playbackSource ||
+      playbackSource.kind !== "external_video" ||
+      !safeEmbedUrl);
   const showSourceFallbackAction =
     Boolean(fallbackSourceUrl) &&
     (mediaKind === "video" || playbackError || playerUnavailable);
@@ -318,7 +316,7 @@ export default function TranscriptPlaybackPanel({
 
   useEffect(() => {
     const iframe = iframeRef.current;
-    if (!viewport.hydrated || !iframe || mediaKind !== "video" || !iframeSrc) {
+    if (!viewport.hydrated || !iframe || mediaKind !== "video" || !safeEmbedUrl) {
       return;
     }
     const recorder = activityRecorder();
@@ -363,7 +361,7 @@ export default function TranscriptPlaybackPanel({
       unregister();
     };
   }, [
-    iframeSrc,
+    safeEmbedUrl,
     mediaId,
     mediaKind,
     paneInstance,
@@ -440,10 +438,10 @@ export default function TranscriptPlaybackPanel({
               ) : null}
             </div>
           </div>
-        ) : mediaKind === "video" && iframeSrc ? (
+        ) : mediaKind === "video" && safeEmbedUrl ? (
           <YouTubeEmbedFrame
             ref={iframeRef}
-            embedUrl={safeEmbedUrl!}
+            embedUrl={safeEmbedUrl}
             seekTargetMs={videoSeekTargetMs}
             className={styles.playerFrame}
             onError={() => {

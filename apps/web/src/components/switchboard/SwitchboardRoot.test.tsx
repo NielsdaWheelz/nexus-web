@@ -73,6 +73,7 @@ describe("SwitchboardRoot", () => {
     for (const label of [
       "Lectern",
       "Libraries",
+      "Browse",
       "Podcasts",
       "Chats",
       "Notes",
@@ -81,7 +82,6 @@ describe("SwitchboardRoot", () => {
       "Chat",
       "Library",
       "Import",
-      "Podcast",
     ]) {
       expect(screen.getByRole("button", { name: label })).toBeVisible();
     }

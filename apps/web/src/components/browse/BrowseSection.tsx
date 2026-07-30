@@ -83,7 +83,11 @@ function restoreFailure(failure: BrowseSectionFailureSnapshot): ApiError {
   );
 }
 
-function failureMessage(error: ApiError): string {
+function assertNever(value: never): never {
+  throw new Error(`Unhandled browse section failure: ${JSON.stringify(value)}`);
+}
+
+function browseSectionErrorMessage(error: ApiError): string {
   if (error.code === "E_BROWSE_REQUEST_INTERRUPTED") return "Search paused";
   if (error.code === "E_NETWORK") return "Connection lost";
   const failure = decodeBrowseSectionFailure(error);
@@ -98,6 +102,8 @@ function failureMessage(error: ApiError): string {
       return failure.resetAt.kind === "Present"
         ? `Quota exhausted until ${new Date(failure.resetAt.value).toLocaleTimeString()}`
         : "Quota exhausted";
+    default:
+      return assertNever(failure);
   }
 }
 
@@ -272,7 +278,7 @@ export default function BrowseSection({
     }
     statusRow = (
       <div className={styles.statusRow}>
-        <span>{failureMessage(error)}</span>
+        <span>{browseSectionErrorMessage(error)}</span>
         <Button size="sm" variant="secondary" onClick={pagination.retry}>
           Retry
         </Button>
@@ -294,7 +300,7 @@ export default function BrowseSection({
         surface={false}
         rowActionsAvailable={false}
       />
-      {pagination.status === "ready" && pagination.hasMore ? (
+      {pagination.status === "ready" && pagination.hasMore && !pagination.error ? (
         <div className={styles.continuation}>
           <Button
             size="sm"

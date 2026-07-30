@@ -9,6 +9,7 @@ import {
   CSP_REPORT_PATH,
   generateNonce,
 } from "./csp";
+import { YOUTUBE_EMBED_ORIGINS } from "./youtube";
 
 const PROD_OPTS = {
   nonce: "TESTNONCE",
@@ -46,6 +47,19 @@ describe("CSP_DIRECTIVES (source of truth)", () => {
     expect(CSP_DIRECTIVES["default-src"]).toEqual(["'self'"]);
   });
 
+  it("pins frame-src to exactly the two YouTube embed origins (no widening)", () => {
+    expect(CSP_DIRECTIVES["frame-src"]).toEqual([
+      "https://www.youtube.com",
+      "https://www.youtube-nocookie.com",
+    ]);
+    expect(CSP_DIRECTIVES["frame-src"]).toEqual(YOUTUBE_EMBED_ORIGINS);
+  });
+
+  it("pins img-src and media-src to their exact minimal sets (no widening)", () => {
+    expect(CSP_DIRECTIVES["img-src"]).toEqual(["'self'", "data:"]);
+    expect(CSP_DIRECTIVES["media-src"]).toEqual(["'self'", "https:"]);
+  });
+
   it("wires CSP reporting", () => {
     expect(CSP_DIRECTIVES["report-to"]).toEqual(["csp"]);
     expect(CSP_DIRECTIVES["report-uri"]).toEqual([CSP_REPORT_PATH]);
@@ -66,6 +80,11 @@ describe("buildContentSecurityPolicy", () => {
       "https://acc.r2.cloudflarestorage.com",
     ]);
     expect(directives.get("media-src")).toEqual(["'self'", "https:"]);
+    expect(directives.get("img-src")).toEqual(["'self'", "data:"]);
+    expect(directives.get("frame-src")).toEqual([
+      "https://www.youtube.com",
+      "https://www.youtube-nocookie.com",
+    ]);
     expect(directives.get("base-uri")).toEqual(["'none'"]);
     expect(directives.has("upgrade-insecure-requests")).toBe(true);
     expect(directives.get("report-to")).toEqual(["csp"]);

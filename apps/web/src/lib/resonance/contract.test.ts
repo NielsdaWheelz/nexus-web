@@ -143,7 +143,7 @@ describe("Resonance slate contract", () => {
   it("rejects unknown keys, invalid refs, duplicate refs, and more than ten", () => {
     expect(() =>
       decodeSlateEnvelope({ data: { items: [], legacy: true } }),
-    ).toThrow(/expected keys/);
+    ).toThrow(/must contain exactly/);
     expect(() =>
       decodeSlateEnvelope({
         data: { items: [wireItem(MEDIA_A), wireItem(MEDIA_A)] },

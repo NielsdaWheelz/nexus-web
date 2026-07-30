@@ -34,7 +34,10 @@ import {
   type BrowseQuery,
   type BrowseQueryKind,
 } from "@/lib/browse/query";
-import { browseSourceLabel } from "@/lib/collections/presenters/browse";
+import {
+  browseKindLabel,
+  browseSourceLabel,
+} from "@/lib/collections/presenters/browse";
 import { createBrowseRequestGate } from "@/lib/browse/requestGate";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import styles from "./browse.module.css";
@@ -123,15 +126,7 @@ function visibleSections(query: BrowseQuery): readonly BrowseSectionIdentity[] {
 }
 
 function sectionLabel(section: BrowseSectionIdentity): string {
-  const kind =
-    section.kind === "Pdf"
-      ? "PDF"
-      : section.kind === "Epub"
-        ? "EPUB"
-        : section.kind === "WebArticle"
-          ? "Web Article"
-          : section.kind;
-  return `${kind} · ${browseSourceLabel(section.source)}`;
+  return `${browseKindLabel(section.kind)} · ${browseSourceLabel(section.source)}`;
 }
 
 export default function BrowsePaneBody() {
@@ -349,13 +344,7 @@ export default function BrowsePaneBody() {
             aria-pressed={query.kind === kind}
             onClick={() => replaceQuery(withBrowseKind(query, kind))}
           >
-            {kind === "Pdf"
-              ? "PDF"
-              : kind === "Epub"
-                ? "EPUB"
-                : kind === "WebArticle"
-                  ? "Web Article"
-                  : kind}
+            {kind === "All" ? "All" : browseKindLabel(kind)}
           </Button>
         ))}
       </div>

@@ -8082,7 +8082,7 @@ class TestPodcastOpmlImportExport:
         second_sub = _subscribe(auth_client, user_id, second_payload)
 
         unsubscribe_response = auth_client.delete(
-            f"/podcasts/subscriptions/{second_sub['podcast_id']}",
+            f"/podcasts/subscriptions/{second_sub['podcastId']}",
             headers={
                 **auth_headers(user_id),
                 "Idempotency-Key": f"unsubscribe-opml-{uuid4()}",

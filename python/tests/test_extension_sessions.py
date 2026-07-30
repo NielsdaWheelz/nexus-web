@@ -411,7 +411,7 @@ class TestCaptureAuthorStepGatesReady:
 
         monkeypatch.setattr(
             media_source_ingest_module,
-            "replace_source_observed_role_slices",
+            "observe_contributors_under_source_fence",
             _fail_author_step,
         )
         first_result = _run_attempt_result(direct_db, media_id, user_id)
@@ -431,14 +431,14 @@ class TestCaptureAuthorStepGatesReady:
             auth_client, direct_db, monkeypatch, slug="author-step-crash-resume"
         )
 
-        real_replace = media_source_ingest_module.replace_source_observed_role_slices
+        real_replace = media_source_ingest_module.observe_contributors_under_source_fence
 
         def _crash_in_author_step(**kwargs) -> None:
             raise _SimulatedCrash
 
         monkeypatch.setattr(
             media_source_ingest_module,
-            "replace_source_observed_role_slices",
+            "observe_contributors_under_source_fence",
             _crash_in_author_step,
         )
         with pytest.raises(_SimulatedCrash):
@@ -477,7 +477,7 @@ class TestCaptureAuthorStepGatesReady:
             db.commit()
         monkeypatch.setattr(
             media_source_ingest_module,
-            "replace_source_observed_role_slices",
+            "observe_contributors_under_source_fence",
             real_replace,
         )
         resume_result = _run_attempt_result(direct_db, media_id, user_id)

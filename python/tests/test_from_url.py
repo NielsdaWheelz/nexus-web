@@ -1332,13 +1332,17 @@ class TestFromUrlSuccess:
         assert attempt_row == ("failed", "E_INTERNAL")
         assert job_count == 0
 
-    def test_youtube_transcript_failure_fails_saved_source_attempt(
+    def test_youtube_acquisition_publishes_playable_media_without_transcript(
         self,
         auth_client,
         direct_db: DirectSessionManager,
         monkeypatch,
     ):
-        """A YouTube provider failure should fail the saved item, not lose it."""
+        """YouTube Add publishes playable Media; captions require explicit Transcribe.
+
+        Acquisition no longer fetches captions, so absent captions never fail the
+        saved item: the video succeeds as playable Media with no transcript state.
+        """
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
         video_id = uuid4().hex[:11]
@@ -1346,14 +1350,6 @@ class TestFromUrlSuccess:
         monkeypatch.setattr(
             "nexus.services.youtube_video_ingest.fetch_youtube_metadata",
             lambda _provider_id: None,
-        )
-        monkeypatch.setattr(
-            "nexus.services.youtube_video_ingest.fetch_youtube_transcript",
-            lambda _provider_id: {
-                "status": "failed",
-                "error_code": ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value,
-                "error_message": "Transcript unavailable",
-            },
         )
 
         _, media_id = _accept_source_url(
@@ -1365,8 +1361,8 @@ class TestFromUrlSuccess:
         )
         result = _run_source_attempt_for_media(direct_db, media_id)
 
-        assert result["status"] == "failed"
-        assert result["error_code"] == ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value
+        assert result["status"] == "success"
+        assert result["metadata_enrichment"] is False
 
         with direct_db.session() as session:
             media_row = session.execute(
@@ -1402,18 +1398,10 @@ class TestFromUrlSuccess:
                 {"media_id": media_id},
             ).fetchone()
 
-        assert media_row == (
-            "failed",
-            "transcribe",
-            ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value,
-        )
-        assert attempt_row == ("failed", ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value)
-        assert transcript_row == (
-            "unavailable",
-            "none",
-            "failed",
-            ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value,
-        )
+        assert media_row == ("ready_for_reading", None, None)
+        assert attempt_row == ("succeeded", None)
+        # No transcript state is started during acquisition (NotRequested == absent).
+        assert transcript_row is None
 
 
 class TestFromUrlXPost:
@@ -3060,7 +3048,7 @@ class TestFromUrlXPost:
         direct_db.register_cleanup("document_embeds", "media_id", media_id)
         direct_db.register_cleanup("resource_edges", "source_id", media_id)
 
-        real_apply = source_ingest_module.replace_source_observed_role_slices
+        real_apply = source_ingest_module.observe_contributors_under_source_fence
 
         class _SimulatedCrash(BaseException):
             pass
@@ -3070,7 +3058,7 @@ class TestFromUrlXPost:
 
         monkeypatch.setattr(
             source_ingest_module,
-            "replace_source_observed_role_slices",
+            "observe_contributors_under_source_fence",
             _crash_before_author_ops,
         )
         with pytest.raises(_SimulatedCrash):
@@ -3097,7 +3085,7 @@ class TestFromUrlXPost:
 
         monkeypatch.setattr(
             source_ingest_module,
-            "replace_source_observed_role_slices",
+            "observe_contributors_under_source_fence",
             real_apply,
         )
         with direct_db.session() as session:

@@ -905,7 +905,7 @@ def test_terminal_syncs_additional_x_child_into_resolving_generic_parent(
 
         monkeypatch.setattr(
             media_source_ingest,
-            "replace_source_observed_role_slices",
+            "observe_contributors_under_source_fence",
             fail_observation,
         )
 

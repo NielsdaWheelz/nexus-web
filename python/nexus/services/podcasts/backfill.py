@@ -27,10 +27,7 @@ from nexus.jobs.queue import (
 from ._normalize import parse_iso_datetime
 from .episode_identity import aliases_from_episode
 from .feed import fetch_feed_backfill_page
-from .ingest import (
-    lock_subscription_ingest_parent_in_current_transaction,
-    sync_subscription_ingest,
-)
+from .ingest import sync_subscription_ingest
 
 BACKFILL_JOB_KIND = "podcast_backfill_subscription"
 BACKFILL_JOB_LEASE_SECONDS = 900
@@ -158,9 +155,15 @@ def run_backfill_step(
     if int(preflight["step_no"]) > expected_step_no:
         return {"status": "AlreadyApplied"}
     if int(preflight["step_no"]) != expected_step_no:
+        # justify-service-invariant-check: a job is only enqueued after the fence
+        # advances to its step, so its expected step never exceeds the durable one.
+        # justify-defect: a job naming a step ahead of the fence is corruption.
         raise RuntimeError("Podcast backfill job names a future step")
     current_cursor = _coerce_cursor(preflight["cursor"])
     if cursor_digest(current_cursor) != expected_digest:
+        # justify-service-invariant-check: the cursor and its step are written in one
+        # fenced update, so a step-matched digest must equal the enqueued digest.
+        # justify-defect: a step-matched digest mismatch is fence corruption.
         raise RuntimeError("Podcast backfill cursor fence mismatch")
 
     fetched = fetch_feed_backfill_page(
@@ -217,8 +220,14 @@ def run_backfill_step(
             if actual_step_no > expected_step_no:
                 return {"status": "AlreadyApplied"}
             if actual_step_no < expected_step_no:
+                # justify-service-invariant-check: the locked fence row only advances
+                # forward, never behind a job that named its step.
+                # justify-defect: a job naming a step ahead of the locked fence is corruption.
                 raise RuntimeError("Podcast backfill job names a future step")
             if cursor_digest(actual_cursor) != expected_digest:
+                # justify-service-invariant-check: step and cursor advance in one locked
+                # update, so a step-matched digest must equal the enqueued digest.
+                # justify-defect: a step-matched digest mismatch is fence corruption.
                 raise RuntimeError("Podcast backfill cursor fence mismatch")
             if any(
                 row[field] is not None
@@ -240,6 +249,9 @@ def run_backfill_step(
 
             now = db.scalar(text("SELECT transaction_timestamp()"))
             if not isinstance(now, datetime):
+                # justify-service-invariant-check: transaction_timestamp() always returns
+                # the open transaction's start time as a datetime.
+                # justify-defect: a missing transaction timestamp means the session is broken.
                 raise AssertionError("database transaction timestamp is unavailable")
             podcast_id = UUID(str(row["podcast_id"]))
             subscription_id = UUID(str(row["subscription_id"]))
@@ -262,11 +274,9 @@ def run_backfill_step(
                 is None
             ):
                 return {"status": "StaleOrUnsubscribed"}
-            lock_subscription_ingest_parent_in_current_transaction(
-                db,
-                podcast_id=podcast_id,
-                selected_episodes=selected,
-            )
+            # sync_subscription_ingest re-acquires the identical candidate-alias
+            # locks (in canonical order) plus the parent Podcast row FOR UPDATE as
+            # its first action, so no separate parent-alias lock is taken here.
             result = sync_subscription_ingest(
                 db=db,
                 viewer_id=UUID(str(row["user_id"])),
@@ -314,6 +324,9 @@ def run_backfill_step(
                 },
             )
             if not isinstance(updated, CursorResult) or updated.rowcount != 1:
+                # justify-service-invariant-check: the backfill row is held FOR UPDATE at
+                # the matched step for the life of this transaction.
+                # justify-defect: the fenced update must strike exactly the locked row.
                 raise AssertionError("locked Podcast backfill fence update affected no row")
             if next_cursor is not None:
                 enqueue_backfill_step_in_current_transaction(
@@ -395,6 +408,8 @@ def _coerce_cursor(value: object) -> dict[str, object] | None:
     if value is None:
         return None
     if not isinstance(value, dict):
+        # justify-service-invariant-check: the cursor column is a jsonb object or NULL.
+        # justify-defect: a non-object cursor is schema corruption.
         raise RuntimeError("Podcast backfill cursor is not an object")
     return {str(key): item for key, item in value.items()}
 

@@ -12,6 +12,7 @@ import {
 } from "@/lib/api/client";
 import type { DiscoveryTargetHandle } from "@/lib/browse/contract";
 import { isAbortError } from "@/lib/errors";
+import type { Presence } from "@/lib/api/presence";
 import {
   createLibrary,
   searchWritableLibraryDestinations,
@@ -36,18 +37,15 @@ export interface AcquisitionSuccess {
 export interface AcquisitionCommand {
   readonly namedLibraryIds: readonly string[];
   readonly idempotencyKey: string;
-  readonly replacementConfirmation:
-    | { readonly kind: "Absent" }
-    | {
-        readonly kind: "Present";
-        readonly value: { readonly conflictFingerprint: string };
-      };
+  readonly replacementConfirmation: Presence<{
+    readonly conflictFingerprint: string;
+  }>;
 }
 
 interface FrozenCommand extends AcquisitionCommand {
   readonly previewPosition: {
     readonly positionMs: number;
-    readonly durationMs: import("@/lib/api/presence").Presence<number>;
+    readonly durationMs: Presence<number>;
   } | null;
 }
 
@@ -293,7 +291,14 @@ export default function AcquisitionControl(props: AcquisitionControlProps) {
               body: JSON.stringify(command.previewPosition),
             },
           );
-        } catch {
+        } catch (error) {
+          if (handleUnauthenticatedApiError(error)) return;
+          // justify-ignore-error: preview-position transfer is best-effort per
+          // spec §5.2 — the Add stays committed. Rethrow only genuine same-system
+          // defects (real server bugs must fail loud); every other failure
+          // (transport, timeout, abort, expected API error) is non-fatal feedback
+          // and the canonical replace still proceeds.
+          if (isSameSystemApiDefect(error)) throw error;
           feedback.show({
             severity: "warning",
             title: "Added without preview position",
@@ -340,13 +345,16 @@ export default function AcquisitionControl(props: AcquisitionControlProps) {
         return;
       }
       if (dispatched && isDeliveryUnknown(error)) {
+        // Release the replacement dialog so the primary button — which reruns the
+        // frozen confirmed command with its original mutation id — is reachable
+        // instead of being trapped behind the modal backdrop.
+        setConflict(null);
         setFailure({
           kind: "DeliveryUnknown",
           message: "Delivery unknown",
         });
         return;
       }
-      if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
       throw error;
     } finally {
       setBusy(false);
@@ -484,16 +492,27 @@ export default function AcquisitionControl(props: AcquisitionControlProps) {
           setFrozen(null);
         }}
         onConfirm={() => {
-          if (!conflict) return;
-          const base = frozen ?? freeze({ kind: "Absent" });
-          void run({
-            ...base,
-            idempotencyKey: mutationId(),
-            replacementConfirmation: {
-              kind: "Present",
-              value: { conflictFingerprint: conflict.fingerprint },
-            },
-          });
+          if (!conflict || frozen === null) return;
+          // Confirming a conflict is one logical command: mint its mutation id
+          // once (fresh vs. the pre-conflict attempt), then reuse it on every
+          // transport retry of the same fingerprint so a delivery-unknown replay
+          // returns the frozen response instead of double-applying the removal.
+          const retryingConfirmed =
+            frozen.replacementConfirmation.kind === "Present" &&
+            frozen.replacementConfirmation.value.conflictFingerprint ===
+              conflict.fingerprint;
+          void run(
+            retryingConfirmed
+              ? frozen
+              : {
+                  ...frozen,
+                  idempotencyKey: mutationId(),
+                  replacementConfirmation: {
+                    kind: "Present",
+                    value: { conflictFingerprint: conflict.fingerprint },
+                  },
+                },
+          );
         }}
       />
     </div>

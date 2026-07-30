@@ -1,4 +1,11 @@
-"""YouTube video transcript materialization service."""
+"""YouTube video acquisition service.
+
+Fetches YouTube Data API metadata and publishes playable Media (canonical watch
+URL + provider identity + metadata enrichment). It performs no transcript work:
+captions materialize only through the separate explicit Transcribe command
+(``request_media_transcript_for_viewer``), which imports public captions with
+origin ``Imported``.
+"""
 
 from __future__ import annotations
 

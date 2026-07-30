@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from typing import assert_never
+from urllib.parse import quote
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 from web_search_tool.types import WebSearchProvider
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
@@ -28,7 +31,8 @@ from nexus.schemas.browse import (
     WebArticlePreview,
     WebArticlePreviewFacts,
 )
-from nexus.schemas.presence import absent, present
+from nexus.schemas.contributors import ContributorCreditOut
+from nexus.schemas.presence import Presence, absent, present
 from nexus.services.browse import brave, gutenberg, nexus, podcast_index, youtube
 from nexus.services.browse.models import (
     BraveWebArticleTarget,
@@ -49,6 +53,7 @@ from nexus.services.podcasts.episode_identity import (
 )
 from nexus.services.podcasts.subscriptions_query import active_subscription_rows_sql
 from nexus.services.sealed_handles import DiscoveryTargetHandle
+from nexus.web_paths import media_image_url
 
 
 async def search_browse(
@@ -60,13 +65,15 @@ async def search_browse(
 ) -> BrowsePage:
     match query.source:
         case BrowseSource.Nexus:
-            items, next_cursor = nexus.search(
+            items, next_cursor = await run_in_threadpool(
+                nexus.search,
                 db,
                 viewer_id=viewer_id,
                 query=query,
             )
         case BrowseSource.ProjectGutenberg:
-            items, next_cursor = gutenberg.search(
+            items, next_cursor = await run_in_threadpool(
+                gutenberg.search,
                 db,
                 viewer_id=viewer_id,
                 query=query,
@@ -77,16 +84,23 @@ async def search_browse(
                 query=query,
             )
         case BrowseSource.YouTube:
-            items, next_cursor = youtube.search(
+            items, next_cursor = await run_in_threadpool(
+                youtube.search,
                 viewer_id=viewer_id,
                 query=query,
             )
         case BrowseSource.PodcastIndex:
-            items, next_cursor = podcast_index.search(
+            items, next_cursor = await run_in_threadpool(
+                podcast_index.search,
                 viewer_id=viewer_id,
                 query=query,
             )
-    items = [_with_owned_resolution(db, viewer_id=viewer_id, candidate=item) for item in items]
+    items = await run_in_threadpool(
+        _resolve_owned,
+        db,
+        viewer_id=viewer_id,
+        candidates=items,
+    )
     return BrowsePage(
         query=query.query,
         kind=query.kind,
@@ -109,14 +123,14 @@ def preview_browse(
             ApiErrorCode.E_INVALID_DISCOVERY_TARGET,
             "Invalid discovery target",
         )
-    resolution = _preview_resolution(
-        db,
-        viewer_id=viewer_id,
-        handle=query.target,
-        target=target,
-    )
     match target:
         case ProjectGutenbergEpubTarget():
+            resolution = _preview_resolution(
+                db,
+                viewer_id=viewer_id,
+                handle=query.target,
+                target=target,
+            )
             book = gutenberg.preview(
                 db,
                 viewer_id=viewer_id,
@@ -164,6 +178,12 @@ def preview_browse(
                 ),
             )
         case YouTubeVideoTarget():
+            resolution = _preview_resolution(
+                db,
+                viewer_id=viewer_id,
+                handle=query.target,
+                target=target,
+            )
             video = youtube.preview(target.video_ref)
             return VideoPreview(
                 target=query.target,
@@ -183,6 +203,12 @@ def preview_browse(
                 ),
             )
         case PodcastIndexPodcastTarget():
+            resolution = _preview_resolution(
+                db,
+                viewer_id=viewer_id,
+                handle=query.target,
+                target=target,
+            )
             podcast = podcast_index.resolve_podcast(target.podcast_ref)
             episode_items, next_cursor = podcast_index.episode_page(
                 viewer_id=viewer_id,
@@ -215,6 +241,12 @@ def preview_browse(
                 ),
             )
         case PodcastIndexEpisodeTarget():
+            resolution = _preview_resolution(
+                db,
+                viewer_id=viewer_id,
+                handle=query.target,
+                target=target,
+            )
             episode = podcast_index.resolve_episode(
                 podcast_ref=target.podcast_ref,
                 episode_ref=target.episode_ref,
@@ -253,6 +285,18 @@ def resolve_podcast_discovery_target(
                 ApiErrorCode.E_INVALID_DISCOVERY_TARGET,
                 "Discovery target is not a Podcast or Episode",
             )
+
+
+def _resolve_owned(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    candidates: list[BrowseCandidate],
+) -> list[BrowseCandidate]:
+    return [
+        _with_owned_resolution(db, viewer_id=viewer_id, candidate=candidate)
+        for candidate in candidates
+    ]
 
 
 def _with_owned_resolution(
@@ -358,6 +402,8 @@ def _owned_href(
                 episode_ref=target.episode_ref,
             )
             return None if media_id is None else f"/media/{media_id}"
+        case _:
+            assert_never(target)
 
 
 def _visible_media_by_urls(
@@ -393,9 +439,7 @@ def _visible_media_by_urls(
     )
 
 
-def _podcast_contributors(podcast: ResolvedPodcast):
-    from nexus.schemas.contributors import ContributorCreditOut
-
+def _podcast_contributors(podcast: ResolvedPodcast) -> list[ContributorCreditOut]:
     if podcast.author is None:
         return []
     return [
@@ -407,11 +451,7 @@ def _podcast_contributors(podcast: ResolvedPodcast):
     ]
 
 
-def _podcast_image(podcast: ResolvedPodcast):
-    from urllib.parse import quote
-
-    from nexus.web_paths import media_image_url
-
+def _podcast_image(podcast: ResolvedPodcast) -> Presence[str]:
     return (
         absent()
         if podcast.image_url is None

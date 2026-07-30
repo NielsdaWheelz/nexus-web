@@ -2,6 +2,7 @@ import { absent, present } from "@/lib/api/presence";
 import {
   browsePreviewHref,
   type BrowseCandidate,
+  type BrowseKind,
   type BrowseSource,
   type PreviewEpisodeItem,
 } from "@/lib/browse/contract";
@@ -19,6 +20,21 @@ export function browseSourceLabel(source: BrowseSource): string {
       return "YouTube";
     case "PodcastIndex":
       return "Podcast Index";
+  }
+}
+
+export function browseKindLabel(kind: BrowseKind): string {
+  switch (kind) {
+    case "Pdf":
+      return "PDF";
+    case "Epub":
+      return "EPUB";
+    case "WebArticle":
+      return "Web Article";
+    case "Video":
+      return "Video";
+    case "Podcast":
+      return "Podcast";
   }
 }
 

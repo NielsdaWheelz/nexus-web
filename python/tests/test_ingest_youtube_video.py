@@ -1,4 +1,9 @@
-"""Integration tests for YouTube video transcript ingestion."""
+"""Integration tests for YouTube video acquisition and explicit Transcribe.
+
+Acquisition publishes playable Media with metadata enrichment and performs no
+transcript work; captions materialize only through the explicit Transcribe
+command (``POST /media/{id}/transcript/request``) with origin ``Imported``.
+"""
 
 import importlib
 from uuid import UUID
@@ -59,12 +64,54 @@ def _run_latest_source_attempt(
         )
 
 
+def _assert_no_transcript_artifacts(direct_db: DirectSessionManager, media_id: UUID) -> None:
+    """Acquisition must leave transcript state NotRequested (absent) and empty."""
+    with direct_db.session() as session:
+        counts = session.execute(
+            text(
+                """
+                SELECT
+                    (SELECT COUNT(*) FROM media_transcript_states WHERE media_id = :media_id),
+                    (SELECT COUNT(*) FROM podcast_transcript_segments WHERE media_id = :media_id),
+                    (SELECT COUNT(*) FROM fragments WHERE media_id = :media_id)
+                """
+            ),
+            {"media_id": media_id},
+        ).one()
+    assert counts == (0, 0, 0), (
+        "acquisition must not create any transcript state, segments, or fragments; "
+        f"found media_transcript_states/segments/fragments = {tuple(counts)}"
+    )
+
+
+def _request_youtube_captions(auth_client, user_id: UUID, media_id: UUID) -> dict[str, object]:
+    """Drive the explicit Transcribe command that imports YouTube captions."""
+    response = auth_client.post(
+        f"/media/{media_id}/transcript/request",
+        json={"reason": "episode_open"},
+        headers=auth_headers(user_id),
+    )
+    assert response.status_code == 200, (
+        f"expected explicit Transcribe to import captions synchronously, got "
+        f"{response.status_code}: {response.text}"
+    )
+    return response.json()["data"]
+
+
 class TestIngestYoutubeVideo:
-    def test_transcript_success_persists_ordered_fragments_and_marks_readable(
+    def test_acquisition_publishes_playable_media_without_transcript(
         self, auth_client, direct_db: DirectSessionManager, monkeypatch
     ):
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
+
+        # Absent YouTube Data API metadata must not fail acquisition: the video is
+        # still published as playable Media.
+        monkeypatch.setattr(
+            _youtube_ingest_module(),
+            "fetch_youtube_metadata",
+            lambda _provider_id: None,
+        )
 
         create_response = auth_client.post(
             "/media/from_url",
@@ -76,123 +123,18 @@ class TestIngestYoutubeVideo:
 
         _register_youtube_media_cleanup(direct_db, media_id)
 
-        monkeypatch.setattr(
-            _youtube_ingest_module(),
-            "fetch_youtube_transcript",
-            lambda _provider_id: {
-                "status": "completed",
-                "segments": [
-                    {
-                        "t_start_ms": 4500,
-                        "t_end_ms": 5100,
-                        "text": "   second   segment ",
-                        "speaker_label": "",
-                    },
-                    {
-                        "t_start_ms": 1200,
-                        "t_end_ms": 2000,
-                        "text": "first segment",
-                        "speaker_label": "Host",
-                    },
-                ],
-            },
-        )
-
-        with direct_db.session() as session:
-            result = run_queued_source_attempt(
-                session,
-                media_id=media_id,
-                actor_user_id=user_id,
-            )
-        with direct_db.session() as session:
-            semantic_result = run_queued_transcript_semantic_reindex(
-                session,
-                media_id=media_id,
-            )
-
-        assert result["status"] == "success"
-        assert semantic_result["status"] == "completed"
-
-        fragments_response = auth_client.get(
-            f"/media/{media_id}/fragments", headers=auth_headers(user_id)
-        )
-        assert fragments_response.status_code == 200, (
-            f"expected transcript fragments to be readable, got {fragments_response.status_code}: "
-            f"{fragments_response.text}"
-        )
-        fragments = fragments_response.json()["data"]
-        assert len(fragments) == 2
-        assert fragments[0]["canonical_text"] == "first segment"
-        assert fragments[1]["canonical_text"] == "second segment"
-        assert [frag["t_start_ms"] for frag in fragments] == [1200, 4500]
-
-        media_response = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
-        assert media_response.status_code == 200
-        media = media_response.json()["data"]
-        assert media["processing_status"] == "ready_for_reading"
-        assert media["retrieval_status"] == "ready"
-        assert media["last_error_code"] is None
-        caps = media["capabilities"]
-        assert caps["can_play"] is True
-        assert caps["can_read"] is True
-        assert caps["can_highlight"] is True
-        assert caps["can_quote"] is True
-        assert caps["can_search"] is True
-
-        with direct_db.session() as session:
-            artifact_counts = session.execute(
-                text(
-                    """
-                    SELECT
-                        (SELECT COUNT(*) FROM podcast_transcript_segments WHERE media_id = :media_id),
-                        (SELECT COUNT(*) FROM content_chunks
-                         WHERE owner_kind = 'media' AND owner_id = :media_id),
-                        (SELECT COUNT(*) FROM evidence_spans
-                         WHERE owner_kind = 'media' AND owner_id = :media_id)
-                    """
-                ),
-                {"media_id": media_id},
-            ).one()
-        assert artifact_counts[0] == 2
-        assert artifact_counts[1] > 0
-        assert artifact_counts[2] == artifact_counts[1]
-
-    def test_transcript_unavailable_is_playback_only_and_terminal(
-        self, auth_client, direct_db: DirectSessionManager, monkeypatch
-    ):
-        user_id = create_test_user_id()
-        auth_client.get("/me", headers=auth_headers(user_id))
-
-        create_response = auth_client.post(
-            "/media/from_url",
-            json={"url": "https://youtu.be/dQw4w9WgXcQ"},
-            headers=auth_headers(user_id),
-        )
-        assert create_response.status_code == 202
-        media_id = UUID(create_response.json()["data"]["media_id"])
-
-        _register_youtube_media_cleanup(direct_db, media_id)
-
-        monkeypatch.setattr(
-            _youtube_ingest_module(),
-            "fetch_youtube_transcript",
-            lambda _provider_id: {
-                "status": "failed",
-                "error_code": "E_TRANSCRIPT_UNAVAILABLE",
-                "error_message": "Transcript unavailable",
-            },
-        )
-
         result = _run_latest_source_attempt(direct_db, media_id)
-
-        assert result["status"] == "failed"
-        assert result["error_code"] == "E_TRANSCRIPT_UNAVAILABLE"
+        assert result["status"] == "success"
+        assert result["metadata_enrichment"] is False
 
         media_response = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
         assert media_response.status_code == 200
         media = media_response.json()["data"]
-        assert media["processing_status"] == "failed"
-        assert media["last_error_code"] == "E_TRANSCRIPT_UNAVAILABLE"
+        # Playable-only: no transcript state was started during acquisition.
+        assert media["processing_status"] == "ready_for_reading"
+        assert media["last_error_code"] is None
+        assert media["transcript_state"] is None
+        assert media["transcript_origin"] == {"kind": "Absent"}
         caps = media["capabilities"]
         assert caps["can_play"] is True
         assert caps["can_read"] is False
@@ -200,21 +142,13 @@ class TestIngestYoutubeVideo:
         assert caps["can_quote"] is False
         assert caps["can_search"] is False
 
-    def test_transcript_success_persists_source_metadata_and_enqueues_enrichment(
+        _assert_no_transcript_artifacts(direct_db, media_id)
+
+    def test_acquisition_persists_metadata_and_enqueues_enrichment(
         self, auth_client, direct_db: DirectSessionManager, monkeypatch
     ):
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
-
-        create_response = auth_client.post(
-            "/media/from_url",
-            json={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"},
-            headers=auth_headers(user_id),
-        )
-        assert create_response.status_code == 202
-        media_id = UUID(create_response.json()["data"]["media_id"])
-
-        _register_youtube_media_cleanup(direct_db, media_id)
 
         monkeypatch.setattr(
             _youtube_ingest_module(),
@@ -227,25 +161,21 @@ class TestIngestYoutubeVideo:
                 "language": "en-US",
             },
         )
-        monkeypatch.setattr(
-            _youtube_ingest_module(),
-            "fetch_youtube_transcript",
-            lambda _provider_id: {
-                "status": "completed",
-                "segments": [
-                    {
-                        "t_start_ms": 0,
-                        "t_end_ms": 900,
-                        "text": "systems lecture transcript",
-                        "speaker_label": None,
-                    }
-                ],
-            },
+
+        create_response = auth_client.post(
+            "/media/from_url",
+            json={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"},
+            headers=auth_headers(user_id),
         )
+        assert create_response.status_code == 202
+        media_id = UUID(create_response.json()["data"]["media_id"])
+
+        _register_youtube_media_cleanup(direct_db, media_id)
 
         result = _run_latest_source_attempt(direct_db, media_id)
 
         assert result["status"] == "success"
+        assert result["metadata_enrichment"] is True
 
         with direct_db.session() as session:
             job_rows = [
@@ -265,7 +195,7 @@ class TestIngestYoutubeVideo:
         for job_id, _payload in job_rows:
             direct_db.register_cleanup("background_jobs", "id", job_id)
 
-        assert job_rows, "expected YouTube ingest to enqueue metadata enrichment"
+        assert job_rows, "expected YouTube acquisition to enqueue metadata enrichment"
         for _job_id, payload in job_rows:
             assert "force" not in payload, (
                 "automatic YouTube metadata enrichment must use the structured-overwrite "
@@ -283,11 +213,22 @@ class TestIngestYoutubeVideo:
         assert media["language"] == "en-US"
         assert [credit["credited_name"] for credit in media["contributors"]] == ["Nexus Channel"]
 
-    def test_ingest_is_idempotent_after_success_and_does_not_refetch_transcript(
+        # Enriched metadata is still transcript-free; captions require Transcribe.
+        assert media["transcript_state"] is None
+        assert media["transcript_origin"] == {"kind": "Absent"}
+        _assert_no_transcript_artifacts(direct_db, media_id)
+
+    def test_acquisition_is_idempotent_and_leaves_media_playable(
         self, auth_client, direct_db: DirectSessionManager, monkeypatch
     ):
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
+
+        monkeypatch.setattr(
+            _youtube_ingest_module(),
+            "fetch_youtube_metadata",
+            lambda _provider_id: None,
+        )
 
         create_response = auth_client.post(
             "/media/from_url",
@@ -298,28 +239,6 @@ class TestIngestYoutubeVideo:
         media_id = UUID(create_response.json()["data"]["media_id"])
 
         _register_youtube_media_cleanup(direct_db, media_id)
-
-        calls = {"count": 0}
-
-        def _fake_transcript(_provider_id: str):
-            calls["count"] += 1
-            return {
-                "status": "completed",
-                "segments": [
-                    {
-                        "t_start_ms": 0,
-                        "t_end_ms": 900,
-                        "text": "single segment",
-                        "speaker_label": None,
-                    }
-                ],
-            }
-
-        monkeypatch.setattr(
-            _youtube_ingest_module(),
-            "fetch_youtube_transcript",
-            _fake_transcript,
-        )
 
         first = _run_latest_source_attempt(direct_db, media_id)
         duplicate_response = auth_client.post(
@@ -331,20 +250,21 @@ class TestIngestYoutubeVideo:
         assert first["status"] == "success"
         assert duplicate_response.status_code == 202
         assert UUID(duplicate_response.json()["data"]["media_id"]) == media_id
-        assert calls["count"] == 1, f"expected one transcript fetch, got {calls['count']}"
+        # The dedupe short-circuit does not enqueue a second source attempt.
+        assert duplicate_response.json()["data"]["ingest_enqueued"] is False
+        _assert_no_transcript_artifacts(direct_db, media_id)
 
-    def test_reingest_replace_strategy_preserves_highlight_and_replaces_fragments(
+    def test_explicit_transcribe_imports_youtube_captions_with_imported_origin(
         self, auth_client, direct_db: DirectSessionManager, monkeypatch
     ):
-        # Highlight Durability (invariant 9): a YouTube re-ingest through
-        # `write_current_transcript` replaces the media's fragments wholesale
-        # but never deletes highlights. The pre-existing highlight survives
-        # with a stale locator cache; because the new transcript's text no
-        # longer contains the authored quote, media-wide reads return it as
-        # visibly unresolved (null locator) rather than deleting it or
-        # painting it at a wrong location.
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
+
+        monkeypatch.setattr(
+            _youtube_ingest_module(),
+            "fetch_youtube_metadata",
+            lambda _provider_id: None,
+        )
 
         create_response = auth_client.post(
             "/media/from_url",
@@ -355,6 +275,118 @@ class TestIngestYoutubeVideo:
         media_id = UUID(create_response.json()["data"]["media_id"])
 
         _register_youtube_media_cleanup(direct_db, media_id)
+
+        result = _run_latest_source_attempt(direct_db, media_id)
+        assert result["status"] == "success"
+        # Acquisition alone leaves no transcript.
+        _assert_no_transcript_artifacts(direct_db, media_id)
+
+        # Explicit Transcribe imports the public captions. It is the ONLY path that
+        # materializes a YouTube transcript, with origin `Imported`.
+        monkeypatch.setattr(
+            "nexus.services.podcasts.transcription.fetch_youtube_transcript",
+            lambda _provider_id: {
+                "status": "completed",
+                "segments": [
+                    {
+                        "t_start_ms": 4500,
+                        "t_end_ms": 5100,
+                        "text": "   second   segment ",
+                        "speaker_label": "",
+                    },
+                    {
+                        "t_start_ms": 1200,
+                        "t_end_ms": 2000,
+                        "text": "first segment",
+                        "speaker_label": "Host",
+                    },
+                ],
+            },
+        )
+
+        transcribe = _request_youtube_captions(auth_client, user_id, media_id)
+        assert transcribe["transcript_state"] == "ready"
+        assert transcribe["transcript_coverage"] == "full"
+        assert transcribe["request_enqueued"] is False
+
+        with direct_db.session() as session:
+            semantic_result = run_queued_transcript_semantic_reindex(
+                session,
+                media_id=media_id,
+            )
+        assert semantic_result["status"] == "completed"
+
+        with direct_db.session() as session:
+            transcript_row = session.execute(
+                text(
+                    """
+                    SELECT transcript_state, transcript_coverage, transcript_origin
+                    FROM media_transcript_states
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            ).one()
+        assert transcript_row == ("ready", "full", "Imported")
+
+        fragments_response = auth_client.get(
+            f"/media/{media_id}/fragments", headers=auth_headers(user_id)
+        )
+        assert fragments_response.status_code == 200, (
+            f"expected imported captions to be readable, got {fragments_response.status_code}: "
+            f"{fragments_response.text}"
+        )
+        fragments = fragments_response.json()["data"]
+        assert len(fragments) == 2
+        assert fragments[0]["canonical_text"] == "first segment"
+        assert fragments[1]["canonical_text"] == "second segment"
+        assert [frag["t_start_ms"] for frag in fragments] == [1200, 4500]
+
+        media_response = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
+        assert media_response.status_code == 200
+        media = media_response.json()["data"]
+        assert media["processing_status"] == "ready_for_reading"
+        assert media["transcript_state"] == "ready"
+        assert media["transcript_origin"] == {"kind": "Present", "value": "Imported"}
+        assert media["retrieval_status"] == "ready"
+        caps = media["capabilities"]
+        assert caps["can_play"] is True
+        assert caps["can_read"] is True
+        assert caps["can_highlight"] is True
+        assert caps["can_quote"] is True
+        assert caps["can_search"] is True
+
+    def test_reingest_transcribe_preserves_highlight_and_replaces_fragments(
+        self, auth_client, direct_db: DirectSessionManager, monkeypatch
+    ):
+        # Highlight Durability (invariant 9): re-running the explicit Transcribe
+        # command replaces the media's fragments wholesale through
+        # `write_current_transcript` but never deletes highlights. The pre-existing
+        # highlight survives with a stale locator cache; because the new
+        # transcript's text no longer contains the authored quote, media-wide reads
+        # return it as visibly unresolved (null locator) rather than deleting it or
+        # painting it at a wrong location.
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        monkeypatch.setattr(
+            _youtube_ingest_module(),
+            "fetch_youtube_metadata",
+            lambda _provider_id: None,
+        )
+
+        create_response = auth_client.post(
+            "/media/from_url",
+            json={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"},
+            headers=auth_headers(user_id),
+        )
+        assert create_response.status_code == 202
+        media_id = UUID(create_response.json()["data"]["media_id"])
+
+        _register_youtube_media_cleanup(direct_db, media_id)
+
+        result = _run_latest_source_attempt(direct_db, media_id)
+        assert result["status"] == "success"
 
         first_segments = [
             {
@@ -371,13 +403,10 @@ class TestIngestYoutubeVideo:
             },
         ]
         monkeypatch.setattr(
-            _youtube_ingest_module(),
-            "fetch_youtube_transcript",
+            "nexus.services.podcasts.transcription.fetch_youtube_transcript",
             lambda _provider_id: {"status": "completed", "segments": first_segments},
         )
-
-        first = _run_latest_source_attempt(direct_db, media_id)
-        assert first["status"] == "success"
+        _request_youtube_captions(auth_client, user_id, media_id)
 
         # Seed a highlight anchored to one of the first transcript's fragments. The
         # POST creates the highlight + its highlight_fragment_anchors row, which is the
@@ -417,25 +446,17 @@ class TestIngestYoutubeVideo:
             },
         ]
         monkeypatch.setattr(
-            _youtube_ingest_module(),
-            "fetch_youtube_transcript",
+            "nexus.services.podcasts.transcription.fetch_youtube_transcript",
             lambda _provider_id: {"status": "completed", "segments": second_segments},
         )
-
-        refresh_response = auth_client.post(
-            f"/media/{media_id}/refresh",
-            headers=auth_headers(user_id),
-        )
-        assert refresh_response.status_code == 202, refresh_response.text
-        second = _run_latest_source_attempt(direct_db, media_id)
-        assert second["status"] == "success"
+        _request_youtube_captions(auth_client, user_id, media_id)
 
         # The pre-existing highlight SURVIVES the fragment replacement.
         highlight_detail = auth_client.get(
             f"/highlights/{highlight_id}", headers=auth_headers(user_id)
         )
         assert highlight_detail.status_code == 200, (
-            "expected the highlight to survive the re-ingest fragment replacement, "
+            "expected the highlight to survive the re-transcribe fragment replacement, "
             f"got {highlight_detail.status_code}: {highlight_detail.text}"
         )
 

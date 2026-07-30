@@ -1017,7 +1017,10 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   const playPreviewAudio = useCallback(
     (descriptor: PreviewAudioDescriptor) => {
       if (transportLocked()) return;
-      stopHeartbeat(false);
+      // Flush the outgoing canonical session's final position before preview
+      // takes over the shared <audio> element; otherwise up to one heartbeat
+      // cadence of the ending owned-media session's listening position is lost.
+      stopHeartbeat(true);
       setPersistence({ kind: "Ready" });
       setSessionState({ kind: "Absent" });
       sessionStateRef.current = { kind: "Absent" };

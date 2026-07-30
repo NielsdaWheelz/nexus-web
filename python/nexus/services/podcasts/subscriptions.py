@@ -852,6 +852,9 @@ def retry_subscription_backfill(
                 {"backfill_id": current_backfill_id},
             ).first()
             if backfill is None:
+                # justify-service-invariant-check: the subscription/backfill pair was
+                # just read under the per-Podcast command advisory lock held here.
+                # justify-defect: the current backfill cannot vanish under that lock.
                 raise RuntimeError("Podcast subscription lost its current backfill")
             if (
                 db.execute(
@@ -873,6 +876,9 @@ def retry_subscription_backfill(
                 ).first()
                 is None
             ):
+                # justify-service-invariant-check: the subscription was matched under
+                # the per-Podcast command advisory lock held for this transaction.
+                # justify-defect: the subscription cannot disappear under that lock.
                 raise RuntimeError("Podcast subscription disappeared while retrying backfill")
             if (
                 db.execute(
@@ -881,6 +887,9 @@ def retry_subscription_backfill(
                 ).first()
                 is None
             ):
+                # justify-service-invariant-check: a live subscription holds a
+                # non-null FK to its Podcast, re-locked here FOR UPDATE.
+                # justify-defect: the referenced Podcast cannot be missing.
                 raise RuntimeError("Podcast disappeared under subscription")
 
             outcome = "NotEligible"
@@ -986,6 +995,44 @@ def update_subscription_settings_for_viewer(
     )
 
 
+def _decode_queue_revocation(revocation: object) -> tuple[UUID | None, bool]:
+    """Decode a persisted ``_queueRevocation`` marker into its two job fences."""
+    if not isinstance(revocation, dict):
+        return None, False
+    raw_backfill_id = revocation.get("backfillId")
+    backfill_id = UUID(str(raw_backfill_id)) if raw_backfill_id is not None else None
+    return backfill_id, bool(revocation.get("sync"))
+
+
+def _revoke_subscription_jobs(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    podcast_id: UUID,
+    backfill_id: UUID | None,
+    sync: bool,
+) -> None:
+    """Revoke the backfill and sync jobs a completed Unsubscribe orphaned."""
+    if backfill_id is None and not sync:
+        return
+    with transaction(db):
+        if backfill_id is not None:
+            revoke_jobs_for_payload(
+                db,
+                kind="podcast_backfill_subscription",
+                expected_payload_match={"backfillId": str(backfill_id)},
+            )
+        if sync:
+            revoke_jobs_for_payload(
+                db,
+                kind="podcast_sync_subscription_job",
+                expected_payload_match={
+                    "user_id": str(viewer_id),
+                    "podcast_id": str(podcast_id),
+                },
+            )
+
+
 def unsubscribe_from_podcast(
     db: Session,
     viewer_id: UUID,
@@ -1012,31 +1059,16 @@ def unsubscribe_from_podcast(
     )
     if replay is not None:
         replay_payload = dict(replay)
-        revocation = replay_payload.pop("_queueRevocation", None)
-        replay_backfill_id: UUID | None = None
-        replay_sync = False
-        if isinstance(revocation, dict):
-            raw_backfill_id = revocation.get("backfillId")
-            if raw_backfill_id is not None:
-                replay_backfill_id = UUID(str(raw_backfill_id))
-            replay_sync = bool(revocation.get("sync"))
-        if replay_backfill_id is not None or replay_sync:
-            with transaction(db):
-                if replay_backfill_id is not None:
-                    revoke_jobs_for_payload(
-                        db,
-                        kind="podcast_backfill_subscription",
-                        expected_payload_match={"backfillId": str(replay_backfill_id)},
-                    )
-                if replay_sync:
-                    revoke_jobs_for_payload(
-                        db,
-                        kind="podcast_sync_subscription_job",
-                        expected_payload_match={
-                            "user_id": str(viewer_id),
-                            "podcast_id": str(podcast_id),
-                        },
-                    )
+        replay_backfill_id, replay_sync = _decode_queue_revocation(
+            replay_payload.pop("_queueRevocation", None)
+        )
+        _revoke_subscription_jobs(
+            db,
+            viewer_id=viewer_id,
+            podcast_id=podcast_id,
+            backfill_id=replay_backfill_id,
+            sync=replay_sync,
+        )
         if replay_payload.get("outcome") == "Unsubscribed":
             return PodcastUnsubscribedOut.model_validate(replay_payload)
         return PodcastAlreadyUnsubscribedOut.model_validate(replay_payload)
@@ -1065,12 +1097,9 @@ def unsubscribe_from_podcast(
             )
             if replay is not None:
                 replay_payload = dict(replay)
-                revocation = replay_payload.pop("_queueRevocation", None)
-                if isinstance(revocation, dict):
-                    raw_backfill_id = revocation.get("backfillId")
-                    if raw_backfill_id is not None:
-                        removed_backfill_id = UUID(str(raw_backfill_id))
-                    should_revoke_sync = bool(revocation.get("sync"))
+                removed_backfill_id, should_revoke_sync = _decode_queue_revocation(
+                    replay_payload.pop("_queueRevocation", None)
+                )
                 if replay_payload.get("outcome") == "Unsubscribed":
                     should_revoke_sync = True
                     return PodcastUnsubscribedOut.model_validate(replay_payload)
@@ -1131,6 +1160,9 @@ def unsubscribe_from_podcast(
                         ).fetchone()
                         is None
                     ):
+                        # justify-service-invariant-check: a live subscription holds a
+                        # non-null FK to its Podcast, re-locked here FOR UPDATE.
+                        # justify-defect: the referenced Podcast cannot be missing.
                         raise RuntimeError("Podcast disappeared under subscription")
                     removal = remove_unsubscribed_podcast_placements(
                         db,
@@ -1204,23 +1236,13 @@ def unsubscribe_from_podcast(
             return response
 
     response = retry_read_committed(db, "unsubscribe_from_podcast", attempt)
-    if removed_backfill_id is not None or should_revoke_sync:
-        with transaction(db):
-            if removed_backfill_id is not None:
-                revoke_jobs_for_payload(
-                    db,
-                    kind="podcast_backfill_subscription",
-                    expected_payload_match={"backfillId": str(removed_backfill_id)},
-                )
-            if should_revoke_sync:
-                revoke_jobs_for_payload(
-                    db,
-                    kind="podcast_sync_subscription_job",
-                    expected_payload_match={
-                        "user_id": str(viewer_id),
-                        "podcast_id": str(podcast_id),
-                    },
-                )
+    _revoke_subscription_jobs(
+        db,
+        viewer_id=viewer_id,
+        podcast_id=podcast_id,
+        backfill_id=removed_backfill_id,
+        sync=should_revoke_sync,
+    )
     return response
 
 

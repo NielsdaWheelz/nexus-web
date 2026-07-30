@@ -194,6 +194,67 @@ describe("AcquisitionControl", () => {
     });
   });
 
+  it("releases the replacement modal on delivery-unknown and retries the confirmed command with its frozen key", async () => {
+    const commands: AcquisitionCommand[] = [];
+    const commit = vi.fn(async (command: AcquisitionCommand) => {
+      commands.push(command);
+      if (commands.length === 1) {
+        throw {
+          code: "E_PODCAST_REPLACES_EPISODES",
+          details: {
+            conflicts: [
+              {
+                libraryId: "library-a",
+                libraryName: "Library A",
+                episodeCount: 2,
+              },
+            ],
+            conflictFingerprint: "conflict-1",
+          },
+        };
+      }
+      if (commands.length === 2) {
+        // Delivery unknown on the confirmed, destructive replacement: the
+        // command may already have committed, so the retry must reuse its key.
+        throw new TypeError("Failed to fetch");
+      }
+      return { href: "/podcasts/podcast-1" };
+    });
+
+    renderControl(
+      <AcquisitionControl
+        kind="Subscribe"
+        previewTarget={target}
+        commit={commit}
+        onCommitted={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Select Library A" }));
+    fireEvent.click(screen.getByRole("button", { name: /Subscribe, also add/ }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Replace and subscribe" }),
+    );
+
+    const retry = await screen.findByRole("button", { name: /^Retry Subscribe/ });
+    // The modal is released so the frozen-key retry is reachable, not trapped.
+    expect(
+      screen.queryByRole("button", { name: "Replace and subscribe" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(retry);
+    await waitFor(() => expect(commit).toHaveBeenCalledTimes(3));
+
+    // Confirmation mints one fresh key; the delivery-unknown retry reuses it so
+    // the server's replay returns the frozen response instead of double-removing.
+    expect(commands[1]!.idempotencyKey).not.toBe(commands[0]!.idempotencyKey);
+    expect(commands[2]!.idempotencyKey).toBe(commands[1]!.idempotencyKey);
+    expect(commands[2]!.replacementConfirmation).toEqual({
+      kind: "Present",
+      value: { conflictFingerprint: "conflict-1" },
+    });
+  });
+
   it("commits acquisition when preview-position transfer fails and reports nonfatal feedback", async () => {
     mocks.stopPreviewAudio.mockReturnValue({
       positionMs: 12_345,

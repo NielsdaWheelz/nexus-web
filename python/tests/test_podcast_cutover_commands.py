@@ -491,16 +491,16 @@ def test_backfill_worker_locks_fence_before_aliases_and_enqueues_one_successor(
         "lock_and_renew_running_job_claim",
         lambda *_args, **_kwargs: db.events.append("job") or object(),
     )
-    monkeypatch.setattr(
-        backfill_service,
-        "lock_subscription_ingest_parent_in_current_transaction",
-        lambda *_args, **_kwargs: db.events.append("aliases"),
-    )
-    monkeypatch.setattr(
-        backfill_service,
-        "sync_subscription_ingest",
-        lambda **_kwargs: db.events.append("ingest") or SubscriptionIngestResult(1, 0, 1, False),
-    )
+
+    # sync_subscription_ingest owns the parent/alias lock as its first action, so
+    # the "aliases" checkpoint originates at the ingest boundary — still after the
+    # fence (backfill row) and subscription locks, before the ingest body.
+    def _fake_ingest(**_kwargs):
+        db.events.append("aliases")
+        db.events.append("ingest")
+        return SubscriptionIngestResult(1, 0, 1, False)
+
+    monkeypatch.setattr(backfill_service, "sync_subscription_ingest", _fake_ingest)
     monkeypatch.setattr(
         backfill_service,
         "enqueue_backfill_step_in_current_transaction",

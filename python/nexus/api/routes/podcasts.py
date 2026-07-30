@@ -34,7 +34,7 @@ def subscribe_to_podcast(
     body: PodcastSubscribeRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=200)],
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=120)],
 ) -> dict:
     """Subscribe viewer and enqueue async data-plane podcast sync."""
     out = podcast_subscription_service.subscribe_to_podcast(
@@ -51,7 +51,7 @@ def acquire_podcast_episode(
     body: PodcastEpisodeFromDiscoveryRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=200)],
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=120)],
 ) -> dict:
     out = podcast_episode_acquisition_service.acquire_episode_from_discovery(
         db,
@@ -153,7 +153,7 @@ def retry_subscription_backfill(
     podcast_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=200)],
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=120)],
 ) -> dict:
     """Restart only a persistently failed historical backfill."""
     out = podcast_subscription_service.retry_subscription_backfill(
@@ -214,7 +214,7 @@ def unsubscribe_from_podcast(
     podcast_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=200)],
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=120)],
 ) -> dict:
     """Unsubscribe viewer and remove removable podcast library entries."""
     out = podcast_subscription_service.unsubscribe_from_podcast(

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal, cast
 from urllib.parse import quote, urljoin, urlsplit
 
@@ -96,7 +96,10 @@ async def search(
         )
     except WebSearchError as exc:
         if exc.code is WebSearchErrorCode.RATE_LIMITED:
-            raise BrowseProviderFailure(BrowseSectionFailureKind.RateLimited) from exc
+            raise BrowseProviderFailure(
+                BrowseSectionFailureKind.RateLimited,
+                retry_at=_retry_at(exc.retry_after),
+            ) from exc
         if exc.code in {
             WebSearchErrorCode.TIMEOUT,
             WebSearchErrorCode.PROVIDER_DOWN,
@@ -104,6 +107,19 @@ async def search(
             raise BrowseProviderFailure(BrowseSectionFailureKind.Unavailable) from exc
         raise RuntimeError(f"Brave Browse provider defect: {exc.code.value}") from exc
     return [_candidate(item) for item in result.results], None
+
+
+def _retry_at(retry_after_seconds: float | None) -> datetime | None:
+    """Project the provider's Retry-After delta into an absolute reset Instant.
+
+    The Brave provider already parses the `Retry-After` header into
+    `WebSearchError.retry_after` (delta-seconds); we only turn that delta into
+    the wall-clock Instant the RateLimited failure carries. Absent when the
+    provider supplied no honorable value.
+    """
+    if retry_after_seconds is None:
+        return None
+    return datetime.now(UTC) + timedelta(seconds=retry_after_seconds)
 
 
 def preview(canonical_url: str) -> BraveArticle:

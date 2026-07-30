@@ -226,8 +226,14 @@ def set_media_transcript_state(
     readable = transcript_state in {"ready", "partial"}
     existing_origin = existing["transcript_origin"] if existing is not None else None
     if readable and transcript_origin is None and existing_origin is None:
+        # justify-service-invariant-check: the coupling between transcript_state
+        # and transcript_origin is a cross-parameter relation (plus the row's
+        # persisted origin) that the individual parameter types cannot express.
         raise AssertionError("readable transcript state requires an owned transcript origin")
     if not readable and transcript_origin is not None:
+        # justify-service-invariant-check: same cross-parameter relation — a
+        # non-readable state carrying an origin cannot be ruled out by the
+        # str/Optional[TranscriptOrigin] parameter types alone.
         raise AssertionError("non-readable transcript state cannot carry transcript origin")
     params = {
         "media_id": media_id,

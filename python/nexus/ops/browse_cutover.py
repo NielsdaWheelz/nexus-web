@@ -199,21 +199,27 @@ def preflight(db: Session) -> dict[str, Any]:
     for (podcast_id, media_id), aliases in classified.items():
         for alias in aliases:
             owners.setdefault((podcast_id, alias), []).append(media_id)
-    identity_collisions = [
-        {
-            "podcastId": str(podcast_id),
-            "scheme": alias.scheme,
-            "valueHash": hashlib.sha256(alias.value.encode()).hexdigest(),
-            "mediaIds": [str(value) for value in sorted(set(media_ids))],
-        }
-        for (podcast_id, alias), media_ids in owners.items()
-        if len(set(media_ids)) > 1
-    ]
-    unresolved_episodes = [
-        {"podcastId": str(podcast_id), "mediaId": str(media_id)}
-        for (podcast_id, media_id), aliases in classified.items()
-        if not aliases
-    ]
+    identity_collisions = sorted(
+        (
+            {
+                "podcastId": str(podcast_id),
+                "scheme": alias.scheme,
+                "valueHash": hashlib.sha256(alias.value.encode()).hexdigest(),
+                "mediaIds": [str(value) for value in sorted(set(media_ids))],
+            }
+            for (podcast_id, alias), media_ids in owners.items()
+            if len(set(media_ids)) > 1
+        ),
+        key=lambda row: (row["podcastId"], row["scheme"], row["valueHash"]),
+    )
+    unresolved_episodes = sorted(
+        (
+            {"podcastId": str(podcast_id), "mediaId": str(media_id)}
+            for (podcast_id, media_id), aliases in classified.items()
+            if not aliases
+        ),
+        key=lambda row: (row["podcastId"], row["mediaId"]),
+    )
     transcript_origin_predicate = (
         "AND state.transcript_origin IS NULL" if schema_phase == "Prepared" else ""
     )

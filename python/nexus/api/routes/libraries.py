@@ -426,7 +426,7 @@ def remove_podcast_from_library(
     podcast_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=200)],
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=120)],
 ) -> dict:
     """Remove a podcast reference from one non-default library."""
     result = library_entries.remove_podcast_from_library(
