@@ -1,11 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
+import GlobalPlayerSurfaces from "@/components/player/GlobalPlayerSurfaces";
 import { MobileViewportProvider } from "@/lib/mobileViewport/MobileViewportProvider";
 import { WorkspaceTestProvider } from "@/__tests__/helpers/WorkspaceTestProvider";
 import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
 import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
-import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer";
+import {
+  GlobalPlayerProvider,
+  usePlayerCommands,
+  usePlayerSession,
+} from "@/lib/player/globalPlayer";
 import {
   assumeDiscoveryTargetHandle,
   browsePreviewHref,
@@ -13,8 +17,8 @@ import {
 import { absent, present } from "@/lib/api/presence";
 import { withRenderEnvironment } from "../helpers/renderEnvironment";
 import {
-  FOOTER_AUDIO_LABEL,
-  buildFooterDescriptor,
+  PLAYER_AUDIO_LABEL,
+  buildPlayerDescriptor,
   installLecternPlayerFetchMock,
   setAudioMetrics,
   setViewportWidth,
@@ -34,6 +38,7 @@ const MEDIA_SESSION_ACTIONS = [
   "previoustrack",
   "nexttrack",
   "seekto",
+  "stop",
 ] as const;
 const PREVIEW_TARGET = assumeDiscoveryTargetHandle(
   "ndt1.e30.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
@@ -103,12 +108,12 @@ function installMediaSessionHarness(): MediaSessionHarness {
 }
 
 function Harness() {
+  const { state } = usePlayerSession();
   const {
-    state,
     playAudio,
     playPreviewAudio,
     stopPreviewAudio,
-  } = useGlobalPlayer();
+  } = usePlayerCommands();
   const { resource } = useLectern();
   return (
     <>
@@ -117,7 +122,7 @@ function Harness() {
         type="button"
         onClick={() =>
           playAudio(
-            buildFooterDescriptor("11111111-1111-4111-8111-111111111111", "Episode A", {
+            buildPlayerDescriptor("11111111-1111-4111-8111-111111111111", "Episode A", {
               subtitle: "Queue Podcast",
               artworkUrl: "https://cdn.example.com/podcast-cover.jpg",
             })
@@ -148,7 +153,7 @@ function Harness() {
       </button>
       <span data-testid="player-state">{state.kind}</span>
       <MobileViewportProvider>
-        <GlobalPlayerFooter />
+        <GlobalPlayerSurfaces />
       </MobileViewportProvider>
     </>
   );
@@ -223,7 +228,7 @@ describe("GlobalPlayer MediaSession integration", () => {
         buildMediaImageProxySrc("https://cdn.example.com/podcast-cover.jpg"),
       );
 
-      const audio = screen.getByLabelText(FOOTER_AUDIO_LABEL) as HTMLAudioElement;
+      const audio = screen.getByLabelText(PLAYER_AUDIO_LABEL) as HTMLAudioElement;
       // Spy after autoplay so the play/pause handler assertions count only their
       // own invocations.
       const playSpy = vi.spyOn(audio, "play").mockResolvedValue(undefined);
@@ -292,6 +297,21 @@ describe("GlobalPlayer MediaSession integration", () => {
       await waitFor(() => {
         expect(Math.floor(audio.currentTime)).toBe(0);
       });
+
+      const stopHandler = mediaSession.actionHandlers.get("stop");
+      pauseSpy.mockClear();
+      mediaSession.setPositionStateSpy.mockClear();
+      stopHandler?.({ action: "stop" } as MediaSessionActionDetails);
+      await waitFor(() => {
+        expect(screen.getByTestId("player-state")).toHaveTextContent("Absent");
+        expect(window.navigator.mediaSession?.metadata).toBeNull();
+        expect(mediaSession.setPositionStateSpy).toHaveBeenCalledWith(undefined);
+        for (const action of MEDIA_SESSION_ACTIONS) {
+          expect(mediaSession.actionHandlers.get(action)).toBeNull();
+        }
+      });
+      expect(pauseSpy).toHaveBeenCalledTimes(1);
+      expect(audio.getAttribute("src")).toBeNull();
     } finally {
       unmount?.();
       mediaSession.restore();
@@ -313,16 +333,16 @@ describe("GlobalPlayer MediaSession integration", () => {
         expect(mediaSession.actionHandlers.get("nexttrack")).toBeNull();
       });
       expect(
-        screen.getByRole("link", { name: "External episode" }),
-      ).toHaveAttribute(
-        "href",
-        `/browse/preview?target=${PREVIEW_TARGET}`,
+        screen.getByRole("button", { name: "Open External episode" }),
+      ).toBeVisible();
+      fireEvent.click(
+        screen.getByRole("button", { name: "More player controls" }),
       );
       expect(
-        screen.getByRole("link", { name: "Open source" }),
+        screen.getByRole("menuitem", { name: "Open source" }),
       ).toHaveAttribute("href", "https://example.com/episode");
 
-      const audio = screen.getByLabelText(FOOTER_AUDIO_LABEL) as HTMLAudioElement;
+      const audio = screen.getByLabelText(PLAYER_AUDIO_LABEL) as HTMLAudioElement;
       setAudioMetrics(audio, { duration: 120, currentTime: 40 });
       fireEvent(audio, new Event("timeupdate"));
       mediaSession.setPositionStateSpy.mockClear();

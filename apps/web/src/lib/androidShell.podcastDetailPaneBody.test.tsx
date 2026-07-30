@@ -64,7 +64,7 @@ import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementCon
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
 
-// The pane reads useLectern()/useGlobalPlayer(); mount the real providers and
+// The pane reads the Lectern/player providers; mount the real providers and
 // answer their initial GET /api/lectern at the fetch boundary below.
 function Wrapped() {
   return withRenderEnvironment(

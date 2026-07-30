@@ -159,9 +159,11 @@ Owned-absence fields on every wire shape use `Presence<T>` from
 `AuthenticatedShell.tsx` mounts `LecternProvider` (one `AsyncResource` + one
 mutation FIFO that owns every Lectern/consumption mutation and reconciliation
 GET) above `GlobalPlayerProvider` (one `PlayerSession`), which wraps
-`WorkspaceHost` and `GlobalPlayerFooter` — a shell-resident `region` labelled
-**Media player** that persists across pane navigation and is never an editor
-(the Lectern pane is the sole full-list editor).
+`WorkspaceHost` and `GlobalPlayerSurfaces`. The latter is the shell-resident
+presentation owner: desktop Listening Shelf, mobile MiniPlayer, and mobile
+full-screen Now Playing. Exactly one active `region` is labelled **Media
+player**. It persists across pane navigation and is never an editor (the
+Lectern pane is the sole full-list editor).
 
 - `apps/web/src/lib/lectern/` — the Lectern capability: `contract.ts` (the one
   transport-free, isomorphic owner of every Lectern/consumption wire type and
@@ -194,10 +196,12 @@ GET) above `GlobalPlayerProvider` (one `PlayerSession`), which wraps
 - `apps/web/src/lib/player/` — the audio session: `playerSession.ts` (pure
   session/origin/history/resume state machine, zero React/I-O),
   `listeningHeartbeat.ts` (the single-flight, generation-keyed heartbeat
-  engine), `globalPlayer.tsx` (the app-wide `<audio>` element, Web Audio
-  effects graph, OS media-session integration), plus `audioEffects.ts`,
-  `chapters.ts`, `mediaSession.ts`, `subscriptionPlaybackSpeed.ts`, and
-  `usePlayerKeyboardShortcuts.ts`.
+  engine), `globalPlayer.tsx` (the provider-owned app-wide `<audio>` element,
+  Web Audio effects graph, OS media-session integration, and stable Commands
+  plus cadence-separated Session/Settings/Timeline capabilities),
+  `playerChromeModel.ts` (the exhaustive pure semantic projection), plus
+  `audioEffects.ts`, `chapters.ts`, `mediaSession.ts`,
+  `subscriptionPlaybackSpeed.ts`, and `usePlayerKeyboardShortcuts.ts`.
 - `globalPlayer.tsx` also owns the exhaustive `PreviewAudio` session variant.
   It uses the same provider and `<audio>` element but has no Media ID, Lectern
   origin/history, heartbeat, completion command, activity observation, queue,
@@ -207,12 +211,18 @@ GET) above `GlobalPlayerProvider` (one `PlayerSession`), which wraps
 - `globalPlayer.tsx` publishes owned `<audio>` playing/pause/buffering/end
   observations to the single Consumption recorder. The heartbeat persists
   current position; it never carries elapsed-time activity or a raw device id.
-- `apps/web/src/components/GlobalPlayerFooter.tsx` — transport, Walknotes
-  entry points, and the read-only "Next on the Lectern" / "Forward: _title_"
-  preview. The dock is not an editor; all "Open Lectern" affordances navigate
-  through workspace target activation. For `PreviewAudio`, the footer exposes
-  title, source, **Open source**, and **Open Preview** only; it emits no Media
-  href or acquisition mutation.
+- `apps/web/src/components/player/` — the Listening Shelf, MiniPlayer, full-
+  screen Now Playing, and shared cadence-scoped controls. The surfaces share
+  one Capture controller and one provider-lifetime live region. They do not
+  mount media elements, mirror session state, or own queue/chapter data.
+  Contents and Lectern affordances use canonical workspace activation. For
+  `PreviewAudio`, every surface omits canonical history, Capture, Contents,
+  completion, and durable-status actions.
+- `dismiss()` is a device-local teardown, not completion: it samples and
+  flushes progress/activity before unloading audio, clears player history and
+  OS controls, resets transient persistence state, and preserves all durable
+  Consumption/Lectern facts. It remains available during completion. Pause
+  never dismisses; mobile Back/Escape/Collapse never changes playback.
 
 ## Boundary With Podcast Sync
 

@@ -22,7 +22,7 @@ import {
   definePaneVisitDataKey,
   usePaneVisitData,
 } from "@/lib/panes/paneRuntime";
-import { useGlobalPlayer } from "@/lib/player/globalPlayer";
+import { usePlayerCommands } from "@/lib/player/globalPlayer";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import PodcastReplacementDialog, {
   type PodcastReplacementConflict,
@@ -168,7 +168,7 @@ type AcquisitionControlProps = {
 
 export default function AcquisitionControl(props: AcquisitionControlProps) {
   const { kind, commit, onCommitted } = props;
-  const player = useGlobalPlayer();
+  const { stopPreviewAudio } = usePlayerCommands();
   const feedback = useFeedback();
   const panelId = useId();
   const chevronRef = useRef<HTMLButtonElement>(null);
@@ -218,7 +218,7 @@ export default function AcquisitionControl(props: AcquisitionControlProps) {
     confirmation: AcquisitionCommand["replacementConfirmation"],
   ): FrozenCommand => {
     const stopped =
-      kind === "Add" ? player.stopPreviewAudio(props.previewTarget) : null;
+      kind === "Add" ? stopPreviewAudio(props.previewTarget) : null;
     return {
       namedLibraryIds: selected.map((destination) => destination.id),
       idempotencyKey: mutationId(),

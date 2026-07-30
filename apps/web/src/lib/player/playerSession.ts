@@ -127,7 +127,8 @@ export type PlaybackEffect =
   | { kind: "None" }
   | { kind: "StartSession" }
   | { kind: "RestartCurrent" }
-  | { kind: "ResetCurrent"; positionMs: number };
+  | { kind: "ResetCurrent"; positionMs: number }
+  | { kind: "StopSession" };
 
 export interface SessionTransition {
   state: PlayerSessionState;
@@ -462,6 +463,34 @@ export function resetProgress(
     history,
     effect: { kind: "ResetCurrent", positionMs },
   };
+}
+
+/**
+ * Explicitly close the device-local player without changing any durable
+ * Consumption or Lectern state. Dismissal is available from every retained
+ * canonical phase, clears device-local navigation history, and delegates all
+ * runtime teardown to the provider through `StopSession`.
+ */
+export function dismissSession(
+  state: PlayerSessionState,
+  history: PlayerHistory,
+): SessionTransition {
+  switch (state.kind) {
+    case "Absent":
+      return { state, history, effect: { kind: "None" } };
+    case "Active":
+    case "Completing":
+    case "CompletionFailed":
+    case "PlaybackFailed":
+    case "PausedAtEnd":
+      return {
+        state: { kind: "Absent" },
+        history: EMPTY_HISTORY,
+        effect: { kind: "StopSession" },
+      };
+    default:
+      return assertNever(state);
+  }
 }
 
 // --- Resume authority (spec §6 resume-authority bullet) ---------------------

@@ -13,6 +13,7 @@ const ACTIONS: MediaSessionAction[] = [
   "previoustrack",
   "nexttrack",
   "seekto",
+  "stop",
 ];
 
 function getMediaSession(): MediaSession | null {
@@ -65,6 +66,7 @@ interface MediaSessionHandlers {
   skipForward: () => void;
   previous: (() => void | Promise<void>) | null;
   next: (() => void | Promise<void>) | null;
+  stop: () => void;
   /** seekTime in seconds, as supplied by the Media Session API. */
   seekToSeconds: (seekTimeSeconds: number) => void;
 }
@@ -267,6 +269,9 @@ export function useMediaSessionAdapter(args: {
         return;
       }
       handlersRef.current.seekToSeconds(details.seekTime);
+    });
+    setActionHandler(ms, "stop", () => {
+      handlersRef.current.stop();
     });
     return () => {
       for (const action of ACTIONS) {

@@ -41,7 +41,7 @@ interface BillingAccountResponse {
 
 // The billing account seed (cacheKey `billing-account:0`) has multiple simultaneous
 // first-paint consumers: the settings-billing pane it is seeded for, the always-mounted
-// GlobalPlayerFooter, and (in multi-pane workspaces) media/podcast panes. The resource
+// player surfaces, and (in multi-pane workspaces) media/podcast panes. The resource
 // cache is consume-once, so if an ambient reader claimed the seed it would starve the
 // pane, whose lazy chunk hydrates later — the pane would then render its loading state
 // against the server-rendered content and hydration would mismatch (React #418). So only

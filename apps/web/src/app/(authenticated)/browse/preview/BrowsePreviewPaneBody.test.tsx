@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/player/globalPlayer", () => ({
-  useGlobalPlayer: () => ({
+  usePlayerCommands: () => ({
     playPreviewAudio: mocks.playPreviewAudio,
   }),
 }));

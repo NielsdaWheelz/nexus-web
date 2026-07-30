@@ -39,7 +39,7 @@ import {
   usePaneSearchParams,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
-import { useGlobalPlayer } from "@/lib/player/globalPlayer";
+import { usePlayerCommands } from "@/lib/player/globalPlayer";
 import { subscribeToPodcast } from "@/lib/podcasts/acquisition";
 import styles from "../browse.module.css";
 
@@ -159,7 +159,7 @@ export default function BrowsePreviewPaneBody() {
       }),
   });
   const [loadVideo, setLoadVideo] = useState(false);
-  const player = useGlobalPlayer();
+  const { playPreviewAudio } = usePlayerCommands();
   const preview = resource.status === "ready" ? resource.data : null;
   const ownedHref =
     preview?.resolution.kind === "InNexus"
@@ -392,7 +392,7 @@ export default function BrowsePreviewPaneBody() {
               <Button
                 variant="secondary"
                 onClick={() =>
-                  player.playPreviewAudio({
+                  playPreviewAudio({
                     target: episode.target,
                     previewHref: browsePreviewHref(episode.target),
                     title: episode.title,

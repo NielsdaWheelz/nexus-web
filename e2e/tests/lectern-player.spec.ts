@@ -28,12 +28,12 @@ import { stateChangingApiHeaders } from "./api";
  *       (the media pane "Options" menu → "Add to Lectern");
  *   (b) the Lectern pane lists a mixed-media set (Readable web article + video
  *       OpenPane) with server-derived activation + consumption, and a Readable
- *       row exposes no footer "Play" action (activation derivation, §4/§8.14);
+ *       row exposes no audio "Play" action (activation derivation, §4/§8.14);
  *   (c) reorder + remove with provider-owned optimistic UI (§6/§8.8);
  *   (d) reader "Mark as finished" (`finishLecternItem`) removes the *exact* row,
  *       and the 10-second Undo restores it with a *new* itemId in the Unread
  *       state (§1 table, §6 Undo, §8.2/§8.12);
- *   (e) the shell shows no player dock without an audio session (§1, §6);
+ *   (e) the shell shows no player surface without an audio session (§1, §6);
  *   (f) focus revalidation discovers a background addition once past the
  *       coalescing window, without racing a mutation install (§6/§8.10).
  *
@@ -41,7 +41,7 @@ import { stateChangingApiHeaders } from "./api";
  * per §2 "the E2E proves the headline journey, not every branch"):
  *   - Any FooterAudio playback: real podcast audio is unavailable in the plain
  *     e2e project (E2E_REAL_MEDIA=0 seeds only Readable + video/OpenPane kinds),
- *     so play-from-Lectern → dock-appears, transport, next-preview, history,
+ *     so play-from-Lectern → surface-appears, transport, next-preview, history,
  *     natural-end advance, and the listening heartbeat are exercised by the
  *     backend/provider tests and the real-media project, not here.
  *   - Concurrency/idempotency-replay, teardown/reference barriers, auto-
@@ -212,14 +212,14 @@ test.describe("lectern + global player lifecycle", () => {
     }
   });
 
-  test("edits a mixed-media Lectern optimistically; no dock without an audio session", async ({
+  test("edits a mixed-media Lectern optimistically; no player without an audio session", async ({
     page,
   }, testInfo) => {
     test.slow();
     const deviceId = lecternDeviceId(testInfo);
 
-    // (e) Fresh shell, no audio ever played → the activity-conditional dock is
-    // absent (spec §1 "reload restores no session"; §6 dock is Absent-gated).
+    // (e) Fresh shell, no audio ever played → the session-conditional surface
+    // is absent (spec §1 "reload restores no session"; §6 is Absent-gated).
     await gotoSinglePaneWorkspace(page, deviceId, `/media/${articleId}`);
     await expect(player(page)).toHaveCount(0);
 
@@ -256,7 +256,7 @@ test.describe("lectern + global player lifecycle", () => {
     expect(byMedia.get(videoId)?.activation.kind).toBe("OpenPane");
     expect(items.every((i) => i.activation.kind !== "FooterAudio")).toBe(true);
 
-    // A Readable row offers Remove but no footer "Play" (Play is FooterAudio-only).
+    // A Readable row offers Remove but no audio "Play" (FooterAudio-only).
     const articleRow = lecternRow(page, READABLE_ARTICLE.title);
     await articleRow.hover();
     await lecternRowActions(articleRow, READABLE_ARTICLE.title).click();
@@ -293,7 +293,7 @@ test.describe("lectern + global player lifecycle", () => {
       .poll(async () => (await getLecternItems(page.request)).map((i) => i.mediaId))
       .toEqual([resumeId, videoId]);
 
-    // The dock never appeared during any list edit (no audio session was created).
+    // The player never appeared during any list edit (no audio session was created).
     await expect(player(page)).toHaveCount(0);
   });
 

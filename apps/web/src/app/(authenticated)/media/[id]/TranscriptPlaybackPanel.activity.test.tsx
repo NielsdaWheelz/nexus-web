@@ -18,9 +18,13 @@ vi.mock("@/lib/player/globalPlayer", async () => {
     );
   return {
     ...actual,
-    useGlobalPlayer: () => ({
+    usePlayerCommands: () => ({
       playAudio: vi.fn(),
-      presentation: { positionMs: 0 },
+    }),
+    usePlayerTimeline: () => ({
+      positionMs: 0,
+    }),
+    usePlayerSession: () => ({
       state: { kind: "Absent" },
     }),
   };

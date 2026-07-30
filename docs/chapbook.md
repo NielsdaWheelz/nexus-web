@@ -562,27 +562,33 @@ Playback is continuous across navigation.
 
 ### MiniPlayer
 
-When media is active, a compact accessory sits above or attaches to the tab
-bar. It shows:
+When an audio session is present, a compact accessory attaches above the root
+Nexus control. It shows:
 
-- source identity;
+- source identity as a real expansion button;
 - play/pause;
-- compact progress;
-- one predictable expansion action.
+- compact progress and a short More inventory;
+- one predictable expansion action into full-screen Now Playing.
 
 It never traps navigation and never pretends playback stopped when the user
-opens another part of the app.
+opens another part of the app. Pause retains it. Root text entry hides it and
+releases its obstruction without stopping playback.
 
 ### Now Playing
 
-Now Playing is a full media mode, not a generic drawer:
+Now Playing is a full-screen media mode, not a generic drawer or bottom sheet:
 
 - artwork or video owns the upper field;
-- transport, speed, output, and note controls occupy the reachable lower field;
-- chapters, transcript, queue, and details are subordinate routes or short
-  sheets;
+- transport, speed/effects, Capture, Contents, and source actions occupy the
+  reachable lower field;
+- chapters and review are subordinate short sheets or dialogs;
 - system media controls, interruptions, background audio, and Picture in
   Picture behave as the platform expects.
+
+Collapse, Back, and Escape return to the mounted MiniPlayer without changing
+playback. Close player is a separate labelled lower-field action: it stops and
+dismisses the device-local session without altering durable progress, history,
+notes, annotations, or Lectern membership.
 
 A timestamped Note records Source, time range, transcript excerpt where
 available, and the user's thought. Manually scrolling a following transcript

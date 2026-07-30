@@ -48,7 +48,7 @@ import {
 import { useBillingAccount } from "@/lib/billing/useBillingAccount";
 import {
   canonicalSessionOfGlobalState,
-  useGlobalPlayer,
+  usePlayerSession,
 } from "@/lib/player/globalPlayer";
 import { formatSubscriptionPlaybackSummary } from "@/lib/player/subscriptionPlaybackSpeed";
 import { pluralize } from "@/lib/text/pluralize";
@@ -165,7 +165,7 @@ export default function PodcastDetailPaneBody() {
   const activateTarget = paneRuntime.activateTarget;
   const paneSearchParams = usePaneSearchParams();
   const { account: billingAccount } = useBillingAccount();
-  const player = useGlobalPlayer();
+  const { state: playerState } = usePlayerSession();
   const lectern = useLectern();
   const offerCompletionUndo = useCompletionUndo();
   const committedSnapshotRef = useRef<PodcastDetailSnapshot | null>(null);
@@ -1353,11 +1353,11 @@ export default function PodcastDetailPaneBody() {
   // "Play next" is disabled/no-op for the media that is the active Lectern
   // origin's descriptor (spec §5.1 "targeting the current origin is disabled").
   const playNextDisabledMediaId = useMemo<string | null>(() => {
-    const session = canonicalSessionOfGlobalState(player.state);
+    const session = canonicalSessionOfGlobalState(playerState);
     return session?.origin.kind === "Lectern"
       ? session.descriptor.mediaId
       : null;
-  }, [player.state]);
+  }, [playerState]);
 
   // Play next: place After the exact Lectern origin item, else at the head
   // (spec §5.1). Add to Lectern: append Last.
@@ -1389,7 +1389,7 @@ export default function PodcastDetailPaneBody() {
 
   const handlePlayNext = useCallback(
     async (mediaId: string) => {
-      const session = canonicalSessionOfGlobalState(player.state);
+      const session = canonicalSessionOfGlobalState(playerState);
       const placement: Placement =
         session && session.origin.kind === "Lectern"
           ? { kind: "After", itemId: session.origin.itemId }
@@ -1405,7 +1405,7 @@ export default function PodcastDetailPaneBody() {
         "Failed to place episode next on Lectern",
       );
     },
-    [lectern, player.state, runEpisodeLecternMutation],
+    [lectern, playerState, runEpisodeLecternMutation],
   );
 
   const handleAddToLectern = useCallback(

@@ -70,9 +70,10 @@ The supporting registries are browser-local and composition-safe:
 A modal-local `ActionMenu` derives that ownership from modal context, portals
 into its containing dialog, becomes a transient Escape/history owner, and does
 not claim `aria-modal`. Escape closes the top menu or modal one layer at a
-time. Back closes a modal-local menu and then the top history-enabled sheet or
-drawer; `Dialog` intentionally does not consume browser history, so an
-intervening Dialog is Escape-dismissed before Back can reach its underlay.
+time. Back closes a modal-local menu and then the top history-enabled dialog,
+sheet, or drawer. Dialog owners opt into history only when their product
+contract requires platform Back; player-owned subordinate dialogs do so, which
+prevents Back from reaching full-screen Now Playing first.
 
 ## Keyboard Geometry Ownership
 
@@ -97,7 +98,8 @@ Scrim is a two-value semantic choice:
 - `soft` (`--overlay-scrim-soft`): in-context companion sheets — workspace
   secondary surfaces, model settings
 - `default` (`--overlay-scrim`): app-level modals — Nexus Switchboard
-  (including its embedded workflows), expanded player
+  (including its embedded workflows) and full-screen Now Playing. Now Playing
+  composes the modal behavior primitives directly; it is not `MobileSheet`.
 
 ## Nexus Switchboard
 
@@ -105,6 +107,14 @@ The Nexus Switchboard is the sole mobile global-access overlay. It uses one
 mounted `MobileSheet` while Root, Find, actions, capture, acquisition, and
 recovery pages replace one another inside the sheet. Mobile has no global
 navigation drawer and no stacked workflow sheet.
+
+## Player Surfaces
+
+Full-screen Now Playing is a shell-owned modal mode, not a bottom sheet. It
+stays mounted, composes `useDialogOverlay`, `useHistoryDismiss`, and
+`ModalLayerProvider`, and uses the shared backdrop projection. Its short
+subordinate tasks—Contents, speed/effects, menus, and capture review—reuse the
+named overlay primitives and own one-layer Back/Escape dismissal.
 
 ## Underlying Primitives
 

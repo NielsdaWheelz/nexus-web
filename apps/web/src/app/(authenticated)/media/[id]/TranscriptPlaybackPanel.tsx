@@ -9,7 +9,9 @@ import YouTubeEmbedFrame, {
 } from "@/components/media/YouTubeEmbedFrame";
 import {
   canonicalSessionOfGlobalState,
-  useGlobalPlayer,
+  usePlayerCommands,
+  usePlayerSession,
+  usePlayerTimeline,
 } from "@/lib/player/globalPlayer";
 import { useLectern } from "@/lib/lectern/LecternProvider";
 import { parseMediaId, type PlayerDescriptor } from "@/lib/lectern/contract";
@@ -197,7 +199,9 @@ export default function TranscriptPlaybackPanel({
   paneInstance = mediaId,
   onSeek,
 }: TranscriptPlaybackPanelProps) {
-  const { playAudio, presentation, state } = useGlobalPlayer();
+  const { playAudio } = usePlayerCommands();
+  const { state } = usePlayerSession();
+  const { positionMs } = usePlayerTimeline();
   const { placeItems, resource } = useLectern();
   const [playbackError, setPlaybackError] = useState(false);
   const [iframeLoaded, setIframeLoaded] = useState(false);
@@ -257,10 +261,10 @@ export default function TranscriptPlaybackPanel({
       mediaKind === "podcast_episode"
         ? resolveTranscriptChapterInterval({
             chapters: normalizedChapters,
-            timestampMs: presentation.positionMs,
+            timestampMs: positionMs,
           })
         : null,
-    [mediaKind, normalizedChapters, presentation.positionMs],
+    [mediaKind, normalizedChapters, positionMs],
   );
   const showNotesHtml = useMemo(() => {
     if (mediaKind !== "podcast_episode") {
@@ -405,7 +409,7 @@ export default function TranscriptPlaybackPanel({
         ) : mediaKind === "podcast_episode" &&
           playbackSource.kind === "external_audio" ? (
           <div className={styles.globalPlayerPrompt}>
-            <p>Playback is controlled in the global player footer.</p>
+            <p>Playback continues in the global player.</p>
             <div className={styles.podcastPlaybackActions}>
               {playerDescriptor ? (
                 <Button
@@ -414,7 +418,7 @@ export default function TranscriptPlaybackPanel({
                   disabled={!lecternReady}
                   onClick={() => playAudio(playerDescriptor)}
                 >
-                  Play in footer
+                  Play
                 </Button>
               ) : null}
               <Button

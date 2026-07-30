@@ -401,6 +401,7 @@ test("records private activity through the BFF and renders filtered Stats", asyn
   await postActivity(viewingCapture);
 
   await resetAndPlaceAudio(page, audio.media_id);
+  await page.setViewportSize({ width: 390, height: 844 });
   await gotoSinglePaneWorkspace(page, rawDeviceId, "/lectern");
   const listeningCapture = page.waitForResponse((response) => {
     if (
@@ -434,6 +435,10 @@ test("records private activity through the BFF and renders filtered Stats", asyn
   await expect(
     page.getByRole("region", { name: "Media player" }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Media player" }),
+  ).toHaveCount(1);
+  await expectNoDocumentHorizontalOverflow(page);
   const audioElement = page.locator('audio[aria-label="Media player audio"]');
   await expect(audioElement).toHaveJSProperty("paused", false);
   await expect
@@ -445,10 +450,38 @@ test("records private activity through the BFF and renders filtered Stats", asyn
       { timeout: 10_000 },
     )
     .toBeGreaterThan(1);
+
   await page
-    .getByRole("navigation", { name: "Primary" })
-    .getByRole("link", { name: "Libraries" })
+    .getByRole("button", { name: `Open Now Playing: ${audio.title}` })
     .click();
+  const nowPlaying = page.getByRole("dialog", { name: "Now Playing" });
+  await expect(nowPlaying).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Media player" }),
+  ).toHaveCount(1);
+  await nowPlaying
+    .getByRole("button", { name: "Pause media player" })
+    .click();
+  await expect(audioElement).toHaveJSProperty("paused", true);
+
+  const playerUrl = page.url();
+  await page.goBack();
+  await expect(nowPlaying).toBeHidden();
+  await expect(page).toHaveURL(playerUrl);
+  const miniPlayer = page.getByRole("region", { name: "Media player" });
+  await expect(miniPlayer).toBeVisible();
+  await miniPlayer
+    .getByRole("button", { name: "Play media player" })
+    .click();
+  await expect(audioElement).toHaveJSProperty("paused", false);
+
+  await page.locator('button[aria-label^="Open Nexus,"]').click();
+  const mobileNexus = page.getByRole("dialog", { name: "Nexus" });
+  await mobileNexus
+    .getByRole("region", { name: "Places" })
+    .getByRole("button", { name: "Libraries" })
+    .click();
+  await expect(mobileNexus).toBeHidden();
   await page.waitForTimeout(10_500);
   await expect
     .poll(
@@ -459,9 +492,18 @@ test("records private activity through the BFF and renders filtered Stats", asyn
       { timeout: 10_000 },
     )
     .toBeGreaterThan(10);
-  await page.getByRole("button", { name: "Pause media player" }).click();
+  await miniPlayer
+    .getByRole("button", { name: "More player controls" })
+    .click();
+  await page.getByRole("menuitem", { name: "Close player" }).click();
+  await expect(
+    page.getByRole("region", { name: "Media player" }),
+  ).toHaveCount(0);
+  await expect(audioElement).toHaveJSProperty("paused", true);
+  await expect(audioElement).not.toHaveAttribute("src");
   await postActivity(listeningCapture);
 
+  await page.setViewportSize({ width: 1280, height: 720 });
   const occurredAt = new Date(Date.now() - 2_000).toISOString();
   const base = {
     mediaRef: `media:${mediaId}`,

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import AppNav from "@/components/appnav/AppNav";
 import Nexus from "@/components/nexus/Nexus";
 import WorkspaceHost from "@/components/workspace/WorkspaceHost";
-import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
+import GlobalPlayerSurfaces from "@/components/player/GlobalPlayerSurfaces";
 import LecternMutationNotice from "@/components/LecternMutationNotice";
 import { WebVitalsReporter } from "@/components/workspace/WebVitalsReporter";
 import LocalVaultAutoSync from "./LocalVaultAutoSync";
@@ -121,9 +121,9 @@ function AuthenticatedWorkspace({
         >
           <MobileViewportProvider>
             <MobileChromeProvider>
-              {/* One Lectern owner wraps the Nexus/workspace leaves and the player
-                  session (spec §3 architecture): LecternProvider -> leaves ->
-                  GlobalPlayerProvider -> WorkspaceHost + GlobalPlayerFooter. */}
+              {/* One Lectern owner wraps the workspace leaves and player
+                  runtime: LecternProvider -> GlobalPlayerProvider -> workspace
+                  + the shell-owned player surfaces. */}
               <LecternProvider>
                 <LibraryPlacementControllerProvider>
                   <ShareControllerProvider>
@@ -139,7 +139,7 @@ function AuthenticatedWorkspace({
                             <WalknoteSessionProvider>
                               <WorkspaceHost />
                               <LecternMutationNotice />
-                              <GlobalPlayerFooter />
+                              <GlobalPlayerSurfaces />
                             </WalknoteSessionProvider>
                           </GlobalPlayerProvider>
                         </main>

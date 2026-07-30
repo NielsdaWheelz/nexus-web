@@ -1,16 +1,23 @@
-import { act, render, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useLayoutEffect, useRef } from "react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   MobileViewportProvider,
   useMobileViewport,
+  useRootTextEntryFocused,
   type MobileViewportCapability,
 } from "@/lib/mobileViewport/MobileViewportProvider";
 
 let capability: MobileViewportCapability | null = null;
+let rootTextEntryFocused = false;
 
 function CapabilityProbe() {
   capability = useMobileViewport();
+  return null;
+}
+
+function TextEntryFocusProbe() {
+  rootTextEntryFocused = useRootTextEntryFocused();
   return null;
 }
 
@@ -38,7 +45,9 @@ function RegisteredPlayer() {
 
 describe("MobileViewportProvider", () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     capability = null;
+    rootTextEntryFocused = false;
     document.documentElement.style.removeProperty(
       "--mobile-content-bottom-clearance",
     );
@@ -82,6 +91,7 @@ describe("MobileViewportProvider", () => {
     render(
       <MobileViewportProvider>
         <CapabilityProbe />
+        <TextEntryFocusProbe />
       </MobileViewportProvider>,
     );
     const element = document.createElement("div");
@@ -189,5 +199,98 @@ describe("MobileViewportProvider", () => {
         "--mobile-overlay-keyboard-inset",
       ),
     ).toBe("0px");
+  });
+
+  it("owns root text-entry focus without treating other controls as text entry", async () => {
+    render(
+      <MobileViewportProvider>
+        <CapabilityProbe />
+        <TextEntryFocusProbe />
+        <input aria-label="Title" />
+        <textarea aria-label="Notes" />
+        <input aria-label="Enabled" type="checkbox" />
+        <select aria-label="Sort">
+          <option>Newest</option>
+        </select>
+        <div data-modal-backdrop="true">
+          <input aria-label="Dialog title" />
+        </div>
+      </MobileViewportProvider>,
+    );
+
+    const stableCapability = capability;
+    expect(rootTextEntryFocused).toBe(false);
+
+    fireEvent.focus(screen.getByRole("textbox", { name: "Title" }));
+    await waitFor(() => {
+      expect(rootTextEntryFocused).toBe(true);
+    });
+
+    fireEvent.focus(screen.getByRole("checkbox", { name: "Enabled" }));
+    await waitFor(() => {
+      expect(rootTextEntryFocused).toBe(false);
+    });
+
+    fireEvent.focus(screen.getByRole("combobox", { name: "Sort" }));
+    await waitFor(() => {
+      expect(rootTextEntryFocused).toBe(false);
+    });
+
+    fireEvent.focus(screen.getByRole("textbox", { name: "Notes" }));
+    await waitFor(() => {
+      expect(rootTextEntryFocused).toBe(true);
+    });
+
+    fireEvent.focus(screen.getByRole("textbox", { name: "Dialog title" }));
+    await waitFor(() => {
+      expect(rootTextEntryFocused).toBe(false);
+    });
+    expect(capability).toBe(stableCapability);
+  });
+
+  it("re-reads active focus and removes its one document observer pair", async () => {
+    const addEventListener = vi.spyOn(document, "addEventListener");
+    const removeEventListener = vi.spyOn(document, "removeEventListener");
+    const { unmount } = render(
+      <MobileViewportProvider>
+        <CapabilityProbe />
+        <TextEntryFocusProbe />
+        <input aria-label="Title" />
+      </MobileViewportProvider>,
+    );
+    const input = screen.getByRole("textbox", { name: "Title" });
+
+    input.focus();
+    await waitFor(() => {
+      expect(rootTextEntryFocused).toBe(true);
+    });
+    input.blur();
+    expect(rootTextEntryFocused).toBe(true);
+    await waitFor(() => {
+      expect(rootTextEntryFocused).toBe(false);
+    });
+
+    const focusInRegistrations = addEventListener.mock.calls.filter(
+      ([type]) => type === "focusin",
+    );
+    const focusOutRegistrations = addEventListener.mock.calls.filter(
+      ([type]) => type === "focusout",
+    );
+    expect(focusInRegistrations).toHaveLength(1);
+    expect(focusOutRegistrations).toHaveLength(1);
+    const focusInListener = focusInRegistrations[0]?.[1];
+    const focusOutListener = focusOutRegistrations[0]?.[1];
+    expect(focusInListener).toBeTypeOf("function");
+    expect(focusOutListener).toBeTypeOf("function");
+
+    unmount();
+    expect(removeEventListener).toHaveBeenCalledWith(
+      "focusin",
+      focusInListener,
+    );
+    expect(removeEventListener).toHaveBeenCalledWith(
+      "focusout",
+      focusOutListener,
+    );
   });
 });

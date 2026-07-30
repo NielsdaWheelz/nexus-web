@@ -1,8 +1,11 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
-import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer";
-import { buildFooterDescriptor, installLecternPlayerFetchMock } from "@/__tests__/helpers/audio";
+import {
+  GlobalPlayerProvider,
+  usePlayerCommands,
+} from "@/lib/player/globalPlayer";
+import { buildPlayerDescriptor, installLecternPlayerFetchMock } from "@/__tests__/helpers/audio";
 
 const recorder = vi.hoisted(() => ({
   registerObserver: vi.fn(() => vi.fn()),
@@ -39,14 +42,14 @@ function latestListeningRegistration() {
 }
 
 function AudioActivityHarness() {
-  const { playAudio, bindAudioElement } = useGlobalPlayer();
+  const { dismiss, playAudio } = usePlayerCommands();
   const { resource } = useLectern();
   return (
     <>
       <output aria-label="lectern status">{resource.status}</output>
       <button
         type="button"
-        onClick={() => playAudio(buildFooterDescriptor(MEDIA_ID, "Activity audio"))}
+        onClick={() => playAudio(buildPlayerDescriptor(MEDIA_ID, "Activity audio"))}
       >
         Play
       </button>
@@ -54,7 +57,7 @@ function AudioActivityHarness() {
         type="button"
         onClick={() =>
           playAudio(
-            buildFooterDescriptor(
+            buildPlayerDescriptor(
               "00000000-0000-4000-8000-000000000902",
               "Replacement audio",
             ),
@@ -63,7 +66,9 @@ function AudioActivityHarness() {
       >
         Replace
       </button>
-      <audio ref={bindAudioElement} aria-label="Activity audio element" />
+      <button type="button" onClick={dismiss}>
+        Close player
+      </button>
     </>
   );
 }
@@ -94,7 +99,7 @@ describe("GlobalPlayer activity adapter", () => {
     );
     await screen.findByText("ready", { selector: '[aria-label="lectern status"]' });
     fireEvent.click(screen.getByRole("button", { name: "Play" }));
-    const audio = screen.getByLabelText("Activity audio element") as HTMLAudioElement;
+    const audio = screen.getByLabelText("Media player audio") as HTMLAudioElement;
 
     fireEvent(audio, new Event("playing"));
     await waitFor(() => expect(latestListeningRegistration().eligible).toBe(true));
@@ -146,4 +151,35 @@ describe("GlobalPlayer activity adapter", () => {
     );
   });
 
+  it("publishes the sampled final position before unregistering and unloading on dismiss", async () => {
+    render(
+      <LecternProvider>
+        <GlobalPlayerProvider>
+          <AudioActivityHarness />
+        </GlobalPlayerProvider>
+      </LecternProvider>,
+    );
+    await screen.findByText("ready", {
+      selector: '[aria-label="lectern status"]',
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Play" }));
+    const audio = screen.getByLabelText("Media player audio") as HTMLAudioElement;
+    fireEvent(audio, new Event("playing"));
+    audio.currentTime = 18.75;
+    fireEvent(audio, new Event("timeupdate"));
+
+    const unregister = recorder.registerObserver.mock.results.at(-1)
+      ?.value as ReturnType<typeof vi.fn>;
+    fireEvent.click(screen.getByRole("button", { name: "Close player" }));
+
+    await waitFor(() => expect(unregister).toHaveBeenCalledOnce());
+    expect(latestListeningRegistration()).toMatchObject({
+      eligible: false,
+      measurement: { mediaPositionMs: 18_750 },
+    });
+    expect(
+      recorder.observe.mock.invocationCallOrder.at(-1),
+    ).toBeLessThan(unregister.mock.invocationCallOrder[0]);
+    expect(audio.getAttribute("src")).toBeNull();
+  });
 });

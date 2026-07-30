@@ -1,5 +1,5 @@
-/* An unobtrusive banner rendered in-flow directly above the player dock. Like
-   the dock, it occupies layout space and never overlays content (spec §1). */
+/* An unobtrusive banner rendered in-flow directly above the player surfaces.
+   It occupies layout space and never overlays content (spec §1). */
 .notice {
   display: flex;
   align-items: center;

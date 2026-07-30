@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ApiError } from "@/lib/api/client";
 import { absent, present } from "@/lib/api/presence";
 import {
   assumeAppHref,
@@ -16,6 +17,7 @@ import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget
 import {
   applySnapshotInstall,
   descriptorFromLecternItem,
+  dismissSession,
   EMPTY_HISTORY,
   getStartPositionMs,
   manualNext,
@@ -400,6 +402,51 @@ describe("resetProgress", () => {
     expect(resetProgress({ kind: "Absent" }, EMPTY_HISTORY, mediaId("A"), 0)).toEqual({
       state: { kind: "Absent" },
       history: EMPTY_HISTORY,
+      effect: { kind: "None" },
+    });
+  });
+});
+
+// --- dismissSession ----------------------------------------------------------
+
+describe("dismissSession", () => {
+  const session: AudioSession = {
+    descriptor: descriptor("A"),
+    origin: lectern("iA"),
+  };
+  let attemptId = 0;
+  const attempt = mintCompletionAttempt(session, () => `dismiss-${++attemptId}`);
+  const error = new ApiError(503, "E_NETWORK", "Unavailable");
+  const history: PlayerHistory = {
+    back: [descriptor("B")],
+    forward: [descriptor("C")],
+  };
+
+  const retainedStates: PlayerSessionState[] = [
+    { kind: "Active", session, phase: "Playing" },
+    { kind: "Completing", session, attempt },
+    { kind: "CompletionFailed", session, attempt, error },
+    {
+      kind: "PlaybackFailed",
+      session,
+      error: { code: "4", message: "Audio URL unavailable." },
+    },
+    { kind: "PausedAtEnd", session },
+  ];
+
+  it.each(retainedStates)("dismisses $kind and clears device-local history", (state) => {
+    expect(dismissSession(state, history)).toEqual({
+      state: { kind: "Absent" },
+      history: EMPTY_HISTORY,
+      effect: { kind: "StopSession" },
+    });
+  });
+
+  it("is an idempotent no-op when no session exists", () => {
+    const absentState: PlayerSessionState = { kind: "Absent" };
+    expect(dismissSession(absentState, history)).toEqual({
+      state: absentState,
+      history,
       effect: { kind: "None" },
     });
   });

@@ -137,7 +137,7 @@ function LecternStatus() {
 }
 
 // Render the pane under the real Lectern + global-player providers (the pane
-// reads both via useLectern()/useGlobalPlayer()). The fetch boundary below
+// reads both through the Lectern and player providers. The fetch boundary below
 // answers the provider's initial GET /api/lectern.
 function Wrapped({
   href: hrefOverride,

@@ -34,7 +34,7 @@ import {
 import { useLectern } from "@/lib/lectern/LecternProvider";
 import { runProgressReset } from "@/lib/consumption/progressReset";
 import { descriptorFromLecternItem } from "@/lib/player/playerSession";
-import { useGlobalPlayer } from "@/lib/player/globalPlayer";
+import { usePlayerCommands } from "@/lib/player/globalPlayer";
 import {
   usePaneReturnReady,
   usePaneRuntime,
@@ -84,7 +84,7 @@ export default function LecternPaneBody() {
     setOrder,
     resetProgress,
   } = useLectern();
-  const { playAudio } = useGlobalPlayer();
+  const { playAudio } = usePlayerCommands();
   const toast = useFeedback();
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
   const queueSectionId = useId();
