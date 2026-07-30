@@ -504,7 +504,6 @@ def list_podcast_episodes_for_viewer(
                                 if listening.duration_ms is not None
                                 else absent()
                             ),
-                            playback_speed=listening.playback_speed,
                         )
                     )
                     if listening is not None

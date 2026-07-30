@@ -34,7 +34,7 @@ function fakeResponse(body: unknown, status = 200): Response {
 interface ParsedBody {
   positionMs: number;
   durationMs: Presence<number>;
-  playbackSpeed: number;
+  episodePlaybackRate: Presence<number>;
   expectedWriteRevision: number;
   expectedResetEpoch: number;
   heartbeatGeneration: string;
@@ -42,7 +42,14 @@ interface ParsedBody {
 }
 
 function stateOut(over: Partial<ListeningStateOut> = {}): ListeningStateOut {
-  return { positionMs: 0, durationMs: absent(), playbackSpeed: 1, writeRevision: 0, resetEpoch: 0, ...over };
+  return {
+    positionMs: 0,
+    durationMs: absent(),
+    episodePlaybackRate: absent(),
+    writeRevision: 0,
+    resetEpoch: 0,
+    ...over,
+  };
 }
 
 function getEnvelope(state: ListeningStateOut): unknown {
@@ -60,7 +67,7 @@ function echoSuccess(body: ParsedBody): Response {
       stateOut({
         positionMs: body.positionMs,
         durationMs: body.durationMs,
-        playbackSpeed: body.playbackSpeed,
+        episodePlaybackRate: body.episodePlaybackRate,
         writeRevision: body.expectedWriteRevision + 1,
         resetEpoch: body.expectedResetEpoch,
       }),
@@ -112,13 +119,18 @@ interface Harness {
 function makeEngine(opts?: {
   initial?: { writeRevision: number; resetEpoch: number; positionMs: number };
   startSample?: HeartbeatSample;
+  onPersistenceResumed?: () => void;
 }): Harness {
   const overlay: OverlayEntry[] = [];
   const adopted: Array<{ state: ListeningStateOut; seek: boolean }> = [];
   const suspended: Array<{ error: ApiError; retryGet: () => void }> = [];
   const counts = { resumed: 0 };
   let sample: HeartbeatSample =
-    opts?.startSample ?? { positionMs: 1000, durationMs: present(120_000), playbackSpeed: 1 };
+    opts?.startSample ?? {
+      positionMs: 1000,
+      durationMs: present(120_000),
+      episodePlaybackRate: present(1),
+    };
   let gen = 0;
   const engine = createListeningHeartbeat({
     mediaId: MEDIA,
@@ -132,6 +144,7 @@ function makeEngine(opts?: {
     onPersistenceSuspended: (error, retryGet) => suspended.push({ error, retryGet }),
     onPersistenceResumed: () => {
       counts.resumed += 1;
+      opts?.onPersistenceResumed?.();
     },
     onOverlayUpdate: (entry) => overlay.push(entry),
   });
@@ -162,7 +175,11 @@ describe("listeningHeartbeat", () => {
       return Promise.resolve(echoSuccess(body));
     });
     const h = makeEngine({ initial: { writeRevision: 4, resetEpoch: 1, positionMs: 0 } });
-    h.setSample({ positionMs: 6000, durationMs: present(200_000), playbackSpeed: 1.5 });
+    h.setSample({
+      positionMs: 6000,
+      durationMs: present(200_000),
+      episodePlaybackRate: present(1.5),
+    });
     const beforeRevision = consumptionProjectionSnapshot().revision;
 
     h.engine.tick();
@@ -175,7 +192,7 @@ describe("listeningHeartbeat", () => {
     expect(bodies[0]).toMatchObject({
       positionMs: 6000,
       durationMs: { kind: "Present", value: 200_000 },
-      playbackSpeed: 1.5,
+      episodePlaybackRate: { kind: "Present", value: 1.5 },
       expectedWriteRevision: 4,
       expectedResetEpoch: 1,
       heartbeatSequence: 0,
@@ -197,16 +214,32 @@ describe("listeningHeartbeat", () => {
     });
 
     const h = makeEngine();
-    h.setSample({ positionMs: 1000, durationMs: present(120_000), playbackSpeed: 1 });
+    h.setSample({
+      positionMs: 1000,
+      durationMs: present(120_000),
+      episodePlaybackRate: present(1),
+    });
     h.engine.tick();
     await flush();
     expect(bodies).toHaveLength(1);
 
-    h.setSample({ positionMs: 2000, durationMs: present(120_000), playbackSpeed: 1 });
+    h.setSample({
+      positionMs: 2000,
+      durationMs: present(120_000),
+      episodePlaybackRate: present(1),
+    });
     h.engine.tick();
-    h.setSample({ positionMs: 3000, durationMs: present(120_000), playbackSpeed: 1 });
+    h.setSample({
+      positionMs: 3000,
+      durationMs: present(120_000),
+      episodePlaybackRate: present(1),
+    });
     h.engine.tick();
-    h.setSample({ positionMs: 4000, durationMs: present(120_000), playbackSpeed: 1 });
+    h.setSample({
+      positionMs: 4000,
+      durationMs: present(120_000),
+      episodePlaybackRate: present(1),
+    });
     h.engine.tick();
     await flush();
     expect(bodies).toHaveLength(1);
@@ -219,23 +252,82 @@ describe("listeningHeartbeat", () => {
   });
 
   it("timeout recovery retains the local position when the reset epoch is unchanged", async () => {
+    const bodies: ParsedBody[] = [];
+    let putCount = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation((_input, init = {}) => {
       const method = (init.method ?? "GET").toUpperCase();
       if (method === "GET") {
         return Promise.resolve(fakeResponse(getEnvelope(stateOut({ positionMs: 500, writeRevision: 7, resetEpoch: 0 }))));
       }
-      parseBody(init);
-      return abortable(init.signal);
+      const body = parseBody(init);
+      bodies.push(body);
+      putCount += 1;
+      return putCount === 1
+        ? abortable(init.signal)
+        : Promise.resolve(echoSuccess(body));
     });
     const h = makeEngine({ initial: { writeRevision: 2, resetEpoch: 0, positionMs: 0 } });
-    h.setSample({ positionMs: 8000, durationMs: present(120_000), playbackSpeed: 1 });
+    h.setSample({
+      positionMs: 8000,
+      durationMs: present(120_000),
+      episodePlaybackRate: present(1),
+    });
     h.engine.tick();
     await flush();
     await vi.advanceTimersByTimeAsync(HEARTBEAT_DEADLINE_MS);
     await flush();
 
     expect(h.adopted).toHaveLength(0);
-    expect(h.overlay.at(-1)).toEqual({ positionMs: 8000, writeRevision: 7, resetEpoch: 0 });
+    expect(bodies).toHaveLength(2);
+    expect(bodies[1]).toMatchObject({
+      positionMs: 8000,
+      episodePlaybackRate: { kind: "Present", value: 1 },
+      expectedWriteRevision: 7,
+      heartbeatSequence: 0,
+    });
+    expect(h.overlay.at(-1)).toEqual({ positionMs: 8000, writeRevision: 8, resetEpoch: 0 });
+  });
+
+  it("resends the dirty sample after network-failure recovery", async () => {
+    const bodies: ParsedBody[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation((_input, init = {}) => {
+      const method = (init.method ?? "GET").toUpperCase();
+      if (method === "GET") {
+        return Promise.resolve(
+          fakeResponse(
+            getEnvelope(
+              stateOut({
+                positionMs: 100,
+                writeRevision: 4,
+                resetEpoch: 0,
+              }),
+            ),
+          ),
+        );
+      }
+      const body = parseBody(init);
+      bodies.push(body);
+      return bodies.length === 1
+        ? Promise.reject(new TypeError("network down"))
+        : Promise.resolve(echoSuccess(body));
+    });
+    const h = makeEngine();
+    h.setSample({
+      positionMs: 7100,
+      durationMs: present(120_000),
+      episodePlaybackRate: present(1.8),
+    });
+
+    h.engine.tick();
+    await flush();
+
+    expect(bodies).toHaveLength(2);
+    expect(bodies[1]).toMatchObject({
+      positionMs: 7100,
+      episodePlaybackRate: { kind: "Present", value: 1.8 },
+      expectedWriteRevision: 4,
+      heartbeatSequence: 0,
+    });
   });
 
   it("timeout recovery adopts canonical state when the reset epoch changed", async () => {
@@ -247,7 +339,11 @@ describe("listeningHeartbeat", () => {
       return abortable(init.signal);
     });
     const h = makeEngine({ initial: { writeRevision: 2, resetEpoch: 0, positionMs: 0 } });
-    h.setSample({ positionMs: 8000, durationMs: present(120_000), playbackSpeed: 1 });
+    h.setSample({
+      positionMs: 8000,
+      durationMs: present(120_000),
+      episodePlaybackRate: present(1),
+    });
     h.engine.tick();
     await flush();
     await vi.advanceTimersByTimeAsync(HEARTBEAT_DEADLINE_MS);
@@ -258,28 +354,54 @@ describe("listeningHeartbeat", () => {
   });
 
   it("recovers via GET when the server rejects a stale revision (409)", async () => {
+    const bodies: ParsedBody[] = [];
     let putCount = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation((_input, init = {}) => {
       const method = (init.method ?? "GET").toUpperCase();
       if (method === "GET") {
         return Promise.resolve(fakeResponse(getEnvelope(stateOut({ positionMs: 4200, writeRevision: 11, resetEpoch: 0 }))));
       }
-      parseBody(init);
+      const body = parseBody(init);
+      bodies.push(body);
       putCount += 1;
-      return Promise.resolve(fakeResponse({ error: { code: "E_STALE_LISTENING_REVISION", message: "stale" } }, 409));
+      return putCount === 1
+        ? Promise.resolve(
+            fakeResponse(
+              {
+                error: {
+                  code: "E_STALE_LISTENING_REVISION",
+                  message: "stale",
+                },
+              },
+              409,
+            ),
+          )
+        : Promise.resolve(echoSuccess(body));
     });
     const h = makeEngine({ initial: { writeRevision: 2, resetEpoch: 0, positionMs: 0 } });
-    h.setSample({ positionMs: 4200, durationMs: present(120_000), playbackSpeed: 1 });
+    h.setSample({
+      positionMs: 4200,
+      durationMs: present(120_000),
+      episodePlaybackRate: present(1),
+    });
     h.engine.tick();
     await flush();
 
-    expect(putCount).toBe(1);
+    expect(putCount).toBe(2);
+    expect(bodies[1]).toMatchObject({
+      positionMs: 4200,
+      expectedWriteRevision: 11,
+      expectedResetEpoch: 0,
+      heartbeatSequence: 0,
+    });
     expect(h.suspended).toHaveLength(0);
-    expect(h.overlay.at(-1)).toEqual({ positionMs: 4200, writeRevision: 11, resetEpoch: 0 });
+    expect(h.overlay.at(-1)).toEqual({ positionMs: 4200, writeRevision: 12, resetEpoch: 0 });
   });
 
   it("suspends persistence on a failed recovery GET and resumes only after retryGet succeeds", async () => {
     const bodies: ParsedBody[] = [];
+    const keepaliveBodies: ParsedBody[] = [];
+    const recoveryOrder: string[] = [];
     let getShouldFail = true;
     vi.spyOn(globalThis, "fetch").mockImplementation((_input, init = {}) => {
       const method = (init.method ?? "GET").toUpperCase();
@@ -288,32 +410,118 @@ describe("listeningHeartbeat", () => {
         return Promise.resolve(fakeResponse(getEnvelope(stateOut({ positionMs: 0, writeRevision: 3, resetEpoch: 0 }))));
       }
       const body = parseBody(init);
+      if (init.keepalive) {
+        keepaliveBodies.push(body);
+        return Promise.resolve(fakeResponse({ data: {} }));
+      }
       bodies.push(body);
       if (bodies.length === 1) {
         return Promise.resolve(fakeResponse({ error: { code: "E_STALE_LISTENING_REVISION", message: "stale" } }, 409));
       }
+      recoveryOrder.push("resend");
       return Promise.resolve(echoSuccess(body));
     });
 
-    const h = makeEngine();
+    const h = makeEngine({
+      onPersistenceResumed: () => recoveryOrder.push("resumed"),
+    });
     h.engine.tick(); // -> 409 -> recovery GET fails -> Suspended
     await flush();
     expect(h.suspended).toHaveLength(1);
     const sentBeforeSuspend = bodies.length;
 
+    h.setSample({
+      positionMs: 9000,
+      durationMs: present(120_000),
+      episodePlaybackRate: present(1.8),
+    });
     h.engine.tick();
     h.engine.tick();
     await flush();
     expect(bodies.length).toBe(sentBeforeSuspend); // no heartbeats while suspended
+    h.engine.flushKeepalive();
+    await flush();
+    expect(keepaliveBodies).toHaveLength(1);
 
     getShouldFail = false;
     h.suspended[0].retryGet();
     await flush();
     expect(h.counts.resumed).toBe(1);
+    expect(bodies.length).toBe(sentBeforeSuspend + 1);
+    expect(bodies.at(-1)).toMatchObject({
+      positionMs: 9000,
+      episodePlaybackRate: { kind: "Present", value: 1.8 },
+      expectedWriteRevision: 3,
+    });
+    expect(recoveryOrder).toEqual(["resend", "resumed"]);
+  });
+
+  it("suppresses every unestablished sample, including a pre-play seek", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch");
+    const h = makeEngine({
+      startSample: {
+        positionMs: 30_000,
+        durationMs: present(120_000),
+        episodePlaybackRate: absent(),
+      },
+    });
+
+    h.engine.tick();
+    h.engine.flushKeepalive();
+    await flush();
+
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("retires a dirty pre-reset sample when recovery observes a newer reset epoch", async () => {
+    let putCount = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation((_input, init = {}) => {
+      const method = (init.method ?? "GET").toUpperCase();
+      if (method === "GET") {
+        return Promise.resolve(
+          fakeResponse(
+            getEnvelope(
+              stateOut({
+                positionMs: 0,
+                writeRevision: 8,
+                resetEpoch: 2,
+              }),
+            ),
+          ),
+        );
+      }
+      putCount += 1;
+      parseBody(init);
+      return Promise.resolve(
+        fakeResponse(
+          {
+            error: {
+              code: "E_STALE_LISTENING_REVISION",
+              message: "stale",
+            },
+          },
+          409,
+        ),
+      );
+    });
+    const h = makeEngine({
+      initial: { writeRevision: 1, resetEpoch: 1, positionMs: 20_000 },
+    });
 
     h.engine.tick();
     await flush();
-    expect(bodies.length).toBe(sentBeforeSuspend + 1); // sends resume after recovery
+
+    expect(putCount).toBe(1);
+    expect(h.adopted).toEqual([
+      {
+        state: stateOut({
+          positionMs: 0,
+          writeRevision: 8,
+          resetEpoch: 2,
+        }),
+        seek: true,
+      },
+    ]);
   });
 
   it("drainAndStop resolves within the deadline when the in-flight PUT hangs", async () => {

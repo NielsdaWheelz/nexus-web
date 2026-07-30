@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
 from nexus.schemas.collection_page import CollectionRevision
+from nexus.schemas.consumption import PlaybackRate
 from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.presence import Presence
 from nexus.services.podcasts.types import PodcastSyncStatus
@@ -171,7 +172,7 @@ class LibraryEntryPodcastOut(BaseModel):
 
 
 class LibraryEntryPodcastSubscriptionOut(BaseModel):
-    default_playback_speed: float | None = Field(default=None, ge=0.5, le=3.0)
+    default_playback_speed: Presence[PlaybackRate]
     auto_queue: bool = False
     sync_status: PodcastSyncStatus
 

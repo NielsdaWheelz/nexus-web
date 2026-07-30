@@ -66,7 +66,11 @@ function audioItem(
       positionMs: 0,
       writeRevision: 0,
       resetEpoch: 0,
-      playbackSpeed: 1,
+      playbackRate: {
+        value: 1,
+        source: "Product",
+        podcastPreference: absent(),
+      },
       durationMs: absent(),
       artworkUrl: absent(),
       chapters: [],
@@ -99,7 +103,7 @@ function heartbeatResponse(init: RequestInit | undefined): Response {
         listeningState: {
           positionMs: body.positionMs,
           durationMs: body.durationMs,
-          playbackSpeed: body.playbackSpeed,
+          episodePlaybackRate: body.episodePlaybackRate,
           writeRevision: 1,
           resetEpoch: 0,
         },
@@ -112,7 +116,7 @@ function heartbeatResponse(init: RequestInit | undefined): Response {
     data: {
       positionMs: 0,
       durationMs: { kind: "Absent" },
-      playbackSpeed: 1,
+      episodePlaybackRate: absent(),
       writeRevision: 0,
       resetEpoch: 0,
     },

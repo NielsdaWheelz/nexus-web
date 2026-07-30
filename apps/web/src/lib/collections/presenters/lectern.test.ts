@@ -160,7 +160,11 @@ describe("Lectern collection presenters", () => {
         positionMs: 1,
         writeRevision: 0,
         resetEpoch: 0,
-        playbackSpeed: 1,
+        playbackRate: {
+          value: 1,
+          source: "Product",
+          podcastPreference: { kind: "Absent" },
+        },
         durationMs: { kind: "Present", value: 0 },
         artworkUrl: { kind: "Absent" },
         chapters: [],

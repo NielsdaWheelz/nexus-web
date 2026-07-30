@@ -73,8 +73,8 @@ import {
 import {
   buildPodcastUnsubscribeConfirmation,
   unsubscribeFromPodcast,
-  type PodcastSubscriptionSettingsResponse,
 } from "@/app/(authenticated)/podcasts/podcastSubscriptions";
+import type { PodcastSubscriptionSettingsResponse } from "@/lib/podcasts/subscriptionSettings";
 import PodcastSubscriptionSettingsModal from "@/app/(authenticated)/podcasts/PodcastSubscriptionSettingsModal";
 import { usePodcastSubscriptionSettingsModal } from "@/app/(authenticated)/podcasts/usePodcastSubscriptionSettingsModal";
 import Button from "@/components/ui/Button";
@@ -2878,6 +2878,10 @@ export default function LibraryPaneBody() {
   const entryRowView = (item: LibraryEntry): CollectionRowView => {
     const showAdded = committedView?.order.kind === "Added";
     if (item.kind === "podcast") {
+      const subscription =
+        item.subscription.kind === "Present"
+          ? item.subscription.value
+          : null;
       const row = presentPodcast(
         {
           id: item.podcast.id,
@@ -2889,32 +2893,27 @@ export default function LibraryPaneBody() {
         },
         {
           settings:
-            viewIsCommitted && item.subscription.kind === "Present"
+            viewIsCommitted && subscription !== null
               ? {
                   kind: "Available",
                   execute: () =>
                     podcastSettingsModal.open({
                       podcast_id: item.podcast.id,
                       default_playback_speed:
-                        item.subscription.kind === "Present"
-                          ? item.subscription.value.defaultPlaybackSpeed
-                          : null,
-                      auto_queue:
-                        item.subscription.kind === "Present"
-                          ? item.subscription.value.autoQueue
-                          : false,
+                        subscription.defaultPlaybackSpeed,
+                      auto_queue: subscription.autoQueue,
                     }),
                 }
               : { kind: "Unavailable" },
           checkForNewEpisodes:
-            viewIsCommitted && item.subscription.kind === "Present"
+            viewIsCommitted && subscription !== null
               ? {
                   kind: "Available",
                   execute: () => handleRefreshPodcast(item),
                 }
               : { kind: "Unavailable" },
           subscription:
-            viewIsCommitted && item.subscription.kind === "Present"
+            viewIsCommitted && subscription !== null
               ? {
                   kind: "Subscribed",
                   execute: () => handleUnsubscribePodcast(item),

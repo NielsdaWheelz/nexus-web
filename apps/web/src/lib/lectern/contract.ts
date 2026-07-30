@@ -35,6 +35,7 @@ import {
   parseReaderCursorSnapshot,
   type ReaderCursorSnapshot,
 } from "@/lib/reader/readerProgress";
+import { parsePlaybackRate } from "@/lib/player/playbackRate";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
 // --- Branded identities ------------------------------------------------------
@@ -122,7 +123,7 @@ export interface FooterAudioActivation {
   positionMs: number;
   writeRevision: number;
   resetEpoch: number;
-  playbackSpeed: number;
+  playbackRate: PlaybackRateResolution;
   durationMs: Presence<number>;
   artworkUrl: Presence<string>;
   chapters: ChapterOut[];
@@ -214,10 +215,19 @@ export interface PlayerDescriptor {
   activation: FooterAudioActivation;
 }
 
+export interface PlaybackRateResolution {
+  value: number;
+  source: "Episode" | "Podcast" | "Product";
+  podcastPreference: Presence<{
+    podcastId: string;
+    value: Presence<number>;
+  }>;
+}
+
 export interface ListeningStateOut {
   positionMs: number;
   durationMs: Presence<number>;
-  playbackSpeed: number;
+  episodePlaybackRate: Presence<number>;
   writeRevision: number;
   resetEpoch: number;
 }
@@ -329,14 +339,6 @@ function asNonNegativeInt32(raw: unknown, ctx: string): number {
   return value;
 }
 
-function asPlaybackSpeed(raw: unknown, ctx: string): number {
-  const value = asFiniteNumber(raw, ctx);
-  if (value < 0.25 || value > 3) {
-    throw new Error(`Invalid ${ctx}: expected a value in 0.25..3, got ${value}`);
-  }
-  return value;
-}
-
 function asFraction(raw: unknown, ctx: string): number {
   const value = asFiniteNumber(raw, ctx);
   if (value < 0 || value > 1) {
@@ -377,7 +379,80 @@ function decodeAppHref(raw: unknown): AppHref {
   return assumeAppHref(asString(raw, "AppHref"));
 }
 
+function decodeUuidString(raw: unknown, context: string): string {
+  const value = asString(raw, context);
+  if (!CANONICAL_UUID_RE.test(value)) {
+    throw new Error(`Invalid ${context}: expected a canonical UUID.`);
+  }
+  return value;
+}
+
 // --- Domain decoders ---------------------------------------------------------
+
+function decodePlaybackRateResolution(raw: unknown): PlaybackRateResolution {
+  const rec = asRecord(raw, "PlaybackRateResolution");
+  exactKeys(
+    rec,
+    ["value", "source", "podcastPreference"],
+    "PlaybackRateResolution",
+  );
+  const source = asLiteral(
+    rec.source,
+    ["Episode", "Podcast", "Product"] as const,
+    "PlaybackRateResolution.source",
+  );
+  const podcastPreference = decodePresence(rec.podcastPreference, (rawValue) => {
+    const preference = asRecord(
+      rawValue,
+      "PlaybackRateResolution.podcastPreference",
+    );
+    exactKeys(
+      preference,
+      ["podcastId", "value"],
+      "PlaybackRateResolution.podcastPreference",
+    );
+    return {
+      podcastId: decodeUuidString(
+        preference.podcastId,
+        "PlaybackRateResolution.podcastPreference.podcastId",
+      ),
+      value: decodePresence(preference.value, (value) =>
+        parsePlaybackRate(
+          value,
+          "PlaybackRateResolution.podcastPreference.value",
+        ),
+      ),
+    };
+  });
+  const value = parsePlaybackRate(rec.value, "PlaybackRateResolution.value");
+  if (source === "Podcast") {
+    if (
+      podcastPreference.kind !== "Present" ||
+      podcastPreference.value.value.kind !== "Present" ||
+      podcastPreference.value.value.value !== value
+    ) {
+      throw new Error(
+        "Invalid PlaybackRateResolution: Podcast source must equal the present podcast preference.",
+      );
+    }
+  }
+  if (source === "Product") {
+    if (value !== 1) {
+      throw new Error(
+        "Invalid PlaybackRateResolution: Product source must resolve to 1.",
+      );
+    }
+    if (
+      podcastPreference.kind === "Present" &&
+      podcastPreference.value.value.kind === "Present"
+    ) {
+      throw new Error(
+        "Invalid PlaybackRateResolution: a present podcast preference must resolve from Podcast.",
+      );
+    }
+  }
+  return { value, source, podcastPreference };
+}
 
 export function decodeChapter(raw: unknown): ChapterOut {
   const rec = asRecord(raw, "ChapterOut");
@@ -421,7 +496,7 @@ export function decodeActivation(raw: unknown): Activation {
           "positionMs",
           "writeRevision",
           "resetEpoch",
-          "playbackSpeed",
+          "playbackRate",
           "durationMs",
           "artworkUrl",
           "chapters",
@@ -450,10 +525,7 @@ export function decodeActivation(raw: unknown): Activation {
           rec.resetEpoch,
           "FooterAudioActivation.resetEpoch",
         ),
-        playbackSpeed: asPlaybackSpeed(
-          rec.playbackSpeed,
-          "FooterAudioActivation.playbackSpeed",
-        ),
+        playbackRate: decodePlaybackRateResolution(rec.playbackRate),
         durationMs: decodePresence(rec.durationMs, (v) =>
           asNonNegativeInt32(v, "FooterAudioActivation.durationMs"),
         ),
@@ -544,7 +616,13 @@ export function decodeListeningState(raw: unknown): ListeningStateOut {
   const rec = asRecord(raw, "ListeningStateOut");
   exactKeys(
     rec,
-    ["positionMs", "durationMs", "playbackSpeed", "writeRevision", "resetEpoch"],
+    [
+      "positionMs",
+      "durationMs",
+      "episodePlaybackRate",
+      "writeRevision",
+      "resetEpoch",
+    ],
     "ListeningStateOut",
   );
   return {
@@ -552,7 +630,9 @@ export function decodeListeningState(raw: unknown): ListeningStateOut {
     durationMs: decodePresence(rec.durationMs, (v) =>
       asNonNegativeInt32(v, "ListeningStateOut.durationMs"),
     ),
-    playbackSpeed: asPlaybackSpeed(rec.playbackSpeed, "ListeningStateOut.playbackSpeed"),
+    episodePlaybackRate: decodePresence(rec.episodePlaybackRate, (value) =>
+      parsePlaybackRate(value, "ListeningStateOut.episodePlaybackRate"),
+    ),
     writeRevision: asNonNegativeInt32(
       rec.writeRevision,
       "ListeningStateOut.writeRevision",

@@ -343,7 +343,6 @@ function episodeMedia({
   listeningState?: {
     position_ms: number;
     duration_ms: number | null;
-    playback_speed: number;
     is_completed: boolean;
   } | null;
 } = {}) {
@@ -373,7 +372,6 @@ function episodeMedia({
                       kind: "Present",
                       value: listeningState.duration_ms,
                     },
-              playback_speed: listeningState.playback_speed,
             },
           },
     episode_state: episodeState ?? "unplayed",
@@ -566,7 +564,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
             subscription: {
               podcast_id: "00000000-0000-4000-8000-000000000011",
               user_id: "user-1",
-              default_playback_speed: null,
+              default_playback_speed: { kind: "Absent" },
               auto_queue: false,
               sync_status: "Complete",
               sync_error_code: null,
@@ -649,7 +647,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     const subscription = {
       podcast_id: "00000000-0000-4000-8000-000000000011",
       user_id: "user-1",
-      default_playback_speed: null,
+      default_playback_speed: { kind: "Absent" },
       auto_queue: false,
       sync_status: "Complete",
       sync_error_code: null,
@@ -825,7 +823,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     const subscription = {
       podcast_id: "00000000-0000-4000-8000-000000000011",
       user_id: "user-1",
-      default_playback_speed: null,
+      default_playback_speed: { kind: "Absent" },
       auto_queue: false,
       sync_status: "Complete",
       sync_error_code: null,
@@ -1401,7 +1399,6 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
               listeningState: {
                 position_ms: resetCommitted ? 0 : 30_000,
                 duration_ms: 60_000,
-                playback_speed: 1.25,
                 is_completed: false,
               },
             }),
@@ -1442,7 +1439,10 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
                   value: {
                     positionMs: 0,
                     durationMs: { kind: "Present", value: 60_000 },
-                    playbackSpeed: 1.25,
+                    episodePlaybackRate: {
+                      kind: "Present",
+                      value: 1.25,
+                    },
                     writeRevision: 1,
                     resetEpoch: 1,
                   },
@@ -1835,7 +1835,11 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
                   positionMs: 0,
                   writeRevision: 0,
                   resetEpoch: 0,
-                  playbackSpeed: 1,
+                  playbackRate: {
+                    value: 1,
+                    source: "Product",
+                    podcastPreference: { kind: "Absent" },
+                  },
                   durationMs: { kind: "Present", value: 60_000 },
                   artworkUrl: { kind: "Absent" },
                   chapters: [],

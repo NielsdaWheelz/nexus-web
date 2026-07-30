@@ -84,7 +84,7 @@ export function useMediaSessionAdapter(args: {
   isPlaying: boolean;
   positionEnabled: boolean;
   audioElement: HTMLAudioElement | null;
-  playbackRateRef: RefObject<number>;
+  basePlaybackRateRef: RefObject<number>;
   handlers: MediaSessionHandlers;
 }): { updatePositionState: (force?: boolean) => void } {
   const { track, isPlaying, positionEnabled } = args;
@@ -97,7 +97,7 @@ export function useMediaSessionAdapter(args: {
   positionEnabledRef.current = args.positionEnabled;
   const handlersRef = useRef(args.handlers);
   handlersRef.current = args.handlers;
-  const playbackRateRef = args.playbackRateRef;
+  const basePlaybackRateRef = args.basePlaybackRateRef;
 
   const lastUpdateAtRef = useRef(0);
 
@@ -126,8 +126,6 @@ export function useMediaSessionAdapter(args: {
       const position = Number.isFinite(audio.currentTime)
         ? audio.currentTime
         : null;
-      const playbackRate =
-        playbackRateRef.current > 0 ? playbackRateRef.current : 1;
       if (
         duration == null ||
         duration <= 0 ||
@@ -139,7 +137,7 @@ export function useMediaSessionAdapter(args: {
       try {
         ms.setPositionState({
           duration,
-          playbackRate,
+          playbackRate: basePlaybackRateRef.current,
           position: Math.min(position, duration),
         });
         lastUpdateAtRef.current = now;
@@ -147,7 +145,7 @@ export function useMediaSessionAdapter(args: {
         // Some browsers throw when duration/position are temporarily unavailable.
       }
     },
-    [playbackRateRef],
+    [basePlaybackRateRef],
   );
 
   useEffect(() => {

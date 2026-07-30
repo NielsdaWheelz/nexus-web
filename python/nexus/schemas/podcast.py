@@ -8,12 +8,13 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
 from nexus.schemas.collection_page import CollectionRevision
+from nexus.schemas.consumption import PlaybackRate
 from nexus.schemas.contributors import (
     ContributorCreditIn,
     ContributorCreditOut,
 )
 from nexus.schemas.media import MediaProcessingStatus
-from nexus.schemas.presence import Presence
+from nexus.schemas.presence import Presence, absent
 from nexus.services.podcasts.handles import PodcastRefreshRunHandle
 from nexus.services.podcasts.types import PodcastRefreshRunStatus, PodcastSyncStatus
 from nexus.services.sealed_handles import DiscoveryTargetHandle
@@ -175,7 +176,7 @@ class PodcastEpisodeFromDiscoveryOut(BaseModel):
 
 
 class PodcastSubscriptionSettingsPatchRequest(BaseModel):
-    default_playback_speed: float | None = Field(default=None, ge=0.5, le=3.0)
+    default_playback_speed: Presence[PlaybackRate] = Field(default_factory=absent)
     auto_queue: bool | None = None
 
     @model_validator(mode="after")
@@ -208,7 +209,7 @@ class PodcastOpmlImportOut(BaseModel):
 class PodcastSubscriptionStatusOut(BaseModel):
     user_id: UUID
     podcast_id: UUID
-    default_playback_speed: float | None = Field(default=None, ge=0.5, le=3.0)
+    default_playback_speed: Presence[PlaybackRate]
     auto_queue: bool = False
     sync_status: PodcastSyncStatus
     sync_error_code: str | None = None
@@ -258,7 +259,7 @@ class PodcastSubscriptionListItemOut(BaseModel):
     contributors: list[ContributorCreditOut] = Field(default_factory=list)
     unplayed_count: int = Field(ge=0)
     latest_episode_published_at: Presence[datetime]
-    default_playback_speed: Presence[float]
+    default_playback_speed: Presence[PlaybackRate]
     auto_queue: bool
     sync_status: PodcastSyncStatus
 
@@ -280,7 +281,6 @@ class PodcastEpisodeListCapabilitiesOut(BaseModel):
 class PodcastEpisodeListeningStateOut(BaseModel):
     position_ms: int = Field(ge=0)
     duration_ms: Presence[int]
-    playback_speed: float = Field(gt=0)
 
     model_config = ConfigDict(extra="forbid")
 

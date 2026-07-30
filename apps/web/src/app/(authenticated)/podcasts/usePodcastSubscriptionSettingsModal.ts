@@ -1,32 +1,32 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type FeedbackContent,
   toFeedback,
 } from "@/components/feedback/Feedback";
+import { absent, type Presence } from "@/lib/api/presence";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
-  getPodcastSubscriptionSettingsDraft,
-  parsePodcastSubscriptionDefaultPlaybackSpeed,
   savePodcastSubscriptionSettings,
+  subscribePodcastSubscriptionSettingsInstalls,
   type PodcastSubscriptionSettingsResponse,
-} from "./podcastSubscriptions";
+} from "@/lib/podcasts/subscriptionSettings";
 
 interface SubscriptionSettingsSource {
   podcast_id: string;
-  default_playback_speed?: number | null;
-  auto_queue?: boolean;
+  default_playback_speed: Presence<number>;
+  auto_queue: boolean;
 }
 
 export interface PodcastSubscriptionSettingsModal {
   /** Non-null when the modal is open; identifies the podcast being edited. */
   podcastId: string | null;
-  defaultSpeed: string;
+  defaultPlaybackSpeed: Presence<number>;
   autoQueue: boolean;
   busy: boolean;
   error: FeedbackContent | null;
-  setDefaultSpeed: (value: string) => void;
+  setDefaultPlaybackSpeed: (value: Presence<number>) => void;
   setAutoQueue: (value: boolean) => void;
   open: (subscription: SubscriptionSettingsSource) => void;
   close: () => void;
@@ -36,8 +36,9 @@ export interface PodcastSubscriptionSettingsModal {
 /**
  * State machine for the podcast-subscription settings modal: seeds the
  * defaultSpeed/autoQueue draft from the active subscription on open, tracks
- * busy/error during save, and forwards the saved response to the caller via
- * `onSaved` so it can patch its local subscription state.
+ * busy/error during save, and forwards every shared settings install exactly
+ * once via `onSaved` so the caller's subscription projection stays current
+ * after either a modal save or a player-side Remember.
  */
 export function usePodcastSubscriptionSettingsModal({
   onSaved,
@@ -45,38 +46,41 @@ export function usePodcastSubscriptionSettingsModal({
   onSaved: (response: PodcastSubscriptionSettingsResponse) => void;
 }): PodcastSubscriptionSettingsModal {
   const [podcastId, setPodcastId] = useState<string | null>(null);
-  const [defaultSpeed, setDefaultSpeed] = useState<string>("default");
+  const [defaultPlaybackSpeed, setDefaultPlaybackSpeed] =
+    useState<Presence<number>>(absent());
   const [autoQueue, setAutoQueue] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<FeedbackContent | null>(null);
+  const busyRef = useRef(false);
+
+  useEffect(
+    () => subscribePodcastSubscriptionSettingsInstalls(onSaved),
+    [onSaved],
+  );
 
   const open = useCallback((subscription: SubscriptionSettingsSource) => {
-    const draft = getPodcastSubscriptionSettingsDraft(subscription);
     setPodcastId(subscription.podcast_id);
-    setDefaultSpeed(draft.defaultSpeed);
-    setAutoQueue(draft.autoQueue);
+    setDefaultPlaybackSpeed(subscription.default_playback_speed);
+    setAutoQueue(subscription.auto_queue);
     setError(null);
   }, []);
 
   const close = useCallback(() => {
+    if (busyRef.current) return;
     setPodcastId(null);
     setError(null);
-    setBusy(false);
   }, []);
 
   const save = useCallback(async () => {
-    if (!podcastId) {
-      return;
-    }
+    if (podcastId === null || busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     setError(null);
     try {
-      const response = await savePodcastSubscriptionSettings(podcastId, {
-        defaultPlaybackSpeed:
-          parsePodcastSubscriptionDefaultPlaybackSpeed(defaultSpeed),
+      await savePodcastSubscriptionSettings(podcastId, {
+        defaultPlaybackSpeed,
         autoQueue,
       });
-      onSaved(response);
       setPodcastId(null);
     } catch (saveError) {
       if (handleUnauthenticatedApiError(saveError)) return;
@@ -86,17 +90,18 @@ export function usePodcastSubscriptionSettingsModal({
         }),
       );
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
-  }, [autoQueue, defaultSpeed, onSaved, podcastId]);
+  }, [autoQueue, defaultPlaybackSpeed, podcastId]);
 
   return {
     podcastId,
-    defaultSpeed,
+    defaultPlaybackSpeed,
     autoQueue,
     busy,
     error,
-    setDefaultSpeed,
+    setDefaultPlaybackSpeed,
     setAutoQueue,
     open,
     close,

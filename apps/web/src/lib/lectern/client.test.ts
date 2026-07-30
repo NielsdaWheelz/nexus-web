@@ -12,6 +12,7 @@ import {
 const MEDIA_ID = "11111111-1111-1111-1111-111111111111";
 const ITEM_ID = "22222222-2222-2222-2222-222222222222";
 const NEXT_ITEM_ID = "33333333-3333-3333-3333-333333333333";
+const PODCAST_ID = "44444444-4444-4444-4444-444444444444";
 
 function footerAudio(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -21,7 +22,17 @@ function footerAudio(overrides: Record<string, unknown> = {}): Record<string, un
     positionMs: 1000,
     writeRevision: 3,
     resetEpoch: 0,
-    playbackSpeed: 1.5,
+    playbackRate: {
+      value: 1.5,
+      source: "Podcast",
+      podcastPreference: {
+        kind: "Present",
+        value: {
+          podcastId: PODCAST_ID,
+          value: { kind: "Present", value: 1.5 },
+        },
+      },
+    },
     durationMs: { kind: "Present", value: 60000 },
     artworkUrl: { kind: "Absent" },
     chapters: [{ title: "Intro", startMs: 0, endMs: { kind: "Present", value: 5000 } }],
@@ -54,6 +65,17 @@ describe("decodeActivation", () => {
       expect(decoded.kind).toBe("FooterAudio");
       if (decoded.kind !== "FooterAudio") throw new Error("unreachable");
       expect(decoded.positionMs).toBe(1000);
+      expect(decoded.playbackRate).toEqual({
+        value: 1.5,
+        source: "Podcast",
+        podcastPreference: {
+          kind: "Present",
+          value: {
+            podcastId: PODCAST_ID,
+            value: { kind: "Present", value: 1.5 },
+          },
+        },
+      });
       expect(decoded.durationMs).toEqual({ kind: "Present", value: 60000 });
       expect(decoded.artworkUrl).toEqual({ kind: "Absent" });
       expect(decoded.chapters).toHaveLength(1);
@@ -108,9 +130,66 @@ describe("decodeActivation", () => {
       ).toThrow();
     });
 
-    it("rejects playback speed outside 0.25..3", () => {
-      expect(() => decodeActivation(footerAudio({ playbackSpeed: 0.249 }))).toThrow();
-      expect(() => decodeActivation(footerAudio({ playbackSpeed: 3.001 }))).toThrow();
+    it("rejects playback rate outside 0.5..3", () => {
+      expect(() =>
+        decodeActivation(
+          footerAudio({
+            playbackRate: {
+              value: 0.499,
+              source: "Episode",
+              podcastPreference: { kind: "Absent" },
+            },
+          }),
+        ),
+      ).toThrow();
+      expect(() =>
+        decodeActivation(
+          footerAudio({
+            playbackRate: {
+              value: 3.001,
+              source: "Episode",
+              podcastPreference: { kind: "Absent" },
+            },
+          }),
+        ),
+      ).toThrow();
+    });
+
+    it("rejects a resolution whose source contradicts its preference", () => {
+      expect(() =>
+        decodeActivation(
+          footerAudio({
+            playbackRate: {
+              value: 1,
+              source: "Product",
+              podcastPreference: {
+                kind: "Present",
+                value: {
+                  podcastId: PODCAST_ID,
+                  value: { kind: "Present", value: 1.5 },
+                },
+              },
+            },
+          }),
+        ),
+      ).toThrow();
+      expect(() =>
+        decodeActivation(
+          footerAudio({
+            playbackRate: {
+              value: 1.25,
+              source: "Podcast",
+              podcastPreference: {
+                kind: "Present",
+                value: {
+                  podcastId: PODCAST_ID,
+                  value: { kind: "Present", value: 1.5 },
+                },
+              },
+            },
+          }),
+        ),
+      ).toThrow();
     });
 
     it("rejects more than 100 chapters (bounds)", () => {
@@ -256,7 +335,7 @@ describe("decodeListeningState", () => {
     const decoded = decodeListeningState({
       positionMs: 42,
       durationMs: { kind: "Present", value: 100 },
-      playbackSpeed: 1,
+      episodePlaybackRate: { kind: "Present", value: 1 },
       writeRevision: 7,
       resetEpoch: 2,
     });
@@ -269,7 +348,7 @@ describe("decodeListeningState", () => {
       decodeListeningState({
         positionMs: 0,
         durationMs: { kind: "Absent" },
-        playbackSpeed: 1,
+        episodePlaybackRate: { kind: "Present", value: 1 },
         writeRevision: 1.2,
         resetEpoch: 0,
       }),
@@ -320,7 +399,7 @@ describe("decodeConsumptionResult", () => {
             value: {
             positionMs: 0,
             durationMs: { kind: "Absent" },
-            playbackSpeed: 1,
+            episodePlaybackRate: { kind: "Absent" },
             writeRevision: 1,
             resetEpoch: 1,
             },

@@ -13,7 +13,6 @@ function timing(overrides: Partial<EpisodeTiming> = {}): EpisodeTiming {
   return {
     position_ms: 30_000,
     duration_ms: 120_000,
-    playback_speed: 1,
     ...overrides,
   };
 }

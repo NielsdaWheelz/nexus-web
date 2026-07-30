@@ -32,6 +32,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { ApiError, isApiError } from "@/lib/api/client";
 import {
   absent,
@@ -55,8 +56,13 @@ import type {
   ChapterOut,
   LecternSnapshot,
   MediaId,
+  PlaybackRateResolution,
   PlayerDescriptor,
 } from "@/lib/lectern/contract";
+import {
+  savePodcastSubscriptionSettings,
+  subscribePodcastSubscriptionSettingsInstalls,
+} from "@/lib/podcasts/subscriptionSettings";
 import {
   AUDIO_EFFECTS_DEFAULTS,
   COMPRESSOR_DEFAULTS,
@@ -81,6 +87,7 @@ import {
   type ListeningHeartbeat,
 } from "@/lib/player/listeningHeartbeat";
 import { useMediaSessionAdapter } from "@/lib/player/mediaSession";
+import { parsePlaybackRate } from "@/lib/player/playbackRate";
 import {
   applySnapshotInstall,
   dismissSession,
@@ -115,8 +122,7 @@ export const PLAYER_SKIP_FORWARD_SECONDS = 30;
 const DEFAULT_PLAYBACK_RATE = 1.0;
 const DEFAULT_VOLUME = 1.0;
 const VOLUME_STORAGE_KEY = "nexus.globalPlayer.volume";
-const SPEED_MIN = 0.25;
-const SPEED_MAX = 3.0;
+const PLAYBACK_RATE_TOLERANCE = 0.001;
 const EMPTY_LECTERN_SNAPSHOT: LecternSnapshot = { items: [] };
 
 type AudioWindow = Window & { webkitAudioContext?: typeof AudioContext };
@@ -200,9 +206,39 @@ export interface PlayerTimelineCapability {
 
 export interface PlayerSettingsCapability {
   volume: number;
-  playbackRate: number;
+  playbackRate: PlayerPlaybackRateCapability;
   audioEffects: AudioEffectsState;
   audioEffectsAvailable: boolean;
+}
+
+export type PlayerPlaybackRateScope =
+  | {
+      kind: "Canonical";
+      episodeRate: Presence<number>;
+      podcastPreference: Presence<{
+        podcastId: string;
+        value: Presence<number>;
+      }>;
+    }
+  | { kind: "Preview" };
+
+export type PlayerPlaybackRateRemember =
+  | { kind: "Unavailable" }
+  | { kind: "Ready" }
+  | { kind: "Pending" }
+  | {
+      kind: "Failed";
+      error: FeedbackContent;
+      retryable: boolean;
+    };
+
+export interface PlayerPlaybackRateCapability {
+  scope: PlayerPlaybackRateScope;
+  preferred: number;
+  temporaryNormal: boolean;
+  base: number;
+  observed: number;
+  remember: PlayerPlaybackRateRemember;
 }
 
 export interface PlayerSessionCapability {
@@ -224,6 +260,9 @@ export interface PlayerCommandsCapability {
   next(): void;
   setVolume(volume: number): void;
   setPlaybackRate(rate: number): void;
+  toggleTemporaryNormalRate(): void;
+  useInheritedPlaybackRate(): void;
+  rememberPlaybackRateForPodcast(): void;
   setAudioEffects(patch: Partial<AudioEffectsState>): void;
 }
 
@@ -253,11 +292,6 @@ function clampSeconds(value: number, durationSeconds: number | null): number {
   return Math.min(lowerBounded, durationSeconds);
 }
 
-function normalizePlaybackRate(value: number | null | undefined): number {
-  if (!Number.isFinite(value) || value == null) return DEFAULT_PLAYBACK_RATE;
-  return clamp(value, SPEED_MIN, SPEED_MAX);
-}
-
 function normalizeVolume(value: number | null | undefined): number {
   if (!Number.isFinite(value) || value == null) return DEFAULT_VOLUME;
   return clamp(value, 0, 1);
@@ -278,6 +312,166 @@ function getAudioContextConstructor(): typeof AudioContext | undefined {
 
 function assertNever(value: never): never {
   throw new Error(`Unhandled player session state: ${JSON.stringify(value)}`);
+}
+
+type PlaybackRateState =
+  | {
+      kind: "Canonical";
+      episodeRate: Presence<number>;
+      podcastPreference: Presence<{
+        podcastId: string;
+        value: Presence<number>;
+      }>;
+      temporaryNormal: boolean;
+      observed: number;
+      remember: PlayerPlaybackRateRemember;
+    }
+  | {
+      kind: "Preview";
+      preferred: number;
+      temporaryNormal: boolean;
+      observed: number;
+      remember: { kind: "Unavailable" };
+    };
+
+type InstalledPodcastPreference =
+  | { kind: "Active"; value: Presence<number> }
+  | { kind: "Lapsed" };
+
+function preferredPlaybackRate(state: PlaybackRateState): number {
+  if (state.kind === "Preview") return state.preferred;
+  if (state.episodeRate.kind === "Present") return state.episodeRate.value;
+  if (
+    state.podcastPreference.kind === "Present" &&
+    state.podcastPreference.value.value.kind === "Present"
+  ) {
+    return state.podcastPreference.value.value.value;
+  }
+  return DEFAULT_PLAYBACK_RATE;
+}
+
+function basePlaybackRate(state: PlaybackRateState): number {
+  return state.temporaryNormal
+    ? DEFAULT_PLAYBACK_RATE
+    : preferredPlaybackRate(state);
+}
+
+function playbackRateStateFromDescriptor(
+  descriptor: PlayerDescriptor,
+): Extract<PlaybackRateState, { kind: "Canonical" }> {
+  const resolution = descriptor.activation.playbackRate;
+  return {
+    kind: "Canonical",
+    episodeRate:
+      resolution.source === "Episode"
+        ? present(resolution.value)
+        : absent(),
+    podcastPreference: resolution.podcastPreference,
+    temporaryNormal: false,
+    observed: resolution.value,
+    remember:
+      resolution.podcastPreference.kind === "Present"
+        ? { kind: "Ready" }
+        : { kind: "Unavailable" },
+  };
+}
+
+function playbackRateResolutionFromState(
+  state: Extract<PlaybackRateState, { kind: "Canonical" }>,
+): PlaybackRateResolution {
+  if (state.episodeRate.kind === "Present") {
+    return {
+      value: state.episodeRate.value,
+      source: "Episode",
+      podcastPreference: state.podcastPreference,
+    };
+  }
+  if (
+    state.podcastPreference.kind === "Present" &&
+    state.podcastPreference.value.value.kind === "Present"
+  ) {
+    return {
+      value: state.podcastPreference.value.value.value,
+      source: "Podcast",
+      podcastPreference: state.podcastPreference,
+    };
+  }
+  return {
+    value: DEFAULT_PLAYBACK_RATE,
+    source: "Product",
+    podcastPreference: state.podcastPreference,
+  };
+}
+
+function withPlaybackRateResolution(
+  descriptor: PlayerDescriptor,
+  playbackRate: PlaybackRateResolution,
+): PlayerDescriptor {
+  return {
+    ...descriptor,
+    activation: {
+      ...descriptor.activation,
+      playbackRate,
+    },
+  };
+}
+
+function withInstalledPodcastPreference(
+  descriptor: PlayerDescriptor,
+  installed: ReadonlyMap<string, InstalledPodcastPreference>,
+): PlayerDescriptor {
+  const resolution = descriptor.activation.playbackRate;
+  if (resolution.podcastPreference.kind === "Absent") return descriptor;
+  const podcastId = resolution.podcastPreference.value.podcastId;
+  const preference = installed.get(podcastId);
+  if (preference === undefined) return descriptor;
+
+  const podcastPreference: PlaybackRateResolution["podcastPreference"] =
+    preference.kind === "Active"
+      ? present({ podcastId, value: preference.value })
+      : absent();
+  if (resolution.source === "Episode") {
+    return withPlaybackRateResolution(descriptor, {
+      ...resolution,
+      podcastPreference,
+    });
+  }
+  if (preference.kind === "Active" && preference.value.kind === "Present") {
+    return withPlaybackRateResolution(descriptor, {
+      value: preference.value.value,
+      source: "Podcast",
+      podcastPreference,
+    });
+  }
+  return withPlaybackRateResolution(descriptor, {
+    value: DEFAULT_PLAYBACK_RATE,
+    source: "Product",
+    podcastPreference,
+  });
+}
+
+function mapSessionDescriptor(
+  state: PlayerSessionState,
+  transform: (descriptor: PlayerDescriptor) => PlayerDescriptor,
+): PlayerSessionState {
+  switch (state.kind) {
+    case "Absent":
+      return state;
+    case "Active":
+    case "Completing":
+    case "CompletionFailed":
+    case "PlaybackFailed":
+    case "PausedAtEnd":
+      return {
+        ...state,
+        session: {
+          ...state.session,
+          descriptor: transform(state.session.descriptor),
+        },
+      };
+    default:
+      return assertNever(state);
+  }
 }
 
 export function canonicalSessionOfGlobalState(
@@ -350,7 +544,14 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   const [currentTimeSeconds, setCurrentTimeSeconds] = useState(0);
   const [durationSeconds, setDurationSeconds] = useState(0);
   const [bufferedSeconds, setBufferedSeconds] = useState(0);
-  const [playbackRate, setPlaybackRateState] = useState(DEFAULT_PLAYBACK_RATE);
+  const [playbackRateState, setPlaybackRateState] =
+    useState<PlaybackRateState>({
+      kind: "Preview",
+      preferred: DEFAULT_PLAYBACK_RATE,
+      temporaryNormal: false,
+      observed: DEFAULT_PLAYBACK_RATE,
+      remember: { kind: "Unavailable" },
+    });
   const [volume, setVolumeState] = useState(DEFAULT_VOLUME);
   const [audioEffects, setAudioEffectsState] = useState<AudioEffectsState>(
     AUDIO_EFFECTS_DEFAULTS,
@@ -380,8 +581,10 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   currentTimeSecondsRef.current = currentTimeSeconds;
   const volumeRef = useRef(DEFAULT_VOLUME);
   volumeRef.current = volume;
-  const userPlaybackRateRef = useRef(DEFAULT_PLAYBACK_RATE);
-  userPlaybackRateRef.current = playbackRate;
+  const playbackRateStateRef = useRef<PlaybackRateState>(playbackRateState);
+  playbackRateStateRef.current = playbackRateState;
+  const basePlaybackRateRef = useRef(DEFAULT_PLAYBACK_RATE);
+  basePlaybackRateRef.current = basePlaybackRate(playbackRateState);
   const audioEffectsRef = useRef<AudioEffectsState>(AUDIO_EFFECTS_DEFAULTS);
   audioEffectsRef.current = audioEffects;
   const isSilenceTrimmingRef = useRef(false);
@@ -421,8 +624,23 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   const pendingStartRef = useRef<{
     sourceUrl: string;
     startSeconds: number;
-    playbackRate: number;
   } | null>(null);
+  const ownedRateExpectationRef = useRef<{
+    element: HTMLAudioElement;
+    target: number;
+    cause: "Base" | "SilenceTrim";
+  } | null>(null);
+  const installedPodcastPreferencesRef = useRef(
+    new Map<string, InstalledPodcastPreference>(),
+  );
+  const playbackRateInitializedElementsRef = useRef(
+    new WeakSet<HTMLAudioElement>(),
+  );
+  const rememberAttemptRef = useRef<{
+    podcastId: string;
+    token: string;
+  } | null>(null);
+  const updateMediaSessionPositionStateRef = useRef<() => void>(() => {});
   const completionAttemptRef = useRef<CompletionIdentity | null>(null);
   const activityRegistrationRef = useRef<{
     key: string;
@@ -469,6 +687,73 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     [isCurrentCompletion],
   );
 
+  const installPlaybackRateState = useCallback((state: PlaybackRateState) => {
+    playbackRateStateRef.current = state;
+    basePlaybackRateRef.current = basePlaybackRate(state);
+    setPlaybackRateState(state);
+  }, []);
+
+  const reconcileDescriptorForTransition = useCallback(
+    (descriptor: PlayerDescriptor): PlayerDescriptor => {
+      const currentSession = sessionOfState(sessionStateRef.current);
+      const currentRate = playbackRateStateRef.current;
+      if (
+        currentSession?.descriptor.mediaId === descriptor.mediaId &&
+        currentRate.kind === "Canonical"
+      ) {
+        return withPlaybackRateResolution(
+          descriptor,
+          playbackRateResolutionFromState(currentRate),
+        );
+      }
+      return withInstalledPodcastPreference(
+        descriptor,
+        installedPodcastPreferencesRef.current,
+      );
+    },
+    [],
+  );
+
+  const reconcileTransitionPlaybackRates = useCallback(
+    (transition: SessionTransition): SessionTransition => ({
+      ...transition,
+      state: mapSessionDescriptor(
+        transition.state,
+        reconcileDescriptorForTransition,
+      ),
+      history: {
+        back: transition.history.back.map(reconcileDescriptorForTransition),
+        forward: transition.history.forward.map(
+          reconcileDescriptorForTransition,
+        ),
+      },
+    }),
+    [reconcileDescriptorForTransition],
+  );
+
+  const failPlaybackRate = useCallback((code: string, message: string) => {
+    setActivityAudioPlaying(false);
+    const preview = previewAudioStateRef.current;
+    if (preview !== null) {
+      const failed: PreviewAudioState = {
+        kind: "PreviewAudioFailed",
+        session: preview.session,
+        error: { code, message },
+      };
+      previewAudioStateRef.current = failed;
+      setPreviewAudioState(failed);
+      return;
+    }
+    const session = sessionOfState(sessionStateRef.current);
+    if (session !== undefined) {
+      setSessionState({
+        kind: "PlaybackFailed",
+        session,
+        error: { code, message },
+      });
+    }
+  }, []);
+
   // --- Audio-effects graph (kept verbatim from the pre-cutover player) --------
 
   const resetAudioGraphNodes = useCallback(() => {
@@ -483,15 +768,46 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     silenceAnalyserBufferRef.current = null;
   }, []);
 
-  const applyUserPlaybackRateToAudio = useCallback(() => {
-    const audio = audioElementRef.current;
-    if (!audio) return;
-    const targetRate = isSilenceTrimmingRef.current
-      ? SILENCE_TRIM_PLAYBACK_RATE
-      : userPlaybackRateRef.current;
-    if (Math.abs(audio.playbackRate - targetRate) < 0.001) return;
-    audio.playbackRate = targetRate;
-  }, []);
+  const applyOwnedPlaybackRate = useCallback(
+    (target: number, cause: "Base" | "SilenceTrim") => {
+      const audio = audioElementRef.current;
+      if (!audio) return;
+      audio.preservesPitch = true;
+      if (
+        playbackRateInitializedElementsRef.current.has(audio) &&
+        Math.abs(audio.playbackRate - target) < PLAYBACK_RATE_TOLERANCE
+      ) {
+        return;
+      }
+      try {
+        audio.playbackRate = target;
+      } catch {
+        failPlaybackRate(
+          "PlaybackRateRejected",
+          "This playback speed is not supported by the browser.",
+        );
+        return;
+      }
+      playbackRateInitializedElementsRef.current.add(audio);
+      ownedRateExpectationRef.current = { element: audio, target, cause };
+      if (Math.abs(audio.playbackRate - target) >= PLAYBACK_RATE_TOLERANCE) {
+        failPlaybackRate(
+          "PlaybackRateRejected",
+          "This playback speed is not supported by the browser.",
+        );
+      }
+    },
+    [failPlaybackRate],
+  );
+
+  const applyCurrentPlaybackRate = useCallback(() => {
+    applyOwnedPlaybackRate(
+      isSilenceTrimmingRef.current
+        ? SILENCE_TRIM_PLAYBACK_RATE
+        : basePlaybackRateRef.current,
+      isSilenceTrimmingRef.current ? "SilenceTrim" : "Base",
+    );
+  }, [applyOwnedPlaybackRate]);
 
   const stopSilenceTrimming = useCallback(() => {
     if (silenceTrimFrameIdRef.current != null) {
@@ -504,8 +820,8 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       isSilenceTrimmingRef.current = false;
       setIsSilenceTrimming(false);
     }
-    applyUserPlaybackRateToAudio();
-  }, [applyUserPlaybackRateToAudio]);
+    applyCurrentPlaybackRate();
+  }, [applyCurrentPlaybackRate]);
 
   const configureAudioEffectsGraph = useCallback(() => {
     const context = audioContextRef.current;
@@ -727,11 +1043,11 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       if (shouldTrim && !isSilenceTrimmingRef.current) {
         isSilenceTrimmingRef.current = true;
         setIsSilenceTrimming(true);
-        applyUserPlaybackRateToAudio();
+        applyCurrentPlaybackRate();
       } else if (!isBelowThreshold && isSilenceTrimmingRef.current) {
         isSilenceTrimmingRef.current = false;
         setIsSilenceTrimming(false);
-        applyUserPlaybackRateToAudio();
+        applyCurrentPlaybackRate();
       }
 
       if (isSilenceTrimmingRef.current && elapsedMs > 0) {
@@ -739,7 +1055,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
           (elapsedMs / 1000) *
           Math.max(
             0,
-            1 - userPlaybackRateRef.current / SILENCE_TRIM_PLAYBACK_RATE,
+            1 - basePlaybackRateRef.current / SILENCE_TRIM_PLAYBACK_RATE,
           );
         if (savedSeconds > 0) {
           setSilenceTimeSavedSeconds((previous) => previous + savedSeconds);
@@ -751,7 +1067,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
 
     silenceTrimLastTimestampRef.current = null;
     silenceTrimFrameIdRef.current = window.requestAnimationFrame(step);
-  }, [applyUserPlaybackRateToAudio, stopSilenceTrimming]);
+  }, [applyCurrentPlaybackRate, stopSilenceTrimming]);
 
   // --- Heartbeat engine ------------------------------------------------------
 
@@ -770,7 +1086,10 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     return {
       positionMs,
       durationMs,
-      playbackSpeed: userPlaybackRateRef.current,
+      episodePlaybackRate:
+        playbackRateStateRef.current.kind === "Canonical"
+          ? playbackRateStateRef.current.episodeRate
+          : absent(),
     };
   }, []);
 
@@ -866,17 +1185,25 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     setPreviewAudioState(null);
     setPersistence({ kind: "Ready" });
     activeFenceRef.current = { writeRevision: 0, resetEpoch: 0 };
+    rememberAttemptRef.current = null;
+    installPlaybackRateState({
+      kind: "Preview",
+      preferred: DEFAULT_PLAYBACK_RATE,
+      temporaryNormal: false,
+      observed: DEFAULT_PLAYBACK_RATE,
+      remember: { kind: "Unavailable" },
+    });
   }, [
     advanceRuntimeGeneration,
     closeListeningActivity,
     clearAudioPlayback,
+    installPlaybackRateState,
     readSample,
     stopHeartbeat,
   ]);
 
   const startHeartbeat = useCallback(
     (descriptor: PlayerDescriptor, startPositionMs: number) => {
-      stopHeartbeat(true);
       const overlayEntry = overlayRef.current.get(descriptor.mediaId);
       const initial = overlayEntry ?? {
         writeRevision: descriptor.activation.writeRevision,
@@ -902,6 +1229,20 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
         readSample,
         mintGeneration: () => crypto.randomUUID(),
         onStateAdopted: (state, { seek }) => {
+          const rateState = playbackRateStateRef.current;
+          if (rateState.kind === "Canonical") {
+            const next: PlaybackRateState = {
+              ...rateState,
+              episodeRate: state.episodePlaybackRate,
+              observed: rateState.observed,
+            };
+            installPlaybackRateState({
+              ...next,
+              observed: basePlaybackRate(next),
+            });
+            applyCurrentPlaybackRate();
+            updateMediaSessionPositionStateRef.current();
+          }
           if (seek) seekToSecondsInternal(state.positionMs / 1000);
         },
         onPersistenceSuspended: (error, retryGet) => {
@@ -923,13 +1264,20 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       });
       setPersistence({ kind: "Ready" });
     },
-    [readSample, seekToSecondsInternal, stopHeartbeat],
+    [
+      applyCurrentPlaybackRate,
+      installPlaybackRateState,
+      readSample,
+      seekToSecondsInternal,
+    ],
   );
 
   // --- Transition application ------------------------------------------------
 
   const applyTransition = useCallback(
-    (transition: SessionTransition) => {
+    (requestedTransition: SessionTransition) => {
+      const transition =
+        reconcileTransitionPlaybackRates(requestedTransition);
       if (transition.effect.kind === "StopSession") {
         stopPlayerRuntime();
         setSessionState(transition.state);
@@ -948,6 +1296,16 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
         const session = sessionOfState(transition.state);
         if (session === undefined) return;
         const { descriptor } = session;
+        stopHeartbeat(true);
+        const pendingRemember = rememberAttemptRef.current;
+        const descriptorPodcastPreference =
+          descriptor.activation.playbackRate.podcastPreference;
+        const rememberStillMatches =
+          pendingRemember !== null &&
+          descriptorPodcastPreference.kind === "Present" &&
+          descriptorPodcastPreference.value.podcastId ===
+            pendingRemember.podcastId;
+        if (!rememberStillMatches) rememberAttemptRef.current = null;
         const finishedOverride = finishedOverridesRef.current.has(
           descriptor.mediaId,
         );
@@ -972,18 +1330,17 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
               snapshot,
             )
           : descriptor.activation.positionMs;
-        const startRate = normalizePlaybackRate(
-          descriptor.activation.playbackSpeed,
-        );
-        userPlaybackRateRef.current = startRate;
-        setPlaybackRateState(startRate);
+        const descriptorRateState = playbackRateStateFromDescriptor(descriptor);
+        const rateState: PlaybackRateState = rememberStillMatches
+          ? { ...descriptorRateState, remember: { kind: "Pending" } }
+          : descriptorRateState;
+        installPlaybackRateState(rateState);
         pendingStartRef.current = {
           sourceUrl: resolveOfflineMediaStream(
             descriptor.mediaId,
             descriptor.activation.streamUrl,
           ),
           startSeconds: startPositionMs / 1000,
-          playbackRate: startRate,
         };
         rotateAudioElementIfRequired();
         startHeartbeat(descriptor, startPositionMs);
@@ -1025,10 +1382,13 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       latestSnapshot,
       resolveOfflineMediaStream,
       rotateAudioElementIfRequired,
+      reconcileTransitionPlaybackRates,
       seekToSecondsInternal,
       startHeartbeat,
+      stopHeartbeat,
       stopPlayerRuntime,
       stopSilenceTrimming,
+      installPlaybackRateState,
     ],
   );
 
@@ -1301,13 +1661,18 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       };
       previewAudioStateRef.current = preview;
       setPreviewAudioState(preview);
-      const startRate = DEFAULT_PLAYBACK_RATE;
-      userPlaybackRateRef.current = startRate;
-      setPlaybackRateState(startRate);
+      rememberAttemptRef.current = null;
+      const rateState: PlaybackRateState = {
+        kind: "Preview",
+        preferred: DEFAULT_PLAYBACK_RATE,
+        temporaryNormal: false,
+        observed: DEFAULT_PLAYBACK_RATE,
+        remember: { kind: "Unavailable" },
+      };
+      installPlaybackRateState(rateState);
       pendingStartRef.current = {
         sourceUrl: descriptor.audioUrl,
         startSeconds: 0,
-        playbackRate: startRate,
       };
       setCurrentTimeSeconds(0);
       setDurationSeconds(
@@ -1321,6 +1686,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     },
     [
       advanceRuntimeGeneration,
+      installPlaybackRateState,
       rotateAudioElementIfRequired,
       stopHeartbeat,
       transportLocked,
@@ -1349,9 +1715,20 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       clearAudioPlayback();
       previewAudioStateRef.current = null;
       setPreviewAudioState(null);
+      installPlaybackRateState({
+        kind: "Preview",
+        preferred: DEFAULT_PLAYBACK_RATE,
+        temporaryNormal: false,
+        observed: DEFAULT_PLAYBACK_RATE,
+        remember: { kind: "Unavailable" },
+      });
       return { positionMs, durationMs };
     },
-    [advanceRuntimeGeneration, clearAudioPlayback],
+    [
+      advanceRuntimeGeneration,
+      clearAudioPlayback,
+      installPlaybackRateState,
+    ],
   );
 
   const playAudio = useCallback(
@@ -1475,14 +1852,14 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
         stopSilenceTrimming();
         resetAudioGraphNodes();
         setActivityAudioPlaying(false);
+        ownedRateExpectationRef.current = null;
       }
       audioElementRef.current = node;
       setAudioElement(node);
       if (node) {
         node.volume = volumeRef.current;
-        node.playbackRate = isSilenceTrimmingRef.current
-          ? SILENCE_TRIM_PLAYBACK_RATE
-          : userPlaybackRateRef.current;
+        node.preservesPitch = true;
+        applyCurrentPlaybackRate();
         if (recoveringAudioElementRef.current) {
           recoveringAudioElementRef.current = false;
           setAudioEffectsAvailable(true);
@@ -1490,7 +1867,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    [resetAudioGraphNodes, stopSilenceTrimming],
+    [applyCurrentPlaybackRate, resetAudioGraphNodes, stopSilenceTrimming],
   );
 
   // --- Media Session ---------------------------------------------------------
@@ -1591,7 +1968,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       isPlaying,
       positionEnabled: previewAudioState?.kind !== "PreviewAudioAtEnd",
       audioElement,
-      playbackRateRef: userPlaybackRateRef,
+      basePlaybackRateRef,
       handlers: {
         play: resume,
         pause,
@@ -1603,16 +1980,243 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
         seekToSeconds: (seconds) => seekTo(seconds * 1000),
       },
     });
+  updateMediaSessionPositionStateRef.current = () =>
+    updateMediaSessionPositionState(true);
+
+  const adoptPlaybackRate = useCallback(
+    (rate: number) => {
+      const current = playbackRateStateRef.current;
+      const next: PlaybackRateState =
+        current.kind === "Canonical"
+          ? {
+              ...current,
+              episodeRate: present(rate),
+              temporaryNormal: false,
+              observed: rate,
+            }
+          : {
+              ...current,
+              preferred: rate,
+              temporaryNormal: false,
+              observed: rate,
+            };
+      installPlaybackRateState(next);
+      applyCurrentPlaybackRate();
+      updateMediaSessionPositionState(true);
+      if (next.kind === "Canonical") heartbeatRef.current?.tick();
+    },
+    [
+      applyCurrentPlaybackRate,
+      installPlaybackRateState,
+      updateMediaSessionPositionState,
+    ],
+  );
 
   const setPlaybackRate = useCallback(
     (nextRate: number) => {
-      const normalized = normalizePlaybackRate(nextRate);
-      userPlaybackRateRef.current = normalized;
-      setPlaybackRateState(normalized);
-      applyUserPlaybackRateToAudio();
-      updateMediaSessionPositionState(true);
+      adoptPlaybackRate(parsePlaybackRate(nextRate));
     },
-    [applyUserPlaybackRateToAudio, updateMediaSessionPositionState],
+    [adoptPlaybackRate],
+  );
+
+  const toggleTemporaryNormalRate = useCallback(() => {
+    const current = playbackRateStateRef.current;
+    if (preferredPlaybackRate(current) === DEFAULT_PLAYBACK_RATE) return;
+    const next = {
+      ...current,
+      temporaryNormal: !current.temporaryNormal,
+      observed: current.temporaryNormal
+        ? preferredPlaybackRate(current)
+        : DEFAULT_PLAYBACK_RATE,
+    } satisfies PlaybackRateState;
+    installPlaybackRateState(next);
+    applyCurrentPlaybackRate();
+    updateMediaSessionPositionState(true);
+  }, [
+    applyCurrentPlaybackRate,
+    installPlaybackRateState,
+    updateMediaSessionPositionState,
+  ]);
+
+  const useInheritedPlaybackRate = useCallback(() => {
+    const current = playbackRateStateRef.current;
+    if (current.kind !== "Canonical") return;
+    const inherited =
+      current.podcastPreference.kind === "Present" &&
+      current.podcastPreference.value.value.kind === "Present"
+        ? current.podcastPreference.value.value.value
+        : DEFAULT_PLAYBACK_RATE;
+    if (
+      current.episodeRate.kind === "Present" &&
+      current.episodeRate.value === inherited &&
+      !current.temporaryNormal
+    ) {
+      return;
+    }
+    const next: PlaybackRateState = {
+      ...current,
+      episodeRate: present(inherited),
+      temporaryNormal: false,
+      observed: inherited,
+    };
+    installPlaybackRateState(next);
+    applyCurrentPlaybackRate();
+    updateMediaSessionPositionState(true);
+    heartbeatRef.current?.tick();
+  }, [
+    applyCurrentPlaybackRate,
+    installPlaybackRateState,
+    updateMediaSessionPositionState,
+  ]);
+
+  const rememberPlaybackRateForPodcast = useCallback(() => {
+    const current = playbackRateStateRef.current;
+    if (
+      current.kind !== "Canonical" ||
+      current.podcastPreference.kind !== "Present" ||
+      rememberAttemptRef.current !== null
+    ) {
+      return;
+    }
+    const podcastId = current.podcastPreference.value.podcastId;
+    const attempt = { podcastId, token: crypto.randomUUID() };
+    rememberAttemptRef.current = attempt;
+    installPlaybackRateState({ ...current, remember: { kind: "Pending" } });
+    void savePodcastSubscriptionSettings(podcastId, {
+      defaultPlaybackSpeed: present(preferredPlaybackRate(current)),
+    })
+      .then(() => {
+        if (rememberAttemptRef.current !== attempt) return;
+        const installed = playbackRateStateRef.current;
+        if (
+          installed.kind === "Canonical" &&
+          installed.podcastPreference.kind === "Present" &&
+          installed.podcastPreference.value.podcastId === podcastId
+        ) {
+          installPlaybackRateState({
+            ...installed,
+            remember: { kind: "Ready" },
+          });
+        }
+      })
+      .catch((error: unknown) => {
+        if (handleUnauthenticatedApiError(error)) return;
+        if (rememberAttemptRef.current !== attempt) return;
+        const installed = playbackRateStateRef.current;
+        if (
+          installed.kind !== "Canonical" ||
+          installed.podcastPreference.kind !== "Present" ||
+          installed.podcastPreference.value.podcastId !== podcastId
+        ) {
+          return;
+        }
+        if (isApiError(error) && error.code === "E_NOT_FOUND") {
+          installedPodcastPreferencesRef.current.set(podcastId, {
+            kind: "Lapsed",
+          });
+          const next: PlaybackRateState = {
+            ...installed,
+            podcastPreference: absent(),
+            remember: {
+              kind: "Failed",
+              error: {
+                severity: "error",
+                title: "Podcast subscription no longer exists.",
+                requestId: error.requestId,
+              },
+              retryable: false,
+            },
+          };
+          installPlaybackRateState(next);
+          applyCurrentPlaybackRate();
+          updateMediaSessionPositionState(true);
+          return;
+        }
+        installPlaybackRateState({
+          ...installed,
+          remember: {
+            kind: "Failed",
+            error: {
+              severity: "error",
+              title: "Could not remember playback speed",
+              message:
+                error instanceof Error
+                  ? error.message
+                  : "Please try again.",
+              requestId: isApiError(error) ? error.requestId : undefined,
+            },
+            retryable: true,
+          },
+        });
+      })
+      .finally(() => {
+        if (rememberAttemptRef.current === attempt) {
+          rememberAttemptRef.current = null;
+        }
+      });
+  }, [
+    applyCurrentPlaybackRate,
+    installPlaybackRateState,
+    updateMediaSessionPositionState,
+  ]);
+
+  const establishCanonicalPlaybackRate = useCallback(() => {
+    const current = playbackRateStateRef.current;
+    if (
+      current.kind !== "Canonical" ||
+      current.episodeRate.kind === "Present"
+    ) {
+      return;
+    }
+    installPlaybackRateState({
+      ...current,
+      episodeRate: present(preferredPlaybackRate(current)),
+    });
+    heartbeatRef.current?.tick();
+  }, [installPlaybackRateState]);
+
+  useEffect(
+    () =>
+      subscribePodcastSubscriptionSettingsInstalls((settings) => {
+        const current = playbackRateStateRef.current;
+        if (
+          current.kind !== "Canonical" ||
+          current.podcastPreference.kind !== "Present" ||
+          current.podcastPreference.value.podcastId !== settings.podcast_id
+        ) {
+          return;
+        }
+        installedPodcastPreferencesRef.current.set(settings.podcast_id, {
+          kind: "Active",
+          value: settings.default_playback_speed,
+        });
+        const next: PlaybackRateState = {
+          ...current,
+          podcastPreference: present({
+            podcastId: settings.podcast_id,
+            value: settings.default_playback_speed,
+          }),
+          remember:
+            rememberAttemptRef.current?.podcastId === settings.podcast_id
+              ? { kind: "Pending" }
+              : { kind: "Ready" },
+        };
+        const wasUnestablished = current.episodeRate.kind === "Absent";
+        installPlaybackRateState(
+          wasUnestablished
+            ? { ...next, observed: basePlaybackRate(next) }
+            : next,
+        );
+        if (wasUnestablished) {
+          applyCurrentPlaybackRate();
+          updateMediaSessionPositionState(true);
+        }
+      }),
+    [
+      applyCurrentPlaybackRate,
+      installPlaybackRateState,
+      updateMediaSessionPositionState,
+    ],
   );
 
   // --- Restore persisted volume / effects ------------------------------------
@@ -1735,7 +2339,34 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     const handlePlaying = () => {
       setActivityAudioPlaying(true);
       setPhase("Playing");
+      establishCanonicalPlaybackRate();
       updateMediaSessionPositionState(true);
+    };
+    const handleRateChange = () => {
+      const observed = audioElement.playbackRate;
+      const owned = ownedRateExpectationRef.current;
+      // Keep the one bounded expectation while duplicate/coalesced browser
+      // echoes still report its current target. The first mismatch retires it
+      // before adoption, so a later genuine external return cannot masquerade
+      // as a delayed owned echo.
+      if (
+        owned?.element === audioElement &&
+        Math.abs(observed - owned.target) < PLAYBACK_RATE_TOLERANCE
+      ) {
+        return;
+      }
+      ownedRateExpectationRef.current = null;
+      let rate: number;
+      try {
+        rate = parsePlaybackRate(observed);
+      } catch {
+        failPlaybackRate(
+          "InvalidPlaybackRate",
+          "The browser reported an invalid playback speed.",
+        );
+        return;
+      }
+      adoptPlaybackRate(rate);
     };
     const handleTimeUpdate = () => {
       const seconds = audioElement.currentTime || 0;
@@ -1841,6 +2472,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     audioElement.addEventListener("loadedmetadata", handleLoadedMetadata);
     audioElement.addEventListener("progress", handleProgress);
     audioElement.addEventListener("volumechange", handleVolumeChange);
+    audioElement.addEventListener("ratechange", handleRateChange);
     audioElement.addEventListener("waiting", handleWaiting);
     audioElement.addEventListener("stalled", handleStalled);
     audioElement.addEventListener("error", handleError);
@@ -1861,6 +2493,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       audioElement.removeEventListener("loadedmetadata", handleLoadedMetadata);
       audioElement.removeEventListener("progress", handleProgress);
       audioElement.removeEventListener("volumechange", handleVolumeChange);
+      audioElement.removeEventListener("ratechange", handleRateChange);
       audioElement.removeEventListener("waiting", handleWaiting);
       audioElement.removeEventListener("stalled", handleStalled);
       audioElement.removeEventListener("error", handleError);
@@ -1869,6 +2502,9 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     };
   }, [
     audioElement,
+    adoptPlaybackRate,
+    establishCanonicalPlaybackRate,
+    failPlaybackRate,
     handleEnded,
     setPhase,
     startSilenceTrimming,
@@ -1881,6 +2517,9 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     const audio = audioElementRef.current;
     const pending = pendingStartRef.current;
     if (!audio || !pending || runtimeGeneration === 0) return;
+    // Own the target before load: browsers may reset playbackRate while loading
+    // a replacement source and queue that ratechange before the post-load write.
+    applyCurrentPlaybackRate();
     if (audio.getAttribute("src") !== pending.sourceUrl) {
       audio.src = pending.sourceUrl;
       audio.load();
@@ -1891,9 +2530,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     } catch {
       // loadedmetadata re-applies.
     }
-    userPlaybackRateRef.current = pending.playbackRate;
-    setPlaybackRateState(pending.playbackRate);
-    applyUserPlaybackRateToAudio();
+    applyCurrentPlaybackRate();
     resumeAudioEffectsGraphIfRequired();
     if (
       audioEffectsRef.current.silenceTrim &&
@@ -1946,6 +2583,20 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
         });
         const active = sessionOfState(sessionStateRef.current);
         if (active?.descriptor.mediaId === mediaId) {
+          const rateState = playbackRateStateRef.current;
+          if (rateState.kind === "Canonical") {
+            const withEpisodeRate: PlaybackRateState = {
+              ...rateState,
+              episodeRate: state.episodePlaybackRate,
+              observed: rateState.observed,
+            };
+            installPlaybackRateState({
+              ...withEpisodeRate,
+              observed: basePlaybackRate(withEpisodeRate),
+            });
+            applyCurrentPlaybackRate();
+            updateMediaSessionPositionStateRef.current();
+          }
           // `registerBeforeProgressReset` already retired the old engine. Move
           // the element to the returned canonical position and pause it, then
           // create a fresh engine using the server's fencing tokens.
@@ -1980,7 +2631,13 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       unsubscribeInstall();
       unsubscribeDrain();
     };
-  }, [applyTransition, lectern, startHeartbeat]);
+  }, [
+    applyCurrentPlaybackRate,
+    applyTransition,
+    installPlaybackRateState,
+    lectern,
+    startHeartbeat,
+  ]);
 
   // --- Keyboard shortcuts ----------------------------------------------------
 
@@ -2108,6 +2765,27 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     ],
   );
 
+  const playbackRate = useMemo<PlayerPlaybackRateCapability>(() => {
+    const preferred = preferredPlaybackRate(playbackRateState);
+    return {
+      scope:
+        playbackRateState.kind === "Canonical"
+          ? {
+              kind: "Canonical",
+              episodeRate: playbackRateState.episodeRate,
+              podcastPreference: playbackRateState.podcastPreference,
+            }
+          : { kind: "Preview" },
+      preferred,
+      temporaryNormal: playbackRateState.temporaryNormal,
+      base: playbackRateState.temporaryNormal
+        ? DEFAULT_PLAYBACK_RATE
+        : preferred,
+      observed: playbackRateState.observed,
+      remember: playbackRateState.remember,
+    };
+  }, [playbackRateState]);
+
   const settings = useMemo<PlayerSettingsCapability>(
     () => ({
       volume,
@@ -2140,6 +2818,9 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     next,
     setVolume,
     setPlaybackRate,
+    toggleTemporaryNormalRate,
+    useInheritedPlaybackRate,
+    rememberPlaybackRateForPodcast,
     setAudioEffects,
   };
   const commands = useMemo<PlayerCommandsCapability>(() => {
@@ -2163,6 +2844,11 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       next: () => current().next(),
       setVolume: (nextVolume) => current().setVolume(nextVolume),
       setPlaybackRate: (rate) => current().setPlaybackRate(rate),
+      toggleTemporaryNormalRate: () =>
+        current().toggleTemporaryNormalRate(),
+      useInheritedPlaybackRate: () => current().useInheritedPlaybackRate(),
+      rememberPlaybackRateForPodcast: () =>
+        current().rememberPlaybackRateForPodcast(),
       setAudioEffects: (patch) => current().setAudioEffects(patch),
     };
   }, []);

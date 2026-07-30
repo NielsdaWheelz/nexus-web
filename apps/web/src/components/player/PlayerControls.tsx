@@ -8,7 +8,6 @@ import {
   type Ref,
 } from "react";
 import {
-  Gauge,
   List,
   Mic,
   Pause,
@@ -33,14 +32,8 @@ import {
   playerTransportLocked,
   type PlayerChromeModel,
 } from "@/lib/player/playerChromeModel";
-import {
-  SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS,
-  formatPlaybackSpeedLabel,
-  type SubscriptionPlaybackSpeedOption,
-} from "@/lib/player/subscriptionPlaybackSpeed";
 import Button from "@/components/ui/Button";
 import MediaImage from "@/components/ui/MediaImage";
-import Select from "@/components/ui/Select";
 import type { PlayerCaptureController } from "@/lib/walknotes/usePlayerCapture";
 import styles from "./PlayerControls.module.css";
 
@@ -461,41 +454,6 @@ export function PlayerStatus({
       ) : null}
     </div>
   );
-}
-
-export function PlayerSpeedControl() {
-  const settings = usePlayerSettings();
-  const commands = usePlayerCommands();
-  const value = isPlaybackSpeedOption(settings.playbackRate)
-    ? settings.playbackRate
-    : 1;
-
-  return (
-    <label className={styles.setting}>
-      <Gauge size={16} aria-hidden="true" />
-      <span>Speed</span>
-      <Select
-        size="sm"
-        aria-label="Playback speed"
-        value={value}
-        onChange={(event) =>
-          commands.setPlaybackRate(Number(event.currentTarget.value))
-        }
-      >
-        {SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS.map((speed) => (
-          <option key={speed} value={speed}>
-            {formatPlaybackSpeedLabel(speed)}
-          </option>
-        ))}
-      </Select>
-    </label>
-  );
-}
-
-function isPlaybackSpeedOption(
-  value: number,
-): value is SubscriptionPlaybackSpeedOption {
-  return SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS.some((option) => option === value);
 }
 
 export function PlayerVolumeControl() {

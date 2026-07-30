@@ -36,7 +36,11 @@ from nexus.schemas.reader import (
     WebReaderResumeState,
 )
 from nexus.services.consumption import _reader_engagement_store
-from tests.factories import add_media_to_library, add_test_podcast_episode_identity
+from tests.factories import (
+    add_media_to_library,
+    add_test_podcast_episode_identity,
+    add_test_podcast_subscription,
+)
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -150,6 +154,24 @@ def _add_to_library(direct_db: DirectSessionManager, library_id: UUID, media_id:
         session.commit()
 
 
+def _subscribe_with_rate(
+    direct_db: DirectSessionManager,
+    *,
+    user_id: UUID,
+    podcast_id: UUID,
+    rate: float | None,
+) -> None:
+    with direct_db.session() as session:
+        add_test_podcast_subscription(
+            session,
+            user_id=user_id,
+            podcast_id=podcast_id,
+            default_playback_speed=rate,
+        )
+        session.commit()
+    direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
+
+
 def _place(auth_client, user_id, media_ids) -> list[dict]:
     response = auth_client.post(
         "/lectern/commands",
@@ -180,6 +202,7 @@ def _heartbeat(
     expected_write_revision=0,
     expected_reset_epoch=0,
     duration_ms=600_000,
+    episode_playback_rate=1.0,
 ):
     response = auth_client.put(
         f"/media/{media_id}/listening-state",
@@ -187,7 +210,10 @@ def _heartbeat(
         json={
             "positionMs": position_ms,
             "durationMs": {"kind": "Present", "value": duration_ms},
-            "playbackSpeed": 1.0,
+            "episodePlaybackRate": {
+                "kind": "Present",
+                "value": episode_playback_rate,
+            },
             "expectedWriteRevision": expected_write_revision,
             "expectedResetEpoch": expected_reset_epoch,
             "heartbeatGeneration": str(uuid4()),
@@ -731,16 +757,162 @@ class TestPlayerDescriptor:
     """Spec §6: "Lectern, podcast, and media DTOs reuse the same server-derived
     title/subtitle + FooterAudio descriptor.\" """
 
+    def test_unestablished_episode_without_subscription_uses_product_rate_in_both_descriptors(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        _, episode = _create_podcast_episode(direct_db, title="Product default")
+        _add_to_library(direct_db, library_id, episode)
+        _place(auth_client, user_id, [episode])
+
+        expected = {
+            "value": 1.0,
+            "source": "Product",
+            "podcastPreference": {"kind": "Absent"},
+        }
+        lectern_rate = _get_lectern_item(auth_client, user_id, episode)["activation"][
+            "playbackRate"
+        ]
+        media_response = auth_client.get(
+            f"/media/{episode}",
+            headers=auth_headers(user_id),
+        )
+        assert media_response.status_code == 200, media_response.text
+        media_rate = media_response.json()["data"]["playerDescriptor"]["value"]["activation"][
+            "playbackRate"
+        ]
+
+        assert lectern_rate == expected
+        assert media_rate == expected
+
+    def test_active_subscription_without_default_keeps_product_rate_and_owned_scope(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        podcast_id, episode = _create_podcast_episode(
+            direct_db,
+            title="No podcast default",
+        )
+        _subscribe_with_rate(
+            direct_db,
+            user_id=user_id,
+            podcast_id=podcast_id,
+            rate=None,
+        )
+        _add_to_library(direct_db, library_id, episode)
+        _place(auth_client, user_id, [episode])
+
+        expected = {
+            "value": 1.0,
+            "source": "Product",
+            "podcastPreference": {
+                "kind": "Present",
+                "value": {
+                    "podcastId": str(podcast_id),
+                    "value": {"kind": "Absent"},
+                },
+            },
+        }
+        lectern_rate = _get_lectern_item(auth_client, user_id, episode)["activation"][
+            "playbackRate"
+        ]
+        media_response = auth_client.get(
+            f"/media/{episode}",
+            headers=auth_headers(user_id),
+        )
+        assert media_response.status_code == 200, media_response.text
+        media_rate = media_response.json()["data"]["playerDescriptor"]["value"]["activation"][
+            "playbackRate"
+        ]
+
+        assert lectern_rate == expected
+        assert media_rate == expected
+
+    def test_preview_transfer_keeps_rate_absent_and_subscription_inheritance(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        podcast_id, episode = _create_podcast_episode(
+            direct_db,
+            title="Preview transfer",
+        )
+        _subscribe_with_rate(
+            direct_db,
+            user_id=user_id,
+            podcast_id=podcast_id,
+            rate=1.5,
+        )
+        _add_to_library(direct_db, library_id, episode)
+        direct_db.register_cleanup("resource_mutations", "user_id", user_id)
+
+        preview = auth_client.post(
+            f"/media/{episode}/preview-position",
+            headers={
+                **auth_headers(user_id),
+                "Idempotency-Key": str(uuid4()),
+            },
+            json={
+                "positionMs": 30_000,
+                "durationMs": {"kind": "Present", "value": 600_000},
+            },
+        )
+        assert preview.status_code == 204, preview.text
+
+        listening_response = auth_client.get(
+            f"/media/{episode}/listening-state",
+            headers=auth_headers(user_id),
+        )
+        assert listening_response.status_code == 200, listening_response.text
+        listening = listening_response.json()["data"]
+        assert listening["episodePlaybackRate"] == {"kind": "Absent"}
+
+        _place(auth_client, user_id, [episode])
+        lectern_rate = _get_lectern_item(auth_client, user_id, episode)["activation"][
+            "playbackRate"
+        ]
+        media_response = auth_client.get(
+            f"/media/{episode}",
+            headers=auth_headers(user_id),
+        )
+        assert media_response.status_code == 200, media_response.text
+        media_rate = media_response.json()["data"]["playerDescriptor"]["value"]["activation"][
+            "playbackRate"
+        ]
+
+        assert lectern_rate["source"] == "Podcast"
+        assert lectern_rate["value"] == 1.5
+        assert media_rate == lectern_rate
+
     def test_media_carries_lectern_descriptor_and_episode_list_carries_playback_gate(
         self, auth_client, direct_db: DirectSessionManager
     ):
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         podcast_id, episode = _create_podcast_episode(direct_db, title="Ep")
+        _subscribe_with_rate(
+            direct_db,
+            user_id=user_id,
+            podcast_id=podcast_id,
+            rate=1.5,
+        )
         _add_to_library(direct_db, library_id, episode)
         _place(auth_client, user_id, [episode])
         lectern_activation = _get_lectern_item(auth_client, user_id, episode)["activation"]
         assert lectern_activation["kind"] == "FooterAudio"
+        assert lectern_activation["playbackRate"] == {
+            "value": 1.5,
+            "source": "Podcast",
+            "podcastPreference": {
+                "kind": "Present",
+                "value": {
+                    "podcastId": str(podcast_id),
+                    "value": {"kind": "Present", "value": 1.5},
+                },
+            },
+        }
 
         media_resp = auth_client.get(f"/media/{episode}", headers=auth_headers(user_id))
         assert media_resp.status_code == 200, media_resp.text
@@ -764,6 +936,134 @@ class TestPlayerDescriptor:
                 "mediaId": str(episode),
             },
         }
+
+    def test_synthetic_finished_and_reset_rows_do_not_shadow_subscription_rate(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        podcast_id, episode = _create_podcast_episode(direct_db, title="Synthetic")
+        _subscribe_with_rate(
+            direct_db,
+            user_id=user_id,
+            podcast_id=podcast_id,
+            rate=1.5,
+        )
+        _add_to_library(direct_db, library_id, episode)
+
+        finished = auth_client.post(
+            "/consumption/commands",
+            headers=auth_headers(user_id),
+            json={
+                "kind": "EnsureMediaFinished",
+                "clientMutationId": str(uuid4()),
+                "mediaId": str(episode),
+            },
+        )
+        assert finished.status_code == 200, finished.text
+        activation = auth_client.get(f"/media/{episode}", headers=auth_headers(user_id)).json()[
+            "data"
+        ]["playerDescriptor"]["value"]["activation"]
+        assert activation["playbackRate"]["source"] == "Podcast"
+        assert activation["playbackRate"]["value"] == 1.5
+
+        reset = auth_client.post(
+            "/consumption/commands",
+            headers=auth_headers(user_id),
+            json={
+                "kind": "ResetProgress",
+                "clientMutationId": str(uuid4()),
+                "mediaId": str(episode),
+            },
+        )
+        assert reset.status_code == 200, reset.text
+        listening = reset.json()["data"]["progressState"]["value"]["listeningState"]["value"]
+        assert listening["episodePlaybackRate"] == {"kind": "Absent"}
+        activation = auth_client.get(f"/media/{episode}", headers=auth_headers(user_id)).json()[
+            "data"
+        ]["playerDescriptor"]["value"]["activation"]
+        assert activation["playbackRate"]["source"] == "Podcast"
+        assert activation["playbackRate"]["value"] == 1.5
+
+    def test_established_episode_is_independent_and_next_episode_inherits(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        podcast_id, established_episode = _create_podcast_episode(
+            direct_db,
+            title="Established",
+        )
+        untouched_episode = uuid4()
+        episode_ref = f"episode-{untouched_episode}"
+        with direct_db.session() as session:
+            session.add(
+                Media(
+                    id=untouched_episode,
+                    kind=MediaKind.podcast_episode.value,
+                    title="Untouched",
+                    canonical_source_url=f"https://example.com/{episode_ref}",
+                    external_playback_url=f"https://cdn.example.com/{untouched_episode}.mp3",
+                    provider="podcast_index",
+                    provider_id=episode_ref,
+                    processing_status=ProcessingStatus.ready_for_reading,
+                )
+            )
+            session.add(
+                PodcastEpisode(
+                    media_id=untouched_episode,
+                    podcast_id=podcast_id,
+                    published_at="2026-03-23T00:00:00Z",
+                    duration_seconds=600,
+                )
+            )
+            add_test_podcast_episode_identity(
+                session,
+                podcast_id=podcast_id,
+                media_id=untouched_episode,
+                value=episode_ref,
+            )
+            session.commit()
+        _register_media_cleanup(direct_db, untouched_episode)
+        _subscribe_with_rate(
+            direct_db,
+            user_id=user_id,
+            podcast_id=podcast_id,
+            rate=1.5,
+        )
+        _add_to_library(direct_db, library_id, established_episode)
+        _add_to_library(direct_db, library_id, untouched_episode)
+
+        _heartbeat(
+            auth_client,
+            user_id,
+            established_episode,
+            position_ms=1_000,
+            episode_playback_rate=1.75,
+        )
+        preference_update = auth_client.patch(
+            f"/podcasts/subscriptions/{podcast_id}/settings",
+            headers=auth_headers(user_id),
+            json={"default_playback_speed": {"kind": "Present", "value": 2.0}},
+        )
+        assert preference_update.status_code == 200, preference_update.text
+        assert preference_update.json()["data"]["default_playback_speed"] == {
+            "kind": "Present",
+            "value": 2.0,
+        }
+
+        established_rate = auth_client.get(
+            f"/media/{established_episode}",
+            headers=auth_headers(user_id),
+        ).json()["data"]["playerDescriptor"]["value"]["activation"]["playbackRate"]
+        untouched_rate = auth_client.get(
+            f"/media/{untouched_episode}",
+            headers=auth_headers(user_id),
+        ).json()["data"]["playerDescriptor"]["value"]["activation"]["playbackRate"]
+        assert established_rate["source"] == "Episode"
+        assert established_rate["value"] == 1.75
+        assert untouched_rate["source"] == "Podcast"
+        assert untouched_rate["value"] == 2.0
 
     def test_web_article_descriptor_is_absent(self, auth_client, direct_db: DirectSessionManager):
         user_id = create_test_user_id()

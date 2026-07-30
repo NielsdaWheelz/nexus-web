@@ -449,7 +449,7 @@ message API responses include a
 durable history-traversal fence), `podcast_episodes` (PK = `media_id`),
 `podcast_episode_identities` (stable PodcastIndex/RSS aliases),
 `podcast_episode_chapters`,
-`podcast_listening_states` (position/duration/speed +
+`podcast_listening_states` (position/duration/nullable established episode rate +
 `write_revision`/`reset_epoch` heartbeat fencing plus heartbeat-only
 `last_engaged_at`; operational `updated_at` is not engagement),
 `podcast_transcription_jobs`,
@@ -856,7 +856,7 @@ capability-owned:
 - `epub_assets.py`: private EPUB resource asset authorization and byte-size
   checked reads.
 - `api/routes/listening_state.py`: the singular listening-heartbeat route
-  (GET/PUT, no batch endpoint); position/duration/speed DML is owned by
+  (GET/PUT, no batch endpoint); position/duration/nullable episode-rate DML is owned by
   `services/consumption/_listening_store.py` (§8.8).
 - `media_file_access.py`: signed original-file download URLs.
 - `media_processing_state.py`: every processing-state transition, including
@@ -1249,7 +1249,7 @@ Playing** is one device-local audio session, not a second durable list.
 `_lectern_store.py` (`consumption_queue_items` membership/order + the
 canonical `LecternSnapshot`), `_state_store.py` (`consumption_overrides`
 explicit `Unread`/`Finished`), `_listening_store.py` (`podcast_listening_states`
-position/duration/speed + heartbeat fencing tokens `write_revision`/
+position/duration/nullable established episode rate + heartbeat fencing tokens `write_revision`/
 `reset_epoch`), `_reader_cursor_store.py` (`reader_media_state` revisioned
 `Empty`/`Positioned` cursor CAS), `_reader_engagement_store.py`
 (`reader_engagement_states`, the sole DML owner of current-state reader
@@ -1299,8 +1299,9 @@ capabilities. See
 [`modules/player.md`](modules/player.md) and
 [`modules/consumption-activity.md`](modules/consumption-activity.md) for the
 full file map. The shared player also owns an exhaustive ephemeral
-`PreviewAudio` session: it has no Media ID, queue/history origin, heartbeat,
-activity/completion writes, or previous/next behavior. After Episode Add, the
+`PreviewAudio` session: it starts at `1x` and has no Media ID, queue/history
+origin, heartbeat, podcast preference, activity/completion writes, or
+previous/next behavior. After Episode Add, the
 consumption owner may install the observed Preview position once, only when
 owned progress is still empty. The shared
 `ReadingSlateSection` consumes an optional Lectern first-paint seed and

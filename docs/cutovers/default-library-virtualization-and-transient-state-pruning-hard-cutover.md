@@ -209,7 +209,7 @@ Document `last_engaged_at` comes from `reader_engagement_states`; audio recency 
 Post-cut `ListeningHeartbeatIn` remains strict camel-case, all-required, CAS-fenced, and has **no completion field**. It contains exactly:
 
 ```text
-positionMs, durationMs: Presence, playbackSpeed,
+positionMs, durationMs: Presence, episodePlaybackRate: Presence,
 expectedWriteRevision, expectedResetEpoch,
 heartbeatGeneration, heartbeatSequence
 ```

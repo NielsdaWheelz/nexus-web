@@ -67,6 +67,7 @@ class LecternRow:
     canonical_source_url: str | None
     provider: str | None
     provider_id: str | None
+    podcast_id: UUID | None
     podcast_title: str | None
     podcast_image_url: str | None
     duration_seconds: int | None
@@ -124,6 +125,7 @@ def load_rows(db: Session, *, viewer_id: UUID) -> list[LecternRow]:
                 m.canonical_source_url,
                 m.provider,
                 m.provider_id,
+                pe.podcast_id,
                 p.title AS podcast_title,
                 p.image_url AS podcast_image_url,
                 pe.duration_seconds
@@ -151,6 +153,7 @@ def load_rows(db: Session, *, viewer_id: UUID) -> list[LecternRow]:
             canonical_source_url=_opt_str(row["canonical_source_url"]),
             provider=_opt_str(row["provider"]),
             provider_id=_opt_str(row["provider_id"]),
+            podcast_id=UUID(str(row["podcast_id"])) if row["podcast_id"] is not None else None,
             podcast_title=_opt_str(row["podcast_title"]),
             podcast_image_url=_opt_str(row["podcast_image_url"]),
             duration_seconds=int(row["duration_seconds"])

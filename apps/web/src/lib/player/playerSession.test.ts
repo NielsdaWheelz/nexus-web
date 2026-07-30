@@ -61,7 +61,11 @@ function footerAudio(positionMs = 0): FooterAudioActivation {
     positionMs,
     writeRevision: 0,
     resetEpoch: 0,
-    playbackSpeed: 1,
+    playbackRate: {
+      value: 1,
+      source: "Product",
+      podcastPreference: absent(),
+    },
     durationMs: present(120_000),
     artworkUrl: absent(),
     chapters: [],

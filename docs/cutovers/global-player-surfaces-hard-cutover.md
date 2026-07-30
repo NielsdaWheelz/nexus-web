@@ -3,6 +3,10 @@
 Status: IMPLEMENTED; focused local proof complete; real-stack, manual-device,
 CI, deploy, and production gates pending; type: hard cutover; date: 2026-07-30
 
+Playback-rate policy, controls, and Settings capability are superseded by
+[`playback-rate-policy-hard-cutover.md`](playback-rate-policy-hard-cutover.md).
+This document remains canonical for player-surface and dismissal behavior.
+
 ## Decision
 
 Replace `GlobalPlayerFooter` with one shell-owned player presentation system:
@@ -106,12 +110,12 @@ Rules:
 - Left: artwork, title link, source/current chapter, next provenance.
 - Center: Previous, −15, Play/Pause, +30, Next, native seek range, elapsed /
   duration.
-- Right: Capture, speed, volume, More, Close.
+- Right: Capture, Playback speed, volume, More, Close.
 - Play/Pause is the sole visually primary transport.
 - Container queries move secondary labels/actions into More. Identity,
   Play/Pause, seek/time, status, and Close remain available.
-- More is the exhaustive fallback inventory: Capture/Review, audio effects,
-  speed, Open source, and Contents/Lectern. An action is direct or in More,
+- More is the exhaustive fallback inventory: Capture/Review, Open source, and
+  Contents/Lectern. An action is direct or in More,
   never both. Close remains direct. Do not create an unnamed overflow owner.
 - Preserve chapter tick markers on the seek track. Preview omits Previous, Next,
   Capture/Review, Contents/Lectern, and durable status actions instead of
@@ -126,7 +130,7 @@ Rules:
 - Capture is direct when width permits and otherwise first in More.
 - A real `Button` containing artwork/title opens Now Playing; no clickable
   `div` or aggregate row handler.
-- More contains Capture/Review, speed/effects, Previous/Next when applicable,
+- More contains Capture/Review, Playback speed, Previous/Next when applicable,
   Open source, Contents/Lectern, and Close player.
 - Every frequent target is at least 44 × 44 CSS px.
 - `MobileViewportProvider` owns `rootTextEntryFocused` through one document
@@ -154,7 +158,7 @@ Rules:
   session-killing `X` in the conventional collapse position.
 - Upper field: artwork or the owned placeholder, plus source identity.
 - Reachable field, in priority order: status; native seek/time; Previous, −15,
-  Play/Pause, +30, Next; Capture; speed/effects; current chapter/Contents and
+  Play/Pause, +30, Next; Capture; Playback speed; current chapter/Contents and
   next provenance; Open source/Lectern and Review captures; labeled Close
   player.
 - On short viewports artwork yields first, then secondary metadata compacts into
@@ -165,7 +169,7 @@ Rules:
 - Collapse restores focus to the still-mounted MiniPlayer opener. Close
   dismisses the session, announces “Player closed,” and returns focus to
   `findPaneChromeFocusTarget(activePrimaryPaneId)`.
-- Speed/effects, Contents, and Walknote review use named
+- Playback, Contents, and Walknote review use named
   `MobileSheet`/dialog primitives as short subordinate tasks. Every subordinate
   menu, sheet, and dialog uses history dismissal; Back/Escape unwinds exactly
   one layer before Now Playing collapses.
@@ -293,7 +297,14 @@ interface PlayerTimelineCapability {
 
 interface PlayerSettingsCapability {
   volume: number;
-  playbackRate: number;
+  playbackRate: {
+    scope: CanonicalPlaybackRateScope | { kind: "Preview" };
+    preferred: number;
+    temporaryNormal: boolean;
+    base: number;
+    observed: number;
+    remember: PlaybackRateRememberState;
+  };
   audioEffects: AudioEffectsState;
   audioEffectsAvailable: boolean;
 }
@@ -311,6 +322,9 @@ interface PlayerCommandsCapability {
   next(): void;
   setVolume(volume: number): void;
   setPlaybackRate(rate: number): void;
+  toggleTemporaryNormalRate(): void;
+  useInheritedPlaybackRate(): void;
+  rememberPlaybackRateForPodcast(): void;
   setAudioEffects(patch: Partial<AudioEffectsState>): void;
 }
 
@@ -476,7 +490,7 @@ Add:
 - `apps/web/src/components/player/MobileNowPlaying.tsx`
 - `apps/web/src/components/player/MobileNowPlaying.module.css`
 - `apps/web/src/components/player/PlayerAudioEffectsControls.tsx`
-- `apps/web/src/components/player/PlayerAudioEffectsSheet.tsx`
+- `apps/web/src/components/player/PlayerPlaybackControls.tsx`
 - `apps/web/src/components/player/PlayerContentsSheet.tsx`
 - `apps/web/src/__tests__/components/GlobalPlayerSurfaces.test.tsx`
 - `apps/web/src/lib/player/usePlayerKeyboardShortcuts.test.tsx`

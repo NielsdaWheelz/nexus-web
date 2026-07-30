@@ -37,6 +37,11 @@ function installIntervalHarness() {
   return {
     setIntervalSpy,
     clearIntervalSpy,
+    has(delay: number): boolean {
+      return [...handlers.values()].some(
+        ({ delay: registeredDelay }) => registeredDelay === delay,
+      );
+    },
     run(delay: number): boolean {
       let invoked = false;
       for (const { delay: registeredDelay, handler } of handlers.values()) {
@@ -65,7 +70,11 @@ const MEDIA_B = "22222222-2222-4222-8222-222222222222";
 
 const DESCRIPTOR_A = buildPlayerDescriptor(MEDIA_A, "Episode Alpha", {
   positionMs: 45_000,
-  playbackSpeed: 1.75,
+  playbackRate: {
+    value: 1.75,
+    source: "Episode",
+    podcastPreference: { kind: "Absent" },
+  },
 });
 const DESCRIPTOR_B = buildPlayerDescriptor(MEDIA_B, "Episode Beta");
 
@@ -133,10 +142,12 @@ describe("GlobalPlayer listening heartbeat", () => {
     setAudioMetrics(audio, { duration: 120, currentTime: 30, playbackRate: 1.5 });
     fireEvent(audio, new Event("durationchange"));
     fireEvent(audio, new Event("timeupdate"));
-    fireEvent(audio, new Event("play"));
+    fireEvent(audio, new Event("playing"));
 
-    await waitFor(() =>
-      expect(intervals.setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 15_000),
+    await waitFor(() => expect(intervals.has(15_000)).toBe(true));
+    expect(intervals.setIntervalSpy).toHaveBeenCalledWith(
+      expect.any(Function),
+      15_000,
     );
     expect(intervals.run(15_000)).toBe(true);
 
@@ -146,7 +157,7 @@ describe("GlobalPlayer listening heartbeat", () => {
     const body = JSON.parse(String(init?.body ?? "{}"));
     expect(body).toMatchObject({
       positionMs: expect.any(Number),
-      playbackSpeed: expect.any(Number),
+      episodePlaybackRate: { kind: "Present", value: 1.75 },
       expectedWriteRevision: expect.any(Number),
       expectedResetEpoch: expect.any(Number),
       heartbeatSequence: expect.any(Number),
@@ -266,7 +277,7 @@ describe("GlobalPlayer listening heartbeat", () => {
                   value: {
                     positionMs: 0,
                     durationMs: { kind: "Absent" },
-                    playbackSpeed: 1,
+                    episodePlaybackRate: { kind: "Absent" },
                     writeRevision: 5,
                     resetEpoch: 1,
                   },
@@ -288,7 +299,7 @@ describe("GlobalPlayer listening heartbeat", () => {
               listeningState: {
                 positionMs: body.positionMs,
                 durationMs: body.durationMs,
-                playbackSpeed: body.playbackSpeed,
+                episodePlaybackRate: body.episodePlaybackRate,
                 writeRevision: 1,
                 resetEpoch: 0,
               },
@@ -298,7 +309,13 @@ describe("GlobalPlayer listening heartbeat", () => {
           });
         }
         return jsonResponse({
-          data: { positionMs: 0, durationMs: { kind: "Absent" }, playbackSpeed: 1, writeRevision: 0, resetEpoch: 0 },
+          data: {
+            positionMs: 0,
+            durationMs: { kind: "Absent" },
+            episodePlaybackRate: { kind: "Absent" },
+            writeRevision: 0,
+            resetEpoch: 0,
+          },
         });
       }
       return jsonResponse({ data: {} });
@@ -349,7 +366,7 @@ describe("GlobalPlayer listening heartbeat", () => {
     setAudioMetrics(audio, { duration: 120, currentTime: 30 });
     fireEvent(audio, new Event("durationchange"));
     fireEvent(audio, new Event("timeupdate"));
-    fireEvent(audio, new Event("play"));
+    fireEvent(audio, new Event("playing"));
 
     await waitFor(() =>
       expect(intervals.setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 15_000),

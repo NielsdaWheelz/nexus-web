@@ -68,7 +68,9 @@ def test_transfer_clamps_and_never_overwrites_progress(
     first_key = uuid4()
     first = _post(auth_client, user_id, media_id, first_key, 45_000)
     assert first.status_code == 204, first.text
-    assert _state(auth_client, user_id, media_id)["positionMs"] == 30_000
+    state = _state(auth_client, user_id, media_id)
+    assert state["positionMs"] == 30_000
+    assert state["episodePlaybackRate"] == {"kind": "Absent"}
 
     replay = _post(auth_client, user_id, media_id, first_key, 45_000)
     assert replay.status_code == 204, replay.text

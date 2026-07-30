@@ -1,0 +1,117 @@
+.panel,
+.editor,
+.scope,
+.effects {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-4);
+}
+
+.summary {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.summary > div {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.eyebrow,
+.remaining,
+.scope p {
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+.value {
+  font-family: var(--font-mono);
+  font-size: var(--text-3xl);
+  font-variant-numeric: tabular-nums;
+}
+
+.remaining {
+  overflow-wrap: anywhere;
+}
+
+.presets {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(4rem, 1fr));
+  gap: var(--space-2);
+}
+
+.presets button,
+.scope button {
+  min-height: 44px;
+  height: auto;
+  white-space: normal;
+}
+
+.adjuster {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.adjuster button {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.range {
+  width: 100%;
+  min-width: 0;
+  height: 44px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.scope {
+  padding-top: var(--space-4);
+  border-top: var(--stroke-hairline) solid var(--edge);
+}
+
+.scope p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.effects {
+  padding-top: var(--space-4);
+  border-top: var(--stroke-hairline) solid var(--edge);
+}
+
+.effects h3 {
+  margin: 0;
+  font-size: var(--text-base);
+}
+
+.rateButton {
+  min-width: 64px;
+  min-height: 44px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 340px) {
+  .presets {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (forced-colors: active) {
+  .scope,
+  .effects {
+    border-color: CanvasText;
+  }
+
+  .range {
+    forced-color-adjust: auto;
+  }
+}

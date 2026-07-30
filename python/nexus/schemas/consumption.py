@@ -33,6 +33,7 @@ ConsumptionStateValue = Literal["Unread", "InProgress", "Finished"]
 NextCapability = Literal["Stop", "FooterAudio", "Readable"]
 ConsumptionMediaKind = Literal["web_article", "epub", "pdf", "video", "podcast_episode"]
 _NonNegInt32 = Annotated[int, Field(ge=0, le=_INT32_MAX)]
+PlaybackRate = Annotated[float, Field(strict=True, ge=0.5, le=3)]
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +51,25 @@ class ChapterOut(BaseModel):
     end_ms: Presence[_NonNegInt32]
 
 
+class PodcastPlaybackPreference(BaseModel):
+    """The active subscription's owned playback-rate preference."""
+
+    model_config = _OUT_CONFIG
+
+    podcast_id: UUID
+    value: Presence[PlaybackRate]
+
+
+class PlaybackRateResolution(BaseModel):
+    """Immutable playback-rate policy resolved at a canonical source boundary."""
+
+    model_config = _OUT_CONFIG
+
+    value: PlaybackRate
+    source: Literal["Episode", "Podcast", "Product"]
+    podcast_preference: Presence[PodcastPlaybackPreference]
+
+
 class FooterAudioActivation(BaseModel):
     """The only footer-playable activation (spec §3.2 invariant 5)."""
 
@@ -61,7 +81,7 @@ class FooterAudioActivation(BaseModel):
     position_ms: _NonNegInt32
     write_revision: _NonNegInt32
     reset_epoch: _NonNegInt32
-    playback_speed: float = Field(ge=0.25, le=3)
+    playback_rate: PlaybackRateResolution
     duration_ms: Presence[_NonNegInt32]
     artwork_url: Presence[str]
     chapters: list[ChapterOut] = Field(max_length=100)
@@ -274,13 +294,13 @@ ConsumptionCommand = Annotated[
 
 
 class ListeningStateOut(BaseModel):
-    """Position/duration/speed plus heartbeat fencing tokens for one media."""
+    """Position/duration/episode rate plus heartbeat fencing tokens."""
 
     model_config = _OUT_CONFIG
 
     position_ms: _NonNegInt32
     duration_ms: Presence[_NonNegInt32]
-    playback_speed: float = Field(ge=0.25, le=3)
+    episode_playback_rate: Presence[PlaybackRate]
     write_revision: _NonNegInt32
     reset_epoch: _NonNegInt32
 
@@ -334,7 +354,7 @@ class ListeningHeartbeatIn(BaseModel):
 
     position_ms: _NonNegInt32
     duration_ms: Presence[_NonNegInt32]
-    playback_speed: float = Field(ge=0.25, le=3)
+    episode_playback_rate: Presence[PlaybackRate]
     expected_write_revision: _NonNegInt32
     expected_reset_epoch: _NonNegInt32
     heartbeat_generation: UUID

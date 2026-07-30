@@ -553,7 +553,9 @@ def get_podcast_detail_for_viewer(
         subscription = PodcastSubscriptionStatusOut(
             user_id=row[10],
             podcast_id=row[12],
-            default_playback_speed=float(row[13]) if row[13] is not None else None,
+            default_playback_speed=presence_from_nullable(
+                float(row[13]) if row[13] is not None else None
+            ),
             auto_queue=bool(row[14]),
             sync_status=row[15],
             sync_error_code=row[16],

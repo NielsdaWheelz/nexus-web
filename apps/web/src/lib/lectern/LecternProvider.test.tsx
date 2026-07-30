@@ -50,7 +50,11 @@ function wireItem(itemId: string, mediaId: string, title: string): Record<string
       positionMs: 0,
       writeRevision: 1,
       resetEpoch: 0,
-      playbackSpeed: 1,
+      playbackRate: {
+        value: 1,
+        source: "Product",
+        podcastPreference: { kind: "Absent" },
+      },
       durationMs: { kind: "Present", value: 60000 },
       artworkUrl: { kind: "Absent" },
       chapters: [],
@@ -646,7 +650,7 @@ describe("LecternProvider ResetProgress install", () => {
                 value: {
                   positionMs: 0,
                   durationMs: { kind: "Present", value: 60_000 },
-                  playbackSpeed: 1,
+                  episodePlaybackRate: { kind: "Present", value: 1 },
                   writeRevision: 8,
                   resetEpoch: 2,
                 },
@@ -705,7 +709,7 @@ describe("LecternProvider ResetProgress install", () => {
           value: {
             positionMs: 0,
             durationMs: { kind: "Present", value: 60_000 },
-            playbackSpeed: 1,
+            episodePlaybackRate: { kind: "Present", value: 1 },
             writeRevision: 8,
             resetEpoch: 2,
           },

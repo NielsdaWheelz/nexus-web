@@ -28,7 +28,9 @@ from nexus.schemas.consumption import (
     LecternSnapshot,
     ListeningStateOut,
     OpenPaneActivation,
+    PlaybackRateResolution,
     PlayerDescriptor,
+    PodcastPlaybackPreference,
     ReadableActivation,
 )
 from nexus.schemas.media import MediaReadState
@@ -43,6 +45,9 @@ from nexus.services.consumption._lectern_store import LecternRow
 from nexus.services.consumption._listening_store import ListeningRow
 from nexus.services.consumption._reader_engagement_store import ReaderEngagementRow
 from nexus.services.playback_source import derive_playback_source
+from nexus.services.podcasts.playback_preferences import (
+    load_subscription_playback_preferences,
+)
 
 _MAX_CHAPTERS = 100
 _MAX_TITLE_CHARS = 300
@@ -68,16 +73,54 @@ def to_listening_state_out(row: ListeningRow | None) -> ListeningStateOut:
         return ListeningStateOut(
             position_ms=0,
             duration_ms=absent(),
-            playback_speed=1.0,
+            episode_playback_rate=absent(),
             write_revision=0,
             reset_epoch=0,
         )
     return ListeningStateOut(
         position_ms=row.position_ms,
         duration_ms=presence_from_nullable(row.duration_ms),
-        playback_speed=row.playback_speed,
+        episode_playback_rate=presence_from_nullable(row.playback_speed),
         write_revision=row.write_revision,
         reset_epoch=row.reset_epoch,
+    )
+
+
+def resolve_playback_rate(
+    *,
+    episode_rate: float | None,
+    podcast_id: UUID,
+    subscription_preference: Absent | Present[float] | None,
+) -> PlaybackRateResolution:
+    """Resolve one immutable canonical playback-rate source boundary."""
+    podcast_preference = (
+        present(
+            PodcastPlaybackPreference.model_validate(
+                {
+                    "podcast_id": podcast_id,
+                    "value": subscription_preference.model_dump(),
+                }
+            )
+        )
+        if subscription_preference is not None
+        else absent()
+    )
+    if episode_rate is not None:
+        return PlaybackRateResolution(
+            value=episode_rate,
+            source="Episode",
+            podcast_preference=podcast_preference,
+        )
+    if isinstance(subscription_preference, Present):
+        return PlaybackRateResolution(
+            value=subscription_preference.value,
+            source="Podcast",
+            podcast_preference=podcast_preference,
+        )
+    return PlaybackRateResolution(
+        value=1,
+        source="Product",
+        podcast_preference=podcast_preference,
     )
 
 
@@ -87,9 +130,20 @@ def _project(db: Session, *, viewer_id: UUID, rows: list[LecternRow]) -> list[Le
     media_ids = [row.media_id for row in rows]
     overrides = _state_store.load_overrides(db, viewer_id=viewer_id, media_ids=media_ids)
     listening = _listening_store.load_states(db, viewer_id=viewer_id, media_ids=media_ids)
+    subscription_preferences = load_subscription_playback_preferences(
+        db,
+        viewer_id=viewer_id,
+        podcast_ids=[row.podcast_id for row in rows if row.podcast_id is not None],
+    )
 
     activations = {
-        row.media_id: _derive_activation(db, row, listening.get(row.media_id)) for row in rows
+        row.media_id: _derive_activation(
+            db,
+            row,
+            listening.get(row.media_id),
+            subscription_preferences.get(row.podcast_id) if row.podcast_id is not None else None,
+        )
+        for row in rows
     }
     doc_media = [
         row.media_id
@@ -146,7 +200,10 @@ def activation_kind(row: LecternRow) -> str:
 
 
 def _derive_activation(
-    db: Session, row: LecternRow, listening: ListeningRow | None
+    db: Session,
+    row: LecternRow,
+    listening: ListeningRow | None,
+    subscription_preference: Absent | Present[float] | None,
 ) -> LecternActivation:
     if row.kind == MediaKind.video.value:
         # Video never binds to <audio>; it always opens a media pane (spec §4).
@@ -164,13 +221,20 @@ def _derive_activation(
         if playback is None or not playback.stream_url:
             # Podcast without playable audio -> media pane.
             return OpenPaneActivation()
+        # justify-defect: every podcast_episode row owns a podcast_episodes
+        # parent relation, which the store joins into this projection row.
+        assert row.podcast_id is not None
         return FooterAudioActivation(
             stream_url=playback.stream_url,
             source_url=playback.source_url,
             position_ms=listening.position_ms if listening is not None else 0,
             write_revision=listening.write_revision if listening is not None else 0,
             reset_epoch=listening.reset_epoch if listening is not None else 0,
-            playback_speed=listening.playback_speed if listening is not None else 1.0,
+            playback_rate=resolve_playback_rate(
+                episode_rate=listening.playback_speed if listening is not None else None,
+                podcast_id=row.podcast_id,
+                subscription_preference=subscription_preference,
+            ),
             duration_ms=_footer_duration_ms(listening, row.duration_seconds),
             artwork_url=present(row.podcast_image_url)
             if row.podcast_image_url is not None
@@ -532,6 +596,7 @@ class _PlayerDescriptorRow:
     canonical_source_url: str | None
     provider: str | None
     provider_id: str | None
+    podcast_id: UUID
     podcast_title: str | None
     podcast_image_url: str | None
     duration_seconds: int | None
@@ -554,6 +619,11 @@ def player_descriptors(
         return {}
     row_media_ids = [row.media_id for row in rows]
     listening = _listening_store.load_states(db, viewer_id=viewer_id, media_ids=row_media_ids)
+    subscription_preferences = load_subscription_playback_preferences(
+        db,
+        viewer_id=viewer_id,
+        podcast_ids=[row.podcast_id for row in rows],
+    )
     chapters_by_media = _load_chapters_batch(db, row_media_ids)
 
     result: dict[UUID, PlayerDescriptor] = {}
@@ -578,7 +648,13 @@ def player_descriptors(
                 position_ms=listening_row.position_ms if listening_row is not None else 0,
                 write_revision=listening_row.write_revision if listening_row is not None else 0,
                 reset_epoch=listening_row.reset_epoch if listening_row is not None else 0,
-                playback_speed=listening_row.playback_speed if listening_row is not None else 1.0,
+                playback_rate=resolve_playback_rate(
+                    episode_rate=(
+                        listening_row.playback_speed if listening_row is not None else None
+                    ),
+                    podcast_id=row.podcast_id,
+                    subscription_preference=subscription_preferences.get(row.podcast_id),
+                ),
                 duration_ms=_footer_duration_ms(listening_row, row.duration_seconds),
                 artwork_url=present(row.podcast_image_url)
                 if row.podcast_image_url is not None
@@ -602,6 +678,7 @@ def _load_player_descriptor_rows(db: Session, media_ids: list[UUID]) -> list[_Pl
                 m.canonical_source_url,
                 m.provider,
                 m.provider_id,
+                pe.podcast_id,
                 p.title AS podcast_title,
                 p.image_url AS podcast_image_url,
                 pe.duration_seconds
@@ -621,6 +698,7 @@ def _load_player_descriptor_rows(db: Session, media_ids: list[UUID]) -> list[_Pl
             canonical_source_url=_opt_str(row["canonical_source_url"]),
             provider=_opt_str(row["provider"]),
             provider_id=_opt_str(row["provider_id"]),
+            podcast_id=UUID(str(row["podcast_id"])),
             podcast_title=_opt_str(row["podcast_title"]),
             podcast_image_url=_opt_str(row["podcast_image_url"]),
             duration_seconds=int(row["duration_seconds"])

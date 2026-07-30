@@ -26,7 +26,6 @@ import {
   expectArray,
   expectBoolean,
   expectExactRecord,
-  expectFiniteNumber,
   expectNonnegativeInteger,
   expectOneOf,
   expectString,
@@ -93,7 +92,6 @@ export interface PodcastEpisodeMedia {
   listening_state: {
     position_ms: number;
     duration_ms: number | null;
-    playback_speed: number;
   } | null;
   episode_state: EpisodeState;
   progress_resettable: boolean;
@@ -147,7 +145,7 @@ export function decodePodcastEpisodeMedia(raw: unknown): PodcastEpisodeMedia {
   const listening = decodePresence(item.listening_state, (value) => {
     const state = expectExactRecord(
       value,
-      ["position_ms", "duration_ms", "playback_speed"],
+      ["position_ms", "duration_ms"],
       "listening_state.value",
     );
     const duration = decodePresence(
@@ -161,10 +159,6 @@ export function decodePodcastEpisodeMedia(raw: unknown): PodcastEpisodeMedia {
         "listening_state.position_ms",
       ),
       duration_ms: duration.kind === "Present" ? duration.value : null,
-      playback_speed: expectFiniteNumber(
-        state.playback_speed,
-        "listening_state.playback_speed",
-      ),
     };
   });
   const capabilities = expectExactRecord(

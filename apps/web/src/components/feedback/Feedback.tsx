@@ -424,6 +424,7 @@ export function FeedbackNotice({
   requestId,
   children,
   className,
+  announce = true,
 }: {
   feedback?: FeedbackContent | null;
   severity?: FeedbackSeverity;
@@ -432,6 +433,7 @@ export function FeedbackNotice({
   requestId?: string;
   children?: ReactNode;
   className?: string;
+  announce?: boolean;
 }) {
   const resolvedSeverity = feedback?.severity ?? severity ?? "info";
   const resolvedTitle = feedback?.title ?? title;
@@ -441,9 +443,15 @@ export function FeedbackNotice({
   return (
     <div
       className={`${styles.notice} ${styles[resolvedSeverity]} ${className ?? ""}`}
-      role={roleFor(resolvedSeverity)}
-      aria-live={resolvedSeverity === "error" ? "assertive" : "polite"}
-      aria-atomic="true"
+      role={announce ? roleFor(resolvedSeverity) : undefined}
+      aria-live={
+        announce
+          ? resolvedSeverity === "error"
+            ? "assertive"
+            : "polite"
+          : undefined
+      }
+      aria-atomic={announce ? "true" : undefined}
     >
       <div className={styles.icon}>{iconFor(resolvedSeverity)}</div>
       <div className={styles.body}>

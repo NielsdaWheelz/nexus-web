@@ -24,7 +24,7 @@ function podcastEntry() {
     subscription: {
       kind: "Present",
       value: {
-        defaultPlaybackSpeed: 1.25,
+        defaultPlaybackSpeed: { kind: "Present", value: 1.25 },
         autoQueue: true,
         syncStatus: "Complete",
       },
@@ -53,7 +53,7 @@ describe("decodeLibraryEntryListItem", () => {
       subscription: {
         kind: "Present",
         value: {
-          defaultPlaybackSpeed: 1.25,
+          defaultPlaybackSpeed: { kind: "Present", value: 1.25 },
           autoQueue: true,
           syncStatus: "Complete",
         },

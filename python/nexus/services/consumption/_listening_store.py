@@ -1,4 +1,4 @@
-"""Sole DML owner of ``podcast_listening_states`` (position/duration/speed,
+"""Sole DML owner of ``podcast_listening_states`` (position/duration/rate,
 completion flag, heartbeat-only ``last_engaged_at``, and the fencing tokens
 ``write_revision`` / ``reset_epoch``).
 
@@ -18,6 +18,8 @@ from sqlalchemy import text
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
+from nexus.schemas.presence import Presence, Present, nullable_from_presence
+
 
 @dataclass(frozen=True)
 class ListeningRow:
@@ -25,7 +27,7 @@ class ListeningRow:
 
     position_ms: int
     duration_ms: int | None
-    playback_speed: float
+    playback_speed: float | None
     write_revision: int
     reset_epoch: int
     is_completed: bool
@@ -35,7 +37,9 @@ def _row_from_mapping(mapping) -> ListeningRow:
     return ListeningRow(
         position_ms=int(mapping["position_ms"]),
         duration_ms=int(mapping["duration_ms"]) if mapping["duration_ms"] is not None else None,
-        playback_speed=float(mapping["playback_speed"]),
+        playback_speed=(
+            float(mapping["playback_speed"]) if mapping["playback_speed"] is not None else None
+        ),
         write_revision=int(mapping["write_revision"]),
         reset_epoch=int(mapping["reset_epoch"]),
         is_completed=bool(mapping["is_completed"]),
@@ -106,13 +110,12 @@ def record_heartbeat_in_txn(
     media_id: UUID,
     position_ms: int,
     duration_ms: int | None,
-    playback_speed: float,
+    episode_playback_rate: Presence[float],
     expected_write_revision: int,
     expected_reset_epoch: int,
 ) -> ListeningRow | None:
-    """CAS the fencing tokens, then write position/duration/speed and advance the
-    write revision. Returns the post-write row, or ``None`` on a fencing mismatch
-    (the caller must then roll back and reject with no writes)."""
+    """CAS the fencing tokens, then write position/duration/rate and advance the
+    write revision. An absent rate inserts NULL or preserves the current value."""
     current = load_state(db, viewer_id=viewer_id, media_id=media_id)
     if current is None:
         # An absent row reads as revision 0 / epoch 0.
@@ -136,13 +139,13 @@ def record_heartbeat_in_txn(
                 "media_id": media_id,
                 "position_ms": position_ms,
                 "duration_ms": duration_ms,
-                "playback_speed": playback_speed,
+                "playback_speed": nullable_from_presence(episode_playback_rate),
             },
         )
         return ListeningRow(
             position_ms=position_ms,
             duration_ms=duration_ms,
-            playback_speed=playback_speed,
+            playback_speed=nullable_from_presence(episode_playback_rate),
             write_revision=1,
             reset_epoch=0,
             is_completed=False,
@@ -155,6 +158,11 @@ def record_heartbeat_in_txn(
         return None
 
     next_revision = current.write_revision + 1
+    playback_speed = (
+        episode_playback_rate.value
+        if isinstance(episode_playback_rate, Present)
+        else current.playback_speed
+    )
     db.execute(
         text(
             """
@@ -210,7 +218,7 @@ def install_preview_position_if_empty_in_txn(
                     is_completed, write_revision, reset_epoch, updated_at, last_engaged_at
                 )
                 VALUES (
-                    :viewer_id, :media_id, :position_ms, :duration_ms, 1.0,
+                    :viewer_id, :media_id, :position_ms, :duration_ms, NULL,
                     false, 1, 0, now(), now()
                 )
                 """
@@ -254,7 +262,7 @@ def mark_completed_in_txn(db: Session, *, viewer_id: UUID, media_id: UUID) -> No
                 user_id, media_id, position_ms, duration_ms, playback_speed,
                 is_completed, write_revision, reset_epoch, updated_at, last_engaged_at
             )
-            VALUES (:viewer_id, :media_id, 0, NULL, 1.0, true, 0, 0, now(), NULL)
+            VALUES (:viewer_id, :media_id, 0, NULL, NULL, true, 0, 0, now(), NULL)
             ON CONFLICT (user_id, media_id)
             DO UPDATE SET is_completed = true, updated_at = now()
             """
@@ -274,7 +282,7 @@ def reset_progress_in_txn(db: Session, *, viewer_id: UUID, media_id: UUID) -> Li
                     user_id, media_id, position_ms, duration_ms, playback_speed,
                     is_completed, write_revision, reset_epoch, updated_at, last_engaged_at
                 )
-                VALUES (:viewer_id, :media_id, 0, NULL, 1.0, false, 1, 1, now(), NULL)
+                VALUES (:viewer_id, :media_id, 0, NULL, NULL, false, 1, 1, now(), NULL)
                 """
             ),
             {"viewer_id": viewer_id, "media_id": media_id},
@@ -282,7 +290,7 @@ def reset_progress_in_txn(db: Session, *, viewer_id: UUID, media_id: UUID) -> Li
         return ListeningRow(
             position_ms=0,
             duration_ms=None,
-            playback_speed=1.0,
+            playback_speed=None,
             write_revision=1,
             reset_epoch=1,
             is_completed=False,

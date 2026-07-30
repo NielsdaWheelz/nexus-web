@@ -2,18 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildPodcastUnsubscribeConfirmation,
   decodePodcastDetailResponse,
-  getPodcastSubscriptionSettingsDraft,
-  getPodcastSubscriptionSettingsPatch,
-  parsePodcastSubscriptionDefaultPlaybackSpeed,
   retryPodcastSubscriptionBackfill,
-  savePodcastSubscriptionSettings,
   unsubscribeFromPodcast,
 } from "./podcastSubscriptions";
 import type { LibraryPlacementOption } from "@/lib/libraries/libraryPlacement";
 import { libraryPlacementSnapshot } from "@/lib/libraries/placementRevision";
-import type { CollectionRevision } from "@/lib/api/collectionPage";
-
-const REVISION = 7 as CollectionRevision;
 
 function podcastDetailWire() {
   return {
@@ -34,7 +27,7 @@ function podcastDetailWire() {
       subscription: {
         user_id: "user-1",
         podcast_id: "podcast-1",
-        default_playback_speed: null,
+        default_playback_speed: { kind: "Absent" },
         auto_queue: false,
         sync_status: "Complete",
         sync_error_code: null,
@@ -70,61 +63,6 @@ function createLibraryPlacement(
 }
 
 describe("podcastSubscriptions helpers", () => {
-  it("builds settings draft state from nullable subscription fields", () => {
-    expect(getPodcastSubscriptionSettingsDraft(null)).toEqual({
-      defaultSpeed: "default",
-      autoQueue: false,
-    });
-    expect(
-      getPodcastSubscriptionSettingsDraft({
-        default_playback_speed: 1.8,
-        auto_queue: true,
-      }),
-    ).toEqual({
-      defaultSpeed: "1.8",
-      autoQueue: true,
-    });
-  });
-
-  it("parses playback speed form values", () => {
-    expect(parsePodcastSubscriptionDefaultPlaybackSpeed("default")).toBeNull();
-    expect(parsePodcastSubscriptionDefaultPlaybackSpeed("1.5")).toBe(1.5);
-  });
-
-  it("returns an explicit settings patch", () => {
-    expect(
-      getPodcastSubscriptionSettingsPatch({
-        response: {
-          user_id: "user-1",
-          podcast_id: "podcast-1",
-          default_playback_speed: 1.25,
-          auto_queue: true,
-          sync_status: "Complete",
-          sync_error_code: null,
-          sync_error_message: null,
-          sync_attempts: 1,
-          sync_started_at: null,
-          sync_completed_at: null,
-          last_checked_at: null,
-          updated_at: "2026-04-22T00:00:00Z",
-          backfill: {
-            id: "backfill-1",
-            state: "Complete",
-            processedCount: 10,
-            addedCount: 8,
-          },
-          collectionRevision: REVISION,
-          libraryEntriesCollectionRevision: REVISION,
-        },
-        updatedAt: "2026-01-01T00:00:00Z",
-      }),
-    ).toEqual({
-      default_playback_speed: 1.25,
-      auto_queue: true,
-      updated_at: "2026-04-22T00:00:00Z",
-    });
-  });
-
   it("hard-requires last_checked_at on podcast detail", () => {
     expect(decodePodcastDetailResponse(podcastDetailWire())).toMatchObject({
       subscription: {
@@ -176,53 +114,6 @@ describe("podcastSubscriptions helpers", () => {
 
 describe("podcastSubscriptions placement revision publishing", () => {
   afterEach(() => vi.restoreAllMocks());
-
-  it("strictly decodes the revision-bearing settings response", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      Response.json({
-        data: {
-          user_id: "user-1",
-          podcast_id: "podcast-1",
-          default_playback_speed: 1.5,
-          auto_queue: true,
-          sync_status: "Complete",
-          sync_error_code: null,
-          sync_error_message: null,
-          sync_attempts: 1,
-          sync_started_at: null,
-          sync_completed_at: null,
-          last_checked_at: null,
-          updated_at: "2026-07-29T00:00:00Z",
-          backfill: {
-            id: "backfill-1",
-            state: "Running",
-            processedCount: 5,
-            addedCount: 4,
-          },
-          collectionRevision: 7,
-          libraryEntriesCollectionRevision: 11,
-        },
-      }),
-    );
-
-    await expect(
-      savePodcastSubscriptionSettings("podcast-1", {
-        defaultPlaybackSpeed: 1.5,
-        autoQueue: true,
-      }),
-    ).resolves.toMatchObject({
-      user_id: "user-1",
-      podcast_id: "podcast-1",
-      collectionRevision: 7,
-      libraryEntriesCollectionRevision: 11,
-      backfill: {
-        id: "backfill-1",
-        state: "Running",
-        processedCount: 5,
-        addedCount: 4,
-      },
-    });
-  });
 
   it("strictly decodes Failed backfill Retry and sends one header idempotency key", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(

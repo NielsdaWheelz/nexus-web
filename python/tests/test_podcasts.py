@@ -5732,7 +5732,10 @@ class TestPodcastApiSurface:
         patch_response = auth_client.patch(
             f"/podcasts/subscriptions/{podcast_id}/settings",
             headers=auth_headers(user_id),
-            json={"default_playback_speed": 1.5, "auto_queue": True},
+            json={
+                "default_playback_speed": {"kind": "Present", "value": 1.85},
+                "auto_queue": True,
+            },
         )
         assert patch_response.status_code == 200, (
             "settings patch should support setting default speed + auto_queue together, "
@@ -5740,7 +5743,7 @@ class TestPodcastApiSurface:
         )
         patched = patch_response.json()["data"]
         assert patched["podcast_id"] == str(podcast_id)
-        assert patched["default_playback_speed"] == 1.5
+        assert patched["default_playback_speed"] == {"kind": "Present", "value": 1.85}
         assert patched["auto_queue"] is True
 
         partial_patch = auth_client.patch(
@@ -5753,7 +5756,10 @@ class TestPodcastApiSurface:
             f"got {partial_patch.status_code}: {partial_patch.text}"
         )
         partial_payload = partial_patch.json()["data"]
-        assert partial_payload["default_playback_speed"] == 1.5
+        assert partial_payload["default_playback_speed"] == {
+            "kind": "Present",
+            "value": 1.85,
+        }
         assert partial_payload["auto_queue"] is False
 
         subscriptions_response = auth_client.get(
@@ -5768,7 +5774,7 @@ class TestPodcastApiSurface:
         assert len(rows) == 1
         row = rows[0]
         assert row["podcast_id"] == str(podcast_id)
-        assert row["default_playback_speed"] == {"kind": "Present", "value": 1.5}
+        assert row["default_playback_speed"] == {"kind": "Present", "value": 1.85}
         assert row["auto_queue"] is False
 
         detail_response = auth_client.get(
@@ -5780,42 +5786,22 @@ class TestPodcastApiSurface:
             f"got {detail_response.status_code}: {detail_response.text}"
         )
         detail_payload = detail_response.json()["data"]
-        assert detail_payload["subscription"]["default_playback_speed"] == 1.5
+        assert detail_payload["subscription"]["default_playback_speed"] == {
+            "kind": "Present",
+            "value": 1.85,
+        }
         assert detail_payload["subscription"]["auto_queue"] is False
-
-        episodes_response = auth_client.get(
-            f"/podcasts/{podcast_id}/episodes?limit=10",
-            headers=auth_headers(user_id),
-        )
-        assert episodes_response.status_code == 200, (
-            "episodes list should include subscription_default_playback_speed for first-play inheritance, "
-            f"got {episodes_response.status_code}: {episodes_response.text}"
-        )
-        episodes = episodes_response.json()["data"]["items"]
-        assert len(episodes) == 2
-        assert all("subscription_default_playback_speed" not in episode for episode in episodes)
 
         clear_response = auth_client.patch(
             f"/podcasts/subscriptions/{podcast_id}/settings",
             headers=auth_headers(user_id),
-            json={"default_playback_speed": None},
+            json={"default_playback_speed": {"kind": "Absent"}},
         )
         assert clear_response.status_code == 200, (
-            "explicit null default_playback_speed must clear override, "
+            "explicit Absent default_playback_speed must clear override, "
             f"got {clear_response.status_code}: {clear_response.text}"
         )
-        assert clear_response.json()["data"]["default_playback_speed"] is None
-
-        episodes_after_clear = auth_client.get(
-            f"/podcasts/{podcast_id}/episodes?limit=10",
-            headers=auth_headers(user_id),
-        )
-        assert episodes_after_clear.status_code == 200
-        episodes_after_clear_payload = episodes_after_clear.json()["data"]["items"]
-        assert all(
-            "subscription_default_playback_speed" not in episode
-            for episode in episodes_after_clear_payload
-        )
+        assert clear_response.json()["data"]["default_playback_speed"] == {"kind": "Absent"}
 
     def test_patch_subscription_settings_rejects_out_of_range_default_speed(
         self, auth_client, monkeypatch
@@ -5835,7 +5821,7 @@ class TestPodcastApiSurface:
         too_low = auth_client.patch(
             f"/podcasts/subscriptions/{podcast_id}/settings",
             headers=auth_headers(user_id),
-            json={"default_playback_speed": 0.49},
+            json={"default_playback_speed": {"kind": "Present", "value": 0.49}},
         )
         assert too_low.status_code == 400, (
             "default_playback_speed below 0.5 must be rejected, "
@@ -5846,13 +5832,35 @@ class TestPodcastApiSurface:
         too_high = auth_client.patch(
             f"/podcasts/subscriptions/{podcast_id}/settings",
             headers=auth_headers(user_id),
-            json={"default_playback_speed": 3.01},
+            json={"default_playback_speed": {"kind": "Present", "value": 3.01}},
         )
         assert too_high.status_code == 400, (
             "default_playback_speed above 3.0 must be rejected, "
             f"got {too_high.status_code}: {too_high.text}"
         )
         assert too_high.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+        for coercive_value in ("1.5", True):
+            coercive = auth_client.patch(
+                f"/podcasts/subscriptions/{podcast_id}/settings",
+                headers=auth_headers(user_id),
+                json={
+                    "default_playback_speed": {
+                        "kind": "Present",
+                        "value": coercive_value,
+                    }
+                },
+            )
+            assert coercive.status_code == 400, coercive.text
+            assert coercive.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+        raw_null = auth_client.patch(
+            f"/podcasts/subscriptions/{podcast_id}/settings",
+            headers=auth_headers(user_id),
+            json={"default_playback_speed": None},
+        )
+        assert raw_null.status_code == 400, raw_null.text
+        assert raw_null.json()["error"]["code"] == "E_INVALID_REQUEST"
 
         empty_payload = auth_client.patch(
             f"/podcasts/subscriptions/{podcast_id}/settings",
@@ -5864,6 +5872,39 @@ class TestPodcastApiSurface:
             f"got {empty_payload.status_code}: {empty_payload.text}"
         )
         assert empty_payload.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+    def test_patch_subscription_settings_reports_lapsed_subscription(
+        self, auth_client, monkeypatch
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        provider_podcast_id = f"surface-settings-lapsed-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, "Lapsed Settings Podcast")
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast={provider_podcast_id: []},
+        )
+        podcast_id = _subscribe(auth_client, user_id, payload)["podcastId"]
+
+        unsubscribe = auth_client.delete(
+            f"/podcasts/subscriptions/{podcast_id}",
+            headers={
+                **auth_headers(user_id),
+                "Idempotency-Key": f"lapse-settings-{uuid4()}",
+            },
+        )
+        assert unsubscribe.status_code == 200, unsubscribe.text
+
+        response = auth_client.patch(
+            f"/podcasts/subscriptions/{podcast_id}/settings",
+            headers=auth_headers(user_id),
+            json={"default_playback_speed": {"kind": "Present", "value": 1.5}},
+        )
+
+        assert response.status_code == 404, response.text
+        assert response.json()["error"]["code"] == "E_NOT_FOUND"
+        assert response.json()["error"]["message"] == "Podcast subscription not found"
 
     def test_patch_subscription_settings_rejects_removed_category_field(
         self, auth_client, monkeypatch
@@ -6698,7 +6739,7 @@ upgrade now
             json={
                 "positionMs": 900_000,
                 "durationMs": {"kind": "Present", "value": 1_800_000},
-                "playbackSpeed": 1.0,
+                "episodePlaybackRate": {"kind": "Present", "value": 1.0},
                 "expectedWriteRevision": 0,
                 "expectedResetEpoch": 0,
                 "heartbeatGeneration": str(uuid4()),

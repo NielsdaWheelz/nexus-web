@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, Ellipsis, Gauge, List, Mic, X } from "lucide-react";
+import { ChevronDown, Ellipsis, List, Mic, X } from "lucide-react";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
@@ -25,6 +25,7 @@ import {
   playerTitle,
   type PresentPlayerChrome,
 } from "./PlayerControls";
+import { PlayerPlaybackRateButton } from "./PlayerPlaybackControls";
 import styles from "./MobileNowPlaying.module.css";
 
 function nextProvenance(model: PresentPlayerChrome): string | null {
@@ -44,6 +45,7 @@ export default function MobileNowPlaying({
   capture,
   suspended,
   miniPlayerButtonRef,
+  playbackButtonRef,
   returnFocusFallback,
   onOpenPlayback,
   onOpenContents,
@@ -57,6 +59,7 @@ export default function MobileNowPlaying({
   readonly capture: PlayerCaptureController;
   readonly suspended: boolean;
   readonly miniPlayerButtonRef: RefObject<HTMLButtonElement | null>;
+  readonly playbackButtonRef: RefObject<HTMLButtonElement | null>;
   readonly returnFocusFallback: () => HTMLElement | null;
   readonly onOpenPlayback: () => void;
   readonly onOpenContents: () => void;
@@ -95,13 +98,6 @@ export default function MobileNowPlaying({
   }, []);
 
   const secondaryOptions: ActionDescriptor[] = [
-    {
-      id: "Player.Playback",
-      kind: "command",
-      label: "Speed and audio effects",
-      icon: <Gauge aria-hidden="true" />,
-      onSelect: onOpenPlayback,
-    },
     ...(model.kind === "Canonical" && chapters.length > 0
       ? [
           {
@@ -212,6 +208,10 @@ export default function MobileNowPlaying({
               <PlayerStatus model={model} />
               <PlayerSeek model={model} />
               <PlayerTransport model={model} />
+              <PlayerPlaybackRateButton
+                ref={playbackButtonRef}
+                onClick={onOpenPlayback}
+              />
 
               {model.kind === "Canonical" ? (
                 <PlayerCaptureButton model={model} capture={capture} />
@@ -236,15 +236,6 @@ export default function MobileNowPlaying({
                 />
               ) : (
                 <div className={styles.secondaryActions}>
-                  <Button
-                    variant="ghost"
-                    size="lg"
-                    data-player-effects
-                    onClick={onOpenPlayback}
-                    leadingIcon={<Gauge aria-hidden="true" />}
-                  >
-                    Speed &amp; effects
-                  </Button>
                   {model.kind === "Canonical" && chapters.length > 0 ? (
                     <span data-player-contents>
                       <PlayerContentsButton onClick={onOpenContents} />

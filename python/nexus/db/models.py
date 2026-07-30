@@ -2635,10 +2635,6 @@ class PodcastSubscription(Base):
             "sync_attempts >= 0",
             name="ck_podcast_subscriptions_sync_attempts_non_negative",
         ),
-        CheckConstraint(
-            "default_playback_speed IS NULL OR (default_playback_speed >= 0.5 AND default_playback_speed <= 3.0)",
-            name="ck_podcast_subscriptions_default_playback_speed_range",
-        ),
     )
 
     podcast: Mapped["Podcast"] = relationship("Podcast")
@@ -2946,10 +2942,10 @@ class PodcastListeningState(Base):
     )
     position_ms: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    playback_speed: Mapped[float] = mapped_column(Float, nullable=False, server_default="1.0")
+    playback_speed: Mapped[float | None] = mapped_column(Float, nullable=True)
     is_completed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     # Listening-heartbeat fencing tokens (spec §5.4): only an exact expected
-    # write_revision + reset_epoch may atomically write position/dwell and
+    # write_revision + reset_epoch may atomically write position/duration/rate and
     # advance write_revision; ResetProgress advances both and resets position.
     write_revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     reset_epoch: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
@@ -2973,10 +2969,6 @@ class PodcastListeningState(Base):
         CheckConstraint(
             "duration_ms IS NULL OR duration_ms >= 0",
             name="ck_podcast_listening_states_duration_ms_non_negative",
-        ),
-        CheckConstraint(
-            "playback_speed > 0",
-            name="ck_podcast_listening_states_playback_speed_positive",
         ),
         Index("ix_podcast_listening_states_media_id", "media_id"),
         Index(

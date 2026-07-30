@@ -5,6 +5,12 @@
 
 No blocking question remains.
 
+**Playback-rate supersession (2026-07-30):**
+[`playback-rate-policy-hard-cutover.md`](playback-rate-policy-hard-cutover.md)
+supersedes this document's scalar rate, former lower bound, and heartbeat
+discard-on-recovery clauses. Its resolved descriptor, owned-absence episode rate,
+and dirty-sample recovery contracts are canonical.
+
 **Player-surface supersession (2026-07-30):**
 [`global-player-surfaces-hard-cutover.md`](global-player-surfaces-hard-cutover.md)
 supersedes this document's footer/dock presentation, public monolithic player
@@ -54,8 +60,8 @@ the matching file/gate clauses. It remains normative for everything else here
 — Lectern ordering, the two command ports, replay, and the dock/footer
 contract are unchanged. `services/attention.py` and `reading_sessions` are
 deleted outright, not relocated: the listening heartbeat now writes only
-position/duration/speed/fencing and carries no elapsed-time delta or
-client-supplied device identifier, and media teardown composes one
+position/duration/owned-absence episode-rate/fencing and carries no elapsed-time
+delta or client-supplied device identifier, and media teardown composes one
 consumption call, not two. Document engagement recency moves to a fifth
 consumption store, `reader_engagement_states`
 (`services/consumption/_reader_engagement_store.py`), written atomically with
@@ -134,7 +140,7 @@ history, and Walknotes retained**. Reload intentionally restores no session.
 HTTP/BFF -> services/consumption/service.py
               -> _state_store      explicit state + podcast terminal state
               -> _lectern_store    membership/order + canonical snapshot
-              -> _listening_store  position/duration/speed heartbeat
+              -> _listening_store  position/duration/episode-rate heartbeat
               -> _projection       explicit + attention-derived read model
 
 attention.py -> reading_sessions writes, dwell aggregate, attention_on_day
@@ -382,7 +388,8 @@ LecternItemOut {
   activation:
     { kind: "FooterAudio",
       streamUrl: string, sourceUrl: string,
-      positionMs: int, writeRevision: int, resetEpoch: int, playbackSpeed: number,
+      positionMs: int, writeRevision: int, resetEpoch: int,
+      playbackRate: PlaybackRateResolution,
       durationMs: Presence<int>, artworkUrl: Presence<string>,
       chapters: ChapterOut[0..100] }
     | { kind: "Readable" }
@@ -570,12 +577,14 @@ policy change; no batch or stable domain attempt is persisted.
 ```text
 ListeningStateOut {
   positionMs: int[0..2147483647],
-  durationMs: Presence<int[0..2147483647]>, playbackSpeed: number[0.25..3],
+  durationMs: Presence<int[0..2147483647]>,
+  episodePlaybackRate: Presence<number[0.5..3]>,
   writeRevision: int[0..2147483647], resetEpoch: int[0..2147483647]
 }
 ListeningHeartbeatIn {
   positionMs: int[0..2147483647],
-  durationMs: Presence<int[0..2147483647]>, playbackSpeed: number[0.25..3],
+  durationMs: Presence<int[0..2147483647]>,
+  episodePlaybackRate: Presence<number[0.5..3]>,
   dwellMsDelta: int[0..17000], deviceId: string[1..128],
   expectedWriteRevision: int[0..2147483647],
   expectedResetEpoch: int[0..2147483647],
@@ -589,7 +598,7 @@ ListeningHeartbeatResult {
 
 All request fields are required; duration is the strict Presence encoding. GET
 returns `ListeningStateOut`; PUT accepts no completion field and returns
-`ListeningHeartbeatResult`. Consumption owns position/duration/speed;
+`ListeningHeartbeatResult`. Consumption owns position/duration/episode rate;
 attention owns the piggybacked `reading_sessions` dwell write. The 95%-threshold
 Finished signal is projection-only and never sets `is_completed` or prunes.
 
@@ -702,7 +711,14 @@ interface GlobalPlayerCapability {
     durationMs: number;
     bufferedMs: number;
     volume: number;
-    playbackRate: number;
+    playbackRate: {
+      scope: CanonicalPlaybackRateScope | { kind: "Preview" };
+      preferred: number;
+      temporaryNormal: boolean;
+      base: number;
+      observed: number;
+      remember: PlaybackRateRememberState;
+    };
     currentChapter: Presence<ChapterOut>;
     audioEffects: AudioEffectsState;
     audioEffectsAvailable: boolean;
@@ -862,7 +878,7 @@ interface GlobalPlayerCapability {
   `resource_items/{mutations,surfaces}.py`; preserve hash-basis regression tests in
   `test_{notes,contributors,resource_item_surfaces}.py`.
 - Frontend owners: `AuthenticatedShell.tsx`; player
-  `{audioEffects,chapters,globalPlayer,listeningState,mediaSession,subscriptionPlaybackSpeed,usePlayerKeyboardShortcuts}`;
+  `{audioEffects,chapters,globalPlayer,listeningState,mediaSession,playbackRate,usePlayerKeyboardShortcuts}`;
   `app/api/media/[id]/listening-state/route.ts`;
   `GlobalPlayerFooter.tsx` + CSS; Lectern pane/prompt; media pane/transcript;
   podcast `PodcastDetailPaneBody`, `PodcastEpisodeList`, `EpisodeControls`,

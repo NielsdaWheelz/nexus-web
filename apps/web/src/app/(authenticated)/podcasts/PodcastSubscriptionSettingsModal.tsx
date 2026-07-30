@@ -6,12 +6,10 @@ import {
   ModalLayerProvider,
   modalBackdropProjection,
 } from "@/lib/ui/useModalLayer";
-import {
-  SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS,
-  formatPlaybackSpeedLabel,
-} from "@/lib/player/subscriptionPlaybackSpeed";
+import { absent, presenceValueOr, present } from "@/lib/api/presence";
+import { formatPlaybackRate } from "@/lib/player/playbackRate";
+import { PlaybackRateEditor } from "@/components/player/PlayerPlaybackControls";
 import Button from "@/components/ui/Button";
-import Select from "@/components/ui/Select";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import type { PodcastSubscriptionSettingsModal as PodcastSubscriptionSettingsModalState } from "./usePodcastSubscriptionSettingsModal";
 import styles from "./page.module.css";
@@ -28,6 +26,10 @@ export default function PodcastSubscriptionSettingsModal({
     ref: cardRef,
     active: podcastTitle !== null,
     onDismiss: settingsModal.close,
+    initialFocus: () =>
+      cardRef.current?.querySelector<HTMLElement>(
+        "[data-playback-rate-range]",
+      ) ?? null,
   });
   if (podcastTitle === null) {
     return null;
@@ -51,21 +53,30 @@ export default function PodcastSubscriptionSettingsModal({
         <p className={styles.modalDescription}>
           Configure default playback behavior for <strong>{podcastTitle}</strong>.
         </p>
-        <label className={styles.settingsFieldLabel}>
-          Default playback speed
-          <Select
-            value={settingsModal.defaultSpeed}
-            onChange={(event) => settingsModal.setDefaultSpeed(event.target.value)}
-            aria-label="Default playback speed"
+        <div className={styles.settingsFieldLabel}>
+          <PlaybackRateEditor
+            value={presenceValueOr(settingsModal.defaultPlaybackSpeed, 1)}
+            onChange={(rate) =>
+              settingsModal.setDefaultPlaybackSpeed(present(rate))
+            }
+            label="Default playback speed"
+          />
+          <Button
+            variant="secondary"
+            size="lg"
+            aria-pressed={settingsModal.defaultPlaybackSpeed.kind === "Absent"}
+            onClick={() => settingsModal.setDefaultPlaybackSpeed(absent())}
           >
-            <option value="default">Default (1.0x)</option>
-            {SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS.map((option) => (
-              <option key={option} value={String(option)}>
-                {formatPlaybackSpeedLabel(option)}
-              </option>
-            ))}
-          </Select>
-        </label>
+            Use app default (1x)
+          </Button>
+          <span className={styles.modalDescription}>
+            {settingsModal.defaultPlaybackSpeed.kind === "Absent"
+              ? "New episodes use the app default, 1x."
+              : `New episodes start at ${formatPlaybackRate(
+                  settingsModal.defaultPlaybackSpeed.value,
+                )}.`}
+          </span>
+        </div>
         <label className={styles.settingsToggleLabel}>
           <input
             type="checkbox"

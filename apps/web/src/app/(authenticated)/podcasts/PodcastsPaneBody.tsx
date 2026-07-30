@@ -367,14 +367,7 @@ export default function PodcastsPaneBody() {
           row.podcast_id === response.podcast_id
             ? {
                 ...row,
-                default_playback_speed:
-                  response.default_playback_speed === null
-                    ? { kind: "Absent" as const }
-                    : {
-                        kind: "Present" as const,
-                        value: response.default_playback_speed,
-                      },
-                defaultPlaybackSpeed: response.default_playback_speed,
+                default_playback_speed: response.default_playback_speed,
                 auto_queue: response.auto_queue,
               }
             : row,
@@ -910,7 +903,7 @@ export default function PodcastsPaneBody() {
           execute: () =>
             settingsModal.open({
               podcast_id: row.podcast_id,
-              default_playback_speed: row.defaultPlaybackSpeed,
+              default_playback_speed: row.default_playback_speed,
               auto_queue: row.auto_queue,
             }),
         },

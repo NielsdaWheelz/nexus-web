@@ -188,26 +188,15 @@ _MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
     END AS retrieval_status""",
     "mcis.status_reason AS retrieval_status_reason",
     f"{_CAN_DELETE_SQL} AS can_delete",
-    """(
-        SELECT ps.default_playback_speed
-        FROM podcast_episodes pe_sub
-        JOIN podcast_subscriptions ps
-          ON ps.podcast_id = pe_sub.podcast_id
-         AND ps.user_id = :viewer_id
-        WHERE pe_sub.media_id = m.id
-        LIMIT 1
-    ) AS subscription_default_playback_speed""",
 )
 _MEDIA_LISTENING_STATE_SELECT_COLUMNS: tuple[str, ...] = (
     "pls.position_ms AS listening_position_ms",
     "pls.duration_ms AS listening_duration_ms",
-    "pls.playback_speed AS listening_playback_speed",
     "pls.is_completed AS listening_is_completed",
 )
 _MEDIA_LISTENING_STATE_NULL_SELECT_COLUMNS: tuple[str, ...] = (
     "NULL::bigint AS listening_position_ms",
     "NULL::bigint AS listening_duration_ms",
-    "NULL::double precision AS listening_playback_speed",
     "NULL::boolean AS listening_is_completed",
 )
 _COLLECTION_MEDIA_SELECT_COLUMNS: tuple[str, ...] = (
@@ -763,15 +752,13 @@ def _media_listening_state_from_row(
     row: Mapping[str, object],
 ) -> ListeningStateOut | None:
     position_ms = row.get("listening_position_ms")
-    playback_speed = row.get("listening_playback_speed")
-    if position_ms is None or playback_speed is None:
+    if position_ms is None:
         return None
 
     duration_ms = row.get("listening_duration_ms")
     return ListeningStateOut(
         position_ms=int(position_ms),
         duration_ms=int(duration_ms) if duration_ms is not None else None,
-        playback_speed=float(playback_speed),
         is_completed=bool(row.get("listening_is_completed")),
     )
 
@@ -830,11 +817,6 @@ def _media_out_from_row(
         last_error_code=row["last_error_code"],
         playback_source=playback_source,
         listening_state=_media_listening_state_from_row(row),
-        subscription_default_playback_speed=(
-            float(row["subscription_default_playback_speed"])
-            if row.get("subscription_default_playback_speed") is not None
-            else None
-        ),
         chapters=chapters or [],
         capabilities=capabilities,
         contributors=contributors,

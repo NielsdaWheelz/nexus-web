@@ -1338,7 +1338,7 @@ def _validate_activity_batch(batch: ActivityBatchIn) -> None:
 def record_listening_heartbeat(
     viewer_id: UUID, media_id: UUID, heartbeat: ListeningHeartbeatIn
 ) -> ListeningHeartbeatResult:
-    """Fence and write position/duration/speed in one txn."""
+    """Fence and write position/duration/episode rate in one transaction."""
     fresh = _fresh_session()
     try:
         return retry_serializable(
@@ -1364,7 +1364,7 @@ def _record_heartbeat_op(
         media_id=media_id,
         position_ms=heartbeat.position_ms,
         duration_ms=duration_ms,
-        playback_speed=heartbeat.playback_speed,
+        episode_playback_rate=heartbeat.episode_playback_rate,
         expected_write_revision=heartbeat.expected_write_revision,
         expected_reset_epoch=heartbeat.expected_reset_epoch,
     )

@@ -95,6 +95,8 @@ READER_RESUME_WEB_SOURCE_URL = "https://example.com/e2e-reader-resume-web-seed"
 READER_DOCUMENT_MAP_SOURCE_URL = "https://example.com/e2e-reader-document-map-seed"
 ACTIVITY_AUDIO_SOURCE_URL = "https://example.com/e2e-activity-audio-seed"
 ACTIVITY_AUDIO_STREAM_PATH = "/e2e-activity-audio.wav"
+ACTIVITY_AUDIO_SUCCESSOR_SOURCE_URL = "https://example.com/e2e-activity-audio-successor-seed"
+ACTIVITY_AUDIO_SUCCESSOR_STREAM_PATH = "/e2e-activity-audio-successor.wav"
 ACTIVITY_AUDIO_DURATION_SECONDS = 30
 YOUTUBE_VIDEO_ID = "s8E2Evid001"
 YOUTUBE_PLAYBACK_ONLY_VIDEO_ID = "s8E2Evid002"
@@ -591,16 +593,27 @@ def _write_reader_document_map_seed_file(
     print(f"Wrote E2E reader Document Map seed metadata: {seed_path}")
 
 
-def _write_activity_audio_seed_file(*, media_id: UUID, title: str) -> None:
+def _write_activity_audio_seed_file(
+    *,
+    podcast_id: UUID,
+    media_id: UUID,
+    title: str,
+    successor_media_id: UUID,
+    successor_title: str,
+) -> None:
     """Persist the deterministic audio identity used by activity E2E."""
     repo_root = Path(__file__).resolve().parents[2]
     seed_path = repo_root / AUDIO_ACTIVITY_SEED_FILE_RELATIVE
     seed_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "media_fixture_kind": "synthetic",
+        "podcast_id": str(podcast_id),
         "media_id": str(media_id),
         "title": title,
         "stream_path": ACTIVITY_AUDIO_STREAM_PATH,
+        "successor_media_id": str(successor_media_id),
+        "successor_title": successor_title,
+        "successor_stream_path": ACTIVITY_AUDIO_SUCCESSOR_STREAM_PATH,
         "duration_seconds": ACTIVITY_AUDIO_DURATION_SECONDS,
         "seeded_at": datetime.now(UTC).isoformat(),
     }
@@ -1465,7 +1478,9 @@ def _seed_activity_audio_media(session_factory, user_id: UUID) -> None:
     """
     podcast_id = uuid5(NAMESPACE_URL, "nexus:e2e:activity-audio:podcast")
     media_id = uuid5(NAMESPACE_URL, "nexus:e2e:activity-audio:episode")
+    successor_media_id = uuid5(NAMESPACE_URL, "nexus:e2e:activity-audio:successor-episode")
     title = "E2E background listening seed"
+    successor_title = "E2E untouched successor listening seed"
     now = datetime.now(UTC)
 
     with session_factory() as db:
@@ -1485,65 +1500,99 @@ def _seed_activity_audio_media(session_factory, user_id: UUID) -> None:
             podcast.title = "E2E Activity Audio"
             podcast.updated_at = now
 
-        media = db.get(Media, media_id)
-        if media is None:
-            media = Media(
-                id=media_id,
-                kind="podcast_episode",
-                title=title,
-                canonical_source_url=ACTIVITY_AUDIO_SOURCE_URL,
-                external_playback_url=ACTIVITY_AUDIO_STREAM_PATH,
-                provider="e2e",
-                provider_id="activity-audio-episode",
-                created_by_user_id=user_id,
-                processing_status=ProcessingStatus.ready_for_reading,
-                processing_started_at=now,
-                processing_completed_at=now,
-            )
-            db.add(media)
-        else:
-            media.title = title
-            media.canonical_source_url = ACTIVITY_AUDIO_SOURCE_URL
-            media.external_playback_url = ACTIVITY_AUDIO_STREAM_PATH
-            media.provider = "e2e"
-            media.provider_id = "activity-audio-episode"
-            media.processing_status = ProcessingStatus.ready_for_reading
-            media.failure_stage = None
-            media.last_error_code = None
-            media.last_error_message = None
-            media.failed_at = None
-            media.processing_completed_at = now
-            media.updated_at = now
-        db.flush()
-
-        episode = db.get(PodcastEpisode, media_id)
-        if episode is None:
-            db.add(
-                PodcastEpisode(
-                    media_id=media_id,
-                    podcast_id=podcast_id,
-                    published_at=datetime(2026, 1, 1, tzinfo=UTC),
-                    duration_seconds=ACTIVITY_AUDIO_DURATION_SECONDS,
-                    description_text="Deterministic background-listening fixture.",
+        for (
+            episode_media_id,
+            episode_title,
+            source_url,
+            stream_path,
+            provider_id,
+            published_at,
+            alias,
+        ) in (
+            (
+                media_id,
+                title,
+                ACTIVITY_AUDIO_SOURCE_URL,
+                ACTIVITY_AUDIO_STREAM_PATH,
+                "activity-audio-episode",
+                datetime(2026, 1, 1, tzinfo=UTC),
+                "nexus-e2e-activity-audio",
+            ),
+            (
+                successor_media_id,
+                successor_title,
+                ACTIVITY_AUDIO_SUCCESSOR_SOURCE_URL,
+                ACTIVITY_AUDIO_SUCCESSOR_STREAM_PATH,
+                "activity-audio-successor-episode",
+                datetime(2026, 1, 2, tzinfo=UTC),
+                "nexus-e2e-activity-audio-successor",
+            ),
+        ):
+            media = db.get(Media, episode_media_id)
+            if media is None:
+                media = Media(
+                    id=episode_media_id,
+                    kind="podcast_episode",
+                    title=episode_title,
+                    canonical_source_url=source_url,
+                    external_playback_url=stream_path,
+                    provider="e2e",
+                    provider_id=provider_id,
+                    created_by_user_id=user_id,
+                    processing_status=ProcessingStatus.ready_for_reading,
+                    processing_started_at=now,
+                    processing_completed_at=now,
                 )
+                db.add(media)
+            else:
+                media.title = episode_title
+                media.canonical_source_url = source_url
+                media.external_playback_url = stream_path
+                media.provider = "e2e"
+                media.provider_id = provider_id
+                media.processing_status = ProcessingStatus.ready_for_reading
+                media.failure_stage = None
+                media.last_error_code = None
+                media.last_error_message = None
+                media.failed_at = None
+                media.processing_completed_at = now
+                media.updated_at = now
+            db.flush()
+
+            episode = db.get(PodcastEpisode, episode_media_id)
+            if episode is None:
+                db.add(
+                    PodcastEpisode(
+                        media_id=episode_media_id,
+                        podcast_id=podcast_id,
+                        published_at=published_at,
+                        duration_seconds=ACTIVITY_AUDIO_DURATION_SECONDS,
+                        description_text="Deterministic background-listening fixture.",
+                    )
+                )
+            else:
+                episode.duration_seconds = ACTIVITY_AUDIO_DURATION_SECONDS
+            db.flush()
+            attach_episode_aliases_in_current_transaction(
+                db,
+                podcast_id=podcast_id,
+                media_id=episode_media_id,
+                aliases=(EpisodeAlias("RssGuid", alias),),
             )
-        else:
-            episode.duration_seconds = ACTIVITY_AUDIO_DURATION_SECONDS
-        db.flush()
-        attach_episode_aliases_in_current_transaction(
-            db,
-            podcast_id=podcast_id,
-            media_id=media_id,
-            aliases=(EpisodeAlias("RssGuid", "nexus-e2e-activity-audio"),),
-        )
-        library_entries.ensure_entry(
-            db,
-            default_library_id,
-            library_entries.media_target(media_id),
-        )
+            library_entries.ensure_entry(
+                db,
+                default_library_id,
+                library_entries.media_target(episode_media_id),
+            )
         db.commit()
 
-    _write_activity_audio_seed_file(media_id=media_id, title=title)
+    _write_activity_audio_seed_file(
+        podcast_id=podcast_id,
+        media_id=media_id,
+        title=title,
+        successor_media_id=successor_media_id,
+        successor_title=successor_title,
+    )
     print(f"Seeded activity-audio podcast episode for E2E: {media_id}")
 
 

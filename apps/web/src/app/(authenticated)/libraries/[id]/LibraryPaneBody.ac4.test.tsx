@@ -371,7 +371,7 @@ function seededPodcastEntry() {
     subscription: {
       kind: "Present",
       value: {
-        defaultPlaybackSpeed: 1.5,
+        defaultPlaybackSpeed: { kind: "Present", value: 1.5 },
         autoQueue: true,
         syncStatus: "Complete",
       },
@@ -1219,7 +1219,7 @@ exhaustion: "Complete",
       screen.getByRole("dialog", { name: "Subscription settings" }),
     ).toBeVisible();
     expect(
-      screen.getByRole("combobox", { name: "Default playback speed" }),
+      screen.getByRole("slider", { name: "Default playback speed" }),
     ).toHaveValue("1.5");
     expect(
       screen.getByRole("checkbox", {
@@ -4224,7 +4224,10 @@ exhaustion: "Partial",
                   value: {
                     positionMs: 59_000,
                     durationMs: { kind: "Present", value: 60_000 },
-                    playbackSpeed: 1,
+                    episodePlaybackRate: {
+                      kind: "Present",
+                      value: 1,
+                    },
                     writeRevision: 1,
                     resetEpoch: 1,
                   },
@@ -4565,7 +4568,10 @@ exhaustion: "Complete",
                   value: {
                     positionMs: 0,
                     durationMs: { kind: "Present", value: 60_000 },
-                    playbackSpeed: 1,
+                    episodePlaybackRate: {
+                      kind: "Present",
+                      value: 1,
+                    },
                     writeRevision: 1,
                     resetEpoch: 1,
                   },

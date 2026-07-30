@@ -8,6 +8,7 @@ advances the revision; a mismatch writes nothing.
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import text
 
 from nexus.db.models import Media, MediaKind, ProcessingStatus
 from tests.factories import add_media_to_library
@@ -69,11 +70,12 @@ def _heartbeat_body(
     expected_write_revision: int,
     expected_reset_epoch: int,
     duration_ms: int = 600_000,
+    episode_playback_rate: dict | None = None,
 ) -> dict:
     return {
         "positionMs": position_ms,
         "durationMs": {"kind": "Present", "value": duration_ms},
-        "playbackSpeed": 1.5,
+        "episodePlaybackRate": episode_playback_rate or {"kind": "Present", "value": 1.5},
         "expectedWriteRevision": expected_write_revision,
         "expectedResetEpoch": expected_reset_epoch,
         "heartbeatGeneration": str(uuid4()),
@@ -103,7 +105,7 @@ class TestGet:
         assert response.json()["data"] == {
             "positionMs": 0,
             "durationMs": {"kind": "Absent"},
-            "playbackSpeed": 1.0,
+            "episodePlaybackRate": {"kind": "Absent"},
             "writeRevision": 0,
             "resetEpoch": 0,
         }
@@ -126,7 +128,10 @@ class TestPut:
         data = response.json()["data"]
         assert data["listeningState"]["writeRevision"] == 1
         assert data["listeningState"]["positionMs"] == 60_000
-        assert data["listeningState"]["playbackSpeed"] == 1.5
+        assert data["listeningState"]["episodePlaybackRate"] == {
+            "kind": "Present",
+            "value": 1.5,
+        }
         assert data["heartbeatSequence"] == 7
 
     def test_stale_revision_writes_nothing(self, auth_client, direct_db: DirectSessionManager):
@@ -149,21 +154,135 @@ class TestPut:
             ).status_code
             == 200
         )
+        before = _get(auth_client, user_id, media_id).json()["data"]
+        with direct_db.session() as session:
+            before_last_engaged_at = session.execute(
+                text(
+                    """
+                    SELECT last_engaged_at
+                    FROM podcast_listening_states
+                    WHERE user_id = :user_id AND media_id = :media_id
+                    """
+                ),
+                {"user_id": user_id, "media_id": media_id},
+            ).scalar_one()
 
         # A retry that still expects revision 0 is stale.
         stale = _put(
             auth_client,
             user_id,
             media_id,
-            _heartbeat_body(position_ms=90_000, expected_write_revision=0, expected_reset_epoch=0),
+            _heartbeat_body(
+                position_ms=90_000,
+                duration_ms=120_000,
+                episode_playback_rate={"kind": "Present", "value": 1.8},
+                expected_write_revision=0,
+                expected_reset_epoch=0,
+            ),
         )
         assert stale.status_code == 409, stale.text
         assert stale.json()["error"]["code"] == "E_STALE_LISTENING_REVISION"
 
-        # Position did not move.
-        current = _get(auth_client, user_id, media_id).json()["data"]
-        assert current["positionMs"] == 30_000, "stale PUT must not move position"
-        assert current["writeRevision"] == 1
+        assert _get(auth_client, user_id, media_id).json()["data"] == before
+        with direct_db.session() as session:
+            after_last_engaged_at = session.execute(
+                text(
+                    """
+                    SELECT last_engaged_at
+                    FROM podcast_listening_states
+                    WHERE user_id = :user_id AND media_id = :media_id
+                    """
+                ),
+                {"user_id": user_id, "media_id": media_id},
+            ).scalar_one()
+        assert after_last_engaged_at == before_last_engaged_at
+
+    def test_absent_rate_inserts_null_and_preserves_an_established_rate(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        media_id = _create_audio_media(direct_db)
+        _add_to_library(direct_db, library_id, media_id)
+
+        absent = _put(
+            auth_client,
+            user_id,
+            media_id,
+            _heartbeat_body(
+                position_ms=1_000,
+                expected_write_revision=0,
+                expected_reset_epoch=0,
+                episode_playback_rate={"kind": "Absent"},
+            ),
+        )
+        assert absent.status_code == 200, absent.text
+        assert absent.json()["data"]["listeningState"]["episodePlaybackRate"] == {"kind": "Absent"}
+
+        established = _put(
+            auth_client,
+            user_id,
+            media_id,
+            _heartbeat_body(
+                position_ms=2_000,
+                expected_write_revision=1,
+                expected_reset_epoch=0,
+                episode_playback_rate={"kind": "Present", "value": 1.8},
+            ),
+        )
+        assert established.status_code == 200, established.text
+
+        preserving = _put(
+            auth_client,
+            user_id,
+            media_id,
+            _heartbeat_body(
+                position_ms=3_000,
+                expected_write_revision=2,
+                expected_reset_epoch=0,
+                episode_playback_rate={"kind": "Absent"},
+            ),
+        )
+        assert preserving.status_code == 200, preserving.text
+        assert preserving.json()["data"]["listeningState"]["episodePlaybackRate"] == {
+            "kind": "Present",
+            "value": 1.8,
+        }
+
+    @pytest.mark.parametrize(
+        "patch",
+        [
+            {"episodePlaybackRate": None},
+            {"episodePlaybackRate": 1.5},
+            {"episodePlaybackRate": {"kind": "Present", "value": 0.49}},
+            {"episodePlaybackRate": {"kind": "Present", "value": 3.01}},
+            {"episodePlaybackRate": {"kind": "Present", "value": "1.5"}},
+            {"episodePlaybackRate": {"kind": "Present", "value": True}},
+            {"playbackSpeed": 1.5},
+        ],
+    )
+    def test_rejects_noncanonical_rate_shapes(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        patch: dict,
+    ):
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        media_id = _create_audio_media(direct_db)
+        _add_to_library(direct_db, library_id, media_id)
+        body = _heartbeat_body(
+            position_ms=1_000,
+            expected_write_revision=0,
+            expected_reset_epoch=0,
+        )
+        if "playbackSpeed" in patch:
+            body.pop("episodePlaybackRate")
+        body.update(patch)
+
+        response = _put(auth_client, user_id, media_id, body)
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
     def test_stale_after_reset_progress(self, auth_client, direct_db: DirectSessionManager):
         user_id = create_test_user_id()

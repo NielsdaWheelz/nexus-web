@@ -1,9 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Dialog from "@/components/ui/Dialog";
 import WalknoteReviewPanel from "@/components/walknotes/WalknoteReviewPanel";
+import { presenceValueOr } from "@/lib/api/presence";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import { usePlayerCommands, usePlayerSession } from "@/lib/player/globalPlayer";
+import {
+  usePlayerCommands,
+  usePlayerSession,
+  usePlayerSettings,
+} from "@/lib/player/globalPlayer";
 import { projectPlayerChrome } from "@/lib/player/playerChromeModel";
 import { usePlayerCapture } from "@/lib/walknotes/usePlayerCapture";
 import { useWorkspaceStore } from "@/lib/workspace/store";
@@ -11,8 +17,11 @@ import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
 import DesktopListeningShelf from "./DesktopListeningShelf";
 import MobileMiniPlayer from "./MobileMiniPlayer";
 import MobileNowPlaying from "./MobileNowPlaying";
-import PlayerAudioEffectsSheet from "./PlayerAudioEffectsSheet";
 import PlayerContentsSheet from "./PlayerContentsSheet";
+import {
+  PlayerPlaybackPanel,
+  PlayerPlaybackSheet,
+} from "./PlayerPlaybackControls";
 import {
   playerTargetHref,
   playerTitle,
@@ -38,14 +47,19 @@ function playerAnnouncement(model: PresentPlayerChrome): string | null {
 
 export default function GlobalPlayerSurfaces() {
   const session = usePlayerSession();
+  const settings = usePlayerSettings();
   const commands = usePlayerCommands();
   const capture = usePlayerCapture();
   const workspace = useWorkspaceStore();
   const isMobile = useIsMobileViewport();
   const model = projectPlayerChrome(session);
   const miniPlayerButtonRef = useRef<HTMLButtonElement>(null);
+  const playbackButtonRef = useRef<HTMLButtonElement>(null);
+  const playbackReturnFocusRef = useRef<HTMLElement | null>(null);
   const announcedIdentityRef = useRef<string | null>(null);
   const activeSessionIdentityRef = useRef<string | null>(null);
+  const previousIsMobileRef = useRef(isMobile);
+  const rememberAnnouncementRef = useRef("Unavailable");
   const [nowPlayingOpen, setNowPlayingOpen] = useState(false);
   const [playbackOpen, setPlaybackOpen] = useState(false);
   const [contentsOpen, setContentsOpen] = useState(false);
@@ -76,6 +90,8 @@ export default function GlobalPlayerSurfaces() {
   }, [capture, commands, workspace.state.activePrimaryPaneId]);
 
   useEffect(() => {
+    const viewportChanged = previousIsMobileRef.current !== isMobile;
+    previousIsMobileRef.current = isMobile;
     const identity =
       model.kind === "Absent"
         ? null
@@ -93,9 +109,12 @@ export default function GlobalPlayerSurfaces() {
     }
     activeSessionIdentityRef.current = identity;
 
-    if (!isMobile || model.kind === "Absent") {
+    if (viewportChanged || model.kind === "Absent") {
       setNowPlayingOpen(false);
       setPlaybackOpen(false);
+      setContentsOpen(false);
+    } else if (!isMobile) {
+      setNowPlayingOpen(false);
       setContentsOpen(false);
     }
   }, [capture, isMobile, model]);
@@ -124,6 +143,28 @@ export default function GlobalPlayerSurfaces() {
     }
   }, [capture.announcement]);
 
+  useEffect(() => {
+    const remember = settings.playbackRate.remember;
+    const signature =
+      remember.kind === "Failed"
+        ? `${remember.kind}:${remember.error.title}:${remember.error.message ?? ""}`
+        : remember.kind;
+    const previous = rememberAnnouncementRef.current;
+    if (signature === previous) return;
+    rememberAnnouncementRef.current = signature;
+    if (remember.kind === "Pending") {
+      setAnnouncement("Remembering playback speed for this podcast");
+    } else if (remember.kind === "Failed") {
+      setAnnouncement(
+        [remember.error.title, remember.error.message]
+          .filter(Boolean)
+          .join(". "),
+      );
+    } else if (remember.kind === "Ready" && previous === "Pending") {
+      setAnnouncement("Podcast playback speed remembered");
+    }
+  }, [settings.playbackRate.remember]);
+
   const activateTarget = useCallback(
     (target: { readonly href: string; readonly labelHint: string }) => {
       workspace.activateWorkspaceTarget({
@@ -150,6 +191,11 @@ export default function GlobalPlayerSurfaces() {
     activateTarget({ href: "/lectern", labelHint: "Lectern" });
   }, [activateTarget, collapse]);
 
+  const openPlayback = useCallback((returnFocusTo: HTMLElement | null) => {
+    playbackReturnFocusRef.current = returnFocusTo;
+    setPlaybackOpen(true);
+  }, []);
+
   const liveRegion = (
     <span
       className={styles.liveRegion}
@@ -167,6 +213,10 @@ export default function GlobalPlayerSurfaces() {
     model.kind === "Canonical"
       ? model.state.session.descriptor.activation.chapters
       : [];
+  const podcastTitle =
+    model.kind === "Canonical"
+      ? presenceValueOr(model.state.session.descriptor.subtitle, null)
+      : null;
   const modalActive =
     nowPlayingOpen || playbackOpen || contentsOpen || capture.reviewOpen;
   const subordinateActive = playbackOpen || contentsOpen || capture.reviewOpen;
@@ -183,7 +233,7 @@ export default function GlobalPlayerSurfaces() {
             openerRef={miniPlayerButtonRef}
             onOpenNowPlaying={() => setNowPlayingOpen(true)}
             onOpenTarget={openPlayerTarget}
-            onOpenPlayback={() => setPlaybackOpen(true)}
+            onOpenPlayback={openPlayback}
             onOpenContents={() => setContentsOpen(true)}
             onOpenLectern={openLectern}
             onDismiss={dismiss}
@@ -194,19 +244,26 @@ export default function GlobalPlayerSurfaces() {
             capture={capture}
             suspended={subordinateActive}
             miniPlayerButtonRef={miniPlayerButtonRef}
+            playbackButtonRef={playbackButtonRef}
             returnFocusFallback={() =>
               findPaneChromeFocusTarget(workspace.state.activePrimaryPaneId)
             }
-            onOpenPlayback={() => setPlaybackOpen(true)}
+            onOpenPlayback={() => openPlayback(playbackButtonRef.current)}
             onOpenContents={() => setContentsOpen(true)}
             onCollapse={collapse}
             onOpenTarget={openPlayerTarget}
             onOpenLectern={openLectern}
             onDismiss={dismiss}
           />
-          <PlayerAudioEffectsSheet
+          <PlayerPlaybackSheet
             active={playbackOpen}
+            podcastTitle={podcastTitle}
             onDismiss={() => setPlaybackOpen(false)}
+            returnFocusTo={() =>
+              playbackReturnFocusRef.current ??
+              playbackButtonRef.current ??
+              miniPlayerButtonRef.current
+            }
           />
           <PlayerContentsSheet
             active={contentsOpen}
@@ -215,14 +272,30 @@ export default function GlobalPlayerSurfaces() {
           />
         </>
       ) : (
-        <DesktopListeningShelf
-          model={model}
-          capture={capture}
-          onOpenTarget={openPlayerTarget}
-          onOpenLectern={openLectern}
-          onDismiss={dismiss}
-          suspended={capture.reviewOpen}
-        />
+        <>
+          <DesktopListeningShelf
+            model={model}
+            capture={capture}
+            onOpenTarget={openPlayerTarget}
+            onOpenLectern={openLectern}
+            onOpenPlayback={() => openPlayback(playbackButtonRef.current)}
+            onDismiss={dismiss}
+            suspended={capture.reviewOpen || playbackOpen}
+            playbackButtonRef={playbackButtonRef}
+          />
+          <Dialog
+            open={playbackOpen}
+            onClose={() => setPlaybackOpen(false)}
+            title="Playback"
+            returnFocusTo={() =>
+              playbackReturnFocusRef.current ?? playbackButtonRef.current
+            }
+          >
+            <div role="region" aria-label="Media player">
+              <PlayerPlaybackPanel podcastTitle={podcastTitle} />
+            </div>
+          </Dialog>
+        </>
       )}
       {model.kind === "Canonical" && capture.reviewOpen ? (
         <WalknoteReviewPanel

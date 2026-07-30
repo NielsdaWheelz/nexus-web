@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import GlobalPlayerSurfaces from "@/components/player/GlobalPlayerSurfaces";
 import { MobileViewportProvider } from "@/lib/mobileViewport/MobileViewportProvider";
 import { WorkspaceTestProvider } from "@/__tests__/helpers/WorkspaceTestProvider";
@@ -268,6 +274,13 @@ async function play() {
   fireEvent.click(screen.getByRole("button", { name: "Play episode" }));
 }
 
+async function openPlayback() {
+  fireEvent.click(
+    screen.getByRole("button", { name: /^Playback speed,/ }),
+  );
+  return screen.findByRole("dialog", { name: "Playback" });
+}
+
 function App() {
   // GlobalPlayerProvider consumes useLectern(), so it MUST be wrapped in a
   // LecternProvider; both fire `/api/lectern` + heartbeat fetches on mount, which
@@ -313,19 +326,20 @@ describe("GlobalPlayer audio effects", () => {
       await play();
       expect(audioContextMock.instances).toHaveLength(0);
 
+      const playback = await openPlayback();
       fireEvent.click(
-        screen.getByRole("button", { name: "More player controls" }),
-      );
-      fireEvent.click(
-        screen.getByRole("checkbox", { name: "Silence trimming" }),
+        within(playback).getByRole("checkbox", { name: "Silence trimming" }),
       );
       await waitFor(() => {
         expect(audioContextMock.instances).toHaveLength(1);
       });
-      fireEvent.change(screen.getByRole("combobox", { name: "Volume boost" }), {
-        target: { value: "medium" },
-      });
-      fireEvent.click(screen.getByRole("checkbox", { name: "Mono audio" }));
+      fireEvent.change(
+        within(playback).getByRole("combobox", { name: "Volume boost" }),
+        { target: { value: "medium" } },
+      );
+      fireEvent.click(
+        within(playback).getByRole("checkbox", { name: "Mono audio" }),
+      );
 
       expect(window.localStorage.getItem("podcast_effects_silence_trim")).toBe(
         "true",
@@ -354,18 +368,16 @@ describe("GlobalPlayer audio effects", () => {
     try {
       ({ unmount } = render(<App />));
       await play();
-      fireEvent.click(
-        screen.getByRole("button", { name: "More player controls" }),
-      );
+      const playback = await openPlayback();
 
       expect(
-        screen.getByRole("checkbox", { name: "Silence trimming" }),
+        within(playback).getByRole("checkbox", { name: "Silence trimming" }),
       ).toBeChecked();
       expect(
-        screen.getByRole("combobox", { name: "Volume boost" }),
+        within(playback).getByRole("combobox", { name: "Volume boost" }),
       ).toHaveValue("high");
       expect(
-        screen.getByRole("checkbox", { name: "Mono audio" }),
+        within(playback).getByRole("checkbox", { name: "Mono audio" }),
       ).toBeChecked();
     } finally {
       unmount?.();
@@ -386,17 +398,13 @@ describe("GlobalPlayer audio effects", () => {
         PLAYER_AUDIO_LABEL,
       ) as HTMLAudioElement;
 
-      fireEvent.click(
-        screen.getByRole("button", { name: "More player controls" }),
-      );
-      fireEvent.change(
-        screen.getByRole("combobox", { name: "Playback speed" }),
-        {
-          target: { value: "1.5" },
-        },
+      const playback = await openPlayback();
+      fireEvent.input(
+        within(playback).getByRole("slider", { name: "Playback speed" }),
+        { target: { value: "1.5" } },
       );
       fireEvent.click(
-        screen.getByRole("checkbox", { name: "Silence trimming" }),
+        within(playback).getByRole("checkbox", { name: "Silence trimming" }),
       );
       await waitFor(() => {
         expect(audioContextMock.instances).toHaveLength(1);
@@ -415,13 +423,30 @@ describe("GlobalPlayer audio effects", () => {
         expect(audio.playbackRate).toBeCloseTo(6, 2);
       });
       // The effects popover stayed open (no Play-button click closed it).
-      expect(screen.getByText("Trimming silence")).toBeVisible();
+      expect(within(playback).getByText("Trimming silence")).toBeVisible();
+      const fetchMock = vi.mocked(globalThis.fetch);
+      fetchMock.mockClear();
+      window.dispatchEvent(new Event("beforeunload"));
+      const keepalive = fetchMock.mock.calls.find(
+        ([input, init]) =>
+          new URL(String(input), "http://localhost").pathname.endsWith(
+            "/listening-state",
+          ) && init?.keepalive === true,
+      );
+      expect(keepalive).toBeDefined();
+      const keepaliveBody = JSON.parse(String(keepalive?.[1]?.body)) as {
+        episodePlaybackRate: unknown;
+      };
+      expect(keepaliveBody.episodePlaybackRate).toEqual(present(1.5));
 
       setAudioMetrics(audio, { duration: 180, currentTime: 10 });
       fireEvent(audio, new Event("durationchange"));
       fireEvent(audio, new Event("timeupdate"));
       expect(
-        screen.getByRole("slider", { name: "Seek playback position" }),
+        screen.getByRole("slider", {
+          name: "Seek playback position",
+          hidden: true,
+        }),
       ).toHaveAttribute("aria-valuetext", "00:10 of 03:00");
 
       for (let index = 0; index < 4; index += 1) {
@@ -441,7 +466,7 @@ describe("GlobalPlayer audio effects", () => {
       await waitFor(() => {
         expect(audio.playbackRate).toBeCloseTo(1.5, 2);
       });
-      expect(screen.queryByText("Trimming silence")).toBeNull();
+      expect(within(playback).queryByText("Trimming silence")).toBeNull();
     } finally {
       unmount?.();
       audioContextMock.restore();
@@ -466,10 +491,10 @@ describe("GlobalPlayer audio effects", () => {
       // Spy after autoplay so the count reflects only the mono toggle.
       const pauseSpy = vi.spyOn(audio, "pause").mockImplementation(() => {});
 
+      const playback = await openPlayback();
       fireEvent.click(
-        screen.getByRole("button", { name: "More player controls" }),
+        within(playback).getByRole("checkbox", { name: "Mono audio" }),
       );
-      fireEvent.click(screen.getByRole("checkbox", { name: "Mono audio" }));
       await waitFor(() => {
         expect(audioContextMock.instances).toHaveLength(1);
       });
@@ -478,7 +503,7 @@ describe("GlobalPlayer audio effects", () => {
       // Enabling mono re-routes the graph without pausing/reloading playback.
       expect(pauseSpy).not.toHaveBeenCalled();
       expect(
-        screen.getByRole("checkbox", { name: "Mono audio" }),
+        within(playback).getByRole("checkbox", { name: "Mono audio" }),
       ).toBeChecked();
       expect(instance.splitterNodes).toHaveLength(1);
       expect(instance.mergerNodes).toHaveLength(1);
@@ -497,26 +522,26 @@ describe("GlobalPlayer audio effects", () => {
       await play();
       expect(audioContextMock.instances).toHaveLength(0);
 
+      const playback = await openPlayback();
       fireEvent.click(
-        screen.getByRole("button", { name: "More player controls" }),
-      );
-      fireEvent.click(
-        screen.getByRole("checkbox", { name: "Silence trimming" }),
+        within(playback).getByRole("checkbox", { name: "Silence trimming" }),
       );
       await waitFor(() => {
         expect(audioContextMock.instances).toHaveLength(1);
       });
       expect(
-        screen.getByText("Audio effects unavailable for this source."),
+        within(playback).getByText(
+          "Audio effects unavailable for this source.",
+        ),
       ).toBeVisible();
       expect(
-        screen.getByRole("checkbox", { name: "Silence trimming" }),
+        within(playback).getByRole("checkbox", { name: "Silence trimming" }),
       ).toBeDisabled();
       expect(
-        screen.getByRole("combobox", { name: "Volume boost" }),
+        within(playback).getByRole("combobox", { name: "Volume boost" }),
       ).toBeDisabled();
       expect(
-        screen.getByRole("checkbox", { name: "Mono audio" }),
+        within(playback).getByRole("checkbox", { name: "Mono audio" }),
       ).toBeDisabled();
     } finally {
       unmount?.();

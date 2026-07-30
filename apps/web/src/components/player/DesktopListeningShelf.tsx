@@ -1,24 +1,28 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState } from "react";
-import { Ellipsis, Gauge, List, Mic, X } from "lucide-react";
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
+import { Ellipsis, List, Mic, X } from "lucide-react";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { PlayerCaptureController } from "@/lib/walknotes/usePlayerCapture";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
-import PlayerAudioEffectsControls from "./PlayerAudioEffectsControls";
 import { PlayerChapterList } from "./PlayerContentsSheet";
 import {
   PlayerCaptureButton,
   PlayerIdentity,
   PlayerSeek,
-  PlayerSpeedControl,
   PlayerStatus,
   PlayerTransport,
   PlayerVolumeControl,
   playerSourceHref,
   type PresentPlayerChrome,
 } from "./PlayerControls";
+import { PlayerPlaybackRateButton } from "./PlayerPlaybackControls";
 import styles from "./DesktopListeningShelf.module.css";
 
 function nextProvenance(model: PresentPlayerChrome): string | null {
@@ -37,15 +41,19 @@ export default function DesktopListeningShelf({
   capture,
   onOpenTarget,
   onOpenLectern,
+  onOpenPlayback,
   onDismiss,
   suspended,
+  playbackButtonRef,
 }: {
   readonly model: PresentPlayerChrome;
   readonly capture: PlayerCaptureController;
   readonly onOpenTarget: () => void;
   readonly onOpenLectern: () => void;
+  readonly onOpenPlayback: () => void;
   readonly onDismiss: () => void;
   readonly suspended: boolean;
+  readonly playbackButtonRef: RefObject<HTMLButtonElement | null>;
 }) {
   const shelfRef = useRef<HTMLElement>(null);
   const [compactActions, setCompactActions] = useState(false);
@@ -87,27 +95,15 @@ export default function DesktopListeningShelf({
           {
             id: "Player.PlaybackSettings",
             kind: "custom" as const,
-            label: "Playback settings",
+            label: "Volume",
             render: () => (
               <div className={styles.menuSettings}>
-                <PlayerSpeedControl />
                 <PlayerVolumeControl />
               </div>
             ),
           },
         ]
       : []),
-    {
-      id: "Player.AudioEffects",
-      kind: "custom",
-      label: "Audio effects",
-      icon: <Gauge aria-hidden="true" />,
-      render: () => (
-        <div className={styles.menuEffects}>
-          <PlayerAudioEffectsControls />
-        </div>
-      ),
-    },
     ...(model.kind === "Canonical" && chapters.length > 0
       ? [
           {
@@ -179,15 +175,14 @@ export default function DesktopListeningShelf({
         {model.kind === "Canonical" && !compactActions ? (
           <PlayerCaptureButton model={model} capture={capture} />
         ) : null}
+        <PlayerPlaybackRateButton
+          ref={playbackButtonRef}
+          onClick={onOpenPlayback}
+        />
         {!compactActions ? (
-          <>
-            <span className={styles.desktopSetting}>
-              <PlayerSpeedControl />
-            </span>
-            <span className={styles.desktopSetting}>
-              <PlayerVolumeControl />
-            </span>
-          </>
+          <span className={styles.desktopSetting}>
+            <PlayerVolumeControl />
+          </span>
         ) : null}
         <ActionMenu
           options={options}

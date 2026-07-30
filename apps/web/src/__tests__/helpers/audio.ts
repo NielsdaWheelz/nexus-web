@@ -5,6 +5,7 @@ import type {
   LecternItem,
   ListeningStateOut,
   MediaId,
+  PlaybackRateResolution,
   PlayerDescriptor,
 } from "@/lib/lectern/contract";
 
@@ -58,7 +59,7 @@ type DescriptorOptions = {
   positionMs?: number;
   writeRevision?: number;
   resetEpoch?: number;
-  playbackSpeed?: number;
+  playbackRate?: PlaybackRateResolution;
   durationMs?: number | null;
   artworkUrl?: string | null;
   chapters?: ChapterOut[];
@@ -81,7 +82,11 @@ export function buildPlayerDescriptor(
       positionMs: options.positionMs ?? 0,
       writeRevision: options.writeRevision ?? 0,
       resetEpoch: options.resetEpoch ?? 0,
-      playbackSpeed: options.playbackSpeed ?? 1,
+      playbackRate: options.playbackRate ?? {
+        value: 1,
+        source: "Product",
+        podcastPreference: absent(),
+      },
       durationMs: options.durationMs != null ? present(options.durationMs) : absent(),
       artworkUrl: options.artworkUrl != null ? present(options.artworkUrl) : absent(),
       chapters: options.chapters ?? [],
@@ -93,7 +98,7 @@ function initialListeningState(): ListeningStateOut {
   return {
     positionMs: 0,
     durationMs: absent(),
-    playbackSpeed: 1,
+    episodePlaybackRate: absent(),
     writeRevision: 0,
     resetEpoch: 0,
   };
@@ -141,14 +146,14 @@ export function installLecternPlayerFetchMock(options: { items?: LecternItem[] }
         const body = JSON.parse(String(init?.body ?? "{}")) as {
           positionMs: number;
           durationMs: Presence<number>;
-          playbackSpeed: number;
+          episodePlaybackRate: Presence<number>;
           heartbeatGeneration: string;
           heartbeatSequence: number;
         };
         const next: ListeningStateOut = {
           positionMs: body.positionMs,
           durationMs: body.durationMs,
-          playbackSpeed: body.playbackSpeed,
+          episodePlaybackRate: body.episodePlaybackRate,
           writeRevision: state.writeRevision + 1,
           resetEpoch: state.resetEpoch,
         };

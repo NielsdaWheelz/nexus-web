@@ -234,7 +234,6 @@ class ListeningStateOut(BaseModel):
 
     position_ms: int = Field(ge=0)
     duration_ms: int | None = Field(default=None, ge=0)
-    playback_speed: float = Field(gt=0)
     is_completed: bool = False
 
 
@@ -266,7 +265,6 @@ class MediaOut(BaseModel):
     last_error_code: str | None = None
     playback_source: PlaybackSourceOut | None = None
     listening_state: ListeningStateOut | None = None
-    subscription_default_playback_speed: float | None = Field(default=None, ge=0.5, le=3.0)
     episode_state: Literal["unplayed", "in_progress", "played"] | None = None
     chapters: list[PodcastEpisodeChapterOut] = []
     capabilities: CapabilitiesOut

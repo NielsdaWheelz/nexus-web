@@ -39,6 +39,22 @@ const DESCRIPTOR = buildPlayerDescriptor(MEDIA_ID, "The shape of attention", {
     { title: "Attention", startMs: 60_000, endMs: present(120_000) },
   ],
 });
+const SUBSCRIBED_DESCRIPTOR = buildPlayerDescriptor(
+  MEDIA_ID,
+  "The shape of attention",
+  {
+    subtitle: "The Systems Show",
+    durationMs: 120_000,
+    playbackRate: {
+      value: 1.5,
+      source: "Podcast",
+      podcastPreference: present({
+        podcastId: "22222222-2222-4222-8222-222222222222",
+        value: present(1.5),
+      }),
+    },
+  },
+);
 
 function LecternReadyProbe() {
   const lectern = useLectern();
@@ -51,6 +67,12 @@ function PlayerLauncher() {
     <>
       <button type="button" onClick={() => commands.playAudio(DESCRIPTOR)}>
         Play canonical
+      </button>
+      <button
+        type="button"
+        onClick={() => commands.playAudio(SUBSCRIBED_DESCRIPTOR)}
+      >
+        Play subscribed
       </button>
       <button
         type="button"
@@ -124,13 +146,24 @@ async function loadCanonical() {
   return screen.findByRole("region", { name: "Media player" });
 }
 
+async function loadSubscribed() {
+  await screen.findByText("ready", {
+    selector: '[data-testid="lectern-status"]',
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Play subscribed" }));
+  return screen.findByRole("region", { name: "Media player" });
+}
+
 describe("GlobalPlayerSurfaces", () => {
   let historyState: unknown = null;
+  let playerFetchMock: ReturnType<
+    typeof installLecternPlayerFetchMock
+  >["fetchMock"];
 
   beforeEach(() => {
     sessionStorage.removeItem(SESSION_STORAGE_KEY);
     setViewportWidth(1280);
-    installLecternPlayerFetchMock();
+    playerFetchMock = installLecternPlayerFetchMock().fetchMock;
     vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
     vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
     vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
@@ -302,22 +335,182 @@ describe("GlobalPlayerSurfaces", () => {
     expect(audio.currentTime).toBe(60);
   });
 
-  it("exposes chapters and compact settings through real controls in desktop More", async () => {
+  it("opens truthful Playback controls from the always-visible desktop rate", async () => {
     render(<Harness />);
     await loadCanonical();
 
+    const playbackRate = screen.getByRole("button", {
+      name: "Playback speed, normal",
+    });
+    expect(playbackRate).toHaveTextContent("1x");
+    fireEvent.click(playbackRate);
+    expect(
+      await screen.findByRole("dialog", { name: "Playback" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("slider", { name: "Playback speed" }),
+    ).toHaveAttribute("aria-valuetext", "Normal speed");
+
+    fireEvent.click(screen.getByRole("button", { name: "Close dialog" }));
+    await waitFor(() => expect(playbackRate).toHaveFocus());
     fireEvent.click(
       screen.getByRole("button", { name: "More player controls" }),
     );
     const menu = screen.getByRole("menu");
     expect(
-      within(menu).getByRole("group", { name: "Playback settings" }),
-    ).toBeVisible();
-    expect(
-      within(menu).getByRole("combobox", { name: "Playback speed" }),
+      within(menu).getByRole("group", { name: "Volume" }),
     ).toBeVisible();
     expect(within(menu).getByRole("group", { name: "Contents" })).toBeVisible();
     expect(within(menu).getByText("Attention")).toBeVisible();
+  });
+
+  it("keeps temporary and inherited scope actions explicit", async () => {
+    render(<Harness />);
+    await loadSubscribed();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Playback speed, 1.5 times",
+      }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Playback" });
+    expect(
+      within(dialog).getByText(
+        "This episode 1.5x · Podcast default 1.5x",
+      ),
+    ).toBeVisible();
+
+    fireEvent.input(
+      within(dialog).getByRole("slider", { name: "Playback speed" }),
+      { target: { value: "1.85" } },
+    );
+    expect(within(dialog).getByText("1.85x")).toBeVisible();
+    expect(
+      within(dialog).getByRole("button", {
+        name: "Use podcast speed 1.5x",
+      }),
+    ).toBeVisible();
+    expect(
+      within(dialog).getByRole("button", {
+        name: "Remember 1.85x for The Systems Show",
+      }),
+    ).toBeVisible();
+
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "Temporarily use 1x",
+      }),
+    );
+    expect(within(dialog).getByText("1x", { selector: "strong" })).toBeVisible();
+    expect(
+      within(dialog).getByRole("button", { name: "Return to 1.85x" }),
+    ).toBeVisible();
+    expect(
+      within(dialog).getByRole("button", {
+        name: "Use podcast speed 1.5x",
+      }),
+    ).toBeVisible();
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Return to 1.85x" }),
+    );
+    expect(within(dialog).getByText("1.85x", { selector: "strong" })).toBeVisible();
+
+    playerFetchMock.mockClear();
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "Use podcast speed 1.5x",
+      }),
+    );
+    expect(within(dialog).getByText("1.5x", { selector: "strong" })).toBeVisible();
+    expect(
+      within(dialog).queryByRole("button", {
+        name: "Use podcast speed 1.5x",
+      }),
+    ).toBeNull();
+    await waitFor(() =>
+      expect(
+        playerFetchMock.mock.calls.some(([input, init]) => {
+          const url = new URL(String(input), "http://localhost");
+          if (
+            !url.pathname.endsWith("/listening-state") ||
+            init?.method !== "PUT"
+          ) {
+            return false;
+          }
+          const body = JSON.parse(String(init.body)) as {
+            episodePlaybackRate: unknown;
+          };
+          return (
+            JSON.stringify(body.episodePlaybackRate) ===
+            JSON.stringify(present(1.5))
+          );
+        }),
+      ).toBe(true),
+    );
+  });
+
+  it("renders Remember pending and lapsed-subscription failure from capability state", async () => {
+    const playerFetch = playerFetchMock.getMockImplementation()!;
+    let rejectRemember!: (response: Response) => void;
+    playerFetchMock.mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname.endsWith("/settings") && init?.method === "PATCH") {
+        return new Promise<Response>((resolve) => {
+          rejectRemember = resolve;
+        });
+      }
+      return playerFetch(input, init);
+    });
+    render(<Harness />);
+    await loadSubscribed();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Playback speed, 1.5 times",
+      }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Playback" });
+    fireEvent.input(
+      within(dialog).getByRole("slider", { name: "Playback speed" }),
+      { target: { value: "1.85" } },
+    );
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "Remember 1.85x for The Systems Show",
+      }),
+    );
+    expect(
+      within(dialog).getByRole("button", {
+        name: "Remembering playback speed…",
+      }),
+    ).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Remembering playback speed for this podcast",
+    );
+
+    rejectRemember(
+      Response.json(
+        {
+          error: {
+            code: "E_NOT_FOUND",
+            message: "Podcast subscription not found",
+          },
+        },
+        { status: 404 },
+      ),
+    );
+    expect(
+      await within(dialog).findByText("Podcast subscription no longer exists."),
+    ).toBeVisible();
+    expect(within(dialog).queryByRole("alert")).toBeNull();
+    expect(
+      within(dialog).queryByRole("button", {
+        name: "Use podcast speed 1.5x",
+      }),
+    ).toBeNull();
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Podcast subscription no longer exists.",
+      ),
+    );
   });
 
   it("announces track identity outside hidden player chrome", async () => {
@@ -366,16 +559,18 @@ describe("GlobalPlayerSurfaces", () => {
     });
 
     fireEvent.click(
-      within(nowPlaying).getByRole("button", { name: "Speed & effects" }),
+      within(nowPlaying).getByRole("button", {
+        name: "Playback speed, normal",
+      }),
     );
-    expect(screen.getByRole("dialog", { name: "Audio effects" })).toBeVisible();
+    expect(screen.getByRole("dialog", { name: "Playback" })).toBeVisible();
     act(() => {
       historyState = null;
       window.dispatchEvent(new PopStateEvent("popstate", { state: null }));
     });
     await waitFor(() =>
       expect(
-        screen.queryByRole("dialog", { name: "Audio effects" }),
+        screen.queryByRole("dialog", { name: "Playback" }),
       ).toBeNull(),
     );
     expect(nowPlaying).toBeVisible();
@@ -429,6 +624,9 @@ describe("GlobalPlayerSurfaces", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "More player controls" }),
     );
+    expect(
+      screen.getByRole("menuitem", { name: "Playback speed, 1x" }),
+    ).toBeVisible();
     fireEvent.click(screen.getByRole("menuitem", { name: "Close player" }));
 
     await waitFor(() =>
@@ -441,6 +639,24 @@ describe("GlobalPlayerSurfaces", () => {
     );
   });
 
+  it("returns focus to the MiniPlayer More trigger after Playback", async () => {
+    setViewportWidth(390);
+    render(<Harness />);
+    await loadCanonical();
+
+    const more = screen.getByRole("button", {
+      name: "More player controls",
+    });
+    fireEvent.click(more);
+    fireEvent.click(
+      screen.getByRole("menuitem", { name: "Playback speed, 1x" }),
+    );
+    expect(screen.getByRole("dialog", { name: "Playback" })).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(more).toHaveFocus());
+  });
+
   it("keeps one player landmark while a subordinate player sheet owns focus", async () => {
     setViewportWidth(390);
     render(<Harness />);
@@ -450,16 +666,18 @@ describe("GlobalPlayerSurfaces", () => {
         name: "Open Now Playing: The shape of attention",
       }),
     );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Speed & effects" }),
-    );
+    const playbackRate = await screen.findByRole("button", {
+      name: "Playback speed, normal",
+    });
+    fireEvent.click(playbackRate);
 
-    expect(screen.getByRole("dialog", { name: "Audio effects" })).toBeVisible();
+    expect(screen.getByRole("dialog", { name: "Playback" })).toBeVisible();
     expect(
       screen.getAllByRole("region", { name: "Media player" }),
     ).toHaveLength(1);
 
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(playbackRate).toHaveFocus());
     fireEvent.click(
       await screen.findByRole("button", {
         name: "Review captures (0)",

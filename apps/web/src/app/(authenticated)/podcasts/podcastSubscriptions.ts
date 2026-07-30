@@ -10,6 +10,7 @@ import { decodePresence, type Presence } from "@/lib/api/presence";
 import type { PositiveCount } from "@/lib/consumption/activityFacts";
 import type { PublicationDate } from "@/lib/dates/publicationDate";
 import { decodeOptionalPublicationDate } from "@/lib/dates/publicationDate";
+import { parsePlaybackRate } from "@/lib/player/playbackRate";
 import { decodePodcastUnplayedCount } from "@/lib/podcasts/activityFacts";
 import type { LibraryPlacementOption } from "@/lib/libraries/libraryPlacement";
 import { pluralize } from "@/lib/text/pluralize";
@@ -21,7 +22,6 @@ import {
   expectArray,
   expectBoolean,
   expectExactRecord,
-  expectFiniteNumber,
   expectNullableString,
   expectNonnegativeInteger,
   expectString,
@@ -60,8 +60,8 @@ export type PodcastSummary = {
 
 export type PodcastSubscriptionRecord = {
   podcast_id: string;
-  default_playback_speed?: number | null;
-  auto_queue?: boolean;
+  default_playback_speed: Presence<number>;
+  auto_queue: boolean;
   sync_status: PodcastSyncStatus;
   sync_error_code: string | null;
   sync_error_message: string | null;
@@ -206,13 +206,14 @@ export function decodePodcastDetailResponse(
               subscription.podcast_id,
               "subscription.podcast_id",
             ),
-            default_playback_speed:
-              subscription.default_playback_speed === null
-                ? null
-                : expectFiniteNumber(
-                    subscription.default_playback_speed,
-                    "subscription.default_playback_speed",
-                  ),
+            default_playback_speed: decodePresence(
+              subscription.default_playback_speed,
+              (value) =>
+                parsePlaybackRate(
+                  value,
+                  "subscription.default_playback_speed.value",
+                ),
+            ),
             auto_queue: expectBoolean(
               subscription.auto_queue,
               "subscription.auto_queue",
@@ -269,7 +270,6 @@ export type PodcastSubscriptionListItemWire = {
 };
 
 export type PodcastSubscriptionListItem = PodcastSubscriptionListItemWire & {
-  defaultPlaybackSpeed: number | null;
   unplayedCount: Presence<PositiveCount>;
   publicationDate: Presence<PublicationDate>;
   syncStatus: Presence<PodcastSyncStatus>;
@@ -298,7 +298,7 @@ export function decodePodcastSubscriptionListItem(
   );
   const defaultPlaybackSpeed = decodePresence(
     item.default_playback_speed,
-    (value) => expectFiniteNumber(value, "default_playback_speed.value"),
+    (value) => parsePlaybackRate(value, "default_playback_speed.value"),
   );
   const syncStatus = decodePodcastSyncStatus(
     item.sync_status,
@@ -328,10 +328,6 @@ export function decodePodcastSubscriptionListItem(
   };
   return {
     ...wire,
-    defaultPlaybackSpeed:
-      defaultPlaybackSpeed.kind === "Present"
-        ? defaultPlaybackSpeed.value
-        : null,
     unplayedCount: decodePodcastUnplayedCount(wire.unplayed_count),
     publicationDate:
       latestEpisodePublishedAt.kind === "Present"
@@ -346,34 +342,6 @@ export function decodePodcastSubscriptionListItem(
     },
   };
 }
-
-type PodcastSubscriptionSettingsFields = Pick<
-  PodcastSubscriptionRecord,
-  "default_playback_speed" | "auto_queue"
->;
-
-type PodcastSubscriptionSettingsDraft = {
-  defaultSpeed: string;
-  autoQueue: boolean;
-};
-
-export type PodcastSubscriptionSettingsResponse = {
-  user_id: string;
-  podcast_id: string;
-  default_playback_speed: number | null;
-  auto_queue: boolean;
-  sync_status: PodcastSyncStatus;
-  sync_error_code: string | null;
-  sync_error_message: string | null;
-  sync_attempts: number;
-  sync_started_at: string | null;
-  sync_completed_at: string | null;
-  last_checked_at: string | null;
-  updated_at: string;
-  backfill: PodcastBackfill;
-  collectionRevision: CollectionRevision;
-  libraryEntriesCollectionRevision: CollectionRevision;
-};
 
 export type PodcastBackfillRetryResult = {
   podcastId: string;
@@ -396,108 +364,6 @@ export type PodcastUnsubscribeResult =
       readonly collectionRevision: CollectionRevision;
       readonly libraryEntriesCollectionRevision: CollectionRevision;
     };
-
-export function getPodcastSubscriptionSettingsDraft(
-  subscription: PodcastSubscriptionSettingsFields | null | undefined,
-): PodcastSubscriptionSettingsDraft {
-  return {
-    defaultSpeed:
-      subscription?.default_playback_speed == null
-        ? "default"
-        : String(subscription.default_playback_speed),
-    autoQueue: Boolean(subscription?.auto_queue),
-  };
-}
-
-export function parsePodcastSubscriptionDefaultPlaybackSpeed(
-  value: string,
-): number | null {
-  return value === "default" ? null : Number.parseFloat(value);
-}
-
-export function getPodcastSubscriptionSettingsPatch({
-  response,
-  updatedAt,
-}: {
-  response: PodcastSubscriptionSettingsResponse;
-  updatedAt: string;
-}) {
-  return {
-    default_playback_speed: response.default_playback_speed,
-    auto_queue: response.auto_queue,
-    updated_at: response.updated_at ?? updatedAt,
-  };
-}
-
-function decodePodcastSubscriptionSettingsResponse(
-  raw: unknown,
-): PodcastSubscriptionSettingsResponse {
-  const data = expectExactRecord(
-    expectExactRecord(raw, ["data"], "PodcastSubscriptionSettingsResponse")
-      .data,
-    [
-      "user_id",
-      "podcast_id",
-      "default_playback_speed",
-      "auto_queue",
-      "sync_status",
-      "sync_error_code",
-      "sync_error_message",
-      "sync_attempts",
-      "sync_started_at",
-      "sync_completed_at",
-      "last_checked_at",
-      "updated_at",
-      "backfill",
-      "collectionRevision",
-      "libraryEntriesCollectionRevision",
-    ],
-    "PodcastSubscriptionSettingsResponse.data",
-  );
-  return {
-    user_id: expectString(data.user_id, "user_id"),
-    podcast_id: expectString(data.podcast_id, "podcast_id"),
-    default_playback_speed:
-      data.default_playback_speed === null
-        ? null
-        : expectFiniteNumber(
-            data.default_playback_speed,
-            "default_playback_speed",
-          ),
-    auto_queue: expectBoolean(data.auto_queue, "auto_queue"),
-    sync_status: decodePodcastSyncStatus(data.sync_status, "sync_status"),
-    sync_error_code: expectNullableString(
-      data.sync_error_code,
-      "sync_error_code",
-    ),
-    sync_error_message: expectNullableString(
-      data.sync_error_message,
-      "sync_error_message",
-    ),
-    sync_attempts: expectNonnegativeInteger(
-      data.sync_attempts,
-      "sync_attempts",
-    ),
-    sync_started_at: expectNullableString(
-      data.sync_started_at,
-      "sync_started_at",
-    ),
-    sync_completed_at: expectNullableString(
-      data.sync_completed_at,
-      "sync_completed_at",
-    ),
-    last_checked_at: expectNullableString(
-      data.last_checked_at,
-      "last_checked_at",
-    ),
-    updated_at: expectString(data.updated_at, "updated_at"),
-    backfill: decodePodcastBackfill(data.backfill, "backfill"),
-    collectionRevision: decodeCollectionRevision(data.collectionRevision),
-    libraryEntriesCollectionRevision: decodeCollectionRevision(
-      data.libraryEntriesCollectionRevision,
-    ),
-  };
-}
 
 function decodePodcastBackfill(raw: unknown, context: string): PodcastBackfill {
   const value = expectExactRecord(
@@ -536,30 +402,6 @@ function decodePodcastBackfillRetryResult(
     outcome,
     backfill: decodePodcastBackfill(data.backfill, "backfill"),
   };
-}
-
-export async function savePodcastSubscriptionSettings(
-  podcastId: string,
-  {
-    defaultPlaybackSpeed,
-    autoQueue,
-  }: {
-    defaultPlaybackSpeed: number | null;
-    autoQueue: boolean;
-  },
-): Promise<PodcastSubscriptionSettingsResponse> {
-  return decodePodcastSubscriptionSettingsResponse(
-    await apiFetch<unknown>(
-      `/api/podcasts/subscriptions/${podcastId}/settings`,
-      {
-        method: "PATCH",
-        body: JSON.stringify({
-          default_playback_speed: defaultPlaybackSpeed,
-          auto_queue: autoQueue,
-        }),
-      },
-    ),
-  );
 }
 
 export async function retryPodcastSubscriptionBackfill(

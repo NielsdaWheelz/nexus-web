@@ -7,6 +7,10 @@ reads/writes, feature flag, or backward compatibility.
 
 No blocking question remains.
 
+The nullable episode-rate storage and reset clauses are superseded by
+[`playback-rate-policy-hard-cutover.md`](playback-rate-policy-hard-cutover.md);
+reset preserves an existing rate and inserts `NULL` when no listening row exists.
+
 ## Goal
 
 Give every media item two independent, honest controls:
@@ -79,7 +83,7 @@ Reset preserves:
 - notes, highlights, annotations, Walknotes, and graph relationships;
 - media/library/podcast records and processing artifacts;
 - Lectern membership/order;
-- playback speed and known episode duration;
+- nullable established episode rate and known episode duration;
 - reader profile/preferences;
 - external YouTube/provider watch position.
 
@@ -161,12 +165,12 @@ existing row:
   last_engaged_at = NULL
   write_revision += 1
   reset_epoch += 1
-  preserve duration_ms + playback_speed
+  preserve duration_ms + nullable playback_speed
 
 absent row:
   position_ms = 0
   duration_ms = absent
-  playback_speed = 1
+  playback_speed = NULL
   is_completed = false
   last_engaged_at = NULL
   write_revision = 1

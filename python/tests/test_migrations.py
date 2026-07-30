@@ -26467,3 +26467,177 @@ class TestMigration0203PodcastFreshness:
             reset_test_schema()
             run_alembic_command("upgrade head")
             engine.dispose()
+
+
+class TestMigration0204PlaybackRatePolicy:
+    def test_nullable_rate_classification_clamp_and_constraint_hard_cut(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0203")
+            assert result.returncode == 0, result.stderr
+
+            user_id = uuid4()
+            podcast_id = uuid4()
+            subscription_id = uuid4()
+            media_ids = {
+                name: uuid4()
+                for name in (
+                    "synthetic",
+                    "near_miss_position",
+                    "near_miss_duration",
+                    "near_miss_rate",
+                    "near_miss_completion",
+                    "near_miss_write_revision",
+                    "near_miss_reset_epoch",
+                    "near_miss_recency",
+                    "too_slow",
+                    "too_fast",
+                    "established",
+                )
+            }
+            with engine.begin() as connection:
+                connection.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO podcasts (
+                            id, provider, provider_podcast_id, title, feed_url
+                        )
+                        VALUES (
+                            :id, 'podcast_index', :provider_id, 'Migration show', :feed_url
+                        )
+                        """
+                    ),
+                    {
+                        "id": podcast_id,
+                        "provider_id": f"migration-{podcast_id}",
+                        "feed_url": f"https://example.com/{podcast_id}.xml",
+                    },
+                )
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO podcast_subscriptions (
+                            id, user_id, podcast_id, next_sync_at
+                        )
+                        VALUES (:id, :user_id, :podcast_id, now())
+                        """
+                    ),
+                    {
+                        "id": subscription_id,
+                        "user_id": user_id,
+                        "podcast_id": podcast_id,
+                    },
+                )
+                for media_id in media_ids.values():
+                    connection.execute(
+                        text(
+                            """
+                            INSERT INTO media (id, kind, title, processing_status)
+                            VALUES (:id, 'podcast_episode', 'Migration episode', 'ready_for_reading')
+                            """
+                        ),
+                        {"id": media_id},
+                    )
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO podcast_listening_states (
+                            user_id, media_id, position_ms, duration_ms,
+                            playback_speed, is_completed, write_revision,
+                            reset_epoch, last_engaged_at
+                        )
+                        VALUES
+                            (:user_id, :synthetic, 0, NULL, 1, true, 0, 0, NULL),
+                            (:user_id, :near_miss_position, 1, NULL, 1, true, 0, 0, NULL),
+                            (:user_id, :near_miss_duration, 0, 1, 1, true, 0, 0, NULL),
+                            (:user_id, :near_miss_rate, 0, NULL, 1.25, true, 0, 0, NULL),
+                            (:user_id, :near_miss_completion, 0, NULL, 1, false, 0, 0, NULL),
+                            (:user_id, :near_miss_write_revision, 0, NULL, 1, true, 1, 0, NULL),
+                            (:user_id, :near_miss_reset_epoch, 0, NULL, 1, true, 0, 1, NULL),
+                            (:user_id, :near_miss_recency, 0, NULL, 1, true, 0, 0, now()),
+                            (:user_id, :too_slow, 1, NULL, 0.1, false, 1, 0, now()),
+                            (:user_id, :too_fast, 1, NULL, 5, false, 1, 0, now()),
+                            (:user_id, :established, 1, NULL, 1.85, false, 1, 0, now())
+                        """
+                    ),
+                    {"user_id": user_id, **media_ids},
+                )
+
+            result = run_alembic_command("upgrade 0204")
+            assert result.returncode == 0, result.stderr
+
+            with engine.begin() as connection:
+                rates = {
+                    name: connection.scalar(
+                        text(
+                            """
+                            SELECT playback_speed
+                            FROM podcast_listening_states
+                            WHERE user_id = :user_id AND media_id = :media_id
+                            """
+                        ),
+                        {"user_id": user_id, "media_id": media_id},
+                    )
+                    for name, media_id in media_ids.items()
+                }
+                assert rates == {
+                    "synthetic": None,
+                    "near_miss_position": 1.0,
+                    "near_miss_duration": 1.0,
+                    "near_miss_rate": 1.25,
+                    "near_miss_completion": 1.0,
+                    "near_miss_write_revision": 1.0,
+                    "near_miss_reset_epoch": 1.0,
+                    "near_miss_recency": 1.0,
+                    "too_slow": 0.5,
+                    "too_fast": 3.0,
+                    "established": 1.85,
+                }
+
+                column = connection.execute(
+                    text(
+                        """
+                        SELECT is_nullable, column_default
+                        FROM information_schema.columns
+                        WHERE table_name = 'podcast_listening_states'
+                          AND column_name = 'playback_speed'
+                        """
+                    )
+                ).one()
+                assert column == ("YES", None)
+
+                constraints = set(
+                    connection.scalars(
+                        text(
+                            """
+                            SELECT conname
+                            FROM pg_constraint
+                            WHERE conrelid IN (
+                                'podcast_listening_states'::regclass,
+                                'podcast_subscriptions'::regclass
+                            )
+                            """
+                        )
+                    )
+                )
+                assert "ck_podcast_listening_states_playback_speed_positive" not in constraints
+                assert "ck_podcast_subscriptions_default_playback_speed_range" not in constraints
+                connection.execute(
+                    text(
+                        """
+                        UPDATE podcast_subscriptions
+                        SET default_playback_speed = 4
+                        WHERE id = :subscription_id
+                        """
+                    ),
+                    {"subscription_id": subscription_id},
+                )
+
+            downgrade = run_alembic_command("downgrade 0203")
+            assert downgrade.returncode != 0
+            assert "has no downgrade path" in downgrade.stderr
+        finally:
+            reset_test_schema()
+            engine.dispose()

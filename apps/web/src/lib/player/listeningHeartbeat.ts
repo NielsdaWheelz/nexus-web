@@ -6,9 +6,10 @@
  * in-flight PUT, coalesces later samples to the newest, keys installs by an
  * injected generation + a per-send sequence, and fences every write on the
  * server's `writeRevision`/`resetEpoch`. Timeout, network failure, and a stale
- * `E_STALE_LISTENING_REVISION` (409) never block playback: the engine retires
- * the generation and re-syncs via GET (at-most-once). A failed GET suspends
- * persistence (playback continues) until a GET-only retry succeeds.
+ * `E_STALE_LISTENING_REVISION` (409) never block playback: the engine retains
+ * the newest dirty semantic sample, retires the generation, and re-syncs its
+ * fences via GET. A failed GET suspends persistence (playback continues) until
+ * a GET-only retry succeeds, then immediately resends the dirty sample.
  *
  * Cadence is caller-driven: the provider calls {@link ListeningHeartbeat.tick}
  * on the {@link SYNC_INTERVAL_MS} interval (and on pause / before a track
@@ -40,7 +41,7 @@ export const SYNC_INTERVAL_MS = 15_000;
 export interface HeartbeatSample {
   positionMs: number;
   durationMs: Presence<number>;
-  playbackSpeed: number;
+  episodePlaybackRate: Presence<number>;
 }
 
 export interface ListeningHeartbeatConfig {
@@ -77,7 +78,7 @@ export interface ListeningHeartbeat {
 interface ListeningHeartbeatIn {
   positionMs: number;
   durationMs: Presence<number>;
-  playbackSpeed: number;
+  episodePlaybackRate: Presence<number>;
   expectedWriteRevision: number;
   expectedResetEpoch: number;
   heartbeatGeneration: string;
@@ -146,8 +147,14 @@ type EngineStatus = "Active" | "Recovering" | "Suspended" | "Stopped";
 interface InFlight {
   generation: string;
   sequence: number;
+  dirtyVersion: number;
   controller: AbortController;
   settled: Promise<void>;
+}
+
+interface DirtySample {
+  version: number;
+  sample: HeartbeatSample;
 }
 
 export function createListeningHeartbeat(config: ListeningHeartbeatConfig): ListeningHeartbeat {
@@ -168,13 +175,14 @@ export function createListeningHeartbeat(config: ListeningHeartbeatConfig): List
   let generation = mintGeneration();
   let sequence = 0;
   let inFlight: InFlight | undefined;
-  let resendQueued = false;
+  let dirtyVersion = 0;
+  let dirty: DirtySample | undefined;
 
   function buildBody(sample: HeartbeatSample, seq: number): ListeningHeartbeatIn {
     return {
       positionMs: sample.positionMs,
       durationMs: sample.durationMs,
-      playbackSpeed: sample.playbackSpeed,
+      episodePlaybackRate: sample.episodePlaybackRate,
       expectedWriteRevision,
       expectedResetEpoch,
       heartbeatGeneration: generation,
@@ -194,8 +202,9 @@ export function createListeningHeartbeat(config: ListeningHeartbeatConfig): List
   }
 
   function maybeResend(): void {
-    if (status !== "Active" || inFlight !== undefined || !resendQueued) return;
-    resendQueued = false;
+    if (status !== "Active" || inFlight !== undefined || dirty === undefined) {
+      return;
+    }
     performSend();
   }
 
@@ -221,6 +230,7 @@ export function createListeningHeartbeat(config: ListeningHeartbeatConfig): List
     installState(result.listeningState);
     // An accepted heartbeat install can advance read_state/InProgress.
     publishConsumptionProjectionChange();
+    if (dirty?.version === record.dirtyVersion) dirty = undefined;
     maybeResend();
   }
 
@@ -231,20 +241,27 @@ export function createListeningHeartbeat(config: ListeningHeartbeatConfig): List
       maybeResend();
       return;
     }
-    // Timeout, network failure, and stale-revision (409) all re-sync via GET;
-    // this send's ambiguous outcome is discarded (at-most-once, spec §5.4).
+    // Timeout, network failure, and stale-revision (409) all re-sync via GET.
+    // The ambiguous sample stays dirty and is resent with refreshed fences.
     status = "Recovering";
     void recover({ fromSuspended: false });
   }
 
   function performSend(): void {
-    const sample = readSample();
-    lastKnownPositionMs = sample.positionMs;
+    if (dirty === undefined) return;
+    const requested = dirty;
+    lastKnownPositionMs = requested.sample.positionMs;
     const seq = sequence;
     sequence += 1;
-    const body = buildBody(sample, seq);
+    const body = buildBody(requested.sample, seq);
     const controller = new AbortController();
-    const record: InFlight = { generation, sequence: seq, controller, settled: Promise.resolve() };
+    const record: InFlight = {
+      generation,
+      sequence: seq,
+      dirtyVersion: requested.version,
+      controller,
+      settled: Promise.resolve(),
+    };
     inFlight = record;
     record.settled = runSend(record, body, controller);
   }
@@ -289,7 +306,9 @@ export function createListeningHeartbeat(config: ListeningHeartbeatConfig): List
       return;
     }
     if (state.resetEpoch !== expectedResetEpoch) {
-      // Reset epoch advanced: discard old samples and adopt the canonical reset.
+      // Reset epoch advanced: retire every pre-reset dirty sample and adopt the
+      // full canonical reset state.
+      dirty = undefined;
       onStateAdopted(state, { seek: true });
       lastKnownPositionMs = state.positionMs;
       onOverlayUpdate({
@@ -310,8 +329,8 @@ export function createListeningHeartbeat(config: ListeningHeartbeatConfig): List
     generation = mintGeneration();
     sequence = 0;
     status = "Active";
-    if (options.fromSuspended) onPersistenceResumed();
     maybeResend();
+    if (options.fromSuspended) onPersistenceResumed();
   }
 
   function retryGet(): void {
@@ -321,17 +340,18 @@ export function createListeningHeartbeat(config: ListeningHeartbeatConfig): List
   }
 
   function tick(): void {
-    if (status === "Stopped" || status === "Suspended") return;
-    if (status === "Recovering" || inFlight !== undefined) {
-      resendQueued = true;
-      return;
-    }
-    performSend();
+    if (status === "Stopped") return;
+    const sample = readSample();
+    if (sample.episodePlaybackRate.kind === "Absent") return;
+    dirtyVersion += 1;
+    dirty = { version: dirtyVersion, sample };
+    lastKnownPositionMs = sample.positionMs;
+    maybeResend();
   }
 
   function stop(): void {
     status = "Stopped";
-    resendQueued = false;
+    dirty = undefined;
     const current = inFlight;
     inFlight = undefined;
     if (current !== undefined) {
@@ -350,6 +370,7 @@ export function createListeningHeartbeat(config: ListeningHeartbeatConfig): List
   function flushKeepalive(): void {
     if (status === "Stopped") return;
     const sample = readSample();
+    if (sample.episodePlaybackRate.kind === "Absent") return;
     const body = buildBody(sample, sequence);
     sequence += 1;
     void apiKeepaliveJson(listeningPath, body).catch(() => {

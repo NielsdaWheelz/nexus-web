@@ -44,8 +44,9 @@ split by storage and query concern:
 - `_state_store.py` — sole DML owner of `consumption_overrides` (explicit
   `Unread`/`Finished` state).
 - `_listening_store.py` — sole DML owner of `podcast_listening_states`
-  (position/duration/speed, completion flag, and the heartbeat fencing tokens
-  `write_revision`/`reset_epoch`). `last_engaged_at` is advanced by successful
+  (position/duration/nullable established episode rate, completion flag, and
+  the heartbeat fencing tokens `write_revision`/`reset_epoch`).
+  `last_engaged_at` is advanced by successful
   heartbeats and by the one post-acquisition Preview-position transfer. The
   transfer installs only when no owned progress exists and never overwrites a
   listening position or completion. The separate operational `updated_at`
@@ -75,16 +76,17 @@ split by storage and query concern:
   listening heartbeat.
 - `_projection.py` — the combined explicit-override + reader-engagement read
   model (`Unread`/`InProgress`/`Finished` + progress fraction), plus batched
-  `PlayerDescriptor`s for podcast-episode media, reusing
-  `services/playback_source.derive_playback_source` exactly as a Lectern item
-  does (listening join + chapters + artwork/title). `services/media.py`,
+  `PlayerDescriptor`s for podcast-episode media. Both descriptor paths reuse
+  `services/playback_source.derive_playback_source` and the one playback-rate
+  resolver over nullable episode rate plus the active subscription preference.
+  `services/media.py`,
   `services/library_entries.py`, and `services/podcasts/{episodes,
   subscriptions_query}.py` adopt this projection; no other module reads
   `consumption_overrides`/`podcast_listening_states`/`reader_media_state`/
   `reader_engagement_states` directly except the one documented exception in
   `services/media.py`
-  (`MediaOut.listening_state`, a raw passthrough of position/duration/speed
-  distinct from the derived read-state projection).
+  (catalog hydration only; canonical playback state comes from the player
+  descriptor).
 
 `python/nexus/services/resonance/` owns the deterministic Reading Slate. It
 combines Consumption-owned Continuity with media- and podcast-owned Arrival
@@ -132,9 +134,11 @@ semantic-idempotent through a client-generated `clientMutationId`, keyed by
 `services/resource_mutation_replay.py` ledger. The listening-state PUT is a
 separate, unreplayable CAS mutation fenced by `write_revision`/`reset_epoch`
 (§5.4) — it never memoizes and never reuses the command replay ledger. It
-writes only position/duration/speed; the heartbeat carries no client-supplied
-elapsed-time delta and no client-supplied device identifier, and piggybacks
-no other table's write. Reader cursor and engagement writes share their own
+writes position/duration plus an owned-absence episode rate; `Absent` preserves
+an existing nullable rate and does not establish one on insert. The heartbeat
+carries no client-supplied elapsed-time delta or client-supplied device
+identifier, and piggybacks no other table's write. Reader cursor and engagement
+writes share their own
 atomic Consumption transaction (see
 [reader-implementation.md](reader-implementation.md)), independent of the
 listening heartbeat.
@@ -201,12 +205,15 @@ Lectern pane is the sole full-list editor).
   Web Audio effects graph, OS media-session integration, and stable Commands
   plus cadence-separated Session/Settings/Timeline capabilities),
   `playerChromeModel.ts` (the exhaustive pure semantic projection), plus
-  `audioEffects.ts`, `chapters.ts`, `mediaSession.ts`,
-  `subscriptionPlaybackSpeed.ts`, and `usePlayerKeyboardShortcuts.ts`.
+  `audioEffects.ts`, `chapters.ts`, `mediaSession.ts`, `playbackRate.ts`, and
+  `usePlayerKeyboardShortcuts.ts`. `playbackRate.ts` is the one owner of product
+  bounds, steps, presets, parsing, formatting, and adjusted remaining time.
 - `globalPlayer.tsx` also owns the exhaustive `PreviewAudio` session variant.
   It uses the same provider and `<audio>` element but has no Media ID, Lectern
   origin/history, heartbeat, completion command, activity observation, queue,
-  or previous/next capability. Natural end is local `PreviewAudioAtEnd`.
+  podcast preference, or previous/next capability. Preview starts at `1x`, and
+  its rate remains device-session local. Natural end is local
+  `PreviewAudioAtEnd`.
   Stopping Preview returns one in-memory position snapshot and clears OS Media
   Session position state.
 - `globalPlayer.tsx` publishes owned `<audio>` playing/pause/buffering/end

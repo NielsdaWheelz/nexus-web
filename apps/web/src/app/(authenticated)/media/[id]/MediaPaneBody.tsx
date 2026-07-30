@@ -367,17 +367,12 @@ export interface Media extends MediaProcessingSnapshot {
   listening_state?: {
     position_ms: number;
     duration_ms?: number | null;
-    playback_speed: number;
     is_completed?: boolean;
   } | null;
-  subscription_default_playback_speed?: number | null;
   episode_state?: "unplayed" | "in_progress" | "played" | null;
   read_state?: "unread" | "in_progress" | "finished" | null;
   progress_resettable: boolean;
-  // Presence<PlayerDescriptor> (camelCase key even inside this snake_case DTO;
-  // spec §4/§6). Absent for non-audio media; may be missing until the backend
-  // field lands — decoded defensively at the call site.
-  playerDescriptor?: unknown;
+  playerDescriptor: unknown;
   description?: string | null;
   description_html?: string | null;
   description_text?: string | null;
@@ -6539,16 +6534,11 @@ export default function MediaPaneBody() {
     [media?.kind, resume, seekTo],
   );
 
-  // Decode this media's footer descriptor (Presence<PlayerDescriptor>); absent or
-  // not-yet-landed → null, which hides the transcript Play affordance.
   const mediaPlayerDescriptor = useMemo<PlayerDescriptor | null>(() => {
-    try {
-      const presence = decodePresentPlayerDescriptor(media?.playerDescriptor);
-      return presence.kind === "Present" ? presence.value : null;
-    } catch {
-      return null;
-    }
-  }, [media?.playerDescriptor]);
+    if (media === null) return null;
+    const presence = decodePresentPlayerDescriptor(media.playerDescriptor);
+    return presence.kind === "Present" ? presence.value : null;
+  }, [media]);
 
   useEffect(() => {
     if (!isMobileViewport) {

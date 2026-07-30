@@ -58,7 +58,7 @@ from nexus.schemas.library import (
     ReadingTimeEstimateOut,
 )
 from nexus.schemas.podcast import PodcastSubscriptionVisibleLibraryOut
-from nexus.schemas.presence import Presence, absent, present
+from nexus.schemas.presence import Presence, absent, presence_from_nullable, present
 from nexus.services import library_governance as governance
 from nexus.services.billing_entitlements import get_effective_entitlements
 from nexus.services.collection_revisions import (
@@ -1112,9 +1112,11 @@ def _hydrate_entry_rows(
         if podcast_row["sub_id"] is not None:
             subscription = present(
                 LibraryEntryPodcastSubscriptionOut(
-                    default_playback_speed=float(podcast_row["sub_default_playback_speed"])
-                    if podcast_row["sub_default_playback_speed"] is not None
-                    else None,
+                    default_playback_speed=presence_from_nullable(
+                        float(podcast_row["sub_default_playback_speed"])
+                        if podcast_row["sub_default_playback_speed"] is not None
+                        else None
+                    ),
                     auto_queue=bool(podcast_row["sub_auto_queue"]),
                     sync_status=podcast_row["sub_sync_status"],
                 )

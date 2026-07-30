@@ -33,7 +33,11 @@ const descriptor = {
     positionMs: 0,
     writeRevision: 0,
     resetEpoch: 0,
-    playbackSpeed: 1,
+    playbackRate: {
+      value: 1,
+      source: "Product",
+      podcastPreference: absent(),
+    },
     durationMs: absent(),
     artworkUrl: absent(),
     chapters: [],

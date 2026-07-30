@@ -14,6 +14,7 @@ import {
   decodePodcastSyncStatus,
   type PodcastSyncStatus,
 } from "@/lib/podcasts/types";
+import { parsePlaybackRate } from "@/lib/player/playbackRate";
 import {
   decodeLibraryReadingTimeEntry,
   type LibraryMediaKind,
@@ -86,7 +87,7 @@ export interface LibraryPodcastListValue {
 }
 
 export interface LibraryPodcastSubscriptionValue {
-  readonly defaultPlaybackSpeed: number | null;
+  readonly defaultPlaybackSpeed: Presence<number>;
   readonly autoQueue: boolean;
   readonly syncStatus: PodcastSyncStatus;
 }
@@ -296,13 +297,14 @@ function decodeSubscription(
         "Library podcast subscription",
       );
       return {
-        defaultPlaybackSpeed:
-          subscription.defaultPlaybackSpeed === null
-            ? null
-            : expectFiniteNumber(
-                subscription.defaultPlaybackSpeed,
-                "Library podcast subscription.defaultPlaybackSpeed",
-              ),
+        defaultPlaybackSpeed: decodePresence(
+          subscription.defaultPlaybackSpeed,
+          (playbackRate) =>
+            parsePlaybackRate(
+              playbackRate,
+              "Library podcast subscription.defaultPlaybackSpeed.value",
+            ),
+        ),
         autoQueue: expectBoolean(
           subscription.autoQueue,
           "Library podcast subscription.autoQueue",

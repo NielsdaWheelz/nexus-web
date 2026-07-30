@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import GlobalPlayerSurfaces from "@/components/player/GlobalPlayerSurfaces";
 import { MobileViewportProvider } from "@/lib/mobileViewport/MobileViewportProvider";
 import { WorkspaceTestProvider } from "@/__tests__/helpers/WorkspaceTestProvider";
@@ -125,6 +131,14 @@ function Harness() {
             buildPlayerDescriptor("11111111-1111-4111-8111-111111111111", "Episode A", {
               subtitle: "Queue Podcast",
               artworkUrl: "https://cdn.example.com/podcast-cover.jpg",
+              playbackRate: {
+                value: 1.75,
+                source: "Podcast",
+                podcastPreference: present({
+                  podcastId: "22222222-2222-4222-8222-222222222222",
+                  value: present(1.75),
+                }),
+              },
             })
           )
         }
@@ -229,6 +243,9 @@ describe("GlobalPlayer MediaSession integration", () => {
       );
 
       const audio = screen.getByLabelText(PLAYER_AUDIO_LABEL) as HTMLAudioElement;
+      await waitFor(() => {
+        expect(audio.playbackRate).toBe(1.75);
+      });
       // Spy after autoplay so the play/pause handler assertions count only their
       // own invocations.
       const playSpy = vi.spyOn(audio, "play").mockResolvedValue(undefined);
@@ -247,7 +264,7 @@ describe("GlobalPlayer MediaSession integration", () => {
       expect(mediaSession.setPositionStateSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           duration: 120,
-          playbackRate: 1,
+          playbackRate: 1.75,
           position: 10,
         })
       );
@@ -258,9 +275,44 @@ describe("GlobalPlayer MediaSession integration", () => {
       expect(mediaSession.setPositionStateSpy).toHaveBeenLastCalledWith(
         expect.objectContaining({
           duration: 120,
-          playbackRate: 1,
+          playbackRate: 1.75,
           position: 12,
         })
+      );
+
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Playback speed, 1.75 times",
+        }),
+      );
+      const playback = await screen.findByRole("dialog", { name: "Playback" });
+      mediaSession.setPositionStateSpy.mockClear();
+      fireEvent.input(
+        within(playback).getByRole("slider", { name: "Playback speed" }),
+        { target: { value: "1.85" } },
+      );
+      expect(mediaSession.setPositionStateSpy).toHaveBeenLastCalledWith(
+        expect.objectContaining({ playbackRate: 1.85 }),
+      );
+
+      mediaSession.setPositionStateSpy.mockClear();
+      fireEvent.click(
+        within(playback).getByRole("button", {
+          name: "Temporarily use 1x",
+        }),
+      );
+      expect(mediaSession.setPositionStateSpy).toHaveBeenLastCalledWith(
+        expect.objectContaining({ playbackRate: 1 }),
+      );
+
+      mediaSession.setPositionStateSpy.mockClear();
+      fireEvent.click(
+        within(playback).getByRole("button", {
+          name: "Use podcast speed 1.75x",
+        }),
+      );
+      expect(mediaSession.setPositionStateSpy).toHaveBeenLastCalledWith(
+        expect.objectContaining({ playbackRate: 1.75 }),
       );
 
       const playHandler = mediaSession.actionHandlers.get("play");

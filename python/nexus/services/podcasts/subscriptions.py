@@ -41,7 +41,7 @@ from nexus.schemas.podcast import (
     PodcastUnsubscribedOut,
     PodcastUnsubscribeOut,
 )
-from nexus.schemas.presence import Present
+from nexus.schemas.presence import Present, nullable_from_presence, presence_from_nullable
 from nexus.services.browse.models import ResolvedPodcast
 from nexus.services.collection_revisions import (
     CollectionFamily,
@@ -760,7 +760,9 @@ def get_subscription_status(
     return PodcastSubscriptionStatusOut(
         user_id=row[0],
         podcast_id=row[2],
-        default_playback_speed=float(row[3]) if row[3] is not None else None,
+        default_playback_speed=presence_from_nullable(
+            float(row[3]) if row[3] is not None else None
+        ),
         auto_queue=bool(row[4]),
         sync_status=row[5],
         sync_error_code=row[6],
@@ -954,7 +956,7 @@ def update_subscription_settings_for_viewer(
     }
     if "default_playback_speed" in body.model_fields_set:
         assignments.append("default_playback_speed = :default_playback_speed")
-        params["default_playback_speed"] = body.default_playback_speed
+        params["default_playback_speed"] = nullable_from_presence(body.default_playback_speed)
     if "auto_queue" in body.model_fields_set:
         assignments.append("auto_queue = :auto_queue")
         params["auto_queue"] = bool(body.auto_queue)

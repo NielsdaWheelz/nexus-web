@@ -20,7 +20,7 @@ import {
   type CollectionPage,
   type CollectionRevision,
 } from "@/lib/api/collectionPage";
-import type { Presence } from "@/lib/api/presence";
+import { presenceValueOr, type Presence } from "@/lib/api/presence";
 import { useExhaustivePagination } from "@/lib/api/useExhaustivePagination";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useResource } from "@/lib/api/useResource";
@@ -50,7 +50,7 @@ import {
   canonicalSessionOfGlobalState,
   usePlayerSession,
 } from "@/lib/player/globalPlayer";
-import { formatSubscriptionPlaybackSummary } from "@/lib/player/subscriptionPlaybackSpeed";
+import { formatPlaybackRate } from "@/lib/player/playbackRate";
 import { pluralize } from "@/lib/text/pluralize";
 import { useLectern } from "@/lib/lectern/LecternProvider";
 import { useCompletionUndo } from "@/lib/lectern/useCompletionUndo";
@@ -81,7 +81,6 @@ import { useConnectionsComposerController } from "@/components/connections/conne
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import {
   decodePodcastDetailResponse,
-  getPodcastSubscriptionSettingsPatch,
   retryPodcastSubscriptionBackfill,
   type PodcastBackfillRecord,
   type PodcastDetailResponse,
@@ -338,16 +337,16 @@ export default function PodcastDetailPaneBody() {
     : false;
   const settingsModal = usePodcastSubscriptionSettingsModal({
     onSaved: (response) => {
+      if (response.podcast_id !== podcastId) return;
       setDetail((prev) =>
         prev && prev.subscription
           ? {
               ...prev,
               subscription: {
                 ...prev.subscription,
-                ...getPodcastSubscriptionSettingsPatch({
-                  response,
-                  updatedAt: prev.subscription.updated_at,
-                }),
+                default_playback_speed: response.default_playback_speed,
+                auto_queue: response.auto_queue,
+                updated_at: response.updated_at,
               },
             }
           : prev,
@@ -1216,7 +1215,6 @@ export default function PodcastDetailPaneBody() {
         listening_state: {
           position_ms: previousListeningState?.position_ms ?? 0,
           duration_ms: previousListeningState?.duration_ms ?? null,
-          playback_speed: previousListeningState?.playback_speed ?? 1,
         },
         episode_state: "played",
       };
@@ -1345,12 +1343,11 @@ export default function PodcastDetailPaneBody() {
               ...episode,
               listening_state: {
                 position_ms: canonicalListeningState.positionMs,
-                duration_ms:
-                  canonicalListeningState.durationMs.kind === "Present"
-                    ? canonicalListeningState.durationMs.value
-                    : null,
-                playback_speed: canonicalListeningState.playbackSpeed,
-              },
+                  duration_ms:
+                    canonicalListeningState.durationMs.kind === "Present"
+                      ? canonicalListeningState.durationMs.value
+                      : null,
+                },
               episode_state: "unplayed",
               progress_resettable: false,
             };
@@ -1777,10 +1774,14 @@ export default function PodcastDetailPaneBody() {
                   ? [
                       formatEpisodeUpdateStatus(activeSubscription.sync_status),
                       formatBackfillFact(activeSubscription.backfill),
-                      formatSubscriptionPlaybackSummary(
-                        activeSubscription.default_playback_speed,
-                        activeSubscription.auto_queue,
-                      ),
+                      `${formatPlaybackRate(
+                        presenceValueOr(
+                          activeSubscription.default_playback_speed,
+                          1,
+                        ),
+                      )} default speed · Auto-queue ${
+                        activeSubscription.auto_queue ? "on" : "off"
+                      }`,
                     ]
                   : []),
               ]}

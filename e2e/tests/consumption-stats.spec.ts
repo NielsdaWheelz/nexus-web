@@ -20,8 +20,12 @@ interface SeededMedia {
 }
 
 interface SeededAudio extends SeededMedia {
+  podcast_id: string;
   title: string;
   stream_path: string;
+  successor_media_id: string;
+  successor_title: string;
+  successor_stream_path: string;
   duration_seconds: number;
 }
 
@@ -33,7 +37,9 @@ interface LecternItem {
 interface ListeningState {
   positionMs: number;
   durationMs: { kind: "Absent" } | { kind: "Present"; value: number };
-  playbackSpeed: number;
+  episodePlaybackRate:
+    | { kind: "Absent" }
+    | { kind: "Present"; value: number };
   writeRevision: number;
   resetEpoch: number;
 }
@@ -161,24 +167,7 @@ async function resetAndPlaceAudio(
   page: Parameters<typeof gotoSinglePaneWorkspace>[0],
   mediaId: string,
 ): Promise<void> {
-  const lecternResponse = await page.request.get("/api/lectern");
-  expect(lecternResponse.ok()).toBe(true);
-  const current = (await lecternResponse.json()) as {
-    data: { items: LecternItem[] };
-  };
-  for (const item of current.data.items.filter(
-    (candidate) => candidate.mediaId === mediaId,
-  )) {
-    const removed = await page.request.post("/api/lectern/commands", {
-      headers: stateChangingApiHeaders(),
-      data: {
-        kind: "RemoveItem",
-        clientMutationId: randomUUID(),
-        itemId: item.itemId,
-      },
-    });
-    expect(removed.ok()).toBe(true);
-  }
+  await removeAudioFromLectern(page, [mediaId]);
   await resetAudioProgress(page, mediaId);
   const placed = await page.request.post("/api/lectern/commands", {
     headers: stateChangingApiHeaders(),
@@ -190,6 +179,30 @@ async function resetAndPlaceAudio(
     },
   });
   expect(placed.ok()).toBe(true);
+}
+
+async function removeAudioFromLectern(
+  page: Parameters<typeof gotoSinglePaneWorkspace>[0],
+  mediaIds: string[],
+): Promise<void> {
+  const lecternResponse = await page.request.get("/api/lectern");
+  expect(lecternResponse.ok()).toBe(true);
+  const current = (await lecternResponse.json()) as {
+    data: { items: LecternItem[] };
+  };
+  for (const item of current.data.items.filter(
+    (candidate) => mediaIds.includes(candidate.mediaId),
+  )) {
+    const removed = await page.request.post("/api/lectern/commands", {
+      headers: stateChangingApiHeaders(),
+      data: {
+        kind: "RemoveItem",
+        clientMutationId: randomUUID(),
+        itemId: item.itemId,
+      },
+    });
+    expect(removed.ok()).toBe(true);
+  }
 }
 
 async function postActivity(
@@ -229,7 +242,7 @@ test("resets podcast progress through the BFF to a canonical install snapshot", 
           kind: "Present",
           value: audio.duration_seconds * 1_000,
         },
-        playbackSpeed: 1.25,
+        episodePlaybackRate: { kind: "Present", value: 1.25 },
         expectedWriteRevision: before.data.writeRevision,
         expectedResetEpoch: before.data.resetEpoch,
         heartbeatGeneration,
@@ -252,7 +265,7 @@ test("resets podcast progress through the BFF to a canonical install snapshot", 
         kind: "Present",
         value: audio.duration_seconds * 1_000,
       },
-      playbackSpeed: 1.25,
+      episodePlaybackRate: { kind: "Present", value: 1.25 },
       writeRevision: before.data.writeRevision + 2,
       resetEpoch: before.data.resetEpoch + 1,
     },
@@ -264,6 +277,147 @@ test("resets podcast progress through the BFF to a canonical install snapshot", 
   expect(afterResponse.ok()).toBe(true);
   const after = (await afterResponse.json()) as { data: ListeningState };
   expect(after.data).toEqual(reset.listeningState.value);
+});
+
+test("inherits podcast playback speed and resumes an episode override", async ({
+  page,
+}) => {
+  test.slow();
+  const audio = seededAudio();
+  const rawDeviceId = `e2e-playback-rate-${randomUUID()}`;
+  const subscriptionHeaders = {
+    ...stateChangingApiHeaders(),
+    "Idempotency-Key": randomUUID(),
+  };
+  await page.route(
+    new RegExp(
+      `(?:${audio.stream_path}|${audio.successor_stream_path})$`,
+    ),
+    (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "audio/wav",
+        body: toneWav(audio.duration_seconds),
+      }),
+  );
+  await gotoSinglePaneWorkspace(page, rawDeviceId, "/lectern");
+
+  const priorSubscription = await page.request.delete(
+    `/api/podcasts/subscriptions/${audio.podcast_id}`,
+    { headers: subscriptionHeaders },
+  );
+  expect(
+    priorSubscription.ok(),
+    await priorSubscription.text(),
+  ).toBeTruthy();
+  const subscribed = await page.request.post("/api/podcasts/subscriptions", {
+    headers: {
+      ...stateChangingApiHeaders(),
+      "Idempotency-Key": randomUUID(),
+    },
+    data: {
+      target: { kind: "Canonical", podcastId: audio.podcast_id },
+      namedLibraryIds: [],
+      replacementConfirmation: { kind: "Absent" },
+    },
+  });
+  expect(subscribed.ok(), await subscribed.text()).toBeTruthy();
+
+  try {
+    const preference = await page.request.patch(
+      `/api/podcasts/subscriptions/${audio.podcast_id}/settings`,
+      {
+        headers: stateChangingApiHeaders(),
+        data: {
+          default_playback_speed: { kind: "Present", value: 1.5 },
+        },
+      },
+    );
+    expect(preference.ok(), await preference.text()).toBeTruthy();
+
+    await resetAndPlaceAudio(page, audio.media_id);
+    await resetAudioProgress(page, audio.successor_media_id);
+    await gotoSinglePaneWorkspace(page, rawDeviceId, "/lectern");
+    await activeWorkspacePane(page)
+      .getByRole("button", { name: `Play ${audio.title}` })
+      .click();
+
+    const audioElement = page.locator(
+      'audio[aria-label="Media player audio"]',
+    );
+    await expect(audioElement).toHaveJSProperty("paused", false);
+    await expect
+      .poll(() =>
+        audioElement.evaluate(
+          (element) => (element as HTMLAudioElement).playbackRate,
+        ),
+      )
+      .toBe(1.5);
+    await expect(
+      page.getByRole("button", {
+        name: "Playback speed, 1.5 times",
+      }),
+    ).toBeVisible();
+
+    const persistedRate = page.waitForResponse((response) => {
+      if (
+        response.request().method() !== "PUT" ||
+        new URL(response.url()).pathname !==
+          `/api/media/${audio.media_id}/listening-state`
+      ) {
+        return false;
+      }
+      const rate = (
+        response.request().postDataJSON() as {
+          episodePlaybackRate?: { kind?: string; value?: number };
+        }
+      ).episodePlaybackRate;
+      return rate?.kind === "Present" && rate.value === 1.75;
+    });
+    await page
+      .getByRole("button", { name: "Playback speed, 1.5 times" })
+      .click();
+    const playbackDialog = page.getByRole("dialog", { name: "Playback" });
+    await playbackDialog
+      .getByRole("slider", { name: "Playback speed" })
+      .fill("1.75");
+    expect((await persistedRate).ok()).toBeTruthy();
+    await expect(audioElement).toHaveJSProperty("playbackRate", 1.75);
+    await page.keyboard.press("Escape");
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await waitForWorkspaceHydration(page);
+    await activeWorkspacePane(page)
+      .getByRole("button", { name: `Play ${audio.title}` })
+      .click();
+    await expect(audioElement).toHaveJSProperty("playbackRate", 1.75);
+
+    await page
+      .getByRole("region", { name: "Media player" })
+      .getByRole("button", { name: "Close player" })
+      .click();
+    await resetAndPlaceAudio(page, audio.successor_media_id);
+    await gotoSinglePaneWorkspace(page, rawDeviceId, "/lectern");
+    await activeWorkspacePane(page)
+      .getByRole("button", { name: `Play ${audio.successor_title}` })
+      .click();
+    await expect(audioElement).toHaveJSProperty("playbackRate", 1.5);
+  } finally {
+    await removeAudioFromLectern(page, [
+      audio.media_id,
+      audio.successor_media_id,
+    ]);
+    const unsubscribed = await page.request.delete(
+      `/api/podcasts/subscriptions/${audio.podcast_id}`,
+      {
+        headers: {
+          ...stateChangingApiHeaders(),
+          "Idempotency-Key": randomUUID(),
+        },
+      },
+    );
+    expect(unsubscribed.ok(), await unsubscribed.text()).toBeTruthy();
+  }
 });
 
 test("records private activity through the BFF and renders filtered Stats", async ({

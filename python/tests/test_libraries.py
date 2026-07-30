@@ -2168,6 +2168,10 @@ class TestListLibraryMedia:
         podcast_rows = [row for row in data if row["kind"] == "podcast"]
         assert len(media_rows) == 1
         assert [row["podcast"]["id"] for row in podcast_rows] == [str(podcast_id)]
+        assert podcast_rows[0]["subscription"]["value"]["defaultPlaybackSpeed"] == {
+            "kind": "Present",
+            "value": 1.5,
+        }
         media_row = media_rows[0]
         media = media_row["media"]
         assert media["id"] == str(media_id)
@@ -2179,7 +2183,6 @@ class TestListLibraryMedia:
         assert {
             "transcript_state",
             "transcript_coverage",
-            "subscription_default_playback_speed",
             "description_html",
             "description_text",
             "listening_state",

@@ -151,7 +151,7 @@ def _heartbeat(
     expected_write_revision,
     expected_reset_epoch,
     duration_ms=600_000,
-    playback_speed=1.0,
+    episode_playback_rate=1.0,
 ):
     return auth_client.put(
         f"/media/{media_id}/listening-state",
@@ -159,7 +159,7 @@ def _heartbeat(
         json={
             "positionMs": position_ms,
             "durationMs": {"kind": "Present", "value": duration_ms},
-            "playbackSpeed": playback_speed,
+            "episodePlaybackRate": {"kind": "Present", "value": episode_playback_rate},
             "expectedWriteRevision": expected_write_revision,
             "expectedResetEpoch": expected_reset_epoch,
             "heartbeatGeneration": str(uuid4()),
@@ -506,7 +506,7 @@ class TestResetProgress:
                 position_ms=120_000,
                 expected_write_revision=0,
                 expected_reset_epoch=0,
-                playback_speed=1.25,
+                episode_playback_rate=1.25,
             ).status_code
             == 200
         )
@@ -557,7 +557,7 @@ class TestResetProgress:
                     "value": {
                         "positionMs": 0,
                         "durationMs": {"kind": "Present", "value": 600_000},
-                        "playbackSpeed": 1.25,
+                        "episodePlaybackRate": {"kind": "Present", "value": 1.25},
                         "writeRevision": 2,
                         "resetEpoch": 1,
                     },
@@ -672,7 +672,7 @@ class TestResetProgress:
             "value": {
                 "positionMs": 5_000,
                 "durationMs": {"kind": "Present", "value": 600_000},
-                "playbackSpeed": 1.0,
+                "episodePlaybackRate": {"kind": "Present", "value": 1.0},
                 "writeRevision": 3,
                 "resetEpoch": 1,
             },
@@ -706,7 +706,7 @@ class TestResetProgress:
                     "value": {
                         "positionMs": 0,
                         "durationMs": {"kind": "Absent"},
-                        "playbackSpeed": 1.0,
+                        "episodePlaybackRate": {"kind": "Absent"},
                         "writeRevision": 1,
                         "resetEpoch": 1,
                     },
@@ -731,7 +731,7 @@ class TestResetProgress:
             "value": {
                 "positionMs": 0,
                 "durationMs": {"kind": "Absent"},
-                "playbackSpeed": 1.0,
+                "episodePlaybackRate": {"kind": "Absent"},
                 "writeRevision": 2,
                 "resetEpoch": 2,
             },

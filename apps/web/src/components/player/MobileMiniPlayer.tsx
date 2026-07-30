@@ -16,7 +16,11 @@ import {
   useMobileViewport,
   useRootTextEntryFocused,
 } from "@/lib/mobileViewport/MobileViewportProvider";
-import { usePlayerCommands } from "@/lib/player/globalPlayer";
+import {
+  usePlayerCommands,
+  usePlayerSettings,
+} from "@/lib/player/globalPlayer";
+import { formatPlaybackRate } from "@/lib/player/playbackRate";
 import { playerTransportLocked } from "@/lib/player/playerChromeModel";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { PlayerCaptureController } from "@/lib/walknotes/usePlayerCapture";
@@ -50,7 +54,7 @@ export default function MobileMiniPlayer({
   readonly openerRef: RefObject<HTMLButtonElement | null>;
   readonly onOpenNowPlaying: () => void;
   readonly onOpenTarget: () => void;
-  readonly onOpenPlayback: () => void;
+  readonly onOpenPlayback: (trigger: HTMLButtonElement | null) => void;
   readonly onOpenContents: () => void;
   readonly onOpenLectern: () => void;
   readonly onDismiss: () => void;
@@ -58,6 +62,7 @@ export default function MobileMiniPlayer({
   const mobileViewport = useMobileViewport();
   const rootTextEntryFocused = useRootTextEntryFocused();
   const commands = usePlayerCommands();
+  const settings = usePlayerSettings();
   const playerRef = useRef<HTMLElement>(null);
   const [captureInMenu, setCaptureInMenu] = useState(false);
   const hidden = suspended || rootTextEntryFocused;
@@ -111,9 +116,11 @@ export default function MobileMiniPlayer({
     {
       id: "Player.Playback",
       kind: "command",
-      label: "Speed and audio effects",
+      label: `Playback speed, ${formatPlaybackRate(
+        settings.playbackRate.base,
+      )}`,
       icon: <Gauge aria-hidden="true" />,
-      onSelect: onOpenPlayback,
+      onSelect: ({ triggerEl }) => onOpenPlayback(triggerEl),
     },
     ...(model.kind === "Canonical"
       ? [
