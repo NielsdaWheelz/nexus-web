@@ -1,6 +1,6 @@
 # Android Episode Offline Downloads — Hard Cutover
 
-**Status:** APPROVED FOR IMPLEMENTATION · revised 2026-07-30
+**Status:** IMPLEMENTED LOCALLY · physical-device acceptance pending · 2026-07-30
 **Type:** Hard cutover; one managed-download path, no compatibility path.
 
 ## Decision
@@ -118,7 +118,8 @@ NetworkPolicy = UnmeteredOnly | AnyConnected
 - Persist one app-wide policy; default `UnmeteredOnly`.
 - Apply it to Media3 `DownloadManager.setRequirements` before resuming work on
   every process construction.
-- Enqueue always creates the download. On a metered network under
+- After source preflight succeeds, Enqueue durably inserts a stopped Media3
+  request before replying `Accepted`. On a metered network under
   `UnmeteredOnly`, it becomes `Queued.WaitingForUnmetered`.
 - The Downloads surface may ask once whether to enable **Download over mobile
   data**. Approval changes the global policy and releases every pending item.
@@ -211,6 +212,8 @@ OfflineDownloadSpec = {
 ```
 
 - Strict camelCase; `extra="forbid"`; private/no-store.
+- `title` is 1..512 Unicode code points and `sourceUrl` is 1..8192 Unicode code
+  points in Python, TypeScript, and Kotlin.
 - Add one `derive_offline_download_source` owner. It accepts only a podcast
   episode's non-empty `external_playback_url`; never fall back to
   `canonical_source_url`.
@@ -393,17 +396,25 @@ DownloadRequest.data = OfflineMediaMetadata {
 Android lifecycle:
 
 - The user starts a non-exported `dataSync` `DownloadService`.
+- Admission first inserts the request with the app's `SystemLimit` stop reason.
+  The first DownloadIndex-backed `onDownloadChanged` is the durability
+  acknowledgement. Only then may a still-current foreground account session
+  start the service, clear that stop reason, and reply `Accepted`; cancellation
+  or account-generation change removes the request instead.
 - `getScheduler()` returns `null`. Add no restart intent filter,
   `PlatformScheduler`, WorkManager, Android `DownloadManager`, UIDT, boot
   receiver, connectivity scheduler, or second lifecycle owner.
 - On target-SDK-35 `dataSync` timeout, pause work and call the Media3 superclass
   timeout path promptly. Project `Queued.SystemLimit`; resume only after Nexus
-  is next foregrounded.
+  is next foregrounded and a completed `Connect` has established the active
+  account.
 - Process death/reboot preserves index and complete/partial cleanup facts but
   does not promise automatic background restart.
 - Add only the required new permissions:
   `ACCESS_NETWORK_STATE`, `FOREGROUND_SERVICE`,
   `FOREGROUND_SERVICE_DATA_SYNC`, `POST_NOTIFICATIONS`.
+- Remove Media3 ExoPlayer's transitive `WAKE_LOCK` declaration from the merged
+  manifest; this download-only path does not use ExoPlayer wake mode.
 
 ## Intra-System Composition
 

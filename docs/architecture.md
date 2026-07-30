@@ -1510,16 +1510,25 @@ they open over Resume and never become panes.
 ## 10. Non-web clients
 
 **Android shell** (`apps/android`): a single-Activity Kotlin app wrapping the web
-app in a hardened `WebView` (no JS bridge, no file/content access, third-party
-cookies blocked, off-origin links open in Custom Tabs). It is **sandboxed** by
-rule ([`rules/layers.md`](rules/layers.md)): the only native HTTP call it makes is
-`POST /auth/native/google`; PKCE/code exchange stays server-side. Native Google
-sign-in (Credential Manager) and Custom-Tab OAuth both converge on a server-minted,
-single-use, PKCE-bound `nexus://auth/handoff` code that injects a first-party
-session cookie into the WebView. App Links are backed by
+app in a hardened `WebView` (no `addJavascriptInterface`, file/content access,
+third-party cookies, or off-origin in-WebView navigation). It is **sandboxed**
+by rule ([`rules/layers.md`](rules/layers.md)): its only native/web product
+message capability is the strict AndroidX WebKit `nexusOfflineMedia` listener,
+confined to the exact owned origin and main frame. The native shell otherwise
+has no product API client; its only native HTTP API call is auth bootstrap
+`POST /auth/native/google`, and PKCE/code exchange stays server-side.
+`OfflineMediaStore` is the sole device owner of Media3 transfer, index,
+non-evicting app-private cache, global network policy, account purge, recovery,
+and local GET/range serving. Work resumes only after a verified account
+handshake while Nexus is foregrounded; there is no boot/background scheduler
+and no cold-launch-offline shell. Native Google sign-in (Credential Manager)
+and Custom-Tab OAuth both converge on a server-minted, single-use, PKCE-bound
+`nexus://auth/handoff` code that injects a first-party session cookie into the
+WebView. App Links are backed by
 `apps/web/public/.well-known/assetlinks.json` (validated against the release
 signing cert at build time). The web app detects the shell via a `NexusAndroidShell`
-UA token and hides incompatible surfaces (e.g. local vault).
+UA token for presentation adaptation (e.g. hiding local vault); successful
+offline-media handshake, never the UA, is capability truth.
 
 **Browser extension** (`apps/extension`): a Manifest V3 capture tool. It connects
 via `launchWebAuthFlow` against `/extension/connect/start`, obtains a revocable

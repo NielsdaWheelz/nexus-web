@@ -875,7 +875,10 @@ internal class OfflineMediaStore private constructor(
         if (reconciled) {
             return
         }
-        downloads().forEach { download ->
+        val indexedDownloads = downloads()
+        val indexedIds = indexedDownloads.mapTo(mutableSetOf()) { it.request.id }
+        cache.keys.filterNot(indexedIds::contains).forEach(cache::removeResource)
+        indexedDownloads.forEach { download ->
             val metadata = metadata(download)
             check(download.request.id == stableDownloadId(metadata.accountId, metadata.mediaId))
             check(download.request.customCacheKey == download.request.id)

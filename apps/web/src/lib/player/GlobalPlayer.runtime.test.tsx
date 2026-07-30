@@ -28,6 +28,14 @@ import {
   setAudioMetrics,
 } from "@/__tests__/helpers/audio";
 
+const offlineMedia = vi.hoisted(() => ({
+  resolveStreamUrl: vi.fn((_mediaId: string, remoteUrl: string) => remoteUrl),
+}));
+
+vi.mock("@/lib/offlineMedia/OfflineMediaProvider", () => ({
+  useOfflineMediaStreamResolver: () => offlineMedia.resolveStreamUrl,
+}));
+
 const MEDIA_A = "11111111-1111-4111-8111-111111111111";
 const MEDIA_B = "22222222-2222-4222-8222-222222222222";
 let restoreAudioContext: (() => void) | null = null;
@@ -183,6 +191,10 @@ function App({ children }: { children: ReactNode }) {
 describe("GlobalPlayer runtime", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    offlineMedia.resolveStreamUrl.mockReset();
+    offlineMedia.resolveStreamUrl.mockImplementation(
+      (_mediaId: string, remoteUrl: string) => remoteUrl,
+    );
     vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
     vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
     vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
@@ -192,6 +204,63 @@ describe("GlobalPlayer runtime", () => {
     restoreAudioContext?.();
     restoreAudioContext = null;
     vi.restoreAllMocks();
+  });
+
+  it("captures the offline source once when a session starts", async () => {
+    installLecternPlayerFetchMock();
+    const remoteUrl = "https://cdn.example.com/alpha.mp3";
+    const localUrl = `https://nexus.test/_native/offline-media/${MEDIA_A}`;
+    offlineMedia.resolveStreamUrl.mockReturnValue(localUrl);
+
+    function Harness() {
+      const commands = usePlayerCommands();
+      const { resource } = useLectern();
+      return (
+        <>
+          <output aria-label="lectern status">{resource.status}</output>
+          <button
+            type="button"
+            onClick={() =>
+              commands.playAudio(
+                buildPlayerDescriptor(MEDIA_A, "Alpha", { streamUrl: remoteUrl }),
+              )
+            }
+          >
+            Play Alpha
+          </button>
+        </>
+      );
+    }
+
+    const { rerender } = render(
+      <App>
+        <Harness />
+      </App>,
+    );
+    await screen.findByText("ready", {
+      selector: '[aria-label="lectern status"]',
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Play Alpha" }));
+    const audio = screen.getByLabelText(
+      "Media player audio",
+    ) as HTMLAudioElement;
+    await waitFor(() => expect(audio.getAttribute("src")).toBe(localUrl));
+    expect(offlineMedia.resolveStreamUrl).toHaveBeenCalledOnce();
+    expect(offlineMedia.resolveStreamUrl).toHaveBeenCalledWith(
+      MEDIA_A,
+      remoteUrl,
+    );
+
+    offlineMedia.resolveStreamUrl.mockReturnValue(remoteUrl);
+    rerender(
+      <App>
+        <Harness />
+      </App>,
+    );
+    fireEvent.timeUpdate(audio);
+
+    expect(audio.getAttribute("src")).toBe(localUrl);
+    expect(offlineMedia.resolveStreamUrl).toHaveBeenCalledOnce();
   });
 
   it("dismisses a parked completion without swallowing the next session's natural end", async () => {

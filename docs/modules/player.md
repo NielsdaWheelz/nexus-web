@@ -211,6 +211,12 @@ Lectern pane is the sole full-list editor).
 - `globalPlayer.tsx` publishes owned `<audio>` playing/pause/buffering/end
   observations to the single Consumption recorder. The heartbeat persists
   current position; it never carries elapsed-time activity or a raw device id.
+- On Android, `globalPlayer.tsx` asks the enclosing `OfflineMediaProvider` for
+  the source exactly once while applying `StartSession`. Ready resolves to the
+  owned native GET/range route; all other states resolve to the canonical
+  remote stream. The captured URL belongs to that session epoch and is never
+  recomputed or switched while playback is active. Missing/corrupt Ready bytes
+  fail locally and never fall back to the network.
 - `apps/web/src/components/player/` — the Listening Shelf, MiniPlayer, full-
   screen Now Playing, and shared cadence-scoped controls. The surfaces share
   one Capture controller and one provider-lifetime live region. They do not
