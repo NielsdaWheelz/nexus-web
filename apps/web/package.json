@@ -21,7 +21,7 @@
     "@supabase/supabase-js": "^2.108.2",
     "lucide-react": "^1.8.0",
     "next": "15.5.22",
-    "pdfjs-dist": "^5.6.205",
+    "pdfjs-dist": "5.7.284",
     "prosemirror-history": "^1.5.0",
     "prosemirror-keymap": "^1.2.3",
     "prosemirror-model": "^1.25.4",

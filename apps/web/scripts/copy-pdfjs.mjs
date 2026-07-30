@@ -1,13 +1,23 @@
 // Copies pdf.js runtime assets into public/ so they are served as static
 // files. They cannot be served from a route that reads node_modules at
 // request time -- Next.js does not trace those files into the deployed function.
-import { copyFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const webDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const sourceDir = join(webDir, "node_modules", "pdfjs-dist");
 const targetDir = join(webDir, "public", "pdfjs");
+const expectedVersion = "5.7.284";
+const installedVersion = JSON.parse(
+  readFileSync(join(sourceDir, "package.json"), "utf8"),
+).version;
+
+if (installedVersion !== expectedVersion) {
+  throw new Error(
+    `Expected pdfjs-dist ${expectedVersion}, found ${String(installedVersion)}.`,
+  );
+}
 
 mkdirSync(targetDir, { recursive: true });
 for (const [from, to] of [

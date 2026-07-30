@@ -10,6 +10,7 @@ import {
   createTranscriptFindSnapshot,
   type TranscriptFindSnapshot,
 } from "./transcriptPaneFind";
+import { createMediaFindPreviewLease } from "./mediaFindPreviewLease";
 
 function fragment({
   id,
@@ -83,6 +84,7 @@ function adapter(
     getSegmentList: () => null,
     getMatchElement: () => null,
     publishPresentation: vi.fn(),
+    previewLease: createMediaFindPreviewLease(),
   });
 }
 

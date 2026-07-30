@@ -392,6 +392,124 @@ async function resetPdfReaderState(page: Page, mediaId: string): Promise<void> {
 test.describe("pdf reader", () => {
   test.describe.configure({ mode: "serial" });
 
+  test("find previews PDF matches and returns without changing reading progress", async ({
+    page,
+  }, testInfo) => {
+    const seeded = readSeededPdfMedia();
+    const mediaId = seeded.media_id;
+    const expectedPageCount = seeded.page_count;
+    test.skip(
+      expectedPageCount < 2,
+      "Seeded PDF fixture must include at least two pages for Return coverage",
+    );
+
+    const deviceId = workspaceE2eDeviceId(testInfo, "e2e-pdf-find");
+    await gotoSinglePaneWorkspace(page, deviceId, "/libraries");
+    await putReaderState(page, mediaId, {
+      kind: "pdf",
+      position: 2,
+      page: 2,
+      page_progression: null,
+      zoom: 1,
+    });
+    await gotoSinglePaneWorkspace(page, deviceId, `/media/${mediaId}`);
+
+    const pane = activeWorkspacePane(page);
+    await expect(pageIndicator(page, 2, expectedPageCount)).toBeVisible({
+      timeout: 20_000,
+    });
+    const urlBeforeFind = page.url();
+    const readerStateBeforeFind = await fetchReaderState(page, mediaId);
+    const readerStateWrites: string[] = [];
+    const captureReaderStateWrite = (request: {
+      method(): string;
+      url(): string;
+    }) => {
+      if (
+        request.method() === "PUT" &&
+        new URL(request.url()).pathname ===
+          `/api/media/${mediaId}/reader-state`
+      ) {
+        readerStateWrites.push(request.url());
+      }
+    };
+    page.on("request", captureReaderStateWrite);
+
+    try {
+      await expect(
+        pane.getByRole("button", { name: "Find", exact: true }),
+      ).toBeVisible();
+      await page.keyboard.press("Control+f");
+      const input = pane.getByRole("searchbox", { name: "Find in PDF" });
+      await expect(input).toBeFocused();
+      await input.fill("E2E PDF signed-url expiry seed");
+
+      await expect(
+        pane
+          .getByRole("status")
+          .filter({ hasText: `1 of ${expectedPageCount} matches` }),
+      ).toHaveText(`1 of ${expectedPageCount} matches`, {
+        timeout: 20_000,
+      });
+      await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible();
+
+      const activeMatch = pane.locator(".textLayer .highlight.selected");
+      await expect(activeMatch.first()).toBeVisible();
+      await expect
+        .poll(async () =>
+          activeMatch.first().evaluate((element) => {
+            const style = getComputedStyle(element);
+            return {
+              outline: style.outlineStyle,
+              decoration: style.textDecorationLine,
+            };
+          }),
+        )
+        .toEqual({ outline: "solid", decoration: "underline" });
+
+      await pane.getByRole("button", { name: "Results" }).click();
+      const results = page
+        .getByRole("list", { name: "Search results" })
+        .filter({ visible: true });
+      await expect(results.getByRole("listitem")).toHaveCount(
+        expectedPageCount,
+      );
+      await results
+        .getByRole("button", {
+          name: new RegExp(
+            `Go to match: ${expectedPageCount} of ${expectedPageCount}:`,
+          ),
+        })
+        .click();
+      await expect(
+        pageIndicator(page, expectedPageCount, expectedPageCount),
+      ).toBeVisible();
+
+      await pane
+        .getByTestId("pane-search-toolbar")
+        .getByRole("button", { name: "Close search", exact: true })
+        .click();
+      await expect(pane.locator(".textLayer .highlight")).toHaveCount(0);
+      await expect(
+        pageIndicator(page, expectedPageCount, expectedPageCount),
+      ).toBeVisible();
+
+      await pane
+        .getByRole("button", { name: "Go back to reading position" })
+        .click();
+      await expect(pageIndicator(page, 2, expectedPageCount)).toBeVisible();
+      await expect(pane.getByRole("region", { name: "PDF document" })).toBeFocused();
+
+      expect(page.url()).toBe(urlBeforeFind);
+      expect(await fetchReaderState(page, mediaId)).toEqual(
+        readerStateBeforeFind,
+      );
+      expect(readerStateWrites).toHaveLength(0);
+    } finally {
+      page.off("request", captureReaderStateWrite);
+    }
+  });
+
   test("upload -> viewer -> persistent highlight -> send to chat", async ({
     page,
   }, testInfo) => {

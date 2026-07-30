@@ -4,6 +4,7 @@ export interface MediaFindPreviewLease {
   acquire(): void;
   releaseForGenuineInput(): void;
   cancelUnreportedPreview(): void;
+  completeReturn(): void;
   retire(): void;
   subscribe(listener: () => void): () => void;
   armNextCaptureSuppression(): void;
@@ -11,9 +12,9 @@ export interface MediaFindPreviewLease {
 }
 
 /**
- * One route-local fence shared by media Find, reader progress, and reading
- * activity. It deliberately owns no React state: consumers consult the
- * current value at their imperative mutation boundaries.
+ * One route-local fence shared by media Find adapters, reader progress, and
+ * reading activity. It owns no React state: consumers consult its current
+ * value at their imperative mutation boundaries.
  */
 export function createMediaFindPreviewLease(): MediaFindPreviewLease {
   let active = false;
@@ -23,6 +24,11 @@ export function createMediaFindPreviewLease(): MediaFindPreviewLease {
 
   const publish = () => {
     for (const listener of listeners) listener();
+  };
+  const release = () => {
+    if (!active || retired) return;
+    active = false;
+    publish();
   };
 
   return {
@@ -41,16 +47,9 @@ export function createMediaFindPreviewLease(): MediaFindPreviewLease {
       active = true;
       publish();
     },
-    releaseForGenuineInput() {
-      if (!active || retired) return;
-      active = false;
-      publish();
-    },
-    cancelUnreportedPreview() {
-      if (!active || retired) return;
-      active = false;
-      publish();
-    },
+    releaseForGenuineInput: release,
+    cancelUnreportedPreview: release,
+    completeReturn: release,
     retire() {
       suppressNextCapture = false;
       if (retired) return;

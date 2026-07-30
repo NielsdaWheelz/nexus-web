@@ -1,4 +1,9 @@
-import { useCallback, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useState,
+  type MutableRefObject,
+  type ReactNode,
+} from "react";
 import {
   act,
   fireEvent,
@@ -227,11 +232,15 @@ vi.mock("@/components/PdfReader", () => ({
   default: ({
     onIntrinsicWidthChange,
     onHighlightHover,
+    viewportRef,
+    contentRef,
   }: {
     onIntrinsicWidthChange?: (state: {
       maxRenderedPageWidthPx: number | null;
     }) => void;
     onHighlightHover?: (highlightId: string | null) => void;
+    viewportRef?: MutableRefObject<HTMLDivElement | null>;
+    contentRef?: MutableRefObject<HTMLDivElement | null>;
   }) => {
     window.setTimeout(() => {
       onIntrinsicWidthChange?.({
@@ -240,7 +249,14 @@ vi.mock("@/components/PdfReader", () => ({
     }, 0);
     return (
       <div
+        ref={(node) => {
+          if (viewportRef) {
+            viewportRef.current = node;
+          }
+        }}
         data-testid="pdf-reader"
+        role="region"
+        aria-label="PDF document"
         tabIndex={0}
         onPointerEnter={() =>
           onHighlightHover?.("33333333-3333-4333-8333-333333333333")
@@ -250,7 +266,17 @@ vi.mock("@/components/PdfReader", () => ({
           onHighlightHover?.("33333333-3333-4333-8333-333333333333")
         }
         onBlur={() => onHighlightHover?.(null)}
-      />
+      >
+        <div
+          ref={(node) => {
+            if (contentRef) {
+              contentRef.current = node;
+            }
+          }}
+          data-testid="pdf-reader-content"
+          className="pdfViewer"
+        />
+      </div>
     );
   },
 }));

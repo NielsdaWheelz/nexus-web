@@ -630,6 +630,7 @@ export function createWebFindAdapter({
       origin = null;
       clearPreviewFragment();
       focusReaderViewport();
+      previewLease.completeReturn();
     },
     errorMessage: mediaPaneFindErrorMessage,
     rebuildPresentation() {

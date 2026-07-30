@@ -56,7 +56,7 @@ function nextCodePointIndex(text: string, utf16Index: number): number {
   return utf16Index + (codePoint > 0xffff ? 2 : 1);
 }
 
-function snippetSegments(
+export function canonicalTextFindSnippet(
   codePoints: readonly string[],
   startCp: number,
   endCp: number,
@@ -108,7 +108,7 @@ function projectUnitMatches(
       unitId: unit.id,
       startCp,
       endCp,
-      snippet: snippetSegments(codePoints, startCp, endCp),
+      snippet: canonicalTextFindSnippet(codePoints, startCp, endCp),
     };
   });
 }

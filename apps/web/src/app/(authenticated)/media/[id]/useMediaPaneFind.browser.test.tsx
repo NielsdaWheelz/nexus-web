@@ -314,6 +314,7 @@ describe("Web Find adapter", () => {
     expect(focusReaderViewport).toHaveBeenCalledTimes(1);
     expect(clearPreviewFragment).toHaveBeenCalledTimes(1);
     expect(highlightOwner.clear).toHaveBeenCalled();
+    expect(previewLease.isActive()).toBe(false);
   });
 
   it("rejects an unavailable origin without moving and defects on canonical mismatch before scrolling", async () => {

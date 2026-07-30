@@ -28,7 +28,7 @@ interface UseReaderActivityAdapterInput {
   paneActive: boolean;
   viewport: ReaderActivityViewport;
   readerRootRef: RefObject<HTMLDivElement | null>;
-  pdfContentRef: RefObject<HTMLDivElement | null>;
+  pdfViewportRef: RefObject<HTMLDivElement | null>;
   activeContent: ReaderActivityText | null;
   pdfControls: ReaderActivityPdfControls | null;
   onGenuineReaderInput: () => void;
@@ -77,7 +77,7 @@ export function useReaderActivityAdapter({
   paneActive,
   viewport,
   readerRootRef,
-  pdfContentRef,
+  pdfViewportRef,
   activeContent,
   pdfControls,
   onGenuineReaderInput,
@@ -107,7 +107,7 @@ export function useReaderActivityAdapter({
     if (!viewport.hydrated || !canRead || (!isPdf && !activeContent)) {
       return;
     }
-    const root = isPdf ? pdfContentRef.current : readerRootRef.current;
+    const root = isPdf ? pdfViewportRef.current : readerRootRef.current;
     if (!root) return;
 
     const recorder = activityRecorder();
@@ -201,7 +201,7 @@ export function useReaderActivityAdapter({
     observerKey,
     onGenuineReaderInput,
     paneActive,
-    pdfContentRef,
+    pdfViewportRef,
     pdfControls,
     previewLease,
     readerRootRef,

@@ -27,6 +27,7 @@ import {
   mediaPaneFindErrorMessage,
   type MediaPaneFindError,
 } from "./mediaPaneFind";
+import type { MediaFindPreviewLease } from "./mediaFindPreviewLease";
 
 const ENTIRE_TRANSCRIPT_SCOPE_ID = "EntireTranscript";
 const CURRENT_CHAPTER_SCOPE_PREFIX = "CurrentChapter:";
@@ -87,6 +88,7 @@ export interface CreateTranscriptFindAdapterInput {
   readonly publishPresentation: (
     presentation: TranscriptFindPresentation,
   ) => void;
+  readonly previewLease: MediaFindPreviewLease;
 }
 
 function readableTranscriptState(
@@ -294,6 +296,7 @@ export function createTranscriptFindAdapter({
   getSegmentList,
   getMatchElement,
   publishPresentation,
+  previewLease,
 }: CreateTranscriptFindAdapterInput): TranscriptFindAdapter {
   let currentSessionId = 0;
   let currentQueryId = 0;
@@ -522,6 +525,7 @@ export function createTranscriptFindAdapter({
         activeFragmentId: getActiveFragmentId(),
         segmentListScrollTop: segmentList.scrollTop,
       };
+      previewLease.acquire();
       const previous = {
         activeFragmentId: getActiveFragmentId(),
         segmentListScrollTop: segmentList.scrollTop,
@@ -564,7 +568,10 @@ export function createTranscriptFindAdapter({
         } catch {
           return previewReceipt(request);
         }
-        if (originWasNew) origin = null;
+        if (originWasNew) {
+          origin = null;
+          previewLease.cancelUnreportedPreview();
+        }
         throw error;
       }
       return previewReceipt(request);
@@ -583,6 +590,7 @@ export function createTranscriptFindAdapter({
       if (origin.sessionId !== request.sessionId) {
         throw new Error("Transcript Find origin belongs to another session.");
       }
+      previewLease.acquire();
       const captured = origin;
       activePresentationKey = null;
       publishPresentation({ kind: "Text" });
@@ -598,6 +606,7 @@ export function createTranscriptFindAdapter({
       segmentList.scrollTop = captured.segmentListScrollTop;
       segmentList.focus({ preventScroll: true });
       origin = null;
+      previewLease.completeReturn();
     },
     errorMessage: mediaPaneFindErrorMessage,
     dispose() {

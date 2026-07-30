@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { canonicalTextFind } from "@/lib/reader/canonicalTextFind";
+import {
+  canonicalTextFind,
+  canonicalTextFindSnippet,
+} from "@/lib/reader/canonicalTextFind";
 import sharedCases from "../../../../../testdata/pane-find/canonical-text.json";
 
 function readyOccurrences(
@@ -13,6 +16,18 @@ function readyOccurrences(
 }
 
 describe("canonicalTextFind", () => {
+  it("exports the canonical codepoint snippet projection", () => {
+    const codePoints = Array.from(
+      `${"L".repeat(70)}😀needle😀${"R".repeat(70)}`,
+    );
+
+    expect(canonicalTextFindSnippet(codePoints, 71, 77)).toEqual([
+      { text: `${"L".repeat(63)}😀`, emphasized: false },
+      { text: "needle", emphasized: true },
+      { text: `😀${"R".repeat(63)}`, emphasized: false },
+    ]);
+  });
+
   it("matches the shared TypeScript/Python agreement corpus", () => {
     for (const testCase of sharedCases.cases) {
       const result = canonicalTextFind({

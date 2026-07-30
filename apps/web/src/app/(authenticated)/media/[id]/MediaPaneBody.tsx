@@ -269,6 +269,11 @@ import {
   type EpubRenderedSectionOverride,
 } from "./useEpubPaneFind";
 import type { MediaPaneFindError } from "./mediaPaneFind";
+import { usePdfPaneFind } from "./usePdfPaneFind";
+import type {
+  PdfFindError,
+  PdfFindRuntime,
+} from "@/components/pdfPaneFind";
 import TranscriptContentPanel, {
   type TranscriptFindPresentation,
 } from "./TranscriptContentPanel";
@@ -1060,6 +1065,22 @@ export default function MediaPaneBody() {
   const [pdfIntrinsicWidthPx, setPdfIntrinsicWidthPx] = useState<number | null>(
     null,
   );
+  const [pdfFindRuntimePublication, setPdfFindRuntimePublication] = useState<{
+    readonly mediaId: string;
+    readonly runtime: PdfFindRuntime;
+  } | null>(null);
+  const handlePdfFindRuntimeReady = useCallback(
+    (runtime: PdfFindRuntime | null) => {
+      setPdfFindRuntimePublication((current) =>
+        runtime === null
+          ? current?.mediaId === id
+            ? null
+            : current
+          : { mediaId: id, runtime },
+      );
+    },
+    [id],
+  );
   const pdfControlsRef = useRef<PdfReaderControlActions | null>(null);
   const restoreSessionIdRef = useRef(0);
   const appliedEpubNavigationRef = useRef<ReaderNavigationSection[] | null>(
@@ -1469,6 +1490,7 @@ export default function MediaPaneBody() {
 
   const contentRef = useRef<HTMLDivElement>(null);
   const pdfContentRef = useRef<HTMLDivElement>(null);
+  const pdfViewportRef = useRef<HTMLDivElement>(null);
   const textViewportRef = useRef<HTMLDivElement>(null);
   const textEndRef = useRef<HTMLElement>(null);
   const cursorRef = useRef<CanonicalCursorResult | null>(null);
@@ -2969,7 +2991,7 @@ export default function MediaPaneBody() {
 
   // Stable reader viewport focus target after a handoff button resolves.
   const focusReaderViewport = useCallback(() => {
-    const container = isPdf ? pdfContentRef.current : textViewportRef.current;
+    const container = isPdf ? pdfViewportRef.current : textViewportRef.current;
     if (!container) {
       return;
     }
@@ -3795,15 +3817,26 @@ export default function MediaPaneBody() {
             getMatchElement: (key) =>
               transcriptFindMatchElementsRef.current.get(key) ?? null,
             publishPresentation: setTranscriptFindPresentation,
+            previewLease: mediaFindPreviewLease,
           })
         : null,
-    [transcriptFindSnapshot],
+    [mediaFindPreviewLease, transcriptFindSnapshot],
   );
   useLayoutEffect(() => {
     if (!transcriptFindAdapter) return;
     mediaFindPreviewLease.beginSource();
     return () => transcriptFindAdapter.dispose();
   }, [mediaFindPreviewLease, transcriptFindAdapter]);
+  const pdfFindAdapter = usePdfPaneFind({
+    mediaId: id,
+    runtime:
+      isPdf &&
+      canRead &&
+      pdfFindRuntimePublication?.mediaId === id
+        ? pdfFindRuntimePublication.runtime
+        : null,
+    previewLease: mediaFindPreviewLease,
+  });
 
   const webPaneFindSource = useMemo(
     () =>
@@ -3867,7 +3900,7 @@ export default function MediaPaneBody() {
     focusReaderViewport,
   });
   const selectedMediaFindCapability = useMemo<
-    PaneFindCapability<MediaPaneFindError>
+    PaneFindCapability<MediaPaneFindError | PdfFindError>
   >(() => {
     switch (media?.kind) {
       case "web_article":
@@ -3880,12 +3913,16 @@ export default function MediaPaneBody() {
       case "epub":
         return epubPaneFindCapability;
       case "pdf":
+        return pdfFindAdapter
+          ? { kind: "Available", adapter: pdfFindAdapter }
+          : { kind: "Unavailable" };
       default:
         return { kind: "Unavailable" };
     }
   }, [
     epubPaneFindCapability,
     media?.kind,
+    pdfFindAdapter,
     transcriptFindAdapter,
     webPaneFindCapability,
   ]);
@@ -5021,7 +5058,7 @@ export default function MediaPaneBody() {
     paneActive: paneRuntime.isActive,
     viewport,
     readerRootRef,
-    pdfContentRef,
+    pdfViewportRef,
     activeContent,
     pdfControls: pdfControlsState,
     onGenuineReaderInput: handleGenuineReaderInput,
@@ -7145,9 +7182,11 @@ export default function MediaPaneBody() {
   const mediaFindInputLabel =
     media?.kind === "epub"
       ? "Find in book"
-      : transcriptFindAvailable
-        ? "Find in transcript"
-        : "Find in article";
+      : media?.kind === "pdf"
+        ? "Find in PDF"
+        : transcriptFindAvailable
+          ? "Find in transcript"
+          : "Find in article";
   const searchCommandsRef = useRef<
     Pick<
       ReturnType<typeof useResourceInspector>,
@@ -7641,6 +7680,7 @@ export default function MediaPaneBody() {
                   key={`${id}:${canonicalResetRevision ?? "initial"}`}
                   mediaId={id}
                   beforeContent={readerBanners}
+                  viewportRef={pdfViewportRef}
                   contentRef={pdfContentRef}
                   focusedHighlightId={focusState.focusedId}
                   hoveredHighlightId={hoveredHighlightId}
@@ -7711,6 +7751,7 @@ export default function MediaPaneBody() {
                     }
                   }}
                   onIntrinsicWidthChange={handlePdfIntrinsicWidthChange}
+                  onFindRuntimeReady={handlePdfFindRuntimeReady}
                   startPageNumber={
                     canonicalResetRevision === null
                       ? (activeRequestedPdfPageNumber ??
