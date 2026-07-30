@@ -89,6 +89,7 @@ describe("decodePodcastEpisodeMedia contributor contract", () => {
       kind: "podcast_episode",
       title: "Episode",
       canonical_source_url: { kind: "Absent" },
+      offline_download_eligible: false,
       processing_status: "ready_for_reading",
       transcript_state: "ready",
       transcript_coverage: "full",

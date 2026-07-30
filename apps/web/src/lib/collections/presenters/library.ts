@@ -47,6 +47,7 @@ export function presentLibrary(
     }),
     activity: absent(),
     exceptionalStatus: absent(),
+    localAvailability: absent(),
     connections: absent(),
     relatedMediaId: absent(),
     actionPublication: publishResourceRowActions({

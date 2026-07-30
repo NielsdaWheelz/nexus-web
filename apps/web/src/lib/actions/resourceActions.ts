@@ -2,6 +2,7 @@ import { createElement, type ComponentType } from "react";
 import {
   ArrowUpRight,
   CheckCircle2,
+  Download,
   ExternalLink,
   Library,
   ListMinus,
@@ -15,8 +16,11 @@ import {
   Sparkles,
   Trash2,
   Undo2,
+  XCircle,
 } from "lucide-react";
 import type { LecternItemId } from "@/lib/lectern/contract";
+import type { Presence } from "@/lib/api/presence";
+import type { LocalAvailability } from "@/lib/offlineMedia/contract";
 import { resourceCapabilityForScheme } from "@/lib/resources/resourceCapabilities";
 import type {
   ResourceActionSubject,
@@ -82,6 +86,27 @@ export const RESOURCE_ACTION_CATALOG = {
     label: "Retry processing",
     busyLabel: "Retrying...",
     icon: RotateCcw,
+  },
+  DownloadOffline: {
+    id: "ResourceOperation.Media.DownloadOffline",
+    label: "Download for offline",
+    icon: Download,
+  },
+  CancelOfflineDownload: {
+    id: "ResourceOperation.Media.CancelOfflineDownload",
+    label: "Cancel download",
+    icon: XCircle,
+  },
+  RetryOfflineDownload: {
+    id: "ResourceOperation.Media.RetryOfflineDownload",
+    label: "Retry download",
+    icon: RotateCcw,
+  },
+  RemoveOfflineDownload: {
+    id: "ResourceOperation.Media.RemoveOfflineDownload",
+    label: "Remove download",
+    busyLabel: "Removing download…",
+    icon: Trash2,
   },
   RefreshSource: {
     id: "ResourceOperation.Media.RefreshSource",
@@ -646,6 +671,19 @@ export type EpisodePlayedStateAction =
   | { readonly kind: "MarkPlayed"; readonly execute: RichActionExecutor }
   | { readonly kind: "MarkUnplayed"; readonly execute: RichActionExecutor };
 
+export type EpisodeOfflineDownloadAction =
+  | { readonly kind: "Unavailable" }
+  | {
+      readonly kind: "Available";
+      readonly availability: Presence<LocalAvailability>;
+      readonly execute: {
+        readonly download: RichActionExecutor;
+        readonly cancel: RichActionExecutor;
+        readonly retry: RichActionExecutor;
+        readonly remove: RichActionExecutor;
+      };
+    };
+
 export type PodcastSubscriptionAction =
   | { readonly kind: "Unavailable" }
   | { readonly kind: "Subscribed"; readonly execute: RichActionExecutor };
@@ -695,6 +733,66 @@ function commandDescriptor(
   });
 }
 
+const NO_BUSY_RESOURCE_ACTIONS: ReadonlySet<ResourceActionId> = new Set();
+
+export function episodeOfflineDownloadOptions(
+  offline: EpisodeOfflineDownloadAction,
+): readonly ActionDescriptor[] {
+  if (offline.kind === "Unavailable") return [];
+  if (offline.availability.kind === "Absent") {
+    return [
+      commandDescriptor(
+        "DownloadOffline",
+        offline.execute.download,
+        NO_BUSY_RESOURCE_ACTIONS,
+      ),
+    ];
+  }
+  switch (offline.availability.value.kind) {
+    case "Resolving":
+    case "Queued":
+    case "Downloading":
+    case "Restarting":
+      return [
+        commandDescriptor(
+          "CancelOfflineDownload",
+          offline.execute.cancel,
+          NO_BUSY_RESOURCE_ACTIONS,
+        ),
+      ];
+    case "Ready":
+      return [
+        commandDescriptor(
+          "RemoveOfflineDownload",
+          offline.execute.remove,
+          NO_BUSY_RESOURCE_ACTIONS,
+        ),
+      ];
+    case "Failed":
+      return [
+        commandDescriptor(
+          "RetryOfflineDownload",
+          offline.execute.retry,
+          NO_BUSY_RESOURCE_ACTIONS,
+        ),
+        commandDescriptor(
+          "RemoveOfflineDownload",
+          offline.execute.remove,
+          NO_BUSY_RESOURCE_ACTIONS,
+        ),
+      ];
+    case "Removing":
+      return [
+        projectResourceActionToMenu({
+          kind: "command",
+          catalogKey: "RemoveOfflineDownload",
+          busy: true,
+          onSelect: offline.execute.remove,
+        }),
+      ];
+  }
+}
+
 function executableDescriptor(
   catalogKey: ResourceActionCatalogKey,
   capability: ExecutableResourceAction,
@@ -712,6 +810,7 @@ function mediaOperationGroups(
       | MediaReadStateAction
       | EpisodePlayedStateAction;
     readonly busyIds: ReadonlySet<ResourceActionId>;
+    readonly offlineDownload?: EpisodeOfflineDownloadAction;
   },
 ): RichResourceActionGroups {
   const operations: ActionDescriptor[] = [];
@@ -723,6 +822,9 @@ function mediaOperationGroups(
         href: input.media.canonical_source_url,
       }),
     );
+  }
+  if (input.offlineDownload?.kind === "Available") {
+    operations.push(...episodeOfflineDownloadOptions(input.offlineDownload));
   }
   const retry = executableDescriptor(
     "RetryProcessing",
@@ -930,6 +1032,7 @@ export interface EpisodeResourceActionsInput
   extends MediaOperationCapabilities {
   readonly media: MediaActionSubject;
   readonly playedState: EpisodePlayedStateAction;
+  readonly offlineDownload: EpisodeOfflineDownloadAction;
   readonly busyIds: ReadonlySet<ResourceActionId>;
 }
 

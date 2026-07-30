@@ -61,6 +61,7 @@ export function presentPodcast(
         ? present({ kind: "Unplayed", count: item.unplayedCount.value })
         : absent(),
     exceptionalStatus: exceptionalStatus(item.syncStatus),
+    localAvailability: absent(),
     connections: connectionsFromSummary(connectionSummary),
     relatedMediaId: absent(),
     actionPublication: publishResourceRowActions({

@@ -337,7 +337,8 @@ without the intentionally excluded native API client.
 
 ## Native Contract
 
-- Pin every Media3 artifact to `1.10.1`.
+- Pin every Media3 artifact to `1.10.1`. Compile against Android SDK 36, its
+  minimum supported compile SDK; retain target SDK 35 behavior.
 - Structured key: `(ownedOrigin, accountId, mediaId)`. Derive one stable request
   id and use it as Media3 id plus `customCacheKey`.
 - One app-scoped `SimpleCache` below `filesDir`; never `cacheDir`; one
@@ -369,8 +370,8 @@ DownloadRequest.data = OfflineMediaMetadata {
   post-redirect final URL.
 - Before enqueue, perform one `Range: bytes=0-0` preflight with
   `OFFLINE_PREFLIGHT_DEADLINE_MS = 30_000` through the owned public-HTTPS
-  OkHttp data source. Determine length when available, MIME, and MP3/M4A
-  container; do not issue HEAD.
+  OkHttp data source. Validate status and MIME and determine length when
+  available; do not issue HEAD.
 - Re-run redirect policy on every attempt. Reject credentials, non-HTTPS,
   IP literals, non-global DNS, redirect loops, and more than five redirects.
 - Log structured request/media ids, sanitized host, response status, redirect
@@ -378,8 +379,9 @@ DownloadRequest.data = OfflineMediaMetadata {
   paths/queries.
 - `SafeProgressiveDownloaderFactory` deletes every incomplete cache resource
   before a new attempt. Failed/interrupted work never resumes cached spans.
-- `Ready` requires Media3 completion and complete cache coverage. Verification
-  is an internal transition, not a visible state.
+- `Ready` requires Media3 completion, complete cache coverage, and an MP3/M4A
+  container signature read from the completed cache. Verification is an
+  internal transition, not a visible state.
 - Before enqueue, require known remaining bytes plus the 512 MiB reserve when
   length is known. An owned sink guard checks allocatable space during writes
   and fails before crossing the reserve.

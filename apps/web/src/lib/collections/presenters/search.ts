@@ -42,6 +42,7 @@ export function presentSearchResult(vm: SearchResultRowViewModel): CollectionRow
     context,
     activity: absent(),
     exceptionalStatus: absent(),
+    localAvailability: absent(),
     connections: absent(),
     relatedMediaId: absent(),
     actionPublication: {

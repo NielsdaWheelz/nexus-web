@@ -134,6 +134,7 @@ describe("PodcastDetailPaneBody transcript billing", () => {
                 kind: "Present",
                 value: "https://feeds.example.com/systems.xml",
               },
+              offline_download_eligible: true,
               processing_status: "ready_for_reading",
               transcript_state: "not_requested",
               transcript_coverage: "none",

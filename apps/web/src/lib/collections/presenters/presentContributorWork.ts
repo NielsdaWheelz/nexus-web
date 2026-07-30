@@ -77,6 +77,7 @@ export function presentContributorWork(work: ContributorWorkItem): CollectionRow
         : present({ kind: "Text", text: roleContext }),
     activity: absent(),
     exceptionalStatus: absent(),
+    localAvailability: absent(),
     connections: absent(),
     relatedMediaId: absent(),
     actionPublication: {

@@ -370,6 +370,7 @@ class TestPodcastUxHardening:
             "kind",
             "title",
             "canonical_source_url",
+            "offline_download_eligible",
             "processing_status",
             "transcript_state",
             "transcript_coverage",

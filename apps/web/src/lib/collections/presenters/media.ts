@@ -113,6 +113,7 @@ export function presentMedia(
       readingTime(readingTimeEstimate),
     ),
     exceptionalStatus: exceptionalStatus(item.processing_status),
+    localAvailability: absent(),
     connections: connectionsFromSummary(connectionSummary),
     relatedMediaId: present(item.id),
     actionPublication: publishResourceRowActions({

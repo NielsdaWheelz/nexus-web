@@ -1,0 +1,137 @@
+.panel {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.mobileHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: var(--stroke-hairline) solid var(--edge-subtle);
+}
+
+.mobileHeader h2 {
+  margin: 0;
+  font-size: var(--text-lg);
+}
+
+.policy {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.policy input {
+  width: 1.1rem;
+  height: 1.1rem;
+  margin: 0.15rem 0 0;
+  flex: none;
+  accent-color: var(--accent);
+}
+
+.policy span {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.policy small,
+.state,
+.total {
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+.empty,
+.total {
+  margin: 0;
+}
+
+.total {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-1) var(--space-3);
+  align-items: center;
+  min-width: 0;
+  padding: var(--space-3) 0;
+  border-top: var(--stroke-hairline) solid var(--edge-subtle);
+}
+
+.title {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-snug);
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.title:hover {
+  color: var(--accent);
+}
+
+.title:focus-visible {
+  outline: var(--focus-ring-width) solid var(--ring);
+  outline-offset: 3px;
+  border-radius: var(--radius-xs);
+}
+
+.state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  margin: 0;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.item > :global(button:last-child) {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+@media (max-width: 520px) {
+  .item {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .actions,
+  .item > :global(button:last-child) {
+    grid-column: 1;
+    grid-row: auto;
+    justify-content: flex-start;
+  }
+}

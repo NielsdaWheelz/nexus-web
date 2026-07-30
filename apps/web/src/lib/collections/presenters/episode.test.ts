@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { present } from "@/lib/api/presence";
 import { presentEpisode, type EpisodePresenterContext, type EpisodePresenterItem } from "./episode";
 
 function item(overrides: Partial<EpisodePresenterItem> = {}): EpisodePresenterItem {
@@ -9,6 +10,7 @@ function item(overrides: Partial<EpisodePresenterItem> = {}): EpisodePresenterIt
     processing_status: "ready_for_reading",
     episode_state: "in_progress",
     canonical_source_url: "https://example.test/episode",
+    offline_download_eligible: true,
     contributors: [],
     publicationDate: { kind: "Absent" },
     activityFacts: {
@@ -30,6 +32,7 @@ function ctx(overrides: Partial<EpisodePresenterContext> = {}): EpisodePresenter
     lecternMembership: { kind: "Unavailable" },
     removeMedia: { kind: "Unavailable" },
     playedState: { kind: "Unavailable" },
+    offlineDownload: { kind: "Unavailable" },
     busyIds: new Set(),
     view: [],
     ...overrides,
@@ -62,5 +65,120 @@ describe("presentEpisode", () => {
     if (action?.kind !== "command") throw new Error("Expected command action");
     action.onSelect({ triggerEl: null });
     expect(reset).toHaveBeenCalledOnce();
+  });
+
+  it("maps selected offline availability and actions in canonical operation order", () => {
+    const remove = vi.fn();
+    const retryProcessing = vi.fn();
+    const availability = present({
+      kind: "Ready" as const,
+      sizeBytes: 42,
+      contentType: "audio/mpeg",
+      updatedAt: "2026-07-30T19:00:00Z",
+    });
+    const view = presentEpisode(
+      item(),
+      ctx({
+        retryProcessing: {
+          kind: "Available",
+          execute: retryProcessing,
+        },
+        offlineDownload: {
+          kind: "Available",
+          availability,
+          execute: {
+            download: vi.fn(),
+            cancel: vi.fn(),
+            retry: vi.fn(),
+            remove,
+          },
+        },
+      }),
+    );
+
+    expect(view.localAvailability).toBe(availability);
+    if (view.actionPublication.kind !== "ResourceMenu") {
+      throw new Error("Expected resource menu publication");
+    }
+    expect(
+      view.actionPublication.groups.operations.map((action) => action.id),
+    ).toEqual([
+      "ResourceOperation.OpenSource",
+      "ResourceOperation.Media.RemoveOfflineDownload",
+      "ResourceOperation.Media.RetryProcessing",
+    ]);
+    const removeAction = view.actionPublication.groups.operations[1];
+    if (removeAction?.kind !== "command") {
+      throw new Error("Expected remove command");
+    }
+    removeAction.onSelect({ triggerEl: null });
+    expect(remove).toHaveBeenCalledOnce();
+  });
+
+  it("keeps durable offline state removable after current eligibility is lost", () => {
+    const remove = vi.fn();
+    const view = presentEpisode(
+      item({ offline_download_eligible: false }),
+      ctx({
+        offlineDownload: {
+          kind: "Available",
+          availability: present({
+            kind: "Ready",
+            sizeBytes: 42,
+            contentType: "audio/mpeg",
+            updatedAt: "2026-07-30T19:00:00Z",
+          }),
+          execute: {
+            download: vi.fn(),
+            cancel: vi.fn(),
+            retry: vi.fn(),
+            remove,
+          },
+        },
+      }),
+    );
+
+    expect(view.localAvailability).toMatchObject({
+      kind: "Present",
+      value: { kind: "Ready" },
+    });
+    if (view.actionPublication.kind !== "ResourceMenu") {
+      throw new Error("Expected resource menu publication");
+    }
+    expect(
+      view.actionPublication.groups.operations.map((action) => action.id),
+    ).toContain("ResourceOperation.Media.RemoveOfflineDownload");
+  });
+
+  it("keeps a durable Failed item retryable after current eligibility is lost", () => {
+    const view = presentEpisode(
+      item({ offline_download_eligible: false }),
+      ctx({
+        offlineDownload: {
+          kind: "Available",
+          availability: present({
+            kind: "Failed",
+            code: "DownloadFailed",
+          }),
+          execute: {
+            download: vi.fn(),
+            cancel: vi.fn(),
+            retry: vi.fn(),
+            remove: vi.fn(),
+          },
+        },
+      }),
+    );
+
+    if (view.actionPublication.kind !== "ResourceMenu") {
+      throw new Error("Expected resource menu publication");
+    }
+    expect(
+      view.actionPublication.groups.operations.map((action) => action.id),
+    ).toEqual([
+      "ResourceOperation.OpenSource",
+      "ResourceOperation.Media.RetryOfflineDownload",
+      "ResourceOperation.Media.RemoveOfflineDownload",
+    ]);
   });
 });

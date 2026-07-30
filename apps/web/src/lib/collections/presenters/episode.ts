@@ -27,6 +27,7 @@ export interface EpisodePresenterItem {
   processing_status: MediaProcessingStatus;
   episode_state: "unplayed" | "in_progress" | "played";
   canonical_source_url: string | null;
+  offline_download_eligible: boolean;
   contributors: ContributorCredit[];
   capabilities?: unknown;
   publicationDate: Presence<PublicationDate>;
@@ -118,6 +119,10 @@ export function presentEpisode(
     context: absent(),
     activity: episodeActivity(item),
     exceptionalStatus: exceptionalStatus(item.processing_status),
+    localAvailability:
+      actionCtx.offlineDownload.kind === "Available"
+        ? actionCtx.offlineDownload.availability
+        : absent(),
     connections: connectionsFromSummary(connectionSummary),
     relatedMediaId: present(item.id),
     actionPublication: publishResourceRowActions({

@@ -4,6 +4,7 @@
  */
 
 import type { ResourceRowPrimary } from "@/components/ui/ResourceRow";
+import type { LocalAvailability } from "@/lib/offlineMedia/contract";
 import type { EmphasisSegment } from "@/lib/ui/emphasis";
 import type { Presence } from "@/lib/api/presence";
 import type { ContributorCredit } from "@/lib/contributors/types";
@@ -102,6 +103,7 @@ export interface CollectionRowView {
   readonly context: Presence<CollectionContext>;
   readonly activity: Presence<CollectionActivity>;
   readonly exceptionalStatus: Presence<ExceptionalStatus>;
+  readonly localAvailability: Presence<LocalAvailability>;
   readonly connections: Presence<ConnectionSummaryView>;
   readonly relatedMediaId: Presence<string>;
   readonly actionPublication: ActionPublication;

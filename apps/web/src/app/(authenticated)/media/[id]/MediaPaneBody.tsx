@@ -5982,6 +5982,7 @@ export default function MediaPaneBody() {
       media.kind === "podcast_episode"
         ? episodeResourceOptions({
             ...commonActions,
+            offlineDownload: { kind: "Unavailable" },
             playedState:
               media.episode_state === "played" ||
               (media.episode_state === null &&

@@ -303,6 +303,7 @@ class PodcastEpisodeListItemOut(BaseModel):
     kind: Literal["podcast_episode"]
     title: str
     canonical_source_url: Presence[str]
+    offline_download_eligible: bool
     processing_status: MediaProcessingStatus
     transcript_state: str
     transcript_coverage: str

@@ -11,6 +11,7 @@ import LocalVaultAutoSync from "./LocalVaultAutoSync";
 import SessionRefresher from "@/lib/auth/SessionRefresher";
 import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
+import { OfflineMediaProvider } from "@/lib/offlineMedia/OfflineMediaProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { WalknoteSessionProvider } from "@/lib/walknotes/walknoteSession";
 import { ReaderProvider } from "@/lib/reader/ReaderContext";
@@ -37,11 +38,13 @@ import { ShareControllerProvider } from "@/lib/sharing/controller";
 import styles from "./layout.module.css";
 
 export default function AuthenticatedShell({
+  accountId,
   readerProfile,
   renderEnvironment,
   initialState,
   resources,
 }: {
+  accountId: string;
   readerProfile: ReaderProfile;
   renderEnvironment: RenderEnvironment;
   initialState: WorkspaceState;
@@ -58,7 +61,10 @@ export default function AuthenticatedShell({
           <KeybindingsProvider>
             <ReaderProvider initialProfile={readerProfile}>
               <ReaderProfileSaveFeedback />
-              <AuthenticatedWorkspace initialState={initialState} />
+              <AuthenticatedWorkspace
+                accountId={accountId}
+                initialState={initialState}
+              />
             </ReaderProvider>
           </KeybindingsProvider>
         </ResourceCacheProvider>
@@ -67,7 +73,13 @@ export default function AuthenticatedShell({
   );
 }
 
-function AuthenticatedWorkspace({ initialState }: { initialState: WorkspaceState }) {
+function AuthenticatedWorkspace({
+  accountId,
+  initialState,
+}: {
+  accountId: string;
+  initialState: WorkspaceState;
+}) {
   const { workspacePrimaryMetrics, probe } = useWorkspacePrimaryMetrics();
 
   // Interactivity fact for the workspace root: absent in server HTML, stamped
@@ -115,19 +127,24 @@ function AuthenticatedWorkspace({ initialState }: { initialState: WorkspaceState
               <LecternProvider>
                 <LibraryPlacementControllerProvider>
                   <ShareControllerProvider>
-                    <Nexus />
-                    <div className={styles.layout} data-hydrated={hydrated || undefined}>
-                      <AppNav />
-                      <main className={styles.main}>
-                        <GlobalPlayerProvider>
-                          <WalknoteSessionProvider>
-                            <WorkspaceHost />
-                            <LecternMutationNotice />
-                            <GlobalPlayerFooter />
-                          </WalknoteSessionProvider>
-                        </GlobalPlayerProvider>
-                      </main>
-                    </div>
+                    <OfflineMediaProvider accountId={accountId}>
+                      <Nexus />
+                      <div
+                        className={styles.layout}
+                        data-hydrated={hydrated || undefined}
+                      >
+                        <AppNav />
+                        <main className={styles.main}>
+                          <GlobalPlayerProvider>
+                            <WalknoteSessionProvider>
+                              <WorkspaceHost />
+                              <LecternMutationNotice />
+                              <GlobalPlayerFooter />
+                            </WalknoteSessionProvider>
+                          </GlobalPlayerProvider>
+                        </main>
+                      </div>
+                    </OfflineMediaProvider>
                   </ShareControllerProvider>
                 </LibraryPlacementControllerProvider>
               </LecternProvider>

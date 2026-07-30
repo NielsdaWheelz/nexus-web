@@ -16,8 +16,7 @@ interface ResourceRowProps {
   readonly primary: ResourceRowPrimary;
   readonly title: ReactNode;
   readonly supporting?: ReactNode;
-  readonly activity?: ReactNode;
-  readonly exceptionalStatus?: ReactNode;
+  readonly status?: ReactNode;
   readonly primaryControl?: ReactNode;
   readonly actions?: ReactNode;
   readonly expanded?: ReactNode;
@@ -34,8 +33,7 @@ export default function ResourceRow({
   primary,
   title,
   supporting,
-  activity,
-  exceptionalStatus,
+  status,
   primaryControl,
   actions,
   expanded,
@@ -43,7 +41,6 @@ export default function ResourceRow({
   as = "li",
   rootProps,
 }: ResourceRowProps) {
-  const state = exceptionalStatus ?? activity;
   const primaryIsInteractive =
     primary.kind === "link" ||
     (primary.kind === "button" && !primary.disabled && !primary.busy);
@@ -79,10 +76,10 @@ export default function ResourceRow({
           </span>
         </div>
       )}
-      {supporting || state ? (
+      {supporting || status ? (
         <div className={styles.secondary}>
           {supporting ? <div className={styles.supporting}>{supporting}</div> : null}
-          {supporting && state ? (
+          {supporting && status ? (
             <>
               <span className={styles.stateSeparator} aria-hidden="true">
                 ·
@@ -90,7 +87,7 @@ export default function ResourceRow({
               <span className="sr-only">, </span>
             </>
           ) : null}
-          {state ? <div className={styles.state}>{state}</div> : null}
+          {status ? <div className={styles.state}>{status}</div> : null}
         </div>
       ) : null}
       {primaryControl ? (

@@ -4,10 +4,12 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
-import { LogOut } from "lucide-react";
+import { Download, LogOut } from "lucide-react";
 import Link from "next/link";
 import ActionMenu from "@/components/ui/ActionMenu";
+import { useOfflineMediaCapability } from "@/lib/offlineMedia/OfflineMediaProvider";
 import type { AppNavActivationResult } from "@/lib/panes/targetLinkActivation";
+import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { NavItem } from "./navModel";
 import styles from "./AppNav.module.css";
 
@@ -30,6 +32,70 @@ export default function AccountMenu({
   ) => AppNavActivationResult;
 }): ReactNode {
   const SettingsIcon = settings.icon;
+  const offlineMedia = useOfflineMediaCapability();
+  const options: ActionDescriptor[] = [];
+  if (offlineMedia.kind === "Ready") {
+    options.push({
+      kind: "custom",
+      id: "downloads",
+      label: "Downloads",
+      render: ({ closeMenu }) => (
+        <button
+          type="button"
+          role="menuitem"
+          className={styles.menuItem}
+          onClick={() => {
+            closeMenu();
+            offlineMedia.controller.openDownloads();
+          }}
+        >
+          <Download size={16} aria-hidden="true" />
+          Downloads
+        </button>
+      ),
+    });
+  }
+  options.push(
+    {
+      kind: "custom",
+      id: "settings",
+      label: settings.label,
+      render: ({ closeMenu, closeMenuWithoutFocus }) => (
+        <Link
+          href={settings.href}
+          role="menuitem"
+          className={styles.menuItem}
+          aria-current={active ? "page" : undefined}
+          onClick={(event) => {
+            const result = onNavigate(event, settings.href);
+            if (result === "unhandled") return;
+            if (result === "handled-source-focus") closeMenu();
+            else closeMenuWithoutFocus();
+          }}
+        >
+          <SettingsIcon size={16} aria-hidden="true" />
+          {settings.label}
+        </Link>
+      ),
+    },
+    {
+      kind: "custom",
+      id: "signout",
+      label: "Sign Out",
+      render: () => (
+        <form action="/auth/signout" method="post" className={styles.menuForm}>
+          <button
+            type="submit"
+            role="menuitem"
+            className={`${styles.menuItem} ${styles.menuItemDanger}`}
+          >
+            <LogOut size={16} aria-hidden="true" />
+            Sign Out
+          </button>
+        </form>
+      ),
+    },
+  );
   return (
     <ActionMenu
       className={styles.account}
@@ -37,47 +103,7 @@ export default function AccountMenu({
       placement={placement}
       align={align}
       renderTrigger={renderTrigger}
-      options={[
-        {
-          kind: "custom",
-          id: "settings",
-          label: settings.label,
-          render: ({ closeMenu, closeMenuWithoutFocus }) => (
-            <Link
-              href={settings.href}
-              role="menuitem"
-              className={styles.menuItem}
-              aria-current={active ? "page" : undefined}
-              onClick={(event) => {
-                const result = onNavigate(event, settings.href);
-                if (result === "unhandled") return;
-                if (result === "handled-source-focus") closeMenu();
-                else closeMenuWithoutFocus();
-              }}
-            >
-              <SettingsIcon size={16} aria-hidden="true" />
-              {settings.label}
-            </Link>
-          ),
-        },
-        {
-          kind: "custom",
-          id: "signout",
-          label: "Sign Out",
-          render: () => (
-            <form action="/auth/signout" method="post" className={styles.menuForm}>
-              <button
-                type="submit"
-                role="menuitem"
-                className={`${styles.menuItem} ${styles.menuItemDanger}`}
-              >
-                <LogOut size={16} aria-hidden="true" />
-                Sign Out
-              </button>
-            </form>
-          ),
-        },
-      ]}
+      options={options}
     />
   );
 }

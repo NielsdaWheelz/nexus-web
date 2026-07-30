@@ -121,6 +121,10 @@ class ApiErrorCode(str, Enum):
     E_STALE_LISTENING_REVISION = "E_STALE_LISTENING_REVISION"  # 409 - heartbeat CAS mismatch
     E_LIMIT = "E_LIMIT"  # 409 - Lectern aggregate row limit exceeded
 
+    # Offline media errors (409/422)
+    E_OFFLINE_MEDIA_UNAVAILABLE = "E_OFFLINE_MEDIA_UNAVAILABLE"
+    E_OFFLINE_MEDIA_UNSUPPORTED_SOURCE = "E_OFFLINE_MEDIA_UNSUPPORTED_SOURCE"
+
     # Streaming errors
     E_CLIENT_DISCONNECT = "E_CLIENT_DISCONNECT"  # stream aborted by client
     E_ORPHANED_PENDING = "E_ORPHANED_PENDING"  # sweeper cleanup
@@ -288,6 +292,9 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_MEDIA_DELETING: 409,
     ApiErrorCode.E_STALE_LISTENING_REVISION: 409,
     ApiErrorCode.E_LIMIT: 409,
+    # Offline media errors
+    ApiErrorCode.E_OFFLINE_MEDIA_UNAVAILABLE: 409,
+    ApiErrorCode.E_OFFLINE_MEDIA_UNSUPPORTED_SOURCE: 422,
     # Streaming errors
     ApiErrorCode.E_CLIENT_DISCONNECT: 499,
     ApiErrorCode.E_ORPHANED_PENDING: 500,
