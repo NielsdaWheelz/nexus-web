@@ -15,8 +15,8 @@ type AudioMetrics = {
   playbackRate?: number;
 };
 
-/** The accessible name of the footer's hidden `<audio>` element. */
-export const FOOTER_AUDIO_LABEL = "Media player audio";
+/** The public accessible name of the provider-owned `<audio>` element. */
+export const PLAYER_AUDIO_LABEL = "Media player audio";
 
 export function setViewportWidth(width: number): void {
   vi.stubGlobal("innerWidth", width);
@@ -65,7 +65,7 @@ type DescriptorOptions = {
 };
 
 /** Build a decoded `PlayerDescriptor` (the only `playAudio` input). */
-export function buildFooterDescriptor(
+export function buildPlayerDescriptor(
   mediaId: string,
   title: string,
   options: DescriptorOptions = {},

@@ -1,18 +1,22 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
+import GlobalPlayerSurfaces from "@/components/player/GlobalPlayerSurfaces";
 import { MobileViewportProvider } from "@/lib/mobileViewport/MobileViewportProvider";
 import { WorkspaceTestProvider } from "@/__tests__/helpers/WorkspaceTestProvider";
-import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer";
+import {
+  GlobalPlayerProvider,
+  usePlayerCommands,
+  usePlayerSession,
+} from "@/lib/player/globalPlayer";
 import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
 import { assumeMediaId } from "@/lib/lectern/contract";
 import {
-  buildFooterDescriptor,
+  buildPlayerDescriptor,
   installLecternPlayerFetchMock,
   jsonResponse,
   setAudioMetrics,
   setViewportWidth,
-  FOOTER_AUDIO_LABEL,
+  PLAYER_AUDIO_LABEL,
 } from "../helpers/audio";
 
 function installIntervalHarness() {
@@ -59,14 +63,14 @@ function listeningStatePuts(
 const MEDIA_A = "11111111-1111-4111-8111-111111111111";
 const MEDIA_B = "22222222-2222-4222-8222-222222222222";
 
-const DESCRIPTOR_A = buildFooterDescriptor(MEDIA_A, "Episode Alpha", {
+const DESCRIPTOR_A = buildPlayerDescriptor(MEDIA_A, "Episode Alpha", {
   positionMs: 45_000,
   playbackSpeed: 1.75,
 });
-const DESCRIPTOR_B = buildFooterDescriptor(MEDIA_B, "Episode Beta");
+const DESCRIPTOR_B = buildPlayerDescriptor(MEDIA_B, "Episode Beta");
 
 function PersistenceProbe() {
-  const { persistence } = useGlobalPlayer();
+  const { persistence } = usePlayerSession();
   return <span data-testid="persistence">{persistence.kind}</span>;
 }
 
@@ -76,7 +80,7 @@ function LecternReadyProbe() {
 }
 
 function Harness() {
-  const { playAudio } = useGlobalPlayer();
+  const { playAudio } = usePlayerCommands();
   return (
     <>
       <button type="button" onClick={() => playAudio(DESCRIPTOR_A)}>Load episode A</button>
@@ -84,7 +88,7 @@ function Harness() {
       <PersistenceProbe />
       <LecternReadyProbe />
       <MobileViewportProvider>
-        <GlobalPlayerFooter />
+        <GlobalPlayerSurfaces />
       </MobileViewportProvider>
     </>
   );
@@ -125,7 +129,7 @@ describe("GlobalPlayer listening heartbeat", () => {
     render(<App />);
     await loadA();
 
-    const audio = screen.getByLabelText(FOOTER_AUDIO_LABEL) as HTMLAudioElement;
+    const audio = screen.getByLabelText(PLAYER_AUDIO_LABEL) as HTMLAudioElement;
     setAudioMetrics(audio, { duration: 120, currentTime: 30, playbackRate: 1.5 });
     fireEvent(audio, new Event("durationchange"));
     fireEvent(audio, new Event("timeupdate"));
@@ -161,7 +165,7 @@ describe("GlobalPlayer listening heartbeat", () => {
     render(<App />);
     await loadA();
 
-    const audio = screen.getByLabelText(FOOTER_AUDIO_LABEL) as HTMLAudioElement;
+    const audio = screen.getByLabelText(PLAYER_AUDIO_LABEL) as HTMLAudioElement;
     setAudioMetrics(audio, { duration: 120, currentTime: 15 });
     fireEvent(audio, new Event("durationchange"));
     fireEvent(audio, new Event("timeupdate"));
@@ -182,7 +186,7 @@ describe("GlobalPlayer listening heartbeat", () => {
     render(<App />);
     await loadA();
 
-    const audio = screen.getByLabelText(FOOTER_AUDIO_LABEL) as HTMLAudioElement;
+    const audio = screen.getByLabelText(PLAYER_AUDIO_LABEL) as HTMLAudioElement;
     fireEvent(audio, new Event("loadedmetadata"));
 
     await waitFor(() => {
@@ -210,7 +214,7 @@ describe("GlobalPlayer listening heartbeat", () => {
     render(<App />);
     await loadA();
 
-    const audio = screen.getByLabelText(FOOTER_AUDIO_LABEL) as HTMLAudioElement;
+    const audio = screen.getByLabelText(PLAYER_AUDIO_LABEL) as HTMLAudioElement;
     setAudioMetrics(audio, { duration: 120, currentTime: 10 });
     fireEvent(audio, new Event("durationchange"));
     fireEvent(audio, new Event("timeupdate"));
@@ -302,13 +306,13 @@ describe("GlobalPlayer listening heartbeat", () => {
     const intervals = installIntervalHarness();
 
     function DrainHarness() {
-      const { playAudio } = useGlobalPlayer();
+      const { playAudio } = usePlayerCommands();
       const { resetProgress } = useLectern();
       return (
         <>
           <button
             type="button"
-            onClick={() => playAudio(buildFooterDescriptor(MEDIA, "Drainable"))}
+            onClick={() => playAudio(buildPlayerDescriptor(MEDIA, "Drainable"))}
           >
             Load drain
           </button>
@@ -322,7 +326,7 @@ describe("GlobalPlayer listening heartbeat", () => {
           </button>
           <LecternReadyProbe />
           <MobileViewportProvider>
-            <GlobalPlayerFooter />
+            <GlobalPlayerSurfaces />
           </MobileViewportProvider>
         </>
       );
@@ -341,7 +345,7 @@ describe("GlobalPlayer listening heartbeat", () => {
     await screen.findByText("ready", { selector: '[data-testid="lectern-status"]' });
     fireEvent.click(screen.getByRole("button", { name: "Load drain" }));
 
-    const audio = screen.getByLabelText(FOOTER_AUDIO_LABEL) as HTMLAudioElement;
+    const audio = screen.getByLabelText(PLAYER_AUDIO_LABEL) as HTMLAudioElement;
     setAudioMetrics(audio, { duration: 120, currentTime: 30 });
     fireEvent(audio, new Event("durationchange"));
     fireEvent(audio, new Event("timeupdate"));

@@ -5,6 +5,15 @@
 
 No blocking question remains.
 
+**Player-surface supersession (2026-07-30):**
+[`global-player-surfaces-hard-cutover.md`](global-player-surfaces-hard-cutover.md)
+supersedes this document's footer/dock presentation, public monolithic player
+capability, surface-owned audio element, and no-dismissal lifecycle clause. It
+adds `dismissSession`, provider-owned audio, cadence-separated capabilities,
+the Listening Shelf, MiniPlayer, and full-screen Now Playing. Every other
+Lectern ordering, completion, heartbeat, replay, origin, and history semantic
+remains canonical here.
+
 **Progress-reset supersession (2026-07-24):**
 [`media-progress-reset-hard-cutover.md`](media-progress-reset-hard-cutover.md)
 supersedes this document's Mark Unread rewind behavior, `listeningStates`

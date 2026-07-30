@@ -18,25 +18,27 @@ import {
   renderHook,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
-import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
+import GlobalPlayerSurfaces from "@/components/player/GlobalPlayerSurfaces";
 import { MobileViewportProvider } from "@/lib/mobileViewport/MobileViewportProvider";
 import { WorkspaceTestProvider } from "@/__tests__/helpers/WorkspaceTestProvider";
 import {
   canonicalSessionOfGlobalState,
   GlobalPlayerProvider,
-  useGlobalPlayer,
+  usePlayerCommands,
+  usePlayerSession,
 } from "@/lib/player/globalPlayer";
 import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
 import { absent } from "@/lib/api/presence";
 import { assumeMediaId, type LecternItem } from "@/lib/lectern/contract";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import {
-  buildFooterDescriptor,
+  buildPlayerDescriptor,
   jsonResponse,
   setAudioMetrics,
   setViewportWidth,
-  FOOTER_AUDIO_LABEL,
+  PLAYER_AUDIO_LABEL,
 } from "../helpers/audio";
 
 const MEDIA_A = "11111111-1111-4111-8111-111111111111";
@@ -175,7 +177,7 @@ function installMock(config: MockConfig) {
 }
 
 function Probes() {
-  const { state } = useGlobalPlayer();
+  const { state } = usePlayerSession();
   const origin = canonicalSessionOfGlobalState(state)?.origin.kind ?? "none";
   const phase = state.kind === "Active" ? state.phase : "none";
   return (
@@ -199,13 +201,13 @@ function Controls({
   playMediaId: string;
   playTitle: string;
 }) {
-  const { playAudio } = useGlobalPlayer();
+  const { playAudio } = usePlayerCommands();
   const { removeItem } = useLectern();
   return (
     <>
       <button
         type="button"
-        onClick={() => playAudio(buildFooterDescriptor(playMediaId, playTitle))}
+        onClick={() => playAudio(buildPlayerDescriptor(playMediaId, playTitle))}
       >
         Play A
       </button>
@@ -238,7 +240,7 @@ function App({
         <Probes />
         <Controls playMediaId={playMediaId} playTitle={playTitle} />
         <MobileViewportProvider>
-          <GlobalPlayerFooter />
+          <GlobalPlayerSurfaces />
         </MobileViewportProvider>
         </GlobalPlayerProvider>
       </LecternProvider>
@@ -247,19 +249,19 @@ function App({
 }
 
 function StatusOnlyOverrideControls() {
-  const { playAudio } = useGlobalPlayer();
+  const { playAudio } = usePlayerCommands();
   const { setUnread } = useLectern();
   return (
     <>
       <button
         type="button"
-        onClick={() => playAudio(buildFooterDescriptor(MEDIA_A, "Override Alpha"))}
+        onClick={() => playAudio(buildPlayerDescriptor(MEDIA_A, "Override Alpha"))}
       >
         Load override A
       </button>
       <button
         type="button"
-        onClick={() => playAudio(buildFooterDescriptor(MEDIA_B, "Override Bravo"))}
+        onClick={() => playAudio(buildPlayerDescriptor(MEDIA_B, "Override Bravo"))}
       >
         Load override B
       </button>
@@ -284,7 +286,7 @@ function StatusOnlyOverrideApp() {
         <Probes />
         <StatusOnlyOverrideControls />
         <MobileViewportProvider>
-          <GlobalPlayerFooter />
+          <GlobalPlayerSurfaces />
         </MobileViewportProvider>
         </GlobalPlayerProvider>
       </LecternProvider>
@@ -351,11 +353,15 @@ describe("GlobalPlayer completion lifecycle", () => {
       expect(screen.getByTestId("origin").textContent).toBe("Lectern"),
     );
 
-    const audio = screen.getByLabelText(FOOTER_AUDIO_LABEL) as HTMLAudioElement;
+    const audio = screen.getByLabelText(PLAYER_AUDIO_LABEL) as HTMLAudioElement;
     fireEvent(audio, new Event("ended"));
 
     // Advances to the returned next session (proves snapshot installed before start).
-    expect(await screen.findByText("Second")).toBeInTheDocument();
+    expect(
+      await within(
+        screen.getByRole("region", { name: "Media player" }),
+      ).findByRole("button", { name: "Open Second" }),
+    ).toBeInTheDocument();
 
     const finish = consumptionBodies.find(
       (b) => b.kind === "FinishLecternItem",
@@ -378,7 +384,7 @@ describe("GlobalPlayer completion lifecycle", () => {
       expect(screen.getByTestId("origin").textContent).toBe("Direct"),
     );
 
-    const audio = screen.getByLabelText(FOOTER_AUDIO_LABEL) as HTMLAudioElement;
+    const audio = screen.getByLabelText(PLAYER_AUDIO_LABEL) as HTMLAudioElement;
     fireEvent(audio, new Event("ended"));
 
     await waitFor(() =>
@@ -400,7 +406,7 @@ describe("GlobalPlayer completion lifecycle", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Load override A" }));
-    const audio = screen.getByLabelText(FOOTER_AUDIO_LABEL) as HTMLAudioElement;
+    const audio = screen.getByLabelText(PLAYER_AUDIO_LABEL) as HTMLAudioElement;
     setAudioMetrics(audio, { duration: 120, currentTime: 120 });
     fireEvent(audio, new Event("durationchange"));
     fireEvent(audio, new Event("timeupdate"));
@@ -485,7 +491,7 @@ describe("GlobalPlayer completion lifecycle", () => {
       expect(screen.getByTestId("origin").textContent).toBe("Lectern"),
     );
 
-    const audio = screen.getByLabelText(FOOTER_AUDIO_LABEL) as HTMLAudioElement;
+    const audio = screen.getByLabelText(PLAYER_AUDIO_LABEL) as HTMLAudioElement;
     fireEvent(audio, new Event("ended"));
 
     await waitFor(() =>
@@ -520,10 +526,10 @@ describe("GlobalPlayer completion lifecycle", () => {
         <GlobalPlayerProvider>{children}</GlobalPlayerProvider>
       </LecternProvider>
     );
-    const { result } = renderHook(() => useGlobalPlayer(), { wrapper });
+    const { result } = renderHook(() => usePlayerCommands(), { wrapper });
 
     expect(() =>
-      result.current.playAudio(buildFooterDescriptor(MEDIA_A, "Too early")),
+      result.current.playAudio(buildPlayerDescriptor(MEDIA_A, "Too early")),
     ).toThrow(/Ready/);
   });
 

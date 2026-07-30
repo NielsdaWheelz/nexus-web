@@ -13,7 +13,7 @@ import SettingsBillingPaneBody from "./SettingsBillingPaneBody";
 // server render so hydration does not mismatch (React #418).
 //
 // The second test is the real regression: the `billing-account:0` seed has more than one
-// first-paint consumer (the always-mounted GlobalPlayerFooter reads it too, then the lazy
+// first-paint consumer (the always-mounted player surfaces read it too, then the lazy
 // billing pane hydrates later). The resource cache is consume-once, so an ambient reader
 // that CLAIMED the seed would remove it before the pane hydrates, and the pane would paint
 // its loading state against server-rendered content. Ambient readers must therefore read
@@ -84,7 +84,7 @@ describe("SettingsBillingPaneBody (AC-4 hydration hit)", () => {
 
     let mountPane: () => void = () => {};
 
-    // Mirrors GlobalPlayerFooter: an always-mounted reader of the same billing seed that
+    // Mirrors player surfaces: an always-mounted reader of the same billing seed that
     // commits (and runs its effects) before the lazy billing pane hydrates.
     function AmbientReader() {
       const { account } = useBillingAccount();

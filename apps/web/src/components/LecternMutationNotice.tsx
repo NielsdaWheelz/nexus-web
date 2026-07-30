@@ -12,7 +12,7 @@
  * the player freezes in `Completing` with no affordance. This banner exposes the
  * provider-owned Retry so the user can unblock the lane.
  *
- * It renders for ALL parked states EXCEPT a completion attempt the player dock
+ * It renders for ALL parked states EXCEPT a completion attempt the player
  * already surfaces as `CompletionFailed` (its own Retry) — determined by matching
  * the parked attempt's `clientMutationId` against the player's active
  * `CompletionAttempt` ids, so the two surfaces never double up.
@@ -20,19 +20,19 @@
 
 import Button from "@/components/ui/Button";
 import { useLectern } from "@/lib/lectern/LecternProvider";
-import { useGlobalPlayer } from "@/lib/player/globalPlayer";
+import { usePlayerSession } from "@/lib/player/globalPlayer";
 import { mutationMatchesAttempt } from "@/lib/player/playerSession";
 import styles from "./LecternMutationNotice.module.css";
 
 export default function LecternMutationNotice() {
   const { mutation } = useLectern();
-  const { state } = useGlobalPlayer();
+  const { state } = usePlayerSession();
 
   if (mutation.kind !== "RetryableFailure" && mutation.kind !== "ReconciliationFailed") {
     return null;
   }
 
-  // Suppress when the player dock already owns the retry surface for this exact
+  // Suppress when the player already owns the retry surface for this exact
   // completion attempt (Completing/CompletionFailed carry the active attempt).
   const completionAttempt =
     state.kind === "Completing" || state.kind === "CompletionFailed" ? state.attempt : undefined;

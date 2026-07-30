@@ -228,7 +228,7 @@ import {
   type ReaderLocationTarget,
 } from "@/lib/reader/readerLocationHref";
 import ReaderProgressHandoff from "./ReaderProgressHandoff";
-import { useGlobalPlayer } from "@/lib/player/globalPlayer";
+import { usePlayerCommands } from "@/lib/player/globalPlayer";
 import {
   decodeMediaNavigationResponse,
   type MediaNavigationResponse,
@@ -4962,7 +4962,7 @@ export default function MediaPaneBody() {
     [clearFocus, pdfDocumentHighlights],
   );
 
-  const { seekTo, resume } = useGlobalPlayer();
+  const { seekTo, resume } = usePlayerCommands();
   useEffect(() => {
     if (!requestedHighlightId) {
       urlTranscriptSeekAppliedRef.current = null;

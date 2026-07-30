@@ -39,7 +39,7 @@ vi.mock("@/lib/auth/UnauthenticatedApiBoundary", () => ({
 }));
 
 vi.mock("@/lib/player/globalPlayer", () => ({
-  useGlobalPlayer: () => ({
+  usePlayerCommands: () => ({
     stopPreviewAudio: mocks.stopPreviewAudio,
   }),
 }));

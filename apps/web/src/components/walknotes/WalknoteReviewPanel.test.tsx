@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useRef, useState } from "react";
 import WalknoteReviewPanel from "./WalknoteReviewPanel";
 import {
   WalknoteSessionProvider,
@@ -75,6 +76,24 @@ function renderWithProvider(
   return render(<WalknoteSessionProvider>{ui}</WalknoteSessionProvider>);
 }
 
+function DismissHarness() {
+  const [open, setOpen] = useState(false);
+  const openerRef = useRef<HTMLButtonElement>(null);
+  return (
+    <>
+      <button ref={openerRef} type="button" onClick={() => setOpen(true)}>
+        Review waypoints
+      </button>
+      {open ? (
+        <WalknoteReviewPanel
+          onClose={() => setOpen(false)}
+          returnFocusFallback={() => openerRef.current}
+        />
+      ) : null}
+    </>
+  );
+}
+
 describe("WalknoteReviewPanel", () => {
   beforeEach(() => {
     fakeState = null;
@@ -124,6 +143,39 @@ describe("WalknoteReviewPanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Close waypoints panel" }));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses Back to close one review layer and restore its opener", async () => {
+    renderWithProvider(<DismissHarness />);
+    const opener = screen.getByRole("button", { name: "Review waypoints" });
+    fireEvent.click(opener);
+    await waitFor(() => {
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+    });
+
+    fakeState = null;
+    fireEvent.popState(window, { state: null });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(opener).toHaveFocus();
+    });
+  });
+
+  it("uses Escape to close one review layer and restore its opener", async () => {
+    renderWithProvider(<DismissHarness />);
+    const opener = screen.getByRole("button", { name: "Review waypoints" });
+    fireEvent.click(opener);
+    await waitFor(() => {
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(opener).toHaveFocus();
+    });
   });
 
   it("keep/discard toggle changes button label", async () => {

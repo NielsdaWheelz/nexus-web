@@ -15,6 +15,7 @@ import {
   type MobileFixedObstructionId,
   type MobileFixedObstructionRect,
 } from "@/lib/mobileViewport/model";
+import { isTextEntryTarget } from "@/lib/ui/isTextEntryTarget";
 
 export type { MobileFixedObstructionId } from "@/lib/mobileViewport/model";
 
@@ -43,6 +44,7 @@ interface MobileSheetKeyboardReport {
 
 const MobileViewportContext =
   createContext<MobileViewportCapability | null>(null);
+const RootTextEntryFocusContext = createContext<boolean | null>(null);
 
 function measurementsEqual(
   left: FixedMeasurements,
@@ -84,6 +86,7 @@ export function MobileViewportProvider({
     });
   const [mobileSheetKeyboardInsetPx, setMobileSheetKeyboardInsetPx] =
     useState(0);
+  const [rootTextEntryFocused, setRootTextEntryFocused] = useState(false);
   const mobileSheetKeyboardReportsRef = useRef<MobileSheetKeyboardReport[]>([]);
   const nextMobileSheetKeyboardReportIdRef = useRef(0);
 
@@ -214,6 +217,32 @@ export function MobileViewportProvider({
     };
   }, [measureFixedObstructions]);
 
+  useEffect(() => {
+    let mounted = true;
+    const readFocus = (target: EventTarget | null) => {
+      setRootTextEntryFocused(
+        isTextEntryTarget(target) &&
+          target instanceof Element &&
+          target.closest("[data-modal-backdrop='true']") === null,
+      );
+    };
+    const onFocusIn = (event: FocusEvent) => readFocus(event.target);
+    const onFocusOut = () => {
+      queueMicrotask(() => {
+        if (mounted) readFocus(document.activeElement);
+      });
+    };
+
+    readFocus(document.activeElement);
+    document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("focusout", onFocusOut);
+    return () => {
+      mounted = false;
+      document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("focusout", onFocusOut);
+    };
+  }, []);
+
   useEffect(
     () => () => {
       for (const registration of registrationsRef.current.values()) {
@@ -230,9 +259,11 @@ export function MobileViewportProvider({
   );
 
   return (
-    <MobileViewportContext.Provider value={capability}>
-      {children}
-    </MobileViewportContext.Provider>
+    <RootTextEntryFocusContext.Provider value={rootTextEntryFocused}>
+      <MobileViewportContext.Provider value={capability}>
+        {children}
+      </MobileViewportContext.Provider>
+    </RootTextEntryFocusContext.Provider>
   );
 }
 
@@ -244,4 +275,14 @@ export function useMobileViewport(): MobileViewportCapability {
     );
   }
   return capability;
+}
+
+export function useRootTextEntryFocused(): boolean {
+  const focused = useContext(RootTextEntryFocusContext);
+  if (focused === null) {
+    throw new Error(
+      "useRootTextEntryFocused must be used inside MobileViewportProvider",
+    );
+  }
+  return focused;
 }

@@ -1,0 +1,97 @@
+.shelf {
+  container-type: inline-size;
+  display: grid;
+  grid-template-columns: minmax(12rem, 1fr) minmax(20rem, 2fr) minmax(
+      max-content,
+      1fr
+    );
+  min-height: 72px;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  color: var(--ink);
+  background: var(--surface-1);
+  border-top: var(--stroke-hairline) solid var(--edge);
+}
+
+.identityField,
+.listeningField,
+.actionField {
+  min-width: 0;
+}
+
+.identityField {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.provenance {
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-size: var(--text-2xs);
+  line-height: var(--leading-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.listeningField {
+  display: grid;
+  grid-template-columns: auto minmax(8rem, 1fr);
+  align-items: center;
+  gap: 0 var(--space-3);
+}
+
+.listeningField > :last-child {
+  grid-column: 2;
+}
+
+.actionField {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-1);
+}
+
+.iconButton {
+  min-width: var(--size-xl);
+  min-height: var(--size-xl);
+}
+
+.menuSettings {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+}
+
+.menuEffects {
+  width: min(20rem, 80vw);
+  padding: var(--space-3);
+}
+
+.menuEffects > div {
+  display: grid;
+  gap: var(--space-3);
+}
+
+@container (max-width: 68rem) {
+  .shelf {
+    grid-template-columns: minmax(10rem, 1fr) minmax(18rem, 2fr) auto;
+    gap: var(--space-2);
+  }
+}
+
+@container (max-width: 50rem) {
+  .shelf {
+    grid-template-columns: minmax(10rem, 1fr) minmax(18rem, 2fr) auto;
+  }
+
+  .provenance {
+    display: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .shelf {
+    border-top-color: CanvasText;
+  }
+}

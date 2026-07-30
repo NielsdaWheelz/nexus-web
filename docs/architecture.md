@@ -1282,12 +1282,18 @@ directly.
 
 Frontend: `AuthenticatedShell` mounts `LecternProvider` (one `AsyncResource` +
 one mutation FIFO, `lib/lectern/`) above `GlobalPlayerProvider` (one
-`PlayerSession`, `lib/player/`), which wraps `WorkspaceHost` and a
-shell-resident dock — `region` labelled **Media player** — that persists
-across pane navigation and is never an editor. A single app-wide `<audio>`
-element lives in `lib/player/globalPlayer.tsx` with a Web Audio effects graph,
-OS media-session integration, and a single-flight, generation-keyed
-15s-cadence listening heartbeat (`lib/player/listeningHeartbeat.ts`). See
+`PlayerSession`, `lib/player/`), which wraps `WorkspaceHost` and
+`GlobalPlayerSurfaces`. The latter projects one shell-owned **Media player**
+landmark as the desktop Listening Shelf or mobile MiniPlayer/full-screen Now
+Playing; it persists across pane navigation and is never an editor. Session
+presence, playback phase, and mobile presentation mode are independent: Pause
+retains the surface, Back/Collapse retains playback, and Close stops and
+dismisses the device-local session. A single provider-owned `<audio>` element
+lives in `lib/player/globalPlayer.tsx` with a Web Audio effects graph, OS
+media-session integration, and a single-flight, generation-keyed 15s-cadence
+listening heartbeat (`lib/player/listeningHeartbeat.ts`). The provider exposes
+stable Commands plus cadence-separated Session, Settings, and Timeline
+capabilities. See
 [`modules/player.md`](modules/player.md) and
 [`modules/consumption-activity.md`](modules/consumption-activity.md) for the
 full file map. The shared player also owns an exhaustive ephemeral
@@ -1399,8 +1405,10 @@ they open over Resume and never become panes.
   `usePanePrimaryChrome`; `usePaneRuntime().isActive` exposes the
   host's pane-activity capability, which reader progress uses for
   adoption-versus-handoff arbitration. `MobileViewportProvider` composes safe
-  area, the measured outer Nexus wrapper and player, and the `MobileSheet`
-  keyboard inset into one shared mobile content-clearance value.
+  area, the measured outer Nexus wrapper and MiniPlayer, root text-entry focus,
+  and the `MobileSheet` keyboard inset into one shared mobile content-clearance
+  value. Text entry keeps playback alive while hiding and unregistering the
+  MiniPlayer.
   `MobileChromeProvider` projects reader collapse to AppBar, the active
   PaneToolbar, and the inner NexusControl without moving that wrapper. Every
   eligible resource pane publishes one

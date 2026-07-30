@@ -23,6 +23,14 @@
   box-shadow: var(--shadow-4);
 }
 
+.playerTask {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
 .header {
   display: flex;
   align-items: center;
