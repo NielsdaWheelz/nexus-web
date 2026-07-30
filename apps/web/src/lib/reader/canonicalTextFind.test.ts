@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { canonicalTextFind } from "@/lib/reader/canonicalTextFind";
+import {
+  canonicalTextFind,
+  canonicalTextFindSnippet,
+} from "@/lib/reader/canonicalTextFind";
 
 function readyOccurrences(
   result: ReturnType<typeof canonicalTextFind>,
@@ -12,6 +15,18 @@ function readyOccurrences(
 }
 
 describe("canonicalTextFind", () => {
+  it("exports the canonical codepoint snippet projection", () => {
+    const codePoints = Array.from(
+      `${"L".repeat(70)}😀needle😀${"R".repeat(70)}`,
+    );
+
+    expect(canonicalTextFindSnippet(codePoints, 71, 77)).toEqual([
+      { text: `${"L".repeat(63)}😀`, emphasized: false },
+      { text: "needle", emphasized: true },
+      { text: `😀${"R".repeat(63)}`, emphasized: false },
+    ]);
+  });
+
   it("matches escaped NFC literals with ECMAScript Unicode case semantics", () => {
     const literal = canonicalTextFind({
       units: [

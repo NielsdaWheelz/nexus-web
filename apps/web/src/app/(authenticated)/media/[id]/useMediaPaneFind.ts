@@ -39,18 +39,8 @@ import {
   restoreCanonicalTextAnchorViewportPosition,
   scrollToExactCanonicalTextAnchor,
 } from "./paneTextAnchor";
-
-export interface MediaFindPreviewLease {
-  isActive(): boolean;
-  beginSource(): void;
-  acquire(): void;
-  releaseForGenuineInput(): void;
-  cancelUnreportedPreview(): void;
-  retire(): void;
-  subscribe(listener: () => void): () => void;
-  armNextCaptureSuppression(): void;
-  consumeNextCaptureSuppression(trustedIntent: boolean): boolean;
-}
+import type { MediaFindPreviewLease } from "./mediaFindPreviewLease";
+import type { PdfPaneFindAdapter } from "./usePdfPaneFind";
 
 const ENTIRE_ARTICLE_SCOPE_ID = "EntireArticle";
 const CURRENT_SECTION_SCOPE_PREFIX = "CurrentSection:";
@@ -641,6 +631,7 @@ export function createWebFindAdapter({
       origin = null;
       clearPreviewFragment();
       focusReaderViewport();
+      previewLease.completeReturn();
     },
     errorMessage: mediaPaneFindErrorMessage,
     rebuildPresentation() {
@@ -656,7 +647,6 @@ export function createWebFindAdapter({
       activeOccurrence = null;
       origin = null;
       highlightOwner.clear();
-      previewLease.retire();
     },
   };
 }
@@ -694,6 +684,7 @@ export function useMediaPaneFind({
   focusReaderViewport,
   previewLease,
   transcriptAdapter,
+  pdfAdapter,
 }: {
   readonly mediaId: string;
   readonly fragments: readonly Fragment[];
@@ -706,6 +697,7 @@ export function useMediaPaneFind({
   readonly transcriptAdapter:
     | (PaneFindAdapter<MediaPaneFindError> & { dispose(): void })
     | null;
+  readonly pdfAdapter: PdfPaneFindAdapter | null;
 }): MediaPaneFindController {
   const snapshot = useMemo(
     () => createWebFindSnapshot({ mediaId, fragments, sections }),
@@ -760,108 +752,43 @@ export function useMediaPaneFind({
       findSnapshot,
     ],
   );
-  const activeAdapter = transcriptAdapter ?? adapter;
+  const activeAdapter:
+    | WebFindAdapter
+    | (PaneFindAdapter<MediaPaneFindError> & { dispose(): void })
+    | PdfPaneFindAdapter = pdfAdapter ?? transcriptAdapter ?? adapter;
+  const activeWebAdapter = pdfAdapter === null && transcriptAdapter === null;
   const paneFind = usePaneFind({ adapter: activeAdapter });
-  const begunWebAdapterRef = useRef<typeof adapter | null>(null);
   useLayoutEffect(() => {
     if (
-      !transcriptAdapter &&
+      activeWebAdapter &&
       findSnapshot.sourceKey !== snapshot.sourceKey
     ) {
       setPreviewFragmentId(null);
     }
   }, [
     findSnapshot.sourceKey,
+    activeWebAdapter,
     setPreviewFragmentId,
     snapshot.sourceKey,
-    transcriptAdapter,
   ]);
   useLayoutEffect(() => {
-    if (transcriptAdapter) {
-      return () => transcriptAdapter.dispose();
-    }
-    setPreviewFragmentId(null);
-    return () => adapter.dispose();
-  }, [adapter, setPreviewFragmentId, transcriptAdapter]);
-  useLayoutEffect(() => {
-    if (
-      transcriptAdapter ||
-      previewFragmentId !== null ||
-      begunWebAdapterRef.current === adapter
-    ) {
-      return;
-    }
-    begunWebAdapterRef.current = adapter;
     previewLease.beginSource();
-  }, [adapter, previewFragmentId, previewLease, transcriptAdapter]);
+    if (activeWebAdapter) {
+      setPreviewFragmentId(null);
+    }
+    return () => activeAdapter.dispose();
+  }, [
+    activeAdapter,
+    activeWebAdapter,
+    previewLease,
+    setPreviewFragmentId,
+  ]);
   return {
     ...paneFind,
     sourceKey: activeAdapter.sourceKey,
     rebuildPresentation:
-      transcriptAdapter === null
+      activeWebAdapter
         ? adapter.rebuildPresentation
         : NOOP_REBUILD_PRESENTATION,
-  };
-}
-
-/**
- * One route-local fence shared by Web Find, reader progress, and reading
- * activity. It deliberately owns no React state: consumers consult the
- * current value at their imperative mutation boundaries.
- */
-export function createMediaFindPreviewLease(): MediaFindPreviewLease {
-  let active = false;
-  let retired = false;
-  let suppressNextCapture = false;
-  const listeners = new Set<() => void>();
-
-  const publish = () => {
-    for (const listener of listeners) listener();
-  };
-
-  return {
-    isActive: () => active || retired,
-    beginSource() {
-      const changed = active || retired || suppressNextCapture;
-      active = false;
-      retired = false;
-      suppressNextCapture = false;
-      if (changed) publish();
-    },
-    acquire() {
-      if (retired) return;
-      suppressNextCapture = false;
-      if (active) return;
-      active = true;
-      publish();
-    },
-    releaseForGenuineInput() {
-      if (!active || retired) return;
-      active = false;
-      publish();
-    },
-    cancelUnreportedPreview() {
-      if (!active || retired) return;
-      active = false;
-      publish();
-    },
-    retire() {
-      suppressNextCapture = false;
-      if (retired) return;
-      retired = true;
-      publish();
-    },
-    subscribe(listener) {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    armNextCaptureSuppression() {
-      suppressNextCapture = true;
-    },
-    consumeNextCaptureSuppression(trustedIntent) {
-      if (!suppressNextCapture) return false;
-      suppressNextCapture = false;
-      return !trustedIntent;
-    },
   };
 }

@@ -4,15 +4,19 @@ import { useState } from "react";
 import { buildCanonicalCursor } from "@/lib/highlights/canonicalCursor";
 import type { Fragment } from "@/lib/media/transcriptView";
 import type { ReaderNavigationSection } from "@/lib/media/readerNavigation";
-import type { PaneFindResultKey } from "@/lib/panes/paneSearch";
 import {
-  createMediaFindPreviewLease,
+  createPaneFindSourceKey,
+  type PaneFindResultKey,
+} from "@/lib/panes/paneSearch";
+import {
   createWebFindAdapter,
   createWebFindSnapshot,
   resolvePreparedWebSectionScope,
   type WebFindRenderedState,
   useMediaPaneFind,
 } from "./useMediaPaneFind";
+import { createMediaFindPreviewLease } from "./mediaFindPreviewLease";
+import type { PdfPaneFindAdapter } from "./usePdfPaneFind";
 
 function fragment(id: string, idx: number, canonicalText: string): Fragment {
   return {
@@ -87,43 +91,6 @@ function rendered(
 
 afterEach(() => {
   vi.restoreAllMocks();
-});
-
-describe("createMediaFindPreviewLease", () => {
-  it("publishes one acquire/release transition and retires capture suppression", () => {
-    const lease = createMediaFindPreviewLease();
-    const changed = vi.fn();
-    const unsubscribe = lease.subscribe(changed);
-
-    lease.acquire();
-    lease.acquire();
-    expect(lease.isActive()).toBe(true);
-    expect(changed).toHaveBeenCalledTimes(1);
-
-    lease.releaseForGenuineInput();
-    lease.releaseForGenuineInput();
-    expect(lease.isActive()).toBe(false);
-    expect(changed).toHaveBeenCalledTimes(2);
-
-    lease.armNextCaptureSuppression();
-    expect(lease.consumeNextCaptureSuppression(false)).toBe(true);
-    expect(lease.consumeNextCaptureSuppression(false)).toBe(false);
-    lease.armNextCaptureSuppression();
-    expect(lease.consumeNextCaptureSuppression(true)).toBe(false);
-
-    lease.acquire();
-    lease.armNextCaptureSuppression();
-    lease.retire();
-    expect(lease.isActive()).toBe(true);
-    expect(lease.consumeNextCaptureSuppression(false)).toBe(false);
-    expect(changed).toHaveBeenCalledTimes(4);
-    lease.beginSource();
-    expect(lease.isActive()).toBe(false);
-    lease.acquire();
-    expect(lease.isActive()).toBe(true);
-
-    unsubscribe();
-  });
 });
 
 describe("Web Find adapter", () => {
@@ -351,6 +318,7 @@ describe("Web Find adapter", () => {
     expect(focusReaderViewport).toHaveBeenCalledTimes(1);
     expect(clearPreviewFragment).toHaveBeenCalledTimes(1);
     expect(highlightOwner.clear).toHaveBeenCalled();
+    expect(previewLease.isActive()).toBe(false);
   });
 
   it("rejects an unavailable origin without moving and defects on canonical mismatch before scrolling", async () => {
@@ -548,6 +516,78 @@ describe("Web Find adapter", () => {
 });
 
 describe("useMediaPaneFind", () => {
+  it("uses the ready PDF adapter under the sole Pane Find controller and begins its source", async () => {
+    const sourceKey = createPaneFindSourceKey({
+      kind: "Pdf",
+      mediaId: "media-1",
+      fingerprints: ["fingerprint"],
+      numPages: 2,
+    });
+    const dispose = vi.fn();
+    const pdfAdapter = {
+      sourceKey,
+      prepare: vi.fn(async (request) => ({
+        sessionId: request.sessionId,
+        sourceKey: request.sourceKey,
+        scopes: [
+          {
+            kind: "EntireResource" as const,
+            id: "EntirePdf",
+            label: "Entire PDF",
+          },
+        ],
+      })),
+      find: vi.fn(async (request) => ({
+        kind: "NoMatches" as const,
+        sessionId: request.sessionId,
+        queryId: request.queryId,
+        sourceKey: request.sourceKey,
+        completeness: "Complete" as const,
+      })),
+      preview: vi.fn(async (request) => ({
+        kind: "Rejected" as const,
+        sessionId: request.sessionId,
+        queryId: request.queryId,
+        sourceKey: request.sourceKey,
+        key: request.key,
+        error: { kind: "OriginUnavailable" as const },
+      })),
+      clearPresentation: vi.fn(async () => undefined),
+      returnToReadingPosition: vi.fn(async () => undefined),
+      errorMessage: () => "PDF Find failed.",
+      dispose,
+    } satisfies PdfPaneFindAdapter;
+    const previewLease = createMediaFindPreviewLease();
+    previewLease.retire();
+    const renderedStateRef: { current: WebFindRenderedState | null } = {
+      current: null,
+    };
+    const view = renderHook(() => {
+      const [previewFragmentId, setPreviewFragmentId] = useState<string | null>(
+        null,
+      );
+      return useMediaPaneFind({
+        mediaId: "media-1",
+        fragments: [],
+        sections: [],
+        renderedStateRef,
+        previewFragmentId,
+        setPreviewFragmentId,
+        focusReaderViewport: vi.fn(),
+        previewLease,
+        transcriptAdapter: null,
+        pdfAdapter,
+      });
+    });
+
+    await waitFor(() => expect(pdfAdapter.prepare).toHaveBeenCalledTimes(1));
+    expect(view.result.current.sourceKey).toBe(sourceKey);
+    expect(previewLease.isActive()).toBe(false);
+
+    view.unmount();
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
   it("cancels a queued first preview on Close, restores the origin, and reprepares on reopen", async () => {
     vi.spyOn(Range.prototype, "getBoundingClientRect").mockReturnValue({
       top: 70,
@@ -591,6 +631,7 @@ describe("useMediaPaneFind", () => {
         focusReaderViewport,
         previewLease: lease,
         transcriptAdapter: null,
+        pdfAdapter: null,
       });
       return { find, previewFragmentId };
     });
@@ -668,6 +709,7 @@ describe("useMediaPaneFind", () => {
           focusReaderViewport,
           previewLease: lease,
           transcriptAdapter: null,
+          pdfAdapter: null,
         });
         return { find, previewFragmentId };
       },
