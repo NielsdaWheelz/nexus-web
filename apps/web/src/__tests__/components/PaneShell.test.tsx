@@ -1,4 +1,11 @@
-import { Component, type ComponentProps, type ReactNode } from "react";
+import {
+  Component,
+  useLayoutEffect,
+  useRef,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
+import Link from "next/link";
 import {
   act,
   fireEvent,
@@ -7,9 +14,9 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { cdp } from "vitest/browser";
-import MobilePaneBar from "@/components/appnav/MobilePaneBar";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cdp, page } from "vitest/browser";
+import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import PaneShell from "@/components/workspace/PaneShell";
 import type { PanePrimaryChromePublication } from "@/lib/panes/panePublications";
@@ -22,8 +29,8 @@ import type {
 } from "@/lib/ui/actionDescriptor";
 import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
 import {
-  findPaneActivationFocusTarget,
   findPaneChromeFocusTarget,
+  findPaneLandmarkFocusTarget,
   findPaneSearchFocusTarget,
 } from "@/lib/workspace/paneDom";
 import type { EffectivePaneSizing } from "@/lib/workspace/paneSizing";
@@ -31,7 +38,13 @@ import { assumePaneVisitId } from "@/lib/workspace/schema";
 import { routeShareTarget } from "@/lib/sharing/targets";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
-import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
+import {
+  MobileChromeProvider,
+  useMobileChrome,
+  useMobileChromeReaderScrollport,
+  useMobileChromeSurface,
+  type MobilePaneChrome,
+} from "@/lib/workspace/mobileChrome";
 
 const TEST_VISIT_ID = assumePaneVisitId("00000000-0000-4000-8000-000000000001");
 
@@ -149,9 +162,70 @@ function RuntimeRoute({
   );
 }
 
+const mobileChromeObservation: {
+  current: MobilePaneChrome | null;
+} = { current: null };
+
+function MobileChromeObservation() {
+  const { motionPhase, paneChrome } = useMobileChrome();
+  useLayoutEffect(() => {
+    mobileChromeObservation.current = paneChrome;
+    return () => {
+      if (mobileChromeObservation.current === paneChrome) {
+        mobileChromeObservation.current = null;
+      }
+    };
+  }, [paneChrome]);
+  return (
+    <output data-testid="mobile-chrome-phase">{motionPhase.kind}</output>
+  );
+}
+
+function MobileChromeReaderScrollport({ sourceKey }: { sourceKey: string }) {
+  const registerScrollport = useMobileChromeReaderScrollport<HTMLDivElement>({
+    sourceKey,
+    enabled: true,
+  });
+  return (
+    <div
+      ref={registerScrollport}
+      aria-hidden="true"
+      data-testid="mobile-chrome-reader-scrollport"
+      style={{
+        height: 100,
+        left: -1_000,
+        overflowY: "auto",
+        position: "fixed",
+        top: 0,
+        width: 100,
+      }}
+    >
+      <div style={{ height: 1_000 }} />
+    </div>
+  );
+}
+
+function MobilePaneOptionsSurface({ paneId }: { paneId: string }) {
+  const ref = useRef<HTMLElement>(null);
+  useMobileChromeSurface(ref, "AppBar", true);
+  return (
+    <header ref={ref} data-pane-chrome-for={paneId}>
+      <button type="button" data-pane-options-trigger={paneId}>
+        Pane options
+      </button>
+    </header>
+  );
+}
+
+interface PaneTreeHarnessOptions {
+  readonly chromeSibling?: ReactNode;
+  readonly readerScrollport?: boolean;
+}
+
 function paneTree(
   overrides: Partial<PaneProps> = {},
   runtimeHref = "/media/media-1",
+  harness: PaneTreeHarnessOptions = {},
 ) {
   const { children = <div>Body content</div>, ...paneOverrides } = overrides;
   const props: PaneProps = {
@@ -159,9 +233,15 @@ function paneTree(
     ...paneOverrides,
     children,
   };
-  return (
+  return withRenderEnvironment(
     <MobileChromeProvider>
-      {props.isMobile ? <MobilePaneBar /> : null}
+      <MobileChromeObservation />
+      {harness.chromeSibling}
+      {harness.readerScrollport ? (
+        <MobileChromeReaderScrollport
+          sourceKey={`${props.routeKey}:pane-shell-test`}
+        />
+      ) : null}
       <RuntimeRoute
         paneId={props.paneId}
         routeKey={props.routeKey}
@@ -169,7 +249,8 @@ function paneTree(
       >
         <PaneShell {...props} />
       </RuntimeRoute>
-    </MobileChromeProvider>
+    </MobileChromeProvider>,
+    { initialViewport: props.isMobile ? "mobile" : "desktop" },
   );
 }
 
@@ -180,6 +261,31 @@ function PrimaryChromeProbe({
 }) {
   usePanePrimaryChrome(publication);
   return <div>Published body</div>;
+}
+
+function latestMobilePaneSearchAction(): Extract<
+  PaneHeaderAction,
+  { kind: "command" }
+> {
+  const action = mobileChromeObservation.current?.actions.find(
+    (candidate) =>
+      candidate.kind === "command" && candidate.id === "Pane.Search",
+  );
+  if (action?.kind === "command") return action;
+  throw new Error("Mobile Pane Search action was not published");
+}
+
+function latestMobilePaneChrome(): MobilePaneChrome {
+  const chrome = mobileChromeObservation.current;
+  if (chrome) return chrome;
+  throw new Error("Mobile pane chrome was not published");
+}
+
+function scrollMobileChromeTo(top: number): HTMLElement {
+  const scrollport = screen.getByTestId("mobile-chrome-reader-scrollport");
+  scrollport.scrollTop = top;
+  fireEvent.scroll(scrollport);
+  return scrollport;
 }
 
 function dispatchTouch(
@@ -196,6 +302,7 @@ function dispatchTouch(
   fireEvent(target, event);
   return event;
 }
+
 function readyResource(title: string): PanePrimaryChromePublication {
   return {
     header: {
@@ -254,8 +361,22 @@ class TestErrorBoundary extends Component<
   }
 }
 
+let mobileViewportActive = false;
+
+async function useMobileTestViewport() {
+  await page.viewport(390, 844);
+  mobileViewportActive = true;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  mobileChromeObservation.current = null;
+});
+
+afterEach(async () => {
+  if (!mobileViewportActive) return;
+  await page.viewport(1_280, 720);
+  mobileViewportActive = false;
 });
 
 describe("PaneShell", () => {
@@ -307,9 +428,7 @@ describe("PaneShell", () => {
         .map((button) => button.getAttribute("aria-label")),
     ).toEqual(["Companion", "Filter"]);
 
-    fireEvent.click(
-      within(paneActions).getByRole("button", { name: "Filter" }),
-    );
+    fireEvent.click(within(paneActions).getByRole("button", { name: "Filter" }));
     const input = await screen.findByRole("searchbox", {
       name: "Filter items",
     });
@@ -332,36 +451,45 @@ describe("PaneShell", () => {
   });
 
   it("returns mobile shortcut-opened Filter focus to the Options trigger", async () => {
+    await useMobileTestViewport();
     const onDismiss = vi.fn();
     render(
-      paneTree({
-        isActive: true,
-        isMobile: true,
-        children: (
-          <PrimaryChromeProbe
-            publication={{
-              search: {
-                kind: "FilterRows",
-                query: "",
-                inputLabel: "Filter items",
-                placeholder: "Filter",
-                onQueryChange: vi.fn(),
-                onDismiss,
-                rowStatus: {
-                  kind: "Complete",
-                  visibleCount: 1,
-                  totalCount: 1,
-                  unit: { singular: "item", plural: "items" },
+      paneTree(
+        {
+          isActive: true,
+          isMobile: true,
+          children: (
+            <PrimaryChromeProbe
+              publication={{
+                search: {
+                  kind: "FilterRows",
+                  query: "",
+                  inputLabel: "Filter items",
+                  placeholder: "Filter",
+                  onQueryChange: vi.fn(),
+                  onDismiss,
+                  rowStatus: {
+                    kind: "Complete",
+                    visibleCount: 1,
+                    totalCount: 1,
+                    unit: { singular: "item", plural: "items" },
+                  },
+                  activeDomainControlCount: 0,
                 },
-                activeDomainControlCount: 0,
-              },
-            }}
-          />
-        ),
-      }),
+              }}
+            />
+          ),
+        },
+        "/media/media-1",
+        {
+          chromeSibling: <MobilePaneOptionsSurface paneId="pane-a" />,
+        },
+      ),
     );
 
-    await screen.findByRole("button", { name: "Pane options" });
+    await waitFor(() =>
+      expect(latestMobilePaneChrome().paneId).toBe("pane-a"),
+    );
     expect(dispatchPaneSearchRequest()).toBe(true);
     const input = await screen.findByRole("searchbox", {
       name: "Filter items",
@@ -376,54 +504,13 @@ describe("PaneShell", () => {
         screen.getByRole("button", { name: "Pane options" }),
       ).toHaveFocus(),
     );
+    expect(screen.getByTestId("mobile-chrome-phase")).toHaveTextContent(
+      "Pinned",
+    );
   });
 
   it("focuses a mobile shortcut-opened Filter after the row commits", async () => {
-    const requestAnimationFrame = vi
-      .spyOn(window, "requestAnimationFrame")
-      .mockImplementation((callback) => {
-        callback(0);
-        return 1;
-      });
-    try {
-      render(
-        paneTree({
-          isActive: true,
-          isMobile: true,
-          children: (
-            <PrimaryChromeProbe
-              publication={{
-                search: {
-                  kind: "FilterRows",
-                  query: "",
-                  inputLabel: "Filter items",
-                  placeholder: "Filter",
-                  onQueryChange: vi.fn(),
-                  onDismiss: vi.fn(),
-                  rowStatus: {
-                    kind: "Complete",
-                    visibleCount: 1,
-                    totalCount: 1,
-                    unit: { singular: "item", plural: "items" },
-                  },
-                  activeDomainControlCount: 0,
-                },
-              }}
-            />
-          ),
-        }),
-      );
-
-      await waitFor(() => expect(dispatchPaneSearchRequest()).toBe(true));
-      expect(
-        await screen.findByRole("searchbox", { name: "Filter items" }),
-      ).toHaveFocus();
-    } finally {
-      requestAnimationFrame.mockRestore();
-    }
-  });
-
-  it("ignores a transient mobile menu row when closing Filter", async () => {
+    await useMobileTestViewport();
     render(
       paneTree({
         isActive: true,
@@ -452,14 +539,62 @@ describe("PaneShell", () => {
       }),
     );
 
-    const options = await screen.findByRole("button", { name: "Pane options" });
-    fireEvent.click(options);
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Filter" }));
+    await waitFor(() => expect(dispatchPaneSearchRequest()).toBe(true));
+    const input = await screen.findByRole("searchbox", {
+      name: "Filter items",
+    });
+    await waitFor(() => expect(input).toHaveFocus());
+  });
+
+  it("ignores a transient mobile menu row when closing Filter", async () => {
+    await useMobileTestViewport();
+    render(
+      paneTree(
+        {
+          isActive: true,
+          isMobile: true,
+          children: (
+            <PrimaryChromeProbe
+              publication={{
+                search: {
+                  kind: "FilterRows",
+                  query: "",
+                  inputLabel: "Filter items",
+                  placeholder: "Filter",
+                  onQueryChange: vi.fn(),
+                  onDismiss: vi.fn(),
+                  rowStatus: {
+                    kind: "Complete",
+                    visibleCount: 1,
+                    totalCount: 1,
+                    unit: { singular: "item", plural: "items" },
+                  },
+                  activeDomainControlCount: 0,
+                },
+              }}
+            />
+          ),
+        },
+        "/media/media-1",
+        {
+          chromeSibling: <MobilePaneOptionsSurface paneId="pane-a" />,
+        },
+      ),
+    );
+
+    await waitFor(() => latestMobilePaneSearchAction());
+    const transientMenuRow = document.createElement("button");
+    act(() =>
+      latestMobilePaneSearchAction().onSelect({
+        triggerEl: transientMenuRow,
+      }),
+    );
     await screen.findByRole("searchbox", { name: "Filter items" });
 
-    fireEvent.click(options);
-    fireEvent.click(
-      await screen.findByRole("menuitem", { name: "Close filter" }),
+    act(() =>
+      latestMobilePaneSearchAction().onSelect({
+        triggerEl: transientMenuRow,
+      }),
     );
     await waitFor(() =>
       expect(
@@ -556,7 +691,9 @@ describe("PaneShell", () => {
       }),
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: "Filter" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Filter" }),
+    );
     await waitFor(() =>
       expect(
         screen.getByRole("searchbox", { name: "Filter libraries" }),
@@ -801,6 +938,7 @@ describe("PaneShell", () => {
   });
 
   it("locks only a top-edge downward mobile gesture, arms at the exact resisted distance, and coalesces execution", async () => {
+    await useMobileTestViewport();
     let resolveRefresh:
       | ((result: {
           readonly kind: "Complete";
@@ -922,16 +1060,11 @@ describe("PaneShell", () => {
     expect(execute).toHaveBeenCalledTimes(1);
     expect(screen.getByText("Refreshing")).toBeInTheDocument();
 
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "Pane options",
-      }),
-    );
-    const refreshOption = await screen.findByRole("menuitem", {
-      name: "Refresh",
-    });
-    expect(refreshOption).toHaveAttribute("aria-disabled", "true");
-    fireEvent.click(refreshOption);
+    const refreshOption = latestMobilePaneChrome().options[0];
+    if (refreshOption?.kind !== "command") {
+      throw new Error("Mobile Refresh option was not a command");
+    }
+    refreshOption.onSelect({ triggerEl: null });
     expect(execute).toHaveBeenCalledTimes(1);
 
     const session = cdp() as unknown as {
@@ -1029,6 +1162,7 @@ describe("PaneShell", () => {
   });
 
   it("keeps the routed content as the pane-return root when refresh is published", async () => {
+    await useMobileTestViewport();
     render(
       paneTree({
         isActive: true,
@@ -1388,7 +1522,8 @@ describe("PaneShell", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("projects mobile primary actions and resource options once through the pane menu", async () => {
+  it("publishes primary actions separately from mobile Options", async () => {
+    await useMobileTestViewport();
     const companion = {
       kind: "command",
       id: "resource-inspector-companion",
@@ -1422,30 +1557,34 @@ describe("PaneShell", () => {
       }),
     );
 
+    await waitFor(() => {
+      expect(latestMobilePaneChrome()).toEqual(
+        expect.objectContaining({
+          paneId: "pane-a",
+          header: expect.objectContaining({ kind: "resource" }),
+          actions: expect.any(Array),
+          options: expect.any(Array),
+        }),
+      );
+    });
+    const publication = latestMobilePaneChrome();
+    expect(
+      publication.actions.map((action: PaneHeaderAction) => action.label),
+    ).toEqual(["Companion"]);
+    expect(
+      publication.options.map((option: ActionDescriptor) => option.label),
+    ).toEqual(["Share…", "Chat about this resource", "Credits…", "Libraries…"]);
+    expect(
+      publication.options.filter(
+        (option: ActionDescriptor) => option.id === "ResourceAction.Share",
+      ),
+    ).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "Companion" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Options" })).toBeNull();
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Pane options" }),
-    );
-    const menu = await screen.findByRole("menu");
-    expect(
-      within(menu)
-        .getAllByRole("menuitem")
-        .map((item) => item.textContent?.trim()),
-    ).toEqual([
-      "Go forward",
-      "Companion",
-      "Share…",
-      "Chat about this resource",
-      "Credits…",
-      "Libraries…",
-    ]);
-    expect(
-      within(menu).getAllByRole("menuitem", { name: "Share…" }),
-    ).toHaveLength(1);
   });
 
   it("keeps projected mobile identity links inside pane navigation", async () => {
+    await useMobileTestViewport();
     render(
       paneTree({
         routeHeader: resourceHeader,
@@ -1479,7 +1618,23 @@ describe("PaneShell", () => {
       }),
     );
 
-    const link = await screen.findByRole("link", { name: "Ada Lovelace" });
+    await waitFor(() => {
+      expect(latestMobilePaneChrome().paneId).toBe("pane-a");
+    });
+    const publication = latestMobilePaneChrome();
+
+    render(
+      <Link
+        href="/authors/ada-lovelace"
+        data-pane-label-hint="Ada Lovelace"
+        onClick={(event) =>
+          publication.activateIdentityAnchor(event, event.currentTarget)
+        }
+      >
+        Ada Lovelace
+      </Link>,
+    );
+    const link = screen.getByRole("link", { name: "Ada Lovelace" });
 
     fireEvent.click(link, { detail: 0 });
     expect(runtimeNavigation.activateWorkspaceTarget).toHaveBeenCalledWith({
@@ -1505,34 +1660,104 @@ describe("PaneShell", () => {
     expect(runtimeNavigation.activateWorkspaceTarget).toHaveBeenCalledTimes(2);
   });
 
-  it("leaves the pane toolbar surface empty when the reader publishes no toolbar", async () => {
+  it("keeps the pane landmark available while the whole moving toolbar is noninteractive outside visible phases", async () => {
+    await useMobileTestViewport();
+    const mobileToolbar = {
+      routeHeader: resourceHeader,
+      routeShareIdentity: null,
+      label: "Media",
+      isMobile: true,
+      children: (
+        <PrimaryChromeProbe
+          publication={{
+            ...readyResource("Document title"),
+            toolbar: <button type="button">Reader controls</button>,
+          }}
+        />
+      ),
+    } satisfies Partial<PaneProps>;
     render(
-      paneTree({
-        routeHeader: resourceHeader,
-        routeShareIdentity: null,
-        label: "Media",
-        isMobile: true,
-        children: (
-          <PrimaryChromeProbe publication={readyResource("Document title")} />
-        ),
+      paneTree(mobileToolbar, "/media/media-1", {
+        readerScrollport: true,
       }),
     );
 
+    const readerControls = await screen.findByRole("button", {
+      name: "Reader controls",
+    });
+    const landmark = screen.getByTestId("pane-shell-root");
     const chrome = screen.getByTestId("pane-shell-chrome");
+    const body = screen.getByTestId("pane-shell-body");
+    const toolbar = screen.getByTestId("pane-shell-toolbar");
+    expect(landmark).toHaveAttribute("data-pane-focus-landmark", "true");
+    expect(landmark).toHaveAttribute("tabindex", "-1");
     expect(chrome).toHaveAttribute("data-mobile-chrome-phase", "Visible");
     expect(chrome).not.toHaveAttribute("aria-hidden");
     expect(chrome).not.toHaveAttribute("inert");
-    expect(chrome).toBeEmptyDOMElement();
+    expect(chrome).not.toHaveStyle({ pointerEvents: "none" });
+
+    vi.useFakeTimers();
+    try {
+      scrollMobileChromeTo(32);
+      expect(chrome).toHaveAttribute("data-mobile-chrome-phase", "Tracking");
+      expect(chrome).toHaveAttribute("aria-hidden", "true");
+      expect(chrome).toHaveAttribute("inert");
+      expect(chrome).toHaveStyle({ pointerEvents: "none" });
+      expect(readerControls).toBeVisible();
+      expect(
+        screen.queryByRole("button", { name: "Reader controls" }),
+      ).toBeNull();
+
+      act(() => vi.advanceTimersByTime(120));
+      expect(chrome).toHaveAttribute("data-mobile-chrome-phase", "Settling");
+      expect(chrome).toHaveAttribute("aria-hidden", "true");
+      expect(chrome).toHaveAttribute("inert");
+      expect(chrome).toHaveStyle({ pointerEvents: "none" });
+      expect(
+        screen.queryByRole("button", { name: "Reader controls" }),
+      ).toBeNull();
+
+      act(() => vi.advanceTimersByTime(500));
+      expect(chrome).toHaveAttribute("data-mobile-chrome-phase", "Visible");
+    } finally {
+      vi.useRealTimers();
+    }
+
+    scrollMobileChromeTo(300);
+    expect(chrome).toHaveAttribute("data-mobile-chrome-phase", "Hidden");
+    expect(chrome).toHaveAttribute("aria-hidden", "true");
+    expect(chrome).toHaveAttribute("inert");
+    expect(chrome).toHaveStyle({ pointerEvents: "none" });
+    expect(toolbar).not.toHaveAttribute("aria-hidden");
+    expect(toolbar).not.toHaveAttribute("inert");
+    expect(screen.queryByRole("button", { name: "Reader controls" })).toBeNull();
+    expect(screen.getByTestId("pane-shell-body")).toBe(body);
   });
 
-  it("owns a stable programmatic-focus pane landmark distinct from chrome", () => {
-    render(<div data-pane-id="pane-a">{paneTree({ label: "Media" })}</div>);
+  it("leaves the pane toolbar surface empty when the reader publishes no toolbar", async () => {
+    await useMobileTestViewport();
+    render(
+      paneTree(
+        {
+          routeHeader: resourceHeader,
+          routeShareIdentity: null,
+          label: "Media",
+          isMobile: true,
+          children: (
+            <PrimaryChromeProbe publication={readyResource("Document title")} />
+          ),
+        },
+        "/media/media-1",
+        { readerScrollport: true },
+      ),
+    );
 
-    const landmark = screen.getByTestId("pane-shell-root");
-    expect(landmark).toHaveAttribute("data-pane-activation-focus", "true");
-    expect(landmark).toHaveAttribute("tabindex", "-1");
-    expect(findPaneActivationFocusTarget("pane-a")).toBe(landmark);
-    expect(findPaneActivationFocusTarget("missing-pane")).toBeNull();
+    const chrome = screen.getByTestId("pane-shell-chrome");
+    scrollMobileChromeTo(300);
+    expect(chrome).toHaveAttribute("data-mobile-chrome-phase", "Hidden");
+    expect(chrome).not.toHaveAttribute("aria-hidden");
+    expect(chrome).not.toHaveAttribute("inert");
+    expect(chrome).toBeEmptyDOMElement();
   });
 
   it("falls back to the pane chrome sentinel when the mobile Options trigger is inert", () => {
@@ -1557,6 +1782,28 @@ describe("PaneShell", () => {
 
     const sentinel = screen.getByTestId("pane-chrome-sentinel");
     expect(findPaneChromeFocusTarget("pane-a")).toBe(sentinel);
+  });
+
+  it("resolves the stable named pane landmark independently of moving chrome", () => {
+    render(
+      <div data-pane-id="pane-a">
+        <section
+          aria-label="Document title"
+          data-pane-focus-landmark="true"
+          tabIndex={-1}
+        />
+        <div inert>
+          <button type="button" data-pane-options-trigger>
+            Pane options
+          </button>
+        </div>
+      </div>,
+    );
+
+    const landmark = screen.getByRole("region", { name: "Document title" });
+    expect(findPaneLandmarkFocusTarget("pane-a")).toBe(landmark);
+    landmark.focus();
+    expect(landmark).toHaveFocus();
   });
 
   it("resolves the expanded Filter input before the collapsed Filter action", () => {

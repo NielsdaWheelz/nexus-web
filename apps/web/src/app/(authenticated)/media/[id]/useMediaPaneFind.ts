@@ -30,6 +30,7 @@ import {
   createCanonicalTextFindHighlightOwner,
   type CanonicalTextFindHighlightOwner,
 } from "@/lib/reader/canonicalTextFindHighlights";
+import type { ReaderScrollPositioner } from "@/lib/reader/paneScroll";
 import {
   findFirstVisibleCanonicalOffset,
   measureCanonicalTextAnchorViewportDelta,
@@ -290,6 +291,7 @@ export function createWebFindAdapter({
   focusReaderViewport,
   previewLease,
   highlightOwner,
+  scrollPositioner,
 }: {
   readonly snapshot: WebFindSnapshot;
   readonly getCurrentSourceKey: () => PaneFindSourceKey | null;
@@ -302,6 +304,7 @@ export function createWebFindAdapter({
   readonly focusReaderViewport: () => void;
   readonly previewLease: MediaFindPreviewLease;
   readonly highlightOwner: CanonicalTextFindHighlightOwner;
+  readonly scrollPositioner: ReaderScrollPositioner;
 }): WebFindAdapter {
   let preparedScopeBySession = new Map<number, PreparedSectionScope | null>();
   let occurrencesByKey = new Map<PaneFindResultKey, WebFindOccurrence>();
@@ -309,6 +312,38 @@ export function createWebFindAdapter({
   let origin: WebFindOrigin | null = null;
   let leaseRetired = false;
   let disposed = false;
+  const positionExactAnchor = async (
+    rendered: WebFindRenderedState,
+    anchorCp: number,
+  ): Promise<boolean> => {
+    let positioned = false;
+    await scrollPositioner.run((commands) => {
+      positioned = scrollToExactCanonicalTextAnchor(
+        commands,
+        rendered.viewport,
+        rendered.cursor,
+        anchorCp,
+      );
+    });
+    return positioned;
+  };
+  const restoreOrigin = async (
+    rendered: WebFindRenderedState,
+    captured: WebFindOrigin,
+  ): Promise<boolean> => {
+    let restored = false;
+    await scrollPositioner.run((commands) => {
+      restored = restoreCanonicalTextAnchorViewportPosition(
+        commands,
+        rendered.viewport,
+        rendered.cursor,
+        captured.anchorCp,
+        captured.viewportTopDeltaPx,
+        captured.scrollLeft,
+      );
+    });
+    return restored;
+  };
 
   const assertCurrent = (sourceKey: PaneFindSourceKey) => {
     if (
@@ -554,13 +589,7 @@ export function createWebFindAdapter({
         }
         activeOccurrence = occurrence;
         publishRenderedRanges(rendered);
-        if (
-          !scrollToExactCanonicalTextAnchor(
-            rendered.viewport,
-            rendered.cursor,
-            occurrence.startCp,
-          )
-        ) {
+        if (!(await positionExactAnchor(rendered, occurrence.startCp))) {
           throw new Error("Web Find occurrence anchor is not renderable.");
         }
       } catch (error) {
@@ -628,15 +657,7 @@ export function createWebFindAdapter({
       throwIfAborted(request.signal);
       assertCurrent(request.sourceKey);
       assertRenderedFragment(snapshot, rendered);
-      if (
-        !restoreCanonicalTextAnchorViewportPosition(
-          rendered.viewport,
-          rendered.cursor,
-          origin.anchorCp,
-          origin.viewportTopDeltaPx,
-          origin.scrollLeft,
-        )
-      ) {
+      if (!(await restoreOrigin(rendered, origin))) {
         throw new Error("Web Find reading origin is no longer renderable.");
       }
       activeOccurrence = null;
@@ -697,6 +718,7 @@ export function useWebPaneFindCapability({
   setPreviewFragmentId,
   focusReaderViewport,
   previewLease,
+  scrollPositioner,
 }: {
   readonly source: WebPaneFindSource;
   readonly renderedStateRef: RefObject<WebFindRenderedState | null>;
@@ -704,6 +726,7 @@ export function useWebPaneFindCapability({
   readonly setPreviewFragmentId: Dispatch<SetStateAction<string | null>>;
   readonly focusReaderViewport: () => void;
   readonly previewLease: MediaFindPreviewLease;
+  readonly scrollPositioner: ReaderScrollPositioner;
 }): WebPaneFindCapability {
   const sourceMediaId = source.kind === "Available" ? source.mediaId : null;
   const sourceFragments = source.kind === "Available" ? source.fragments : null;
@@ -791,12 +814,14 @@ export function useWebPaneFindCapability({
               liveInputsRef.current.focusReaderViewport(),
             previewLease,
             highlightOwner,
+            scrollPositioner,
           }),
     [
       clearPreviewFragment,
       getRenderedState,
       highlightOwner,
       previewLease,
+      scrollPositioner,
       showPreviewFragment,
       findSnapshot,
     ],

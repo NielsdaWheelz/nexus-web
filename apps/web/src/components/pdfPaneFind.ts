@@ -97,6 +97,7 @@ export interface CreatePdfFindRuntimeOptions {
     readonly pageNumber: number;
     readonly signal: AbortSignal;
   }) => Promise<void>;
+  readonly revealMatch: (element: HTMLElement) => void;
   readonly captureOrigin: () => PdfFindOriginCapture;
   readonly restoreOrigin: (
     origin: PdfFindOrigin,
@@ -302,6 +303,7 @@ function createControllerClasses(viewerModule: PdfJsViewerLike) {
     private readonly nexusEventBus: PdfEventBusLike;
     private readonly nexusLinkService: PdfLinkServiceLike;
     private readonly revealPage: CreatePdfFindRuntimeOptions["revealPage"];
+    private readonly revealMatch: CreatePdfFindRuntimeOptions["revealMatch"];
     private readonly matchesCountListener: (event: unknown) => void;
     private activeSearch: ActiveSearch | null = null;
     private nexusSelection: PdfFindSelectionLike = {
@@ -318,10 +320,12 @@ function createControllerClasses(viewerModule: PdfJsViewerLike) {
       linkService,
       eventBus,
       revealPage,
+      revealMatch,
     }: {
       readonly linkService: PdfLinkServiceLike;
       readonly eventBus: PdfEventBusLike;
       readonly revealPage: CreatePdfFindRuntimeOptions["revealPage"];
+      readonly revealMatch: CreatePdfFindRuntimeOptions["revealMatch"];
     }) {
       super({
         linkService,
@@ -331,6 +335,7 @@ function createControllerClasses(viewerModule: PdfJsViewerLike) {
       this.nexusEventBus = eventBus;
       this.nexusLinkService = linkService;
       this.revealPage = revealPage;
+      this.revealMatch = revealMatch;
       this.matchesCountListener = (event) => {
         this.handleMatchesCount(event);
       };
@@ -407,7 +412,7 @@ function createControllerClasses(viewerModule: PdfJsViewerLike) {
         return;
       }
       this.pendingScroll = null;
-      element.scrollIntoView({ block: "start", inline: "center" });
+      this.revealMatch(element);
     }
 
     beginSearch(
@@ -829,6 +834,7 @@ export function createPdfFindRuntime({
   viewerModule,
   eventBus,
   revealPage,
+  revealMatch,
   captureOrigin,
   restoreOrigin,
 }: CreatePdfFindRuntimeOptions): PdfFindRuntimeBinding {
@@ -844,6 +850,7 @@ export function createPdfFindRuntime({
     linkService: findLinkService,
     eventBus,
     revealPage,
+    revealMatch,
   });
 
   let documentLifetime: DocumentLifetime | null = null;

@@ -36,6 +36,22 @@ research can support softer tinted backgrounds, but that does not justify
 the additional product and maintenance complexity here. the shipped system
 intentionally stays with two reader themes: light and dark.
 
+## mobile attention and recovery
+
+Mobile chrome follows one principle: attention without disorientation. Sustained
+forward reading retreats global commands without moving content; reverse
+reading, top/Home, or command focus restores them. All reader formats feed one
+direction-aware policy from their actual scroll owner, and all moving surfaces
+share one continuous progress value.
+
+Stable layout matters more than reclaiming a few measured pixels. Chrome moves
+with transforms while its layout and Nexus obstruction wrapper remain fixed, so
+the reader's place, selection, last line, and player clearance do not jump.
+Partially retreated controls are not useful controls: the complete moving roots
+leave hit testing and accessibility navigation until fully visible again. A
+blank-canvas tap is convenient pointer recovery, but reverse/top/focus are the
+input-independent recovery contract.
+
 ## research basis for the typography rules
 
 - left-align is the screen-reading consensus (Reynolds & Walker 2004,

@@ -9,9 +9,11 @@ import type {
   TouchEvent,
   WheelEvent,
 } from "react";
-import { useCallback, useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
+import { composeRefs } from "@/lib/ui/composeRefs";
 import { useMobileChromeReaderScrollport } from "@/lib/workspace/mobileChrome";
+import type { ReaderScrollPositioner } from "@/lib/reader/paneScroll";
 import styles from "./page.module.css";
 
 export type ReaderViewportSnapshot = {
@@ -44,6 +46,7 @@ export default function TextDocumentReader({
   mediaId,
   mobileChromeSourceKey,
   mobileChromeEnabled,
+  scrollPositioner,
   beforeContent,
   readerRootRef,
   contentRef,
@@ -68,6 +71,7 @@ export default function TextDocumentReader({
   mediaId: string;
   mobileChromeSourceKey: string;
   mobileChromeEnabled: boolean;
+  scrollPositioner: ReaderScrollPositioner;
   beforeContent?: ReactNode;
   readerRootRef: RefObject<HTMLDivElement | null>;
   contentRef: RefObject<HTMLDivElement | null>;
@@ -89,17 +93,18 @@ export default function TextDocumentReader({
   onContentBlur: (event: FocusEvent<HTMLDivElement>) => void;
   onInternalLinkClick?: (href: string | null) => boolean;
 }) {
-  const mobileChromeViewportRef =
+  const chromeScrollportRef =
     useMobileChromeReaderScrollport<HTMLDivElement>({
       sourceKey: mobileChromeSourceKey,
-      enabled: mobileChromeEnabled,
+      enabled: mobileChromeEnabled && contentState.status === "ready",
     });
-  const setTextViewportNode = useCallback(
-    (node: HTMLDivElement | null) => {
-      textViewportRef.current = node;
-      mobileChromeViewportRef(node);
-    },
-    [mobileChromeViewportRef, textViewportRef],
+  const viewportRef = useMemo(
+    () =>
+      composeRefs<HTMLDivElement>(
+        textViewportRef,
+        chromeScrollportRef,
+      ),
+    [chromeScrollportRef, textViewportRef],
   );
   const onViewportReadyRef = useRef(onViewportReady);
   const onViewportScrollRef = useRef(onViewportScroll);
@@ -204,6 +209,11 @@ export default function TextDocumentReader({
     const target = event.target;
     let delegatedToContentClick = false;
     if (target instanceof Element) {
+      target
+        .closest(
+          "[data-active-highlight-ids], [data-highlight-anchor], [data-reader-apparatus-item-id]",
+        )
+        ?.setAttribute("data-reader-tap-handled", "true");
       const apparatusEl = target.closest("[data-reader-apparatus-item-id]");
       if (apparatusEl) {
         onContentClick(event);
@@ -233,7 +243,7 @@ export default function TextDocumentReader({
   return (
     <div className={styles.readerFrame}>
       <div
-        ref={setTextViewportNode}
+        ref={viewportRef}
         className={styles.documentViewport}
         data-testid="document-viewport"
         data-pane-content="true"
@@ -283,6 +293,7 @@ export default function TextDocumentReader({
                   htmlSanitized={contentState.renderedHtml}
                   className={styles.fragment}
                   mediaId={mediaId}
+                  scrollPositioner={scrollPositioner}
                   headingLevelOffset={1}
                 />
               </div>

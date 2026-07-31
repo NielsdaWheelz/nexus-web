@@ -13,7 +13,11 @@ import {
 import { projectPlayerChrome } from "@/lib/player/playerChromeModel";
 import { usePlayerCapture } from "@/lib/walknotes/usePlayerCapture";
 import { useWorkspaceStore } from "@/lib/workspace/store";
-import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
+import {
+  findPaneChromeFocusTarget,
+  findPaneLandmarkFocusTarget,
+} from "@/lib/workspace/paneDom";
+import { usePaneChromeFocusReturn } from "@/lib/workspace/mobileChrome";
 import DesktopListeningShelf from "./DesktopListeningShelf";
 import MobileMiniPlayer from "./MobileMiniPlayer";
 import MobileNowPlaying from "./MobileNowPlaying";
@@ -51,6 +55,7 @@ export default function GlobalPlayerSurfaces() {
   const commands = usePlayerCommands();
   const capture = usePlayerCapture();
   const workspace = useWorkspaceStore();
+  const { focus: returnPaneChromeFocus } = usePaneChromeFocusReturn();
   const isMobile = useIsMobileViewport();
   const model = projectPlayerChrome(session);
   const miniPlayerButtonRef = useRef<HTMLButtonElement>(null);
@@ -84,10 +89,20 @@ export default function GlobalPlayerSurfaces() {
     setNowPlayingOpen(false);
     setAnnouncement("Player closed");
     commands.dismiss();
+    if (isMobile) {
+      void returnPaneChromeFocus(activePaneId);
+      return;
+    }
     requestAnimationFrame(() =>
       findPaneChromeFocusTarget(activePaneId)?.focus(),
     );
-  }, [capture, commands, workspace.state.activePrimaryPaneId]);
+  }, [
+    capture,
+    commands,
+    isMobile,
+    returnPaneChromeFocus,
+    workspace.state.activePrimaryPaneId,
+  ]);
 
   useEffect(() => {
     const viewportChanged = previousIsMobileRef.current !== isMobile;
@@ -246,7 +261,7 @@ export default function GlobalPlayerSurfaces() {
             miniPlayerButtonRef={miniPlayerButtonRef}
             playbackButtonRef={playbackButtonRef}
             returnFocusFallback={() =>
-              findPaneChromeFocusTarget(workspace.state.activePrimaryPaneId)
+              findPaneLandmarkFocusTarget(workspace.state.activePrimaryPaneId)
             }
             onOpenPlayback={() => openPlayback(playbackButtonRef.current)}
             onOpenContents={() => setContentsOpen(true)}
@@ -303,7 +318,7 @@ export default function GlobalPlayerSurfaces() {
           onClose={capture.closeReview}
           returnFocusFallback={() =>
             document.querySelector<HTMLElement>("[data-player-capture]") ??
-            findPaneChromeFocusTarget(workspace.state.activePrimaryPaneId)
+            findPaneLandmarkFocusTarget(workspace.state.activePrimaryPaneId)
           }
           onMaterializeComplete={capture.announceMaterialized}
         />

@@ -65,6 +65,7 @@ function Reader() {
   return (
     <div
       ref={scrollportRef}
+      data-mobile-reader-interaction-root="true"
       data-testid="reader-scrollport"
       style={{ height: 120, overflowY: "auto" }}
     >
@@ -122,33 +123,35 @@ describe("PaneShell mobile Find chrome composition", () => {
                     onGoBackPane={noop}
                     onGoForwardPane={noop}
                   >
-                    <PaneShell
-                      paneId="pane-a"
-                      routeKey="media:/media/document-a"
-                      routeHeader={{
-                        kind: "resource",
-                        pendingLabel: "Loading document…",
-                      }}
-                      routeShareIdentity={null}
-                      label="Document"
-                      returnMementoEnabled={false}
-                      sizing={{
-                        primaryWidthPx: 390,
-                        primaryMinWidthPx: 320,
-                        primaryMaxWidthPx: 1_400,
-                        renderedPrimarySlotWidthPx: 390,
-                        renderedPrimarySlotMinWidthPx: 320,
-                        renderedPrimarySlotMaxWidthPx: 1_400,
-                        fixedChromeWidthPx: 0,
-                        storedWidthCorrectionPx: null,
-                      }}
-                      bodyMode="document"
-                      onResizePrimaryPane={noop}
-                      isActive
-                      isMobile
-                    >
-                      <Reader />
-                    </PaneShell>
+                    <div data-pane-id="pane-a" data-active="true">
+                      <PaneShell
+                        paneId="pane-a"
+                        routeKey="media:/media/document-a"
+                        routeHeader={{
+                          kind: "resource",
+                          pendingLabel: "Loading document…",
+                        }}
+                        routeShareIdentity={null}
+                        label="Document"
+                        returnMementoEnabled={false}
+                        sizing={{
+                          primaryWidthPx: 390,
+                          primaryMinWidthPx: 320,
+                          primaryMaxWidthPx: 1_400,
+                          renderedPrimarySlotWidthPx: 390,
+                          renderedPrimarySlotMinWidthPx: 320,
+                          renderedPrimarySlotMaxWidthPx: 1_400,
+                          fixedChromeWidthPx: 0,
+                          storedWidthCorrectionPx: null,
+                        }}
+                        bodyMode="document"
+                        onResizePrimaryPane={noop}
+                        isActive
+                        isMobile
+                      >
+                        <Reader />
+                      </PaneShell>
+                    </div>
                   </PaneRuntimeProvider>
                 </PaneReturnMementoProvider>
               </LibraryPlacementControllerProvider>
@@ -172,11 +175,9 @@ describe("PaneShell mobile Find chrome composition", () => {
       expect(collapseProgress(appBar)).toBe(1);
       expect(collapseProgress(paneChrome)).toBe(1);
     });
-    expect(paneToolbar).toHaveAttribute("aria-hidden", "true");
-    expect(paneToolbar).toHaveAttribute("inert");
-    for (const controls of screen.getAllByTestId("top-bar-controls")) {
-      expect(controls).toHaveAttribute("aria-hidden", "true");
-      expect(controls).toHaveAttribute("inert");
+    for (const movingRoot of [appBar, paneChrome]) {
+      expect(movingRoot).toHaveAttribute("aria-hidden", "true");
+      expect(movingRoot).toHaveAttribute("inert");
     }
 
     act(() => {
@@ -192,8 +193,10 @@ describe("PaneShell mobile Find chrome composition", () => {
       expect(collapseProgress(appBar)).toBe(0);
       expect(collapseProgress(paneChrome)).toBe(0);
     });
-    expect(paneToolbar).not.toHaveAttribute("aria-hidden");
-    expect(paneToolbar).not.toHaveAttribute("inert");
+    expect(appBar).not.toHaveAttribute("aria-hidden");
+    expect(appBar).not.toHaveAttribute("inert");
+    expect(paneChrome).not.toHaveAttribute("aria-hidden");
+    expect(paneChrome).not.toHaveAttribute("inert");
     expect(screen.getByTestId("pane-search-toolbar")).not.toHaveAttribute(
       "inert",
     );
@@ -232,7 +235,9 @@ describe("PaneShell mobile Find chrome composition", () => {
       expect(collapseProgress(appBar)).toBe(1);
       expect(collapseProgress(paneChrome)).toBe(1);
     });
-    expect(paneToolbar).toHaveAttribute("aria-hidden", "true");
-    expect(paneToolbar).toHaveAttribute("inert");
+    expect(appBar).toHaveAttribute("aria-hidden", "true");
+    expect(appBar).toHaveAttribute("inert");
+    expect(paneChrome).toHaveAttribute("aria-hidden", "true");
+    expect(paneChrome).toHaveAttribute("inert");
   });
 });

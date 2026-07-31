@@ -1,39 +1,10 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { isInteractiveTarget } from "@/lib/ui/interactiveTarget";
 import { isEditableTarget } from "@/lib/ui/isEditableTarget";
 
 export const PLAYER_SHORTCUTS_DISABLED_SELECTOR = "[data-player-shortcuts-disabled]";
-
-const INTERACTIVE_TARGET_SELECTOR = [
-  "a[href]",
-  "audio[controls]",
-  "button",
-  "input",
-  "select",
-  "summary",
-  "textarea",
-  "video[controls]",
-  "[contenteditable]",
-  "[role='button']",
-  "[role='checkbox']",
-  "[role='combobox']",
-  "[role='gridcell']",
-  "[role='link']",
-  "[role='listbox']",
-  "[role='menu']",
-  "[role='menuitem']",
-  "[role='menuitemcheckbox']",
-  "[role='menuitemradio']",
-  "[role='option']",
-  "[role='radio']",
-  "[role='slider']",
-  "[role='spinbutton']",
-  "[role='switch']",
-  "[role='tab']",
-  "[role='treeitem']",
-  "[tabindex]",
-].join(",");
 
 /**
  * Bind document keyboard shortcuts to the global player while a session is
@@ -80,7 +51,7 @@ export function usePlayerKeyboardShortcuts(args: {
       if (
         event.target instanceof Element &&
         (event.target.closest(PLAYER_SHORTCUTS_DISABLED_SELECTOR) ||
-          event.target.closest(INTERACTIVE_TARGET_SELECTOR))
+          isInteractiveTarget(event.target))
       ) {
         return;
       }

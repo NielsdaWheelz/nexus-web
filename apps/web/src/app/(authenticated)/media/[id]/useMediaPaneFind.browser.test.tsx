@@ -6,6 +6,7 @@ import type { Fragment } from "@/lib/media/transcriptView";
 import type { ReaderNavigationSection } from "@/lib/media/readerNavigation";
 import type { PaneFindResultKey } from "@/lib/panes/paneSearch";
 import { usePaneFind } from "@/lib/panes/usePaneFind";
+import type { ReaderScrollPositioner } from "@/lib/reader/paneScroll";
 import {
   createWebFindAdapter,
   createWebFindSnapshot,
@@ -14,6 +15,20 @@ import {
   useWebPaneFindCapability,
 } from "./useMediaPaneFind";
 import { createMediaFindPreviewLease } from "./mediaFindPreviewLease";
+
+const scrollPositioner: ReaderScrollPositioner = {
+  async run(operation) {
+    await operation({
+      setTop(scrollport, top) {
+        scrollport.scrollTop = Math.max(0, top);
+      },
+      adjustTop(scrollport, delta) {
+        scrollport.scrollTop = Math.max(0, scrollport.scrollTop + delta);
+      },
+      reveal() {},
+    });
+  },
+};
 
 function fragment(id: string, idx: number, canonicalText: string): Fragment {
   return {
@@ -224,6 +239,7 @@ describe("Web Find adapter", () => {
       focusReaderViewport,
       previewLease,
       highlightOwner,
+      scrollPositioner,
     });
     const abort = new AbortController();
     await adapter.prepare({
@@ -346,6 +362,7 @@ describe("Web Find adapter", () => {
       focusReaderViewport: vi.fn(),
       previewLease: lease,
       highlightOwner,
+      scrollPositioner,
     });
     const signal = new AbortController().signal;
     await adapter.prepare({
@@ -405,6 +422,7 @@ describe("Web Find adapter", () => {
       focusReaderViewport: vi.fn(),
       previewLease: createMediaFindPreviewLease(),
       highlightOwner,
+      scrollPositioner,
     });
     await mismatchAdapter.prepare({
       sessionId: 2,
@@ -474,6 +492,7 @@ describe("Web Find adapter", () => {
       focusReaderViewport: vi.fn(),
       previewLease: createMediaFindPreviewLease(),
       highlightOwner,
+      scrollPositioner,
     });
     const signal = new AbortController().signal;
     await adapter.prepare({
@@ -527,6 +546,7 @@ describe("useWebPaneFindCapability", () => {
         setPreviewFragmentId,
         focusReaderViewport: vi.fn(),
         previewLease: lease,
+        scrollPositioner,
       });
     });
 
@@ -580,6 +600,7 @@ describe("useWebPaneFindCapability", () => {
         setPreviewFragmentId,
         focusReaderViewport,
         previewLease: lease,
+        scrollPositioner,
       });
       const findResult = usePaneFind({ capability });
       if (findResult.kind !== "Available") {
@@ -661,6 +682,7 @@ describe("useWebPaneFindCapability", () => {
           setPreviewFragmentId,
           focusReaderViewport,
           previewLease: lease,
+          scrollPositioner,
         });
         const findResult = usePaneFind({ capability });
         if (findResult.kind !== "Available") {
@@ -763,6 +785,7 @@ describe("useWebPaneFindCapability", () => {
           setPreviewFragmentId,
           focusReaderViewport,
           previewLease: lease,
+          scrollPositioner,
         });
         const find = usePaneFind({ capability });
         if (find.kind !== "Available") {

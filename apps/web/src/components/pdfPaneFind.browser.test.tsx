@@ -365,11 +365,13 @@ function createHarness({
     },
     _signal: AbortSignal,
   ) => Promise<void> = async () => {};
+  const revealMatch = vi.fn<(element: HTMLElement) => void>();
   binding = createPdfFindRuntime({
     mediaId: "media-1",
     viewerModule,
     eventBus,
     revealPage: (request) => reveal(request),
+    revealMatch,
     captureOrigin: () => ({
       kind: "Captured",
       value: {
@@ -391,6 +393,7 @@ function createHarness({
     viewer,
     getTextContentCalls: () => getTextContentCalls,
     matchCalls: () => matchCalls,
+    revealMatch,
     setReveal(nextReveal: (request: RevealRequest) => Promise<void>) {
       reveal = nextReveal;
     },
@@ -629,7 +632,9 @@ describe("PDF Find runtime", () => {
       matchIndex: 0,
     });
 
-    expect(element.scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(harness.revealMatch).toHaveBeenCalledTimes(1);
+    expect(harness.revealMatch).toHaveBeenCalledWith(element);
+    expect(element.scrollIntoView).not.toHaveBeenCalled();
     expect(harness.eventBus.findEventTypes.at(-1)).toBe(
       "highlightallchange",
     );
@@ -702,7 +707,9 @@ describe("PDF Find runtime", () => {
     await secondActivation;
 
     expect(staleElement.scrollIntoView).not.toHaveBeenCalled();
-    expect(currentElement.scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(currentElement.scrollIntoView).not.toHaveBeenCalled();
+    expect(harness.revealMatch).toHaveBeenCalledTimes(1);
+    expect(harness.revealMatch).toHaveBeenCalledWith(currentElement);
     expect(harness.binding.findController.selected).toEqual({
       pageIdx: 1,
       matchIdx: 0,

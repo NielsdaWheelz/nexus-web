@@ -1,3 +1,7 @@
+"use client";
+
+import { useCallback, useMemo } from "react";
+import { useMobileChromeVisibleLocks } from "@/lib/workspace/mobileChrome";
 import { isPositiveFinite } from "@/lib/validation";
 
 const TEXT_ANCHOR_TOP_PADDING_PX = 56;
@@ -48,10 +52,6 @@ export function getPaneScrollContainer(
   return null;
 }
 
-type ScrollIntoViewOptionsWithContainer = ScrollIntoViewOptions & {
-  container?: "all" | "nearest";
-};
-
 export function getPaneScrollTopPaddingPx(container: HTMLElement): number {
   if (typeof window === "undefined") {
     return TEXT_ANCHOR_TOP_PADDING_PX;
@@ -75,28 +75,71 @@ export function isElementInPaneView(
   return targetRect.bottom > containerRect.top && targetRect.top < containerRect.bottom;
 }
 
-export function scrollElementIntoPaneView(
-  container: HTMLElement,
-  target: HTMLElement,
-  options: { block?: "start" | "center" } = {},
-): void {
-  const containerRect = container.getBoundingClientRect();
-  const targetRect = target.getBoundingClientRect();
-  const topPaddingPx = getPaneScrollTopPaddingPx(container);
-  const block = options.block ?? "start";
-  const delta =
-    block === "center"
-      ? targetRect.top -
-        containerRect.top -
-        Math.max(0, (containerRect.height - targetRect.height) / 2)
-      : targetRect.top - containerRect.top - topPaddingPx;
-  container.scrollTop = Math.max(0, container.scrollTop + delta);
-  if (!isElementInPaneView(container, target)) {
-    target.scrollIntoView({
-      block,
-      inline: "nearest",
-      behavior: "auto",
-      container: "nearest",
-    } as ScrollIntoViewOptionsWithContainer);
-  }
+export interface ReaderScrollCommands {
+  setTop(scrollport: HTMLElement, top: number): void;
+  adjustTop(scrollport: HTMLElement, delta: number): void;
+  reveal(scrollport: HTMLElement, target: HTMLElement): void;
+}
+
+export interface ReaderScrollPositioner {
+  run(
+    operation: (
+      commands: ReaderScrollCommands,
+    ) => void | Promise<void>,
+  ): Promise<void>;
+}
+
+const readerScrollCommands: ReaderScrollCommands = {
+  setTop(scrollport, top) {
+    scrollport.scrollTop = Math.max(0, top);
+  },
+  adjustTop(scrollport, delta) {
+    scrollport.scrollTop = Math.max(0, scrollport.scrollTop + delta);
+  },
+  reveal(scrollport, target) {
+    const scrollportRect = scrollport.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    if (
+      targetRect.top < scrollportRect.top &&
+      targetRect.bottom > scrollportRect.bottom
+    ) {
+      return;
+    }
+    if (targetRect.top < scrollportRect.top) {
+      readerScrollCommands.adjustTop(
+        scrollport,
+        targetRect.top - scrollportRect.top,
+      );
+      return;
+    }
+    if (targetRect.bottom > scrollportRect.bottom) {
+      readerScrollCommands.adjustTop(
+        scrollport,
+        targetRect.bottom - scrollportRect.bottom,
+      );
+    }
+  },
+};
+
+function nextLayoutSample(): Promise<void> {
+  return new Promise((resolve) => {
+    window.requestAnimationFrame(() => resolve());
+  });
+}
+
+export function useReaderScrollPositioner(): ReaderScrollPositioner {
+  const visibleLocks = useMobileChromeVisibleLocks();
+  const run = useCallback<ReaderScrollPositioner["run"]>(
+    async (operation) => {
+      const release = visibleLocks.acquire("reader-positioning");
+      try {
+        await operation(readerScrollCommands);
+      } finally {
+        await nextLayoutSample();
+        release();
+      }
+    },
+    [visibleLocks],
+  );
+  return useMemo(() => ({ run }), [run]);
 }

@@ -176,7 +176,7 @@ import {
   useMobileChromeReaderScrollport,
   useMobileChromeVisibleLocks,
 } from "@/lib/workspace/mobileChrome";
-import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
+import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { usePaneFixedChrome } from "@/components/workspace/PaneFixedChrome";
 import type { PanePrimaryChromePublication } from "@/lib/panes/panePublications";
 import type {
@@ -192,6 +192,8 @@ import {
 } from "@/lib/dossiers/generationAdapter";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
 import { canonicalCpLength } from "@/lib/reader/textOffsets";
+import { useReaderScrollPositioner } from "@/lib/reader/paneScroll";
+import { composeRefs } from "@/lib/ui/composeRefs";
 import {
   isPdfReaderResumeState,
   isReflowableReaderResumeState,
@@ -213,7 +215,6 @@ import {
   isElementInPaneView,
   isCanonicalTextAnchorVisible,
   isTextViewportAtEnd,
-  scrollElementIntoPaneView,
   scrollToCanonicalTextAnchor,
 } from "./paneTextAnchor";
 import {
@@ -444,14 +445,6 @@ interface ActiveContent {
   documentEmbeds: DocumentEmbed[];
 }
 
-type CodeOwnedReaderPositioningReason =
-  | "reader-positioning"
-  | "highlight-navigation";
-
-interface CodeOwnedReaderPositioningRunContext {
-  readonly finishAfterFinalSample: () => void;
-}
-
 /**
  * Rank-2 polymorphic shape so one helper can drive `Highlight[]`,
  * `PdfHighlightOut[]` slots with the same transform.
@@ -655,7 +648,7 @@ export default function MediaPaneBody() {
   const closeSecondaryPane = paneRuntime.closeSecondaryPane;
   const secondaryPane = paneRuntime.secondaryPane ?? null;
   const returnFocusFallback = useCallback(
-    () => findPaneChromeFocusTarget(paneRuntime.paneId),
+    () => findPaneLandmarkFocusTarget(paneRuntime.paneId),
     [paneRuntime.paneId],
   );
   // Reader-owned location-target seam: replaces the mounted media visit's
@@ -669,8 +662,8 @@ export default function MediaPaneBody() {
     },
     [id, paneRouter],
   );
-  const { acquire: acquireMobileChromeVisibleLock } =
-    useMobileChromeVisibleLocks();
+  const mobileChromeVisibleLocks = useMobileChromeVisibleLocks();
+  const readerScrollPositioner = useReaderScrollPositioner();
   const transcriptViewportRef = useRef<HTMLDivElement | null>(null);
   const transcriptSegmentListRef = useRef<HTMLDivElement | null>(null);
   const transcriptFindMatchElementsRef = useRef(
@@ -701,67 +694,6 @@ export default function MediaPaneBody() {
   const requestedStartMs = target?.kind === "t" ? Number(target.value) : null;
   const feedback = useFeedback();
   const isMobileViewport = useIsMobileViewport();
-  const activeCodeOwnedReaderPositioningRef = useRef<(() => void) | null>(
-    null,
-  );
-  const cancelActiveCodeOwnedReaderPositioning = useCallback(() => {
-    const cancel = activeCodeOwnedReaderPositioningRef.current;
-    activeCodeOwnedReaderPositioningRef.current = null;
-    cancel?.();
-  }, []);
-  const startCodeOwnedReaderPositioning = useCallback(
-    (
-      reason: CodeOwnedReaderPositioningReason,
-      run: (
-        context: CodeOwnedReaderPositioningRunContext,
-      ) => (() => void) | void,
-    ): (() => void) => {
-      cancelActiveCodeOwnedReaderPositioning();
-      let releaseChromeLock = isMobileViewport
-        ? acquireMobileChromeVisibleLock(reason)
-        : null;
-      let releaseFrame = 0;
-      let cancelWork: (() => void) | null = null;
-      let finished = false;
-
-      const cancel = () => {
-        if (finished) return;
-        finished = true;
-        if (releaseFrame) {
-          window.cancelAnimationFrame(releaseFrame);
-          releaseFrame = 0;
-        }
-        cancelWork?.();
-        cancelWork = null;
-        releaseChromeLock?.();
-        releaseChromeLock = null;
-        if (activeCodeOwnedReaderPositioningRef.current === cancel) {
-          activeCodeOwnedReaderPositioningRef.current = null;
-        }
-      };
-      const finishAfterFinalSample = () => {
-        if (finished || releaseFrame) return;
-        releaseFrame = window.requestAnimationFrame(() => {
-          releaseFrame = 0;
-          cancel();
-        });
-      };
-
-      activeCodeOwnedReaderPositioningRef.current = cancel;
-      try {
-        cancelWork = run({ finishAfterFinalSample }) ?? null;
-      } catch (error) {
-        cancel();
-        throw error;
-      }
-      return cancel;
-    },
-    [
-      acquireMobileChromeVisibleLock,
-      cancelActiveCodeOwnedReaderPositioning,
-      isMobileViewport,
-    ],
-  );
   const {
     profile: readerProfile,
     persistence: readerPersistence,
@@ -1161,6 +1093,23 @@ export default function MediaPaneBody() {
       ? Boolean(media.capabilities?.can_read)
       : canReadMediaDocument(media)
     : false;
+  const transcriptChromeScrollportRef =
+    useMobileChromeReaderScrollport<HTMLDivElement>({
+      sourceKey: id,
+      enabled:
+        isMobileViewport &&
+        paneRuntime.isActive &&
+        isTranscriptMedia &&
+        canRead,
+    });
+  const setTranscriptViewportRef = useMemo(
+    () =>
+      composeRefs<HTMLDivElement>(
+        transcriptViewportRef,
+        transcriptChromeScrollportRef,
+      ),
+    [transcriptChromeScrollportRef],
+  );
   const readerLocatorKind: ReaderResumeState["kind"] | null = !media
     ? null
     : isPdf
@@ -1561,7 +1510,6 @@ export default function MediaPaneBody() {
   const terminalReportedGenerationRef = useRef<number | null>(null);
   const pendingTextViewportPublicationRef = useRef<{
     snapshot: ReaderViewportSnapshot;
-    ready: boolean;
     trustedIntent: boolean;
   } | null>(null);
   const textViewportDimensionsRef = useRef<{
@@ -1972,15 +1920,6 @@ export default function MediaPaneBody() {
     isEpub,
     isPdf,
   ]);
-  useEffect(
-    () => () => cancelActiveCodeOwnedReaderPositioning(),
-    [
-      activeTextSource,
-      cancelActiveCodeOwnedReaderPositioning,
-      canonicalResetRevision,
-      readerLayoutKey,
-    ],
-  );
   renderedFragmentIdRef.current = activeContent?.fragmentId ?? null;
 
   const activeTextAnchor = useMemo(() => {
@@ -2887,9 +2826,8 @@ export default function MediaPaneBody() {
       return;
     }
 
-    let releaseChromeLock = isMobileViewport
-      ? acquireMobileChromeVisibleLock("reader-restore")
-      : null;
+    let releaseChromeLock: (() => void) | null =
+      mobileChromeVisibleLocks.acquire("reader-restore");
     const releaseChrome = () => {
       releaseChromeLock?.();
       releaseChromeLock = null;
@@ -2901,7 +2839,7 @@ export default function MediaPaneBody() {
     let attempts = 0;
     const maxAttempts = 96;
 
-    const attemptRestore = () => {
+    const attemptRestore = async () => {
       if (sessionId !== restoreSessionIdRef.current) {
         releaseChrome();
         return;
@@ -2910,7 +2848,9 @@ export default function MediaPaneBody() {
       const cursor = cursorRef.current;
       if (!cursor) {
         if (attempts < maxAttempts) {
-          rafId = window.requestAnimationFrame(attemptRestore);
+          rafId = window.requestAnimationFrame(() => {
+            void attemptRestore();
+          });
         } else if (isEpub && (epubAnchorId !== null || allowEpubTopFallback)) {
           releaseChrome();
           void updateRestorePhase(sessionId, "restoring_fallback");
@@ -2921,11 +2861,15 @@ export default function MediaPaneBody() {
         return;
       }
 
-      const restored = scrollToCanonicalTextAnchor(
-        container,
-        cursor,
-        resumeOffset,
-      );
+      let restored = false;
+      await readerScrollPositioner.run((commands) => {
+        restored = scrollToCanonicalTextAnchor(
+          commands,
+          container,
+          cursor,
+          resumeOffset,
+        );
+      });
       const visible = restored
         ? isCanonicalTextAnchorVisible(container, cursor, resumeOffset)
         : false;
@@ -2935,7 +2879,9 @@ export default function MediaPaneBody() {
         releaseChrome();
         void settleRestoreSession(sessionId);
       } else if (attempts < maxAttempts) {
-        rafId = window.requestAnimationFrame(attemptRestore);
+        rafId = window.requestAnimationFrame(() => {
+          void attemptRestore();
+        });
       } else if (isEpub && (epubAnchorId !== null || allowEpubTopFallback)) {
         releaseChrome();
         void updateRestorePhase(sessionId, "restoring_fallback");
@@ -2945,7 +2891,9 @@ export default function MediaPaneBody() {
       }
     };
 
-    rafId = window.requestAnimationFrame(attemptRestore);
+    rafId = window.requestAnimationFrame(() => {
+      void attemptRestore();
+    });
     return () => {
       if (rafId) {
         window.cancelAnimationFrame(rafId);
@@ -2973,8 +2921,8 @@ export default function MediaPaneBody() {
     readerResumePosition,
     readerLayoutReady,
     restorePhase,
-    isMobileViewport,
-    acquireMobileChromeVisibleLock,
+    mobileChromeVisibleLocks,
+    readerScrollPositioner,
     settleRestoreSession,
     targetStatus,
     totalTextLength,
@@ -3254,17 +3202,26 @@ export default function MediaPaneBody() {
     if (!container) {
       return;
     }
-    return startCodeOwnedReaderPositioning(
-      "reader-positioning",
-      ({ finishAfterFinalSample }) => {
-        container.scrollTop = 0;
+    let cancelled = false;
+    void readerScrollPositioner
+      .run(({ setTop }) => {
+        setTop(container, 0);
+      })
+      .then(() => {
+        if (
+          cancelled ||
+          pendingCanonicalResetRef.current !== pending
+        ) {
+          return;
+        }
         scrollRestoreAppliedRef.current = true;
         textRestoreSettledRef.current = true;
         pendingCanonicalResetRef.current = null;
         pending.resolve("applied");
-        finishAfterFinalSample();
-      },
-    );
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [
     activeContentId,
     activeEpubSection?.section_id,
@@ -3272,8 +3229,8 @@ export default function MediaPaneBody() {
     epubRestoreRequest,
     isEpub,
     isPdf,
+    readerScrollPositioner,
     readerLayoutReady,
-    startCodeOwnedReaderPositioning,
   ]);
 
   useEffect(() => {
@@ -3323,9 +3280,8 @@ export default function MediaPaneBody() {
     let rafId = 0;
     const MAX_ATTEMPTS = 96;
 
-    let releaseChromeLock = isMobileViewport
-      ? acquireMobileChromeVisibleLock("reader-restore")
-      : null;
+    let releaseChromeLock: (() => void) | null =
+      mobileChromeVisibleLocks.acquire("reader-restore");
     const releaseChrome = () => {
       releaseChromeLock?.();
       releaseChromeLock = null;
@@ -3355,7 +3311,7 @@ export default function MediaPaneBody() {
       );
     };
 
-    const attemptScroll = (attempt: number) => {
+    const attemptScroll = async (attempt: number) => {
       if (sessionId !== restoreSessionIdRef.current) {
         releaseChrome();
         return;
@@ -3366,20 +3322,22 @@ export default function MediaPaneBody() {
         const container = textViewportRef.current;
         if (!container) {
           if (attempt < MAX_ATTEMPTS) {
-            rafId = window.requestAnimationFrame(() =>
-              attemptScroll(attempt + 1),
-            );
+            rafId = window.requestAnimationFrame(() => {
+              void attemptScroll(attempt + 1);
+            });
             return;
           }
           releaseChrome();
           void settleRestoreSession(sessionId);
           return;
         }
-        scrollElementIntoPaneView(container, target);
+        await readerScrollPositioner.run(({ reveal }) => {
+          reveal(container, target);
+        });
         if (!isElementInPaneView(container, target) && attempt < MAX_ATTEMPTS) {
-          rafId = window.requestAnimationFrame(() =>
-            attemptScroll(attempt + 1),
-          );
+          rafId = window.requestAnimationFrame(() => {
+            void attemptScroll(attempt + 1);
+          });
           return;
         }
         scrollRestoreAppliedRef.current = true;
@@ -3389,14 +3347,18 @@ export default function MediaPaneBody() {
       }
 
       if (epubRestoreRequest.anchorId && attempt < MAX_ATTEMPTS) {
-        rafId = window.requestAnimationFrame(() => attemptScroll(attempt + 1));
+        rafId = window.requestAnimationFrame(() => {
+          void attemptScroll(attempt + 1);
+        });
         return;
       }
 
       if (epubRestoreRequest.allowSectionTopFallback) {
         const container = textViewportRef.current;
         if (container) {
-          container.scrollTop = 0;
+          await readerScrollPositioner.run(({ setTop }) => {
+            setTop(container, 0);
+          });
         }
         scrollRestoreAppliedRef.current = true;
       }
@@ -3404,7 +3366,7 @@ export default function MediaPaneBody() {
       void settleRestoreSession(sessionId);
     };
 
-    attemptScroll(0);
+    void attemptScroll(0);
 
     return () => {
       if (rafId) {
@@ -3417,8 +3379,8 @@ export default function MediaPaneBody() {
     epubRestoreRequest,
     epubSectionLoading,
     isEpub,
-    isMobileViewport,
-    acquireMobileChromeVisibleLock,
+    mobileChromeVisibleLocks,
+    readerScrollPositioner,
     readerLayoutReady,
     restorePhase,
     settleRestoreSession,
@@ -3666,9 +3628,8 @@ export default function MediaPaneBody() {
       return;
     }
 
-    let releaseChromeLock = isMobileViewport
-      ? acquireMobileChromeVisibleLock("reader-restore")
-      : null;
+    let releaseChromeLock: (() => void) | null =
+      mobileChromeVisibleLocks.acquire("reader-restore");
     const releaseChrome = () => {
       releaseChromeLock?.();
       releaseChromeLock = null;
@@ -3690,34 +3651,44 @@ export default function MediaPaneBody() {
       );
     };
 
-    const attemptScroll = () => {
+    const attemptScroll = async () => {
       attempts += 1;
       const target = findTarget();
       if (target) {
-        scrollElementIntoPaneView(container, target);
+        await readerScrollPositioner.run(({ reveal }) => {
+          reveal(container, target);
+        });
         releaseChrome();
         return;
       }
-      if (
-        section.start_offset !== null &&
-        cursorRef.current &&
-        scrollToCanonicalTextAnchor(
-          container,
-          cursorRef.current,
-          section.start_offset,
-        )
-      ) {
+      let positioned = false;
+      const cursor = cursorRef.current;
+      if (section.start_offset !== null && cursor) {
+        await readerScrollPositioner.run((commands) => {
+          positioned = scrollToCanonicalTextAnchor(
+            commands,
+            container,
+            cursor,
+            section.start_offset!,
+          );
+        });
+      }
+      if (positioned) {
         releaseChrome();
         return;
       }
       if (attempts < maxAttempts) {
-        rafId = window.requestAnimationFrame(attemptScroll);
+        rafId = window.requestAnimationFrame(() => {
+          void attemptScroll();
+        });
         return;
       }
       releaseChrome();
     };
 
-    rafId = window.requestAnimationFrame(attemptScroll);
+    rafId = window.requestAnimationFrame(() => {
+      void attemptScroll();
+    });
     return () => {
       if (rafId) {
         window.cancelAnimationFrame(rafId);
@@ -3727,9 +3698,9 @@ export default function MediaPaneBody() {
   }, [
     activeContent,
     activeWebSectionId,
-    isMobileViewport,
     media?.kind,
-    acquireMobileChromeVisibleLock,
+    mobileChromeVisibleLocks,
+    readerScrollPositioner,
     readerLayoutReady,
     renderedHtml.length,
     webSections,
@@ -3891,14 +3862,24 @@ export default function MediaPaneBody() {
             getActiveFragmentId: () =>
               transcriptFindActiveFragmentIdRef.current,
             setActiveFragmentId: setActiveTranscriptFragmentId,
-            getScrollport: () => transcriptViewportRef.current,
+            getSegmentList: () => transcriptSegmentListRef.current,
+            getScrollOwner: () =>
+              isMobileViewport
+                ? transcriptViewportRef.current
+                : transcriptSegmentListRef.current,
             getMatchElement: (key) =>
               transcriptFindMatchElementsRef.current.get(key) ?? null,
             publishPresentation: setTranscriptFindPresentation,
             previewLease: mediaFindPreviewLease,
+            scrollPositioner: readerScrollPositioner,
           })
         : null,
-    [mediaFindPreviewLease, transcriptFindSnapshot],
+    [
+      isMobileViewport,
+      mediaFindPreviewLease,
+      readerScrollPositioner,
+      transcriptFindSnapshot,
+    ],
   );
   useLayoutEffect(() => {
     if (!transcriptFindAdapter) return;
@@ -3936,6 +3917,7 @@ export default function MediaPaneBody() {
     setPreviewFragmentId: setWebSearchPreviewFragmentId,
     focusReaderViewport,
     previewLease: mediaFindPreviewLease,
+    scrollPositioner: readerScrollPositioner,
   });
   const handleEpubFindSourceChanged = useCallback(() => {
     epubAdoptionCaptureSuppressionRef.current = false;
@@ -3973,6 +3955,7 @@ export default function MediaPaneBody() {
     resetRenderedSectionAuxiliaryState: resetEpubRenderedSectionAuxiliaryState,
     onSourceChanged: handleEpubFindSourceChanged,
     focusReaderViewport,
+    scrollPositioner: readerScrollPositioner,
   });
   const selectedMediaFindCapability = useMemo<
     PaneFindCapability<MediaPaneFindError | PdfFindError>
@@ -4114,16 +4097,21 @@ export default function MediaPaneBody() {
       return;
     }
 
-    return startCodeOwnedReaderPositioning(
-      "highlight-navigation",
-      ({ finishAfterFinalSample }) => {
-        scrollElementIntoPaneView(container, anchor, { block: "center" });
-        focusHighlight(requestedHighlightId);
-        urlHighlightAppliedRef.current = requestedHighlightId;
-        markActive();
-        finishAfterFinalSample();
-      },
-    );
+    let releaseChromeLock: (() => void) | null =
+      mobileChromeVisibleLocks.acquire("highlight-navigation");
+    const releaseChrome = () => {
+      releaseChromeLock?.();
+      releaseChromeLock = null;
+    };
+    void readerScrollPositioner
+      .run(({ reveal }) => {
+        reveal(container, anchor);
+      })
+      .finally(releaseChrome);
+    focusHighlight(requestedHighlightId);
+    urlHighlightAppliedRef.current = requestedHighlightId;
+    markActive();
+    return releaseChrome;
   }, [
     requestedHighlightId,
     resolvedHighlightTargetResource.status,
@@ -4132,8 +4120,9 @@ export default function MediaPaneBody() {
     highlights,
     renderedHtml,
     focusHighlight,
+    mobileChromeVisibleLocks,
+    readerScrollPositioner,
     markActive,
-    startCodeOwnedReaderPositioning,
   ]);
 
   useEffect(() => {
@@ -4155,17 +4144,6 @@ export default function MediaPaneBody() {
     });
     focusHighlight(requestedHighlightId);
   }, [focusHighlight, requestedHighlightId, resolvedHighlightTarget]);
-
-  useEffect(() => {
-    if (!isMobileViewport || pdfHighlightNavigation === null) {
-      return;
-    }
-    return acquireMobileChromeVisibleLock("highlight-navigation");
-  }, [
-    acquireMobileChromeVisibleLock,
-    isMobileViewport,
-    pdfHighlightNavigation,
-  ]);
 
   useEffect(() => {
     const textEvidenceHighlightId =
@@ -4195,25 +4173,31 @@ export default function MediaPaneBody() {
     if (!anchor) {
       return;
     }
-    return startCodeOwnedReaderPositioning(
-      "highlight-navigation",
-      ({ finishAfterFinalSample }) => {
-        scrollElementIntoPaneView(container, anchor, { block: "center" });
-        urlEvidenceAppliedRef.current = textEvidenceHighlightId;
-        markActive();
-        finishAfterFinalSample();
-      },
-    );
+    let releaseChromeLock: (() => void) | null =
+      mobileChromeVisibleLocks.acquire("highlight-navigation");
+    const releaseChrome = () => {
+      releaseChromeLock?.();
+      releaseChromeLock = null;
+    };
+    void readerScrollPositioner
+      .run(({ reveal }) => {
+        reveal(container, anchor);
+      })
+      .finally(releaseChrome);
+    urlEvidenceAppliedRef.current = textEvidenceHighlightId;
+    markActive();
+    return releaseChrome;
   }, [
     requestedEvidenceId,
     activeContent,
     epubSectionLoading,
+    mobileChromeVisibleLocks,
+    readerScrollPositioner,
     renderedHtml,
     resolvedEvidence,
     resolvedEvidenceHighlightId,
     temporaryTextHighlight,
     markActive,
-    startCodeOwnedReaderPositioning,
   ]);
 
   useEffect(() => {
@@ -4509,30 +4493,16 @@ export default function MediaPaneBody() {
   );
 
   const focusReaderApparatusInContent = useCallback(
-    (
-      itemId: string,
-      shouldScroll: boolean,
-      afterPosition?: () => void,
-    ): (() => void) | null => {
-      const positionWithoutApparatusElement = () =>
-        afterPosition
-          ? startCodeOwnedReaderPositioning(
-              "reader-positioning",
-              ({ finishAfterFinalSample }) => {
-                afterPosition();
-                finishAfterFinalSample();
-              },
-            )
-          : null;
+    (itemId: string, shouldScroll: boolean) => {
       const root = contentRef.current;
       if (!root) {
-        return positionWithoutApparatusElement();
+        return;
       }
       const element = root.querySelector<HTMLElement>(
         readerApparatusSelector(itemId),
       );
       if (!element) {
-        return positionWithoutApparatusElement();
+        return;
       }
       const rowId = sourceReferenceByStableKey.get(itemId)?.item.id ?? itemId;
       setFocusedApparatusItemId(rowId);
@@ -4542,29 +4512,21 @@ export default function MediaPaneBody() {
         READER_APPARATUS_FOCUS_CLASS,
       );
       if (shouldScroll) {
-        return startCodeOwnedReaderPositioning(
-          "reader-positioning",
-          ({ finishAfterFinalSample }) => {
-            resetTextProgressGeneration();
-            const container = getPaneScrollContainer(root);
-            if (container) {
-              scrollElementIntoPaneView(container, element, { block: "center" });
-            }
-            pulseReaderApparatusElement(element);
-            afterPosition?.();
-            finishAfterFinalSample();
-          },
-        );
+        resetTextProgressGeneration();
+        const container = getPaneScrollContainer(root);
+        if (container) {
+          void readerScrollPositioner.run(({ reveal }) => {
+            reveal(container, element);
+          });
+        }
       }
       pulseReaderApparatusElement(element);
-      afterPosition?.();
-      return null;
     },
     [
       readerApparatusItemIdsForRow,
+      readerScrollPositioner,
       resetTextProgressGeneration,
       sourceReferenceByStableKey,
-      startCodeOwnedReaderPositioning,
     ],
   );
 
@@ -5151,33 +5113,6 @@ export default function MediaPaneBody() {
   });
   const focusModeForRoot = readerProfile.focus_mode;
   const hyphenationForRoot = readerProfile.hyphenation;
-  const mobileReaderScrollportEnabled =
-    isMobileViewport && paneRuntime.isActive && canRead;
-  const transcriptMobileChromeSourceKey = `transcript:${id}:${
-    transcriptFindSnapshot?.sourceKey ?? "unavailable"
-  }:${readerLayoutKey}:${canonicalResetRevision ?? "initial"}`;
-  const textMobileChromeSourceKey = `${
-    isEpub ? "epub" : "web"
-  }:${id}:${activeTextSource ?? "unavailable"}:${
-    activeTextAnchor ?? "top"
-  }:${readerLayoutKey}:${hyphenationForRoot}:${
-    isEpub ? epubSourceGeneration : 0
-  }:${canonicalResetRevision ?? "initial"}`;
-  const pdfMobileChromeSourceKey = `pdf:${id}:${
-    canonicalResetRevision ?? "initial"
-  }`;
-  const transcriptMobileChromeViewportRef =
-    useMobileChromeReaderScrollport<HTMLDivElement>({
-      sourceKey: transcriptMobileChromeSourceKey,
-      enabled: mobileReaderScrollportEnabled && isTranscriptMedia,
-    });
-  const setTranscriptViewportNode = useCallback(
-    (node: HTMLDivElement | null) => {
-      transcriptViewportRef.current = node;
-      transcriptMobileChromeViewportRef(node);
-    },
-    [transcriptMobileChromeViewportRef],
-  );
   const { chromeRevealed } = useFocusModeTracking(
     focusModeForRoot,
     readerRootRef,
@@ -5478,7 +5413,6 @@ export default function MediaPaneBody() {
   const scheduleTextViewportCapture = useCallback(
     (
       snapshot: ReaderViewportSnapshot,
-      ready: boolean,
       trustedIntent: boolean,
     ) => {
       if (mediaFindPreviewLease.isActive()) {
@@ -5486,8 +5420,6 @@ export default function MediaPaneBody() {
       }
       pendingTextViewportPublicationRef.current = {
         snapshot,
-        ready:
-          ready || pendingTextViewportPublicationRef.current?.ready === true,
         trustedIntent:
           trustedIntent ||
           pendingTextViewportPublicationRef.current?.trustedIntent === true,
@@ -5654,13 +5586,13 @@ export default function MediaPaneBody() {
 
   const handleTextViewportReady = useCallback(
     (snapshot: ReaderViewportSnapshot) => {
-      scheduleTextViewportCapture(snapshot, true, false);
+      scheduleTextViewportCapture(snapshot, false);
     },
     [scheduleTextViewportCapture],
   );
   const handleTextViewportScroll = useCallback(
     (snapshot: ReaderViewportSnapshot) => {
-      scheduleTextViewportCapture(snapshot, false, false);
+      scheduleTextViewportCapture(snapshot, false);
     },
     [scheduleTextViewportCapture],
   );
@@ -5687,7 +5619,6 @@ export default function MediaPaneBody() {
             scrollHeight: container.scrollHeight,
             clientHeight: container.clientHeight,
           },
-          false,
           true,
         );
       }
@@ -5719,7 +5650,6 @@ export default function MediaPaneBody() {
         scrollHeight: viewport.scrollHeight,
         clientHeight: viewport.clientHeight,
       },
-      false,
       false,
     );
   }, [activeContent, isPdf, renderedHtml, scheduleTextViewportCapture]);
@@ -5760,7 +5690,6 @@ export default function MediaPaneBody() {
           scrollHeight: viewport.scrollHeight,
           clientHeight: viewport.clientHeight,
         },
-        false,
         false,
       );
     });
@@ -6372,6 +6301,27 @@ export default function MediaPaneBody() {
     toggleInspector,
   ]);
 
+  const releasePdfActionMenuLockRef = useRef<(() => void) | null>(null);
+  const handlePdfActionMenuOpenChange = useCallback(
+    (open: boolean) => {
+      if (open) {
+        releasePdfActionMenuLockRef.current ??=
+          mobileChromeVisibleLocks.acquire("action-menu");
+        return;
+      }
+      releasePdfActionMenuLockRef.current?.();
+      releasePdfActionMenuLockRef.current = null;
+    },
+    [mobileChromeVisibleLocks],
+  );
+  useEffect(
+    () => () => {
+      releasePdfActionMenuLockRef.current?.();
+      releasePdfActionMenuLockRef.current = null;
+    },
+    [],
+  );
+
   const mediaToolbar = useMemo(
     () =>
       isPdf && canRead && pdfControlsState ? (
@@ -6409,6 +6359,7 @@ export default function MediaPaneBody() {
             </Button>
             <ActionMenu
               label="More actions"
+              onOpenChange={handlePdfActionMenuOpenChange}
               options={[
                 {
                   kind: "command",
@@ -6503,6 +6454,7 @@ export default function MediaPaneBody() {
       activeSectionPosition,
       canRead,
       epubSections,
+      handlePdfActionMenuOpenChange,
       isEpub,
       isPdf,
       navigateToEpubSection,
@@ -6541,20 +6493,19 @@ export default function MediaPaneBody() {
   }, [media]);
 
   useEffect(() => {
-    if (!isMobileViewport) {
-      return;
-    }
     const releaseLocks: Array<() => void> = [];
     if (
       secondaryPane?.groupId === "resource-inspector" &&
       secondaryPane.visibility === "visible"
     ) {
       releaseLocks.push(
-        acquireMobileChromeVisibleLock("mobile-secondary"),
+        mobileChromeVisibleLocks.acquire("mobile-secondary"),
       );
     }
     if (selection && !focusState.editingBounds) {
-      releaseLocks.push(acquireMobileChromeVisibleLock("text-selection"));
+      releaseLocks.push(
+        mobileChromeVisibleLocks.acquire("text-selection"),
+      );
     }
     return () => {
       for (const releaseLock of releaseLocks) {
@@ -6562,9 +6513,8 @@ export default function MediaPaneBody() {
       }
     };
   }, [
-    acquireMobileChromeVisibleLock,
     focusState.editingBounds,
-    isMobileViewport,
+    mobileChromeVisibleLocks,
     secondaryPane,
     selection,
   ]);
@@ -6739,114 +6689,69 @@ export default function MediaPaneBody() {
   }, [activeContent, activeTextStartOffset, isPdf, totalTextLength]);
 
   const scrollRenderedHighlightIntoView = useCallback(
-    (highlightId: string, afterPosition?: () => void): (() => void) =>
-      startCodeOwnedReaderPositioning(
-        "highlight-navigation",
-        ({ finishAfterFinalSample }) => {
-          resetTextProgressGeneration();
-          const escapedId = escapeAttrValue(highlightId);
-          const MAX_ATTEMPTS = 30;
-          let attempt = 0;
-          let retryFrame = 0;
-          let cancelled = false;
+    (highlightId: string) => {
+      resetTextProgressGeneration();
+      const escapedId = escapeAttrValue(highlightId);
+      const MAX_ATTEMPTS = 30;
+      let attempt = 0;
 
-          const finish = () => {
-            afterPosition?.();
-            finishAfterFinalSample();
-          };
-          const scroll = () => {
-            retryFrame = 0;
-            if (cancelled) {
-              return;
-            }
-            const root = contentRef.current;
-            const target =
-              root?.querySelector<HTMLElement>(
-                `[data-active-highlight-ids~="${escapedId}"]`,
-              ) ??
-              root?.querySelector<HTMLElement>(
-                `[data-highlight-anchor="${escapedId}"]`,
-              ) ??
-              null;
-            const container = target ? getPaneScrollContainer(target) : null;
-            if (target && container) {
-              scrollElementIntoPaneView(container, target, { block: "center" });
-              if (isElementInPaneView(container, target)) {
-                finish();
-                return;
-              }
-            }
-            attempt += 1;
-            if (attempt < MAX_ATTEMPTS) {
-              retryFrame = window.requestAnimationFrame(scroll);
-            } else {
-              finish();
-            }
-          };
+      const scroll = async () => {
+        const root = contentRef.current;
+        if (!root) {
+          return;
+        }
+        const target =
+          root.querySelector<HTMLElement>(
+            `[data-active-highlight-ids~="${escapedId}"]`,
+          ) ??
+          root.querySelector<HTMLElement>(
+            `[data-highlight-anchor="${escapedId}"]`,
+          );
+        const container = target ? getPaneScrollContainer(target) : null;
+        if (target && container) {
+          await readerScrollPositioner.run(({ reveal }) => {
+            reveal(container, target);
+          });
+          if (isElementInPaneView(container, target)) {
+            return;
+          }
+        }
+        attempt += 1;
+        if (attempt < MAX_ATTEMPTS) {
+          window.requestAnimationFrame(() => {
+            void scroll();
+          });
+        }
+      };
 
-          scroll();
-          return () => {
-            cancelled = true;
-            if (retryFrame) {
-              window.cancelAnimationFrame(retryFrame);
-            }
-          };
-        },
-      ),
-    [
-      resetTextProgressGeneration,
-      startCodeOwnedReaderPositioning,
-    ],
+      void scroll();
+    },
+    [readerScrollPositioner, resetTextProgressGeneration],
   );
 
   const scrollDocumentEmbedIntoView = useCallback(
-    (occurrenceKey: string): (() => void) =>
-      startCodeOwnedReaderPositioning(
-        "reader-positioning",
-        ({ finishAfterFinalSample }) => {
-          resetTextProgressGeneration();
-          const MAX_ATTEMPTS = 30;
-          let attempt = 0;
-          let retryFrame = 0;
-          let cancelled = false;
-
-          const scroll = () => {
-            retryFrame = 0;
-            if (cancelled) {
-              return;
-            }
-            const root = contentRef.current;
-            const target = root?.querySelector<HTMLElement>(
-              `[data-nexus-document-embed-id="${escapeAttrValue(occurrenceKey)}"]`,
-            );
-            const container = target ? getPaneScrollContainer(target) : null;
-            if (target && container) {
-              scrollElementIntoPaneView(container, target, { block: "center" });
-              pulseReaderApparatusElement(target);
-              finishAfterFinalSample();
-              return;
-            }
-            attempt += 1;
-            if (attempt < MAX_ATTEMPTS) {
-              retryFrame = window.requestAnimationFrame(scroll);
-            } else {
-              finishAfterFinalSample();
-            }
-          };
-
-          scroll();
-          return () => {
-            cancelled = true;
-            if (retryFrame) {
-              window.cancelAnimationFrame(retryFrame);
-            }
-          };
-        },
-      ),
-    [
-      resetTextProgressGeneration,
-      startCodeOwnedReaderPositioning,
-    ],
+    (occurrenceKey: string) => {
+      resetTextProgressGeneration();
+      const root = contentRef.current;
+      if (!root) {
+        return;
+      }
+      const target = root.querySelector<HTMLElement>(
+        `[data-nexus-document-embed-id="${escapeAttrValue(occurrenceKey)}"]`,
+      );
+      const container = target ? getPaneScrollContainer(target) : null;
+      if (!target || !container) {
+        return;
+      }
+      void readerScrollPositioner
+        .run(({ reveal }) => {
+          reveal(container, target);
+        })
+        .then(() => {
+          pulseReaderApparatusElement(target);
+        });
+    },
+    [readerScrollPositioner, resetTextProgressGeneration],
   );
 
   useEffect(() => {
@@ -6855,8 +6760,13 @@ export default function MediaPaneBody() {
       return;
     }
     pendingDocumentEmbedPulseRef.current = null;
-    return scrollDocumentEmbedIntoView(pending.occurrenceKey);
-  }, [activeContent?.fragmentId, scrollDocumentEmbedIntoView]);
+    const rafId = window.requestAnimationFrame(() => {
+      scrollDocumentEmbedIntoView(pending.occurrenceKey);
+    });
+    return () => {
+      window.cancelAnimationFrame(rafId);
+    };
+  }, [activeContent?.fragmentId, renderedHtml, scrollDocumentEmbedIntoView]);
 
   // Complete a target activation after its fragment/section has rendered.
   useEffect(() => {
@@ -6870,33 +6780,22 @@ export default function MediaPaneBody() {
     }
     pendingDocumentMapPulseRef.current = null;
     if (pending.apparatusStableKey) {
-      return (
-        focusReaderApparatusInContent(
-          pending.apparatusStableKey,
-          true,
-          () => dispatchReaderPulse(pending.target),
-        ) ?? undefined
-      );
+      focusReaderApparatusInContent(pending.apparatusStableKey, true);
+    } else if (pending.target.highlightId) {
+      scrollRenderedHighlightIntoView(pending.target.highlightId);
     }
-    if (pending.target.highlightId) {
-      return scrollRenderedHighlightIntoView(
-        pending.target.highlightId,
-        () => dispatchReaderPulse(pending.target),
-      );
-    }
-    return startCodeOwnedReaderPositioning(
-      "reader-positioning",
-      ({ finishAfterFinalSample }) => {
-        dispatchReaderPulse(pending.target);
-        finishAfterFinalSample();
-      },
-    );
+    const rafId = window.requestAnimationFrame(() => {
+      dispatchReaderPulse(pending.target);
+    });
+    return () => {
+      window.cancelAnimationFrame(rafId);
+    };
   }, [
-    activeContent?.fragmentId,
+    activeContent,
     epubSectionLoading,
     focusReaderApparatusInContent,
+    renderedHtml,
     scrollRenderedHighlightIntoView,
-    startCodeOwnedReaderPositioning,
   ]);
 
   const activateEvidenceResolution = useCallback(
@@ -6963,22 +6862,11 @@ export default function MediaPaneBody() {
       const fragmentId = locator.fragment_id;
       if (fragmentId === activeContent?.fragmentId && !epubSectionLoading) {
         if (apparatusStableKey) {
-          focusReaderApparatusInContent(apparatusStableKey, true, () =>
-            dispatchReaderPulse(target),
-          );
+          focusReaderApparatusInContent(apparatusStableKey, true);
         } else if (highlightId) {
-          scrollRenderedHighlightIntoView(highlightId, () =>
-            dispatchReaderPulse(target),
-          );
-        } else {
-          startCodeOwnedReaderPositioning(
-            "reader-positioning",
-            ({ finishAfterFinalSample }) => {
-              dispatchReaderPulse(target);
-              finishAfterFinalSample();
-            },
-          );
+          scrollRenderedHighlightIntoView(highlightId);
         }
+        dispatchReaderPulse(target);
         completeActivation();
         return true;
       }
@@ -7040,7 +6928,6 @@ export default function MediaPaneBody() {
       scrollRenderedHighlightIntoView,
       seekTo,
       setTarget,
-      startCodeOwnedReaderPositioning,
     ],
   );
 
@@ -7332,10 +7219,31 @@ export default function MediaPaneBody() {
         "openSearchResults" | "closeSearchResults" | "previewSearchResult"
       >
     >(null);
+  const releasePaneFindLockRef = useRef<(() => void) | null>(null);
+  const openFind = useCallback(() => {
+    if (!mediaPaneFind) return;
+    releasePaneFindLockRef.current ??=
+      mobileChromeVisibleLocks.acquire("pane-find");
+    mediaPaneFind.onOpen();
+  }, [mediaPaneFind, mobileChromeVisibleLocks]);
   const dismissFind = useCallback(() => {
     mediaPaneFind?.onDismiss();
     searchCommandsRef.current?.closeSearchResults();
+    releasePaneFindLockRef.current?.();
+    releasePaneFindLockRef.current = null;
   }, [mediaPaneFind]);
+  useEffect(() => {
+    if (mediaPaneFind) return;
+    releasePaneFindLockRef.current?.();
+    releasePaneFindLockRef.current = null;
+  }, [mediaPaneFind]);
+  useEffect(
+    () => () => {
+      releasePaneFindLockRef.current?.();
+      releasePaneFindLockRef.current = null;
+    },
+    [],
+  );
   const showFindResults = useCallback((trigger: HTMLButtonElement | null) => {
     searchCommandsRef.current?.openSearchResults(trigger);
   }, []);
@@ -7359,7 +7267,7 @@ export default function MediaPaneBody() {
               : undefined,
             inputLabel: mediaFindInputLabel,
             placeholder: mediaFindInputLabel,
-            onOpen: mediaPaneFind.onOpen,
+            onOpen: openFind,
             onQueryChange: mediaPaneFind.onQueryChange,
             onDismiss: dismissFind,
             result: mediaPaneFind.result,
@@ -7380,6 +7288,7 @@ export default function MediaPaneBody() {
       dismissFind,
       mediaPaneFind,
       mediaFindInputLabel,
+      openFind,
       showFindResults,
       transcriptFindAvailable,
     ],
@@ -7495,7 +7404,13 @@ export default function MediaPaneBody() {
 
   if (loading) {
     return (
-      <div className={styles.mobileDocumentState}>
+      <div
+        className={styles.mobileDocumentState}
+        data-mobile-reader-interaction-root={
+          paneRuntime.isActive ? "true" : undefined
+        }
+        data-testid="mobile-reader-interaction-root"
+      >
         <PaneLoadingState />
       </div>
     );
@@ -7503,7 +7418,13 @@ export default function MediaPaneBody() {
 
   if (error || !media) {
     return (
-      <div className={`${styles.errorContainer} ${styles.mobileDocumentState}`}>
+      <div
+        className={`${styles.errorContainer} ${styles.mobileDocumentState}`}
+        data-mobile-reader-interaction-root={
+          paneRuntime.isActive ? "true" : undefined
+        }
+        data-testid="mobile-reader-interaction-root"
+      >
         <FeedbackNotice
           feedback={error ?? { severity: "error", title: "Media not found" }}
         />
@@ -7519,7 +7440,13 @@ export default function MediaPaneBody() {
       media.processing_status === "extracting")
   ) {
     return (
-      <div className={`${styles.content} ${styles.mobileDocumentState}`}>
+      <div
+        className={`${styles.content} ${styles.mobileDocumentState}`}
+        data-mobile-reader-interaction-root={
+          paneRuntime.isActive ? "true" : undefined
+        }
+        data-testid="mobile-reader-interaction-root"
+      >
         <div className={styles.notReady}>
           <p>This EPUB is still being processed.</p>
           <p>Status: {media.processing_status}</p>
@@ -7651,6 +7578,7 @@ export default function MediaPaneBody() {
       renderedHtml={renderedHtml}
       readerSurfaceClassName={readerSurfaceClassName}
       readerSurfaceStyle={readerSurfaceStyle}
+      scrollPositioner={readerScrollPositioner}
       evidenceHighlightId={
         resolvedEvidence?.resolver.kind === "transcript"
           ? resolvedEvidenceHighlightId
@@ -7693,6 +7621,10 @@ export default function MediaPaneBody() {
         data-focus-mode={focusModeForRoot}
         data-chrome-revealed={chromeRevealed ? "true" : undefined}
         data-view-transition-part="reader"
+        data-mobile-reader-interaction-root={
+          paneRuntime.isActive ? "true" : undefined
+        }
+        data-testid="mobile-reader-interaction-root"
       >
         {mediaReaderViewTransition ? (
           <div className={styles.readerTransitionHeader} aria-hidden="true">
@@ -7720,7 +7652,7 @@ export default function MediaPaneBody() {
           {isTranscriptMedia ? (
             <div className={styles.readerFrame}>
               <div
-                ref={setTranscriptViewportNode}
+                ref={setTranscriptViewportRef}
                 className={styles.documentViewport}
                 data-testid="document-viewport"
                 data-pane-content="true"
@@ -7810,8 +7742,9 @@ export default function MediaPaneBody() {
                 <PdfReader
                   key={`${id}:${canonicalResetRevision ?? "initial"}`}
                   mediaId={id}
-                  mobileChromeSourceKey={pdfMobileChromeSourceKey}
-                  mobileChromeEnabled={mobileReaderScrollportEnabled}
+                  mobileChromeEnabled={
+                    isMobileViewport && paneRuntime.isActive && canRead
+                  }
                   beforeContent={readerBanners}
                   viewportRef={pdfViewportRef}
                   contentRef={pdfContentRef}
@@ -7917,8 +7850,15 @@ export default function MediaPaneBody() {
             <TextDocumentReader
               key={`${id}:${canonicalResetRevision ?? "initial"}`}
               mediaId={id}
-              mobileChromeSourceKey={textMobileChromeSourceKey}
-              mobileChromeEnabled={mobileReaderScrollportEnabled}
+              mobileChromeSourceKey={
+                renderedEpubSection
+                  ? `${id}:epub:${renderedEpubSection.section_id}`
+                  : `${id}:epub`
+              }
+              mobileChromeEnabled={
+                isMobileViewport && paneRuntime.isActive && canRead
+              }
+              scrollPositioner={readerScrollPositioner}
               beforeContent={readerBanners}
               readerRootRef={readerRootRef}
               contentRef={contentRef}
@@ -7955,8 +7895,11 @@ export default function MediaPaneBody() {
             <TextDocumentReader
               key={`${id}:${canonicalResetRevision ?? "initial"}`}
               mediaId={id}
-              mobileChromeSourceKey={textMobileChromeSourceKey}
-              mobileChromeEnabled={mobileReaderScrollportEnabled}
+              mobileChromeSourceKey={id}
+              mobileChromeEnabled={
+                isMobileViewport && paneRuntime.isActive && canRead
+              }
+              scrollPositioner={readerScrollPositioner}
               beforeContent={readerBanners}
               readerRootRef={readerRootRef}
               contentRef={contentRef}

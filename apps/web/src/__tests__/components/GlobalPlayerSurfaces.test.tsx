@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   act,
   fireEvent,
@@ -22,6 +22,10 @@ import {
 } from "@/lib/walknotes/walknoteSession";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import { WorkspaceTestProvider } from "@/__tests__/helpers/WorkspaceTestProvider";
+import {
+  MobileChromeProvider,
+  useMobileChromeSurface,
+} from "@/lib/workspace/mobileChrome";
 import {
   buildPlayerDescriptor,
   installLecternPlayerFetchMock,
@@ -102,8 +106,11 @@ function PlayerLauncher() {
 
 function PaneChromeFocusProbe() {
   const workspace = useWorkspaceStore();
+  const ref = useRef<HTMLDivElement>(null);
+  useMobileChromeSurface(ref, "AppBar", true);
   return (
     <div
+      ref={ref}
       data-pane-chrome-for={workspace.state.activePrimaryPaneId ?? undefined}
     >
       <button type="button" data-pane-options-trigger>
@@ -117,23 +124,25 @@ function Harness() {
   const [route, setRoute] = useState("A");
   return (
     <WorkspaceTestProvider>
-      <LecternProvider>
-        <GlobalPlayerProvider>
-          <WalknoteSessionProvider>
-            <button type="button" onClick={() => setRoute("B")}>
-              Navigate pane
-            </button>
-            <span>Pane {route}</span>
-            <input aria-label="Root notes" />
-            <PaneChromeFocusProbe />
-            <LecternReadyProbe />
-            <PlayerLauncher />
-            <MobileViewportProvider>
-              <GlobalPlayerSurfaces />
-            </MobileViewportProvider>
-          </WalknoteSessionProvider>
-        </GlobalPlayerProvider>
-      </LecternProvider>
+      <MobileChromeProvider>
+        <LecternProvider>
+          <GlobalPlayerProvider>
+            <WalknoteSessionProvider>
+              <button type="button" onClick={() => setRoute("B")}>
+                Navigate pane
+              </button>
+              <span>Pane {route}</span>
+              <input aria-label="Root notes" />
+              <PaneChromeFocusProbe />
+              <LecternReadyProbe />
+              <PlayerLauncher />
+              <MobileViewportProvider>
+                <GlobalPlayerSurfaces />
+              </MobileViewportProvider>
+            </WalknoteSessionProvider>
+          </GlobalPlayerProvider>
+        </LecternProvider>
+      </MobileChromeProvider>
     </WorkspaceTestProvider>
   );
 }
@@ -205,6 +214,22 @@ describe("GlobalPlayerSurfaces", () => {
     fireEvent.click(screen.getByRole("button", { name: "Navigate pane" }));
     expect(screen.getByText("Pane B")).toBeVisible();
     expect(screen.getByRole("region", { name: "Media player" })).toBeVisible();
+  });
+
+  it("preserves desktop dismissal focus on the pane command target", async () => {
+    render(<Harness />);
+    await loadCanonical();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close player" }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole("region", { name: "Media player" })).toBeNull(),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Active pane options" }),
+      ).toHaveFocus(),
+    );
   });
 
   it("opens full-screen Now Playing, collapses without pausing, and closes independently", async () => {

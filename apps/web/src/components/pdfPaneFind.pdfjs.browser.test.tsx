@@ -82,6 +82,7 @@ it("composes the pinned PDF.js Find runtime without native navigation or rematch
     viewerModule,
     eventBus,
     revealPage,
+    revealMatch: vi.fn(),
     captureOrigin: () => ({ kind: "Unavailable" }),
     restoreOrigin: async () => undefined,
   });

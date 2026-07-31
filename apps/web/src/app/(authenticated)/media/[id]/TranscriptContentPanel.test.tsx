@@ -1,10 +1,26 @@
 import { createRef, type CSSProperties } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
+import { page } from "vitest/browser";
 import { describe, expect, it, vi } from "vitest";
 import TranscriptContentPanel from "./TranscriptContentPanel";
 import type { TranscriptFragment } from "@/lib/media/transcriptView";
 import { createPaneFindResultKey } from "@/lib/panes/paneSearch";
+import type { ReaderScrollPositioner } from "@/lib/reader/paneScroll";
 import styles from "./page.module.css";
+
+const scrollPositioner: ReaderScrollPositioner = {
+  async run(operation) {
+    await operation({
+      setTop(scrollport, top) {
+        scrollport.scrollTop = Math.max(0, top);
+      },
+      adjustTop(scrollport, delta) {
+        scrollport.scrollTop = Math.max(0, scrollport.scrollTop + delta);
+      },
+      reveal() {},
+    });
+  },
+};
 
 const READER_SURFACE_STYLE = {
   "--reader-font-family": "Georgia, serif",
@@ -50,6 +66,7 @@ function renderPanel(
     renderedHtml: "<p>Active fragment prose.</p>",
     readerSurfaceClassName: READER_SURFACE_CLASS_NAME,
     readerSurfaceStyle: READER_SURFACE_STYLE,
+    scrollPositioner,
     contentRef: createRef<HTMLDivElement>(),
     segmentListRef: createRef<HTMLDivElement>(),
     findPresentation: { kind: "Text" },
@@ -161,6 +178,25 @@ describe("TranscriptContentPanel", () => {
     expect(segmentList).toHaveFocus();
   });
 
+  it("uses the outer reader viewport on mobile while preserving the bounded desktop segment list", async () => {
+    await page.viewport(390, 800);
+    const view = renderPanel();
+    const mobileSegments = screen.getByRole("region", {
+      name: "Transcript segments",
+    });
+    expect(getComputedStyle(mobileSegments).maxHeight).toBe("none");
+    expect(getComputedStyle(mobileSegments).overflowY).toBe("visible");
+    view.unmount();
+
+    await page.viewport(1024, 800);
+    renderPanel();
+    const desktopSegments = screen.getByRole("region", {
+      name: "Transcript segments",
+    });
+    expect(getComputedStyle(desktopSegments).maxHeight).toBe("320px");
+    expect(getComputedStyle(desktopSegments).overflowY).toBe("auto");
+  });
+
   it("renders only exact supplied occurrences and labels the active match", () => {
     const firstKey = createPaneFindResultKey({
       source: { fragmentId: "frag-1" },
@@ -235,5 +271,18 @@ describe("TranscriptContentPanel", () => {
 
     expect(onSegmentSelect).toHaveBeenCalledWith(FRAGMENTS[1]);
     expect(onSeek).toHaveBeenCalledWith(4_000);
+  });
+
+  it("marks transcript annotations as handled before delegating their click", () => {
+    const { onContentClick } = renderPanel({
+      renderedHtml:
+        '<p><span data-active-highlight-ids="h1">Transcript highlight</span></p>',
+    });
+
+    const highlight = screen.getByText("Transcript highlight");
+    fireEvent.click(highlight);
+
+    expect(highlight).toHaveAttribute("data-reader-tap-handled", "true");
+    expect(onContentClick).toHaveBeenCalledTimes(1);
   });
 });

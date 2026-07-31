@@ -110,7 +110,7 @@ import {
   useWorkspaceStore,
 } from "@/lib/workspace/store";
 import { useShareController } from "@/lib/sharing/controller";
-import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
+import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import {
   ResourceOpenablesContractDefect,
   searchOpenableResources,
@@ -1132,7 +1132,7 @@ export function useNexusController(): NexusController {
         return {
           returnFocusTo: () => returnTarget,
           returnFocusFallback: present(() =>
-            findPaneChromeFocusTarget(state.activePrimaryPaneId),
+            findPaneLandmarkFocusTarget(state.activePrimaryPaneId),
           ),
         };
       },

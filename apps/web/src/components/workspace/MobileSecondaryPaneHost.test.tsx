@@ -319,7 +319,7 @@ describe("MobileSecondaryPaneHost", () => {
     );
   });
 
-  it("returns to the explicit Options trigger, then falls back to pane chrome", async () => {
+  it("returns to the explicit Options trigger, then falls back to the pane landmark", async () => {
     const trigger = document.createElement("button");
     trigger.textContent = "Options";
     document.body.append(trigger);
@@ -356,11 +356,12 @@ describe("MobileSecondaryPaneHost", () => {
     trigger.focus();
     rerender(
       <>
-        <div data-pane-chrome-for="pane-1">
-          <button data-pane-options-trigger="pane-1">Projected Options</button>
-        </div>
         <div data-pane-id="pane-1">
-          <div data-pane-chrome-focus="true" tabIndex={-1} />
+          <section
+            aria-label="Active pane"
+            data-pane-focus-landmark="true"
+            tabIndex={-1}
+          />
           <MobileSecondaryPaneHost
             {...props}
             secondary={readerSecondary}
@@ -376,11 +377,12 @@ describe("MobileSecondaryPaneHost", () => {
     trigger.remove();
     rerender(
       <>
-        <div data-pane-chrome-for="pane-1">
-          <button data-pane-options-trigger="pane-1">Projected Options</button>
-        </div>
         <div data-pane-id="pane-1">
-          <div data-pane-chrome-focus="true" tabIndex={-1} />
+          <section
+            aria-label="Active pane"
+            data-pane-focus-landmark="true"
+            tabIndex={-1}
+          />
           <MobileSecondaryPaneHost
             {...props}
             secondary={{ ...readerSecondary, visibility: "collapsed" }}
@@ -391,9 +393,7 @@ describe("MobileSecondaryPaneHost", () => {
       </>,
     );
     await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Projected Options" }),
-      ).toHaveFocus(),
+      expect(screen.getByRole("region", { name: "Active pane" })).toHaveFocus(),
     );
   });
 

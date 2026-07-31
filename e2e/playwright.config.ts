@@ -25,10 +25,7 @@ if (REAL_MEDIA_ENABLED) {
   const sourceFixtureDir =
     process.env.REAL_MEDIA_FIXTURE_DIR ??
     path.join(ROOT_DIR, "python/tests/fixtures/real_media");
-  const runtimeFixtureDir = path.join(
-    ROOT_DIR,
-    "e2e/.seed/real-media-runtime",
-  );
+  const runtimeFixtureDir = path.join(ROOT_DIR, "e2e/.seed/real-media-runtime");
   rmSync(runtimeFixtureDir, { recursive: true, force: true });
   cpSync(sourceFixtureDir, runtimeFixtureDir, { recursive: true });
   process.env.REAL_MEDIA_PROVIDER_FIXTURES = "1";
@@ -46,7 +43,8 @@ export default defineConfig({
   testIgnore: ["**/*.csp.spec.ts", "**/*.csp.setup.ts"],
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : 0,
+  retries: process.env.CI ? 1 : 0,
+  failOnFlakyTests: !!process.env.CI,
   // E2E specs share one authenticated seed user and mutate user-scoped state
   // such as reader resume rows. CI parallelism comes from shards, not workers.
   workers: 1,
@@ -57,6 +55,7 @@ export default defineConfig({
     baseURL: `http://localhost:${WEB_PORT}`,
     trace: "on-first-retry",
     screenshot: "only-on-failure",
+    video: "retain-on-failure",
   },
   projects: [
     { name: "setup", testMatch: /.*\.setup\.ts/ },
@@ -75,9 +74,18 @@ export default defineConfig({
       : [
           {
             name: "chromium",
-            grepInvert: /@real-media|@recovery|@mobile-chrome/,
+            grepInvert: /@mobile-chrome|@real-media|@recovery/,
             use: {
               ...devices["Desktop Chrome"],
+              storageState: ".auth/user.json",
+            },
+            dependencies: ["setup"],
+          },
+          {
+            name: "mobile-chrome",
+            grep: /@mobile-chrome/,
+            use: {
+              ...devices["Pixel 7"],
               storageState: ".auth/user.json",
             },
             dependencies: ["setup"],
@@ -92,18 +100,6 @@ export default defineConfig({
             use: {
               ...devices["Desktop Chrome"],
               storageState: ".auth/user.json",
-            },
-            dependencies: ["setup"],
-          },
-          {
-            name: "mobile-chrome",
-            grep: /@mobile-chrome/,
-            use: {
-              ...devices["Pixel 7"],
-              storageState: ".auth/user.json",
-              trace: "retain-on-failure" as const,
-              screenshot: "only-on-failure" as const,
-              video: "retain-on-failure" as const,
             },
             dependencies: ["setup"],
           },

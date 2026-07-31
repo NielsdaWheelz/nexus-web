@@ -14,7 +14,7 @@ import {
   getPaneScrollContainer,
   getPaneScrollTopPaddingPx,
   isElementInPaneView,
-  scrollElementIntoPaneView,
+  type ReaderScrollCommands,
 } from "@/lib/reader/paneScroll";
 
 export const READER_END_TOLERANCE_PX = 2;
@@ -22,7 +22,6 @@ export const READER_END_TOLERANCE_PX = 2;
 export {
   getPaneScrollContainer,
   isElementInPaneView,
-  scrollElementIntoPaneView,
 };
 
 export function isTextViewportAtEnd(
@@ -280,6 +279,7 @@ export function measureCanonicalTextAnchorViewportDelta(
 }
 
 export function restoreCanonicalTextAnchorViewportPosition(
+  commands: ReaderScrollCommands,
   container: HTMLElement,
   cursor: CanonicalCursorResult,
   canonicalOffset: number,
@@ -295,7 +295,7 @@ export function restoreCanonicalTextAnchorViewportPosition(
     canonicalOffset,
   );
   if (currentDelta === null) return false;
-  container.scrollTop += currentDelta - viewportTopDeltaPx;
+  commands.adjustTop(container, currentDelta - viewportTopDeltaPx);
   container.scrollLeft = scrollLeft;
   const restoredDelta = measureCanonicalTextAnchorViewportDelta(
     container,
@@ -310,6 +310,7 @@ export function restoreCanonicalTextAnchorViewportPosition(
 }
 
 export function scrollToCanonicalTextAnchor(
+  commands: ReaderScrollCommands,
   container: HTMLElement,
   cursor: CanonicalCursorResult,
   canonicalOffset: number,
@@ -324,18 +325,19 @@ export function scrollToCanonicalTextAnchor(
   const topPaddingPx = getPaneScrollTopPaddingPx(container);
   if (targetRect.width > 0 || targetRect.height > 0) {
     const delta = targetRect.top - containerRect.top - topPaddingPx;
-    container.scrollTop = Math.max(0, container.scrollTop + delta);
+    commands.setTop(container, Math.max(0, container.scrollTop + delta));
     return true;
   }
 
   if (fallbackElement) {
-    scrollElementIntoPaneView(container, fallbackElement);
+    commands.reveal(container, fallbackElement);
     return true;
   }
   return false;
 }
 
 export function scrollToExactCanonicalTextAnchor(
+  commands: ReaderScrollCommands,
   container: HTMLElement,
   cursor: CanonicalCursorResult,
   canonicalOffset: number,
@@ -352,12 +354,15 @@ export function scrollToExactCanonicalTextAnchor(
   if (!Number.isFinite(targetTop) || !Number.isFinite(containerTop)) {
     return false;
   }
-  container.scrollTop = Math.max(
-    0,
-    container.scrollTop +
-      targetTop -
-      containerTop -
-      getPaneScrollTopPaddingPx(container),
+  commands.setTop(
+    container,
+    Math.max(
+      0,
+      container.scrollTop +
+        targetTop -
+        containerTop -
+        getPaneScrollTopPaddingPx(container),
+    ),
   );
   return true;
 }

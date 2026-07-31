@@ -46,6 +46,7 @@ import {
   assumePaneVisitId,
   type PaneVisitId,
 } from "@/lib/workspace/schema";
+import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
 import ReadingSlateSection from "./ReadingSlateSection";
 
 const TEST_VISIT_ID = assumePaneVisitId(
@@ -56,22 +57,39 @@ const OTHER_VISIT_ID = assumePaneVisitId(
 );
 const TEST_ROUTE_KEY = "/test";
 
+function ReadingSlateTestProviders({ children }: { children: ReactNode }) {
+  return (
+    <MobileChromeProvider>
+      <PaneReturnMementoProvider>
+        <PaneReturnVisitScope visitId={TEST_VISIT_ID} routeKey={TEST_ROUTE_KEY}>
+          <FeedbackProvider>
+            <LibraryPlacementControllerProvider>
+              <ShareControllerProvider>{children}</ShareControllerProvider>
+            </LibraryPlacementControllerProvider>
+          </FeedbackProvider>
+        </PaneReturnVisitScope>
+      </PaneReturnMementoProvider>
+    </MobileChromeProvider>
+  );
+}
+
 function PaneReturnTestHarness({ children }: { children: ReactNode }) {
   return withRenderEnvironment(
-    <PaneReturnMementoProvider>
-      <PaneReturnVisitScope visitId={TEST_VISIT_ID} routeKey={TEST_ROUTE_KEY}>
-        <FeedbackProvider>
-          <LibraryPlacementControllerProvider>
-            <ShareControllerProvider>{children}</ShareControllerProvider>
-          </LibraryPlacementControllerProvider>
-        </FeedbackProvider>
-      </PaneReturnVisitScope>
-    </PaneReturnMementoProvider>,
+    <ReadingSlateTestProviders>{children}</ReadingSlateTestProviders>,
   );
 }
 
 function render(ui: ReactElement) {
   return testingRender(ui, { wrapper: PaneReturnTestHarness });
+}
+
+function renderMobile(ui: ReactElement) {
+  return testingRender(
+    withRenderEnvironment(
+      <ReadingSlateTestProviders>{ui}</ReadingSlateTestProviders>,
+      { initialViewport: "mobile" },
+    ),
+  );
 }
 
 const lecternSlateResponse =
@@ -202,6 +220,10 @@ function renderLectern(accept: ReadingSlateAccept) {
   return render(lecternNode(accept));
 }
 
+function renderMobileLectern(accept: ReadingSlateAccept) {
+  return renderMobile(lecternNode(accept));
+}
+
 function CommandsProbe({
   publish,
 }: {
@@ -264,18 +286,20 @@ function ReadingSlateReturnFixture({
   publish: (commands: PaneReturnMementoCommands) => void;
 }) {
   return withRenderEnvironment(
-    <PaneReturnMementoProvider>
-      <CommandsProbe publish={publish} />
-      <PaneReturnVisitScope visitId={visitId} routeKey={TEST_ROUTE_KEY}>
-        <FeedbackProvider>
-          <LibraryPlacementControllerProvider>
-            <ShareControllerProvider>
-              <ReadingSlateReturnRoute visitId={visitId} accept={accept} />
-            </ShareControllerProvider>
-          </LibraryPlacementControllerProvider>
-        </FeedbackProvider>
-      </PaneReturnVisitScope>
-    </PaneReturnMementoProvider>,
+    <MobileChromeProvider>
+      <PaneReturnMementoProvider>
+        <CommandsProbe publish={publish} />
+        <PaneReturnVisitScope visitId={visitId} routeKey={TEST_ROUTE_KEY}>
+          <FeedbackProvider>
+            <LibraryPlacementControllerProvider>
+              <ShareControllerProvider>
+                <ReadingSlateReturnRoute visitId={visitId} accept={accept} />
+              </ShareControllerProvider>
+            </LibraryPlacementControllerProvider>
+          </FeedbackProvider>
+        </PaneReturnVisitScope>
+      </PaneReturnMementoProvider>
+    </MobileChromeProvider>,
   );
 }
 
@@ -723,7 +747,7 @@ describe("ReadingSlateSection", () => {
     );
   });
 
-  it("moves focus to pane chrome before a terminal empty slate unmounts", async () => {
+  it("reveals and focuses mobile pane chrome before a terminal empty slate unmounts", async () => {
     const only = slateItem(1);
     const command = deferred<AcceptResult>();
     const refill = deferred<SlateSnapshot>();
@@ -731,7 +755,7 @@ describe("ReadingSlateSection", () => {
       .mockResolvedValueOnce({ items: [only] })
       .mockImplementationOnce(() => refill.promise);
     const user = userEvent.setup();
-    renderLectern(() => command.promise);
+    renderMobileLectern(() => command.promise);
 
     await user.click(
       await screen.findByRole("button", { name: "Add Item 1 to Lectern" }),

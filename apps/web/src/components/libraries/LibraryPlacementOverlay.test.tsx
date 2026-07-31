@@ -15,7 +15,11 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { page, userEvent } from "vitest/browser";
 import { absent } from "@/lib/api/presence";
 import type { LibraryPlacementSession } from "@/lib/libraries/placementController";
-import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
+import { MobileViewportProvider } from "@/lib/mobileViewport/MobileViewportProvider";
+import {
+  MobileChromeProvider,
+  useMobileChrome,
+} from "@/lib/workspace/mobileChrome";
 import LibraryPlacementOverlay from "./LibraryPlacementOverlay";
 
 const LIBRARY_1 = "00000000-0000-4000-8000-000000000001";
@@ -39,7 +43,7 @@ function Harness() {
   const anchorRef = useRef<HTMLButtonElement>(null);
   const [session, setSession] = useState<LibraryPlacementSession | null>(null);
   return (
-    <MobileChromeProvider>
+    <>
       <button
         type="button"
         ref={anchorRef}
@@ -60,8 +64,13 @@ function Harness() {
         session={session}
         onClose={() => setSession(null)}
       />
-    </MobileChromeProvider>
+    </>
   );
+}
+
+function MotionPhase() {
+  const { motionPhase } = useMobileChrome();
+  return <output data-testid="mobile-chrome-phase">{motionPhase.kind}</output>;
 }
 
 describe("LibraryPlacementOverlay", () => {
@@ -149,5 +158,33 @@ describe("LibraryPlacementOverlay", () => {
     expect(
       await screen.findByText("No libraries to place this in."),
     ).toBeInTheDocument();
+  });
+
+  it("pins mobile chrome for the picker lifecycle and releases on close", async () => {
+    await page.viewport(390, 844);
+    vi.stubGlobal("fetch", vi.fn(async () => listResponse()));
+    const user = userEvent.setup();
+    render(
+      <MobileChromeProvider>
+        <MobileViewportProvider>
+          <MotionPhase />
+          <Harness />
+        </MobileViewportProvider>
+      </MobileChromeProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Open libraries" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("mobile-chrome-phase")).toHaveTextContent(
+        "Pinned",
+      ),
+    );
+
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.getByTestId("mobile-chrome-phase")).toHaveTextContent(
+        "Visible",
+      ),
+    );
   });
 });

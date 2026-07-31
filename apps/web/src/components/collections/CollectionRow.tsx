@@ -2,6 +2,8 @@
 
 import {
   Fragment,
+  useCallback,
+  useEffect,
   useId,
   useRef,
   useState,
@@ -48,7 +50,8 @@ import { useLibraryPlacementController } from "@/lib/libraries/placementControll
 import { useShareController } from "@/lib/sharing/controller";
 import { paneShareOpenOptions } from "@/lib/sharing/openOptions";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
+import { useMobileChromeVisibleLocks } from "@/lib/workspace/mobileChrome";
+import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import ConnectionRail from "./ConnectionRail";
 import {
   collectionActivityText,
@@ -204,6 +207,25 @@ function RowActionMenu({
   readonly reorder?: SortableActivatorProps;
   readonly reorderHintId: string;
 }) {
+  const { acquire } = useMobileChromeVisibleLocks();
+  const releaseMenuLockRef = useRef<(() => void) | null>(null);
+  const releaseMenuLock = useCallback(() => {
+    releaseMenuLockRef.current?.();
+    releaseMenuLockRef.current = null;
+  }, []);
+  const handleOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open) {
+        releaseMenuLock();
+        return;
+      }
+      if (releaseMenuLockRef.current) return;
+      releaseMenuLockRef.current = acquire("action-menu");
+    },
+    [acquire, releaseMenuLock],
+  );
+  useEffect(() => releaseMenuLock, [releaseMenuLock]);
+
   if (options.length === 0) return null;
   return (
     <>
@@ -216,6 +238,7 @@ function RowActionMenu({
       <ActionMenu
         options={options}
         label={label}
+        onOpenChange={handleOpenChange}
         triggerRef={reorder?.setActivatorNodeRef}
         renderTrigger={
           reorder
@@ -389,7 +412,7 @@ function ResourceCollectionRowActionMenu({
                 options: {
                   anchor: () => detail.triggerEl,
                   returnFocusFallback: present(() =>
-                    findPaneChromeFocusTarget(runtime.paneId),
+                    findPaneLandmarkFocusTarget(runtime.paneId),
                   ),
                 },
               });

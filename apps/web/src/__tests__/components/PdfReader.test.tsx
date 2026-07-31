@@ -6,20 +6,19 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { page } from "vitest/browser";
 import { createRef, useRef, type ComponentProps } from "react";
-import PdfReader, {
-  type PdfReaderControlActions,
-  type PdfReaderControlsState,
-} from "@/components/PdfReader";
+import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
+import PdfReaderImplementation from "@/components/PdfReader";
 import type {
   PdfFindRuntime,
   PdfRuntimeFindResult,
 } from "@/components/pdfPaneFind";
 import { apiFetch } from "@/lib/api/client";
 import { dispatchReaderPulse } from "@/lib/reader/pulseEvent";
+import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import {
   MobileChromeProvider,
+  useMobileChrome,
   useMobileChromeSurface,
 } from "@/lib/workspace/mobileChrome";
 
@@ -34,8 +33,42 @@ const pdfRuntimeState = vi.hoisted(() => ({
   pageTexts: ["Alpha selected quote Omega"] as string[],
   pageHighlights: [] as unknown[],
   createdHighlightId: "created-highlight-1",
-  deferScaleRenders: false,
 }));
+
+type PdfReaderProps = ComponentProps<typeof PdfReaderImplementation>;
+const MOBILE_CHROME_COLLAPSE_PROPERTY = "--mobile-chrome-collapse";
+
+function MobileChromeBehaviorProbe() {
+  const surfaceRef = useRef<HTMLDivElement>(null);
+  const { motionPhase } = useMobileChrome();
+  const isMobile = useIsMobileViewport();
+  useMobileChromeSurface(surfaceRef, "AppBar", true);
+  return (
+    <div
+      ref={surfaceRef}
+      data-testid="mobile-chrome-behavior-probe"
+      data-mobile={isMobile ? "true" : "false"}
+      data-motion-phase={motionPhase.kind}
+    />
+  );
+}
+
+function PdfReader({
+  mobileChromeEnabled = true,
+  ...props
+}: Omit<PdfReaderProps, "mobileChromeEnabled"> & {
+  mobileChromeEnabled?: boolean;
+}) {
+  return (
+    <MobileChromeProvider>
+      <PdfReaderImplementation
+        mobileChromeEnabled={mobileChromeEnabled}
+        {...props}
+      />
+      <MobileChromeBehaviorProbe />
+    </MobileChromeProvider>
+  );
+}
 
 vi.mock("@/lib/sharing/controller", () => ({
   useShareController: () => ({
@@ -48,6 +81,14 @@ function rectList(rects: DOMRect[]): DOMRectList {
   return Object.assign(rects, {
     item: (index: number) => rects[index] ?? null,
   }) as unknown as DOMRectList;
+}
+
+function prepareScrollableReader(viewport: HTMLElement): void {
+  Object.defineProperties(viewport, {
+    scrollHeight: { configurable: true, value: 1_000 },
+    clientHeight: { configurable: true, value: 400 },
+  });
+  viewport.scrollTop = 0;
 }
 
 vi.mock("@/lib/api/client", async () => {
@@ -311,9 +352,6 @@ vi.mock("@/components/pdfReaderRuntime", () => {
 
     set currentScaleValue(value: string | number) {
       this.scale = typeof value === "number" ? value : 1;
-      if (pdfRuntimeState.deferScaleRenders) {
-        return;
-      }
       window.requestAnimationFrame(() => {
         this.eventBus.dispatch("pagerendered", {
           pageNumber: this.pageNumber,
@@ -465,101 +503,6 @@ vi.mock("@/components/pdfReaderRuntime", () => {
   };
 });
 
-function MobileChromeProbe() {
-  const ref = useRef<HTMLDivElement>(null);
-  useMobileChromeSurface(ref, "AppBar", true);
-  return <div ref={ref} data-testid="mobile-chrome-probe" />;
-}
-
-type TestPdfReaderProps = Omit<
-  ComponentProps<typeof PdfReader>,
-  "mobileChromeSourceKey" | "mobileChromeEnabled"
-> & {
-  mobileChromeSourceKey?: string;
-  mobileChromeEnabled?: boolean;
-};
-
-function TestPdfReader({
-  mediaId,
-  mobileChromeSourceKey = `pdf:${mediaId}`,
-  mobileChromeEnabled = false,
-  ...props
-}: TestPdfReaderProps) {
-  return (
-    <MobileChromeProvider>
-      <MobileChromeProbe />
-      <PdfReader
-        {...props}
-        mediaId={mediaId}
-        mobileChromeSourceKey={mobileChromeSourceKey}
-        mobileChromeEnabled={mobileChromeEnabled}
-      />
-    </MobileChromeProvider>
-  );
-}
-
-async function waitForTwoAnimationFrames() {
-  await act(async () => {
-    await new Promise<void>((resolve) => {
-      window.requestAnimationFrame(() =>
-        window.requestAnimationFrame(() => resolve()),
-      );
-    });
-  });
-}
-
-async function renderMobilePositioningHarness() {
-  await page.viewport(390, 844);
-  vi.stubGlobal("innerWidth", 390);
-  vi.stubGlobal("innerHeight", 844);
-  pdfRuntimeState.numPages = 2;
-  pdfRuntimeState.pageWidths = [600, 600];
-  pdfRuntimeState.pageTexts = [
-    "Alpha selected quote Omega",
-    "Second page",
-  ];
-  const controlsRef: { current: PdfReaderControlActions | null } = {
-    current: null,
-  };
-  let controlsState: PdfReaderControlsState | null = null;
-  render(
-    <TestPdfReader
-      mediaId="media-1"
-      mobileChromeEnabled
-      onControlsReady={(nextControls) => {
-        controlsRef.current = nextControls;
-      }}
-      onControlsStateChange={(nextState) => {
-        controlsState = nextState;
-      }}
-    />,
-  );
-
-  const viewport = await screen.findByLabelText("PDF document");
-  await screen.findByTestId("pdf-page-text-layer-1");
-  await waitFor(() => expect(controlsState?.canGoNext).toBe(true));
-  await waitForTwoAnimationFrames();
-  if (!controlsRef.current) {
-    throw new Error("Expected PDF controls");
-  }
-  const controls = controlsRef.current;
-  const chrome = screen.getByTestId("mobile-chrome-probe");
-  Object.defineProperties(viewport, {
-    scrollTop: { value: 0, configurable: true, writable: true },
-    scrollHeight: { value: 2_000, configurable: true },
-    clientHeight: { value: 480, configurable: true },
-  });
-  viewport.scrollTop = 96;
-  fireEvent.scroll(viewport);
-  await waitFor(() =>
-    expect(chrome.style.getPropertyValue("--mobile-chrome-collapse")).toBe(
-      "1",
-    ),
-  );
-  pdfRuntimeState.deferScaleRenders = true;
-  return { chrome, controls, viewport };
-}
-
 describe("PdfReader selection chat destinations", () => {
   beforeEach(() => {
     vi.stubGlobal("innerWidth", 1280);
@@ -572,13 +515,12 @@ describe("PdfReader selection chat destinations", () => {
     pdfRuntimeState.pageTexts = ["Alpha selected quote Omega"];
     pdfRuntimeState.pageHighlights = [];
     pdfRuntimeState.createdHighlightId = "created-highlight-1";
-    pdfRuntimeState.deferScaleRenders = false;
     vi.mocked(apiFetch).mockClear();
   });
 
   it("renders reader banners inside the PDF scroll owner", async () => {
     render(
-      <TestPdfReader
+      <PdfReader
         mediaId="media-1"
         beforeContent={<div>Reader readiness</div>}
       />,
@@ -592,7 +534,7 @@ describe("PdfReader selection chat destinations", () => {
     const viewportRef = createRef<HTMLDivElement>();
     const contentRef = createRef<HTMLDivElement>();
     const view = render(
-      <TestPdfReader
+      <PdfReader
         mediaId="media-1"
         viewportRef={viewportRef}
         contentRef={contentRef}
@@ -613,149 +555,50 @@ describe("PdfReader selection chat destinations", () => {
     expect(contentRef.current).toBeNull();
   });
 
-  it("publishes the real PDF scrollport and rebaselines when its source changes", async () => {
-    await page.viewport(390, 844);
+  it("drives the real chrome provider from the actual PDF viewport and rebaselines on source replacement", async () => {
     vi.stubGlobal("innerWidth", 390);
-    vi.stubGlobal("innerHeight", 844);
+    fireEvent(window, new Event("resize"));
     const view = render(
-      <TestPdfReader mediaId="media-1" mobileChromeEnabled />,
+      withRenderEnvironment(<PdfReader mediaId="media-1" />, {
+        initialViewport: "mobile",
+      }),
     );
 
     const viewport = await screen.findByLabelText("PDF document");
-    await screen.findByTestId("pdf-page-text-layer-1");
-    await act(async () => {
-      await new Promise<void>((resolve) => {
-        window.requestAnimationFrame(() =>
-          window.requestAnimationFrame(() => resolve()),
-        );
-      });
-    });
-    const chrome = screen.getByTestId("mobile-chrome-probe");
-
-    Object.defineProperties(viewport, {
-      scrollTop: { value: 216, configurable: true, writable: true },
-      scrollHeight: { value: 1_200, configurable: true },
-      clientHeight: { value: 480, configurable: true },
-    });
+    const probe = screen.getByTestId("mobile-chrome-behavior-probe");
+    await waitFor(() =>
+      expect(probe).toHaveAttribute("data-mobile", "true"),
+    );
+    await waitFor(() =>
+      expect(probe).toHaveAttribute("data-motion-phase", "Visible"),
+    );
+    await waitFor(() =>
+      expect(
+        probe.style.getPropertyValue(MOBILE_CHROME_COLLAPSE_PROPERTY),
+      ).toBe("0"),
+    );
+    prepareScrollableReader(viewport);
+    viewport.scrollTop = 80;
     fireEvent.scroll(viewport);
-
-    await waitFor(() => {
-      expect(chrome.style.getPropertyValue("--mobile-chrome-collapse")).toBe(
-        "1",
-      );
-    });
+    await waitFor(() =>
+      expect(probe).toHaveAttribute("data-motion-phase", "Hidden"),
+    );
 
     view.rerender(
-      <TestPdfReader mediaId="media-2" mobileChromeEnabled />,
+      withRenderEnvironment(<PdfReader mediaId="media-2" />, {
+        initialViewport: "mobile",
+      }),
     );
-    await waitFor(() => {
-      expect(chrome.style.getPropertyValue("--mobile-chrome-collapse")).toBe(
-        "0",
-      );
-    });
-  });
-
-  it("keeps programmatic page, zoom, and resume positioning pinned through the matching PDF render", async () => {
-    const { chrome, controls, viewport } =
-      await renderMobilePositioningHarness();
-    act(() => {
+    await waitFor(() =>
+      expect(probe).toHaveAttribute("data-motion-phase", "Visible"),
+    );
+    await waitFor(() =>
       expect(
-        controls.applyResumeState({
-          kind: "pdf",
-          position: 2,
-          page: 2,
-          page_progression: 0.5,
-          zoom: 1.25,
-        }),
-      ).toBe(true);
-    });
-    fireEvent.scroll(viewport);
-    await waitFor(() =>
-      expect(chrome.style.getPropertyValue("--mobile-chrome-collapse")).toBe(
-        "0",
-      ),
+        probe.style.getPropertyValue(MOBILE_CHROME_COLLAPSE_PROPERTY),
+      ).toBe("0"),
     );
 
-    await waitForTwoAnimationFrames();
-    viewport.scrollTop = 880;
-    fireEvent.scroll(viewport);
-    await act(async () => {
-      await new Promise<void>((resolve) =>
-        window.requestAnimationFrame(() => resolve()),
-      );
-    });
-    expect(chrome.style.getPropertyValue("--mobile-chrome-collapse")).toBe(
-      "0",
-    );
-
-    act(() => {
-      pdfRuntimeState.eventBus?.dispatch("pagerendered", {
-        pageNumber: 2,
-      });
-    });
-    await waitForTwoAnimationFrames();
-    viewport.scrollTop = 1_060;
-    fireEvent.scroll(viewport);
-    await waitFor(() =>
-      expect(chrome.style.getPropertyValue("--mobile-chrome-collapse")).toBe(
-        "1",
-      ),
-    );
-  });
-
-  it("releases programmatic positioning after a matching generic PDF render error", async () => {
-    const { chrome, controls, viewport } =
-      await renderMobilePositioningHarness();
-    act(() => {
-      expect(
-        controls.applyResumeState({
-          kind: "pdf",
-          position: 2,
-          page: 2,
-          page_progression: 0.5,
-          zoom: 1.25,
-        }),
-      ).toBe(true);
-    });
-    fireEvent.scroll(viewport);
-    await waitFor(() =>
-      expect(chrome.style.getPropertyValue("--mobile-chrome-collapse")).toBe(
-        "0",
-      ),
-    );
-
-    await waitForTwoAnimationFrames();
-    viewport.scrollTop = 880;
-    fireEvent.scroll(viewport);
-    await act(async () => {
-      await new Promise<void>((resolve) =>
-        window.requestAnimationFrame(() => resolve()),
-      );
-    });
-    expect(chrome.style.getPropertyValue("--mobile-chrome-collapse")).toBe(
-      "0",
-    );
-
-    act(() => {
-      pdfRuntimeState.eventBus?.dispatch("pagerendered", {
-        pageNumber: 2,
-        error: new Error("Raster worker failed"),
-      });
-    });
-    viewport.scrollTop = 1_000;
-    fireEvent.scroll(viewport);
-    expect(chrome.style.getPropertyValue("--mobile-chrome-collapse")).toBe(
-      "0",
-    );
-
-    await waitForTwoAnimationFrames();
-    viewport.scrollTop = 1_080;
-    fireEvent.scroll(viewport);
-    await waitFor(() =>
-      expect(chrome.style.getPropertyValue("--mobile-chrome-collapse")).toBe(
-        "1",
-      ),
-    );
+    view.unmount();
   });
 
   it("publishes PDF Find, previews without resume writes, and returns to an empty-text origin page", async () => {
@@ -770,7 +613,7 @@ describe("PdfReader selection chat destinations", () => {
     });
 
     const view = render(
-      <TestPdfReader
+      <PdfReader
         mediaId="media-1"
         onResumeStateChange={onResumeStateChange}
         onFindRuntimeReady={(nextRuntime) => {
@@ -864,7 +707,7 @@ describe("PdfReader selection chat destinations", () => {
     );
 
     render(
-      <TestPdfReader
+      <PdfReader
         mediaId="media-1"
         onQuoteToNewChat={onQuoteToNewChat}
         onQuoteToExistingChat={onQuoteToExistingChat}
@@ -937,7 +780,7 @@ describe("PdfReader selection chat destinations", () => {
       rectList([new DOMRect(110, 140, 160, 20)]),
     );
 
-    render(<TestPdfReader mediaId="media-1" />);
+    render(<PdfReader mediaId="media-1" />);
 
     const textLayer = await screen.findByTestId("pdf-page-text-layer-1");
     await waitFor(() => {
@@ -1004,7 +847,7 @@ describe("PdfReader selection chat destinations", () => {
     const onIntrinsicWidthChange = vi.fn();
 
     render(
-      <TestPdfReader
+      <PdfReader
         mediaId="media-1"
         onIntrinsicWidthChange={onIntrinsicWidthChange}
       />,
@@ -1018,7 +861,7 @@ describe("PdfReader selection chat destinations", () => {
   });
 
   it("loads active page highlights once per page owner, not per render event", async () => {
-    render(<TestPdfReader mediaId="media-1" />);
+    render(<PdfReader mediaId="media-1" />);
 
     await screen.findByTestId("pdf-page-text-layer-1");
 
@@ -1079,7 +922,7 @@ describe("PdfReader selection chat destinations", () => {
     const onHighlightHover = vi.fn();
     const onHighlightTap = vi.fn();
     const { rerender } = render(
-      <TestPdfReader
+      <PdfReader
         mediaId="media-1"
         onHighlightHover={onHighlightHover}
         onHighlightTap={onHighlightTap}
@@ -1088,6 +931,7 @@ describe("PdfReader selection chat destinations", () => {
     const overlay = await screen.findByTestId(
       "pdf-highlight-hovered-highlight-0",
     );
+    expect(overlay).toHaveAttribute("data-reader-tap-handled", "true");
     expect(overlay.className).not.toContain("highlightOverlayRectHovered");
 
     fireEvent.pointerEnter(overlay);
@@ -1103,7 +947,7 @@ describe("PdfReader selection chat destinations", () => {
     expect(onHighlightTap).not.toHaveBeenCalled();
 
     rerender(
-      <TestPdfReader
+      <PdfReader
         mediaId="media-1"
         hoveredHighlightId="hovered-highlight"
         onHighlightHover={onHighlightHover}
@@ -1178,7 +1022,7 @@ describe("PdfReader selection chat destinations", () => {
       },
     ];
 
-    render(<TestPdfReader mediaId="media-1" />);
+    render(<PdfReader mediaId="media-1" />);
 
     await screen.findByTestId("pdf-highlight-h1-0");
     await screen.findByTestId("pdf-highlight-h2-0");
@@ -1251,7 +1095,7 @@ describe("PdfReader selection chat destinations", () => {
       },
     ];
 
-    render(<TestPdfReader mediaId="media-1" />);
+    render(<PdfReader mediaId="media-1" />);
 
     const persisted = await screen.findByTestId(
       "pdf-highlight-persisted-highlight-0",
@@ -1309,7 +1153,7 @@ describe("PdfReader selection chat destinations", () => {
       },
     ];
 
-    render(<TestPdfReader mediaId="media-1" />);
+    render(<PdfReader mediaId="media-1" />);
 
     await screen.findByTestId("pdf-page-text-layer-2");
 

@@ -77,8 +77,8 @@ import {
 } from "@/lib/panes/panePublications";
 import { emitWorkspaceTelemetry } from "@/lib/workspace/telemetry";
 import {
-  findPaneActivationFocusTarget,
   findPaneChromeFocusTarget,
+  findPaneLandmarkFocusTarget,
 } from "@/lib/workspace/paneDom";
 import {
   paneResourceLocatorKey,
@@ -793,11 +793,11 @@ function WorkspaceHost() {
   >(() => new Map());
   const keybindings = useKeybindings();
 
-  // --- Mobile viewport and pane activation focus state ---
+  // --- Mobile viewport and pane focus state ---
   const isMobile = useIsMobileViewport();
   const layoutMode = isMobile ? "mobile" : "desktop";
   const paneWrapRefById = useRef<Map<string, HTMLDivElement>>(new Map());
-  const pendingPaneActivationFocusPaneIdRef = useRef<string | null>(null);
+  const pendingPaneFocusPaneIdRef = useRef<string | null>(null);
   const previousIsMobileRef = useRef(isMobile);
   const secondaryReturnFocusByPaneIdRef = useRef<Map<string, HTMLElement>>(
     new Map(),
@@ -1557,24 +1557,20 @@ function WorkspaceHost() {
     null;
   const renderedPanes = isMobile ? (activePane ? [activePane] : []) : panes;
 
-  // --- Pane activation focus management ---
-  const focusPaneActivationTarget = useCallback(
+  // --- Pane focus management ---
+  const focusPane = useCallback(
     (targetPaneId: string) => {
-      const paneWrap = paneWrapRefById.current.get(targetPaneId);
-      if (!paneWrap) {
+      if (!paneWrapRefById.current.has(targetPaneId)) {
         return false;
       }
-      const paneChrome = paneWrap.querySelector<HTMLElement>(
-        '[data-pane-chrome-focus="true"]',
-      );
-      const focusTarget = isMobile
-        ? findPaneActivationFocusTarget(targetPaneId)
-        : paneChrome;
-      if (!focusTarget) {
+      const target = isMobile
+        ? findPaneLandmarkFocusTarget(targetPaneId)
+        : findPaneChromeFocusTarget(targetPaneId);
+      if (!target) {
         return false;
       }
-      focusTarget.focus({ preventScroll: true });
-      pendingPaneActivationFocusPaneIdRef.current = null;
+      target.focus({ preventScroll: true });
+      pendingPaneFocusPaneIdRef.current = null;
       return true;
     },
     [isMobile],
@@ -1584,13 +1580,13 @@ function WorkspaceHost() {
     const previousIsMobile = previousIsMobileRef.current;
     previousIsMobileRef.current = isMobile;
     const targetPaneId =
-      pendingPaneActivationFocusPaneIdRef.current ??
+      pendingPaneFocusPaneIdRef.current ??
       (isMobile || previousIsMobile ? state.activePrimaryPaneId : null);
     if (!targetPaneId) {
       return;
     }
-    focusPaneActivationTarget(targetPaneId);
-  }, [state.activePrimaryPaneId, isMobile, focusPaneActivationTarget]);
+    focusPane(targetPaneId);
+  }, [state.activePrimaryPaneId, isMobile, focusPane]);
 
   useEffect(() => {
     scrollPaneIntoView(state.activePrimaryPaneId);
@@ -1603,14 +1599,14 @@ function WorkspaceHost() {
       if (!shouldFocusPane) {
         return;
       }
-      pendingPaneActivationFocusPaneIdRef.current = paneId;
+      pendingPaneFocusPaneIdRef.current = paneId;
       window.requestAnimationFrame(() => {
-        if (pendingPaneActivationFocusPaneIdRef.current === paneId) {
-          focusPaneActivationTarget(paneId);
+        if (pendingPaneFocusPaneIdRef.current === paneId) {
+          focusPane(paneId);
         }
       });
     },
-    [activatePane, focusPaneActivationTarget],
+    [activatePane, focusPane],
   );
 
   useEffect(() => {

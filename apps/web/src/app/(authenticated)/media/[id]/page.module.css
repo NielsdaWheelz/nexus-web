@@ -735,6 +735,8 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  max-height: 320px;
+  overflow-y: auto;
   padding-right: var(--space-1);
 }
 
@@ -850,6 +852,10 @@
     margin-top: var(--mobile-pane-content-offset);
   }
 
+  .transcriptSegments {
+    max-height: none;
+    overflow-y: visible;
+  }
 }
 
 /* --- Split layout: reader column plus stable secondary --- */

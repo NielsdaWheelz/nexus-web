@@ -1,7 +1,8 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import ResourceList from "@/components/ui/ResourceList";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
@@ -10,6 +11,11 @@ import { absent, present } from "@/lib/api/presence";
 import type { CollectionRowView } from "@/lib/collections/types";
 import { decodePublicationDate } from "@/lib/dates/publicationDate";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import {
+  MobileChromeProvider,
+  useMobileChrome,
+  useMobileChromeReaderScrollport,
+} from "@/lib/workspace/mobileChrome";
 import CollectionRow from "./CollectionRow";
 
 const MEDIA_ID = "11111111-1111-4111-8111-111111111111";
@@ -43,15 +49,91 @@ function baseRow(): CollectionRowView {
 
 function renderRow(ui: ReactNode) {
   return render(
-    <FeedbackProvider>
-      <LibraryPlacementControllerProvider>
-        <ShareControllerProvider>{ui}</ShareControllerProvider>
-      </LibraryPlacementControllerProvider>
-    </FeedbackProvider>,
+    withRenderEnvironment(
+      <MobileChromeProvider>
+        <FeedbackProvider>
+          <LibraryPlacementControllerProvider>
+            <ShareControllerProvider>{ui}</ShareControllerProvider>
+          </LibraryPlacementControllerProvider>
+        </FeedbackProvider>
+      </MobileChromeProvider>,
+    ),
+  );
+}
+
+function MotionPhase() {
+  const { motionPhase } = useMobileChrome();
+  return <output data-testid="mobile-chrome-phase">{motionPhase.kind}</output>;
+}
+
+function ReaderScrollport() {
+  const registerScrollport = useMobileChromeReaderScrollport<HTMLDivElement>({
+    sourceKey: "collection-row-menu-test",
+    enabled: true,
+  });
+  return (
+    <div
+      ref={registerScrollport}
+      data-testid="reader-scrollport"
+      style={{ height: 100, overflowY: "auto" }}
+    >
+      <div style={{ height: 1_000 }} />
+    </div>
+  );
+}
+
+function mobileMenuTree(showRow: boolean) {
+  return withRenderEnvironment(
+    <MobileChromeProvider>
+      <MotionPhase />
+      <ReaderScrollport />
+      <FeedbackProvider>
+        <LibraryPlacementControllerProvider>
+          <ShareControllerProvider>
+            {showRow ? (
+              <ResourceList ariaLabel="Documents">
+                <CollectionRow row={baseRow()} />
+              </ResourceList>
+            ) : null}
+          </ShareControllerProvider>
+        </LibraryPlacementControllerProvider>
+      </FeedbackProvider>
+    </MobileChromeProvider>,
+    { initialViewport: "mobile" },
   );
 }
 
 describe("CollectionRow", () => {
+  it("pins mobile chrome for the row menu lifecycle and releases on close or unmount", async () => {
+    const user = userEvent.setup();
+    const view = render(mobileMenuTree(true));
+    const phase = screen.getByTestId("mobile-chrome-phase");
+    const scrollport = screen.getByTestId("reader-scrollport");
+    scrollport.scrollTop = 9;
+    fireEvent.scroll(scrollport);
+    scrollport.scrollTop = 100;
+    fireEvent.scroll(scrollport);
+    await waitFor(() => expect(phase).toHaveTextContent("Hidden"));
+
+    const trigger = screen.getByRole("button", {
+      name: "More actions for Canonical title",
+    });
+    await user.click(trigger);
+    await waitFor(() => expect(phase).toHaveTextContent("Pinned"));
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(phase).toHaveTextContent("Visible"));
+
+    await user.click(trigger);
+    await waitFor(() => expect(phase).toHaveTextContent("Pinned"));
+    view.rerender(mobileMenuTree(false));
+    await waitFor(() =>
+      expect(screen.getByTestId("mobile-chrome-phase")).toHaveTextContent(
+        "Visible",
+      ),
+    );
+  });
+
   it.each([
     [{ kind: "Resolving" }, "Preparing download…"],
     [{ kind: "Queued", reason: "Capacity" }, "Download queued"],
