@@ -11,6 +11,7 @@ import {
   savePodcastSubscriptionSettings,
   type PodcastSubscriptionSettingsResponse,
 } from "@/lib/podcasts/subscriptionSettings";
+import type { PauseShorteningMode } from "@/lib/player/pauseShortening";
 
 const podcastTitle = "The Podcast";
 
@@ -18,10 +19,12 @@ function buildModalState(overrides: Partial<ModalState> = {}): ModalState {
   return {
     podcastId: "podcast-1",
     defaultPlaybackSpeed: absent(),
+    pauseShorteningMode: absent(),
     autoQueue: false,
     busy: false,
     error: null,
     setDefaultPlaybackSpeed: vi.fn(),
+    setPauseShorteningMode: vi.fn(),
     setAutoQueue: vi.fn(),
     open: vi.fn(),
     close: vi.fn(),
@@ -63,6 +66,7 @@ function ControllerHarness({
           settingsModal.open({
             podcast_id: "podcast-1",
             default_playback_speed: defaultPlaybackSpeed,
+            pause_shortening_mode: absent(),
             auto_queue: true,
           })
         }
@@ -87,6 +91,7 @@ function ProjectionHarness({
   const [subscription, setSubscription] = useState({
     podcast_id: "podcast-1",
     default_playback_speed: absent() as Presence<number>,
+    pause_shortening_mode: absent() as Presence<PauseShorteningMode>,
     auto_queue: true,
   });
   const settingsModal = usePodcastSubscriptionSettingsModal({
@@ -96,6 +101,7 @@ function ProjectionHarness({
       setSubscription({
         podcast_id: response.podcast_id,
         default_playback_speed: response.default_playback_speed,
+        pause_shortening_mode: response.pause_shortening_mode,
         auto_queue: response.auto_queue,
       });
     },
@@ -121,6 +127,7 @@ function settingsResponse(defaultPlaybackSpeed: Presence<number>) {
       user_id: "user-1",
       podcast_id: "podcast-1",
       default_playback_speed: defaultPlaybackSpeed,
+      pause_shortening_mode: absent(),
       auto_queue: true,
       sync_status: "Complete",
       sync_error_code: null,
@@ -250,6 +257,28 @@ describe("PodcastSubscriptionSettingsModal", () => {
     expect(setDefaultPlaybackSpeed).toHaveBeenCalledWith(absent());
   });
 
+  it("edits the server-owned pause override when browser playback is unsupported", () => {
+    const setPauseShorteningMode = vi.fn();
+    render(
+      <PodcastSubscriptionSettingsModal
+        podcastTitle={podcastTitle}
+        settingsModal={buildModalState({ setPauseShorteningMode })}
+      />,
+    );
+
+    const select = screen.getByRole("combobox", {
+      name: "Shorten pauses",
+    });
+    expect(select).toHaveValue("Device");
+    expect(
+      screen.getByRole("option", { name: "Use device default" }),
+    ).toBeVisible();
+    fireEvent.change(select, { target: { value: "Natural" } });
+    expect(setPauseShorteningMode).toHaveBeenCalledWith(
+      present("Natural"),
+    );
+  });
+
   it.each([
     ["app default", absent()],
     ["preset", present(1.25)],
@@ -280,6 +309,7 @@ describe("PodcastSubscriptionSettingsModal", () => {
       const [, init] = fetchSpy.mock.calls[0]!;
       expect(JSON.parse(String(init?.body))).toEqual({
         default_playback_speed: speed,
+        pause_shortening_mode: absent(),
         auto_queue: true,
       });
     },

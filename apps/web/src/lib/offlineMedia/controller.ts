@@ -1,11 +1,9 @@
-import type { Presence } from "@/lib/api/presence";
 import { isAbortError } from "@/lib/errors";
 import { OfflineMediaClientStore } from "./clientStore";
 import {
   OFFLINE_DOWNLOAD_SPEC_DEADLINE_MS,
   OFFLINE_MEDIA_PROTOCOL_VERSION,
   decodeOfflineMediaInbound,
-  type LocalAvailability,
   type NetworkPolicy,
   type OfflineDownloadSpec,
   type OfflineMediaCommand,
@@ -26,7 +24,6 @@ export interface OfflineMediaController {
   readonly remove: (mediaId: string) => Promise<void>;
   readonly setNetworkPolicy: (policy: NetworkPolicy) => Promise<void>;
   readonly openDownloads: () => void;
-  readonly resolveStreamUrl: (mediaId: string, remoteUrl: string) => string;
 }
 
 interface PendingReply {
@@ -221,15 +218,6 @@ export class OfflineMediaControllerRuntime
 
   setNetworkPolicy = async (policy: NetworkPolicy): Promise<void> => {
     await this.acceptCommand({ kind: "SetNetworkPolicy", policy });
-  };
-
-  resolveStreamUrl = (mediaId: string, remoteUrl: string): string => {
-    const availability: Presence<LocalAvailability> =
-      this.store.getItem(mediaId);
-    return availability.kind === "Present" &&
-      availability.value.kind === "Ready"
-      ? `${this.ownedOrigin}/_native/offline-media/${mediaId}`
-      : remoteUrl;
   };
 
   dispose(): void {

@@ -7,6 +7,7 @@ import {
 } from "./podcastSubscriptions";
 import type { LibraryPlacementOption } from "@/lib/libraries/libraryPlacement";
 import { libraryPlacementSnapshot } from "@/lib/libraries/placementRevision";
+import { subscribePodcastSubscriptionSettingsInstalls } from "@/lib/podcasts/subscriptionSettings";
 
 function podcastDetailWire() {
   return {
@@ -28,6 +29,7 @@ function podcastDetailWire() {
         user_id: "user-1",
         podcast_id: "podcast-1",
         default_playback_speed: { kind: "Absent" },
+        pause_shortening_mode: { kind: "Absent" },
         auto_queue: false,
         sync_status: "Complete",
         sync_error_code: null,
@@ -151,7 +153,7 @@ describe("podcastSubscriptions placement revision publishing", () => {
     );
   });
 
-  it("publishes one Unknown placement change after unsubscribe", async () => {
+  it("publishes placement and live-settings installs from the unsubscribe owner", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -171,18 +173,30 @@ describe("podcastSubscriptions placement revision publishing", () => {
       ),
     );
     const before = libraryPlacementSnapshot().revision;
+    const installs: unknown[] = [];
+    const unsubscribeInstall =
+      subscribePodcastSubscriptionSettingsInstalls((install) => {
+        installs.push(install);
+      });
 
-    await expect(unsubscribeFromPodcast("podcast-1")).resolves.toEqual({
-      outcome: "Unsubscribed",
-      podcast_id: "podcast-1",
-      removed_placement_count: 2,
-      retained_shared_count: 1,
-      collectionRevision: 7,
-      libraryEntriesCollectionRevision: 11,
-    });
+    try {
+      await expect(unsubscribeFromPodcast("podcast-1")).resolves.toEqual({
+        outcome: "Unsubscribed",
+        podcast_id: "podcast-1",
+        removed_placement_count: 2,
+        retained_shared_count: 1,
+        collectionRevision: 7,
+        libraryEntriesCollectionRevision: 11,
+      });
+    } finally {
+      unsubscribeInstall();
+    }
 
     const after = libraryPlacementSnapshot();
     expect(after.revision).toBe(before + 1);
     expect(after.affectedLibraryIds).toBe("Unknown");
+    expect(installs).toEqual([
+      { kind: "Unsubscribed", podcastId: "podcast-1", owner: null },
+    ]);
   });
 });

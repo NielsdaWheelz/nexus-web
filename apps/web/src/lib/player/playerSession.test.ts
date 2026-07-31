@@ -66,6 +66,8 @@ function footerAudio(positionMs = 0): FooterAudioActivation {
       source: "Product",
       podcastPreference: absent(),
     },
+    pauseShorteningMode: absent(),
+    consumptionOverrideRevision: absent(),
     durationMs: present(120_000),
     artworkUrl: absent(),
     chapters: [],

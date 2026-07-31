@@ -2573,6 +2573,7 @@ class PodcastSubscription(Base):
     )
     auto_queue: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     default_playback_speed: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pause_shortening_mode: Mapped[str | None] = mapped_column(Text, nullable=True)
     sync_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="Pending")
     sync_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     sync_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -6435,6 +6436,7 @@ class ConsumptionOverride(Base):
     # Vocabulary owned by persistence adapters, not a database CHECK (spec
     # docs/cutovers/lectern-player-lifecycle-hard-cutover.md §4).
     status: Mapped[str] = mapped_column(Text, nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),

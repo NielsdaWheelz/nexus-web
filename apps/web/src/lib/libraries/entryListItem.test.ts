@@ -25,6 +25,7 @@ function podcastEntry() {
       kind: "Present",
       value: {
         defaultPlaybackSpeed: { kind: "Present", value: 1.25 },
+        pauseShorteningMode: { kind: "Present", value: "Natural" },
         autoQueue: true,
         syncStatus: "Complete",
       },
@@ -54,6 +55,7 @@ describe("decodeLibraryEntryListItem", () => {
         kind: "Present",
         value: {
           defaultPlaybackSpeed: { kind: "Present", value: 1.25 },
+          pauseShorteningMode: { kind: "Present", value: "Natural" },
           autoQueue: true,
           syncStatus: "Complete",
         },

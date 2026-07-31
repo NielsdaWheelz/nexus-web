@@ -160,6 +160,7 @@ def _subscribe_with_rate(
     user_id: UUID,
     podcast_id: UUID,
     rate: float | None,
+    pause_shortening_mode: str | None = None,
 ) -> None:
     with direct_db.session() as session:
         add_test_podcast_subscription(
@@ -167,6 +168,7 @@ def _subscribe_with_rate(
             user_id=user_id,
             podcast_id=podcast_id,
             default_playback_speed=rate,
+            pause_shortening_mode=pause_shortening_mode,
         )
         session.commit()
     direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
@@ -936,6 +938,80 @@ class TestPlayerDescriptor:
                 "mediaId": str(episode),
             },
         }
+
+    def test_pause_shortening_and_override_revision_match_both_descriptor_paths(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        podcast_id, episode = _create_podcast_episode(direct_db, title="Pause shortening")
+        _subscribe_with_rate(
+            direct_db,
+            user_id=user_id,
+            podcast_id=podcast_id,
+            rate=1.5,
+            pause_shortening_mode="Natural",
+        )
+        _add_to_library(direct_db, library_id, episode)
+        _place(auth_client, user_id, [episode])
+
+        lectern_activation = _get_lectern_item(auth_client, user_id, episode)["activation"]
+        media_response = auth_client.get(
+            f"/media/{episode}",
+            headers=auth_headers(user_id),
+        )
+        assert media_response.status_code == 200, media_response.text
+        media_activation = media_response.json()["data"]["playerDescriptor"]["value"]["activation"]
+        assert media_activation == lectern_activation
+        assert lectern_activation["pauseShorteningMode"] == {
+            "kind": "Present",
+            "value": "Natural",
+        }
+        assert lectern_activation["consumptionOverrideRevision"] == {"kind": "Absent"}
+
+        unread = auth_client.post(
+            "/consumption/commands",
+            headers=auth_headers(user_id),
+            json={
+                "kind": "SetUnread",
+                "clientMutationId": str(uuid4()),
+                "mediaId": str(episode),
+            },
+        )
+        assert unread.status_code == 200, unread.text
+        lectern_after = _get_lectern_item(auth_client, user_id, episode)["activation"]
+        media_after = auth_client.get(
+            f"/media/{episode}",
+            headers=auth_headers(user_id),
+        ).json()["data"]["playerDescriptor"]["value"]["activation"]
+        assert media_after == lectern_after
+        assert lectern_after["pauseShorteningMode"] == {
+            "kind": "Present",
+            "value": "Natural",
+        }
+        assert lectern_after["consumptionOverrideRevision"] == {
+            "kind": "Present",
+            "value": 1,
+        }
+
+        _other_podcast_id, unsubscribed_episode = _create_podcast_episode(
+            direct_db,
+            title="Device default",
+        )
+        _add_to_library(direct_db, library_id, unsubscribed_episode)
+        _place(auth_client, user_id, [unsubscribed_episode])
+        unsubscribed_lectern = _get_lectern_item(
+            auth_client,
+            user_id,
+            unsubscribed_episode,
+        )["activation"]
+        unsubscribed_media = auth_client.get(
+            f"/media/{unsubscribed_episode}",
+            headers=auth_headers(user_id),
+        ).json()["data"]["playerDescriptor"]["value"]["activation"]
+        assert unsubscribed_media == unsubscribed_lectern
+        assert unsubscribed_lectern["pauseShorteningMode"] == {"kind": "Absent"}
+        assert unsubscribed_lectern["consumptionOverrideRevision"] == {"kind": "Absent"}
 
     def test_synthetic_finished_and_reset_rows_do_not_shadow_subscription_rate(
         self, auth_client, direct_db: DirectSessionManager

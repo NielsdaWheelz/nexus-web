@@ -7,6 +7,7 @@ from nexus.schemas.podcast import (
     PodcastEpisodeSelection,
     PodcastSourceFacts,
     PodcastSubscribeRequest,
+    PodcastSubscriptionSettingsPatchRequest,
 )
 
 pytestmark = pytest.mark.unit
@@ -89,3 +90,27 @@ def test_podcast_episode_selection_is_state_only():
                 "query": {"kind": "Present", "value": "episode"},
             }
         )
+
+
+def test_pause_shortening_patch_uses_strict_presence():
+    natural = PodcastSubscriptionSettingsPatchRequest.model_validate(
+        {"pause_shortening_mode": {"kind": "Present", "value": "Natural"}}
+    )
+    assert natural.pause_shortening_mode.kind == "Present"
+    assert natural.pause_shortening_mode.value == "Natural"
+
+    inherited = PodcastSubscriptionSettingsPatchRequest.model_validate(
+        {"pause_shortening_mode": {"kind": "Absent"}}
+    )
+    assert inherited.pause_shortening_mode.kind == "Absent"
+
+    for invalid in (
+        None,
+        True,
+        {"kind": "Present", "value": "natural"},
+        {"kind": "Present", "value": "Unknown"},
+    ):
+        with pytest.raises(ValidationError):
+            PodcastSubscriptionSettingsPatchRequest.model_validate(
+                {"pause_shortening_mode": invalid}
+            )

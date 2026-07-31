@@ -53,6 +53,9 @@ from nexus.services.library_entries import (
     remove_unsubscribed_podcast_placements,
 )
 from nexus.services.library_governance import validate_writable_library_destinations
+from nexus.services.podcasts.playback_preferences import (
+    pause_shortening_mode_from_nullable,
+)
 from nexus.services.resource_mutation_replay import (
     lookup_replay,
     record_replay,
@@ -739,6 +742,7 @@ def get_subscription_status(
                 ps.id,
                 ps.podcast_id,
                 ps.default_playback_speed,
+                ps.pause_shortening_mode,
                 ps.auto_queue,
                 ps.sync_status,
                 ps.sync_error_code,
@@ -763,15 +767,16 @@ def get_subscription_status(
         default_playback_speed=presence_from_nullable(
             float(row[3]) if row[3] is not None else None
         ),
-        auto_queue=bool(row[4]),
-        sync_status=row[5],
-        sync_error_code=row[6],
-        sync_error_message=row[7],
-        sync_attempts=row[8],
-        sync_started_at=row[9],
-        sync_completed_at=row[10],
-        last_checked_at=row[11],
-        updated_at=row[12],
+        pause_shortening_mode=pause_shortening_mode_from_nullable(row[4]),
+        auto_queue=bool(row[5]),
+        sync_status=row[6],
+        sync_error_code=row[7],
+        sync_error_message=row[8],
+        sync_attempts=row[9],
+        sync_started_at=row[10],
+        sync_completed_at=row[11],
+        last_checked_at=row[12],
+        updated_at=row[13],
         backfill=_load_backfill_out(db, subscription_id=UUID(str(row[1]))),
     )
 
@@ -957,6 +962,9 @@ def update_subscription_settings_for_viewer(
     if "default_playback_speed" in body.model_fields_set:
         assignments.append("default_playback_speed = :default_playback_speed")
         params["default_playback_speed"] = nullable_from_presence(body.default_playback_speed)
+    if "pause_shortening_mode" in body.model_fields_set:
+        assignments.append("pause_shortening_mode = :pause_shortening_mode")
+        params["pause_shortening_mode"] = nullable_from_presence(body.pause_shortening_mode)
     if "auto_queue" in body.model_fields_set:
         assignments.append("auto_queue = :auto_queue")
         params["auto_queue"] = bool(body.auto_queue)

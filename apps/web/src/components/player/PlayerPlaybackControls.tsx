@@ -5,6 +5,7 @@ import { Gauge, Minus, Plus } from "lucide-react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import MobileSheet from "@/components/ui/MobileSheet";
+import Select from "@/components/ui/Select";
 import { presenceValueOr } from "@/lib/api/presence";
 import { formatClock } from "@/lib/formatClock";
 import {
@@ -23,7 +24,8 @@ import {
   snapPlaybackRateToStep,
   stepPlaybackRate,
 } from "@/lib/player/playbackRate";
-import PlayerAudioEffectsControls from "./PlayerAudioEffectsControls";
+import { pauseShorteningModeLabel } from "@/lib/player/pauseShortening";
+import PlayerOutputEffectsControls from "./PlayerOutputEffectsControls";
 import mobileStyles from "./MobileNowPlaying.module.css";
 import styles from "./PlayerPlaybackControls.module.css";
 
@@ -199,6 +201,37 @@ export function PlayerPlaybackPanel({
     preferredDiffersFromInherited &&
     rate.remember.kind !== "Unavailable" &&
     !(rate.remember.kind === "Failed" && !rate.remember.retryable);
+  const pauseShortening = settings.pauseShortening;
+  const pauseScope =
+    pauseShortening.kind === "Available"
+      ? pauseShortening.provenance === "Session"
+        ? "This session"
+        : pauseShortening.provenance === "Podcast"
+          ? "This podcast"
+          : "Device default"
+      : null;
+  const inheritedPauseMode =
+    pauseShortening.kind === "Available"
+      ? pauseShortening.podcastOverride.kind === "Present"
+        ? pauseShortening.podcastOverride.value
+        : pauseShortening.deviceDefaultMode
+      : null;
+  const pausePodcastActionAvailable =
+    pauseShortening.kind === "Available" &&
+    podcastPreference !== null &&
+    inheritedPauseMode !== null &&
+    pauseShortening.effectiveMode !== inheritedPauseMode;
+  const pauseDeviceActionAvailable =
+    pauseShortening.kind === "Available" &&
+    pauseShortening.effectiveMode !== pauseShortening.deviceDefaultMode;
+  const pauseMutation =
+    pauseShortening.kind === "Available"
+      ? pauseShortening.mutation
+      : null;
+  const savedOnDeviceMs =
+    timeline.pauseShorteningSavedOnDeviceMs.kind === "Present"
+      ? timeline.pauseShorteningSavedOnDeviceMs.value
+      : 0;
 
   return (
     <div className={styles.panel}>
@@ -245,10 +278,19 @@ export function PlayerPlaybackPanel({
               variant="secondary"
               size="lg"
               disabled={rate.remember.kind === "Pending"}
-              onClick={commands.rememberPlaybackRateForPodcast}
+              onClick={
+                rate.remember.kind === "Failed" &&
+                rate.remember.retry !== undefined
+                  ? rate.remember.retry
+                  : commands.rememberPlaybackRateForPodcast
+              }
             >
               {rate.remember.kind === "Pending"
                 ? "Remembering playback speed…"
+                : rate.remember.kind === "Failed"
+                  ? `Retry remembering ${formatPlaybackRate(
+                      rate.remember.attemptedRate ?? rate.preferred,
+                    )}`
                 : `Remember ${formatPlaybackRate(rate.preferred)} for ${
                     podcastTitle ?? "this podcast"
                   }`}
@@ -260,9 +302,104 @@ export function PlayerPlaybackPanel({
         </div>
       ) : null}
 
+      {canonical !== null && pauseShortening.kind === "Available" ? (
+        <section
+          className={styles.pauseShortening}
+          aria-labelledby="player-pause-shortening-title"
+        >
+          <h3 id="player-pause-shortening-title">Shorten pauses</h3>
+          <label className={styles.pauseSetting}>
+            <span>Mode</span>
+            <Select
+              size="lg"
+              disabled={pauseMutation?.kind === "Pending"}
+              value={pauseShortening.effectiveMode}
+              onChange={(event) =>
+                commands.setSessionPauseShorteningMode(
+                  event.currentTarget.value === "Natural"
+                    ? "Natural"
+                    : "Off",
+                )
+              }
+            >
+              <option value="Off">Off</option>
+              <option value="Natural">Natural</option>
+            </Select>
+          </label>
+          <p>
+            {pauseScope} ·{" "}
+            {pauseShorteningModeLabel(pauseShortening.effectiveMode)}
+          </p>
+          <div className={styles.pauseActions}>
+            {pauseShortening.sessionOverride.kind === "Present" ? (
+              <Button
+                variant="secondary"
+                size="lg"
+                disabled={pauseMutation?.kind === "Pending"}
+                onClick={commands.clearSessionPauseShorteningMode}
+              >
+                {pauseShortening.podcastOverride.kind === "Present"
+                  ? "Use podcast setting"
+                  : "Use device setting"}
+              </Button>
+            ) : null}
+            {pausePodcastActionAvailable ? (
+              <Button
+                variant="secondary"
+                size="lg"
+                disabled={pauseMutation?.kind === "Pending"}
+                onClick={commands.rememberPauseShorteningForPodcast}
+              >
+                {pauseMutation?.kind === "Pending" &&
+                pauseMutation.scope === "Podcast"
+                  ? "Remembering for this podcast…"
+                  : "Remember for this podcast"}
+              </Button>
+            ) : null}
+            {pauseDeviceActionAvailable ? (
+              <Button
+                variant="secondary"
+                size="lg"
+                disabled={pauseMutation?.kind === "Pending"}
+                onClick={() =>
+                  commands.setDeviceDefaultPauseShorteningMode(
+                    pauseShortening.effectiveMode,
+                  )
+                }
+              >
+                {pauseMutation?.kind === "Pending" &&
+                pauseMutation.scope === "Device"
+                  ? "Updating device default…"
+                  : "Make default on this device"}
+              </Button>
+            ) : null}
+          </div>
+          {savedOnDeviceMs > 0 ? (
+            <p>
+              Saved on this device ·{" "}
+              {formatClock(savedOnDeviceMs / 1000)}
+            </p>
+          ) : null}
+          {pauseMutation?.kind === "Failed" ? (
+            <div className={styles.pauseFailure}>
+              <FeedbackNotice feedback={pauseMutation.error} />
+              {pauseMutation.retryable ? (
+                <Button
+                  variant="secondary"
+                  size="lg"
+                  onClick={pauseMutation.retry}
+                >
+                  Retry
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
       <section className={styles.effects} aria-labelledby="player-effects-title">
-        <h3 id="player-effects-title">Audio effects</h3>
-        <PlayerAudioEffectsControls />
+        <h3 id="player-effects-title">Output effects</h3>
+        <PlayerOutputEffectsControls />
       </section>
     </div>
   );

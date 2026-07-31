@@ -47,6 +47,7 @@ import type {
   LecternSnapshot,
   MediaId,
   MediaProgressState,
+  NaturalEndSettlement,
   NextCapability,
   Placement,
 } from "@/lib/lectern/contract";
@@ -104,6 +105,7 @@ export interface LecternCapability {
     nextCapability: NextCapability;
     clientMutationId?: string;
   }): Promise<ConsumptionResult>;
+  settleNaturalEnd(receipt: NaturalEndSettlement): Promise<ConsumptionResult>;
   setUnread(mediaId: MediaId): Promise<ConsumptionResult>;
   resetProgress(mediaId: MediaId): Promise<ConsumptionResult>;
   /**
@@ -199,6 +201,7 @@ type LecternEngineMethods = Pick<
   | "setOrder"
   | "ensureMediaFinished"
   | "finishLecternItem"
+  | "settleNaturalEnd"
   | "setUnread"
   | "resetProgress"
   | "undoCompletion"
@@ -555,7 +558,7 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
             throw new Error("Only ResetProgress may return a progress state (defect).");
           }
           installCanonical(result.lectern, unreadMediaIds);
-          // One acknowledged consumption write for all six commands; the pane
+          // One acknowledged consumption write for all seven commands; the pane
           // decides whether to refetch from its own committed projection.
           publishConsumptionProjectionChange();
           if (progressState.kind === "Present") {
@@ -651,6 +654,27 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
       mediaId: input.mediaId,
       itemId: input.itemId,
       nextCapability: input.nextCapability,
+    };
+    return enqueueConsumptionMutation(generation, command, snapshot);
+  }
+
+  function settleNaturalEnd(
+    receipt: NaturalEndSettlement,
+  ): Promise<ConsumptionResult> {
+    // Receipt settlement is deliberately session-less. It must enter the
+    // durable FIFO even when the initial Lectern GET is loading or failed; the
+    // command response installs the canonical snapshot on success.
+    const snapshot =
+      resource.status === "ready" ? resource.data : { items: [] };
+    const command: ConsumptionCommand = {
+      kind: "SettleNaturalEnd",
+      clientMutationId: receipt.clientMutationId,
+      mediaId: receipt.mediaId,
+      origin: receipt.origin,
+      terminalListening: receipt.terminalListening,
+      expectedConsumptionOverrideRevision:
+        receipt.expectedConsumptionOverrideRevision,
+      nextCapability: "FooterAudio",
     };
     return enqueueConsumptionMutation(generation, command, snapshot);
   }
@@ -784,6 +808,7 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
     setOrder,
     ensureMediaFinished,
     finishLecternItem,
+    settleNaturalEnd,
     setUnread,
     resetProgress,
     undoCompletion,
@@ -828,6 +853,7 @@ export function LecternProvider({ children }: { children: ReactNode }) {
       setOrder: engine.setOrder,
       ensureMediaFinished: engine.ensureMediaFinished,
       finishLecternItem: engine.finishLecternItem,
+      settleNaturalEnd: engine.settleNaturalEnd,
       setUnread: engine.setUnread,
       resetProgress: engine.resetProgress,
       undoCompletion: engine.undoCompletion,

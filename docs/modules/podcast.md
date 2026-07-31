@@ -95,6 +95,9 @@ that matter:
 - **Subscription and Library facts.** A `podcast_subscriptions` row means active;
   unsubscribe deletes it. Named placement is only
   `library_entries(podcast_id)`, with `library_entries.py` as sole writer.
+  The row owns the nullable playback-rate and pause-shortening defaults;
+  nullable pause shortening projects as `Presence<Off | Natural>` and means
+  use the Android device default.
   Default/All projects active subscriptions virtually and stores no Podcast
   entry. Subscribe and OPML add named destinations; unsubscribe uses
   `remove_unsubscribed_podcast_placements` to remove viewer-owned unshared

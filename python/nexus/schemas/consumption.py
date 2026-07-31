@@ -34,6 +34,7 @@ NextCapability = Literal["Stop", "FooterAudio", "Readable"]
 ConsumptionMediaKind = Literal["web_article", "epub", "pdf", "video", "podcast_episode"]
 _NonNegInt32 = Annotated[int, Field(ge=0, le=_INT32_MAX)]
 PlaybackRate = Annotated[float, Field(strict=True, ge=0.5, le=3)]
+PauseShorteningMode = Literal["Off", "Natural"]
 
 
 # ---------------------------------------------------------------------------
@@ -82,6 +83,8 @@ class FooterAudioActivation(BaseModel):
     write_revision: _NonNegInt32
     reset_epoch: _NonNegInt32
     playback_rate: PlaybackRateResolution
+    pause_shortening_mode: Presence[PauseShorteningMode]
+    consumption_override_revision: Presence[_NonNegInt32]
     duration_ms: Presence[_NonNegInt32]
     artwork_url: Presence[str]
     chapters: list[ChapterOut] = Field(max_length=100)
@@ -282,13 +285,51 @@ class SetBatchStateCommand(BaseModel):
     state: Literal["Finished", "Unread"]
 
 
+class DirectNaturalEndOrigin(BaseModel):
+    model_config = _IN_CONFIG
+    kind: Literal["Direct"]
+
+
+class LecternNaturalEndOrigin(BaseModel):
+    model_config = _IN_CONFIG
+    kind: Literal["Lectern"]
+    item_id: UUID
+
+
+NaturalEndOrigin = Annotated[
+    DirectNaturalEndOrigin | LecternNaturalEndOrigin,
+    Field(discriminator="kind"),
+]
+
+
+class TerminalListeningIn(BaseModel):
+    model_config = _IN_CONFIG
+    position_ms: _NonNegInt32
+    duration_ms: Presence[_NonNegInt32]
+    episode_playback_rate: Presence[PlaybackRate]
+    expected_write_revision: _NonNegInt32
+    expected_reset_epoch: _NonNegInt32
+
+
+class SettleNaturalEndCommand(BaseModel):
+    model_config = _IN_CONFIG
+    kind: Literal["SettleNaturalEnd"]
+    client_mutation_id: UUID
+    media_id: UUID
+    origin: NaturalEndOrigin
+    terminal_listening: TerminalListeningIn
+    expected_consumption_override_revision: Presence[_NonNegInt32]
+    next_capability: Literal["FooterAudio"]
+
+
 ConsumptionCommand = Annotated[
     EnsureMediaFinishedCommand
     | FinishLecternItemCommand
     | SetUnreadCommand
     | ResetProgressCommand
     | UndoCompletionCommand
-    | SetBatchStateCommand,
+    | SetBatchStateCommand
+    | SettleNaturalEndCommand,
     Field(discriminator="kind"),
 ]
 
@@ -327,8 +368,34 @@ class ConsumptionRemovedOutcome(BaseModel):
     next_item_id: Presence[UUID]
 
 
+class CompletedOutcome(BaseModel):
+    model_config = _OUT_CONFIG
+    kind: Literal["Completed"] = "Completed"
+
+
+class CompletedWithoutAdvanceOutcome(BaseModel):
+    model_config = _OUT_CONFIG
+    kind: Literal["CompletedWithoutAdvance"] = "CompletedWithoutAdvance"
+
+
+class SupersededOutcome(BaseModel):
+    model_config = _OUT_CONFIG
+    kind: Literal["Superseded"] = "Superseded"
+
+
+class TargetGoneOutcome(BaseModel):
+    model_config = _OUT_CONFIG
+    kind: Literal["TargetGone"] = "TargetGone"
+
+
 ConsumptionOutcome = Annotated[
-    StateOnlyOutcome | ConsumptionRemovedOutcome, Field(discriminator="kind")
+    StateOnlyOutcome
+    | ConsumptionRemovedOutcome
+    | CompletedOutcome
+    | CompletedWithoutAdvanceOutcome
+    | SupersededOutcome
+    | TargetGoneOutcome,
+    Field(discriminator="kind"),
 ]
 
 

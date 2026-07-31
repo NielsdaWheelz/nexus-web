@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
 from nexus.schemas.collection_page import CollectionRevision
-from nexus.schemas.consumption import PlaybackRate
+from nexus.schemas.consumption import PauseShorteningMode, PlaybackRate
 from nexus.schemas.contributors import (
     ContributorCreditIn,
     ContributorCreditOut,
@@ -177,12 +177,14 @@ class PodcastEpisodeFromDiscoveryOut(BaseModel):
 
 class PodcastSubscriptionSettingsPatchRequest(BaseModel):
     default_playback_speed: Presence[PlaybackRate] = Field(default_factory=absent)
+    pause_shortening_mode: Presence[PauseShorteningMode] = Field(default_factory=absent)
     auto_queue: bool | None = None
 
     @model_validator(mode="after")
     def validate_patch_semantics(self) -> "PodcastSubscriptionSettingsPatchRequest":
         if (
             "default_playback_speed" not in self.model_fields_set
+            and "pause_shortening_mode" not in self.model_fields_set
             and "auto_queue" not in self.model_fields_set
         ):
             raise ValueError("At least one settings field is required")
@@ -210,6 +212,7 @@ class PodcastSubscriptionStatusOut(BaseModel):
     user_id: UUID
     podcast_id: UUID
     default_playback_speed: Presence[PlaybackRate]
+    pause_shortening_mode: Presence[PauseShorteningMode]
     auto_queue: bool = False
     sync_status: PodcastSyncStatus
     sync_error_code: str | None = None
@@ -260,6 +263,7 @@ class PodcastSubscriptionListItemOut(BaseModel):
     unplayed_count: int = Field(ge=0)
     latest_episode_published_at: Presence[datetime]
     default_playback_speed: Presence[PlaybackRate]
+    pause_shortening_mode: Presence[PauseShorteningMode]
     auto_queue: bool
     sync_status: PodcastSyncStatus
 

@@ -211,6 +211,100 @@ def _completion_rows(direct_db: DirectSessionManager, *, user_id: UUID, media_id
         ).fetchall()
 
 
+def _natural_end_payload(
+    media_id: UUID,
+    *,
+    origin: dict,
+    client_mutation_id: str | None = None,
+    expected_write_revision: int = 0,
+    expected_reset_epoch: int = 0,
+    expected_override_revision: int | None = None,
+) -> dict:
+    return {
+        "kind": "SettleNaturalEnd",
+        "clientMutationId": client_mutation_id or str(uuid4()),
+        "mediaId": str(media_id),
+        "origin": origin,
+        "terminalListening": {
+            "positionMs": 600_000,
+            "durationMs": {"kind": "Present", "value": 600_000},
+            "episodePlaybackRate": {"kind": "Present", "value": 1.25},
+            "expectedWriteRevision": expected_write_revision,
+            "expectedResetEpoch": expected_reset_epoch,
+        },
+        "expectedConsumptionOverrideRevision": (
+            {"kind": "Absent"}
+            if expected_override_revision is None
+            else {"kind": "Present", "value": expected_override_revision}
+        ),
+        "nextCapability": "FooterAudio",
+    }
+
+
+def _natural_end_domain_rows(
+    direct_db: DirectSessionManager,
+    *,
+    user_id: UUID,
+    media_id: UUID,
+) -> tuple:
+    with direct_db.session() as session:
+        listening = session.execute(
+            text(
+                """
+                SELECT position_ms, duration_ms, playback_speed, is_completed,
+                       write_revision, reset_epoch, last_engaged_at
+                FROM podcast_listening_states
+                WHERE user_id = :user_id AND media_id = :media_id
+                """
+            ),
+            {"user_id": user_id, "media_id": media_id},
+        ).one_or_none()
+        override = session.execute(
+            text(
+                """
+                SELECT status, revision, created_at
+                FROM consumption_overrides
+                WHERE user_id = :user_id AND media_id = :media_id
+                """
+            ),
+            {"user_id": user_id, "media_id": media_id},
+        ).one_or_none()
+        queue = session.execute(
+            text(
+                """
+                SELECT id, position
+                FROM consumption_queue_items
+                WHERE user_id = :user_id AND media_id = :media_id
+                ORDER BY id
+                """
+            ),
+            {"user_id": user_id, "media_id": media_id},
+        ).fetchall()
+        completions = session.execute(
+            text(
+                """
+                SELECT id, created_at
+                FROM consumption_completion_facts
+                WHERE user_id = :user_id AND media_id = :media_id
+                ORDER BY id
+                """
+            ),
+            {"user_id": user_id, "media_id": media_id},
+        ).fetchall()
+        revisions = session.execute(
+            text(
+                """
+                SELECT family, revision
+                FROM viewer_collection_revisions
+                WHERE viewer_id = :user_id
+                ORDER BY family
+                """
+            ),
+            {"user_id": user_id},
+        ).fetchall()
+    return listening, override, queue, completions, revisions
+
+
 class TestFinishLecternItem:
     def test_suffix_next_selection_by_capability(
         self, auth_client, direct_db: DirectSessionManager
@@ -388,6 +482,376 @@ class TestFinishLecternItem:
             "nextItemId": {"kind": "Present", "value": ep2_item},
         }
         assert [i["mediaId"] for i in data["lectern"]["items"]] == [str(ep2)]
+
+
+class TestSettleNaturalEnd:
+    def test_exact_lectern_completion_persists_terminal_state_and_replays_semantics(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        episode = _create_podcast_episode(direct_db, title="Ending")
+        successor = _create_podcast_episode(direct_db, title="Next")
+        for media_id in (episode, successor):
+            _add_to_library(direct_db, library_id, media_id)
+        items = _place(auth_client, user_id, [episode, successor])
+        item_id = _item_by_media(items, episode)["itemId"]
+        successor_item_id = _item_by_media(items, successor)["itemId"]
+
+        mutation_id = str(uuid4())
+        body = _natural_end_payload(
+            episode,
+            origin={"kind": "Lectern", "itemId": item_id},
+            client_mutation_id=mutation_id,
+        )
+        first = _consumption(auth_client, user_id, body)
+        assert first.status_code == 200, first.text
+        data = first.json()["data"]
+        assert data["outcome"] == {"kind": "Completed"}
+        assert data["nextItem"]["kind"] == "Present"
+        assert data["nextItem"]["value"]["itemId"] == successor_item_id
+        assert [row["mediaId"] for row in data["lectern"]["items"]] == [str(successor)]
+
+        listening, override, queue, completions, _revisions = _natural_end_domain_rows(
+            direct_db,
+            user_id=user_id,
+            media_id=episode,
+        )
+        assert tuple(listening[:6]) == (600_000, 600_000, 1.25, True, 1, 0)
+        assert listening.last_engaged_at is not None
+        assert tuple(override[:2]) == ("finished", 1)
+        assert queue == []
+        assert len(completions) == 1
+
+        # A new placement after commit proves replay rebuilds a fresh snapshot
+        # and does not rerun the recorded removal or terminal writes.
+        replacement = _place(auth_client, user_id, [episode])
+        replacement_item_id = _item_by_media(replacement, episode)["itemId"]
+        replay = _consumption(auth_client, user_id, body)
+        assert replay.status_code == 200, replay.text
+        replay_data = replay.json()["data"]
+        assert replay_data["outcome"] == {"kind": "Completed"}
+        assert replacement_item_id in {row["itemId"] for row in replay_data["lectern"]["items"]}
+        replay_rows = _natural_end_domain_rows(
+            direct_db,
+            user_id=user_id,
+            media_id=episode,
+        )
+        assert tuple(replay_rows[0][:6]) == (600_000, 600_000, 1.25, True, 1, 0)
+        assert tuple(replay_rows[1][:2]) == ("finished", 1)
+        assert len(replay_rows[3]) == 1
+
+        mismatch = {**body, "nextCapability": "FooterAudio"}
+        mismatch["terminalListening"] = {
+            **body["terminalListening"],
+            "positionMs": 599_999,
+        }
+        conflict = _consumption(auth_client, user_id, mismatch)
+        assert conflict.status_code == 409, conflict.text
+
+    def test_matching_override_revision_settles_and_advances_the_fence(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        episode = _create_podcast_episode(direct_db, title="Override fenced")
+        _add_to_library(direct_db, library_id, episode)
+        _place(auth_client, user_id, [episode])
+
+        unread = _consumption(
+            auth_client,
+            user_id,
+            {
+                "kind": "SetUnread",
+                "clientMutationId": str(uuid4()),
+                "mediaId": str(episode),
+            },
+        )
+        assert unread.status_code == 200, unread.text
+        activation = _item_by_media(
+            unread.json()["data"]["lectern"]["items"],
+            episode,
+        )["activation"]
+        assert activation["consumptionOverrideRevision"] == {
+            "kind": "Present",
+            "value": 1,
+        }
+
+        settled = _consumption(
+            auth_client,
+            user_id,
+            _natural_end_payload(
+                episode,
+                origin={"kind": "Direct"},
+                expected_override_revision=1,
+            ),
+        )
+        assert settled.status_code == 200, settled.text
+        assert settled.json()["data"]["outcome"] == {"kind": "CompletedWithoutAdvance"}
+        listening, override, _queue, completions, _revisions = _natural_end_domain_rows(
+            direct_db,
+            user_id=user_id,
+            media_id=episode,
+        )
+        assert tuple(listening[:6]) == (600_000, 600_000, 1.25, True, 1, 0)
+        assert tuple(override[:2]) == ("finished", 2)
+        assert len(completions) == 1
+
+    def test_explicit_status_and_undo_commands_always_advance_the_override_fence(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        episode = _create_podcast_episode(direct_db, title="Explicit fences")
+        _add_to_library(direct_db, library_id, episode)
+        _place(auth_client, user_id, [episode])
+
+        def revision(response) -> int:
+            assert response.status_code == 200, response.text
+            activation = _item_by_media(
+                response.json()["data"]["lectern"]["items"],
+                episode,
+            )["activation"]
+            return activation["consumptionOverrideRevision"]["value"]
+
+        unread_one = _consumption(
+            auth_client,
+            user_id,
+            {
+                "kind": "SetUnread",
+                "clientMutationId": str(uuid4()),
+                "mediaId": str(episode),
+            },
+        )
+        assert revision(unread_one) == 1
+        unread_two = _consumption(
+            auth_client,
+            user_id,
+            {
+                "kind": "SetUnread",
+                "clientMutationId": str(uuid4()),
+                "mediaId": str(episode),
+            },
+        )
+        assert revision(unread_two) == 2
+
+        finished_one = _consumption(
+            auth_client,
+            user_id,
+            {
+                "kind": "EnsureMediaFinished",
+                "clientMutationId": str(uuid4()),
+                "mediaId": str(episode),
+            },
+        )
+        assert revision(finished_one) == 3
+        completion_handle = finished_one.json()["data"]["completionHandle"]
+        assert completion_handle["kind"] == "Present"
+        finished_two = _consumption(
+            auth_client,
+            user_id,
+            {
+                "kind": "EnsureMediaFinished",
+                "clientMutationId": str(uuid4()),
+                "mediaId": str(episode),
+            },
+        )
+        assert revision(finished_two) == 4
+
+        undone = _consumption(
+            auth_client,
+            user_id,
+            {
+                "kind": "UndoCompletion",
+                "clientMutationId": str(uuid4()),
+                "completionHandle": completion_handle["value"],
+            },
+        )
+        assert revision(undone) == 5
+
+    @pytest.mark.parametrize(
+        "origin_kind",
+        ["Direct", "StaleLectern"],
+    )
+    def test_direct_or_stale_origin_completes_without_advance(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        origin_kind: str,
+    ):
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        episode = _create_podcast_episode(direct_db, title=origin_kind)
+        _add_to_library(direct_db, library_id, episode)
+        item = _item_by_media(_place(auth_client, user_id, [episode]), episode)
+        origin = (
+            {"kind": "Direct"}
+            if origin_kind == "Direct"
+            else {"kind": "Lectern", "itemId": str(uuid4())}
+        )
+
+        response = _consumption(
+            auth_client,
+            user_id,
+            _natural_end_payload(episode, origin=origin),
+        )
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["outcome"] == {"kind": "CompletedWithoutAdvance"}
+        assert data["nextItem"] == {"kind": "Absent"}
+        assert [row["itemId"] for row in data["lectern"]["items"]] == [item["itemId"]]
+        assert _item_by_media(data["lectern"]["items"], episode)["consumption"]["state"] == (
+            "Finished"
+        )
+
+    @pytest.mark.parametrize(
+        "newer_write",
+        ["Heartbeat", "Reset", "Unread", "Finished", "Undo"],
+    )
+    def test_newer_state_supersedes_without_domain_writes(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        newer_write: str,
+    ):
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        episode = _create_podcast_episode(direct_db, title=f"Superseded {newer_write}")
+        _add_to_library(direct_db, library_id, episode)
+        _place(auth_client, user_id, [episode])
+        stale_receipt = _natural_end_payload(episode, origin={"kind": "Direct"})
+
+        if newer_write == "Heartbeat":
+            mutation = _heartbeat(
+                auth_client,
+                user_id,
+                episode,
+                position_ms=12_000,
+                expected_write_revision=0,
+                expected_reset_epoch=0,
+            )
+        elif newer_write == "Reset":
+            mutation = _consumption(
+                auth_client,
+                user_id,
+                {
+                    "kind": "ResetProgress",
+                    "clientMutationId": str(uuid4()),
+                    "mediaId": str(episode),
+                },
+            )
+        elif newer_write in ("Unread", "Finished"):
+            mutation = _consumption(
+                auth_client,
+                user_id,
+                {
+                    "kind": "SetUnread" if newer_write == "Unread" else "EnsureMediaFinished",
+                    "clientMutationId": str(uuid4()),
+                    "mediaId": str(episode),
+                },
+            )
+        else:
+            finished = _consumption(
+                auth_client,
+                user_id,
+                {
+                    "kind": "EnsureMediaFinished",
+                    "clientMutationId": str(uuid4()),
+                    "mediaId": str(episode),
+                },
+            )
+            assert finished.status_code == 200, finished.text
+            mutation = _consumption(
+                auth_client,
+                user_id,
+                {
+                    "kind": "UndoCompletion",
+                    "clientMutationId": str(uuid4()),
+                    "completionHandle": finished.json()["data"]["completionHandle"]["value"],
+                },
+            )
+        assert mutation.status_code == 200, mutation.text
+
+        before = _natural_end_domain_rows(
+            direct_db,
+            user_id=user_id,
+            media_id=episode,
+        )
+        response = _consumption(auth_client, user_id, stale_receipt)
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["outcome"] == {"kind": "Superseded"}
+        after = _natural_end_domain_rows(
+            direct_db,
+            user_id=user_id,
+            media_id=episode,
+        )
+        assert after == before
+
+        replay = _consumption(auth_client, user_id, stale_receipt)
+        assert replay.status_code == 200, replay.text
+        assert replay.json()["data"]["outcome"] == {"kind": "Superseded"}
+        assert (
+            _natural_end_domain_rows(
+                direct_db,
+                user_id=user_id,
+                media_id=episode,
+            )
+            == before
+        )
+
+    def test_missing_target_is_acknowledged_without_domain_writes(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        _bootstrap(auth_client, user_id)
+        missing = uuid4()
+        body = _natural_end_payload(missing, origin={"kind": "Direct"})
+
+        first = _consumption(auth_client, user_id, body)
+        assert first.status_code == 200, first.text
+        assert first.json()["data"]["outcome"] == {"kind": "TargetGone"}
+        before = _natural_end_domain_rows(
+            direct_db,
+            user_id=user_id,
+            media_id=missing,
+        )
+        assert before[0:4] == (None, None, [], [])
+
+        replay = _consumption(auth_client, user_id, body)
+        assert replay.status_code == 200, replay.text
+        assert replay.json()["data"]["outcome"] == {"kind": "TargetGone"}
+        assert (
+            _natural_end_domain_rows(
+                direct_db,
+                user_id=user_id,
+                media_id=missing,
+            )
+            == before
+        )
+
+    def test_inaccessible_target_is_acknowledged_without_domain_writes(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        viewer_id = create_test_user_id()
+        owner_id = create_test_user_id()
+        _bootstrap(auth_client, viewer_id)
+        owner_library_id = _bootstrap(auth_client, owner_id)
+        episode = _create_podcast_episode(direct_db, title="No longer readable")
+        _add_to_library(direct_db, owner_library_id, episode)
+
+        response = _consumption(
+            auth_client,
+            viewer_id,
+            _natural_end_payload(episode, origin={"kind": "Direct"}),
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["outcome"] == {"kind": "TargetGone"}
+        listening, override, queue, completions, _revisions = _natural_end_domain_rows(
+            direct_db,
+            user_id=viewer_id,
+            media_id=episode,
+        )
+        assert (listening, override, queue, completions) == (None, None, [], [])
 
 
 class TestSetUnread:

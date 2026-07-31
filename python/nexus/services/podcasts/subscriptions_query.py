@@ -33,6 +33,9 @@ from nexus.services.collection_revisions import (
 )
 from nexus.services.consumption import service as consumption_service
 from nexus.services.contributor_credits import load_contributor_credits_for_podcasts
+from nexus.services.podcasts.playback_preferences import (
+    pause_shortening_mode_from_nullable,
+)
 from nexus.services.signed_keyset_cursor import (
     KeysetValue,
     KeysetValueKind,
@@ -428,6 +431,7 @@ def list_subscriptions(
                 SELECT
                     ps.podcast_id,
                     ps.default_playback_speed,
+                    ps.pause_shortening_mode,
                     ps.auto_queue,
                     ps.sync_status,
                     ps.updated_at AS subscription_updated_at,
@@ -475,6 +479,9 @@ def list_subscriptions(
                     if row["default_playback_speed"] is not None
                     else None
                 ),
+                pause_shortening_mode=pause_shortening_mode_from_nullable(
+                    row["pause_shortening_mode"]
+                ),
                 auto_queue=bool(row["auto_queue"]),
                 sync_status=row["sync_status"],
             )
@@ -520,6 +527,7 @@ def get_podcast_detail_for_viewer(
                 ps.id,
                 ps.podcast_id,
                 ps.default_playback_speed,
+                ps.pause_shortening_mode,
                 ps.auto_queue,
                 ps.sync_status,
                 ps.sync_error_code,
@@ -556,15 +564,16 @@ def get_podcast_detail_for_viewer(
             default_playback_speed=presence_from_nullable(
                 float(row[13]) if row[13] is not None else None
             ),
-            auto_queue=bool(row[14]),
-            sync_status=row[15],
-            sync_error_code=row[16],
-            sync_error_message=row[17],
-            sync_attempts=row[18],
-            sync_started_at=row[19],
-            sync_completed_at=row[20],
-            last_checked_at=row[21],
-            updated_at=row[22],
+            pause_shortening_mode=pause_shortening_mode_from_nullable(row[14]),
+            auto_queue=bool(row[15]),
+            sync_status=row[16],
+            sync_error_code=row[17],
+            sync_error_message=row[18],
+            sync_attempts=row[19],
+            sync_started_at=row[20],
+            sync_completed_at=row[21],
+            last_checked_at=row[22],
+            updated_at=row[23],
             backfill=_load_backfill_out(db, subscription_id=UUID(str(row[11]))),
         )
     return PodcastDetailOut(podcast=podcast, subscription=subscription)

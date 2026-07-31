@@ -15,7 +15,9 @@ owns acquisition, sync/backfill, and explicit transcription.
 
 Full behavioral contracts, wire shapes, and acceptance criteria:
 `docs/cutovers/lectern-player-lifecycle-hard-cutover.md` and
-`docs/cutovers/resonance-reading-slate-hard-cutover.md`.
+`docs/cutovers/resonance-reading-slate-hard-cutover.md`. Android playback and
+pause shortening are specified by
+`docs/cutovers/android-native-player-pause-shortening-hard-cutover.md`.
 Observed activity and Stats are a separate Consumption capability; see
 [consumption-activity.md](consumption-activity.md).
 
@@ -42,7 +44,8 @@ split by storage and query concern:
 - `_lectern_store.py` — sole DML owner of `consumption_queue_items` (Lectern
   membership/order). Builds the canonical `LecternSnapshot`.
 - `_state_store.py` — sole DML owner of `consumption_overrides` (explicit
-  `Unread`/`Finished` state).
+  `Unread`/`Finished` state plus the completion-only revision that fences a
+  delayed natural-end receipt).
 - `_listening_store.py` — sole DML owner of `podcast_listening_states`
   (position/duration/nullable established episode rate, completion flag, and
   the heartbeat fencing tokens `write_revision`/`reset_epoch`).
@@ -79,6 +82,8 @@ split by storage and query concern:
   `PlayerDescriptor`s for podcast-episode media. Both descriptor paths reuse
   `services/playback_source.derive_playback_source` and the one playback-rate
   resolver over nullable episode rate plus the active subscription preference.
+  They also project the active subscription pause-shortening override and
+  current Consumption override revision through required `Presence` fields.
   `services/media.py`,
   `services/library_entries.py`, and `services/podcasts/{episodes,
   subscriptions_query}.py` adopt this projection; no other module reads
@@ -126,7 +131,7 @@ owns the singular heartbeat GET/PUT (no batch endpoint). The two POST ports
 are bounded aggregate command ports, not a generic command bus: `Lectern`
 commands (`PlaceItems`/`RemoveItem`/`SetOrder`) and `Consumption` commands
 (`EnsureMediaFinished`/`FinishLecternItem`/`SetUnread`/`UndoCompletion`/
-`SetBatchState`/`ResetProgress`) each
+`SetBatchState`/`ResetProgress`/`SettleNaturalEnd`) each
 share one transaction/replay scope (`Lectern.Commands` /
 `Consumption.Commands`) and one canonical response. POST is
 semantic-idempotent through a client-generated `clientMutationId`, keyed by
@@ -142,6 +147,13 @@ writes share their own
 atomic Consumption transaction (see
 [reader-implementation.md](reader-implementation.md)), independent of the
 listening heartbeat.
+
+`SettleNaturalEnd` is the only canonical natural-end command. It compares the
+captured listening fences and exact Consumption override revision before any
+write, installs the terminal source-time observation with zero dwell, and
+completes in the same transaction. Exact Lectern origin may advance; Direct or
+stale origin completes state only. Replay returns a fresh canonical projection
+from the recorded terminal outcome without repeating domain writes.
 
 The Preview-position POST is a replayable post-acquisition command keyed by the
 required `Idempotency-Key` header. It accepts only an owned Podcast-episode
@@ -200,31 +212,43 @@ Lectern pane is the sole full-list editor).
   and quiet read recovery. They do not own queue state or write commands.
 - `apps/web/src/lib/player/` — the audio session: `playerSession.ts` (pure
   session/origin/history/resume state machine, zero React/I-O),
-  `listeningHeartbeat.ts` (the single-flight, generation-keyed heartbeat
-  engine), `globalPlayer.tsx` (the provider-owned app-wide `<audio>` element,
-  Web Audio effects graph, OS media-session integration, and stable Commands
-  plus cadence-separated Session/Settings/Timeline capabilities),
-  `playerChromeModel.ts` (the exhaustive pure semantic projection), plus
-  `audioEffects.ts`, `chapters.ts`, `mediaSession.ts`, `playbackRate.ts`, and
-  `usePlayerKeyboardShortcuts.ts`. `playbackRate.ts` is the one owner of product
-  bounds, steps, presets, parsing, formatting, and adjusted remaining time.
-- `globalPlayer.tsx` also owns the exhaustive `PreviewAudio` session variant.
-  It uses the same provider and `<audio>` element but has no Media ID, Lectern
+  `browserPlayerRuntime.ts` (the non-Android `<audio>` element, output-effects
+  graph, browser Media Session, heartbeat, and activity adaptation),
+  `androidPlayerRuntime.ts` plus `androidPlayerClient.ts` (the exact
+  `nexusPlayer` protocol and native snapshot/command adaptation),
+  `playerChromeModel.ts` (the exhaustive pure semantic projection),
+  `outputEffects.ts`, `pauseShortening.ts`, `chapters.ts`, `mediaSession.ts`,
+  `playbackRate.ts`, `usePlayerKeyboardShortcuts.ts`, and
+  `globalPlayer.tsx` (the exclusive platform-runtime selector and public
+  re-export boundary). Each runtime publishes stable Commands and
+  cadence-separated Session/Settings/Timeline capabilities. `playbackRate.ts`
+  is the one owner of product bounds, steps, presets, parsing, formatting, and
+  adjusted remaining time.
+- Both selected runtimes implement the exhaustive `PreviewAudio` session
+  variant. It has no Media ID, Lectern
   origin/history, heartbeat, completion command, activity observation, queue,
-  podcast preference, or previous/next capability. Preview starts at `1x`, and
-  its rate remains device-session local. Natural end is local
+  podcast preference, pause-shortening preference, or previous/next
+  capability. Preview starts at `1x`; natural end is local
   `PreviewAudioAtEnd`.
   Stopping Preview returns one in-memory position snapshot and clears OS Media
   Session position state.
-- `globalPlayer.tsx` publishes owned `<audio>` playing/pause/buffering/end
-  observations to the single Consumption recorder. The heartbeat persists
-  current position; it never carries elapsed-time activity or a raw device id.
-- On Android, `globalPlayer.tsx` asks the enclosing `OfflineMediaProvider` for
-  the source exactly once while applying `StartSession`. Ready resolves to the
-  owned native GET/range route; all other states resolve to the canonical
-  remote stream. The captured URL belongs to that session epoch and is never
-  recomputed or switched while playback is active. Missing/corrupt Ready bytes
-  fail locally and never fall back to the network.
+- Android selects one service-owned Media3 runtime. The WebView mounts no audio
+  element, Web Audio graph, browser Media Session, heartbeat, or listening
+  recorder. The native service records original-source position and Listening
+  activity while the browser runtime retains those owners on non-Android. A
+  replacement native controller re-handshakes the account and pushes one
+  authoritative full snapshot plus pending-receipt Presence; stale web state
+  never drives the replacement service.
+- Canonical natural end first persists one account/session-fenced native
+  receipt. `LecternProvider.settleNaturalEnd` enters the existing FIFO without
+  a live player session, installs the canonical result, and acknowledges only
+  the exact recorded outcome. Session match gates presentation and successor
+  start, not settlement.
+- On canonical `LoadCanonical`, `NexusPlaybackService` resolves the source once
+  through `OfflineMediaStore`. Ready uses the store's one Media3 cache directly;
+  every other state captures the canonical remote source. Missing or corrupt
+  Ready bytes fail without network fallback, and later download-state changes
+  never switch the active source.
 - `apps/web/src/components/player/` — the Listening Shelf, MiniPlayer, full-
   screen Now Playing, and shared cadence-scoped controls. The surfaces share
   one Capture controller and one provider-lifetime live region. They do not

@@ -1,6 +1,7 @@
 .panel,
 .editor,
 .scope,
+.pauseShortening,
 .effects {
   display: grid;
   min-width: 0;
@@ -82,14 +83,42 @@
   overflow-wrap: anywhere;
 }
 
+.pauseShortening,
 .effects {
   padding-top: var(--space-4);
   border-top: var(--stroke-hairline) solid var(--edge);
 }
 
+.pauseShortening h3,
 .effects h3 {
   margin: 0;
   font-size: var(--text-base);
+}
+
+.pauseShortening p {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.pauseSetting {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-3);
+}
+
+.pauseActions,
+.pauseFailure {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.pauseActions button,
+.pauseFailure button {
+  min-height: 44px;
+  height: auto;
+  white-space: normal;
 }
 
 .rateButton {
@@ -107,6 +136,7 @@
 
 @media (forced-colors: active) {
   .scope,
+  .pauseShortening,
   .effects {
     border-color: CanvasText;
   }

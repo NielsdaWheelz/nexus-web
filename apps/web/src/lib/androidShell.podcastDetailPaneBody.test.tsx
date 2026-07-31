@@ -5,8 +5,56 @@ import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 
 const mockUsePaneParam = vi.fn<(paramName: string) => string | null>();
+const ACCOUNT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const PODCAST_ID = "11111111-1111-4111-8111-111111111111";
 const EPISODE_ID = "22222222-2222-4222-8222-222222222222";
+
+type WireCommand = {
+  kind: string;
+  requestId: string;
+  protocolVersion: 1;
+  accountId?: string;
+};
+
+function installNativePlayerBridge(): WireCommand[] {
+  const commands: WireCommand[] = [];
+  const bridge: {
+    postMessage(message: string): void;
+    onmessage: ((event: { data: unknown }) => void) | null;
+  } = {
+    onmessage: null,
+    postMessage(message) {
+      const command = JSON.parse(message) as WireCommand;
+      commands.push(command);
+      bridge.onmessage?.({
+        data: JSON.stringify(
+          command.kind === "Connect"
+            ? {
+                kind: "Connected",
+                requestId: command.requestId,
+                protocolVersion: 1,
+                snapshot: {
+                  kind: "Absent",
+                  deviceDefaultPauseShorteningMode: "Off",
+                  pauseShorteningSavedOnDeviceMs: 0,
+                },
+                pendingNaturalEnd: { kind: "Absent" },
+              }
+            : {
+                kind: "Accepted",
+                requestId: command.requestId,
+                protocolVersion: 1,
+              },
+        ),
+      });
+    },
+  };
+  Object.defineProperty(window, "nexusPlayer", {
+    configurable: true,
+    value: bridge,
+  });
+  return commands;
+}
 
 vi.mock("@/lib/panes/paneRuntime", () => ({
   definePaneVisitDataKey: (diagnosticName: string) => ({ diagnosticName }),
@@ -71,7 +119,7 @@ function Wrapped() {
     <FeedbackProvider>
       <ShareControllerProvider>
         <LecternProvider>
-          <GlobalPlayerProvider>
+          <GlobalPlayerProvider accountId={ACCOUNT_ID}>
             <LibraryPlacementControllerProvider>
               <PodcastDetailPaneBody />
             </LibraryPlacementControllerProvider>
@@ -93,10 +141,12 @@ function jsonResponse(body: unknown, status = 200): Response {
 describe("PodcastDetailPaneBody transcript billing", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    Reflect.deleteProperty(window, "nexusPlayer");
   });
 
   it("keeps transcript requests unavailable when transcription is locked", async () => {
     const user = userEvent.setup();
+    const nativeCommands = installNativePlayerBridge();
     mockUsePaneParam.mockImplementation((paramName) =>
       paramName === "podcastId" ? PODCAST_ID : null
     );
@@ -175,6 +225,13 @@ describe("PodcastDetailPaneBody transcript billing", () => {
     render(<Wrapped />);
 
     await screen.findByRole("link", { name: "Episode 0" });
+    expect(nativeCommands).toContainEqual(
+      expect.objectContaining({
+        kind: "Connect",
+        accountId: ACCOUNT_ID,
+      }),
+    );
+    expect(screen.queryByLabelText("Media player audio")).toBeNull();
     await user.click(
       screen.getByRole("button", { name: "More actions for Episode 0" })
     );

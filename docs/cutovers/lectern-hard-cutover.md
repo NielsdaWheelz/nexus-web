@@ -629,9 +629,9 @@ to "Up next".
 - `GlobalPlayerFooter.tsx` — stays; queue-button behavior changed on mobile; badge
   display (`queueBadge`) removed per N-5.
 - `SortableList.tsx` — shared primitive, unchanged.
-- Player listening state, audio effects, podcast listening states — entirely separate
+- Player listening state, output effects, podcast listening states — entirely separate
   from the queue; untouched.
-- `__tests__/helpers/audio.ts`, `GlobalPlayerAudioEffects.test.tsx`,
+- `__tests__/helpers/audio.ts`, `GlobalPlayerOutputEffects.test.tsx`,
   `GlobalPlayerPersistence.test.tsx`, `GlobalPlayerMediaSession.test.tsx` — modified
   (mock `source_url` → `stream_url` update) but not deleted.
 
@@ -730,13 +730,13 @@ Remove `countUpcomingQueueItems` + `upcomingQueueCount` useMemo from `globalPlay
 remove `queueBadge` display from `GlobalPlayerFooter.tsx`.
 Fix track construction: `source_url: queueItem.stream_url ?? ""`.
 Update `source_url` → `stream_url` in `__tests__/helpers/audio.ts`,
-`GlobalPlayerAudioEffects.test.tsx`, `GlobalPlayerPersistence.test.tsx`,
+`GlobalPlayerOutputEffects.test.tsx`, `GlobalPlayerPersistence.test.tsx`,
 `GlobalPlayerMediaSession.test.tsx`.
 Change `openQueueFromMobileExpanded` to open `/lectern` pane.
 Rename test file `GlobalPlayerQueue.test.tsx` → `GlobalPlayerConsumptionPanel.test.tsx`.
 Update `GlobalPlayerFooter.tsx` import.
 *Verify:* `bun run test:browser -t GlobalPlayer` (the audio queue + persistence +
-audio effects + media session tests must all pass); additionally run
+output effects + media session tests must all pass); additionally run
 `rg 'source_url' apps/web/src/__tests__/ --include="*.ts" --include="*.tsx"` → zero.
 
 **S5 — Action menu, launcher verb, swipe-in-Lectern**
@@ -946,7 +946,7 @@ make test-migrations        # up + down
 - `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.test.tsx` — AC-10 browser tests for `LecternNextPrompt` at threshold 0.95
 - `apps/web/src/__tests__/components/GlobalPlayerFooter.test.tsx` — mobile queue test; badge-removed assertion
 - `apps/web/src/__tests__/helpers/audio.ts` — mock track construction `source_url` → `stream_url`
-- `apps/web/src/__tests__/components/GlobalPlayerAudioEffects.test.tsx` — mock queue item `source_url` → `stream_url`
+- `apps/web/src/__tests__/components/GlobalPlayerOutputEffects.test.tsx` — mock queue item `source_url` → `stream_url`
 - `apps/web/src/__tests__/components/GlobalPlayerPersistence.test.tsx` — mock queue item `source_url` → `stream_url`
 - `apps/web/src/__tests__/components/GlobalPlayerMediaSession.test.tsx` — mock queue item `source_url` → `stream_url`
 
@@ -965,7 +965,7 @@ make test-migrations        # up + down
 ## 16. Risks
 
 **R-1. Player regression — tests enumerate (HIGH).**
-`GlobalPlayerFooter.test.tsx`, `GlobalPlayerAudioEffects.test.tsx`,
+`GlobalPlayerFooter.test.tsx`, `GlobalPlayerOutputEffects.test.tsx`,
 `GlobalPlayerMediaSession.test.tsx`, `GlobalPlayerPersistence.test.tsx`, and
 `__tests__/helpers/audio.ts` all construct mock queue items or tracks with
 `source_url`. After S2 drops `source_url` from `ConsumptionQueueItem`, every mock

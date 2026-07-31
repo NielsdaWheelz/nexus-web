@@ -5734,6 +5734,7 @@ class TestPodcastApiSurface:
             headers=auth_headers(user_id),
             json={
                 "default_playback_speed": {"kind": "Present", "value": 1.85},
+                "pause_shortening_mode": {"kind": "Present", "value": "Natural"},
                 "auto_queue": True,
             },
         )
@@ -5744,6 +5745,10 @@ class TestPodcastApiSurface:
         patched = patch_response.json()["data"]
         assert patched["podcast_id"] == str(podcast_id)
         assert patched["default_playback_speed"] == {"kind": "Present", "value": 1.85}
+        assert patched["pause_shortening_mode"] == {
+            "kind": "Present",
+            "value": "Natural",
+        }
         assert patched["auto_queue"] is True
 
         partial_patch = auth_client.patch(
@@ -5760,6 +5765,10 @@ class TestPodcastApiSurface:
             "kind": "Present",
             "value": 1.85,
         }
+        assert partial_payload["pause_shortening_mode"] == {
+            "kind": "Present",
+            "value": "Natural",
+        }
         assert partial_payload["auto_queue"] is False
 
         subscriptions_response = auth_client.get(
@@ -5775,6 +5784,10 @@ class TestPodcastApiSurface:
         row = rows[0]
         assert row["podcast_id"] == str(podcast_id)
         assert row["default_playback_speed"] == {"kind": "Present", "value": 1.85}
+        assert row["pause_shortening_mode"] == {
+            "kind": "Present",
+            "value": "Natural",
+        }
         assert row["auto_queue"] is False
 
         detail_response = auth_client.get(
@@ -5790,6 +5803,10 @@ class TestPodcastApiSurface:
             "kind": "Present",
             "value": 1.85,
         }
+        assert detail_payload["subscription"]["pause_shortening_mode"] == {
+            "kind": "Present",
+            "value": "Natural",
+        }
         assert detail_payload["subscription"]["auto_queue"] is False
 
         clear_response = auth_client.patch(
@@ -5802,6 +5819,14 @@ class TestPodcastApiSurface:
             f"got {clear_response.status_code}: {clear_response.text}"
         )
         assert clear_response.json()["data"]["default_playback_speed"] == {"kind": "Absent"}
+
+        clear_pause_response = auth_client.patch(
+            f"/podcasts/subscriptions/{podcast_id}/settings",
+            headers=auth_headers(user_id),
+            json={"pause_shortening_mode": {"kind": "Absent"}},
+        )
+        assert clear_pause_response.status_code == 200, clear_pause_response.text
+        assert clear_pause_response.json()["data"]["pause_shortening_mode"] == {"kind": "Absent"}
 
     def test_patch_subscription_settings_rejects_out_of_range_default_speed(
         self, auth_client, monkeypatch
@@ -5861,6 +5886,20 @@ class TestPodcastApiSurface:
         )
         assert raw_null.status_code == 400, raw_null.text
         assert raw_null.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+        for invalid_pause_mode in (
+            None,
+            True,
+            {"kind": "Present", "value": "natural"},
+            {"kind": "Present", "value": "Unknown"},
+        ):
+            invalid_pause = auth_client.patch(
+                f"/podcasts/subscriptions/{podcast_id}/settings",
+                headers=auth_headers(user_id),
+                json={"pause_shortening_mode": invalid_pause_mode},
+            )
+            assert invalid_pause.status_code == 400, invalid_pause.text
+            assert invalid_pause.json()["error"]["code"] == "E_INVALID_REQUEST"
 
         empty_payload = auth_client.patch(
             f"/podcasts/subscriptions/{podcast_id}/settings",

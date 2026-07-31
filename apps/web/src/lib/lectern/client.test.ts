@@ -33,6 +33,8 @@ function footerAudio(overrides: Record<string, unknown> = {}): Record<string, un
         },
       },
     },
+    pauseShorteningMode: { kind: "Absent" },
+    consumptionOverrideRevision: { kind: "Absent" },
     durationMs: { kind: "Present", value: 60000 },
     artworkUrl: { kind: "Absent" },
     chapters: [{ title: "Intro", startMs: 0, endMs: { kind: "Present", value: 5000 } }],

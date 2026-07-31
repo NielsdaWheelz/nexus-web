@@ -10,7 +10,6 @@ import type { OfflineMediaCommand } from "./contract";
 import {
   OfflineMediaProvider,
   useOfflineMediaCapability,
-  useOfflineMediaStreamResolver,
 } from "./OfflineMediaProvider";
 import type { OfflineMediaTransport } from "./transport";
 
@@ -73,12 +72,8 @@ class HandshakeTransport implements OfflineMediaTransport {
 
 function Probe() {
   const capability = useOfflineMediaCapability();
-  const resolveStreamUrl = useOfflineMediaStreamResolver();
   return (
-    <>
-      <p data-testid="offline-capability">{capability.kind}</p>
-      <span>{resolveStreamUrl("media", "https://remote.test")}</span>
-    </>
+    <p data-testid="offline-capability">{capability.kind}</p>
   );
 }
 
@@ -128,7 +123,6 @@ describe("OfflineMediaProvider", () => {
     );
 
     expect(screen.getByText("Unavailable")).toBeInTheDocument();
-    expect(screen.getByText("https://remote.test")).toBeInTheDocument();
   });
 
   it("does not infer capability from a forged Android user agent", () => {

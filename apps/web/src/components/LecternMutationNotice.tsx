@@ -32,10 +32,11 @@ export default function LecternMutationNotice() {
     return null;
   }
 
-  // Suppress when the player already owns the retry surface for this exact
-  // completion attempt (Completing/CompletionFailed carry the active attempt).
+  // Suppress only when the browser player already owns the retry surface for
+  // this exact failed completion. Android receipt settlement remains
+  // `Completing`; its retry stays owned and rendered by the Lectern provider.
   const completionAttempt =
-    state.kind === "Completing" || state.kind === "CompletionFailed" ? state.attempt : undefined;
+    state.kind === "CompletionFailed" ? state.attempt : undefined;
   if (
     completionAttempt !== undefined &&
     mutationMatchesAttempt(mutation.attempt.clientMutationId, completionAttempt)

@@ -5,6 +5,13 @@
 
 No blocking question remains.
 
+**Android native-player supersession (2026-07-30):**
+[`android-native-player-pause-shortening-hard-cutover.md`](android-native-player-pause-shortening-hard-cutover.md)
+supersedes natural-end completion with one fenced `SettleNaturalEnd` command,
+adds the completion-only override revision and pending receipt, and moves
+Android audio, heartbeat, activity, and Media Session ownership to Media3.
+Manual Consumption commands and all unmentioned Lectern semantics remain here.
+
 **Playback-rate supersession (2026-07-30):**
 [`playback-rate-policy-hard-cutover.md`](playback-rate-policy-hard-cutover.md)
 supersedes this document's scalar rate, former lower bound, and heartbeat
@@ -720,10 +727,10 @@ interface GlobalPlayerCapability {
       remember: PlaybackRateRememberState;
     };
     currentChapter: Presence<ChapterOut>;
-    audioEffects: AudioEffectsState;
-    audioEffectsAvailable: boolean;
-    isSilenceTrimming: boolean;
-    silenceTimeSavedMs: number;
+    outputEffects: OutputEffectsState;
+    outputEffectsAvailable: boolean;
+    pauseShortening: PlayerPauseShorteningCapability;
+    pauseShorteningSavedOnDeviceMs: Presence<number>;
   };
   playAudio(input: PlayAudioInput): void;
   resume(): void;
@@ -734,7 +741,11 @@ interface GlobalPlayerCapability {
   next(): void;
   setVolume(volume: number): void;
   setPlaybackRate(rate: number): void;
-  setAudioEffects(patch: Partial<AudioEffectsState>): void;
+  setOutputEffects(patch: Partial<OutputEffectsState>): void;
+  setSessionPauseShorteningMode(mode: PauseShorteningMode): void;
+  clearSessionPauseShorteningMode(): void;
+  rememberPauseShorteningForPodcast(): void;
+  setDeviceDefaultPauseShorteningMode(mode: PauseShorteningMode): void;
   bindAudioElement(node: HTMLAudioElement | null): void;
 }
 ```
@@ -878,7 +889,8 @@ interface GlobalPlayerCapability {
   `resource_items/{mutations,surfaces}.py`; preserve hash-basis regression tests in
   `test_{notes,contributors,resource_item_surfaces}.py`.
 - Frontend owners: `AuthenticatedShell.tsx`; player
-  `{audioEffects,chapters,globalPlayer,listeningState,mediaSession,playbackRate,usePlayerKeyboardShortcuts}`;
+  `{outputEffects,chapters,globalPlayer,playerRuntime,browserPlayerRuntime,
+  androidPlayerRuntime,playbackRate,usePlayerKeyboardShortcuts}`;
   `app/api/media/[id]/listening-state/route.ts`;
   `GlobalPlayerFooter.tsx` + CSS; Lectern pane/prompt; media pane/transcript;
   podcast `PodcastDetailPaneBody`, `PodcastEpisodeList`, `EpisodeControls`,

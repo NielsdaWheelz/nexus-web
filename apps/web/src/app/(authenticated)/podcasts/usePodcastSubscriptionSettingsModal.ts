@@ -12,10 +12,12 @@ import {
   subscribePodcastSubscriptionSettingsInstalls,
   type PodcastSubscriptionSettingsResponse,
 } from "@/lib/podcasts/subscriptionSettings";
+import type { PauseShorteningMode } from "@/lib/player/pauseShortening";
 
 interface SubscriptionSettingsSource {
   podcast_id: string;
   default_playback_speed: Presence<number>;
+  pause_shortening_mode: Presence<PauseShorteningMode>;
   auto_queue: boolean;
 }
 
@@ -23,10 +25,12 @@ export interface PodcastSubscriptionSettingsModal {
   /** Non-null when the modal is open; identifies the podcast being edited. */
   podcastId: string | null;
   defaultPlaybackSpeed: Presence<number>;
+  pauseShorteningMode: Presence<PauseShorteningMode>;
   autoQueue: boolean;
   busy: boolean;
   error: FeedbackContent | null;
   setDefaultPlaybackSpeed: (value: Presence<number>) => void;
+  setPauseShorteningMode: (value: Presence<PauseShorteningMode>) => void;
   setAutoQueue: (value: boolean) => void;
   open: (subscription: SubscriptionSettingsSource) => void;
   close: () => void;
@@ -48,19 +52,25 @@ export function usePodcastSubscriptionSettingsModal({
   const [podcastId, setPodcastId] = useState<string | null>(null);
   const [defaultPlaybackSpeed, setDefaultPlaybackSpeed] =
     useState<Presence<number>>(absent());
+  const [pauseShorteningMode, setPauseShorteningMode] =
+    useState<Presence<PauseShorteningMode>>(absent());
   const [autoQueue, setAutoQueue] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<FeedbackContent | null>(null);
   const busyRef = useRef(false);
 
   useEffect(
-    () => subscribePodcastSubscriptionSettingsInstalls(onSaved),
+    () =>
+      subscribePodcastSubscriptionSettingsInstalls((install) => {
+        if (install.kind === "Settings") onSaved(install.settings);
+      }),
     [onSaved],
   );
 
   const open = useCallback((subscription: SubscriptionSettingsSource) => {
     setPodcastId(subscription.podcast_id);
     setDefaultPlaybackSpeed(subscription.default_playback_speed);
+    setPauseShorteningMode(subscription.pause_shortening_mode);
     setAutoQueue(subscription.auto_queue);
     setError(null);
   }, []);
@@ -79,6 +89,7 @@ export function usePodcastSubscriptionSettingsModal({
     try {
       await savePodcastSubscriptionSettings(podcastId, {
         defaultPlaybackSpeed,
+        pauseShorteningMode,
         autoQueue,
       });
       setPodcastId(null);
@@ -93,15 +104,17 @@ export function usePodcastSubscriptionSettingsModal({
       busyRef.current = false;
       setBusy(false);
     }
-  }, [autoQueue, defaultPlaybackSpeed, podcastId]);
+  }, [autoQueue, defaultPlaybackSpeed, pauseShorteningMode, podcastId]);
 
   return {
     podcastId,
     defaultPlaybackSpeed,
+    pauseShorteningMode,
     autoQueue,
     busy,
     error,
     setDefaultPlaybackSpeed,
+    setPauseShorteningMode,
     setAutoQueue,
     open,
     close,

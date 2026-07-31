@@ -208,7 +208,7 @@ describe("OfflineMediaController", () => {
     ]);
   });
 
-  it("strictly resolves a spec once, then waits for the native pushed state", async () => {
+  it("strictly resolves a spec once, then installs the native pushed state", async () => {
     const { controller, store, transport } = runtime();
     await connect(controller, transport);
     store.noteTitle(MEDIA_ID, "Episode");
@@ -233,9 +233,15 @@ describe("OfflineMediaController", () => {
       },
     });
 
-    expect(controller.resolveStreamUrl(MEDIA_ID, "https://remote.test")).toBe(
-      `https://nexus.test/_native/offline-media/${MEDIA_ID}`,
-    );
+    expect(store.getItem(MEDIA_ID)).toEqual({
+      kind: "Present",
+      value: {
+        kind: "Ready",
+        sizeBytes: 10,
+        contentType: "audio/mpeg",
+        updatedAt: "2026-07-30T19:00:00Z",
+      },
+    });
   });
 
   it("clears account-session state and ignores late resolving work on dispose", async () => {

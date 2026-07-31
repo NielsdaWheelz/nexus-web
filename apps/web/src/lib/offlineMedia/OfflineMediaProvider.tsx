@@ -51,8 +51,6 @@ const UNAVAILABLE: OfflineMediaCapability = { kind: "Unavailable" };
 const CONNECTING: OfflineMediaCapability = { kind: "Connecting" };
 const ABSENT_AVAILABILITY: Presence<LocalAvailability> = absent();
 const EMPTY_INVENTORY: readonly OfflineMediaInventoryItem[] = [];
-const REMOTE_STREAM_RESOLVER = (_mediaId: string, remoteUrl: string) =>
-  remoteUrl;
 
 const OfflineMediaContext =
   createContext<OfflineMediaCapability>(UNAVAILABLE);
@@ -280,18 +278,4 @@ export function useOfflineMediaItem(
     () => ({ capability, availability }),
     [availability, capability],
   );
-}
-
-/**
- * Synchronous StartSession source decision. The returned function reference is
- * stable for the lifetime of the connected account session.
- */
-export function useOfflineMediaStreamResolver(): (
-  mediaId: string,
-  remoteUrl: string,
-) => string {
-  const capability = useOfflineMediaCapability();
-  return capability.kind === "Ready"
-    ? capability.controller.resolveStreamUrl
-    : REMOTE_STREAM_RESOLVER;
 }

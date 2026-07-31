@@ -13,6 +13,7 @@ function wire(
     contributors: [],
     sync_status: "Complete",
     default_playback_speed: { kind: "Absent" },
+    pause_shortening_mode: { kind: "Absent" },
     auto_queue: false,
     unplayed_count: 2,
     latest_episode_published_at: {

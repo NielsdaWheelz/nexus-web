@@ -38,6 +38,8 @@ const descriptor = {
       source: "Product",
       podcastPreference: absent(),
     },
+    pauseShorteningMode: absent(),
+    consumptionOverrideRevision: absent(),
     durationMs: absent(),
     artworkUrl: absent(),
     chapters: [],

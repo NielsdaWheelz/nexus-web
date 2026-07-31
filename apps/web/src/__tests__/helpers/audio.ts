@@ -60,6 +60,8 @@ type DescriptorOptions = {
   writeRevision?: number;
   resetEpoch?: number;
   playbackRate?: PlaybackRateResolution;
+  pauseShorteningMode?: "Off" | "Natural" | null;
+  consumptionOverrideRevision?: number | null;
   durationMs?: number | null;
   artworkUrl?: string | null;
   chapters?: ChapterOut[];
@@ -87,6 +89,14 @@ export function buildPlayerDescriptor(
         source: "Product",
         podcastPreference: absent(),
       },
+      pauseShorteningMode:
+        options.pauseShorteningMode != null
+          ? present(options.pauseShorteningMode)
+          : absent(),
+      consumptionOverrideRevision:
+        options.consumptionOverrideRevision != null
+          ? present(options.consumptionOverrideRevision)
+          : absent(),
       durationMs: options.durationMs != null ? present(options.durationMs) : absent(),
       artworkUrl: options.artworkUrl != null ? present(options.artworkUrl) : absent(),
       chapters: options.chapters ?? [],

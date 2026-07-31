@@ -586,6 +586,7 @@ export default function LibraryPaneBody() {
                 subscription: {
                   ...candidate.subscription,
                   default_playback_speed: response.default_playback_speed,
+                  pause_shortening_mode: response.pause_shortening_mode,
                   auto_queue: response.auto_queue,
                 },
               }
@@ -2901,6 +2902,8 @@ export default function LibraryPaneBody() {
                       podcast_id: item.podcast.id,
                       default_playback_speed:
                         subscription.defaultPlaybackSpeed,
+                      pause_shortening_mode:
+                        subscription.pauseShorteningMode,
                       auto_queue: subscription.autoQueue,
                     }),
                 }

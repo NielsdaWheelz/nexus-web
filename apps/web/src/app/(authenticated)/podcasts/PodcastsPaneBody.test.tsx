@@ -102,6 +102,7 @@ function podcastSubscription(index: number) {
           : `Podcast ${index}`,
     contributors: [],
     default_playback_speed: { kind: "Absent" },
+    pause_shortening_mode: { kind: "Absent" },
     auto_queue: false,
     sync_status: "Complete",
     unplayed_count: 0,

@@ -36,6 +36,10 @@ import {
   type ReaderCursorSnapshot,
 } from "@/lib/reader/readerProgress";
 import { parsePlaybackRate } from "@/lib/player/playbackRate";
+import {
+  parsePauseShorteningMode,
+  type PauseShorteningMode,
+} from "@/lib/player/pauseShortening";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
 // --- Branded identities ------------------------------------------------------
@@ -124,6 +128,8 @@ export interface FooterAudioActivation {
   writeRevision: number;
   resetEpoch: number;
   playbackRate: PlaybackRateResolution;
+  pauseShorteningMode: Presence<PauseShorteningMode>;
+  consumptionOverrideRevision: Presence<number>;
   durationMs: Presence<number>;
   artworkUrl: Presence<string>;
   chapters: ChapterOut[];
@@ -248,6 +254,24 @@ export type Placement =
 
 export type NextCapability = "Stop" | "FooterAudio" | "Readable";
 
+export interface NaturalEndTerminalListening {
+  positionMs: number;
+  durationMs: Presence<number>;
+  episodePlaybackRate: Presence<number>;
+  expectedWriteRevision: number;
+  expectedResetEpoch: number;
+}
+
+export interface NaturalEndSettlement {
+  clientMutationId: string;
+  mediaId: MediaId;
+  origin:
+    | { kind: "Direct" }
+    | { kind: "Lectern"; itemId: LecternItemId };
+  terminalListening: NaturalEndTerminalListening;
+  expectedConsumptionOverrideRevision: Presence<number>;
+}
+
 export type LecternCommand =
   | { kind: "PlaceItems"; clientMutationId: string; mediaIds: MediaId[]; placement: Placement }
   | { kind: "RemoveItem"; clientMutationId: string; itemId: LecternItemId }
@@ -261,6 +285,17 @@ export type ConsumptionCommand =
       mediaId: MediaId;
       itemId: LecternItemId;
       nextCapability: NextCapability;
+    }
+  | {
+      kind: "SettleNaturalEnd";
+      clientMutationId: string;
+      mediaId: MediaId;
+      origin:
+        | { kind: "Direct" }
+        | { kind: "Lectern"; itemId: LecternItemId };
+      terminalListening: NaturalEndTerminalListening;
+      expectedConsumptionOverrideRevision: Presence<number>;
+      nextCapability: "FooterAudio";
     }
   | { kind: "SetUnread"; clientMutationId: string; mediaId: MediaId }
   | { kind: "ResetProgress"; clientMutationId: string; mediaId: MediaId }
@@ -288,7 +323,11 @@ export interface LecternResult {
 
 export type ConsumptionOutcome =
   | { kind: "StateOnly" }
-  | { kind: "Removed"; itemId: LecternItemId; nextItemId: Presence<LecternItemId> };
+  | { kind: "Removed"; itemId: LecternItemId; nextItemId: Presence<LecternItemId> }
+  | { kind: "Completed" }
+  | { kind: "CompletedWithoutAdvance" }
+  | { kind: "Superseded" }
+  | { kind: "TargetGone" };
 
 export interface ConsumptionResult {
   outcome: ConsumptionOutcome;
@@ -497,6 +536,8 @@ export function decodeActivation(raw: unknown): Activation {
           "writeRevision",
           "resetEpoch",
           "playbackRate",
+          "pauseShorteningMode",
+          "consumptionOverrideRevision",
           "durationMs",
           "artworkUrl",
           "chapters",
@@ -526,6 +567,22 @@ export function decodeActivation(raw: unknown): Activation {
           "FooterAudioActivation.resetEpoch",
         ),
         playbackRate: decodePlaybackRateResolution(rec.playbackRate),
+        pauseShorteningMode: decodePresence(
+          rec.pauseShorteningMode,
+          (value) =>
+            parsePauseShorteningMode(
+              value,
+              "FooterAudioActivation.pauseShorteningMode.value",
+            ),
+        ),
+        consumptionOverrideRevision: decodePresence(
+          rec.consumptionOverrideRevision,
+          (value) =>
+            asNonNegativeInt32(
+              value,
+              "FooterAudioActivation.consumptionOverrideRevision.value",
+            ),
+        ),
         durationMs: decodePresence(rec.durationMs, (v) =>
           asNonNegativeInt32(v, "FooterAudioActivation.durationMs"),
         ),
@@ -681,7 +738,18 @@ export function decodeLecternResult(raw: unknown): LecternResult {
 
 function decodeConsumptionOutcome(raw: unknown): ConsumptionOutcome {
   const rec = asRecord(raw, "ConsumptionOutcome");
-  const kind = asLiteral(rec.kind, ["StateOnly", "Removed"] as const, "ConsumptionOutcome.kind");
+  const kind = asLiteral(
+    rec.kind,
+    [
+      "StateOnly",
+      "Removed",
+      "Completed",
+      "CompletedWithoutAdvance",
+      "Superseded",
+      "TargetGone",
+    ] as const,
+    "ConsumptionOutcome.kind",
+  );
   switch (kind) {
     case "StateOnly": {
       exactKeys(rec, ["kind"], "ConsumptionOutcome.StateOnly");
@@ -694,6 +762,13 @@ function decodeConsumptionOutcome(raw: unknown): ConsumptionOutcome {
         itemId: decodeLecternItemId(rec.itemId),
         nextItemId: decodePresence(rec.nextItemId, decodeLecternItemId),
       };
+    }
+    case "Completed":
+    case "CompletedWithoutAdvance":
+    case "Superseded":
+    case "TargetGone": {
+      exactKeys(rec, ["kind"], `ConsumptionOutcome.${kind}`);
+      return { kind };
     }
   }
 }

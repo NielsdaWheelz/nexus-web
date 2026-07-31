@@ -273,6 +273,7 @@ def add_test_podcast_subscription(
     podcast_id: UUID,
     auto_queue: bool = False,
     default_playback_speed: float | None = None,
+    pause_shortening_mode: str | None = None,
 ) -> UUID:
     """Create one healthy target-head subscription and its pristine backfill fence."""
     now = datetime.now(UTC)
@@ -284,6 +285,7 @@ def add_test_podcast_subscription(
             podcast_id=podcast_id,
             auto_queue=auto_queue,
             default_playback_speed=default_playback_speed,
+            pause_shortening_mode=pause_shortening_mode,
             sync_status="Complete",
             sync_generation=0,
             next_sync_at=healthy_next_sync_at(subscription_id, now),

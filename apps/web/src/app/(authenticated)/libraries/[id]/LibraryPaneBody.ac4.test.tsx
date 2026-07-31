@@ -372,6 +372,7 @@ function seededPodcastEntry() {
       kind: "Present",
       value: {
         defaultPlaybackSpeed: { kind: "Present", value: 1.5 },
+        pauseShorteningMode: { kind: "Absent" },
         autoQueue: true,
         syncStatus: "Complete",
       },

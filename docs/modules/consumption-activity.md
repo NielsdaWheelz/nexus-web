@@ -18,8 +18,9 @@ explicit consumption state. The implementing cutover is
   the fact it created; ordinary later Unread and `ResetProgress` do not rewrite
   history.
 - Reading requires the eligible focused reader/input state. Listening follows
-  the owned global audio element. Viewing is focused, visible video-pane time,
-  not verified provider playback.
+  the sole platform audio owner: the global browser audio element off Android
+  and the native Media3 service in the Android shell. Viewing is focused,
+  visible video-pane time, not verified provider playback.
 - Sessions are read-time gap-and-island projections over spans, never stored
   rows or browser identities. Forward word/media-position change is a cursor
   delta, not unique consumption.
@@ -36,6 +37,7 @@ explicit consumption state. The implementing cutover is
 | Completion policy | `python/nexus/services/consumption/_policy.py` |
 | Strict transport shapes | `python/nexus/schemas/consumption_activity.py` and `apps/web/src/lib/consumption/activityContract.ts` |
 | Browser capture | `apps/web/src/lib/consumption/activityRecorder.ts` |
+| Android listening capture | `apps/android/app/src/main/java/app/nexus/android/playback/NativeConsumptionRecorder.kt` |
 | Stats presentation | `apps/web/src/app/(authenticated)/stats/` |
 
 `POST /consumption/activity` is a replayable `Consumption.Activity` mutation.
@@ -46,10 +48,12 @@ and safe labels only.
 
 ## Boundaries
 
-The recorder has one tab-local owner. Reader, global-audio, and visible-video
-adapters publish observations to it; none sends its own request or writes
-operational telemetry. Capture is bounded and best-effort: an unavailable or
-ambiguous interval is omitted rather than guessed or persisted for later retry.
+The browser recorder has one tab-local owner. Reader, non-Android global-audio,
+and visible-video adapters publish observations to it; none sends its own
+request or writes operational telemetry. Android listening bypasses that
+adapter and is recorded only by the service-owned native recorder. Capture is
+bounded and best-effort: an unavailable or ambiguous interval is omitted
+rather than guessed or persisted for later retry.
 
 Current state remains separate: `reader_media_state`,
 `reader_engagement_states`, and `podcast_listening_states` serve resume,

@@ -26907,3 +26907,83 @@ class TestMigration0205DailyPages:
             reset_test_schema()
             run_alembic_command("upgrade head")
             engine.dispose()
+
+
+class TestMigration0206AndroidNativePlayerPauseShortening:
+    def test_adds_nullable_subscription_mode_and_backfills_override_revision(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0205")
+            assert result.returncode == 0, result.stderr
+
+            user_id = uuid4()
+            media_id = uuid4()
+            with engine.begin() as connection:
+                connection.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO media (id, kind, title, processing_status)
+                        VALUES (:id, 'podcast_episode', 'Migration episode', 'ready_for_reading')
+                        """
+                    ),
+                    {"id": media_id},
+                )
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO consumption_overrides (user_id, media_id, status)
+                        VALUES (:user_id, :media_id, 'unread')
+                        """
+                    ),
+                    {"user_id": user_id, "media_id": media_id},
+                )
+
+            result = run_alembic_command("upgrade 0206")
+            assert result.returncode == 0, result.stderr
+
+            with engine.begin() as connection:
+                subscription_column = connection.execute(
+                    text(
+                        """
+                        SELECT data_type, is_nullable, column_default
+                        FROM information_schema.columns
+                        WHERE table_name = 'podcast_subscriptions'
+                          AND column_name = 'pause_shortening_mode'
+                        """
+                    )
+                ).one()
+                assert subscription_column == ("text", "YES", None)
+
+                override_column = connection.execute(
+                    text(
+                        """
+                        SELECT data_type, is_nullable
+                        FROM information_schema.columns
+                        WHERE table_name = 'consumption_overrides'
+                          AND column_name = 'revision'
+                        """
+                    )
+                ).one()
+                assert override_column == ("integer", "NO")
+                assert (
+                    connection.scalar(
+                        text(
+                            """
+                            SELECT revision
+                            FROM consumption_overrides
+                            WHERE user_id = :user_id AND media_id = :media_id
+                            """
+                        ),
+                        {"user_id": user_id, "media_id": media_id},
+                    )
+                    == 0
+                )
+
+            downgrade = run_alembic_command("downgrade 0205")
+            assert downgrade.returncode != 0
+            assert "0206 is a hard cutover migration" in downgrade.stderr
+        finally:
+            reset_test_schema()
+            engine.dispose()

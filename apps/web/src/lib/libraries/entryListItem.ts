@@ -16,6 +16,10 @@ import {
 } from "@/lib/podcasts/types";
 import { parsePlaybackRate } from "@/lib/player/playbackRate";
 import {
+  parsePauseShorteningMode,
+  type PauseShorteningMode,
+} from "@/lib/player/pauseShortening";
+import {
   decodeLibraryReadingTimeEntry,
   type LibraryMediaKind,
   type ReadingTimeEstimatePresence,
@@ -88,6 +92,7 @@ export interface LibraryPodcastListValue {
 
 export interface LibraryPodcastSubscriptionValue {
   readonly defaultPlaybackSpeed: Presence<number>;
+  readonly pauseShorteningMode: Presence<PauseShorteningMode>;
   readonly autoQueue: boolean;
   readonly syncStatus: PodcastSyncStatus;
 }
@@ -293,7 +298,12 @@ function decodeSubscription(
     (value) => {
       const subscription = expectExactRecord(
         value,
-        ["defaultPlaybackSpeed", "autoQueue", "syncStatus"],
+        [
+          "defaultPlaybackSpeed",
+          "pauseShorteningMode",
+          "autoQueue",
+          "syncStatus",
+        ],
         "Library podcast subscription",
       );
       return {
@@ -303,6 +313,14 @@ function decodeSubscription(
             parsePlaybackRate(
               playbackRate,
               "Library podcast subscription.defaultPlaybackSpeed.value",
+            ),
+        ),
+        pauseShorteningMode: decodePresence(
+          subscription.pauseShorteningMode,
+          (mode) =>
+            parsePauseShorteningMode(
+              mode,
+              "Library podcast subscription.pauseShorteningMode.value",
             ),
         ),
         autoQueue: expectBoolean(

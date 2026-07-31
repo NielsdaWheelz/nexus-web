@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Dialog from "@/components/ui/Dialog";
+import Button from "@/components/ui/Button";
 import WalknoteReviewPanel from "@/components/walknotes/WalknoteReviewPanel";
 import { presenceValueOr } from "@/lib/api/presence";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -63,6 +64,7 @@ export default function GlobalPlayerSurfaces() {
   const activeSessionIdentityRef = useRef<string | null>(null);
   const previousIsMobileRef = useRef(isMobile);
   const rememberAnnouncementRef = useRef("Unavailable");
+  const pauseAnnouncementRef = useRef("Unavailable");
   const [nowPlayingOpen, setNowPlayingOpen] = useState(false);
   const [playbackOpen, setPlaybackOpen] = useState(false);
   const [contentsOpen, setContentsOpen] = useState(false);
@@ -107,7 +109,7 @@ export default function GlobalPlayerSurfaces() {
     const viewportChanged = previousIsMobileRef.current !== isMobile;
     previousIsMobileRef.current = isMobile;
     const identity =
-      model.kind === "Absent"
+      model.kind === "Absent" || model.kind === "RuntimeFailure"
         ? null
         : model.kind === "Canonical"
           ? model.state.session.descriptor.mediaId
@@ -123,7 +125,11 @@ export default function GlobalPlayerSurfaces() {
     }
     activeSessionIdentityRef.current = identity;
 
-    if (viewportChanged || model.kind === "Absent") {
+    if (
+      viewportChanged ||
+      model.kind === "Absent" ||
+      model.kind === "RuntimeFailure"
+    ) {
       setNowPlayingOpen(false);
       setPlaybackOpen(false);
       setContentsOpen(false);
@@ -136,6 +142,11 @@ export default function GlobalPlayerSurfaces() {
   useEffect(() => {
     if (model.kind === "Absent") {
       announcedIdentityRef.current = null;
+      return;
+    }
+    if (model.kind === "RuntimeFailure") {
+      announcedIdentityRef.current = null;
+      setAnnouncement(model.state.error.message);
       return;
     }
     const identity =
@@ -179,6 +190,41 @@ export default function GlobalPlayerSurfaces() {
     }
   }, [settings.playbackRate.remember]);
 
+  useEffect(() => {
+    const pause = settings.pauseShortening;
+    if (pause.kind === "Unavailable") {
+      pauseAnnouncementRef.current = "Unavailable";
+      return;
+    }
+    const mutation = pause.mutation;
+    const signature =
+      mutation.kind === "Failed"
+        ? `${mutation.kind}:${mutation.scope}:${mutation.error.title}:${mutation.error.message ?? ""}`
+        : mutation.kind === "Pending"
+          ? `${mutation.kind}:${mutation.scope}`
+          : mutation.kind;
+    const previous = pauseAnnouncementRef.current;
+    if (signature === previous) return;
+    pauseAnnouncementRef.current = signature;
+    if (mutation.kind === "Pending") {
+      setAnnouncement(
+        mutation.scope === "Podcast"
+          ? "Remembering pause shortening for this podcast"
+          : "Updating the device pause-shortening default",
+      );
+    } else if (mutation.kind === "Failed") {
+      setAnnouncement(
+        [mutation.error.title, mutation.error.message]
+          .filter(Boolean)
+          .join(". "),
+      );
+    } else if (previous === "Pending:Podcast") {
+      setAnnouncement("Podcast pause-shortening setting remembered");
+    } else if (previous === "Pending:Device") {
+      setAnnouncement("Device pause-shortening default updated");
+    }
+  }, [settings.pauseShortening]);
+
   const activateTarget = useCallback(
     (target: { readonly href: string; readonly labelHint: string }) => {
       workspace.activateWorkspaceTarget({
@@ -192,7 +238,7 @@ export default function GlobalPlayerSurfaces() {
   );
 
   const openPlayerTarget = useCallback(() => {
-    if (model.kind === "Absent") return;
+    if (model.kind === "Absent" || model.kind === "RuntimeFailure") return;
     collapse();
     activateTarget({
       href: playerTargetHref(model),
@@ -222,6 +268,30 @@ export default function GlobalPlayerSurfaces() {
   );
 
   if (model.kind === "Absent") return liveRegion;
+  if (model.kind === "RuntimeFailure") {
+    return (
+      <>
+        {liveRegion}
+        <section
+          className={styles.runtimeFailure}
+          role="region"
+          aria-label="Media player"
+        >
+          <div>
+            <strong>Player unavailable</strong>
+            <p>{model.state.error.message}</p>
+          </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={model.state.retry}
+          >
+            Retry
+          </Button>
+        </section>
+      </>
+    );
+  }
 
   const chapters =
     model.kind === "Canonical"

@@ -235,8 +235,21 @@
   gap: var(--space-3);
 }
 
-.trimming {
-  color: var(--success);
+.effectsSelectSetting {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-2);
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+.effectsToggleSetting {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
 }
 
 @media (forced-colors: active) {

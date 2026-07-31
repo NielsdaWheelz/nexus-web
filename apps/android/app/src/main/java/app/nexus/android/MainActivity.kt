@@ -3,6 +3,7 @@ package app.nexus.android
 import android.Manifest
 import android.app.Activity
 import android.content.ActivityNotFoundException
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -19,12 +20,12 @@ import android.webkit.CookieManager
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.OptIn
 import androidx.appcompat.app.AppCompatActivity
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.core.content.ContextCompat
@@ -34,9 +35,22 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import app.nexus.android.offline.OfflineMediaStore
 import app.nexus.android.offline.OfflineMediaWebCapability
+import androidx.lifecycle.Lifecycle
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionError
+import androidx.media3.session.SessionResult
+import androidx.media3.session.SessionToken
+import app.nexus.android.playback.NexusPlaybackService
+import app.nexus.android.playback.NexusPlayerBridge
+import com.google.common.util.concurrent.Futures
+import com.google.common.util.concurrent.ListenableFuture
+import com.google.common.util.concurrent.MoreExecutors
 import java.security.MessageDigest
 import java.security.SecureRandom
 
+@OptIn(UnstableApi::class)
 class MainActivity : AppCompatActivity() {
     internal lateinit var webView: WebView
     internal lateinit var shellChromeClient: WebChromeClient
@@ -51,6 +65,10 @@ class MainActivity : AppCompatActivity() {
             // A denied notification permission hides the drawer notification but does
             // not invalidate the user-started foreground download.
         }
+    private var playerController: MediaController? = null
+    private var playerControllerFuture: ListenableFuture<MediaController>? = null
+    private var playerLifecycleClosing = false
+    private lateinit var playerBridge: NexusPlayerBridge
 
     private val fileChooserLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -87,16 +105,16 @@ class MainActivity : AppCompatActivity() {
             ::requestOfflineDownloadNotificationPermission,
         )
         offlineMediaCapability.install()
+        playerBridge = NexusPlayerBridge(webView) {
+            if (playerController == null) {
+                connectPlayerController()
+            }
+            playerController
+        }
+        playerBridge.install()
+        connectPlayerController()
 
         webView.webViewClient = object : WebViewClient() {
-            override fun shouldInterceptRequest(
-                view: WebView?,
-                request: WebResourceRequest?,
-            ): WebResourceResponse? {
-                return request?.let(offlineMediaCapability::intercept)
-                    ?: super.shouldInterceptRequest(view, request)
-            }
-
             override fun shouldOverrideUrlLoading(
                 view: WebView?,
                 request: WebResourceRequest?
@@ -124,6 +142,7 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 offlineMediaCapability.onPageStarted()
+                playerBridge.onPageStarted()
             }
         }
 
@@ -270,6 +289,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         OfflineMediaStore.get(this).onAppBackground()
+        playerBridge.onPause()
         CookieManager.getInstance().flush()
         webView.onPause()
         webView.pauseTimers()
@@ -281,6 +301,7 @@ class MainActivity : AppCompatActivity() {
         OfflineMediaStore.get(this).onAppForeground()
         webView.onResume()
         webView.resumeTimers()
+        playerBridge.onResume()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -289,6 +310,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        playerLifecycleClosing = true
+        playerBridge.close()
+        playerController?.release()
+        playerController = null
+        playerControllerFuture?.cancel(true)
+        playerControllerFuture = null
         fileChooserCallback?.onReceiveValue(null)
         fileChooserCallback = null
         offlineMediaCapability.close()
@@ -308,6 +335,80 @@ class MainActivity : AppCompatActivity() {
         ) {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
+    }
+
+    private fun connectPlayerController() {
+        if (
+            isDestroyed ||
+            playerLifecycleClosing ||
+            playerController != null ||
+            playerControllerFuture != null
+        ) {
+            return
+        }
+        val token = SessionToken(
+            this,
+            ComponentName(this, NexusPlaybackService::class.java),
+        )
+        val future = MediaController.Builder(this, token)
+            .setListener(
+                object : MediaController.Listener {
+                    override fun onCustomCommand(
+                        controller: MediaController,
+                        command: SessionCommand,
+                        args: Bundle,
+                    ): ListenableFuture<SessionResult> {
+                        if (command.customAction == NexusPlaybackService.ACTION_EVENT) {
+                            args.getString(NexusPlaybackService.ARG_REPLY_JSON)
+                                ?.let(playerBridge::onControllerEvent)
+                            return Futures.immediateFuture(
+                                SessionResult(SessionResult.RESULT_SUCCESS)
+                            )
+                        }
+                        return Futures.immediateFuture(
+                            SessionResult(SessionError.ERROR_NOT_SUPPORTED)
+                        )
+                    }
+
+                    override fun onDisconnected(controller: MediaController) {
+                        runOnUiThread {
+                            if (
+                                playerController !== controller ||
+                                isDestroyed ||
+                                playerLifecycleClosing
+                            ) {
+                                return@runOnUiThread
+                            }
+                            playerBridge.onControllerDisconnected()
+                            playerController = null
+                            connectPlayerController()
+                        }
+                    }
+                }
+            )
+            .buildAsync()
+        playerControllerFuture = future
+        future.addListener(
+            {
+                val connected = runCatching { future.get() }.getOrNull()
+                runOnUiThread {
+                    if (playerControllerFuture !== future || isDestroyed) {
+                        connected?.release()
+                        return@runOnUiThread
+                    }
+                    playerControllerFuture = null
+                    if (connected == null) {
+                        return@runOnUiThread
+                    }
+                    playerController = connected
+                    playerBridge.onControllerConnected(connected)
+                    if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+                        playerBridge.onResume()
+                    }
+                }
+            },
+            MoreExecutors.directExecutor(),
+        )
     }
 
     internal fun routeUrl(uri: Uri) {

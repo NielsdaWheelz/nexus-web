@@ -7,6 +7,11 @@ Playback-rate policy, controls, and Settings capability are superseded by
 [`playback-rate-policy-hard-cutover.md`](playback-rate-policy-hard-cutover.md).
 This document remains canonical for player-surface and dismissal behavior.
 
+Android runtime, output-effects, pause-shortening, and natural-end ownership are
+superseded by
+[`android-native-player-pause-shortening-hard-cutover.md`](android-native-player-pause-shortening-hard-cutover.md).
+The surfaces and dismissal grammar remain canonical.
+
 ## Decision
 
 Replace `GlobalPlayerFooter` with one shell-owned player presentation system:
@@ -291,8 +296,7 @@ interface PlayerTimelineCapability {
   durationMs: number;
   bufferedMs: number;
   currentChapter: Presence<ChapterOut>;
-  isSilenceTrimming: boolean;
-  silenceTimeSavedMs: number;
+  pauseShorteningSavedOnDeviceMs: Presence<number>;
 }
 
 interface PlayerSettingsCapability {
@@ -305,8 +309,9 @@ interface PlayerSettingsCapability {
     observed: number;
     remember: PlaybackRateRememberState;
   };
-  audioEffects: AudioEffectsState;
-  audioEffectsAvailable: boolean;
+  outputEffects: OutputEffectsState;
+  outputEffectsAvailable: boolean;
+  pauseShortening: PlayerPauseShorteningCapability;
 }
 
 interface PlayerCommandsCapability {
@@ -325,7 +330,11 @@ interface PlayerCommandsCapability {
   toggleTemporaryNormalRate(): void;
   useInheritedPlaybackRate(): void;
   rememberPlaybackRateForPodcast(): void;
-  setAudioEffects(patch: Partial<AudioEffectsState>): void;
+  setOutputEffects(patch: Partial<OutputEffectsState>): void;
+  setSessionPauseShorteningMode(mode: PauseShorteningMode): void;
+  clearSessionPauseShorteningMode(): void;
+  rememberPauseShorteningForPodcast(): void;
+  setDeviceDefaultPauseShorteningMode(mode: PauseShorteningMode): void;
 }
 
 usePlayerSession(): PlayerSessionCapability;
@@ -337,9 +346,9 @@ usePlayerCommands(): PlayerCommandsCapability;
 Every command reads mutable runtime/snapshot values through refs and has stable
 identity for the provider lifetime. In particular, `stopPreviewAudio` does not
 close over timeline state, and Play/Previous/Next do not close over a Lectern
-snapshot. Memoize the Commands capability once; prove that time updates, silence
-RAF, settings changes, and Lectern installs do not commit command-only
-consumers.
+snapshot. Memoize the Commands capability once; prove that time updates,
+pause-shortening snapshots, settings changes, and Lectern installs do not
+commit command-only consumers.
 
 `bindAudioElement` is deleted from the public capability. The provider renders
 the hidden, non-duplicative `<audio aria-label="Media player audio">` itself.
@@ -489,8 +498,8 @@ Add:
 - `apps/web/src/components/player/MobileMiniPlayer.module.css`
 - `apps/web/src/components/player/MobileNowPlaying.tsx`
 - `apps/web/src/components/player/MobileNowPlaying.module.css`
-- `apps/web/src/components/player/PlayerAudioEffectsControls.tsx`
 - `apps/web/src/components/player/PlayerPlaybackControls.tsx`
+- `apps/web/src/components/player/PlayerOutputEffectsControls.tsx`
 - `apps/web/src/components/player/PlayerContentsSheet.tsx`
 - `apps/web/src/__tests__/components/GlobalPlayerSurfaces.test.tsx`
 - `apps/web/src/lib/player/usePlayerKeyboardShortcuts.test.tsx`
@@ -503,7 +512,7 @@ Modify:
 - every current `useGlobalPlayer` consumer, mock, helper, and explanatory
   comment, including billing and Android-shell tests
 - migrate, behavior-equivalently, `GlobalPlayerLifecycle`,
-  `GlobalPlayerPersistence`, `GlobalPlayerAudioEffects`,
+  `GlobalPlayerPersistence`, `GlobalPlayerOutputEffects`,
   `GlobalPlayerMediaSession`, and `GlobalPlayer.activity` tests to the split
   hooks/provider-owned audio
 - `apps/web/src/app/(authenticated)/AuthenticatedShell.tsx`
@@ -661,7 +670,7 @@ bun run test:browser -- \
   src/__tests__/components/GlobalPlayerSurfaces.test.tsx \
   src/__tests__/components/GlobalPlayerLifecycle.test.tsx \
   src/__tests__/components/GlobalPlayerPersistence.test.tsx \
-  src/__tests__/components/GlobalPlayerAudioEffects.test.tsx \
+  src/__tests__/components/GlobalPlayerOutputEffects.test.tsx \
   src/__tests__/components/GlobalPlayerMediaSession.test.tsx \
   src/lib/player/GlobalPlayer.runtime.test.tsx \
   src/lib/player/GlobalPlayer.activity.test.tsx \

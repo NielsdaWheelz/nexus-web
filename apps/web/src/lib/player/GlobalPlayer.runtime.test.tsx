@@ -29,14 +29,6 @@ import {
   setAudioMetrics,
 } from "@/__tests__/helpers/audio";
 
-const offlineMedia = vi.hoisted(() => ({
-  resolveStreamUrl: vi.fn((_mediaId: string, remoteUrl: string) => remoteUrl),
-}));
-
-vi.mock("@/lib/offlineMedia/OfflineMediaProvider", () => ({
-  useOfflineMediaStreamResolver: () => offlineMedia.resolveStreamUrl,
-}));
-
 const MEDIA_A = "11111111-1111-4111-8111-111111111111";
 const MEDIA_B = "22222222-2222-4222-8222-222222222222";
 const MEDIA_C = "77777777-7777-4777-8777-777777777777";
@@ -73,6 +65,7 @@ function settingsResponse(
       user_id: "55555555-5555-4555-8555-555555555555",
       podcast_id: podcastId,
       default_playback_speed: present(defaultPlaybackSpeed),
+      pause_shortening_mode: absent(),
       auto_queue: false,
       sync_status: "Complete",
       sync_error_code: null,
@@ -114,14 +107,6 @@ class FakeCompressorNode extends FakeAudioNode {
   release = { value: 0 };
 }
 
-class FakeAnalyserNode extends FakeAudioNode {
-  fftSize = 128;
-
-  getFloatTimeDomainData(target: Float32Array): void {
-    target.fill(0);
-  }
-}
-
 class FakeAudioContext {
   state: AudioContextState = "suspended";
   destination = new FakeAudioNode();
@@ -131,10 +116,6 @@ class FakeAudioContext {
   createMediaElementSource(element: HTMLAudioElement): FakeAudioNode {
     this.capturedElements.push(element);
     return new FakeAudioNode();
-  }
-
-  createAnalyser(): FakeAnalyserNode {
-    return new FakeAnalyserNode();
   }
 
   createGain(): FakeGainNode {
@@ -210,30 +191,6 @@ function installAudioContext() {
   };
 }
 
-function installAnimationFrames() {
-  let nextId = 0;
-  let timestampMs = 0;
-  const callbacks = new Map<number, FrameRequestCallback>();
-  vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
-    nextId += 1;
-    callbacks.set(nextId, callback);
-    return nextId;
-  });
-  vi.spyOn(window, "cancelAnimationFrame").mockImplementation((id) => {
-    callbacks.delete(id);
-  });
-  return {
-    run(count: number) {
-      for (let index = 0; index < count; index += 1) {
-        timestampMs += 100;
-        const frame = [...callbacks.values()];
-        callbacks.clear();
-        for (const callback of frame) callback(timestampMs);
-      }
-    },
-  };
-}
-
 function App({ children }: { children: ReactNode }) {
   return (
     <LecternProvider>
@@ -245,10 +202,6 @@ function App({ children }: { children: ReactNode }) {
 describe("GlobalPlayer runtime", () => {
   beforeEach(() => {
     window.localStorage.clear();
-    offlineMedia.resolveStreamUrl.mockReset();
-    offlineMedia.resolveStreamUrl.mockImplementation(
-      (_mediaId: string, remoteUrl: string) => remoteUrl,
-    );
     vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
     vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
     vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
@@ -258,63 +211,6 @@ describe("GlobalPlayer runtime", () => {
     restoreAudioContext?.();
     restoreAudioContext = null;
     vi.restoreAllMocks();
-  });
-
-  it("captures the offline source once when a session starts", async () => {
-    installLecternPlayerFetchMock();
-    const remoteUrl = "https://cdn.example.com/alpha.mp3";
-    const localUrl = `https://nexus.test/_native/offline-media/${MEDIA_A}`;
-    offlineMedia.resolveStreamUrl.mockReturnValue(localUrl);
-
-    function Harness() {
-      const commands = usePlayerCommands();
-      const { resource } = useLectern();
-      return (
-        <>
-          <output aria-label="lectern status">{resource.status}</output>
-          <button
-            type="button"
-            onClick={() =>
-              commands.playAudio(
-                buildPlayerDescriptor(MEDIA_A, "Alpha", { streamUrl: remoteUrl }),
-              )
-            }
-          >
-            Play Alpha
-          </button>
-        </>
-      );
-    }
-
-    const { rerender } = render(
-      <App>
-        <Harness />
-      </App>,
-    );
-    await screen.findByText("ready", {
-      selector: '[aria-label="lectern status"]',
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Play Alpha" }));
-    const audio = screen.getByLabelText(
-      "Media player audio",
-    ) as HTMLAudioElement;
-    await waitFor(() => expect(audio.getAttribute("src")).toBe(localUrl));
-    expect(offlineMedia.resolveStreamUrl).toHaveBeenCalledOnce();
-    expect(offlineMedia.resolveStreamUrl).toHaveBeenCalledWith(
-      MEDIA_A,
-      remoteUrl,
-    );
-
-    offlineMedia.resolveStreamUrl.mockReturnValue(remoteUrl);
-    rerender(
-      <App>
-        <Harness />
-      </App>,
-    );
-    fireEvent.timeUpdate(audio);
-
-    expect(audio.getAttribute("src")).toBe(localUrl);
-    expect(offlineMedia.resolveStreamUrl).toHaveBeenCalledOnce();
   });
 
   it("dismisses a parked completion without swallowing the next session's natural end", async () => {
@@ -486,12 +382,16 @@ describe("GlobalPlayer runtime", () => {
         <>
           <output aria-label="lectern status">{resource.status}</output>
           <output aria-label="effects availability">
-            {String(settings.audioEffectsAvailable)}
+            {String(settings.outputEffectsAvailable)}
           </output>
           <button
             type="button"
             onClick={() =>
-              commands.playAudio(buildPlayerDescriptor(MEDIA_A, "Alpha"))
+              commands.playAudio(
+                buildPlayerDescriptor(MEDIA_A, "Alpha", {
+                  streamUrl: `/media/${MEDIA_A}.mp3`,
+                }),
+              )
             }
           >
             Play Alpha
@@ -501,7 +401,7 @@ describe("GlobalPlayer runtime", () => {
             onClick={() => {
               commands.setVolume(0.35);
               commands.setPlaybackRate(1.5);
-              commands.setAudioEffects({ mono: true });
+              commands.setOutputEffects({ mono: true });
             }}
           >
             Configure effects
@@ -511,6 +411,7 @@ describe("GlobalPlayer runtime", () => {
             onClick={() =>
               commands.playAudio(
                 buildPlayerDescriptor(MEDIA_B, "Bravo", {
+                  streamUrl: `/media/${MEDIA_B}.mp3`,
                   playbackRate: {
                     value: 1.5,
                     source: "Episode",
@@ -559,7 +460,7 @@ describe("GlobalPlayer runtime", () => {
     expect(secondAudio).not.toBe(firstAudio);
     expect(firstAudio.getAttribute("src")).toBeNull();
     expect(secondAudio.getAttribute("src")).toBe(
-      `https://cdn.example.com/${MEDIA_B}.mp3`,
+      `/media/${MEDIA_B}.mp3`,
     );
     expect(secondAudio.volume).toBe(0.35);
     expect(secondAudio.preservesPitch).toBe(true);
@@ -1088,7 +989,7 @@ describe("GlobalPlayer runtime", () => {
     expect(screen.getByLabelText("playback rate")).toHaveTextContent(
       '"remember":{"kind":"Pending"}',
     );
-    expect(patchCount).toBe(1);
+    await waitFor(() => expect(patchCount).toBe(1));
     fireEvent.click(
       screen.getByRole("button", { name: "Play untouched same podcast" }),
     );
@@ -1153,6 +1054,7 @@ describe("GlobalPlayer runtime", () => {
     expect(screen.getByLabelText("playback rate")).toHaveTextContent(
       '"remember":{"kind":"Pending"}',
     );
+    await waitFor(() => expect(patchCount).toBe(2));
     fireEvent.click(
       screen.getByRole("button", { name: "Play established same podcast" }),
     );
@@ -1255,7 +1157,6 @@ describe("GlobalPlayer runtime", () => {
 
   it("keeps command identity and command-only consumers stable across every other capability cadence", async () => {
     const audioContext = installAudioContext();
-    const animationFrames = installAnimationFrames();
     const { fetchMock } = installLecternPlayerFetchMock();
     const renders = {
       commands: 0,
@@ -1274,7 +1175,11 @@ describe("GlobalPlayer runtime", () => {
           <button
             type="button"
             onClick={() =>
-              commands.playAudio(buildPlayerDescriptor(MEDIA_A, "Alpha"))
+              commands.playAudio(
+                buildPlayerDescriptor(MEDIA_A, "Alpha", {
+                  streamUrl: `/media/${MEDIA_A}.mp3`,
+                }),
+              )
             }
           >
             Play
@@ -1284,9 +1189,9 @@ describe("GlobalPlayer runtime", () => {
           </button>
           <button
             type="button"
-            onClick={() => commands.setAudioEffects({ silenceTrim: true })}
+            onClick={() => commands.setOutputEffects({ mono: true })}
           >
-            Enable silence trimming
+            Enable mono output
           </button>
         </>
       );
@@ -1306,16 +1211,10 @@ describe("GlobalPlayer runtime", () => {
 
     function TimelineProbe() {
       renders.timeline += 1;
-      const {
-        bufferedMs,
-        isSilenceTrimming,
-        positionMs,
-        silenceTimeSavedMs,
-      } = usePlayerTimeline();
+      const { bufferedMs, positionMs } = usePlayerTimeline();
       return (
         <output aria-label="timeline cadence">
-          {positionMs}:{bufferedMs}:{String(isSilenceTrimming)}:
-          {silenceTimeSavedMs}
+          {positionMs}:{bufferedMs}
         </output>
       );
     }
@@ -1408,22 +1307,8 @@ describe("GlobalPlayer runtime", () => {
       settings: baseline.settings + 1,
     });
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Enable silence trimming" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Enable mono output" }));
     expect(audioContext.instances).toHaveLength(1);
-    fireEvent(audio, new Event("playing"));
-    baseline = { ...renders };
-    act(() => animationFrames.run(5));
-    await waitFor(() =>
-      expect(screen.getByLabelText("timeline cadence")).toHaveTextContent(
-        "true",
-      ),
-    );
-    expect(renders.commands).toBe(baseline.commands);
-    expect(renders.session).toBe(baseline.session);
-    expect(renders.settings).toBe(baseline.settings);
-    expect(renders.timeline).toBeGreaterThan(baseline.timeline);
 
     baseline = { ...renders };
     fireEvent.click(

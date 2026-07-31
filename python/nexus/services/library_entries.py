@@ -73,6 +73,9 @@ from nexus.services.contributor_credits import (
     primary_creator_rows_sql,
 )
 from nexus.services.media_document_metrics import load_media_word_counts
+from nexus.services.podcasts.playback_preferences import (
+    pause_shortening_mode_from_nullable,
+)
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_mutation_replay import (
     lookup_replay,
@@ -1023,6 +1026,7 @@ def _hydrate_entry_rows(
                     COALESCE(pu.unplayed_count, 0) AS unplayed_count,
                     ps.id AS sub_id,
                     ps.default_playback_speed AS sub_default_playback_speed,
+                    ps.pause_shortening_mode AS sub_pause_shortening_mode,
                     ps.auto_queue AS sub_auto_queue,
                     ps.sync_status AS sub_sync_status
                 FROM podcasts p
@@ -1116,6 +1120,9 @@ def _hydrate_entry_rows(
                         float(podcast_row["sub_default_playback_speed"])
                         if podcast_row["sub_default_playback_speed"] is not None
                         else None
+                    ),
+                    pause_shortening_mode=pause_shortening_mode_from_nullable(
+                        podcast_row["sub_pause_shortening_mode"]
                     ),
                     auto_queue=bool(podcast_row["sub_auto_queue"]),
                     sync_status=podcast_row["sub_sync_status"],

@@ -9,10 +9,25 @@ import {
 import { absent, presenceValueOr, present } from "@/lib/api/presence";
 import { formatPlaybackRate } from "@/lib/player/playbackRate";
 import { PlaybackRateEditor } from "@/components/player/PlayerPlaybackControls";
+import Select from "@/components/ui/Select";
 import Button from "@/components/ui/Button";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import type { PodcastSubscriptionSettingsModal as PodcastSubscriptionSettingsModalState } from "./usePodcastSubscriptionSettingsModal";
+import { usePlayerSettings } from "@/lib/player/globalPlayer";
+import { useAndroidShell } from "@/lib/renderEnvironment/provider";
 import styles from "./page.module.css";
+
+function AndroidDeviceDefaultPauseOption() {
+  const playerSettings = usePlayerSettings();
+  return (
+    <option value="Device">
+      Use device default
+      {playerSettings.pauseShortening.kind === "Available"
+        ? ` (currently ${playerSettings.pauseShortening.deviceDefaultMode})`
+        : ""}
+    </option>
+  );
+}
 
 export default function PodcastSubscriptionSettingsModal({
   podcastTitle,
@@ -21,6 +36,7 @@ export default function PodcastSubscriptionSettingsModal({
   podcastTitle: string | null;
   settingsModal: PodcastSubscriptionSettingsModalState;
 }) {
+  const androidShell = useAndroidShell();
   const cardRef = useRef<HTMLDivElement>(null);
   const overlay = useDialogOverlay({
     ref: cardRef,
@@ -77,6 +93,37 @@ export default function PodcastSubscriptionSettingsModal({
                 )}.`}
           </span>
         </div>
+        <label className={styles.settingsFieldLabel}>
+          <span>Shorten pauses</span>
+          <Select
+            size="lg"
+            aria-label="Shorten pauses"
+            value={
+              settingsModal.pauseShorteningMode.kind === "Present"
+                ? settingsModal.pauseShorteningMode.value
+                : "Device"
+            }
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              settingsModal.setPauseShorteningMode(
+                value === "Device"
+                  ? absent()
+                  : present(value === "Natural" ? "Natural" : "Off"),
+              );
+            }}
+          >
+            {androidShell ? (
+              <AndroidDeviceDefaultPauseOption />
+            ) : (
+              <option value="Device">Use device default</option>
+            )}
+            <option value="Off">Off</option>
+            <option value="Natural">Natural</option>
+          </Select>
+          <span className={styles.modalDescription}>
+            Applies when an episode has no setting for this session.
+          </span>
+        </label>
         <label className={styles.settingsToggleLabel}>
           <input
             type="checkbox"
@@ -94,7 +141,7 @@ export default function PodcastSubscriptionSettingsModal({
         <div className={styles.modalActions}>
           <Button
             variant="primary"
-            size="md"
+            size="lg"
             onClick={() => {
               void settingsModal.save();
             }}
@@ -105,7 +152,7 @@ export default function PodcastSubscriptionSettingsModal({
           </Button>
           <Button
             variant="secondary"
-            size="md"
+            size="lg"
             onClick={settingsModal.close}
             disabled={settingsModal.busy}
             aria-label="Close subscription settings"

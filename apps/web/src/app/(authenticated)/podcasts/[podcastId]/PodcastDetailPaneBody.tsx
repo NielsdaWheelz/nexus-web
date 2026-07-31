@@ -345,6 +345,7 @@ export default function PodcastDetailPaneBody() {
               subscription: {
                 ...prev.subscription,
                 default_playback_speed: response.default_playback_speed,
+                pause_shortening_mode: response.pause_shortening_mode,
                 auto_queue: response.auto_queue,
                 updated_at: response.updated_at,
               },

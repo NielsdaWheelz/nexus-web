@@ -11,7 +11,15 @@ import type { PositiveCount } from "@/lib/consumption/activityFacts";
 import type { PublicationDate } from "@/lib/dates/publicationDate";
 import { decodeOptionalPublicationDate } from "@/lib/dates/publicationDate";
 import { parsePlaybackRate } from "@/lib/player/playbackRate";
+import {
+  parsePauseShorteningMode,
+  type PauseShorteningMode,
+} from "@/lib/player/pauseShortening";
 import { decodePodcastUnplayedCount } from "@/lib/podcasts/activityFacts";
+import {
+  publishPodcastSubscriptionUnsubscribed,
+  runPodcastSubscriptionSettingsMutation,
+} from "@/lib/podcasts/subscriptionSettings";
 import type { LibraryPlacementOption } from "@/lib/libraries/libraryPlacement";
 import { pluralize } from "@/lib/text/pluralize";
 import {
@@ -61,6 +69,7 @@ export type PodcastSummary = {
 export type PodcastSubscriptionRecord = {
   podcast_id: string;
   default_playback_speed: Presence<number>;
+  pause_shortening_mode: Presence<PauseShorteningMode>;
   auto_queue: boolean;
   sync_status: PodcastSyncStatus;
   sync_error_code: string | null;
@@ -156,6 +165,7 @@ export function decodePodcastDetailResponse(
             "user_id",
             "podcast_id",
             "default_playback_speed",
+            "pause_shortening_mode",
             "auto_queue",
             "sync_status",
             "sync_error_code",
@@ -214,6 +224,14 @@ export function decodePodcastDetailResponse(
                   "subscription.default_playback_speed.value",
                 ),
             ),
+            pause_shortening_mode: decodePresence(
+              subscription.pause_shortening_mode,
+              (value) =>
+                parsePauseShorteningMode(
+                  value,
+                  "subscription.pause_shortening_mode.value",
+                ),
+            ),
             auto_queue: expectBoolean(
               subscription.auto_queue,
               "subscription.auto_queue",
@@ -265,6 +283,7 @@ export type PodcastSubscriptionListItemWire = {
   unplayed_count: number;
   latest_episode_published_at: Presence<string>;
   default_playback_speed: Presence<number>;
+  pause_shortening_mode: Presence<PauseShorteningMode>;
   auto_queue: boolean;
   sync_status: PodcastSyncStatus;
 };
@@ -287,6 +306,7 @@ export function decodePodcastSubscriptionListItem(
       "unplayed_count",
       "latest_episode_published_at",
       "default_playback_speed",
+      "pause_shortening_mode",
       "auto_queue",
       "sync_status",
     ],
@@ -299,6 +319,11 @@ export function decodePodcastSubscriptionListItem(
   const defaultPlaybackSpeed = decodePresence(
     item.default_playback_speed,
     (value) => parsePlaybackRate(value, "default_playback_speed.value"),
+  );
+  const pauseShorteningMode = decodePresence(
+    item.pause_shortening_mode,
+    (value) =>
+      parsePauseShorteningMode(value, "pause_shortening_mode.value"),
   );
   const syncStatus = decodePodcastSyncStatus(
     item.sync_status,
@@ -323,6 +348,7 @@ export function decodePodcastSubscriptionListItem(
     ),
     latest_episode_published_at: latestEpisodePublishedAt,
     default_playback_speed: defaultPlaybackSpeed,
+    pause_shortening_mode: pauseShorteningMode,
     auto_queue: expectBoolean(item.auto_queue, "auto_queue"),
     sync_status: syncStatus,
   };
@@ -421,69 +447,72 @@ export async function retryPodcastSubscriptionBackfill(
 export async function unsubscribeFromPodcast(
   podcastId: string,
 ): Promise<PodcastUnsubscribeResult> {
-  const response = await apiFetch<unknown>(
-    `/api/podcasts/subscriptions/${podcastId}`,
-    {
-      method: "DELETE",
-      headers: { "Idempotency-Key": crypto.randomUUID() },
-    },
-  );
-  const envelope = expectExactRecord(
-    response,
-    ["data"],
-    "PodcastUnsubscribeResult",
-  );
-  const data = expectExactRecord(
-    envelope.data,
-    Object.prototype.hasOwnProperty.call(
+  return runPodcastSubscriptionSettingsMutation(async () => {
+    const response = await apiFetch<unknown>(
+      `/api/podcasts/subscriptions/${podcastId}`,
+      {
+        method: "DELETE",
+        headers: { "Idempotency-Key": crypto.randomUUID() },
+      },
+    );
+    const envelope = expectExactRecord(
+      response,
+      ["data"],
+      "PodcastUnsubscribeResult",
+    );
+    const data = expectExactRecord(
       envelope.data,
-      "removed_placement_count",
-    )
-      ? [
-          "outcome",
-          "podcast_id",
-          "removed_placement_count",
-          "retained_shared_count",
-          "collectionRevision",
-          "libraryEntriesCollectionRevision",
-        ]
-      : [
-          "outcome",
-          "podcast_id",
-          "collectionRevision",
-          "libraryEntriesCollectionRevision",
-        ],
-    "PodcastUnsubscribeResult.data",
-  );
-  const outcome = expectString(data.outcome, "outcome");
-  const common = {
-    podcast_id: expectString(data.podcast_id, "podcast_id"),
-    collectionRevision: decodeCollectionRevision(data.collectionRevision),
-    libraryEntriesCollectionRevision: decodeCollectionRevision(
-      data.libraryEntriesCollectionRevision,
-    ),
-  };
-  const result: PodcastUnsubscribeResult =
-    outcome === "Unsubscribed"
-      ? {
-          outcome,
-          ...common,
-          removed_placement_count: expectNonnegativeInteger(
-            data.removed_placement_count,
+      Object.prototype.hasOwnProperty.call(
+        envelope.data,
+        "removed_placement_count",
+      )
+        ? [
+            "outcome",
+            "podcast_id",
             "removed_placement_count",
-          ),
-          retained_shared_count: expectNonnegativeInteger(
-            data.retained_shared_count,
             "retained_shared_count",
-          ),
-        }
-      : outcome === "AlreadyUnsubscribed"
-        ? { outcome, ...common }
-        : (() => {
-            throw new TypeError("Podcast unsubscribe outcome is invalid");
-          })();
-  publishLibraryPlacementChange("Unknown");
-  return result;
+            "collectionRevision",
+            "libraryEntriesCollectionRevision",
+          ]
+        : [
+            "outcome",
+            "podcast_id",
+            "collectionRevision",
+            "libraryEntriesCollectionRevision",
+          ],
+      "PodcastUnsubscribeResult.data",
+    );
+    const outcome = expectString(data.outcome, "outcome");
+    const common = {
+      podcast_id: expectString(data.podcast_id, "podcast_id"),
+      collectionRevision: decodeCollectionRevision(data.collectionRevision),
+      libraryEntriesCollectionRevision: decodeCollectionRevision(
+        data.libraryEntriesCollectionRevision,
+      ),
+    };
+    const result: PodcastUnsubscribeResult =
+      outcome === "Unsubscribed"
+        ? {
+            outcome,
+            ...common,
+            removed_placement_count: expectNonnegativeInteger(
+              data.removed_placement_count,
+              "removed_placement_count",
+            ),
+            retained_shared_count: expectNonnegativeInteger(
+              data.retained_shared_count,
+              "retained_shared_count",
+            ),
+          }
+        : outcome === "AlreadyUnsubscribed"
+          ? { outcome, ...common }
+          : (() => {
+              throw new TypeError("Podcast unsubscribe outcome is invalid");
+            })();
+    publishLibraryPlacementChange("Unknown");
+    await publishPodcastSubscriptionUnsubscribed(podcastId);
+    return result;
+  });
 }
 
 export function buildPodcastUnsubscribeConfirmation(

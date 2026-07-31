@@ -7,6 +7,11 @@ dual read/write, compatibility decoder, feature flag, or backward compatibility.
 
 No blocking question remains.
 
+Android engine ownership and every silence-trim clause are superseded by
+[`android-native-player-pause-shortening-hard-cutover.md`](android-native-player-pause-shortening-hard-cutover.md).
+Rate resolution, preferred/base semantics, and podcast settings remain
+canonical.
+
 ## Decision
 
 Make podcast playback speed truthful, scoped, and durable:
@@ -551,8 +556,8 @@ Delete or replace in the same change:
   fields that duplicate the canonical descriptor;
 - direct/default inheritance in leaf components and stale comments/tests that
   describe it;
-- `PlayerAudioEffectsSheet` name and Audio-effects-only copy; retain its existing
-  effects behavior inside `PlayerPlaybackControls`;
+- the effects-only sheet name and copy; retain its existing effects behavior
+  inside `PlayerPlaybackControls`;
 - duplicated subscription option constants and formatting;
 - speculative `temporary: Presence<number>` state and any retained mutable
   descriptor `resolution`; use `temporaryNormal` plus provider-derived values.
@@ -588,7 +593,7 @@ Frontend:
 - `apps/web/src/lib/lectern/contract.ts`
 - `apps/web/src/lib/player/{playbackRate,globalPlayer,listeningHeartbeat,mediaSession,playerChromeModel}.ts[x]`
 - `apps/web/src/lib/podcasts/subscriptionSettings.ts`
-- `apps/web/src/components/player/{PlayerControls,PlayerPlaybackControls,DesktopListeningShelf,MobileMiniPlayer,MobileNowPlaying,GlobalPlayerSurfaces,PlayerAudioEffectsControls,PlayerAudioEffectsSheet}.tsx`
+- `apps/web/src/components/player/{PlayerControls,PlayerPlaybackControls,DesktopListeningShelf,MobileMiniPlayer,MobileNowPlaying,GlobalPlayerSurfaces,PlayerOutputEffectsControls}.tsx`
 - `apps/web/src/app/(authenticated)/podcasts/{PodcastSubscriptionSettingsModal,usePodcastSubscriptionSettingsModal,PodcastsPaneBody}.ts[x]`
 - `apps/web/src/app/(authenticated)/podcasts/[podcastId]/{PodcastDetailPaneBody,episodeTranscript}.ts[x]`
 - `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx`

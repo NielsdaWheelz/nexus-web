@@ -37,9 +37,9 @@ import MediaImage from "@/components/ui/MediaImage";
 import type { PlayerCaptureController } from "@/lib/walknotes/usePlayerCapture";
 import styles from "./PlayerControls.module.css";
 
-export type PresentPlayerChrome = Exclude<
+export type PresentPlayerChrome = Extract<
   PlayerChromeModel,
-  { readonly kind: "Absent" }
+  { readonly kind: "Canonical" | "Preview" }
 >;
 
 export function playerTitle(model: PresentPlayerChrome): string {

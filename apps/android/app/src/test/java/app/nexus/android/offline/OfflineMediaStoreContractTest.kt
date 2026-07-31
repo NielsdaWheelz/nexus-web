@@ -31,45 +31,6 @@ class OfflineMediaStoreContractTest {
     }
 
     @Test
-    fun `parses full explicit open and suffix single ranges`() {
-        assertEquals(
-            RequestedByteRange.Satisfiable(0, 100, null),
-            RequestedByteRange.parse(null, 100),
-        )
-        assertEquals(
-            RequestedByteRange.Satisfiable(10, 11, "bytes 10-20/100"),
-            RequestedByteRange.parse("bytes=10-20", 100),
-        )
-        assertEquals(
-            RequestedByteRange.Satisfiable(90, 10, "bytes 90-99/100"),
-            RequestedByteRange.parse("bytes=90-", 100),
-        )
-        assertEquals(
-            RequestedByteRange.Satisfiable(95, 5, "bytes 95-99/100"),
-            RequestedByteRange.parse("bytes=-5", 100),
-        )
-    }
-
-    @Test
-    fun `rejects malformed multiple and out of bounds ranges`() {
-        listOf(
-            "bytes=100-",
-            "bytes=20-10",
-            "bytes=0-1,4-5",
-            "bytes=",
-            "items=0-1",
-            "bytes=-0",
-            "bytes=--",
-        ).forEach { header ->
-            assertEquals(
-                "expected 416 classification for $header",
-                RequestedByteRange.Unsatisfiable,
-                RequestedByteRange.parse(header, 100),
-            )
-        }
-    }
-
-    @Test
     fun `accepts ID3 and valid MPEG frame headers`() {
         assertTrue(
             ProgressiveContainerVerifier.accepts(

@@ -25,6 +25,10 @@ type PreviewState = Extract<
 export type PlayerChromeModel =
   | { readonly kind: "Absent" }
   | {
+      readonly kind: "RuntimeFailure";
+      readonly state: Extract<GlobalPlayerState, { kind: "RuntimeFailed" }>;
+    }
+  | {
       readonly kind: "Canonical";
       readonly state: CanonicalState;
       readonly persistence: PlayerSessionCapability["persistence"];
@@ -45,6 +49,8 @@ export function projectPlayerChrome(
   switch (player.state.kind) {
     case "Absent":
       return { kind: "Absent" };
+    case "RuntimeFailed":
+      return { kind: "RuntimeFailure", state: player.state };
     case "Active":
     case "Completing":
     case "CompletionFailed":

@@ -581,6 +581,9 @@ Now Playing is a full-screen media mode, not a generic drawer or bottom sheet:
 - artwork or video owns the upper field;
 - transport, speed/effects, Capture, Contents, and source actions occupy the
   reachable lower field;
+- Android offers **Shorten pauses** as a current-session `Off | Natural`
+  control, with explicit actions to remember it for the podcast or make it the
+  device default. Original source time remains the only timeline;
 - chapters and review are subordinate short sheets or dialogs;
 - system media controls, interruptions, background audio, and Picture in
   Picture behave as the platform expects.
@@ -597,6 +600,11 @@ pauses auto-follow and offers an explicit “Return to current.”
 Reading and listening are alternate representations of one Source when
 alignment exists. Moving between them transfers a semantic location, never a
 raw DOM pixel.
+
+The browser owns its one audio element only outside the Android shell. Android
+playback belongs to one Media3 service so lock-screen, headset, interruption,
+background progress, and natural-end settlement do not depend on WebView
+timers. Neither runtime is a fallback for the other.
 
 ## AI and conversation
 

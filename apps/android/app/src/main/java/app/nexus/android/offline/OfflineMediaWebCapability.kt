@@ -3,20 +3,16 @@ package app.nexus.android.offline
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import app.nexus.android.BuildConfig
-import java.io.ByteArrayInputStream
 import java.net.URI
 import java.util.UUID
 
 private const val OFFLINE_MEDIA_WEB_OBJECT = "nexusOfflineMedia"
-private const val OFFLINE_MEDIA_ROUTE_PREFIX = "/_native/offline-media/"
 
 internal fun canonicalOriginRule(baseUrl: String): String {
     val uri = URI(baseUrl)
@@ -93,69 +89,6 @@ internal class OfflineMediaWebCapability(
             WebViewCompat.removeWebMessageListener(webView, OFFLINE_MEDIA_WEB_OBJECT)
         }
         installed = false
-    }
-
-    fun intercept(request: WebResourceRequest): WebResourceResponse? {
-        val uri = request.url
-        if (!isExactOwnedOrigin(uri) || !uri.encodedPath.orEmpty().startsWith(OFFLINE_MEDIA_ROUTE_PREFIX)) {
-            return null
-        }
-        if (
-            request.method != "GET" ||
-            uri.query != null ||
-            uri.fragment != null
-        ) {
-            return response(405, "Method Not Allowed")
-        }
-        val rawMediaId = uri.encodedPath.orEmpty().removePrefix(OFFLINE_MEDIA_ROUTE_PREFIX)
-        if (rawMediaId.contains('/')) {
-            return response(404, "Not Found")
-        }
-        val mediaId = runCatching { UUID.fromString(rawMediaId) }
-            .getOrNull()
-            ?.takeIf { it.toString() == rawMediaId }
-            ?: return response(404, "Not Found")
-        val range = request.requestHeaders.entries
-            .firstOrNull { it.key.equals("Range", ignoreCase = true) }
-            ?.value
-        val opened = store.open(mediaId, range)
-        return opened.fold(
-            onSuccess = { read ->
-                val headers = linkedMapOf(
-                    "Accept-Ranges" to "bytes",
-                    "Content-Length" to read.contentLength.toString(),
-                    "Cache-Control" to "private, no-store",
-                )
-                read.contentRange?.let { headers["Content-Range"] = it }
-                WebResourceResponse(
-                    read.contentType,
-                    null,
-                    read.statusCode,
-                    read.reasonPhrase,
-                    headers,
-                    read.body,
-                )
-            },
-            onFailure = { error ->
-                when (error) {
-                    is UnsatisfiableRangeException ->
-                        response(
-                            416,
-                            "Range Not Satisfiable",
-                            mapOf(
-                                "Accept-Ranges" to "bytes",
-                                "Content-Range" to "bytes */${error.size}",
-                                "Cache-Control" to "private, no-store",
-                            ),
-                        )
-                    is AccountMismatchException, is LocalMediaMissingException ->
-                        response(404, "Not Found")
-                    is OfflineMediaPersistenceException ->
-                        response(503, "Service Unavailable")
-                    else -> throw error
-                }
-            },
-        )
     }
 
     override fun onStateChanged(
@@ -318,21 +251,4 @@ internal class OfflineMediaWebCapability(
         }
     }
 
-    private fun response(
-        statusCode: Int,
-        reasonPhrase: String,
-        extraHeaders: Map<String, String> = emptyMap(),
-    ): WebResourceResponse {
-        return WebResourceResponse(
-            "text/plain",
-            "UTF-8",
-            statusCode,
-            reasonPhrase,
-            mapOf(
-                "Content-Length" to "0",
-                "Cache-Control" to "private, no-store",
-            ) + extraHeaders,
-            ByteArrayInputStream(ByteArray(0)),
-        )
-    }
 }

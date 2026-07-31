@@ -187,6 +187,46 @@ export interface PreviewAudioDescriptor {
   readonly durationMs: Presence<number>;
 }
 
+export function decodePreviewAudioDescriptor(
+  raw: unknown,
+): PreviewAudioDescriptor {
+  const value = asRecord(raw, "PreviewAudioDescriptor");
+  exactKeys(
+    value,
+    [
+      "target",
+      "previewHref",
+      "title",
+      "source",
+      "sourceHref",
+      "audioUrl",
+      "imageUrl",
+      "durationMs",
+    ],
+    "PreviewAudioDescriptor",
+  );
+  return {
+    target: parseDiscoveryTargetHandle(value.target),
+    previewHref: internalHref(
+      value.previewHref,
+      "PreviewAudioDescriptor.previewHref",
+    ),
+    title: string(value.title, "PreviewAudioDescriptor.title"),
+    source: string(value.source, "PreviewAudioDescriptor.source"),
+    sourceHref: string(value.sourceHref, "PreviewAudioDescriptor.sourceHref"),
+    audioUrl: string(value.audioUrl, "PreviewAudioDescriptor.audioUrl"),
+    imageUrl: decodePresence(value.imageUrl, (imageUrl) =>
+      proxiedImageHref(imageUrl, "PreviewAudioDescriptor.imageUrl.value"),
+    ),
+    durationMs: decodePresence(value.durationMs, (durationMs) =>
+      nonnegativeInteger(
+        durationMs,
+        "PreviewAudioDescriptor.durationMs.value",
+      ),
+    ),
+  };
+}
+
 export function assumeDiscoveryTargetHandle(
   value: string,
 ): DiscoveryTargetHandle {

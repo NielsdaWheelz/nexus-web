@@ -141,7 +141,7 @@ function AuthenticatedWorkspace({
                       >
                         <AppNav />
                         <main className={styles.main}>
-                          <GlobalPlayerProvider>
+                          <GlobalPlayerProvider accountId={accountId}>
                             <WalknoteSessionProvider>
                               <WorkspaceHost />
                               <LecternMutationNotice />

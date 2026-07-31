@@ -28,6 +28,7 @@ from nexus.schemas.consumption import (
     LecternSnapshot,
     ListeningStateOut,
     OpenPaneActivation,
+    PauseShorteningMode,
     PlaybackRateResolution,
     PlayerDescriptor,
     PodcastPlaybackPreference,
@@ -46,6 +47,7 @@ from nexus.services.consumption._listening_store import ListeningRow
 from nexus.services.consumption._reader_engagement_store import ReaderEngagementRow
 from nexus.services.playback_source import derive_playback_source
 from nexus.services.podcasts.playback_preferences import (
+    load_subscription_pause_shortening_modes,
     load_subscription_playback_preferences,
 )
 
@@ -128,12 +130,22 @@ def _project(db: Session, *, viewer_id: UUID, rows: list[LecternRow]) -> list[Le
     if not rows:
         return []
     media_ids = [row.media_id for row in rows]
-    overrides = _state_store.load_overrides(db, viewer_id=viewer_id, media_ids=media_ids)
+    override_rows = _state_store.load_override_rows(
+        db,
+        viewer_id=viewer_id,
+        media_ids=media_ids,
+    )
     listening = _listening_store.load_states(db, viewer_id=viewer_id, media_ids=media_ids)
+    podcast_ids = [row.podcast_id for row in rows if row.podcast_id is not None]
     subscription_preferences = load_subscription_playback_preferences(
         db,
         viewer_id=viewer_id,
-        podcast_ids=[row.podcast_id for row in rows if row.podcast_id is not None],
+        podcast_ids=podcast_ids,
+    )
+    pause_shortening_modes = load_subscription_pause_shortening_modes(
+        db,
+        viewer_id=viewer_id,
+        podcast_ids=podcast_ids,
     )
 
     activations = {
@@ -142,6 +154,8 @@ def _project(db: Session, *, viewer_id: UUID, rows: list[LecternRow]) -> list[Le
             row,
             listening.get(row.media_id),
             subscription_preferences.get(row.podcast_id) if row.podcast_id is not None else None,
+            pause_shortening_modes.get(row.podcast_id) if row.podcast_id is not None else None,
+            override_rows.get(row.media_id),
         )
         for row in rows
     }
@@ -160,7 +174,7 @@ def _project(db: Session, *, viewer_id: UUID, rows: list[LecternRow]) -> list[Le
             listening=listening.get(row.media_id),
             engagement=engagement.get(row.media_id),
             duration_seconds=row.duration_seconds,
-            override=overrides.get(row.media_id),
+            override=(override_rows[row.media_id].state if row.media_id in override_rows else None),
         )
         subtitle = present(row.podcast_title) if row.podcast_title is not None else absent()
         items.append(
@@ -204,6 +218,8 @@ def _derive_activation(
     row: LecternRow,
     listening: ListeningRow | None,
     subscription_preference: Absent | Present[float] | None,
+    pause_shortening_mode: Absent | Present[PauseShorteningMode] | None,
+    override: _state_store.OverrideRow | None,
 ) -> LecternActivation:
     if row.kind == MediaKind.video.value:
         # Video never binds to <audio>; it always opens a media pane (spec §4).
@@ -234,6 +250,12 @@ def _derive_activation(
                 episode_rate=listening.playback_speed if listening is not None else None,
                 podcast_id=row.podcast_id,
                 subscription_preference=subscription_preference,
+            ),
+            pause_shortening_mode=(
+                pause_shortening_mode if pause_shortening_mode is not None else absent()
+            ),
+            consumption_override_revision=(
+                present(override.revision) if override is not None else absent()
             ),
             duration_ms=_footer_duration_ms(listening, row.duration_seconds),
             artwork_url=present(row.podcast_image_url)
@@ -624,6 +646,16 @@ def player_descriptors(
         viewer_id=viewer_id,
         podcast_ids=[row.podcast_id for row in rows],
     )
+    pause_shortening_modes = load_subscription_pause_shortening_modes(
+        db,
+        viewer_id=viewer_id,
+        podcast_ids=[row.podcast_id for row in rows],
+    )
+    override_rows = _state_store.load_override_rows(
+        db,
+        viewer_id=viewer_id,
+        media_ids=row_media_ids,
+    )
     chapters_by_media = _load_chapters_batch(db, row_media_ids)
 
     result: dict[UUID, PlayerDescriptor] = {}
@@ -638,6 +670,7 @@ def player_descriptors(
         if playback is None or not playback.stream_url:
             continue
         listening_row = listening.get(row.media_id)
+        pause_shortening_mode = pause_shortening_modes.get(row.podcast_id)
         result[row.media_id] = PlayerDescriptor(
             media_id=row.media_id,
             title=row.title[:_MAX_TITLE_CHARS],
@@ -654,6 +687,14 @@ def player_descriptors(
                     ),
                     podcast_id=row.podcast_id,
                     subscription_preference=subscription_preferences.get(row.podcast_id),
+                ),
+                pause_shortening_mode=(
+                    pause_shortening_mode if pause_shortening_mode is not None else absent()
+                ),
+                consumption_override_revision=(
+                    present(override_rows[row.media_id].revision)
+                    if row.media_id in override_rows
+                    else absent()
                 ),
                 duration_ms=_footer_duration_ms(listening_row, row.duration_seconds),
                 artwork_url=present(row.podcast_image_url)

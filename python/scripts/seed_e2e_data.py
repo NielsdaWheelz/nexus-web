@@ -52,10 +52,13 @@ from nexus.db.models import (
     Media,
     Podcast,
     PodcastEpisode,
+    PodcastSubscription,
+    PodcastSubscriptionBackfill,
     ProcessingStatus,
 )
 from nexus.db.retries import retry_serializable
 from nexus.db.session import create_session_factory
+from nexus.ids import new_uuid7
 from nexus.jobs.queue import supersede_unclaimed_job
 from nexus.jobs.worker import JobWorker
 from nexus.schemas.highlights import CreateHighlightRequest
@@ -72,6 +75,7 @@ from nexus.services.podcasts.episode_identity import (
     EpisodeAlias,
     attach_episode_aliases_in_current_transaction,
 )
+from nexus.services.podcasts.refresh import healthy_next_sync_at
 from nexus.services.reader_apparatus import replace_media_apparatus, source_fingerprint
 from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
 from nexus.services.resource_graph.refs import ResourceRef
@@ -1499,6 +1503,50 @@ def _seed_activity_audio_media(session_factory, user_id: UUID) -> None:
         else:
             podcast.title = "E2E Activity Audio"
             podcast.updated_at = now
+        db.flush()
+
+        subscription = db.scalar(
+            select(PodcastSubscription).where(
+                PodcastSubscription.user_id == user_id,
+                PodcastSubscription.podcast_id == podcast_id,
+            )
+        )
+        if subscription is None:
+            subscription_id = new_uuid7()
+            subscription = PodcastSubscription(
+                id=subscription_id,
+                user_id=user_id,
+                podcast_id=podcast_id,
+                sync_status="Complete",
+                sync_generation=0,
+                next_sync_at=healthy_next_sync_at(subscription_id, now),
+                consecutive_sync_failures=0,
+                sync_completed_at=now,
+                last_checked_at=now,
+            )
+            db.add(subscription)
+            db.flush()
+        subscription.auto_queue = False
+        subscription.default_playback_speed = None
+        subscription.pause_shortening_mode = None
+        subscription.updated_at = now
+        backfill = db.scalar(
+            select(PodcastSubscriptionBackfill).where(
+                PodcastSubscriptionBackfill.subscription_id == subscription.id,
+            )
+        )
+        if backfill is None:
+            db.add(
+                PodcastSubscriptionBackfill(
+                    id=new_uuid7(),
+                    subscription_id=subscription.id,
+                    cutoff_at=now,
+                    step_no=0,
+                    processed_count=0,
+                    added_count=0,
+                    completed_at=now,
+                )
+            )
 
         for (
             episode_media_id,

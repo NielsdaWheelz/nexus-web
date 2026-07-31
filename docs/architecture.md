@@ -1258,9 +1258,11 @@ Playing** is one device-local audio session, not a second durable list.
 `services/consumption/` is the sole backend consumption owner, split by table:
 `_lectern_store.py` (`consumption_queue_items` membership/order + the
 canonical `LecternSnapshot`), `_state_store.py` (`consumption_overrides`
-explicit `Unread`/`Finished`), `_listening_store.py` (`podcast_listening_states`
-position/duration/nullable established episode rate + heartbeat fencing tokens `write_revision`/
-`reset_epoch`), `_reader_cursor_store.py` (`reader_media_state` revisioned
+explicit `Unread`/`Finished` plus the natural-end override revision),
+`_listening_store.py` (`podcast_listening_states`
+position/duration/nullable established episode rate + heartbeat fencing tokens
+`write_revision`/`reset_epoch`), `_reader_cursor_store.py`
+(`reader_media_state` revisioned
 `Empty`/`Positioned` cursor CAS), `_reader_engagement_store.py`
 (`reader_engagement_states`, the sole DML owner of current-state reader
 recency — `last_engaged_at` plus, for non-PDF locators, a monotonic
@@ -1277,7 +1279,7 @@ media outside the complete queue and excludes `Finished` targets. Two bounded
 aggregate command ports — `POST /lectern/commands`
 (`PlaceItems`/`RemoveItem`/`SetOrder`) and `POST /consumption/commands`
 (`EnsureMediaFinished`/`FinishLecternItem`/`SetUnread`/`UndoCompletion`/
-`SetBatchState`/`ResetProgress`) — each
+`SetBatchState`/`ResetProgress`/`SettleNaturalEnd`) — each
 share one `retry_serializable` transaction, one canonical response, and
 `clientMutationId` replay through `services/resource_mutation_replay.py`;
 `GET /lectern` and the retained `GET`/`PUT /media/{id}/listening-state`
@@ -1300,12 +1302,15 @@ landmark as the desktop Listening Shelf or mobile MiniPlayer/full-screen Now
 Playing; it persists across pane navigation and is never an editor. Session
 presence, playback phase, and mobile presentation mode are independent: Pause
 retains the surface, Back/Collapse retains playback, and Close stops and
-dismisses the device-local session. A single provider-owned `<audio>` element
-lives in `lib/player/globalPlayer.tsx` with a Web Audio effects graph, OS
-media-session integration, and a single-flight, generation-keyed 15s-cadence
-listening heartbeat (`lib/player/listeningHeartbeat.ts`). The provider exposes
+dismisses the device-local session. The provider selects exactly one runtime:
+non-Android uses one browser-owned `<audio>` element, transparent output-effects
+graph, browser Media Session, heartbeat, and listening recorder; the Android
+shell uses the service-owned Media3 player through the exact `nexusPlayer`
+WebKit protocol and mounts none of those browser owners. The provider exposes
 stable Commands plus cadence-separated Session, Settings, and Timeline
-capabilities. See
+capabilities. Canonical natural end is one receipt-backed
+`SettleNaturalEnd` mutation; settlement does not require the ended session to
+still exist. See
 [`modules/player.md`](modules/player.md) and
 [`modules/consumption-activity.md`](modules/consumption-activity.md) for the
 full file map. The shared player also owns an exhaustive ephemeral
@@ -1531,26 +1536,30 @@ they open over Resume and never become panes.
 
 ## 10. Non-web clients
 
-**Android shell** (`apps/android`): a single-Activity Kotlin app wrapping the web
-app in a hardened `WebView` (no `addJavascriptInterface`, file/content access,
-third-party cookies, or off-origin in-WebView navigation). It is **sandboxed**
-by rule ([`rules/layers.md`](rules/layers.md)): its only native/web product
-message capability is the strict AndroidX WebKit `nexusOfflineMedia` listener,
-confined to the exact owned origin and main frame. The native shell otherwise
-has no product API client; its only native HTTP API call is auth bootstrap
-`POST /auth/native/google`, and PKCE/code exchange stays server-side.
-`OfflineMediaStore` is the sole device owner of Media3 transfer, index,
-non-evicting app-private cache, global network policy, account purge, recovery,
-and local GET/range serving. Work resumes only after a verified account
-handshake while Nexus is foregrounded; there is no boot/background scheduler
-and no cold-launch-offline shell. Native Google sign-in (Credential Manager)
-and Custom-Tab OAuth both converge on a server-minted, single-use, PKCE-bound
+**Android shell** (`apps/android`): a Kotlin app with `MainActivity` for the
+hardened WebView and `ShareActivity` for system-share capture. The WebView has
+no `addJavascriptInterface`, file/content access, third-party cookies, or
+off-origin in-WebView navigation. Two strict AndroidX WebKit listeners are
+confined to the exact owned origin and main frame: `nexusOfflineMedia` carries
+download commands/snapshots, and `nexusPlayer` carries service-player
+commands/snapshots. `NexusOriginClient` calls only fixed listening-state and
+Consumption-activity BFF paths with WebView cookies; arbitrary native product
+HTTP is forbidden. `OfflineMediaStore` is the sole device owner of Media3
+downloads, index, non-evicting app-private cache, public-media data source,
+network policy, account purge, recovery, and native playback source
+resolution. Ready canonical audio is read directly from that cache; the
+superseded WebView GET/range route does not exist. Work resumes only after a
+verified account handshake while Nexus is foregrounded; there is no
+boot/background scheduler or cold-launch-offline shell. Native Google sign-in
+(Credential Manager) and Custom-Tab OAuth both converge on a server-minted,
+single-use, PKCE-bound
 `nexus://auth/handoff` code that injects a first-party session cookie into the
 WebView. App Links are backed by
 `apps/web/public/.well-known/assetlinks.json` (validated against the release
 signing cert at build time). The web app detects the shell via a `NexusAndroidShell`
-UA token for presentation adaptation (e.g. hiding local vault); successful
-offline-media handshake, never the UA, is capability truth.
+UA token for presentation adaptation only. Each exact capability handshake,
+never the UA, is capability truth and the UA never authorizes browser-player
+fallback.
 
 **Browser extension** (`apps/extension`): a Manifest V3 capture tool. It connects
 via `launchWebAuthFlow` against `/extension/connect/start`, obtains a revocable

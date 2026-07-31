@@ -36,6 +36,8 @@ from nexus.errors import (
 )
 from nexus.logging import get_logger
 from nexus.schemas.consumption import (
+    CompletedOutcome,
+    CompletedWithoutAdvanceOutcome,
     ConsumptionCommand,
     ConsumptionRemovedOutcome,
     ConsumptionResult,
@@ -43,6 +45,7 @@ from nexus.schemas.consumption import (
     FinishLecternItemCommand,
     LecternCommand,
     LecternItemOut,
+    LecternNaturalEndOrigin,
     LecternOutcome,
     LecternResult,
     LecternSnapshot,
@@ -60,8 +63,11 @@ from nexus.schemas.consumption import (
     RemoveItemCommand,
     ResetProgressCommand,
     SetBatchStateCommand,
+    SettleNaturalEndCommand,
     SetUnreadCommand,
     StateOnlyOutcome,
+    SupersededOutcome,
+    TargetGoneOutcome,
     UndoCompletionCommand,
 )
 from nexus.schemas.consumption_activity import (
@@ -792,7 +798,14 @@ def _apply_lectern_command(db: Session, viewer_id: UUID, command: LecternCommand
 
 @dataclass
 class _ConsumptionEffect:
-    kind: Literal["StateOnly", "Removed"]
+    kind: Literal[
+        "StateOnly",
+        "Removed",
+        "Completed",
+        "CompletedWithoutAdvance",
+        "Superseded",
+        "TargetGone",
+    ]
     removed_item_id: UUID | None = None
     next_item_id: UUID | None = None
     progress_media_id: UUID | None = None
@@ -894,6 +907,8 @@ def _apply_consumption_command(
             kind="StateOnly",
             completion_handle=seal_completion(completion_id) if completion_id is not None else None,
         )
+    if isinstance(command, SettleNaturalEndCommand):
+        return _apply_settle_natural_end(db, viewer_id, command)
     if isinstance(command, FinishLecternItemCommand):
         return _apply_finish_lectern_item(db, viewer_id, command)
     if isinstance(command, SetUnreadCommand):
@@ -914,6 +929,90 @@ def _apply_consumption_command(
         _write_unread_state(db, viewer_id, media_id)
         return _ConsumptionEffect(kind="StateOnly", revision_media_id=media_id)
     return _apply_set_batch_state(db, viewer_id, command)
+
+
+def _apply_settle_natural_end(
+    db: Session,
+    viewer_id: UUID,
+    command: SettleNaturalEndCommand,
+) -> _ConsumptionEffect:
+    """Fence and persist one receipt-backed natural end."""
+    if not can_read_media(db, viewer_id, command.media_id):
+        return _ConsumptionEffect(kind="TargetGone")
+
+    media_kind = _media_kinds(db, [command.media_id]).get(command.media_id)
+    if media_kind != MediaKind.podcast_episode.value:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_KIND,
+            "Natural-end settlement is podcast-episode only",
+        )
+
+    if not _state_store.override_revision_matches(
+        db,
+        viewer_id=viewer_id,
+        media_id=command.media_id,
+        expected_revision=command.expected_consumption_override_revision,
+    ):
+        return _ConsumptionEffect(kind="Superseded")
+
+    terminal = command.terminal_listening
+    was_finished = _effective_state_is_finished(
+        db,
+        viewer_id=viewer_id,
+        media_id=command.media_id,
+    )
+    listening = _listening_store.record_heartbeat_in_txn(
+        db,
+        viewer_id=viewer_id,
+        media_id=command.media_id,
+        position_ms=terminal.position_ms,
+        duration_ms=nullable_from_presence(terminal.duration_ms),
+        episode_playback_rate=terminal.episode_playback_rate,
+        expected_write_revision=terminal.expected_write_revision,
+        expected_reset_epoch=terminal.expected_reset_epoch,
+    )
+    if listening is None:
+        return _ConsumptionEffect(kind="Superseded")
+
+    rows = _lectern_store.load_rows(db, viewer_id=viewer_id)
+    target: LecternRow | None = None
+    if isinstance(command.origin, LecternNaturalEndOrigin):
+        target = next(
+            (
+                row
+                for row in rows
+                if row.item_id == command.origin.item_id
+                and row.media_id == command.media_id
+                and row.visible
+            ),
+            None,
+        )
+    next_item_id = (
+        _select_next(rows, target.position, command.next_capability) if target is not None else None
+    )
+
+    _write_finished_state(
+        db,
+        viewer_id,
+        command.media_id,
+        kind=media_kind,
+        was_finished=was_finished,
+    )
+    if target is not None:
+        _lectern_store.remove_item_in_txn(
+            db,
+            viewer_id=viewer_id,
+            item_id=target.item_id,
+        )
+        return _ConsumptionEffect(
+            kind="Completed",
+            next_item_id=next_item_id,
+            revision_media_id=command.media_id,
+        )
+    return _ConsumptionEffect(
+        kind="CompletedWithoutAdvance",
+        revision_media_id=command.media_id,
+    )
 
 
 def _apply_finish_lectern_item(
@@ -1019,6 +1118,8 @@ def _bump_collections_for_consumption_command(
         media_ids = [command.media_id]
     elif isinstance(command, FinishLecternItemCommand):
         media_ids = [command.media_id]
+    elif isinstance(command, SettleNaturalEndCommand) and effect.revision_media_id is not None:
+        media_ids = [effect.revision_media_id]
     elif isinstance(command, UndoCompletionCommand) and effect.revision_media_id is not None:
         media_ids = [effect.revision_media_id]
     else:
@@ -1075,7 +1176,12 @@ def _apply_reset_progress(
 
 
 def _write_finished_state(
-    db: Session, viewer_id: UUID, media_id: UUID, *, kind: str | None = None
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+    *,
+    kind: str | None = None,
+    was_finished: bool | None = None,
 ) -> UUID | None:
     """``kind`` lets an already-batch-known media kind (SetBatchState) skip the
     single-media kind lookup below; single-media callers omit it and pay one
@@ -1083,11 +1189,15 @@ def _write_finished_state(
     resolved_kind = kind if kind is not None else _media_kinds(db, [media_id]).get(media_id)
     if resolved_kind is None:
         raise AssertionError(f"missing media kind for Consumption transition: {media_id}")
-    was_finished = _effective_state_is_finished(db, viewer_id=viewer_id, media_id=media_id)
+    prior_finished = (
+        _effective_state_is_finished(db, viewer_id=viewer_id, media_id=media_id)
+        if was_finished is None
+        else was_finished
+    )
     _state_store.set_override_in_txn(db, viewer_id=viewer_id, media_id=media_id, state="Finished")
     if resolved_kind == MediaKind.podcast_episode.value:
         _listening_store.mark_completed_in_txn(db, viewer_id=viewer_id, media_id=media_id)
-    if was_finished:
+    if prior_finished:
         return None
     if not _effective_state_is_finished(db, viewer_id=viewer_id, media_id=media_id):
         raise AssertionError("Finished write did not establish canonical Finished state")
@@ -1119,7 +1229,10 @@ def _build_consumption_result(
 
     resolved_next_id: UUID | None = None
     next_item: Absent | Present[LecternItemOut] = absent()
-    if next_item_id is not None and isinstance(command, FinishLecternItemCommand):
+    if next_item_id is not None and isinstance(
+        command,
+        (FinishLecternItemCommand, SettleNaturalEndCommand),
+    ):
         candidate = next((row for row in rows if row.visible and row.item_id == next_item_id), None)
         if candidate is not None and _capability_matches(
             _projection.activation_kind(candidate), command.next_capability
@@ -1178,6 +1291,14 @@ def _build_consumption_result(
 def _consumption_outcome(outcome_memo: dict[str, object], resolved_next_id: UUID | None):
     if outcome_memo["kind"] == "StateOnly":
         return StateOnlyOutcome()
+    if outcome_memo["kind"] == "Completed":
+        return CompletedOutcome()
+    if outcome_memo["kind"] == "CompletedWithoutAdvance":
+        return CompletedWithoutAdvanceOutcome()
+    if outcome_memo["kind"] == "Superseded":
+        return SupersededOutcome()
+    if outcome_memo["kind"] == "TargetGone":
+        return TargetGoneOutcome()
     next_presence: Absent | Present[UUID] = (
         present(resolved_next_id) if resolved_next_id is not None else absent()
     )

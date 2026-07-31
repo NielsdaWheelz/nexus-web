@@ -368,6 +368,7 @@ export default function PodcastsPaneBody() {
             ? {
                 ...row,
                 default_playback_speed: response.default_playback_speed,
+                pause_shortening_mode: response.pause_shortening_mode,
                 auto_queue: response.auto_queue,
               }
             : row,
@@ -904,6 +905,7 @@ export default function PodcastsPaneBody() {
             settingsModal.open({
               podcast_id: row.podcast_id,
               default_playback_speed: row.default_playback_speed,
+              pause_shortening_mode: row.pause_shortening_mode,
               auto_queue: row.auto_queue,
             }),
         },

@@ -8,6 +8,10 @@ import {
 import { decodePresence, type Presence } from "@/lib/api/presence";
 import { parsePlaybackRate } from "@/lib/player/playbackRate";
 import {
+  parsePauseShorteningMode,
+  type PauseShorteningMode,
+} from "@/lib/player/pauseShortening";
+import {
   decodePodcastSyncStatus,
   type PodcastSyncStatus,
 } from "@/lib/podcasts/types";
@@ -35,6 +39,7 @@ type PodcastSubscriptionSettingsBackfill = {
 
 export type PodcastSubscriptionSettingsPatch = {
   defaultPlaybackSpeed?: Presence<number>;
+  pauseShorteningMode?: Presence<PauseShorteningMode>;
   autoQueue?: boolean;
 };
 
@@ -42,6 +47,7 @@ export type PodcastSubscriptionSettingsResponse = {
   user_id: string;
   podcast_id: string;
   default_playback_speed: Presence<number>;
+  pause_shortening_mode: Presence<PauseShorteningMode>;
   auto_queue: boolean;
   sync_status: PodcastSyncStatus;
   sync_error_code: string | null;
@@ -56,9 +62,41 @@ export type PodcastSubscriptionSettingsResponse = {
   libraryEntriesCollectionRevision: CollectionRevision;
 };
 
+export type PodcastSubscriptionSettingsInstall =
+  | {
+      kind: "Settings";
+      settings: PodcastSubscriptionSettingsResponse;
+      owner: object | null;
+    }
+  | { kind: "Unsubscribed"; podcastId: string; owner: null };
+
 const listeners = new Set<
-  (settings: PodcastSubscriptionSettingsResponse) => void
+  (
+    install: PodcastSubscriptionSettingsInstall,
+  ) => void | Promise<void>
 >();
+let settingsMutationTail: Promise<void> = Promise.resolve();
+
+export function runPodcastSubscriptionSettingsMutation<T>(
+  operation: () => Promise<T>,
+): Promise<T> {
+  const result = settingsMutationTail
+    .catch(() => {})
+    .then(operation);
+  settingsMutationTail = result.then(
+    () => {},
+    () => {},
+  );
+  return result;
+}
+
+async function publishInstall(
+  install: PodcastSubscriptionSettingsInstall,
+): Promise<void> {
+  await Promise.all(
+    [...listeners].map((listener) => listener(install)),
+  );
+}
 
 function decodeBackfillState(
   raw: unknown,
@@ -87,6 +125,7 @@ function decodePodcastSubscriptionSettingsResponse(
       "user_id",
       "podcast_id",
       "default_playback_speed",
+      "pause_shortening_mode",
       "auto_queue",
       "sync_status",
       "sync_error_code",
@@ -113,6 +152,11 @@ function decodePodcastSubscriptionSettingsResponse(
     default_playback_speed: decodePresence(
       data.default_playback_speed,
       (value) => parsePlaybackRate(value, "default_playback_speed.value"),
+    ),
+    pause_shortening_mode: decodePresence(
+      data.pause_shortening_mode,
+      (value) =>
+        parsePauseShorteningMode(value, "pause_shortening_mode.value"),
     ),
     auto_queue: expectBoolean(data.auto_queue, "auto_queue"),
     sync_status: decodePodcastSyncStatus(data.sync_status, "sync_status"),
@@ -163,33 +207,52 @@ function decodePodcastSubscriptionSettingsResponse(
 export async function savePodcastSubscriptionSettings(
   podcastId: string,
   patch: PodcastSubscriptionSettingsPatch,
+  options: { installOwner?: object } = {},
 ): Promise<PodcastSubscriptionSettingsResponse> {
   const body: {
     default_playback_speed?: Presence<number>;
+    pause_shortening_mode?: Presence<PauseShorteningMode>;
     auto_queue?: boolean;
   } = {};
   if ("defaultPlaybackSpeed" in patch) {
     body.default_playback_speed = patch.defaultPlaybackSpeed;
   }
+  if ("pauseShorteningMode" in patch) {
+    body.pause_shortening_mode = patch.pauseShorteningMode;
+  }
   if ("autoQueue" in patch) {
     body.auto_queue = patch.autoQueue;
   }
 
-  const settings = decodePodcastSubscriptionSettingsResponse(
-    await apiFetch<unknown>(
-      `/api/podcasts/subscriptions/${podcastId}/settings`,
-      {
-        method: "PATCH",
-        body: JSON.stringify(body),
-      },
-    ),
-  );
-  for (const listener of listeners) listener(settings);
-  return settings;
+  return runPodcastSubscriptionSettingsMutation(async () => {
+    const settings = decodePodcastSubscriptionSettingsResponse(
+      await apiFetch<unknown>(
+        `/api/podcasts/subscriptions/${podcastId}/settings`,
+        {
+          method: "PATCH",
+          body: JSON.stringify(body),
+        },
+      ),
+    );
+    await publishInstall({
+      kind: "Settings",
+      settings,
+      owner: options.installOwner ?? null,
+    });
+    return settings;
+  });
+}
+
+export async function publishPodcastSubscriptionUnsubscribed(
+  podcastId: string,
+): Promise<void> {
+  await publishInstall({ kind: "Unsubscribed", podcastId, owner: null });
 }
 
 export function subscribePodcastSubscriptionSettingsInstalls(
-  listener: (settings: PodcastSubscriptionSettingsResponse) => void,
+  listener: (
+    install: PodcastSubscriptionSettingsInstall,
+  ) => void | Promise<void>,
 ): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);

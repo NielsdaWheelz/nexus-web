@@ -5,12 +5,16 @@ import {
   subscribePodcastSubscriptionSettingsInstalls,
 } from "./subscriptionSettings";
 
-function response(defaultPlaybackSpeed: unknown) {
+function response(
+  defaultPlaybackSpeed: unknown,
+  pauseShorteningMode: unknown = absent(),
+) {
   return {
     data: {
       user_id: "user-1",
       podcast_id: "podcast-1",
       default_playback_speed: defaultPlaybackSpeed,
+      pause_shortening_mode: pauseShorteningMode,
       auto_queue: true,
       sync_status: "Complete",
       sync_error_code: null,
@@ -51,11 +55,42 @@ describe("podcast subscription settings client", () => {
 
     expect(saved.default_playback_speed).toEqual(absent());
     expect(listener).toHaveBeenCalledOnce();
-    expect(listener).toHaveBeenCalledWith(saved);
+    expect(listener).toHaveBeenCalledWith({
+      kind: "Settings",
+      settings: saved,
+      owner: null,
+    });
     const [, init] = fetchSpy.mock.calls[0]!;
     expect(JSON.parse(String(init?.body))).toEqual({
       default_playback_speed: absent(),
       auto_queue: true,
+    });
+  });
+
+  it("sends and publishes a pause-shortening preference in the shared install", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        Response.json(response(absent(), present("Natural"))),
+      );
+    const listener = vi.fn();
+    const unsubscribe =
+      subscribePodcastSubscriptionSettingsInstalls(listener);
+
+    const saved = await savePodcastSubscriptionSettings("podcast-1", {
+      pauseShorteningMode: present("Natural"),
+    });
+    unsubscribe();
+
+    expect(saved.pause_shortening_mode).toEqual(present("Natural"));
+    expect(listener).toHaveBeenCalledWith({
+      kind: "Settings",
+      settings: saved,
+      owner: null,
+    });
+    const [, init] = fetchSpy.mock.calls[0]!;
+    expect(JSON.parse(String(init?.body))).toEqual({
+      pause_shortening_mode: present("Natural"),
     });
   });
 
@@ -76,6 +111,47 @@ describe("podcast subscription settings client", () => {
     expect(JSON.parse(String(init?.body))).toEqual({
       default_playback_speed: present(1.85),
     });
+  });
+
+  it("serializes PATCH and awaited installs so successful responses publish in server order", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        Response.json(response(present(1.25))),
+      )
+      .mockResolvedValueOnce(
+        Response.json(response(present(1.75))),
+      );
+    let releaseFirstInstall: () => void = () => {
+      throw new Error("First install did not start.");
+    };
+    let installs = 0;
+    const unsubscribe =
+      subscribePodcastSubscriptionSettingsInstalls(async () => {
+        installs += 1;
+        if (installs === 1) {
+          await new Promise<void>((resolve) => {
+            releaseFirstInstall = resolve;
+          });
+        }
+      });
+
+    const first = savePodcastSubscriptionSettings("podcast-1", {
+      defaultPlaybackSpeed: present(1.25),
+    });
+    const second = savePodcastSubscriptionSettings("podcast-1", {
+      defaultPlaybackSpeed: present(1.75),
+    });
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+    expect(installs).toBe(1);
+
+    releaseFirstInstall();
+    await first;
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(2));
+    await second;
+    unsubscribe();
+
+    expect(installs).toBe(2);
   });
 
   it("rejects raw nullable response absence without publishing", async () => {

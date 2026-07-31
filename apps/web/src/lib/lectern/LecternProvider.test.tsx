@@ -55,6 +55,8 @@ function wireItem(itemId: string, mediaId: string, title: string): Record<string
         source: "Product",
         podcastPreference: { kind: "Absent" },
       },
+      pauseShorteningMode: { kind: "Absent" },
+      consumptionOverrideRevision: { kind: "Absent" },
       durationMs: { kind: "Present", value: 60000 },
       artworkUrl: { kind: "Absent" },
       chapters: [],

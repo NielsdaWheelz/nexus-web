@@ -163,28 +163,33 @@ def record_heartbeat_in_txn(
         if isinstance(episode_playback_rate, Present)
         else current.playback_speed
     )
-    db.execute(
-        text(
-            """
-            UPDATE podcast_listening_states
-            SET position_ms = :position_ms,
-                duration_ms = :duration_ms,
-                playback_speed = :playback_speed,
-                write_revision = :next_revision,
-                updated_at = now(),
-                last_engaged_at = now()
-            WHERE user_id = :viewer_id AND media_id = :media_id
-            """
+    result = cast(
+        CursorResult[Any],
+        db.execute(
+            text(
+                """
+                UPDATE podcast_listening_states
+                SET position_ms = :position_ms,
+                    duration_ms = :duration_ms,
+                    playback_speed = :playback_speed,
+                    write_revision = :next_revision,
+                    updated_at = now(),
+                    last_engaged_at = now()
+                WHERE user_id = :viewer_id AND media_id = :media_id
+                """
+            ),
+            {
+                "viewer_id": viewer_id,
+                "media_id": media_id,
+                "position_ms": position_ms,
+                "duration_ms": duration_ms,
+                "playback_speed": playback_speed,
+                "next_revision": next_revision,
+            },
         ),
-        {
-            "viewer_id": viewer_id,
-            "media_id": media_id,
-            "position_ms": position_ms,
-            "duration_ms": duration_ms,
-            "playback_speed": playback_speed,
-            "next_revision": next_revision,
-        },
     )
+    # justify-defect: the serialized owner just selected this exact row.
+    assert result.rowcount == 1
     return ListeningRow(
         position_ms=position_ms,
         duration_ms=duration_ms,
@@ -255,20 +260,36 @@ def install_preview_position_if_empty_in_txn(
 
 def mark_completed_in_txn(db: Session, *, viewer_id: UUID, media_id: UUID) -> None:
     """Set ``is_completed=true`` without moving position; create at zero if absent."""
-    db.execute(
-        text(
-            """
-            INSERT INTO podcast_listening_states (
-                user_id, media_id, position_ms, duration_ms, playback_speed,
-                is_completed, write_revision, reset_epoch, updated_at, last_engaged_at
-            )
-            VALUES (:viewer_id, :media_id, 0, NULL, NULL, true, 0, 0, now(), NULL)
-            ON CONFLICT (user_id, media_id)
-            DO UPDATE SET is_completed = true, updated_at = now()
-            """
+    current = load_state(db, viewer_id=viewer_id, media_id=media_id)
+    if current is None:
+        db.execute(
+            text(
+                """
+                INSERT INTO podcast_listening_states (
+                    user_id, media_id, position_ms, duration_ms, playback_speed,
+                    is_completed, write_revision, reset_epoch, updated_at, last_engaged_at
+                )
+                VALUES (:viewer_id, :media_id, 0, NULL, NULL, true, 0, 0, now(), NULL)
+                """
+            ),
+            {"viewer_id": viewer_id, "media_id": media_id},
+        )
+        return
+    result = cast(
+        CursorResult[Any],
+        db.execute(
+            text(
+                """
+                UPDATE podcast_listening_states
+                SET is_completed = true, updated_at = now()
+                WHERE user_id = :viewer_id AND media_id = :media_id
+                """
+            ),
+            {"viewer_id": viewer_id, "media_id": media_id},
         ),
-        {"viewer_id": viewer_id, "media_id": media_id},
     )
+    # justify-defect: the serialized owner just selected this exact row.
+    assert result.rowcount == 1
 
 
 def reset_progress_in_txn(db: Session, *, viewer_id: UUID, media_id: UUID) -> ListeningRow:

@@ -18,7 +18,6 @@ function controller(): OfflineMediaController {
     remove: vi.fn(async () => undefined),
     setNetworkPolicy: vi.fn(async () => undefined),
     openDownloads: vi.fn(),
-    resolveStreamUrl: (_mediaId, remoteUrl) => remoteUrl,
   };
 }
 

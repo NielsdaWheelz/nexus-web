@@ -11,9 +11,12 @@ import android.os.Looper
 import android.util.Log
 import androidx.media3.common.C
 import androidx.media3.database.StandaloneDatabaseProvider
+import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSourceInputStream
 import androidx.media3.datasource.DataSpec
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.FileDataSource
+import androidx.media3.datasource.PlaceholderDataSource
 import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.ContentMetadata
@@ -25,9 +28,7 @@ import androidx.media3.exoplayer.offline.Download
 import androidx.media3.exoplayer.offline.DownloadManager
 import androidx.media3.exoplayer.offline.DownloadRequest
 import androidx.media3.exoplayer.scheduler.Requirements
-import java.io.FilterInputStream
 import java.io.IOException
-import java.io.InputStream
 import java.security.MessageDigest
 import java.time.Instant
 import java.util.UUID
@@ -48,68 +49,20 @@ private const val OFFLINE_MEDIA_PREFERENCES = "offline_media_policy"
 private const val NETWORK_POLICY_KEY = "network_policy"
 private const val LOG_TAG = "NexusOfflineMedia"
 
-internal data class OfflineMediaRead(
-    val statusCode: Int,
-    val reasonPhrase: String,
-    val contentType: String,
-    val contentLength: Long,
-    val contentRange: String?,
-    val body: InputStream,
-)
+internal class OfflinePlaybackSource(
+    val uri: Uri,
+    val customCacheKey: String?,
+    val dataSourceFactory: DataSource.Factory,
+    private val releaseLease: (() -> Unit)? = null,
+) : AutoCloseable {
+    private val closed = AtomicBoolean(false)
 
-internal sealed interface RequestedByteRange {
-    data class Satisfiable(
-        val start: Long,
-        val length: Long,
-        val contentRange: String?,
-    ) : RequestedByteRange
+    val isOffline: Boolean
+        get() = customCacheKey != null
 
-    data object Unsatisfiable : RequestedByteRange
-
-    companion object {
-        fun parse(header: String?, size: Long): RequestedByteRange {
-            require(size > 0)
-            if (header == null) {
-                return Satisfiable(0, size, null)
-            }
-            if (!header.startsWith("bytes=") || header.indexOf(',') >= 0) {
-                return Unsatisfiable
-            }
-            val value = header.removePrefix("bytes=")
-            val separator = value.indexOf('-')
-            if (separator < 0 || separator != value.lastIndexOf('-')) {
-                return Unsatisfiable
-            }
-            val startText = value.substring(0, separator)
-            val endText = value.substring(separator + 1)
-            if (startText.isEmpty()) {
-                val suffixLength = endText.toLongOrNull()
-                    ?.takeIf { it > 0 }
-                    ?: return Unsatisfiable
-                val length = minOf(suffixLength, size)
-                val start = size - length
-                return Satisfiable(
-                    start,
-                    length,
-                    "bytes $start-${size - 1}/$size",
-                )
-            }
-            val start = startText.toLongOrNull()
-                ?.takeIf { it >= 0 && it < size }
-                ?: return Unsatisfiable
-            val end = if (endText.isEmpty()) {
-                size - 1
-            } else {
-                endText.toLongOrNull()
-                    ?.takeIf { it >= start }
-                    ?.let { minOf(it, size - 1) }
-                    ?: return Unsatisfiable
-            }
-            return Satisfiable(
-                start,
-                end - start + 1,
-                "bytes $start-$end/$size",
-            )
+    override fun close() {
+        if (closed.compareAndSet(false, true)) {
+            releaseLease?.invoke()
         }
     }
 }
@@ -524,6 +477,13 @@ internal class OfflineMediaStore private constructor(
     private val safeHttpClient = SafeHttpClient()
     private val upstreamFactory = OkHttpDataSource.Factory(safeHttpClient.client)
         .setUserAgent("NexusAndroidOfflineMedia/1")
+    val remotePlaybackDataSourceFactory: DataSource.Factory =
+        DefaultDataSource.Factory(appContext, upstreamFactory)
+    private val cacheOnlyPlaybackDataSourceFactory: DataSource.Factory =
+        CacheDataSource.Factory()
+            .setCache(cache)
+            .setUpstreamDataSourceFactory(PlaceholderDataSource.FACTORY)
+            .setCacheWriteDataSinkFactory(null)
     private val cacheDataSourceFactory = CacheDataSource.Factory()
         .setCache(cache)
         .setUpstreamDataSourceFactory(upstreamFactory)
@@ -1273,70 +1233,56 @@ internal class OfflineMediaStore private constructor(
         }
     }
 
-    fun open(mediaId: UUID, rangeHeader: String?): Result<OfflineMediaRead> {
-        val accountId = activeAccountId
-            ?: return Result.failure(AccountMismatchException())
+    fun resolvePlaybackSource(
+        accountId: UUID,
+        mediaId: UUID,
+        remoteUri: Uri,
+    ): Result<OfflinePlaybackSource> {
         val id = stableDownloadId(accountId, mediaId)
-        val prepared = synchronized(readLeases) {
-            if (activeAccountId != accountId) {
-                return Result.failure(AccountMismatchException())
-            }
+        return synchronized(readLeases) {
             val download = try {
                 downloadIndex.getDownload(id)
             } catch (error: IOException) {
                 return Result.failure(OfflineMediaPersistenceException(error))
             }
-                ?: return Result.failure(LocalMediaMissingException())
+                ?: return Result.success(remotePlaybackSource(remoteUri))
             val metadata = metadata(download)
             if (
                 metadata.accountId != accountId ||
+                metadata.mediaId != mediaId
+            ) {
+                return Result.failure(OfflineMediaCorruptionException("offline identity mismatch"))
+            }
+            if (
                 download.state != Download.STATE_COMPLETED ||
                 download.stopReason == OFFLINE_MEDIA_REPAIR_REQUIRED_STOP_REASON ||
                 id in pendingRemovals
             ) {
-                return Result.failure(LocalMediaMissingException())
+                return Result.success(remotePlaybackSource(remoteUri))
             }
             val size = completedSize(download, metadata)
-                ?: return brokenCompleted(download)
+                ?: return brokenPlaybackSource(download)
             if (!isComplete(id, size) || !hasExpectedContainer(id, metadata.contentType, size)) {
-                return brokenCompleted(download)
+                return brokenPlaybackSource(download)
             }
-            val requestedRange = RequestedByteRange.parse(rangeHeader, size)
-            if (requestedRange is RequestedByteRange.Unsatisfiable) {
-                return Result.failure(UnsatisfiableRangeException(size))
-            }
-            requestedRange as RequestedByteRange.Satisfiable
             readLeases[id] = (readLeases[id] ?: 0) + 1
-            Triple(download, metadata, requestedRange)
-        }
-        val (download, metadata, requestedRange) = prepared
-        return try {
-            val stream = cacheInputStream(
-                download.request.uri,
-                id,
-                requestedRange.start,
-                requestedRange.length,
-            )
             Result.success(
-                OfflineMediaRead(
-                    statusCode = if (requestedRange.contentRange == null) 200 else 206,
-                    reasonPhrase = if (requestedRange.contentRange == null) "OK" else "Partial Content",
-                    contentType = metadata.contentType,
-                    contentLength = requestedRange.length,
-                    contentRange = requestedRange.contentRange,
-                    body = LeaseInputStream(
-                        stream,
-                        release = { releaseReadLease(id) },
-                        onReadFailure = { markRepairRequired(download) },
-                    ),
+                OfflinePlaybackSource(
+                    uri = download.request.uri,
+                    customCacheKey = id,
+                    dataSourceFactory = cacheOnlyPlaybackDataSourceFactory,
+                    releaseLease = { releaseReadLease(id) },
                 )
             )
-        } catch (error: IOException) {
-            releaseReadLease(id)
-            markRepairRequired(download)
-            Result.failure(LocalMediaMissingException())
         }
     }
+
+    private fun remotePlaybackSource(remoteUri: Uri): OfflinePlaybackSource =
+        OfflinePlaybackSource(
+            uri = remoteUri,
+            customCacheKey = null,
+            dataSourceFactory = remotePlaybackDataSourceFactory,
+        )
 
     private fun startNextConnect() {
         if (pendingConnect != null || connectQueue.isEmpty() || !initialized) {
@@ -1932,11 +1878,13 @@ internal class OfflineMediaStore private constructor(
         ).also { it.open() }
     }
 
-    private fun brokenCompleted(download: Download): Result<OfflineMediaRead> {
+    private fun brokenPlaybackSource(
+        download: Download,
+    ): Result<OfflinePlaybackSource> {
         return if (persistRepairRequired(download) == null) {
             Result.failure(OfflineMediaPersistenceException())
         } else {
-            Result.failure(LocalMediaMissingException())
+            Result.failure(OfflineMediaCorruptionException("offline media is corrupt"))
         }
     }
 
@@ -2061,43 +2009,6 @@ internal class OfflineMediaStore private constructor(
         val value: String = canonicalOriginRule(app.nexus.android.BuildConfig.NEXUS_BASE_URL)
     }
 
-    private inner class LeaseInputStream(
-        input: InputStream,
-        private val release: () -> Unit,
-        private val onReadFailure: () -> Unit,
-    ) : FilterInputStream(input) {
-        private var closed = false
-
-        override fun read(): Int = readGuarded { super.read() }
-
-        override fun read(buffer: ByteArray): Int = readGuarded { super.read(buffer) }
-
-        override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
-            return readGuarded { super.read(buffer, offset, length) }
-        }
-
-        override fun close() {
-            if (closed) {
-                return
-            }
-            closed = true
-            try {
-                super.close()
-            } finally {
-                release()
-            }
-        }
-
-        private fun readGuarded(read: () -> Int): Int {
-            return try {
-                read()
-            } catch (error: IOException) {
-                onReadFailure()
-                throw error
-            }
-        }
-    }
-
     companion object {
         private val ACTIVE_STATES = setOf(
             Download.STATE_QUEUED,
@@ -2127,7 +2038,3 @@ internal class OfflineMediaPersistenceException(
 internal class OfflineMediaCorruptionException(
     message: String,
 ) : IllegalStateException(message)
-
-internal class LocalMediaMissingException : IOException("offline media is unavailable")
-
-internal class UnsatisfiableRangeException(val size: Long) : IOException("unsatisfiable byte range")

@@ -2119,6 +2119,7 @@ class TestListLibraryMedia:
                 user_id=user_id,
                 podcast_id=podcast_id,
                 default_playback_speed=1.5,
+                pause_shortening_mode="Natural",
             )
             session.execute(
                 text("""
@@ -2171,6 +2172,10 @@ class TestListLibraryMedia:
         assert podcast_rows[0]["subscription"]["value"]["defaultPlaybackSpeed"] == {
             "kind": "Present",
             "value": 1.5,
+        }
+        assert podcast_rows[0]["subscription"]["value"]["pauseShorteningMode"] == {
+            "kind": "Present",
+            "value": "Natural",
         }
         media_row = media_rows[0]
         media = media_row["media"]

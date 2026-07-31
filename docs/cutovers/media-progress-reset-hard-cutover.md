@@ -10,6 +10,9 @@ No blocking question remains.
 The nullable episode-rate storage and reset clauses are superseded by
 [`playback-rate-policy-hard-cutover.md`](playback-rate-policy-hard-cutover.md);
 reset preserves an existing rate and inserts `NULL` when no listening row exists.
+On Android, the native player drains before Reset and
+`AdoptListeningState` seeks and pauses; that runtime handoff is superseded by
+[`android-native-player-pause-shortening-hard-cutover.md`](android-native-player-pause-shortening-hard-cutover.md).
 
 ## Goal
 

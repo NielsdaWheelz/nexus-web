@@ -165,6 +165,8 @@ describe("Lectern collection presenters", () => {
           source: "Product",
           podcastPreference: { kind: "Absent" },
         },
+        pauseShorteningMode: { kind: "Absent" },
+        consumptionOverrideRevision: { kind: "Absent" },
         durationMs: { kind: "Present", value: 0 },
         artworkUrl: { kind: "Absent" },
         chapters: [],

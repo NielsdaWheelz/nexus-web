@@ -126,6 +126,24 @@ function toneWav(durationSeconds: number): Buffer {
   return bytes;
 }
 
+async function resetPodcastSubscriptionSettings(
+  page: Parameters<typeof gotoSinglePaneWorkspace>[0],
+  podcastId: string,
+): Promise<void> {
+  const response = await page.request.patch(
+    `/api/podcasts/subscriptions/${podcastId}/settings`,
+    {
+      headers: stateChangingApiHeaders(),
+      data: {
+        default_playback_speed: { kind: "Absent" },
+        pause_shortening_mode: { kind: "Absent" },
+        auto_queue: false,
+      },
+    },
+  );
+  expect(response.ok(), await response.text()).toBeTruthy();
+}
+
 async function resetAudioProgress(
   page: Parameters<typeof gotoSinglePaneWorkspace>[0],
   mediaId: string,
@@ -285,10 +303,6 @@ test("inherits podcast playback speed and resumes an episode override", async ({
   test.slow();
   const audio = seededAudio();
   const rawDeviceId = `e2e-playback-rate-${randomUUID()}`;
-  const subscriptionHeaders = {
-    ...stateChangingApiHeaders(),
-    "Idempotency-Key": randomUUID(),
-  };
   await page.route(
     new RegExp(
       `(?:${audio.stream_path}|${audio.successor_stream_path})$`,
@@ -302,26 +316,7 @@ test("inherits podcast playback speed and resumes an episode override", async ({
   );
   await gotoSinglePaneWorkspace(page, rawDeviceId, "/lectern");
 
-  const priorSubscription = await page.request.delete(
-    `/api/podcasts/subscriptions/${audio.podcast_id}`,
-    { headers: subscriptionHeaders },
-  );
-  expect(
-    priorSubscription.ok(),
-    await priorSubscription.text(),
-  ).toBeTruthy();
-  const subscribed = await page.request.post("/api/podcasts/subscriptions", {
-    headers: {
-      ...stateChangingApiHeaders(),
-      "Idempotency-Key": randomUUID(),
-    },
-    data: {
-      target: { kind: "Canonical", podcastId: audio.podcast_id },
-      namedLibraryIds: [],
-      replacementConfirmation: { kind: "Absent" },
-    },
-  });
-  expect(subscribed.ok(), await subscribed.text()).toBeTruthy();
+  await resetPodcastSubscriptionSettings(page, audio.podcast_id);
 
   try {
     const preference = await page.request.patch(
@@ -407,16 +402,123 @@ test("inherits podcast playback speed and resumes an episode override", async ({
       audio.media_id,
       audio.successor_media_id,
     ]);
-    const unsubscribed = await page.request.delete(
-      `/api/podcasts/subscriptions/${audio.podcast_id}`,
-      {
-        headers: {
-          ...stateChangingApiHeaders(),
-          "Idempotency-Key": randomUUID(),
-        },
-      },
+    await resetPodcastSubscriptionSettings(page, audio.podcast_id);
+  }
+});
+
+test("persists pause shortening through subscription settings while browser playback omits the unsupported control", async ({
+  page,
+}) => {
+  test.slow();
+  const audio = seededAudio();
+  const rawDeviceId = `e2e-pause-shortening-settings-${randomUUID()}`;
+  await page.route(`**${audio.stream_path}`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "audio/wav",
+      body: toneWav(audio.duration_seconds),
+    }),
+  );
+
+  await gotoSinglePaneWorkspace(page, rawDeviceId, "/lectern");
+  await resetPodcastSubscriptionSettings(page, audio.podcast_id);
+
+  try {
+    await gotoSinglePaneWorkspace(
+      page,
+      rawDeviceId,
+      `/podcasts/${audio.podcast_id}`,
     );
-    expect(unsubscribed.ok(), await unsubscribed.text()).toBeTruthy();
+    const podcastPane = activeWorkspacePane(page);
+    await podcastPane.getByRole("button", { name: "Options" }).click();
+    await page.getByRole("menuitem", { name: "Settings" }).click();
+
+    const settingsDialog = page.getByRole("dialog", {
+      name: "Subscription settings",
+    });
+    const pauseSelect = settingsDialog.getByRole("combobox", {
+      name: "Shorten pauses",
+    });
+    const saveSettings = settingsDialog.getByRole("button", {
+      name: "Save subscription settings",
+    });
+    await expect(pauseSelect).toHaveValue("Device");
+    const pauseSelectBox = await pauseSelect.boundingBox();
+    const saveSettingsBox = await saveSettings.boundingBox();
+    expect(pauseSelectBox).not.toBeNull();
+    expect(saveSettingsBox).not.toBeNull();
+    expect(pauseSelectBox!.height).toBeGreaterThanOrEqual(44);
+    expect(saveSettingsBox!.height).toBeGreaterThanOrEqual(44);
+
+    await pauseSelect.focus();
+    await page.keyboard.press("End");
+    await expect(pauseSelect).toHaveValue("Natural");
+
+    await page.setViewportSize({ width: 320, height: 800 });
+    await expect(settingsDialog).toBeVisible();
+    await expectNoDocumentHorizontalOverflow(page);
+
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.emulateMedia({
+      forcedColors: "active",
+      reducedMotion: "reduce",
+    });
+    await page.evaluate(() => {
+      document.documentElement.style.zoom = "4";
+    });
+    expect(
+      await page.evaluate(() => ({
+        forcedColors: matchMedia("(forced-colors: active)").matches,
+        reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
+      })),
+    ).toEqual({ forcedColors: true, reducedMotion: true });
+    await expect(settingsDialog).toBeVisible();
+    await expectNoDocumentHorizontalOverflow(page);
+    await page.evaluate(() => {
+      document.documentElement.style.zoom = "";
+    });
+
+    const settingsResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "PATCH" &&
+        new URL(response.url()).pathname ===
+          `/api/podcasts/subscriptions/${audio.podcast_id}/settings`,
+    );
+    await saveSettings.click();
+    const saved = await settingsResponse;
+    expect(saved.ok(), await saved.text()).toBeTruthy();
+    expect((await saved.json()).data.pause_shortening_mode).toEqual({
+      kind: "Present",
+      value: "Natural",
+    });
+    await expect(settingsDialog).toHaveCount(0);
+    await page.emulateMedia({
+      forcedColors: "none",
+      reducedMotion: "no-preference",
+    });
+
+    await resetAndPlaceAudio(page, audio.media_id);
+    await gotoSinglePaneWorkspace(page, rawDeviceId, "/lectern");
+    await activeWorkspacePane(page)
+      .getByRole("button", { name: `Play ${audio.title}` })
+      .click();
+    const audioElement = page.locator(
+      'audio[aria-label="Media player audio"]',
+    );
+    await expect(audioElement).toHaveJSProperty("paused", false);
+    await page
+      .getByRole("button", { name: "Playback speed, normal" })
+      .click();
+    const playbackDialog = page.getByRole("dialog", { name: "Playback" });
+    await expect(
+      playbackDialog.getByRole("heading", { name: "Output effects" }),
+    ).toBeVisible();
+    await expect(
+      playbackDialog.getByRole("heading", { name: "Shorten pauses" }),
+    ).toHaveCount(0);
+  } finally {
+    await removeAudioFromLectern(page, [audio.media_id]);
+    await resetPodcastSubscriptionSettings(page, audio.podcast_id);
   }
 });
 
