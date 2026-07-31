@@ -293,9 +293,7 @@ def _write_ingest_checkpoint(
             now=ingest_now,
         )
         status: PodcastHealthySyncStatus = (
-            "SourceLimited"
-            if source_limited or ingest_result.source_limited
-            else "Complete"
+            "SourceLimited" if source_limited or ingest_result.source_limited else "Complete"
         )
         checkpoint = _SyncCheckpoint(
             status=status,
@@ -334,11 +332,7 @@ def _eligible_auto_subscription_media(
     sync_cutoff_at: datetime,
     watermark: datetime | None,
 ) -> list[UUID]:
-    watermark_predicate = (
-        ""
-        if watermark is None
-        else "AND published_at > :watermark"
-    )
+    watermark_predicate = "" if watermark is None else "AND published_at > :watermark"
     rows = db.execute(
         text(
             f"""
@@ -688,9 +682,9 @@ def dead_letter_podcast_subscription_sync(db: Session, job: JobRow) -> None:
             {
                 "subscription_id": payload.subscription_id,
                 "error_code": ApiErrorCode.E_PODCAST_SYNC_RETRY_EXHAUSTED.value,
-                "error_message": (
-                    job.last_error or "Podcast sync exhausted its retry budget"
-                )[:PODCAST_REFRESH_ERROR_MESSAGE_MAX_LENGTH],
+                "error_message": (job.last_error or "Podcast sync exhausted its retry budget")[
+                    :PODCAST_REFRESH_ERROR_MESSAGE_MAX_LENGTH
+                ],
                 "completed_at": completed_at,
             },
         ).scalar_one()

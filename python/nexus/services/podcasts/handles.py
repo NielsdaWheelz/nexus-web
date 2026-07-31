@@ -102,9 +102,7 @@ def _parse_wire(raw: str) -> tuple[UUID, bytes]:
 
 
 def seal_podcast_refresh_run(run_id: UUID) -> PodcastRefreshRunHandle:
-    return PodcastRefreshRunHandle(
-        f"{_PREFIX}.{_b64url(run_id.bytes)}.{_b64url(_tag(run_id))}"
-    )
+    return PodcastRefreshRunHandle(f"{_PREFIX}.{_b64url(run_id.bytes)}.{_b64url(_tag(run_id))}")
 
 
 def unseal_podcast_refresh_run(raw: str) -> UUID:
