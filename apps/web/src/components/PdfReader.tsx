@@ -955,7 +955,7 @@ export default function PdfReader({
     [getPageElement],
   );
 
-  const markPageSurfaceForTesting = useCallback(
+  const markPageSurface = useCallback(
     (targetPage: number, explicitPageView?: PdfPageViewLike) => {
       const pageElement = getPageElement(targetPage);
       if (pageElement) {
@@ -963,9 +963,16 @@ export default function PdfReader({
           "data-testid",
           `pdf-page-surface-${targetPage}`,
         );
-        pageElement
-          .querySelector<HTMLElement>(".textLayer")
-          ?.setAttribute("data-testid", `pdf-page-text-layer-${targetPage}`);
+        const textLayer =
+          pageElement.querySelector<HTMLElement>(".textLayer");
+        textLayer?.setAttribute(
+          "data-testid",
+          `pdf-page-text-layer-${targetPage}`,
+        );
+        textLayer?.setAttribute(
+          "data-reader-tap-reveal-surface",
+          "true",
+        );
         pageElement
           .querySelector<HTMLElement>(".canvasWrapper")
           ?.setAttribute(
@@ -1667,7 +1674,7 @@ export default function PdfReader({
             return;
           }
           for (let index = 1; index <= pagesCount; index += 1) {
-            markPageSurfaceForTesting(
+            markPageSurface(
               index,
               viewer?.getPageView?.(Math.max(0, index - 1)),
             );
@@ -1694,7 +1701,7 @@ export default function PdfReader({
           ? Math.floor(event.pageNumber)
           : pageNumberRef.current;
 
-        markPageSurfaceForTesting(renderedPage, event.source);
+        markPageSurface(renderedPage, event.source);
         rememberPageScale(renderedPage, event.source);
         scheduleIntrinsicWidthPublish();
         evaluatePageGeometryReliability(renderedPage);
@@ -1722,6 +1729,7 @@ export default function PdfReader({
         const renderedPage = isPositiveFinite(event.pageNumber)
           ? Math.floor(event.pageNumber)
           : pageNumberRef.current;
+        markPageSurface(renderedPage);
         textLayerRenderEpochByPageRef.current.set(
           renderedPage,
           (textLayerRenderEpochByPageRef.current.get(renderedPage) ?? 0) + 1,
@@ -1778,7 +1786,7 @@ export default function PdfReader({
       evaluatePageGeometryReliability,
       ensurePdfJsViewer,
       isTextLayerUsableForPage,
-      markPageSurfaceForTesting,
+      markPageSurface,
       mediaId,
       rememberPageScale,
       restorePdfFindOrigin,

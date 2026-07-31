@@ -178,6 +178,25 @@ function ReaderScrollport({
         }
       />
       <span data-testid="blank-canvas">Reading canvas</span>
+      <iframe title="Embedded reader control" />
+      <div
+        data-reader-tap-reveal-surface="true"
+        data-testid="reader-reveal-surface"
+        tabIndex={0}
+      >
+        <span data-testid="reader-reveal-surface-content">
+          Passive focusable reading surface
+        </span>
+        <button type="button" data-testid="reader-reveal-surface-control">
+          Nested reader control
+        </button>
+        <span
+          data-reader-tap-handled="true"
+          data-testid="reader-reveal-surface-annotation"
+        >
+          Nested annotation
+        </span>
+      </div>
       <button type="button" data-testid="reader-control">
         Reader control
       </button>
@@ -972,6 +991,8 @@ describe("MobileChromeProvider", () => {
 
     fireEvent.click(screen.getByTestId("reader-control"));
     expect(screen.getByTestId("phase")).toHaveTextContent("Hidden");
+    fireEvent.click(screen.getByTitle("Embedded reader control"));
+    expect(screen.getByTestId("phase")).toHaveTextContent("Hidden");
     fireEvent.click(screen.getByTestId("reader-annotation"));
     expect(screen.getByTestId("phase")).toHaveTextContent("Hidden");
     fireEvent.click(screen.getByTestId("stopped-canvas"));
@@ -979,6 +1000,26 @@ describe("MobileChromeProvider", () => {
     expect(screen.getByTestId("phase")).toHaveTextContent("Hidden");
 
     fireEvent.click(screen.getByTestId("blank-canvas"));
+    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
+  });
+
+  it("treats a marked focusable reading surface as passive without exempting nested controls", () => {
+    renderInEnvironment(
+      <MobileChromeProvider>
+        <Harness />
+      </MobileChromeProvider>,
+    );
+    flushFrame();
+    fireEvent.scroll(setReaderTop(300));
+    flushFrame();
+    expect(screen.getByTestId("phase")).toHaveTextContent("Hidden");
+
+    fireEvent.click(screen.getByTestId("reader-reveal-surface-control"));
+    expect(screen.getByTestId("phase")).toHaveTextContent("Hidden");
+    fireEvent.click(screen.getByTestId("reader-reveal-surface-annotation"));
+    expect(screen.getByTestId("phase")).toHaveTextContent("Hidden");
+
+    fireEvent.click(screen.getByTestId("reader-reveal-surface-content"));
     expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
   });
 

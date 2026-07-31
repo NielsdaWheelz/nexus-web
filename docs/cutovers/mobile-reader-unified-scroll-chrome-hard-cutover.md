@@ -295,12 +295,27 @@ Rules:
 - Blank-canvas reveal requires a primary unmodified click, no drag-suppressed
   native click, no live selection, and no handled target. `isInteractiveTarget`
   is extracted from the player shortcut precedent and shared; reader
-  annotation/highlight owners add `data-reader-tap-handled="true"`.
+  annotation/highlight owners add `data-reader-tap-handled="true"`. Embedded
+  browsing contexts such as `iframe` are interactive even though their clicks
+  cannot bubble into the parent document.
+- A passive focusable reading surface may opt into
+  `data-reader-tap-reveal-surface="true"`. Blank-tap adjudication uses that
+  surface as the exclusive interactive boundary: its own focusability and
+  passive descendants do not suppress reveal, while nested links, controls,
+  handled annotations, and live selection still do. `PdfReader` assigns the
+  marker to each rendered PDF.js text layer from `textlayerrendered`; never
+  infer this contract from vendor classes, remove the layer's focusability, or
+  manufacture layout gutters.
 - The scrollport's native click listener installs a one-shot `window` bubble
   listener during dispatch. It reveals only if propagation reaches `window`,
   `defaultPrevented` is false, and neither target contract matches. Remove the
   listener after the current task if propagation stopped. Do not decide in a
   target microtask, prevent propagation, or invent a gesture recognizer.
+- Blank tap is a capability of an actual passive reading surface, not a
+  fabricated per-format guarantee. Web, EPUB, and PDF expose one. Transcript's
+  visible body is an embedded player, source link, and segment buttons, so
+  those handled targets stay non-revealing; reverse scroll and top navigation
+  remain its recovery paths.
 - The hook does not write progress, activity, completion, URL, history, or
   persistence.
 - Locks are idempotently releasable and release on owner unmount.
@@ -485,6 +500,8 @@ Behavior proof:
 - `e2e/tests/mobile-reader-chrome.spec.ts`
 - `e2e/tests/pane-chrome.spec.ts`
 - `e2e/tests/epub.spec.ts`
+- `python/scripts/seed_e2e_data.py` (extend the shared transcript fixture; no
+  product/backend contract change)
 - `.github/workflows/ci.yml`
 
 Docs:
@@ -539,14 +556,14 @@ only success; regex, path, and I/O errors remain failures.
 set -euo pipefail
 
 assert_no_match() {
-  local status
+  local rg_status
   if rg "$@"; then
     echo "unexpected cutover residue"
     return 1
   else
-    status=$?
-    if [ "$status" -ne 1 ]; then
-      return "$status"
+    rg_status=$?
+    if [ "$rg_status" -ne 1 ]; then
+      return "$rg_status"
     fi
   fi
   return 0
@@ -599,8 +616,11 @@ fi
 1. From normal mobile activation, one forward touch drag retreats AppBar,
    PaneToolbar when present, and Nexus in Web, EPUB, transcript, and PDF.
 2. Short reverse scroll or top/Home navigation from touch, wheel, keyboard, or
-   AT input reveals all three. An unhandled blank-canvas pointer tap also
-   reveals; handled controls/annotations and drags do not.
+   AT input reveals all three. On Web, EPUB, and PDF, an unhandled
+   blank-canvas pointer tap also reveals; handled controls/annotations and
+   drags do not. Transcript segment/player targets remain handled. PDF proof
+   observes the actual trusted click target after Chrome touch-target
+   adjustment and requires the marked passive text-layer boundary.
 3. Real input proves proportional intermediate motion across the `64px`
    travel, the `8px` reversal dead zone, endpoint settlement, and interruption
    or cancellation of an in-flight settle. Missing transition events still
@@ -666,10 +686,21 @@ fi
   project's `grepInvert`. Set `video: "retain-on-failure"` alongside existing
   trace and screenshot retention.
 - `e2e/tests/mobile-reader-chrome.spec.ts` is the red and final trusted-input
-  home. A shared Chromium CDP touch helper drives incremental touch input and
-  samples computed transforms during the gesture. Direct scroll mutation,
-  synthetic scroll/pointer events, and manual blur are forbidden in chrome
-  acceptance and removed from predecessor pane-chrome helpers.
+  home. A shared Chromium CDP touch helper drives incremental touch input while
+  a page-side RAF recorder samples raw scroll events, their top-pin baseline,
+  specified/computed collapse values, phases, and transforms. A real top-pin
+  sample proves the exact 8px dead zone; later gestures use the reducer's
+  history-safe 0–8px dead-zone envelope without inventing a reset. The format
+  table requires PaneToolbar presence for EPUB/PDF and absence is a failure. Settle
+  transition events prove lifecycle only; a sticky RAF-frame oracle proves
+  every rendered `Settling` frame inert and `aria-hidden`, while gesture
+  samples cover the Tracking/Settling interruption handoff.
+  Continuous-gesture proof must remain below the idle-settle boundary and
+  observe no settle transition; a separate scenario holds a trusted touch
+  stationary while settle begins, then requires its native scroll to cancel the
+  live transition. Direct scroll mutation, synthetic scroll/pointer events, and
+  manual blur are forbidden in chrome acceptance and removed from predecessor
+  pane-chrome helpers.
 - The real-stack matrix covers all four formats plus Find and active-player
   composition.
 - CI's default E2E job runs `mobile-chrome` and retains trace, screenshot, and

@@ -118,6 +118,17 @@ YOUTUBE_TRANSCRIPT_SEGMENTS = [
         "t_start_ms": 12_000,
         "t_end_ms": 17_000,
     },
+    *[
+        {
+            "canonical_text": (
+                f"E2E YouTube transcript deterministic mobile reading row {index:02d}."
+            ),
+            "speaker_label": "Host" if index % 2 == 0 else "Guest",
+            "t_start_ms": 20_000 + index * 5_000,
+            "t_end_ms": 24_000 + index * 5_000,
+        }
+        for index in range(1, 17)
+    ],
 ]
 
 

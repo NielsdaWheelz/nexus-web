@@ -120,6 +120,16 @@ const VolatileChromeContext = createContext<VolatileChromeState | null>(null);
 const COLLAPSE_PROPERTY = "--mobile-chrome-collapse";
 const READER_INTERACTION_ROOT = "[data-mobile-reader-interaction-root]";
 const READER_TAP_HANDLED = "[data-reader-tap-handled='true']";
+const READER_TAP_REVEAL_SURFACE =
+  "[data-reader-tap-reveal-surface='true']";
+
+function isInteractiveReaderTap(
+  target: EventTarget | null,
+  scrollport: HTMLElement,
+): boolean {
+  const revealSurface = closestElement(target, READER_TAP_REVEAL_SURFACE);
+  return isInteractiveTarget(target, revealSurface ?? scrollport);
+}
 
 function initialPrefersReducedMotion(): boolean {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function")
@@ -650,7 +660,7 @@ export function MobileChromeProvider({ children }: { children: ReactNode }) {
           !primaryUnmodifiedClick(event) ||
           event.defaultPrevented ||
           hasLiveSelection() ||
-          isInteractiveTarget(event.target, scrollport) ||
+          isInteractiveReaderTap(event.target, scrollport) ||
           closestElement(event.target, READER_TAP_HANDLED)
         ) {
           return;
@@ -668,7 +678,7 @@ export function MobileChromeProvider({ children }: { children: ReactNode }) {
           if (
             windowEvent.defaultPrevented ||
             hasLiveSelection() ||
-            isInteractiveTarget(windowEvent.target, scrollport) ||
+            isInteractiveReaderTap(windowEvent.target, scrollport) ||
             closestElement(windowEvent.target, READER_TAP_HANDLED)
           ) {
             return;

@@ -9,6 +9,7 @@ describe("isInteractiveTarget", () => {
         <button type="button">
           <span>Native child</span>
         </button>
+        <iframe title="Embedded content" />
         <div role="slider" tabIndex={0} aria-valuenow={1}>
           <span>ARIA child</span>
         </div>
@@ -22,6 +23,9 @@ describe("isInteractiveTarget", () => {
     );
 
     expect(isInteractiveTarget(screen.getByText("Native child"))).toBe(true);
+    expect(isInteractiveTarget(screen.getByTitle("Embedded content"))).toBe(
+      true,
+    );
     expect(isInteractiveTarget(screen.getByText("ARIA child"))).toBe(true);
     expect(isInteractiveTarget(screen.getByText("Editable child"))).toBe(true);
     expect(isInteractiveTarget(screen.getByText("Focusable child"))).toBe(true);

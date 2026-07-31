@@ -2,6 +2,7 @@ const INTERACTIVE_TARGET_SELECTOR = [
   "a[href]",
   "audio[controls]",
   "button",
+  "iframe",
   "input",
   "select",
   "summary",

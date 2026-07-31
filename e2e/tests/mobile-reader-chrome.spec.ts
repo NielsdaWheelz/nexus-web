@@ -34,8 +34,10 @@ interface AudioSeed extends MediaSeed {
 }
 
 interface ChromeSurfaceSample {
+  present: boolean;
   phase: string;
   progress: number;
+  specifiedProgress: number | null;
   translateY: number;
   inert: boolean;
   ariaHidden: string | null;
@@ -45,6 +47,7 @@ interface ChromeSurfaceSample {
 }
 
 interface ChromeSample {
+  recordedAt: number;
   appBar: ChromeSurfaceSample;
   paneToolbar: ChromeSurfaceSample;
   nexus: ChromeSurfaceSample;
@@ -61,28 +64,74 @@ interface ChromeSample {
   href: string;
 }
 
+interface ChromeGestureRecording {
+  samples: ChromeSample[];
+  scrollEvents: ChromeSample[];
+  transitionEvents: Array<{
+    type: string;
+    recordedAt: number;
+  }>;
+  touchStartAt: number | null;
+  touchEndAt: number | null;
+}
+
+interface SettleAccessibilityFailure {
+  origin: "transitionrun" | "animation-frame";
+  recordedAt: number;
+  surfaces: Array<{
+    role: "AppBar" | "PaneToolbar" | "NexusControl";
+    phase: string | null;
+    inert: boolean | null;
+    ariaHidden: string | null;
+  }>;
+}
+
+function chromeSurfaces(
+  sample: ChromeSample,
+  expectPaneToolbar = false,
+): ChromeSurfaceSample[] {
+  if (expectPaneToolbar && !sample.paneToolbar.present) {
+    throw new Error(
+      `The required PaneToolbar surface disappeared: ${JSON.stringify(sample)}`,
+    );
+  }
+  return [
+    sample.appBar,
+    ...(sample.paneToolbar.present ? [sample.paneToolbar] : []),
+    sample.nexus,
+  ];
+}
+
 const formats = [
   {
     name: "Web",
     seedFile: "non-pdf-media.json",
     scrollport: (pane: Locator) => pane.getByTestId("document-viewport"),
+    expectsPaneToolbar: false,
+    hasBlankTapSurface: true,
   },
   {
     name: "EPUB",
     seedFile: "epub-media.json",
     scrollport: (pane: Locator) => pane.getByTestId("document-viewport"),
+    expectsPaneToolbar: true,
     toolbarControlName: "Next section",
+    hasBlankTapSurface: true,
   },
   {
     name: "transcript",
     seedFile: "youtube-media.json",
     scrollport: (pane: Locator) => pane.getByTestId("document-viewport"),
+    expectsPaneToolbar: false,
+    hasBlankTapSurface: false,
   },
   {
     name: "PDF",
     seedFile: "pdf-media.json",
     scrollport: (pane: Locator) => pane.getByLabel("PDF document"),
+    expectsPaneToolbar: true,
     toolbarControlName: "Next page",
+    hasBlankTapSurface: true,
   },
 ] as const;
 
@@ -152,7 +201,10 @@ async function readChromeSample(
     const activePane = document.querySelector(
       '[data-pane-id][data-active="true"]',
     );
-    const readSurface = (element: Element | null): ChromeSurfaceSample => {
+    const readSurface = (
+      element: Element | null,
+      optional = false,
+    ): ChromeSurfaceSample => {
       if (!(element instanceof HTMLElement)) {
         throw new Error("A registered mobile chrome surface is missing.");
       }
@@ -160,13 +212,20 @@ async function readChromeSample(
       const progress = Number.parseFloat(
         style.getPropertyValue("--mobile-chrome-collapse"),
       );
+      const specifiedProgress = Number.parseFloat(
+        element.style.getPropertyValue("--mobile-chrome-collapse"),
+      );
       if (!Number.isFinite(progress)) {
         throw new Error("Mobile chrome collapse progress is not numeric.");
       }
       const rect = element.getBoundingClientRect();
       return {
+        present: !optional || rect.height > 1,
         phase: element.dataset.mobileChromePhase ?? "",
         progress,
+        specifiedProgress: Number.isFinite(specifiedProgress)
+          ? specifiedProgress
+          : null,
         translateY:
           style.transform === "none"
             ? 0
@@ -179,6 +238,7 @@ async function readChromeSample(
       };
     };
     return {
+      recordedAt: performance.now(),
       appBar: readSurface(
         document.querySelector("header[data-mobile-chrome-phase]"),
       ),
@@ -186,6 +246,7 @@ async function readChromeSample(
         activePane?.querySelector(
           '[data-testid="pane-shell-chrome"][data-mobile-chrome-phase]',
         ) ?? null,
+        true,
       ),
       nexus: readSurface(
         document.querySelector(
@@ -209,23 +270,277 @@ async function expectChromePhase(
   page: Page,
   scrollport: Locator,
   phase: "Visible" | "Hidden" | "Pinned" | "Settling",
+  expectPaneToolbar = false,
 ): Promise<ChromeSample> {
   await expect
     .poll(
       async () => {
         const sample = await readChromeSample(page, scrollport);
-        return [
-          sample.appBar.phase,
-          sample.paneToolbar.phase,
-          sample.nexus.phase,
-        ];
+        return chromeSurfaces(sample, expectPaneToolbar).every(
+          (surface) => surface.phase === phase,
+        );
       },
       phase === "Settling"
         ? { intervals: [10, 20, 40, 60], timeout: 1_000 }
         : undefined,
     )
-    .toEqual([phase, phase, phase]);
-  return readChromeSample(page, scrollport);
+    .toBe(true);
+  const sample = await readChromeSample(page, scrollport);
+  chromeSurfaces(sample, expectPaneToolbar);
+  return sample;
+}
+
+async function startChromeGestureRecording(scrollport: Locator): Promise<void> {
+  await scrollport.evaluate((element) => {
+    if (!(element instanceof HTMLElement)) {
+      throw new Error("The mobile chrome scrollport is not an HTMLElement.");
+    }
+    type Recorder = ChromeGestureRecording & {
+      frame: number;
+      scrollport: HTMLElement;
+      readSample(): ChromeSample;
+      onScroll(): void;
+      onTouchStart(): void;
+      onTouchEnd(): void;
+      onTransition(event: Event): void;
+    };
+    const recorderWindow = window as typeof window & {
+      __nexusMobileChromeGestureRecorder?: Recorder;
+    };
+    if (recorderWindow.__nexusMobileChromeGestureRecorder) {
+      throw new Error("A mobile chrome gesture recorder is already active.");
+    }
+
+    const readSample = (): ChromeSample => {
+      const rect = element.getBoundingClientRect();
+      const activePane = document.querySelector(
+        '[data-pane-id][data-active="true"]',
+      );
+      const readSurface = (
+        surface: Element | null,
+        optional = false,
+      ): ChromeSurfaceSample => {
+        if (!(surface instanceof HTMLElement)) {
+          throw new Error("A registered mobile chrome surface is missing.");
+        }
+        const style = getComputedStyle(surface);
+        const progress = Number.parseFloat(
+          style.getPropertyValue("--mobile-chrome-collapse"),
+        );
+        const specifiedProgress = Number.parseFloat(
+          surface.style.getPropertyValue("--mobile-chrome-collapse"),
+        );
+        if (!Number.isFinite(progress)) {
+          throw new Error("Mobile chrome collapse progress is not numeric.");
+        }
+        const surfaceRect = surface.getBoundingClientRect();
+        return {
+          present: !optional || surfaceRect.height > 1,
+          phase: surface.dataset.mobileChromePhase ?? "",
+          progress,
+          specifiedProgress: Number.isFinite(specifiedProgress)
+            ? specifiedProgress
+            : null,
+          translateY:
+            style.transform === "none"
+              ? 0
+              : new DOMMatrixReadOnly(style.transform).m42,
+          inert: surface.inert,
+          ariaHidden: surface.getAttribute("aria-hidden"),
+          top: surfaceRect.top,
+          bottom: surfaceRect.bottom,
+          height: surfaceRect.height,
+        };
+      };
+      return {
+        recordedAt: performance.now(),
+        appBar: readSurface(
+          document.querySelector("header[data-mobile-chrome-phase]"),
+        ),
+        paneToolbar: readSurface(
+          activePane?.querySelector(
+            '[data-testid="pane-shell-chrome"][data-mobile-chrome-phase]',
+          ) ?? null,
+          true,
+        ),
+        nexus: readSurface(
+          document.querySelector(
+            'button[aria-label^="Open Nexus,"][data-mobile-chrome-phase]',
+          ),
+        ),
+        viewportHeight: window.innerHeight,
+        scrollTop: element.scrollTop,
+        scrollport: {
+          top: rect.top,
+          bottom: rect.bottom,
+          clientHeight: element.clientHeight,
+          scrollHeight: element.scrollHeight,
+        },
+        activeElement:
+          document.activeElement instanceof HTMLElement
+            ? [
+                document.activeElement.tagName.toLowerCase(),
+                document.activeElement.id
+                  ? `#${document.activeElement.id}`
+                  : "",
+                document.activeElement.getAttribute("role")
+                  ? `[role="${document.activeElement.getAttribute("role")}"]`
+                  : "",
+                document.activeElement.dataset.testid
+                  ? `[data-testid="${document.activeElement.dataset.testid}"]`
+                  : "",
+              ].join("")
+            : String(document.activeElement),
+        reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
+        href: location.href,
+      };
+    };
+
+    const recorder: Recorder = {
+      samples: [],
+      scrollEvents: [],
+      transitionEvents: [],
+      touchStartAt: null,
+      touchEndAt: null,
+      frame: 0,
+      scrollport: element,
+      readSample,
+      onScroll: () => {
+        recorder.scrollEvents.push(readSample());
+      },
+      onTouchStart: () => {
+        recorder.touchStartAt = performance.now();
+      },
+      onTouchEnd: () => {
+        recorder.touchEndAt = performance.now();
+      },
+      onTransition: (event) => {
+        if (
+          event instanceof TransitionEvent &&
+          event.propertyName === "--mobile-chrome-collapse" &&
+          event.target instanceof HTMLElement &&
+          event.target.matches("[data-mobile-chrome-phase]")
+        ) {
+          recorder.transitionEvents.push({
+            type: event.type,
+            recordedAt: performance.now(),
+          });
+        }
+      },
+    };
+    const recordFrame = () => {
+      recorder.samples.push(readSample());
+      recorder.frame = requestAnimationFrame(recordFrame);
+    };
+    element.addEventListener("scroll", recorder.onScroll, { passive: true });
+    element.addEventListener("touchstart", recorder.onTouchStart, true);
+    element.addEventListener("touchend", recorder.onTouchEnd, true);
+    element.addEventListener("touchcancel", recorder.onTouchEnd, true);
+    document.addEventListener("transitionrun", recorder.onTransition, true);
+    document.addEventListener("transitionend", recorder.onTransition, true);
+    document.addEventListener("transitioncancel", recorder.onTransition, true);
+    recorder.samples.push(readSample());
+    recorder.frame = requestAnimationFrame(recordFrame);
+    recorderWindow.__nexusMobileChromeGestureRecorder = recorder;
+  });
+}
+
+async function stopChromeGestureRecording(
+  scrollport: Locator,
+): Promise<ChromeGestureRecording> {
+  return scrollport.evaluate((element) => {
+    if (!(element instanceof HTMLElement)) {
+      throw new Error("The mobile chrome scrollport is not an HTMLElement.");
+    }
+    type Recorder = ChromeGestureRecording & {
+      frame: number;
+      scrollport: HTMLElement;
+      readSample(): ChromeSample;
+      onScroll(): void;
+      onTouchStart(): void;
+      onTouchEnd(): void;
+      onTransition(event: Event): void;
+    };
+    const recorderWindow = window as typeof window & {
+      __nexusMobileChromeGestureRecorder?: Recorder;
+    };
+    const recorder = recorderWindow.__nexusMobileChromeGestureRecorder;
+    if (!recorder || recorder.scrollport !== element) {
+      throw new Error("The mobile chrome gesture recorder is missing.");
+    }
+    cancelAnimationFrame(recorder.frame);
+    element.removeEventListener("scroll", recorder.onScroll);
+    element.removeEventListener("touchstart", recorder.onTouchStart, true);
+    element.removeEventListener("touchend", recorder.onTouchEnd, true);
+    element.removeEventListener("touchcancel", recorder.onTouchEnd, true);
+    document.removeEventListener("transitionrun", recorder.onTransition, true);
+    document.removeEventListener("transitionend", recorder.onTransition, true);
+    document.removeEventListener(
+      "transitioncancel",
+      recorder.onTransition,
+      true,
+    );
+    recorder.samples.push(recorder.readSample());
+    delete recorderWindow.__nexusMobileChromeGestureRecorder;
+    return {
+      samples: recorder.samples,
+      scrollEvents: recorder.scrollEvents,
+      transitionEvents: recorder.transitionEvents,
+      touchStartAt: recorder.touchStartAt,
+      touchEndAt: recorder.touchEndAt,
+    };
+  });
+}
+
+function expectContinuousTrustedGesture(
+  recording: ChromeGestureRecording,
+  allowTransitionDuringTouch: boolean,
+  expectPaneToolbar: boolean,
+): void {
+  const { touchStartAt, touchEndAt } = recording;
+  if (touchStartAt === null || touchEndAt === null) {
+    throw new Error(
+      `trusted drag lost its native touch boundary; recording=${JSON.stringify(recording)}`,
+    );
+  }
+  const activeScrollEventTimes = recording.scrollEvents
+    .map(({ recordedAt }) => recordedAt)
+    .filter(
+      (recordedAt) => recordedAt >= touchStartAt && recordedAt <= touchEndAt,
+    );
+  expect(
+    activeScrollEventTimes.length,
+    `trusted drag must publish multiple native scroll events; recording=${JSON.stringify(recording)}`,
+  ).toBeGreaterThan(1);
+  const scrollGaps = activeScrollEventTimes
+    .slice(1)
+    .map((recordedAt, index) => recordedAt - activeScrollEventTimes[index]!);
+  expect(
+    Math.max(...scrollGaps),
+    `trusted drag cadence must stay below the 120ms idle-settle boundary; recording=${JSON.stringify(recording)}`,
+  ).toBeLessThan(120);
+  if (!allowTransitionDuringTouch) {
+    expect(
+      recording.transitionEvents.filter(
+        ({ recordedAt }) =>
+          recordedAt >= touchStartAt && recordedAt <= touchEndAt,
+      ),
+      `continuous drag must not enter settle; recording=${JSON.stringify(recording)}`,
+    ).toEqual([]);
+    expect(
+      recording.samples
+        .filter(
+          ({ recordedAt }) =>
+            recordedAt >= touchStartAt && recordedAt <= touchEndAt,
+        )
+        .some((sample) =>
+          chromeSurfaces(sample, expectPaneToolbar).some(
+            (surface) => surface.phase === "Settling",
+          ),
+        ),
+      `continuous drag must not sample a settle phase; recording=${JSON.stringify(recording)}`,
+    ).toBe(false);
+  }
 }
 
 async function dispatchTouchDrag(
@@ -233,7 +548,12 @@ async function dispatchTouchDrag(
   scrollport: Locator,
   fingerDeltaY: number,
   steps: number,
-): Promise<ChromeSample[]> {
+  options: {
+    afterTouchStart?: () => Promise<void>;
+    allowTransitionDuringTouch?: boolean;
+    expectPaneToolbar?: boolean;
+  } = {},
+): Promise<ChromeGestureRecording> {
   const box = await scrollport.boundingBox();
   if (!box) {
     throw new Error("Reader scrollport has no visible bounding box.");
@@ -243,7 +563,6 @@ async function dispatchTouchDrag(
     fingerDeltaY < 0
       ? box.y + Math.min(box.height - 28, Math.max(80, box.height * 0.8))
       : box.y + Math.min(box.height - 100, Math.max(32, box.height * 0.28));
-  const cdp = await page.context().newCDPSession(page);
   const point = (y: number) => [
     {
       id: 1,
@@ -254,43 +573,89 @@ async function dispatchTouchDrag(
       force: 1,
     },
   ];
-  const samples: ChromeSample[] = [];
+  await startChromeGestureRecording(scrollport);
+  let cdp: CDPSession | null = null;
+  let recording: ChromeGestureRecording | null = null;
+  let touchActive = false;
   try {
+    cdp = await page.context().newCDPSession(page);
     await cdp.send("Input.dispatchTouchEvent", {
       type: "touchStart",
       touchPoints: point(startY),
     });
+    touchActive = true;
+    await options.afterTouchStart?.();
     for (let step = 1; step <= steps; step += 1) {
       await cdp.send("Input.dispatchTouchEvent", {
         type: "touchMove",
         touchPoints: point(startY + (fingerDeltaY * step) / steps),
       });
-      await waitForAnimationFrame(page);
-      samples.push(await readChromeSample(page, scrollport));
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 8);
+      });
     }
     await cdp.send("Input.dispatchTouchEvent", {
       type: "touchEnd",
       touchPoints: [],
     });
+    touchActive = false;
   } finally {
-    await cdp.detach();
+    try {
+      if (touchActive && cdp) {
+        await cdp.send("Input.dispatchTouchEvent", {
+          type: "touchEnd",
+          touchPoints: [],
+        });
+        touchActive = false;
+      }
+    } finally {
+      try {
+        recording = await stopChromeGestureRecording(scrollport);
+      } finally {
+        await cdp?.detach();
+      }
+    }
   }
-  return samples;
+  expectContinuousTrustedGesture(
+    recording,
+    options.allowTransitionDuringTouch === true,
+    options.expectPaneToolbar === true,
+  );
+  return recording;
 }
 
 async function expectTrustedForwardRetreat(
   page: Page,
   scrollport: Locator,
+  expectPaneToolbar = false,
 ): Promise<void> {
   const before = await readChromeSample(page, scrollport);
-  const samples = await dispatchTouchDrag(page, scrollport, -128, 24);
-  const tracking = samples.filter(
-    (sample) => sample.appBar.progress > 0.02 && sample.appBar.progress < 0.98,
-  );
+  chromeSurfaces(before, expectPaneToolbar);
+  const recording = await dispatchTouchDrag(page, scrollport, -128, 24, {
+    expectPaneToolbar,
+  });
+  const { samples, scrollEvents } = recording;
+  const tracking = samples
+    .map((sample, index) => ({ index, sample }))
+    .filter(
+      ({ sample }) =>
+        sample.appBar.progress > 0.02 && sample.appBar.progress < 0.98,
+    );
   expect(
     tracking.length,
     `expected proportional intermediate chrome samples; samples=${JSON.stringify(samples)}`,
   ).toBeGreaterThan(1);
+  const topPinnedEvents = scrollEvents.filter(
+    (sample) => sample.scrollTop <= 8,
+  );
+  for (const sample of topPinnedEvents) {
+    for (const surface of chromeSurfaces(sample, expectPaneToolbar)) {
+      expect(surface.phase).toBe("Visible");
+      expect(surface.progress).toBe(0);
+    }
+  }
+  const hasFreshTopPinBaseline = topPinnedEvents.length > 0;
+  const forwardBaseline = topPinnedEvents.at(-1)?.scrollTop ?? before.scrollTop;
   for (let index = 0; index < samples.length; index += 1) {
     const prior = index === 0 ? before : samples[index - 1];
     const sample = samples[index];
@@ -316,66 +681,119 @@ async function expectTrustedForwardRetreat(
     expect(sample.scrollport.clientHeight).toBe(before.scrollport.clientHeight);
     expect(sample.href).toBe(before.href);
   }
-  for (const sample of tracking) {
-    const forwardDistance = sample.scrollTop - before.scrollTop;
-    const expectedProgress = Math.min(
+  for (const { index, sample } of tracking) {
+    const prior = index === 0 ? before : (samples[index - 1] ?? before);
+    // The recorder RAF is armed before touch; a scroll schedules the provider's
+    // coalesced writer behind it. A real top-pin sample resets direction and
+    // proves the exact dead zone. Away from top, reducer direction is correctly
+    // retained across gestures, so the envelope allows either same-direction
+    // travel (no new dead zone) or reversal travel (one dead zone).
+    const priorProgressFloor = Math.min(
       1,
-      Math.max(0, (forwardDistance - 8) / 64),
+      Math.max(0, (prior.scrollTop - forwardBaseline - 8) / 64),
     );
-    const progress = [
-      sample.appBar.progress,
-      sample.paneToolbar.progress,
-      sample.nexus.progress,
-    ];
+    const currentProgressCeiling = Math.min(
+      1,
+      Math.max(
+        0,
+        (sample.scrollTop -
+          forwardBaseline -
+          (hasFreshTopPinBaseline ? 8 : 0)) /
+          64,
+      ),
+    );
+    const surfaces = chromeSurfaces(sample, expectPaneToolbar);
+    const progress = surfaces.map((surface) => surface.progress);
+    const specifiedProgressCandidates = surfaces.map(
+      (surface) => surface.specifiedProgress,
+    );
     expect(
-      Math.abs(sample.appBar.progress - expectedProgress),
-      `collapse must track (scroll distance - 8px dead zone) / 64px; sample=${JSON.stringify(sample)} before=${JSON.stringify(before)}`,
-    ).toBeLessThan(0.12);
-    expect(Math.max(...progress) - Math.min(...progress)).toBeLessThan(0.01);
-    expect(sample.appBar.phase).toBe("Tracking");
-    expect(sample.paneToolbar.phase).toBe("Tracking");
-    expect(sample.nexus.phase).toBe("Tracking");
+      specifiedProgressCandidates.every((candidate) => candidate !== null),
+      `tracking must have one explicitly written collapse value; sample=${JSON.stringify(sample)}`,
+    ).toBe(true);
+    const specifiedProgress = specifiedProgressCandidates.filter(
+      (candidate): candidate is number => candidate !== null,
+    );
+    expect(
+      sample.appBar.progress,
+      `collapse must not lag beyond one coalesced RAF plus the top-pin baseline; sample=${JSON.stringify(sample)} prior=${JSON.stringify(prior)} before=${JSON.stringify(before)}`,
+    ).toBeGreaterThanOrEqual(priorProgressFloor - 0.01);
+    expect(
+      sample.appBar.progress,
+      `collapse must not lead the current 8px dead-zone / 64px-travel bound; sample=${JSON.stringify(sample)} prior=${JSON.stringify(prior)} before=${JSON.stringify(before)}`,
+    ).toBeLessThanOrEqual(currentProgressCeiling + 0.01);
+    expect(
+      Math.max(...specifiedProgress) - Math.min(...specifiedProgress),
+      `one RAF writer must specify one collapse value; sample=${JSON.stringify(sample)}`,
+    ).toBeLessThan(0.000_001);
+    expect(
+      Math.max(...progress) - Math.min(...progress),
+      `computed collapse must remain synchronized; sample=${JSON.stringify(sample)}`,
+    ).toBeLessThan(0.01);
+    for (const surface of surfaces) {
+      expect(surface.phase).toBe("Tracking");
+      expect(surface.inert).toBe(true);
+      expect(surface.ariaHidden).toBe("true");
+    }
     expect(sample.appBar.translateY).toBeLessThan(0);
-    if (sample.paneToolbar.height > 1) {
+    if (sample.paneToolbar.present) {
       expect(sample.paneToolbar.translateY).toBeLessThan(0);
     }
     expect(sample.nexus.translateY).toBeGreaterThan(0);
-    expect(sample.appBar.inert).toBe(true);
-    expect(sample.paneToolbar.inert).toBe(true);
-    expect(sample.nexus.inert).toBe(true);
-    expect(sample.appBar.ariaHidden).toBe("true");
-    expect(sample.paneToolbar.ariaHidden).toBe("true");
-    expect(sample.nexus.ariaHidden).toBe("true");
   }
   expect(samples.at(-1)?.scrollTop ?? before.scrollTop).toBeGreaterThan(
     before.scrollTop,
   );
-  const firstHiddenSample = samples.find(
-    (sample) => sample.appBar.progress >= 0.99,
+  const firstHiddenIndex = samples.findIndex((sample) =>
+    chromeSurfaces(sample, expectPaneToolbar).every(
+      (surface) =>
+        surface.phase === "Hidden" &&
+        surface.specifiedProgress === 1 &&
+        surface.progress === 1,
+    ),
   );
+  const firstHiddenSample =
+    firstHiddenIndex < 0 ? undefined : samples[firstHiddenIndex];
   expect(
     firstHiddenSample,
     `expected trusted input to traverse the hidden endpoint; samples=${JSON.stringify(samples)}`,
   ).toBeDefined();
+  const thresholdWindowStartFrame =
+    firstHiddenIndex < 2 ? before : (samples[firstHiddenIndex - 2] ?? before);
+  const firstHiddenDistance =
+    (firstHiddenSample?.scrollTop ?? before.scrollTop) - before.scrollTop;
+  const thresholdWindowStartDistance =
+    thresholdWindowStartFrame.scrollTop - before.scrollTop;
+  const earliestHiddenThresholdDistance =
+    forwardBaseline - before.scrollTop + (hasFreshTopPinBaseline ? 8 : 0) + 64;
+  const latestHiddenThresholdDistance =
+    forwardBaseline - before.scrollTop + 8 + 64;
   expect(
-    Math.abs(
-      (firstHiddenSample?.scrollTop ?? before.scrollTop) -
-        before.scrollTop -
-        72,
-    ),
-    "hidden endpoint must follow the 8px dead zone plus 64px collapse travel",
-  ).toBeLessThan(12);
+    firstHiddenDistance,
+    hasFreshTopPinBaseline
+      ? "hidden endpoint must not precede the fresh 8px dead zone plus 64px collapse travel"
+      : "hidden endpoint must not precede 64px of collapse travel",
+  ).toBeGreaterThanOrEqual(earliestHiddenThresholdDistance);
+  expect(
+    thresholdWindowStartDistance,
+    "hidden endpoint threshold must overlap the reducer-history envelope despite coalesced publication",
+  ).toBeLessThanOrEqual(latestHiddenThresholdDistance);
 
-  const hidden = await expectChromePhase(page, scrollport, "Hidden");
+  const hidden = await expectChromePhase(
+    page,
+    scrollport,
+    "Hidden",
+    expectPaneToolbar,
+  );
   expect(hidden.appBar.progress).toBe(1);
-  expect(hidden.paneToolbar.progress).toBe(1);
   expect(hidden.nexus.progress).toBe(1);
   expect(hidden.appBar.bottom).toBeLessThanOrEqual(1);
-  if (hidden.paneToolbar.height > 1) {
+  if (hidden.paneToolbar.present) {
+    expect(hidden.paneToolbar.progress).toBe(1);
     expect(hidden.paneToolbar.bottom).toBeLessThanOrEqual(1);
   }
   expect(hidden.nexus.top).toBeGreaterThanOrEqual(hidden.viewportHeight - 1);
-  for (const surface of [hidden.appBar, hidden.paneToolbar, hidden.nexus]) {
+  for (const surface of chromeSurfaces(hidden, expectPaneToolbar)) {
     expect(surface.inert).toBe(true);
     expect(surface.ariaHidden).toBe("true");
   }
@@ -385,9 +803,13 @@ async function expectTrustedReverseReveal(
   page: Page,
   scrollport: Locator,
   priorReverseDistance: number,
+  expectPaneToolbar = false,
 ): Promise<void> {
   const hidden = await readChromeSample(page, scrollport);
-  const samples = await dispatchTouchDrag(page, scrollport, 128, 64);
+  chromeSurfaces(hidden, expectPaneToolbar);
+  const { samples } = await dispatchTouchDrag(page, scrollport, 128, 64, {
+    expectPaneToolbar,
+  });
   const reverseSamples = samples.filter(
     (sample) => sample.scrollTop < hidden.scrollTop,
   );
@@ -411,14 +833,24 @@ async function expectTrustedReverseReveal(
     (candidate) =>
       candidate.appBar.progress > 0.02 && candidate.appBar.progress < 0.98,
   )) {
-    const reverseDistance =
+    const index = samples.indexOf(sample);
+    const prior = index <= 0 ? hidden : (samples[index - 1] ?? hidden);
+    const priorFrameReverseDistance =
+      priorReverseDistance + hidden.scrollTop - prior.scrollTop;
+    const currentReverseDistance =
       priorReverseDistance + hidden.scrollTop - sample.scrollTop;
-    const expectedProgress =
-      1 - Math.min(1, Math.max(0, (reverseDistance - 8) / 64));
+    const priorProgressCeiling =
+      1 - Math.min(1, Math.max(0, (priorFrameReverseDistance - 8) / 64));
+    const currentProgressFloor =
+      1 - Math.min(1, Math.max(0, (currentReverseDistance - 8) / 64));
     expect(
-      Math.abs(sample.appBar.progress - expectedProgress),
-      `reveal must track 1 - (reverse distance - 8px dead zone) / 64px; sample=${JSON.stringify(sample)} hidden=${JSON.stringify(hidden)}`,
-    ).toBeLessThan(0.12);
+      sample.appBar.progress,
+      `reveal must not lead the current 8px dead-zone / 64px-travel bound; sample=${JSON.stringify(sample)} prior=${JSON.stringify(prior)} hidden=${JSON.stringify(hidden)}`,
+    ).toBeGreaterThanOrEqual(currentProgressFloor - 0.01);
+    expect(
+      sample.appBar.progress,
+      `reveal must not lag beyond one coalesced RAF; sample=${JSON.stringify(sample)} prior=${JSON.stringify(prior)} hidden=${JSON.stringify(hidden)}`,
+    ).toBeLessThanOrEqual(priorProgressCeiling + 0.01);
   }
   const firstRevealedSample = reverseSamples.find(
     (sample) => sample.appBar.progress < 0.99,
@@ -432,11 +864,18 @@ async function expectTrustedReverseReveal(
       hidden.scrollTop -
       (firstRevealedSample?.scrollTop ?? hidden.scrollTop),
   ).toBeGreaterThan(8);
-  const visible = await expectChromePhase(page, scrollport, "Visible");
+  const visible = await expectChromePhase(
+    page,
+    scrollport,
+    "Visible",
+    expectPaneToolbar,
+  );
   expect(visible.appBar.progress).toBe(0);
-  expect(visible.paneToolbar.progress).toBe(0);
   expect(visible.nexus.progress).toBe(0);
-  for (const surface of [visible.appBar, visible.paneToolbar, visible.nexus]) {
+  if (visible.paneToolbar.present) {
+    expect(visible.paneToolbar.progress).toBe(0);
+  }
+  for (const surface of chromeSurfaces(visible, expectPaneToolbar)) {
     expect(surface.inert).toBe(false);
     expect(surface.ariaHidden).toBeNull();
   }
@@ -445,6 +884,7 @@ async function expectTrustedReverseReveal(
 async function expectTrustedReverseDeadZone(
   page: Page,
   scrollport: Locator,
+  expectPaneToolbar = false,
 ): Promise<number> {
   const before = await readChromeSample(page, scrollport);
   const box = await scrollport.boundingBox();
@@ -457,6 +897,7 @@ async function expectTrustedReverseDeadZone(
     .poll(() => scrollport.evaluate((element) => element.scrollTop))
     .toBeLessThan(before.scrollTop);
   const sample = await readChromeSample(page, scrollport);
+  chromeSurfaces(sample, expectPaneToolbar);
   const reverseDistance = before.scrollTop - sample.scrollTop;
   expect(
     reverseDistance,
@@ -464,11 +905,13 @@ async function expectTrustedReverseDeadZone(
   ).toBeGreaterThan(0);
   expect(reverseDistance).toBeLessThanOrEqual(8);
   expect(sample.appBar.phase).toBe("Hidden");
-  expect(sample.paneToolbar.phase).toBe("Hidden");
   expect(sample.nexus.phase).toBe("Hidden");
   expect(sample.appBar.progress).toBe(1);
-  expect(sample.paneToolbar.progress).toBe(1);
   expect(sample.nexus.progress).toBe(1);
+  if (sample.paneToolbar.present) {
+    expect(sample.paneToolbar.phase).toBe("Hidden");
+    expect(sample.paneToolbar.progress).toBe(1);
+  }
   return reverseDistance;
 }
 
@@ -512,7 +955,13 @@ async function expectTrustedSettleLifecycle(
         runs: number;
         ends: number;
         cancels: number;
-        settlingAccessible: boolean;
+        allSettleFramesAccessible: boolean;
+        accessibilityFailures: SettleAccessibilityFailure[];
+        settleFrames: number;
+        maxComputedSpread: number;
+        maxSpecifiedSpread: number;
+        maxTransformError: number;
+        frame: number;
         listener: EventListener;
       };
     };
@@ -525,12 +974,19 @@ async function expectTrustedSettleLifecycle(
         priorAudit.listener,
         true,
       );
+      cancelAnimationFrame(priorAudit.frame);
     }
     const audit = {
       runs: 0,
       ends: 0,
       cancels: 0,
-      settlingAccessible: false,
+      allSettleFramesAccessible: true,
+      accessibilityFailures: [] as SettleAccessibilityFailure[],
+      settleFrames: 0,
+      maxComputedSpread: 0,
+      maxSpecifiedSpread: 0,
+      maxTransformError: 0,
+      frame: 0,
       listener: ((event: TransitionEvent) => {
         if (
           event.propertyName === "--mobile-chrome-collapse" &&
@@ -539,23 +995,6 @@ async function expectTrustedSettleLifecycle(
         ) {
           if (event.type === "transitionrun") {
             audit.runs += 1;
-            const surfaces = [
-              document.querySelector("header[data-mobile-chrome-phase]"),
-              document.querySelector(
-                '[data-pane-id][data-active="true"] [data-testid="pane-shell-chrome"][data-mobile-chrome-phase]',
-              ),
-              document.querySelector(
-                'button[aria-label^="Open Nexus,"][data-mobile-chrome-phase]',
-              ),
-            ];
-            audit.settlingAccessible =
-              surfaces.every(
-                (surface) =>
-                  surface instanceof HTMLElement &&
-                  surface.dataset.mobileChromePhase === "Settling" &&
-                  surface.inert &&
-                  surface.getAttribute("aria-hidden") === "true",
-              );
           } else if (event.type === "transitionend") {
             audit.ends += 1;
           } else if (event.type === "transitioncancel") {
@@ -564,10 +1003,118 @@ async function expectTrustedSettleLifecycle(
         }
       }) as EventListener,
     };
+    const sampleSettleFrame = () => {
+      const appBar = document.querySelector("header[data-mobile-chrome-phase]");
+      const paneToolbar = document.querySelector(
+        '[data-pane-id][data-active="true"] [data-testid="pane-shell-chrome"][data-mobile-chrome-phase]',
+      );
+      const nexus = document.querySelector(
+        'button[aria-label^="Open Nexus,"][data-mobile-chrome-phase]',
+      );
+      const presentPaneToolbar =
+        paneToolbar instanceof HTMLElement &&
+        paneToolbar.getBoundingClientRect().height > 1
+          ? paneToolbar
+          : null;
+      if (
+        appBar instanceof HTMLElement &&
+        nexus instanceof HTMLElement &&
+        [
+          appBar,
+          ...(presentPaneToolbar ? [presentPaneToolbar] : []),
+          nexus,
+        ].every((surface) => surface.dataset.mobileChromePhase === "Settling")
+      ) {
+        const surfaces = [
+          appBar,
+          ...(presentPaneToolbar ? [presentPaneToolbar] : []),
+          nexus,
+        ];
+        const accessibility = surfaces.map((surface, index) => ({
+          role: (presentPaneToolbar
+            ? ["AppBar", "PaneToolbar", "NexusControl"]
+            : ["AppBar", "NexusControl"])[index]! as
+            "AppBar" | "PaneToolbar" | "NexusControl",
+          phase: surface.dataset.mobileChromePhase ?? null,
+          inert: surface.inert,
+          ariaHidden: surface.getAttribute("aria-hidden"),
+        }));
+        const accessible = accessibility.every(
+          ({ inert, ariaHidden }) => inert && ariaHidden === "true",
+        );
+        audit.allSettleFramesAccessible =
+          audit.allSettleFramesAccessible && accessible;
+        if (!accessible) {
+          audit.accessibilityFailures.push({
+            origin: "animation-frame",
+            recordedAt: performance.now(),
+            surfaces: accessibility,
+          });
+        }
+        const computed = surfaces.map((surface) =>
+          Number.parseFloat(
+            getComputedStyle(surface).getPropertyValue(
+              "--mobile-chrome-collapse",
+            ),
+          ),
+        );
+        const specified = surfaces.map((surface) =>
+          Number.parseFloat(
+            surface.style.getPropertyValue("--mobile-chrome-collapse"),
+          ),
+        );
+        if (
+          computed.every(Number.isFinite) &&
+          specified.every(Number.isFinite)
+        ) {
+          const appBarRect = appBar.getBoundingClientRect();
+          const nexusWrapper = nexus.parentElement;
+          if (!(nexusWrapper instanceof HTMLElement)) {
+            throw new Error("Nexus has no stable geometry wrapper.");
+          }
+          const nexusWrapperRect = nexusWrapper.getBoundingClientRect();
+          const transformY = (surface: HTMLElement) => {
+            const transform = getComputedStyle(surface).transform;
+            return transform === "none"
+              ? 0
+              : new DOMMatrixReadOnly(transform).m42;
+          };
+          const paneTransformError = presentPaneToolbar
+            ? Math.abs(
+                transformY(presentPaneToolbar) +
+                  computed[1]! *
+                    (appBarRect.height +
+                      presentPaneToolbar.getBoundingClientRect().height),
+              )
+            : 0;
+          const nexusProgress = computed.at(-1)!;
+          audit.settleFrames += 1;
+          audit.maxComputedSpread = Math.max(
+            audit.maxComputedSpread,
+            Math.max(...computed) - Math.min(...computed),
+          );
+          audit.maxSpecifiedSpread = Math.max(
+            audit.maxSpecifiedSpread,
+            Math.max(...specified) - Math.min(...specified),
+          );
+          audit.maxTransformError = Math.max(
+            audit.maxTransformError,
+            Math.abs(transformY(appBar) + computed[0]! * appBarRect.height),
+            paneTransformError,
+            Math.abs(
+              transformY(nexus) -
+                nexusProgress * (window.innerHeight - nexusWrapperRect.top),
+            ),
+          );
+        }
+      }
+      audit.frame = requestAnimationFrame(sampleSettleFrame);
+    };
     auditWindow.__nexusMobileChromeTransitionAudit = audit;
     document.addEventListener("transitionrun", audit.listener, true);
     document.addEventListener("transitionend", audit.listener, true);
     document.addEventListener("transitioncancel", audit.listener, true);
+    audit.frame = requestAnimationFrame(sampleSettleFrame);
   });
 
   try {
@@ -578,7 +1125,12 @@ async function expectTrustedSettleLifecycle(
             runs: number;
             ends: number;
             cancels: number;
-            settlingAccessible: boolean;
+            allSettleFramesAccessible: boolean;
+            accessibilityFailures: SettleAccessibilityFailure[];
+            settleFrames: number;
+            maxComputedSpread: number;
+            maxSpecifiedSpread: number;
+            maxTransformError: number;
           };
         };
         const audit = auditWindow.__nexusMobileChromeTransitionAudit;
@@ -588,7 +1140,12 @@ async function expectTrustedSettleLifecycle(
         audit.runs = 0;
         audit.ends = 0;
         audit.cancels = 0;
-        audit.settlingAccessible = false;
+        audit.allSettleFramesAccessible = true;
+        audit.accessibilityFailures = [];
+        audit.settleFrames = 0;
+        audit.maxComputedSpread = 0;
+        audit.maxSpecifiedSpread = 0;
+        audit.maxTransformError = 0;
       });
     const readAudit = () =>
       page.evaluate(() => {
@@ -597,7 +1154,12 @@ async function expectTrustedSettleLifecycle(
             runs: number;
             ends: number;
             cancels: number;
-            settlingAccessible: boolean;
+            allSettleFramesAccessible: boolean;
+            accessibilityFailures: SettleAccessibilityFailure[];
+            settleFrames: number;
+            maxComputedSpread: number;
+            maxSpecifiedSpread: number;
+            maxTransformError: number;
           };
         };
         const audit = auditWindow.__nexusMobileChromeTransitionAudit;
@@ -608,7 +1170,12 @@ async function expectTrustedSettleLifecycle(
           runs: audit.runs,
           ends: audit.ends,
           cancels: audit.cancels,
-          settlingAccessible: audit.settlingAccessible,
+          allSettleFramesAccessible: audit.allSettleFramesAccessible,
+          accessibilityFailures: audit.accessibilityFailures,
+          settleFrames: audit.settleFrames,
+          maxComputedSpread: audit.maxComputedSpread,
+          maxSpecifiedSpread: audit.maxSpecifiedSpread,
+          maxTransformError: audit.maxTransformError,
         };
       });
     const waitForTransitionRun = async () => {
@@ -626,9 +1193,34 @@ async function expectTrustedSettleLifecycle(
       );
       await handle.dispose();
     };
+    const expectSynchronizedSettle = (
+      audit: Awaited<ReturnType<typeof readAudit>>,
+      scenario: string,
+    ) => {
+      expect(
+        audit.settleFrames,
+        `${scenario} must sample the live settle timeline`,
+      ).toBeGreaterThan(0);
+      expect(
+        audit.allSettleFramesAccessible,
+        `${scenario} must keep every chrome surface inert and aria-hidden throughout settle; failures=${JSON.stringify(audit.accessibilityFailures)}`,
+      ).toBe(true);
+      expect(
+        audit.maxSpecifiedSpread,
+        `${scenario} must retain one specified collapse value`,
+      ).toBeLessThan(0.000_001);
+      expect(
+        audit.maxComputedSpread,
+        `${scenario} must keep computed collapse synchronized`,
+      ).toBeLessThan(0.01);
+      expect(
+        audit.maxTransformError,
+        `${scenario} transforms must follow their computed collapse value`,
+      ).toBeLessThanOrEqual(1);
+    };
 
     await resetAudit();
-    const interruptedSamples = await dispatchTouchDrag(
+    const { samples: interruptedSamples } = await dispatchTouchDrag(
       page,
       scrollport,
       -32,
@@ -641,26 +1233,79 @@ async function expectTrustedSettleLifecycle(
       ),
       `partial trusted drag must stop between endpoints; samples=${JSON.stringify(interruptedSamples)}`,
     ).toBe(true);
-    await waitForTransitionRun();
-    const interruptedAudit = await readAudit();
-    expect(interruptedAudit.runs).toBeGreaterThan(0);
-    expect(interruptedAudit.settlingAccessible).toBe(true);
-    await dispatchTouchDrag(page, scrollport, 64, 8);
+    const interruptionRecording = await dispatchTouchDrag(
+      page,
+      scrollport,
+      64,
+      4,
+      {
+        allowTransitionDuringTouch: true,
+        afterTouchStart: async () => {
+          await waitForTransitionRun();
+          await waitForAnimationFrame(page);
+        },
+      },
+    );
+    const firstNativeScrollAt = interruptionRecording.scrollEvents.find(
+      ({ recordedAt }) =>
+        interruptionRecording.touchStartAt !== null &&
+        recordedAt >= interruptionRecording.touchStartAt,
+    )?.recordedAt;
+    expect(
+      firstNativeScrollAt,
+      `settle interruption must produce native scrolling; recording=${JSON.stringify(interruptionRecording)}`,
+    ).toBeDefined();
+    expect(
+      interruptionRecording.transitionEvents.some(
+        ({ type, recordedAt }) =>
+          type === "transitionrun" &&
+          interruptionRecording.touchStartAt !== null &&
+          recordedAt >= interruptionRecording.touchStartAt &&
+          recordedAt < (firstNativeScrollAt ?? Number.POSITIVE_INFINITY),
+      ),
+      `the live settle must begin under a stationary trusted touch and before native scrolling; recording=${JSON.stringify(interruptionRecording)}`,
+    ).toBe(true);
+    expect(
+      interruptionRecording.transitionEvents.some(
+        ({ type, recordedAt }) =>
+          type === "transitioncancel" &&
+          firstNativeScrollAt !== undefined &&
+          interruptionRecording.touchEndAt !== null &&
+          recordedAt >= firstNativeScrollAt &&
+          recordedAt <= interruptionRecording.touchEndAt,
+      ),
+      `native scrolling must cancel the live CSS settle before touchend; recording=${JSON.stringify(interruptionRecording)}`,
+    ).toBe(true);
+    for (const sample of interruptionRecording.samples) {
+      for (const surface of chromeSurfaces(sample)) {
+        if (surface.phase !== "Tracking" && surface.phase !== "Settling") {
+          continue;
+        }
+        expect(
+          surface.inert,
+          `moving chrome must remain inert during settle interruption; sample=${JSON.stringify(sample)}`,
+        ).toBe(true);
+        expect(
+          surface.ariaHidden,
+          `moving chrome must remain aria-hidden during settle interruption; sample=${JSON.stringify(sample)}`,
+        ).toBe("true");
+      }
+    }
     const visible = await expectChromePhase(page, scrollport, "Visible");
-    for (const surface of [
-      visible.appBar,
-      visible.paneToolbar,
-      visible.nexus,
-    ]) {
+    for (const surface of chromeSurfaces(visible)) {
       expect(surface.inert).toBe(false);
       expect(surface.ariaHidden).toBeNull();
     }
     await expect
       .poll(async () => (await readAudit()).cancels)
       .toBeGreaterThan(0);
+    expectSynchronizedSettle(
+      await readAudit(),
+      "interrupted settle through cancellation",
+    );
 
     await resetAudit();
-    const completedSamples = await dispatchTouchDrag(
+    const { samples: completedSamples } = await dispatchTouchDrag(
       page,
       scrollport,
       -32,
@@ -674,15 +1319,16 @@ async function expectTrustedSettleLifecycle(
       `second partial trusted drag must stop between endpoints; samples=${JSON.stringify(completedSamples)}`,
     ).toBe(true);
     await waitForTransitionRun();
+    await waitForAnimationFrame(page);
     await expectChromePhase(page, scrollport, "Visible");
-    await expect
-      .poll(async () => (await readAudit()).ends)
-      .toBeGreaterThan(0);
-    expect(await readAudit()).toMatchObject({ settlingAccessible: true });
+    await expect.poll(async () => (await readAudit()).ends).toBeGreaterThan(0);
+    const completedAudit = await readAudit();
+    expectSynchronizedSettle(completedAudit, "completed settle");
   } finally {
     await page.evaluate(() => {
       const auditWindow = window as typeof window & {
         __nexusMobileChromeTransitionAudit?: {
+          frame: number;
           listener: EventListener;
         };
       };
@@ -691,6 +1337,7 @@ async function expectTrustedSettleLifecycle(
         document.removeEventListener("transitionrun", audit.listener, true);
         document.removeEventListener("transitionend", audit.listener, true);
         document.removeEventListener("transitioncancel", audit.listener, true);
+        cancelAnimationFrame(audit.frame);
       }
       delete auditWindow.__nexusMobileChromeTransitionAudit;
     });
@@ -701,6 +1348,7 @@ const INTERACTIVE_READER_TARGET = [
   "a[href]",
   "audio[controls]",
   "button",
+  "iframe",
   "input",
   "select",
   "summary",
@@ -726,11 +1374,16 @@ const INTERACTIVE_READER_TARGET = [
   "[role='treeitem']",
   "[tabindex]:not([tabindex='-1'])",
 ].join(",");
+const READER_TAP_REVEAL_SURFACE =
+  "[data-reader-tap-reveal-surface='true']";
 
 async function expectBlankTapReveal(
   page: Page,
   scrollport: Locator,
+  expectPaneToolbar = false,
+  expectRevealSurface = false,
 ): Promise<void> {
+  await expectChromePhase(page, scrollport, "Hidden", expectPaneToolbar);
   const pane = activeWorkspacePane(page);
   const paneId = await pane.getAttribute("data-pane-id");
   if (!paneId) {
@@ -738,8 +1391,12 @@ async function expectBlankTapReveal(
   }
   const href = page.url();
   const dialogCount = await page.getByRole("dialog").count();
-  const position = await scrollport.evaluate(
-    (element, interactiveTargetSelector) => {
+  await expect(scrollport).toBeVisible();
+  const point = await scrollport.evaluate(
+    (
+      element,
+      { interactiveTargetSelector, revealSurfaceSelector },
+    ) => {
       if (!window.getSelection()?.isCollapsed) {
         throw new Error("Blank-canvas tap candidate has a live selection.");
       }
@@ -762,7 +1419,13 @@ async function expectBlankTapReveal(
           if (x <= 0 || y <= 0 || x >= rect.width || y >= rect.height) {
             continue;
           }
-          const target = document.elementFromPoint(rect.left + x, rect.top + y);
+          const clientX = rect.left + x;
+          const clientY = rect.top + y;
+          const target = document.elementFromPoint(clientX, clientY);
+          const revealSurface = target
+            ? target.closest(revealSurfaceSelector)
+            : null;
+          const interactiveBoundary = revealSurface ?? element;
           const interactive = target
             ? target.closest(interactiveTargetSelector)
             : null;
@@ -770,16 +1433,16 @@ async function expectBlankTapReveal(
             !target ||
             !element.contains(target) ||
             (interactive !== null &&
-              interactive !== element &&
-              element.contains(interactive)) ||
+              interactive !== interactiveBoundary &&
+              interactiveBoundary.contains(interactive)) ||
             target.closest("[data-reader-tap-handled='true']") ||
             target.closest("[data-mobile-chrome-phase]")
           ) {
             continue;
           }
           return {
-            x,
-            y,
+            clientX,
+            clientY,
             target: target.outerHTML.slice(0, 300),
           };
         }
@@ -788,20 +1451,134 @@ async function expectBlankTapReveal(
         `Reader has no verified blank-canvas tap point: ${element.outerHTML.slice(0, 500)}`,
       );
     },
-    INTERACTIVE_READER_TARGET,
+    {
+      interactiveTargetSelector: INTERACTIVE_READER_TARGET,
+      revealSurfaceSelector: READER_TAP_REVEAL_SURFACE,
+    },
   );
 
   expect(
-    position.target,
+    point.target,
     "blank-canvas target precondition must identify a real reader descendant",
   ).not.toBe("");
-  await scrollport.tap({ position });
-  await expectChromePhase(page, scrollport, "Visible");
+  await page.evaluate(
+    ({ interactiveTargetSelector, revealSurfaceSelector }) => {
+      type ClickSnapshot = {
+        target: string;
+        defaultPrevented: boolean;
+        interactive: string | null;
+        classifiedInteractive: boolean;
+        revealSurface: string | null;
+        handled: string | null;
+      };
+      type BlankTapAudit = {
+        captured: ClickSnapshot | null;
+        bubbled: ClickSnapshot | null;
+        captureListener: EventListener;
+        bubbleListener: EventListener;
+      };
+      const auditWindow = window as typeof window & {
+        __nexusBlankTapAudit?: BlankTapAudit;
+      };
+      const prior = auditWindow.__nexusBlankTapAudit;
+      if (prior) {
+        document.removeEventListener("click", prior.captureListener, true);
+        window.removeEventListener("click", prior.bubbleListener);
+      }
+      const snapshot = (event: Event): ClickSnapshot => {
+        const target = event.target instanceof Element ? event.target : null;
+        const revealSurface =
+          target?.closest(revealSurfaceSelector) ?? null;
+        const interactive =
+          target?.closest(interactiveTargetSelector) ?? null;
+        return {
+          target: target?.outerHTML.slice(0, 300) ?? String(event.target),
+          defaultPrevented: event.defaultPrevented,
+          interactive: interactive?.outerHTML.slice(0, 300) ?? null,
+          classifiedInteractive:
+            interactive !== null &&
+            (revealSurface === null ||
+              (interactive !== revealSurface &&
+                revealSurface.contains(interactive))),
+          revealSurface:
+            revealSurface?.outerHTML.slice(0, 300) ?? null,
+          handled:
+            target
+              ?.closest("[data-reader-tap-handled='true']")
+              ?.outerHTML.slice(0, 300) ?? null,
+        };
+      };
+      const audit: BlankTapAudit = {
+        captured: null,
+        bubbled: null,
+        captureListener: ((event: Event) => {
+          audit.captured = snapshot(event);
+        }) as EventListener,
+        bubbleListener: ((event: Event) => {
+          audit.bubbled = snapshot(event);
+        }) as EventListener,
+      };
+      document.addEventListener("click", audit.captureListener, true);
+      window.addEventListener("click", audit.bubbleListener);
+      auditWindow.__nexusBlankTapAudit = audit;
+    },
+    {
+      interactiveTargetSelector: INTERACTIVE_READER_TARGET,
+      revealSurfaceSelector: READER_TAP_REVEAL_SURFACE,
+    },
+  );
+  await page.touchscreen.tap(point.clientX, point.clientY);
+  const clickAudit = await page.evaluate(() => {
+    const auditWindow = window as typeof window & {
+      __nexusBlankTapAudit?: {
+        captured: unknown;
+        bubbled: unknown;
+        captureListener: EventListener;
+        bubbleListener: EventListener;
+      };
+    };
+    const audit = auditWindow.__nexusBlankTapAudit;
+    if (!audit) {
+      throw new Error("Blank-tap click audit is missing.");
+    }
+    document.removeEventListener("click", audit.captureListener, true);
+    window.removeEventListener("click", audit.bubbleListener);
+    delete auditWindow.__nexusBlankTapAudit;
+    return {
+      captured: audit.captured,
+      bubbled: audit.bubbled,
+    };
+  });
+  if (expectRevealSurface) {
+    for (const [stage, snapshot] of Object.entries(clickAudit)) {
+      expect(
+        snapshot,
+        `PDF ${stage} click must resolve through its passive reader-surface boundary`,
+      ).toMatchObject({
+        defaultPrevented: false,
+        classifiedInteractive: false,
+        handled: null,
+        revealSurface: expect.stringContaining(
+          "data-reader-tap-reveal-surface",
+        ),
+      });
+    }
+  }
+  try {
+    await expectChromePhase(page, scrollport, "Visible", expectPaneToolbar);
+  } catch (error) {
+    throw new Error(
+      `trusted blank-canvas tap did not reveal chrome; point=${JSON.stringify(point)} click=${JSON.stringify(clickAudit)} after=${JSON.stringify(await readChromeSample(page, scrollport))}; cause=${String(error)}`,
+    );
+  }
   expect(page.url()).toBe(href);
-  await expect(activeWorkspacePane(page)).toHaveAttribute("data-pane-id", paneId);
+  await expect(activeWorkspacePane(page)).toHaveAttribute(
+    "data-pane-id",
+    paneId,
+  );
   await expect(page.getByRole("dialog")).toHaveCount(dialogCount);
   expect(
-    await page.evaluate(() => window.getSelection()?.isCollapsed ?? true),
+    await page.evaluate(() => window.getSelection()?.isCollapsed === true),
   ).toBe(true);
 }
 
@@ -1040,7 +1817,17 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
         pane.locator('[data-mobile-reader-interaction-root="true"]'),
       ).toHaveCount(1);
       await expectRouteFocusOnLandmark(page);
-      await expectChromePhase(page, scrollport, "Visible");
+      await expectChromePhase(
+        page,
+        scrollport,
+        "Visible",
+        format.expectsPaneToolbar,
+      );
+      if (format.expectsPaneToolbar) {
+        await expect(
+          pane.getByRole("button", { name: format.toolbarControlName }),
+        ).toBeVisible();
+      }
 
       if (format.name === "transcript") {
         const segmentList = pane.locator('[class*="transcriptSegments"]');
@@ -1052,7 +1839,11 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
         ).not.toMatch(/auto|scroll/);
       }
 
-      await expectTrustedForwardRetreat(page, scrollport);
+      await expectTrustedForwardRetreat(
+        page,
+        scrollport,
+        format.expectsPaneToolbar,
+      );
       await expect(page.getByRole("banner")).toHaveCount(0);
       await expect(
         page.getByRole("button", { name: /^Open Nexus,/ }),
@@ -1065,8 +1856,14 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
       const trustedDeadZone = await expectTrustedReverseDeadZone(
         page,
         scrollport,
+        format.expectsPaneToolbar,
       );
-      await expectTrustedReverseReveal(page, scrollport, trustedDeadZone);
+      await expectTrustedReverseReveal(
+        page,
+        scrollport,
+        trustedDeadZone,
+        format.expectsPaneToolbar,
+      );
 
       if (format.name === "Web") {
         await expectTrustedForwardRetreat(page, scrollport);
@@ -1074,11 +1871,34 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
         await expectTrustedForwardRetreat(page, scrollport);
         await expectTrustedKeyboardTopRecovery(page, scrollport);
       }
-      await expectTrustedForwardRetreat(page, scrollport);
+      await expectTrustedForwardRetreat(
+        page,
+        scrollport,
+        format.expectsPaneToolbar,
+      );
       if (format.name === "Web") {
         await expectTabSkipsMovingChrome(page, scrollport);
       }
-      await expectBlankTapReveal(page, scrollport);
+      if (format.hasBlankTapSurface) {
+        await expectBlankTapReveal(
+          page,
+          scrollport,
+          format.expectsPaneToolbar,
+          format.name === "PDF",
+        );
+      } else {
+        await pane
+          .getByRole("button", {
+            name: /transcript segment alpha intro line/i,
+          })
+          .tap();
+        await expectChromePhase(
+          page,
+          scrollport,
+          "Hidden",
+          format.expectsPaneToolbar,
+        );
+      }
 
       if (format.name === "Web") {
         const article = readSeed<ArticleSeed>(format.seedFile);
@@ -1191,7 +2011,7 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
         .first();
       await expect(firstPage).toBeVisible({ timeout: 20_000 });
       const geometry = await readContentGeometry(scrollport, firstPage);
-      await expectTrustedForwardRetreat(page, scrollport);
+      await expectTrustedForwardRetreat(page, scrollport, true);
       expect(await readContentGeometry(scrollport, firstPage)).toEqual(
         geometry,
       );
@@ -1251,10 +2071,9 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
       await page.getByRole("button", { name: "Open Nexus, 2 tabs" }).tap();
       await page
         .getByRole("dialog", { name: "Nexus" })
-        .getByRole("button", {
-          name: /E2E linked-items web article seed/,
-        })
-        .first()
+        .locator(
+          '[data-switchboard-row-id="OpenPane:pane-player-reader"]',
+        )
         .tap();
 
       const scrollport =
@@ -1279,7 +2098,20 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
       await page.getByRole("menuitem", { name: "Close player" }).click();
       await expect(player).toHaveCount(0);
       await expectFocusOnVisibleChromeOrLandmark(page);
-      await expectChromePhase(page, scrollport, "Visible");
+      await expect(
+        page
+          .locator(
+            'header[data-pane-chrome-for="pane-player-reader"][data-mobile-chrome-phase]',
+          )
+          .locator("[data-pane-options-trigger]"),
+      ).toBeFocused();
+      const pinned = await expectChromePhase(page, scrollport, "Pinned");
+      for (const surface of chromeSurfaces(pinned)) {
+        expect(surface.progress).toBe(0);
+        expect(surface.inert).toBe(false);
+        expect(surface.ariaHidden).toBeNull();
+      }
+      await expectTrustedForwardRetreat(page, scrollport);
     } finally {
       await removeAudioFromLectern(page, audio.media_id);
     }

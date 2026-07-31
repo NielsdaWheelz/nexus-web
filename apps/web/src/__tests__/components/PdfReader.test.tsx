@@ -549,6 +549,11 @@ describe("PdfReader selection chat destinations", () => {
     expect(contentRef.current).toHaveClass("pdfViewer");
     expect(viewportRef.current).toContainElement(contentRef.current);
     expect(contentRef.current).not.toBe(viewportRef.current);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("pdf-page-text-layer-1"),
+      ).toHaveAttribute("data-reader-tap-reveal-surface", "true"),
+    );
 
     view.unmount();
     expect(viewportRef.current).toBeNull();
@@ -578,6 +583,17 @@ describe("PdfReader selection chat destinations", () => {
       ).toBe("0"),
     );
     prepareScrollableReader(viewport);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("pdf-page-text-layer-1"),
+      ).toHaveAttribute("data-reader-tap-reveal-surface", "true"),
+    );
+    await act(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }),
+    );
     viewport.scrollTop = 80;
     fireEvent.scroll(viewport);
     await waitFor(() =>
