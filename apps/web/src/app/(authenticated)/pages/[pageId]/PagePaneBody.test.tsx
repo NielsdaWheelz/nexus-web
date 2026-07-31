@@ -94,7 +94,7 @@ function App({
                   id: pageId,
                   href: `/pages/${pageId}`,
                 }),
-                dailyNote: { localDate: "2026-07-26" },
+                dailyPage: { localDate: "2026-07-26" },
               }}
             />
           </PanePrimaryChromeProvider>

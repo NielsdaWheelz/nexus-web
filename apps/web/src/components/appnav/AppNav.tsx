@@ -4,10 +4,15 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type MouseEvent,
 } from "react";
-import { useWorkspaceStore } from "@/lib/workspace/store";
+import {
+  useWorkspaceStore,
+  WORKSPACE_PANE_LIMIT_FEEDBACK_KEY,
+} from "@/lib/workspace/store";
+import { useFeedback } from "@/components/feedback/Feedback";
 import { getWorkspacePrimaryPanes } from "@/lib/workspace/schema";
 import { getPaneRouteIcon } from "@/lib/panes/paneRouteTable";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
@@ -17,6 +22,12 @@ import { requestNexusOpen } from "@/lib/nexus/events";
 import { DEFAULT_KEYBINDINGS } from "@/lib/keybindings";
 import { useKeybinding, useKeybindingLabel } from "@/lib/keybindingsProvider";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import {
+  createDailyAppendNoteEntry,
+  type OpenDailyPageActivation,
+  type OpenDailyPageTarget,
+  useOpenDailyPage,
+} from "@/lib/notes/openDailyPage";
 import {
   NAV_ACCOUNT,
   NAV_HOME,
@@ -46,6 +57,10 @@ const NAV_ACCOUNT_ITEM = toNavItem(NAV_ACCOUNT);
 export default function AppNav() {
   const isMobile = useIsMobileViewport();
   const { state, activateWorkspaceTarget } = useWorkspaceStore();
+  const openDailyPage = useOpenDailyPage();
+  const openDailyPageRef = useRef(openDailyPage);
+  openDailyPageRef.current = openDailyPage;
+  const feedback = useFeedback();
 
   const [collapsed, setCollapsed] = useState(false);
   const commandCombo =
@@ -121,6 +136,65 @@ export default function AppNav() {
       }),
     [],
   );
+  const openRailDailyPage = useCallback(
+    (
+      target: OpenDailyPageTarget,
+      activation: OpenDailyPageActivation,
+    ) => {
+      const attempt = (exactTarget: OpenDailyPageTarget) => {
+        const opened = openDailyPageRef.current(exactTarget, activation);
+        if (opened.activation.kind !== "Rejected") {
+          feedback.dismissByDedupeKey(WORKSPACE_PANE_LIMIT_FEEDBACK_KEY);
+          return;
+        }
+        const frozenTarget = {
+          ...exactTarget,
+          localDate: opened.localDate,
+        };
+        feedback.show({
+          severity: "warning",
+          title: "Pane limit reached",
+          message: "Close a pane, then retry.",
+          dedupeKey: WORKSPACE_PANE_LIMIT_FEEDBACK_KEY,
+          action: { label: "Retry", onClick: () => attempt(frozenTarget) },
+        });
+      };
+      attempt(target);
+    },
+    [feedback],
+  );
+  const openQuickNote = useCallback(
+    (event: MouseEvent<HTMLButtonElement>) => {
+      openRailDailyPage(
+        {
+          kind: "OpenDailyPage",
+          localDate: "Today",
+          entry: createDailyAppendNoteEntry(),
+        },
+        {
+          disposition: { kind: "Adopt" },
+          modality: event.detail === 0 ? "Keyboard" : "Pointer",
+        },
+      );
+    },
+    [openRailDailyPage],
+  );
+  const viewToday = useCallback(
+    (event: MouseEvent<HTMLButtonElement>) => {
+      openRailDailyPage(
+        {
+          kind: "OpenDailyPage",
+          localDate: "Today",
+          entry: { kind: "View" },
+        },
+        {
+          disposition: { kind: "Adopt" },
+          modality: event.detail === 0 ? "Keyboard" : "Pointer",
+        },
+      );
+    },
+    [openRailDailyPage],
+  );
 
   if (isMobile) {
     return <MobilePaneBar />;
@@ -138,6 +212,8 @@ export default function AppNav() {
       commandHint={commandHint}
       commandCombo={commandCombo}
       onOpenCommand={openCommand}
+      onQuickNote={openQuickNote}
+      onToday={viewToday}
       onOpenAdd={openAdd}
       onNavigate={onNavigate}
     />

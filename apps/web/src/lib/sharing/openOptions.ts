@@ -1,6 +1,6 @@
 import { present } from "@/lib/api/presence";
 import type { ShareOpenOptions } from "@/lib/sharing/types";
-import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
+import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 
 export function paneShareOpenOptions(
   triggerEl: HTMLButtonElement | null,
@@ -8,7 +8,7 @@ export function paneShareOpenOptions(
 ): ShareOpenOptions {
   return {
     returnFocusTo: () => triggerEl,
-    returnFocusFallback: present(() => findPaneChromeFocusTarget(paneId)),
+    returnFocusFallback: present(() => findPaneLandmarkFocusTarget(paneId)),
   };
 }
 

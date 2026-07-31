@@ -17,6 +17,7 @@ import {
 } from "vitest";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
+import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { PANE_SEARCH_REQUESTED_EVENT } from "@/lib/panes/paneSearchEvents";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
@@ -177,7 +178,8 @@ function mockApi() {
           data: {
             id: body.page_id,
             title: "Untitled",
-            dailyNote: null,
+            updatedAt: null,
+            dailyPage: null,
           },
         });
       }
@@ -234,7 +236,7 @@ function mockViewport(initialMobile: boolean) {
 }
 
 function WorkspaceProbe() {
-  const { state } = useWorkspaceStore();
+  const { state, pendingPaneEntryDeliveryByPaneId } = useWorkspaceStore();
   const panes = getWorkspacePrimaryPanes(state);
   const active = panes.find(
     (pane) => pane.id === state.activePrimaryPaneId,
@@ -244,6 +246,12 @@ function WorkspaceProbe() {
       <output data-testid="workspace-pane-count">{panes.length}</output>
       <output data-testid="workspace-active-href">
         {active?.currentVisit.href ?? ""}
+      </output>
+      <output data-testid="workspace-pending-entry">
+        {JSON.stringify(
+          Array.from(pendingPaneEntryDeliveryByPaneId.values())[0]?.entry ??
+            null,
+        )}
       </output>
     </>
   );
@@ -276,32 +284,39 @@ function renderNexus(input: {
   viewport = mockViewport(mobile);
   return render(
     withRenderEnvironment(
-      <MobileChromeProvider>
-        {input.readerScrollportProbe ? <ReaderScrollportProbe /> : null}
-        <KeybindingsProvider>
-          <FeedbackProvider>
-            <PaneReturnMementoProvider>
-              <WorkspaceStoreProvider
-                workspacePrimaryMetrics={workspacePrimaryMetrics}
-                initialState={
-                  input.state ??
-                  createDefaultWorkspaceState(
-                    "/libraries",
-                    workspacePrimaryMetrics,
-                  )
-                }
-              >
-                <LecternProvider>
-                  <ShareControllerProvider>
-                    <WorkspaceProbe />
-                    <Nexus />
-                  </ShareControllerProvider>
-                </LecternProvider>
-              </WorkspaceStoreProvider>
-            </PaneReturnMementoProvider>
-          </FeedbackProvider>
-        </KeybindingsProvider>
-      </MobileChromeProvider>,
+      <AuthenticatedAccountProvider
+        account={{
+          accountId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          calendarTimeZone: "UTC",
+        }}
+      >
+        <MobileChromeProvider>
+          {input.readerScrollportProbe ? <ReaderScrollportProbe /> : null}
+          <KeybindingsProvider>
+            <FeedbackProvider>
+              <PaneReturnMementoProvider>
+                <WorkspaceStoreProvider
+                  workspacePrimaryMetrics={workspacePrimaryMetrics}
+                  initialState={
+                    input.state ??
+                    createDefaultWorkspaceState(
+                      "/libraries",
+                      workspacePrimaryMetrics,
+                    )
+                  }
+                >
+                  <LecternProvider>
+                    <ShareControllerProvider>
+                      <WorkspaceProbe />
+                      <Nexus />
+                    </ShareControllerProvider>
+                  </LecternProvider>
+                </WorkspaceStoreProvider>
+              </PaneReturnMementoProvider>
+            </FeedbackProvider>
+          </KeybindingsProvider>
+        </MobileChromeProvider>
+      </AuthenticatedAccountProvider>,
       { initialViewport: mobile ? "mobile" : "desktop" },
     ),
   );
@@ -709,6 +724,46 @@ describe("Nexus shell contracts", () => {
           init?.method === "POST",
       ),
     ).toHaveLength(1);
+  });
+
+  it("retries a rejected desktop Quick Note as the same AppendNote capability", async () => {
+    renderNexus({ state: maxPaneState() });
+
+    act(() =>
+      requestNexusOpen({
+        kind: "QuickAction",
+        actionId: "Nexus.Quick.Note",
+      }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Tab limit reached" }),
+    ).toBeVisible();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Manage tabs" }),
+    );
+    await userEvent.click(
+      screen.getAllByRole("button", { name: "Actions for Libraries" })[0]!,
+    );
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: "Close Libraries" }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Open" }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("workspace-active-href")).toHaveTextContent(
+        /^\/daily\/\d{4}-\d{2}-\d{2}$/,
+      ),
+    );
+    expect(screen.getByTestId("workspace-pending-entry")).toHaveTextContent(
+      /"kind":"AppendNote"/,
+    );
+    expect(screen.getByTestId("workspace-pending-entry")).toHaveTextContent(
+      /"noteId":"[^"]+"/,
+    );
+    expect(screen.getByTestId("workspace-pending-entry")).toHaveTextContent(
+      /"clientMutationId":"[^"]+"/,
+    );
   });
 
   it("keeps the mobile Import draft when the shared workflow projects onto desktop", async () => {

@@ -1,4 +1,4 @@
-# Overlays Module
+# Mobile Modal Surfaces
 
 ## Scope
 
@@ -10,12 +10,13 @@ stylesheets, `apps/web/src/components/ui/useMobileModalLifecycle.ts`, and
 
 Established by `docs/cutovers/mobile-sheet-keyboard-unification-hard-cutover.md`.
 The current mobile Nexus projection is defined by
-`docs/cutovers/mobile-nexus-full-screen-task-hard-cutover.md`.
+`docs/cutovers/mobile-nexus-full-screen-task-hard-cutover.md` and
+`docs/cutovers/daily-pages-quick-capture-hard-cutover.md`.
 
 ## MobileSheet Capability Contract
 
-`MobileSheet` is the single mobile bottom-sheet owner. For every mobile bottom
-sheet it owns:
+`MobileSheet` is the single mobile bottom-sheet owner. It composes
+`useMobileModalLifecycle` and owns:
 
 - portal to `document.body`
 - backdrop scrim with tap-to-dismiss
@@ -148,11 +149,13 @@ not `MobileSheet` or `MobileFullScreenTask`.
 ## Mobile Nexus
 
 Mobile Nexus is the sole mobile global-access task. One mounted
-`MobileFullScreenTask` contains the unchanged Root, Find, actions, capture,
-acquisition, Add, and recovery pages; those pages replace one another inside
-the task. Their existing headers are the only headers and their content region
-is the only scroll owner. Mobile Nexus has no global navigation drawer, bottom
-sheet, outside-click target, swipe dismissal, or stacked workflow task.
+`SwitchboardTask` uses `MobileFullScreenTask` for the Root, Find, actions,
+creation, Add, and recovery pages; those pages replace one another inside the
+task. Their existing headers are the only headers and their content region is
+the only scroll owner. Quick Note uses the task-owned gesture-time handoff only
+until the destination Page editor claims input. Mobile Nexus has no global
+navigation drawer, bottom sheet, outside-click target, swipe dismissal, or
+stacked workflow task.
 
 Nested Back, Escape, browser Back, and Android Back request the Nexus
 controller's existing guarded transition: a nested page pops one level, Root
@@ -171,6 +174,9 @@ named overlay primitives and own one-layer Back/Escape dismissal.
 
 ## Underlying Primitives
 
+- `useMobileModalLifecycle` is the shared mobile composition owner for dialog,
+  history, keyboard, viewport publication, and return focus. It renders no
+  markup and owns no geometry.
 - `useDialogOverlay` is the modal contract for all modal overlays, mobile and
   desktop. It owns modal-stack projection, shared scroll locking, focus entry,
   trapping/return, and topmost Escape. Backdrop-click dismissal stays

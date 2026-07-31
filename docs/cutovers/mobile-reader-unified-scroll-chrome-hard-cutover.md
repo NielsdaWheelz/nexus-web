@@ -1,6 +1,7 @@
 # Mobile Reader Unified Scroll Chrome Hard Cutover
 
-Status: SPEC — implementation and device acceptance required
+Status: Implemented in source — focused browser, type, and lint proof complete;
+physical device, real-stack, CI, deployment, and production proof pending
 
 Type: hard cutover
 

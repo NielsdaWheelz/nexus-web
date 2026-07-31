@@ -8,8 +8,6 @@ function completionLabel(retained: RetainedActivation): string {
     return "Your destination is ready to open.";
   }
   switch (retained.completion.value.kind) {
-    case "TodayCapture":
-      return "Your note was saved.";
     case "Page":
       return "Your page was created.";
     case "Library":

@@ -111,6 +111,7 @@ import {
 } from "@/lib/workspace/store";
 import { useShareController } from "@/lib/sharing/controller";
 import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
+import type { WorkspaceTarget } from "@/lib/workspace/targetActivation";
 import {
   ResourceOpenablesContractDefect,
   searchOpenableResources,
@@ -137,6 +138,7 @@ import type {
 import { SWITCHBOARD_PLACES } from "@/lib/switchboard/places";
 import { absent, present, type Presence } from "@/lib/api/presence";
 import { createNotePage } from "@/lib/notes/api";
+import { useOpenDailyPage } from "@/lib/notes/openDailyPage";
 import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import { createLibrary } from "@/lib/libraries/client";
 import {
@@ -147,10 +149,6 @@ import {
   useAddContentSession,
   type AddContentSessionController,
 } from "./useAddContentSession";
-import {
-  useTodayCaptureSession,
-  type TodayCaptureSessionController,
-} from "./useTodayCaptureSession";
 
 interface NexusHistoryResponse {
   data: {
@@ -315,7 +313,6 @@ export interface NexusController {
   query: string;
   page: NexusPage;
   addSession: AddContentSessionController;
-  todaySession: TodayCaptureSessionController;
   dialogLabel: string;
   focusKey: string;
   dismissalConfirmation: AddDismissalConfirmation;
@@ -358,6 +355,7 @@ export interface NexusController {
   retryRetainedActivation(): void;
   cancelRetainedActivation(): void;
   close(): void;
+  completeMobileQuickNoteNavigation(): void;
   dismissAccepted(): void;
   guardClose(): DismissDecision;
   escape(): void;
@@ -399,7 +397,7 @@ export function useNexusController(): NexusController {
   // case calls it. useLectern requires a LecternProvider ancestor (AuthenticatedShell).
   const { placeItems } = useLectern();
   const addSession = useAddContentSession();
-  const todaySession = useTodayCaptureSession();
+  const openDailyPage = useOpenDailyPage();
   const {
     start: startAddSession,
     backToContent: backToAddContent,
@@ -466,7 +464,6 @@ export function useNexusController(): NexusController {
   const previousAddMutationKindRef = useRef(
     addSession.state.mutation.kind,
   );
-  const previousTodaySaveStatusRef = useRef(todaySession.saveStatus);
   const [desktopCommitEpoch, setDesktopCommitEpoch] = useState(0);
 
   const {
@@ -502,17 +499,6 @@ export function useNexusController(): NexusController {
     addSession.state.mutation.kind,
     invalidateDesktopOpenablesCache,
   ]);
-
-  useEffect(() => {
-    const current = todaySession.saveStatus;
-    if (
-      previousTodaySaveStatusRef.current !== current &&
-      current === "saved"
-    ) {
-      invalidateDesktopOpenablesCache();
-    }
-    previousTodaySaveStatusRef.current = current;
-  }, [invalidateDesktopOpenablesCache, todaySession.saveStatus]);
 
   const parsedQuery = useMemo(() => parseNexusFindQuery(query), [query]);
   const requestedHistoryPath = useMemo<ApiPath | null>(() => {
@@ -1124,6 +1110,7 @@ export function useNexusController(): NexusController {
       closePane,
       requestPaneSearch: dispatchPaneSearchRequest,
       openShare,
+      openDailyPage,
       shareOptions: () => {
         const returnTarget =
           document.activeElement instanceof HTMLElement
@@ -1148,6 +1135,7 @@ export function useNexusController(): NexusController {
       restorePane,
       closePane,
       openShare,
+      openDailyPage,
       state.activePrimaryPaneId,
     ],
   );
@@ -1247,7 +1235,7 @@ export function useNexusController(): NexusController {
 
   const dispatchWorkspaceTarget = useCallback(
     (input: {
-      target: RetainedActivation["target"];
+      target: WorkspaceTarget;
       source: RetainedActivation["source"];
       completion?: Presence<CommittedWorkflow>;
       returnTo: RetainedActivation["returnTo"];
@@ -1441,15 +1429,31 @@ export function useNexusController(): NexusController {
               `Unknown Switchboard destination: ${item.destinationId}`,
             );
           }
-          dispatchWorkspaceTarget({
-            target: {
-              href: destination.href,
-              labelHint: destination.label,
-            },
-            source: "Find",
-            returnTo,
-            activation,
-          });
+          if (destination.id === "today") {
+            void dispatchOwned(
+              {
+                kind: "OpenDailyPage",
+                localDate: "Today",
+                entry: { kind: "View" },
+              },
+              activation,
+              {
+                source: "Find",
+                completion: absent(),
+                returnTo,
+              },
+            ).catch(fail);
+          } else {
+            dispatchWorkspaceTarget({
+              target: {
+                href: destination.href,
+                labelHint: destination.label,
+              },
+              source: "Find",
+              returnTo,
+              activation,
+            });
+          }
           return;
         }
         case "Resource": {
@@ -1476,7 +1480,9 @@ export function useNexusController(): NexusController {
     },
     [
       activatePane,
+      dispatchOwned,
       dispatchWorkspaceTarget,
+      fail,
       feedback,
       panes,
       restoreClosedPane,
@@ -1488,6 +1494,22 @@ export function useNexusController(): NexusController {
 
   const openSwitchboardPlace = useCallback(
     (destination: Destination) => {
+      if (destination.id === "today") {
+        void dispatchOwned(
+          {
+            kind: "OpenDailyPage",
+            localDate: "Today",
+            entry: { kind: "View" },
+          },
+          PROGRAMMATIC_ADOPT_NEXUS_TARGET_ACTIVATION,
+          {
+            source: "Place",
+            completion: absent(),
+            returnTo: { kind: "Root" },
+          },
+        ).catch(fail);
+        return;
+      }
       dispatchWorkspaceTarget({
         target: { href: destination.href, labelHint: destination.label },
         source: "Place",
@@ -1495,7 +1517,7 @@ export function useNexusController(): NexusController {
         activation: PROGRAMMATIC_ADOPT_NEXUS_TARGET_ACTIVATION,
       });
     },
-    [dispatchWorkspaceTarget],
+    [dispatchOwned, dispatchWorkspaceTarget, fail],
   );
 
   const switchboardItemActions = useCallback(
@@ -1528,12 +1550,16 @@ export function useNexusController(): NexusController {
     (action: NexusQuickAction) => {
       const adopt = PROGRAMMATIC_ADOPT_NEXUS_TARGET_ACTIVATION;
       switch (action.target.kind) {
-        case "TodayCapture":
-          setPage({
-            kind: "TodayCapture",
-            sessionId: todaySession.start(),
-            activation: adopt,
-          });
+        case "OpenDailyPage":
+          void dispatchOwned(
+            action.target,
+            adopt,
+            {
+              source: "Place",
+              completion: absent(),
+              returnTo: { kind: "Root" },
+            },
+          ).catch(fail);
           return;
         case "CreatePage":
           runPageCreation(crypto.randomUUID(), adopt);
@@ -1571,7 +1597,13 @@ export function useNexusController(): NexusController {
         }
       }
     },
-    [dispatchWorkspaceTarget, runPageCreation, startAddSession, todaySession],
+    [
+      dispatchOwned,
+      dispatchWorkspaceTarget,
+      fail,
+      runPageCreation,
+      startAddSession,
+    ],
   );
 
   const handleWorkflowRequest = useCallback(
@@ -1590,13 +1622,6 @@ export function useNexusController(): NexusController {
             activation,
           });
           return;
-        case "OpenTodayCapture":
-          setPage({
-            kind: "TodayCapture",
-            sessionId: todaySession.start(),
-            activation,
-          });
-          return;
         case "CreatePage":
           runPageCreation(crypto.randomUUID(), activation);
           return;
@@ -1611,7 +1636,7 @@ export function useNexusController(): NexusController {
           return;
       }
     },
-    [runPageCreation, startAddSession, todaySession],
+    [runPageCreation, startAddSession],
   );
 
   const selectEntry = useCallback(
@@ -1678,33 +1703,25 @@ export function useNexusController(): NexusController {
     ],
   );
 
-  // TodayCapturePanel opens its post-action pane through the one dispatch owner.
   // AddPanel uses openAddTarget,
   // whose guarded Navigate intent closes Add after the destination accepts focus.
   const openTarget = useCallback(
     (target: NexusTarget) => {
       const activation =
-        page.kind === "TodayCapture" || page.kind === "Add"
+        page.kind === "Add"
           ? page.activation
           : PROGRAMMATIC_ADOPT_NEXUS_TARGET_ACTIVATION;
       void dispatchOwned(
         target,
         activation,
         {
-          source: page.kind === "TodayCapture" ? "TodayCapture" : "Find",
-          completion:
-            page.kind === "TodayCapture" &&
-            todaySession.committedReplayId !== null
-              ? present({
-                  kind: "TodayCapture",
-                  replayId: todaySession.committedReplayId,
-                })
-              : absent(),
+          source: "Find",
+          completion: absent(),
           returnTo,
         },
       ).catch(fail);
     },
-    [dispatchOwned, fail, page, returnTo, todaySession.committedReplayId],
+    [dispatchOwned, fail, page, returnTo],
   );
 
   const openActions = useCallback(() => {
@@ -1902,9 +1919,6 @@ export function useNexusController(): NexusController {
   const guardExit = useCallback(
     (intent: ExitIntent): DismissDecision => {
       if (pendingDismissal) return "blocked";
-      if (page.kind === "TodayCapture") {
-        return todaySession.checkpointForDismissal();
-      }
       if (page.kind !== "Add") return "accepted";
       if (addSession.state.mutation.kind === "Running") {
         setPendingDismissal({ confirmation: "Stop", intent });
@@ -1924,7 +1938,6 @@ export function useNexusController(): NexusController {
       addSession.state.mutation.kind,
       page.kind,
       pendingDismissal,
-      todaySession,
     ],
   );
 
@@ -1957,6 +1970,11 @@ export function useNexusController(): NexusController {
     () => requestExit({ kind: "Close" }),
     [requestExit],
   );
+  const completeMobileQuickNoteNavigation = useCallback(() => {
+    suppressReturnFocusRef.current = true;
+    discardAddSession();
+    setOpen(false);
+  }, [discardAddSession]);
   const openRoot = useCallback(
     () => {
       if (
@@ -2011,13 +2029,17 @@ export function useNexusController(): NexusController {
       return;
     }
     const retained = page.retained;
-    dispatchWorkspaceTarget({
-      target: retained.target,
-      source: retained.source,
-      completion: retained.completion,
-      returnTo: retained.returnTo,
-      activation: retained.activation,
-      onAccepted: () => {
+    void dispatchOwned(
+      retained.target,
+      retained.activation,
+      {
+        source: retained.source,
+        completion: retained.completion,
+        returnTo: retained.returnTo,
+      },
+    )
+      .then((outcome) => {
+        if (outcome.kind !== "NavigationAccepted") return;
         setPage(
           retained.returnTo.kind === "Find"
             ? {
@@ -2027,9 +2049,9 @@ export function useNexusController(): NexusController {
               }
             : { kind: "Root" },
         );
-      },
-    });
-  }, [dispatchWorkspaceTarget, page]);
+      })
+      .catch(fail);
+  }, [dispatchOwned, fail, page]);
   const cancelRetainedActivation = useCallback(() => {
     setPage((current) => {
       if (
@@ -2047,30 +2069,6 @@ export function useNexusController(): NexusController {
         : { kind: "Root" };
     });
   }, []);
-  useEffect(() => {
-    const replayId = todaySession.committedReplayId;
-    if (replayId === null) return;
-    setPage((current) => {
-      if (
-        (current.kind !== "ActivationBlocked" &&
-          current.kind !== "ManageTabs") ||
-        current.retained.source !== "TodayCapture" ||
-        current.retained.completion.kind === "Present"
-      ) {
-        return current;
-      }
-      return {
-        ...current,
-        retained: {
-          ...current.retained,
-          completion: present({
-            kind: "TodayCapture",
-            replayId,
-          }),
-        },
-      };
-    });
-  }, [todaySession.committedReplayId]);
   const dismissAccepted = useCallback(
     () => performExit({ kind: "Close" }),
     [performExit],
@@ -2163,11 +2161,6 @@ export function useNexusController(): NexusController {
       }
       if (page.kind === "Find") {
         return container.querySelector<HTMLElement>('input[type="search"]');
-      }
-      if (page.kind === "TodayCapture") {
-        return container.querySelector<HTMLElement>(
-          '[role="textbox"][aria-label="Quick note to today"]',
-        );
       }
       if (page.kind === "CreateLibrary") {
         return container.querySelector<HTMLElement>(
@@ -2265,7 +2258,17 @@ export function useNexusController(): NexusController {
         const destination = DESTINATIONS.find((entry) => entry.id === actionId);
         const target: NexusTarget | null =
           actionId === "today"
-            ? { kind: "OpenToday" }
+            ? {
+                kind: "OpenDailyPage",
+                localDate: "Today",
+                entry: { kind: "View" },
+              }
+            : actionId === "Nexus.Quick.Note"
+              ? {
+                  kind: "OpenDailyPage",
+                  localDate: "Today",
+                  entry: { kind: "AppendNote" },
+                }
             : destination
               ? {
                   kind: "InternalHref",
@@ -2379,7 +2382,6 @@ export function useNexusController(): NexusController {
     query,
     page,
     addSession,
-    todaySession,
     dialogLabel,
     focusKey,
     dismissalConfirmation,
@@ -2424,6 +2426,7 @@ export function useNexusController(): NexusController {
     retryRetainedActivation,
     cancelRetainedActivation,
     close,
+    completeMobileQuickNoteNavigation,
     dismissAccepted,
     guardClose,
     escape,

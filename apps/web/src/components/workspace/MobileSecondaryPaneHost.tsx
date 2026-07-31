@@ -23,7 +23,7 @@ import {
 import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { useMobileChrome } from "@/lib/workspace/mobileChrome";
-import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
+import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import styles from "./MobileSecondaryPaneHost.module.css";
 
 interface MobileSecondaryPaneHostProps {
@@ -130,7 +130,7 @@ function MobileSecondaryPanePresentation({
         )
       }
       returnFocusTo={returnFocusTo}
-      returnFocusFallback={() => findPaneChromeFocusTarget(primaryPaneId)}
+      returnFocusFallback={() => findPaneLandmarkFocusTarget(primaryPaneId)}
       skipReturnFocus={() =>
         Boolean(transientSurface && !transientExpanded)
       }

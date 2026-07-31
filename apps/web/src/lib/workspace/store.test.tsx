@@ -35,6 +35,23 @@ const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
   primaryMinWidthPx: 684,
   primaryDefaultWidthPx: 684,
 };
+const DAILY_HREF = "/daily/2026-07-30";
+const PANE_ENTRY_A = {
+  activationId: "activation-a",
+  entry: {
+    kind: "AppendNote" as const,
+    noteId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    clientMutationId: "mutation-a",
+  },
+};
+const PANE_ENTRY_B = {
+  activationId: "activation-b",
+  entry: {
+    kind: "AppendNote" as const,
+    noteId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    clientMutationId: "mutation-b",
+  },
+};
 
 type WorkspaceStore = ReturnType<typeof useWorkspaceStore>;
 let nextVisitIndex = 1;
@@ -371,6 +388,174 @@ describe("WorkspaceStoreProvider", () => {
       expect(primaryPanes(workspace().state).find((pane) => pane.id === originPaneId)?.currentVisit.href).toBe("/conversations");
     });
     flushWorkspaceSession();
+  });
+
+  it("supersedes an unclaimed entry, fences its stale acknowledgement, and lets View cancel the replacement", async () => {
+    const workspace = await mountWorkspaceStore(DAILY_HREF);
+    const paneId = workspace().state.activePrimaryPaneId;
+
+    act(() => {
+      activateTarget(workspace(), {
+        target: { href: DAILY_HREF },
+        disposition: { kind: "Adopt" },
+        paneEntryActivation: PANE_ENTRY_A,
+      });
+    });
+    await waitFor(() =>
+      expect(
+        workspace().pendingPaneEntryDeliveryByPaneId.get(paneId)?.activationId,
+      ).toBe(PANE_ENTRY_A.activationId),
+    );
+    const staleDelivery =
+      workspace().pendingPaneEntryDeliveryByPaneId.get(paneId)!;
+
+    act(() => {
+      activateTarget(workspace(), {
+        target: { href: DAILY_HREF },
+        disposition: { kind: "Adopt" },
+        paneEntryActivation: PANE_ENTRY_B,
+      });
+    });
+    await waitFor(() =>
+      expect(
+        workspace().pendingPaneEntryDeliveryByPaneId.get(paneId)?.activationId,
+      ).toBe(PANE_ENTRY_B.activationId),
+    );
+    expect(
+      workspace().cancelledPaneEntryActivationIds.has(PANE_ENTRY_A.activationId),
+    ).toBe(true);
+    expect(
+      workspace().cancelledPaneEntryActivationIds.has(PANE_ENTRY_B.activationId),
+    ).toBe(false);
+
+    act(() => workspace().acknowledgePaneEntryDelivery(staleDelivery));
+    expect(
+      workspace().pendingPaneEntryDeliveryByPaneId.get(paneId)?.activationId,
+    ).toBe(PANE_ENTRY_B.activationId);
+
+    act(() => {
+      activateTarget(workspace(), {
+        target: { href: DAILY_HREF },
+        disposition: { kind: "Adopt" },
+        paneEntryActivation: {
+          activationId: "activation-view",
+          entry: null,
+        },
+      });
+    });
+    await waitFor(() =>
+      expect(workspace().pendingPaneEntryDeliveryByPaneId.has(paneId)).toBe(
+        false,
+      ),
+    );
+    expect(
+      workspace().cancelledPaneEntryActivationIds.has(PANE_ENTRY_B.activationId),
+    ).toBe(true);
+  });
+
+  it("deduplicates activation IDs for the provider lifetime", async () => {
+    const workspace = await mountWorkspaceStore(DAILY_HREF);
+    const paneId = workspace().state.activePrimaryPaneId;
+
+    act(() => {
+      activateTarget(workspace(), {
+        target: { href: DAILY_HREF },
+        disposition: { kind: "Adopt" },
+        paneEntryActivation: PANE_ENTRY_A,
+      });
+    });
+    await waitFor(() =>
+      expect(
+        workspace().pendingPaneEntryDeliveryByPaneId.get(paneId)?.activationId,
+      ).toBe(PANE_ENTRY_A.activationId),
+    );
+    act(() =>
+      workspace().acknowledgePaneEntryDelivery(
+        workspace().pendingPaneEntryDeliveryByPaneId.get(paneId)!,
+      ),
+    );
+
+    act(() => {
+      for (let index = 0; index < 300; index += 1) {
+        activateTarget(workspace(), {
+          target: { href: DAILY_HREF },
+          disposition: { kind: "Adopt" },
+          paneEntryActivation: {
+            activationId: `intervening-${index}`,
+            entry: null,
+          },
+        });
+      }
+      activateTarget(workspace(), {
+        target: { href: DAILY_HREF },
+        disposition: { kind: "Adopt" },
+        paneEntryActivation: PANE_ENTRY_A,
+      });
+    });
+
+    await waitFor(() =>
+      expect(workspace().pendingPaneEntryDeliveryByPaneId.has(paneId)).toBe(
+        false,
+      ),
+    );
+  });
+
+  it("does not restore a queued entry after its visit changes or pane closes", async () => {
+    const workspace = await mountWorkspaceStore(DAILY_HREF);
+    const paneId = workspace().state.activePrimaryPaneId;
+
+    act(() => {
+      activateTarget(workspace(), {
+        target: { href: DAILY_HREF },
+        disposition: { kind: "Adopt" },
+        paneEntryActivation: PANE_ENTRY_A,
+      });
+      workspace().navigatePane(paneId, "/notes");
+    });
+    await waitFor(() => {
+      expect(activeHref(workspace())).toBe("/notes");
+      expect(workspace().pendingPaneEntryDeliveryByPaneId.has(paneId)).toBe(
+        false,
+      );
+    });
+
+    act(() => workspace().goBackPane(paneId));
+    await waitFor(() => expect(activeHref(workspace())).toBe(DAILY_HREF));
+    expect(workspace().pendingPaneEntryDeliveryByPaneId.has(paneId)).toBe(false);
+
+    act(() => {
+      activateTarget(workspace(), {
+        target: { href: DAILY_HREF },
+        disposition: { kind: "Adopt" },
+        paneEntryActivation: PANE_ENTRY_B,
+      });
+    });
+    await waitFor(() =>
+      expect(workspace().pendingPaneEntryDeliveryByPaneId.has(paneId)).toBe(
+        true,
+      ),
+    );
+    act(() => workspace().closePane(paneId));
+    await waitFor(() => {
+      expect(workspace().state.primaryPanesById[paneId]).toBeUndefined();
+      expect(workspace().pendingPaneEntryDeliveryByPaneId.has(paneId)).toBe(
+        false,
+      );
+    });
+    expect(
+      workspace().cancelledPaneEntryActivationIds.has(PANE_ENTRY_B.activationId),
+    ).toBe(true);
+
+    act(() => {
+      expect(workspace().restoreClosedPane(paneId)).toEqual({
+        kind: "Restored",
+        paneId,
+      });
+    });
+    await waitFor(() =>
+      expect(workspace().state.primaryPanesById[paneId]).toBeDefined(),
+    );
+    expect(workspace().pendingPaneEntryDeliveryByPaneId.has(paneId)).toBe(false);
   });
 
   it("opens a pane after the opener and activates it", async () => {

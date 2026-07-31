@@ -3,8 +3,9 @@ import { DESTINATION_REGISTRY } from "@/lib/navigation/destinations";
 import { SWITCHBOARD_PLACES } from "./places";
 
 describe("Switchboard Places", () => {
-  it("projects the fixed six identities from the destination registry", () => {
+  it("projects the fixed seven identities from the destination registry", () => {
     expect(SWITCHBOARD_PLACES.map((place) => place.label)).toEqual([
+      "Today",
       "Lectern",
       "Libraries",
       "Browse",

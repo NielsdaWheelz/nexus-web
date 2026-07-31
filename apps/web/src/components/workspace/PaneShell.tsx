@@ -1072,7 +1072,7 @@ export default function PaneShell({
     <section
       className={styles.paneShell}
       aria-labelledby={landmarkLabelId}
-      data-pane-activation-focus="true"
+      data-pane-focus-landmark="true"
       data-testid="pane-shell-root"
       data-pane-shell="true"
       data-header-kind={header.kind}

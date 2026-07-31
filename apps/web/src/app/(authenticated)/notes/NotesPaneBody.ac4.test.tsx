@@ -1,19 +1,72 @@
 import { act, fireEvent, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ReactNode } from "react";
 import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
-import { stubFetch, wasFetchPathCalled } from "@/__tests__/helpers/fetch";
+import {
+  fetchInputPath,
+  stubFetch,
+  wasFetchPathCalled,
+} from "@/__tests__/helpers/fetch";
+import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
 import { PanePrimaryChromeProvider } from "@/components/workspace/PanePrimaryChrome";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
+import { formatLocalDateInTimeZone } from "@/lib/localDate";
 import { ResolvedPaneBodyMarker } from "@/lib/panes/paneRenderRegistry";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import {
-  parseWorkspaceTargetActivationMessage,
-  setWorkspaceTargetActivationReceiverReady,
-} from "@/lib/workspace/workspaceTargetActivationIngress";
+  createDefaultWorkspaceState,
+  getWorkspacePrimaryPanes,
+} from "@/lib/workspace/schema";
+import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
+import {
+  useWorkspaceStore,
+  WorkspaceStoreProvider,
+} from "@/lib/workspace/store";
+import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
 import NotesPaneBody from "./NotesPaneBody";
 
-const TODAY_PAGE_ID = "11111111-0000-4000-8000-000000000001";
 const HYDRATED_PAGE_ID = "22222222-0000-4000-8000-000000000002";
+const WORKSPACE_METRICS: WorkspacePrimaryMetrics = {
+  primaryMinWidthPx: 684,
+  primaryDefaultWidthPx: 684,
+};
+
+function NotesTestProviders({ children }: { children: ReactNode }) {
+  return (
+    <MobileChromeProvider>
+      <AuthenticatedAccountProvider
+        account={{ accountId: "account-1", calendarTimeZone: "UTC" }}
+      >
+        <WorkspaceStoreProvider
+          workspacePrimaryMetrics={WORKSPACE_METRICS}
+          initialState={createDefaultWorkspaceState(
+            "/libraries",
+            WORKSPACE_METRICS,
+          )}
+        >
+          {children}
+        </WorkspaceStoreProvider>
+      </AuthenticatedAccountProvider>
+    </MobileChromeProvider>
+  );
+}
+
+function WorkspaceProbe() {
+  const { state, pendingPaneEntryDeliveryByPaneId } = useWorkspaceStore();
+  const active = getWorkspacePrimaryPanes(state).find(
+    (pane) => pane.id === state.activePrimaryPaneId,
+  );
+  return (
+    <>
+      <output aria-label="Active workspace href">
+        {active?.currentVisit.href ?? ""}
+      </output>
+      <output aria-label="Pending daily entry">
+        {pendingPaneEntryDeliveryByPaneId.size}
+      </output>
+    </>
+  );
+}
 
 // AC-4 hydration-hit guard: when the bootstrap seeds the normalized note-page
 // summaries as a BARE array under the cacheKey the pane reads ("notes:pages"),
@@ -24,31 +77,15 @@ const HYDRATED_PAGE_ID = "22222222-0000-4000-8000-000000000002";
 
 describe("NotesPaneBody — Today button", () => {
   afterEach(() => {
-    setWorkspaceTargetActivationReceiverReady(false);
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
-  it("shows a Today button that navigates to the daily note page on click", async () => {
+  it("opens Today through the current OpenDailyPage view capability", async () => {
     const fetchMock = stubFetch(async (input) => {
       const url = new URL(String(input), "http://localhost");
-      if (url.pathname.startsWith("/api/notes/daily/")) {
-        return new Response(
-          JSON.stringify({
-            data: {
-              page: {
-                id: TODAY_PAGE_ID,
-                title: "Today",
-                updated_at: "2026-07-07T00:00:00.000Z",
-                daily_note: { local_date: "2026-07-07" },
-              },
-            },
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        );
-      }
       if (url.pathname === "/api/notes/pages") {
-        return new Response(JSON.stringify({ data: [] }), {
+        return new Response(JSON.stringify({ data: { pages: [] } }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
         });
@@ -56,15 +93,16 @@ describe("NotesPaneBody — Today button", () => {
       throw new Error(`Unexpected fetch: ${url.pathname}`);
     });
 
-    const postMessageSpy = vi.spyOn(window.parent, "postMessage");
-
     renderHydratedPane({
       href: "/notes",
       resources: {},
       children: (
-        <LibraryPlacementControllerProvider>
-          <NotesPaneBody />
-        </LibraryPlacementControllerProvider>
+        <NotesTestProviders>
+          <WorkspaceProbe />
+          <LibraryPlacementControllerProvider>
+            <NotesPaneBody />
+          </LibraryPlacementControllerProvider>
+        </NotesTestProviders>
       ),
     });
 
@@ -74,19 +112,16 @@ describe("NotesPaneBody — Today button", () => {
     fireEvent.click(todayButton);
 
     await vi.waitFor(() => {
-      const requests = postMessageSpy.mock.calls
-        .map(([message]) => parseWorkspaceTargetActivationMessage(message))
-        .filter((request) => request !== null);
-      expect(requests).toEqual([
-        {
-          target: { href: `/pages/${TODAY_PAGE_ID}`, labelHint: "Today" },
-          disposition: { kind: "Follow" },
-          modality: "Programmatic",
-        },
-      ]);
+      expect(screen.getByLabelText("Active workspace href")).toHaveTextContent(
+        `/daily/${formatLocalDateInTimeZone(new Date(), "UTC")}`,
+      );
     });
-
-    void fetchMock;
+    expect(screen.getByLabelText("Pending daily entry")).toHaveTextContent("0");
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        fetchInputPath(input).startsWith("/api/notes/daily/"),
+      ),
+    ).toBe(false);
   });
 });
 
@@ -118,11 +153,13 @@ describe("NotesPaneBody (AC-4 hydration hit)", () => {
         ],
       },
       children: (
-        <ResolvedPaneBodyMarker>
-          <LibraryPlacementControllerProvider>
-            <NotesPaneBody />
-          </LibraryPlacementControllerProvider>
-        </ResolvedPaneBodyMarker>
+        <NotesTestProviders>
+          <ResolvedPaneBodyMarker>
+            <LibraryPlacementControllerProvider>
+              <NotesPaneBody />
+            </LibraryPlacementControllerProvider>
+          </ResolvedPaneBodyMarker>
+        </NotesTestProviders>
       ),
     });
 
@@ -164,9 +201,11 @@ describe("NotesPaneBody (AC-4 hydration hit)", () => {
       href: "/notes",
       resources: {},
       children: (
-        <PanePrimaryChromeProvider publish={publish}>
-          <NotesPaneBody />
-        </PanePrimaryChromeProvider>
+        <NotesTestProviders>
+          <PanePrimaryChromeProvider publish={publish}>
+            <NotesPaneBody />
+          </PanePrimaryChromeProvider>
+        </NotesTestProviders>
       ),
     });
 
@@ -262,8 +301,8 @@ describe("NotesPaneBody create replay identity", () => {
             data: {
               id: body.page_id,
               title: body.title,
-              updated_at: "2026-07-27T12:00:00Z",
-              daily_note: null,
+              updatedAt: "2026-07-27T12:00:00Z",
+              dailyPage: null,
             },
           },
           { status: 201 },
@@ -276,11 +315,13 @@ describe("NotesPaneBody create replay identity", () => {
       href: "/notes",
       resources: { "notes:pages": [] },
       children: (
-        <ResolvedPaneBodyMarker>
-          <LibraryPlacementControllerProvider>
-            <NotesPaneBody />
-          </LibraryPlacementControllerProvider>
-        </ResolvedPaneBodyMarker>
+        <NotesTestProviders>
+          <ResolvedPaneBodyMarker>
+            <LibraryPlacementControllerProvider>
+              <NotesPaneBody />
+            </LibraryPlacementControllerProvider>
+          </ResolvedPaneBodyMarker>
+        </NotesTestProviders>
       ),
     });
 

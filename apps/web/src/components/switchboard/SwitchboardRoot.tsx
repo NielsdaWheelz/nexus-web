@@ -54,7 +54,10 @@ export default function SwitchboardRoot({
   onDone: () => void;
   onFind: () => void;
   onPlace: (destination: Destination) => void;
-  onQuickAction: (action: NexusQuickAction) => void;
+  onQuickAction: (
+    action: NexusQuickAction,
+    trigger: HTMLButtonElement,
+  ) => void;
   onOpenPane: (paneId: string) => void;
   onClosePane: (paneId: string) => void;
   onRestorePane: (paneId: string) => void;
@@ -177,7 +180,9 @@ export default function SwitchboardRoot({
                     key={action.id}
                     type="button"
                     className={styles.compactAction}
-                    onClick={() => onQuickAction(action)}
+                    onClick={(event) =>
+                      onQuickAction(action, event.currentTarget)
+                    }
                   >
                     <Icon size={18} aria-hidden="true" />
                     <span>{action.label}</span>

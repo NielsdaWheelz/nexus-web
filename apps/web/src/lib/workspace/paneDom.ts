@@ -30,7 +30,7 @@ export function findPaneChromeFocusTarget(
   );
 }
 
-export function findPaneActivationFocusTarget(
+export function findPaneLandmarkFocusTarget(
   paneId: string | null | undefined,
 ): HTMLElement | null {
   if (!paneId) return null;
@@ -38,7 +38,7 @@ export function findPaneActivationFocusTarget(
     document.querySelectorAll<HTMLElement>("[data-pane-id]"),
   ).find((candidate) => candidate.dataset.paneId === paneId);
   const landmark = pane?.querySelector<HTMLElement>(
-    "[data-pane-activation-focus='true']",
+    "[data-pane-focus-landmark='true']",
   );
   if (landmark?.isConnected && !landmark.closest("[inert]")) return landmark;
   return null;

@@ -4,8 +4,8 @@ App navigation has two projections with distinct jobs:
 
 - the desktop rail is a small, fixed projection of Nexus's highest-frequency
   destinations;
-- mobile has one Nexus entrance. It opens an opaque full-screen task whose
-  Places projection exposes the bounded destination subset defined below.
+- mobile has one Nexus entrance. Its opaque full-screen `SwitchboardTask`
+  exposes the bounded Places projection defined below.
 
 Neither is a directory of every feature.
 
@@ -17,26 +17,28 @@ Neither is a directory of every feature.
   but do not displace discovery, listening, and conversation tasks.
 - **Desktop rail order is exact and flat:** Lectern, Libraries, Browse, Podcasts,
   Chats, Notes, Stats, Atlas, Oracle.
-- **Mobile Places order is exact and flat:** Lectern, Libraries, Browse,
+- **Mobile Places order is exact and flat:** Today, Lectern, Libraries, Browse,
   Podcasts, Chats, Notes. Stats, Atlas, and Oracle remain retrievable through
   Find.
 - **Fixed navigation is not customizable.** Pinning is not part of this
   contract. Personalized retrieval belongs in the Lectern Reading Slate and
   Nexus, where it can scale without destabilizing spatial memory.
 
-On desktop, Account and Nexus controls are rail actions outside the
-ordered destination list. On mobile, Account, Find, Add/Create, open panes, and
-recently closed panes live inside the Nexus task. Search, Authors, settings
-subpages, and other valid destinations remain retrievable without becoming
-permanent navigation items.
+On desktop, Account, Nexus, Quick Note, and Today are rail actions outside the
+ordered destination list; Quick Note and Today form one compact action group
+below the command bar. On mobile, Account, Find, Quick Note, Add/Create, open
+panes, and recently closed panes live inside the Nexus task, while Today is a
+Place. Search, Authors, settings subpages, and other valid destinations remain
+retrievable without becoming permanent navigation items.
 
-Desktop Nexus presents New Chat, New Note, New Page, and Import as direct
-actions, not as an Add lane or mode chooser. Mobile Import opens the same
+Desktop Nexus presents Quick Note, New Chat, New Page, and Import as its exact
+four direct actions, not as an Add lane or mode chooser. Quick Note dispatches
+the same dated Page append target as the rail. Mobile Import opens the same
 source-first Add workbench from Nexus Quick; an editable non-default
 Library may still seed its full destination object.
 
 Mobile Nexus is a temporary sustained task, not a drawer or bottom sheet. Its
-existing Root, Find, Actions, Capture, Create, Add, and recovery pages replace
+Root, Find, Actions, Create, Add, and recovery pages replace
 one another inside one opaque viewport-fixed dialog. The task adds no second
 header or toolbar; each page retains its sole header and content scroll owner.
 There is no outside-click or drag dismissal.
@@ -49,7 +51,7 @@ phones through 900 px. Fine-pointer short desktop windows remain desktop.
 Desktop Nexus is a one-column workspace switchboard, not a typed command
 language. Its input is always labelled and placeholdered **Find anything…**.
 The zero state shows only an `Open` run of existing/recent internal targets and
-the four explicit `New` actions: **New Chat**, **New Note**, **New Page**, and
+four explicit actions: **Quick Note**, **New Chat**, **New Page**, and
 **Import**. Places are retrievable; they are not a permanent button wall.
 
 A result has one required primary label. It may add only facts already carried
@@ -91,13 +93,14 @@ labels a warmed provider loop as cold. The p95 gates are respectively under
 | Mobile Places membership and order                               | `SWITCHBOARD_PLACE_IDS` in `apps/web/src/lib/switchboard/places.ts`                                                |
 | Route-to-semantic-section ownership                               | section `header.destinationId`, or resource `sectionDestinationId`, in `apps/web/src/lib/panes/paneRouteModel.ts` |
 | Desktop rail projection and pane dispatch                         | `apps/web/src/components/appnav/AppNav.tsx`                                                                       |
-| Mobile global-access projection                                  | `apps/web/src/components/switchboard/*`                                                                           |
+| Mobile global-access projection                                  | `apps/web/src/components/switchboard/SwitchboardTask.tsx` and sibling page components                             |
 | Internal-link gesture policy                                      | `apps/web/src/lib/panes/targetLinkActivation.ts`                                                                  |
 | Target selection, restoration, creation, and activation           | `activateWorkspaceTarget` in `apps/web/src/lib/workspace/store.tsx`                                               |
 | Server-restored deep-link merge                                   | `apps/web/src/lib/workspace/workspaceRestore.ts`                                                                  |
 | Desktop Nexus projection                                         | `apps/web/src/lib/nexus/model.ts`, `apps/web/src/lib/nexus/ranking.ts`, and `apps/web/src/components/nexus/desktop/` |
 | Mobile quick-action projection                                   | `apps/web/src/lib/nexus/quickActions.ts`                                                                          |
 | Nexus ingress and direct action session                          | `apps/web/src/lib/nexus/events.ts` and `apps/web/src/components/nexus/useNexusController.ts`                      |
+| Daily Page location and append entry                             | `apps/web/src/lib/notes/openDailyPage.ts` and workspace pane-entry delivery                                       |
 | Keybinding projection                                             | `apps/web/src/app/(authenticated)/settings/keybindings/KeybindingsPaneBody.tsx`                                   |
 | Nexus history href allowlist                                     | `python/nexus/services/nexus_history.py`                                                                          |
 

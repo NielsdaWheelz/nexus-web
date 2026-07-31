@@ -83,7 +83,7 @@ const quickActions = SWITCHBOARD_QUICK_ACTION_IDS.map(
 );
 
 describe("Nexus result composition", () => {
-  it("caps open/recent navigation together and appends exactly Chat, Note, Page, Import", () => {
+  it("caps navigation and appends exactly Quick Note, Chat, Page, Import", () => {
     const entries = buildNexusZeroState({
       panes: ["a", "b", "c", "d"].map((id) => pane(id)),
       recent: [
@@ -112,8 +112,8 @@ describe("Nexus result composition", () => {
       "Notes",
     ]);
     expect(entries.slice(5).map((entry) => entry.label)).toEqual([
+      "Quick Note",
       "New Chat",
-      "New Note",
       "New Page",
       "Import",
     ]);

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { Component, type ReactNode } from "react";
 import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
 import {
   DISPLAY_NAME_CHANGE_FAILURE_MESSAGE,
@@ -8,6 +9,10 @@ import {
   EMAIL_CHANGE_CONFIRMATION_SENT_MESSAGE,
   EMAIL_IN_USE_MESSAGE,
 } from "@/lib/auth/messages";
+import {
+  AuthenticatedAccountProvider,
+  useAuthenticatedAccount,
+} from "@/lib/account/authenticatedAccount";
 
 const changeEmailAction = vi.hoisted(() => vi.fn());
 const apiFetch = vi.hoisted(() => vi.fn());
@@ -48,20 +53,87 @@ vi.mock("@/lib/api/client", async () => {
 
 import SettingsAccountPaneBody from "./SettingsAccountPaneBody";
 
-function renderAccount() {
+interface AccountWire {
+  user_id: string;
+  default_library_id: string;
+  email: string | null;
+  display_name: string | null;
+  calendar_time_zone: string;
+  email_ingest_address: string | null;
+}
+
+function accountResponse(overrides: Partial<AccountWire> = {}) {
+  return {
+    data: {
+      user_id: "account-1",
+      default_library_id: "library-1",
+      email: "ada@example.com",
+      display_name: "Ada",
+      calendar_time_zone: "UTC",
+      email_ingest_address: null,
+      ...overrides,
+    },
+  };
+}
+
+class DefectBoundary extends Component<
+  { children: ReactNode; onDefect: (error: unknown) => void },
+  { error: unknown | null }
+> {
+  state: { error: unknown | null } = { error: null };
+
+  static getDerivedStateFromError(error: unknown) {
+    return { error };
+  }
+
+  componentDidCatch(error: unknown) {
+    this.props.onDefect(error);
+  }
+
+  render() {
+    return this.state.error ? (
+      <p>Account defect boundary</p>
+    ) : (
+      this.props.children
+    );
+  }
+}
+
+function AccountZoneProbe() {
+  const { calendarTimeZone } = useAuthenticatedAccount();
+  return <output aria-label="Provider calendar time zone">{calendarTimeZone}</output>;
+}
+
+function renderAccount(input: {
+  resources?: Record<string, unknown>;
+  onDefect?: (error: unknown) => void;
+} = {}) {
   return renderHydratedPane({
     href: "/settings/account",
-    resources: {},
-    children: <SettingsAccountPaneBody />,
+    resources: input.resources ?? {},
+    children: (
+      <AuthenticatedAccountProvider
+        account={{ accountId: "account-1", calendarTimeZone: "UTC" }}
+      >
+        {input.onDefect ? (
+          <DefectBoundary onDefect={input.onDefect}>
+            <SettingsAccountPaneBody />
+          </DefectBoundary>
+        ) : (
+          <SettingsAccountPaneBody />
+        )}
+        <AccountZoneProbe />
+      </AuthenticatedAccountProvider>
+    ),
   });
 }
 
 describe("SettingsAccountPaneBody", () => {
   it("renders the Email and Display name forms with the loaded email and display name", async () => {
     apiFetch.mockReset();
-    apiFetch.mockResolvedValue({
-      data: { email: "ada@example.com", display_name: "Ada Lovelace" },
-    });
+    apiFetch.mockResolvedValue(
+      accountResponse({ display_name: "Ada Lovelace" }),
+    );
 
     renderAccount();
 
@@ -86,9 +158,7 @@ describe("SettingsAccountPaneBody", () => {
 
   it("does not reload account data while local form fields change", async () => {
     apiFetch.mockReset();
-    apiFetch.mockResolvedValue({
-      data: { email: "ada@example.com", display_name: "Ada" },
-    });
+    apiFetch.mockResolvedValue(accountResponse());
     const user = userEvent.setup();
 
     renderAccount();
@@ -103,9 +173,7 @@ describe("SettingsAccountPaneBody", () => {
 
   it("shows a success notice when the email-change action resolves ok", async () => {
     apiFetch.mockReset();
-    apiFetch.mockResolvedValue({
-      data: { email: "ada@example.com", display_name: "Ada" },
-    });
+    apiFetch.mockResolvedValue(accountResponse());
     changeEmailAction.mockReset();
     changeEmailAction.mockResolvedValue({ ok: true });
     const user = userEvent.setup();
@@ -129,9 +197,7 @@ describe("SettingsAccountPaneBody", () => {
 
   it("shows the action's error notice when the email-change action returns ok=false", async () => {
     apiFetch.mockReset();
-    apiFetch.mockResolvedValue({
-      data: { email: "ada@example.com", display_name: "Ada" },
-    });
+    apiFetch.mockResolvedValue(accountResponse());
     changeEmailAction.mockReset();
     changeEmailAction.mockResolvedValue({
       ok: false,
@@ -153,12 +219,10 @@ describe("SettingsAccountPaneBody", () => {
 
   it("shows a success notice when the display-name PATCH resolves ok", async () => {
     apiFetch.mockReset();
-    apiFetch.mockResolvedValueOnce({
-      data: { email: "ada@example.com", display_name: "Ada" },
-    });
-    apiFetch.mockResolvedValueOnce({
-      data: { email: "ada@example.com", display_name: "Ada New" },
-    });
+    apiFetch.mockResolvedValueOnce(accountResponse());
+    apiFetch.mockResolvedValueOnce(
+      accountResponse({ display_name: "Ada New" }),
+    );
     const user = userEvent.setup();
 
     renderAccount();
@@ -183,9 +247,7 @@ describe("SettingsAccountPaneBody", () => {
 
   it("shows the failure message when the display-name PATCH rejects", async () => {
     apiFetch.mockReset();
-    apiFetch.mockResolvedValueOnce({
-      data: { email: "ada@example.com", display_name: "Ada" },
-    });
+    apiFetch.mockResolvedValueOnce(accountResponse());
     apiFetch.mockRejectedValueOnce(new Error("patch failed"));
     const user = userEvent.setup();
 
@@ -207,13 +269,11 @@ describe("SettingsAccountPaneBody", () => {
 
   it("renders the Post Room address and copy button when configured", async () => {
     apiFetch.mockReset();
-    apiFetch.mockResolvedValue({
-      data: {
-        email: "ada@example.com",
-        display_name: "Ada",
+    apiFetch.mockResolvedValue(
+      accountResponse({
         email_ingest_address: "letters-abc@mail.example.com",
-      },
-    });
+      }),
+    );
 
     renderAccount();
 
@@ -230,13 +290,7 @@ describe("SettingsAccountPaneBody", () => {
 
   it("renders the not-configured line when the Post Room address is null", async () => {
     apiFetch.mockReset();
-    apiFetch.mockResolvedValue({
-      data: {
-        email: "ada@example.com",
-        display_name: "Ada",
-        email_ingest_address: null,
-      },
-    });
+    apiFetch.mockResolvedValue(accountResponse());
 
     renderAccount();
 
@@ -250,13 +304,11 @@ describe("SettingsAccountPaneBody", () => {
 
   it("copies the Post Room address to the clipboard", async () => {
     apiFetch.mockReset();
-    apiFetch.mockResolvedValue({
-      data: {
-        email: "ada@example.com",
-        display_name: "Ada",
+    apiFetch.mockResolvedValue(
+      accountResponse({
         email_ingest_address: "letters-abc@mail.example.com",
-      },
-    });
+      }),
+    );
     const writeText = vi
       .spyOn(navigator.clipboard, "writeText")
       .mockResolvedValue(undefined);
@@ -276,5 +328,143 @@ describe("SettingsAccountPaneBody", () => {
     });
     expect(writeText).toHaveBeenCalledWith("letters-abc@mail.example.com");
     writeText.mockRestore();
+  });
+
+  it("updates the authenticated account time zone only after PATCH succeeds", async () => {
+    apiFetch.mockReset();
+    apiFetch.mockResolvedValueOnce(accountResponse());
+    apiFetch.mockResolvedValueOnce(
+      accountResponse({ calendar_time_zone: "America/Los_Angeles" }),
+    );
+    const user = userEvent.setup();
+
+    renderAccount();
+
+    const input = await screen.findByLabelText("Calendar time zone");
+    await waitFor(() => expect(input).toBeEnabled());
+    await user.clear(input);
+    await user.type(input, "America/Los_Angeles");
+    expect(screen.getByLabelText("Provider calendar time zone")).toHaveTextContent(
+      "UTC",
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Update calendar time zone" }),
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByLabelText("Provider calendar time zone"),
+      ).toHaveTextContent("America/Los_Angeles");
+    });
+    expect(apiFetch).toHaveBeenLastCalledWith("/api/me", {
+      method: "PATCH",
+      body: JSON.stringify({
+        calendar_time_zone: "America/Los_Angeles",
+      }),
+    });
+  });
+
+  it("keeps the authenticated account time zone unchanged when PATCH fails", async () => {
+    apiFetch.mockReset();
+    apiFetch.mockResolvedValueOnce(accountResponse());
+    apiFetch.mockRejectedValueOnce(new Error("patch failed"));
+    const user = userEvent.setup();
+
+    renderAccount();
+
+    const input = await screen.findByLabelText("Calendar time zone");
+    await waitFor(() => expect(input).toBeEnabled());
+    await user.clear(input);
+    await user.type(input, "Europe/Paris");
+    await user.click(
+      screen.getByRole("button", { name: "Update calendar time zone" }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Calendar time zone could not be updated.",
+      );
+    });
+    expect(screen.getByLabelText("Provider calendar time zone")).toHaveTextContent(
+      "UTC",
+    );
+  });
+
+  it("exact-decodes a hydrated account seed and defects on alternate casing", async () => {
+    apiFetch.mockReset();
+    const onDefect = vi.fn();
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const malformed = accountResponse().data as Record<string, unknown>;
+    malformed.calendarTimeZone = malformed.calendar_time_zone;
+    delete malformed.calendar_time_zone;
+
+    try {
+      renderAccount({
+        resources: {
+          "settings-account:me": { data: malformed },
+        },
+        onDefect,
+      });
+
+      expect(
+        await screen.findByText("Account defect boundary"),
+      ).toBeInTheDocument();
+      expect(onDefect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "AuthenticatedAccountContractDefect",
+        }),
+      );
+      expect(apiFetch).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("defects on a malformed PATCH profile before updating account context", async () => {
+    apiFetch.mockReset();
+    apiFetch.mockResolvedValueOnce(accountResponse());
+    apiFetch.mockResolvedValueOnce({
+      data: {
+        ...accountResponse({
+          calendar_time_zone: "America/Los_Angeles",
+        }).data,
+        unexpected: true,
+      },
+    });
+    const onDefect = vi.fn();
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const user = userEvent.setup();
+
+    try {
+      renderAccount({ onDefect });
+      const input = await screen.findByLabelText("Calendar time zone");
+      await waitFor(() => expect(input).toBeEnabled());
+      await user.clear(input);
+      await user.type(input, "America/Los_Angeles");
+      await user.click(
+        screen.getByRole("button", {
+          name: "Update calendar time zone",
+        }),
+      );
+
+      expect(
+        await screen.findByText("Account defect boundary"),
+      ).toBeInTheDocument();
+      expect(onDefect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "AuthenticatedAccountContractDefect",
+        }),
+      );
+      expect(
+        screen.getByLabelText("Provider calendar time zone"),
+      ).toHaveTextContent("UTC");
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 });

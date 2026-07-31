@@ -130,8 +130,8 @@ function recentEntry(
 
 function quickActionTarget(quickAction: NexusQuickAction): NexusAction["target"] {
   switch (quickAction.target.kind) {
-    case "TodayCapture":
-      return { kind: "OpenTodayCapture" };
+    case "OpenDailyPage":
+      return quickAction.target;
     case "CreatePage":
       return { kind: "CreatePage" };
     case "CreateChat":
@@ -230,7 +230,7 @@ export function buildNexusZeroState(input: {
   );
   const labels: Partial<Record<NexusQuickAction["id"], string>> = {
     "Nexus.Quick.Chat": "New Chat",
-    "Nexus.Quick.Note": "New Note",
+    "Nexus.Quick.Note": "Quick Note",
     "Nexus.Quick.Page": "New Page",
   };
   const quick = NEXUS_ZERO_STATE_ACTION_IDS.map((id) => {
@@ -286,11 +286,22 @@ export function projectNexusLocalEntries(input: {
         label: destination.label,
         typeLabel: "Place",
         icon,
-        primaryAction: action("open", "Open", icon, {
-          kind: "InternalHref",
-          href: destination.href,
-          labelHint: destination.label,
-        }),
+        primaryAction: action(
+          "open",
+          "Open",
+          icon,
+          destination.id === "today"
+            ? {
+                kind: "OpenDailyPage",
+                localDate: "Today",
+                entry: { kind: "View" },
+              }
+            : {
+                kind: "InternalHref",
+                href: destination.href,
+                labelHint: destination.label,
+              },
+        ),
         secondaryActions: [],
         rank: {
           tier,

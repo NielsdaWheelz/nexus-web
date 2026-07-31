@@ -79,6 +79,7 @@ const EXPECTED_ROUTE_DEFAULTS = {
   author: none("Authors"),
   notes: none("Notes"),
   page: paneLabel("Notes"),
+  dailyDate: paneLabel("Notes"),
   note: paneLabel("Notes"),
   stats: none("Stats"),
   settings: none("Settings"),

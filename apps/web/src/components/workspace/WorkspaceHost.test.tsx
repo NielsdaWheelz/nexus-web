@@ -32,6 +32,7 @@ import type {
   WorkspaceSecondaryGroupId,
   WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
+import type { PaneEntryDelivery } from "@/lib/workspace/targetActivation";
 import {
   assumePaneVisitId,
   type PaneVisit,
@@ -118,9 +119,12 @@ const hostMocks = vi.hoisted(() => ({
     },
     runtimeLabelByPaneId: new Map(),
     pendingSecondaryActivationByPaneId: new Map(),
+    pendingPaneEntryDeliveryByPaneId: new Map<string, PaneEntryDelivery>(),
+    cancelledPaneEntryActivationIds: new Set<string>(),
     activatePane: vi.fn(),
     activateWorkspaceTarget: vi.fn(),
     acknowledgePendingSecondaryActivation: vi.fn(),
+    acknowledgePaneEntryDelivery: vi.fn(),
     navigatePane: vi.fn(),
     goBackPane: vi.fn(),
     goForwardPane: vi.fn(),
@@ -134,6 +138,7 @@ const hostMocks = vi.hoisted(() => ({
     minimizePane: vi.fn(),
     restorePane: vi.fn(),
     publishPaneLabel: vi.fn(),
+    publishPaneAliases: vi.fn(),
   },
 }));
 
@@ -771,6 +776,9 @@ describe("WorkspaceHost pane route lifecycle", () => {
     hostMocks.store.activateWorkspaceTarget.mockReset();
     hostMocks.store.acknowledgePendingSecondaryActivation.mockReset();
     hostMocks.store.pendingSecondaryActivationByPaneId = new Map();
+    hostMocks.store.acknowledgePaneEntryDelivery.mockReset();
+    hostMocks.store.pendingPaneEntryDeliveryByPaneId = new Map();
+    hostMocks.store.publishPaneAliases.mockReset();
     hostMocks.store.acknowledgePendingSecondaryActivation.mockImplementation(
       (paneId: string) => {
         hostMocks.store.pendingSecondaryActivationByPaneId.delete(paneId);
@@ -1096,6 +1104,78 @@ describe("WorkspaceHost pane route lifecycle", () => {
       expect(screen.getByRole("banner")).not.toHaveAttribute("tabindex");
     },
   );
+
+  it("preserves the mobile Quick Note handoff focus while AppendNote waits for its editor", async () => {
+    hostMocks.isMobile = true;
+    hostMocks.useActualPaneShell = true;
+    setTwoPaneHrefs(MEDIA_HREF_1, MEDIA_HREF_2);
+    const renderTree = () => (
+      <MobileChromeProvider>
+        <textarea aria-label="Quick Note input handoff" />
+        <WorkspaceHost />
+      </MobileChromeProvider>
+    );
+    const view = render(renderTree());
+
+    await waitFor(() =>
+      expect(screen.getByTestId("pane-shell-root")).toHaveFocus(),
+    );
+    const handoff = screen.getByRole("textbox", {
+      name: "Quick Note input handoff",
+    });
+    handoff.focus();
+    expect(handoff).toHaveFocus();
+
+    const targetPane = hostMocks.store.state.primaryPanesById["pane-1"];
+    if (!targetPane) {
+      throw new Error("Expected pane-1 to exist");
+    }
+    hostMocks.store.pendingPaneEntryDeliveryByPaneId = new Map([
+      [
+        targetPane.id,
+        {
+          activationId: "daily-append-1",
+          paneId: targetPane.id,
+          visitId: targetPane.currentVisit.id,
+          entry: {
+            kind: "AppendNote",
+            noteId: "44444444-4444-4444-8444-444444444444",
+            clientMutationId: "daily-capture-1",
+          },
+        },
+      ],
+    ]);
+    hostMocks.store.state = {
+      ...hostMocks.store.state,
+      activePrimaryPaneId: targetPane.id,
+    };
+    view.rerender(renderTree());
+
+    await waitFor(() =>
+      expect(screen.getByTestId("route-body")).toHaveAttribute(
+        "data-runtime-pane-id",
+        targetPane.id,
+      ),
+    );
+    expect(handoff).toHaveFocus();
+
+    const destinationEditor = screen.getByRole("textbox", {
+      name: "Pane body control",
+    });
+    destinationEditor.focus();
+    hostMocks.store.pendingPaneEntryDeliveryByPaneId = new Map();
+    view.rerender(renderTree());
+    expect(destinationEditor).toHaveFocus();
+
+    hostMocks.store.state = {
+      ...hostMocks.store.state,
+      activePrimaryPaneId: "pane-2",
+    };
+    view.rerender(renderTree());
+    await waitFor(() =>
+      expect(screen.getByTestId("pane-shell-root")).toHaveFocus(),
+    );
+  });
 
   it("restores active PaneShell focus when mobile mode exits", async () => {
     hostMocks.isMobile = true;

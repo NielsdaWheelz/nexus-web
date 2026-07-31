@@ -11,7 +11,7 @@ describe("quick action projections", () => {
       SWITCHBOARD_QUICK_ACTION_IDS.map(
         (id) => QUICK_ACTION_REGISTRY[id].label,
       ),
-    ).toEqual(["Note", "Page", "Chat", "Library", "Import"]);
+    ).toEqual(["Quick Note", "Page", "Chat", "Library", "Import"]);
   });
 
   it("keeps the desktop zero-state actions exact", () => {
@@ -19,6 +19,6 @@ describe("quick action projections", () => {
       NEXUS_ZERO_STATE_ACTION_IDS.map(
         (id) => QUICK_ACTION_REGISTRY[id].label,
       ),
-    ).toEqual(["Chat", "Note", "Page", "Import"]);
+    ).toEqual(["Quick Note", "Chat", "Page", "Import"]);
   });
 });

@@ -2,8 +2,11 @@
 
 import type { useFeedback } from "@/components/feedback/Feedback";
 import { isAndroidShellRestrictedRouteId } from "@/lib/androidShell";
-import { fetchDailyNotePage } from "@/lib/notes/api";
-import { todayLocalDate } from "@/lib/localDate";
+import {
+  createDailyAppendNoteEntry,
+  type OpenDailyPageResult,
+  type OpenDailyPageTarget,
+} from "@/lib/notes/openDailyPage";
 import { parseMediaId } from "@/lib/lectern/contract";
 import type { LecternCapability } from "@/lib/lectern/LecternProvider";
 import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";
@@ -23,7 +26,11 @@ import type {
   WorkspaceTargetActivationRequest,
   WorkspaceTargetActivationResult,
 } from "@/lib/workspace/targetActivation";
-import type { NexusTarget, NexusTargetActivation } from "./model";
+import type {
+  NexusTarget,
+  NexusTargetActivation,
+  RetainedNexusTarget,
+} from "./model";
 
 export function isAndroidShellRestrictedHref(
   href: string,
@@ -57,7 +64,7 @@ export type NexusDispatchOutcome =
   | {
       kind: "NavigationRejected";
       reason: "PaneLimitReached";
-      target: WorkspaceTarget;
+      target: RetainedNexusTarget;
     }
   | {
       kind: "WorkflowRequested";
@@ -66,7 +73,6 @@ export type NexusDispatchOutcome =
         {
           kind:
             | "OpenAdd"
-            | "OpenTodayCapture"
             | "CreatePage"
             | "CreateLibrary";
         }
@@ -96,10 +102,14 @@ export interface NexusDispatchCtx {
   requestPaneSearch(): boolean;
   openShare(target: ShareTarget, options: ShareOpenOptions): void;
   shareOptions(): ShareOpenOptions;
+  openDailyPage(
+    target: OpenDailyPageTarget,
+    activation: NexusTargetActivation,
+  ): OpenDailyPageResult;
 }
 
 function activationOutcome(
-  target: WorkspaceTarget,
+  target: RetainedNexusTarget,
   result: WorkspaceTargetActivationResult,
 ): NexusDispatchOutcome {
   return result.kind === "Rejected"
@@ -117,7 +127,11 @@ function activateTarget(
   activation: NexusTargetActivation,
 ): NexusDispatchOutcome {
   return activationOutcome(
-    target,
+    {
+      kind: "InternalHref",
+      href: target.href,
+      labelHint: target.labelHint,
+    },
     context.activateWorkspaceTarget({
       originPaneId: context.activePaneId,
       target,
@@ -137,14 +151,13 @@ export function nexusTargetNavigates(target: NexusTarget): boolean {
     case "NewConversation":
     case "Share":
     case "PaneOpen":
-    case "OpenToday":
+    case "OpenDailyPage":
       return true;
     case "QueueAdd":
     case "CopyExternalLink":
     case "PaneClose":
     case "PaneSearch":
     case "OpenAdd":
-    case "OpenTodayCapture":
     case "CreatePage":
     case "CreateLibrary":
       return false;
@@ -194,7 +207,11 @@ export async function dispatchNexusTarget(
           disposition: activation.disposition,
           activateTarget: ({ target: workspaceTarget, disposition }) => {
             outcome = activationOutcome(
-              workspaceTarget,
+              {
+                kind: "InternalHref",
+                href: workspaceTarget.href,
+                labelHint: workspaceTarget.labelHint,
+              },
               context.activateWorkspaceTarget({
                 originPaneId: context.activePaneId,
                 target: workspaceTarget,
@@ -226,7 +243,11 @@ export async function dispatchNexusTarget(
             labelHint: "Chat",
           };
           outcome = activationOutcome(
-            workspaceTarget,
+            {
+              kind: "InternalHref",
+              href: workspaceTarget.href,
+              labelHint: workspaceTarget.labelHint,
+            },
             context.activateWorkspaceTarget({
               originPaneId: context.activePaneId,
               target: workspaceTarget,
@@ -300,16 +321,38 @@ export async function dispatchNexusTarget(
       return context.requestPaneSearch()
         ? { kind: "NavigationAccepted" }
         : { kind: "Stayed" };
-    case "OpenToday": {
-      const page = await fetchDailyNotePage(todayLocalDate());
-      return activateTarget(
-        { href: `/pages/${page.id}`, labelHint: page.title },
-        context,
+    case "OpenDailyPage": {
+      const entry: OpenDailyPageTarget["entry"] =
+        target.entry.kind === "View"
+          ? { kind: "View" }
+          : "noteId" in target.entry &&
+              typeof target.entry.noteId === "string" &&
+              "clientMutationId" in target.entry &&
+              typeof target.entry.clientMutationId === "string"
+            ? {
+                kind: "AppendNote",
+                noteId: target.entry.noteId,
+                clientMutationId: target.entry.clientMutationId,
+              }
+            : createDailyAppendNoteEntry();
+      const opened = context.openDailyPage(
+        {
+          kind: "OpenDailyPage",
+          localDate: target.localDate,
+          entry,
+        },
         activation,
+      );
+      return activationOutcome(
+        {
+          kind: "OpenDailyPage",
+          localDate: opened.localDate,
+          entry,
+        },
+        opened.activation,
       );
     }
     case "OpenAdd":
-    case "OpenTodayCapture":
     case "CreatePage":
     case "CreateLibrary":
       return { kind: "WorkflowRequested", target, activation };

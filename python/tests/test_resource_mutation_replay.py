@@ -8,11 +8,8 @@ non-negotiable invariant of that extraction is byte-for-byte hash compatibility
 with every pre-extraction scope: existing ``resource_mutations`` rows must keep
 replaying correctly. (a) below pins the historical sha256 algorithm
 independent of the module's own implementation. (b)/(c) exercise the shared
-lookup/record contract directly. (d) proves the concurrency-gap fix that
-landed alongside the extraction: ``notes.quick_capture`` now wraps its whole
-claim/validate/write/memo body in ``retry_serializable``, so a duplicate
-same-key submit converges on the first recorded response instead of
-surfacing a raw ``IntegrityError``.
+lookup/record contract directly. (d) proves daily capture converges on its
+recorded response for an exact replay.
 """
 
 from __future__ import annotations
@@ -28,7 +25,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import ResourceEdge
 from nexus.errors import ApiErrorCode, ConflictError
-from nexus.schemas.notes import QuickCaptureRequest
+from nexus.schemas.notes import DailyCaptureRequest
 from nexus.services import notes
 from nexus.services.resource_mutation_replay import (
     canonical_json_bytes,
@@ -138,31 +135,37 @@ def test_lookup_replay_raises_on_hash_mismatch(
 
 
 @pytest.mark.integration
-def test_quick_capture_duplicate_submit_converges_on_recorded_response(
+def test_daily_capture_duplicate_submit_converges_on_recorded_response(
     db_session: Session, bootstrapped_user: UUID
 ) -> None:
-    # notes.quick_capture's claim/validate/write/memo body is now wrapped in
-    # retry_serializable (requirement 3): a duplicate submit under the same
-    # clientMutationId must converge on the first recorded response rather
-    # than raising a raw IntegrityError on the second write attempt.
-    request = QuickCaptureRequest(
-        id=uuid4(),
-        client_mutation_id="quick-capture-duplicate-submit",
-        local_date=date(2026, 6, 13),
+    note_id = uuid4()
+    request = DailyCaptureRequest(
+        note_id=note_id,
+        client_mutation_id="daily-capture-duplicate-submit",
         body_pm_json=_paragraph("captured once"),
     )
 
-    first = notes.quick_capture(db_session, bootstrapped_user, request=request)
-    second = notes.quick_capture(db_session, bootstrapped_user, request=request)
+    first = notes.capture_daily_page_note(
+        db_session,
+        bootstrapped_user,
+        local_date=date(2026, 6, 13),
+        request=request,
+    )
+    second = notes.capture_daily_page_note(
+        db_session,
+        bootstrapped_user,
+        local_date=date(2026, 6, 13),
+        request=request,
+    )
 
     assert second == first, "a duplicate same-key submit must return the identical response"
-    assert second.id == request.id
+    assert second.surface.ordered_items[-1].target.item.id == note_id
 
     edges = db_session.scalars(
         select(ResourceEdge).where(
             ResourceEdge.user_id == bootstrapped_user,
             ResourceEdge.target_scheme == "note_block",
-            ResourceEdge.target_id == request.id,
+            ResourceEdge.target_id == note_id,
         )
     ).all()
     assert len(edges) == 1, "the replayed duplicate must not create a second ordered edge"

@@ -1,8 +1,17 @@
 # Mobile Nexus Full-Screen Task — Hard Cutover
 
-**Status:** Approved for implementation · Rev 2 · 2026-07-30
+**Status:** Implemented in source · focused tests are present but were not
+rerun in this reconciliation · physical device, real-stack, CI, deployment,
+and production proof pending · Rev 2 · 2026-07-30
 **Type:** Presentation-only hard cutover
 **Boundary:** Mobile Nexus only; 80/20 prototype slice
+
+**Follow-up authority (2026-07-30):**
+[`daily-pages-quick-capture-hard-cutover.md`](daily-pages-quick-capture-hard-cutover.md)
+deletes Today Capture and its workflow/recovery files, then composes the
+gesture-time Quick Note handoff inside the final `SwitchboardTask`. Preserve
+this document's task presentation, lifecycle, focus, Back, and geometry
+contracts; its Today Capture file targets are historical.
 
 Follow `docs/rules/`, especially cleanliness, simplicity, frontend,
 correctness, boundaries, naming, control flow, and testing.

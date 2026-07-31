@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import datetime
 from typing import Annotated, Any, Literal, TypeGuard
 from uuid import UUID
 
@@ -320,39 +320,8 @@ class ContributorHandleLocatorIn(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
 
-class DailyNoteTodayLocatorIn(BaseModel):
-    kind: Literal["daily_note_today"]
-    time_zone: str = Field(
-        min_length=1,
-        max_length=100,
-        validation_alias=AliasChoices("time_zone", "timeZone"),
-        serialization_alias="timeZone",
-    )
-
-    model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True, extra="forbid")
-
-
-class DailyNoteDateLocatorIn(BaseModel):
-    kind: Literal["daily_note_date"]
-    local_date: date = Field(
-        validation_alias=AliasChoices("local_date", "localDate"),
-        serialization_alias="localDate",
-    )
-    time_zone: str = Field(
-        min_length=1,
-        max_length=100,
-        validation_alias=AliasChoices("time_zone", "timeZone"),
-        serialization_alias="timeZone",
-    )
-
-    model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True, extra="forbid")
-
-
 ResourceLocatorIn = Annotated[
-    ResourceRefLocatorIn
-    | ContributorHandleLocatorIn
-    | DailyNoteTodayLocatorIn
-    | DailyNoteDateLocatorIn,
+    ResourceRefLocatorIn | ContributorHandleLocatorIn,
     Field(discriminator="kind"),
 ]
 

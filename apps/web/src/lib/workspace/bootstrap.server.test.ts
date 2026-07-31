@@ -54,9 +54,10 @@ type Responder = (path: string) => unknown;
 // Route callFastAPI by path; an unmapped path rejects so a loader that depends on
 // it is omitted (D-8) rather than silently seeding a partial shape.
 function respondWith(routes: Record<string, unknown>): void {
+  const allRoutes: Record<string, unknown> = { "/me": ACCOUNT_OK, ...routes };
   mockCallFastAPI.mockImplementation(async (path: string) => {
-    if (path in routes) {
-      return routes[path] as never;
+    if (path in allRoutes) {
+      return allRoutes[path] as never;
     }
     throw new Error(`unmapped path: ${path}`);
   });
@@ -64,7 +65,8 @@ function respondWith(routes: Record<string, unknown>): void {
 
 function respondWithFn(responder: Responder): void {
   mockCallFastAPI.mockImplementation(
-    async (path: string) => responder(path) as never,
+    async (path: string) =>
+      (path === "/me" ? ACCOUNT_OK : responder(path)) as never,
   );
 }
 
@@ -113,6 +115,16 @@ const EMPTY_COLLECTION_ENVELOPE = {
 };
 
 // A reader-profile responder shared by the resource cases that don't care about it.
+const ACCOUNT_OK = {
+  data: {
+    user_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    default_library_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    email: "seed@example.com",
+    display_name: "Seed",
+    calendar_time_zone: "America/Los_Angeles",
+    email_ingest_address: null,
+  },
+};
 const PROFILE_OK = { data: READER_PROFILE };
 const NOTE_PAGE_ID = "11111111-1111-4111-8111-111111111111";
 const NOTE_BLOCK_ID = "22222222-2222-4222-8222-222222222222";
@@ -681,7 +693,7 @@ describe("loadWorkspaceBootstrap", () => {
         href: "/settings/account",
         path: "/me",
         key: "settings-account:me",
-        body: { data: { email: "seed@example.com", display_name: "Seed" } },
+        body: ACCOUNT_OK,
       },
       {
         href: "/settings/billing",
@@ -714,7 +726,26 @@ describe("loadWorkspaceBootstrap", () => {
 
     const result = await loadWorkspaceBootstrap(false);
 
+    expect(result.account).toEqual({
+      accountId: ACCOUNT_OK.data.user_id,
+      calendarTimeZone: ACCOUNT_OK.data.calendar_time_zone,
+    });
     expect(result.readerProfile).toEqual(profile);
+  });
+
+  it("rejects the whole bootstrap when the required /me account read fails", async () => {
+    requestHeaders.set(REQUEST_PATH_HEADER, "/libraries");
+    mockCallFastAPI.mockImplementation(async (path: string) => {
+      if (path === "/me") {
+        throw new Error("account 504");
+      }
+      if (path === "/me/reader-profile") {
+        return PROFILE_OK as never;
+      }
+      return EMPTY_COLLECTION_ENVELOPE as never;
+    });
+
+    await expect(loadWorkspaceBootstrap(false)).rejects.toThrow("account 504");
   });
 
   it("rejects the whole bootstrap when the required /me/reader-profile read fails", async () => {
@@ -766,12 +797,14 @@ describe("loadWorkspaceBootstrap", () => {
 
     await loadWorkspaceBootstrap(false);
 
-    const profileCalls = mockCallFastAPI.mock.calls.filter(
-      ([path]) => path === "/me/reader-profile",
+    const requiredProfileCalls = mockCallFastAPI.mock.calls.filter(
+      ([path]) => path === "/me" || path === "/me/reader-profile",
     );
-    expect(profileCalls).toEqual([["/me/reader-profile"]]);
+    expect(requiredProfileCalls).toEqual(
+      expect.arrayContaining([["/me"], ["/me/reader-profile"]]),
+    );
     for (const [path, options] of mockCallFastAPI.mock.calls) {
-      if (path !== "/me/reader-profile") {
+      if (path !== "/me" && path !== "/me/reader-profile") {
         expect(options).toEqual({ timeoutMs: 500 });
       }
     }

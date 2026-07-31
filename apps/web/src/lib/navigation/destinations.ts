@@ -7,7 +7,12 @@
  * Nexus providers.
  */
 
-import { Sparkles, UserRound, type LucideIcon } from "lucide-react";
+import {
+  CalendarDays,
+  Sparkles,
+  UserRound,
+  type LucideIcon,
+} from "lucide-react";
 import { APP_AUTHENTICATED_HOME_HREF } from "@/lib/routes/defaults";
 
 export interface DestinationDefinition {
@@ -18,6 +23,12 @@ export interface DestinationDefinition {
 }
 
 export const DESTINATION_REGISTRY = {
+  today: {
+    label: "Today",
+    href: "/daily",
+    keywords: ["daily", "journal", "date"],
+    icon: CalendarDays,
+  },
   lectern: {
     label: "Lectern",
     href: APP_AUTHENTICATED_HOME_HREF,

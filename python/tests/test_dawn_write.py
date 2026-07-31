@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 from provider_runtime import (
@@ -25,10 +26,11 @@ from provider_runtime import (
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import DailyNotePage, DawnWrite, Highlight, Page
+from nexus.db.models import DailyPageBinding, DawnWrite, Highlight, Page, User
 from nexus.services.dawn_write import DAWN_WRITE_OPERATION, collect_signals, generate_dawn_write
 from nexus.services.llm_profiles import operation_profile
 from nexus.services.rate_limit import RateLimiter, get_rate_limiter, set_rate_limiter
+from nexus.tasks import dawn_write as dawn_write_task
 from tests.factories import (
     create_test_library_artifact,
     create_test_media_in_library,
@@ -105,20 +107,42 @@ def _succeeded_text_outcome(text: str) -> Succeeded:
 # ---------------------------------------------------------------------------
 
 
-def _seed_daily_note_page(db: Session, user_id: UUID, tz: str = "America/New_York") -> None:
-    """Seed a daily_note_pages row so the job sees a timezone for this user."""
+def _seed_daily_page_binding(db: Session, user_id: UUID, tz: str = "America/New_York") -> None:
+    """Seed the established sweep population and its profile-owned timezone."""
+    user = db.get(User, user_id)
+    assert user is not None
+    user.calendar_time_zone = tz
     page = Page(id=uuid4(), user_id=user_id, title="Test daily page")
     db.add(page)
     db.flush()
-    row = DailyNotePage(
+    row = DailyPageBinding(
         id=uuid4(),
         user_id=user_id,
         local_date=date.today(),
-        time_zone=tz,
         page_id=page.id,
     )
     db.add(row)
     db.commit()
+
+
+def _owned_daily_storage_counts(db: Session, user_id: UUID) -> dict[str, int]:
+    return {
+        table: int(
+            db.scalar(
+                text(f"SELECT count(*) FROM {table} WHERE user_id = :user_id"),
+                {"user_id": user_id},
+            )
+            or 0
+        )
+        for table in (
+            "pages",
+            "daily_page_bindings",
+            "note_blocks",
+            "resource_edges",
+            "resource_versions",
+            "resource_mutations",
+        )
+    }
 
 
 def _seed_highlight(
@@ -231,6 +255,64 @@ class TestCollectSignals:
             tz="UTC",
         )
         assert result is None  # no other signals either
+
+    @pytest.mark.parametrize(
+        ("local_date", "expected_duration"),
+        (
+            (date(2026, 3, 9), timedelta(hours=23)),
+            (date(2026, 11, 2), timedelta(hours=25)),
+        ),
+    )
+    def test_highlight_window_uses_both_account_local_midnights_across_dst(
+        self,
+        db_session: Session,
+        bootstrapped_user: UUID,
+        local_date: date,
+        expected_duration: timedelta,
+    ) -> None:
+        zone = ZoneInfo("America/Los_Angeles")
+        yesterday_start = datetime.combine(
+            local_date - timedelta(days=1),
+            time.min,
+            tzinfo=zone,
+        ).astimezone(UTC)
+        today_start = datetime.combine(local_date, time.min, tzinfo=zone).astimezone(UTC)
+        assert today_start - yesterday_start == expected_duration
+
+        library_id = get_user_default_library(db_session, bootstrapped_user)
+        assert library_id is not None
+        media_id = create_test_media_in_library(
+            db_session,
+            bootstrapped_user,
+            library_id,
+            title="DST boundary article",
+        )
+        for exact, created_at in (
+            ("before window", yesterday_start - timedelta(microseconds=1)),
+            ("at window start", yesterday_start),
+            ("before window end", today_start - timedelta(microseconds=1)),
+            ("at window end", today_start),
+        ):
+            _seed_highlight(
+                db_session,
+                bootstrapped_user,
+                media_id,
+                exact=exact,
+                created_at=created_at,
+            )
+
+        result = collect_signals(
+            db_session,
+            user_id=bootstrapped_user,
+            local_date=local_date,
+            tz=zone.key,
+        )
+
+        assert result is not None
+        assert [signal.exact for signal in result.highlights] == [
+            "at window start",
+            "before window end",
+        ]
 
     def test_synapse_edge_included(self, db_session: Session, bootstrapped_user: UUID) -> None:
         _seed_synapse_edge(db_session, bootstrapped_user, excerpt="synapse rationale text")
@@ -350,6 +432,12 @@ class TestGenerateDawnWrite:
             db_session, bootstrapped_user, library_id, title="Machine Learnable"
         )
         _seed_highlight(db_session, bootstrapped_user, media_id, exact="a memorable phrase")
+        _seed_daily_page_binding(db_session, bootstrapped_user, "UTC")
+        daily_page_id = db_session.scalar(
+            select(DailyPageBinding.page_id).where(DailyPageBinding.user_id == bootstrapped_user)
+        )
+        assert daily_page_id is not None
+        daily_storage_before = _owned_daily_storage_counts(db_session, bootstrapped_user)
 
         runtime = _ScriptedRuntime(
             outcome=_succeeded_text_outcome(
@@ -385,6 +473,22 @@ class TestGenerateDawnWrite:
             {"oid": str(db_row.id)},
         ).scalar()
         assert llm_call_count == 1
+        assert _owned_daily_storage_counts(db_session, bootstrapped_user) == daily_storage_before
+        assert (
+            db_session.scalar(
+                text(
+                    """
+                    SELECT count(*)
+                    FROM resource_edges
+                    WHERE user_id = :user_id
+                      AND source_scheme = 'page'
+                      AND source_id = :page_id
+                    """
+                ),
+                {"user_id": bootstrapped_user, "page_id": daily_page_id},
+            )
+            == 0
+        )
 
     def test_skips_when_llm_not_entitled(
         self, db_session: Session, bootstrapped_user: UUID
@@ -555,10 +659,119 @@ class TestGenerateDawnWrite:
 
 
 class TestSweepLogic:
-    def test_sweep_skips_user_with_no_daily_note_pages(
+    def test_production_sweep_preserves_binding_population_and_daily_storage(
+        self,
+        db_session: Session,
+        bootstrapped_user: UUID,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        bound_user = bootstrapped_user
+        unbound_user = uuid4()
+        existing_user = uuid4()
+        bound_zone = "Pacific/Kiritimati"
+        existing_zone = "America/Los_Angeles"
+        db_session.add_all([User(id=unbound_user), User(id=existing_user)])
+        db_session.commit()
+        _seed_daily_page_binding(db_session, bound_user, bound_zone)
+        _seed_daily_page_binding(db_session, existing_user, existing_zone)
+
+        existing_local_date = datetime.now(tz=ZoneInfo(existing_zone)).date()
+        existing = DawnWrite(
+            user_id=existing_user,
+            local_date=existing_local_date,
+            body_md="existing dawn write",
+        )
+        db_session.add(existing)
+        db_session.commit()
+        existing_id = existing.id
+
+        owners = {
+            "bound_user": bound_user,
+            "unbound_user": unbound_user,
+            "existing_user": existing_user,
+        }
+
+        def daily_storage_counts() -> dict[str, int]:
+            return {
+                table: int(
+                    db_session.scalar(
+                        text(
+                            f"SELECT count(*) FROM {table} "
+                            "WHERE user_id IN (:bound_user, :unbound_user, :existing_user)"
+                        ),
+                        owners,
+                    )
+                    or 0
+                )
+                for table in (
+                    "pages",
+                    "daily_page_bindings",
+                    "note_blocks",
+                    "resource_edges",
+                    "resource_versions",
+                    "resource_mutations",
+                )
+            }
+
+        before = daily_storage_counts()
+        runtime = _ScriptedRuntime()
+        generation_calls: list[tuple[UUID, date, str, object]] = []
+
+        async def fake_generate(
+            db: Session,
+            *,
+            user_id: UUID,
+            local_date: date,
+            tz: str,
+            runtime: object,
+        ) -> DawnWrite:
+            generation_calls.append((user_id, local_date, tz, runtime))
+            row = DawnWrite(
+                user_id=user_id,
+                local_date=local_date,
+                body_md="new dawn write",
+            )
+            db.add(row)
+            db.commit()
+            return row
+
+        monkeypatch.setenv("DAWN_WRITE_ENABLED", "true")
+        monkeypatch.setenv("REAL_MEDIA_PROVIDER_FIXTURES", "false")
+        from nexus.config import clear_settings_cache
+
+        clear_settings_cache()
+        monkeypatch.setattr(
+            "nexus.tasks.llm_task.get_session_factory",
+            lambda: task_session_factory(db_session),
+        )
+        monkeypatch.setattr(
+            "nexus.tasks.llm_task.ProductionExecutionRuntime",
+            lambda _provider_runtime: runtime,
+        )
+        monkeypatch.setattr(dawn_write_task, "generate_dawn_write", fake_generate)
+
+        result = dawn_write_task.dawn_write_sweep()
+
+        db_session.expire_all()
+        assert result == {"generated": 1, "already_exists": 1, "skipped": 0}
+        assert generation_calls == [
+            (
+                bound_user,
+                datetime.now(tz=ZoneInfo(bound_zone)).date(),
+                bound_zone,
+                runtime,
+            )
+        ]
+        assert unbound_user not in {call[0] for call in generation_calls}
+        persisted_existing = db_session.get(DawnWrite, existing_id)
+        assert persisted_existing is not None
+        assert persisted_existing.body_md == "existing dawn write"
+        assert daily_storage_counts() == before
+
+    def test_sweep_skips_user_with_no_daily_page_bindings(
         self, db_session: Session, bootstrapped_user: UUID
     ) -> None:
-        # No daily_note_pages row → no timezone record → skip.
+        # No binding means the user remains outside the established population.
         # collect_signals would still work, but the sweep won't call it.
         # We verify by seeding a highlight but no tz record — sweep should produce no row.
         library_id = get_user_default_library(db_session, bootstrapped_user)
@@ -566,13 +779,13 @@ class TestSweepLogic:
         media_id = create_test_media_in_library(db_session, bootstrapped_user, library_id)
         _seed_highlight(db_session, bootstrapped_user, media_id)
 
-        # No daily_note_pages row exists → the sweep query returns nothing for this user.
+        # Joining profile timezone onto the empty binding population returns nothing.
         tz_rows = db_session.execute(
             text(
-                "SELECT DISTINCT ON (user_id) user_id, time_zone"
-                " FROM daily_note_pages"
-                " WHERE user_id = :uid"
-                " ORDER BY user_id, created_at DESC"
+                "SELECT DISTINCT b.user_id, u.calendar_time_zone AS time_zone"
+                " FROM daily_page_bindings b"
+                " JOIN users u ON u.id = b.user_id"
+                " WHERE b.user_id = :uid"
             ),
             {"uid": str(bootstrapped_user)},
         ).fetchall()
@@ -581,7 +794,7 @@ class TestSweepLogic:
     def test_sweep_skips_user_when_row_already_exists(
         self, db_session: Session, bootstrapped_user: UUID
     ) -> None:
-        _seed_daily_note_page(db_session, bootstrapped_user)
+        _seed_daily_page_binding(db_session, bootstrapped_user)
         # Pre-insert a dawn_writes row.
         existing = DawnWrite(
             user_id=bootstrapped_user,

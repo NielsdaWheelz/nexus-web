@@ -9,7 +9,14 @@ import {
   type MouseEvent,
 } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, ChevronRight, Plus, Search } from "lucide-react";
+import {
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  NotebookPen,
+  Plus,
+  Search,
+} from "lucide-react";
 import Link from "next/link";
 import AsterismMark from "@/components/AsterismMark";
 import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
@@ -29,6 +36,8 @@ export default function NavRail({
   commandHint,
   commandCombo,
   onOpenCommand,
+  onQuickNote,
+  onToday,
   onOpenAdd,
   onNavigate,
 }: {
@@ -42,13 +51,15 @@ export default function NavRail({
   commandHint: string;
   commandCombo: string;
   onOpenCommand: () => void;
+  onQuickNote: (event: MouseEvent<HTMLButtonElement>) => void;
+  onToday: (event: MouseEvent<HTMLButtonElement>) => void;
   onOpenAdd: () => void;
   onNavigate: (event: MouseEvent<HTMLElement>, href: string) => AppNavActivationResult;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Map<string, HTMLElement>>(new Map());
   const [indicator, setIndicator] = useState({ top: 0, height: 0, visible: false });
-  const [tip, setTip] = useState<NavItem | null>(null);
+  const [tip, setTip] = useState<{ id: string; label: string } | null>(null);
 
   const measure = useCallback(() => {
     const list = listRef.current;
@@ -125,6 +136,53 @@ export default function NavRail({
             </>
           )}
         </button>
+      </div>
+
+      <div className={styles.dailyActions} role="group" aria-label="Daily">
+        {[
+          {
+            id: "daily-action:quick-note",
+            label: "Quick Note",
+            icon: NotebookPen,
+            onClick: onQuickNote,
+          },
+          {
+            id: "daily-action:today",
+            label: "Today",
+            icon: CalendarDays,
+            onClick: onToday,
+          },
+        ].map((action) => {
+          const Icon = action.icon;
+          return (
+            <button
+              key={action.id}
+              ref={(element) => {
+                if (element) itemRefs.current.set(action.id, element);
+                else itemRefs.current.delete(action.id);
+              }}
+              type="button"
+              className={styles.dailyAction}
+              aria-label={action.label}
+              onClick={action.onClick}
+              onMouseEnter={() => setTip(action)}
+              onMouseLeave={() =>
+                setTip((current) => (current?.id === action.id ? null : current))
+              }
+              onFocus={() => setTip(action)}
+              onBlur={() =>
+                setTip((current) => (current?.id === action.id ? null : current))
+              }
+            >
+              <span className={styles.itemIcon}>
+                <Icon size={20} strokeWidth={2} aria-hidden="true" />
+              </span>
+              {!collapsed && (
+                <span className={styles.itemLabel}>{action.label}</span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       <div ref={listRef} className={styles.scroll}>

@@ -47,8 +47,11 @@ ingest. Multi-URL shares use the same selected destination set for each URL and
 retry failed URLs only. Retrying a URL reuses its original idempotency key so an
 already accepted source attempt is not duplicated.
 
-For non-URL text, `/share` quick-captures the text to today's daily note and does
-not show a library picker because libraries are media/podcast containers.
+For non-URL text, `/share` first reads `/me`, exact-decodes the account calendar
+timezone, freezes one account-local date with the capture identities, and sends
+the text through the dated daily-capture command. Retry keeps that date even
+after midnight. Profile failure sends no capture. The flow does not show a
+library picker because libraries are media/podcast containers.
 
 ## Destination Contract
 

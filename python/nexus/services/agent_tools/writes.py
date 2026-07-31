@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -32,8 +32,8 @@ from nexus.config import get_settings
 from nexus.db.models import ChatRun
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.highlights import CreateHighlightRequest
-from nexus.schemas.notes import QuickCaptureRequest
-from nexus.services import highlights, library_entries, notes, text_quote
+from nexus.schemas.notes import DailyCaptureRequest
+from nexus.services import highlights, library_entries, notes, text_quote, users
 from nexus.services.chat_run_tools import (
     assistant_write_tool_call_count,
     persist_write_tool_call,
@@ -496,25 +496,32 @@ def _jot_note(db: Session, viewer_id: UUID, args: dict[str, Any]) -> _HandlerRes
         block = notes.append_note_block_to_page(
             db, viewer_id, page_id=page_ref.id, body_pm_json=body_pm_json
         )
+        note_id = block.id
         page_label = "page"
     else:
-        from uuid import uuid4
-
-        block = notes.quick_capture(
+        local_date = users.calendar_local_date(db, viewer_id)
+        # The chat loop commits before dispatch; only the write-cap read and this
+        # account-zone read are open here. Close that read-only transaction so
+        # capture_daily_page_note can select SERIALIZABLE before its first query.
+        # Keep the cap check before capture so replay and Undo retain their
+        # committed, non-reverted write-count semantics.
+        db.commit()
+        note_id = uuid4()
+        notes.capture_daily_page_note(
             db,
             viewer_id,
-            request=QuickCaptureRequest(
-                id=uuid4(),
+            local_date=local_date,
+            request=DailyCaptureRequest(
+                note_id=note_id,
                 client_mutation_id=f"assistant:{uuid4()}",
                 body_pm_json=body_pm_json,
-                local_date=None,
             ),
         )
         page_label = "today's note"
-    created = {"kind": "note_block", "id": str(block.id), "label": page_label}
+    created = {"kind": "note_block", "id": str(note_id), "label": page_label}
     return _HandlerResult(
         created_refs=[created],
-        output={"noted_in": page_label, "note_block_id": str(block.id)},
+        output={"noted_in": page_label, "note_block_id": str(note_id)},
     )
 
 
@@ -562,8 +569,6 @@ def _create_highlight(db: Session, viewer_id: UUID, args: dict[str, Any]) -> _Ha
     ]
     note = _optional_str(args, "note")
     if note and note.strip():
-        from uuid import uuid4
-
         block = notes.set_highlight_note_body_pm_json(
             db,
             viewer_id,

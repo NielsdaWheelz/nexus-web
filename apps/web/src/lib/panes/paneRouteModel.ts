@@ -331,6 +331,21 @@ export const PANE_ROUTE_MODELS = [
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
+    id: "dailyDate",
+    header: {
+      kind: "section",
+      destinationId: "notes",
+      defaultFolio: "pane-label",
+    },
+    pattern: ["daily", ":localDate"],
+    defaultLabel: "Daily Page",
+    labelMode: "dynamic",
+    returnMemento: { kind: "ShellScroll" },
+    bodyMode: "standard",
+    secondaryGroups: ["resource-inspector"],
+    ...STANDARD_WIDTH_CONTRACT,
+  }),
+  route({
     id: "note",
     header: {
       kind: "section",

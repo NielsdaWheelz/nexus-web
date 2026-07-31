@@ -7,11 +7,11 @@ import SwitchboardRecovery from "@/components/switchboard/SwitchboardRecovery";
 import SwitchboardRoot from "@/components/switchboard/SwitchboardRoot";
 import SwitchboardTask from "@/components/switchboard/SwitchboardTask";
 import { paneStatusLabel } from "@/lib/switchboard/paneStatusLabel";
+import { retainedNexusTargetLabel } from "@/lib/nexus/model";
 import { useViewportState } from "@/lib/renderEnvironment/provider";
 import AddPanel from "./AddPanel";
 import AddPanelBoundary from "./AddPanelBoundary";
 import DesktopNexus from "./desktop/DesktopNexus";
-import TodayCapturePanel from "./TodayCapturePanel";
 import {
   useNexusController,
   type NexusController,
@@ -54,15 +54,6 @@ function desktopWorkflow(input: {
             Open Browse
           </button>
         </section>
-      );
-      break;
-    case "TodayCapture":
-      content = (
-        <TodayCapturePanel
-          session={controller.todaySession}
-          onOpen={controller.openTarget}
-          onBack={controller.back}
-        />
       );
       break;
     case "CreatePage":
@@ -144,9 +135,7 @@ function desktopWorkflow(input: {
             metadata: "Closed tab",
           }))}
           accountMenu={null}
-          retainedTarget={
-            page.retained.target.labelHint ?? page.retained.target.href
-          }
+          retainedTarget={retainedNexusTargetLabel(page.retained.target)}
           manageTabs
           onDone={controller.close}
           onFind={controller.enterFind}

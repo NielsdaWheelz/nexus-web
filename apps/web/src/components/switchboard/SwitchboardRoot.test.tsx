@@ -71,13 +71,14 @@ describe("SwitchboardRoot", () => {
   it("shows every locked Place and Quick action", () => {
     renderRoot();
     for (const label of [
+      "Today",
       "Lectern",
       "Libraries",
       "Browse",
       "Podcasts",
       "Chats",
       "Notes",
-      "Note",
+      "Quick Note",
       "Page",
       "Chat",
       "Library",

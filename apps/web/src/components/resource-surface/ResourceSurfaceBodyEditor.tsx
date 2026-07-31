@@ -5,6 +5,7 @@ import { ChevronDown, ChevronUp, Link2, Plus, Trash2 } from "lucide-react";
 import ActionMenu from "@/components/ui/ActionMenu";
 import NoteBodyEditor, {
   type NoteBodyChange,
+  type NoteBodyInputHandoff,
   type NoteBodySplit,
 } from "@/components/notes/NoteBodyEditor";
 import ResourceTargetListbox, {
@@ -52,10 +53,12 @@ export interface ResourceSurfaceInsertResourceRequest {
 }
 
 export interface ResourceSurfaceBodyEditorProps {
-  sourceRef: string;
+  sourceRef?: string;
+  editorSessionKey?: string;
   orderedItems: ResourceSurfaceOccurrence[];
   rowFilterQuery?: string;
   editable?: boolean;
+  structuralEditing?: boolean;
   focusRequest?: ResourceSurfaceBodyFocusRequest;
   onInsertNote: (position: SurfacePosition) => void;
   onSplitNote: (request: ResourceSurfaceSplitRequest) => void;
@@ -75,6 +78,11 @@ export interface ResourceSurfaceBodyEditorProps {
   ) => void;
   onFeedback?: (feedback: FeedbackContent) => void;
   onError?: (error: unknown) => void;
+  inputHandoff?: {
+    noteRef: string;
+    handoff: NoteBodyInputHandoff;
+  } | null;
+  onInputHandoffClaimed?: (handoffId: string) => void;
 }
 
 interface LocalFocusRequest {
@@ -84,9 +92,11 @@ interface LocalFocusRequest {
 
 export default function ResourceSurfaceBodyEditor({
   sourceRef,
+  editorSessionKey = sourceRef ?? "resource-surface",
   orderedItems,
   rowFilterQuery = "",
   editable = true,
+  structuralEditing = true,
   focusRequest,
   onInsertNote,
   onSplitNote,
@@ -99,6 +109,8 @@ export default function ResourceSurfaceBodyEditor({
   onOpenObject,
   onFeedback,
   onError,
+  inputHandoff = null,
+  onInputHandoffClaimed,
 }: ResourceSurfaceBodyEditorProps) {
   const [addItemOpen, setAddItemOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -110,9 +122,11 @@ export default function ResourceSurfaceBodyEditor({
   const addItemListboxId = useId();
   const filtering = rowFilterQuery.trim().length > 0;
   const directEditingAvailable = editable && !filtering;
+  const structuralEditingAvailable =
+    directEditingAvailable && structuralEditing;
   const presentRefs = useMemo(
     () => [
-      sourceRef,
+      ...(sourceRef ? [sourceRef] : []),
       ...orderedItems.map((occurrence) => occurrence.target.item.ref),
     ],
     [orderedItems, sourceRef],
@@ -223,10 +237,11 @@ export default function ResourceSurfaceBodyEditor({
                 className={styles.noteRow}
                 data-occurrence-id={occurrence.occurrenceId}
                 data-collection-row-id={occurrence.occurrenceId}
+                data-note-ref={item.ref}
               >
                 <div className={styles.noteEditor}>
                   <NoteBodyEditor
-                    resourceKey={`${sourceRef}:${item.ref}`}
+                    resourceKey={`${editorSessionKey}:${item.ref}`}
                     initialBodyPmJson={content.bodyPmJson}
                     fallbackBodyText={content.bodyText}
                     editable={directEditingAvailable}
@@ -245,46 +260,52 @@ export default function ResourceSurfaceBodyEditor({
                       })
                     }
                     onSplit={
-                      directEditingAvailable
+                      structuralEditingAvailable
                         ? (split) =>
-                      onSplitNoteRequest(
-                        occurrence.occurrenceId,
-                        split,
-                        onSplitNote,
-                      )
+                            onSplitNoteRequest(
+                              occurrence.occurrenceId,
+                              split,
+                              onSplitNote,
+                            )
                         : undefined
                     }
                     onEmptyBackspace={
-                      directEditingAvailable
+                      structuralEditingAvailable
                         ? () => {
-                      focusPreviousEditableRow(sourceIndex);
-                      onRemoveOccurrence(occurrence.occurrenceId);
+                            focusPreviousEditableRow(sourceIndex);
+                            onRemoveOccurrence(occurrence.occurrenceId);
                           }
                         : undefined
                     }
                     onMove={
-                      directEditingAvailable
+                      structuralEditingAvailable
                         ? (direction) => {
-                      const position = positionForMove(
-                        orderedItems,
-                        sourceIndex,
-                        direction,
-                      );
-                      if (position) {
-                        onMoveOccurrence({
-                          occurrenceId: occurrence.occurrenceId,
-                          position,
-                        });
-                      }
+                            const position = positionForMove(
+                              orderedItems,
+                              sourceIndex,
+                              direction,
+                            );
+                            if (position) {
+                              onMoveOccurrence({
+                                occurrenceId: occurrence.occurrenceId,
+                                position,
+                              });
+                            }
                           }
                         : undefined
                     }
                     onOpenObject={onOpenObject}
                     onFeedback={onFeedback}
                     onError={onError}
+                    inputHandoff={
+                      inputHandoff?.noteRef === item.ref
+                        ? inputHandoff.handoff
+                        : null
+                    }
+                    onInputHandoffClaimed={onInputHandoffClaimed}
                   />
                 </div>
-                {directEditingAvailable ? (
+                {structuralEditingAvailable ? (
                   <RowActions
                     label={label || `note ${sourceIndex + 1}`}
                     canMoveUp={sourceIndex > 0}
@@ -345,7 +366,7 @@ export default function ResourceSurfaceBodyEditor({
                   <span className={styles.resourceSummary}>{item.summary}</span>
                 ) : null}
               </button>
-              {directEditingAvailable ? (
+              {structuralEditingAvailable ? (
                 <RowActions
                   label={label}
                   canMoveUp={sourceIndex > 0}
@@ -387,7 +408,7 @@ export default function ResourceSurfaceBodyEditor({
             No items match this filter.
           </li>
         ) : null}
-        {directEditingAvailable ? (
+        {structuralEditingAvailable ? (
           <li className={styles.insertionRow}>
             <button
               type="button"
@@ -406,7 +427,7 @@ export default function ResourceSurfaceBodyEditor({
         ) : null}
       </ol>
 
-      {directEditingAvailable ? (
+      {structuralEditingAvailable ? (
         <div className={styles.addItem}>
           {addItemOpen ? (
             <div className={styles.addItemSearch}>

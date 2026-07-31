@@ -5,6 +5,15 @@
 **Type:** Hard cutover — no legacy mobile path, fallback, compatibility shim,
 feature flag, or dual entry point.
 
+**Follow-up authority (2026-07-30):**
+[`mobile-nexus-full-screen-task-hard-cutover.md`](mobile-nexus-full-screen-task-hard-cutover.md)
+replaces `SwitchboardSheet` with `SwitchboardTask`.
+[`daily-pages-quick-capture-hard-cutover.md`](daily-pages-quick-capture-hard-cutover.md)
+then deletes Today Capture and its workflow/recovery variants, maps Quick Note
+to pane-native append, and keeps Today as a Place. The single Nexus control,
+Root inventory, activation, focus, Back, accessibility, performance, and data
+contracts remain authoritative.
+
 This document supersedes the mobile surface contracts in
 [`universal-launcher-hard-cutover.md`](universal-launcher-hard-cutover.md),
 [`app-navigation.md`](../modules/app-navigation.md), and

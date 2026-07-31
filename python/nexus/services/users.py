@@ -4,15 +4,23 @@ User profile and search operations.
 """
 
 import re
+from datetime import date, datetime
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from nexus.db.models import User
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.presence import presence_from_nullable
-from nexus.schemas.user import DISPLAY_NAME_MAX_LENGTH, UserProfileOut, UserSearchOut
+from nexus.schemas.user import (
+    DISPLAY_NAME_MAX_LENGTH,
+    UpdateProfileRequest,
+    UserProfileOut,
+    UserSearchOut,
+)
 from nexus.services.sealed_handles import seal_user
 
 
@@ -25,30 +33,26 @@ def get_user_profile(
     display_name is read from the DB.
     """
     row = db.execute(
-        text("SELECT display_name FROM users WHERE id = :uid"),
+        text("SELECT display_name, calendar_time_zone FROM users WHERE id = :uid"),
         {"uid": user_id},
     ).fetchone()
+    if row is None:
+        # justify-defect: authenticated bootstrap guarantees the viewer's User row.
+        raise AssertionError("authenticated user profile row is missing")
 
     return UserProfileOut(
         user_id=user_id,
         default_library_id=default_library_id,
         email=email,
-        display_name=row[0] if row else None,
+        display_name=row.display_name,
+        calendar_time_zone=row.calendar_time_zone,
     )
 
 
-def update_display_name(db: Session, user_id: UUID, display_name: str | None) -> None:
-    """Update a user's display_name.
-
-    Args:
-        db: Database session.
-        user_id: The user's ID.
-        display_name: New display name, or None to clear.
-
-    Raises:
-        InvalidRequestError: If display_name is empty string or too long.
-    """
-    if display_name is not None:
+def update_user_profile(db: Session, user_id: UUID, request: UpdateProfileRequest) -> None:
+    """Apply one atomic mutation to the supplied profile fields."""
+    display_name = request.display_name
+    if "display_name" in request.model_fields_set and display_name is not None:
         display_name = display_name.strip()
         if not display_name:
             raise InvalidRequestError(
@@ -60,12 +64,28 @@ def update_display_name(db: Session, user_id: UUID, display_name: str | None) ->
                 ApiErrorCode.E_INVALID_REQUEST,
                 f"Display name cannot exceed {DISPLAY_NAME_MAX_LENGTH} characters",
             )
-
     with transaction(db):
-        db.execute(
-            text("UPDATE users SET display_name = :dn WHERE id = :uid"),
-            {"dn": display_name, "uid": user_id},
-        )
+        user = db.get(User, user_id)
+        if user is None:
+            # justify-defect: authenticated bootstrap guarantees the viewer's User row.
+            raise AssertionError("authenticated user profile row is missing")
+        if "display_name" in request.model_fields_set:
+            user.display_name = display_name
+        if "calendar_time_zone" in request.model_fields_set:
+            if request.calendar_time_zone is None:
+                # justify-defect: UpdateProfileRequest rejects supplied null and
+                # this branch only runs when the field was supplied.
+                raise AssertionError("validated calendar timezone is missing")
+            user.calendar_time_zone = request.calendar_time_zone
+
+
+def calendar_local_date(db: Session, user_id: UUID) -> date:
+    """Resolve one account-local date from the profile's canonical IANA zone."""
+    time_zone = db.scalar(select(User.calendar_time_zone).where(User.id == user_id))
+    if time_zone is None:
+        # justify-defect: authenticated bootstrap guarantees a non-null profile zone.
+        raise AssertionError("authenticated user calendar timezone is missing")
+    return datetime.now(ZoneInfo(time_zone)).date()
 
 
 def search_users(db: Session, query: str, viewer_id: UUID, limit: int = 10) -> list[UserSearchOut]:

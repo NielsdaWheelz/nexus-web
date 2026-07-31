@@ -21,7 +21,7 @@ import {
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import { createNotePage } from "@/lib/notes/api";
-import { openTodayPage } from "@/lib/notes/openToday";
+import { useOpenDailyPage } from "@/lib/notes/openDailyPage";
 import { PROGRAMMATIC_NEXUS_TARGET_ACTIVATION } from "@/lib/nexus/dispatch";
 import type { NotePageSummary } from "@/lib/notes/normalize";
 import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
@@ -37,6 +37,7 @@ import styles from "./notes.module.css";
 const EMPTY_NOTE_PAGES: readonly NotePageSummary[] = [];
 
 export default function NotesPaneBody() {
+  const openDailyPage = useOpenDailyPage();
   const activateTarget = requirePaneRuntime(
     usePaneRuntime(),
     "NotesPaneBody",
@@ -131,14 +132,21 @@ export default function NotesPaneBody() {
     }
   }, [pagesResource]);
 
-  const openToday = useCallback(async () => {
+  const viewToday = useCallback(() => {
     try {
-      await openTodayPage(PROGRAMMATIC_NEXUS_TARGET_ACTIVATION);
+      openDailyPage(
+        {
+          kind: "OpenDailyPage",
+          localDate: "Today",
+          entry: { kind: "View" },
+        },
+        PROGRAMMATIC_NEXUS_TARGET_ACTIVATION,
+      );
     } catch (error: unknown) {
       if (handleUnauthenticatedApiError(error)) return;
       setFeedback(toFeedback(error, { fallback: "Could not open today." }));
     }
-  }, []);
+  }, [openDailyPage]);
 
   const createPage = useCallback(async () => {
     const trimmedTitle = title.trim();
@@ -228,7 +236,7 @@ export default function NotesPaneBody() {
           <Button
             variant="secondary"
             size="sm"
-            onClick={() => void openToday()}
+            onClick={viewToday}
           >
             Today
           </Button>

@@ -66,8 +66,8 @@ def patch_me(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Update user profile (display_name)."""
-    users_service.update_display_name(db, viewer.user_id, body.display_name)
+    """Update supplied user profile fields."""
+    users_service.update_user_profile(db, viewer.user_id, body)
     profile = users_service.get_user_profile(
         db, viewer.user_id, viewer.default_library_id, viewer.email
     )

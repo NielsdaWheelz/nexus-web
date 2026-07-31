@@ -97,9 +97,12 @@ describe("pane route table", () => {
     ]);
   });
 
-  it("returns the unsupported placeholder for redirected /daily routes", () => {
+  it("keeps /daily server-only and resolves explicit daily dates", () => {
     expect(resolvePaneRoute("/daily").id).toBe("unsupported");
-    expect(resolvePaneRoute("/daily/2026-05-06").id).toBe("unsupported");
+    expect(resolvePaneRoute("/daily/2026-05-06")).toMatchObject({
+      id: "dailyDate",
+      params: { localDate: "2026-05-06" },
+    });
   });
 
   it("resolves oracle routes as registered pane routes after shell dissolution", () => {

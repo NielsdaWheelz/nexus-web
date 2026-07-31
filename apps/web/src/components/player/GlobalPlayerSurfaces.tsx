@@ -13,7 +13,10 @@ import {
 import { projectPlayerChrome } from "@/lib/player/playerChromeModel";
 import { usePlayerCapture } from "@/lib/walknotes/usePlayerCapture";
 import { useWorkspaceStore } from "@/lib/workspace/store";
-import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
+import {
+  findPaneChromeFocusTarget,
+  findPaneLandmarkFocusTarget,
+} from "@/lib/workspace/paneDom";
 import DesktopListeningShelf from "./DesktopListeningShelf";
 import MobileMiniPlayer from "./MobileMiniPlayer";
 import MobileNowPlaying from "./MobileNowPlaying";
@@ -84,10 +87,21 @@ export default function GlobalPlayerSurfaces() {
     setNowPlayingOpen(false);
     setAnnouncement("Player closed");
     commands.dismiss();
+    if (isMobile) {
+      requestAnimationFrame(() =>
+        findPaneLandmarkFocusTarget(activePaneId)?.focus(),
+      );
+      return;
+    }
     requestAnimationFrame(() =>
       findPaneChromeFocusTarget(activePaneId)?.focus(),
     );
-  }, [capture, commands, workspace.state.activePrimaryPaneId]);
+  }, [
+    capture,
+    commands,
+    isMobile,
+    workspace.state.activePrimaryPaneId,
+  ]);
 
   useEffect(() => {
     const viewportChanged = previousIsMobileRef.current !== isMobile;
@@ -246,7 +260,7 @@ export default function GlobalPlayerSurfaces() {
             miniPlayerButtonRef={miniPlayerButtonRef}
             playbackButtonRef={playbackButtonRef}
             returnFocusFallback={() =>
-              findPaneChromeFocusTarget(workspace.state.activePrimaryPaneId)
+              findPaneLandmarkFocusTarget(workspace.state.activePrimaryPaneId)
             }
             onOpenPlayback={() => openPlayback(playbackButtonRef.current)}
             onOpenContents={() => setContentsOpen(true)}
@@ -303,7 +317,7 @@ export default function GlobalPlayerSurfaces() {
           onClose={capture.closeReview}
           returnFocusFallback={() =>
             document.querySelector<HTMLElement>("[data-player-capture]") ??
-            findPaneChromeFocusTarget(workspace.state.activePrimaryPaneId)
+            findPaneLandmarkFocusTarget(workspace.state.activePrimaryPaneId)
           }
           onMaterializeComplete={capture.announceMaterialized}
         />

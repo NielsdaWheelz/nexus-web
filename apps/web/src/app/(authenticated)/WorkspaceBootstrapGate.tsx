@@ -7,18 +7,15 @@ import AuthenticatedShell from "./AuthenticatedShell";
 // restored workspace. Nothing here gates the first byte — the skeleton already flushed. A
 // rejected bootstrap surfaces in AuthenticatedWorkspaceErrorBoundary.
 export default async function WorkspaceBootstrapGate({
-  accountId,
   renderEnvironment,
 }: {
-  accountId: string;
   renderEnvironment: RenderEnvironment;
 }) {
-  const { readerProfile, initialState, resources } = await loadWorkspaceBootstrap(
-    renderEnvironment.androidShell
-  );
+  const { account, readerProfile, initialState, resources } =
+    await loadWorkspaceBootstrap(renderEnvironment.androidShell);
   return (
     <AuthenticatedShell
-      accountId={accountId}
+      account={account}
       readerProfile={readerProfile}
       renderEnvironment={renderEnvironment}
       initialState={initialState}

@@ -71,6 +71,8 @@ import {
 import { useFeedback } from "@/components/feedback/Feedback";
 import {
   planWorkspaceTargetActivation,
+  type PaneEntryDelivery,
+  type WorkspacePaneEntryActivation,
   type WorkspaceTargetActivationRequest,
   type WorkspaceTargetActivationResult,
 } from "./targetActivation";
@@ -80,6 +82,9 @@ import {
   type PaneNavigationModality,
   type PaneReturnVisitTopology,
 } from "./paneReturnMemento";
+
+export const WORKSPACE_PANE_LIMIT_FEEDBACK_KEY =
+  "Workspace.PaneLimitReached";
 
 type WorkspaceAction =
   | { type: "activate_pane"; paneId: string }
@@ -707,6 +712,11 @@ export interface WorkspacePendingSecondaryActivation {
   activation: WorkspaceSecondaryActivation;
 }
 
+export interface WorkspacePaneAliasesRecord {
+  visitId: string;
+  aliases: readonly string[];
+}
+
 export type RestoreClosedPaneResult =
   | { kind: "Restored"; paneId: string }
   | { kind: "Rejected"; reason: "PaneLimitReached" };
@@ -724,6 +734,9 @@ interface WorkspaceStoreValue {
     string,
     WorkspacePendingSecondaryActivation
   >;
+  paneAliasesByPaneId: ReadonlyMap<string, WorkspacePaneAliasesRecord>;
+  pendingPaneEntryDeliveryByPaneId: ReadonlyMap<string, PaneEntryDelivery>;
+  cancelledPaneEntryActivationIds: ReadonlySet<string>;
   activatePane: (paneId: string) => void;
   activateWorkspaceTarget: (
     request: WorkspaceTargetActivationRequest,
@@ -733,6 +746,7 @@ interface WorkspaceStoreValue {
     routeKey: string,
     activation: WorkspaceSecondaryActivation,
   ) => void;
+  acknowledgePaneEntryDelivery: (delivery: PaneEntryDelivery) => void;
   navigatePane: (
     paneId: string,
     href: string,
@@ -764,6 +778,11 @@ interface WorkspaceStoreValue {
     paneId: string;
     routeKey: string;
     label: string | null;
+  }) => void;
+  publishPaneAliases: (input: {
+    paneId: string;
+    visitId: string;
+    aliases: readonly string[];
   }) => void;
 }
 
@@ -809,6 +828,20 @@ export function WorkspaceStoreProvider({
   ] = useState<Map<string, WorkspacePendingSecondaryActivation>>(
     () => new Map(),
   );
+  const [paneAliasesByPaneId, setPaneAliasesByPaneId] = useState<
+    Map<string, WorkspacePaneAliasesRecord>
+  >(() => new Map());
+  const [paneEntryDeliveryLifecycle, setPaneEntryDeliveryLifecycle] = useState(
+    () => ({
+      pendingByPaneId: new Map<string, PaneEntryDelivery>(),
+      cancelledActivationIds: new Set<string>(),
+    }),
+  );
+  const pendingPaneEntryDeliveryByPaneId =
+    paneEntryDeliveryLifecycle.pendingByPaneId;
+  const cancelledPaneEntryActivationIds =
+    paneEntryDeliveryLifecycle.cancelledActivationIds;
+  const consumedPaneEntryActivationIdSetRef = useRef<Set<string>>(new Set());
   const readyRef = useRef(false);
   const hashFoldedRef = useRef(false);
   const lastFoldedLocationHashHrefRef = useRef<string | null>(null);
@@ -910,6 +943,59 @@ export function WorkspaceStoreProvider({
           activation,
         });
         return next;
+      });
+    },
+    [],
+  );
+
+  const consumePaneEntryActivation = useCallback(
+    (
+      activation: WorkspacePaneEntryActivation | undefined,
+      target?: { paneId: string; visitId: string },
+    ) => {
+      if (!activation) {
+        return;
+      }
+      const consumedIds = consumedPaneEntryActivationIdSetRef.current;
+      if (consumedIds.has(activation.activationId)) {
+        return;
+      }
+      consumedIds.add(activation.activationId);
+      if (!target) {
+        if (activation.entry !== null) {
+          setPaneEntryDeliveryLifecycle((current) => ({
+            pendingByPaneId: current.pendingByPaneId,
+            cancelledActivationIds: new Set(current.cancelledActivationIds).add(
+              activation.activationId,
+            ),
+          }));
+        }
+        return;
+      }
+      setPaneEntryDeliveryLifecycle((current) => {
+        const next = new Map(current.pendingByPaneId);
+        const cancelled = new Set(current.cancelledActivationIds);
+        const previous = next.get(target.paneId);
+        if (activation.entry === null) {
+          if (previous) cancelled.add(previous.activationId);
+          next.delete(target.paneId);
+        } else {
+          // One pane visit owns one unclaimed entry. A newer accepted entry
+          // explicitly supersedes it; View above cancels it.
+          if (previous && previous.activationId !== activation.activationId) {
+            cancelled.add(previous.activationId);
+          }
+          next.set(target.paneId, {
+            activationId: activation.activationId,
+            paneId: target.paneId,
+            visitId: target.visitId,
+            entry: activation.entry,
+          });
+        }
+        return {
+          pendingByPaneId: next,
+          cancelledActivationIds: cancelled,
+        };
       });
     },
     [],
@@ -1199,15 +1285,20 @@ export function WorkspaceStoreProvider({
           paneId: pane.id,
           href: pane.currentVisit.href,
           minimized: pane.visibility === "minimized",
+          aliases:
+            paneAliasesByPaneId.get(pane.id)?.visitId === pane.currentVisit.id
+              ? paneAliasesByPaneId.get(pane.id)?.aliases
+              : undefined,
         })),
         maxPanes: MAX_PANES,
       });
 
       if (plan.kind === "Reject") {
+        consumePaneEntryActivation(request.paneEntryActivation);
         feedback.show({
           severity: "warning",
           title: "Pane limit reached",
-          dedupeKey: "Workspace.PaneLimitReached",
+          dedupeKey: WORKSPACE_PANE_LIMIT_FEEDBACK_KEY,
         });
         return { kind: "Rejected", reason: plan.reason };
       }
@@ -1224,10 +1315,30 @@ export function WorkspaceStoreProvider({
       switch (plan.kind) {
         case "Unchanged":
           publishTargetMetadata(plan.paneId, request.target.href);
+          {
+            const pane = getWorkspacePrimaryPane(currentState, plan.paneId);
+            if (!pane) {
+              throw new Error(`Planned workspace pane disappeared: ${plan.paneId}`);
+            }
+            consumePaneEntryActivation(request.paneEntryActivation, {
+              paneId: pane.id,
+              visitId: pane.currentVisit.id,
+            });
+          }
           return { kind: "Unchanged", paneId: plan.paneId };
 
         case "ActivateExisting":
           publishTargetMetadata(plan.paneId, request.target.href);
+          {
+            const pane = getWorkspacePrimaryPane(currentState, plan.paneId);
+            if (!pane) {
+              throw new Error(`Planned workspace pane disappeared: ${plan.paneId}`);
+            }
+            consumePaneEntryActivation(request.paneEntryActivation, {
+              paneId: pane.id,
+              visitId: pane.currentVisit.id,
+            });
+          }
           commitTargetActivation({ type: "restore_pane", paneId: plan.paneId });
           return { kind: "ActivatedExisting", paneId: plan.paneId };
 
@@ -1256,6 +1367,10 @@ export function WorkspaceStoreProvider({
             workspaceReducer(currentState, action, workspacePrimaryMetrics),
           );
           publishTargetMetadata(pane.id, plan.href);
+          consumePaneEntryActivation(request.paneEntryActivation, {
+            paneId: pane.id,
+            visitId: transition.visit.id,
+          });
           commitTargetActivation(action);
           return {
             kind:
@@ -1274,6 +1389,10 @@ export function WorkspaceStoreProvider({
             afterPaneId: plan.originPaneId,
           };
           publishTargetMetadata(pane.id, plan.target.href);
+          consumePaneEntryActivation(request.paneEntryActivation, {
+            paneId: pane.id,
+            visitId: pane.currentVisit.id,
+          });
           commitTargetActivation(action);
           return { kind: "CreatedPane", paneId: pane.id };
         }
@@ -1289,6 +1408,8 @@ export function WorkspaceStoreProvider({
       preparePaneTransition,
       publishPaneLabelHint,
       publishPendingSecondaryActivation,
+      consumePaneEntryActivation,
+      paneAliasesByPaneId,
       workspacePrimaryMetrics,
     ],
   );
@@ -1509,6 +1630,92 @@ export function WorkspaceStoreProvider({
     []
   );
 
+  const publishPaneAliases = useCallback(
+    (input: {
+      paneId: string;
+      visitId: string;
+      aliases: readonly string[];
+    }) => {
+      const pane = getWorkspacePrimaryPane(stateRef.current, input.paneId);
+      if (!pane || pane.currentVisit.id !== input.visitId) {
+        return;
+      }
+      const aliases = [...new Set(input.aliases.filter((alias) => alias.length > 0))].sort();
+      setPaneAliasesByPaneId((current) => {
+        const existing = current.get(input.paneId);
+        if (
+          existing?.visitId === input.visitId &&
+          existing.aliases.length === aliases.length &&
+          existing.aliases.every((alias, index) => alias === aliases[index])
+        ) {
+          return current;
+        }
+        const next = new Map(current);
+        if (aliases.length === 0) {
+          next.delete(input.paneId);
+        } else {
+          next.set(input.paneId, { visitId: input.visitId, aliases });
+        }
+        return next;
+      });
+    },
+    [],
+  );
+
+  const acknowledgePaneEntryDelivery = useCallback(
+    (delivery: PaneEntryDelivery) => {
+      setPaneEntryDeliveryLifecycle((current) => {
+        const pending = current.pendingByPaneId.get(delivery.paneId);
+        if (
+          !pending ||
+          pending.activationId !== delivery.activationId ||
+          pending.visitId !== delivery.visitId
+        ) {
+          return current;
+        }
+        const next = new Map(current.pendingByPaneId);
+        next.delete(delivery.paneId);
+        return { ...current, pendingByPaneId: next };
+      });
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const currentVisitByPaneId = new Map(
+      getWorkspacePrimaryPanes(state).map((pane) => [
+        pane.id,
+        pane.currentVisit.id,
+      ]),
+    );
+    setPaneAliasesByPaneId((current) => {
+      const next = new Map(
+        [...current].filter(
+          ([paneId, record]) =>
+            currentVisitByPaneId.get(paneId) === record.visitId,
+        ),
+      );
+      return next.size === current.size ? current : next;
+    });
+    setPaneEntryDeliveryLifecycle((current) => {
+      const next = new Map(
+        [...current.pendingByPaneId].filter(
+          ([paneId, delivery]) =>
+            currentVisitByPaneId.get(paneId) === delivery.visitId,
+        ),
+      );
+      if (next.size === current.pendingByPaneId.size) return current;
+      const cancelled = new Set(current.cancelledActivationIds);
+      for (const [paneId, delivery] of current.pendingByPaneId) {
+        if (!next.has(paneId)) cancelled.add(delivery.activationId);
+      }
+      return {
+        pendingByPaneId: next,
+        cancelledActivationIds: cancelled,
+      };
+    });
+  }, [state]);
+
   const value = useMemo<WorkspaceHostStoreValue>(
     () => ({
       state,
@@ -1516,9 +1723,13 @@ export function WorkspaceStoreProvider({
       workspacePrimaryMetrics,
       runtimeLabelByPaneId,
       pendingSecondaryActivationByPaneId,
+      paneAliasesByPaneId,
+      pendingPaneEntryDeliveryByPaneId,
+      cancelledPaneEntryActivationIds,
       activatePane,
       activateWorkspaceTarget,
       acknowledgePendingSecondaryActivation,
+      acknowledgePaneEntryDelivery,
       navigatePane,
       goBackPane,
       goForwardPane,
@@ -1533,6 +1744,7 @@ export function WorkspaceStoreProvider({
       minimizePane,
       restorePane,
       publishPaneLabel,
+      publishPaneAliases,
     }),
     [
       state,
@@ -1540,9 +1752,13 @@ export function WorkspaceStoreProvider({
       workspacePrimaryMetrics,
       runtimeLabelByPaneId,
       pendingSecondaryActivationByPaneId,
+      paneAliasesByPaneId,
+      pendingPaneEntryDeliveryByPaneId,
+      cancelledPaneEntryActivationIds,
       activatePane,
       activateWorkspaceTarget,
       acknowledgePendingSecondaryActivation,
+      acknowledgePaneEntryDelivery,
       navigatePane,
       goBackPane,
       goForwardPane,
@@ -1557,6 +1773,7 @@ export function WorkspaceStoreProvider({
       minimizePane,
       restorePane,
       publishPaneLabel,
+      publishPaneAliases,
     ]
   );
 

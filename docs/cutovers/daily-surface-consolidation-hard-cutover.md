@@ -3,6 +3,14 @@
 **Status:** Spec · **Rev 1** · 2026-07-07
 **Type:** Hard cutover — no legacy code, no fallbacks, no compat shims, no flags-for-old-behavior.
 
+**Superseded in part (2026-07-30):**
+[`daily-pages-quick-capture-hard-cutover.md`](daily-pages-quick-capture-hard-cutover.md)
+restores `/daily/{localDate}` as a non-mutating locator pane, replaces mutating
+daily GETs with latent-or-materialized reads, replaces `quick_capture` with one
+atomic dated capture, and deletes the retained daily locator variants. The
+ordinary-Page ontology and deletion of the old standalone Today surface remain
+authoritative.
+
 ## One-line
 
 Delete the Today surface (`DailyNotePaneBody`, the `daily`/`dailyDate` pane routes, the Today nav entry); keep `daily_note_pages` and the backend lookup; make "today" a verb — a Notes-pane button, a launcher command, a keybinding — that resolves-or-creates today's page then opens it in the ordinary Page pane.

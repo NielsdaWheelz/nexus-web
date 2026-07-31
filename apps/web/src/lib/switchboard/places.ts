@@ -5,6 +5,7 @@ import {
 } from "@/lib/navigation/destinations";
 
 export const SWITCHBOARD_PLACE_IDS = [
+  "today",
   "lectern",
   "libraries",
   "browse",

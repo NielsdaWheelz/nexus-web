@@ -22,7 +22,7 @@ import type {
 } from "@/lib/ui/actionDescriptor";
 import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
 import {
-  findPaneActivationFocusTarget,
+  findPaneLandmarkFocusTarget,
   findPaneChromeFocusTarget,
   findPaneSearchFocusTarget,
 } from "@/lib/workspace/paneDom";
@@ -1529,10 +1529,10 @@ describe("PaneShell", () => {
     render(<div data-pane-id="pane-a">{paneTree({ label: "Media" })}</div>);
 
     const landmark = screen.getByTestId("pane-shell-root");
-    expect(landmark).toHaveAttribute("data-pane-activation-focus", "true");
+    expect(landmark).toHaveAttribute("data-pane-focus-landmark", "true");
     expect(landmark).toHaveAttribute("tabindex", "-1");
-    expect(findPaneActivationFocusTarget("pane-a")).toBe(landmark);
-    expect(findPaneActivationFocusTarget("missing-pane")).toBeNull();
+    expect(findPaneLandmarkFocusTarget("pane-a")).toBe(landmark);
+    expect(findPaneLandmarkFocusTarget("missing-pane")).toBeNull();
   });
 
   it("falls back to the pane chrome sentinel when the mobile Options trigger is inert", () => {

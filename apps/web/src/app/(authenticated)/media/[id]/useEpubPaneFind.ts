@@ -37,6 +37,7 @@ import {
   createCanonicalTextFindHighlightOwner,
   type CanonicalTextFindHighlightOwner,
 } from "@/lib/reader/canonicalTextFindHighlights";
+import type { ReaderScrollPositioner } from "@/lib/reader/paneScroll";
 import { canonicalCpLength } from "@/lib/reader/textOffsets";
 import {
   findFirstVisibleCanonicalOffset,
@@ -138,6 +139,7 @@ interface EpubFindAdapterInput {
   readonly onSourceChanged: () => void;
   readonly focusReaderViewport: () => void;
   readonly highlightOwner: CanonicalTextFindHighlightOwner;
+  readonly scrollPositioner: ReaderScrollPositioner;
   readonly findOccurrences?: FindOccurrences;
   readonly loadSection?: LoadSection;
 }
@@ -362,6 +364,7 @@ export function createEpubFindAdapter({
   onSourceChanged,
   focusReaderViewport,
   highlightOwner,
+  scrollPositioner,
   findOccurrences = requestEpubFind,
   loadSection = requestEpubSection,
 }: EpubFindAdapterInput): EpubPaneFindAdapter {
@@ -371,6 +374,38 @@ export function createEpubFindAdapter({
   let origin: CapturedEpubFindOrigin | null = null;
   let previewGeneration = 0;
   let disposed = false;
+  const positionExactAnchor = async (
+    rendered: EpubFindRenderedState,
+    anchorCp: number,
+  ): Promise<boolean> => {
+    let positioned = false;
+    await scrollPositioner.run((commands) => {
+      positioned = scrollToExactCanonicalTextAnchor(
+        commands,
+        rendered.viewport,
+        rendered.cursor,
+        anchorCp,
+      );
+    });
+    return positioned;
+  };
+  const restoreOriginPosition = async (
+    rendered: EpubFindRenderedState,
+    captured: CapturedEpubFindOrigin,
+  ): Promise<boolean> => {
+    let restored = false;
+    await scrollPositioner.run((commands) => {
+      restored = restoreCanonicalTextAnchorViewportPosition(
+        commands,
+        rendered.viewport,
+        rendered.cursor,
+        captured.anchorCp,
+        captured.viewportTopDeltaPx,
+        captured.scrollLeft,
+      );
+    });
+    return restored;
+  };
 
   const assertCurrent = (sourceKey: PaneFindSourceKey) => {
     if (
@@ -434,15 +469,7 @@ export function createEpubFindAdapter({
       getRenderedState,
       getRenderedSectionOverride,
     });
-    if (
-      !restoreCanonicalTextAnchorViewportPosition(
-        rendered.viewport,
-        rendered.cursor,
-        captured.anchorCp,
-        captured.viewportTopDeltaPx,
-        captured.scrollLeft,
-      )
-    ) {
+    if (!(await restoreOriginPosition(rendered, captured))) {
       throw new Error("EPUB Find reading origin is no longer renderable.");
     }
   };
@@ -745,11 +772,10 @@ export function createEpubFindAdapter({
           activeOccurrence = occurrence;
           publishRenderedRanges(renderedBefore);
           if (
-            !scrollToExactCanonicalTextAnchor(
-              renderedBefore.viewport,
-              renderedBefore.cursor,
+            !(await positionExactAnchor(
+              renderedBefore,
               occurrence.startCp,
-            )
+            ))
           ) {
             throw new Error(
               "EPUB Find occurrence anchor is not renderable.",
@@ -864,13 +890,7 @@ export function createEpubFindAdapter({
           );
           activeOccurrence = occurrence;
           publishRenderedRanges(rendered);
-          if (
-            !scrollToExactCanonicalTextAnchor(
-              rendered.viewport,
-              rendered.cursor,
-              occurrence.startCp,
-            )
-          ) {
+          if (!(await positionExactAnchor(rendered, occurrence.startCp))) {
             throw new Error(
               "EPUB Find occurrence anchor is not renderable.",
             );
@@ -967,6 +987,7 @@ export function useEpubPaneFind({
   resetRenderedSectionAuxiliaryState,
   onSourceChanged,
   focusReaderViewport,
+  scrollPositioner,
 }: {
   readonly mediaId: string;
   readonly navigation: readonly ReaderNavigationSection[] | null;
@@ -982,6 +1003,7 @@ export function useEpubPaneFind({
   readonly resetRenderedSectionAuxiliaryState: () => void;
   readonly onSourceChanged: () => void;
   readonly focusReaderViewport: () => void;
+  readonly scrollPositioner: ReaderScrollPositioner;
 }): PaneFindCapability<EpubFindError> {
   const snapshot = useMemo(
     () =>
@@ -1013,6 +1035,7 @@ export function useEpubPaneFind({
             onSourceChanged,
             focusReaderViewport,
             highlightOwner,
+            scrollPositioner,
           })
         : null,
     [
@@ -1023,6 +1046,7 @@ export function useEpubPaneFind({
       previewLease,
       renderedStateRef,
       resetRenderedSectionAuxiliaryState,
+      scrollPositioner,
       setAwaitingReaderAdoption,
       setRenderedSectionOverride,
       snapshot,

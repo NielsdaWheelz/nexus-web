@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useTransition,
@@ -33,20 +34,32 @@ import { usePaneReturnReady } from "@/lib/panes/paneRuntime";
 import { changeEmailAction } from "./actions";
 import styles from "./page.module.css";
 import { copyText } from "@/lib/ui/copyText";
+import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
+import {
+  decodeAuthenticatedAccountProfile,
+  isAuthenticatedAccountContractDefect,
+} from "@/lib/account/contract";
 
 interface AccountResponse {
-  data: {
-    email?: string;
-    display_name: string | null;
-    email_ingest_address?: string | null;
-  };
+  data: unknown;
 }
 
 export default function SettingsAccountPaneBody() {
+  const { setCalendarTimeZone } = useAuthenticatedAccount();
   const accountResource = useResource<AccountResponse, NoResourceParams>({
     descriptor: settingsAccountResource,
     params: {},
   });
+  const accountProfile = useMemo(
+    () =>
+      accountResource.status === "ready"
+        ? decodeAuthenticatedAccountProfile(accountResource.data.data)
+        : null,
+    [accountResource],
+  );
+  const [contractDefect, setContractDefect] = useState<{
+    error: unknown;
+  } | null>(null);
 
   const [ingestAddressCopied, setIngestAddressCopied] = useState(false);
   const [ingestAddressCopyFailed, setIngestAddressCopyFailed] = useState(false);
@@ -79,8 +92,15 @@ export default function SettingsAccountPaneBody() {
   const [displayNameFeedback, setDisplayNameFeedback] =
     useState<FeedbackContent | null>(null);
   const [displayNamePending, startDisplayNameTransition] = useTransition();
+  const [currentCalendarTimeZone, setCurrentCalendarTimeZone] = useState("");
+  const [calendarTimeZoneInput, setCalendarTimeZoneInput] = useState("");
+  const calendarTimeZoneDirtyRef = useRef(false);
+  const [calendarTimeZoneFeedback, setCalendarTimeZoneFeedback] =
+    useState<FeedbackContent | null>(null);
+  const [calendarTimeZonePending, startCalendarTimeZoneTransition] =
+    useTransition();
   const [mounted, setMounted] = useState(false);
-  const accountReady = mounted && accountResource.status === "ready";
+  const accountReady = mounted && accountProfile !== null;
   usePaneReturnReady(
     mounted &&
       (accountResource.status === "ready" ||
@@ -92,21 +112,23 @@ export default function SettingsAccountPaneBody() {
   }, []);
 
   useEffect(() => {
-    if (accountResource.status === "ready") {
-      const email =
-        typeof accountResource.data.data.email === "string"
-          ? accountResource.data.data.email
-          : "";
+    if (accountProfile !== null) {
+      const email = accountProfile.email ?? "";
       if (email) {
         setCurrentEmail(email);
         if (!emailDirtyRef.current) {
           setEmailInput(email);
         }
       }
-      const name = accountResource.data.data.display_name ?? "";
+      const name = accountProfile.displayName ?? "";
       setCurrentDisplayName(name);
       if (!displayNameDirtyRef.current) {
         setDisplayNameInput(name);
+      }
+      const calendarTimeZone = accountProfile.calendarTimeZone;
+      setCurrentCalendarTimeZone(calendarTimeZone);
+      if (!calendarTimeZoneDirtyRef.current) {
+        setCalendarTimeZoneInput(calendarTimeZone);
       }
       return;
     }
@@ -116,8 +138,12 @@ export default function SettingsAccountPaneBody() {
         severity: "error",
         title: DISPLAY_NAME_CHANGE_FAILURE_MESSAGE,
       });
+      setCalendarTimeZoneFeedback({
+        severity: "error",
+        title: "Calendar time zone could not be loaded.",
+      });
     }
-  }, [accountResource]);
+  }, [accountProfile, accountResource.status]);
 
   const handleEmailSubmit = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
@@ -148,13 +174,12 @@ export default function SettingsAccountPaneBody() {
       setDisplayNameFeedback(null);
       startDisplayNameTransition(async () => {
         try {
-          const response = await apiFetch<{
-            data: { display_name: string | null };
-          }>("/api/me", {
+          const response = await apiFetch<{ data: unknown }>("/api/me", {
             method: "PATCH",
             body: JSON.stringify({ display_name: displayNameInput }),
           });
-          const name = response.data.display_name ?? "";
+          const profile = decodeAuthenticatedAccountProfile(response.data);
+          const name = profile.displayName ?? "";
           setCurrentDisplayName(name);
           setDisplayNameInput(name);
           displayNameDirtyRef.current = false;
@@ -164,6 +189,10 @@ export default function SettingsAccountPaneBody() {
           });
         } catch (error) {
           if (handleUnauthenticatedApiError(error)) return;
+          if (isAuthenticatedAccountContractDefect(error)) {
+            setContractDefect({ error });
+            return;
+          }
           setDisplayNameFeedback({
             severity: "error",
             title: DISPLAY_NAME_CHANGE_FAILURE_MESSAGE,
@@ -173,6 +202,47 @@ export default function SettingsAccountPaneBody() {
     },
     [displayNameInput]
   );
+
+  const handleCalendarTimeZoneSubmit = useCallback(
+    (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      setCalendarTimeZoneFeedback(null);
+      startCalendarTimeZoneTransition(async () => {
+        try {
+          const requestedCalendarTimeZone = calendarTimeZoneInput.trim();
+          const response = await apiFetch<{ data: unknown }>("/api/me", {
+            method: "PATCH",
+            body: JSON.stringify({
+              calendar_time_zone: requestedCalendarTimeZone,
+            }),
+          });
+          const profile = decodeAuthenticatedAccountProfile(response.data);
+          const calendarTimeZone = profile.calendarTimeZone;
+          setCurrentCalendarTimeZone(calendarTimeZone);
+          setCalendarTimeZoneInput(calendarTimeZone);
+          calendarTimeZoneDirtyRef.current = false;
+          setCalendarTimeZone(calendarTimeZone);
+          setCalendarTimeZoneFeedback({
+            severity: "success",
+            title: "Calendar time zone updated.",
+          });
+        } catch (error) {
+          if (handleUnauthenticatedApiError(error)) return;
+          if (isAuthenticatedAccountContractDefect(error)) {
+            setContractDefect({ error });
+            return;
+          }
+          setCalendarTimeZoneFeedback({
+            severity: "error",
+            title: "Calendar time zone could not be updated.",
+          });
+        }
+      });
+    },
+    [calendarTimeZoneInput, setCalendarTimeZone],
+  );
+
+  if (contractDefect) throw contractDefect.error;
 
   return (
     <PaneSurface opener={<SectionOpener heading="Account" />}>
@@ -246,19 +316,56 @@ export default function SettingsAccountPaneBody() {
         </form>
       </PaneSection>
 
+      <PaneSection title="Calendar time zone">
+        <form className={styles.form} onSubmit={handleCalendarTimeZoneSubmit}>
+          {calendarTimeZoneFeedback ? (
+            <FeedbackNotice feedback={calendarTimeZoneFeedback} />
+          ) : null}
+          <p className={styles.current}>
+            Current: {currentCalendarTimeZone}
+          </p>
+          <label className={styles.field}>
+            <span className={styles.label}>Calendar time zone</span>
+            <Input
+              type="text"
+              autoComplete="off"
+              required
+              value={calendarTimeZoneInput}
+              onChange={(event) => {
+                calendarTimeZoneDirtyRef.current = true;
+                setCalendarTimeZoneInput(event.target.value);
+              }}
+              disabled={!accountReady || calendarTimeZonePending}
+            />
+          </label>
+          <p className={styles.current}>
+            Use an IANA time zone, for example America/Los_Angeles.
+          </p>
+          <Button
+            type="submit"
+            variant="primary"
+            loading={calendarTimeZonePending}
+            disabled={
+              !accountReady ||
+              !calendarTimeZoneInput.trim() ||
+              calendarTimeZoneInput.trim() === currentCalendarTimeZone
+            }
+          >
+            Update calendar time zone
+          </Button>
+        </form>
+      </PaneSection>
+
       <PaneSection title="Post Room">
-        {accountResource.status !== "ready" ? null : accountResource.data.data
-            .email_ingest_address ? (
+        {accountProfile === null ? null : accountProfile.emailIngestAddress ? (
           <>
             <p className={styles.current}>
-              <code>{accountResource.data.data.email_ingest_address}</code>
+              <code>{accountProfile.emailIngestAddress}</code>
             </p>
             <Button
               variant="ghost"
               onClick={() =>
-                handleCopyIngestAddress(
-                  accountResource.data.data.email_ingest_address!
-                )
+                handleCopyIngestAddress(accountProfile.emailIngestAddress!)
               }
             >
               {ingestAddressCopied

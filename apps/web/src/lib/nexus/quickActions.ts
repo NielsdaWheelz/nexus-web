@@ -13,11 +13,15 @@ import type {
 export const QUICK_ACTION_REGISTRY = {
   "Nexus.Quick.Note": {
     id: "Nexus.Quick.Note",
-    label: "Note",
+    label: "Quick Note",
     icon: FileText,
     keywords: ["today", "capture", "journal"],
     category: "Create",
-    target: { kind: "TodayCapture" },
+    target: {
+      kind: "OpenDailyPage",
+      localDate: "Today",
+      entry: { kind: "AppendNote" },
+    },
   },
   "Nexus.Quick.Page": {
     id: "Nexus.Quick.Page",
@@ -69,8 +73,8 @@ export const SWITCHBOARD_QUICK_ACTION_IDS = [
 ] as const satisfies readonly NexusQuickActionId[];
 
 export const NEXUS_ZERO_STATE_ACTION_IDS = [
-  "Nexus.Quick.Chat",
   "Nexus.Quick.Note",
+  "Nexus.Quick.Chat",
   "Nexus.Quick.Page",
   "Nexus.Quick.Import",
 ] as const satisfies readonly NexusQuickActionId[];

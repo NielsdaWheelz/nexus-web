@@ -132,7 +132,7 @@ function page(updatedAt: string): NotePage {
       href: `/pages/${PAGE_ID}`,
     }),
     updatedAt,
-    dailyNote: null,
+      dailyPage: null,
   };
 }
 

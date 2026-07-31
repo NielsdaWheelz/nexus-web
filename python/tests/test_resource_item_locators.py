@@ -1,20 +1,15 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
 from uuid import UUID, uuid4
 
 import pytest
 from pydantic import ValidationError
-from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from nexus.db.models import DailyNotePage
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.notes import CreatePageRequest
 from nexus.schemas.resource_items import (
     ContributorHandleLocatorIn,
-    DailyNoteDateLocatorIn,
-    DailyNoteTodayLocatorIn,
     ResourceLocatorResolveRequest,
     ResourceRefLocatorIn,
 )
@@ -57,85 +52,27 @@ def test_batch_locator_resolution_preserves_input_order(
         bootstrapped_user,
         CreatePageRequest(page_id=uuid4(), title="Batch Page"),
     )
-    local_date = date(2026, 6, 19)
+    other_page = notes.create_page(
+        db_session,
+        bootstrapped_user,
+        CreatePageRequest(page_id=uuid4(), title="Second Batch Page"),
+    )
 
     results = resolve_resource_locators(
         db_session,
         viewer_id=bootstrapped_user,
         locators=[
-            DailyNoteDateLocatorIn(
-                kind="daily_note_date",
-                local_date=local_date,
-                time_zone="America/Los_Angeles",
-            ),
+            ResourceRefLocatorIn(kind="resource_ref", ref=f"page:{other_page.id}"),
             ResourceRefLocatorIn(kind="resource_ref", ref=f"page:{page.id}"),
         ],
     )
 
     assert [result.locator.kind for result in results] == [
-        "daily_note_date",
+        "resource_ref",
         "resource_ref",
     ]
-    assert results[0].resource_item.scheme == "page"
+    assert results[0].resource_item.ref == f"page:{other_page.id}"
     assert results[1].resource_item.ref == f"page:{page.id}"
-
-
-def test_daily_note_date_locator_is_idempotent(
-    db_session: Session,
-    bootstrapped_user: UUID,
-) -> None:
-    locator = DailyNoteDateLocatorIn(
-        kind="daily_note_date",
-        local_date=date(2026, 6, 19),
-        time_zone="America/Los_Angeles",
-    )
-
-    first = resolve_resource_locator(db_session, viewer_id=bootstrapped_user, locator=locator)
-    second = resolve_resource_locator(db_session, viewer_id=bootstrapped_user, locator=locator)
-
-    assert first.resource_item.ref == second.resource_item.ref
-    assert first.resource_item.scheme == "page"
-    assert first.canonical_href == f"/pages/{first.resource_item.id}"
-    assert (
-        db_session.scalar(
-            select(func.count())
-            .select_from(DailyNotePage)
-            .where(
-                DailyNotePage.user_id == bootstrapped_user,
-                DailyNotePage.local_date == date(2026, 6, 19),
-            )
-        )
-        == 1
-    )
-
-
-def test_daily_note_today_locator_uses_explicit_timezone(
-    db_session: Session,
-    bootstrapped_user: UUID,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FixedDateTime(datetime):
-        @classmethod
-        def now(cls, tz=None):  # noqa: ANN001
-            fixed = datetime(2026, 6, 20, 6, 30, tzinfo=UTC)
-            return fixed if tz is None else fixed.astimezone(tz)
-
-    monkeypatch.setattr(notes, "datetime", FixedDateTime)
-
-    result = resolve_resource_locator(
-        db_session,
-        viewer_id=bootstrapped_user,
-        locator=DailyNoteTodayLocatorIn(
-            kind="daily_note_today",
-            time_zone="America/Los_Angeles",
-        ),
-    )
-
-    daily = db_session.scalar(
-        select(DailyNotePage).where(DailyNotePage.page_id == result.resource_item.id)
-    )
-    assert daily is not None
-    assert daily.local_date == date(2026, 6, 19)
 
 
 def test_resource_ref_locator_rejects_product_pseudo_refs() -> None:
@@ -151,22 +88,18 @@ def test_resource_ref_locator_rejects_product_pseudo_refs() -> None:
             )
 
 
-def test_daily_locator_rejects_invalid_timezone(
-    db_session: Session,
-    bootstrapped_user: UUID,
-) -> None:
-    with pytest.raises(ApiError) as error:
-        resolve_resource_locator(
-            db_session,
-            viewer_id=bootstrapped_user,
-            locator=DailyNoteDateLocatorIn(
-                kind="daily_note_date",
-                local_date=date(2026, 6, 19),
-                time_zone="Not/A_Zone",
-            ),
+@pytest.mark.parametrize("kind", ["daily_note_today", "daily_note_date"])
+def test_removed_daily_locators_fail_exact_schema_decode(kind: str) -> None:
+    with pytest.raises(ValidationError):
+        ResourceLocatorResolveRequest(
+            locators=[
+                {
+                    "kind": kind,
+                    "localDate": "2026-06-19",
+                    "timeZone": "UTC",
+                }
+            ]
         )
-
-    assert error.value.code == ApiErrorCode.E_INVALID_REQUEST
 
 
 @pytest.mark.parametrize(

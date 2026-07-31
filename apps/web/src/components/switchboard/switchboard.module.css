@@ -129,6 +129,22 @@
   text-align: start;
 }
 
+.quickNoteHandoffInput {
+  position: fixed;
+  inset-inline-start: 0;
+  bottom: 0;
+  z-index: calc(var(--z-nexus) + 1);
+  width: 1px;
+  height: 1px;
+  min-width: 1px;
+  min-height: 1px;
+  padding: 0;
+  border: 0;
+  font-size: 16px;
+  opacity: 0.01;
+  resize: none;
+}
+
 .compactAction span {
   min-width: 0;
   overflow-wrap: anywhere;

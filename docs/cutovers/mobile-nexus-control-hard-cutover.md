@@ -1,6 +1,8 @@
 # Mobile Nexus Control — Hard Cutover
 
-Status: APPROVED FOR IMPLEMENTATION — 2026-07-30
+Status: Implemented in source — focused tests are present but were not rerun in
+this reconciliation; physical device, real-stack, CI, deployment, and
+production proof pending — 2026-07-30
 Type: hard cutover
 
 ## Decision

@@ -3,6 +3,10 @@ import { planWorkspaceTargetActivation } from "@/lib/workspace/targetActivation"
 
 const MEDIA_ID = "11111111-1111-4111-8111-111111111111";
 const MEDIA_HREF = `/media/${MEDIA_ID}`;
+const PAGE_ID = "22222222-2222-4222-8222-222222222222";
+const PAGE_HREF = `/pages/${PAGE_ID}`;
+const DAILY_LOCAL_DATE = "2026-07-30";
+const DAILY_HREF = `/daily/${DAILY_LOCAL_DATE}`;
 
 function plan(input: Partial<Parameters<typeof planWorkspaceTargetActivation>[0]> = {}) {
   return planWorkspaceTargetActivation({
@@ -56,6 +60,60 @@ describe("planWorkspaceTargetActivation", () => {
         ],
       }),
     ).toEqual({ kind: "ActivateExisting", paneId: "minimized" });
+  });
+
+  it("activates a Page pane through its published daily alias", () => {
+    expect(
+      plan({
+        target: { href: DAILY_HREF },
+        panes: [
+          { paneId: "origin", href: "/libraries", minimized: false },
+          {
+            paneId: "page",
+            href: PAGE_HREF,
+            minimized: false,
+            aliases: [`daily:${DAILY_LOCAL_DATE}`],
+          },
+        ],
+      }),
+    ).toEqual({ kind: "ActivateExisting", paneId: "page" });
+  });
+
+  it("restores a minimized daily pane through an ordinary Page target", () => {
+    expect(
+      plan({
+        target: { href: PAGE_HREF },
+        panes: [
+          { paneId: "origin", href: "/libraries", minimized: false },
+          {
+            paneId: "daily",
+            href: DAILY_HREF,
+            minimized: true,
+            aliases: [`page:${PAGE_ID}`],
+          },
+        ],
+      }),
+    ).toEqual({ kind: "ActivateExisting", paneId: "daily" });
+  });
+
+  it("does not collapse query-distinct visits through their Page alias", () => {
+    expect(
+      plan({
+        target: { href: `${PAGE_HREF}?view=outline` },
+        panes: [
+          { paneId: "origin", href: "/libraries", minimized: false },
+          {
+            paneId: "page",
+            href: `${PAGE_HREF}?view=canvas`,
+            minimized: false,
+          },
+        ],
+      }),
+    ).toEqual({
+      kind: "NavigateOrigin",
+      paneId: "origin",
+      href: `${PAGE_HREF}?view=outline`,
+    });
   });
 
   it("pushes a hash-only target in the selected exact pane", () => {

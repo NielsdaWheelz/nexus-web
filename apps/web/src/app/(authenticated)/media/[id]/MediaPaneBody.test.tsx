@@ -771,6 +771,7 @@ function mediaResponse() {
     read_state: canonicalAfterReset?.readState ?? testState.readState,
     progress_resettable:
       canonicalAfterReset?.progressResettable ?? testState.progressResettable,
+    playerDescriptor: { kind: "Absent" as const },
   };
 }
 
@@ -2407,6 +2408,28 @@ describe("MediaPaneBody pane sizing", () => {
     },
   );
 
+  it(
+    "blurs a focused chrome command only for primary reader pointer intent",
+    async () => {
+      testState.mediaKind = "web_article";
+      testState.isMobileViewport = true;
+      renderMediaPane();
+
+      const viewport = await screen.findByTestId("document-viewport");
+      const chromeCommand = screen.getByRole("button", {
+        name: "Chrome command",
+      });
+      chromeCommand.focus();
+      expect(chromeCommand).toHaveFocus();
+
+      fireEvent.pointerDown(viewport, { button: 0, isPrimary: false });
+      expect(chromeCommand).toHaveFocus();
+
+      fireEvent.pointerDown(viewport, { button: 0, isPrimary: true });
+      expect(chromeCommand).not.toHaveFocus();
+    },
+  );
+
   it("rebaselines transcript chrome when typography changes its rendered layout", async () => {
     testState.mediaKind = "podcast_episode";
     testState.isMobileViewport = true;
@@ -2499,28 +2522,6 @@ describe("MediaPaneBody pane sizing", () => {
       window.removeEventListener(READER_PULSE_HIGHLIGHT, pulseHandler);
     }
   });
-
-  it(
-    "blurs a focused chrome command only for primary reader pointer intent",
-    async () => {
-      testState.mediaKind = "web_article";
-      testState.isMobileViewport = true;
-      renderMediaPane();
-
-      const viewport = await screen.findByTestId("document-viewport");
-      const chromeCommand = screen.getByRole("button", {
-        name: "Chrome command",
-      });
-      chromeCommand.focus();
-      expect(chromeCommand).toHaveFocus();
-
-      fireEvent.pointerDown(viewport, { button: 0, isPrimary: false });
-      expect(chromeCommand).toHaveFocus();
-
-      fireEvent.pointerDown(viewport, { button: 0, isPrimary: true });
-      expect(chromeCommand).not.toHaveFocus();
-    },
-  );
 
   it("rebaselines the transcript scrollport when its media id changes", async () => {
     testState.mediaKind = "video";
@@ -2923,20 +2924,9 @@ describe("MediaPaneBody pane sizing", () => {
       screen.getByTestId("html-renderer"),
     ).getByText("Standalone margin note body.");
     expect(inlineMarginNote).toBeInstanceOf(HTMLElement);
-    const chrome = screen.getByTestId("mobile-chrome-probe");
 
     const publicationCountBeforeClick = onSetPaneSecondary.mock.calls.length;
     fireEvent.click(marginNoteButton);
-    expect(chrome).toHaveAttribute("data-mobile-chrome-phase", "Pinned");
-    await act(
-      () =>
-        new Promise<void>((resolve) =>
-          window.requestAnimationFrame(() => resolve()),
-        ),
-    );
-    await waitFor(() =>
-      expect(chrome).toHaveAttribute("data-mobile-chrome-phase", "Visible"),
-    );
     await waitFor(() => {
       expect(onSetPaneSecondary.mock.calls.length).toBeGreaterThan(
         publicationCountBeforeClick,

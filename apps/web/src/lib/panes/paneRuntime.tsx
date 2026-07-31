@@ -33,6 +33,7 @@ import { preloadPane } from "@/lib/panes/paneRenderRegistry";
 import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";
 import type { PaneRuntimeLayout } from "@/lib/workspace/paneSizing";
 import type {
+  PaneEntryDelivery,
   WorkspaceTarget,
   WorkspaceTargetActivationRequest,
   WorkspaceTargetActivationResult,
@@ -108,6 +109,7 @@ export interface PaneRuntimeContextValue {
   resourceStatus: PaneResourceStatus;
   secondaryPane?: WorkspaceAttachedSecondaryPaneState | null;
   secondaryActivation: WorkspaceDossierActivation | null;
+  paneEntryDelivery: PaneEntryDelivery | null;
   transientSecondarySurface: PaneRuntimeTransientSecondarySurface | null;
   pathParams: Record<string, string>;
   searchParams: URLSearchParams;
@@ -136,6 +138,8 @@ export interface PaneRuntimeContextValue {
   closeTransientSecondarySurface: () => void;
   previewTransientSecondaryResult: () => void;
   acknowledgeSecondaryActivation: () => void;
+  acknowledgePaneEntryDelivery: (delivery: PaneEntryDelivery) => void;
+  setPaneAliases: (aliases: readonly string[]) => void;
 }
 
 const PaneRuntimeContext = createContext<PaneRuntimeContextValue | null>(null);
@@ -158,6 +162,7 @@ interface PaneRuntimeProviderProps {
   resourceStatus?: PaneResourceStatus;
   secondaryPane?: WorkspaceAttachedSecondaryPaneState | null;
   secondaryActivation?: WorkspaceDossierActivation | null;
+  paneEntryDelivery?: PaneEntryDelivery | null;
   transientSecondarySurface?: PaneRuntimeTransientSecondarySurface | null;
   pathParams?: Record<string, string>;
   canGoBack: boolean;
@@ -212,6 +217,12 @@ interface PaneRuntimeProviderProps {
     routeKey: string,
     activation: WorkspaceDossierActivation,
   ) => void;
+  onAcknowledgePaneEntryDelivery?: (delivery: PaneEntryDelivery) => void;
+  onSetPaneAliases?: (input: {
+    paneId: string;
+    visitId: string;
+    aliases: readonly string[];
+  }) => void;
   children: React.ReactNode;
 }
 
@@ -285,6 +296,7 @@ export function PaneRuntimeProvider({
   resourceStatus = "none",
   secondaryPane = null,
   secondaryActivation = null,
+  paneEntryDelivery = null,
   transientSecondarySurface = null,
   pathParams = {},
   canGoBack,
@@ -303,6 +315,8 @@ export function PaneRuntimeProvider({
   onCloseTransientSecondarySurface,
   onPreviewTransientSecondaryResult,
   onAcknowledgeSecondaryActivation,
+  onAcknowledgePaneEntryDelivery,
+  onSetPaneAliases,
   children,
 }: PaneRuntimeProviderProps) {
   const pendingNavigationModalityRef = useRef<{
@@ -355,7 +369,10 @@ export function PaneRuntimeProvider({
     onCloseTransientSecondarySurface,
     onPreviewTransientSecondaryResult,
     onAcknowledgeSecondaryActivation,
+    onAcknowledgePaneEntryDelivery,
+    onSetPaneAliases,
     secondaryActivation,
+    paneEntryDelivery,
   });
   commandsRef.current = {
     paneId,
@@ -375,7 +392,10 @@ export function PaneRuntimeProvider({
     onCloseTransientSecondarySurface,
     onPreviewTransientSecondaryResult,
     onAcknowledgeSecondaryActivation,
+    onAcknowledgePaneEntryDelivery,
+    onSetPaneAliases,
     secondaryActivation,
+    paneEntryDelivery,
   };
   const navigationStateRef = useRef({ canGoBack, canGoForward });
   navigationStateRef.current = { canGoBack, canGoForward };
@@ -531,6 +551,21 @@ export function PaneRuntimeProvider({
       );
     }
   }, []);
+  const acknowledgePaneEntryDelivery = useCallback(
+    (delivery: PaneEntryDelivery) => {
+      const current = commandsRef.current;
+      current.onAcknowledgePaneEntryDelivery?.(delivery);
+    },
+    [],
+  );
+  const setPaneAliases = useCallback((aliases: readonly string[]) => {
+    const current = commandsRef.current;
+    current.onSetPaneAliases?.({
+      paneId: current.paneId,
+      visitId,
+      aliases,
+    });
+  }, [visitId]);
   const value = useMemo<PaneRuntimeContextValue>(
     () => ({
       paneId,
@@ -546,6 +581,7 @@ export function PaneRuntimeProvider({
       resourceStatus: effectiveResourceStatus,
       secondaryPane,
       secondaryActivation,
+      paneEntryDelivery,
       transientSecondarySurface,
       pathParams,
       searchParams: parsed.searchParams,
@@ -561,6 +597,8 @@ export function PaneRuntimeProvider({
       closeTransientSecondarySurface,
       previewTransientSecondaryResult,
       acknowledgeSecondaryActivation,
+      acknowledgePaneEntryDelivery,
+      setPaneAliases,
     }),
     [
       href,
@@ -572,6 +610,8 @@ export function PaneRuntimeProvider({
       closeSecondaryPane,
       setSecondarySurface,
       acknowledgeSecondaryActivation,
+      acknowledgePaneEntryDelivery,
+      setPaneAliases,
       paneId,
       visitId,
       isActive,
@@ -585,6 +625,7 @@ export function PaneRuntimeProvider({
       effectiveResourceStatus,
       secondaryPane,
       secondaryActivation,
+      paneEntryDelivery,
       transientSecondarySurface,
       routeKey,
       routeId,
@@ -721,4 +762,32 @@ export function useSetPaneLabel(label: string | null | undefined): void {
       label: normalizedLabel,
     };
   }, [normalizedLabel, paneId, routeKey, setPaneLabel]);
+}
+
+export function useSetPaneAliases(aliases: readonly string[]): void {
+  const paneRuntime = usePaneRuntime();
+  const aliasKey = [...new Set(aliases)].sort().join("\u0000");
+  const setPaneAliases = paneRuntime?.setPaneAliases;
+  useEffect(() => {
+    if (!setPaneAliases) {
+      return;
+    }
+    setPaneAliases(aliasKey.length === 0 ? [] : aliasKey.split("\u0000"));
+  }, [aliasKey, setPaneAliases]);
+}
+
+export function usePaneEntryDelivery(): {
+  delivery: PaneEntryDelivery | null;
+  acknowledge: (delivery: PaneEntryDelivery) => void;
+} {
+  const paneRuntime = usePaneRuntime();
+  if (!paneRuntime) {
+    throw new Error(
+      "usePaneEntryDelivery must be used inside PaneRuntimeProvider",
+    );
+  }
+  return {
+    delivery: paneRuntime.paneEntryDelivery,
+    acknowledge: paneRuntime.acknowledgePaneEntryDelivery,
+  };
 }

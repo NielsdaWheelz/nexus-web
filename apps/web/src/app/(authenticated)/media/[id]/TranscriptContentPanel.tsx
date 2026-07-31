@@ -5,6 +5,7 @@ import HtmlRenderer from "@/components/HtmlRenderer";
 import Button from "@/components/ui/Button";
 import { normalizeTrackChapters } from "@/lib/media/transcriptChapters";
 import type { PaneFindResultKey } from "@/lib/panes/paneSearch";
+import type { ReaderScrollPositioner } from "@/lib/reader/paneScroll";
 import {
   formatTranscriptTimestampMs,
   type TranscriptChapter,
@@ -47,6 +48,7 @@ interface TranscriptContentPanelProps {
   renderedHtml: string;
   readerSurfaceClassName: string;
   readerSurfaceStyle: CSSProperties;
+  scrollPositioner: ReaderScrollPositioner;
   evidenceHighlightId?: string | null;
   evidenceExactText?: string | null;
   evidenceStartMs?: number | null;
@@ -166,6 +168,7 @@ export default function TranscriptContentPanel({
   renderedHtml,
   readerSurfaceClassName,
   readerSurfaceStyle,
+  scrollPositioner,
   evidenceHighlightId,
   evidenceExactText,
   evidenceStartMs,
@@ -416,13 +419,23 @@ export default function TranscriptContentPanel({
             <div className={styles.readerContentInner}>
               <div
                 ref={contentRef}
-                onClick={onContentClick}
+                onClick={(event) => {
+                  if (event.target instanceof Element) {
+                    event.target
+                      .closest(
+                        "[data-active-highlight-ids], [data-highlight-anchor], [data-reader-apparatus-item-id]",
+                      )
+                      ?.setAttribute("data-reader-tap-handled", "true");
+                  }
+                  onContentClick(event);
+                }}
                 onPointerOver={onContentPointerOver}
                 onPointerOut={onContentPointerOut}
               >
                 <HtmlRenderer
                   htmlSanitized={renderedHtml}
                   mediaId={mediaId}
+                  scrollPositioner={scrollPositioner}
                   headingLevelOffset={1}
                 />
               </div>

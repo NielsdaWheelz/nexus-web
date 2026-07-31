@@ -1,10 +1,16 @@
-import { useEffect, useRef, type ComponentProps } from "react";
+import {
+  useEffect,
+  useRef,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import {
   PaneRuntimeProvider,
   requirePaneRuntime,
+  usePaneEntryDelivery,
   usePaneRuntime,
   usePaneRouter,
   useSetPaneLabel,
@@ -12,6 +18,7 @@ import {
 import type { PaneViewTransitionIntent } from "@/lib/ui/viewTransitions";
 import { assumePaneVisitId } from "@/lib/workspace/schema";
 import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
+import type { PaneEntryDelivery } from "@/lib/workspace/targetActivation";
 
 const MEDIA_ID_1 = "11111111-1111-4111-8111-111111111111";
 const LIBRARY_ID = "33333333-3333-4333-8333-333333333333";
@@ -20,6 +27,26 @@ const LIBRARY_HREF = `/libraries/${LIBRARY_ID}`;
 const TEST_VISIT_ID = assumePaneVisitId(
   "00000000-0000-4000-8000-000000000001",
 );
+const PANE_ENTRY_A: PaneEntryDelivery = {
+  activationId: "activation-a",
+  paneId: "pane-1",
+  visitId: TEST_VISIT_ID,
+  entry: {
+    kind: "AppendNote",
+    noteId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    clientMutationId: "mutation-a",
+  },
+};
+const PANE_ENTRY_B: PaneEntryDelivery = {
+  activationId: "activation-b",
+  paneId: "pane-1",
+  visitId: TEST_VISIT_ID,
+  entry: {
+    kind: "AppendNote",
+    noteId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    clientMutationId: "mutation-b",
+  },
+};
 
 it("keeps a missing required pane runtime as an owner defect", () => {
   expect(() => requirePaneRuntime(null, "LibraryPaneBody")).toThrow(
@@ -129,6 +156,26 @@ function RuntimeShapeProbe({ onValue }: { onValue: (value: unknown) => void }) {
   useEffect(() => {
     onValue(runtime);
   }, [onValue, runtime]);
+  return null;
+}
+
+function PaneEntryProbe({
+  onValue,
+}: {
+  onValue: (value: {
+    delivery: PaneEntryDelivery;
+    acknowledge: () => void;
+  }) => void;
+}) {
+  const { delivery, acknowledge } = usePaneEntryDelivery();
+  useEffect(() => {
+    if (delivery) {
+      onValue({
+        delivery,
+        acknowledge: () => acknowledge(delivery),
+      });
+    }
+  }, [acknowledge, delivery, onValue]);
   return null;
 }
 
@@ -252,6 +299,31 @@ function runtime(
   );
 }
 
+function paneEntryRuntime(
+  delivery: PaneEntryDelivery,
+  children: ReactNode,
+  onAcknowledgePaneEntryDelivery: (delivery: PaneEntryDelivery) => void,
+) {
+  const identity = resolvePaneRouteIdentity(LIBRARY_HREF);
+  return (
+    <TestPaneRuntimeProvider
+      paneId="pane-1"
+      visitId={TEST_VISIT_ID}
+      isActive
+      href={LIBRARY_HREF}
+      routeId={identity.routeId}
+      routeKey={identity.routeKey}
+      {...defaultNavigationProps}
+      onNavigatePane={vi.fn()}
+      onReplacePane={vi.fn()}
+      paneEntryDelivery={delivery}
+      onAcknowledgePaneEntryDelivery={onAcknowledgePaneEntryDelivery}
+    >
+      {children}
+    </TestPaneRuntimeProvider>
+  );
+}
+
 describe("useSetPaneLabel", () => {
   it("does not republish the same label for the same route key", async () => {
     const onSetPaneLabel = vi.fn();
@@ -284,6 +356,66 @@ describe("useSetPaneLabel", () => {
 });
 
 describe("PaneRuntimeProvider", () => {
+  it("delivers a queued pane entry when its visit consumer mounts later", async () => {
+    const onAcknowledgePaneEntryDelivery = vi.fn();
+    const onValue = vi.fn();
+    const { rerender } = render(
+      paneEntryRuntime(
+        PANE_ENTRY_A,
+        <div>Pane body loading</div>,
+        onAcknowledgePaneEntryDelivery,
+      ),
+    );
+
+    expect(onValue).not.toHaveBeenCalled();
+    rerender(
+      paneEntryRuntime(
+        PANE_ENTRY_A,
+        <PaneEntryProbe onValue={onValue} />,
+        onAcknowledgePaneEntryDelivery,
+      ),
+    );
+
+    await waitFor(() =>
+      expect(onValue).toHaveBeenCalledWith(
+        expect.objectContaining({ delivery: PANE_ENTRY_A }),
+      ),
+    );
+  });
+
+  it("acknowledges the exact delivery claimed before a newer one arrived", async () => {
+    const onAcknowledgePaneEntryDelivery = vi.fn();
+    const claims: Array<{
+      delivery: PaneEntryDelivery;
+      acknowledge: () => void;
+    }> = [];
+    const onValue = vi.fn((claim: (typeof claims)[number]) => {
+      claims.push(claim);
+    });
+    const { rerender } = render(
+      paneEntryRuntime(
+        PANE_ENTRY_A,
+        <PaneEntryProbe onValue={onValue} />,
+        onAcknowledgePaneEntryDelivery,
+      ),
+    );
+    await waitFor(() => expect(claims).toHaveLength(1));
+
+    rerender(
+      paneEntryRuntime(
+        PANE_ENTRY_B,
+        <PaneEntryProbe onValue={onValue} />,
+        onAcknowledgePaneEntryDelivery,
+      ),
+    );
+    await waitFor(() => expect(claims).toHaveLength(2));
+
+    claims[0]!.acknowledge();
+
+    expect(onAcknowledgePaneEntryDelivery).toHaveBeenCalledOnce();
+    expect(onAcknowledgePaneEntryDelivery).toHaveBeenCalledWith(PANE_ENTRY_A);
+  });
+
   it.each([
     ["push", "onNavigatePane"],
     ["replace", "onReplacePane"],

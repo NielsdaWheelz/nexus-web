@@ -46,6 +46,7 @@ import {
   assumePaneVisitId,
   type PaneVisitId,
 } from "@/lib/workspace/schema";
+import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
 import ReadingSlateSection from "./ReadingSlateSection";
 
 const TEST_VISIT_ID = assumePaneVisitId(
@@ -56,22 +57,39 @@ const OTHER_VISIT_ID = assumePaneVisitId(
 );
 const TEST_ROUTE_KEY = "/test";
 
+function ReadingSlateTestProviders({ children }: { children: ReactNode }) {
+  return (
+    <MobileChromeProvider>
+      <PaneReturnMementoProvider>
+        <PaneReturnVisitScope visitId={TEST_VISIT_ID} routeKey={TEST_ROUTE_KEY}>
+          <FeedbackProvider>
+            <LibraryPlacementControllerProvider>
+              <ShareControllerProvider>{children}</ShareControllerProvider>
+            </LibraryPlacementControllerProvider>
+          </FeedbackProvider>
+        </PaneReturnVisitScope>
+      </PaneReturnMementoProvider>
+    </MobileChromeProvider>
+  );
+}
+
 function PaneReturnTestHarness({ children }: { children: ReactNode }) {
   return withRenderEnvironment(
-    <PaneReturnMementoProvider>
-      <PaneReturnVisitScope visitId={TEST_VISIT_ID} routeKey={TEST_ROUTE_KEY}>
-        <FeedbackProvider>
-          <LibraryPlacementControllerProvider>
-            <ShareControllerProvider>{children}</ShareControllerProvider>
-          </LibraryPlacementControllerProvider>
-        </FeedbackProvider>
-      </PaneReturnVisitScope>
-    </PaneReturnMementoProvider>,
+    <ReadingSlateTestProviders>{children}</ReadingSlateTestProviders>,
   );
 }
 
 function render(ui: ReactElement) {
   return testingRender(ui, { wrapper: PaneReturnTestHarness });
+}
+
+function renderMobile(ui: ReactElement) {
+  return testingRender(
+    withRenderEnvironment(
+      <ReadingSlateTestProviders>{ui}</ReadingSlateTestProviders>,
+      { initialViewport: "mobile" },
+    ),
+  );
 }
 
 const lecternSlateResponse =
@@ -185,6 +203,7 @@ function lecternNode(accept: ReadingSlateAccept, isActive = true) {
   return (
     <>
       <div data-pane-id="pane-1">
+        <button data-pane-focus-landmark="true">Pane surface</button>
         <button data-pane-chrome-focus="true">Pane chrome</button>
       </div>
       <ReadingSlateSection
@@ -200,6 +219,10 @@ function lecternNode(accept: ReadingSlateAccept, isActive = true) {
 
 function renderLectern(accept: ReadingSlateAccept) {
   return render(lecternNode(accept));
+}
+
+function renderMobileLectern(accept: ReadingSlateAccept) {
+  return renderMobile(lecternNode(accept));
 }
 
 function CommandsProbe({
@@ -233,6 +256,7 @@ function ReadingSlateReturnRoute({
   });
   return (
     <section data-pane-shell data-pane-id="pane-1">
+      <button data-pane-focus-landmark="true">Pane surface</button>
       <button data-pane-chrome-focus="true">Pane chrome</button>
       <div ref={scrollportRef} data-testid="slate-return-scrollport">
         <div key={visitId}>
@@ -264,18 +288,20 @@ function ReadingSlateReturnFixture({
   publish: (commands: PaneReturnMementoCommands) => void;
 }) {
   return withRenderEnvironment(
-    <PaneReturnMementoProvider>
-      <CommandsProbe publish={publish} />
-      <PaneReturnVisitScope visitId={visitId} routeKey={TEST_ROUTE_KEY}>
-        <FeedbackProvider>
-          <LibraryPlacementControllerProvider>
-            <ShareControllerProvider>
-              <ReadingSlateReturnRoute visitId={visitId} accept={accept} />
-            </ShareControllerProvider>
-          </LibraryPlacementControllerProvider>
-        </FeedbackProvider>
-      </PaneReturnVisitScope>
-    </PaneReturnMementoProvider>,
+    <MobileChromeProvider>
+      <PaneReturnMementoProvider>
+        <CommandsProbe publish={publish} />
+        <PaneReturnVisitScope visitId={visitId} routeKey={TEST_ROUTE_KEY}>
+          <FeedbackProvider>
+            <LibraryPlacementControllerProvider>
+              <ShareControllerProvider>
+                <ReadingSlateReturnRoute visitId={visitId} accept={accept} />
+              </ShareControllerProvider>
+            </LibraryPlacementControllerProvider>
+          </FeedbackProvider>
+        </PaneReturnVisitScope>
+      </PaneReturnMementoProvider>
+    </MobileChromeProvider>,
   );
 }
 
@@ -723,7 +749,7 @@ describe("ReadingSlateSection", () => {
     );
   });
 
-  it("moves focus to pane chrome before a terminal empty slate unmounts", async () => {
+  it("focuses the mobile pane landmark before a terminal empty slate unmounts", async () => {
     const only = slateItem(1);
     const command = deferred<AcceptResult>();
     const refill = deferred<SlateSnapshot>();
@@ -731,7 +757,7 @@ describe("ReadingSlateSection", () => {
       .mockResolvedValueOnce({ items: [only] })
       .mockImplementationOnce(() => refill.promise);
     const user = userEvent.setup();
-    renderLectern(() => command.promise);
+    renderMobileLectern(() => command.promise);
 
     await user.click(
       await screen.findByRole("button", { name: "Add Item 1 to Lectern" }),
@@ -746,10 +772,10 @@ describe("ReadingSlateSection", () => {
         screen.queryByRole("region", { name: "At hand suggestions" }),
       ).toBeNull(),
     );
-    expect(screen.getByRole("button", { name: "Pane chrome" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Pane surface" })).toHaveFocus();
   });
 
-  it("moves focus directly to pane chrome when a terminal refill settles immediately", async () => {
+  it("moves focus directly to the pane landmark when a terminal refill settles immediately", async () => {
     const only = slateItem(1);
     lecternSlateResponse
       .mockResolvedValueOnce({ items: [only] })
@@ -766,10 +792,10 @@ describe("ReadingSlateSection", () => {
         screen.queryByRole("region", { name: "At hand suggestions" }),
       ).toBeNull(),
     );
-    expect(screen.getByRole("button", { name: "Pane chrome" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Pane surface" })).toHaveFocus();
   });
 
-  it("moves focus to pane chrome before a terminal refresh removes the focused row", async () => {
+  it("moves focus to the pane landmark before a terminal refresh removes the focused row", async () => {
     const only = slateItem(1);
     const refresh = deferred<SlateSnapshot>();
     lecternSlateResponse
@@ -779,9 +805,9 @@ describe("ReadingSlateSection", () => {
     const view = renderLectern(accept);
 
     const focusedRow = await screen.findByRole("link", { name: /Item 1/ });
-    const paneChrome = screen.getByRole("button", { name: "Pane chrome" });
+    const paneLandmark = screen.getByRole("button", { name: "Pane surface" });
     let rowWasConnectedAtFocusHandoff = false;
-    paneChrome.addEventListener(
+    paneLandmark.addEventListener(
       "focus",
       () => {
         rowWasConnectedAtFocusHandoff = focusedRow.isConnected;
@@ -805,7 +831,7 @@ describe("ReadingSlateSection", () => {
         screen.queryByRole("region", { name: "At hand suggestions" }),
       ).toBeNull(),
     );
-    expect(paneChrome).toHaveFocus();
+    expect(paneLandmark).toHaveFocus();
     expect(rowWasConnectedAtFocusHandoff).toBe(true);
   });
 

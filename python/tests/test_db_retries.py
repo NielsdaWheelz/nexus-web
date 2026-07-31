@@ -284,3 +284,28 @@ def test_retry_serializable_retries_reader_profile_pkey_race_then_succeeds() -> 
     assert retry_serializable(db, "test_op", op) == "ok"  # type: ignore[arg-type]
     assert attempts["n"] == 2
     assert db.rollbacks == 1
+
+
+@pytest.mark.parametrize(
+    "constraint_name",
+    [
+        "uq_daily_page_bindings_user_date",
+        "uq_daily_page_bindings_user_page",
+    ],
+)
+def test_retry_serializable_retries_daily_page_binding_race(
+    constraint_name: str,
+) -> None:
+    """A losing first-capture binding retries and re-reads the winning Page."""
+    db = _FakeSession()
+    attempts = {"n": 0}
+
+    def op():
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise _integrity_error(constraint_name)
+        return "winning-page"
+
+    assert retry_serializable(db, "capture_daily_page_note", op) == "winning-page"  # type: ignore[arg-type]
+    assert attempts["n"] == 2
+    assert db.rollbacks == 1

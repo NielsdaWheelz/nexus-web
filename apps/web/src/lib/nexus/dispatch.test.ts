@@ -40,6 +40,14 @@ function context(input?: {
     closePane: vi.fn(),
     requestPaneSearch: vi.fn(() => false),
     openShare: vi.fn(),
+    openDailyPage: vi.fn((target, _activation) => ({
+      localDate:
+        target.localDate === "Today" ? "2026-07-30" : target.localDate,
+      activationId: "daily-activation",
+      activation:
+        input?.result ??
+        ({ kind: "CreatedPane", paneId: "pane-created" } as const),
+    })),
     shareOptions: () => ({
       returnFocusTo: () => null,
       returnFocusFallback: { kind: "Absent" },
@@ -101,7 +109,11 @@ describe("Nexus dispatch", () => {
     ).resolves.toEqual({
       kind: "NavigationRejected",
       reason: "PaneLimitReached",
-      target: { href: "/libraries", labelHint: "Libraries" },
+      target: {
+        kind: "InternalHref",
+        href: "/libraries",
+        labelHint: "Libraries",
+      },
     });
   });
 
@@ -170,7 +182,6 @@ describe("Nexus dispatch", () => {
           initialDestinations: [],
         },
       },
-      { kind: "OpenTodayCapture" },
       { kind: "CreatePage" },
       { kind: "CreateLibrary" },
     ];
@@ -184,6 +195,100 @@ describe("Nexus dispatch", () => {
       });
     }
     expect(ctx.activateWorkspaceTarget).not.toHaveBeenCalled();
+  });
+
+  it("routes Today view and append through the one OpenDailyPage capability", async () => {
+    const ctx = context();
+    const activation = {
+      disposition: { kind: "Adopt" as const },
+      modality: "Pointer" as const,
+    };
+
+    await dispatchNexusTarget(
+      {
+        kind: "OpenDailyPage",
+        localDate: "Today",
+        entry: { kind: "View" },
+      },
+      ctx,
+      activation,
+    );
+    await dispatchNexusTarget(
+      {
+        kind: "OpenDailyPage",
+        localDate: "Today",
+        entry: { kind: "AppendNote" },
+      },
+      ctx,
+      activation,
+    );
+
+    expect(ctx.openDailyPage).toHaveBeenNthCalledWith(
+      1,
+      {
+        kind: "OpenDailyPage",
+        localDate: "Today",
+        entry: { kind: "View" },
+      },
+      activation,
+    );
+    expect(ctx.openDailyPage).toHaveBeenNthCalledWith(
+      2,
+      {
+        kind: "OpenDailyPage",
+        localDate: "Today",
+        entry: {
+          kind: "AppendNote",
+          noteId: expect.any(String),
+          clientMutationId: expect.any(String),
+        },
+      },
+      activation,
+    );
+  });
+
+  it("retains and retries one frozen daily AppendNote target after pane rejection", async () => {
+    const rejected = context({
+      result: { kind: "Rejected", reason: "PaneLimitReached" },
+    });
+    const activation = {
+      disposition: { kind: "Adopt" as const },
+      modality: "Programmatic" as const,
+    };
+
+    const outcome = await dispatchNexusTarget(
+      {
+        kind: "OpenDailyPage",
+        localDate: "Today",
+        entry: { kind: "AppendNote" },
+      },
+      rejected,
+      activation,
+    );
+
+    expect(outcome).toMatchObject({
+      kind: "NavigationRejected",
+      target: {
+        kind: "OpenDailyPage",
+        localDate: "2026-07-30",
+        entry: {
+          kind: "AppendNote",
+          noteId: expect.any(String),
+          clientMutationId: expect.any(String),
+        },
+      },
+    });
+    if (outcome.kind !== "NavigationRejected") {
+      throw new Error("Expected rejected daily activation");
+    }
+
+    const accepted = context();
+    await dispatchNexusTarget(outcome.target, accepted, activation);
+
+    expect(accepted.openDailyPage).toHaveBeenCalledWith(
+      outcome.target,
+      activation,
+    );
   });
 
   it("accepts pane Search only when the active pane consumes the request", async () => {

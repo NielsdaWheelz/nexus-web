@@ -22,7 +22,7 @@ _SPEC = LlmTaskSpec(label="dawn_write_sweep", http_timeout_s=60.0)
 
 
 def dawn_write_sweep() -> dict:
-    """Periodic sweep: generate a dawn write for every user who has a timezone record."""
+    """Generate for the existing population of users with a daily Page binding."""
 
     async def _handler(db: Session, runtime: ExecutionRuntime, _client: httpx.AsyncClient) -> dict:
         settings = get_settings()
@@ -30,13 +30,13 @@ def dawn_write_sweep() -> dict:
             logger.info("dawn_write_sweep_skipped", reason="disabled")
             return {"skipped": 0, "generated": 0, "already_exists": 0}
 
-        # Collect (user_id, most_recent_time_zone, current_local_date) for all
-        # users who have ever opened a daily note page.
+        # Preserve the established eligible population (users with a binding)
+        # while taking calendar timezone from its profile owner.
         tz_rows = db.execute(
             text(
-                "SELECT DISTINCT ON (user_id) user_id, time_zone"
-                " FROM daily_note_pages"
-                " ORDER BY user_id, created_at DESC"
+                "SELECT DISTINCT b.user_id, u.calendar_time_zone AS time_zone"
+                " FROM daily_page_bindings b"
+                " JOIN users u ON u.id = b.user_id"
             )
         ).fetchall()
 
@@ -99,10 +99,6 @@ def dawn_write_sweep() -> dict:
 def _local_date_for_tz(tz_name: str) -> date:
     """Return the current local date in *tz_name*."""
     from datetime import datetime
-    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    from zoneinfo import ZoneInfo
 
-    try:
-        tz = ZoneInfo(tz_name)
-    except ZoneInfoNotFoundError:
-        tz = ZoneInfo("UTC")
-    return datetime.now(tz=tz).date()
+    return datetime.now(tz=ZoneInfo(tz_name)).date()

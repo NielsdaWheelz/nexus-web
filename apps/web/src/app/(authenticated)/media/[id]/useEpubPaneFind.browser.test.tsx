@@ -12,6 +12,7 @@ import {
 import type { ReaderNavigationSection } from "@/lib/media/readerNavigation";
 import type { PaneFindSourceKey } from "@/lib/panes/paneSearch";
 import { usePaneFind } from "@/lib/panes/usePaneFind";
+import type { ReaderScrollPositioner } from "@/lib/reader/paneScroll";
 import { createMediaFindPreviewLease } from "./mediaFindPreviewLease";
 import {
   createEpubFindAdapter,
@@ -19,6 +20,20 @@ import {
   type EpubFindRenderedState,
   type EpubRenderedSectionOverride,
 } from "./useEpubPaneFind";
+
+const scrollPositioner: ReaderScrollPositioner = {
+  async run(operation) {
+    await operation({
+      setTop(scrollport, top) {
+        scrollport.scrollTop = Math.max(0, top);
+      },
+      adjustTop(scrollport, delta) {
+        scrollport.scrollTop = Math.max(0, scrollport.scrollTop + delta);
+      },
+      reveal() {},
+    });
+  },
+};
 
 const MEDIA_ID = "00000000-0000-4000-8000-000000000001";
 const FIRST_FRAGMENT = "10000000-0000-4000-8000-000000000001";
@@ -248,6 +263,7 @@ describe("EPUB Find adapter", () => {
       onSourceChanged: vi.fn(),
       focusReaderViewport: vi.fn(),
       highlightOwner,
+      scrollPositioner,
       findOccurrences: vi.fn(async () =>
         ready(snapshot.sourceWitnessFragmentId, [
           occurrence(first, 8, 14),
@@ -354,6 +370,7 @@ describe("EPUB Find adapter", () => {
       onSourceChanged: vi.fn(),
       focusReaderViewport,
       highlightOwner,
+      scrollPositioner,
       findOccurrences: vi.fn(async () =>
         ready(snapshot.sourceWitnessFragmentId, [
           occurrence(second, 6, 12),
@@ -468,6 +485,7 @@ describe("EPUB Find adapter", () => {
       onSourceChanged: vi.fn(),
       focusReaderViewport: vi.fn(),
       highlightOwner: { publish: vi.fn(), clear: vi.fn() },
+      scrollPositioner,
       findOccurrences: vi.fn(async () =>
         ready(snapshot.sourceWitnessFragmentId, [
           occurrence(second, 6, 12),
@@ -573,6 +591,7 @@ describe("EPUB Find adapter", () => {
       onSourceChanged: vi.fn(),
       focusReaderViewport: vi.fn(),
       highlightOwner,
+      scrollPositioner,
       findOccurrences: vi.fn(async () =>
         ready(snapshot.sourceWitnessFragmentId, [
           occurrence(sections[1], 7, 13),
@@ -629,6 +648,7 @@ describe("EPUB Find adapter", () => {
       onSourceChanged: vi.fn(),
       focusReaderViewport: vi.fn(),
       highlightOwner: { publish: vi.fn(), clear: vi.fn() },
+      scrollPositioner,
       findOccurrences: vi.fn(async () => {
         throw transport;
       }),
@@ -724,6 +744,7 @@ describe("EPUB Find adapter", () => {
       onSourceChanged: vi.fn(),
       focusReaderViewport: vi.fn(),
       highlightOwner,
+      scrollPositioner,
       findOccurrences: vi.fn(async () =>
         ready(snapshot.sourceWitnessFragmentId, [
           occurrence(sections[1], 7, 13),
@@ -854,6 +875,7 @@ describe("EPUB Find adapter", () => {
       onSourceChanged: vi.fn(),
       focusReaderViewport: vi.fn(),
       highlightOwner: { publish: vi.fn(), clear: vi.fn() },
+      scrollPositioner,
       findOccurrences: vi.fn(async () =>
         ready(snapshot.sourceWitnessFragmentId, [
           occurrence(sections[1], 7, 13),
@@ -975,6 +997,7 @@ describe("EPUB Find adapter", () => {
       onSourceChanged,
       focusReaderViewport: vi.fn(),
       highlightOwner: { publish: vi.fn(), clear: vi.fn() },
+      scrollPositioner,
       findOccurrences: vi.fn(async () =>
         ready(snapshot.sourceWitnessFragmentId, [
           occurrence(second, 6, 12),
@@ -1063,6 +1086,7 @@ describe("EPUB Find adapter", () => {
       onSourceChanged,
       focusReaderViewport: vi.fn(),
       highlightOwner: { publish: vi.fn(), clear: vi.fn() },
+      scrollPositioner,
       findOccurrences,
       loadSection: vi.fn(async () => ({
         ...second,
@@ -1104,6 +1128,7 @@ describe("EPUB Find adapter", () => {
       onSourceChanged: routeBoundarySourceChange,
       focusReaderViewport: vi.fn(),
       highlightOwner: { publish: vi.fn(), clear: vi.fn() },
+      scrollPositioner,
       findOccurrences: vi.fn(async () => {
         throw nextFailure;
       }),
@@ -1177,6 +1202,7 @@ describe("EPUB Find foundation composition", () => {
       onSourceChanged: vi.fn(),
       focusReaderViewport: vi.fn(),
       highlightOwner: { publish: vi.fn(), clear: vi.fn() },
+      scrollPositioner,
       findOccurrences,
     });
     const view = renderHook(() => {
@@ -1275,6 +1301,7 @@ describe("EPUB Find foundation composition", () => {
       onSourceChanged: vi.fn(),
       focusReaderViewport: vi.fn(),
       highlightOwner: { publish: vi.fn(), clear: vi.fn() },
+      scrollPositioner,
       findOccurrences,
       loadSection,
     });
@@ -1373,6 +1400,7 @@ describe("useEpubPaneFind", () => {
           resetRenderedSectionAuxiliaryState,
           onSourceChanged,
           focusReaderViewport,
+          scrollPositioner,
         }),
       {
         initialProps: {

@@ -4,11 +4,9 @@ import type { Presence } from "@/lib/api/presence";
 import type { LibraryDestinationSelection } from "@/lib/libraries/client";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { CanonicalResourceRef, ShareTarget } from "@/lib/sharing/types";
-import type {
-  WorkspaceTarget,
-  WorkspaceTargetDisposition,
-} from "@/lib/workspace/targetActivation";
+import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import type { PaneNavigationModality } from "@/lib/workspace/paneReturnMemento";
+import type { OpenDailyPageTarget } from "@/lib/notes/openDailyPage";
 
 export type NexusIcon = ComponentType<{
   size?: number;
@@ -83,9 +81,12 @@ export type NexusTarget =
   | { kind: "PaneOpen"; paneId: string }
   | { kind: "PaneClose"; paneId: string }
   | { kind: "PaneSearch" }
-  | { kind: "OpenToday" }
+  | {
+      kind: "OpenDailyPage";
+      localDate: "Today" | string;
+      entry: { kind: "View" } | { kind: "AppendNote" };
+    }
   | { kind: "OpenAdd"; seed: AddSeed }
-  | { kind: "OpenTodayCapture" }
   | { kind: "CreatePage" }
   | { kind: "CreateLibrary" };
 
@@ -132,7 +133,11 @@ export type NexusQuickActionId =
   | "Nexus.Quick.Import";
 
 export type NexusQuickActionTarget =
-  | { kind: "TodayCapture" }
+  | {
+      kind: "OpenDailyPage";
+      localDate: "Today" | string;
+      entry: { kind: "AppendNote" };
+    }
   | { kind: "CreatePage" }
   | { kind: "CreateChat" }
   | { kind: "CreateLibrary" }
@@ -162,18 +167,31 @@ export type ReplayableSubmitState =
   | { kind: "Retryable"; message: string };
 
 export type CommittedWorkflow =
-  | { kind: "TodayCapture"; replayId: string }
   | { kind: "Page"; replayId: string }
   | { kind: "Library"; replayId: string }
   | { kind: "Import"; replayId: string };
 
+export type RetainedNexusTarget =
+  | Extract<NexusTarget, { kind: "InternalHref" }>
+  | OpenDailyPageTarget;
+
+export function retainedNexusTargetLabel(
+  target: RetainedNexusTarget,
+): string {
+  switch (target.kind) {
+    case "InternalHref":
+      return target.labelHint ?? target.href;
+    case "OpenDailyPage":
+      return target.entry.kind === "AppendNote" ? "Quick Note" : "Today";
+  }
+}
+
 export interface RetainedActivation {
-  readonly target: WorkspaceTarget;
+  readonly target: RetainedNexusTarget;
   readonly activation: NexusTargetActivation;
   readonly source:
     | "Find"
     | "Place"
-    | "TodayCapture"
     | "Page"
     | "Chat"
     | "Library"
@@ -192,11 +210,6 @@ export type NexusPage =
       kind: "Actions";
       entry: NexusEntry;
       actions: readonly NexusAction[];
-    }
-  | {
-      kind: "TodayCapture";
-      sessionId: string;
-      activation: NexusTargetActivation;
     }
   | {
       kind: "CreatePage";

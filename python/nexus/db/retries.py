@@ -25,8 +25,9 @@ from nexus.db.session import use_read_committed_if_available, use_serializable_i
 # Nexus history's first query-href aggregate insert, and the Link mutation's
 # first inserts — passage-anchor identity, canonical neutral-Link pair, directed
 # stance pair, and client-minted Highlight id (spec
-# universal-link-authoring-hard-cutover.md, Graph Shapes) — all retry the whole
-# operation on a first-sight race.
+# universal-link-authoring-hard-cutover.md, Graph Shapes) — plus the daily Page
+# binding's first-capture date/Page assignment all retry the whole operation on
+# a first-sight race.
 RETRYABLE_UNIQUE_CONSTRAINTS = frozenset(
     {
         "uq_contributors_handle",
@@ -59,6 +60,8 @@ RETRYABLE_UNIQUE_CONSTRAINTS = frozenset(
         "uix_media_canonical_url",
         "uix_media_x_provider_id",
         "uq_podcast_refresh_runs_user_idempotency_key",
+        "uq_daily_page_bindings_user_date",
+        "uq_daily_page_bindings_user_page",
     }
 )
 

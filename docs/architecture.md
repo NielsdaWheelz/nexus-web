@@ -386,9 +386,11 @@ table: the default library's read surface is a live query over
 there is no self-FK, no merge/split/tombstone, and no status column),
 `contributor_aliases`, `contributor_external_ids`, `contributor_credits`.
 
-**Notes** — `pages` (title only), `daily_note_pages`, `note_blocks`
-(ProseMirror JSON + generated text only), `resource_versions`,
-`resource_mutations`, and `resource_view_states`.
+**Notes** — `pages` (title only), `daily_page_bindings` (one sparse
+user/date role assignment to an ordinary Page), `note_blocks` (ProseMirror JSON
+plus generated text only), `resource_versions`, `resource_mutations`, and
+`resource_view_states`. `users.calendar_time_zone` is the sole account-local
+Today clock.
 Page/note ordering, inline note-to-object refs, highlight-note attachments, and
 backlinks are `resource_edges`, below — notes own no link table.
 
@@ -1205,9 +1207,13 @@ commands. Commands use resource versions, durable mutation replay, and one
 SERIALIZABLE transaction. Surface activation uses the bounded batch router, so
 heterogeneous rows add no per-occurrence query loop. Intrinsic page-title and
 note-body edits use the resource-item mutation owner. `services/notes.py`
-remains the notes collection, daily-page, quick-capture, and Dawn Write facade;
-Quick Capture and Amanuensis compose the surface owner's insert-note capability
-and do not own a second surface-write protocol.
+remains the notes collection, daily-page, dated-capture, and Dawn Write facade.
+A daily date is a latent non-mutating locator until its first meaningful Note.
+That first capture creates the ordinary Page, binding, Note, ordered
+occurrence, required versions, and replay receipt in one serializable
+transaction. Later edits use the ordinary resource-surface mutation owners.
+Amanuensis composes the surface owner's insert-note capability and does not own
+a second surface-write protocol.
 
 Inline `object_ref`/`object_embed` nodes remain part of note prose and sync
 `origin='note_body'` edges. Highlight notes remain ordinary notes linked by an
@@ -1215,14 +1221,18 @@ Inline `object_ref`/`object_embed` nodes remain part of note prose and sync
 `note_indexing.enqueue_note_reindex`. Backlinks, citations, and inferred
 relations remain Companion concerns rather than editor rows.
 
-Frontend composition is one `ResourceSurfaceEditor` and one
-`useResourceSurfaceSession` for both panes, with `NoteBodyEditor` as the sole
-prose primitive. `ResourceSurfaceBodyEditor` is a React-owned flat occurrence
-list, not a second serialized ProseMirror document; each inline note owns one
-independent editor keyed by stable resource identity. Enter in a surface note
-splits to a new note; Shift+Enter adds a line break. Page-title Enter focuses or
-inserts the first note. The editor does not expose hierarchy, collapse,
-cross-note merge, or full-list replacement semantics.
+Frontend composition is one `PagePaneBody`, one `ResourceSurfaceEditor`, and
+one `useResourceSurfaceSession` for ordinary Page refs and dated daily
+locators, with `NoteBodyEditor` as the sole prose primitive. Pane visit/session
+identity remains stable while a latent date hydrates or adopts `page:{id}`.
+Quick Note adds one provisional final Note immediately; persisted hydration
+merges before it, and acknowledgement cannot erase later local keystrokes.
+`ResourceSurfaceBodyEditor` is a React-owned flat occurrence list, not a second
+serialized ProseMirror document; each inline note owns one independent editor
+keyed by stable resource identity. Enter in a surface note splits to a new
+note; Shift+Enter adds a line break. Page-title Enter focuses or inserts the
+first note. The editor does not expose hierarchy, collapse, cross-note merge,
+or full-list replacement semantics.
 
 ### 8.8 Lectern & podcast playback
 

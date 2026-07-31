@@ -133,6 +133,102 @@ describe("NoteBodyEditor", () => {
     expect(editor).toHaveFocus();
   });
 
+  it("claims completed composition from canonical PM state and keeps selection for following typing", async () => {
+    const onBodyChange = vi.fn();
+    const onInputHandoffClaimed = vi.fn();
+    const composing = {
+      handoffId: "handoff-1",
+      text: "Buffered",
+      selectionStart: 4,
+      selectionEnd: 4,
+      composition: "Composing" as const,
+    };
+    const { rerender } = render(
+      <NoteBodyEditor
+        resourceKey="note:handoff"
+        initialBodyPmJson={paragraphFromText("").toJSON()}
+        ariaLabel="Handoff note"
+        inputHandoff={composing}
+        onBodyChange={onBodyChange}
+        onInputHandoffClaimed={onInputHandoffClaimed}
+      />,
+    );
+    const editor = screen.getByRole("textbox", { name: "Handoff note" });
+    expect(onInputHandoffClaimed).not.toHaveBeenCalled();
+
+    rerender(
+      <NoteBodyEditor
+        resourceKey="note:handoff"
+        initialBodyPmJson={paragraphFromText("Buffered").toJSON()}
+        ariaLabel="Handoff note"
+        inputHandoff={{ ...composing, composition: "Complete" }}
+        onBodyChange={onBodyChange}
+        onInputHandoffClaimed={onInputHandoffClaimed}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(onInputHandoffClaimed).toHaveBeenCalledWith("handoff-1"),
+    );
+    expect(onInputHandoffClaimed).toHaveBeenCalledOnce();
+    expect(screen.getByRole("textbox", { name: "Handoff note" })).toBe(editor);
+    expect(editor).toHaveTextContent("Buffered");
+    expect(editor).toHaveFocus();
+    expect(window.getSelection()?.anchorOffset).toBe(4);
+
+    await userEvent.keyboard("X");
+    await waitFor(() =>
+      expect(onBodyChange).toHaveBeenLastCalledWith(
+        expect.objectContaining({ bodyText: "BuffXered" }),
+      ),
+    );
+    expect(onInputHandoffClaimed).toHaveBeenCalledOnce();
+    expect(editor).toHaveTextContent("BuffXered");
+  });
+
+  it("preserves marked and object PM JSON while claiming a recovered handoff", async () => {
+    const richBody = {
+      type: "paragraph",
+      content: [
+        {
+          type: "text",
+          text: "Bold",
+          marks: [{ type: "strong" }],
+        },
+        {
+          type: "object_ref",
+          attrs: {
+            objectType: "page",
+            objectId: "11111111-1111-4111-8111-111111111111",
+            label: "Project",
+          },
+        },
+      ],
+    };
+    const onBodyChange = vi.fn();
+    render(
+      <NoteBodyEditor
+        resourceKey="note:rich-handoff"
+        initialBodyPmJson={richBody}
+        ariaLabel="Rich handoff"
+        inputHandoff={{
+          handoffId: "handoff-rich",
+          text: "BoldProject",
+          selectionStart: 4,
+          selectionEnd: 4,
+          composition: "Complete",
+        }}
+        onBodyChange={onBodyChange}
+        onInputHandoffClaimed={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(onBodyChange).toHaveBeenCalled());
+    expect(onBodyChange.mock.calls[0]?.[0]?.bodyPmJson).toEqual(richBody);
+    expect(screen.getByText("Bold").tagName).toBe("STRONG");
+    expect(screen.getByRole("link", { name: "Open Project" })).toBeVisible();
+  });
+
   it("leaves Tab and modified Enter to focus and line-break behavior while autocomplete is open", async () => {
     const onBodyChange = vi.fn();
     const fetchSpy = vi

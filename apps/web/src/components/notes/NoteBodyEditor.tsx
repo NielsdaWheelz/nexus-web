@@ -78,6 +78,14 @@ export interface NotePulseEditorTarget {
   pulseId: number;
 }
 
+export interface NoteBodyInputHandoff {
+  handoffId: string;
+  text: string;
+  selectionStart: number;
+  selectionEnd: number;
+  composition: "Composing" | "Complete";
+}
+
 export interface NoteBodyEditorProps {
   resourceKey: string;
   initialBodyPmJson: Record<string, unknown>;
@@ -101,6 +109,8 @@ export interface NoteBodyEditorProps {
   onSplit?: (split: NoteBodySplit) => void;
   onEmptyBackspace?: () => void;
   onMove?: (direction: "up" | "down") => void;
+  inputHandoff?: NoteBodyInputHandoff | null;
+  onInputHandoffClaimed?: (handoffId: string) => void;
 }
 
 interface ObjectRefTextRange {
@@ -172,6 +182,8 @@ export default function NoteBodyEditor({
   onSplit,
   onEmptyBackspace,
   onMove,
+  inputHandoff = null,
+  onInputHandoffClaimed,
 }: NoteBodyEditorProps) {
   const shellRef = useRef<HTMLDivElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -201,6 +213,8 @@ export default function NoteBodyEditor({
   const onSplitRef = useRef(onSplit);
   const onEmptyBackspaceRef = useRef(onEmptyBackspace);
   const onMoveRef = useRef(onMove);
+  const onInputHandoffClaimedRef = useRef(onInputHandoffClaimed);
+  const claimedInputHandoffIdsRef = useRef<Set<string>>(new Set());
   const notePulseTargetRef = useRef(notePulseTarget);
   const notePulseTimeoutRef = useRef<number | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
@@ -227,6 +241,7 @@ export default function NoteBodyEditor({
   onSplitRef.current = onSplit;
   onEmptyBackspaceRef.current = onEmptyBackspace;
   onMoveRef.current = onMove;
+  onInputHandoffClaimedRef.current = onInputHandoffClaimed;
   notePulseTargetRef.current = notePulseTarget;
   ariaLabelRef.current = ariaLabel;
   compactRef.current = compact;
@@ -270,6 +285,45 @@ export default function NoteBodyEditor({
       viewRef.current?.focus();
     }
   }, [focusRequest]);
+
+  useLayoutEffect(() => {
+    if (
+      !editorReady ||
+      !inputHandoff ||
+      inputHandoff.composition !== "Complete" ||
+      claimedInputHandoffIdsRef.current.has(inputHandoff.handoffId)
+    ) {
+      return;
+    }
+    const view = viewRef.current;
+    if (!view) {
+      return;
+    }
+    const nextDoc = externalDoc;
+    const maxTextOffset = nextDoc.textContent.length;
+    const selectionStart = Math.min(
+      inputHandoff.selectionStart,
+      maxTextOffset,
+    );
+    const selectionEnd = Math.min(inputHandoff.selectionEnd, maxTextOffset);
+    const from = noteBodyPositionForTextOffset(nextDoc, selectionStart);
+    const to = noteBodyPositionForTextOffset(
+      nextDoc,
+      Math.max(selectionStart, selectionEnd),
+    );
+    claimedInputHandoffIdsRef.current.add(inputHandoff.handoffId);
+    view.updateState(
+      EditorState.create({
+        schema: noteBodySchema,
+        doc: nextDoc,
+        selection: TextSelection.create(nextDoc, from, to),
+        plugins: view.state.plugins,
+      }),
+    );
+    onBodyChangeRef.current?.(noteBodyValueFromDoc(nextDoc));
+    view.focus();
+    onInputHandoffClaimedRef.current?.(inputHandoff.handoffId);
+  }, [editorReady, externalDoc, inputHandoff]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -751,6 +805,25 @@ function publicSplit(split: ProseMirrorNoteBodySplit): NoteBodySplit {
     rightBodyPmJson: split.right.bodyPmJson,
     rightBodyText: split.right.bodyText,
   };
+}
+
+function noteBodyPositionForTextOffset(
+  doc: ProseMirrorNode,
+  textOffset: number,
+): number {
+  let consumed = 0;
+  let position = doc.content.size;
+  doc.descendants((node, nodePosition) => {
+    if (!node.isText) return true;
+    const length = node.text?.length ?? 0;
+    if (textOffset <= consumed + length) {
+      position = nodePosition + Math.max(0, textOffset - consumed);
+      return false;
+    }
+    consumed += length;
+    return true;
+  });
+  return Math.max(1, Math.min(position, doc.content.size));
 }
 
 function isMediaAttachmentDefect(error: unknown): boolean {

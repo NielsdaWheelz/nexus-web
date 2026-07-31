@@ -136,7 +136,7 @@ describe("reduceMobileChromeMotion", () => {
     expect(visible).toMatchObject({ phase: { kind: "Visible" }, progress: 0, lastScrollTop: 8 });
   });
 
-  it("clamps an upward reversal at the visible endpoint", () => {
+  it("makes an upward reversal interactive at the visible endpoint", () => {
     const started = reduceMobileChromeMotion(initialMobileChromeMotionState(), {
       kind: "Start",
       snapshot: snapshot(100),
@@ -144,7 +144,27 @@ describe("reduceMobileChromeMotion", () => {
     const hidden = reduceMobileChromeMotion(started, { kind: "Scroll", snapshot: snapshot(300) });
     const visible = reduceMobileChromeMotion(hidden, { kind: "Scroll", snapshot: snapshot(200) });
 
-    expect(visible).toMatchObject({ phase: { kind: "Tracking", direction: "Up" }, progress: 0 });
+    expect(visible).toMatchObject({
+      phase: { kind: "Visible" },
+      progress: 0,
+    });
+  });
+
+  it("keeps chrome visible for a non-overflowing source", () => {
+    const started = reduceMobileChromeMotion(initialMobileChromeMotionState(), {
+      kind: "Start",
+      snapshot: { scrollTop: 30, scrollHeight: 400, clientHeight: 500 },
+    });
+    const sampled = reduceMobileChromeMotion(started, {
+      kind: "Scroll",
+      snapshot: { scrollTop: 30, scrollHeight: 400, clientHeight: 500 },
+    });
+
+    expect(sampled).toMatchObject({
+      phase: { kind: "Visible" },
+      progress: 0,
+      lastScrollTop: 0,
+    });
   });
 
   it("settles partial progress to the nearest endpoint and ignores stale completion", () => {

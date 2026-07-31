@@ -36,6 +36,7 @@ const PANE_LOADERS: Record<PaneRouteId, PaneLoader> = {
   author: () => import("@/app/(authenticated)/authors/[handle]/AuthorPaneBody"),
   notes: () => import("@/app/(authenticated)/notes/NotesPaneBody"),
   page: () => import("@/app/(authenticated)/pages/[pageId]/PagePaneBody"),
+  dailyDate: () => import("@/app/(authenticated)/pages/[pageId]/PagePaneBody"),
   note: () => import("@/app/(authenticated)/notes/[blockId]/NotePaneBody"),
   stats: () => import("@/app/(authenticated)/stats/StatsPaneBody"),
   settings: () => import("@/app/(authenticated)/settings/SettingsPaneBody"),

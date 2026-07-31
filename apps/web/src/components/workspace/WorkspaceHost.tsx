@@ -77,7 +77,7 @@ import {
 } from "@/lib/panes/panePublications";
 import { emitWorkspaceTelemetry } from "@/lib/workspace/telemetry";
 import {
-  findPaneActivationFocusTarget,
+  findPaneLandmarkFocusTarget,
   findPaneChromeFocusTarget,
 } from "@/lib/workspace/paneDom";
 import {
@@ -92,6 +92,7 @@ import {
 import type { ResourceItem } from "@/lib/resources/resourceItems";
 import { resolveResourceLocators } from "@/lib/resources/resourceLocators";
 import type {
+  PaneEntryDelivery,
   WorkspaceTargetActivationRequest,
   WorkspaceTargetActivationResult,
 } from "@/lib/workspace/targetActivation";
@@ -254,6 +255,7 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
   resourceStatus,
   secondaryPane,
   secondaryActivation,
+  paneEntryDelivery,
   transientSecondarySurface,
   navigatePane,
   activateWorkspaceTarget,
@@ -272,6 +274,8 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
   closeTransientSecondarySurface,
   previewTransientSecondaryResult,
   acknowledgeSecondaryActivation,
+  acknowledgePaneEntryDelivery,
+  publishPaneAliases,
   children,
 }: {
   paneId: string;
@@ -284,6 +288,7 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
   resourceStatus: PaneResourceStatus;
   secondaryPane: WorkspaceAttachedSecondaryPaneState | null;
   secondaryActivation: WorkspaceDossierActivation | null;
+  paneEntryDelivery: PaneEntryDelivery | null;
   transientSecondarySurface: {
     readonly id: PaneTransientSecondarySurfaceId;
     readonly expanded: boolean;
@@ -347,6 +352,12 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
     routeKey: string,
     activation: WorkspaceDossierActivation,
   ) => void;
+  acknowledgePaneEntryDelivery: (delivery: PaneEntryDelivery) => void;
+  publishPaneAliases: (input: {
+    paneId: string;
+    visitId: string;
+    aliases: readonly string[];
+  }) => void;
   children: React.ReactNode;
 }) {
   const handleReplacePane = useCallback(
@@ -383,6 +394,7 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
       resourceStatus={resourceStatus}
       secondaryPane={secondaryPane}
       secondaryActivation={secondaryActivation}
+      paneEntryDelivery={paneEntryDelivery}
       transientSecondarySurface={transientSecondarySurface}
       pathParams={route.params}
       canGoBack={canGoBack}
@@ -401,6 +413,8 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
       onCloseTransientSecondarySurface={closeTransientSecondarySurface}
       onPreviewTransientSecondaryResult={previewTransientSecondaryResult}
       onAcknowledgeSecondaryActivation={acknowledgeSecondaryActivation}
+      onAcknowledgePaneEntryDelivery={acknowledgePaneEntryDelivery}
+      onSetPaneAliases={publishPaneAliases}
     >
       <PaneSecondaryContext.Provider value={handlePaneSecondaryPublication}>
         <PaneFixedChromeContext.Provider
@@ -751,9 +765,11 @@ function WorkspaceHost() {
     state,
     runtimeLabelByPaneId,
     pendingSecondaryActivationByPaneId,
+    pendingPaneEntryDeliveryByPaneId,
     activatePane,
     activateWorkspaceTarget,
     acknowledgePendingSecondaryActivation,
+    acknowledgePaneEntryDelivery,
     navigatePane,
     goBackPane,
     goForwardPane,
@@ -767,6 +783,7 @@ function WorkspaceHost() {
     minimizePane,
     restorePane,
     publishPaneLabel,
+    publishPaneAliases,
     workspacePrimaryMetrics,
   } = useWorkspaceHostStore();
   const labelTelemetryByPaneIdRef = useRef<Map<string, string>>(new Map());
@@ -798,6 +815,14 @@ function WorkspaceHost() {
   const layoutMode = isMobile ? "mobile" : "desktop";
   const paneWrapRefById = useRef<Map<string, HTMLDivElement>>(new Map());
   const pendingPaneActivationFocusPaneIdRef = useRef<string | null>(null);
+  const activePaneVisitIdRef = useRef<string | null>(null);
+  activePaneVisitIdRef.current =
+    state.primaryPanesById[state.activePrimaryPaneId]?.currentVisit.id ?? null;
+  const pendingPaneEntryDeliveryByPaneIdRef = useRef(
+    pendingPaneEntryDeliveryByPaneId,
+  );
+  pendingPaneEntryDeliveryByPaneIdRef.current =
+    pendingPaneEntryDeliveryByPaneId;
   const previousIsMobileRef = useRef(isMobile);
   const secondaryReturnFocusByPaneIdRef = useRef<Map<string, HTMLElement>>(
     new Map(),
@@ -1568,7 +1593,7 @@ function WorkspaceHost() {
         '[data-pane-chrome-focus="true"]',
       );
       const focusTarget = isMobile
-        ? findPaneActivationFocusTarget(targetPaneId)
+        ? findPaneLandmarkFocusTarget(targetPaneId)
         : paneChrome;
       if (!focusTarget) {
         return false;
@@ -1587,6 +1612,16 @@ function WorkspaceHost() {
       pendingPaneActivationFocusPaneIdRef.current ??
       (isMobile || previousIsMobile ? state.activePrimaryPaneId : null);
     if (!targetPaneId) {
+      return;
+    }
+    const entryDelivery =
+      pendingPaneEntryDeliveryByPaneIdRef.current.get(targetPaneId);
+    if (
+      isMobile &&
+      entryDelivery?.visitId === activePaneVisitIdRef.current &&
+      entryDelivery.entry.kind === "AppendNote"
+    ) {
+      pendingPaneActivationFocusPaneIdRef.current = null;
       return;
     }
     focusPaneActivationTarget(targetPaneId);
@@ -1739,6 +1774,13 @@ function WorkspaceHost() {
                           ?.activation ?? null)
                       : null
                   }
+                  paneEntryDelivery={
+                    pendingPaneEntryDeliveryByPaneId.get(pane.paneId)
+                      ?.visitId === pane.visitId
+                      ? (pendingPaneEntryDeliveryByPaneId.get(pane.paneId) ??
+                        null)
+                      : null
+                  }
                   transientSecondarySurface={
                     pane.transientSecondarySurface
                       ? {
@@ -1772,6 +1814,8 @@ function WorkspaceHost() {
                   acknowledgeSecondaryActivation={
                     acknowledgeSecondaryActivation
                   }
+                  acknowledgePaneEntryDelivery={acknowledgePaneEntryDelivery}
+                  publishPaneAliases={publishPaneAliases}
                 >
                   {pane.route.id !== "unsupported" ? (
                     <PaneShell

@@ -26,7 +26,7 @@ test.describe("share to Nexus", () => {
     await expect(page.getByText("Added to today")).toBeVisible();
     await expect(page.getByRole("link", { name: "Open" })).toHaveAttribute(
       "href",
-      "/notes",
+      /^\/daily\/\d{4}-\d{2}-\d{2}$/,
     );
   });
 

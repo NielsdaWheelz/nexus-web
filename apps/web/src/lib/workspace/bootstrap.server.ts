@@ -6,6 +6,10 @@ import { callFastAPI } from "@/lib/api/server";
 import { PREFETCH_OPTS } from "@/lib/api/resourceTransport";
 import { serverResourceFetcher } from "@/lib/api/resourceTransport.server";
 import type { DehydratedResources } from "@/lib/api/resourceCache";
+import {
+  decodeAuthenticatedAccount,
+  type AuthenticatedAccount,
+} from "@/lib/account/contract";
 import { REQUEST_PATH_HEADER } from "@/lib/auth/requestPath";
 import { readDeviceId } from "@/lib/auth/deviceCookie";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
@@ -86,6 +90,11 @@ async function loadReaderProfile(): Promise<ReaderProfile> {
   return parseReaderProfile(res.data);
 }
 
+async function loadAuthenticatedAccount(): Promise<AuthenticatedAccount> {
+  const response = await callFastAPI<{ data: unknown }>("/me");
+  return decodeAuthenticatedAccount(response.data);
+}
+
 async function loadSession(
   deviceId: string | null,
 ): Promise<{ own: unknown; mostRecentElsewhere: unknown } | null> {
@@ -146,6 +155,7 @@ async function loadSession(
 // pane's data — so the first paint shows the right panes, with their data, and no client
 // round-trip.
 export async function loadWorkspaceBootstrap(androidShell: boolean): Promise<{
+  account: AuthenticatedAccount;
   readerProfile: ReaderProfile;
   initialState: WorkspaceState;
   resources: DehydratedResources;
@@ -169,10 +179,12 @@ export async function loadWorkspaceBootstrap(androidShell: boolean): Promise<{
     }
   }
 
-  // Wave 1 — reader profile, saved session, and only a Navigate pane's resource are
-  // concurrent. Resume never speculatively seeds root. The profile is required; session and
-  // pane seeds stay best-effort. None gates the first byte — the shell skeleton streamed.
-  const [readerProfile, session, urlSeed] = await Promise.all([
+  // Wave 1 — account profile, reader profile, saved session, and only a Navigate
+  // pane's resource are concurrent. Resume never speculatively seeds root. Both
+  // profiles are required; session and pane seeds stay best-effort. None gates
+  // the first byte — the shell skeleton streamed.
+  const [account, readerProfile, session, urlSeed] = await Promise.all([
+    loadAuthenticatedAccount(),
     loadReaderProfile(),
     loadSession(deviceId),
     urlSeedPromise,
@@ -233,5 +245,5 @@ export async function loadWorkspaceBootstrap(androidShell: boolean): Promise<{
     }
   }
 
-  return { readerProfile, initialState, resources };
+  return { account, readerProfile, initialState, resources };
 }

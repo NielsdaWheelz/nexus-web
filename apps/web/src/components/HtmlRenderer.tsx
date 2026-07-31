@@ -20,8 +20,8 @@ import { useReaderPulseHighlight } from "@/lib/reader/pulseEvent";
 import type { RetrievalLocator } from "@/lib/api/sse/locators";
 import {
   getPaneScrollContainer,
-  scrollElementIntoPaneView,
 } from "@/lib/reader/paneScroll";
+import type { ReaderScrollPositioner } from "@/lib/reader/paneScroll";
 import styles from "./HtmlRenderer.module.css";
 
 interface HtmlRendererProps {
@@ -42,6 +42,8 @@ interface HtmlRendererProps {
    * matching highlight element.
    */
   mediaId?: string;
+  /** Reader-owned positioning boundary for pulse navigation. */
+  scrollPositioner?: ReaderScrollPositioner;
   /**
    * Projects imported document headings beneath the route-level pane heading.
    * IDs and all other attributes are preserved.
@@ -92,6 +94,7 @@ export default memo(function HtmlRenderer({
   htmlSanitized,
   className,
   mediaId,
+  scrollPositioner,
   headingLevelOffset,
 }: HtmlRendererProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -117,9 +120,9 @@ export default memo(function HtmlRenderer({
         );
         for (const candidate of candidates) {
           const container = getPaneScrollContainer(candidate);
-          if (container) {
-            scrollElementIntoPaneView(container, candidate, {
-              block: "center",
+          if (container && scrollPositioner) {
+            void scrollPositioner.run(({ reveal }) => {
+              reveal(container, candidate);
             });
           }
           candidate.classList.add(styles.pulsing);
@@ -128,7 +131,7 @@ export default memo(function HtmlRenderer({
           }, PULSE_DURATION_MS);
         }
       },
-      [mediaId],
+      [mediaId, scrollPositioner],
     ),
   );
 

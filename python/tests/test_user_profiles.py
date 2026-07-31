@@ -2,13 +2,14 @@
 
 Tests cover:
 - Bootstrap syncs email from JWT to users table
-- GET /me returns email and display_name
-- PATCH /me updates display_name
+- GET /me returns email, display_name, and calendar_time_zone
+- PATCH /me updates supplied profile fields
 - GET /users/search searches by email prefix and display_name substring
 - Library member/invite responses include email and display_name
 - Invite by email (alternative to user_id)
 """
 
+from datetime import date
 from uuid import uuid4
 
 import pytest
@@ -125,6 +126,7 @@ class TestGetMeProfile:
             f"Expected 'display_name' in /me response, got keys: {list(data.keys())}"
         )
         assert data["display_name"] is None
+        assert data["calendar_time_zone"] == "UTC"
 
 
 # =============================================================================
@@ -196,6 +198,103 @@ class TestPatchMe:
 
         assert response.status_code == 200
         assert response.json()["data"]["display_name"] is None
+
+    def test_patch_me_calendar_timezone_omits_display_name_and_rejects_null(self, auth_client):
+        user_id = create_test_user_id()
+        headers = auth_headers(user_id, email=f"calendar-{user_id}@example.com")
+        auth_client.get("/me", headers=headers)
+        auth_client.patch("/me", json={"display_name": "Calendar Owner"}, headers=headers)
+
+        updated = auth_client.patch(
+            "/me",
+            json={"calendar_time_zone": "America/Los_Angeles"},
+            headers=headers,
+        )
+
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["data"]["display_name"] == "Calendar Owner"
+        assert updated.json()["data"]["calendar_time_zone"] == "America/Los_Angeles"
+
+        rejected = auth_client.patch(
+            "/me",
+            json={"calendar_time_zone": None},
+            headers=headers,
+        )
+        assert rejected.status_code == 400, rejected.text
+        persisted = auth_client.get("/me", headers=headers).json()["data"]
+        assert persisted["display_name"] == "Calendar Owner"
+        assert persisted["calendar_time_zone"] == "America/Los_Angeles"
+
+    def test_patch_me_display_null_omits_calendar_timezone(self, auth_client):
+        user_id = create_test_user_id()
+        headers = auth_headers(user_id, email=f"profile-omit-{user_id}@example.com")
+        auth_client.get("/me", headers=headers)
+        auth_client.patch(
+            "/me",
+            json={
+                "display_name": "Temporary",
+                "calendar_time_zone": "Europe/Amsterdam",
+            },
+            headers=headers,
+        )
+
+        cleared = auth_client.patch("/me", json={"display_name": None}, headers=headers)
+
+        assert cleared.status_code == 200, cleared.text
+        assert cleared.json()["data"]["display_name"] is None
+        assert cleared.json()["data"]["calendar_time_zone"] == "Europe/Amsterdam"
+
+    def test_patch_me_calendar_timezone_moves_no_existing_daily_binding(
+        self,
+        auth_client,
+        direct_db,
+    ) -> None:
+        user_id = create_test_user_id()
+        page_id = uuid4()
+        local_date = date(2026, 1, 15)
+        headers = auth_headers(user_id, email=f"binding-zone-{user_id}@example.com")
+        response = auth_client.get("/me", headers=headers)
+        assert response.status_code == 200, response.text
+        direct_db.register_cleanup("users", "id", user_id)
+        direct_db.register_cleanup("pages", "user_id", user_id)
+        with direct_db.session() as db:
+            db.execute(
+                text(
+                    "INSERT INTO pages (id, user_id, title) "
+                    "VALUES (:page_id, :user_id, 'Bound daily Page')"
+                ),
+                {"page_id": page_id, "user_id": user_id},
+            )
+            db.execute(
+                text(
+                    "INSERT INTO daily_page_bindings (user_id, local_date, page_id) "
+                    "VALUES (:user_id, :local_date, :page_id)"
+                ),
+                {
+                    "user_id": user_id,
+                    "local_date": local_date,
+                    "page_id": page_id,
+                },
+            )
+            db.commit()
+
+        updated = auth_client.patch(
+            "/me",
+            json={"calendar_time_zone": "Asia/Tokyo"},
+            headers=headers,
+        )
+
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["data"]["calendar_time_zone"] == "Asia/Tokyo"
+        with direct_db.session() as db:
+            binding = db.execute(
+                text(
+                    "SELECT local_date, page_id FROM daily_page_bindings WHERE user_id = :user_id"
+                ),
+                {"user_id": user_id},
+            ).one()
+            assert binding.local_date == local_date
+            assert binding.page_id == page_id
 
 
 # =============================================================================

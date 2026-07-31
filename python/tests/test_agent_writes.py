@@ -9,6 +9,7 @@ persister inserts its own row). Undo, cap, and quote-ambiguity are covered here;
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -329,12 +330,40 @@ def test_create_highlight_unique_and_ambiguous(direct_db):
         assert still_one == 1
 
 
-def test_jot_note_appends_to_daily(direct_db):
+def test_jot_note_uses_account_local_date_and_undo_preserves_daily_page(
+    direct_db,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class BoundaryDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            instant = datetime(2026, 1, 1, 0, 30, tzinfo=UTC)
+            return instant if tz is None else instant.astimezone(tz)
+
     user_id = _seed_user(direct_db)
     run = _seed_run(direct_db, user_id)
     direct_db.register_cleanup("note_blocks", "user_id", user_id)
     direct_db.register_cleanup("pages", "user_id", user_id)
+    monkeypatch.setattr("nexus.services.users.datetime", BoundaryDateTime)
+    capture_daily_page_note = writes.notes.capture_daily_page_note
+
+    def capture_with_clean_transaction_entry(*args, **kwargs):
+        session = args[0]
+        assert not session.in_transaction()
+        return capture_daily_page_note(*args, **kwargs)
+
+    monkeypatch.setattr(
+        writes.notes,
+        "capture_daily_page_note",
+        capture_with_clean_transaction_entry,
+    )
+
     with direct_db.session() as session:
+        session.execute(
+            text("UPDATE users SET calendar_time_zone = 'America/Los_Angeles' WHERE id = :user_id"),
+            {"user_id": user_id},
+        )
+        session.commit()
         outcome = writes.execute_write_tool(
             session,
             run=run,
@@ -343,10 +372,104 @@ def test_jot_note_appends_to_daily(direct_db):
             args={"markdown": "remember this"},
         )
         assert not outcome.is_error
-        blocks = session.execute(
-            text("SELECT count(*) FROM note_blocks WHERE user_id = :u"), {"u": user_id}
-        ).scalar_one()
-        assert blocks == 1
+        note_id = UUID(str(outcome.created_refs[0]["id"]))
+        binding = session.execute(
+            text("SELECT local_date, page_id FROM daily_page_bindings WHERE user_id = :user_id"),
+            {"user_id": user_id},
+        ).one()
+        page_id = binding.page_id
+        assert binding.local_date.isoformat() == "2025-12-31"
+        assert (
+            session.scalar(
+                text("SELECT count(*) FROM note_blocks WHERE user_id = :user_id AND id = :note_id"),
+                {"user_id": user_id, "note_id": note_id},
+            )
+            == 1
+        )
+        assert (
+            session.scalar(
+                text(
+                    "SELECT count(*) FROM resource_edges "
+                    "WHERE user_id = :user_id "
+                    "AND source_scheme = 'page' AND source_id = :page_id "
+                    "AND target_scheme = 'note_block' AND target_id = :note_id "
+                    "AND source_order_key IS NOT NULL"
+                ),
+                {
+                    "user_id": user_id,
+                    "page_id": page_id,
+                    "note_id": note_id,
+                },
+            )
+            == 1
+        )
+        assert (
+            session.scalar(
+                text(
+                    "SELECT count(*) FROM resource_mutations "
+                    "WHERE user_id = :user_id AND mutation_scope = 'daily:capture'"
+                ),
+                {"user_id": user_id},
+            )
+            == 1
+        )
+
+    with direct_db.session() as session:
+        writes.undo_tool_call(
+            session,
+            viewer_id=user_id,
+            conversation_id=run.conversation_id,
+            tool_call_id=outcome.tool_call_id,
+        )
+        assert (
+            session.scalar(
+                text("SELECT count(*) FROM note_blocks WHERE user_id = :user_id AND id = :note_id"),
+                {"user_id": user_id, "note_id": note_id},
+            )
+            == 0
+        )
+        assert (
+            session.scalar(
+                text(
+                    "SELECT count(*) FROM resource_edges "
+                    "WHERE user_id = :user_id AND target_id = :note_id"
+                ),
+                {"user_id": user_id, "note_id": note_id},
+            )
+            == 0
+        )
+        assert (
+            session.scalar(
+                text("SELECT count(*) FROM pages WHERE user_id = :user_id AND id = :page_id"),
+                {"user_id": user_id, "page_id": page_id},
+            )
+            == 1
+        )
+        assert (
+            session.scalar(
+                text("SELECT reverted_at FROM message_tool_calls WHERE id = :tool_call_id"),
+                {"tool_call_id": outcome.tool_call_id},
+            )
+            is not None
+        )
+        assert (
+            session.scalar(
+                text(
+                    "SELECT count(*) FROM daily_page_bindings "
+                    "WHERE user_id = :user_id AND page_id = :page_id "
+                    "AND local_date = DATE '2025-12-31'"
+                ),
+                {"user_id": user_id, "page_id": page_id},
+            )
+            == 1
+        )
+        assert (
+            session.scalar(
+                text("SELECT count(*) FROM resource_mutations WHERE user_id = :user_id"),
+                {"user_id": user_id},
+            )
+            == 1
+        )
 
 
 def test_queue_add_marks_assistant_source(direct_db):

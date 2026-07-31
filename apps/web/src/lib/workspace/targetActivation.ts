@@ -8,6 +8,7 @@ export interface WorkspaceTarget {
   href: string;
   labelHint?: string;
   secondaryActivation?: WorkspaceSecondaryActivation;
+  aliases?: readonly string[];
 }
 
 export type WorkspaceTargetDisposition =
@@ -20,6 +21,25 @@ export interface WorkspaceTargetActivationRequest {
   target: WorkspaceTarget;
   disposition: WorkspaceTargetDisposition;
   modality: PaneNavigationModality;
+  paneEntryActivation?: WorkspacePaneEntryActivation;
+}
+
+export interface WorkspacePaneEntry {
+  kind: "AppendNote";
+  noteId: string;
+  clientMutationId: string;
+}
+
+export interface WorkspacePaneEntryActivation {
+  activationId: string;
+  entry: WorkspacePaneEntry | null;
+}
+
+export interface PaneEntryDelivery {
+  activationId: string;
+  paneId: string;
+  visitId: string;
+  entry: WorkspacePaneEntry;
 }
 
 export type WorkspaceTargetActivationResult =
@@ -46,6 +66,7 @@ export interface WorkspaceTargetActivationPane {
   paneId: string;
   href: string;
   minimized: boolean;
+  aliases?: readonly string[];
 }
 
 export interface WorkspaceTargetActivationPlannerInput {
@@ -66,15 +87,56 @@ function requireSupportedTarget(target: WorkspaceTarget): WorkspaceTarget {
   return { ...target, href };
 }
 
-function selectExactPane(
+function canonicalRouteAliases(
+  route: ReturnType<typeof resolvePaneRoute>,
+): readonly string[] {
+  if (route.id === "dailyDate" && route.params.localDate) {
+    return [`daily:${route.params.localDate}`];
+  }
+  if (route.id === "page" && route.params.pageId) {
+    return [`page:${route.params.pageId}`];
+  }
+  return [];
+}
+
+function selectMatchingPane(
   panes: readonly WorkspaceTargetActivationPane[],
   originPaneId: string,
-  href: string,
-): WorkspaceTargetActivationPane | null {
-  const matches = panes.filter((pane) => hasSamePaneRoute(pane.href, href));
+  target: WorkspaceTarget,
+): { pane: WorkspaceTargetActivationPane; kind: "Route" | "Alias" } | null {
+  const targetRoute = resolvePaneRoute(target.href);
+  const targetAliases = new Set([
+    ...canonicalRouteAliases(targetRoute),
+    ...(target.aliases ?? []),
+  ]);
+  const matches = panes
+    .map((pane) => {
+      const paneRoute = resolvePaneRoute(pane.href);
+      const isAlias =
+        paneRoute.id !== targetRoute.id &&
+        [...canonicalRouteAliases(paneRoute), ...(pane.aliases ?? [])].some(
+          (alias) => targetAliases.has(alias),
+        );
+      return {
+        pane,
+        kind: hasSamePaneRoute(pane.href, target.href)
+          ? ("Route" as const)
+          : isAlias
+            ? ("Alias" as const)
+            : null,
+      };
+    })
+    .filter(
+      (
+        match,
+      ): match is {
+        pane: WorkspaceTargetActivationPane;
+        kind: "Route" | "Alias";
+      } => match.kind !== null,
+    );
   return (
-    matches.find((pane) => pane.paneId === originPaneId) ??
-    matches.find((pane) => !pane.minimized) ??
+    matches.find((match) => match.pane.paneId === originPaneId) ??
+    matches.find((match) => !match.pane.minimized) ??
     matches[0] ??
     null
   );
@@ -99,7 +161,8 @@ export function planWorkspaceTargetActivation(
           target,
         };
 
-  const exactPane = selectExactPane(input.panes, input.originPaneId, target.href);
+  const match = selectMatchingPane(input.panes, input.originPaneId, target);
+  const exactPane = match?.pane ?? null;
   switch (input.disposition.kind) {
     case "Fork":
       return create();
@@ -107,6 +170,11 @@ export function planWorkspaceTargetActivation(
     case "Follow":
       if (!exactPane) {
         return { kind: "NavigateOrigin", paneId: origin.paneId, href: target.href };
+      }
+      if (match?.kind === "Alias") {
+        return exactPane.paneId === origin.paneId
+          ? { kind: "Unchanged", paneId: exactPane.paneId }
+          : { kind: "ActivateExisting", paneId: exactPane.paneId };
       }
       if (exactPane.href === target.href) {
         return exactPane.paneId === origin.paneId
@@ -122,6 +190,11 @@ export function planWorkspaceTargetActivation(
     case "Adopt":
       if (!exactPane) {
         return create();
+      }
+      if (match?.kind === "Alias") {
+        return exactPane.paneId === origin.paneId
+          ? { kind: "Unchanged", paneId: exactPane.paneId }
+          : { kind: "ActivateExisting", paneId: exactPane.paneId };
       }
       if (exactPane.href === target.href) {
         return exactPane.paneId === origin.paneId

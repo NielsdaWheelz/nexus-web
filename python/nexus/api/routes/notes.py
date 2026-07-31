@@ -16,7 +16,7 @@ from nexus.db.session import get_db
 from nexus.responses import ok, success_response
 from nexus.schemas.notes import (
     CreatePageRequest,
-    QuickCaptureRequest,
+    DailyCaptureRequest,
     UpdatePageRequest,
 )
 from nexus.services import notes as notes_service
@@ -83,45 +83,34 @@ def delete_page(
     return Response(status_code=204)
 
 
-@router.get("/daily")
-def get_daily_note_for_today(
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    time_zone: Annotated[str, Query(alias="time_zone", min_length=1, max_length=100)] = "UTC",
-) -> dict:
-    daily = notes_service.get_daily_note_for_today(
-        db,
-        viewer.user_id,
-        time_zone=time_zone,
-    )
-    return ok(daily, by_alias=True)
-
-
-@router.post("/quick-capture", status_code=201)
-def quick_capture(
-    request: QuickCaptureRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    time_zone: Annotated[str, Query(alias="time_zone", min_length=1, max_length=100)] = "UTC",
-) -> dict:
-    block = notes_service.quick_capture(
-        db,
-        viewer.user_id,
-        request=request,
-        time_zone=time_zone,
-    )
-    return ok(block, by_alias=True)
-
-
 @router.get("/daily/{local_date}")
-def get_daily_note_by_date(
+def read_daily_page(
     local_date: date,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    time_zone: Annotated[str, Query(alias="time_zone", min_length=1, max_length=100)] = "UTC",
 ) -> dict:
-    daily = notes_service.get_daily_note(db, viewer.user_id, local_date, time_zone=time_zone)
-    return ok(daily, by_alias=True)
+    return ok(
+        notes_service.read_daily_page(db, viewer.user_id, local_date),
+        by_alias=True,
+    )
+
+
+@router.post("/daily/{local_date}/captures", status_code=201)
+def capture_daily_page_note(
+    local_date: date,
+    request: DailyCaptureRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    return ok(
+        notes_service.capture_daily_page_note(
+            db,
+            viewer.user_id,
+            local_date=local_date,
+            request=request,
+        ),
+        by_alias=True,
+    )
 
 
 @router.get("/blocks/{block_id}")

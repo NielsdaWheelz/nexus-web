@@ -1,16 +1,19 @@
 "use client";
 
-import type { MouseEvent, ReactNode } from "react";
+import { useRef, type MouseEvent, type ReactNode } from "react";
 import AccountMenu from "@/components/appnav/AccountMenu";
 import AddPanel from "@/components/nexus/AddPanel";
 import AddPanelBoundary from "@/components/nexus/AddPanelBoundary";
-import TodayCapturePanel from "@/components/nexus/TodayCapturePanel";
 import MobileFullScreenTask from "@/components/ui/MobileFullScreenTask";
 import { getDestination } from "@/lib/navigation/destinations";
+import { retainedNexusTargetLabel } from "@/lib/nexus/model";
 import { getPaneRouteIcon } from "@/lib/panes/paneRouteTable";
 import type { AppNavActivationResult } from "@/lib/panes/targetLinkActivation";
 import type { NexusController } from "@/components/nexus/useNexusController";
 import CreateLibraryPanel from "./CreateLibraryPanel";
+import MobileQuickNoteHandoff, {
+  type MobileQuickNoteHandoffHandle,
+} from "./MobileQuickNoteHandoff";
 import SwitchboardActions from "./SwitchboardActions";
 import SwitchboardFind from "./SwitchboardFind";
 import SwitchboardRecovery from "./SwitchboardRecovery";
@@ -62,6 +65,8 @@ export default function SwitchboardTask({
   onClearAddDefect(): void;
 }) {
   const switchboard = useSwitchboardController(controller);
+  const quickNoteHandoffRef =
+    useRef<MobileQuickNoteHandoffHandle>(null);
   const settingsDestination = getDestination("settings");
   const accountSettings = {
     ...settingsDestination,
@@ -108,14 +113,19 @@ export default function SwitchboardTask({
         manageTabs &&
         (controller.page.kind === "ManageTabs" ||
           controller.page.kind === "ActivationBlocked")
-          ? controller.page.retained.target.labelHint ??
-            controller.page.retained.target.href
+          ? retainedNexusTargetLabel(controller.page.retained.target)
           : undefined
       }
       onDone={controller.close}
       onFind={controller.enterFind}
       onPlace={controller.openSwitchboardPlace}
-      onQuickAction={controller.runSwitchboardQuickAction}
+      onQuickAction={(action, trigger) => {
+        if (action.id === "Nexus.Quick.Note") {
+          quickNoteHandoffRef.current?.begin(trigger);
+          return;
+        }
+        controller.runSwitchboardQuickAction(action);
+      }}
       onOpenPane={(paneId) => {
         const pane = controller.switchboardPanes.find(
           (candidate) => candidate.id === paneId,
@@ -207,14 +217,6 @@ export default function SwitchboardTask({
             </button>
           </div>
         );
-      case "TodayCapture":
-        return (
-          <TodayCapturePanel
-            session={controller.todaySession}
-            onOpen={controller.openTarget}
-            onBack={controller.back}
-          />
-        );
       case "CreatePage":
         return (
           <CreationStatus
@@ -272,16 +274,22 @@ export default function SwitchboardTask({
   };
 
   return (
-    <MobileFullScreenTask
-      active={active}
-      onDismiss={controller.dismissAccepted}
-      onDismissRequest={controller.guardClose}
-      ariaLabel={activeAddDefect ? "Add needs attention" : "Nexus"}
-      initialFocus={(container) => controller.initialFocus(container, true)}
-      skipReturnFocus={controller.shouldSuppressReturnFocusOnClose}
-      focusKey={controller.focusKey}
-    >
-      {renderPage()}
-    </MobileFullScreenTask>
+    <>
+      <MobileFullScreenTask
+        active={active}
+        onDismiss={controller.dismissAccepted}
+        onDismissRequest={controller.guardClose}
+        ariaLabel={activeAddDefect ? "Add needs attention" : "Nexus"}
+        initialFocus={(container) => controller.initialFocus(container, true)}
+        skipReturnFocus={controller.shouldSuppressReturnFocusOnClose}
+        focusKey={controller.focusKey}
+      >
+        {renderPage()}
+      </MobileFullScreenTask>
+      <MobileQuickNoteHandoff
+        ref={quickNoteHandoffRef}
+        onNavigationAccepted={controller.completeMobileQuickNoteNavigation}
+      />
+    </>
   );
 }

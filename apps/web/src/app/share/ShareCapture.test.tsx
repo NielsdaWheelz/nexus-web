@@ -51,16 +51,97 @@ function parseJsonBody(init: RequestInit | undefined): Record<string, unknown> {
   return JSON.parse(init.body) as Record<string, unknown>;
 }
 
-function noteBlock() {
+function resourceItem(ref: string, scheme: string, id: string) {
   return {
-    id: "block-1",
-    parent_block_id: null,
-    order_key: "a0",
-    body_pm_json: {},
-    body_text: "plain note",
-    collapsed: false,
-    children: [],
+    ref,
+    scheme,
+    id,
+    label: "",
+    summary: "",
+    route: null,
+    activation: {
+      resourceRef: ref,
+      kind: "none",
+      href: null,
+      unresolvedReason: null,
+    },
+    missing: false,
+    capabilities: {
+      userRelation: {
+        userLinkSource: false,
+        userLinkTarget: "none",
+        noteReferenceTarget: false,
+      },
+      sharing: "None",
+      libraryPlacement: "None",
+      attachable: false,
+      chatSubject: "none",
+      readable: "none",
+      inspectable: "none",
+      citableResultType: null,
+      citationOutputSource: false,
+      appSearchScope: false,
+      conversationSearchScope: false,
+      promptRender: "none",
+      expansionPolicy: "none",
+      expandable: false,
+      adjacencySource: true,
+      adjacencyTarget: true,
+    },
+    versionByLane: { title: 1, body: 1, outgoing_edges: 1 },
   };
+}
+
+function dailyCaptureResponse(
+  localDate: string,
+  body: Record<string, unknown>,
+): Response {
+  const pageId = "11111111-1111-4111-8111-111111111111";
+  const noteId = String(body.noteId);
+  const pageRef = `page:${pageId}`;
+  const noteRef = `note_block:${noteId}`;
+  return jsonResponse(
+    {
+      data: {
+        clientMutationId: body.clientMutationId,
+        localDate,
+        pageId,
+        surface: {
+          source: {
+            item: resourceItem(pageRef, "page", pageId),
+            content: { kind: "page_title", title: "Today" },
+          },
+          ordered_items: [
+            {
+              occurrence_id: "edge-1",
+              target: {
+                item: resourceItem(noteRef, "note_block", noteId),
+                content: {
+                  kind: "note_body",
+                  body_pm_json: body.bodyPmJson,
+                  body_text: "plain note",
+                },
+              },
+            },
+          ],
+        },
+      },
+    },
+    201,
+  );
+}
+
+function accountResponse(calendarTimeZone = "UTC"): Response {
+  return jsonResponse({
+    data: {
+      user_id: "account-1",
+      default_library_id: "library-1",
+      email: "ada@example.com",
+      display_name: "Ada",
+      calendar_time_zone: calendarTimeZone,
+      email_ingest_address: null,
+    },
+  });
 }
 
 const UUID_RE =
@@ -95,9 +176,16 @@ function createdLibraryResponse(body: Record<string, unknown>): Response {
 function installShareFetch({
   fromUrl,
   createLibrary,
+  profile,
+  dailyCapture,
 }: {
   fromUrl?: (body: Record<string, unknown>) => Response | Promise<Response>;
   createLibrary?: (
+    body: Record<string, unknown>,
+  ) => Response | Promise<Response>;
+  profile?: () => Response | Promise<Response>;
+  dailyCapture?: (
+    localDate: string,
     body: Record<string, unknown>,
   ) => Response | Promise<Response>;
 } = {}) {
@@ -106,6 +194,10 @@ function installShareFetch({
       const path = pathFor(input);
       const url = new URL(path, "http://localhost");
       const method = init?.method ?? "GET";
+
+      if (url.pathname === "/api/me" && method === "GET") {
+        return profile ? profile() : accountResponse();
+      }
 
       if (url.pathname === "/api/libraries/writable-destinations") {
         const query = (url.searchParams.get("q") ?? "").trim();
@@ -147,8 +239,16 @@ function installShareFetch({
         });
       }
 
-      if (url.pathname === "/api/notes/quick-capture" && method === "POST") {
-        return jsonResponse({ data: noteBlock() }, 201);
+      const dailyCaptureMatch =
+        /^\/api\/notes\/daily\/(\d{4}-\d{2}-\d{2})\/captures$/.exec(
+          url.pathname,
+        );
+      if (dailyCaptureMatch && method === "POST") {
+        const body = parseJsonBody(init);
+        const localDate = dailyCaptureMatch[1]!;
+        return dailyCapture
+          ? dailyCapture(localDate, body)
+          : dailyCaptureResponse(localDate, body);
       }
 
       throw new Error(`Unexpected request: ${method} ${path}`);
@@ -168,15 +268,26 @@ function fromUrlBodies(fetchMock: ReturnType<typeof installShareFetch>) {
     .map(([, init]) => parseJsonBody(init));
 }
 
-function quickCaptureBodies(fetchMock: ReturnType<typeof installShareFetch>) {
+function dailyCaptureCalls(fetchMock: ReturnType<typeof installShareFetch>) {
   return fetchMock.mock.calls
-    .filter(
-      ([input, init]) =>
-        new URL(pathFor(input), "http://localhost").pathname.endsWith(
-          "/quick-capture",
-        ) && init?.method === "POST",
-    )
-    .map(([, init]) => parseJsonBody(init));
+    .flatMap(([input, init]) => {
+      const pathname = new URL(pathFor(input), "http://localhost").pathname;
+      const match =
+        /^\/api\/notes\/daily\/(\d{4}-\d{2}-\d{2})\/captures$/.exec(
+          pathname,
+        );
+      return match && init?.method === "POST"
+        ? [{ localDate: match[1]!, body: parseJsonBody(init) }]
+        : [];
+    });
+}
+
+function profileCalls(fetchMock: ReturnType<typeof installShareFetch>) {
+  return fetchMock.mock.calls.filter(
+    ([input, init]) =>
+      new URL(pathFor(input), "http://localhost").pathname === "/api/me" &&
+      (init?.method ?? "GET") === "GET",
+  );
 }
 
 function libraryCreateBodies(
@@ -573,26 +684,146 @@ describe("ShareCapture", () => {
     releases.shift()?.();
   });
 
-  it("quick-captures non-URL text without showing a destination picker", async () => {
+  it("reads the account profile before dated plain-text capture", async () => {
     const fetchMock = installShareFetch();
 
     renderShareCapture("plain note");
 
     await screen.findByText("Added to today");
-    const [body] = quickCaptureBodies(fetchMock);
-    expect(body).toEqual(
-      expect.objectContaining({
-        id: expect.stringMatching(UUID_RE),
-        client_mutation_id: expect.stringMatching(/^share-note-mutation-/),
-        body_pm_json: {
+    const [capture] = dailyCaptureCalls(fetchMock);
+    expect(capture).toEqual({
+      localDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+      body: {
+        noteId: expect.stringMatching(UUID_RE),
+        clientMutationId: expect.stringMatching(/^share-note-mutation-/),
+        bodyPmJson: {
           type: "paragraph",
           content: [{ type: "text", text: "plain note" }],
         },
-      }),
+      },
+    });
+    const requestedPaths = fetchMock.mock.calls.map(([input]) => pathFor(input));
+    expect(requestedPaths.indexOf("/api/me")).toBeLessThan(
+      requestedPaths.findIndex((path) => path.endsWith("/captures")),
     );
     expect(
       screen.queryByRole("button", { name: /^Library destinations:/ }),
     ).toBeNull();
+  });
+
+  it("sends no capture after a profile-read failure and retries the profile", async () => {
+    let profileAttempt = 0;
+    const fetchMock = installShareFetch({
+      profile: () => {
+        profileAttempt += 1;
+        return profileAttempt === 1
+          ? jsonResponse(
+              { error: { code: "E_PROFILE", message: "profile failed" } },
+              500,
+            )
+          : accountResponse("UTC");
+      },
+    });
+
+    renderShareCapture("plain note");
+
+    await screen.findByRole("heading", { name: "Couldn’t save" });
+    expect(dailyCaptureCalls(fetchMock)).toEqual([]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    await screen.findByText("Added to today");
+    expect(profileCalls(fetchMock)).toHaveLength(2);
+    expect(dailyCaptureCalls(fetchMock)).toHaveLength(1);
+  });
+
+  it("propagates an account profile contract defect without sending a capture", async () => {
+    const onDefect = vi.fn();
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const fetchMock = installShareFetch({
+      profile: () =>
+        jsonResponse({
+          data: {
+            user_id: "account-1",
+            default_library_id: "library-1",
+            email: "ada@example.com",
+            display_name: "Ada",
+            calendarTimeZone: "UTC",
+            email_ingest_address: null,
+          },
+        }),
+    });
+
+    try {
+      render(
+        <DefectBoundary onDefect={onDefect}>
+          <ShareCapture text="plain note" isShell={false} />
+        </DefectBoundary>,
+      );
+
+      expect(
+        await screen.findByText("Share defect boundary"),
+      ).toBeInTheDocument();
+      expect(onDefect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "AuthenticatedAccountContractDefect",
+        }),
+      );
+      expect(dailyCaptureCalls(fetchMock)).toEqual([]);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("freezes the date and identities when capture retries across midnight", async () => {
+    const formatToParts = vi
+      .fn()
+      .mockReturnValueOnce([
+        { type: "month", value: "07" },
+        { type: "literal", value: "/" },
+        { type: "day", value: "30" },
+        { type: "literal", value: "/" },
+        { type: "year", value: "2026" },
+      ])
+      .mockReturnValueOnce([
+        { type: "month", value: "07" },
+        { type: "literal", value: "/" },
+        { type: "day", value: "31" },
+        { type: "literal", value: "/" },
+        { type: "year", value: "2026" },
+    ]);
+    vi.spyOn(Intl, "DateTimeFormat").mockImplementation(
+      function MockDateTimeFormat() {
+        return { formatToParts } as unknown as Intl.DateTimeFormat;
+      } as typeof Intl.DateTimeFormat,
+    );
+    let captureAttempt = 0;
+    const fetchMock = installShareFetch({
+      dailyCapture: (localDate, body) => {
+        captureAttempt += 1;
+        return captureAttempt === 1
+          ? jsonResponse(
+              { error: { code: "E_CAPTURE", message: "capture failed" } },
+              500,
+            )
+          : dailyCaptureResponse(localDate, body);
+      },
+    });
+
+    renderShareCapture("plain note");
+
+    await screen.findByRole("heading", { name: "Couldn’t save" });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByText("Added to today");
+
+    const captures = dailyCaptureCalls(fetchMock);
+    expect(captures).toHaveLength(2);
+    expect(captures[0]).toEqual(captures[1]);
+    expect(captures[0]?.localDate).toBe("2026-07-30");
+    expect(profileCalls(fetchMock)).toHaveLength(1);
+    expect(formatToParts).toHaveBeenCalledTimes(1);
   });
 
   it("does not render the old post-save add-libraries modal", async () => {

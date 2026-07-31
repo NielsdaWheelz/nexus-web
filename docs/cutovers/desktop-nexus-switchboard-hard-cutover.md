@@ -4,6 +4,12 @@ Status: IMPLEMENTED — repository and real-stack verification complete —
 production deployment pending — 2026-07-29
 Type: hard cutover
 
+**Follow-up authority (2026-07-30):**
+[`daily-pages-quick-capture-hard-cutover.md`](daily-pages-quick-capture-hard-cutover.md)
+replaces “New Note reuses Today Capture” with the pane-native `Quick Note`
+entry and deletes Today Capture. The desktop Nexus zero state remains exactly
+four actions: Quick Note, New Chat, New Page, and Import.
+
 ## Decision
 
 Replace the desktop Launcher with **Nexus**: one keyboard-first workspace

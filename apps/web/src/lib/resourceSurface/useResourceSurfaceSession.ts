@@ -14,6 +14,9 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import type { ResourceItem, ResourceSurface, ResourceSurfaceOccurrence } from "@/lib/resources/resourceItems";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { isRecord } from "@/lib/validation";
+import { captureDailySurface, createDailyDraft, dailyDraftBodyChanged, draftNoteRef, loadDailySurface, pendingDailyBody, surfaceContainsDailyDraft, type DailySurfaceSessionOptions } from "@/lib/resourceSurface/dailySurfacePersistence";
+import { acknowledgeDailyDraftHandoff, clearDailyDraft, readDailyDraft, writeDailyDraft, type DailyDraft, type DailyDraftHandoff } from "@/lib/notes/dailyDraftStore";
+import { noteBodyHasContent } from "@/lib/notes/prosemirror/bodyContent";
 
 const IDLE_DELAY_MS = 1500;
 const MAX_WAIT_MS = 5000;
@@ -64,6 +67,13 @@ export interface ResourceSurfaceSession {
   retry(): void;
   reload(): Promise<void>;
   copyRecovery(): Promise<void>;
+}
+
+export interface DailyResourceSurfaceSession extends Omit<ResourceSurfaceSession, "surface" | "updateSourceNoteBody"> {
+  surface: ResourceSurface | null; title: string | null;
+  provisional: { occurrenceId: string; noteRef: string; bodyPmJson: Record<string, unknown>; bodyText: string } | null;
+  inputHandoff: DailyDraftHandoff;
+  acknowledgeInputHandoff(handoffId: string): void;
 }
 
 function lane(item: ResourceItem, name: "title" | "body" | "outgoing_edges") {
@@ -198,11 +208,97 @@ function readDraft(sourceRef: string): Draft | null {
   return null;
 }
 
-export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }: { sourceRef: string; initialSurface: ResourceSurface; onError?: (error: unknown) => void }): ResourceSurfaceSession {
-  const [surface, setSurface] = useState(initialSurface);
+function pendingBodies(draft: Draft | null): Map<string, PendingBody> {
+  return new Map(
+    Object.entries(draft?.bodies ?? {}).map(([ref, body]) => [
+      ref,
+      {
+        bodyPmJson: body.body_pm_json,
+        bodyText: body.body_text,
+        clientMutationId: body.client_mutation_id,
+      },
+    ]),
+  );
+}
+
+function persistDraft(input: {
+  sourceRef: string;
+  acknowledgedSurface: ResourceSurface;
+  commands: Intent[];
+  title: PendingTitle | undefined;
+  bodies: Map<string, PendingBody>;
+  omittedBodyRef?: string;
+}): boolean {
+  const bodies: Draft["bodies"] = {};
+  for (const [ref, body] of input.bodies) {
+    if (ref === input.omittedBodyRef) continue;
+    bodies[ref] = {
+      body_pm_json: body.bodyPmJson,
+      body_text: body.bodyText,
+      client_mutation_id: body.clientMutationId,
+    };
+  }
+  const hasPending =
+    input.commands.length > 0 ||
+    input.title !== undefined ||
+    Object.keys(bodies).length > 0;
+  try {
+    if (!hasPending) {
+      window.localStorage.removeItem(`${STORAGE_PREFIX}${input.sourceRef}`);
+      return false;
+    }
+    window.localStorage.setItem(`${STORAGE_PREFIX}${input.sourceRef}`, JSON.stringify({
+      version: 1,
+      source_ref: input.sourceRef,
+      acknowledged_surface: input.acknowledgedSurface,
+      commands: input.commands,
+      ...(input.title === undefined ? {} : {
+        title: {
+          value: input.title.value,
+          client_mutation_id: input.title.clientMutationId,
+        },
+      }),
+      bodies,
+    } satisfies Draft));
+  } catch {
+    // Browser storage is a recovery aid; unavailable storage must not block editing.
+  }
+  return hasPending;
+}
+
+function clearPersistedDraft(sourceRef: string): void {
+  try {
+    window.localStorage.removeItem(`${STORAGE_PREFIX}${sourceRef}`);
+  } catch {
+    // Browser storage is optional recovery state.
+  }
+}
+
+type PersistedSessionOptions = { sourceRef: string; initialSurface: ResourceSurface; onError?: (error: unknown) => void };
+
+export function useResourceSurfaceSession(input: PersistedSessionOptions): ResourceSurfaceSession;
+export function useResourceSurfaceSession(input: DailySurfaceSessionOptions): DailyResourceSurfaceSession;
+export function useResourceSurfaceSession(input: PersistedSessionOptions | DailySurfaceSessionOptions): ResourceSurfaceSession | DailyResourceSurfaceSession;
+export function useResourceSurfaceSession(input: PersistedSessionOptions | DailySurfaceSessionOptions): ResourceSurfaceSession | DailyResourceSurfaceSession {
+  const daily = "daily" in input ? input.daily : null;
+  const sessionKey = "daily" in input ? input.sessionKey : input.sourceRef;
+  const initialMaterialized =
+    "daily" in input ? input.initialMaterialized ?? null : null;
+  const initialSurface =
+    "daily" in input ? initialMaterialized?.surface ?? null : input.initialSurface;
+  const [surface, setSurface] = useState<ResourceSurface | null>(initialSurface);
   const [status, setStatus] = useState<Status>("clean");
   const [hasRecoveredDraft, setHasRecoveredDraft] = useState(false);
-  const acknowledgedRef = useRef(initialSurface);
+  const [dailyTitle, setDailyTitle] = useState<string | null>(null);
+  const acknowledgedRef = useRef<ResourceSurface | null>(initialSurface);
+  const sourceRefRef = useRef<string | null>(
+    "daily" in input ? initialMaterialized?.sourceRef ?? null : input.sourceRef,
+  );
+  const dailyDraftRef = useRef<DailyDraft | null>(null);
+  const captureSnapshotRef = useRef<DailyDraft | null>(null);
+  const dailyCapturedRef = useRef(false);
+  const recoveredPausedRef = useRef(false);
+  const claimedDeliveryIdsRef = useRef<Set<string>>(new Set());
   const intentsRef = useRef<Intent[]>([]);
   const titleRef = useRef<PendingTitle | undefined>(undefined);
   const bodiesRef = useRef(new Map<string, PendingBody>());
@@ -214,7 +310,10 @@ export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }
   const idleRef = useRef<number | null>(null);
   const maxRef = useRef<number | null>(null);
   const pumpRef = useRef<() => void>(() => undefined);
-  const onErrorRef = useRef(onError); onErrorRef.current = onError;
+  const inputRef = useRef(input);
+  const onErrorRef = useRef(input.onError);
+  inputRef.current = input;
+  onErrorRef.current = input.onError;
 
   const settleStatus = useCallback(() => {
     if (stoppedRef.current) {
@@ -234,6 +333,7 @@ export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }
 
   const derived = useCallback(() => {
     let next = acknowledgedRef.current;
+    if (!next) return null;
     for (const intent of intentsRef.current) {
       const command = materialize(next, intent);
       if (command) next = optimistic(next, command);
@@ -250,48 +350,109 @@ export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }
   }, []);
 
   const publish = useCallback(() => setSurface(derived()), [derived]);
+  const restoreMaterializedDaily = useCallback((
+    sourceRef: string,
+    ownerSurface: ResourceSurface,
+    dailyDraft: DailyDraft | null,
+  ) => {
+    const resourceDraft = readDraft(sourceRef);
+    const acknowledged = resourceDraft?.acknowledged_surface ?? ownerSurface;
+    acknowledgedRef.current = acknowledged;
+    sourceRefRef.current = sourceRef;
+    intentsRef.current = resourceDraft?.commands ?? [];
+    titleRef.current = resourceDraft?.title
+      ? {
+          value: resourceDraft.title.value,
+          clientMutationId: resourceDraft.title.client_mutation_id,
+        }
+      : undefined;
+    bodiesRef.current = pendingBodies(resourceDraft);
+    if (dailyDraft) {
+      const ref = draftNoteRef(dailyDraft.noteId);
+      bodiesRef.current.set(
+        ref,
+        pendingDailyBody(
+          dailyDraft,
+          bodiesRef.current.get(ref)?.clientMutationId ??
+            resourceSurfaceCommandId(),
+        ),
+      );
+    }
+    dailyCapturedRef.current = surfaceContainsDailyDraft(
+      acknowledged,
+      dailyDraft,
+    );
+    return resourceDraft !== null;
+  }, []);
   const store = useCallback(() => {
-    const bodies: Draft["bodies"] = {};
-    for (const [ref, body] of bodiesRef.current) {
-      bodies[ref] = {
-        body_pm_json: body.bodyPmJson,
-        body_text: body.bodyText,
-        client_mutation_id: body.clientMutationId,
-      };
-    }
-    try {
-      if (!intentsRef.current.length && titleRef.current === undefined && !Object.keys(bodies).length) {
-        window.localStorage.removeItem(`${STORAGE_PREFIX}${sourceRef}`);
-        setHasRecoveredDraft(false);
-        return;
+    const currentInput = inputRef.current;
+    if ("daily" in currentInput) {
+      const dailyDraft = dailyDraftRef.current;
+      if (dailyDraft) writeDailyDraft(dailyDraft);
+      else clearDailyDraft(currentInput.daily.accountId, currentInput.daily.localDate);
+      const sourceRef = sourceRefRef.current;
+      const acknowledged = acknowledgedRef.current;
+      if (sourceRef && acknowledged) {
+        persistDraft({
+          sourceRef,
+          acknowledgedSurface: acknowledged,
+          commands: intentsRef.current,
+          title: titleRef.current,
+          bodies: bodiesRef.current,
+          ...(
+            dailyDraft && !dailyCapturedRef.current
+              ? { omittedBodyRef: draftNoteRef(dailyDraft.noteId) }
+              : {}
+          ),
+        });
       }
-      window.localStorage.setItem(`${STORAGE_PREFIX}${sourceRef}`, JSON.stringify({
-        version: 1,
-        source_ref: sourceRef,
-        acknowledged_surface: acknowledgedRef.current,
-        commands: intentsRef.current,
-        ...(titleRef.current === undefined ? {} : {
-          title: {
-            value: titleRef.current.value,
-            client_mutation_id: titleRef.current.clientMutationId,
-          },
-        }),
-        bodies,
-      } satisfies Draft));
-    } catch {
-      // Browser storage is a recovery aid; unavailable storage must not block editing.
+      return;
     }
-  }, [sourceRef]);
+    const sourceRef = sourceRefRef.current;
+    if (!sourceRef || !acknowledgedRef.current) return;
+    const hasPending = persistDraft({
+      sourceRef,
+      acknowledgedSurface: acknowledgedRef.current,
+      commands: intentsRef.current,
+      title: titleRef.current,
+      bodies: bodiesRef.current,
+    });
+    if (!hasPending) {
+      setHasRecoveredDraft(false);
+    }
+  }, []);
+
+  const clearDailyIfSaved = useCallback(() => {
+    const draft = dailyDraftRef.current;
+    if (!draft || !dailyCapturedRef.current || bodiesRef.current.has(draftNoteRef(draft.noteId)) || draft.handoff.kind !== "None") return false;
+    dailyDraftRef.current = null; setHasRecoveredDraft(false);
+    return true;
+  }, []);
 
   const clearTimers = useCallback(() => { if (idleRef.current !== null) window.clearTimeout(idleRef.current); if (maxRef.current !== null) window.clearTimeout(maxRef.current); idleRef.current = null; maxRef.current = null; }, []);
 
   const saveIntrinsics = useCallback(() => {
     clearTimers();
+    if (stoppedRef.current) {
+      store();
+      settleStatus();
+      return;
+    }
     const ack = acknowledgedRef.current;
+    const sourceRef = sourceRefRef.current;
     const generation = generationRef.current;
     const title = titleRef.current;
     const bodies = [...bodiesRef.current];
-    if (title !== undefined && ack.source.content.kind === "page_title" && !intrinsicActiveRef.current.has(ack.source.item.ref)) {
+    const currentInput = inputRef.current;
+    const draft = dailyDraftRef.current;
+    const captureReady = Boolean(
+      "daily" in currentInput &&
+        draft &&
+        !dailyCapturedRef.current &&
+        !recoveredPausedRef.current &&
+        noteBodyHasContent(draft),
+    );
+    if (ack && sourceRef && !captureReady && title !== undefined && ack.source.content.kind === "page_title" && !intrinsicActiveRef.current.has(ack.source.item.ref)) {
       intrinsicActiveRef.current.add(ack.source.item.ref);
       setStatus("saving");
       void updateResourceSurfaceTitle({
@@ -301,14 +462,16 @@ export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }
         title: title.value,
       }).then((item) => {
         if (generation !== generationRef.current) return;
+        const current = acknowledgedRef.current;
+        if (!current) return;
         acknowledgedRef.current = {
-          ...acknowledgedRef.current,
+          ...current,
           source: {
-            ...acknowledgedRef.current.source,
+            ...current.source,
             item,
-            content: acknowledgedRef.current.source.content.kind === "page_title"
+            content: current.source.content.kind === "page_title"
               ? { kind: "page_title", title: title.value }
-              : acknowledgedRef.current.source.content,
+              : current.source.content,
           },
         };
         if (titleRef.current === title) titleRef.current = undefined;
@@ -332,6 +495,35 @@ export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }
       });
     }
     for (const [ref, body] of bodies) {
+      const isDailyDraft = draft && ref === draftNoteRef(draft.noteId);
+      if (isDailyDraft && recoveredPausedRef.current) continue;
+      if ("daily" in currentInput && isDailyDraft && !dailyCapturedRef.current) {
+        if (!captureReady || activeRef.current || intrinsicActiveRef.current.size) continue;
+        const snapshot = captureSnapshotRef.current ?? draft;
+        const captureGeneration = ++generationRef.current;
+        captureSnapshotRef.current = snapshot; intrinsicActiveRef.current.add(ref); setStatus("saving");
+        void captureDailySurface(currentInput.daily, snapshot).then((result) => {
+          if (captureGeneration !== generationRef.current) return;
+          acknowledgedRef.current = result.surface;
+          sourceRefRef.current = `page:${result.pageId}`;
+          dailyCapturedRef.current = true; captureSnapshotRef.current = null;
+          if (bodiesRef.current.get(ref) === body) bodiesRef.current.delete(ref);
+          clearDailyIfSaved();
+          setDailyTitle(result.surface.source.content.kind === "page_title" ? result.surface.source.content.title : null);
+          publish(); store();
+        }).catch((error) => {
+          if (captureGeneration !== generationRef.current) return;
+          if (handleUnauthenticatedApiError(error)) return;
+          stoppedRef.current = true; setStatus("failed"); store();
+          onErrorRef.current?.(error);
+        }).finally(() => {
+          if (captureGeneration !== generationRef.current) return;
+          intrinsicActiveRef.current.delete(ref);
+          if (!stoppedRef.current) saveIntrinsics(); settleStatus();
+        });
+        break;
+      }
+      if (!ack || !sourceRef) continue;
       if (intrinsicActiveRef.current.has(ref)) continue;
       const sourceItem = ack.source.item.ref === ref ? ack.source.item : occurrenceForRef(ack, ref)?.target.item;
       if (!sourceItem) continue;
@@ -344,22 +536,24 @@ export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }
         bodyPmJson: body.bodyPmJson,
       }).then((result) => {
         if (generation !== generationRef.current) return;
+        const currentAck = acknowledgedRef.current;
+        if (!currentAck) return;
         if (bodiesRef.current.get(ref) === body) bodiesRef.current.delete(ref);
-        if (acknowledgedRef.current.source.item.ref === ref) {
+        if (currentAck.source.item.ref === ref) {
           acknowledgedRef.current = {
-            ...acknowledgedRef.current,
+            ...currentAck,
             source: {
-              ...acknowledgedRef.current.source,
+              ...currentAck.source,
               item: result.item,
-              content: acknowledgedRef.current.source.content.kind === "note_body"
+              content: currentAck.source.content.kind === "note_body"
                 ? { kind: "note_body", bodyPmJson: body.bodyPmJson, bodyText: result.bodyText }
-                : acknowledgedRef.current.source.content,
+                : currentAck.source.content,
             },
           };
         } else {
           acknowledgedRef.current = {
-            ...acknowledgedRef.current,
-            orderedItems: acknowledgedRef.current.orderedItems.map((row) =>
+            ...currentAck,
+            orderedItems: currentAck.orderedItems.map((row) =>
               row.target.item.ref === ref && row.target.content.kind === "note_body"
                 ? {
                     ...row,
@@ -377,6 +571,7 @@ export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }
             ),
           };
         }
+        clearDailyIfSaved();
         publish();
         store();
       }).catch((error) => {
@@ -400,10 +595,14 @@ export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }
       });
     }
     settleStatus();
-  }, [clearTimers, publish, settleStatus, sourceRef, store]);
+  }, [clearDailyIfSaved, clearTimers, publish, settleStatus, store]);
 
   const pump = useCallback(() => {
+    const acknowledged = acknowledgedRef.current;
+    const sourceRef = sourceRefRef.current;
     if (
+      !acknowledged ||
+      !sourceRef ||
       activeRef.current ||
       intrinsicActiveRef.current.size > 0 ||
       stoppedRef.current ||
@@ -412,7 +611,7 @@ export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }
       return;
     }
     const intent = intentsRef.current[0]!;
-    const command = materialize(acknowledgedRef.current, intent);
+    const command = materialize(acknowledged, intent);
     if (!command) {
       const error = new Error(
         "This edit no longer matches the current resource order.",
@@ -424,13 +623,13 @@ export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }
       return;
     }
     if (command.type === "split_note") {
-      const left = acknowledgedRef.current.orderedItems.find((item) => item.occurrenceId === command.occurrenceId);
+      const left = acknowledged.orderedItems.find((item) => item.occurrenceId === command.occurrenceId);
       if (left && intrinsicActiveRef.current.has(left.target.item.ref)) return;
     }
     activeRef.current = true; setStatus("saving");
     const generation = generationRef.current;
-    const bases: Array<{ ref: string; lane: "body" | "outgoing_edges"; version: number }> = [{ ref: acknowledgedRef.current.source.item.ref, lane: "outgoing_edges", version: lane(acknowledgedRef.current.source.item, "outgoing_edges") }];
-    if (command.type === "split_note") { const row = acknowledgedRef.current.orderedItems.find((item) => item.occurrenceId === command.occurrenceId); if (!row) { stoppedRef.current = true; activeRef.current = false; setStatus("failed"); return; } bases.push({ ref: row.target.item.ref, lane: "body" as const, version: lane(row.target.item, "body") }); }
+    const bases: Array<{ ref: string; lane: "body" | "outgoing_edges"; version: number }> = [{ ref: acknowledged.source.item.ref, lane: "outgoing_edges", version: lane(acknowledged.source.item, "outgoing_edges") }];
+    if (command.type === "split_note") { const row = acknowledged.orderedItems.find((item) => item.occurrenceId === command.occurrenceId); if (!row) { stoppedRef.current = true; activeRef.current = false; setStatus("failed"); return; } bases.push({ ref: row.target.item.ref, lane: "body" as const, version: lane(row.target.item, "body") }); }
     void commandResourceSurface({ sourceRef, clientMutationId: intent.clientMutationId, baseVersions: bases, command }).then((next) => {
       if (generation !== generationRef.current) return;
       acknowledgedRef.current = next;
@@ -453,13 +652,99 @@ export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }
       store();
       onErrorRef.current?.(error);
     });
-  }, [publish, saveIntrinsics, settleStatus, sourceRef, store]);
+  }, [publish, saveIntrinsics, settleStatus, store]);
   pumpRef.current = pump;
 
   const schedule = useCallback(() => { if (idleRef.current !== null) window.clearTimeout(idleRef.current); idleRef.current = window.setTimeout(saveIntrinsics, IDLE_DELAY_MS); if (maxRef.current === null) maxRef.current = window.setTimeout(saveIntrinsics, MAX_WAIT_MS); }, [saveIntrinsics]);
 
+  const loadDailyOwner = useCallback(async () => {
+    const currentInput = inputRef.current;
+    if (!("daily" in currentInput)) return;
+    const generation = ++generationRef.current;
+    try {
+      const load = await loadDailySurface(currentInput.daily);
+      if (generation !== generationRef.current) return;
+      setDailyTitle(load.title);
+      let resourceRecovered = false;
+      if (load.kind === "Latent") {
+        acknowledgedRef.current = null; sourceRefRef.current = null;
+        dailyCapturedRef.current = false; setSurface(null);
+      } else {
+        const draft = dailyDraftRef.current;
+        resourceRecovered = restoreMaterializedDaily(
+          load.sourceRef,
+          load.surface,
+          draft,
+        );
+        if (draft && !dailyCapturedRef.current) currentInput.beforePrepend?.(draftNoteRef(draft.noteId));
+        publish();
+        setHasRecoveredDraft(
+          recoveredPausedRef.current || resourceRecovered,
+        );
+      }
+      stoppedRef.current = false;
+      setStatus(
+        recoveredPausedRef.current || resourceRecovered
+          ? "recovered"
+          : dailyDraftRef.current
+            ? "dirty"
+            : "clean",
+      );
+    } catch (error) {
+      if (generation !== generationRef.current) return;
+      if (handleUnauthenticatedApiError(error)) return;
+      stoppedRef.current = true; setStatus("failed"); onErrorRef.current?.(error);
+    }
+  }, [publish, restoreMaterializedDaily]);
+
   useEffect(() => {
+    const currentInput = inputRef.current;
+    if ("daily" in currentInput) {
+      const draft = currentInput.draftSnapshot === undefined ? readDailyDraft(currentInput.daily.accountId, currentInput.daily.localDate) : currentInput.draftSnapshot;
+      dailyDraftRef.current = draft; recoveredPausedRef.current = Boolean(draft);
+      const materialized = currentInput.initialMaterialized;
+      captureSnapshotRef.current = null;
+      claimedDeliveryIdsRef.current.clear();
+      intentsRef.current = [];
+      titleRef.current = undefined;
+      bodiesRef.current = new Map();
+      intrinsicActiveRef.current.clear();
+      stoppedRef.current = false;
+      requiresRebaseRef.current = false;
+      activeRef.current = false;
+      if (materialized) {
+        const resourceRecovered = restoreMaterializedDaily(
+          materialized.sourceRef,
+          materialized.surface,
+          draft,
+        );
+        setDailyTitle(
+          materialized.surface.source.content.kind === "page_title"
+            ? materialized.surface.source.content.title
+            : null,
+        );
+        setHasRecoveredDraft(Boolean(draft) || resourceRecovered);
+        setStatus(Boolean(draft) || resourceRecovered ? "recovered" : "clean");
+        publish();
+      } else {
+        acknowledgedRef.current = null;
+        sourceRefRef.current = null;
+        dailyCapturedRef.current = false;
+        if (draft) {
+          bodiesRef.current.set(
+            draftNoteRef(draft.noteId),
+            pendingDailyBody(draft, resourceSurfaceCommandId()),
+          );
+        }
+        setHasRecoveredDraft(Boolean(draft));
+        setStatus(draft ? "recovered" : "clean");
+        void loadDailyOwner();
+      }
+      return () => { generationRef.current += 1; clearTimers(); };
+    }
     generationRef.current += 1;
+    const sourceRef = sourceRefRef.current;
+    if (!sourceRef || !initialSurface) return clearTimers;
     const draft = readDraft(sourceRef);
     acknowledgedRef.current = draft?.acknowledged_surface ?? initialSurface;
     intentsRef.current = draft?.commands ?? [];
@@ -469,16 +754,7 @@ export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }
           clientMutationId: draft.title.client_mutation_id,
         }
       : undefined;
-    bodiesRef.current = new Map(
-      Object.entries(draft?.bodies ?? {}).map(([ref, body]) => [
-        ref,
-        {
-          bodyPmJson: body.body_pm_json,
-          bodyText: body.body_text,
-          clientMutationId: body.client_mutation_id,
-        },
-      ]),
-    );
+    bodiesRef.current = pendingBodies(draft);
     intrinsicActiveRef.current.clear();
     stoppedRef.current = false;
     requiresRebaseRef.current = false;
@@ -487,10 +763,49 @@ export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }
     setHasRecoveredDraft(Boolean(draft));
     setStatus(draft ? "recovered" : "clean");
     return clearTimers;
-  }, [clearTimers, initialSurface, publish, sourceRef]);
+  }, [
+    clearTimers,
+    initialSurface,
+    loadDailyOwner,
+    publish,
+    restoreMaterializedDaily,
+    sessionKey,
+  ]);
+
+  const draftSnapshot = "daily" in input ? input.draftSnapshot : undefined;
+  useEffect(() => {
+    const currentInput = inputRef.current;
+    if (draftSnapshot === undefined || !("daily" in currentInput)) return;
+    const previous = dailyDraftRef.current;
+    dailyDraftRef.current = draftSnapshot;
+    if (previous && previous.noteId !== draftSnapshot?.noteId) bodiesRef.current.delete(draftNoteRef(previous.noteId));
+    if (draftSnapshot && dailyDraftBodyChanged(previous, draftSnapshot)) {
+      if (!previous || previous.noteId !== draftSnapshot.noteId) { dailyCapturedRef.current = false; captureSnapshotRef.current = null; }
+      bodiesRef.current.set(draftNoteRef(draftSnapshot.noteId), pendingDailyBody(draftSnapshot, resourceSurfaceCommandId()));
+    }
+    if (clearDailyIfSaved()) clearDailyDraft(currentInput.daily.accountId, currentInput.daily.localDate);
+    publish();
+  }, [clearDailyIfSaved, draftSnapshot, publish, sessionKey]);
+  const delivery = "daily" in input ? input.delivery ?? null : null;
+  useEffect(() => {
+    const currentInput = inputRef.current;
+    if (!delivery || !("daily" in currentInput) || claimedDeliveryIdsRef.current.has(delivery.activationId)) return;
+    claimedDeliveryIdsRef.current.add(delivery.activationId);
+    let draft = dailyDraftRef.current;
+    if (!draft) {
+      draft = createDailyDraft(currentInput.daily, delivery.entry.noteId, delivery.entry.clientMutationId);
+      dailyDraftRef.current = draft; recoveredPausedRef.current = false;
+      dailyCapturedRef.current = false; captureSnapshotRef.current = null;
+      bodiesRef.current.set(draftNoteRef(draft.noteId), pendingDailyBody(draft, resourceSurfaceCommandId()));
+      store();
+    }
+    currentInput.onDeliveryClaimed?.(delivery, draft.noteId);
+  }, [delivery, store]);
 
   const updateTitle = useCallback((title: string) => {
-    const source = acknowledgedRef.current.source.item.ref;
+    const acknowledged = acknowledgedRef.current;
+    if (!acknowledged) return;
+    const source = acknowledged.source.item.ref;
     titleRef.current = {
       value: title,
       clientMutationId:
@@ -504,9 +819,46 @@ export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }
     schedule();
   }, [publish, schedule, store]);
   const updateBody = useCallback((input: { occurrenceId: string; bodyPmJson: Record<string, unknown>; bodyText: string; flush?: boolean }) => {
-    const row = derived().orderedItems.find((item) => item.occurrenceId === input.occurrenceId);
-    if (!row) return;
-    const ref = row.target.item.ref;
+    const currentSurface = derived();
+    const row = currentSurface?.orderedItems.find((item) => item.occurrenceId === input.occurrenceId);
+    const dailyDraft = dailyDraftRef.current;
+    const provisional = dailyDraft && input.occurrenceId === `daily-provisional:${dailyDraft.noteId}`;
+    if (!row && !provisional) return;
+    const ref = row?.target.item.ref ?? draftNoteRef(dailyDraft!.noteId);
+    const acknowledged = acknowledgedRef.current;
+    const acknowledgedContent =
+      acknowledged?.source.item.ref === ref
+        ? acknowledged.source.content
+        : acknowledged
+          ? occurrenceForRef(acknowledged, ref)?.target.content
+          : undefined;
+    if (
+      (
+        !intrinsicActiveRef.current.has(ref) ||
+        !bodiesRef.current.has(ref)
+      ) &&
+      acknowledgedContent?.kind === "note_body" &&
+      acknowledgedContent.bodyText === input.bodyText &&
+      JSON.stringify(acknowledgedContent.bodyPmJson) ===
+        JSON.stringify(input.bodyPmJson)
+    ) {
+      const removedPendingBody = bodiesRef.current.delete(ref);
+      if (dailyDraft && ref === draftNoteRef(dailyDraft.noteId)) {
+        dailyDraftRef.current = {
+          ...dailyDraft,
+          bodyPmJson: input.bodyPmJson,
+          bodyText: input.bodyText,
+        };
+      }
+      const clearedDailyDraft = clearDailyIfSaved();
+      if (removedPendingBody || clearedDailyDraft) {
+        clearTimers();
+        publish();
+        store();
+        settleStatus();
+      }
+      return;
+    }
     const current = bodiesRef.current.get(ref);
     bodiesRef.current.set(ref, {
       bodyPmJson: input.bodyPmJson,
@@ -516,14 +868,31 @@ export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }
           ? current.clientMutationId
           : resourceSurfaceCommandId(),
     });
+    if (dailyDraft && ref === draftNoteRef(dailyDraft.noteId)) {
+      dailyDraftRef.current = {
+        ...dailyDraft, bodyPmJson: input.bodyPmJson, bodyText: input.bodyText,
+      };
+      recoveredPausedRef.current = false; setHasRecoveredDraft(false);
+    }
     publish();
     store();
     setStatus("dirty");
     if (input.flush) saveIntrinsics();
     else schedule();
-  }, [derived, publish, saveIntrinsics, schedule, store]);
+  }, [
+    clearDailyIfSaved,
+    clearTimers,
+    derived,
+    publish,
+    saveIntrinsics,
+    schedule,
+    settleStatus,
+    store,
+  ]);
   const updateSourceNoteBody = useCallback((input: { bodyPmJson: Record<string, unknown>; bodyText: string; flush?: boolean }) => {
-    const ref = derived().source.item.ref;
+    const currentSurface = derived();
+    if (!currentSurface) return;
+    const ref = currentSurface.source.item.ref;
     const current = bodiesRef.current.get(ref);
     bodiesRef.current.set(ref, {
       bodyPmJson: input.bodyPmJson,
@@ -540,7 +909,19 @@ export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }
     else schedule();
   }, [derived, publish, saveIntrinsics, schedule, store]);
   const command = useCallback((next: ResourceSurfaceCommand) => {
+    const currentInput = inputRef.current;
+    if ("daily" in currentInput && !acknowledgedRef.current && next.type === "insert_note") {
+      if (dailyDraftRef.current) return;
+      dailyDraftRef.current = createDailyDraft(
+        currentInput.daily, next.noteId, resourceSurfaceCommandId(), next.bodyPmJson,
+      );
+      dailyCapturedRef.current = false; captureSnapshotRef.current = null;
+      bodiesRef.current.set(draftNoteRef(next.noteId), pendingDailyBody(dailyDraftRef.current, resourceSurfaceCommandId()));
+      recoveredPausedRef.current = false; store();
+      return;
+    }
     const before = derived();
+    if (!before) return;
     const intent = intentFor(before, next);
     if (!intent) {
       const error = new Error(
@@ -569,6 +950,19 @@ export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }
     const generation = generationRef.current;
     activeRef.current = false;
     intrinsicActiveRef.current.clear();
+    if ("daily" in inputRef.current) {
+      const currentInput = inputRef.current; dailyDraftRef.current = null; captureSnapshotRef.current = null;
+      recoveredPausedRef.current = false; dailyCapturedRef.current = false;
+      intentsRef.current = []; titleRef.current = undefined; bodiesRef.current.clear();
+      clearDailyDraft(currentInput.daily.accountId, currentInput.daily.localDate);
+      const sourceRef = sourceRefRef.current;
+      if (sourceRef) clearPersistedDraft(sourceRef);
+      setHasRecoveredDraft(false);
+      await loadDailyOwner();
+      return;
+    }
+    const sourceRef = sourceRefRef.current;
+    if (!sourceRef) return;
     let next: ResourceSurface;
     try {
       next = await fetchResourceSurface(sourceRef);
@@ -591,7 +985,7 @@ export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }
     store();
     setHasRecoveredDraft(false);
     setStatus("clean");
-  }, [clearTimers, publish, sourceRef, store]);
+  }, [clearTimers, loadDailyOwner, publish, store]);
   const retry = useCallback(() => {
     if (requiresRebaseRef.current) {
       clearTimers();
@@ -600,11 +994,19 @@ export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }
       const generation = generationRef.current;
       activeRef.current = false;
       intrinsicActiveRef.current.clear();
+      const sourceRef = sourceRefRef.current;
+      if (!sourceRef) return;
       void fetchResourceSurface(sourceRef).then((next) => {
         if (generation !== generationRef.current) return;
         acknowledgedRef.current = next;
         requiresRebaseRef.current = false;
         stoppedRef.current = false;
+        if ("daily" in inputRef.current) {
+          dailyCapturedRef.current = surfaceContainsDailyDraft(
+            next,
+            dailyDraftRef.current,
+          );
+        }
         publish();
         store();
         saveIntrinsics();
@@ -618,33 +1020,80 @@ export function useResourceSurfaceSession({ sourceRef, initialSurface, onError }
       });
       return;
     }
+    if ("daily" in inputRef.current && dailyDraftRef.current) {
+      stoppedRef.current = false; recoveredPausedRef.current = false;
+      setHasRecoveredDraft(false); saveIntrinsics(); return;
+    }
+    if ("daily" in inputRef.current) {
+      if (
+        intentsRef.current.length > 0 ||
+        titleRef.current !== undefined ||
+        bodiesRef.current.size > 0
+      ) {
+        stoppedRef.current = false;
+        setHasRecoveredDraft(false);
+        saveIntrinsics();
+        pump();
+        return;
+      }
+      stoppedRef.current = false;
+      void loadDailyOwner();
+      return;
+    }
     stoppedRef.current = false;
     saveIntrinsics();
     pump();
   }, [
     clearTimers,
+    loadDailyOwner,
     publish,
     pump,
     saveIntrinsics,
     settleStatus,
-    sourceRef,
     store,
   ]);
   const copyRecovery = useCallback(async () => {
-    const draft = readDraft(sourceRef);
+    const currentInput = inputRef.current;
+    const resourceDraft = sourceRefRef.current
+      ? readDraft(sourceRefRef.current)
+      : null;
+    const dailyDraft = "daily" in currentInput
+      ? readDailyDraft(currentInput.daily.accountId, currentInput.daily.localDate)
+      : null;
+    const draft = dailyDraft && resourceDraft
+      ? { daily: dailyDraft, resource: resourceDraft }
+      : dailyDraft ?? resourceDraft;
     if (!draft) return;
     try {
       await navigator.clipboard.writeText(JSON.stringify(draft, null, 2));
     } catch (error) {
       onErrorRef.current?.(error);
     }
-  }, [sourceRef]);
+  }, []);
   useEffect(() => {
     const flushWhenHidden = () => { if (document.visibilityState === "hidden") saveIntrinsics(); };
     document.addEventListener("visibilitychange", flushWhenHidden);
     window.addEventListener("pagehide", saveIntrinsics);
     return () => { document.removeEventListener("visibilitychange", flushWhenHidden); window.removeEventListener("pagehide", saveIntrinsics); saveIntrinsics(); };
   }, [saveIntrinsics]);
+  if (daily) {
+    const draft = draftSnapshot === undefined ? dailyDraftRef.current : draftSnapshot;
+    const ref = draft ? draftNoteRef(draft.noteId) : null;
+    const canonical = ref && surface ? occurrenceForRef(surface, ref) : null;
+    const pending = ref ? bodiesRef.current.get(ref) : undefined;
+    return {
+      surface,
+      title: surface?.source.content.kind === "page_title" ? surface.source.content.title : dailyTitle,
+      provisional: draft && !canonical ? {
+        occurrenceId: `daily-provisional:${draft.noteId}`, noteRef: draftNoteRef(draft.noteId),
+        bodyPmJson: pending?.bodyPmJson ?? draft.bodyPmJson, bodyText: pending?.bodyText ?? draft.bodyText,
+      } : null,
+      inputHandoff: draft?.handoff ?? { kind: "None" },
+      status, hasRecoveredDraft, updateTitle, updateBody, command, flush, retry, reload, copyRecovery,
+      acknowledgeInputHandoff: (handoffId) => { const active = dailyDraftRef.current; if (active?.handoff.kind === "Buffered" && active.handoff.handoffId === handoffId) { recoveredPausedRef.current = false; setHasRecoveredDraft(false); setStatus("dirty"); schedule(); } acknowledgeDailyDraftHandoff(daily.accountId, daily.localDate, handoffId); },
+    };
+  }
+  if (!surface) throw new Error("Persisted resource surface requires a surface");
   return {
     surface,
     status,

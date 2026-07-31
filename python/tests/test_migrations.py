@@ -26640,4 +26640,270 @@ class TestMigration0204PlaybackRatePolicy:
             assert "has no downgrade path" in downgrade.stderr
         finally:
             reset_test_schema()
+
+
+@MIGRATION_CI_LATE
+class TestMigration0205DailyPages:
+    def test_backfills_profile_zone_and_hard_cuts_binding_shape(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0204")
+            assert result.returncode == 0, result.stderr
+
+            user_with_valid_fallback = uuid4()
+            user_with_invalid_only = uuid4()
+            user_without_binding = uuid4()
+            user_with_deleted_only = uuid4()
+            older_valid_page = uuid4()
+            valid_page = uuid4()
+            invalid_newer_page = uuid4()
+            deleted_binding_page = uuid4()
+            invalid_only_page = uuid4()
+            deleted_only_page = uuid4()
+            with engine.begin() as connection:
+                connection.execute(
+                    text("INSERT INTO users (id) VALUES (:id)"),
+                    [
+                        {"id": user_with_valid_fallback},
+                        {"id": user_with_invalid_only},
+                        {"id": user_without_binding},
+                        {"id": user_with_deleted_only},
+                    ],
+                )
+                connection.execute(
+                    text("INSERT INTO pages (id, user_id, title) VALUES (:id, :user_id, :title)"),
+                    [
+                        {
+                            "id": older_valid_page,
+                            "user_id": user_with_valid_fallback,
+                            "title": "Older valid zone",
+                        },
+                        {
+                            "id": valid_page,
+                            "user_id": user_with_valid_fallback,
+                            "title": "Valid fallback",
+                        },
+                        {
+                            "id": invalid_newer_page,
+                            "user_id": user_with_valid_fallback,
+                            "title": "Invalid newer",
+                        },
+                        {
+                            "id": deleted_binding_page,
+                            "user_id": user_with_valid_fallback,
+                            "title": "Deleted binding Page survives",
+                        },
+                        {
+                            "id": invalid_only_page,
+                            "user_id": user_with_invalid_only,
+                            "title": "Invalid only",
+                        },
+                        {
+                            "id": deleted_only_page,
+                            "user_id": user_with_deleted_only,
+                            "title": "Deleted-only Page survives",
+                        },
+                    ],
+                )
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO daily_note_pages (
+                            id, user_id, local_date, time_zone, page_id,
+                            created_at, updated_at, deleted_at
+                        )
+                        VALUES (
+                            :id, :user_id, :local_date, :time_zone, :page_id,
+                            :created_at, :updated_at, :deleted_at
+                        )
+                        """
+                    ),
+                    [
+                        {
+                            "id": uuid4(),
+                            "user_id": user_with_valid_fallback,
+                            "local_date": "2026-06-30",
+                            "time_zone": "America/New_York",
+                            "page_id": older_valid_page,
+                            "created_at": datetime(2026, 6, 30, tzinfo=UTC),
+                            "updated_at": datetime(2026, 6, 30, tzinfo=UTC),
+                            "deleted_at": None,
+                        },
+                        {
+                            "id": uuid4(),
+                            "user_id": user_with_valid_fallback,
+                            "local_date": "2026-07-01",
+                            "time_zone": "Europe/Amsterdam",
+                            "page_id": valid_page,
+                            "created_at": datetime(2026, 7, 1, tzinfo=UTC),
+                            "updated_at": datetime(2026, 7, 1, tzinfo=UTC),
+                            "deleted_at": None,
+                        },
+                        {
+                            "id": uuid4(),
+                            "user_id": user_with_valid_fallback,
+                            "local_date": "2026-07-02",
+                            "time_zone": "Not/A_Zone",
+                            "page_id": invalid_newer_page,
+                            "created_at": datetime(2026, 7, 2, tzinfo=UTC),
+                            "updated_at": datetime(2026, 7, 2, tzinfo=UTC),
+                            "deleted_at": None,
+                        },
+                        {
+                            "id": uuid4(),
+                            "user_id": user_with_valid_fallback,
+                            "local_date": "2026-07-03",
+                            "time_zone": "Asia/Tokyo",
+                            "page_id": deleted_binding_page,
+                            "created_at": datetime(2026, 7, 3, tzinfo=UTC),
+                            "updated_at": datetime(2026, 7, 3, tzinfo=UTC),
+                            "deleted_at": datetime(2026, 7, 4, tzinfo=UTC),
+                        },
+                        {
+                            "id": uuid4(),
+                            "user_id": user_with_invalid_only,
+                            "local_date": "2026-07-01",
+                            "time_zone": "Still/Invalid",
+                            "page_id": invalid_only_page,
+                            "created_at": datetime(2026, 7, 1, tzinfo=UTC),
+                            "updated_at": datetime(2026, 7, 1, tzinfo=UTC),
+                            "deleted_at": None,
+                        },
+                        {
+                            "id": uuid4(),
+                            "user_id": user_with_deleted_only,
+                            "local_date": "2026-07-01",
+                            "time_zone": "Pacific/Kiritimati",
+                            "page_id": deleted_only_page,
+                            "created_at": datetime(2026, 7, 1, tzinfo=UTC),
+                            "updated_at": datetime(2026, 7, 1, tzinfo=UTC),
+                            "deleted_at": datetime(2026, 7, 2, tzinfo=UTC),
+                        },
+                    ],
+                )
+
+            upgraded = run_alembic_command("upgrade 0205")
+            assert upgraded.returncode == 0, upgraded.stderr
+            with engine.connect() as connection:
+                assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0205"
+                assert (
+                    connection.scalar(text("SELECT to_regclass('public.daily_note_pages')")) is None
+                )
+                assert (
+                    connection.scalar(text("SELECT to_regclass('public.daily_page_bindings')"))
+                    == "daily_page_bindings"
+                )
+                zones = dict(
+                    connection.execute(
+                        text(
+                            """
+                            SELECT id, calendar_time_zone
+                            FROM users
+                            WHERE id IN (
+                                :valid_user,
+                                :invalid_user,
+                                :empty_user,
+                                :deleted_only_user
+                            )
+                            """
+                        ),
+                        {
+                            "valid_user": user_with_valid_fallback,
+                            "invalid_user": user_with_invalid_only,
+                            "empty_user": user_without_binding,
+                            "deleted_only_user": user_with_deleted_only,
+                        },
+                    ).all()
+                )
+                assert zones == {
+                    user_with_valid_fallback: "Europe/Amsterdam",
+                    user_with_invalid_only: "UTC",
+                    user_without_binding: "UTC",
+                    user_with_deleted_only: "UTC",
+                }
+                columns = {
+                    row.column_name
+                    for row in connection.execute(
+                        text(
+                            """
+                            SELECT column_name
+                            FROM information_schema.columns
+                            WHERE table_schema = 'public'
+                              AND table_name = 'daily_page_bindings'
+                            """
+                        )
+                    )
+                }
+                assert columns == {"id", "user_id", "local_date", "page_id", "created_at"}
+                constraints = {
+                    row.conname: row.contype
+                    for row in connection.execute(
+                        text(
+                            """
+                            SELECT conname, contype
+                            FROM pg_constraint
+                            WHERE conrelid = 'daily_page_bindings'::regclass
+                            """
+                        )
+                    )
+                }
+                assert constraints["daily_page_bindings_pkey"] == "p"
+                assert constraints["daily_page_bindings_user_id_fkey"] == "f"
+                assert constraints["daily_page_bindings_page_id_fkey"] == "f"
+                assert constraints["uq_daily_page_bindings_user_date"] == "u"
+                assert constraints["uq_daily_page_bindings_user_page"] == "u"
+                assert not any(name.startswith("daily_note_pages") for name in constraints)
+                assert not any(name.startswith("uix_daily_note_pages") for name in constraints)
+                assert not any(name.startswith("ck_daily_note_pages") for name in constraints)
+                profile_column = connection.execute(
+                    text(
+                        """
+                        SELECT is_nullable, column_default
+                        FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND table_name = 'users'
+                          AND column_name = 'calendar_time_zone'
+                        """
+                    )
+                ).one()
+                assert profile_column.is_nullable == "NO"
+                assert "UTC" in profile_column.column_default
+                assert (
+                    connection.scalar(
+                        text("SELECT count(*) FROM pages WHERE id IN (:mixed_page, :only_page)"),
+                        {
+                            "mixed_page": deleted_binding_page,
+                            "only_page": deleted_only_page,
+                        },
+                    )
+                    == 2
+                )
+                assert (
+                    connection.scalar(
+                        text(
+                            "SELECT count(*) FROM daily_page_bindings "
+                            "WHERE user_id = :deleted_only_user"
+                        ),
+                        {"deleted_only_user": user_with_deleted_only},
+                    )
+                    == 0
+                )
+                assert connection.scalar(text("SELECT count(*) FROM daily_page_bindings")) == 4
+
+            downgrade = run_alembic_command("downgrade 0204")
+            assert downgrade.returncode != 0
+            assert "Hard cutover: 0205 is not reversible" in downgrade.stderr
+            with engine.connect() as connection:
+                assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0205"
+                assert (
+                    connection.scalar(text("SELECT to_regclass('public.daily_page_bindings')"))
+                    == "daily_page_bindings"
+                )
+                assert (
+                    connection.scalar(text("SELECT to_regclass('public.daily_note_pages')")) is None
+                )
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
             engine.dispose()

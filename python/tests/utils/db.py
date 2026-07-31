@@ -628,7 +628,7 @@ class DirectSessionManager:
                         params={"value": value},
                     )
                     session.execute(
-                        text("DELETE FROM daily_note_pages WHERE user_id = :value"),
+                        text("DELETE FROM daily_page_bindings WHERE user_id = :value"),
                         {"value": value},
                     )
                     session.execute(
@@ -1179,7 +1179,7 @@ class DirectSessionManager:
 
                 if table == "pages" and column == "id":
                     session.execute(
-                        text("DELETE FROM daily_note_pages WHERE page_id = :value"),
+                        text("DELETE FROM daily_page_bindings WHERE page_id = :value"),
                         {"value": value},
                     )
                     session.execute(
@@ -1228,7 +1228,7 @@ class DirectSessionManager:
 
                 if table == "pages" and column == "user_id":
                     session.execute(
-                        text("DELETE FROM daily_note_pages WHERE user_id = :value"),
+                        text("DELETE FROM daily_page_bindings WHERE user_id = :value"),
                         {"value": value},
                     )
                     session.execute(

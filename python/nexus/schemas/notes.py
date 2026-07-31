@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
-from nexus.schemas.resource_items import validate_note_body_pm_json
+from nexus.schemas.resource_items import ResourceSurfaceOut, validate_note_body_pm_json
 
 
 class NoteBlockOut(BaseModel):
@@ -49,7 +49,7 @@ class NotePageSummaryOut(BaseModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
-class DailyNotePageSummaryOut(BaseModel):
+class DailyPageSummaryOut(BaseModel):
     local_date: date = Field(
         serialization_alias="localDate",
     )
@@ -58,24 +58,42 @@ class DailyNotePageSummaryOut(BaseModel):
 
 
 class NotePageOut(NotePageSummaryOut):
-    daily_note: DailyNotePageSummaryOut | None = Field(
+    daily_page: DailyPageSummaryOut | None = Field(
         None,
-        serialization_alias="dailyNote",
+        serialization_alias="dailyPage",
     )
 
 
-class DailyNotePageOut(BaseModel):
+class LatentDailyPageDescriptor(BaseModel):
+    kind: Literal["Latent"]
     local_date: date = Field(
         validation_alias=AliasChoices("local_date", "localDate"),
         serialization_alias="localDate",
     )
-    time_zone: str = Field(
-        validation_alias=AliasChoices("time_zone", "timeZone"),
-        serialization_alias="timeZone",
+    default_title: str = Field(
+        validation_alias=AliasChoices("default_title", "defaultTitle"),
+        serialization_alias="defaultTitle",
+    )
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+class MaterializedDailyPageDescriptor(BaseModel):
+    kind: Literal["Materialized"]
+    local_date: date = Field(
+        validation_alias=AliasChoices("local_date", "localDate"),
+        serialization_alias="localDate",
     )
     page: NotePageOut
+    surface: ResourceSurfaceOut
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+DailyPageDescriptor = Annotated[
+    LatentDailyPageDescriptor | MaterializedDailyPageDescriptor,
+    Field(discriminator="kind"),
+]
 
 
 class CreatePageRequest(BaseModel):
@@ -105,8 +123,7 @@ class NoteBodyRequest(BaseModel):
         return validate_note_body_pm_json(value) or value
 
 
-class QuickCaptureRequest(NoteBodyRequest):
-    id: UUID
+class DailyCaptureRequest(NoteBodyRequest):
     client_mutation_id: str = Field(
         ...,
         min_length=1,
@@ -114,8 +131,25 @@ class QuickCaptureRequest(NoteBodyRequest):
         validation_alias=AliasChoices("client_mutation_id", "clientMutationId"),
         serialization_alias="clientMutationId",
     )
-    local_date: date | None = Field(
-        None,
+    note_id: UUID = Field(
+        validation_alias=AliasChoices("note_id", "noteId"),
+        serialization_alias="noteId",
+    )
+
+
+class DailyCaptureResult(BaseModel):
+    client_mutation_id: str = Field(
+        validation_alias=AliasChoices("client_mutation_id", "clientMutationId"),
+        serialization_alias="clientMutationId",
+    )
+    local_date: date = Field(
         validation_alias=AliasChoices("local_date", "localDate"),
         serialization_alias="localDate",
     )
+    page_id: UUID = Field(
+        validation_alias=AliasChoices("page_id", "pageId"),
+        serialization_alias="pageId",
+    )
+    surface: ResourceSurfaceOut
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")

@@ -119,7 +119,7 @@ def collect_signals(
     Returns None when all signals are empty (skip-generation sentinel).
     """
     today_utc = _tz_midnight_utc(local_date, tz)
-    yesterday_utc = today_utc - timedelta(days=1)
+    yesterday_utc = _tz_midnight_utc(local_date - timedelta(days=1), tz)
 
     # Signal A — yesterday's highlights.
     highlight_rows = db.execute(
@@ -142,7 +142,7 @@ def collect_signals(
         for row in highlight_rows
     ]
 
-    # Signal B — overnight Synapse resonances (last 24 h).
+    # Signal B — Synapse resonances since the prior account-local midnight.
     synapse_rows = db.execute(
         text(
             "SELECT re.snapshot, re.source_scheme, re.target_scheme, re.created_at"

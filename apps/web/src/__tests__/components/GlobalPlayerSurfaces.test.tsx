@@ -22,6 +22,7 @@ import {
 } from "@/lib/walknotes/walknoteSession";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import { WorkspaceTestProvider } from "@/__tests__/helpers/WorkspaceTestProvider";
+import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
 import {
   buildPlayerDescriptor,
   installLecternPlayerFetchMock,
@@ -102,14 +103,20 @@ function PlayerLauncher() {
 
 function PaneChromeFocusProbe() {
   const workspace = useWorkspaceStore();
+  const paneId = workspace.state.activePrimaryPaneId ?? undefined;
   return (
-    <div
-      data-pane-chrome-for={workspace.state.activePrimaryPaneId ?? undefined}
-    >
-      <button type="button" data-pane-options-trigger>
-        Active pane options
-      </button>
-    </div>
+    <>
+      <div data-pane-id={paneId}>
+        <button type="button" data-pane-focus-landmark="true">
+          Active pane
+        </button>
+      </div>
+      <div data-pane-chrome-for={paneId}>
+        <button type="button" data-pane-options-trigger>
+          Active pane options
+        </button>
+      </div>
+    </>
   );
 }
 
@@ -117,23 +124,25 @@ function Harness() {
   const [route, setRoute] = useState("A");
   return (
     <WorkspaceTestProvider>
-      <LecternProvider>
-        <GlobalPlayerProvider>
-          <WalknoteSessionProvider>
-            <button type="button" onClick={() => setRoute("B")}>
-              Navigate pane
-            </button>
-            <span>Pane {route}</span>
-            <input aria-label="Root notes" />
-            <PaneChromeFocusProbe />
-            <LecternReadyProbe />
-            <PlayerLauncher />
-            <MobileViewportProvider>
-              <GlobalPlayerSurfaces />
-            </MobileViewportProvider>
-          </WalknoteSessionProvider>
-        </GlobalPlayerProvider>
-      </LecternProvider>
+      <MobileChromeProvider>
+        <LecternProvider>
+          <GlobalPlayerProvider>
+            <WalknoteSessionProvider>
+              <button type="button" onClick={() => setRoute("B")}>
+                Navigate pane
+              </button>
+              <span>Pane {route}</span>
+              <input aria-label="Root notes" />
+              <PaneChromeFocusProbe />
+              <LecternReadyProbe />
+              <PlayerLauncher />
+              <MobileViewportProvider>
+                <GlobalPlayerSurfaces />
+              </MobileViewportProvider>
+            </WalknoteSessionProvider>
+          </GlobalPlayerProvider>
+        </LecternProvider>
+      </MobileChromeProvider>
     </WorkspaceTestProvider>
   );
 }
@@ -207,6 +216,22 @@ describe("GlobalPlayerSurfaces", () => {
     expect(screen.getByRole("region", { name: "Media player" })).toBeVisible();
   });
 
+  it("preserves desktop dismissal focus on the pane command target", async () => {
+    render(<Harness />);
+    await loadCanonical();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close player" }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole("region", { name: "Media player" })).toBeNull(),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Active pane options" }),
+      ).toHaveFocus(),
+    );
+  });
+
   it("opens full-screen Now Playing, collapses without pausing, and closes independently", async () => {
     setViewportWidth(390);
     render(<Harness />);
@@ -269,9 +294,7 @@ describe("GlobalPlayerSurfaces", () => {
     );
     expect(screen.getByRole("status")).toHaveTextContent("Player closed");
     await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Active pane options" }),
-      ).toHaveFocus(),
+      expect(screen.getByRole("button", { name: "Active pane" })).toHaveFocus(),
     );
   });
 
@@ -633,9 +656,7 @@ describe("GlobalPlayerSurfaces", () => {
       expect(screen.queryByRole("region", { name: "Media player" })).toBeNull(),
     );
     await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Active pane options" }),
-      ).toHaveFocus(),
+      expect(screen.getByRole("button", { name: "Active pane" })).toHaveFocus(),
     );
   });
 

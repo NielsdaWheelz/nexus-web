@@ -10,7 +10,7 @@ from nexus.schemas.resource_items import (
     ResourceLocatorIn,
     ResourceLocatorResolutionOut,
 )
-from nexus.services import contributors, notes
+from nexus.services import contributors
 from nexus.services.contributor_taxonomy import try_parse_contributor_handle
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 from nexus.services.resource_items import surfaces
@@ -51,19 +51,6 @@ def resolve_resource_locator(
             db,
             viewer_id=viewer_id,
             contributor_handle=handle,
-        )
-    elif locator.kind == "daily_note_today":
-        ref = notes.resolve_today_daily_note_page_ref(
-            db,
-            viewer_id=viewer_id,
-            time_zone=locator.time_zone,
-        )
-    elif locator.kind == "daily_note_date":
-        ref = notes.resolve_daily_note_page_ref(
-            db,
-            viewer_id=viewer_id,
-            local_date=locator.local_date,
-            time_zone=locator.time_zone,
         )
     else:
         raise AssertionError(f"unhandled resource locator kind: {locator.kind}")

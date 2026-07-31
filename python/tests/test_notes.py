@@ -8,7 +8,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import NoteBlock, Page, ResourceEdge, ResourceVersion
-from nexus.schemas.notes import CreatePageRequest, QuickCaptureRequest
+from nexus.schemas.notes import CreatePageRequest, DailyCaptureRequest
 from nexus.services import notes
 from nexus.services.artifacts.dossier_types import SubjectResource
 from nexus.services.artifacts.engine import bootstrap_resource_dossier
@@ -35,24 +35,24 @@ def test_page_and_note_rows_are_intrinsic_only() -> None:
 
 
 @pytest.mark.integration
-def test_quick_capture_links_note_to_daily_page(
+def test_daily_capture_links_note_to_daily_page(
     db_session: Session,
     bootstrapped_user: UUID,
 ) -> None:
     block_id = uuid4()
-    block = notes.quick_capture(
+    result = notes.capture_daily_page_note(
         db_session,
         bootstrapped_user,
-        request=QuickCaptureRequest(
-            id=block_id,
-            client_mutation_id="quick-1",
-            local_date=date(2026, 6, 13),
+        local_date=date(2026, 6, 13),
+        request=DailyCaptureRequest(
+            note_id=block_id,
+            client_mutation_id="daily-capture-1",
             body_pm_json=_paragraph("captured"),
         ),
     )
 
-    assert block.id == block_id
-    assert block.body_text == "captured"
+    assert result.surface.ordered_items[-1].target.item.id == block_id
+    assert result.surface.ordered_items[-1].target.content.body_text == "captured"
     edge = db_session.scalar(
         select(ResourceEdge).where(
             ResourceEdge.user_id == bootstrapped_user,
@@ -80,12 +80,13 @@ def test_get_note_block_is_body_only(
     bootstrapped_user: UUID,
 ) -> None:
     block_id = uuid4()
-    notes.quick_capture(
+    notes.capture_daily_page_note(
         db_session,
         bootstrapped_user,
-        request=QuickCaptureRequest(
-            id=block_id,
-            client_mutation_id="quick-1",
+        local_date=date(2026, 6, 13),
+        request=DailyCaptureRequest(
+            note_id=block_id,
+            client_mutation_id="daily-capture-1",
             body_pm_json=_paragraph("standalone"),
         ),
     )
@@ -108,12 +109,13 @@ def test_delete_page_leaves_linked_note_alive(
         CreatePageRequest(page_id=uuid4(), title="Page"),
     )
     block_id = uuid4()
-    notes.quick_capture(
+    notes.capture_daily_page_note(
         db_session,
         bootstrapped_user,
-        request=QuickCaptureRequest(
-            id=block_id,
-            client_mutation_id="quick-1",
+        local_date=date(2026, 6, 13),
+        request=DailyCaptureRequest(
+            note_id=block_id,
+            client_mutation_id="daily-capture-1",
             body_pm_json=_paragraph("survives"),
         ),
     )

@@ -3,7 +3,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import LibraryDestinationField from "@/components/libraries/LibraryDestinationField";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
-import { isUnauthenticatedApiError } from "@/lib/api/client";
+import { apiFetch, isUnauthenticatedApiError } from "@/lib/api/client";
+import {
+  decodeAuthenticatedAccount,
+  isAuthenticatedAccountContractDefect,
+} from "@/lib/account/contract";
 import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
 import { createRandomId } from "@/lib/createRandomId";
 import { extractUrls } from "@/lib/extractUrls";
@@ -15,7 +19,8 @@ import {
   captureSourceUrl,
   isSourceUrlCaptureDefect,
 } from "@/lib/media/sourceUrlCapture";
-import { quickCaptureDailyNote } from "@/lib/notes/api";
+import { formatLocalDateInTimeZone } from "@/lib/localDate";
+import { captureDailyPageNote } from "@/lib/notes/api";
 import { APP_AUTHENTICATED_HOME_HREF } from "@/lib/routes/defaults";
 import styles from "./share.module.css";
 
@@ -51,11 +56,16 @@ export default function ShareCapture({
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const [attempt, setAttempt] = useState(0);
   // Capture fires once per attempt. The guard survives React's mount-effect
-  // double-invoke; the caller block id also makes transport retries converge on
-  // the same daily-note block.
+  // double-invoke. Once the profile read succeeds, the account-local date and
+  // both replay identities stay frozen across retries and midnight.
   const capturedAttempt = useRef<number | null>(null);
-  const quickCaptureBlockId = useRef(createRandomId());
-  const quickCaptureMutationId = useRef(createRandomId("share-note-mutation"));
+  const noteId = useRef(createRandomId());
+  const noteMutationId = useRef(createRandomId("share-note-mutation"));
+  const plainTextAttempt = useRef<{
+    localDate: string;
+    noteId: string;
+    clientMutationId: string;
+  } | null>(null);
   const urlIdempotencyKeys = useRef<Map<string, string>>(new Map());
   const destinationCreateIds = useRef<Map<string, string>>(new Map());
   const [selectedDestinations, setSelectedDestinations] = useState<
@@ -71,9 +81,25 @@ export default function ShareCapture({
 
     void (async () => {
       try {
-        await quickCaptureDailyNote({
-          blockId: quickCaptureBlockId.current,
-          clientMutationId: quickCaptureMutationId.current,
+        let frozen = plainTextAttempt.current;
+        if (frozen === null) {
+          const profile = await apiFetch<{ data: unknown }>("/api/me", {
+            cache: "no-store",
+          });
+          const account = decodeAuthenticatedAccount(profile.data);
+          frozen = {
+            localDate: formatLocalDateInTimeZone(
+              new Date(),
+              account.calendarTimeZone,
+            ),
+            noteId: noteId.current,
+            clientMutationId: noteMutationId.current,
+          };
+          plainTextAttempt.current = frozen;
+        }
+        await captureDailyPageNote(frozen.localDate, {
+          noteId: frozen.noteId,
+          clientMutationId: frozen.clientMutationId,
           bodyPmJson: {
             type: "paragraph",
             content: [{ type: "text", text: trimmed }],
@@ -84,10 +110,14 @@ export default function ShareCapture({
             label: trimmed,
             ok: true,
             status: "Added to today",
-            path: "/notes",
+            path: `/daily/${frozen.localDate}`,
           },
         ]);
-      } catch {
+      } catch (error) {
+        if (isAuthenticatedAccountContractDefect(error)) {
+          setDefect({ error });
+          return;
+        }
         setResults([
           {
             label: trimmed,
@@ -307,7 +337,9 @@ export default function ShareCapture({
                         : result.path
                     }
                   >
-                    {result.path === "/notes" ? "Open" : "Open in Nexus"}
+                    {result.path.startsWith("/daily/")
+                      ? "Open"
+                      : "Open in Nexus"}
                   </a>
                 </div>
               </>

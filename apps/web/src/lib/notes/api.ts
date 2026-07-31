@@ -1,17 +1,22 @@
 import { apiFetch, type ApiPath } from "@/lib/api/client";
 import {
   normalizeNoteContent,
-  normalizePageSummary,
   requiredRecord,
   type NoteContent,
   type NotePageSummary,
 } from "@/lib/notes/normalize";
-import { todayLocalDate } from "@/lib/localDate";
-import { browserTimeZone } from "@/lib/time/browserTimeZone";
-import { isRecord } from "@/lib/validation";
+import { isLocalDate } from "@/lib/localDate";
+import { normalizeResourceSurface, type ResourceSurface } from "@/lib/resources/resourceItems";
+import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import {
+  expectExactRecord,
+  expectNullableString,
+  expectString,
+  isRecord,
+} from "@/lib/validation";
 
 export interface NotePage extends NotePageSummary {
-  dailyNote: { localDate: string } | null;
+  dailyPage: { localDate: string } | null;
 }
 
 export interface SaveNoteBodyInput {
@@ -24,14 +29,58 @@ interface ApiResponse {
   data: unknown;
 }
 
-function normalizePage(raw: Record<string, unknown>): NotePage {
-  const rawDailyNote = raw.dailyNote ?? raw.daily_note;
-  const dailyNote =
-    isRecord(rawDailyNote) &&
-    typeof (rawDailyNote.localDate ?? rawDailyNote.local_date) === "string"
-      ? { localDate: String(rawDailyNote.localDate ?? rawDailyNote.local_date) }
-      : null;
-  return { ...normalizePageSummary(raw), dailyNote };
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function decodeUuid(raw: unknown, name: string): string {
+  const value = expectString(raw, name);
+  if (!UUID_RE.test(value)) {
+    throw new TypeError(`${name} must be a canonical UUID`);
+  }
+  return value;
+}
+
+function decodeLocalDate(raw: unknown, name: string): string {
+  const localDate = expectString(raw, name);
+  if (!isLocalDate(localDate)) {
+    throw new TypeError(`${name} must be a valid YYYY-MM-DD date`);
+  }
+  return localDate;
+}
+
+export function decodeNotePage(raw: unknown): NotePage {
+  const page = expectExactRecord(
+    raw,
+    ["id", "title", "updatedAt", "dailyPage"],
+    "note page",
+  );
+  const id = decodeUuid(page.id, "note page.id");
+  const updatedAt = expectNullableString(page.updatedAt, "note page.updatedAt");
+  let dailyPage: NotePage["dailyPage"] = null;
+  if (page.dailyPage !== null) {
+    const daily = expectExactRecord(
+      page.dailyPage,
+      ["localDate"],
+      "note page.dailyPage",
+    );
+    dailyPage = {
+      localDate: decodeLocalDate(
+        daily.localDate,
+        "note page.dailyPage.localDate",
+      ),
+    };
+  }
+  return {
+    id,
+    title: expectString(page.title, "note page.title"),
+    ...(updatedAt === null ? {} : { updatedAt }),
+    actionTarget: routeResourceActionSubject({
+      scheme: "page",
+      id,
+      href: `/pages/${id}`,
+    }),
+    dailyPage,
+  };
 }
 
 export async function createNotePage(input: {
@@ -42,7 +91,7 @@ export async function createNotePage(input: {
     method: "POST",
     body: JSON.stringify({ page_id: input.pageId, title: input.title }),
   });
-  const page = normalizePage(requiredRecord(response.data, "note page"));
+  const page = decodeNotePage(response.data);
   if (page.id !== input.pageId) {
     throw new Error(
       `Notes API create response id ${page.id} does not match requested page ${input.pageId}`,
@@ -51,45 +100,157 @@ export async function createNotePage(input: {
   return page;
 }
 
-export async function fetchDailyNotePage(
-  localDate = todayLocalDate(),
-  options: { timeZone?: string } = {},
-): Promise<NotePage> {
-  const params = new URLSearchParams({
-    time_zone: options.timeZone ?? browserTimeZone(),
-  });
-  const response = await apiFetch<ApiResponse>(
-    `/api/notes/daily/${localDate}?${params}`,
-    { cache: "no-store" },
-  );
-  const data = requiredRecord(response.data, "daily note response");
-  return normalizePage(requiredRecord(data.page, "daily note page"));
+export type DailyPageDescriptor =
+  | {
+      kind: "Latent";
+      localDate: string;
+      defaultTitle: string;
+    }
+  | {
+      kind: "Materialized";
+      localDate: string;
+      page: NotePage;
+      surface: ResourceSurface;
+    };
+
+export function decodeDailyPageDescriptor(raw: unknown): DailyPageDescriptor {
+  const record = requiredRecord(raw, "daily page descriptor");
+  const kind = expectString(record.kind, "daily page descriptor.kind");
+  switch (kind) {
+    case "Latent": {
+      const latent = expectExactRecord(
+        record,
+        ["kind", "localDate", "defaultTitle"],
+        "latent daily page descriptor",
+      );
+      return {
+        kind,
+        localDate: decodeLocalDate(
+          latent.localDate,
+          "latent daily page descriptor.localDate",
+        ),
+        defaultTitle: expectString(
+          latent.defaultTitle,
+          "latent daily page descriptor.defaultTitle",
+        ),
+      };
+    }
+    case "Materialized": {
+      const materialized = expectExactRecord(
+        record,
+        ["kind", "localDate", "page", "surface"],
+        "materialized daily page descriptor",
+      );
+      const localDate = decodeLocalDate(
+        materialized.localDate,
+        "materialized daily page descriptor.localDate",
+      );
+      const page = decodeNotePage(materialized.page);
+      if (page.dailyPage?.localDate !== localDate) {
+        throw new TypeError(
+          "materialized daily page descriptor page must match localDate",
+        );
+      }
+      return {
+        kind,
+        localDate,
+        page,
+        surface: normalizeResourceSurface(materialized.surface),
+      };
+    }
+    default:
+      throw new TypeError(
+        "daily page descriptor.kind must be Latent or Materialized",
+      );
+  }
 }
 
-export async function quickCaptureDailyNote(input: {
-  blockId: string;
-  clientMutationId: string;
-  bodyPmJson: Record<string, unknown>;
-  localDate?: string;
-}): Promise<NoteContent> {
-  const body: Record<string, unknown> = {
-    id: input.blockId,
-    client_mutation_id: input.clientMutationId,
-    body_pm_json: input.bodyPmJson,
-  };
-  if (input.localDate !== undefined) body.local_date = input.localDate;
+export async function readDailyPage(
+  localDate: string,
+): Promise<DailyPageDescriptor> {
+  if (!isLocalDate(localDate)) {
+    throw new TypeError("localDate must be a valid YYYY-MM-DD date");
+  }
   const response = await apiFetch<ApiResponse>(
-    `/api/notes/quick-capture?${new URLSearchParams({ time_zone: browserTimeZone() })}`,
-    { method: "POST", body: JSON.stringify(body) },
+    `/api/notes/daily/${localDate}`,
+    { cache: "no-store" },
   );
-  return normalizeNoteContent(requiredRecord(response.data, "note content"));
+  return decodeDailyPageDescriptor(response.data);
+}
+
+export interface DailyCaptureInput {
+  clientMutationId: string;
+  noteId: string;
+  bodyPmJson: Record<string, unknown>;
+}
+
+export interface DailyCaptureResult {
+  clientMutationId: string;
+  localDate: string;
+  pageId: string;
+  surface: ResourceSurface;
+}
+
+export function decodeDailyCaptureResult(raw: unknown): DailyCaptureResult {
+  const result = expectExactRecord(
+    raw,
+    ["clientMutationId", "localDate", "pageId", "surface"],
+    "daily capture result",
+  );
+  const pageId = decodeUuid(result.pageId, "daily capture result.pageId");
+  const surface = normalizeResourceSurface(result.surface);
+  if (surface.source.item.ref !== `page:${pageId}`) {
+    throw new TypeError(
+      "daily capture result.surface source must match pageId",
+    );
+  }
+  return {
+    clientMutationId: expectString(
+      result.clientMutationId,
+      "daily capture result.clientMutationId",
+    ),
+    localDate: decodeLocalDate(
+      result.localDate,
+      "daily capture result.localDate",
+    ),
+    pageId,
+    surface,
+  };
+}
+
+export async function captureDailyPageNote(
+  localDate: string,
+  input: DailyCaptureInput,
+): Promise<DailyCaptureResult> {
+  if (!isLocalDate(localDate)) {
+    throw new TypeError("localDate must be a valid YYYY-MM-DD date");
+  }
+  const response = await apiFetch<ApiResponse>(
+    `/api/notes/daily/${localDate}/captures`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        clientMutationId: input.clientMutationId,
+        noteId: input.noteId,
+        bodyPmJson: input.bodyPmJson,
+      }),
+    },
+  );
+  const result = decodeDailyCaptureResult(response.data);
+  if (
+    result.clientMutationId !== input.clientMutationId ||
+    result.localDate !== localDate
+  ) {
+    throw new TypeError("daily capture response identity does not match request");
+  }
+  return result;
 }
 
 export async function fetchNotePage(pageId: string): Promise<NotePage> {
   const response = await apiFetch<ApiResponse>(`/api/notes/pages/${pageId}`, {
     cache: "no-store",
   });
-  return normalizePage(requiredRecord(response.data, "note page"));
+  return decodeNotePage(response.data);
 }
 
 export async function fetchNoteContent(blockId: string): Promise<NoteContent> {
@@ -121,7 +282,6 @@ export async function dismissDawnWrite(writeId: string): Promise<void> {
   });
 }
 
-/** Kept for quick-capture and highlight flows, never for surface persistence. */
 export async function saveNoteBody(
   blockId: string,
   input: SaveNoteBodyInput,

@@ -111,6 +111,9 @@ const PANE_ROUTE_META: Record<PaneRouteId, PaneRouteMeta> = {
   page: {
     icon: FileText,
   },
+  dailyDate: {
+    icon: FileText,
+  },
   note: {
     icon: FileText,
   },

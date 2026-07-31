@@ -33,7 +33,8 @@ from sqlalchemy import text
 from nexus.config import clear_settings_cache
 from nexus.db.models import Fragment
 from nexus.errors import InvalidRequestError, NotFoundError
-from nexus.services import contributors
+from nexus.schemas.notes import DailyCaptureRequest
+from nexus.services import contributors, notes
 from nexus.services.content_indexing import (
     IndexOwner,
     mark_content_index_failed,
@@ -43,7 +44,6 @@ from nexus.services.content_indexing import (
 from nexus.services.contributor_taxonomy import ContributorObservation, ObservedRoleSlices
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.note_indexing import rebuild_note_content_index
-from nexus.services.notes import get_daily_note
 from nexus.services.reader_apparatus import replace_media_apparatus, source_fingerprint
 from nexus.services.search import get_search_result
 from nexus.services.search.projection import _snippet_around_query, _truncate_snippet
@@ -3373,15 +3373,26 @@ class TestSearchResultFormat:
         direct_db.register_cleanup("users", "id", user_id)
         direct_db.register_cleanup("libraries", "owner_user_id", user_id)
         direct_db.register_cleanup("memberships", "user_id", user_id)
-        direct_db.register_cleanup("daily_note_pages", "user_id", user_id)
+        direct_db.register_cleanup("daily_page_bindings", "user_id", user_id)
         direct_db.register_cleanup("pages", "user_id", user_id)
         auth_client.get("/me", headers=auth_headers(user_id))
 
         local_date = date(2026, 5, 6)
         with direct_db.session() as session:
-            daily = get_daily_note(session, user_id, local_date)
-            page_id = daily.page.id
-            session.commit()
+            capture = notes.capture_daily_page_note(
+                session,
+                user_id,
+                local_date=local_date,
+                request=DailyCaptureRequest(
+                    client_mutation_id=f"daily-search-{uuid4()}",
+                    note_id=uuid4(),
+                    body_pm_json={
+                        "type": "paragraph",
+                        "content": [{"type": "text", "text": "Searchable daily note"}],
+                    },
+                ),
+            )
+            page_id = capture.page_id
 
         human = auth_client.get(
             "/search?q=May+6,+2026&kinds=notes",

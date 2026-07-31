@@ -11,15 +11,12 @@ import WorkspaceBootstrapGate from "./WorkspaceBootstrapGate";
 // The client class boundary owns bootstrap failure (the required profile read): a
 // same-segment error.tsx cannot catch its own layout.
 export default async function AuthenticatedLayout() {
-  const viewer = await verifySession();
+  await verifySession();
   const renderEnvironment = await loadRenderEnvironment();
   return (
     <AuthenticatedWorkspaceErrorBoundary>
       <Suspense fallback={<AuthenticatedShellSkeleton />}>
-        <WorkspaceBootstrapGate
-          accountId={viewer.userId}
-          renderEnvironment={renderEnvironment}
-        />
+        <WorkspaceBootstrapGate renderEnvironment={renderEnvironment} />
       </Suspense>
     </AuthenticatedWorkspaceErrorBoundary>
   );

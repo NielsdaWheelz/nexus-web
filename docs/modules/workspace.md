@@ -37,7 +37,7 @@ Mobile mode:
 - renders no pane resize handle
 - presents secondary content only through `MobileSecondaryPaneHost`
 - presents global pane switching and recently closed restoration through the
-  shell-mounted Nexus full-screen task
+  shell-mounted full-screen Nexus `SwitchboardTask`
 
 Mobile mode is not a narrow desktop canvas. It is a different composition
 contract.
@@ -232,6 +232,23 @@ At the 12-pane cap, `Fork` or creating `Adopt` is rejected atomically with
 non-modal feedback. The workspace never evicts another pane to satisfy target
 activation.
 
+Accepted activation may carry one pane-entry delivery addressed to the chosen
+`paneId` plus its current `visitId`. Lazy body mounting queues that delivery
+until the visit subscribes; an already-mounted visit receives it immediately.
+Each activation ID is consumed once for the workspace-provider lifetime. A
+visit holds at most one unclaimed delivery: a newer accepted entry explicitly
+supersedes it, while View cancels it. Acknowledgement names the exact claimed
+delivery, so a stale acknowledgement cannot clear its replacement. Rejected,
+closed, or `ActivationBlocked` activation leaves no ambient intent for a later
+pane.
+
+The planner derives `daily:{localDate}` and `page:{pageId}` aliases from their
+routes and unions them with aliases published by Page panes. Quick Note and
+ordinary Page opens therefore reuse an open `/pages/{pageId}` daily pane or
+`/daily/{localDate}` pane and deliver append to that exact visit. A latent
+daily visit adopts its returned persistence ref without replacing the visit
+href or mount identity.
+
 Learn is one of the named Adopt workflows. It preserves the source reader and
 opens `/artifacts/artifact:<id>` as a standalone resource pane after its durable
 Highlight-to-Idea command succeeds. Artifact revision navigation is in-place:
@@ -274,9 +291,10 @@ obstruction. One document focus observer recognizes only text-entry targets
 outside modal layers. While root text entry owns focus, the mounted MiniPlayer
 is hidden/inert and its `"Player"` obstruction is unregistered; playback
 continues through system controls. Fixed controls register measured rectangles;
-the shared mobile-modal lifecycle reports keyboard inset through scoped,
-ordered reports so nested-overlay release restores the prior inset. Inactive
-mounted overlays publish nothing. The provider publishes
+`useMobileModalLifecycle` reports active sheet or full-screen-task keyboard
+insets through scoped, ordered reports, so releasing the newest modal restores
+the preceding report. Inactive mounted overlays publish nothing. The provider
+publishes
 `--mobile-content-bottom-clearance`, and every authenticated mobile primary
 scroll owner consumes it. Components do not independently recalculate safe
 area, player, Nexus, focus, or keyboard geometry.

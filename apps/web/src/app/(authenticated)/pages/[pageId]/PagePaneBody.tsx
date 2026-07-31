@@ -16,7 +16,6 @@ import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { consumePendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import {
-  fetchDailyNotePage,
   fetchDawnWrite,
   fetchNotePage,
   type DawnWrite,
@@ -25,9 +24,11 @@ import {
 import { shiftLocalDate } from "@/lib/localDate";
 import {
   requirePaneRuntime,
+  usePaneEntryDelivery,
   usePaneParam,
   usePaneReturnReady,
   usePaneRuntime,
+  useSetPaneAliases,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
@@ -35,6 +36,21 @@ import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { ResourceSurface } from "@/lib/resources/resourceItems";
 import { resourceSurfaceFilterFields } from "@/components/resource-surface/resourceSurfaceFilterFields";
+import { useOptionalAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
+import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import type {
+  WorkspaceTarget,
+  WorkspaceTargetDisposition,
+} from "@/lib/workspace/targetActivation";
+import type { PaneSearchPublication } from "@/lib/panes/paneSearch";
+
+export type PagePaneSource =
+  | { kind: "PageRef"; pageId: string }
+  | {
+      kind: "DailyDate";
+      accountId: string;
+      localDate: string;
+    };
 
 export default function PagePaneBody({
   pageIdOverride,
@@ -44,32 +60,50 @@ export default function PagePaneBody({
   initialPage?: NotePage;
 }) {
   const routePageId = usePaneParam("pageId");
-  const pageId = pageIdOverride ?? routePageId;
-  if (!pageId) throw new Error("page route requires a page id");
+  const routeLocalDate = usePaneParam("localDate");
+  const account = useOptionalAuthenticatedAccount();
+  const source: PagePaneSource =
+    pageIdOverride ?? routePageId
+      ? { kind: "PageRef", pageId: (pageIdOverride ?? routePageId)! }
+      : routeLocalDate && account
+        ? {
+            kind: "DailyDate",
+            accountId: account.accountId,
+            localDate: routeLocalDate,
+          }
+        : (() => {
+            throw new Error(
+              "page route requires a page id or authenticated daily date",
+            );
+          })();
   const activateTarget = requirePaneRuntime(
     usePaneRuntime(),
     "PagePaneBody",
   ).activateTarget;
-  const sourceRef = `page:${pageId}`;
+  const { delivery, acknowledge } = usePaneEntryDelivery();
+  const sourceKey =
+    source.kind === "PageRef"
+      ? `page:${source.pageId}`
+      : `daily:${source.accountId}:${source.localDate}`;
   const [filterRowsState, setFilterRowsState] = useState<{
     sourceRef: string;
     ready: boolean;
     fields: readonly (readonly string[])[];
   }>({
-    sourceRef,
+    sourceRef: sourceKey,
     ready: false,
     fields: [],
   });
-  if (filterRowsState.sourceRef !== sourceRef) {
-    setFilterRowsState({ sourceRef, ready: false, fields: [] });
+  if (filterRowsState.sourceRef !== sourceKey) {
+    setFilterRowsState({ sourceRef: sourceKey, ready: false, fields: [] });
   }
   const filterRows = useMemo(
     () =>
-      filterRowsState.sourceRef === sourceRef ? filterRowsState.fields : [],
-    [filterRowsState, sourceRef],
+      filterRowsState.sourceRef === sourceKey ? filterRowsState.fields : [],
+    [filterRowsState, sourceKey],
   );
   const ready =
-    filterRowsState.sourceRef === sourceRef && filterRowsState.ready;
+    filterRowsState.sourceRef === sourceKey && filterRowsState.ready;
   const getFilterStatus = useCallback(
     (query: string) => {
       const visibleCount = filterRows.filter((fields) =>
@@ -93,26 +127,32 @@ export default function PagePaneBody({
     [filterRows, ready],
   );
   const { query: filterQuery, publication: search } = usePaneFilterRows({
-    sourceKey: sourceRef,
-      inputLabel: "Filter page items",
-      placeholder: "Filter items",
+    sourceKey,
+    inputLabel: "Filter page items",
+    placeholder: "Filter items",
     getRowStatus: getFilterStatus,
     activeDomainControlCount: 0,
   });
   const [page, setPage] = useState<NotePage | null>(
-    initialPage?.id === pageId ? initialPage : null,
+    source.kind === "PageRef" && initialPage?.id === source.pageId
+      ? initialPage
+      : null,
   );
+  const [dailyTitle, setDailyTitle] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
   const [focusMastheadSerial, setFocusMastheadSerial] = useState(0);
   const [focusBodySerial, setFocusBodySerial] = useState(0);
+  const pageRefId = source.kind === "PageRef" ? source.pageId : null;
+  const dailySourceDate = source.kind === "DailyDate" ? source.localDate : null;
   usePaneReturnReady(ready || feedback !== null);
-  useSetPaneLabel(page?.title ?? (feedback ? "Page" : null));
+  useSetPaneLabel(page?.title ?? dailyTitle ?? (feedback ? "Page" : null));
 
   useEffect(() => {
+    if (!pageRefId) return;
     let active = true;
-    if (initialPage?.id === pageId) return;
+    if (initialPage?.id === pageRefId) return;
     setPage(null);
-    void fetchNotePage(pageId)
+    void fetchNotePage(pageRefId)
       .then((next) => active && setPage(next))
       .catch((error: unknown) => {
         if (!active || handleUnauthenticatedApiError(error)) return;
@@ -123,23 +163,29 @@ export default function PagePaneBody({
     return () => {
       active = false;
     };
-  }, [initialPage, pageId]);
+  }, [initialPage, pageRefId]);
 
   useEffect(() => {
-    if (!ready) return;
-    const pending = consumePendingNoteFocus(pageId);
+    if (!ready || !page) return;
+    const pending = consumePendingNoteFocus(page.id);
     if (pending === "title") setFocusMastheadSerial((current) => current + 1);
     else if (pending) setFocusBodySerial((current) => current + 1);
-  }, [pageId, ready]);
+  }, [page, ready]);
 
-  const dailyLocalDate = page?.dailyNote?.localDate ?? null;
+  const dailyLocalDate =
+    dailySourceDate ?? page?.dailyPage?.localDate ?? null;
+  const pageId =
+    page?.id ?? (source.kind === "PageRef" ? source.pageId : null);
+  useSetPaneAliases([
+    ...(dailyLocalDate ? [`daily:${dailyLocalDate}`] : []),
+    ...(pageId ? [`page:${pageId}`] : []),
+  ]);
   const openDatedPage = useCallback(
-    async (localDate: string) => {
-    const next = await fetchDailyNotePage(localDate);
-    activateTarget({
-      target: { href: `/pages/${next.id}`, labelHint: next.title },
-      disposition: { kind: "Follow" },
-    });
+    (localDate: string) => {
+      activateTarget({
+        target: { href: `/daily/${localDate}` },
+        disposition: { kind: "Follow" },
+      });
     },
     [activateTarget],
   );
@@ -165,54 +211,44 @@ export default function PagePaneBody({
         : [],
     [dailyLocalDate, openDatedPage],
   );
-  const composer = useConnectionsComposerController({
-    scheme: "page",
-    id: pageId,
-  });
-  const connections = useMemo(
-    () => (
-      <ConnectionsSurface
-        resourceRef={{ scheme: "page", id: pageId }}
-        composerController={composer}
-        activateTarget={activateTarget}
-      />
-    ),
-    [activateTarget, composer, pageId],
-  );
-  const { companionAction } = useResourceInspector({
-    scheme: "page",
-    handle: pageId,
-    bodies: { linkedItems: connections },
-  });
   const handleSurfaceChange = useCallback(
     (surface: ResourceSurface) => {
       setFilterRowsState({
-        sourceRef,
+        sourceRef: sourceKey,
         ready: true,
         fields: surface.orderedItems.map(resourceSurfaceFilterFields),
       });
       if (surface.source.content.kind !== "page_title") return;
       const { title } = surface.source.content;
-      setPage((current) => (current ? { ...current, title } : current));
+      setPage((current) =>
+        current
+          ? { ...current, title }
+          : dailySourceDate
+            ? {
+                id: surface.source.item.id,
+                title,
+                actionTarget: routeResourceActionSubject({
+                  scheme: "page",
+                  id: surface.source.item.id,
+                  href: `/pages/${surface.source.item.id}`,
+                }),
+                dailyPage: { localDate: dailySourceDate },
+              }
+            : current,
+      );
     },
-    [sourceRef],
+    [dailySourceDate, sourceKey],
   );
-  usePanePrimaryChrome({
-    search,
-    actions: companionAction ? [companionAction] : [],
-    menu: page
-      ? {
-          kind: "ResourceMenu",
-          target: page.actionTarget,
-          groups: {
-            core: [],
-            operations: [],
-            relationships: [],
-            view: viewActions,
-          },
-        }
-      : undefined,
-  });
+  const handleDailyTitleChange = useCallback((title: string | null) => {
+    setDailyTitle(title);
+    if (title !== null) {
+      setFilterRowsState((current) =>
+        current.sourceRef === sourceKey
+          ? { ...current, ready: true }
+          : current,
+      );
+    }
+  }, [sourceKey]);
   const [dawnWrite, setDawnWrite] = useState<DawnWrite | null>(null);
   useEffect(() => {
     if (!dailyLocalDate) {
@@ -224,10 +260,26 @@ export default function PagePaneBody({
       .catch(() => setDawnWrite(null));
   }, [dailyLocalDate]);
 
-  if (feedback && !page) return <FeedbackNotice {...feedback} />;
-  if (!page) {
+  const chrome = (
+    <PageChrome
+      page={page}
+      search={search}
+      viewActions={viewActions}
+      activateTarget={activateTarget}
+    />
+  );
+  if (feedback && !page) {
     return (
       <>
+        {chrome}
+        <FeedbackNotice {...feedback} />
+      </>
+    );
+  }
+  if (!page && source.kind === "PageRef") {
+    return (
+      <>
+        {chrome}
         <PaneLoadingState />
         {filterQuery.trim() ? (
           <p role="status">No matching item found so far.</p>
@@ -237,18 +289,124 @@ export default function PagePaneBody({
   }
   return (
     <>
-    {dawnWrite ? <DawnWriteBlock write={dawnWrite} /> : null}
+      {chrome}
+      {dawnWrite ? <DawnWriteBlock write={dawnWrite} /> : null}
       {!ready && filterQuery.trim() ? (
         <p role="status">No matching item found so far.</p>
       ) : null}
-    <ResourceSurfaceEditor
-      sourceRef={sourceRef}
-      rowFilterQuery={filterQuery}
-      focusMastheadSerial={focusMastheadSerial}
-      focusBodySerial={focusBodySerial}
+      <ResourceSurfaceEditor
+        {...(dailyLocalDate && account
+          ? {
+              daily: {
+                accountId: account.accountId,
+                localDate: dailyLocalDate,
+                ...(source.kind === "PageRef"
+                  ? { materializedSourceRef: `page:${source.pageId}` }
+                  : {}),
+                delivery,
+                onDeliveryClaimed: acknowledge,
+              },
+            }
+          : source.kind === "PageRef"
+            ? { sourceRef: `page:${source.pageId}` }
+            : {
+                daily: {
+                  accountId: source.accountId,
+                  localDate: source.localDate,
+                  delivery,
+                  onDeliveryClaimed: acknowledge,
+                },
+              })}
+        rowFilterQuery={filterQuery}
+        focusMastheadSerial={focusMastheadSerial}
+        focusBodySerial={focusBodySerial}
         onSurfaceChange={handleSurfaceChange}
-      activateTarget={activateTarget}
-    />
+        onDailyTitleChange={
+          source.kind === "DailyDate" ? handleDailyTitleChange : undefined
+        }
+        activateTarget={activateTarget}
+      />
     </>
   );
+}
+
+function PageChrome({
+  page,
+  search,
+  viewActions,
+  activateTarget,
+}: {
+  page: NotePage | null;
+  search: PaneSearchPublication;
+  viewActions: ActionDescriptor[];
+  activateTarget: (input: {
+    target: WorkspaceTarget;
+    disposition: WorkspaceTargetDisposition;
+  }) => void;
+}) {
+  return page ? (
+    <MaterializedPageChrome
+      page={page}
+      search={search}
+      viewActions={viewActions}
+      activateTarget={activateTarget}
+    />
+  ) : (
+    <LatentPageChrome search={search} />
+  );
+}
+
+function LatentPageChrome({ search }: { search: PaneSearchPublication }) {
+  usePanePrimaryChrome({ search, actions: [] });
+  return null;
+}
+
+function MaterializedPageChrome({
+  page,
+  search,
+  viewActions,
+  activateTarget,
+}: {
+  page: NotePage;
+  search: PaneSearchPublication;
+  viewActions: ActionDescriptor[];
+  activateTarget: (input: {
+    target: WorkspaceTarget;
+    disposition: WorkspaceTargetDisposition;
+  }) => void;
+}) {
+  const composer = useConnectionsComposerController({
+    scheme: "page",
+    id: page.id,
+  });
+  const connections = useMemo(
+    () => (
+      <ConnectionsSurface
+        resourceRef={{ scheme: "page", id: page.id }}
+        composerController={composer}
+        activateTarget={activateTarget}
+      />
+    ),
+    [activateTarget, composer, page.id],
+  );
+  const { companionAction } = useResourceInspector({
+    scheme: "page",
+    handle: page.id,
+    bodies: { linkedItems: connections },
+  });
+  usePanePrimaryChrome({
+    search,
+    actions: companionAction ? [companionAction] : [],
+    menu: {
+      kind: "ResourceMenu",
+      target: page.actionTarget,
+      groups: {
+        core: [],
+        operations: [],
+        relationships: [],
+        view: viewActions,
+      },
+    },
+  });
+  return null;
 }

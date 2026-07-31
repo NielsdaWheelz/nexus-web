@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { buildCanonicalCursor } from "@/lib/highlights/canonicalCursor";
+import type { ReaderScrollCommands } from "@/lib/reader/paneScroll";
 import {
   findFirstVisibleCanonicalOffset,
   measureCanonicalTextAnchorViewportDelta,
@@ -8,6 +9,24 @@ import {
   restoreCanonicalTextAnchorViewportPosition,
   scrollToExactCanonicalTextAnchor,
 } from "./paneTextAnchor";
+
+const scrollCommands: ReaderScrollCommands = {
+  setTop(scrollport, top) {
+    scrollport.scrollTop = Math.max(0, top);
+  },
+  adjustTop(scrollport, delta) {
+    scrollport.scrollTop = Math.max(0, scrollport.scrollTop + delta);
+  },
+  reveal(scrollport, target) {
+    const scrollportRect = scrollport.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    if (targetRect.top < scrollportRect.top) {
+      this.adjustTop(scrollport, targetRect.top - scrollportRect.top);
+    } else if (targetRect.bottom > scrollportRect.bottom) {
+      this.adjustTop(scrollport, targetRect.bottom - scrollportRect.bottom);
+    }
+  },
+};
 
 function html(content: string): HTMLElement {
   const root = document.createElement("div");
@@ -121,6 +140,7 @@ describe("canonical text provenance resolution", () => {
     );
     expect(
       restoreCanonicalTextAnchorViewportPosition(
+        scrollCommands,
         container,
         cursor,
         2,
@@ -187,7 +207,7 @@ describe("canonical text provenance resolution", () => {
     } as DOMRect);
 
     expect(
-      scrollToExactCanonicalTextAnchor(container, cursor, 2),
+      scrollToExactCanonicalTextAnchor(scrollCommands, container, cursor, 2),
     ).toBe(true);
     expect(container.scrollTop).toBe(39);
   });

@@ -36,40 +36,46 @@ import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
 import styles from "./layout.module.css";
+import {
+  AuthenticatedAccountProvider,
+  type AuthenticatedAccount,
+} from "@/lib/account/authenticatedAccount";
 
 export default function AuthenticatedShell({
-  accountId,
+  account,
   readerProfile,
   renderEnvironment,
   initialState,
   resources,
 }: {
-  accountId: string;
+  account: AuthenticatedAccount;
   readerProfile: ReaderProfile;
   renderEnvironment: RenderEnvironment;
   initialState: WorkspaceState;
   resources: DehydratedResources;
 }) {
   return (
-    <RenderEnvironmentProvider value={renderEnvironment}>
-      <UnauthenticatedApiBoundary>
-        <ActivityCaptureLifecycle />
-        <SessionRefresher />
-        <LocalVaultAutoSync />
-        <WebVitalsReporter />
-        <ResourceCacheProvider value={resources}>
-          <KeybindingsProvider>
-            <ReaderProvider initialProfile={readerProfile}>
-              <ReaderProfileSaveFeedback />
-              <AuthenticatedWorkspace
-                accountId={accountId}
-                initialState={initialState}
-              />
-            </ReaderProvider>
-          </KeybindingsProvider>
-        </ResourceCacheProvider>
-      </UnauthenticatedApiBoundary>
-    </RenderEnvironmentProvider>
+    <AuthenticatedAccountProvider account={account}>
+      <RenderEnvironmentProvider value={renderEnvironment}>
+        <UnauthenticatedApiBoundary>
+          <ActivityCaptureLifecycle />
+          <SessionRefresher />
+          <LocalVaultAutoSync />
+          <WebVitalsReporter />
+          <ResourceCacheProvider value={resources}>
+            <KeybindingsProvider>
+              <ReaderProvider initialProfile={readerProfile}>
+                <ReaderProfileSaveFeedback />
+                <AuthenticatedWorkspace
+                  accountId={account.accountId}
+                  initialState={initialState}
+                />
+              </ReaderProvider>
+            </KeybindingsProvider>
+          </ResourceCacheProvider>
+        </UnauthenticatedApiBoundary>
+      </RenderEnvironmentProvider>
+    </AuthenticatedAccountProvider>
   );
 }
 

@@ -185,6 +185,11 @@ class User(Base):
     )
     email: Mapped[str | None] = mapped_column(Text, nullable=True, unique=True)
     display_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    calendar_time_zone: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        server_default="UTC",
+    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -252,10 +257,10 @@ class Page(Base):
     )
 
 
-class DailyNotePage(Base):
-    """Durable daily-date identity for an ordinary note page."""
+class DailyPageBinding(Base):
+    """Assign one account-local date to one ordinary Page."""
 
-    __tablename__ = "daily_note_pages"
+    __tablename__ = "daily_page_bindings"
 
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -268,7 +273,6 @@ class DailyNotePage(Base):
         nullable=False,
     )
     local_date: Mapped[date] = mapped_column(Date, nullable=False)
-    time_zone: Mapped[str] = mapped_column(Text, nullable=False, server_default="UTC")
     page_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("pages.id"),
@@ -279,20 +283,18 @@ class DailyNotePage(Base):
         server_default=text("now()"),
         nullable=False,
     )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
     __table_args__ = (
-        CheckConstraint(
-            "char_length(time_zone) BETWEEN 1 AND 100",
-            name="ck_daily_note_pages_time_zone_length",
+        UniqueConstraint(
+            "user_id",
+            "local_date",
+            name="uq_daily_page_bindings_user_date",
         ),
-        UniqueConstraint("user_id", "local_date", name="uix_daily_note_pages_user_date"),
-        UniqueConstraint("user_id", "page_id", name="uix_daily_note_pages_user_page"),
+        UniqueConstraint(
+            "user_id",
+            "page_id",
+            name="uq_daily_page_bindings_user_page",
+        ),
     )
 
 

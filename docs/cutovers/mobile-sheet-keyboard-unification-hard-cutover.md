@@ -16,6 +16,13 @@ this cutover there is exactly one mobile bottom-sheet owner and exactly one
 keyboard-geometry owner, and every per-component copy of that machinery is
 deleted.
 
+**Follow-up authority (2026-07-30):**
+[`mobile-nexus-full-screen-task-hard-cutover.md`](mobile-nexus-full-screen-task-hard-cutover.md)
+extracts the shared modal lifecycle, gives mobile Nexus its distinct
+full-screen-task presentation, and hard-renames sheet-exclusive keyboard
+report/import ownership to mobile-overlay ownership. Contextual `MobileSheet`
+behavior and its single geometry owner remain authoritative.
+
 This is the follow-up cutover that
 `docs/cutovers/mobile-workspace-right-edge-hard-cutover.md` explicitly
 scheduled:

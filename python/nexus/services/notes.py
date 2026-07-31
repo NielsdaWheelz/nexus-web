@@ -6,29 +6,34 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, cast
 from uuid import UUID, uuid4
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import delete, func, select, text
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from nexus.db.errors import integrity_constraint_name
 from nexus.db.models import (
-    DailyNotePage,
+    DailyPageBinding,
     NoteBlock,
     Page,
 )
 from nexus.db.retries import retry_serializable
 from nexus.db.session import transaction
-from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
+from nexus.errors import (
+    ApiErrorCode,
+    ConflictError,
+    InvalidRequestError,
+    NotFoundError,
+)
 from nexus.schemas.notes import (
     CreatePageRequest,
-    DailyNotePageOut,
-    DailyNotePageSummaryOut,
+    DailyCaptureRequest,
+    DailyCaptureResult,
+    DailyPageDescriptor,
+    DailyPageSummaryOut,
+    LatentDailyPageDescriptor,
+    MaterializedDailyPageDescriptor,
     NoteBlockOut,
     NotePageOut,
     NotePageSummaryOut,
-    QuickCaptureRequest,
     UpdatePageRequest,
 )
 from nexus.services import note_bodies, passage_anchors
@@ -229,9 +234,9 @@ def delete_page(db: Session, viewer_id: UUID, page_id: UUID) -> None:
     artifact_engine.on_subject_deleted(db, ref)
     delete_edges_for_deleted_resource(db, ref=ref)
     db.execute(
-        delete(DailyNotePage).where(
-            DailyNotePage.user_id == viewer_id,
-            DailyNotePage.page_id == page.id,
+        delete(DailyPageBinding).where(
+            DailyPageBinding.user_id == viewer_id,
+            DailyPageBinding.page_id == page.id,
         )
     )
     delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)
@@ -239,140 +244,131 @@ def delete_page(db: Session, viewer_id: UUID, page_id: UUID) -> None:
     db.commit()
 
 
-def get_daily_note_for_today(
-    db: Session,
-    viewer_id: UUID,
-    *,
-    time_zone: str,
-) -> DailyNotePageOut:
-    return get_daily_note(db, viewer_id, _today_in_time_zone(time_zone), time_zone=time_zone)
-
-
-def get_daily_note(
+def read_daily_page(
     db: Session,
     viewer_id: UUID,
     local_date: date,
-    *,
-    time_zone: str = "UTC",
-) -> DailyNotePageOut:
-    page, stored_time_zone = _resolve_daily_page_with_retry(
-        db,
-        viewer_id,
-        local_date,
-        time_zone=time_zone,
+) -> DailyPageDescriptor:
+    binding = db.scalar(
+        select(DailyPageBinding).where(
+            DailyPageBinding.user_id == viewer_id,
+            DailyPageBinding.local_date == local_date,
+        )
     )
-    return DailyNotePageOut(
+    if binding is None:
+        return LatentDailyPageDescriptor(
+            kind="Latent",
+            local_date=local_date,
+            default_title=_default_daily_page_title(local_date),
+        )
+    page = _page_for_binding(db, viewer_id=viewer_id, binding=binding)
+    source = _page_ref(page.id)
+    return MaterializedDailyPageDescriptor(
+        kind="Materialized",
         local_date=local_date,
-        time_zone=stored_time_zone,
         page=_page_out(db, viewer_id, page),
+        surface=resource_surfaces.get_surface(db, viewer_id=viewer_id, source=source),
     )
 
 
-def resolve_daily_note_page_ref(
+def capture_daily_page_note(
     db: Session,
-    *,
     viewer_id: UUID,
+    *,
     local_date: date,
-    time_zone: str,
-) -> ResourceRef:
-    _zone_info(time_zone)
-    page, _stored_time_zone = _resolve_daily_page_with_retry(
-        db,
-        viewer_id,
-        local_date,
-        time_zone=time_zone,
-    )
-    return _page_ref(page.id)
-
-
-def resolve_today_daily_note_page_ref(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    time_zone: str,
-) -> ResourceRef:
-    return resolve_daily_note_page_ref(
-        db,
-        viewer_id=viewer_id,
-        local_date=_today_in_time_zone(time_zone),
-        time_zone=time_zone,
-    )
-
-
-def quick_capture(
-    db: Session,
-    viewer_id: UUID,
-    *,
-    request: QuickCaptureRequest,
-    time_zone: str = "UTC",
-) -> NoteBlockOut:
-    local_date = request.local_date or _today_in_time_zone(time_zone)
-    request_bytes = canonical_json_bytes(request.model_dump(mode="json", by_alias=True))
-    # Resolved (and committed) before the retried op: it owns its own retry
-    # loop, and nesting two retry_serializable scopes would make it ambiguous
-    # which layer retries what (docs/rules/retries.md). Re-resolving on a
-    # retry would only re-find the same daily page.
-    page, _stored_time_zone = _resolve_daily_page_with_retry(
-        db,
-        viewer_id,
-        local_date,
-        time_zone=time_zone,
-    )
-    scope = f"resource:{_page_ref(page.id).uri}:quick_capture"
-
-    def op() -> NoteBlockOut:
-        replay = lookup_replay(
-            db,
-            viewer_id=viewer_id,
-            scope=scope,
-            client_mutation_id=request.client_mutation_id,
-            request_bytes=request_bytes,
+    request: DailyCaptureRequest,
+) -> DailyCaptureResult:
+    if not text_from_pm_json(request.body_pm_json).strip():
+        raise InvalidRequestError(
+            ApiErrorCode.E_EMPTY_NOTE_BODY,
+            "Daily capture requires a meaningful note body",
         )
-        if replay is not None:
-            return NoteBlockOut.model_validate(replay)
+    request_payload = request.model_dump(mode="json", by_alias=True)
+    request_payload["localDate"] = local_date.isoformat()
+    request_bytes = canonical_json_bytes(request_payload)
+    page_id_candidate = uuid4()
+    scope = "daily:capture"
 
-        source = _page_ref(page.id)
-        block = resource_surfaces.insert_note_occurrence_without_commit(
-            db,
-            viewer_id=viewer_id,
-            source=source,
-            note_id=request.id,
-            body_pm_json=request.body_pm_json,
-            position="end",
-            reindex_reason="quick_capture",
-        )
-        response = NoteBlockOut(
-            id=block.id,
-            body_pm_json=block.body_pm_json,
-            body_text=block.body_text,
-            created_at=block.created_at,
-            updated_at=block.updated_at,
-            version_by_lane=versions.versions_for_ref(
-                db, viewer_id=viewer_id, ref=_note_ref(block.id)
-            ),
-        )
-        record_replay(
-            db,
-            viewer_id=viewer_id,
-            scope=scope,
-            client_mutation_id=request.client_mutation_id,
-            request_bytes=request_bytes,
-            response_json=response.model_dump(mode="json", by_alias=True),
-            changed_lanes={scope: True},
-        )
-        db.commit()
-        return response
+    def op() -> DailyCaptureResult:
+        with transaction(db):
+            replay = lookup_replay(
+                db,
+                viewer_id=viewer_id,
+                scope=scope,
+                client_mutation_id=request.client_mutation_id,
+                request_bytes=request_bytes,
+            )
+            if replay is not None:
+                return DailyCaptureResult.model_validate(replay)
 
-    return retry_serializable(db, "quick_capture", op)
+            binding = db.scalar(
+                select(DailyPageBinding).where(
+                    DailyPageBinding.user_id == viewer_id,
+                    DailyPageBinding.local_date == local_date,
+                )
+            )
+            page = (
+                _create_daily_page_binding_without_commit(
+                    db,
+                    viewer_id=viewer_id,
+                    local_date=local_date,
+                    page_id=page_id_candidate,
+                )
+                if binding is None
+                else _page_for_binding(db, viewer_id=viewer_id, binding=binding)
+            )
+            page_ref = _page_ref(page.id)
+            note = resource_surfaces.insert_note_occurrence_without_commit(
+                db,
+                viewer_id=viewer_id,
+                source=page_ref,
+                note_id=request.note_id,
+                body_pm_json=request.body_pm_json,
+                position="end",
+                reindex_reason="daily_capture",
+            )
+            note_ref = _note_ref(note.id)
+            response = DailyCaptureResult(
+                client_mutation_id=request.client_mutation_id,
+                local_date=local_date,
+                page_id=page.id,
+                surface=resource_surfaces.get_surface(
+                    db,
+                    viewer_id=viewer_id,
+                    source=page_ref,
+                ),
+            )
+            record_replay(
+                db,
+                viewer_id=viewer_id,
+                scope=scope,
+                client_mutation_id=request.client_mutation_id,
+                request_bytes=request_bytes,
+                response_json=response.model_dump(mode="json", by_alias=True),
+                changed_lanes={
+                    page_ref.uri: versions.versions_for_ref(
+                        db,
+                        viewer_id=viewer_id,
+                        ref=page_ref,
+                    ),
+                    note_ref.uri: versions.versions_for_ref(
+                        db,
+                        viewer_id=viewer_id,
+                        ref=note_ref,
+                    ),
+                },
+            )
+            return response
+
+    return retry_serializable(db, "capture_daily_page_note", op)
 
 
 def append_note_block_to_page(
     db: Session, viewer_id: UUID, *, page_id: UUID, body_pm_json: dict[str, Any]
 ) -> NoteBlockOut:
     """Append one new note block to a caller-supplied page (the amanuensis
-    ``jot_note`` page-append seam). Mirrors ``quick_capture``'s ordered-edge
-    append, but resolves an explicit page instead of today's daily page and does
-    not carry a client-mutation replay (the tool loop re-arms at the tool-call
+    ``jot_note`` page-append seam). It resolves an explicit page and does not
+    carry a client-mutation replay (the tool loop re-arms at the tool-call
     level). The page must belong to the viewer."""
     page = get_page_for_owner_or_404(db, viewer_id, page_id)
     source = _page_ref(page.id)
@@ -551,106 +547,67 @@ def _upsert_note_body(
     )
 
 
-def _resolve_daily_page_with_retry(
+def _create_daily_page_binding_without_commit(
     db: Session,
+    *,
     viewer_id: UUID,
     local_date: date,
-    *,
-    time_zone: str,
-    commit: bool = True,
-) -> tuple[Page, str]:
-    def op() -> tuple[Page, str]:
-        page, stored_time_zone = _resolve_daily_page_once(
-            db,
-            viewer_id,
-            local_date,
-            time_zone=time_zone,
-        )
-        if commit:
-            db.commit()
-            db.refresh(page)
-        return page, stored_time_zone
-
-    for attempt in range(3):
-        try:
-            return retry_serializable(db, "resolve_daily_page", op)
-        except IntegrityError as exc:
-            db.rollback()
-            if (
-                integrity_constraint_name(exc)
-                not in {
-                    "uix_daily_note_pages_user_date",
-                    "uix_daily_note_pages_user_page",
-                }
-                or attempt == 2
-            ):
-                raise
-    raise AssertionError("Daily note retry loop exhausted")
-
-
-def _resolve_daily_page_once(
-    db: Session,
-    viewer_id: UUID,
-    local_date: date,
-    *,
-    time_zone: str,
-) -> tuple[Page, str]:
-    daily = db.scalar(
-        select(DailyNotePage).where(
-            DailyNotePage.user_id == viewer_id,
-            DailyNotePage.local_date == local_date,
-        )
-    )
-    if daily is not None:
-        return get_page_for_owner_or_404(db, viewer_id, daily.page_id), daily.time_zone
-
+    page_id: UUID,
+) -> Page:
     page = Page(
+        id=page_id,
         user_id=viewer_id,
-        title=f"{local_date.strftime('%B')} {local_date.day}, {local_date.year}",
+        title=_default_daily_page_title(local_date),
     )
     db.add(page)
     db.flush()
     versions.ensure_version(db, viewer_id=viewer_id, ref=_page_ref(page.id), lane="title")
     versions.ensure_version(db, viewer_id=viewer_id, ref=_page_ref(page.id), lane="outgoing_edges")
     db.add(
-        DailyNotePage(
+        DailyPageBinding(
             user_id=viewer_id,
             local_date=local_date,
-            time_zone=time_zone,
             page_id=page.id,
         )
     )
-    return page, time_zone
+    db.flush()
+    return page
+
+
+def _page_for_binding(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    binding: DailyPageBinding,
+) -> Page:
+    page = db.get(Page, binding.page_id)
+    if page is None or page.user_id != viewer_id:
+        # justify-defect: a daily binding must point at its owner's durable Page.
+        raise AssertionError("daily Page binding ownership is inconsistent")
+    return page
 
 
 def _page_out(db: Session, viewer_id: UUID, page: Page) -> NotePageOut:
     daily_local_date = db.scalar(
-        select(DailyNotePage.local_date).where(
-            DailyNotePage.page_id == page.id,
-            DailyNotePage.user_id == viewer_id,
+        select(DailyPageBinding.local_date).where(
+            DailyPageBinding.page_id == page.id,
+            DailyPageBinding.user_id == viewer_id,
         )
     )
     return NotePageOut(
         id=page.id,
         title=page.title,
         updated_at=page.updated_at,
-        daily_note=(
-            DailyNotePageSummaryOut(local_date=daily_local_date)
+        daily_page=(
+            DailyPageSummaryOut(local_date=daily_local_date)
             if daily_local_date is not None
             else None
         ),
     )
 
 
-def _today_in_time_zone(time_zone: str) -> date:
-    return datetime.now(_zone_info(time_zone)).date()
-
-
-def _zone_info(time_zone: str) -> ZoneInfo:
-    try:
-        return ZoneInfo(time_zone)
-    except (ValueError, ZoneInfoNotFoundError) as exc:
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "time_zone is invalid") from exc
+def _default_daily_page_title(local_date: date) -> str:
+    return f"{local_date.strftime('%B')} {local_date.day}, {local_date.year}"
 
 
 def _append_text(content: list[dict[str, Any]], text_value: str) -> None:
