@@ -23,6 +23,7 @@ import { WorkspaceStoreProvider } from "@/lib/workspace/store";
 import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
+import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -74,25 +75,29 @@ function mockApi(
 function renderNexus() {
   return render(
     withRenderEnvironment(
-      <KeybindingsProvider>
-        <PaneReturnMementoProvider>
-          <FeedbackProvider>
-            <ShareControllerProvider>
-              <LecternProvider>
-                <WorkspaceStoreProvider
-                  workspacePrimaryMetrics={workspacePrimaryMetrics}
-                  initialState={createDefaultWorkspaceState(
-                    "/libraries",
-                    workspacePrimaryMetrics,
-                  )}
-                >
-                  <Nexus />
-                </WorkspaceStoreProvider>
-              </LecternProvider>
-            </ShareControllerProvider>
-          </FeedbackProvider>
-        </PaneReturnMementoProvider>
-      </KeybindingsProvider>,
+      <AuthenticatedAccountProvider
+        account={{ accountId: "account-1", calendarTimeZone: "UTC" }}
+      >
+        <KeybindingsProvider>
+          <PaneReturnMementoProvider>
+            <FeedbackProvider>
+              <ShareControllerProvider>
+                <LecternProvider>
+                  <WorkspaceStoreProvider
+                    workspacePrimaryMetrics={workspacePrimaryMetrics}
+                    initialState={createDefaultWorkspaceState(
+                      "/libraries",
+                      workspacePrimaryMetrics,
+                    )}
+                  >
+                    <Nexus />
+                  </WorkspaceStoreProvider>
+                </LecternProvider>
+              </ShareControllerProvider>
+            </FeedbackProvider>
+          </PaneReturnMementoProvider>
+        </KeybindingsProvider>
+      </AuthenticatedAccountProvider>,
       { androidShell: true },
     ),
   );

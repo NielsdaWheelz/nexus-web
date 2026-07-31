@@ -50,7 +50,7 @@ import { useLibraryPlacementController } from "@/lib/libraries/placementControll
 import { useShareController } from "@/lib/sharing/controller";
 import { paneShareOpenOptions } from "@/lib/sharing/openOptions";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import { useMobileChromeVisibleLocks } from "@/lib/workspace/mobileChrome";
+import { useOptionalMobileChromeVisibleLocks } from "@/lib/workspace/mobileChrome";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import ConnectionRail from "./ConnectionRail";
 import {
@@ -207,7 +207,7 @@ function RowActionMenu({
   readonly reorder?: SortableActivatorProps;
   readonly reorderHintId: string;
 }) {
-  const { acquire } = useMobileChromeVisibleLocks();
+  const { acquire } = useOptionalMobileChromeVisibleLocks();
   const releaseMenuLockRef = useRef<(() => void) | null>(null);
   const releaseMenuLock = useCallback(() => {
     releaseMenuLockRef.current?.();

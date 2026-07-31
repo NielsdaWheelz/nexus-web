@@ -55,7 +55,7 @@ function installMatchMedia(matches: boolean) {
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
     value: vi.fn((query: string) => ({
-      matches,
+      matches: query === "(prefers-reduced-motion: reduce)" && matches,
       media: query,
       onchange: null,
       addEventListener: vi.fn(),

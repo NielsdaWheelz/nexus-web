@@ -18,7 +18,7 @@ import {
   findPaneChromeFocusTarget,
   findPaneLandmarkFocusTarget,
 } from "@/lib/workspace/paneDom";
-import { usePaneChromeFocusReturn } from "@/lib/workspace/mobileChrome";
+import { useOptionalPaneChromeFocusReturn } from "@/lib/workspace/mobileChrome";
 import DesktopListeningShelf from "./DesktopListeningShelf";
 import MobileMiniPlayer from "./MobileMiniPlayer";
 import MobileNowPlaying from "./MobileNowPlaying";
@@ -56,7 +56,7 @@ export default function GlobalPlayerSurfaces() {
   const commands = usePlayerCommands();
   const capture = usePlayerCapture();
   const workspace = useWorkspaceStore();
-  const { focus: returnPaneChromeFocus } = usePaneChromeFocusReturn();
+  const { focus: returnPaneChromeFocus } = useOptionalPaneChromeFocusReturn();
   const isMobile = useIsMobileViewport();
   const model = projectPlayerChrome(session);
   const miniPlayerButtonRef = useRef<HTMLButtonElement>(null);

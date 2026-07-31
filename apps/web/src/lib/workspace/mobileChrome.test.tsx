@@ -17,6 +17,8 @@ import {
   useMobileChromeReaderScrollport,
   useMobileChromeSurface,
   useMobileChromeVisibleLocks,
+  useOptionalMobileChromeVisibleLocks,
+  useOptionalPaneChromeFocusReturn,
   usePaneChromeFocusReturn,
   type MobileChromeSurfaceRole,
 } from "@/lib/workspace/mobileChrome";
@@ -104,6 +106,35 @@ function RegisteredSurface({
         </button>
       ) : null}
     </div>
+  );
+}
+
+function VisibleLocksProbe() {
+  const { acquire } = useOptionalMobileChromeVisibleLocks();
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        const release = acquire("action-menu");
+        release();
+      }}
+    >
+      Exercise visible lock
+    </button>
+  );
+}
+
+function StrictVisibleLocksProbe() {
+  useMobileChromeVisibleLocks();
+  return null;
+}
+
+function OptionalFocusReturnProbe() {
+  const { focus } = useOptionalPaneChromeFocusReturn();
+  return (
+    <button type="button" onClick={() => void focus("pane-1")}>
+      Return focus
+    </button>
   );
 }
 
@@ -472,6 +503,27 @@ describe("MobileChromeProvider", () => {
       .getByTestId(role)
       .style.getPropertyValue(COLLAPSE_PROPERTY);
   }
+
+  it("lets collection primitives discover that no chrome capability exists", () => {
+    const view = renderInEnvironment(<VisibleLocksProbe />, "desktop");
+    expect(() =>
+      fireEvent.click(screen.getByRole("button", { name: "Exercise visible lock" })),
+    ).not.toThrow();
+    view.unmount();
+
+    expect(() =>
+      renderInEnvironment(<StrictVisibleLocksProbe />, "desktop"),
+    ).toThrow(
+      "useMobileChromeVisibleLocks must be used within MobileChromeProvider",
+    );
+  });
+
+  it("lets reusable pane surfaces discover that no focus capability exists", () => {
+    expect(() => {
+      renderInEnvironment(<OptionalFocusReturnProbe />, "desktop");
+      fireEvent.click(screen.getByRole("button", { name: "Return focus" }));
+    }).not.toThrow();
+  });
 
   function setReaderTop(top: number): HTMLElement {
     const reader = screen.getByTestId("reader-scrollport");

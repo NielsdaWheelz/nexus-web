@@ -1073,11 +1073,13 @@ export function useMobileChrome(): VolatileChromeState &
   return { ...volatile, setPaneChrome: stable.setPaneChrome };
 }
 
-export function useMobileChromeVisibleLocks(): MobileChromeVisibleLocks {
-  const stable = useStableController("useMobileChromeVisibleLocks");
+function useVisibleLocks(
+  stable: StableController | null,
+): MobileChromeVisibleLocks {
   const releasesRef = useRef(new Set<() => void>());
   const acquire = useCallback(
     (reason: MobileChromeVisibleLockReason) => {
+      if (!stable) return () => undefined;
       const releaseProviderLock = stable.acquire(reason);
       let released = false;
       const release = () => {
@@ -1100,11 +1102,44 @@ export function useMobileChromeVisibleLocks(): MobileChromeVisibleLocks {
   return useMemo(() => ({ acquire }), [acquire]);
 }
 
+export function useMobileChromeVisibleLocks(): MobileChromeVisibleLocks {
+  return useVisibleLocks(
+    useStableController("useMobileChromeVisibleLocks"),
+  );
+}
+
+/**
+ * Collection primitives also render where no mobile chrome exists. They may
+ * discover this capability without creating a second chrome owner; when the
+ * authenticated shell is present, the returned locks are the provider's real
+ * locks.
+ */
+export function useOptionalMobileChromeVisibleLocks(): MobileChromeVisibleLocks {
+  return useVisibleLocks(useContext(StableControllerContext));
+}
+
 export function usePaneChromeFocusReturn(): PaneChromeFocusReturn {
   const stable = useStableController("usePaneChromeFocusReturn");
   return useMemo(
     () => ({ focus: stable.focusPaneChrome }),
     [stable.focusPaneChrome],
+  );
+}
+
+/**
+ * Reusable pane content and global player surfaces also render in desktop-only
+ * harnesses where mobile chrome is not mounted. They may discover the focus
+ * capability without manufacturing another chrome owner.
+ */
+export function useOptionalPaneChromeFocusReturn(): PaneChromeFocusReturn {
+  const stable = useContext(StableControllerContext);
+  return useMemo(
+    () => ({
+      focus:
+        stable?.focusPaneChrome ??
+        (async (_paneId: string): Promise<void> => undefined),
+    }),
+    [stable?.focusPaneChrome],
   );
 }
 
