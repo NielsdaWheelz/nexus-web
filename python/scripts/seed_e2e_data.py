@@ -99,8 +99,14 @@ READER_RESUME_WEB_SOURCE_URL = "https://example.com/e2e-reader-resume-web-seed"
 READER_DOCUMENT_MAP_SOURCE_URL = "https://example.com/e2e-reader-document-map-seed"
 ACTIVITY_AUDIO_SOURCE_URL = "https://example.com/e2e-activity-audio-seed"
 ACTIVITY_AUDIO_STREAM_PATH = "/e2e-activity-audio.wav"
-ACTIVITY_AUDIO_SUCCESSOR_SOURCE_URL = "https://example.com/e2e-activity-audio-successor-seed"
-ACTIVITY_AUDIO_SUCCESSOR_STREAM_PATH = "/e2e-activity-audio-successor.wav"
+ACTIVITY_AUDIO_RESET_SOURCE_URL = "https://example.com/e2e-activity-audio-reset-seed"
+ACTIVITY_AUDIO_RESET_STREAM_PATH = "/e2e-activity-audio-reset.wav"
+ACTIVITY_AUDIO_PLAYBACK_SOURCE_URL = "https://example.com/e2e-activity-audio-playback-seed"
+ACTIVITY_AUDIO_PLAYBACK_STREAM_PATH = "/e2e-activity-audio-playback.wav"
+ACTIVITY_AUDIO_PLAYBACK_SUCCESSOR_SOURCE_URL = (
+    "https://example.com/e2e-activity-audio-playback-successor-seed"
+)
+ACTIVITY_AUDIO_PLAYBACK_SUCCESSOR_STREAM_PATH = "/e2e-activity-audio-playback-successor.wav"
 ACTIVITY_AUDIO_DURATION_SECONDS = 30
 YOUTUBE_VIDEO_ID = "s8E2Evid001"
 YOUTUBE_PLAYBACK_ONLY_VIDEO_ID = "s8E2Evid002"
@@ -613,8 +619,11 @@ def _write_activity_audio_seed_file(
     podcast_id: UUID,
     media_id: UUID,
     title: str,
-    successor_media_id: UUID,
-    successor_title: str,
+    reset_media_id: UUID,
+    playback_media_id: UUID,
+    playback_title: str,
+    playback_successor_media_id: UUID,
+    playback_successor_title: str,
 ) -> None:
     """Persist the deterministic audio identity used by activity E2E."""
     repo_root = Path(__file__).resolve().parents[2]
@@ -626,9 +635,13 @@ def _write_activity_audio_seed_file(
         "media_id": str(media_id),
         "title": title,
         "stream_path": ACTIVITY_AUDIO_STREAM_PATH,
-        "successor_media_id": str(successor_media_id),
-        "successor_title": successor_title,
-        "successor_stream_path": ACTIVITY_AUDIO_SUCCESSOR_STREAM_PATH,
+        "reset_media_id": str(reset_media_id),
+        "playback_media_id": str(playback_media_id),
+        "playback_title": playback_title,
+        "playback_stream_path": ACTIVITY_AUDIO_PLAYBACK_STREAM_PATH,
+        "playback_successor_media_id": str(playback_successor_media_id),
+        "playback_successor_title": playback_successor_title,
+        "playback_successor_stream_path": ACTIVITY_AUDIO_PLAYBACK_SUCCESSOR_STREAM_PATH,
         "duration_seconds": ACTIVITY_AUDIO_DURATION_SECONDS,
         "seeded_at": datetime.now(UTC).isoformat(),
     }
@@ -1493,9 +1506,14 @@ def _seed_activity_audio_media(session_factory, user_id: UUID) -> None:
     """
     podcast_id = uuid5(NAMESPACE_URL, "nexus:e2e:activity-audio:podcast")
     media_id = uuid5(NAMESPACE_URL, "nexus:e2e:activity-audio:episode")
-    successor_media_id = uuid5(NAMESPACE_URL, "nexus:e2e:activity-audio:successor-episode")
+    reset_media_id = uuid5(NAMESPACE_URL, "nexus:e2e:activity-audio:reset-episode")
+    playback_media_id = uuid5(NAMESPACE_URL, "nexus:e2e:activity-audio:playback-episode")
+    playback_successor_media_id = uuid5(
+        NAMESPACE_URL, "nexus:e2e:activity-audio:playback-successor-episode"
+    )
     title = "E2E background listening seed"
-    successor_title = "E2E untouched successor listening seed"
+    playback_title = "E2E playback-rate inheritance seed"
+    playback_successor_title = "E2E playback-rate successor seed"
     now = datetime.now(UTC)
 
     with session_factory() as db:
@@ -1578,13 +1596,31 @@ def _seed_activity_audio_media(session_factory, user_id: UUID) -> None:
                 "nexus-e2e-activity-audio",
             ),
             (
-                successor_media_id,
-                successor_title,
-                ACTIVITY_AUDIO_SUCCESSOR_SOURCE_URL,
-                ACTIVITY_AUDIO_SUCCESSOR_STREAM_PATH,
-                "activity-audio-successor-episode",
+                reset_media_id,
+                "E2E reset-progress seed",
+                ACTIVITY_AUDIO_RESET_SOURCE_URL,
+                ACTIVITY_AUDIO_RESET_STREAM_PATH,
+                "activity-audio-reset-episode",
                 datetime(2026, 1, 2, tzinfo=UTC),
-                "nexus-e2e-activity-audio-successor",
+                "nexus-e2e-activity-audio-reset",
+            ),
+            (
+                playback_media_id,
+                playback_title,
+                ACTIVITY_AUDIO_PLAYBACK_SOURCE_URL,
+                ACTIVITY_AUDIO_PLAYBACK_STREAM_PATH,
+                "activity-audio-playback-episode",
+                datetime(2026, 1, 3, tzinfo=UTC),
+                "nexus-e2e-activity-audio-playback",
+            ),
+            (
+                playback_successor_media_id,
+                playback_successor_title,
+                ACTIVITY_AUDIO_PLAYBACK_SUCCESSOR_SOURCE_URL,
+                ACTIVITY_AUDIO_PLAYBACK_SUCCESSOR_STREAM_PATH,
+                "activity-audio-playback-successor-episode",
+                datetime(2026, 1, 4, tzinfo=UTC),
+                "nexus-e2e-activity-audio-playback-successor",
             ),
         ):
             media = db.get(Media, episode_media_id)
@@ -1649,8 +1685,11 @@ def _seed_activity_audio_media(session_factory, user_id: UUID) -> None:
         podcast_id=podcast_id,
         media_id=media_id,
         title=title,
-        successor_media_id=successor_media_id,
-        successor_title=successor_title,
+        reset_media_id=reset_media_id,
+        playback_media_id=playback_media_id,
+        playback_title=playback_title,
+        playback_successor_media_id=playback_successor_media_id,
+        playback_successor_title=playback_successor_title,
     )
     print(f"Seeded activity-audio podcast episode for E2E: {media_id}")
 

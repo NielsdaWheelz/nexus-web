@@ -23,9 +23,13 @@ interface SeededAudio extends SeededMedia {
   podcast_id: string;
   title: string;
   stream_path: string;
-  successor_media_id: string;
-  successor_title: string;
-  successor_stream_path: string;
+  reset_media_id: string;
+  playback_media_id: string;
+  playback_title: string;
+  playback_stream_path: string;
+  playback_successor_media_id: string;
+  playback_successor_title: string;
+  playback_successor_stream_path: string;
   duration_seconds: number;
 }
 
@@ -144,33 +148,6 @@ async function resetPodcastSubscriptionSettings(
   expect(response.ok(), await response.text()).toBeTruthy();
 }
 
-async function clearEpisodePlaybackRate(
-  page: Parameters<typeof gotoSinglePaneWorkspace>[0],
-  mediaId: string,
-): Promise<void> {
-  const currentResponse = await page.request.get(
-    `/api/media/${mediaId}/listening-state`,
-  );
-  expect(currentResponse.ok(), await currentResponse.text()).toBeTruthy();
-  const current = (await currentResponse.json()) as { data: ListeningState };
-  const response = await page.request.put(
-    `/api/media/${mediaId}/listening-state`,
-    {
-      headers: stateChangingApiHeaders(),
-      data: {
-        positionMs: current.data.positionMs,
-        durationMs: current.data.durationMs,
-        episodePlaybackRate: { kind: "Absent" },
-        expectedWriteRevision: current.data.writeRevision,
-        expectedResetEpoch: current.data.resetEpoch,
-        heartbeatGeneration: randomUUID(),
-        heartbeatSequence: 1,
-      },
-    },
-  );
-  expect(response.ok(), await response.text()).toBeTruthy();
-}
-
 async function resetAudioProgress(
   page: Parameters<typeof gotoSinglePaneWorkspace>[0],
   mediaId: string,
@@ -272,13 +249,13 @@ test("resets podcast progress through the BFF to a canonical install snapshot", 
   await gotoSinglePaneWorkspace(page, rawDeviceId, "/lectern");
 
   const beforeResponse = await page.request.get(
-    `/api/media/${audio.media_id}/listening-state`,
+    `/api/media/${audio.reset_media_id}/listening-state`,
   );
   expect(beforeResponse.ok()).toBe(true);
   const before = (await beforeResponse.json()) as { data: ListeningState };
   const heartbeatGeneration = randomUUID();
   const heartbeat = await page.request.put(
-    `/api/media/${audio.media_id}/listening-state`,
+    `/api/media/${audio.reset_media_id}/listening-state`,
     {
       headers: stateChangingApiHeaders(),
       data: {
@@ -297,7 +274,7 @@ test("resets podcast progress through the BFF to a canonical install snapshot", 
   );
   expect(heartbeat.ok()).toBe(true);
 
-  const reset = await resetAudioProgress(page, audio.media_id);
+  const reset = await resetAudioProgress(page, audio.reset_media_id);
   expect(reset.readerCursor.revision).toBeGreaterThanOrEqual(1);
   if (reset.listeningState.kind !== "Present") {
     throw new Error("Podcast ResetProgress omitted its listening state");
@@ -317,7 +294,7 @@ test("resets podcast progress through the BFF to a canonical install snapshot", 
   });
 
   const afterResponse = await page.request.get(
-    `/api/media/${audio.media_id}/listening-state`,
+    `/api/media/${audio.reset_media_id}/listening-state`,
   );
   expect(afterResponse.ok()).toBe(true);
   const after = (await afterResponse.json()) as { data: ListeningState };
@@ -332,7 +309,7 @@ test("inherits podcast playback speed and resumes an episode override", async ({
   const rawDeviceId = `e2e-playback-rate-${randomUUID()}`;
   await page.route(
     new RegExp(
-      `(?:${audio.stream_path}|${audio.successor_stream_path})$`,
+      `(?:${audio.playback_stream_path}|${audio.playback_successor_stream_path})$`,
     ),
     (route) =>
       route.fulfill({
@@ -344,8 +321,6 @@ test("inherits podcast playback speed and resumes an episode override", async ({
   await gotoSinglePaneWorkspace(page, rawDeviceId, "/lectern");
 
   await resetPodcastSubscriptionSettings(page, audio.podcast_id);
-  await clearEpisodePlaybackRate(page, audio.media_id);
-  await clearEpisodePlaybackRate(page, audio.successor_media_id);
 
   try {
     const preference = await page.request.patch(
@@ -359,11 +334,11 @@ test("inherits podcast playback speed and resumes an episode override", async ({
     );
     expect(preference.ok(), await preference.text()).toBeTruthy();
 
-    await resetAndPlaceAudio(page, audio.media_id);
-    await resetAudioProgress(page, audio.successor_media_id);
+    await resetAndPlaceAudio(page, audio.playback_media_id);
+    await resetAudioProgress(page, audio.playback_successor_media_id);
     await gotoSinglePaneWorkspace(page, rawDeviceId, "/lectern");
     await activeWorkspacePane(page)
-      .getByRole("button", { name: `Play ${audio.title}` })
+      .getByRole("button", { name: `Play ${audio.playback_title}` })
       .click();
 
     const audioElement = page.locator(
@@ -387,7 +362,7 @@ test("inherits podcast playback speed and resumes an episode override", async ({
       if (
         response.request().method() !== "PUT" ||
         new URL(response.url()).pathname !==
-          `/api/media/${audio.media_id}/listening-state`
+          `/api/media/${audio.playback_media_id}/listening-state`
       ) {
         return false;
       }
@@ -412,7 +387,7 @@ test("inherits podcast playback speed and resumes an episode override", async ({
     await page.reload({ waitUntil: "domcontentloaded" });
     await waitForWorkspaceHydration(page);
     await activeWorkspacePane(page)
-      .getByRole("button", { name: `Play ${audio.title}` })
+      .getByRole("button", { name: `Play ${audio.playback_title}` })
       .click();
     await expect(audioElement).toHaveJSProperty("playbackRate", 1.75);
 
@@ -420,19 +395,19 @@ test("inherits podcast playback speed and resumes an episode override", async ({
       .getByRole("region", { name: "Media player" })
       .getByRole("button", { name: "Close player" })
       .click();
-    await resetAndPlaceAudio(page, audio.successor_media_id);
+    await resetAndPlaceAudio(page, audio.playback_successor_media_id);
     await gotoSinglePaneWorkspace(page, rawDeviceId, "/lectern");
     await activeWorkspacePane(page)
-      .getByRole("button", { name: `Play ${audio.successor_title}` })
+      .getByRole("button", {
+        name: `Play ${audio.playback_successor_title}`,
+      })
       .click();
     await expect(audioElement).toHaveJSProperty("playbackRate", 1.5);
   } finally {
     await removeAudioFromLectern(page, [
-      audio.media_id,
-      audio.successor_media_id,
+      audio.playback_media_id,
+      audio.playback_successor_media_id,
     ]);
-    await clearEpisodePlaybackRate(page, audio.media_id);
-    await clearEpisodePlaybackRate(page, audio.successor_media_id);
     await resetPodcastSubscriptionSettings(page, audio.podcast_id);
   }
 });
@@ -602,7 +577,7 @@ test("records private activity through the BFF and renders filtered Stats", asyn
   await expect(readerSurface).toBeVisible();
   await page.bringToFront();
   await readerSurface.click({ position: { x: 20, y: 20 } });
-  await readerSurface.hover();
+  await readerViewport.hover({ position: { x: 20, y: 20 } });
   const initialScrollTop = await readerViewport.evaluate(
     (element) => element.scrollTop,
   );
