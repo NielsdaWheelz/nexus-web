@@ -48,6 +48,7 @@ htmlcov/
 coverage/
 test-results/
 .vitest-attachments/
+/.nexus-test/
 
 # Linting
 .ruff_cache/

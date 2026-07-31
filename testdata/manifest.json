@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "artifacts": [
+    {
+      "path": "testdata/consumption/canonical_word_policy.json",
+      "sha256": "f4fafd95b12bcc1e135e2975bf95011d04dbea2a39485b6b2fc29c4aa7322113",
+      "source": "repo-authored: canonical consumption word-policy cases",
+      "license": "repo-owned",
+      "purpose": [
+        "Cross-language canonical word counts and position boundaries"
+      ]
+    },
+    {
+      "path": "testdata/pane-find/canonical-text.json",
+      "sha256": "05fb15a70a8ea323e0cabb44818c31465ecb9c43bd1b4740899b291c7511d11a",
+      "source": "repo-authored: canonical pane-find cases",
+      "license": "repo-owned",
+      "purpose": [
+        "Cross-language canonical text-find matching and offsets"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "priority_risks": [
+    {
+      "id": "test-environment-isolation",
+      "source_globs": [
+        "python/nexus_test_control/runtime.py"
+      ],
+      "proofs": [],
+      "capabilities": []
+    },
+    {
+      "id": "auth-privacy-secrets",
+      "source_globs": [
+        "python/nexus/auth/**/*.py",
+        "apps/web/src/lib/auth/**/*.ts",
+        "apps/web/src/lib/auth/**/*.tsx"
+      ],
+      "proofs": [],
+      "capabilities": []
+    },
+    {
+      "id": "destructive-side-effects",
+      "source_globs": [
+        "python/nexus/services/media_deletion.py",
+        "python/nexus/services/resource_graph/cleanup.py"
+      ],
+      "proofs": [],
+      "capabilities": []
+    },
+    {
+      "id": "migration-compatibility",
+      "source_globs": [
+        "migrations/alembic/**/*.py"
+      ],
+      "proofs": [],
+      "capabilities": []
+    },
+    {
+      "id": "costly-effects",
+      "source_globs": [
+        "python/nexus/services/billing.py",
+        "python/nexus/services/chat_run_usage.py",
+        "python/nexus/services/llm_ledger.py"
+      ],
+      "proofs": [],
+      "capabilities": []
+    },
+    {
+      "id": "reading-progress",
+      "source_globs": [
+        "python/nexus/services/consumption/**/*.py",
+        "apps/web/src/lib/reader/readerProgress.ts"
+      ],
+      "proofs": [],
+      "capabilities": []
+    },
+    {
+      "id": "citation-provenance-identity",
+      "source_globs": [
+        "python/nexus/services/retrieval_citation.py",
+        "python/nexus/services/resource_graph/citations.py",
+        "apps/web/src/lib/conversations/citations.ts"
+      ],
+      "proofs": [],
+      "capabilities": []
+    },
+    {
+      "id": "durable-job-replay",
+      "source_globs": [
+        "python/nexus/jobs/**/*.py",
+        "python/nexus/services/chat_run_idempotency.py"
+      ],
+      "proofs": [],
+      "capabilities": []
+    },
+    {
+      "id": "database-object-convergence",
+      "source_globs": [
+        "python/nexus/storage/**/*.py",
+        "python/nexus/services/media_deletion.py"
+      ],
+      "proofs": [],
+      "capabilities": []
+    },
+    {
+      "id": "llm-tool-safety",
+      "source_globs": [
+        "python/nexus/services/agent_tools/**/*.py",
+        "python/nexus/services/chat_run_tools.py"
+      ],
+      "proofs": [],
+      "capabilities": []
+    },
+    {
+      "id": "native-release-auth-handoff",
+      "source_globs": [
+        "apps/android/app/src/main/java/app/nexus/android/GoogleSignInController.kt",
+        "apps/android/app/src/main/java/app/nexus/android/MainActivity.kt"
+      ],
+      "proofs": [],
+      "capabilities": []
+    }
+  ],
+  "journeys": []
+}
