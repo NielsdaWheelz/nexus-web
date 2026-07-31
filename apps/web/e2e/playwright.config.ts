@@ -1,8 +1,11 @@
 import { defineConfig, devices } from "playwright/test";
+import { realpathSync } from "node:fs";
 import path from "node:path";
 import { loadBrowserRuntime } from "./runtime";
 
-const runtime = loadBrowserRuntime();
+const repoRoot = realpathSync(path.resolve(__dirname, "../../.."));
+const deploymentOrigin = process.env.NEXUS_SMOKE_APP_URL?.replace(/\/$/, "");
+const runtime = deploymentOrigin ? null : loadBrowserRuntime();
 
 for (const key of [
   "SERVICE_ROLE_KEY",
@@ -16,20 +19,37 @@ for (const key of [
 }
 
 export default defineConfig({
-  testDir: "./journeys",
-  testMatch: "**/*.journey.spec.ts",
   fullyParallel: false,
   forbidOnly: true,
   retries: 0,
   timeout: 90_000,
   workers: 1,
   reporter: "line",
-  outputDir: path.join(runtime.repoRoot, "test-results", "playwright"),
+  outputDir: path.join(repoRoot, "test-results", "playwright"),
   use: {
     ...devices["Desktop Chrome"],
-    baseURL: runtime.webOrigin,
     serviceWorkers: "block",
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
+  projects: [
+    {
+      name: "journeys",
+      testDir: "./journeys",
+      testMatch: "**/*.journey.spec.ts",
+      use: { baseURL: runtime?.webOrigin ?? "http://127.0.0.1" },
+    },
+    {
+      name: "deployment-smoke",
+      testDir: "./deployment",
+      testMatch: "**/*.deployed.spec.ts",
+      use: { baseURL: deploymentOrigin ?? "http://127.0.0.1" },
+    },
+    {
+      name: "extension",
+      testDir: "./extension",
+      testMatch: "**/*.extension.spec.ts",
+      use: { baseURL: runtime?.webOrigin ?? "http://127.0.0.1" },
+    },
+  ],
 });

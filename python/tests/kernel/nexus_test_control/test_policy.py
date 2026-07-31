@@ -103,16 +103,90 @@ def _minimal_repository(root: Path) -> None:
         "docs/rules/overrides.md",
         "docs/rules/retries.md",
         "docs/rules/simplicity.md",
+        "docs/rules/testing.md",
         "docs/rules/timing.md",
     )
     for relative in normative:
-        _write(root, relative, "# owner\n")
+        content = "# owner\n"
+        if relative == "docs/local-rules/index.md":
+            content += "[Testing](testing-standards.md)\n"
+        _write(root, relative, content)
     _write(
         root,
         "python/pyproject.toml",
         '[tool.pytest.ini_options]\nfilterwarnings = ["error::UserWarning"]\n',
     )
     _write(root, "apps/web/e2e/playwright.config.ts", "export default { workers: 1, retries: 0 }\n")
+    _write(
+        root,
+        "scripts/test",
+        "exec uv run --frozen --no-sync python -m nexus_test_control\n",
+    )
+    _write(root, "scripts/agency_verify.sh", "exec ./scripts/test confidence\n")
+    _write(
+        root,
+        "scripts/agency_setup.sh",
+        "uv sync --all-extras --locked\nbun install --frozen-lockfile\n",
+    )
+    _write(
+        root,
+        ".github/workflows/ci.yml",
+        "run: ./scripts/test pr\nif: always()\n",
+    )
+    _write(
+        root,
+        ".github/workflows/nightly.yml",
+        'NEXUS_HOSTED_CANARY: "1"\nscript: ./scripts/test nightly\n',
+    )
+    _write(
+        root,
+        ".github/workflows/release.yml",
+        'NEXUS_PROVIDER_CERTIFICATION: "1"\nscript: ./scripts/test release\n',
+    )
+    _write(
+        root,
+        "docs/local-rules/codebase.md",
+        "typed test control plane\napps/web/e2e/\ntestdata/\n",
+    )
+    _write(
+        root,
+        "docs/local-rules/testing-standards.md",
+        "./scripts/test confidence\n./scripts/test prove\n"
+        "## 11. Local test-runtime safety\nnexus-run-<run-id>\n",
+    )
+    for relative in ("README.md", "python/README.md", "apps/web/README.md"):
+        _write(
+            root,
+            relative,
+            "./scripts/test changed\n./scripts/test confidence\n./scripts/test pr\n",
+        )
+    _write(
+        root,
+        "docs/architecture.md",
+        "./scripts/test\ntesting-standards.md\napps/web/e2e/\n",
+    )
+    _write(root, ".env.example", "NEXUS_ENV=local\n")
+
+
+def test_repository_guard_rejects_legacy_route_resurrection(tmp_path: Path) -> None:
+    _minimal_repository(tmp_path)
+    _write(tmp_path, "scripts/test_env.sh", "export DATABASE_URL_TEST=unsafe\n")
+
+    assert "repository-retired-test-path" in _rules(repository_violations(tmp_path))
+
+
+def test_repository_guard_rejects_route_drift(tmp_path: Path) -> None:
+    _minimal_repository(tmp_path)
+    _write(tmp_path, "scripts/agency_verify.sh", "exec make test\n")
+
+    assert "repository-route-contract" in _rules(repository_violations(tmp_path))
+
+
+def test_repository_guard_rejects_documented_legacy_route(tmp_path: Path) -> None:
+    _minimal_repository(tmp_path)
+    _write(tmp_path, "README.md", "./scripts/test changed\nmake test-e2e\n")
+
+    assert "repository-route-contract" in _rules(repository_violations(tmp_path))
 
 
 def test_repository_contract_accepts_bounded_single_owner(tmp_path: Path) -> None:
@@ -185,9 +259,16 @@ def _complete_proof_repository(root: Path) -> dict[str, Any]:
     journeys: list[dict[str, Any]] = []
     for index, journey_id in enumerate(journey_ids):
         proof = f"apps/web/e2e/journeys/{journey_id}.journey.spec.ts"
+        source = f"src/journey_owner_{index}.tsx"
         _write(root, proof, "// journey\n")
+        _write(root, source, "export const owner = true;\n")
         journeys.append(
-            {"id": journey_id, "proof": proof, "risks": [risk_ids[index % len(risk_ids)]]}
+            {
+                "id": journey_id,
+                "proof": proof,
+                "risks": [risk_ids[index % len(risk_ids)]],
+                "source_globs": [source],
+            }
         )
     manifest = {"version": 1, "priority_risks": risks, "journeys": journeys}
     _dump(root, "testdata/proofs.json", manifest)
@@ -222,6 +303,7 @@ def test_proof_schema_rejects_unknown_capability(tmp_path: Path) -> None:
     ("mutation", "rule"),
     [
         ("missing-source", "proof-source-owner"),
+        ("missing-journey-source", "proof-source-owner"),
         ("missing-proof", "proof-node"),
         ("duplicate-proof", "proof-unique-owner"),
         ("too-few-journeys", "proof-journey-cap"),
@@ -234,6 +316,8 @@ def test_complete_proof_guard_rejects_broken_ownership(
     manifest = _complete_proof_repository(tmp_path)
     if mutation == "missing-source":
         manifest["priority_risks"][0]["source_globs"] = ["src/missing.py"]
+    elif mutation == "missing-journey-source":
+        manifest["journeys"][0]["source_globs"] = ["src/missing-journey.tsx"]
     elif mutation == "missing-proof":
         manifest["priority_risks"][0]["proofs"] = ["pytest:python/tests/kernel/missing.py::test"]
     elif mutation == "duplicate-proof":

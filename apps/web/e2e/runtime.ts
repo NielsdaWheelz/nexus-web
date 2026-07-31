@@ -12,7 +12,6 @@ const PORT_KEYS = [
   "supabase_shadow",
   "api",
   "web",
-  "reader_proxy",
 ] as const;
 
 type PortKey = (typeof PORT_KEYS)[number];
@@ -96,7 +95,6 @@ export function loadBrowserRuntime(): BrowserRuntime {
     origin(runtime.ports.api),
     origin(runtime.ports.minio),
     origin(runtime.ports.supabase_api),
-    origin(runtime.ports.reader_proxy),
   ]);
   return {
     repoRoot,

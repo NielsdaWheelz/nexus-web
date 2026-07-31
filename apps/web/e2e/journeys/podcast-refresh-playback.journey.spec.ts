@@ -97,7 +97,10 @@ test("a subscribed podcast refreshes through its durable run and opens an episod
     `Episode from podcast ${podcastId} did not establish a global player session after refresh ${refreshHandle}.`,
   ).toBeVisible();
   await expect(player).toContainText("The Crew-4 Astronauts");
+  const controls = player.getByRole("group", { name: "Media player controls" });
+  await expect(controls).toBeVisible();
   await expect(
-    player.getByRole("group", { name: "Media player controls" }),
+    controls.getByRole("button", { name: /^(?:Play|Pause) media player$/ }),
+    `Episode from podcast ${podcastId} did not establish an operable player session.`,
   ).toBeVisible();
 });

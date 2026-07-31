@@ -17,9 +17,10 @@
     },
     {
       "id": "auth-privacy-secrets",
-      "source_globs": [
-        "python/nexus/auth/**/*.py",
-        "apps/web/src/lib/auth/**/*.ts",
+            "source_globs": [
+                "python/nexus/auth/**/*.py",
+                "python/nexus/services/conversations.py",
+                "apps/web/src/lib/auth/**/*.ts",
         "apps/web/src/lib/auth/**/*.tsx"
       ],
       "proofs": [
@@ -56,10 +57,12 @@
     },
     {
       "id": "costly-effects",
-      "source_globs": [
-        "python/nexus/services/billing.py",
-        "python/nexus/services/chat_run_usage.py",
-        "python/nexus/services/llm_ledger.py"
+            "source_globs": [
+                "python/nexus/services/billing.py",
+                "python/nexus/services/billing_entitlements.py",
+                "python/nexus/services/chat_run_usage.py",
+                "python/nexus/services/llm_ledger.py",
+                "python/nexus/services/rate_limit.py"
       ],
       "proofs": [
         "pytest:python/tests/service/test_costly_effects.py::test_token_budget_reservation_and_settlement_are_exactly_once"
@@ -110,9 +113,10 @@
     },
     {
       "id": "database-object-convergence",
-      "source_globs": [
-        "python/nexus/storage/**/*.py",
-        "python/nexus/services/media_deletion.py"
+            "source_globs": [
+                "python/nexus/storage/**/*.py",
+                "python/nexus/services/media_deletion.py",
+                "python/nexus/tasks/storage_object_cleanup.py"
       ],
       "proofs": [
         "pytest:python/tests/service/test_database_object_convergence.py::test_owned_object_write_and_document_delete_converge_across_postgres_and_minio"
@@ -150,74 +154,129 @@
     }
   ],
   "journeys": [
-    {
-      "id": "auth-session",
-      "proof": "apps/web/e2e/journeys/auth-session.journey.spec.ts",
-      "risks": [
+        {
+            "id": "auth-session",
+            "proof": "apps/web/e2e/journeys/auth-session.journey.spec.ts",
+            "source_globs": [
+                "python/nexus/auth/**/*",
+                "apps/web/src/lib/auth/**/*",
+                "apps/web/src/app/login/**/*"
+            ],
+            "risks": [
         "auth-privacy-secrets"
       ]
     },
-    {
-      "id": "durable-ingest-reader-open",
-      "proof": "apps/web/e2e/journeys/durable-ingest-reader-open.journey.spec.ts",
-      "risks": [
+        {
+            "id": "durable-ingest-reader-open",
+            "proof": "apps/web/e2e/journeys/durable-ingest-reader-open.journey.spec.ts",
+            "source_globs": [
+                "python/nexus/services/node_ingest.py",
+                "python/nexus/services/media.py",
+                "apps/web/src/app/(authenticated)/media/**/*",
+                "apps/web/src/lib/panes/paneRenderRegistry.tsx"
+            ],
+            "risks": [
         "database-object-convergence"
       ]
     },
-    {
-      "id": "highlight-note-provenance",
-      "proof": "apps/web/e2e/journeys/highlight-note-provenance.journey.spec.ts",
-      "risks": [
+        {
+            "id": "highlight-note-provenance",
+            "proof": "apps/web/e2e/journeys/highlight-note-provenance.journey.spec.ts",
+            "source_globs": [
+                "python/nexus/services/highlights.py",
+                "apps/web/src/components/highlights/**/*",
+                "apps/web/src/lib/panes/paneRenderRegistry.tsx"
+            ],
+            "risks": [
         "citation-provenance-identity"
       ]
     },
-    {
-      "id": "reader-progress-resume",
-      "proof": "apps/web/e2e/journeys/reader-progress-resume.journey.spec.ts",
-      "risks": [
+        {
+            "id": "reader-progress-resume",
+            "proof": "apps/web/e2e/journeys/reader-progress-resume.journey.spec.ts",
+            "source_globs": [
+                "python/nexus/services/consumption/**/*",
+                "apps/web/src/lib/reader/**/*",
+                "apps/web/src/lib/panes/paneRenderRegistry.tsx"
+            ],
+            "risks": [
         "reading-progress"
       ]
     },
-    {
-      "id": "grounded-chat-citation",
-      "proof": "apps/web/e2e/journeys/grounded-chat-citation.journey.spec.ts",
-      "risks": [
+        {
+            "id": "grounded-chat-citation",
+            "proof": "apps/web/e2e/journeys/grounded-chat-citation.journey.spec.ts",
+            "source_globs": [
+                "python/nexus/services/chat_runs.py",
+                "python/nexus/services/resource_graph/citations.py",
+                "apps/web/src/components/chat/**/*",
+                "apps/web/src/lib/panes/paneRenderRegistry.tsx"
+            ],
+            "risks": [
         "citation-provenance-identity",
         "llm-tool-safety"
       ]
     },
-    {
-      "id": "resource-share-boundary",
-      "proof": "apps/web/e2e/journeys/resource-share-boundary.journey.spec.ts",
-      "risks": [
+        {
+            "id": "resource-share-boundary",
+            "proof": "apps/web/e2e/journeys/resource-share-boundary.journey.spec.ts",
+            "source_globs": [
+                "python/nexus/services/resource_sharing.py",
+                "apps/web/src/app/s/**/*"
+            ],
+            "risks": [
         "auth-privacy-secrets"
       ]
     },
-    {
-      "id": "nexus-search-open-restore",
-      "proof": "apps/web/e2e/journeys/nexus-search-open-restore.journey.spec.ts",
-      "risks": [
+        {
+            "id": "nexus-search-open-restore",
+            "proof": "apps/web/e2e/journeys/nexus-search-open-restore.journey.spec.ts",
+            "source_globs": [
+                "python/nexus/services/workspace_sessions.py",
+                "apps/web/src/components/nexus/**/*",
+                "apps/web/src/lib/nexus/**/*",
+                "apps/web/src/lib/workspace/**/*",
+                "apps/web/src/lib/panes/paneRenderRegistry.tsx"
+            ],
+            "risks": [
         "database-object-convergence"
       ]
     },
-    {
-      "id": "podcast-refresh-playback",
-      "proof": "apps/web/e2e/journeys/podcast-refresh-playback.journey.spec.ts",
-      "risks": [
+        {
+            "id": "podcast-refresh-playback",
+            "proof": "apps/web/e2e/journeys/podcast-refresh-playback.journey.spec.ts",
+            "source_globs": [
+                "python/nexus/services/podcasts/**/*",
+                "apps/web/src/app/(authenticated)/podcasts/**/*",
+                "apps/web/src/lib/player/**/*",
+                "apps/web/src/lib/panes/paneRenderRegistry.tsx"
+            ],
+            "risks": [
         "durable-job-replay"
       ]
     },
-    {
-      "id": "destructive-delete",
-      "proof": "apps/web/e2e/journeys/destructive-delete.journey.spec.ts",
-      "risks": [
+        {
+            "id": "destructive-delete",
+            "proof": "apps/web/e2e/journeys/destructive-delete.journey.spec.ts",
+            "source_globs": [
+                "python/nexus/services/conversations.py",
+                "apps/web/src/components/chat/Conversation.tsx",
+                "apps/web/src/lib/panes/paneRenderRegistry.tsx"
+            ],
+            "risks": [
         "destructive-side-effects"
       ]
     },
-    {
-      "id": "daily-page-capture",
-      "proof": "apps/web/e2e/journeys/daily-page-capture.journey.spec.ts",
-      "risks": [
+        {
+            "id": "daily-page-capture",
+            "proof": "apps/web/e2e/journeys/daily-page-capture.journey.spec.ts",
+            "source_globs": [
+                "python/nexus/services/notes.py",
+                "apps/web/src/app/(authenticated)/pages/**/*",
+                "apps/web/src/app/share/**/*",
+                "apps/web/src/lib/panes/paneRenderRegistry.tsx"
+            ],
+            "risks": [
         "destructive-side-effects"
       ]
     }

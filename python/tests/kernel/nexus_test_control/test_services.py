@@ -1,9 +1,13 @@
+import base64
+import hashlib
 from pathlib import Path
 
 import pytest
 
 from nexus_test_control.runtime import RuntimeContractError, RuntimePorts, initialize_runtime
 from nexus_test_control.services import (
+    TEST_EXTENSION_ID,
+    TEST_EXTENSION_PUBLIC_KEY,
     SupabaseCredentials,
     _database_url,
     _parse_supabase_status,
@@ -23,7 +27,7 @@ TEST_ENV = {"NEXUS_ENV": "test"}
 
 
 def _ports() -> RuntimePorts:
-    return RuntimePorts(15432, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000, 18010)
+    return RuntimePorts(15432, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000)
 
 
 def test_run_ids_are_exact_opaque_test_ownership_ids() -> None:
@@ -42,6 +46,11 @@ def test_caller_resource_configuration_is_rejected_and_secrets_have_safe_reprs()
         {"DATABASE_URL": "postgresql://production.example/app"},
         {"R2_ENDPOINT_URL": "https://production.example"},
         {"SUPABASE_JWKS_URL": "https://production.example/jwks"},
+        {"AWS_ENDPOINT_URL_S3": "https://production.example"},
+        {"PGHOST": "production.example"},
+        {"SUPABASE_ACCESS_TOKEN": "production-token"},
+        {"DOCKER_HOST": "tcp://production.example:2376"},
+        {"DOCKER_CONTEXT": "production"},
     ):
         with pytest.raises(RuntimeContractError):
             local_test_environment(environment)
@@ -153,6 +162,9 @@ def test_run_environment_contains_only_exact_local_resources_and_no_admin_key(
     assert environment["R2_BUCKET"] == run.bucket
     assert environment["NEXT_PUBLIC_SUPABASE_URL"] == "http://127.0.0.1:25421"
     assert environment["NEXT_PUBLIC_SUPABASE_ANON_KEY"] == "public-anon-key"
+    assert environment["NEXUS_EXTENSION_REDIRECT_ORIGINS"] == (
+        f"https://{TEST_EXTENSION_ID}.chromiumapp.org"
+    )
     assert "must-not-escape" not in repr(environment)
     assert not {
         "SERVICE_ROLE_KEY",
@@ -160,3 +172,12 @@ def test_run_environment_contains_only_exact_local_resources_and_no_admin_key(
         "SUPABASE_SERVICE_KEY",
         "SUPABASE_SERVICE_ROLE_KEY",
     }.intersection(environment)
+
+
+def test_extension_redirect_id_is_derived_from_the_staged_public_key() -> None:
+    digest = hashlib.sha256(base64.b64decode(TEST_EXTENSION_PUBLIC_KEY)).digest()
+    extension_id = "".join(
+        chr(ord("a") + nibble) for byte in digest[:16] for nibble in (byte >> 4, byte & 15)
+    )
+
+    assert extension_id == TEST_EXTENSION_ID

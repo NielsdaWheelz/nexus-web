@@ -1,5 +1,6 @@
 import fcntl
 import json
+import socket
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from nexus_test_control.runtime import (
     extension_profile_identity,
     forget_cleaned,
     initialize_runtime,
+    local_docker_host,
     process_resource_identity,
     read_ledger,
     record_created,
@@ -37,8 +39,20 @@ OTHER_RUN_ID = "fedcba9876543210"
 TEST_ENV = {"NEXUS_ENV": "test"}
 
 
+def test_docker_host_accepts_only_a_real_local_unix_socket(tmp_path: Path) -> None:
+    ordinary_file = tmp_path / "not-a-socket"
+    ordinary_file.write_text("unsafe", encoding="utf-8")
+    local_socket = tmp_path / "docker.sock"
+    with socket.socket(socket.AF_UNIX) as server:
+        server.bind(str(local_socket))
+        assert local_docker_host((ordinary_file, local_socket)) == f"unix://{local_socket}"
+
+    with pytest.raises(RuntimeContractError, match="local Docker Unix socket"):
+        local_docker_host((ordinary_file,))
+
+
 def _ports() -> RuntimePorts:
-    return RuntimePorts(15432, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000, 18010)
+    return RuntimePorts(15432, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000)
 
 
 def _runtime(tmp_path: Path) -> None:
@@ -74,7 +88,7 @@ def test_runtime_and_ledger_are_bound_to_the_exact_repository(tmp_path: Path) ->
 
 def test_runtime_ports_cannot_be_replaced_after_resource_ownership_exists(tmp_path: Path) -> None:
     _runtime(tmp_path)
-    changed = RuntimePorts(15433, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000, 18010)
+    changed = RuntimePorts(15433, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000)
 
     with pytest.raises(RuntimeContractError, match="cannot be replaced"):
         initialize_runtime(tmp_path, TEST_ENV, changed)

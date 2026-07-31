@@ -1,10 +1,16 @@
+import json
+from pathlib import Path
+
 import pytest
 
 from nexus_test_control.model import Capability, SelectionReason
 from nexus_test_control.selection import (
+    ChangedPath,
+    GitChangeKind,
     IndexedRoute,
     SelectionIndex,
     SelectionTarget,
+    load_selection_index,
     parse_git_name_status,
     select_changed,
     select_explicit_focus,
@@ -95,3 +101,92 @@ def test_direct_extension_does_not_also_select_all_journeys() -> None:
         parse_git_name_status(b"M\0apps/web/e2e/extension/reader.extension.spec.ts\0")
     )
     assert [item.capability for item in selections] == [Capability.EXTENSION]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "python/tests/hosted/nightly/test_openai_canary.py",
+        "python/tests/hosted/release/test_provider_certification.py",
+        "apps/android/app/src/androidTest/java/app/nexus/android/NativeAuthHandoffTest.kt",
+    ],
+)
+def test_paid_and_device_proof_never_enters_pr_sensitivity(path: str) -> None:
+    selection = select_changed(parse_git_name_status(f"M\0{path}\0".encode()))
+    assert len(selection) == 1
+    assert selection[0].sensitivity_required is False
+
+
+def test_priority_manifest_globs_route_root_and_nested_sources_to_exact_proof(
+    tmp_path: Path,
+) -> None:
+    manifest = tmp_path / "testdata/proofs.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "priority_risks": [
+                    {
+                        "id": "auth-privacy-secrets",
+                        "source_globs": ["python/nexus/auth/**/*.py"],
+                        "proofs": [
+                            "pytest:python/tests/service/test_auth_privacy.py::test_privacy"
+                        ],
+                        "capabilities": ["service"],
+                    }
+                ],
+                "journeys": [],
+            }
+        )
+    )
+    index = load_selection_index(tmp_path)
+
+    selections = select_changed(
+        parse_git_name_status(
+            b"M\0python/nexus/auth/verifier.py\0M\0python/nexus/auth/oauth/callback.py\0"
+        ),
+        index,
+    )
+
+    assert [selection.proof for selection in selections] == [
+        "pytest:python/tests/service/test_auth_privacy.py::test_privacy",
+        "pytest:python/tests/service/test_auth_privacy.py::test_privacy",
+    ]
+    assert {selection.reason for selection in selections} == {SelectionReason.PRIORITY_RISK}
+
+
+def test_journey_manifest_routes_lazy_pane_source_to_its_exact_browser_proof(
+    tmp_path: Path,
+) -> None:
+    manifest = tmp_path / "testdata/proofs.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "priority_risks": [],
+                "journeys": [
+                    {
+                        "id": "nexus-search-open-restore",
+                        "proof": (
+                            "apps/web/e2e/journeys/nexus-search-open-restore.journey.spec.ts"
+                        ),
+                        "risks": [],
+                        "source_globs": ["apps/web/src/lib/panes/paneRenderRegistry.tsx"],
+                    }
+                ],
+            }
+        )
+    )
+
+    selections = select_changed(
+        (ChangedPath(GitChangeKind.MODIFIED, "apps/web/src/lib/panes/paneRenderRegistry.tsx"),),
+        load_selection_index(tmp_path),
+    )
+
+    assert any(
+        selection.capability is Capability.JOURNEYS_ALL
+        and selection.proof
+        == ("playwright:apps/web/e2e/journeys/nexus-search-open-restore.journey.spec.ts")
+        and selection.reason is SelectionReason.JOURNEY_OWNER
+        for selection in selections
+    )

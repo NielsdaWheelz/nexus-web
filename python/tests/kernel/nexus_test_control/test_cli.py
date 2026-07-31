@@ -85,17 +85,18 @@ def test_workflow_writes_truthful_not_run_summary(tmp_path: Path) -> None:
     summary = json.loads(summary_path.read_text())
     assert summary["workflow"] == "doctor"
     assert summary["status"] == "not_run"
-    assert summary["capabilities"] == [
-        {
-            "artifacts": [],
-            "duration_ms": 0,
-            "estimated_cost_usd": 0,
-            "id": "doctor",
-            "peak_owned_mib": 0,
-            "provider_calls": 0,
-            "status": "not_run",
-        }
-    ]
+    capability = summary["capabilities"][0]
+    assert capability == {
+        "artifacts": [],
+        "duration_ms": 0,
+        "estimated_cost_usd": 0,
+        "id": "doctor",
+        "peak_owned_mib": capability["peak_owned_mib"],
+        "provider_calls": 0,
+        "status": "not_run",
+    }
+    assert capability["peak_owned_mib"] > 0
+    assert summary["peak_owned_mib"]["total"] >= capability["peak_owned_mib"]
 
 
 def test_changed_focus_uses_the_repository_root_and_records_explicit_selection(

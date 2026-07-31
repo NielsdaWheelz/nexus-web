@@ -50,8 +50,94 @@ _NORMATIVE_PATHS = (
     "docs/rules/overrides.md",
     "docs/rules/retries.md",
     "docs/rules/simplicity.md",
+    "docs/rules/testing.md",
     "docs/rules/timing.md",
 )
+_RETIRED_TEST_PATHS = (
+    "e2e",
+    "scripts/with_test_services.sh",
+    "scripts/with_supabase_services.sh",
+    "scripts/test_env.sh",
+    "scripts/find_port.sh",
+    "python/scripts/seed_real_media_e2e.py",
+    "python/scripts/seed_e2e_data.py",
+    "python/scripts/seed_oracle_plate_e2e.py",
+)
+_ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    "scripts/test": (
+        ("exec uv run --frozen --no-sync python -m nexus_test_control",),
+        ("make test", "pytest", "playwright"),
+    ),
+    "scripts/agency_verify.sh": (
+        ("exec ./scripts/test confidence",),
+        ("make test", "pytest", "playwright"),
+    ),
+    "scripts/agency_setup.sh": (
+        ("uv sync --all-extras --locked", "bun install --frozen-lockfile"),
+        ("DATABASE_URL_TEST", "nexus_test", "tests/test_db.py", "make test"),
+    ),
+    ".github/workflows/ci.yml": (
+        ("run: ./scripts/test pr", "if: always()"),
+        ("make test", "pytest", "playwright test"),
+    ),
+    ".github/workflows/nightly.yml": (
+        ('NEXUS_HOSTED_CANARY: "1"', "script: ./scripts/test nightly"),
+        ("make test",),
+    ),
+    ".github/workflows/release.yml": (
+        ('NEXUS_PROVIDER_CERTIFICATION: "1"', "script: ./scripts/test release"),
+        ("make test",),
+    ),
+    "docs/local-rules/index.md": (
+        ("testing-standards.md",),
+        ("testing_standards.md",),
+    ),
+    "docs/local-rules/codebase.md": (
+        ("apps/web/e2e/", "testdata/", "typed test control plane"),
+        ("- `e2e/`",),
+    ),
+    "docs/local-rules/testing-standards.md": (
+        (
+            "./scripts/test confidence",
+            "./scripts/test prove",
+            "## 11. Local test-runtime safety",
+            "nexus-run-<run-id>",
+        ),
+        (
+            "make test",
+            "make verify",
+            "test_verifier",
+            "## 11. Recovery and production proof",
+        ),
+    ),
+    "README.md": (
+        ("./scripts/test changed", "./scripts/test confidence", "./scripts/test pr"),
+        ("make test-", "make verify", "PLAYWRIGHT_ARGS", "DATABASE_URL_TEST"),
+    ),
+    "python/README.md": (
+        ("./scripts/test changed", "./scripts/test confidence", "./scripts/test pr"),
+        ("make test-", "make verify", "pytest-xdist"),
+    ),
+    "apps/web/README.md": (
+        ("./scripts/test changed", "./scripts/test confidence", "./scripts/test pr"),
+        ("make test-", "make verify", "PLAYWRIGHT_ARGS", "CI shards"),
+    ),
+    "docs/architecture.md": (
+        ("./scripts/test", "testing-standards.md", "apps/web/e2e/"),
+        ("testing_standards.md", "make test-", "make verify", "PLAYWRIGHT_ARGS"),
+    ),
+    ".env.example": (
+        ("NEXUS_ENV=local",),
+        (
+            "DATABASE_URL_TEST",
+            "TEST_POSTGRES_PORT",
+            "TEST_MINIO_PORT",
+            "PLAYWRIGHT_ARGS",
+            "E2E_DISABLE_CSP",
+            "E2E_USER_EMAIL",
+        ),
+    ),
+}
 
 
 def _sorted(violations: list[PolicyViolation]) -> tuple[PolicyViolation, ...]:
@@ -367,6 +453,49 @@ def repository_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
             violations.append(
                 PolicyViolation("repository-normative-link", relative, "normative owner is missing")
             )
+    for relative in _RETIRED_TEST_PATHS:
+        if (repo_root / relative).exists():
+            violations.append(
+                PolicyViolation(
+                    "repository-retired-test-path",
+                    relative,
+                    "hard-cut legacy test path must remain absent",
+                )
+            )
+    for relative, (required, forbidden) in _ROUTE_CONTRACT.items():
+        path = repo_root / relative
+        if not path.is_file():
+            violations.append(
+                PolicyViolation(
+                    "repository-route-contract",
+                    relative,
+                    "required test route owner is absent",
+                )
+            )
+            continue
+        text = path.read_text(encoding="utf-8")
+        missing = tuple(fragment for fragment in required if fragment not in text)
+        stale = tuple(fragment for fragment in forbidden if fragment in text)
+        if missing or stale:
+            violations.append(
+                PolicyViolation(
+                    "repository-route-contract",
+                    relative,
+                    f"missing={missing}; stale={stale}",
+                )
+            )
+    makefile = repo_root / "Makefile"
+    if makefile.is_file() and re.search(
+        r"(?m)^(?:test|check|verify)(?:-[a-z0-9_-]+)?\s*:",
+        makefile.read_text(encoding="utf-8"),
+    ):
+        violations.append(
+            PolicyViolation(
+                "repository-route-contract",
+                "Makefile",
+                "test and verification targets are forbidden compatibility aliases",
+            )
+        )
     return _sorted(violations)
 
 
@@ -454,7 +583,12 @@ def proof_manifest_schema_violations(repo_root: Path) -> tuple[PolicyViolation, 
 
     for index, journey in enumerate(data["journeys"]):
         location = f"{relative}#journeys[{index}]"
-        if not isinstance(journey, dict) or set(journey) != {"id", "proof", "risks"}:
+        if not isinstance(journey, dict) or set(journey) != {
+            "id",
+            "proof",
+            "risks",
+            "source_globs",
+        }:
             violations.append(PolicyViolation("proof-schema", location, "invalid journey shape"))
             continue
         if not isinstance(journey["id"], str) or not _SLUG.fullmatch(journey["id"]):
@@ -467,6 +601,12 @@ def proof_manifest_schema_violations(repo_root: Path) -> tuple[PolicyViolation, 
             risk not in required_ids for risk in journey["risks"]
         ):
             violations.append(PolicyViolation("proof-schema", location, "invalid journey risks"))
+        if not _string_list(journey["source_globs"], allow_empty=False) or not all(
+            _safe_relative(item, glob=True) for item in journey["source_globs"]
+        ):
+            violations.append(
+                PolicyViolation("proof-schema", location, "invalid journey source globs")
+            )
     return _sorted(violations)
 
 
@@ -536,11 +676,19 @@ def proof_contract_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
             )
         )
     for journey in data["journeys"]:
+        location = f"testdata/proofs.json#{journey['id']}"
+        for pattern in journey["source_globs"]:
+            if not any(path.is_file() for path in repo_root.glob(pattern)):
+                violations.append(
+                    PolicyViolation(
+                        "proof-source-owner", location, f"source glob matches no file: {pattern}"
+                    )
+                )
         if not (repo_root / journey["proof"]).is_file():
             violations.append(
                 PolicyViolation(
                     "proof-node",
-                    f"testdata/proofs.json#{journey['id']}",
+                    location,
                     "journey proof is missing",
                 )
             )

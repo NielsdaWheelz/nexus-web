@@ -36,12 +36,14 @@ from nexus_test_control.runtime import (
     cleanup_candidates,
     forget_cleaned,
     initialize_runtime,
+    local_docker_host,
     migration_database_name,
     process_resource_identity,
     read_runtime,
     record_created,
     record_planned,
     release_run,
+    require_run_id,
     require_scenario_id,
     require_test_environment,
     run_bucket_name,
@@ -65,19 +67,41 @@ POSTGRES_VERSION = "15"
 MINIO_ACCESS_KEY = "nexus-test-access-key"
 MINIO_SECRET_KEY = "nexus-test-secret-key"
 MINIO_REGION = "us-east-1"
+TEST_EXTENSION_PUBLIC_KEY = (
+    "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA7aGcdPe/ohIT6LtXJ0f01AQTBwebDyeBOwM"
+    "gtKOlrFeyM0N1rd0f8a04zaf9COcb1W3D+VfvFBUmSzA9VFV/OH8lCubZiSezftQggTIUGZvnvzL"
+    "sei/KNK1OO5uC7lfT3TDeYdw4qMMo0WU6QxUyMGeXuqV9dhBexVkQhSvKKZvgN2lX5cXvoH4N7fa"
+    "x0GFN5IYKodpTmAHMlxSrhAbQ8ZgNqTZN9M+TA2sbGUP2h9TVXyG90XOdTSr4eFHvogXuQC6bN4Q"
+    "oZ3TurMbTspO06nWOKE+Ls+5F0sB3Po1qVfdNd2pzTKn+diDPJ3WwlwwdoN3bBxn/A0V+uzWRym0/"
+    "YwIDAQAB"
+)
+TEST_EXTENSION_ID = "pfcfdmanlahjkanalhpnfjflgaaahgib"
 SUPABASE_EXCLUDED_SERVICES = (
     "realtime,storage-api,imgproxy,studio,edge-runtime,logflare,vector,postgres-meta,postgrest"
 )
 
-_PORT_DEFAULTS = (15432, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000, 18010)
+_PORT_DEFAULTS = (15432, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000)
 _SAFE_CHILD_ENV = ("HOME", "LANG", "LC_ALL", "PATH", "TMPDIR", "TZ", "UV_CACHE_DIR")
 _STATUS_KEYS = frozenset({"API_URL", "ANON_KEY", "PUBLISHABLE_KEY", "SECRET_KEY"})
 _CALLER_RESOURCE_ENV = frozenset(
     {
+        "AWS_ACCESS_KEY_ID",
+        "AWS_ENDPOINT_URL",
+        "AWS_ENDPOINT_URL_S3",
+        "AWS_PROFILE",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
         "DATABASE_URL",
         "DATABASE_URL_TEST",
         "DATABASE_URL_TEST_MIGRATIONS",
         "NEXT_PUBLIC_SUPABASE_URL",
+        "PGDATABASE",
+        "PGHOST",
+        "PGPASSFILE",
+        "PGPASSWORD",
+        "PGSERVICE",
+        "PGSERVICEFILE",
+        "PGUSER",
         "R2_ENDPOINT_URL",
         "R2_ACCESS_KEY_ID",
         "R2_BUCKET",
@@ -86,6 +110,7 @@ _CALLER_RESOURCE_ENV = frozenset(
         "R2_SECRET_ACCESS_KEY",
         "SERVICE_ROLE_KEY",
         "SUPABASE_ANON_KEY",
+        "SUPABASE_ACCESS_TOKEN",
         "SUPABASE_AUTH_ADMIN_KEY",
         "SUPABASE_DATABASE_URL",
         "SUPABASE_ISSUER",
@@ -141,6 +166,7 @@ def run_environment(
         "FASTAPI_BASE_URL": runtime_endpoint(root, environment, EndpointKind.API),
         "NEXT_PUBLIC_SUPABASE_ANON_KEY": run.supabase.anon_key,
         "NEXT_PUBLIC_SUPABASE_URL": run.supabase.url,
+        "NEXUS_EXTENSION_REDIRECT_ORIGINS": f"https://{TEST_EXTENSION_ID}.chromiumapp.org",
         "NEXUS_ENV": "test",
         "NEXUS_INTERNAL_SECRET": "nexus-test-internal-secret",
         "NEXUS_TEST_RUN_ID": run.run_id,
@@ -173,6 +199,12 @@ def test_environment(caller_environment: Mapping[str, str]) -> dict[str, str]:
         raise RuntimeContractError(
             "test control does not accept caller resource configuration: " + ", ".join(supplied)
         )
+    caller_docker_host = caller_environment.get("DOCKER_HOST")
+    if caller_docker_host and caller_docker_host != local_docker_host():
+        raise RuntimeContractError("test control rejects a non-local Docker host")
+    caller_docker_context = caller_environment.get("DOCKER_CONTEXT")
+    if caller_docker_context not in {None, "", "default"}:
+        raise RuntimeContractError("test control rejects a non-default Docker context")
     return {"NEXUS_ENV": "test"}
 
 
@@ -269,12 +301,13 @@ def prepare_run(
     repo_root: Path,
     environment: Mapping[str, str],
     *,
+    run_id: str,
     include_migration_database: bool = False,
 ) -> TestRun:
     require_test_environment(environment)
+    require_run_id(run_id)
     root = canonical_repo_root(repo_root)
     supabase = ensure_services(root, environment)
-    run_id = new_run_id()
     claim_run(root, environment, run_id)
     try:
         with run_lifecycle_lock(root, environment, run_id):
@@ -1042,6 +1075,9 @@ def _run(
     if not command or any(not isinstance(part, str) or not part for part in command):
         raise RuntimeContractError("child command must be a fixed non-empty argv")
     child_environment = _child_environment(environment or {})
+    if command[0] in {"docker", "supabase"}:
+        child_environment["DOCKER_HOST"] = local_docker_host()
+        child_environment["DOCKER_CONTEXT"] = "default"
     return subprocess.run(
         tuple(command),
         cwd=cwd,

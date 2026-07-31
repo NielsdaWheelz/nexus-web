@@ -1,8 +1,8 @@
 import json
+import subprocess
+from collections.abc import Mapping
 from io import StringIO
 from pathlib import Path
-
-import pytest
 
 import nexus_test_control.runner as runner
 from nexus_test_control.build import StandaloneBuild
@@ -35,9 +35,16 @@ from nexus_test_control.services import (
 
 
 def test_doctor_is_not_run_when_its_locked_tool_owners_are_absent(tmp_path: Path) -> None:
-    evidence = run_workflow(CapabilityContext(tmp_path, Workflow.DOCTOR, ()), StringIO(), {})
+    evidence = run_workflow(
+        CapabilityContext(tmp_path, Workflow.DOCTOR, ()),
+        StringIO(),
+        {},
+        run_id="0123456789abcdef",
+    )
 
-    assert evidence == (CapabilityEvidence(Capability.DOCTOR, RunStatus.NOT_RUN, 0, 0),)
+    assert evidence.capabilities[0].id is Capability.DOCTOR
+    assert evidence.capabilities[0].status is RunStatus.NOT_RUN
+    assert evidence.capabilities[0].peak_owned_mib > 0
 
 
 def test_changed_policy_scans_only_the_selected_python_proof(tmp_path: Path) -> None:
@@ -326,6 +333,10 @@ def test_exact_android_device_proof_uses_one_instrumentation_method(tmp_path: Pa
         "}\n",
     )
     _stub_tools(tmp_path, "java")
+    _write_executable(
+        sdk / "platform-tools/adb",
+        stdout="List of devices attached\nemulator-5554\tdevice\n",
+    )
     _write_executable(android_root / "gradlew")
     environment = {
         **_tool_environment(tmp_path),
@@ -333,7 +344,6 @@ def test_exact_android_device_proof_uses_one_instrumentation_method(tmp_path: Pa
         "NEXUS_GOOGLE_WEB_CLIENT_ID": "production-shaped-value",
     }
     proof = f"gradle:{proof_path}::nativeAuthStartCarriesTheExactHandoffContractToTheOwnedOrigin"
-
     result = run_proof(
         CapabilityContext(tmp_path, Workflow.NIGHTLY, ()),
         proof,
@@ -341,7 +351,7 @@ def test_exact_android_device_proof_uses_one_instrumentation_method(tmp_path: Pa
     )
 
     assert result.evidence.status is RunStatus.PASS
-    command = _commands(tmp_path)[0]
+    command = _commands(tmp_path)[-1]
     assert command["argv"] == [
         "--no-daemon",
         ":app:connectedDebugAndroidTest",
@@ -370,7 +380,7 @@ def test_missing_tool_is_not_run_and_command_failure_records_its_exit_status(
 
     stream = StringIO()
     tuple(stream_first_failure((failed,), stream, ("hidden-value",)))
-    assert stream.getvalue() == "kernel-web: fixed command 1 exited 7: token=[REDACTED]\n"
+    assert stream.getvalue() == ("kernel-web: fixed command 1 exited 7: stderr=token=[REDACTED]\n")
 
 
 def test_heavy_capability_remains_truthfully_not_run() -> None:
@@ -382,11 +392,18 @@ def test_heavy_capability_remains_truthfully_not_run() -> None:
 
 
 def test_affected_heavy_proofs_share_one_workflow_run_and_request_migrations_only_when_selected(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     (tmp_path / "python/.venv").mkdir(parents=True)
-    _write(tmp_path / "python/tests/service/test_owned.py", "def test_owned(): pass\n")
-    _write(tmp_path / "python/tests/migrations/test_owned.py", "def test_owned(): pass\n")
+    _write(tmp_path / "python/pyproject.toml", "[project]\nname='fixture'\nversion='1'\n")
+    _write(
+        tmp_path / "python/tests/service/test_owned.py",
+        "def test_owned():\n    assert 2 + 2 == 4\n",
+    )
+    _write(
+        tmp_path / "python/tests/migrations/test_owned.py",
+        "def test_owned():\n    assert 2 + 2 == 4\n",
+    )
     _write(tmp_path / "apps/web/package.json", "{}\n")
     (tmp_path / "apps/web/node_modules").mkdir()
     _write(tmp_path / "apps/web/src/owned.browser.test.ts", "export {};\n")
@@ -394,21 +411,43 @@ def test_affected_heavy_proofs_share_one_workflow_run_and_request_migrations_onl
     prepared: list[bool] = []
     cleaned: list[str] = []
 
-    def prepare(
-        repo_root: Path,
-        child_environment: dict[str, str],
-        *,
-        include_migration_database: bool,
-    ) -> OwnedTestRun:
-        assert repo_root == tmp_path
-        assert child_environment["NEXUS_ENV"] == "test"
-        prepared.append(include_migration_database)
-        return _test_run(include_migration_database=include_migration_database)
+    class Ports(runner._RunnerPorts):
+        def prepare_run(
+            self,
+            repo_root: Path,
+            child_environment: Mapping[str, str],
+            *,
+            run_id: str,
+            include_migration_database: bool,
+        ) -> OwnedTestRun:
+            assert repo_root == tmp_path
+            assert child_environment["NEXUS_ENV"] == "test"
+            assert run_id == "0123456789abcdef"
+            prepared.append(include_migration_database)
+            return _test_run(include_migration_database=include_migration_database)
 
-    monkeypatch.setattr(runner, "prepare_run", prepare)
-    monkeypatch.setattr(runner, "clean_run", lambda *_args, **_kwargs: cleaned.append("run"))
-    monkeypatch.setattr(runner, "run_environment", _stub_run_environment)
-    monkeypatch.setattr(runner, "_browser_installed", lambda *_args: True)
+        def clean_run(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            _run_id: str,
+            *,
+            supabase: SupabaseCredentials,
+        ) -> None:
+            del supabase
+            cleaned.append("run")
+
+        def run_environment(
+            self,
+            repo_root: Path,
+            environment: Mapping[str, str],
+            run: OwnedTestRun,
+        ) -> dict[str, str]:
+            return _stub_run_environment(repo_root, dict(environment), run)
+
+        def browser_installed(self, _repo_root: Path, _environment: Mapping[str, str]) -> bool:
+            return True
+
     context = CapabilityContext(
         tmp_path,
         Workflow.CHANGED,
@@ -434,16 +473,49 @@ def test_affected_heavy_proofs_share_one_workflow_run_and_request_migrations_onl
         ),
     )
 
-    evidence = run_workflow(context, StringIO(), environment)
+    evidence = run_workflow(
+        context,
+        StringIO(),
+        environment,
+        run_id="0123456789abcdef",
+        _ports=Ports(),
+    )
 
     assert prepared == [True]
     assert cleaned == ["run"]
-    by_capability = {item.id: item.status for item in evidence}
+    by_capability = {item.id: item.status for item in evidence.capabilities}
     assert by_capability[Capability.SERVICE] is RunStatus.PASS
     assert by_capability[Capability.MIGRATIONS] is RunStatus.PASS
     assert by_capability[Capability.COMPONENT] is RunStatus.PASS
     commands = _commands(tmp_path)
     assert [command["argv"] for command in commands] == [
+        [
+            "run",
+            "--frozen",
+            "--no-sync",
+            "ruff",
+            "check",
+            "./tests/migrations/test_owned.py",
+            "./tests/service/test_owned.py",
+        ],
+        [
+            "run",
+            "--frozen",
+            "--no-sync",
+            "ruff",
+            "format",
+            "--check",
+            "./tests/migrations/test_owned.py",
+            "./tests/service/test_owned.py",
+        ],
+        [
+            "run",
+            "--frozen",
+            "--no-sync",
+            "pyright",
+            "./tests/migrations/test_owned.py",
+            "./tests/service/test_owned.py",
+        ],
         ["run", "eslint", "--max-warnings", "0", "./src/owned.browser.test.ts"],
         [
             "run",
@@ -463,26 +535,26 @@ def test_affected_heavy_proofs_share_one_workflow_run_and_request_migrations_onl
     ]
     assert all(
         "DATABASE_URL" in command["environment"] and "NEXUS_TEST_RUN_ID" in command["environment"]
-        for command in (commands[1], commands[3])
+        for command in (commands[4], commands[6])
     )
-    assert "DATABASE_URL" not in commands[2]["environment"]
-    assert "NEXUS_TEST_RUN_ID" in commands[2]["environment"]
+    assert "DATABASE_URL" not in commands[5]["environment"]
+    assert "NEXUS_TEST_RUN_ID" in commands[5]["environment"]
 
 
 def test_affected_heavy_capabilities_with_no_selection_do_not_prepare_runtime(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(
-        runner,
-        "prepare_run",
-        lambda *_args, **_kwargs: pytest.fail("empty affected proof prepared a local run"),
+    run_workflow(
+        CapabilityContext(tmp_path, Workflow.CHANGED, ()),
+        StringIO(),
+        {},
+        run_id="0123456789abcdef",
     )
-
-    run_workflow(CapabilityContext(tmp_path, Workflow.CHANGED, ()), StringIO(), {})
+    assert not (tmp_path / ".nexus-test").exists()
 
 
 def test_bundle_is_built_once_and_critical_journeys_consume_ledger_owned_processes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     web_root = tmp_path / "apps/web"
     _write(web_root / "package.json", "{}\n")
@@ -499,12 +571,6 @@ def test_bundle_is_built_once_and_critical_journeys_consume_ledger_owned_process
             f'test.use({{ journeyId: "{journey_id}" }});\n',
         )
     environment = _stub_tools(tmp_path, "bun")
-    execution = runner._WorkflowExecution(
-        CapabilityContext(tmp_path, Workflow.PR, ()),
-        environment,
-        include_migration_database=True,
-        run=_test_run(include_migration_database=True),
-    )
     build_calls: list[str] = []
     process_roles: list[str] = []
     users: list[str] = []
@@ -512,44 +578,88 @@ def test_bundle_is_built_once_and_critical_journeys_consume_ledger_owned_process
     artifact = tmp_path / ".nexus-test/builds/fingerprint"
     _write(artifact / "server.js", "export {};\n")
 
-    def build(*_args: object) -> StandaloneBuild:
-        build_calls.append("build")
-        return StandaloneBuild("a" * 64, artifact, artifact / "server.js")
+    class Ports(runner._RunnerPorts):
+        def browser_installed(self, _repo_root: Path, _environment: Mapping[str, str]) -> bool:
+            return True
 
-    def start_python(*_args: object) -> StartedProcess:
-        role = str(_args[-1])
-        process_roles.append(role)
-        return StartedProcess(role, len(process_roles) + 100, f"{role}.log")
+        def run_environment(
+            self,
+            repo_root: Path,
+            environment: Mapping[str, str],
+            run: OwnedTestRun,
+        ) -> dict[str, str]:
+            return _stub_run_environment(repo_root, dict(environment), run)
 
-    def start_web(*_args: object) -> StartedProcess:
-        process_roles.append("web")
-        return StartedProcess("web", 200, "web.log")
+        def ensure_standalone_build(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            _supabase_anon_key: str,
+        ) -> StandaloneBuild:
+            build_calls.append("build")
+            return StandaloneBuild("a" * 64, artifact, artifact / "server.js")
 
-    def create_user(
-        _root: Path,
-        _environment: dict[str, str],
-        _run_id: str,
-        scenario_id: str,
-        _credentials: SupabaseCredentials,
-    ) -> OwnedTestUser:
-        users.append(scenario_id)
-        return OwnedTestUser(
-            "00000000-0000-4000-8000-000000000001",
-            f"nexus+0123456789abcdef+{scenario_id}@example.invalid",
-            "test-password",
-        )
+        def start_python_process(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            _run: OwnedTestRun,
+            role: str,
+        ) -> StartedProcess:
+            process_roles.append(role)
+            return StartedProcess(role, len(process_roles) + 100, f"{role}.log")
 
-    monkeypatch.setattr(runner, "ensure_standalone_build", build)
-    monkeypatch.setattr(runner, "_browser_installed", lambda *_args: True)
-    monkeypatch.setattr(runner, "run_environment", _stub_run_environment)
-    monkeypatch.setattr(runner, "start_python_process", start_python)
-    monkeypatch.setattr(runner, "start_web_process", start_web)
-    monkeypatch.setattr(runner, "wait_process_ready", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(runner, "create_supabase_user", create_user)
-    monkeypatch.setattr(
-        runner,
-        "grant_scenario_ai_entitlement",
-        lambda _root, _environment, _run, user: entitlements.append(user.email),
+        def start_web_process(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            _run: OwnedTestRun,
+            _build: StandaloneBuild,
+        ) -> StartedProcess:
+            process_roles.append("web")
+            return StartedProcess("web", 200, "web.log")
+
+        def wait_process_ready(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            _process: StartedProcess,
+            _endpoint: runner.EndpointKind,
+            _path: str,
+        ) -> None:
+            return
+
+        def create_supabase_user(
+            self,
+            _root: Path,
+            _environment: Mapping[str, str],
+            _run_id: str,
+            scenario_id: str,
+            _credentials: SupabaseCredentials,
+        ) -> OwnedTestUser:
+            users.append(scenario_id)
+            return OwnedTestUser(
+                "00000000-0000-4000-8000-000000000001",
+                f"nexus+0123456789abcdef+{scenario_id}@example.invalid",
+                "test-password",
+            )
+
+        def grant_scenario_ai_entitlement(
+            self,
+            _root: Path,
+            _environment: Mapping[str, str],
+            _run: OwnedTestRun,
+            user: OwnedTestUser,
+        ) -> None:
+            entitlements.append(user.email)
+
+    execution = runner._WorkflowExecution(
+        CapabilityContext(tmp_path, Workflow.PR, ()),
+        environment,
+        include_migration_database=True,
+        run_id="0123456789abcdef",
+        ports=Ports(),
+        run=_test_run(include_migration_database=True),
     )
 
     bundle = runner._run_bundle(execution.context, execution)
@@ -581,6 +691,8 @@ def test_bundle_is_built_once_and_critical_journeys_consume_ledger_owned_process
         "test",
         "--config",
         "e2e/playwright.config.ts",
+        "--project",
+        "journeys",
         "--workers=1",
         "--retries=0",
         "./e2e/journeys/auth-session.journey.spec.ts",
@@ -601,7 +713,7 @@ def test_bundle_is_built_once_and_critical_journeys_consume_ledger_owned_process
 
 
 def test_run_proof_executes_only_the_exact_service_node_and_classifies_assertion_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     (tmp_path / "python/.venv").mkdir(parents=True)
     proof = "python/tests/service/test_owned.py"
@@ -620,23 +732,43 @@ def test_run_proof_executes_only_the_exact_service_node_and_classifies_assertion
     prepared: list[bool] = []
     cleaned: list[str] = []
 
-    def prepare(
-        _root: Path,
-        _environment: dict[str, str],
-        *,
-        include_migration_database: bool,
-    ) -> OwnedTestRun:
-        prepared.append(include_migration_database)
-        return _test_run(include_migration_database=include_migration_database)
+    class Ports(runner._RunnerPorts):
+        def prepare_run(
+            self,
+            _root: Path,
+            _environment: Mapping[str, str],
+            *,
+            run_id: str,
+            include_migration_database: bool,
+        ) -> OwnedTestRun:
+            assert len(run_id) == 16
+            prepared.append(include_migration_database)
+            return _test_run(include_migration_database=include_migration_database)
 
-    monkeypatch.setattr(runner, "prepare_run", prepare)
-    monkeypatch.setattr(runner, "run_environment", _stub_run_environment)
-    monkeypatch.setattr(runner, "clean_run", lambda *_args, **_kwargs: cleaned.append("run"))
+        def clean_run(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            _run_id: str,
+            *,
+            supabase: SupabaseCredentials,
+        ) -> None:
+            del supabase
+            cleaned.append("run")
+
+        def run_environment(
+            self,
+            repo_root: Path,
+            environment: Mapping[str, str],
+            run: OwnedTestRun,
+        ) -> dict[str, str]:
+            return _stub_run_environment(repo_root, dict(environment), run)
 
     result = run_proof(
         CapabilityContext(tmp_path, Workflow.PR, ()),
         f"pytest:{proof}::test_exact",
         environment,
+        _ports=Ports(),
     )
 
     assert result.evidence.status is RunStatus.FAIL
@@ -653,14 +785,9 @@ def test_run_proof_executes_only_the_exact_service_node_and_classifies_assertion
 
 
 def test_run_proof_rejects_missing_or_inexact_browser_nodes_without_preparing_runtime(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     _write(tmp_path / "apps/web/src/owned.browser.test.ts", "export {};\n")
-    monkeypatch.setattr(
-        runner,
-        "prepare_run",
-        lambda *_args, **_kwargs: pytest.fail("invalid exact proof prepared a local run"),
-    )
     context = CapabilityContext(tmp_path, Workflow.PR, ())
 
     inexact = run_proof(
@@ -718,6 +845,108 @@ def test_first_failure_streams_before_later_results_and_redacts_secrets() -> Non
 
     assert len(observed) == 2
     assert stream.getvalue() == "policy: token=[REDACTED]\n"
+
+
+def test_workflow_stops_launching_capabilities_after_the_first_decisive_result(
+    tmp_path: Path,
+) -> None:
+    proof = tmp_path / "python/tests/kernel/test_rule.py"
+    _write(proof, "import time\n\ndef test_rule():\n    time.sleep(1)\n")
+    selection = Selection(
+        "python/tests/kernel/test_rule.py",
+        Capability.KERNEL_PYTHON,
+        SelectionReason.CHANGED_TEST,
+        "pytest:python/tests/kernel/test_rule.py",
+    )
+    result = run_workflow(
+        CapabilityContext(tmp_path, Workflow.CHANGED, (selection,)),
+        StringIO(),
+        {},
+        run_id="0123456789abcdef",
+    )
+
+    assert result.capabilities[0].status is RunStatus.FAIL
+    assert all(item.status is RunStatus.NOT_RUN for item in result.capabilities[1:])
+
+
+def test_paid_evidence_parser_accepts_only_typed_bounded_accounting(tmp_path: Path) -> None:
+    path = tmp_path / "paid.json"
+    _write(
+        path,
+        json.dumps(
+            {
+                "provider_calls": 9,
+                "estimated_cost_usd": 0.031,
+                "limits": {"provider_calls": 9, "estimated_cost_usd": 0.10},
+                "results": [{"attempts": 1}],
+            }
+        ),
+    )
+
+    assert runner._read_paid_evidence(path) == (9, 0.031, (9, 0.10), [{"attempts": 1}])
+
+    _write(
+        path,
+        json.dumps(
+            {
+                "provider_calls": True,
+                "estimated_cost_usd": 0,
+                "limits": {"provider_calls": 9, "estimated_cost_usd": 0.10},
+                "results": [],
+            }
+        ),
+    )
+    assert runner._read_paid_evidence(path) is None
+
+
+def test_android_release_parsers_fail_closed_on_signer_and_manifest_contract() -> None:
+    certificate = "ab" * 32
+    completed = subprocess.CompletedProcess(
+        ("apksigner",),
+        0,
+        f"Signer #1 certificate SHA-256 digest: {certificate}\n",
+        "",
+    )
+    manifest = (
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android" '
+        'package="app.nexus.android" android:versionCode="42" android:versionName="2.1">'
+        '<application android:usesCleartextTraffic="false"><activity>'
+        '<intent-filter android:autoVerify="true">'
+        '<data android:scheme="https" android:host="nexus.nielseriknandal.com"/>'
+        "</intent-filter></activity></application></manifest>"
+    )
+
+    assert runner._apksigner_certificate(completed) == certificate
+    assert runner._release_manifest_facts(manifest) == (
+        "app.nexus.android",
+        "42",
+        "2.1",
+        "nexus.nielseriknandal.com",
+    )
+    assert (
+        runner._apksigner_certificate(
+            subprocess.CompletedProcess(("apksigner",), 0, "unsigned", "")
+        )
+        is None
+    )
+    assert runner._release_manifest_facts(manifest.replace('"false"', '"true"')) is None
+
+
+def test_android_tool_versions_are_numeric_and_physical_release_devices_are_rejected(
+    tmp_path: Path,
+) -> None:
+    assert runner._android_tool_version("35.0.1-rc2") == (35, 0, 1, 2)
+    assert runner._android_tool_version("preview") == (0,)
+    adb = tmp_path / "sdk/adb"
+    _write_executable(
+        adb,
+        stdout="List of devices attached\nR5CT1234\tdevice\n",
+    )
+
+    serial, detail = runner._authorized_emulator(tmp_path, adb, _tool_environment(tmp_path))
+
+    assert serial is None
+    assert detail == "unsafe Android device inventory: release proof permits one emulator only"
 
 
 def _changed_context(repo_root: Path, selection: Selection) -> CapabilityContext:
@@ -791,7 +1020,7 @@ def _test_run(*, include_migration_database: bool) -> OwnedTestRun:
             if include_migration_database
             else None
         ),
-        bucket="nexus-test-0123456789abcdef",
+        bucket="nexus-run-0123456789abcdef",
         supabase=SupabaseCredentials(
             "http://127.0.0.1:54322",
             "anon-test-key",

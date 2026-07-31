@@ -123,6 +123,8 @@ class SelectionReason(StrEnum):
     CRITICAL_SOURCE = "critical-source"
     LAZY_PANE = "lazy-pane"
     PYTHON_OWNER = "python-owner"
+    PRIORITY_RISK = "priority-risk"
+    JOURNEY_OWNER = "journey-owner"
     PROMOTED_CAPABILITY = "promoted-capability"
 
 
@@ -277,6 +279,26 @@ _FULL_COMPLETE = (
     Capability.ANDROID_HOST,
 )
 
+_CHANGED_AFFECTED = (
+    Capability.POLICY_SELF_TESTS,
+    Capability.KERNEL_PYTHON,
+    Capability.KERNEL_WEB,
+    Capability.SERVICE,
+    Capability.COMPONENT,
+    Capability.MIGRATIONS,
+    Capability.BUNDLE,
+    Capability.JOURNEYS_ALL,
+    Capability.CORPUS,
+    Capability.PROVIDER_RUNTIME,
+    Capability.LLM_EVAL,
+    Capability.EXTENSION,
+    Capability.ANDROID_HOST,
+    Capability.AUDIT,
+    Capability.HOSTED,
+    Capability.PROVIDER_CERTIFICATION,
+    Capability.ANDROID_DEVICE,
+)
+
 WORKFLOW_REGISTRY: Mapping[Workflow, WorkflowDefinition] = MappingProxyType(
     {
         Workflow.CHANGED: WorkflowDefinition(
@@ -293,14 +315,7 @@ WORKFLOW_REGISTRY: Mapping[Workflow, WorkflowDefinition] = MappingProxyType(
                 ),
                 *_requirements(
                     SelectionScope.AFFECTED,
-                    (
-                        Capability.KERNEL_PYTHON,
-                        Capability.KERNEL_WEB,
-                        Capability.SERVICE,
-                        Capability.COMPONENT,
-                        Capability.MIGRATIONS,
-                        Capability.JOURNEYS_ALL,
-                    ),
+                    _CHANGED_AFFECTED,
                 ),
             ),
         ),

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import fcntl
+import hashlib
 import json
 import os
 import re
@@ -8,11 +10,14 @@ import socket
 import subprocess
 import time
 import tomllib
-from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+import xml.etree.ElementTree as ET
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
+from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
 from typing import TextIO, assert_never
+from urllib.parse import urlsplit
 
 import httpx
 import psycopg
@@ -20,10 +25,13 @@ from botocore.exceptions import BotoCoreError
 from sqlalchemy.exc import SQLAlchemyError
 
 from nexus_test_control.build import StandaloneBuild, ensure_standalone_build
-from nexus_test_control.evidence import CapabilityEvidence, redact_text
+from nexus_test_control.evidence import CapabilityEvidence, PeakOwnedMemory, redact_text
+from nexus_test_control.memory import measure_owned_memory, measured
 from nexus_test_control.model import (
     WORKFLOW_REGISTRY,
     Capability,
+    Resource,
+    ResourceKind,
     RunStatus,
     Selection,
     SelectionReason,
@@ -42,15 +50,23 @@ from nexus_test_control.policy import (
 from nexus_test_control.runtime import (
     EndpointKind,
     RuntimeContractError,
+    extension_profile_identity,
     read_runtime,
+    record_created,
+    record_planned,
     template_database_name,
 )
 from nexus_test_control.services import (
+    TEST_EXTENSION_PUBLIC_KEY,
+    StartedProcess,
+    SupabaseCredentials,
     TestRun,
+    TestUser,
     _repository_template_fingerprint,
     clean_run,
     create_supabase_user,
     grant_scenario_ai_entitlement,
+    new_run_id,
     prepare_run,
     run_environment,
     start_python_process,
@@ -166,11 +182,114 @@ class CapabilityResult:
             raise ValueError("capability result detail must not be blank")
 
 
+@dataclass(frozen=True, slots=True)
+class WorkflowRun:
+    capabilities: tuple[CapabilityEvidence, ...]
+    peak_owned_mib: PeakOwnedMemory
+
+
+class _RunnerPorts:
+    """Owned adapters for external process, service, and filesystem boundaries."""
+
+    def prepare_run(
+        self,
+        repo_root: Path,
+        environment: Mapping[str, str],
+        *,
+        run_id: str,
+        include_migration_database: bool,
+    ) -> TestRun:
+        return prepare_run(
+            repo_root,
+            environment,
+            run_id=run_id,
+            include_migration_database=include_migration_database,
+        )
+
+    def clean_run(
+        self,
+        repo_root: Path,
+        environment: Mapping[str, str],
+        run_id: str,
+        *,
+        supabase: SupabaseCredentials,
+    ) -> None:
+        clean_run(repo_root, environment, run_id, supabase=supabase)
+
+    def browser_installed(self, repo_root: Path, environment: Mapping[str, str]) -> bool:
+        return _browser_installed(repo_root, environment)
+
+    def run_environment(
+        self,
+        repo_root: Path,
+        environment: Mapping[str, str],
+        run: TestRun,
+    ) -> dict[str, str]:
+        return run_environment(repo_root, environment, run)
+
+    def ensure_standalone_build(
+        self,
+        repo_root: Path,
+        environment: Mapping[str, str],
+        supabase_anon_key: str,
+    ) -> StandaloneBuild:
+        return ensure_standalone_build(repo_root, environment, supabase_anon_key)
+
+    def create_supabase_user(
+        self,
+        repo_root: Path,
+        environment: Mapping[str, str],
+        run_id: str,
+        scenario_id: str,
+        supabase: SupabaseCredentials,
+    ) -> TestUser:
+        return create_supabase_user(repo_root, environment, run_id, scenario_id, supabase)
+
+    def grant_scenario_ai_entitlement(
+        self,
+        repo_root: Path,
+        environment: Mapping[str, str],
+        run: TestRun,
+        user: TestUser,
+    ) -> None:
+        grant_scenario_ai_entitlement(repo_root, environment, run, user)
+
+    def start_python_process(
+        self,
+        repo_root: Path,
+        environment: Mapping[str, str],
+        run: TestRun,
+        role: str,
+    ) -> StartedProcess:
+        return start_python_process(repo_root, environment, run, role)
+
+    def start_web_process(
+        self,
+        repo_root: Path,
+        environment: Mapping[str, str],
+        run: TestRun,
+        build: StandaloneBuild,
+    ) -> StartedProcess:
+        return start_web_process(repo_root, environment, run, build)
+
+    def wait_process_ready(
+        self,
+        repo_root: Path,
+        environment: Mapping[str, str],
+        process: StartedProcess,
+        endpoint: EndpointKind,
+        path: str,
+    ) -> None:
+        wait_process_ready(repo_root, environment, process, endpoint, path)
+
+
 @dataclass(slots=True)
 class _WorkflowExecution:
     context: CapabilityContext
     caller_environment: Mapping[str, str]
     include_migration_database: bool
+    run_id: str
+    ports: _RunnerPorts = field(default_factory=_RunnerPorts)
     run: TestRun | None = None
     build: StandaloneBuild | None = None
     journey_runtime_started: bool = False
@@ -210,9 +329,10 @@ class _WorkflowExecution:
             return self.preparation_failure
         started = time.monotonic_ns()
         try:
-            self.run = prepare_run(
+            self.run = self.ports.prepare_run(
                 self.context.repo_root,
                 {"NEXUS_ENV": "test", **child_environment},
+                run_id=self.run_id,
                 include_migration_database=self.include_migration_database,
             )
         except OSError as error:
@@ -246,7 +366,7 @@ class _WorkflowExecution:
             return
         run = self.run
         self.run = None
-        clean_run(
+        self.ports.clean_run(
             self.context.repo_root,
             {"NEXUS_ENV": "test", **_child_environment(self.caller_environment)},
             run.run_id,
@@ -258,8 +378,21 @@ def run_workflow(
     context: CapabilityContext,
     stream: TextIO,
     environment: Mapping[str, str],
-) -> tuple[CapabilityEvidence, ...]:
+    *,
+    run_id: str,
+    _ports: _RunnerPorts | None = None,
+) -> WorkflowRun:
     requirements = WORKFLOW_REGISTRY[context.workflow].requirements
+    required_capabilities = {requirement.capability for requirement in requirements}
+    omitted = sorted(
+        {selection.capability for selection in context.selection}.difference(required_capabilities),
+        key=lambda capability: capability.value,
+    )
+    if omitted:
+        raise RuntimeContractError(
+            f"{context.workflow.value} omits selected capabilities: "
+            + ", ".join(capability.value for capability in omitted)
+        )
     execution = _WorkflowExecution(
         context,
         environment,
@@ -268,24 +401,43 @@ def run_workflow(
             and _capability_is_selected(context, Capability.MIGRATIONS)
             for requirement in requirements
         ),
+        run_id=run_id,
+        ports=_ports or _RunnerPorts(),
     )
 
     def results() -> Iterable[CapabilityResult]:
+        blocked_by: Capability | None = None
         try:
             for requirement in requirements:
-                yield _run_capability(
-                    context,
-                    requirement.capability,
-                    environment,
-                    execution,
+                if blocked_by is not None:
+                    yield _not_run(
+                        requirement.capability,
+                        f"blocked by earlier {blocked_by.value} result",
+                    )
+                    continue
+                with measure_owned_memory(context.repo_root) as sampler:
+                    result = _run_capability(
+                        context,
+                        requirement.capability,
+                        environment,
+                        execution,
+                    )
+                memory = measured(sampler)
+                yield CapabilityResult(
+                    replace(result.evidence, peak_owned_mib=memory.total),
+                    result.detail,
                 )
+                if result.evidence.status is not RunStatus.PASS:
+                    blocked_by = requirement.capability
         finally:
             execution.close()
 
-    return tuple(
-        result.evidence
-        for result in stream_first_failure(results(), stream, environment_secrets(environment))
-    )
+    with measure_owned_memory(context.repo_root) as workflow_sampler:
+        capabilities = tuple(
+            result.evidence
+            for result in stream_first_failure(results(), stream, environment_secrets(environment))
+        )
+    return WorkflowRun(capabilities, measured(workflow_sampler))
 
 
 def stream_first_failure(
@@ -295,7 +447,7 @@ def stream_first_failure(
 ) -> Iterable[CapabilityResult]:
     failure_streamed = False
     for result in results:
-        if result.evidence.status is RunStatus.FAIL and not failure_streamed:
+        if result.evidence.status is not RunStatus.PASS and not failure_streamed:
             stream.write(
                 redact_text(
                     f"{result.evidence.id.value}: {result.detail}\n",
@@ -319,6 +471,8 @@ def run_proof(
     context: CapabilityContext,
     proof_id: str,
     environment: Mapping[str, str],
+    *,
+    _ports: _RunnerPorts | None = None,
 ) -> CapabilityResult:
     """Run one exact runner-qualified proof under its final ownership boundary."""
     try:
@@ -349,6 +503,8 @@ def run_proof(
         proof_context,
         environment,
         include_migration_database=capability is Capability.MIGRATIONS,
+        run_id=new_run_id(),
+        ports=_ports or _RunnerPorts(),
     )
     try:
         match capability:
@@ -396,8 +552,32 @@ def run_proof(
                     execution,
                     exact=True,
                 )
+            case Capability.EXTENSION:
+                result = _run_extension(
+                    proof_context,
+                    environment,
+                    execution,
+                    exact=True,
+                )
             case Capability.ANDROID_DEVICE:
                 result = _run_android_device_exact(proof_context, node, environment)
+            case Capability.ANDROID_HOST:
+                result = _run_android_host(proof_context, environment)
+            case Capability.AUDIT:
+                result = _run_audit(proof_context, environment, exact=True)
+            case Capability.HOSTED:
+                result = _run_hosted(
+                    proof_context,
+                    environment,
+                    execution,
+                    exact=True,
+                )
+            case Capability.PROVIDER_CERTIFICATION:
+                result = _run_provider_certification(
+                    proof_context,
+                    environment,
+                    execution,
+                )
             case _:
                 result = _not_run(capability, "exact proof owner has no executor")
         return _classified_exact_result(result)
@@ -416,6 +596,10 @@ def _run_capability(
     }
     if capability not in required:
         raise ValueError(f"{capability.value} is not required by workflow {context.workflow.value}")
+    if _scope(context, capability) is SelectionScope.AFFECTED and not _capability_is_selected(
+        context, capability
+    ):
+        return _pass(capability, f"no selected {capability.value} proof")
     caller_environment = environment
     match capability:
         case Capability.POLICY:
@@ -471,32 +655,25 @@ def _run_capability(
                 owner="tests/evals",
             )
         case Capability.EXTENSION:
-            return _not_implemented(capability)
+            return _run_extension(context, caller_environment, execution)
         case Capability.ANDROID_HOST:
             return _run_android_host(context, caller_environment)
         case Capability.AUDIT:
-            return _not_implemented(capability)
+            return _run_audit(context, caller_environment)
         case Capability.HOSTED:
-            return _not_implemented(capability)
+            return _run_hosted(context, caller_environment, execution)
         case Capability.ANDROID_DEVICE:
-            return _not_implemented(capability)
+            return _run_android_device(context, caller_environment)
         case Capability.PROVIDER_CERTIFICATION:
-            return _not_implemented(capability)
+            return _run_provider_certification(context, caller_environment, execution)
         case Capability.ANDROID_RELEASE:
-            return _not_implemented(capability)
+            return _run_android_release(context, caller_environment, execution)
         case Capability.RELEASE_ARTIFACT:
-            return _not_implemented(capability)
+            return _run_release_artifact(context, caller_environment, execution)
         case Capability.DOCTOR:
             return _run_doctor(context, caller_environment)
         case _ as unreachable:
             assert_never(unreachable)
-
-
-def _not_implemented(capability: Capability) -> CapabilityResult:
-    return CapabilityResult(
-        CapabilityEvidence(capability, RunStatus.NOT_RUN, 0, 0),
-        "capability executor is not implemented",
-    )
 
 
 def _run_sensitivity_gate(context: CapabilityContext) -> CapabilityResult:
@@ -740,20 +917,9 @@ def _run_kernel_python(
     if not owners or not (python_root / ".venv").is_dir():
         return _not_run(Capability.KERNEL_PYTHON, "Python kernel owner is absent")
     nodes, promoted = _selected_proof_nodes(context, Capability.KERNEL_PYTHON, "pytest")
-    proven = _proven_nodes(context, Capability.KERNEL_PYTHON, "pytest")
     if _scope(context, Capability.KERNEL_PYTHON) is SelectionScope.COMPLETE or promoted:
-        proven_paths = {node.split("::", 1)[0] for node in proven}
-        remaining = tuple(
-            f"./{path.relative_to(python_root).as_posix()}"
-            for path in owners
-            if path.relative_to(context.repo_root).as_posix() not in proven_paths
-        )
-        if not remaining:
-            return _pass(
-                Capability.KERNEL_PYTHON,
-                "complete Python kernel proof was covered by sensitivity",
-            )
-        argv = ("uv", "run", "--frozen", "--no-sync", "pytest", *remaining)
+        targets = tuple(f"./{path.relative_to(python_root).as_posix()}" for path in owners)
+        argv = ("uv", "run", "--frozen", "--no-sync", "pytest", *targets)
     elif nodes:
         argv = (
             "uv",
@@ -828,22 +994,12 @@ def _run_python_heavy(
     if not owner_files or not (python_root / ".venv").is_dir():
         return _not_run(capability, f"Python {capability.value} proof owner is absent")
     nodes, promoted = _selected_proof_nodes(context, capability, "pytest")
-    proven = _proven_nodes(context, capability, "pytest")
     if exact:
         if not nodes or promoted:
             raise ValueError("exact Python proof must name one pytest node")
         targets = tuple(_python_heavy_node(node, owner) for node in nodes)
     elif _scope(context, capability) is SelectionScope.COMPLETE or promoted:
-        proven_paths = {node.split("::", 1)[0] for node in proven}
-        targets = tuple(
-            f"./{path.relative_to(python_root).as_posix()}"
-            for path in owner_files
-            if path.relative_to(context.repo_root).as_posix() not in proven_paths
-        )
-        if not targets:
-            return _pass(
-                capability, f"complete Python {capability.value} proof was covered by sensitivity"
-            )
+        targets = tuple(f"./{path.relative_to(python_root).as_posix()}" for path in owner_files)
     elif nodes:
         targets = tuple(_python_heavy_node(node, owner) for node in nodes)
     else:
@@ -851,7 +1007,9 @@ def _run_python_heavy(
     prepared = _prepared_run(execution, capability)
     if isinstance(prepared, CapabilityResult):
         return prepared
-    child_environment = _heavy_environment(context, environment, prepared)
+    if execution is None:
+        raise AssertionError("prepared run exists without workflow execution")
+    child_environment = _heavy_environment(context, environment, prepared, execution.ports)
     return _run_owned_commands(
         capability,
         (
@@ -906,18 +1064,21 @@ def _run_component(
         targets = tuple(_web_component_path(node) for node in nodes)
     else:
         return _pass(capability, "no selected web component proof")
-    if not _browser_installed(context.repo_root, environment):
+    ports = execution.ports if execution is not None else _RunnerPorts()
+    if not ports.browser_installed(context.repo_root, environment):
         return _not_run(capability, "the locked Chromium browser is absent")
     prepared = _prepared_run(execution, capability)
     if isinstance(prepared, CapabilityResult):
         return prepared
+    if execution is None:
+        raise AssertionError("prepared run exists without workflow execution")
     argv = ("bun", "run", "test:browser")
     if targets:
         argv = (*argv, "--", *targets)
     return _run_owned_commands(
         capability,
         ((argv, web_root),),
-        _heavy_environment(context, environment, prepared, browser=True),
+        _heavy_environment(context, environment, prepared, execution.ports, browser=True),
         ("bun",),
     )
 
@@ -955,7 +1116,7 @@ def _ensure_bundle(
         return _not_run(capability, "required tool is absent: bun")
     started = time.monotonic_ns()
     try:
-        execution.build = ensure_standalone_build(
+        execution.build = execution.ports.ensure_standalone_build(
             context.repo_root,
             {"NEXUS_ENV": "test", **child_environment},
             prepared.supabase.anon_key,
@@ -1018,7 +1179,8 @@ def _run_journeys(
         if proven_paths:
             return _pass(capability, "selected Playwright journey proof was covered by sensitivity")
         return _not_run(capability, "selected Playwright journey owner is absent")
-    if not _browser_installed(context.repo_root, environment):
+    ports = execution.ports if execution is not None else _RunnerPorts()
+    if not ports.browser_installed(context.repo_root, environment):
         return _not_run(capability, "the locked Chromium browser is absent")
     prepared = _prepared_run(execution, capability)
     if isinstance(prepared, CapabilityResult):
@@ -1036,50 +1198,13 @@ def _run_journeys(
             )
     if execution.build is None:
         raise AssertionError("passing bundle capability did not retain its artifact")
+    runtime_failure = _ensure_browser_processes(context, capability, execution, prepared)
+    if runtime_failure is not None:
+        return runtime_failure
     try:
-        if not execution.journey_runtime_started:
-            api = start_python_process(
-                context.repo_root,
-                {"NEXUS_ENV": "test"},
-                prepared,
-                "api",
-            )
-            wait_process_ready(
-                context.repo_root,
-                {"NEXUS_ENV": "test"},
-                api,
-                EndpointKind.API,
-                "/health",
-            )
-            start_python_process(
-                context.repo_root,
-                {"NEXUS_ENV": "test"},
-                prepared,
-                "worker-interactive",
-            )
-            start_python_process(
-                context.repo_root,
-                {"NEXUS_ENV": "test"},
-                prepared,
-                "worker-background",
-            )
-            web = start_web_process(
-                context.repo_root,
-                {"NEXUS_ENV": "test"},
-                prepared,
-                execution.build,
-            )
-            wait_process_ready(
-                context.repo_root,
-                {"NEXUS_ENV": "test"},
-                web,
-                EndpointKind.WEB,
-                "/login",
-            )
-            execution.journey_runtime_started = True
         scenario_users: dict[str, dict[str, str]] = {}
         for journey_id in tuple(_journey_id(path) for path in paths):
-            user = create_supabase_user(
+            user = execution.ports.create_supabase_user(
                 context.repo_root,
                 {"NEXUS_ENV": "test"},
                 prepared.run_id,
@@ -1087,7 +1212,7 @@ def _run_journeys(
                 prepared.supabase,
             )
             if journey_id in {"grounded-chat-citation", "resource-share-boundary"}:
-                grant_scenario_ai_entitlement(
+                execution.ports.grant_scenario_ai_entitlement(
                     context.repo_root,
                     {"NEXUS_ENV": "test"},
                     prepared,
@@ -1104,7 +1229,9 @@ def _run_journeys(
         )
     except (RuntimeContractError, SQLAlchemyError, httpx.HTTPError, psycopg.Error) as error:
         return _fail(capability, f"owned journey runtime failed: {error}")
-    child_environment = _heavy_environment(context, environment, prepared, browser=True)
+    child_environment = _heavy_environment(
+        context, environment, prepared, execution.ports, browser=True
+    )
     child_environment["NEXUS_TEST_SCENARIO_USERS"] = json.dumps(
         scenario_users,
         separators=(",", ":"),
@@ -1122,6 +1249,8 @@ def _run_journeys(
                     "test",
                     "--config",
                     "e2e/playwright.config.ts",
+                    "--project",
+                    "journeys",
                     "--workers=1",
                     "--retries=0",
                     *targets,
@@ -1132,6 +1261,206 @@ def _run_journeys(
         child_environment,
         ("bun",),
     )
+
+
+def _run_extension(
+    context: CapabilityContext,
+    environment: Mapping[str, str],
+    execution: _WorkflowExecution | None,
+    *,
+    exact: bool = False,
+) -> CapabilityResult:
+    capability = Capability.EXTENSION
+    web_root = context.repo_root / "apps/web"
+    owner_root = web_root / "e2e/extension"
+    available = tuple(sorted(owner_root.glob("*.extension.spec.ts")))
+    if not available or not (context.repo_root / "apps/extension/manifest.json").is_file():
+        return _not_run(capability, "MV3 extension proof owner is absent")
+    if not _capability_is_selected(context, capability):
+        return _pass(capability, "no selected MV3 extension proof")
+    nodes, promoted = _selected_proof_nodes(context, capability, "playwright")
+    if exact:
+        if not nodes or promoted:
+            raise ValueError("exact extension proof must name one Playwright path")
+        paths = tuple(context.repo_root / _playwright_extension_path(node) for node in nodes)
+    elif _scope(context, capability) is SelectionScope.COMPLETE or promoted:
+        paths = available
+    elif nodes:
+        paths = tuple(context.repo_root / _playwright_extension_path(node) for node in nodes)
+    else:
+        return _pass(capability, "no selected MV3 extension proof")
+    ports = execution.ports if execution is not None else _RunnerPorts()
+    if not ports.browser_installed(context.repo_root, environment):
+        return _not_run(capability, "the locked Chromium browser is absent")
+    prepared = _prepared_run(execution, capability)
+    if isinstance(prepared, CapabilityResult):
+        return prepared
+    if execution is None:
+        raise AssertionError("prepared run exists without workflow execution")
+    if execution.build is None:
+        bundle = _ensure_bundle(context, capability, execution, prepared)
+        if bundle.evidence.status is not RunStatus.PASS:
+            return _result(
+                capability,
+                bundle.evidence.status,
+                bundle.evidence.duration_ms,
+                f"extension proof requires the production bundle: {bundle.detail}",
+            )
+    runtime_failure = _ensure_browser_processes(context, capability, execution, prepared)
+    if runtime_failure is not None:
+        return runtime_failure
+    try:
+        user = execution.ports.create_supabase_user(
+            context.repo_root,
+            {"NEXUS_ENV": "test"},
+            prepared.run_id,
+            "extension",
+            prepared.supabase,
+        )
+        profile, extension = _stage_extension(context.repo_root, prepared.run_id)
+    except OSError as error:
+        return _not_run(
+            capability, f"owned extension state could not start: {error.strerror or error}"
+        )
+    except (RuntimeContractError, httpx.HTTPError) as error:
+        return _fail(capability, f"owned extension state failed: {error}")
+    child_environment = _heavy_environment(
+        context, environment, prepared, execution.ports, browser=True
+    )
+    child_environment.update(
+        {
+            "NEXUS_TEST_EXTENSION_DIR": str(extension),
+            "NEXUS_TEST_EXTENSION_PROFILE": str(profile),
+            "NEXUS_TEST_SCENARIO_USERS": json.dumps(
+                {
+                    "extension": {
+                        "id": user.id,
+                        "email": user.email,
+                        "password": user.password,
+                    }
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+        }
+    )
+    targets = tuple(f"./{path.relative_to(web_root).as_posix()}" for path in paths)
+    return _run_owned_commands(
+        capability,
+        (
+            (
+                (
+                    "bun",
+                    "run",
+                    "playwright",
+                    "test",
+                    "--config",
+                    "e2e/playwright.config.ts",
+                    "--project",
+                    "extension",
+                    "--workers=1",
+                    "--retries=0",
+                    *targets,
+                ),
+                web_root,
+            ),
+        ),
+        child_environment,
+        ("bun",),
+    )
+
+
+def _ensure_browser_processes(
+    context: CapabilityContext,
+    capability: Capability,
+    execution: _WorkflowExecution,
+    prepared: TestRun,
+) -> CapabilityResult | None:
+    if execution.journey_runtime_started:
+        return None
+    if execution.build is None:
+        raise AssertionError("browser runtime requires the retained standalone artifact")
+    try:
+        api = execution.ports.start_python_process(
+            context.repo_root,
+            {"NEXUS_ENV": "test"},
+            prepared,
+            "api",
+        )
+        execution.ports.wait_process_ready(
+            context.repo_root,
+            {"NEXUS_ENV": "test"},
+            api,
+            EndpointKind.API,
+            "/health",
+        )
+        execution.ports.start_python_process(
+            context.repo_root,
+            {"NEXUS_ENV": "test"},
+            prepared,
+            "worker-interactive",
+        )
+        execution.ports.start_python_process(
+            context.repo_root,
+            {"NEXUS_ENV": "test"},
+            prepared,
+            "worker-background",
+        )
+        web = execution.ports.start_web_process(
+            context.repo_root,
+            {"NEXUS_ENV": "test"},
+            prepared,
+            execution.build,
+        )
+        execution.ports.wait_process_ready(
+            context.repo_root,
+            {"NEXUS_ENV": "test"},
+            web,
+            EndpointKind.WEB,
+            "/login",
+        )
+    except OSError as error:
+        return _not_run(
+            capability, f"owned browser runtime could not start: {error.strerror or error}"
+        )
+    except RuntimeContractError as error:
+        return _fail(capability, f"owned browser runtime failed: {error}")
+    execution.journey_runtime_started = True
+    return None
+
+
+def _stage_extension(repo_root: Path, run_id: str) -> tuple[Path, Path]:
+    scenario_id = "extension"
+    identity = extension_profile_identity(run_id, scenario_id)
+    resource = Resource(ResourceKind.EXTENSION_PROFILE, identity)
+    environment = {"NEXUS_ENV": "test"}
+    record_planned(
+        repo_root,
+        environment,
+        run_id,
+        resource,
+        scenario_id=scenario_id,
+    )
+    root = repo_root / identity
+    extension = root / "extension"
+    profile = root / "chromium"
+    root.mkdir(parents=True, exist_ok=False)
+    shutil.copytree(repo_root / "apps/extension", extension)
+    manifest_path = extension / "manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise RuntimeContractError("extension manifest is not readable JSON") from error
+    if not isinstance(manifest, dict) or manifest.get("manifest_version") != 3:
+        raise RuntimeContractError("extension proof requires the production MV3 manifest")
+    manifest["key"] = TEST_EXTENSION_PUBLIC_KEY
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    profile.mkdir()
+    record_created(repo_root, environment, run_id, resource)
+    return profile, extension
 
 
 def _prepared_run(
@@ -1151,6 +1480,13 @@ def _proof_owner(runner_name: str, node: str) -> tuple[Capability, Workflow]:
             ("python/tests/service/", Capability.SERVICE, Workflow.CHANGED),
             ("python/tests/migrations/", Capability.MIGRATIONS, Workflow.CHANGED),
             ("python/tests/evals/", Capability.LLM_EVAL, Workflow.FULL),
+            ("python/tests/audit/", Capability.AUDIT, Workflow.CHANGED),
+            (
+                "python/tests/hosted/release/",
+                Capability.PROVIDER_CERTIFICATION,
+                Workflow.RELEASE,
+            ),
+            ("python/tests/hosted/nightly/", Capability.HOSTED, Workflow.CHANGED),
         ):
             if path.startswith(prefix) and path.endswith(".py"):
                 return capability, workflow
@@ -1169,6 +1505,15 @@ def _proof_owner(runner_name: str, node: str) -> tuple[Capability, Workflow]:
     ):
         return Capability.JOURNEYS_ALL, Workflow.CHANGED
     elif (
+        runner_name == "playwright"
+        and "::" not in node
+        and path.startswith("apps/web/e2e/extension/")
+        and path.endswith(".extension.spec.ts")
+    ):
+        return Capability.EXTENSION, Workflow.CHANGED
+    elif runner_name == "gradle" and path.startswith(_ANDROID_HOST_PREFIX) and path.endswith(".kt"):
+        return Capability.ANDROID_HOST, Workflow.CHANGED
+    elif (
         runner_name == "gradle"
         and path.startswith("apps/android/app/src/androidTest/")
         and path.endswith(".kt")
@@ -1179,6 +1524,8 @@ def _proof_owner(runner_name: str, node: str) -> tuple[Capability, Workflow]:
 
 def _classified_exact_result(result: CapabilityResult) -> CapabilityResult:
     if result.evidence.status is not RunStatus.FAIL:
+        return result
+    if result.detail.startswith("proof_result="):
         return result
     folded = result.detail.casefold()
     if any(
@@ -1216,6 +1563,7 @@ def _heavy_environment(
     context: CapabilityContext,
     caller_environment: Mapping[str, str],
     run: TestRun,
+    ports: _RunnerPorts,
     *,
     browser: bool = False,
 ) -> dict[str, str]:
@@ -1224,7 +1572,7 @@ def _heavy_environment(
         for key in _SAFE_HEAVY_ENV
         if (value := caller_environment.get(key)) is not None and value != ""
     }
-    owned = run_environment(context.repo_root, {"NEXUS_ENV": "test"}, run)
+    owned = ports.run_environment(context.repo_root, {"NEXUS_ENV": "test"}, run)
     child.update(
         {key: value for key, value in owned.items() if not browser or key in _BROWSER_RUN_ENV}
     )
@@ -1253,6 +1601,13 @@ def _playwright_journey_path(node: str) -> str:
     path = node.split("::", 1)[0]
     if not path.startswith("apps/web/e2e/journeys/") or not path.endswith(".journey.spec.ts"):
         raise ValueError(f"Playwright journey proof is outside its owner: {node}")
+    return path
+
+
+def _playwright_extension_path(node: str) -> str:
+    path = node.split("::", 1)[0]
+    if not path.startswith("apps/web/e2e/extension/") or not path.endswith(".extension.spec.ts"):
+        raise ValueError(f"Playwright extension proof is outside its owner: {node}")
     return path
 
 
@@ -1329,6 +1684,291 @@ def _run_corpus(context: CapabilityContext) -> CapabilityResult:
     return _result(Capability.CORPUS, RunStatus.PASS, duration_ms, "corpus contract passed")
 
 
+def _run_audit(
+    context: CapabilityContext,
+    environment: Mapping[str, str],
+    *,
+    exact: bool = False,
+) -> CapabilityResult:
+    capability = Capability.AUDIT
+    python_root = context.repo_root / "python"
+    owner = python_root / "tests/audit"
+    available = tuple(sorted(owner.rglob("test_*.py"))) if owner.is_dir() else ()
+    if not available or not (python_root / ".venv").is_dir():
+        return _not_run(capability, "Python audit proof owner is absent")
+    nodes, promoted = _selected_proof_nodes(context, capability, "pytest")
+    if exact:
+        if not nodes or promoted:
+            raise ValueError("exact audit proof must name one pytest node")
+        targets = tuple(_python_heavy_node(node, "tests/audit") for node in nodes)
+    elif _scope(context, capability) is SelectionScope.COMPLETE or promoted:
+        targets = tuple(f"./{path.relative_to(python_root).as_posix()}" for path in available)
+    elif nodes:
+        targets = tuple(_python_heavy_node(node, "tests/audit") for node in nodes)
+    else:
+        return _pass(capability, "no selected audit proof")
+    child_environment = _child_environment(environment)
+    child_environment["NEXUS_ENV"] = "test"
+    seeds = ("15485863",) if exact else ("15485863", "32452843")
+    commands: tuple[FixedCommand, ...] = tuple(
+        (
+            (
+                "uv",
+                "run",
+                "--frozen",
+                "--no-sync",
+                "pytest",
+                "-q",
+                f"--randomly-seed={seed}",
+                f"--hypothesis-seed={seed}",
+                *targets,
+            ),
+            python_root,
+        )
+        for seed in seeds
+    )
+    return _run_owned_commands(capability, commands, child_environment, ("uv",))
+
+
+def _run_hosted(
+    context: CapabilityContext,
+    environment: Mapping[str, str],
+    execution: _WorkflowExecution | None,
+    *,
+    exact: bool = False,
+) -> CapabilityResult:
+    capability = Capability.HOSTED
+    python_root = context.repo_root / "python"
+    owner = python_root / "tests/hosted/nightly"
+    available = tuple(sorted(owner.rglob("test_*.py"))) if owner.is_dir() else ()
+    if not available or not (python_root / ".venv").is_dir():
+        return _not_run(capability, "hosted canary owner is absent")
+    if environment.get("NEXUS_HOSTED_CANARY") != "1":
+        return _not_run(capability, "set NEXUS_HOSTED_CANARY=1 for the paid hosted canary")
+    api_key = environment.get("OPENAI_API_KEY")
+    if not api_key:
+        return _not_run(capability, "the paid hosted canary requires OPENAI_API_KEY")
+    if execution is None:
+        return _not_run(capability, "hosted canary requires a controller run identity")
+    nodes, promoted = _selected_proof_nodes(context, capability, "pytest")
+    if exact:
+        if not nodes or promoted:
+            raise ValueError("exact hosted proof must name one pytest node")
+        targets = tuple(_python_heavy_node(node, "tests/hosted/nightly") for node in nodes)
+    elif _scope(context, capability) is SelectionScope.COMPLETE or promoted:
+        targets = tuple(f"./{path.relative_to(python_root).as_posix()}" for path in available)
+    elif nodes:
+        targets = tuple(_python_heavy_node(node, "tests/hosted/nightly") for node in nodes)
+    else:
+        return _pass(capability, "no selected hosted canary")
+    evidence_relative = Path("test-results/runs") / execution.run_id / "hosted-openai-canary.json"
+    evidence_path = context.repo_root / evidence_relative
+    if evidence_path.exists():
+        evidence_path.unlink()
+    child_environment = _child_environment(environment)
+    child_environment.update(
+        {
+            "NEXUS_ENV": "test",
+            "NEXUS_HOSTED_EVIDENCE_PATH": str(evidence_path),
+            "NEXUS_HOSTED_MAX_COST_USD": "0.01",
+            "NEXUS_HOSTED_MODEL": "openai/gpt-5.6-luna",
+            "NEXUS_HOSTED_CANARY": "1",
+            "NEXUS_PROVIDER_RUNTIME_REVISION": _provider_runtime_pin(context.repo_root),
+            "NEXUS_TEST_RUN_ID": execution.run_id,
+            "OPENAI_API_KEY": api_key,
+        }
+    )
+    result = _run_owned_commands(
+        capability,
+        (
+            (
+                (
+                    "uv",
+                    "run",
+                    "--frozen",
+                    "--no-sync",
+                    "pytest",
+                    "-q",
+                    "--force-enable-socket",
+                    *targets,
+                ),
+                python_root,
+            ),
+        ),
+        child_environment,
+        ("uv",),
+    )
+    if result.evidence.status is not RunStatus.PASS:
+        return result
+    try:
+        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+        calls = evidence["provider_calls"]
+        cost = evidence["estimated_cost_usd"]
+        results = evidence["results"]
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError):
+        return _fail(capability, "hosted canary did not emit its bounded evidence")
+    if (
+        calls != 1
+        or isinstance(cost, bool)
+        or not isinstance(cost, (int, float))
+        or not 0 <= cost <= 0.01
+        or not isinstance(results, list)
+        or len(results) != 1
+        or results[0].get("target") != "openai/gpt-5.6-luna"
+    ):
+        return _fail(capability, "hosted canary exceeded or changed its declared contract")
+    return CapabilityResult(
+        CapabilityEvidence(
+            capability,
+            RunStatus.PASS,
+            result.evidence.duration_ms,
+            result.evidence.peak_owned_mib,
+            provider_calls=1,
+            estimated_cost_usd=float(cost),
+            artifacts=(evidence_relative.as_posix(),),
+        ),
+        "one pinned OpenAI canary passed inside the $0.01 ceiling",
+    )
+
+
+def _run_provider_certification(
+    context: CapabilityContext,
+    environment: Mapping[str, str],
+    execution: _WorkflowExecution | None,
+) -> CapabilityResult:
+    capability = Capability.PROVIDER_CERTIFICATION
+    python_root = context.repo_root / "python"
+    proof = python_root / "tests/hosted/release/test_provider_certification.py"
+    if not proof.is_file() or not (python_root / ".venv").is_dir():
+        return _not_run(capability, "provider-certification proof owner is absent")
+    if environment.get("NEXUS_PROVIDER_CERTIFICATION") != "1":
+        return _not_run(
+            capability,
+            "set NEXUS_PROVIDER_CERTIFICATION=1 in the protected release environment",
+        )
+    required = (
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY",
+        "MOONSHOT_API_KEY",
+        "NEXUS_FABLE_RETENTION_ACCEPTED_AT",
+    )
+    missing = tuple(name for name in required if not environment.get(name))
+    if missing:
+        return _not_run(
+            capability,
+            "provider certification is missing protected inputs: " + ", ".join(missing),
+        )
+    if execution is None:
+        return _not_run(capability, "provider certification requires a controller run identity")
+    evidence_relative = Path("test-results/runs") / execution.run_id / "provider-certification.json"
+    evidence_path = context.repo_root / evidence_relative
+    if evidence_path.exists():
+        evidence_path.unlink()
+    child_environment = _child_environment(environment)
+    child_environment.update({name: environment[name] for name in required})
+    child_environment.update(
+        {
+            "NEXUS_ENV": "test",
+            "NEXUS_PROVIDER_CERTIFICATION": "1",
+            "NEXUS_PROVIDER_CERTIFICATION_EVIDENCE_PATH": str(evidence_path),
+            "NEXUS_PROVIDER_RUNTIME_REVISION": _provider_runtime_pin(context.repo_root),
+            "NEXUS_TEST_RUN_ID": execution.run_id,
+        }
+    )
+    result = _run_owned_commands(
+        capability,
+        (
+            (
+                (
+                    "uv",
+                    "run",
+                    "--frozen",
+                    "--no-sync",
+                    "pytest",
+                    "-q",
+                    "--force-enable-socket",
+                    "./tests/hosted/release/test_provider_certification.py",
+                ),
+                python_root,
+            ),
+        ),
+        child_environment,
+        ("uv",),
+    )
+    parsed = _read_paid_evidence(evidence_path)
+    if parsed is None:
+        if result.evidence.status is RunStatus.PASS:
+            return _fail(capability, "provider certification emitted no valid bounded evidence")
+        return result
+    calls, cost, limits, results = parsed
+    contract_valid = (
+        limits == (9, 0.10)
+        and calls == 9
+        and 0 <= cost <= 0.10
+        and len(results) == 9
+        and all(item.get("attempts") == 1 for item in results)
+    )
+    status = result.evidence.status
+    detail = result.detail
+    if status is RunStatus.PASS and not contract_valid:
+        status = RunStatus.FAIL
+        detail = "provider certification evidence changed or exceeded its bounded contract"
+    return CapabilityResult(
+        CapabilityEvidence(
+            capability,
+            status,
+            result.evidence.duration_ms,
+            result.evidence.peak_owned_mib,
+            provider_calls=calls,
+            estimated_cost_usd=cost,
+            artifacts=(evidence_relative.as_posix(),),
+        ),
+        detail,
+    )
+
+
+def _read_paid_evidence(
+    path: Path,
+) -> tuple[int, float, tuple[int, float], list[dict[str, object]]] | None:
+    try:
+        evidence = json.loads(path.read_text(encoding="utf-8"))
+        calls = evidence["provider_calls"]
+        cost = evidence["estimated_cost_usd"]
+        limits = evidence["limits"]
+        results = evidence["results"]
+        call_limit = limits["provider_calls"]
+        cost_limit = limits["estimated_cost_usd"]
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError):
+        return None
+    if (
+        isinstance(calls, bool)
+        or not isinstance(calls, int)
+        or calls < 0
+        or isinstance(cost, bool)
+        or not isinstance(cost, (int, float))
+        or isinstance(call_limit, bool)
+        or not isinstance(call_limit, int)
+        or isinstance(cost_limit, bool)
+        or not isinstance(cost_limit, (int, float))
+        or not isinstance(results, list)
+        or any(not isinstance(item, dict) for item in results)
+    ):
+        return None
+    return calls, float(cost), (call_limit, float(cost_limit)), results
+
+
+def _provider_runtime_pin(repo_root: Path) -> str:
+    try:
+        data = tomllib.loads((repo_root / "python/pyproject.toml").read_text(encoding="utf-8"))
+        revision = data["tool"]["uv"]["sources"]["provider-runtime"]["rev"]
+    except (KeyError, OSError, TypeError, tomllib.TOMLDecodeError) as error:
+        raise RuntimeContractError("provider-runtime pin is invalid or absent") from error
+    if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+        raise RuntimeContractError("provider-runtime pin is not a full Git SHA")
+    return revision
+
+
 def _run_provider_runtime(
     context: CapabilityContext, environment: Mapping[str, str]
 ) -> CapabilityResult:
@@ -1336,15 +1976,9 @@ def _run_provider_runtime(
     if not checkout.is_dir() or not (checkout / ".venv").is_dir():
         return _not_run(Capability.PROVIDER_RUNTIME, "pinned provider-runtime checkout is absent")
     try:
-        data = tomllib.loads(
-            (context.repo_root / "python/pyproject.toml").read_text(encoding="utf-8")
-        )
-        source = data["tool"]["uv"]["sources"]["provider-runtime"]
-        expected = source["rev"]
-    except (KeyError, OSError, TypeError, tomllib.TOMLDecodeError):
-        return _fail(Capability.PROVIDER_RUNTIME, "provider-runtime pin is invalid or absent")
-    if not isinstance(expected, str) or re.fullmatch(r"[0-9a-f]{40}", expected) is None:
-        return _fail(Capability.PROVIDER_RUNTIME, "provider-runtime pin is not a full Git SHA")
+        expected = _provider_runtime_pin(context.repo_root)
+    except RuntimeContractError as error:
+        return _fail(Capability.PROVIDER_RUNTIME, str(error))
     child_environment = _child_environment(environment)
     if shutil.which("git", path=child_environment.get("PATH")) is None:
         return _not_run(Capability.PROVIDER_RUNTIME, "required tool is absent: git")
@@ -1434,12 +2068,40 @@ def _run_android_host(
             argv = (*argv, "--tests", _android_test_class(context.repo_root, node))
     child_environment = dict(environment)
     child_environment["NEXUS_GOOGLE_WEB_CLIENT_ID"] = _TEST_GOOGLE_CLIENT_ID
-    return _run_fixed_commands(
-        Capability.ANDROID_HOST,
-        ((argv, android_root),),
-        child_environment,
-        ("java",),
+    with _gradle_lock(context.repo_root):
+        return _run_fixed_commands(
+            Capability.ANDROID_HOST,
+            ((argv, android_root),),
+            child_environment,
+            ("java",),
+        )
+
+
+def _run_android_device(
+    context: CapabilityContext, environment: Mapping[str, str]
+) -> CapabilityResult:
+    android_root = context.repo_root / "apps/android"
+    wrapper = android_root / "gradlew"
+    owners = tuple(
+        sorted(
+            path for path in (android_root / "app/src/androidTest").rglob("*.kt") if path.is_file()
+        )
     )
+    if not wrapper.is_file() or not owners:
+        return _not_run(Capability.ANDROID_DEVICE, "Android device proof owner is absent")
+    if not _android_sdk_available(android_root, environment):
+        return _not_run(Capability.ANDROID_DEVICE, "Android SDK is absent")
+    if not _android_device_attached(android_root, environment):
+        return _not_run(Capability.ANDROID_DEVICE, "no authorized Android device is attached")
+    child_environment = dict(environment)
+    child_environment["NEXUS_GOOGLE_WEB_CLIENT_ID"] = _TEST_GOOGLE_CLIENT_ID
+    with _gradle_lock(context.repo_root):
+        return _run_fixed_commands(
+            Capability.ANDROID_DEVICE,
+            ((("./gradlew", "--no-daemon", ":app:connectedDebugAndroidTest"), android_root),),
+            child_environment,
+            ("java",),
+        )
 
 
 def _run_android_device_exact(
@@ -1453,25 +2115,666 @@ def _run_android_device_exact(
         return _not_run(Capability.ANDROID_DEVICE, "Android device proof owner is absent")
     if not _android_sdk_available(android_root, environment):
         return _not_run(Capability.ANDROID_DEVICE, "Android SDK is absent")
+    if not _android_device_attached(android_root, environment):
+        return _not_run(Capability.ANDROID_DEVICE, "no authorized Android device is attached")
     target = _android_device_test_target(context.repo_root, node)
     child_environment = dict(environment)
     child_environment["NEXUS_GOOGLE_WEB_CLIENT_ID"] = _TEST_GOOGLE_CLIENT_ID
-    return _run_fixed_commands(
-        Capability.ANDROID_DEVICE,
-        (
+    with _gradle_lock(context.repo_root):
+        result = _run_fixed_commands(
+            Capability.ANDROID_DEVICE,
             (
                 (
-                    "./gradlew",
-                    "--no-daemon",
-                    ":app:connectedDebugAndroidTest",
-                    f"-Pandroid.testInstrumentationRunnerArguments.class={target}",
+                    (
+                        "./gradlew",
+                        "--no-daemon",
+                        ":app:connectedDebugAndroidTest",
+                        f"-Pandroid.testInstrumentationRunnerArguments.class={target}",
+                    ),
+                    android_root,
                 ),
-                android_root,
             ),
-        ),
-        child_environment,
-        ("java",),
+            child_environment,
+            ("java",),
+        )
+    if result.evidence.status is RunStatus.FAIL and _gradle_assertion_failed(android_root, target):
+        return CapabilityResult(
+            result.evidence,
+            f"proof_result=behavioral_assertion_failure|{result.detail}",
+        )
+    return result
+
+
+@dataclass(frozen=True, slots=True)
+class _AndroidReleaseInputs:
+    tag: str
+    git_sha: str
+    base_url: str
+    owned_host: str
+    certificate_sha256: str
+    keystore: Path
+    version_code: int
+    version_name: str
+    serial: str
+    adb: Path
+    apksigner: Path
+    apkanalyzer: Path
+
+
+def _run_android_release(
+    context: CapabilityContext,
+    environment: Mapping[str, str],
+    execution: _WorkflowExecution | None,
+) -> CapabilityResult:
+    capability = Capability.ANDROID_RELEASE
+    if execution is None:
+        return _not_run(capability, "Android release requires a controller run identity")
+    started = time.monotonic_ns()
+    inputs = _android_release_inputs(context.repo_root, environment)
+    if isinstance(inputs, CapabilityResult):
+        return inputs
+    android_root = context.repo_root / "apps/android"
+    child_environment = _child_environment(environment)
+    release_environment_names = (
+        "NEXUS_ANDROID_RELEASE_BASE_URL",
+        "NEXUS_ANDROID_RELEASE_OWNED_HOST",
+        "NEXUS_ANDROID_RELEASE_CERT_SHA256",
+        "NEXUS_ANDROID_RELEASE_STORE_FILE",
+        "NEXUS_ANDROID_RELEASE_STORE_PASSWORD",
+        "NEXUS_ANDROID_RELEASE_KEY_ALIAS",
+        "NEXUS_ANDROID_RELEASE_KEY_PASSWORD",
+        "NEXUS_ANDROID_VERSION_CODE",
+        "NEXUS_ANDROID_VERSION_NAME",
+        "NEXUS_GOOGLE_WEB_CLIENT_ID",
     )
+    child_environment.update({name: environment[name] for name in release_environment_names})
+    target = (
+        "app.nexus.android.NativeAuthHandoffTest#"
+        "nativeAuthStartCarriesTheExactHandoffContractToTheOwnedOrigin"
+    )
+    commands = (
+        (
+            "./gradlew",
+            "--no-daemon",
+            "-PnexusAndroidInstrumentationBuildType=release",
+            ":app:clean",
+            ":app:lintRelease",
+            ":app:assembleRelease",
+        ),
+        (
+            "./gradlew",
+            "--no-daemon",
+            "-PnexusAndroidInstrumentationBuildType=release",
+            ":app:connectedReleaseAndroidTest",
+            f"-Pandroid.testInstrumentationRunnerArguments.class={target}",
+        ),
+    )
+    with _gradle_lock(context.repo_root):
+        build = _release_command(commands[0], android_root, child_environment)
+        if build.returncode != 0:
+            return _release_command_failure(capability, started, 1, build, child_environment)
+        apk = android_root / "app/build/outputs/apk/release/app-release.apk"
+        if not apk.is_file() or apk.is_symlink():
+            return _release_failure(
+                capability, started, "release APK is absent or not a regular file"
+            )
+        signer = _release_command(
+            (str(inputs.apksigner), "verify", "--verbose", "--print-certs", str(apk)),
+            context.repo_root,
+            child_environment,
+        )
+        actual_certificate = _apksigner_certificate(signer)
+        if signer.returncode != 0 or actual_certificate != inputs.certificate_sha256:
+            return _release_failure(
+                capability,
+                started,
+                "release APK signature does not match the protected certificate",
+            )
+        manifest = _release_command(
+            (str(inputs.apkanalyzer), "manifest", "print", str(apk)),
+            context.repo_root,
+            child_environment,
+        )
+        manifest_facts = _release_manifest_facts(manifest.stdout)
+        expected_manifest = (
+            "app.nexus.android",
+            str(inputs.version_code),
+            inputs.version_name,
+            inputs.owned_host,
+        )
+        if manifest.returncode != 0 or manifest_facts != expected_manifest:
+            return _release_failure(
+                capability,
+                started,
+                "release APK manifest differs from package/version/App-Link contract",
+            )
+        offline = _release_command(
+            (
+                str(inputs.adb),
+                "-s",
+                inputs.serial,
+                "shell",
+                "cmd",
+                "connectivity",
+                "airplane-mode",
+                "enable",
+            ),
+            context.repo_root,
+            child_environment,
+        )
+        offline_state = _release_command(
+            (
+                str(inputs.adb),
+                "-s",
+                inputs.serial,
+                "shell",
+                "settings",
+                "get",
+                "global",
+                "airplane_mode_on",
+            ),
+            context.repo_root,
+            child_environment,
+        )
+        if (
+            offline.returncode != 0
+            or offline_state.returncode != 0
+            or offline_state.stdout.strip() != "1"
+        ):
+            return _release_failure(
+                capability,
+                started,
+                "dedicated release emulator could not be placed offline before app launch",
+            )
+        device = _release_command(commands[1], android_root, child_environment)
+        if device.returncode != 0:
+            return _release_command_failure(capability, started, 2, device, child_environment)
+        if not _gradle_assertion_passed(android_root, target):
+            return _release_failure(
+                capability,
+                started,
+                "release instrumentation did not emit the exact passing auth-handoff proof",
+            )
+        verified_again = _release_command(
+            (str(inputs.apksigner), "verify", "--verbose", "--print-certs", str(apk)),
+            context.repo_root,
+            child_environment,
+        )
+        if (
+            verified_again.returncode != 0
+            or _apksigner_certificate(verified_again) != inputs.certificate_sha256
+        ):
+            return _release_failure(capability, started, "tested release APK changed after signing")
+        resolved = _release_command(
+            (
+                str(inputs.adb),
+                "-s",
+                inputs.serial,
+                "shell",
+                "cmd",
+                "package",
+                "resolve-activity",
+                "--brief",
+                "-a",
+                "android.intent.action.VIEW",
+                "-c",
+                "android.intent.category.BROWSABLE",
+                "-d",
+                f"{inputs.base_url}/",
+            ),
+            context.repo_root,
+            child_environment,
+        )
+    resolved_activity = resolved.stdout.strip().splitlines()[-1:] or [""]
+    if resolved.returncode != 0 or resolved_activity[0] not in {
+        "app.nexus.android/.MainActivity",
+        "app.nexus.android/app.nexus.android.MainActivity",
+    }:
+        return _release_failure(
+            capability,
+            started,
+            "installed release APK does not resolve its owned HTTPS App Link",
+        )
+    sha256 = _sha256_file(apk)
+    evidence_relative = Path("test-results/runs") / execution.run_id / "android-release.json"
+    evidence_path = context.repo_root / evidence_relative
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
+    evidence_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "run_id": execution.run_id,
+                "git_sha": inputs.git_sha,
+                "tag": inputs.tag,
+                "apk_path": apk.relative_to(context.repo_root).as_posix(),
+                "apk_sha256": sha256,
+                "apk_size": apk.stat().st_size,
+                "package": "app.nexus.android",
+                "version_code": inputs.version_code,
+                "version_name": inputs.version_name,
+                "signer_sha256": inputs.certificate_sha256,
+                "emulator": {"serial": inputs.serial, "qemu": True},
+                "instrumentation_proof": target,
+                "app_link_host": inputs.owned_host,
+                "resolved_activity": resolved_activity[0],
+                "production_network_contact": False,
+                "emulator_network_disabled": True,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    duration_ms = (time.monotonic_ns() - started) // 1_000_000
+    return CapabilityResult(
+        CapabilityEvidence(
+            capability,
+            RunStatus.PASS,
+            duration_ms,
+            0,
+            artifacts=(evidence_relative.as_posix(),),
+        ),
+        "signed release APK, exact auth handoff, and local App-Link resolution passed",
+    )
+
+
+def _run_release_artifact(
+    context: CapabilityContext,
+    environment: Mapping[str, str],
+    execution: _WorkflowExecution | None,
+) -> CapabilityResult:
+    capability = Capability.RELEASE_ARTIFACT
+    if execution is None:
+        return _not_run(capability, "release artifact requires a controller run identity")
+    started = time.monotonic_ns()
+    evidence_path = (
+        context.repo_root / "test-results/runs" / execution.run_id / "android-release.json"
+    )
+    try:
+        source = json.loads(evidence_path.read_text(encoding="utf-8"))
+        tag = source["tag"]
+        apk_relative = source["apk_path"]
+        expected_sha256 = source["apk_sha256"]
+        signer = source["signer_sha256"]
+        version_code = source["version_code"]
+        version_name = source["version_name"]
+        git_sha = source["git_sha"]
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError):
+        return _release_failure(
+            capability, started, "same-run Android release evidence is absent or invalid"
+        )
+    if (
+        source.get("run_id") != execution.run_id
+        or not isinstance(tag, str)
+        or re.fullmatch(r"android-v[a-zA-Z0-9._-]+", tag) is None
+        or apk_relative != "apps/android/app/build/outputs/apk/release/app-release.apk"
+        or not isinstance(expected_sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None
+        or not isinstance(signer, str)
+        or re.fullmatch(r"[0-9a-f]{64}", signer) is None
+        or isinstance(version_code, bool)
+        or not isinstance(version_code, int)
+        or version_code < 1
+        or not isinstance(version_name, str)
+        or version_name != tag.removeprefix("android-v")
+        or not isinstance(git_sha, str)
+        or re.fullmatch(r"[0-9a-f]{40}", git_sha) is None
+    ):
+        return _release_failure(capability, started, "Android release evidence changed shape")
+    apk = context.repo_root / apk_relative
+    try:
+        tag_sha = _git_commit(context.repo_root, tag, environment)
+        head_sha = _git_commit(context.repo_root, "HEAD", environment)
+    except RuntimeContractError as error:
+        return _release_failure(capability, started, str(error))
+    if (
+        not apk.is_file()
+        or apk.is_symlink()
+        or _sha256_file(apk) != expected_sha256
+        or tag_sha != git_sha
+        or head_sha != git_sha
+    ):
+        return _release_failure(
+            capability,
+            started,
+            "release source APK, tag, or commit differs from verified evidence",
+        )
+    sdk_tools = _android_release_tools(environment)
+    if sdk_tools is None:
+        return _not_run(capability, "Android release SDK tools are absent")
+    _adb, apksigner, _apkanalyzer = sdk_tools
+    verified = _release_command(
+        (str(apksigner), "verify", "--verbose", "--print-certs", str(apk)),
+        context.repo_root,
+        _child_environment(environment),
+    )
+    if verified.returncode != 0 or _apksigner_certificate(verified) != signer:
+        return _release_failure(capability, started, "release source signer changed")
+    release_root = context.repo_root / "test-results/runs" / execution.run_id
+    staged = release_root / "release"
+    temporary = release_root / "release.tmp"
+    if staged.exists() or temporary.exists():
+        return _release_failure(capability, started, "same-run release staging path already exists")
+    temporary.mkdir(parents=True)
+    versioned_name = f"nexus-android-{version_name}.apk"
+    names = ("nexus-android.apk", versioned_name)
+    for name in names:
+        shutil.copy2(apk, temporary / name)
+        (temporary / f"{name}.sha256").write_text(
+            f"{expected_sha256}  {name}\n",
+            encoding="utf-8",
+        )
+    manifest = {
+        "version": 1,
+        "run_id": execution.run_id,
+        "git_sha": git_sha,
+        "tag": tag,
+        "package": "app.nexus.android",
+        "version_code": version_code,
+        "version_name": version_name,
+        "signer_sha256": signer,
+        "source_apk_sha256": expected_sha256,
+        "assets": {
+            name: _sha256_file(temporary / name)
+            for name in (*names, *(f"{name}.sha256" for name in names))
+        },
+    }
+    (temporary / "release-manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temporary.rename(staged)
+    artifacts = tuple(
+        (staged / name).relative_to(context.repo_root).as_posix()
+        for name in (
+            "nexus-android.apk",
+            "nexus-android.apk.sha256",
+            versioned_name,
+            f"{versioned_name}.sha256",
+            "release-manifest.json",
+        )
+    )
+    duration_ms = (time.monotonic_ns() - started) // 1_000_000
+    return CapabilityResult(
+        CapabilityEvidence(
+            capability,
+            RunStatus.PASS,
+            duration_ms,
+            0,
+            artifacts=artifacts,
+        ),
+        "verified Android release assets were staged atomically",
+    )
+
+
+def _android_release_inputs(
+    repo_root: Path, environment: Mapping[str, str]
+) -> _AndroidReleaseInputs | CapabilityResult:
+    capability = Capability.ANDROID_RELEASE
+    names = (
+        "ANDROID_RELEASE_TAG",
+        "NEXUS_ANDROID_RELEASE_BASE_URL",
+        "NEXUS_ANDROID_RELEASE_OWNED_HOST",
+        "NEXUS_ANDROID_RELEASE_CERT_SHA256",
+        "NEXUS_ANDROID_RELEASE_STORE_FILE",
+        "NEXUS_ANDROID_RELEASE_STORE_PASSWORD",
+        "NEXUS_ANDROID_RELEASE_KEY_ALIAS",
+        "NEXUS_ANDROID_RELEASE_KEY_PASSWORD",
+        "NEXUS_ANDROID_VERSION_CODE",
+        "NEXUS_ANDROID_VERSION_NAME",
+        "NEXUS_GOOGLE_WEB_CLIENT_ID",
+    )
+    missing = tuple(name for name in names if not environment.get(name))
+    if missing:
+        return _not_run(
+            capability, "Android release is missing protected inputs: " + ", ".join(missing)
+        )
+    tag = environment["ANDROID_RELEASE_TAG"]
+    if re.fullmatch(r"android-v[a-zA-Z0-9._-]+", tag) is None:
+        return _fail(capability, "Android release tag must match android-v*")
+    try:
+        tag_sha = _git_commit(repo_root, tag, environment)
+        head_sha = _git_commit(repo_root, "HEAD", environment)
+        if tag_sha != head_sha:
+            return _fail(capability, "Android release tag does not resolve to HEAD")
+    except RuntimeContractError as error:
+        return _fail(capability, str(error))
+    base_url = environment["NEXUS_ANDROID_RELEASE_BASE_URL"].rstrip("/")
+    owned_host = environment["NEXUS_ANDROID_RELEASE_OWNED_HOST"]
+    parsed = urlsplit(base_url)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != owned_host
+        or owned_host != "nexus.nielseriknandal.com"
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        return _fail(capability, "Android release URL must be the canonical HTTPS origin")
+    certificate = environment["NEXUS_ANDROID_RELEASE_CERT_SHA256"].replace(":", "").lower()
+    if re.fullmatch(r"[0-9a-f]{64}", certificate) is None:
+        return _fail(capability, "Android release certificate must be SHA-256")
+    keystore = Path(environment["NEXUS_ANDROID_RELEASE_STORE_FILE"])
+    try:
+        mode = keystore.stat().st_mode
+    except OSError:
+        return _not_run(capability, "Android release keystore is absent")
+    if not keystore.is_file() or keystore.is_symlink() or mode & 0o077:
+        return _fail(capability, "Android release keystore must be a private regular file")
+    try:
+        version_code = int(environment["NEXUS_ANDROID_VERSION_CODE"])
+    except ValueError:
+        return _fail(capability, "Android release version code must be a positive integer")
+    if version_code < 1:
+        return _fail(capability, "Android release version code must be a positive integer")
+    version_name = environment["NEXUS_ANDROID_VERSION_NAME"]
+    if version_name != tag.removeprefix("android-v"):
+        return _fail(capability, "Android release version name must derive exactly from its tag")
+    tools = _android_release_tools(environment)
+    if tools is None:
+        return _not_run(capability, "Android release SDK tools are absent")
+    adb, apksigner, apkanalyzer = tools
+    serial, device_error = _authorized_emulator(repo_root, adb, environment)
+    if serial is None:
+        status = RunStatus.FAIL if device_error.startswith("unsafe") else RunStatus.NOT_RUN
+        return _result(capability, status, 0, device_error)
+    return _AndroidReleaseInputs(
+        tag,
+        head_sha,
+        base_url,
+        owned_host,
+        certificate,
+        keystore,
+        version_code,
+        version_name,
+        serial,
+        adb,
+        apksigner,
+        apkanalyzer,
+    )
+
+
+def _android_release_tools(
+    environment: Mapping[str, str],
+) -> tuple[Path, Path, Path] | None:
+    sdk_value = environment.get("ANDROID_HOME") or environment.get("ANDROID_SDK_ROOT")
+    if not sdk_value:
+        return None
+    sdk = Path(sdk_value)
+    adb = sdk / "platform-tools/adb"
+    apksigners = tuple(sdk.glob("build-tools/*/apksigner"))
+    analyzers = tuple(sdk.glob("cmdline-tools/*/bin/apkanalyzer"))
+    if not adb.is_file() or not apksigners or not analyzers:
+        return None
+    return (
+        adb,
+        max(apksigners, key=lambda path: _android_tool_version(path.parent.name)),
+        max(
+            analyzers,
+            key=lambda path: (path.parents[1].name == "latest", path.parents[1].name),
+        ),
+    )
+
+
+def _android_tool_version(value: str) -> tuple[int, ...]:
+    numbers = tuple(int(part) for part in re.findall(r"\d+", value))
+    return numbers or (0,)
+
+
+def _authorized_emulator(
+    repo_root: Path,
+    adb: Path,
+    environment: Mapping[str, str],
+) -> tuple[str | None, str]:
+    child_environment = _child_environment(environment)
+    listed = _release_command((str(adb), "devices"), repo_root, child_environment)
+    if listed.returncode != 0:
+        return None, "Android emulator inventory could not be read"
+    devices = tuple(
+        line.split("\t", 1)[0]
+        for line in listed.stdout.splitlines()[1:]
+        if line.endswith("\tdevice")
+    )
+    if not devices:
+        return None, "no authorized Android emulator is attached"
+    if len(devices) != 1 or not devices[0].startswith("emulator-"):
+        return None, "unsafe Android device inventory: release proof permits one emulator only"
+    serial = devices[0]
+    qemu = _release_command(
+        (str(adb), "-s", serial, "shell", "getprop", "ro.kernel.qemu"),
+        repo_root,
+        child_environment,
+    )
+    if qemu.returncode != 0 or qemu.stdout.strip() != "1":
+        return None, "unsafe Android device inventory: selected device is not qemu"
+    return serial, ""
+
+
+def _release_command(
+    argv: tuple[str, ...], cwd: Path, environment: Mapping[str, str]
+) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            argv,
+            cwd=cwd,
+            env=dict(environment),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as error:
+        return subprocess.CompletedProcess(argv, 127, "", str(error))
+
+
+def _release_command_failure(
+    capability: Capability,
+    started: int,
+    index: int,
+    completed: subprocess.CompletedProcess[str],
+    environment: Mapping[str, str],
+) -> CapabilityResult:
+    duration_ms = (time.monotonic_ns() - started) // 1_000_000
+    return _result(
+        capability,
+        RunStatus.FAIL,
+        duration_ms,
+        redact_text(_failed_command_detail(index, completed), environment_secrets(environment)),
+    )
+
+
+def _release_failure(capability: Capability, started: int, detail: str) -> CapabilityResult:
+    return _result(
+        capability,
+        RunStatus.FAIL,
+        (time.monotonic_ns() - started) // 1_000_000,
+        detail,
+    )
+
+
+def _apksigner_certificate(completed: subprocess.CompletedProcess[str]) -> str | None:
+    match = re.search(
+        r"(?im)^Signer #1 certificate SHA-256 digest:\s*([0-9a-f:]{64,95})\s*$",
+        f"{completed.stdout}\n{completed.stderr}",
+    )
+    return match.group(1).replace(":", "").lower() if match else None
+
+
+def _release_manifest_facts(text: str) -> tuple[str, str, str, str] | None:
+    start = text.find("<manifest")
+    if start < 0:
+        return None
+    try:
+        root = ET.fromstring(text[start:])
+    except ET.ParseError:
+        return None
+    android = "{http://schemas.android.com/apk/res/android}"
+    application = root.find("application")
+    if application is None or application.attrib.get(f"{android}usesCleartextTraffic") != "false":
+        return None
+    hosts: set[str] = set()
+    for intent_filter in root.findall("./application/activity/intent-filter"):
+        if intent_filter.attrib.get(f"{android}autoVerify") != "true":
+            continue
+        for data in intent_filter.findall("data"):
+            if data.attrib.get(f"{android}scheme") == "https":
+                host = data.attrib.get(f"{android}host")
+                if host:
+                    hosts.add(host)
+    if len(hosts) != 1:
+        return None
+    return (
+        root.attrib.get("package", ""),
+        root.attrib.get(f"{android}versionCode", ""),
+        root.attrib.get(f"{android}versionName", ""),
+        next(iter(hosts)),
+    )
+
+
+def _git_commit(repo_root: Path, revision: str, environment: Mapping[str, str]) -> str:
+    child_environment = _child_environment(environment)
+    git = shutil.which("git", path=child_environment.get("PATH"))
+    if git is None:
+        raise RuntimeContractError("required tool is absent: git")
+    result = _release_command(
+        (git, "rev-parse", "--verify", f"{revision}^{{commit}}"),
+        repo_root,
+        child_environment,
+    )
+    sha = result.stdout.strip()
+    if result.returncode != 0 or re.fullmatch(r"[0-9a-f]{40}", sha) is None:
+        raise RuntimeContractError(f"Git revision is not exact: {revision}")
+    return sha
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _gradle_assertion_passed(android_root: Path, target: str) -> bool:
+    class_name, separator, method = target.partition("#")
+    reports = android_root / "app/build/outputs/androidTest-results"
+    matches = 0
+    for report in reports.rglob("*.xml") if reports.is_dir() else ():
+        try:
+            root = ET.parse(report).getroot()
+        except (OSError, ET.ParseError):
+            continue
+        for case in root.iter("testcase"):
+            if case.attrib.get("classname") != class_name:
+                continue
+            if separator and case.attrib.get("name") != method:
+                continue
+            matches += 1
+            if any(case.find(node) is not None for node in ("failure", "error", "skipped")):
+                return False
+    return matches == 1
 
 
 def _run_doctor(context: CapabilityContext, environment: Mapping[str, str]) -> CapabilityResult:
@@ -1696,6 +2999,59 @@ def _android_sdk_available(android_root: Path, environment: Mapping[str, str]) -
     )
 
 
+def _android_device_attached(android_root: Path, environment: Mapping[str, str]) -> bool:
+    sdk_root = environment.get("ANDROID_HOME") or environment.get("ANDROID_SDK_ROOT")
+    adb = Path(sdk_root) / "platform-tools/adb" if sdk_root else Path("adb")
+    command = str(adb) if adb.is_file() else shutil.which("adb", path=environment.get("PATH"))
+    if command is None:
+        return False
+    try:
+        result = subprocess.run(
+            (command, "devices"),
+            cwd=android_root,
+            env=_child_environment(environment),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0 and any(
+        line.endswith("\tdevice") for line in result.stdout.splitlines()[1:]
+    )
+
+
+def _gradle_assertion_failed(android_root: Path, target: str) -> bool:
+    class_name, separator, method = target.partition("#")
+    reports = android_root / "app/build/outputs/androidTest-results"
+    for report in reports.rglob("*.xml") if reports.is_dir() else ():
+        try:
+            root = ET.parse(report).getroot()
+        except (OSError, ET.ParseError):
+            continue
+        for case in root.iter("testcase"):
+            if case.attrib.get("classname") != class_name:
+                continue
+            if separator and case.attrib.get("name") != method:
+                continue
+            if case.find("failure") is not None:
+                return True
+    return False
+
+
+@contextmanager
+def _gradle_lock(repo_root: Path) -> Iterator[None]:
+    path = repo_root / ".nexus-test/locks/gradle.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock = path.open("a+b")
+    try:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+        lock.close()
+
+
 def _browser_installed(repo_root: Path, environment: Mapping[str, str]) -> bool:
     browsers_json = repo_root / "apps/web/node_modules/playwright-core/browsers.json"
     try:
@@ -1784,8 +3140,14 @@ def _run_fixed_commands(
 
 
 def _failed_command_detail(index: int, completed: subprocess.CompletedProcess[str]) -> str:
-    output = (completed.stderr or completed.stdout).strip()
-    decisive = output[-4000:] if output else "no diagnostic output"
+    stdout = completed.stdout.strip()
+    stderr = completed.stderr.strip()
+    parts = []
+    if stdout:
+        parts.append(f"stdout={stdout[-1900:]}")
+    if stderr:
+        parts.append(f"stderr={stderr[-1900:]}")
+    decisive = " | ".join(parts) if parts else "no diagnostic output"
     return f"fixed command {index} exited {completed.returncode}: {decisive}"
 
 

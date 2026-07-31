@@ -31,15 +31,11 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "hypothesis>=6.151.9",
+    "httpx2>=2.9.1",
     "ruff>=0.8.0",
     "pytest>=8.3.0",
-    "pytest-asyncio>=0.24.0",
+    "pytest-randomly>=4.0.1",
     "pytest-socket>=0.7.0",
-    "pytest-xdist>=3.8.0",
-    "httpx>=0.28.0",
-    "httpx2>=2.0.0",
-    "pytest-httpserver>=1.0.0",
-    "respx>=0.21.0",
     "pyright>=1.1.390",
     "pip-audit>=2.9.0",
     "zizmor>=1.24.1",
@@ -206,8 +202,6 @@ addopts = [
     "--allow-hosts=127.0.0.1,::1,127.0.1.1",
 ]
 pythonpath = ["."]
-asyncio_mode = "auto"
-asyncio_default_fixture_loop_scope = "function"
 filterwarnings = [
     "error::UserWarning",
 ]

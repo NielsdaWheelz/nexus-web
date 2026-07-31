@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TextIO
 
-from nexus_test_control.evidence import PeakOwnedMemory, RunEvidence, evidence_json, redact_text
+from nexus_test_control.evidence import RunEvidence, evidence_json, redact_text
 from nexus_test_control.model import (
     WORKFLOW_REGISTRY,
     RunStatus,
@@ -28,6 +28,7 @@ from nexus_test_control.runtime import RuntimeContractError
 from nexus_test_control.selection import (
     ChangedPath,
     GitChangeKind,
+    load_selection_index,
     read_git_changes,
     select_changed,
 )
@@ -40,7 +41,7 @@ from nexus_test_control.sensitivity import (
 from nexus_test_control.sensitivity import (
     prove as prove_sensitivity,
 )
-from nexus_test_control.services import clean_owned_runs, test_environment
+from nexus_test_control.services import clean_owned_runs, new_run_id, test_environment
 
 _PROOF_RUNNERS = frozenset({"gradle", "playwright", "pytest", "static", "vitest"})
 _FAULT_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
@@ -201,6 +202,7 @@ def _execute_workflow(
     output: TextIO,
 ) -> int:
     started = time.monotonic_ns()
+    run_id = new_run_id()
     git_sha = _git_sha(repo_root, "HEAD")
     base_override = None
     if command.workflow is Workflow.PR:
@@ -226,19 +228,19 @@ def _execute_workflow(
         command.ui,
         frozenset(item.proof for item in sensitivity),
     )
-    capabilities = run_workflow(context, output, environment)
+    workflow_run = run_workflow(context, output, environment, run_id=run_id)
     duration_ms = (time.monotonic_ns() - started) // 1_000_000
     evidence = RunEvidence(
         repo_root=repo_root,
-        run_id=uuid.uuid4().hex,
+        run_id=run_id,
         workflow=command.workflow,
         git_sha=git_sha,
         base_sha=base_sha,
         duration_ms=duration_ms,
-        peak_owned_mib=PeakOwnedMemory(0, 0, 0),
+        peak_owned_mib=workflow_run.peak_owned_mib,
         selection=selection,
         sensitivity=sensitivity,
-        capabilities=capabilities,
+        capabilities=workflow_run.capabilities,
     )
     relative_summary = write_summary(repo_root, evidence, environment_secrets(environment))
     output.write(f"{command.workflow.value}: {evidence.status.value}; summary={relative_summary}\n")
@@ -345,7 +347,10 @@ def _selection(
     if command.focus:
         return base_sha, tuple(_focus_selection(repo_root, item) for item in command.focus)
     try:
-        return base_sha, select_changed(read_git_changes(repo_root, base))
+        return base_sha, select_changed(
+            read_git_changes(repo_root, base),
+            load_selection_index(repo_root),
+        )
     except (OSError, subprocess.CalledProcessError, ValueError) as error:
         raise ControlPlaneError(f"could not select changed proof: {error}") from error
 

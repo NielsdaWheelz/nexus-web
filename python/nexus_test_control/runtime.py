@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import tempfile
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -25,9 +26,7 @@ _REPO_ID = re.compile(r"[0-9a-f]{16}\Z")
 _FINGERPRINT = re.compile(r"[0-9a-f]{40}\Z")
 _SCENARIO_ID = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?\Z")
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\Z")
-_PROCESS_ROLES = frozenset(
-    {"api", "web", "worker-interactive", "worker-background", "reader-proxy"}
-)
+_PROCESS_ROLES = frozenset({"api", "web", "worker-interactive", "worker-background"})
 
 
 class RuntimeContractError(ValueError):
@@ -40,7 +39,6 @@ class EndpointKind(StrEnum):
     SUPABASE = "supabase"
     API = "api"
     WEB = "web"
-    READER_PROXY = "reader-proxy"
 
 
 class ResourcePhase(StrEnum):
@@ -59,7 +57,6 @@ class RuntimePorts:
     supabase_shadow: int
     api: int
     web: int
-    reader_proxy: int
 
     def __post_init__(self) -> None:
         ports = tuple(self.as_dict().values())
@@ -82,7 +79,6 @@ class RuntimePorts:
             "supabase_shadow": self.supabase_shadow,
             "api": self.api,
             "web": self.web,
-            "reader_proxy": self.reader_proxy,
         }
 
 
@@ -128,6 +124,26 @@ class CleanupCandidate:
 def require_test_environment(environment: Mapping[str, str]) -> None:
     if environment.get("NEXUS_ENV") != "test":
         raise RuntimeContractError("NEXUS_ENV must be exactly 'test'")
+
+
+def local_docker_host(candidates: Sequence[Path] | None = None) -> str:
+    """Resolve Docker only through a verified local Unix-domain socket."""
+    paths = (
+        tuple(candidates)
+        if candidates is not None
+        else (
+            Path(f"/run/user/{os.getuid()}/docker.sock"),
+            Path("/var/run/docker.sock"),
+        )
+    )
+    for path in paths:
+        try:
+            mode = path.stat().st_mode
+        except OSError:
+            continue
+        if stat.S_ISSOCK(mode):
+            return f"unix://{path.resolve(strict=True)}"
+    raise RuntimeContractError("test control requires a verified local Docker Unix socket")
 
 
 def canonical_repo_root(repo_root: Path) -> Path:
@@ -626,7 +642,6 @@ def _endpoint(ports: RuntimePorts, kind: EndpointKind) -> str:
         EndpointKind.SUPABASE: ports.supabase_api,
         EndpointKind.API: ports.api,
         EndpointKind.WEB: ports.web,
-        EndpointKind.READER_PROXY: ports.reader_proxy,
     }[kind]
     scheme = "postgresql" if kind is EndpointKind.POSTGRES else "http"
     return f"{scheme}://{LOOPBACK_HOST}:{port}"

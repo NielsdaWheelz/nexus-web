@@ -1,4 +1,6 @@
+import json
 import os
+import re
 import subprocess
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -40,7 +42,7 @@ class SelectionTarget:
 
 @dataclass(frozen=True, slots=True)
 class IndexedRoute:
-    path: str
+    path_glob: str
     target: SelectionTarget
     reason: SelectionReason
 
@@ -50,13 +52,117 @@ class SelectionIndex:
     routes: tuple[IndexedRoute, ...] = ()
 
     def for_path(self, path: str) -> tuple[IndexedRoute, ...]:
-        return tuple(route for route in self.routes if route.path == path)
+        return tuple(route for route in self.routes if _glob_matches(path, route.path_glob))
 
 
 EMPTY_SELECTION_INDEX = SelectionIndex()
 
 
 SelectionResolver = Callable[[str], Iterable[SelectionTarget]]
+
+
+def load_selection_index(repo_root: Path) -> SelectionIndex:
+    manifest_path = repo_root / "testdata/proofs.json"
+    if not manifest_path.is_file():
+        return EMPTY_SELECTION_INDEX
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        risks = manifest["priority_risks"]
+        journeys = manifest["journeys"]
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError) as error:
+        raise ValueError("priority proof manifest is unreadable") from error
+    if not isinstance(risks, list):
+        raise ValueError("priority proof manifest risks must be a list")
+    if not isinstance(journeys, list):
+        raise ValueError("priority proof manifest journeys must be a list")
+    routes: list[IndexedRoute] = []
+    for risk in risks:
+        if not isinstance(risk, dict):
+            raise ValueError("priority proof manifest risk must be an object")
+        source_globs = risk.get("source_globs")
+        proofs = risk.get("proofs")
+        capabilities = risk.get("capabilities")
+        if (
+            not isinstance(source_globs, list)
+            or not isinstance(proofs, list)
+            or not isinstance(capabilities, list)
+        ):
+            raise ValueError("priority proof manifest routing fields must be lists")
+        for proof in proofs:
+            if not isinstance(proof, str):
+                raise ValueError("priority proof id must be a string")
+            target = _proof_target(proof)
+            if target.capability.value not in capabilities:
+                raise ValueError("priority proof runner is absent from its capability contract")
+            for source_glob in source_globs:
+                if not isinstance(source_glob, str) or not source_glob:
+                    raise ValueError("priority source glob must be a non-empty string")
+                routes.append(IndexedRoute(source_glob, target, SelectionReason.PRIORITY_RISK))
+    for journey in journeys:
+        if not isinstance(journey, dict):
+            raise ValueError("journey proof manifest entry must be an object")
+        proof = journey.get("proof")
+        source_globs = journey.get("source_globs")
+        if not isinstance(proof, str) or not isinstance(source_globs, list):
+            raise ValueError("journey proof manifest routing fields are invalid")
+        target = _proof_target(f"playwright:{proof}")
+        if target.capability is not Capability.JOURNEYS_ALL:
+            raise ValueError("journey proof manifest entry is outside the journey owner")
+        for source_glob in source_globs:
+            if not isinstance(source_glob, str) or not source_glob:
+                raise ValueError("journey source glob must be a non-empty string")
+            routes.append(IndexedRoute(source_glob, target, SelectionReason.JOURNEY_OWNER))
+    return SelectionIndex(tuple(routes))
+
+
+def _proof_target(proof: str) -> SelectionTarget:
+    runner, separator, node = proof.partition(":")
+    if not separator or not node:
+        raise ValueError("priority proof must be runner-qualified")
+    path = node.split("::", 1)[0]
+    direct = _direct_test_target(path)
+    if direct is None or proof.partition(":")[0] not in {
+        "gradle",
+        "playwright",
+        "pytest",
+        "vitest",
+    }:
+        raise ValueError(f"priority proof has no executable owner: {proof}")
+    expected_runner = {
+        Capability.ANDROID_DEVICE: "gradle",
+        Capability.COMPONENT: "vitest",
+        Capability.JOURNEYS_ALL: "playwright",
+        Capability.KERNEL_PYTHON: "pytest",
+        Capability.KERNEL_WEB: "vitest",
+        Capability.LLM_EVAL: "pytest",
+        Capability.MIGRATIONS: "pytest",
+        Capability.SERVICE: "pytest",
+    }.get(direct.capability)
+    if runner != expected_runner:
+        raise ValueError(f"priority proof runner does not match its owner: {proof}")
+    return SelectionTarget(direct.capability, proof)
+
+
+def _glob_matches(path: str, pattern: str) -> bool:
+    expression = ""
+    index = 0
+    while index < len(pattern):
+        if pattern.startswith("**/", index):
+            expression += "(?:.*/)?"
+            index += 3
+        elif pattern.startswith("**", index):
+            expression += ".*"
+            index += 2
+        elif pattern[index] == "*":
+            expression += "[^/]*"
+            index += 1
+        elif pattern[index] == "?":
+            expression += "[^/]"
+            index += 1
+        else:
+            expression += re.escape(pattern[index])
+            index += 1
+    return re.fullmatch(expression, path) is not None
 
 
 def parse_git_name_status(output: bytes) -> tuple[ChangedPath, ...]:
@@ -152,11 +258,22 @@ def select_changed(
                     route.reason,
                     target.proof,
                     sensitivity_required=(
-                        route.reason is SelectionReason.CHANGED_TEST and change.requires_sensitivity
+                        route.reason is SelectionReason.CHANGED_TEST
+                        and change.requires_sensitivity
+                        and _pr_sensitivity_eligible(change.path)
                     ),
                 )
             )
     return tuple(selections)
+
+
+def _pr_sensitivity_eligible(path: str) -> bool:
+    return not path.startswith(
+        (
+            "python/tests/hosted/",
+            "apps/android/app/src/androidTest/",
+        )
+    )
 
 
 def _promoted_targets(path: str) -> tuple[SelectionTarget, ...]:
@@ -243,7 +360,8 @@ def _direct_test_target(path: str) -> SelectionTarget | None:
         ("python/tests/evals/", Capability.LLM_EVAL),
         ("python/tests/audit/", Capability.AUDIT),
         ("python/tests/contract/", Capability.PROVIDER_RUNTIME),
-        ("python/tests/hosted/", Capability.HOSTED),
+        ("python/tests/hosted/release/", Capability.PROVIDER_CERTIFICATION),
+        ("python/tests/hosted/nightly/", Capability.HOSTED),
     )
     for prefix, capability in python_direct:
         if path.startswith(prefix) and path.endswith(".py"):
