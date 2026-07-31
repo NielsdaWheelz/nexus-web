@@ -586,7 +586,13 @@ Write ignored `test-results/runs/<run_id>/summary.json`:
     "container_working_set": 0,
     "total": 0
   },
-  "selection": [{"path": "path", "reason": "rule"}],
+  "selection": [{
+    "path": "path",
+    "capability": "service",
+    "reason": "rule",
+    "proof": "runner-qualified-node-id-or-null",
+    "sensitivity_required": true
+  }],
   "sensitivity": [
     {
       "proof": "runner-qualified-node-id",

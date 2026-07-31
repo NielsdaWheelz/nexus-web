@@ -5,8 +5,16 @@ from pathlib import Path
 
 import pytest
 
-from nexus_test_control.cli import ListCommand, ProveCommand, WorkflowCommand, main, parse_command
-from nexus_test_control.model import WORKFLOW_REGISTRY, SensitivityMethod, Workflow
+from nexus_test_control.cli import (
+    ListCommand,
+    ProveCommand,
+    WorkflowCommand,
+    _focus_selections,
+    main,
+    parse_command,
+)
+from nexus_test_control.model import WORKFLOW_REGISTRY, Capability, SensitivityMethod, Workflow
+from nexus_test_control.selection import load_selection_index
 
 
 def test_parser_accepts_only_the_explicit_command_shapes() -> None:
@@ -119,8 +127,49 @@ def test_changed_focus_uses_the_repository_root_and_records_explicit_selection(
     summary_path = tmp_path / output.getvalue().strip().split("summary=", 1)[1]
     summary = json.loads(summary_path.read_text())
     assert summary["selection"] == [
-        {"path": "python/tests/kernel/test_rule.py", "reason": "explicit-focus"}
+        {
+            "capability": "kernel-python",
+            "path": "python/tests/kernel/test_rule.py",
+            "proof": "pytest:python/tests/kernel/test_rule.py::test_rule",
+            "reason": "explicit-focus",
+            "sensitivity_required": False,
+        }
     ]
+
+
+def test_plain_focus_keeps_every_manifest_owned_journey_route(tmp_path: Path) -> None:
+    source = tmp_path / "apps/web/src/lib/panes/paneRenderRegistry.tsx"
+    source.parent.mkdir(parents=True)
+    source.write_text("export const registry = {}\n")
+    manifest = tmp_path / "testdata/proofs.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "priority_risks": [],
+                "journeys": [
+                    {
+                        "proof": f"apps/web/e2e/journeys/{journey}.journey.spec.ts",
+                        "source_globs": ["apps/web/src/lib/panes/paneRenderRegistry.tsx"],
+                    }
+                    for journey in ("reader-open", "search-open")
+                ],
+            }
+        )
+    )
+
+    selections = _focus_selections(
+        tmp_path,
+        "apps/web/src/lib/panes/paneRenderRegistry.tsx",
+        load_selection_index(tmp_path),
+    )
+
+    assert len(selections) == 2
+    assert {selection.capability for selection in selections} == {Capability.JOURNEYS_ALL}
+    assert {selection.proof for selection in selections} == {
+        "playwright:apps/web/e2e/journeys/reader-open.journey.spec.ts",
+        "playwright:apps/web/e2e/journeys/search-open.journey.spec.ts",
+    }
 
 
 def test_prove_requires_a_clean_committed_checkout(tmp_path: Path) -> None:

@@ -28,6 +28,7 @@ from nexus_test_control.runtime import RuntimeContractError
 from nexus_test_control.selection import (
     ChangedPath,
     GitChangeKind,
+    SelectionIndex,
     load_selection_index,
     read_git_changes,
     select_changed,
@@ -345,7 +346,16 @@ def _selection(
     base = command.base or base_override or "HEAD"
     base_sha = _git_sha(repo_root, base)
     if command.focus:
-        return base_sha, tuple(_focus_selection(repo_root, item) for item in command.focus)
+        try:
+            index = load_selection_index(repo_root)
+        except (OSError, ValueError) as error:
+            raise ControlPlaneError(f"could not load focused proof routing: {error}") from error
+        focused = tuple(
+            selection
+            for item in command.focus
+            for selection in _focus_selections(repo_root, item, index)
+        )
+        return base_sha, tuple(dict.fromkeys(focused))
     try:
         return base_sha, select_changed(
             read_git_changes(repo_root, base),
@@ -355,7 +365,7 @@ def _selection(
         raise ControlPlaneError(f"could not select changed proof: {error}") from error
 
 
-def _focus_selection(repo_root: Path, value: str) -> Selection:
+def _focus_selections(repo_root: Path, value: str, index: SelectionIndex) -> tuple[Selection, ...]:
     path = _proof_path(value)
     candidate = (repo_root / path).resolve(strict=False)
     try:
@@ -364,15 +374,27 @@ def _focus_selection(repo_root: Path, value: str) -> Selection:
         raise ControlPlaneError(f"focus must remain inside the repository: {value}") from error
     if not candidate.is_file() or relative.as_posix() != path:
         raise ControlPlaneError(f"focus path is not an exact repository file: {value}")
-    selection = select_changed((ChangedPath(GitChangeKind.MODIFIED, path),))
-    if not selection:
+    selections = select_changed((ChangedPath(GitChangeKind.MODIFIED, path),), index)
+    if not selections:
         raise ControlPlaneError(f"focus did not resolve: {value}")
-    selected = selection[-1]
-    return Selection(
-        path,
-        selected.capability,
-        SelectionReason.EXPLICIT_FOCUS,
-        proof=value if ":" in value else selected.proof,
+    if ":" in value:
+        runner = value.partition(":")[0]
+        direct_proof = f"{runner}:{path}"
+        selections = tuple(
+            selection
+            for selection in selections
+            if selection.reason is SelectionReason.CHANGED_TEST and selection.proof == direct_proof
+        )
+        if len(selections) != 1:
+            raise ControlPlaneError(f"focused proof has no exact executable owner: {value}")
+    return tuple(
+        Selection(
+            path,
+            selection.capability,
+            SelectionReason.EXPLICIT_FOCUS,
+            proof=value if ":" in value else selection.proof,
+        )
+        for selection in selections
     )
 
 

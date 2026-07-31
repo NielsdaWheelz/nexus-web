@@ -227,7 +227,13 @@ def evidence_json(evidence: RunEvidence, secrets: Iterable[str] = ()) -> dict[st
             "total": evidence.peak_owned_mib.total,
         },
         "selection": [
-            {"path": selection.path, "reason": selection.reason.value}
+            {
+                "path": selection.path,
+                "capability": selection.capability.value,
+                "reason": selection.reason.value,
+                "proof": selection.proof,
+                "sensitivity_required": selection.sensitivity_required,
+            }
             for selection in evidence.selection
         ],
         "sensitivity": [_sensitivity_json(item) for item in evidence.sensitivity],

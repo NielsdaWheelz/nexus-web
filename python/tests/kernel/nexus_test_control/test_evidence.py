@@ -88,7 +88,15 @@ def test_evidence_matches_schema_and_preserves_not_run(tmp_path: Path) -> None:
 
     assert payload["version"] == 1
     assert payload["status"] == "not_run"
-    assert payload["selection"] == [{"path": relative, "reason": "changed-test"}]
+    assert payload["selection"] == [
+        {
+            "capability": "kernel-python",
+            "path": relative,
+            "proof": proof,
+            "reason": "changed-test",
+            "sensitivity_required": True,
+        }
+    ]
     assert payload["sensitivity"][0]["red"]["phase"] == "assertion"  # type: ignore[index]  # justify-type-assertion: exact JSON schema shape is under proof.
 
 
