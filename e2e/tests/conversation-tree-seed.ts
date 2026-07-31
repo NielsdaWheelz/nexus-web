@@ -14,9 +14,11 @@ interface MeResponse {
 }
 
 export interface ScrollConversationSeed {
+  owner_user_id: string;
   conversation_id: string;
   active_leaf_message_id: string;
   message_count: number;
+  extra_conversation_ids: string[];
 }
 
 export interface BranchingConversationSeed {
@@ -44,7 +46,7 @@ async function e2eOwnerUserId(page: Page): Promise<string> {
 
 function seedConversationTree<T>(
   ownerUserId: string,
-  scenario: "branching" | "scroll",
+  scenario: "branching" | "cleanup" | "scroll",
   extraEnv: Record<string, string> = {},
 ): T {
   const databaseUrl = process.env.DATABASE_URL;
@@ -86,11 +88,27 @@ function seedConversationTree<T>(
 export async function seedScrollConversation(
   page: Page,
   messageCount: number,
+  extraConversationCount = 0,
 ): Promise<ScrollConversationSeed> {
   return seedConversationTree<ScrollConversationSeed>(
     await e2eOwnerUserId(page),
     "scroll",
-    { NEXUS_E2E_MESSAGE_COUNT: String(messageCount) },
+    {
+      NEXUS_E2E_EXTRA_CONVERSATION_COUNT: String(extraConversationCount),
+      NEXUS_E2E_MESSAGE_COUNT: String(messageCount),
+    },
+  );
+}
+
+export async function cleanupConversationFixtures(
+  ownerUserId: string,
+  conversationIds: readonly string[],
+): Promise<void> {
+  if (conversationIds.length === 0) return;
+  seedConversationTree<{ deleted_conversation_ids: string[] }>(
+    ownerUserId,
+    "cleanup",
+    { NEXUS_E2E_CONVERSATION_IDS: JSON.stringify(conversationIds) },
   );
 }
 

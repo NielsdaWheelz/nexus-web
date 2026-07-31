@@ -144,10 +144,21 @@ export async function pinDeviceId(page: Page, deviceId: string): Promise<void> {
 }
 
 async function leaveCurrentWorkspaceDocument(page: Page): Promise<void> {
-  if (page.url() === "about:blank") {
-    return;
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (page.url() === "about:blank") return;
+    try {
+      await page.goto("about:blank", { waitUntil: "commit" });
+      if (page.url() === "about:blank") return;
+    } catch (error) {
+      if (page.url() === "about:blank") return;
+      lastError = error;
+    }
+    await page.waitForTimeout(50 * (attempt + 1));
   }
-  await page.goto("about:blank");
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Could not leave the active workspace document.");
 }
 
 export async function seedWorkspaceSession(

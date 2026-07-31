@@ -1,6 +1,8 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { stateChangingApiHeaders } from "./api";
-import { seedScrollConversation } from "./conversation-tree-seed";
+import {
+  cleanupConversationFixtures,
+  seedScrollConversation,
+} from "./conversation-tree-seed";
 import {
   activeWorkspacePane,
   gotoSinglePaneWorkspace,
@@ -15,6 +17,7 @@ const BILLING_ROW_ID = "/settings/billing";
 const APPEARANCE_ROW_ID = "/settings/appearance";
 const TARGET_OFFSET_PX = -12;
 const OFFSET_TOLERANCE_PX = 1;
+const CONVERSATIONS_PAGE_SIZE = 100;
 
 function paneScrollport(page: Page): Locator {
   return activeWorkspacePane(page).getByTestId("pane-shell-body");
@@ -192,55 +195,6 @@ async function goBackInPane(
   await expect(page).toHaveURL(expectedPath);
 }
 
-async function createConversation(page: Page): Promise<string> {
-  const response = await page.request.post("/api/conversations", {
-    headers: stateChangingApiHeaders(),
-  });
-  const body = await response.text();
-  expect(
-    response.ok(),
-    `POST /api/conversations failed: ${response.status()} ${body.slice(0, 300)}`,
-  ).toBeTruthy();
-  return (JSON.parse(body) as { data: { id: string } }).data.id;
-}
-
-async function createConversations(
-  page: Page,
-  count: number,
-): Promise<string[]> {
-  const ids: string[] = [];
-  for (let start = 0; start < count; start += 5) {
-    ids.push(
-      ...(await Promise.all(
-        Array.from({ length: Math.min(5, count - start) }, () =>
-          createConversation(page),
-        ),
-      )),
-    );
-  }
-  return ids;
-}
-
-async function deleteConversations(
-  page: Page,
-  conversationIds: readonly string[],
-): Promise<void> {
-  for (let start = 0; start < conversationIds.length; start += 5) {
-    await Promise.all(
-      conversationIds.slice(start, start + 5).map(async (conversationId) => {
-        const response = await page.request.delete(
-          `/api/conversations/${conversationId}`,
-          { headers: stateChangingApiHeaders() },
-        );
-        expect(
-          response.ok() || response.status() === 404,
-          `DELETE /api/conversations/${conversationId} failed: ${response.status()}`,
-        ).toBeTruthy();
-      }),
-    );
-  }
-}
-
 test.describe("pane return memento", () => {
   test.use({ viewport: INITIAL_VIEWPORT });
 
@@ -348,18 +302,23 @@ test.describe("pane return memento", () => {
       workspaceE2eDeviceId(testInfo, "e2e-pane-return-conversations"),
       "/settings",
     );
-    const target = await seedScrollConversation(page, 50);
-    const conversationIds = [target.conversation_id];
+    const target = await seedScrollConversation(
+      page,
+      50,
+      CONVERSATIONS_PAGE_SIZE,
+    );
+    const conversationIds = [
+      target.conversation_id,
+      ...target.extra_conversation_ids,
+    ];
     try {
-      const firstPageConversationIds = await createConversations(page, 50);
-      conversationIds.push(...firstPageConversationIds);
-      await primaryNavigation(page)
-        .getByRole("link", { name: "Chats" })
-        .click();
+      const firstPageConversationIds = target.extra_conversation_ids;
+      const chatsLink = primaryNavigation(page).getByRole("link", {
+        name: "Chats",
+      });
+      await chatsLink.focus();
+      await chatsLink.press("Enter");
       await expect(page).toHaveURL(/\/conversations$/);
-      await activeWorkspacePane(page)
-        .getByRole("button", { name: "Load more conversations" })
-        .click();
 
       const listScrollport = paneScrollport(page);
       const targetConversation = collectionRow(
@@ -434,7 +393,7 @@ test.describe("pane return memento", () => {
         conversationOffset,
       );
     } finally {
-      await deleteConversations(page, conversationIds);
+      await cleanupConversationFixtures(target.owner_user_id, conversationIds);
     }
   });
 });

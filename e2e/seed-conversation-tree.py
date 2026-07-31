@@ -6,8 +6,10 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
+
+from sqlalchemy import select
 
 from nexus.db.models import (
     ChatRun,
@@ -17,6 +19,7 @@ from nexus.db.models import (
     Message,
 )
 from nexus.db.session import create_session_factory
+from nexus.services.conversations import delete_conversation_rows_without_commit
 
 
 def require_env(name: str) -> str:
@@ -120,18 +123,27 @@ def add_completed_run(
     )
 
 
-def seed_scroll(owner_user_id: UUID, message_count: int) -> dict[str, object]:
+def seed_scroll(
+    owner_user_id: UUID,
+    message_count: int,
+    extra_conversation_count: int,
+) -> dict[str, object]:
     if message_count < 2:
         raise RuntimeError("NEXUS_E2E_MESSAGE_COUNT must be at least 2")
+    if extra_conversation_count < 0:
+        raise RuntimeError("NEXUS_E2E_EXTRA_CONVERSATION_COUNT cannot be negative")
 
     session_factory = create_session_factory()
     with session_factory() as db:
+        seeded_at = datetime.now(UTC)
         conversation = Conversation(
             id=uuid4(),
             owner_user_id=owner_user_id,
             title="E2E scroll tree conversation",
             sharing="private",
             next_seq=1,
+            created_at=seeded_at,
+            updated_at=seeded_at,
         )
         db.add(conversation)
         db.flush()
@@ -171,13 +183,61 @@ def seed_scroll(owner_user_id: UUID, message_count: int) -> dict[str, object]:
                 active_leaf_message_id=leaf_id,
             )
         )
+
+        extra_conversation_ids: list[UUID] = []
+        for index in range(extra_conversation_count):
+            filler_timestamp = seeded_at + timedelta(microseconds=index + 1)
+            filler = Conversation(
+                id=uuid4(),
+                owner_user_id=owner_user_id,
+                title=f"E2E pane-return filler {index + 1:03d}",
+                sharing="private",
+                next_seq=1,
+                created_at=filler_timestamp,
+                updated_at=filler_timestamp,
+            )
+            db.add(filler)
+            extra_conversation_ids.append(filler.id)
         db.commit()
 
         return {
+            "owner_user_id": str(owner_user_id),
             "conversation_id": str(conversation.id),
             "active_leaf_message_id": str(leaf_id),
             "message_count": message_count,
+            "extra_conversation_ids": [
+                str(conversation_id)
+                for conversation_id in reversed(extra_conversation_ids)
+            ],
         }
+
+
+def cleanup_conversations(
+    owner_user_id: UUID,
+    conversation_ids: list[UUID],
+) -> dict[str, object]:
+    session_factory = create_session_factory()
+    with session_factory() as db:
+        owned_ids = set(
+            db.scalars(
+                select(Conversation.id).where(
+                    Conversation.id.in_(conversation_ids),
+                    Conversation.owner_user_id == owner_user_id,
+                )
+            ).all()
+        )
+        for conversation_id in conversation_ids:
+            if conversation_id in owned_ids:
+                delete_conversation_rows_without_commit(db, conversation_id)
+        db.commit()
+
+    return {
+        "deleted_conversation_ids": [
+            str(conversation_id)
+            for conversation_id in conversation_ids
+            if conversation_id in owned_ids
+        ]
+    }
 
 
 def seed_branching(owner_user_id: UUID) -> dict[str, object]:
@@ -383,9 +443,22 @@ def main() -> None:
     scenario = require_env("NEXUS_E2E_CONVERSATION_SCENARIO")
     if scenario == "scroll":
         message_count = int(require_env("NEXUS_E2E_MESSAGE_COUNT"))
-        result = seed_scroll(owner_user_id, message_count)
+        extra_conversation_count = int(
+            os.getenv("NEXUS_E2E_EXTRA_CONVERSATION_COUNT", "0")
+        )
+        result = seed_scroll(owner_user_id, message_count, extra_conversation_count)
     elif scenario == "branching":
         result = seed_branching(owner_user_id)
+    elif scenario == "cleanup":
+        raw_conversation_ids = json.loads(require_env("NEXUS_E2E_CONVERSATION_IDS"))
+        if not isinstance(raw_conversation_ids, list) or not all(
+            isinstance(value, str) for value in raw_conversation_ids
+        ):
+            raise RuntimeError("NEXUS_E2E_CONVERSATION_IDS must be a JSON string list")
+        result = cleanup_conversations(
+            owner_user_id,
+            [UUID(value) for value in raw_conversation_ids],
+        )
     else:
         raise RuntimeError(f"Unknown scenario: {scenario}")
 

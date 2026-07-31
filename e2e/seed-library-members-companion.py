@@ -134,6 +134,17 @@ def cleanup(fixture: dict[str, object]) -> None:
         db.execute(delete(Library).where(Library.id == library_id))
         db.execute(delete(Library).where(Library.id == system_library_id))
         db.execute(
+            text(
+                """
+                DELETE FROM viewer_collection_revisions
+                WHERE viewer_id IN (
+                    SELECT id FROM users WHERE email LIKE :pattern
+                )
+                """
+            ),
+            {"pattern": f"{email_prefix}-%"},
+        )
+        db.execute(
             text("DELETE FROM users WHERE email LIKE :pattern"),
             {"pattern": f"{email_prefix}-%"},
         )
