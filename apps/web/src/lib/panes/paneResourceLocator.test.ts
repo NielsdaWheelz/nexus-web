@@ -95,6 +95,7 @@ describe("pane resource locator", () => {
       `/artifacts/${encodeURIComponent(ARTIFACT_REF)}`,
       "/authors/ursula-k-le-guin",
       "/media/not-a-uuid",
+      "/daily/2099-06-15",
     ]) {
       expect(routeShareFor(href), href).toBeNull();
     }

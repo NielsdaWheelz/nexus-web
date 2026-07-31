@@ -73,7 +73,7 @@ const INTERNAL_ROUTE_IDS = new Set([
   "settingsIdentities",
   "settingsKeybindings",
 ]);
-const RESOURCE_ROUTE_IDS = new Set([
+const RESOURCE_IDENTITY_ROUTE_IDS = new Set([
   "library",
   "media",
   "artifact",
@@ -83,6 +83,9 @@ const RESOURCE_ROUTE_IDS = new Set([
   "note",
   "oracleReading",
   "author",
+  // A latent daily date has no durable resource to share. Once materialized,
+  // PagePaneBody publishes the decoded Page identity through pane chrome.
+  "dailyDate",
 ]);
 
 /**
@@ -97,7 +100,7 @@ export function resolvePaneRouteShareIdentity(
   if (route.id === "unsupported" || INTERNAL_ROUTE_IDS.has(route.id)) {
     return null;
   }
-  if (RESOURCE_ROUTE_IDS.has(route.id)) {
+  if (RESOURCE_IDENTITY_ROUTE_IDS.has(route.id)) {
     return null;
   }
   const target = routeShareTarget({ href: route.pathname, label });

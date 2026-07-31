@@ -1,13 +1,6 @@
-import {
-  expect,
-  test,
-  type APIRequestContext,
-} from "@playwright/test";
+import { expect, test, type APIRequestContext } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import {
-  deleteE2eResource,
-  throwE2eCleanupFailures,
-} from "./cleanup";
+import { deleteE2eResource, throwE2eCleanupFailures } from "./cleanup";
 import {
   activeWorkspacePane,
   gotoSinglePaneWorkspace,
@@ -25,11 +18,10 @@ type DailyPageDescriptor =
       localDate: string;
       page: { id: string };
       surface: {
-        orderedItems: Array<{
+        ordered_items: Array<{
           target: {
             content:
-              | { kind: "note_body"; bodyText: string }
-              | { kind: string };
+              { kind: "note_body"; body_text: string } | { kind: string };
           };
         }>;
       };
@@ -54,11 +46,11 @@ function bodyTextCount(
   expected: string,
 ): number {
   if (descriptor.kind !== "Materialized") return 0;
-  return descriptor.surface.orderedItems.filter(
+  return descriptor.surface.ordered_items.filter(
     ({ target }) =>
       target.content.kind === "note_body" &&
-      "bodyText" in target.content &&
-      target.content.bodyText === expected,
+      "body_text" in target.content &&
+      target.content.body_text === expected,
   ).length;
 }
 
@@ -67,6 +59,13 @@ test.describe("daily Pages", () => {
     page,
   }, testInfo) => {
     test.slow();
+    const browserErrors: string[] = [];
+    page.on("console", (message) => {
+      if (message.type() === "error") browserErrors.push(message.text());
+    });
+    page.on("pageerror", (error) => {
+      browserErrors.push(error.stack ?? error.message);
+    });
     await page.clock.setFixedTime(new Date("2099-06-15T12:00:00Z"));
     const noteText = `E2E daily Quick Note ${randomUUID()}`;
     let localDate: string | null = null;
@@ -91,7 +90,8 @@ test.describe("daily Pages", () => {
           new URL(page.url()).pathname,
         )?.[1] ?? null;
       expect(localDate).toMatch(/^2099-06-1[56]$/);
-      if (!localDate) throw new Error("Quick Note did not expose its local date");
+      if (!localDate)
+        throw new Error("Quick Note did not expose its local date");
 
       const before = await readDailyPage(page.request, localDate);
       expect(before.kind).toBe("Latent");
@@ -119,7 +119,7 @@ test.describe("daily Pages", () => {
         throw new Error("Quick Note did not materialize its daily Page");
       }
       pageId = saved.page.id;
-      expect(saved.surface.orderedItems).toHaveLength(1);
+      expect(saved.surface.ordered_items).toHaveLength(1);
 
       await page.reload({ waitUntil: "domcontentloaded" });
       const reloadedEditor = activeWorkspacePane(page).getByRole("textbox", {
@@ -129,10 +129,7 @@ test.describe("daily Pages", () => {
         timeout: 15_000,
       });
       expect(
-        bodyTextCount(
-          await readDailyPage(page.request, localDate),
-          noteText,
-        ),
+        bodyTextCount(await readDailyPage(page.request, localDate), noteText),
       ).toBe(1);
     } catch (error) {
       productError = error;
@@ -156,6 +153,12 @@ test.describe("daily Pages", () => {
         } catch (error) {
           cleanupErrors.push(error);
         }
+      }
+      if (browserErrors.length > 0) {
+        await testInfo.attach("browser-errors.txt", {
+          body: browserErrors.join("\n\n"),
+          contentType: "text/plain",
+        });
       }
       throwE2eCleanupFailures(
         "Daily Page Quick Note",
