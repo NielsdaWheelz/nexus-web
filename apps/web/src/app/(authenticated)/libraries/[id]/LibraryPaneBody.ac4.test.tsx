@@ -33,7 +33,11 @@ import {
   publishLibraryPlacementChange,
   resetLibraryPlacementRevisionForTest,
 } from "@/lib/libraries/placementRevision";
-import { NEXUS_OPEN_REQUESTED_EVENT } from "@/lib/nexus/events";
+import {
+  consumePendingNexusOpenIntents,
+  NEXUS_OPEN_REQUESTED_EVENT,
+  setNexusOpenReceiverReady,
+} from "@/lib/nexus/events";
 import type { NexusOpenIntent } from "@/lib/nexus/model";
 import {
   PanePrimaryChromeProvider,
@@ -961,6 +965,7 @@ exhaustion: "Complete",
       details.push((event as CustomEvent<NexusOpenIntent>).detail);
     };
     window.addEventListener(NEXUS_OPEN_REQUESTED_EVENT, onOpen);
+    setNexusOpenReceiverReady(true);
 
     try {
       renderHydratedPane({
@@ -1021,6 +1026,8 @@ exhaustion: "Complete",
       ]);
     } finally {
       window.removeEventListener(NEXUS_OPEN_REQUESTED_EVENT, onOpen);
+      setNexusOpenReceiverReady(false);
+      consumePendingNexusOpenIntents();
     }
   });
 
