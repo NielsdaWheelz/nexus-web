@@ -22,6 +22,7 @@ from nexus_test_control.sensitivity import (
     canonical_proof,
     declared_fault_for_proof,
     fault_definition,
+    isolated_worktree,
     prove,
 )
 
@@ -153,6 +154,81 @@ def test_base_sensitivity_runs_the_overlaid_proof_red_then_current_green(
     assert result.red.phase is SensitivityPhase.ASSERTION
     assert result.red.failure_fingerprint.startswith("sha256:")
     assert result.green.status is RunStatus.PASS
+
+
+@pytest.mark.parametrize(
+    "proof_error",
+    [RuntimeError("synthetic proof failure"), KeyboardInterrupt()],
+    ids=("proof-error", "interruption"),
+)
+def test_isolated_worktree_cleans_runtime_before_removal_on_proof_exit(
+    tmp_path: Path,
+    proof_error: BaseException,
+) -> None:
+    (tmp_path / "proof.txt").write_text("proof\n")
+    _commit(tmp_path, "base")
+    revision = _git_output(tmp_path, "rev-parse", "HEAD")
+    cleaned: list[tuple[Path, dict[str, str]]] = []
+    checkout: Path | None = None
+
+    def clean_runtime(
+        worktree: Path,
+        environment: dict[str, str],
+    ) -> tuple[str, ...]:
+        assert _git_output(worktree, "rev-parse", "HEAD") == revision
+        cleaned.append((worktree, environment))
+        return ()
+
+    with pytest.raises(type(proof_error)):
+        with isolated_worktree(
+            tmp_path,
+            revision,
+            overlays=(),
+            runtime_cleaner=clean_runtime,
+        ) as red_root:
+            checkout = red_root
+            raise proof_error
+
+    assert cleaned == [(checkout, {"NEXUS_ENV": "test"})]
+    assert checkout is not None
+    assert not checkout.exists()
+    assert str(checkout) not in _git_output(tmp_path, "worktree", "list", "--porcelain")
+
+
+def test_isolated_worktree_retains_ownership_evidence_when_runtime_cleanup_fails(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "proof.txt").write_text("proof\n")
+    _commit(tmp_path, "base")
+    revision = _git_output(tmp_path, "rev-parse", "HEAD")
+    checkout: Path | None = None
+
+    def fail_cleanup(
+        worktree: Path,
+        environment: dict[str, str],
+    ) -> tuple[str, ...]:
+        assert worktree.exists()
+        assert environment == {"NEXUS_ENV": "test"}
+        raise RuntimeError("synthetic cleanup failure")
+
+    try:
+        with pytest.raises(SensitivityError, match="ownership evidence was retained") as error:
+            with isolated_worktree(
+                tmp_path,
+                revision,
+                overlays=(),
+                runtime_cleaner=fail_cleanup,
+            ) as red_root:
+                checkout = red_root
+
+        assert checkout is not None
+        assert checkout.exists()
+        assert str(checkout) in _git_output(tmp_path, "worktree", "list", "--porcelain")
+        assert f"cd {checkout} && ./scripts/test clean" in str(error.value)
+    finally:
+        if checkout is not None and checkout.exists():
+            _git_output(tmp_path, "worktree", "remove", "--force", str(checkout))
+            checkout.parent.rmdir()
 
 
 def _commit(repo: Path, message: str) -> None:

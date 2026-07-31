@@ -79,7 +79,12 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ("DATABASE_URL_TEST", "nexus_test", "tests/test_db.py", "make test"),
     ),
     ".github/workflows/ci.yml": (
-        ("run: ./scripts/test pr", "if: always()"),
+        (
+            "workflow_dispatch:",
+            "run: ./scripts/test pr",
+            "run: ./scripts/test full",
+            "if: always()",
+        ),
         ("make test", "pytest", "playwright test"),
     ),
     ".github/workflows/nightly.yml": (

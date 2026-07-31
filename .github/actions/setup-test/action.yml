@@ -74,7 +74,7 @@ runs:
 
     - name: Install Chromium and its system dependencies
       shell: bash
-      run: cd apps/web && bunx --no-install playwright install --with-deps chromium
+      run: cd apps/web && flock -x /tmp/nexus-test-chromium.lock bunx --no-install playwright install --with-deps chromium
 
     - name: Prepare pinned provider-runtime checkout
       if: inputs.provider-runtime == 'true'

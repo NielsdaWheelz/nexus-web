@@ -1,6 +1,8 @@
 import fcntl
 import json
 import socket
+import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -32,11 +34,70 @@ from nexus_test_control.runtime import (
     template_database_name,
     template_fingerprint,
     template_lifecycle_lock,
+    workspace_heavy_lock,
 )
 
 RUN_ID = "0123456789abcdef"
 OTHER_RUN_ID = "fedcba9876543210"
 TEST_ENV = {"NEXUS_ENV": "test"}
+
+
+def test_heavy_lock_serializes_linked_worktrees_through_their_common_git_owner(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    linked = tmp_path / "linked"
+    repository.mkdir()
+    subprocess.run(("git", "init", "-q"), cwd=repository, check=True)
+    (repository / "proof.txt").write_text("proof\n", encoding="utf-8")
+    subprocess.run(("git", "add", "."), cwd=repository, check=True)
+    subprocess.run(
+        (
+            "git",
+            "-c",
+            "user.name=Nexus Test",
+            "-c",
+            "user.email=nexus@example.invalid",
+            "commit",
+            "-qm",
+            "base",
+        ),
+        cwd=repository,
+        check=True,
+    )
+    subprocess.run(
+        ("git", "worktree", "add", "--detach", str(linked), "HEAD"),
+        cwd=repository,
+        check=True,
+        capture_output=True,
+    )
+    try:
+        with workspace_heavy_lock(repository) as primary_path:
+            completed = subprocess.run(
+                (
+                    sys.executable,
+                    "-c",
+                    "import fcntl, pathlib, sys; "
+                    "f = pathlib.Path(sys.argv[1]).open('a+b'); "
+                    "fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)",
+                    str(primary_path),
+                ),
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        with workspace_heavy_lock(linked) as linked_path:
+            assert linked_path == primary_path
+    finally:
+        subprocess.run(
+            ("git", "worktree", "remove", "--force", str(linked)),
+            cwd=repository,
+            check=True,
+            capture_output=True,
+        )
+
+    assert completed.returncode != 0
+    assert "BlockingIOError" in completed.stderr
 
 
 def test_docker_host_accepts_only_a_real_local_unix_socket(tmp_path: Path) -> None:

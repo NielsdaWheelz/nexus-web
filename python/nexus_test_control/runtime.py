@@ -532,6 +532,39 @@ def _state_lock(repo_root: Path, name: str) -> Iterator[None]:
 
 
 @contextmanager
+def workspace_heavy_lock(repo_root: Path) -> Iterator[Path]:
+    """Serialize memory-heavy work across every controller for one checkout."""
+    root = canonical_repo_root(repo_root)
+    identity = hashlib.sha256(os.fsencode(_git_common_identity(root))).hexdigest()[:16]
+    path = Path(tempfile.gettempdir()) / f"nexus-test-heavy-{identity}.lock"
+    with _locked_path(path):
+        yield path
+
+
+def _git_common_identity(repo_root: Path) -> Path:
+    marker = repo_root / ".git"
+    if marker.is_dir():
+        return marker.resolve(strict=True)
+    try:
+        line = marker.read_text(encoding="utf-8").strip()
+    except OSError:
+        return repo_root
+    prefix = "gitdir: "
+    if not line.startswith(prefix):
+        return repo_root
+    git_dir = Path(line.removeprefix(prefix))
+    if not git_dir.is_absolute():
+        git_dir = marker.parent / git_dir
+    git_dir = git_dir.resolve(strict=True)
+    common_marker = git_dir / "commondir"
+    try:
+        common = Path(common_marker.read_text(encoding="utf-8").strip())
+    except OSError:
+        return git_dir
+    return (git_dir / common).resolve(strict=True)
+
+
+@contextmanager
 def _locked_path(path: Path) -> Iterator[None]:
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_file = path.open("a+b")

@@ -131,7 +131,7 @@ def _minimal_repository(root: Path) -> None:
     _write(
         root,
         ".github/workflows/ci.yml",
-        "run: ./scripts/test pr\nif: always()\n",
+        "workflow_dispatch:\nrun: ./scripts/test pr\nrun: ./scripts/test full\nif: always()\n",
     )
     _write(
         root,

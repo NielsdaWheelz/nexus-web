@@ -15,7 +15,10 @@ if (process.env.CI || process.env.VERCEL || process.env.PLAYWRIGHT_SKIP_BROWSER_
 }
 
 try {
-  execSync("bunx playwright install chromium", { stdio: "inherit" });
+  execSync(
+    "flock -x /tmp/nexus-test-chromium.lock bunx playwright install chromium",
+    { stdio: "inherit" },
+  );
 } catch {
   console.warn(
     "[install-test-browser] Could not install Chromium for the Vitest browser " +

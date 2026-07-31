@@ -7,10 +7,12 @@
     "build": "node scripts/copy-pdfjs.mjs && next build",
     "start": "next start",
     "lint:css-tokens": "node scripts/check-css-tokens.mjs",
+    "test:eslint-policy": "bun scripts/test-eslint-policy.mjs",
     "lint": "eslint src/ vitest.config.ts \"e2e/**/*.{ts,tsx,mjs}\" --no-error-on-unmatched-pattern --max-warnings 0",
     "typecheck": "rm -rf .next/types && next typegen && tsc --noEmit",
     "test:unit": "vitest run --project unit",
     "test:browser": "vitest run --project browser",
+    "check:bundle": "node scripts/check-bundle.mjs",
     "postinstall": "node scripts/install-test-browser.mjs"
   },
   "dependencies": {

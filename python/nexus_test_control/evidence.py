@@ -59,6 +59,7 @@ class CapabilityEvidence:
     provider_calls: int = 0
     estimated_cost_usd: float = 0
     artifacts: tuple[str, ...] = ()
+    detail: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.id, Capability) or not isinstance(self.status, RunStatus):
@@ -233,6 +234,9 @@ def evidence_json(evidence: RunEvidence, secrets: Iterable[str] = ()) -> dict[st
                 "reason": selection.reason.value,
                 "proof": selection.proof,
                 "sensitivity_required": selection.sensitivity_required,
+                "deferred_to": (
+                    selection.deferred_to.value if selection.deferred_to is not None else None
+                ),
             }
             for selection in evidence.selection
         ],
@@ -246,6 +250,7 @@ def evidence_json(evidence: RunEvidence, secrets: Iterable[str] = ()) -> dict[st
                 "provider_calls": capability.provider_calls,
                 "estimated_cost_usd": capability.estimated_cost_usd,
                 "artifacts": list(capability.artifacts),
+                "detail": capability.detail,
             }
             for capability in evidence.capabilities
         ],

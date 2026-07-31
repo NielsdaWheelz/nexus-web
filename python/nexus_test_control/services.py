@@ -11,7 +11,7 @@ import signal
 import socket
 import subprocess
 import time
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,6 +27,7 @@ from psycopg import sql
 
 from nexus_test_control.build import StandaloneBuild
 from nexus_test_control.model import Resource, ResourceKind
+from nexus_test_control.process import run_command, unblock_and_exec_command
 from nexus_test_control.runtime import (
     EndpointKind,
     RuntimeContractError,
@@ -82,7 +83,9 @@ SUPABASE_EXCLUDED_SERVICES = (
 
 _PORT_DEFAULTS = (15432, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000)
 _SAFE_CHILD_ENV = ("HOME", "LANG", "LC_ALL", "PATH", "TMPDIR", "TZ", "UV_CACHE_DIR")
-_STATUS_KEYS = frozenset({"API_URL", "ANON_KEY", "PUBLISHABLE_KEY", "SECRET_KEY"})
+_STATUS_KEYS = frozenset(
+    {"API_URL", "ANON_KEY", "PUBLISHABLE_KEY", "SECRET_KEY", "SERVICE_ROLE_KEY"}
+)
 _CALLER_RESOURCE_ENV = frozenset(
     {
         "AWS_ACCESS_KEY_ID",
@@ -286,7 +289,7 @@ def read_supabase_credentials(
     expected_url = runtime_endpoint(root, environment, EndpointKind.SUPABASE)
     url = status.get("API_URL")
     anon_key = status.get("ANON_KEY") or status.get("PUBLISHABLE_KEY")
-    admin_key = status.get("SECRET_KEY")
+    admin_key = status.get("SECRET_KEY") or status.get("SERVICE_ROLE_KEY")
     if (
         not isinstance(url, str)
         or url != expected_url
@@ -574,7 +577,7 @@ def _start_owned_process(
     try:
         with log_path.open("w", encoding="utf-8") as log:
             process = subprocess.Popen(
-                command,
+                unblock_and_exec_command(command),
                 cwd=cwd,
                 env=child_environment,
                 stdin=subprocess.DEVNULL,
@@ -669,6 +672,69 @@ def clean_owned_runs(repo_root: Path, environment: Mapping[str, str]) -> tuple[s
     credentials = ensure_services(root, environment) if run_ids else None
     for run_id in run_ids:
         clean_run(root, environment, run_id, supabase=credentials)
+    return run_ids
+
+
+CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
+
+
+def clean_owned_runtime(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    *,
+    command_runner: CommandRunner | None = None,
+) -> tuple[str, ...]:
+    """Delete the exact recorded runs, workspace services, volumes, and state."""
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    if not runtime_record_path(root).exists():
+        return ()
+    run_command = command_runner or _run
+    runtime = read_runtime(root)
+    run_ids = runtime.owned_run_ids
+    failures: list[str] = []
+    try:
+        clean_owned_runs(root, environment)
+    except Exception as error:
+        failures.append(f"run cleanup failed: {error}")
+    supabase_config = Path(runtime.supabase_workdir) / "supabase" / "config.toml"
+    if supabase_config.is_file():
+        try:
+            run_command(
+                (
+                    "supabase",
+                    "--workdir",
+                    runtime.supabase_workdir,
+                    "stop",
+                    "--project-id",
+                    runtime.compose_project,
+                    "--no-backup",
+                    "--yes",
+                ),
+                cwd=root,
+            )
+        except Exception as error:
+            failures.append(f"Supabase teardown failed: {error}")
+    try:
+        run_command(
+            (
+                "docker",
+                "compose",
+                "--project-name",
+                runtime.compose_project,
+                "--file",
+                str(root / "docker" / "docker-compose.test.yml"),
+                "down",
+                "--volumes",
+                "--remove-orphans",
+            ),
+            cwd=root,
+        )
+    except Exception as error:
+        failures.append(f"Compose teardown failed: {error}")
+    if failures:
+        raise RuntimeContractError("; ".join(failures))
+    shutil.rmtree(runtime_state_dir(root))
     return run_ids
 
 
@@ -1037,14 +1103,22 @@ def _stop_process_group(
         os.killpg(process_group_id, signal.SIGTERM)
     except ProcessLookupError:
         return
-    deadline = time.monotonic() + 10
+    deadline = time.monotonic() + 3
     while time.monotonic() < deadline:
+        try:
+            os.waitpid(process_group_id, os.WNOHANG)
+        except ChildProcessError:
+            pass
         try:
             os.killpg(process_group_id, 0)
         except ProcessLookupError:
             return
         time.sleep(0.05)
     os.killpg(process_group_id, signal.SIGKILL)
+    try:
+        os.waitpid(process_group_id, 0)
+    except ChildProcessError:
+        pass
 
 
 def _process_start_token(process_id: int) -> str:
@@ -1078,11 +1152,10 @@ def _run(
     if command[0] in {"docker", "supabase"}:
         child_environment["DOCKER_HOST"] = local_docker_host()
         child_environment["DOCKER_CONTEXT"] = "default"
-    return subprocess.run(
+    return run_command(
         tuple(command),
         cwd=cwd,
         env=child_environment,
         check=True,
-        text=True,
         capture_output=capture_output,
     )

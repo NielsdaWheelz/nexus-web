@@ -63,8 +63,10 @@ test and verification API.
 ```
 
 Scheduled/operator workflows additionally own `nightly` and `release`.
-`./scripts/test clean` deletes only ledger-owned local test resources; use
-`./scripts/test list --json` for the machine-readable capability registry.
+`./scripts/test clean` deletes exact ledger-owned run resources, stops the
+recorded workspace-local Supabase/Compose projects, removes their test-only
+volumes, and deletes `.nexus-test/`. It preserves every unrecorded resource.
+Use `./scripts/test list --json` for the machine-readable capability registry.
 
 Product operations remain Make targets:
 

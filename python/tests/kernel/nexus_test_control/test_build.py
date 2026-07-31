@@ -36,6 +36,7 @@ def _repository(tmp_path: Path) -> Path:
         "bun.lock",
         "next.config.ts",
         "package.json",
+        "scripts/check-bundle.mjs",
         "scripts/copy-pdfjs.mjs",
         "tsconfig.json",
     ):
@@ -58,6 +59,8 @@ def _fake_bun(repo_root: Path) -> Path:
         "previous = json.loads(log.read_text()) if log.exists() else []\n"
         "previous.append({'argv': sys.argv[1:], 'cwd': str(root), 'env': dict(os.environ)})\n"
         "log.write_text(json.dumps(previous))\n"
+        "if sys.argv[1:] != ['run', 'build']:\n"
+        "    raise SystemExit(0)\n"
         "standalone = root / '.next' / 'standalone'\n"
         "server_root = standalone / 'apps' / 'web'\n"
         "server_root.mkdir(parents=True)\n"
@@ -102,6 +105,7 @@ def test_fingerprint_tracks_product_build_inputs_and_exact_public_environment(
         "bun.lock",
         "next.config.ts",
         "package.json",
+        "scripts/check-bundle.mjs",
         "scripts/copy-pdfjs.mjs",
         "tsconfig.json",
         "patches/dependency.patch",
@@ -173,9 +177,10 @@ def test_build_is_fixed_isolated_normalized_atomic_and_reused(tmp_path: Path) ->
     assert metadata["strict_csp"] is True
 
     invocations = json.loads((root / "apps" / "web" / "build-invocation.json").read_text())
-    assert len(invocations) == 1
+    assert len(invocations) == 2
     invocation = invocations[0]
     assert invocation["argv"] == ["run", "build"]
+    assert invocations[1]["argv"] == ["run", "check:bundle"]
     assert invocation["cwd"] == str(root / "apps" / "web")
     child = invocation["env"]
     assert child["NEXUS_ENV"] == "test"
@@ -195,7 +200,7 @@ def test_build_is_fixed_isolated_normalized_atomic_and_reused(tmp_path: Path) ->
         assert rejected not in child
 
     assert ensure_standalone_build(root, environment, PUBLIC_KEY) == artifact
-    assert len(json.loads((root / "apps" / "web" / "build-invocation.json").read_text())) == 1
+    assert len(json.loads((root / "apps" / "web" / "build-invocation.json").read_text())) == 2
 
 
 def test_invalid_or_ambiguous_output_is_never_published(tmp_path: Path) -> None:

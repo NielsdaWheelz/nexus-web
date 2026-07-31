@@ -6,6 +6,10 @@ import { loadBrowserRuntime } from "./runtime";
 const repoRoot = realpathSync(path.resolve(__dirname, "../../.."));
 const deploymentOrigin = process.env.NEXUS_SMOKE_APP_URL?.replace(/\/$/, "");
 const runtime = deploymentOrigin ? null : loadBrowserRuntime();
+const runId = process.env.NEXUS_TEST_RUN_ID;
+if (runId && !/^[0-9a-f]{16}$/.test(runId)) {
+  throw new Error("Playwright received a non-canonical NEXUS_TEST_RUN_ID.");
+}
 
 for (const key of [
   "SERVICE_ROLE_KEY",
@@ -25,7 +29,9 @@ export default defineConfig({
   timeout: 90_000,
   workers: 1,
   reporter: "line",
-  outputDir: path.join(repoRoot, "test-results", "playwright"),
+  outputDir: runId
+    ? path.join(repoRoot, "test-results", "runs", runId, "playwright")
+    : path.join(repoRoot, "test-results", "playwright"),
   use: {
     ...devices["Desktop Chrome"],
     serviceWorkers: "block",

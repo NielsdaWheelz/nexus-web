@@ -51,6 +51,14 @@ def test_confidence_keeps_real_stack_affected_and_skips_build_and_journeys() -> 
     assert Capability.JOURNEYS_ALL not in by_capability
 
 
+def test_persistent_browser_processes_are_the_final_contiguous_heavy_block() -> None:
+    for workflow in (Workflow.CHANGED, Workflow.FULL, Workflow.NIGHTLY, Workflow.RELEASE):
+        capabilities = tuple(
+            requirement.capability for requirement in WORKFLOW_REGISTRY[workflow].requirements
+        )
+        assert capabilities[-2:] == (Capability.JOURNEYS_ALL, Capability.EXTENSION)
+
+
 def test_run_status_never_turns_not_run_or_empty_into_pass() -> None:
     assert aggregate_status(()) is RunStatus.NOT_RUN
     assert aggregate_status((RunStatus.PASS, RunStatus.NOT_RUN)) is RunStatus.NOT_RUN

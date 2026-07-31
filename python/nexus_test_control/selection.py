@@ -236,7 +236,10 @@ def select_changed(
             direct = _direct_test_target(change.path)
             if direct is not None:
                 routes.append(IndexedRoute(change.path, direct, SelectionReason.CHANGED_TEST))
-        routes.extend(index.for_path(change.path))
+            else:
+                routes.extend(index.for_path(change.path))
+        else:
+            routes.extend(index.for_path(change.path))
         if not routes:
             routes.append(
                 IndexedRoute(

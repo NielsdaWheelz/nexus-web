@@ -9,13 +9,14 @@ import sys
 import time
 import uuid
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import TextIO
 
 from nexus_test_control.evidence import RunEvidence, evidence_json, redact_text
 from nexus_test_control.model import (
     WORKFLOW_REGISTRY,
+    Capability,
     RunStatus,
     Selection,
     SelectionReason,
@@ -23,8 +24,9 @@ from nexus_test_control.model import (
     SensitivityMethod,
     Workflow,
 )
+from nexus_test_control.process import CommandInterrupted, controller_signal_handlers
 from nexus_test_control.runner import CapabilityContext, environment_secrets, run_workflow
-from nexus_test_control.runtime import RuntimeContractError
+from nexus_test_control.runtime import RuntimeContractError, workspace_heavy_lock
 from nexus_test_control.selection import (
     ChangedPath,
     GitChangeKind,
@@ -42,10 +44,26 @@ from nexus_test_control.sensitivity import (
 from nexus_test_control.sensitivity import (
     prove as prove_sensitivity,
 )
-from nexus_test_control.services import clean_owned_runs, new_run_id, test_environment
+from nexus_test_control.services import clean_owned_runtime, new_run_id, test_environment
 
 _PROOF_RUNNERS = frozenset({"gradle", "playwright", "pytest", "static", "vitest"})
 _FAULT_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+_DEFERRED_OWNER = {
+    Capability.MIGRATIONS: Workflow.PR,
+    Capability.BUNDLE: Workflow.PR,
+    Capability.JOURNEYS_ALL: Workflow.FULL,
+    Capability.CORPUS: Workflow.FULL,
+    Capability.PROVIDER_RUNTIME: Workflow.FULL,
+    Capability.LLM_EVAL: Workflow.FULL,
+    Capability.EXTENSION: Workflow.FULL,
+    Capability.ANDROID_HOST: Workflow.FULL,
+    Capability.AUDIT: Workflow.NIGHTLY,
+    Capability.HOSTED: Workflow.NIGHTLY,
+    Capability.ANDROID_DEVICE: Workflow.NIGHTLY,
+    Capability.PROVIDER_CERTIFICATION: Workflow.RELEASE,
+    Capability.ANDROID_RELEASE: Workflow.RELEASE,
+    Capability.RELEASE_ARTIFACT: Workflow.RELEASE,
+}
 
 
 class ControlPlaneError(ValueError):
@@ -184,14 +202,20 @@ def main(
     try:
         root = _git_repo_root(repo_root or Path.cwd())
         local_test_environment = test_environment(env)
-        if isinstance(command, ProveCommand):
-            return _execute_prove(root, command, env, output)
-        if isinstance(command, CleanCommand):
-            cleaned = clean_owned_runs(root, local_test_environment)
-            output.write(f"clean: pass; runs={len(cleaned)}\n")
-            return 0
-        return _execute_workflow(root, command, env, output)
-    except (ControlPlaneError, RuntimeContractError, SensitivityError) as error:
+        with controller_signal_handlers():
+            if isinstance(command, ProveCommand):
+                return _execute_prove(root, command, env, output)
+            if isinstance(command, CleanCommand):
+                with workspace_heavy_lock(root):
+                    runtime_existed = (root / ".nexus-test/runtime.json").is_file()
+                    cleaned = clean_owned_runtime(root, local_test_environment)
+                output.write(
+                    f"clean: pass; runs={len(cleaned)}; "
+                    f"runtime={'removed' if runtime_existed else 'absent'}\n"
+                )
+                return 0
+            return _execute_workflow(root, command, env, output)
+    except (CommandInterrupted, ControlPlaneError, RuntimeContractError, SensitivityError) as error:
         errors.write(redact_text(f"test control failed: {error}\n", environment_secrets(env)))
         return 1
 
@@ -204,12 +228,14 @@ def _execute_workflow(
 ) -> int:
     started = time.monotonic_ns()
     run_id = new_run_id()
+    results_directory = repo_root / "test-results" / "runs" / run_id
+    results_directory.mkdir(parents=True, exist_ok=False)
     git_sha = _git_sha(repo_root, "HEAD")
     base_override = None
     if command.workflow is Workflow.PR:
         base_override = environment.get("NEXUS_TEST_BASE_SHA") or "HEAD^"
     base_sha, selection = _selection(repo_root, command, base_override=base_override)
-    selection = tuple(
+    selected = tuple(
         Selection(
             item.path,
             item.capability,
@@ -218,18 +244,26 @@ def _execute_workflow(
             if item.sensitivity_required and item.proof is not None
             else item.proof,
             item.sensitivity_required,
+            item.deferred_to,
         )
         for item in selection
     )
+    selection = _route_selection_for_workflow(command.workflow, selected)
+    active_selection = tuple(item for item in selection if item.deferred_to is None)
     sensitivity = _workflow_sensitivity(repo_root, command, environment, base_sha, selection)
     context = CapabilityContext(
         repo_root,
         command.workflow,
-        selection,
+        active_selection,
         command.ui,
         frozenset(item.proof for item in sensitivity),
     )
-    workflow_run = run_workflow(context, output, environment, run_id=run_id)
+    owned_environment = {
+        **environment,
+        "NEXUS_TEST_RESULTS_DIR": str(results_directory),
+        "NEXUS_TEST_RUN_ID": run_id,
+    }
+    workflow_run = run_workflow(context, output, owned_environment, run_id=run_id)
     duration_ms = (time.monotonic_ns() - started) // 1_000_000
     evidence = RunEvidence(
         repo_root=repo_root,
@@ -246,6 +280,24 @@ def _execute_workflow(
     relative_summary = write_summary(repo_root, evidence, environment_secrets(environment))
     output.write(f"{command.workflow.value}: {evidence.status.value}; summary={relative_summary}\n")
     return 0 if evidence.status is RunStatus.PASS else 1
+
+
+def _route_selection_for_workflow(
+    workflow: Workflow, selection: tuple[Selection, ...]
+) -> tuple[Selection, ...]:
+    required = {requirement.capability for requirement in WORKFLOW_REGISTRY[workflow].requirements}
+    routed: list[Selection] = []
+    for item in selection:
+        if item.capability in required:
+            routed.append(item)
+            continue
+        owner = _DEFERRED_OWNER.get(item.capability)
+        if owner is None:
+            raise ControlPlaneError(
+                f"{workflow.value} has no owner for selected {item.capability.value} proof"
+            )
+        routed.append(replace(item, deferred_to=owner))
+    return tuple(routed)
 
 
 def _execute_prove(
@@ -327,11 +379,10 @@ def write_summary(
 ) -> str:
     relative = Path("test-results") / "runs" / evidence.run_id / "summary.json"
     path = repo_root / relative
-    path.parent.mkdir(parents=True, exist_ok=False)
-    path.write_text(
-        json.dumps(evidence_json(evidence, secrets), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    if not path.parent.is_dir():
+        raise ControlPlaneError("run evidence directory is absent")
+    with path.open("x", encoding="utf-8") as target:
+        target.write(json.dumps(evidence_json(evidence, secrets), indent=2, sort_keys=True) + "\n")
     return relative.as_posix()
 
 

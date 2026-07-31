@@ -135,6 +135,7 @@ class Selection:
     reason: SelectionReason
     proof: str | None = None
     sensitivity_required: bool = False
+    deferred_to: Workflow | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.capability, Capability) or not isinstance(
@@ -147,6 +148,8 @@ class Selection:
             raise ValueError("selection proof must not be blank")
         if self.sensitivity_required and self.proof is None:
             raise ValueError("sensitivity-required selection must name its proof")
+        if self.deferred_to is not None and not isinstance(self.deferred_to, Workflow):
+            raise ValueError("selection deferral must name a typed workflow")
 
 
 class SensitivityMethod(StrEnum):
@@ -269,14 +272,18 @@ _PR_COMPLETE = (
     Capability.JOURNEYS_CRITICAL,
 )
 
-_FULL_COMPLETE = (
+_FULL_NON_BROWSER = (
     *_PR_COMPLETE[:-1],
-    Capability.JOURNEYS_ALL,
     Capability.CORPUS,
     Capability.PROVIDER_RUNTIME,
     Capability.LLM_EVAL,
-    Capability.EXTENSION,
     Capability.ANDROID_HOST,
+)
+
+_FULL_COMPLETE = (
+    *_FULL_NON_BROWSER,
+    Capability.JOURNEYS_ALL,
+    Capability.EXTENSION,
 )
 
 _CHANGED_AFFECTED = (
@@ -287,16 +294,16 @@ _CHANGED_AFFECTED = (
     Capability.COMPONENT,
     Capability.MIGRATIONS,
     Capability.BUNDLE,
-    Capability.JOURNEYS_ALL,
     Capability.CORPUS,
     Capability.PROVIDER_RUNTIME,
     Capability.LLM_EVAL,
-    Capability.EXTENSION,
     Capability.ANDROID_HOST,
     Capability.AUDIT,
     Capability.HOSTED,
     Capability.PROVIDER_CERTIFICATION,
     Capability.ANDROID_DEVICE,
+    Capability.JOURNEYS_ALL,
+    Capability.EXTENSION,
 )
 
 WORKFLOW_REGISTRY: Mapping[Workflow, WorkflowDefinition] = MappingProxyType(
@@ -337,7 +344,14 @@ WORKFLOW_REGISTRY: Mapping[Workflow, WorkflowDefinition] = MappingProxyType(
             Workflow.NIGHTLY,
             _requirements(
                 SelectionScope.COMPLETE,
-                (*_FULL_COMPLETE, Capability.AUDIT, Capability.HOSTED, Capability.ANDROID_DEVICE),
+                (
+                    *_FULL_NON_BROWSER,
+                    Capability.AUDIT,
+                    Capability.HOSTED,
+                    Capability.ANDROID_DEVICE,
+                    Capability.JOURNEYS_ALL,
+                    Capability.EXTENSION,
+                ),
             ),
         ),
         Workflow.RELEASE: WorkflowDefinition(
@@ -345,10 +359,12 @@ WORKFLOW_REGISTRY: Mapping[Workflow, WorkflowDefinition] = MappingProxyType(
             _requirements(
                 SelectionScope.COMPLETE,
                 (
-                    *_FULL_COMPLETE,
+                    *_FULL_NON_BROWSER,
                     Capability.PROVIDER_CERTIFICATION,
                     Capability.ANDROID_RELEASE,
                     Capability.RELEASE_ARTIFACT,
+                    Capability.JOURNEYS_ALL,
+                    Capability.EXTENSION,
                 ),
             ),
         ),

@@ -19,6 +19,15 @@ _MEMORY = re.compile(r"([0-9]+(?:\.[0-9]+)?)(B|kB|KiB|MB|MiB|GB|GiB)\Z")
 _MIB = 1024 * 1024
 
 
+def available_memory_mib(meminfo: Path = Path("/proc/meminfo")) -> int | None:
+    try:
+        contents = meminfo.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    match = re.search(r"(?m)^MemAvailable:\s+([0-9]+) kB$", contents)
+    return _to_mib(int(match.group(1)) * 1024) if match else None
+
+
 class OwnedMemorySampler:
     def __init__(self, repo_root: Path) -> None:
         self._repo_root = repo_root

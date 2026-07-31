@@ -91,6 +91,7 @@ def test_evidence_matches_schema_and_preserves_not_run(tmp_path: Path) -> None:
     assert payload["selection"] == [
         {
             "capability": "kernel-python",
+            "deferred_to": None,
             "path": relative,
             "proof": proof,
             "reason": "changed-test",

@@ -1,6 +1,7 @@
 # Testing Standards Enforcement Hard Cutover
 
-Status: APPROVED DESIGN — implementation authorized
+Status: IMPLEMENTED IN SOURCE — scoped static, kernel, and policy proof complete;
+heavy real-stack, same-run sensitivity, and remote candidate-full proof pending
 
 Type: hard cutover
 
@@ -14,8 +15,9 @@ Governing contracts:
 Production disaster recovery is a separate future operations project. This
 cutover owns only test-infrastructure safety: it MUST prove that the harness
 cannot connect to or mutate production and can clean up only its recorded local
-test resources. Production backup, PITR, R2 recovery, RPO, and RTO do not block
-this cutover and are not claimed by it.
+test resources. Production backup, PITR, AWS recovery infrastructure, R2
+recovery, RPO, and RTO are neither prerequisites nor acceptance criteria and
+are not claimed by this cutover.
 
 ## Decision
 
@@ -55,6 +57,10 @@ or fallback portfolios. The final routing commit removes the legacy paths.
 - Reuse service processes and one production build; isolate all writable state.
 - Bound local concurrency by measured total owned memory; default to no more
   than two Python workers and one local heavy process.
+- Refuse Node/browser/build/Gradle and other heavy launches below 2,048 MiB
+  kernel `MemAvailable`; treat that value as a conservative host-safety
+  admission floor, not a proof-performance acceptance limit, and adjust it only
+  from recorded 8 GiB-host evidence.
 - Replace legacy proof by risk, demonstrate sensitivity, then delete it.
 - Leave approximately 10–15 product-existence journeys and a dominant
   real-service/real-Chromium middle.
@@ -143,27 +149,35 @@ Rules:
 
 `changed` scans only changed policy/test source unless policy infrastructure
 changed, in which case it promotes the complete policy capability. It selects
-changed test files directly; uses Vitest `related --run` only for static
-frontend imports; maps critical and lazy-loaded source globs, including pane
-registry owners, through the proof contract; and maps Python source to
-same-owner tests by module/name. It does not claim completeness. Test-infra,
-lockfile, migration, shared-schema, or runner-config changes promote the owning
-complete capability. Do not build a coverage database, Python import-graph
-framework, or hidden broad fallback.
+changed test files directly and maps typed-risk and lazy-loaded source routes,
+including pane registry owners, through the proof contract. Unmapped
+`apps/web/src/**` changes promote the compact complete component owner;
+unmapped `python/nexus/**` changes promote the compact complete service owner.
+It does not claim completeness. Test-infra, lockfile, migration, shared-schema,
+or runner-config changes promote the owning complete capability. Do not build a
+coverage database, Python import-graph framework, or hidden broad fallback.
 
 ## Control-plane architecture
 
-Implement `python/nexus_test_control/` with five owners:
+Implement `python/nexus_test_control/` with cohesive owners:
 
 - `model.py`: `Workflow`, `Capability`, `PriorityRiskId`, `Resource`,
   `RunStatus`, `Selection`, `Sensitivity`, and the one workflow/capability
   registry;
 - `selection.py`: git diff and explicit-focus routing;
 - `policy.py`: Python AST, repository-contract, exception, and corpus checks;
-- `runtime.py`: persistent infrastructure, per-run state, process locks,
-  database/bucket/user lifecycle, app processes, and build fingerprint;
-- `cli.py` / `__main__.py`: parse, compose, execute, stream failure, clean up,
-  and write evidence.
+- `runtime.py`: validated runtime/ledger schemas, exact names, endpoints, and
+  lifecycle locks;
+- `services.py`: persistent local services and per-run database, bucket, user,
+  and app-process lifecycle;
+- `build.py`, `process.py`, and `memory.py`: fingerprinted build publication,
+  interrupt-safe process groups, cross-process serialization, admission, and
+  owned-memory measurement;
+- `runner.py` and `sensitivity.py`: capability execution and same-run red/green
+  proof;
+- `evidence.py`: typed, redacted run summaries and artifacts;
+- `cli.py` / `__main__.py`: parse, compose, stream the first failure, clean,
+  and publish evidence.
 
 Use frozen dataclasses and exhaustive enums. Capability functions accept one
 typed context and return one typed result. Runners are internal functions, not
@@ -195,8 +209,8 @@ The runtime record contains only `version`, `repo_id`, `compose_project`,
 `supabase_workdir`, allocated `ports`, and owned `run_ids`; no secrets.
 
 Extract the useful port, health, and cleanup behavior from the current shell
-wrappers into `runtime.py`, then delete the wrappers. Do not share the product
-development database, bucket, or Supabase users.
+wrappers into the runtime/services owners, then delete the wrappers. Do not
+share the product development database, bucket, or Supabase users.
 
 ### PostgreSQL
 
@@ -226,8 +240,9 @@ cloning; runtime locking and engine disposal must enforce that.
 
 ### Storage, auth, and processes
 
-- Create one `nexus-run-<run_id>` MinIO bucket; copy only manifest-selected
-  corpus objects; delete it after the run.
+- Create one empty `nexus-run-<run_id>` MinIO bucket for run-owned writes and
+  delete it after the run. Canonical corpus inputs remain manifest-owned files;
+  add object preload only for a concrete proof that requires it.
 - Create a unique Supabase user per journey, for example
   `nexus+<run_id>+<scenario>@example.invalid`; delete it in fixture teardown.
 - Read the local Supabase service-role credential from the generated local
@@ -237,10 +252,9 @@ cloning; runtime locking and engine disposal must enforce that.
 - Give every Playwright test a new browser context and auth state. Delete global
   `storageState`, setup projects, shared seed users, and shared mutable JSON.
 - Start API, web, and both worker lanes once per journey capability, after run
-  state exists. Give the reader-profile fault proxy a unique scenario token and
-  independently reset/verify its armed state, or start it per scenario; global
-  fail-next state may not cross scenarios. Stop exact process groups on
-  success, failure, signal, or `clean`.
+  state exists. Stop exact process groups on success, failure, signal, or
+  `clean`; no unowned reader-profile fault proxy or global fail-next state
+  remains.
 - Persist run ownership before creating each resource so interrupted cleanup is
   deterministic.
 
@@ -254,19 +268,17 @@ already-built artifact and contains no build command. Remove
 during dependency setup, not inside a test target.
 
 Use cross-process locks for template lifecycle, `next-build`, `chromium`, and
-`gradle`. On the standard local machine, kernel pytest uses at most two workers;
+`gradle`. On the standard local machine, kernel pytest uses one process;
 database pytest, Vitest browser, Playwright, builds, and Gradle use one, with at
 most one heavy operation active. Remove every `-n auto`, Playwright shard, and
 automatic retry. Keep failure traces with `retain-on-failure`.
 
-CI is not forced into one serial job. Use the smallest measured split—normally
-one static/kernel job, one build producer, and one real-stack consumer that
-reuses a single stack/database template across service, component, and journey
-capabilities—with explicit concurrency and memory budgets. The real-stack job
-downloads the standalone artifact; it never rebuilds it. A sampler records the
-recursive owned process-tree RSS and owned container working set without
-double-counting. Initial cold/warm measurements set the cap; later measurements
-may permit more CI concurrency but never silently raise the local cap.
+CI initially uses one bounded job per invoked workflow. Capabilities reuse the
+same stack, database template, and fingerprinted standalone build within that
+job. A sampler records recursive owned process-tree RSS and owned container
+working set without double-counting. Split build/static/real-stack jobs only
+after measured cold/warm evidence shows a material benefit; any future consumer
+must download one producer artifact and must not rebuild it.
 
 Budget semantics:
 
@@ -475,10 +487,10 @@ secrets, absolute paths, duplicate content, and missing provenance.
   `127.0.1.1` only when actually allocated/resolved. Never allow a loopback
   subnet or arbitrary hostnames. `hosted/` is the only force-enabled pytest
   lane.
-- Real spawned-worker proof runs on the runtime-owned internal Compose network
-  with no external route. This closes the subprocess gap that `pytest-socket`
-  cannot cover. Hosted workers use a separate explicit egress-enabled
-  capability.
+- Real spawned-worker proof uses host `Popen` process groups with the inherited
+  testkit `sitecustomize` socket guard and exact runtime loopback allowlist.
+  This closes the subprocess gap that in-process `pytest-socket` cannot cover.
+  Hosted workers use a separate explicit egress-enabled capability.
 - Web test ESLint rejects `vi/jest` mock/spy functions, owned-module mocks,
   sleep promises, and skipped/only tests. Whether a product seam exists only
   for tests is semantic review, not a pretend mechanical rule.
@@ -591,7 +603,8 @@ Write ignored `test-results/runs/<run_id>/summary.json`:
     "capability": "service",
     "reason": "rule",
     "proof": "runner-qualified-node-id-or-null",
-    "sensitivity_required": true
+    "sensitivity_required": true,
+    "deferred_to": "full-or-null"
   }],
   "sensitivity": [
     {
@@ -616,7 +629,8 @@ Write ignored `test-results/runs/<run_id>/summary.json`:
       "peak_owned_mib": 0,
       "provider_calls": 0,
       "estimated_cost_usd": 0,
-      "artifacts": ["relative/path"]
+      "artifacts": ["relative/path"],
+      "detail": "redacted decisive diagnostic"
     }
   ]
 }
@@ -647,10 +661,15 @@ The harness accepts only resources derived from its recorded local runtime:
   process-group id before readiness can succeed.
 
 Every resource is first persisted as a planned owned resource, then created,
-then marked created. `clean` reads only that ledger and revalidates endpoint,
-repo id, run id, type, and test-only name before deletion. It never discovers
-targets by port, process name, prefix alone, environment default, or broad
-database/bucket/user listing.
+then marked created. `clean` reads only those run ledgers and the validated
+workspace runtime record. It revalidates endpoint, repo id, run id, type, and
+test-only identity; deletes exact run resources; then stops the exact recorded
+Supabase project and Compose project, removes their test-only volumes, and
+deletes that runtime state. It never discovers targets by port, process name,
+prefix alone, environment default, or broad database/bucket/user listing.
+Independent teardown owners are all attempted; any failure preserves the
+ledger and exact recovery path, and ownership state is removed only after all
+teardown succeeds.
 
 Standing negative proof supplies production-shaped URLs, names, and
 environments and verifies rejection before network or subprocess activity.
@@ -842,8 +861,9 @@ not supported compatibility modes.
   downward-only ratchet only after at least 20 comparable successful runs; it
   is not an initial acceptance fiction.
 - **AC7 — build/browser:** one Next build and one Chromium installation at most
-  per verification workflow; CI browser jobs consume the same fingerprinted
-  standalone artifact; all journeys use strict CSP and no disable escape.
+  per verification workflow; all browser capabilities consume the same
+  fingerprinted standalone artifact; all journeys use strict CSP and no
+  disable escape.
 - **AC8 — portfolio:** every risk id in the in-scope typed floor has an
   independent, sensitive proof;
   the typed minimum risk floor cannot be lowered through `proofs.json`;
@@ -860,8 +880,8 @@ not supported compatibility modes.
   network/process activity. All created resources were pre-recorded under the
   exact repo/run;
   interrupted-run cleanup deletes only those resources and leaves unrelated
-  local/dev sentinels unchanged. No test workflow reads production credentials
-  or exposes a production backup/restore capability.
+  local/dev sentinels unchanged. No test workflow reads production
+  credentials.
 - **AC11 — cleanliness:** the top-level E2E package, old wrappers/configs/seed
   state, obsolete test helpers, legacy marker algebra, CSP escape, duplicate
   Bun/Playwright ownership, and test-only production seams are absent.

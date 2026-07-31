@@ -4,6 +4,8 @@ from collections.abc import Mapping
 from io import StringIO
 from pathlib import Path
 
+import pytest
+
 import nexus_test_control.runner as runner
 from nexus_test_control.build import StandaloneBuild
 from nexus_test_control.evidence import CapabilityEvidence
@@ -14,6 +16,7 @@ from nexus_test_control.model import (
     SelectionReason,
     Workflow,
 )
+from nexus_test_control.process import CommandInterrupted
 from nexus_test_control.runner import (
     CapabilityContext,
     CapabilityResult,
@@ -98,6 +101,82 @@ def test_sensitivity_gate_requires_same_run_proof_evidence() -> None:
     assert proven.evidence.status is RunStatus.PASS
 
 
+def test_complete_python_kernel_deselects_the_same_run_sensitive_green_node(
+    tmp_path: Path,
+) -> None:
+    _write(tmp_path / "python/pyproject.toml", "[project]\nname='fixture'\nversion='1'\n")
+    _write(
+        tmp_path / "python/tests/kernel/test_first.py",
+        "def test_sensitive():\n    assert True\n\ndef test_neighbor():\n    assert True\n",
+    )
+    _write(tmp_path / "python/tests/kernel/test_second.py", "def test_other():\n    assert True\n")
+    (tmp_path / "python/.venv").mkdir()
+    environment = _stub_tools(tmp_path, "uv")
+    proof = "pytest:python/tests/kernel/test_first.py::test_sensitive"
+    context = CapabilityContext(
+        tmp_path,
+        Workflow.PR,
+        (
+            Selection(
+                "python/tests/kernel/test_first.py",
+                Capability.KERNEL_PYTHON,
+                SelectionReason.CHANGED_TEST,
+                proof,
+            ),
+        ),
+        proven_proofs=frozenset({proof}),
+    )
+
+    result = run_capability(context, Capability.KERNEL_PYTHON, environment)
+
+    assert result.evidence.status is RunStatus.PASS
+    assert _commands(tmp_path)[-1]["argv"] == [
+        "run",
+        "--frozen",
+        "--no-sync",
+        "pytest",
+        "-p",
+        "no:randomly",
+        "./tests/kernel/test_first.py",
+        "./tests/kernel/test_second.py",
+        "--deselect",
+        "./tests/kernel/test_first.py::test_sensitive",
+    ]
+
+
+def test_single_scenario_service_file_covered_by_sensitivity_does_not_prepare_runtime(
+    tmp_path: Path,
+) -> None:
+    _write(tmp_path / "python/tests/service/test_risk.py", "def test_risk():\n    assert True\n")
+    (tmp_path / "python/.venv").mkdir(parents=True)
+    proof = "pytest:python/tests/service/test_risk.py::test_risk"
+    context = CapabilityContext(
+        tmp_path,
+        Workflow.PR,
+        (
+            Selection(
+                "python/tests/service/test_risk.py",
+                Capability.SERVICE,
+                SelectionReason.CHANGED_TEST,
+                proof,
+            ),
+        ),
+        proven_proofs=frozenset({proof}),
+    )
+
+    result = runner._run_python_heavy(
+        context,
+        Capability.SERVICE,
+        {},
+        None,
+        owner="tests/service",
+    )
+
+    assert result.evidence.status is RunStatus.PASS
+    assert "covered by sensitivity" in result.detail
+    assert not (tmp_path / ".nexus-test").exists()
+
+
 def test_changed_python_static_and_kernel_use_only_the_selected_file_and_node(
     tmp_path: Path,
 ) -> None:
@@ -143,6 +222,8 @@ def test_changed_python_static_and_kernel_use_only_the_selected_file_and_node(
             "--frozen",
             "--no-sync",
             "pytest",
+            "-p",
+            "no:randomly",
             "--",
             "./tests/kernel/test_rule.py::test_rule",
         ],
@@ -214,6 +295,7 @@ def test_complete_fast_commands_are_fixed_to_their_final_owners(tmp_path: Path) 
     )
     (tmp_path / "python/.venv").mkdir()
     _write(tmp_path / "apps/web/package.json", "{}\n")
+    _write(tmp_path / "apps/web/scripts/test-eslint-policy.mjs", "export {};\n")
     (tmp_path / "apps/web/node_modules").mkdir()
     _write(tmp_path / "apps/web/src/example.unit.test.ts", "export {};\n")
     _write(tmp_path / ".github/workflows/ci.yml", "name: CI\n")
@@ -236,6 +318,7 @@ def test_complete_fast_commands_are_fixed_to_their_final_owners(tmp_path: Path) 
     commands = _commands(tmp_path)
     assert [command["tool"] for command in commands] == [
         "uv",
+        "bun",
         "uv",
         "uv",
         "uv",
@@ -248,9 +331,10 @@ def test_complete_fast_commands_are_fixed_to_their_final_owners(tmp_path: Path) 
         "bun",
     ]
     assert commands[0]["argv"][-1] == "tests/kernel/nexus_test_control/test_policy.py"
-    assert commands[8]["argv"][-1] == "../.github/workflows/ci.yml"
-    assert commands[9]["argv"][-1] == "./tests/kernel/nexus_test_control/test_policy.py"
-    assert commands[10]["argv"] == [
+    assert commands[1]["argv"] == ["run", "test:eslint-policy"]
+    assert commands[9]["argv"][-1] == "../.github/workflows/ci.yml"
+    assert commands[10]["argv"][-1] == "./tests/kernel/nexus_test_control/test_policy.py"
+    assert commands[11]["argv"] == [
         "run",
         "test:unit",
         "--",
@@ -292,7 +376,15 @@ def test_provider_runtime_requires_the_exact_pin_then_runs_its_deterministic_sui
     commands = _commands(repo_root)
     assert [command["tool"] for command in commands] == ["git", "uv", "uv", "uv", "uv"]
     assert commands[0]["argv"] == ["-C", str(checkout), "rev-parse", "HEAD"]
-    assert commands[-1]["argv"] == ["run", "--frozen", "--no-sync", "pytest", "-q"]
+    assert commands[-1]["argv"] == [
+        "run",
+        "--frozen",
+        "--no-sync",
+        "pytest",
+        "-q",
+        "-p",
+        "no:randomly",
+    ]
 
 
 def test_android_host_uses_the_fixed_synthetic_client_and_host_test_task(tmp_path: Path) -> None:
@@ -348,6 +440,7 @@ def test_exact_android_device_proof_uses_one_instrumentation_method(tmp_path: Pa
         CapabilityContext(tmp_path, Workflow.NIGHTLY, ()),
         proof,
         environment,
+        _available_memory=lambda: 8192,
     )
 
     assert result.evidence.status is RunStatus.PASS
@@ -374,13 +467,51 @@ def test_missing_tool_is_not_run_and_command_failure_records_its_exit_status(
     assert missing.evidence.status is RunStatus.NOT_RUN
 
     environment = _stub_tools(tmp_path, "bun", exit_status=7, diagnostic="token=hidden-value")
+    run_id = "0123456789abcdef"
+    results = tmp_path / "test-results/runs" / run_id
+    results.mkdir(parents=True)
+    environment.update(
+        {
+            "NEXUS_TEST_RESULTS_DIR": str(results),
+            "NEXUS_TEST_RUN_ID": run_id,
+            "API_TOKEN": "hidden-value",
+        }
+    )
     failed = run_capability(context, Capability.KERNEL_WEB, environment)
     assert failed.evidence.status is RunStatus.FAIL
     assert "exited 7" in failed.detail
+    assert failed.evidence.artifacts == (f"test-results/runs/{run_id}/kernel-web-1.log",)
+    failure_log = tmp_path / failed.evidence.artifacts[0]
+    assert "token=[REDACTED]" in failure_log.read_text(encoding="utf-8")
+    assert "hidden-value" not in failure_log.read_text(encoding="utf-8")
 
     stream = StringIO()
     tuple(stream_first_failure((failed,), stream, ("hidden-value",)))
     assert stream.getvalue() == ("kernel-web: fixed command 1 exited 7: stderr=token=[REDACTED]\n")
+
+
+def test_browser_setup_failure_references_every_owned_process_log(tmp_path: Path) -> None:
+    run_id = "0123456789abcdef"
+    directory = tmp_path / "test-results/runs" / run_id
+    for role in ("api", "worker-interactive", "worker-background", "web"):
+        _write(directory / f"{role}.log", f"{role} diagnostic\n")
+    execution = runner._WorkflowExecution(
+        CapabilityContext(tmp_path, Workflow.PR, ()),
+        {},
+        include_migration_database=False,
+        run_id=run_id,
+    )
+
+    result = runner._with_browser_process_logs(
+        runner._fail(Capability.JOURNEYS_CRITICAL, "scenario bootstrap failed"),
+        execution.context,
+        execution,
+    )
+
+    assert result.evidence.artifacts == tuple(
+        f"test-results/runs/{run_id}/{role}.log"
+        for role in ("api", "worker-interactive", "worker-background", "web")
+    )
 
 
 def test_heavy_capability_remains_truthfully_not_run() -> None:
@@ -388,7 +519,109 @@ def test_heavy_capability_remains_truthfully_not_run() -> None:
 
     result = run_capability(context, Capability.SERVICE)
 
-    assert result.evidence == CapabilityEvidence(Capability.SERVICE, RunStatus.NOT_RUN, 0, 0)
+    assert result.evidence.id is Capability.SERVICE
+    assert result.evidence.status is RunStatus.NOT_RUN
+    assert result.evidence.detail == result.detail
+    assert result.detail == "Python service proof owner is absent"
+
+
+def test_workflow_interruption_closes_the_owned_run(tmp_path: Path) -> None:
+    (tmp_path / "python/.venv").mkdir(parents=True)
+    _write(tmp_path / "python/pyproject.toml", "[project]\nname='fixture'\nversion='1'\n")
+    _write(
+        tmp_path / "python/tests/service/test_owned.py",
+        "def test_owned():\n    assert 2 + 2 == 4\n",
+    )
+    _write(tmp_path / "apps/web/package.json", "{}\n")
+    (tmp_path / "apps/web/node_modules").mkdir()
+    environment = _stub_tools(tmp_path, "docker", "supabase", "uv")
+    cleaned: list[str] = []
+
+    class Ports(runner._RunnerPorts):
+        def prepare_run(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            *,
+            run_id: str,
+            include_migration_database: bool,
+        ) -> OwnedTestRun:
+            assert not include_migration_database
+            assert run_id == "0123456789abcdef"
+            return _test_run(include_migration_database=False)
+
+        def run_environment(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            _run: OwnedTestRun,
+        ) -> dict[str, str]:
+            raise CommandInterrupted("synthetic controller SIGTERM")
+
+        def clean_run(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            run_id: str,
+            *,
+            supabase: SupabaseCredentials,
+        ) -> None:
+            del supabase
+            cleaned.append(run_id)
+
+    selection = Selection(
+        "python/tests/service/test_owned.py",
+        Capability.SERVICE,
+        SelectionReason.CHANGED_TEST,
+        "pytest:python/tests/service/test_owned.py",
+    )
+    try:
+        evidence = run_workflow(
+            CapabilityContext(tmp_path, Workflow.CHANGED, (selection,)),
+            StringIO(),
+            environment,
+            run_id="0123456789abcdef",
+            _ports=Ports(),
+            _available_memory=lambda: 8192,
+        )
+    except CommandInterrupted as error:
+        assert "SIGTERM" in str(error)
+    else:
+        pytest.fail(f"workflow did not propagate interruption: {evidence}")
+
+    assert cleaned == ["0123456789abcdef"]
+
+
+def test_web_source_promoted_to_journey_is_memory_admitted_before_static_web(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "apps/web/src/lib/risk.ts"
+    _write(source, "export const risk = 1;\n")
+    _write(tmp_path / "python/pyproject.toml", "[project]\nname='fixture'\nversion='1'\n")
+    (tmp_path / "python/.venv").mkdir()
+    _write(tmp_path / "apps/web/package.json", "{}\n")
+    (tmp_path / "apps/web/node_modules").mkdir()
+    selection = Selection(
+        "apps/web/src/lib/risk.ts",
+        Capability.JOURNEYS_ALL,
+        SelectionReason.JOURNEY_OWNER,
+        "playwright:apps/web/e2e/journeys/risk.journey.spec.ts",
+    )
+
+    evidence = run_workflow(
+        CapabilityContext(tmp_path, Workflow.CHANGED, (selection,)),
+        StringIO(),
+        {},
+        run_id="0123456789abcdef",
+        _available_memory=lambda: 512,
+    )
+
+    static_web = next(item for item in evidence.capabilities if item.id is Capability.STATIC_WEB)
+    assert static_web.status is RunStatus.NOT_RUN
+    assert static_web.detail == (
+        "heavy memory admission requires 2048 MiB available; observed 512 MiB"
+    )
+    assert not (tmp_path / "commands.jsonl").exists()
 
 
 def test_affected_heavy_proofs_share_one_workflow_run_and_request_migrations_only_when_selected(
@@ -479,6 +712,7 @@ def test_affected_heavy_proofs_share_one_workflow_run_and_request_migrations_onl
         environment,
         run_id="0123456789abcdef",
         _ports=Ports(),
+        _available_memory=lambda: 8192,
     )
 
     assert prepared == [True]
@@ -522,6 +756,8 @@ def test_affected_heavy_proofs_share_one_workflow_run_and_request_migrations_onl
             "--frozen",
             "--no-sync",
             "pytest",
+            "-p",
+            "no:randomly",
             "tests/service/test_owned.py",
         ],
         ["run", "test:browser", "--", "./src/owned.browser.test.ts"],
@@ -530,6 +766,8 @@ def test_affected_heavy_proofs_share_one_workflow_run_and_request_migrations_onl
             "--frozen",
             "--no-sync",
             "pytest",
+            "-p",
+            "no:randomly",
             "tests/migrations/test_owned.py",
         ],
     ]
@@ -769,6 +1007,7 @@ def test_run_proof_executes_only_the_exact_service_node_and_classifies_assertion
         f"pytest:{proof}::test_exact",
         environment,
         _ports=Ports(),
+        _available_memory=lambda: 8192,
     )
 
     assert result.evidence.status is RunStatus.FAIL
@@ -780,6 +1019,8 @@ def test_run_proof_executes_only_the_exact_service_node_and_classifies_assertion
         "--frozen",
         "--no-sync",
         "pytest",
+        "-p",
+        "no:randomly",
         "tests/service/test_owned.py::test_exact",
     ]
 

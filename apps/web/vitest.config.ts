@@ -26,7 +26,7 @@ export default defineConfig({
         test: {
           name: "unit",
           environment: "node",
-          include: ["src/**/*.unit.test.ts"],
+          include: ["src/**/*.unit.test.{ts,tsx}"],
           setupFiles: ["./vitest.setup.ts"],
         },
       },

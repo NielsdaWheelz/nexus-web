@@ -300,10 +300,10 @@ fixtures covering frames, disconnect, replay, malformed events, and terminal
 state. Do not mock the consuming hook. At least one journey must prove the real
 browser → BFF/direct-SSE → FastAPI → worker path where the product uses it.
 
-`apps/web/src/__tests__/helpers/fetch.ts` is the current shared fetch-boundary
-helper. It is not blanket approval of every existing helper or test. New
-clean-sheet browser helpers MUST converge on a small owned testkit rather than
-copying legacy local mocks.
+No repository-wide fetch helper is a promised contract. Keep a minimal,
+schema-valid fetch-boundary fixture beside its sole proof; once another proof
+shares the same protocol contract, extract one small owned testkit helper.
+Never copy a deleted legacy helper or generalize unrelated endpoint shapes.
 
 ### Isolation and fixture shape
 
@@ -372,6 +372,12 @@ workers. Run one Next build, Chromium suite, or Gradle operation at a time; do
 not overlap unrelated heavy lanes. Build one fingerprinted strict-CSP Next
 artifact and reuse it.
 
+Before launching Node/browser/build/Gradle or other heavy proof, the controller
+requires at least 2,048 MiB of kernel-reported `MemAvailable`; otherwise the
+capability is `not_run` before launch. This is a conservative host-safety
+admission floor, not a proof-size or performance target. Change it only from
+recorded memory evidence on the 8 GiB reference host.
+
 ## 8. Repository capability contract
 
 `./scripts/test` is the sole public test and verification API. `scripts/test`
@@ -388,8 +394,15 @@ adapter. The Makefile deliberately has no test/check/verify aliases.
 | `./scripts/test release` | `full` plus bounded provider certification, signed Android release proof, and exact staged artifacts |
 | `./scripts/test doctor` | tool, dependency, browser, SDK, local-service, port, and template readiness |
 | `./scripts/test prove --proof PROOF --against base:REF\|fault:FAULT_ID` | exact demonstrated-red then green sensitivity evidence |
-| `./scripts/test clean` | delete only resources in this workspace's ownership ledgers |
+| `./scripts/test clean` | delete exact ledger-owned runs, the recorded local workspace stack/volumes, and its runtime state |
 | `./scripts/test list --json` | machine-readable registry from the same typed execution source |
+
+When changed-file routing names a capability later than the invoked workflow,
+the controller MUST retain it in evidence with its exact `deferred_to` owner and
+MUST NOT dispatch it early or reject the current gate. Deferral MUST NOT clear
+locally eligible changed-proof sensitivity: only paid hosted-provider and
+physical-device boundaries are excluded. The owning `full`, `nightly`, or
+`release` workflow remains fail-closed.
 
 ### Proof owners
 
@@ -653,19 +666,26 @@ Before any resource contact or creation, the controller MUST:
 - persist the repository identity, run ID, resource kind, planned identity, and
   ownership state before creation.
 
-Cleanup MUST read the ownership ledger, revalidate repository and resource-name
-ownership, delete only exact ledger-owned resources, and preserve every foreign,
-unrecorded, public, or ambiguously named resource. Synthetic interruption proof
-must cover crashes between plan/create/record and idempotent repeated cleanup.
+Cleanup MUST read the run ledgers and validated workspace runtime record,
+revalidate repository and resource-name ownership, delete exact run resources,
+then stop and remove only the recorded local Supabase/Compose projects and
+test-only volumes. It MUST preserve every foreign, unrecorded, public, or
+ambiguously named resource. Synthetic interruption proof must cover crashes
+between plan/create/record and idempotent repeated cleanup.
+
+Independent teardown owners are all attempted even when one fails. Any failed
+teardown keeps the runtime ledger and exact recovery path intact and returns a
+failure; ownership evidence is deleted only after every exact teardown
+succeeds.
 
 A local synthetic restore scenario is allowed only when it proves a concrete
 migration or PostgreSQL/object-consistency risk. It is not product disaster
 recovery evidence.
 
-Production backup, PITR, Cloudflare R2 recovery, retention, RPO, RTO, and restore
-drills belong to a separate future operations project. They are not a test
-workflow, release prerequisite, or acceptance criterion in this repository
-contract.
+Production backup, PITR, AWS recovery infrastructure, Cloudflare R2 recovery,
+retention, RPO, RTO, and restore drills belong to a separate future operations
+project. They are not a test workflow, release prerequisite, or acceptance
+criterion in this repository contract.
 
 ### Deployment and production smoke
 
@@ -802,7 +822,8 @@ Build these in order:
 
 1. one repository-owned `changed`, `pr`, `full`, `nightly`, `release`, and
    `doctor` interface;
-2. explicit memory caps, no `-n auto`, no overlapping heavy local gates;
+2. an explicit memory-admission floor, measured ratchets, no `-n auto`, and no
+   overlapping heavy local gates;
 3. one persistent Postgres/MinIO/Supabase stack;
 4. one migrated seed database cloned per run;
 5. one immutable canonical corpus plus per-run writable state;

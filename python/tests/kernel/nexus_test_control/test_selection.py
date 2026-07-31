@@ -103,6 +103,29 @@ def test_direct_extension_does_not_also_select_all_journeys() -> None:
     assert [item.capability for item in selections] == [Capability.EXTENSION]
 
 
+def test_direct_test_does_not_expand_matching_product_source_routes() -> None:
+    path = "apps/web/src/lib/player/playerSession.unit.test.ts"
+    selections = select_changed(
+        (ChangedPath(GitChangeKind.MODIFIED, path),),
+        SelectionIndex(
+            routes=(
+                IndexedRoute(
+                    "apps/web/src/lib/player/**/*.ts",
+                    SelectionTarget(
+                        Capability.JOURNEYS_ALL,
+                        "playwright:apps/web/e2e/journeys/podcast.journey.spec.ts",
+                    ),
+                    SelectionReason.JOURNEY_OWNER,
+                ),
+            )
+        ),
+    )
+
+    assert [(selection.capability, selection.proof) for selection in selections] == [
+        (Capability.KERNEL_WEB, f"vitest:{path}")
+    ]
+
+
 @pytest.mark.parametrize(
     "path",
     [

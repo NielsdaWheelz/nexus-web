@@ -8,14 +8,15 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import tempfile
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from subprocess import CalledProcessError
 from typing import cast
 
+from nexus_test_control.process import run_command
 from nexus_test_control.runtime import (
     EndpointKind,
     RuntimeContractError,
@@ -27,6 +28,7 @@ from nexus_test_control.runtime import (
 
 BUILD_METADATA_VERSION = 1
 BUILD_COMMAND = ("bun", "run", "build")
+BUNDLE_CHECK_COMMAND = ("bun", "run", "check:bundle")
 
 _BUILD_FINGERPRINT = re.compile(r"[0-9a-f]{64}\Z")
 _SAFE_CHILD_ENV = ("HOME", "LANG", "LC_ALL", "PATH", "TMPDIR", "TZ")
@@ -34,6 +36,7 @@ _FIXED_BUILD_INPUTS = (
     "apps/web/bun.lock",
     "apps/web/next.config.ts",
     "apps/web/package.json",
+    "apps/web/scripts/check-bundle.mjs",
     "apps/web/scripts/copy-pdfjs.mjs",
     "apps/web/tsconfig.json",
 )
@@ -94,14 +97,20 @@ def ensure_standalone_build(
             shutil.rmtree(next_output)
 
         try:
-            subprocess.run(
+            run_command(
                 BUILD_COMMAND,
                 cwd=web_root,
                 env=_child_environment(environment, public_environment),
                 check=True,
             )
-        except subprocess.CalledProcessError:
-            raise RuntimeContractError("Next standalone build failed") from None
+            run_command(
+                BUNDLE_CHECK_COMMAND,
+                cwd=web_root,
+                env=_child_environment(environment, public_environment),
+                check=True,
+            )
+        except CalledProcessError:
+            raise RuntimeContractError("Next standalone build or bundle budget failed") from None
 
         standalone = next_output / "standalone"
         server = _single_generated_server(standalone)

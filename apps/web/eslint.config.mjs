@@ -62,13 +62,12 @@ const FAKE_TIMER_BAN = {
 
 const SLEEP_BANS = [
   {
-    selector:
-      "NewExpression[callee.name='Promise'] CallExpression[callee.name='setTimeout']",
+    selector: "CallExpression[callee.name='setTimeout']",
     message: "Do not sleep in tests. Await an observable state transition.",
   },
   {
     selector:
-      "NewExpression[callee.name='Promise'] CallExpression[callee.object.name=/^(globalThis|window)$/][callee.property.name='setTimeout']",
+      "CallExpression[callee.object.name=/^(globalThis|window)$/][callee.property.name='setTimeout']",
     message: "Do not sleep in tests. Await an observable state transition.",
   },
 ];
@@ -120,7 +119,7 @@ const VITEST_RETRY_AND_WORKER_BANS = [
 ];
 
 const UNIT_AND_BROWSER_TESTS = [
-  "src/**/*.unit.test.ts",
+  "src/**/*.unit.test.{ts,tsx}",
   "src/**/*.browser.test.{ts,tsx}",
 ];
 
@@ -293,6 +292,12 @@ const eslintConfig = [
     },
   },
   {
+    files: ["vitest.browser-setup.ts"],
+    rules: {
+      "no-restricted-syntax": ["error", ...OWNED_MODULE_MOCK_BANS],
+    },
+  },
+  {
     files: ["vitest.config.ts"],
     rules: {
       "no-restricted-syntax": ["error", ...VITEST_RETRY_AND_WORKER_BANS],
@@ -312,6 +317,9 @@ const eslintConfig = [
       "no-restricted-syntax": [
         "error",
         ...PLAYWRIGHT_RETRY_AND_WORKER_BANS,
+        ...OWNED_MODULE_MOCK_BANS,
+        FAKE_TIMER_BAN,
+        ...SLEEP_BANS,
         DISABLED_TEST_BAN,
       ],
     },
@@ -319,7 +327,15 @@ const eslintConfig = [
   {
     files: ["e2e/{journeys,extension}/**/*.{ts,tsx,mjs}"],
     rules: {
-      "no-restricted-syntax": ["error", ...PLAYWRIGHT_ROUTE_BANS],
+      "no-restricted-syntax": [
+        "error",
+        ...PLAYWRIGHT_RETRY_AND_WORKER_BANS,
+        ...OWNED_MODULE_MOCK_BANS,
+        FAKE_TIMER_BAN,
+        ...SLEEP_BANS,
+        DISABLED_TEST_BAN,
+        ...PLAYWRIGHT_ROUTE_BANS,
+      ],
     },
   },
 ];

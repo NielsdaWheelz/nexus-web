@@ -6,7 +6,7 @@ import os
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -24,10 +24,15 @@ from nexus_test_control.model import (
 )
 from nexus_test_control.policy import fault_manifest_violations
 from nexus_test_control.runner import CapabilityContext, CapabilityResult, run_proof
+from nexus_test_control.runtime import workspace_heavy_lock
+from nexus_test_control.services import clean_owned_runtime
 
 
 class SensitivityError(ValueError):
     pass
+
+
+RuntimeCleaner = Callable[[Path, Mapping[str, str]], tuple[str, ...]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,21 +195,31 @@ def isolated_worktree(
     revision: str,
     *,
     overlays: Sequence[str],
+    runtime_cleaner: RuntimeCleaner = clean_owned_runtime,
 ) -> Iterator[Path]:
-    with tempfile.TemporaryDirectory(prefix="nexus-test-sensitivity-") as temporary:
-        checkout = Path(temporary) / "checkout"
-        _git(repo_root, "worktree", "add", "--detach", str(checkout), revision)
+    temporary = Path(tempfile.mkdtemp(prefix="nexus-test-sensitivity-"))
+    checkout = temporary / "checkout"
+    _git(repo_root, "worktree", "add", "--detach", str(checkout), revision)
+    try:
+        for relative in overlays:
+            _overlay(repo_root, checkout, relative)
+        _link_dependency(repo_root / "python/.venv", checkout / "python/.venv")
+        _link_dependency(
+            repo_root / "apps/web/node_modules",
+            checkout / "apps/web/node_modules",
+        )
+        yield checkout.resolve(strict=True)
+    finally:
         try:
-            for relative in overlays:
-                _overlay(repo_root, checkout, relative)
-            _link_dependency(repo_root / "python/.venv", checkout / "python/.venv")
-            _link_dependency(
-                repo_root / "apps/web/node_modules",
-                checkout / "apps/web/node_modules",
-            )
-            yield checkout.resolve(strict=True)
-        finally:
-            _git(repo_root, "worktree", "remove", "--force", str(checkout))
+            with workspace_heavy_lock(checkout):
+                runtime_cleaner(checkout, {"NEXUS_ENV": "test"})
+        except BaseException as error:
+            raise SensitivityError(
+                "isolated sensitivity runtime cleanup failed; ownership evidence was retained at "
+                f"{checkout}; recover with: cd {checkout} && ./scripts/test clean"
+            ) from error
+        _git(repo_root, "worktree", "remove", "--force", str(checkout))
+        shutil.rmtree(temporary)
 
 
 def sensitivity_json(value: Sensitivity) -> dict[str, object]:

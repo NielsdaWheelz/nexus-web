@@ -1,17 +1,30 @@
 import base64
 import hashlib
+import os
+import signal
+import subprocess
+import sys
+import threading
 from pathlib import Path
 
 import pytest
 
-from nexus_test_control.runtime import RuntimeContractError, RuntimePorts, initialize_runtime
+from nexus_test_control.runtime import (
+    RuntimeContractError,
+    RuntimePorts,
+    claim_run,
+    initialize_runtime,
+)
 from nexus_test_control.services import (
     TEST_EXTENSION_ID,
     TEST_EXTENSION_PUBLIC_KEY,
     SupabaseCredentials,
     _database_url,
     _parse_supabase_status,
+    _start_owned_process,
     _write_supabase_config,
+    clean_owned_runtime,
+    clean_run,
     new_run_id,
     run_environment,
 )
@@ -24,6 +37,7 @@ from nexus_test_control.services import (
 )
 
 TEST_ENV = {"NEXUS_ENV": "test"}
+RUN_ID = "0123456789abcdef"
 
 
 def _ports() -> RuntimePorts:
@@ -37,6 +51,45 @@ def test_run_ids_are_exact_opaque_test_ownership_ids() -> None:
     assert len(first) == 16
     assert int(first, 16) >= 0
     assert first != second
+
+
+def test_owned_process_unblocks_sigterm_before_exec_and_stops_gracefully(
+    tmp_path: Path,
+) -> None:
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    mask_path = tmp_path / "signal-mask.txt"
+    script = (
+        "import pathlib, signal, sys; "
+        "mask = signal.pthread_sigmask(signal.SIG_BLOCK, set()); "
+        "pathlib.Path(sys.argv[1]).write_text(str(signal.SIGTERM in mask)); "
+        "signal.pause()"
+    )
+    started = _start_owned_process(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        "api",
+        (sys.executable, "-c", script, str(mask_path)),
+        cwd=tmp_path,
+        process_environment={"NEXUS_TEST_RUN_ID": RUN_ID},
+    )
+    try:
+        for _attempt in range(500):
+            if mask_path.is_file():
+                break
+            threading.Event().wait(0.01)
+        assert mask_path.read_text(encoding="utf-8") == "False"
+
+        clean_run(tmp_path, TEST_ENV, RUN_ID)
+
+        with pytest.raises(ProcessLookupError):
+            os.kill(started.process_group_id, 0)
+    finally:
+        try:
+            os.killpg(started.process_group_id, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
 
 
 def test_caller_resource_configuration_is_rejected_and_secrets_have_safe_reprs() -> None:
@@ -78,6 +131,14 @@ def test_supabase_status_parser_ignores_cli_noise_and_keeps_only_required_values
         "ANON_KEY": "public",
         "SECRET_KEY": "admin",
     }
+
+
+def test_supabase_status_parser_accepts_the_service_role_admin_key() -> None:
+    status = _parse_supabase_status(
+        '{"API_URL":"http://127.0.0.1:25421","ANON_KEY":"public","SERVICE_ROLE_KEY":"admin"}\n'
+    )
+
+    assert status["SERVICE_ROLE_KEY"] == "admin"
 
 
 def test_supabase_status_parser_rejects_non_json() -> None:
@@ -181,3 +242,69 @@ def test_extension_redirect_id_is_derived_from_the_staged_public_key() -> None:
     )
 
     assert extension_id == TEST_EXTENSION_ID
+
+
+def test_clean_removes_only_the_exact_recorded_workspace_runtime(tmp_path: Path) -> None:
+    runtime = initialize_runtime(tmp_path, TEST_ENV, _ports())
+    supabase_config = Path(runtime.supabase_workdir) / "supabase/config.toml"
+    supabase_config.parent.mkdir(parents=True)
+    supabase_config.write_text("project_id = 'test'\n", encoding="utf-8")
+    foreign = tmp_path / "foreign-sentinel"
+    foreign.write_text("preserve", encoding="utf-8")
+    commands: list[tuple[str, ...]] = []
+
+    def run_command(command: tuple[str, ...], *, cwd: Path) -> subprocess.CompletedProcess[str]:
+        assert cwd == tmp_path
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    assert clean_owned_runtime(tmp_path, TEST_ENV, command_runner=run_command) == ()
+
+    assert commands == [
+        (
+            "supabase",
+            "--workdir",
+            runtime.supabase_workdir,
+            "stop",
+            "--project-id",
+            runtime.compose_project,
+            "--no-backup",
+            "--yes",
+        ),
+        (
+            "docker",
+            "compose",
+            "--project-name",
+            runtime.compose_project,
+            "--file",
+            str(tmp_path / "docker" / "docker-compose.test.yml"),
+            "down",
+            "--volumes",
+            "--remove-orphans",
+        ),
+    ]
+    assert not (tmp_path / ".nexus-test").exists()
+    assert foreign.read_text(encoding="utf-8") == "preserve"
+
+
+def test_clean_attempts_compose_and_retains_ownership_when_supabase_stop_fails(
+    tmp_path: Path,
+) -> None:
+    runtime = initialize_runtime(tmp_path, TEST_ENV, _ports())
+    supabase_config = Path(runtime.supabase_workdir) / "supabase/config.toml"
+    supabase_config.parent.mkdir(parents=True)
+    supabase_config.write_text("project_id = 'test'\n", encoding="utf-8")
+    commands: list[tuple[str, ...]] = []
+
+    def run_command(command: tuple[str, ...], *, cwd: Path) -> subprocess.CompletedProcess[str]:
+        assert cwd == tmp_path
+        commands.append(command)
+        if command[0] == "supabase":
+            raise subprocess.CalledProcessError(1, command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    with pytest.raises(RuntimeContractError, match="Supabase teardown failed"):
+        clean_owned_runtime(tmp_path, TEST_ENV, command_runner=run_command)
+
+    assert [command[0] for command in commands] == ["supabase", "docker"]
+    assert (tmp_path / ".nexus-test/runtime.json").is_file()
