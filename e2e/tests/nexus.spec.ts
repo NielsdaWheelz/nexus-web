@@ -91,7 +91,9 @@ test.describe("desktop Nexus", () => {
         name: "This link is no longer supported",
       }),
     ).toBeVisible();
-    await expect(dialog.getByRole("button", { name: "Open Browse" })).toBeVisible();
+    await expect(
+      dialog.getByRole("button", { name: "Open Browse" }),
+    ).toBeVisible();
     await expect(dialog.getByText("epistemology")).toHaveCount(0);
   });
 
@@ -121,7 +123,9 @@ test.describe("desktop Nexus", () => {
     });
   }
 
-  test("Home and End remain input-owned while the listbox has no nested controls", async ({ page }) => {
+  test("Home and End remain input-owned while the listbox has no nested controls", async ({
+    page,
+  }) => {
     await page.goto("/libraries?nexus=1&intent=Root");
     const dialog = desktopNexusDialog(page);
     await expect(dialog).toBeVisible();
@@ -143,10 +147,12 @@ test.describe("desktop Nexus", () => {
       "aria-activedescendant",
       activeBefore ?? "",
     );
-    await expect(
-      listbox.getByRole("option").getByRole("button"),
-    ).toHaveCount(0);
-    await expect(listbox.getByRole("option").getByRole("menuitem")).toHaveCount(0);
+    await expect(listbox.getByRole("option").getByRole("button")).toHaveCount(
+      0,
+    );
+    await expect(listbox.getByRole("option").getByRole("menuitem")).toHaveCount(
+      0,
+    );
   });
 });
 
@@ -171,10 +177,9 @@ async function desktopMeasureSamples(
   page: Page,
   name: string,
 ): Promise<DesktopPerformanceSample[]> {
-  return page.evaluate((measureName) =>
-    performance
-      .getEntriesByName(measureName, "measure")
-      .map((entry) => {
+  return page.evaluate(
+    (measureName) =>
+      performance.getEntriesByName(measureName, "measure").map((entry) => {
         const detail = (entry as PerformanceMeasure).detail as
           | {
               phase?: "Cold" | "Warm";
@@ -187,7 +192,8 @@ async function desktopMeasureSamples(
           source: detail?.source ?? null,
         };
       }),
-  name);
+    name,
+  );
 }
 
 async function waitForDesktopMeasureCount(
@@ -209,7 +215,9 @@ async function waitForDesktopMeasureCount(
 }
 
 test.describe("desktop Nexus performance", () => {
-  test("reports truthful cold and warm p95 gates", async ({ page }, testInfo) => {
+  test("reports truthful cold and warm p95 gates", async ({
+    page,
+  }, testInfo) => {
     test.setTimeout(DESKTOP_PERFORMANCE_TIMEOUT_MS);
     await gotoWithWorkspaceSession(
       page,
@@ -227,15 +235,29 @@ test.describe("desktop Nexus performance", () => {
     await waitForDesktopMeasureCount(page, DESKTOP_OPEN_INPUT_READY_MEASURE, 1);
     await page.keyboard.press("Escape");
     await expect(desktopNexusDialog(page)).toBeHidden();
-    await page.evaluate((name) => performance.clearMeasures(name), DESKTOP_OPEN_INPUT_READY_MEASURE);
+    await page.evaluate(
+      (name) => performance.clearMeasures(name),
+      DESKTOP_OPEN_INPUT_READY_MEASURE,
+    );
 
-    for (let sample = 1; sample <= DESKTOP_PERFORMANCE_SAMPLE_COUNT; sample += 1) {
+    for (
+      let sample = 1;
+      sample <= DESKTOP_PERFORMANCE_SAMPLE_COUNT;
+      sample += 1
+    ) {
       await trigger.click();
-      await waitForDesktopMeasureCount(page, DESKTOP_OPEN_INPUT_READY_MEASURE, sample);
+      await waitForDesktopMeasureCount(
+        page,
+        DESKTOP_OPEN_INPUT_READY_MEASURE,
+        sample,
+      );
       await page.keyboard.press("Escape");
       await expect(desktopNexusDialog(page)).toBeHidden();
     }
-    const openSamples = await desktopMeasureSamples(page, DESKTOP_OPEN_INPUT_READY_MEASURE);
+    const openSamples = await desktopMeasureSamples(
+      page,
+      DESKTOP_OPEN_INPUT_READY_MEASURE,
+    );
 
     await trigger.click();
     const dialog = desktopNexusDialog(page);
@@ -287,12 +309,26 @@ test.describe("desktop Nexus performance", () => {
         await coldPage.close();
       }
     }
-    await page.evaluate((name) => performance.clearMeasures(name), DESKTOP_LOCAL_ROWS_MEASURE);
-    for (let sample = 1; sample <= DESKTOP_PERFORMANCE_SAMPLE_COUNT; sample += 1) {
+    await page.evaluate(
+      (name) => performance.clearMeasures(name),
+      DESKTOP_LOCAL_ROWS_MEASURE,
+    );
+    for (
+      let sample = 1;
+      sample <= DESKTOP_PERFORMANCE_SAMPLE_COUNT;
+      sample += 1
+    ) {
       await input.fill(`nexus-local-${sample}`);
-      await waitForDesktopMeasureCount(page, DESKTOP_LOCAL_ROWS_MEASURE, sample);
+      await waitForDesktopMeasureCount(
+        page,
+        DESKTOP_LOCAL_ROWS_MEASURE,
+        sample,
+      );
     }
-    const localSamples = await desktopMeasureSamples(page, DESKTOP_LOCAL_ROWS_MEASURE);
+    const localSamples = await desktopMeasureSamples(
+      page,
+      DESKTOP_LOCAL_ROWS_MEASURE,
+    );
     await input.fill("");
     await waitForDesktopMeasureCount(
       page,
@@ -319,16 +355,21 @@ test.describe("desktop Nexus performance", () => {
       (name) => performance.clearMeasures(name),
       DESKTOP_PROVIDERS_MEASURE,
     );
-    for (let sample = 1; sample <= DESKTOP_PERFORMANCE_SAMPLE_COUNT; sample += 1) {
+    for (
+      let sample = 1;
+      sample <= DESKTOP_PERFORMANCE_SAMPLE_COUNT;
+      sample += 1
+    ) {
       await input.fill(sample % 2 === 0 ? "notes" : "libraries");
-      await waitForDesktopMeasureCount(
-        page,
-        DESKTOP_PROVIDERS_MEASURE,
-        sample,
-      );
+      await waitForDesktopMeasureCount(page, DESKTOP_PROVIDERS_MEASURE, sample);
     }
-    const warmProviderSamples = await desktopMeasureSamples(page, DESKTOP_PROVIDERS_MEASURE);
-    expect(warmProviderSamples.every((sample) => sample.phase === "Warm")).toBe(true);
+    const warmProviderSamples = await desktopMeasureSamples(
+      page,
+      DESKTOP_PROVIDERS_MEASURE,
+    );
+    expect(warmProviderSamples.every((sample) => sample.phase === "Warm")).toBe(
+      true,
+    );
     const warmOpenablesSamples = warmProviderSamples.filter(
       (sample) => sample.source === "Openables",
     );
@@ -337,10 +378,18 @@ test.describe("desktop Nexus performance", () => {
     );
 
     await input.fill("");
-    await expect(dialog.getByRole("option", { name: /^Search\b/ })).toBeVisible();
-    for (let sample = 1; sample <= DESKTOP_PERFORMANCE_SAMPLE_COUNT; sample += 1) {
+    await expect(
+      dialog.getByRole("option", { name: /^Search\b/ }),
+    ).toBeVisible();
+    for (
+      let sample = 1;
+      sample <= DESKTOP_PERFORMANCE_SAMPLE_COUNT;
+      sample += 1
+    ) {
       const target = sample % 2 === 0 ? /^Notes\b/ : /^Search\b/;
-      await desktopNexusDialog(page).getByRole("option", { name: target }).click();
+      await desktopNexusDialog(page)
+        .getByRole("option", { name: target })
+        .click();
       await expect(desktopNexusDialog(page)).toBeHidden();
       await waitForDesktopMeasureCount(
         page,
@@ -352,7 +401,10 @@ test.describe("desktop Nexus performance", () => {
         await expect(desktopNexusDialog(page)).toBeVisible();
       }
     }
-    const paneSamples = await desktopMeasureSamples(page, DESKTOP_PANE_ACTIVATE_MEASURE);
+    const paneSamples = await desktopMeasureSamples(
+      page,
+      DESKTOP_PANE_ACTIVATE_MEASURE,
+    );
 
     const performanceSummary = {
       conditions: {
@@ -406,7 +458,9 @@ test.describe("desktop Nexus performance", () => {
       body: JSON.stringify(performanceSummary, null, 2),
       contentType: "application/json",
     });
-    console.info(`NEXUS_DESKTOP_PERFORMANCE_RESULT ${JSON.stringify(performanceSummary)}`);
+    console.info(
+      `NEXUS_DESKTOP_PERFORMANCE_RESULT ${JSON.stringify(performanceSummary)}`,
+    );
 
     expect(openSamples).toHaveLength(DESKTOP_PERFORMANCE_SAMPLE_COUNT);
     expect(localSamples).toHaveLength(DESKTOP_PERFORMANCE_SAMPLE_COUNT);
@@ -422,12 +476,12 @@ test.describe("desktop Nexus performance", () => {
     expect(p95(paneSamples.map((sample) => sample.duration))).toBeLessThan(
       DESKTOP_PANE_ACTIVATE_BUDGET_MS,
     );
-    expect(p95(coldProviderSamples.map((sample) => sample.duration))).toBeLessThan(
-      DESKTOP_PROVIDERS_BUDGET_MS,
-    );
-    expect(p95(warmProviderSamples.map((sample) => sample.duration))).toBeLessThan(
-      DESKTOP_PROVIDERS_BUDGET_MS,
-    );
+    expect(
+      p95(coldProviderSamples.map((sample) => sample.duration)),
+    ).toBeLessThan(DESKTOP_PROVIDERS_BUDGET_MS);
+    expect(
+      p95(warmProviderSamples.map((sample) => sample.duration)),
+    ).toBeLessThan(DESKTOP_PROVIDERS_BUDGET_MS);
   });
 });
 
@@ -456,46 +510,64 @@ async function expectNexusTaskProjection(
   viewport: { readonly width: number; readonly height: number },
 ): Promise<void> {
   await expect(dialog).toBeVisible();
-  const projection = await dialog.evaluate((element) => {
-    const wrapper = element.parentElement;
-    if (!wrapper) {
-      throw new Error("Nexus task dialog requires its modal projection.");
-    }
-    const frame = element.getBoundingClientRect();
-    const visualViewport = window.visualViewport;
-    const expectedTop = visualViewport?.offsetTop ?? 0;
-    const expectedLeft = visualViewport?.offsetLeft ?? 0;
-    const expectedWidth = visualViewport?.width ?? window.innerWidth;
-    const expectedHeight = visualViewport?.height ?? window.innerHeight;
-    const wrapperStyle = getComputedStyle(wrapper);
-    const frameStyle = getComputedStyle(element);
-    return {
-      frame: {
-        top: frame.top,
-        right: frame.right,
-        bottom: frame.bottom,
-        left: frame.left,
-        width: frame.width,
-        height: frame.height,
+  const readProjection = () =>
+    dialog.evaluate((element) => {
+      const wrapper = element.parentElement;
+      if (!wrapper) {
+        throw new Error("Nexus task dialog requires its modal projection.");
+      }
+      const frame = element.getBoundingClientRect();
+      const visualViewport = window.visualViewport;
+      const expectedTop = visualViewport?.offsetTop ?? 0;
+      const expectedLeft = visualViewport?.offsetLeft ?? 0;
+      const expectedWidth = visualViewport?.width ?? window.innerWidth;
+      const expectedHeight = visualViewport?.height ?? window.innerHeight;
+      const wrapperStyle = getComputedStyle(wrapper);
+      const frameStyle = getComputedStyle(element);
+      return {
+        frame: {
+          top: frame.top,
+          right: frame.right,
+          bottom: frame.bottom,
+          left: frame.left,
+          width: frame.width,
+          height: frame.height,
+        },
+        expected: {
+          top: expectedTop,
+          right: expectedLeft + expectedWidth,
+          bottom: expectedTop + expectedHeight,
+          left: expectedLeft,
+          width: expectedWidth,
+          height: expectedHeight,
+        },
+        wrapperBackground: wrapperStyle.backgroundColor,
+        wrapperBackdrop: wrapper.getAttribute("data-modal-backdrop"),
+        wrapperZIndex: wrapperStyle.zIndex,
+        nexusZIndex: getComputedStyle(document.documentElement)
+          .getPropertyValue("--z-nexus")
+          .trim(),
+        bodyBackground: getComputedStyle(document.body).backgroundColor,
+        frameBackground: frameStyle.backgroundColor,
+      };
+    });
+  await expect
+    .poll(
+      async () => {
+        const projection = await readProjection();
+        return Math.max(
+          Math.abs(projection.frame.left - projection.expected.left),
+          Math.abs(projection.frame.top - projection.expected.top),
+          Math.abs(projection.frame.right - projection.expected.right),
+          Math.abs(projection.frame.bottom - projection.expected.bottom),
+          Math.abs(projection.frame.width - viewport.width),
+          Math.abs(projection.frame.height - viewport.height),
+        );
       },
-      expected: {
-        top: expectedTop,
-        right: expectedLeft + expectedWidth,
-        bottom: expectedTop + expectedHeight,
-        left: expectedLeft,
-        width: expectedWidth,
-        height: expectedHeight,
-      },
-      wrapperBackground: wrapperStyle.backgroundColor,
-      wrapperBackdrop: wrapper.getAttribute("data-modal-backdrop"),
-      wrapperZIndex: wrapperStyle.zIndex,
-      nexusZIndex: getComputedStyle(document.documentElement)
-        .getPropertyValue("--z-nexus")
-        .trim(),
-      bodyBackground: getComputedStyle(document.body).backgroundColor,
-      frameBackground: frameStyle.backgroundColor,
-    };
-  });
+      { message: "Nexus task frame did not converge on the visual viewport" },
+    )
+    .toBeLessThan(0.5);
+  const projection = await readProjection();
 
   expect(projection.frame.left).toBeCloseTo(projection.expected.left, 0);
   expect(projection.frame.top).toBeCloseTo(projection.expected.top, 0);
@@ -529,9 +601,7 @@ async function nexusGeometry(
 ): Promise<NexusGeometry> {
   const button = page.getByRole("button", {
     name:
-      paneCount === 1
-        ? "Open Nexus, 1 tab"
-        : `Open Nexus, ${paneCount} tabs`,
+      paneCount === 1 ? "Open Nexus, 1 tab" : `Open Nexus, ${paneCount} tabs`,
   });
   await expect(button).toBeVisible();
   const wrapper = page.getByTestId("nexus-wrapper");
@@ -544,13 +614,8 @@ async function nexusGeometry(
       button.elementHandle(),
       counter.elementHandle(),
       content.elementHandle(),
-  ]);
-  if (
-    !wrapperElement ||
-    !buttonElement ||
-    !counterElement ||
-    !contentElement
-  ) {
+    ]);
+  if (!wrapperElement || !buttonElement || !counterElement || !contentElement) {
     throw new Error("Nexus geometry requires connected control elements.");
   }
   return page.evaluate(
@@ -647,10 +712,13 @@ test.describe("mobile Nexus task", () => {
       name: "Open Nexus, 2 tabs",
     });
     const paneBody = activeWorkspacePane(page).getByTestId("pane-shell-body");
-    const nexusClearance = await paneBody.evaluate((element) =>
-      Number.parseFloat(getComputedStyle(element).paddingBottom),
-    );
-    expect(nexusClearance).toBeGreaterThan(0);
+    await expect
+      .poll(() =>
+        paneBody.evaluate((element) =>
+          Number.parseFloat(getComputedStyle(element).paddingBottom),
+        ),
+      )
+      .toBeGreaterThan(0);
     await expect(trigger).toBeVisible();
     await trigger.tap();
 
@@ -770,16 +838,16 @@ test.describe("mobile Nexus task", () => {
       if (viewport.width === 390 && viewport.height === 844) {
         await page.emulateMedia({ reducedMotion: "reduce" });
         expect(
-          await page.evaluate(() =>
-            window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+          await page.evaluate(
+            () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
           ),
         ).toBe(true);
         await captureTask("reduced-motion");
         await page.emulateMedia({ reducedMotion: "no-preference" });
         await page.emulateMedia({ forcedColors: "active" });
         expect(
-          await page.evaluate(() =>
-            window.matchMedia("(forced-colors: active)").matches,
+          await page.evaluate(
+            () => window.matchMedia("(forced-colors: active)").matches,
           ),
         ).toBe(true);
         await captureTask("forced-colors");
@@ -929,9 +997,7 @@ test.describe("mobile Nexus task", () => {
 
     await page.goBack();
     await expect(confirmation).toBeVisible();
-    const suspendedNexus = page.locator(
-      '[role="dialog"][aria-label="Nexus"]',
-    );
+    const suspendedNexus = page.locator('[role="dialog"][aria-label="Nexus"]');
     await expect(suspendedNexus).toHaveAttribute("inert", "");
     await expect(suspendedNexus).not.toHaveAttribute("aria-modal");
     await expect(suspendedNexus.locator("..")).toHaveAttribute(
@@ -942,8 +1008,7 @@ test.describe("mobile Nexus task", () => {
       .poll(() =>
         suspendedNexus.evaluate(
           (element) =>
-            getComputedStyle(element).backgroundColor !==
-            "rgba(0, 0, 0, 0)",
+            getComputedStyle(element).backgroundColor !== "rgba(0, 0, 0, 0)",
         ),
       )
       .toBe(true);
@@ -960,9 +1025,7 @@ test.describe("mobile Nexus task", () => {
       )
       .toBe(true);
 
-    await confirmation
-      .getByRole("button", { name: "Keep working" })
-      .tap();
+    await confirmation.getByRole("button", { name: "Keep working" }).tap();
     await expect(confirmation).toBeHidden();
     await expect(nexus).toBeVisible();
     await expect(nexus).toHaveAttribute("aria-modal", "true");
@@ -971,9 +1034,7 @@ test.describe("mobile Nexus task", () => {
 
     await page.keyboard.press("Escape");
     await expect(confirmation).toBeVisible();
-    await confirmation
-      .getByRole("button", { name: "Keep working" })
-      .tap();
+    await confirmation.getByRole("button", { name: "Keep working" }).tap();
     await expect(confirmation).toBeHidden();
     await expect(nexus).toBeVisible();
     await expect(nexus).toHaveAttribute("aria-modal", "true");
@@ -982,18 +1043,14 @@ test.describe("mobile Nexus task", () => {
 
     await nexus.getByRole("button", { name: "Back", exact: true }).tap();
     await expect(confirmation).toBeVisible();
-    await confirmation
-      .getByRole("button", { name: "Keep working" })
-      .tap();
+    await confirmation.getByRole("button", { name: "Keep working" }).tap();
     await expect(confirmation).toBeHidden();
     await expect(nexus).toBeVisible();
     await expect(nexus).toHaveAttribute("aria-modal", "true");
     await expect(links).toHaveValue("https://example.com/article");
     await expect(page).toHaveURL(urlBeforeExit);
 
-    await nexus
-      .getByRole("button", { name: "Close Add content" })
-      .tap();
+    await nexus.getByRole("button", { name: "Close Add content" }).tap();
     await page
       .getByRole("dialog", { name: "Discard unfinished work?" })
       .getByRole("button", { name: "Discard" })
@@ -1014,9 +1071,7 @@ test.describe("mobile Nexus task", () => {
     await page.getByRole("button", { name: "Open Nexus, 1 tab" }).tap();
     const nexus = nexusDialog(page);
     await nexus.getByRole("button", { name: "Find anything…" }).tap();
-    await nexus
-      .getByRole("searchbox", { name: "Find anything" })
-      .fill("stats");
+    await nexus.getByRole("searchbox", { name: "Find anything" }).fill("stats");
 
     await page.setViewportSize({ width: 568, height: 320 });
     await expectNexusTaskProjection(nexus, { width: 568, height: 320 });
@@ -1064,7 +1119,16 @@ test.describe("mobile Nexus task", () => {
 
     await dialog.getByRole("button", { name: "Stats Place" }).tap();
     await expect(dialog).toBeHidden();
-    await expect(page).toHaveURL(/\/stats$/);
+    await expect(page).toHaveURL((url) => {
+      const params = url.searchParams;
+      return (
+        url.pathname === "/stats" &&
+        params.get("view") === "stats" &&
+        params.get("period") === "day" &&
+        /^\d{4}-\d{2}-\d{2}$/.test(params.get("anchor") ?? "") &&
+        [...params.keys()].sort().join(",") === "anchor,period,view"
+      );
+    });
   });
 
   test("keeps target, counter, anchor, and obstruction geometry fixed across tab counts", async ({

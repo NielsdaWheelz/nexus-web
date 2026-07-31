@@ -386,7 +386,12 @@ test.describe("web articles", () => {
       try {
         await bulkRemoveOption.click();
         for (const response of await Promise.all(removalResponses)) {
-          expect(response.status()).toBe(204);
+          expect(response.status()).toBe(200);
+          expect(await response.json()).toEqual({
+            data: {
+              libraryEntriesCollectionRevision: expect.any(Number),
+            },
+          });
         }
         await expect(
           bulkRemove.getByText("No eligible libraries."),
