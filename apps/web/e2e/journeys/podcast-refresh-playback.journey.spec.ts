@@ -90,6 +90,17 @@ test("a subscribed podcast refreshes through its durable run and opens an episod
 
   await episode.click();
   await expect(page).toHaveURL(/\/media\/[0-9a-f-]{36}$/i);
+  const activeTranscriptSegment = page.getByRole("region", {
+    name: "Active transcript segment",
+  });
+  await expect(
+    activeTranscriptSegment,
+    `Episode from podcast ${podcastId} did not expose its active transcript segment after refresh ${refreshHandle}.`,
+  ).toBeVisible();
+  await expect(
+    activeTranscriptSegment,
+    `Active transcript segment for podcast ${podcastId} did not contain the Crew-4 fixture after refresh ${refreshHandle}.`,
+  ).toContainText(/Houston, we have a podcast/i);
   await page.getByRole("button", { name: "Play", exact: true }).click();
   const player = page.getByRole("region", { name: "Media player" });
   await expect(

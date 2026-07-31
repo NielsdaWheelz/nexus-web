@@ -122,12 +122,19 @@ test("a source-grounded answer publishes a citation that opens its exact reader 
     citation,
     `Conversation ${conversationId} completed without a user-visible citation to evidence ${evidence!.context_ref.id}.`,
   ).toBeVisible({ timeout: 25_000 });
-  await citation.click();
-  await expect(page).toHaveURL(
-    new RegExp(
-      `/media/${mediaId}#evidence-${evidence!.context_ref.evidence_span_ids[0]}`,
-    ),
+  const evidenceSpanId = evidence!.context_ref.evidence_span_ids[0];
+  await expect(
+    citation,
+    `Citation from conversation ${conversationId} did not retain its exact evidence activation target for media ${mediaId}.`,
+  ).toHaveAttribute(
+    "href",
+    `/media/${mediaId}#evidence-${evidenceSpanId}`,
   );
+  await citation.click();
+  await expect(
+    page,
+    `Citation evidence ${evidenceSpanId} was not consumed into the canonical media ${mediaId} URL.`,
+  ).toHaveURL(new RegExp(`/media/${mediaId}$`));
   await expect(
     page.getByText(/SOFIA mission detected water molecules/i).first(),
     `Citation from conversation ${conversationId} did not open the SOFIA evidence in media ${mediaId}.`,

@@ -4,7 +4,7 @@
     {
       "id": "test-environment-production-bypass",
       "patch": "testdata/faults/test-environment-production-bypass.patch",
-      "sha256": "de4a806506a7e28eb8da2e740773002696d220188af63fbcc75c038315019e98",
+      "sha256": "2eae36ccb38c6382a5b3158ff2995954e55de29eb41bedebe51a0f12ee7ac1d1",
       "proofs": [
         "pytest:python/tests/service/test_control_plane_isolation.py::test_environment_isolation_rejects_production_and_cleans_only_the_exact_run"
       ],

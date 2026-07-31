@@ -95,7 +95,21 @@ test("Nexus finds and opens a place whose workspace survives a fresh document", 
   await expect(input).toBeFocused();
   await input.fill("stats");
   await nexus.getByRole("option", { name: /^Stats\b/ }).click();
-  await expect(page).toHaveURL(/\/stats$/);
+  await expect(
+    page,
+    `Nexus did not immediately project the opened Stats place into its canonical URL for device ${deviceId}.`,
+  ).toHaveURL((url) => {
+    const params = url.searchParams;
+    return (
+      url.pathname === "/stats" &&
+      params.get("view") === "stats" &&
+      params.get("period") === "day" &&
+      /^\d{4}-\d{2}-\d{2}$/.test(params.get("anchor") ?? "") &&
+      [...params.keys()].sort().join(",") === "anchor,period,view"
+    );
+  });
+  const statsUrl = new URL(page.url());
+  const statsHref = `${statsUrl.pathname}${statsUrl.search}`;
 
   await expect
     .poll(
@@ -109,14 +123,17 @@ test("Nexus finds and opens a place whose workspace survives a fresh document", 
         return state?.primaryPanesById[state.activePrimaryPaneId]?.currentVisit.href;
       },
       {
-        message: `Expected device ${deviceId} to persist the Nexus-opened Stats pane.`,
+        message: `Expected device ${deviceId} to persist the exact Nexus-opened Stats query ${statsHref}.`,
         timeout: 15_000,
       },
     )
-    .toBe("/stats");
+    .toBe(statsHref);
 
   await gotoWithStrictCsp(page, "/");
-  await expect(page).toHaveURL(/\/stats$/);
+  await expect(
+    page,
+    `Fresh document for device ${deviceId} did not restore the exact persisted Stats query ${statsHref}.`,
+  ).toHaveURL(statsUrl.toString());
   await expect(workspacePaneButton(page, /^Stats\b/)).toHaveAttribute(
     "aria-current",
     "page",
