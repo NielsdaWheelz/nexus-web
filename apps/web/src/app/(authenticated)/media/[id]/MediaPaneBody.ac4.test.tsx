@@ -86,6 +86,7 @@ function seededMedia() {
     last_error_code: "E_TEST",
     retrieval_status: "ready",
     contributors: [],
+    playerDescriptor: { kind: "Absent" },
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     capabilities: {

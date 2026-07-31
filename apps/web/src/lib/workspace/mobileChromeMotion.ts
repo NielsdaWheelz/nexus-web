@@ -4,7 +4,7 @@ export const COLLAPSE_TRAVEL_SCROLL_PX = 64;
 export const SCROLL_IDLE_SETTLE_DELAY_MS = 120;
 export const MIN_SCROLL_DELTA_PX = 1;
 
-interface MobileChromeMotionSnapshot {
+interface MobileChromeScrollSnapshot {
   scrollTop: number;
   scrollHeight: number;
   clientHeight: number;
@@ -28,8 +28,9 @@ export interface MobileChromeMotionState {
 }
 
 export type MobileChromeMotionEvent =
-  | { kind: "Start"; snapshot: MobileChromeMotionSnapshot }
-  | { kind: "Scroll"; snapshot: MobileChromeMotionSnapshot }
+  | { kind: "Start"; snapshot: MobileChromeScrollSnapshot }
+  | { kind: "RefreshGeometry"; snapshot: MobileChromeScrollSnapshot }
+  | { kind: "Scroll"; snapshot: MobileChromeScrollSnapshot }
   | { kind: "Settle" }
   | { kind: "FinishSettle" }
   | { kind: "Pin" }
@@ -45,7 +46,7 @@ export function initialMobileChromeMotionState(): MobileChromeMotionState {
   };
 }
 
-function clampedScrollTop(snapshot: MobileChromeMotionSnapshot): number {
+function clampedScrollTop(snapshot: MobileChromeScrollSnapshot): number {
   const maxScrollTop = Math.max(0, snapshot.scrollHeight - snapshot.clientHeight);
   return Math.min(Math.max(0, snapshot.scrollTop), maxScrollTop);
 }
@@ -89,7 +90,7 @@ function progressAfterDistance(
 
 function scrollState(
   state: MobileChromeMotionState,
-  snapshot: MobileChromeMotionSnapshot,
+  snapshot: MobileChromeScrollSnapshot,
 ): MobileChromeMotionState {
   const scrollTop = clampedScrollTop(snapshot);
   if (scrollTop <= TOP_PINNED_SCROLL_PX) {
@@ -139,7 +140,7 @@ function scrollState(
       Math.max(0, reversalDistancePx - DIRECTION_REVERSAL_DEAD_ZONE_PX),
     );
     return {
-      phase: { kind: "Tracking", direction },
+      phase: phaseAtEndpoint(progress, direction),
       progress,
       lastScrollTop: scrollTop,
       direction,
@@ -171,6 +172,28 @@ export function reduceMobileChromeMotion(
         lastScrollTop: scrollTop,
         direction: null,
         reversalDistancePx: 0,
+      };
+    }
+    case "RefreshGeometry": {
+      const scrollTop = clampedScrollTop(event.snapshot);
+      if (
+        event.snapshot.scrollHeight <= event.snapshot.clientHeight ||
+        scrollTop <= TOP_PINNED_SCROLL_PX
+      ) {
+        return {
+          phase:
+            state.phase.kind === "Pinned"
+              ? { kind: "Pinned" }
+              : { kind: "Visible" },
+          progress: 0,
+          lastScrollTop: scrollTop,
+          direction: null,
+          reversalDistancePx: 0,
+        };
+      }
+      return {
+        ...state,
+        lastScrollTop: scrollTop,
       };
     }
     case "Scroll":

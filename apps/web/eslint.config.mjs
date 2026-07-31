@@ -20,6 +20,50 @@ const KEYBOARD_INSET_BAN = {
     "Mobile modal keyboard geometry has one owner: useMobileModalLifecycle (src/components/ui/useMobileModalLifecycle.ts). Compose that lifecycle through a semantic mobile modal primitive instead of reading visual-viewport geometry directly (docs/cutovers/mobile-nexus-full-screen-task-hard-cutover.md).",
 };
 
+const PRODUCT_POLLING_BAN = {
+  selector: "CallExpression[callee.name='setInterval']",
+  message: "Product polling must go through useIntervalPoll.",
+};
+
+const CANVAS_CSS_VARIABLE_BAN = {
+  // Canvas context properties are NOT part of the CSS cascade, so a
+  // var(--…) string is unparseable and silently ignored (the assignment
+  // is dropped). Resolve the design token via getComputedStyle, or
+  // assign a literal value. (`el.style.font` is excluded — inline styles
+  // do resolve var().)
+  selector:
+    "AssignmentExpression[left.property.name=/^(font|fillStyle|strokeStyle)$/][right.value=/var\\(--/]:not([left.object.property.name='style'])",
+  message:
+    "Canvas ctx.font/fillStyle/strokeStyle cannot resolve CSS custom properties; a var(--…) string is silently ignored. Resolve the token via getComputedStyle, or assign a literal value.",
+};
+
+const READER_SCROLL_MUTATION_BANS = [
+  {
+    selector:
+      "AssignmentExpression[left.type='MemberExpression'][left.property.name='scrollTop']",
+    message:
+      "Reader scrollTop writes belong in src/lib/reader/paneScroll.ts and must use ReaderScrollPositioner.",
+  },
+  {
+    selector:
+      "AssignmentExpression[left.type='MemberExpression'][left.computed=true][left.property.value='scrollTop']",
+    message:
+      "Reader scrollTop writes belong in src/lib/reader/paneScroll.ts and must use ReaderScrollPositioner.",
+  },
+  {
+    selector:
+      "CallExpression[callee.type='MemberExpression'][callee.property.name=/^(scrollTo|scrollIntoView)$/]",
+    message:
+      "Reader scrollTo and scrollIntoView calls belong in src/lib/reader/paneScroll.ts and must use ReaderScrollPositioner.",
+  },
+  {
+    selector:
+      "CallExpression[callee.type='MemberExpression'][callee.computed=true][callee.property.value=/^(scrollTo|scrollIntoView)$/]",
+    message:
+      "Reader scrollTo and scrollIntoView calls belong in src/lib/reader/paneScroll.ts and must use ReaderScrollPositioner.",
+  },
+];
+
 const eslintConfig = [
   ...compat.extends("next/core-web-vitals", "next/typescript"),
   {
@@ -27,21 +71,8 @@ const eslintConfig = [
       "react/no-danger": "error",
       "no-restricted-syntax": [
         "error",
-        {
-          selector: "CallExpression[callee.name='setInterval']",
-          message: "Product polling must go through useIntervalPoll.",
-        },
-        {
-          // Canvas context properties are NOT part of the CSS cascade, so a
-          // var(--…) string is unparseable and silently ignored (the assignment
-          // is dropped). Resolve the design token via getComputedStyle, or
-          // assign a literal value. (`el.style.font` is excluded — inline styles
-          // do resolve var().)
-          selector:
-            "AssignmentExpression[left.property.name=/^(font|fillStyle|strokeStyle)$/][right.value=/var\\(--/]:not([left.object.property.name='style'])",
-          message:
-            "Canvas ctx.font/fillStyle/strokeStyle cannot resolve CSS custom properties; a var(--…) string is silently ignored. Resolve the token via getComputedStyle, or assign a literal value.",
-        },
+        PRODUCT_POLLING_BAN,
+        CANVAS_CSS_VARIABLE_BAN,
       ],
       "@typescript-eslint/no-unused-vars": [
         "error",
@@ -52,6 +83,24 @@ const eslintConfig = [
   {
     files: ["src/lib/useIntervalPoll.ts"],
     rules: { "no-restricted-syntax": "off" },
+  },
+  {
+    files: [
+      "src/app/**/media/**/*.{ts,tsx}",
+      "src/components/HtmlRenderer.tsx",
+      "src/components/PdfReader.tsx",
+      "src/components/pdfPaneFind.ts",
+      "src/lib/reader/**/*.{ts,tsx}",
+    ],
+    ignores: ["**/*.test.{ts,tsx}", "src/lib/reader/paneScroll.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        PRODUCT_POLLING_BAN,
+        CANVAS_CSS_VARIABLE_BAN,
+        ...READER_SCROLL_MUTATION_BANS,
+      ],
+    },
   },
   {
     // HtmlRenderer is the sole sanctioned sink for API-sanitized HTML.

@@ -3,8 +3,23 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { describe, expect, it, vi } from "vitest";
 import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
+import type { ReaderScrollPositioner } from "@/lib/reader/paneScroll";
 import TextDocumentReader from "./TextDocumentReader";
 import styles from "./page.module.css";
+
+const scrollPositioner: ReaderScrollPositioner = {
+  async run(operation) {
+    await operation({
+      setTop(scrollport, top) {
+        scrollport.scrollTop = Math.max(0, top);
+      },
+      adjustTop(scrollport, delta) {
+        scrollport.scrollTop = Math.max(0, scrollport.scrollTop + delta);
+      },
+      reveal() {},
+    });
+  },
+};
 
 function renderReader(
   overrides: Partial<Parameters<typeof TextDocumentReader>[0]> = {},
@@ -19,8 +34,9 @@ function renderReader(
   const onContentBlur = vi.fn();
   const props: Parameters<typeof TextDocumentReader>[0] = {
     mediaId: "media-1",
-    mobileChromeSourceKey: "web:media-1:fragment-1",
-    mobileChromeEnabled: false,
+    mobileChromeSourceKey: "media-1",
+    mobileChromeEnabled: true,
+    scrollPositioner,
     readerRootRef: createRef<HTMLDivElement>(),
     contentRef: createRef<HTMLDivElement>(),
     textViewportRef: createRef<HTMLDivElement>(),
@@ -50,11 +66,9 @@ function renderReader(
     ...overrides,
   };
 
-  const view = render(
-    <MobileChromeProvider>
-      <TextDocumentReader {...props} />
-    </MobileChromeProvider>,
-  );
+  const view = render(<TextDocumentReader {...props} />, {
+    wrapper: MobileChromeProvider,
+  });
   return {
     props,
     rerender: view.rerender,
@@ -159,6 +173,24 @@ describe("TextDocumentReader", () => {
     expect(onContentBlur).toHaveBeenCalledTimes(1);
   });
 
+  it("marks rendered annotations as handled before their click reaches reader chrome", () => {
+    renderReader({
+      contentState: {
+        status: "ready",
+        renderedHtml:
+          '<p><span data-active-highlight-ids="h1">Highlight</span> <span data-reader-apparatus-item-id="margin-1">Margin note</span></p>',
+      },
+    });
+
+    const highlight = screen.getByText("Highlight");
+    const apparatus = screen.getByText("Margin note");
+    fireEvent.click(highlight);
+    fireEvent.click(apparatus);
+
+    expect(highlight).toHaveAttribute("data-reader-tap-handled", "true");
+    expect(apparatus).toHaveAttribute("data-reader-tap-handled", "true");
+  });
+
   it("publishes one reader-owned snapshot from its exact viewport", () => {
     const { props, rerender, onViewportReady, onViewportScroll } = renderReader();
     const viewport = screen.getByTestId("document-viewport");
@@ -181,15 +213,7 @@ describe("TextDocumentReader", () => {
       clientHeight: 400,
     });
 
-    rerender(
-      <MobileChromeProvider>
-        <TextDocumentReader
-          {...props}
-          mediaId="media-2"
-          mobileChromeSourceKey="web:media-2:fragment-1"
-        />
-      </MobileChromeProvider>,
-    );
+    rerender(<TextDocumentReader {...props} mediaId="media-2" />);
     expect(onViewportReady).toHaveBeenCalledTimes(2);
   });
 

@@ -749,7 +749,7 @@ describe("ReadingSlateSection", () => {
     );
   });
 
-  it("focuses the mobile pane landmark before a terminal empty slate unmounts", async () => {
+  it("reveals and focuses mobile pane chrome before a terminal empty slate unmounts", async () => {
     const only = slateItem(1);
     const command = deferred<AcceptResult>();
     const refill = deferred<SlateSnapshot>();

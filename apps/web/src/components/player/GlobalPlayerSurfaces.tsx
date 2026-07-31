@@ -18,6 +18,7 @@ import {
   findPaneChromeFocusTarget,
   findPaneLandmarkFocusTarget,
 } from "@/lib/workspace/paneDom";
+import { usePaneChromeFocusReturn } from "@/lib/workspace/mobileChrome";
 import DesktopListeningShelf from "./DesktopListeningShelf";
 import MobileMiniPlayer from "./MobileMiniPlayer";
 import MobileNowPlaying from "./MobileNowPlaying";
@@ -55,6 +56,7 @@ export default function GlobalPlayerSurfaces() {
   const commands = usePlayerCommands();
   const capture = usePlayerCapture();
   const workspace = useWorkspaceStore();
+  const { focus: returnPaneChromeFocus } = usePaneChromeFocusReturn();
   const isMobile = useIsMobileViewport();
   const model = projectPlayerChrome(session);
   const miniPlayerButtonRef = useRef<HTMLButtonElement>(null);
@@ -90,9 +92,7 @@ export default function GlobalPlayerSurfaces() {
     setAnnouncement("Player closed");
     commands.dismiss();
     if (isMobile) {
-      requestAnimationFrame(() =>
-        findPaneLandmarkFocusTarget(activePaneId)?.focus(),
-      );
+      void returnPaneChromeFocus(activePaneId);
       return;
     }
     requestAnimationFrame(() =>
@@ -102,6 +102,7 @@ export default function GlobalPlayerSurfaces() {
     capture,
     commands,
     isMobile,
+    returnPaneChromeFocus,
     workspace.state.activePrimaryPaneId,
   ]);
 

@@ -123,6 +123,13 @@ describe("CollectionRow", () => {
 
     await user.keyboard("{Escape}");
     await waitFor(() => expect(phase).toHaveTextContent("Visible"));
+    await waitFor(() => expect(trigger).toHaveFocus());
+
+    scrollport.scrollTop = 108;
+    fireEvent.scroll(scrollport);
+    scrollport.scrollTop = 116;
+    fireEvent.scroll(scrollport);
+    await waitFor(() => expect(phase).toHaveTextContent("Tracking"));
 
     await user.click(trigger);
     await waitFor(() => expect(phase).toHaveTextContent("Pinned"));

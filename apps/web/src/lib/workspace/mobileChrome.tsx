@@ -20,7 +20,9 @@ import type {
 import type { PaneHeaderModel } from "@/lib/panes/paneHeaderModel";
 import type { TargetLinkMouseEvent } from "@/lib/panes/targetLinkActivation";
 import type { SurfaceHeaderNavigation } from "@/components/ui/SurfaceHeader";
+import { isInteractiveTarget } from "@/lib/ui/interactiveTarget";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import {
   initialMobileChromeMotionState,
   mobileChromePresentationProgress,
@@ -39,16 +41,19 @@ export type MobileChromeVisibleLockReason =
   | "pane-find"
   | "mobile-secondary"
   | "library-picker"
-  | "action-menu"
-  | "chrome-focus";
+  | "action-menu";
 
 export interface MobileChromeVisibleLocks {
-  readonly acquire: (reason: MobileChromeVisibleLockReason) => () => void;
+  acquire(reason: MobileChromeVisibleLockReason): () => void;
 }
 
 export interface MobileChromeReaderScrollportInput {
   readonly sourceKey: string;
   readonly enabled: boolean;
+}
+
+export interface PaneChromeFocusReturn {
+  focus(paneId: string): Promise<void>;
 }
 
 export type MobileChromeSurfaceRole =
@@ -71,71 +76,60 @@ export interface MobilePaneChrome {
   options: readonly ActionDescriptor[];
 }
 
-interface ReaderScrollportRegistration {
-  readonly scrollport: HTMLElement;
-  readonly sourceKey: string;
-  unregister: (() => void) | null;
-}
-
 interface StableController {
-  readonly setPaneChrome: (chrome: MobilePaneChrome | null) => void;
-  readonly registerSurface: (
+  setPaneChrome(chrome: MobilePaneChrome | null): void;
+  registerSurface(
     surface: HTMLElement,
     role: MobileChromeSurfaceRole,
-  ) => () => void;
-  readonly registerReaderScrollport: (input: {
-    readonly scrollport: HTMLElement;
-    readonly sourceKey: string;
-  }) => () => void;
-  readonly acquireLock: (
-    reason: MobileChromeVisibleLockReason,
-  ) => () => void;
+  ): () => void;
+  registerReaderScrollport(
+    scrollport: HTMLElement,
+    sourceKey: string,
+  ): () => void;
+  acquire(reason: MobileChromeVisibleLockReason): () => void;
+  focusPaneChrome(paneId: string): Promise<void>;
 }
 
 interface VolatileChromeState {
-  readonly motionPhase: MobileChromeMotionPhase;
-  readonly paneChrome: MobilePaneChrome | null;
-  readonly finishSettle: () => void;
+  motionPhase: MobileChromeMotionPhase;
+  paneChrome: MobilePaneChrome | null;
 }
 
 interface MobileChromeSurfaceRegistration {
+  readonly role: MobileChromeSurfaceRole;
   readonly surface: HTMLElement;
-  releaseFocusLock: (() => void) | null;
-  unregister: (() => void) | null;
+  readonly observer: MutationObserver;
+  settleGeneration: number | null;
+  unregister(): void;
 }
+
+interface ReaderScrollportRegistration {
+  readonly scrollport: HTMLElement;
+  readonly sourceKey: string;
+  readonly pendingWindowClickCleanups: Set<() => void>;
+  unregister(): void;
+}
+
+type PrivateVisibleLockReason = "focus-return";
+type VisibleLockReason =
+  | MobileChromeVisibleLockReason
+  | PrivateVisibleLockReason;
 
 const StableControllerContext = createContext<StableController | null>(null);
 const VolatileChromeContext = createContext<VolatileChromeState | null>(null);
 const COLLAPSE_PROPERTY = "--mobile-chrome-collapse";
-const CHROME_CONTROL_SELECTOR = [
-  "a[href]",
-  "button",
-  "input",
-  "select",
-  "textarea",
-  "summary",
-  "[contenteditable]:not([contenteditable='false'])",
-  "[role='button']",
-  "[role='checkbox']",
-  "[role='link']",
-  "[role='menuitem']",
-  "[role='option']",
-  "[role='radio']",
-  "[role='slider']",
-  "[role='switch']",
-  "[role='tab']",
-  "[tabindex]:not([tabindex='-1'])",
-].join(",");
-const BLANK_CANVAS_EXCLUDED_TARGET_SELECTOR = [
-  CHROME_CONTROL_SELECTOR,
-  "label",
-  "audio",
-  "video",
-  "[data-highlight-id]",
-  "[data-highlight-anchor]",
-  "[data-active-highlight-ids]",
-  ".annotationLayer",
-].join(",");
+const READER_INTERACTION_ROOT = "[data-mobile-reader-interaction-root]";
+const READER_TAP_HANDLED = "[data-reader-tap-handled='true']";
+const READER_TAP_REVEAL_SURFACE =
+  "[data-reader-tap-reveal-surface='true']";
+
+function isInteractiveReaderTap(
+  target: EventTarget | null,
+  scrollport: HTMLElement,
+): boolean {
+  const revealSurface = closestElement(target, READER_TAP_REVEAL_SURFACE);
+  return isInteractiveTarget(target, revealSurface ?? scrollport);
+}
 
 function initialPrefersReducedMotion(): boolean {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function")
@@ -161,12 +155,17 @@ function phaseAtProgress(
   state: MobileChromeMotionState,
   progress: number,
 ): MobileChromeMotionPhase {
-  if (state.direction != null)
-    return { kind: "Tracking", direction: state.direction };
-  return progress === 0 ? { kind: "Visible" } : { kind: "Hidden" };
+  if (progress === 0) return { kind: "Visible" };
+  if (progress === 1) return { kind: "Hidden" };
+  const direction =
+    state.direction ??
+    (state.phase.kind === "Settling" && state.phase.target === "Hidden"
+      ? "Down"
+      : "Up");
+  return { kind: "Tracking", direction };
 }
 
-function readScrollSnapshot(scrollport: HTMLElement) {
+function scrollSnapshot(scrollport: HTMLElement) {
   return {
     scrollTop: scrollport.scrollTop,
     scrollHeight: scrollport.scrollHeight,
@@ -174,20 +173,67 @@ function readScrollSnapshot(scrollport: HTMLElement) {
   };
 }
 
-function isChromeControl(
-  surface: HTMLElement,
-  target: EventTarget | null,
-): target is HTMLElement {
+function parseCssTimeMs(value: string): number {
+  const time = value.trim();
+  if (time.endsWith("ms")) return Number.parseFloat(time);
+  if (time.endsWith("s")) return Number.parseFloat(time) * 1_000;
+  return 0;
+}
+
+function transitionDeadlineMs(surface: HTMLElement): number {
+  const computed = window.getComputedStyle(surface);
+  const properties = computed.transitionProperty.split(",");
+  const durations = computed.transitionDuration.split(",").map(parseCssTimeMs);
+  const delays = computed.transitionDelay.split(",").map(parseCssTimeMs);
+  const count = Math.max(properties.length, durations.length, delays.length);
+  let deadlineMs = 0;
+  for (let index = 0; index < count; index += 1) {
+    const property = properties[index % properties.length]?.trim();
+    if (property !== "all" && property !== COLLAPSE_PROPERTY) continue;
+    const duration = durations[index % durations.length] ?? 0;
+    const delay = delays[index % delays.length] ?? 0;
+    deadlineMs = Math.max(deadlineMs, duration + delay);
+  }
+  return Math.max(0, deadlineMs);
+}
+
+function primaryUnmodifiedClick(event: MouseEvent): boolean {
   return (
-    target instanceof HTMLElement &&
-    surface.contains(target) &&
-    target.matches(CHROME_CONTROL_SELECTOR)
+    event.button === 0 &&
+    !event.altKey &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.shiftKey
   );
 }
 
 function hasLiveSelection(): boolean {
   const selection = window.getSelection();
   return selection !== null && !selection.isCollapsed;
+}
+
+function closestElement(
+  target: EventTarget | null,
+  selector: string,
+): Element | null {
+  return target instanceof Element ? target.closest(selector) : null;
+}
+
+function readerInteractionRoots(paneId: string): readonly HTMLElement[] {
+  const pane = [...document.querySelectorAll<HTMLElement>("[data-pane-id]")].find(
+    (candidate) => candidate.dataset.paneId === paneId,
+  );
+  if (!pane) return [];
+  return [
+    ...(pane.matches(READER_INTERACTION_ROOT) ? [pane] : []),
+    ...pane.querySelectorAll<HTMLElement>(READER_INTERACTION_ROOT),
+  ];
+}
+
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    window.requestAnimationFrame(() => resolve());
+  });
 }
 
 export function MobileChromeProvider({ children }: { children: ReactNode }) {
@@ -209,25 +255,28 @@ export function MobileChromeProvider({ children }: { children: ReactNode }) {
   const isMobileRef = useRef(isMobile);
   const previousIsMobileRef = useRef(isMobile);
   const prefersReducedMotionRef = useRef(initialPrefersReducedMotion());
-  const visibleLocksRef = useRef<
-    Map<number, MobileChromeVisibleLockReason>
-  >(new Map());
+  const visibleLocksRef = useRef<Map<number, VisibleLockReason>>(new Map());
+  const chromeFocusLockRef = useRef(false);
   const nextLockIdRef = useRef(0);
   const surfacesRef = useRef(
     new Map<MobileChromeSurfaceRole, MobileChromeSurfaceRegistration>(),
   );
   const readerScrollportRef = useRef<ReaderScrollportRegistration | null>(null);
   const frameRef = useRef<number | null>(null);
+  const geometryFrameRef = useRef<number | null>(null);
   const pendingProgressRef = useRef(0);
-  const settleTimerRef = useRef<number | null>(null);
-  const destroyedRef = useRef(false);
+  const scrollIdleTimerRef = useRef<number | null>(null);
+  const settleArmFrameRef = useRef<number | null>(null);
+  const settleDeadlineRef = useRef<number | null>(null);
+  const settleGenerationRef = useRef(0);
+  const mountedRef = useRef(true);
 
   isMobileRef.current = isMobile;
 
   const publishPhase = useCallback((phase: MobileChromeMotionPhase) => {
     if (samePhase(publishedPhaseRef.current, phase)) return;
     publishedPhaseRef.current = phase;
-    setMotionPhase(phase);
+    if (mountedRef.current) setMotionPhase(phase);
   }, []);
 
   const writeProgress = useCallback((progress: number) => {
@@ -237,15 +286,21 @@ export function MobileChromeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const cancelFrame = useCallback(() => {
-    if (frameRef.current == null) return;
+    if (frameRef.current === null) return;
     window.cancelAnimationFrame(frameRef.current);
     frameRef.current = null;
+  }, []);
+
+  const cancelGeometryFrame = useCallback(() => {
+    if (geometryFrameRef.current === null) return;
+    window.cancelAnimationFrame(geometryFrameRef.current);
+    geometryFrameRef.current = null;
   }, []);
 
   const scheduleProgressWrite = useCallback(
     (progress: number) => {
       pendingProgressRef.current = progress;
-      if (frameRef.current != null) return;
+      if (frameRef.current !== null) return;
       frameRef.current = window.requestAnimationFrame(() => {
         frameRef.current = null;
         writeProgress(pendingProgressRef.current);
@@ -254,10 +309,25 @@ export function MobileChromeProvider({ children }: { children: ReactNode }) {
     [writeProgress],
   );
 
-  const cancelSettleTimer = useCallback(() => {
-    if (settleTimerRef.current == null) return;
-    window.clearTimeout(settleTimerRef.current);
-    settleTimerRef.current = null;
+  const cancelScrollIdleTimer = useCallback(() => {
+    if (scrollIdleTimerRef.current === null) return;
+    window.clearTimeout(scrollIdleTimerRef.current);
+    scrollIdleTimerRef.current = null;
+  }, []);
+
+  const invalidateSettle = useCallback(() => {
+    settleGenerationRef.current += 1;
+    for (const registration of surfacesRef.current.values()) {
+      registration.settleGeneration = null;
+    }
+    if (settleArmFrameRef.current !== null) {
+      window.cancelAnimationFrame(settleArmFrameRef.current);
+      settleArmFrameRef.current = null;
+    }
+    if (settleDeadlineRef.current !== null) {
+      window.clearTimeout(settleDeadlineRef.current);
+      settleDeadlineRef.current = null;
+    }
   }, []);
 
   const commit = useCallback(
@@ -269,190 +339,455 @@ export function MobileChromeProvider({ children }: { children: ReactNode }) {
     [publishPhase, scheduleProgressWrite],
   );
 
-  const rebaseline = useCallback(
-    (pinned: boolean) => {
-      cancelFrame();
-      cancelSettleTimer();
-      let next = initialMobileChromeMotionState();
-      const registration = readerScrollportRef.current;
-      if (registration) {
-        next = reduceMobileChromeMotion(next, {
-          kind: "Start",
-          snapshot: readScrollSnapshot(registration.scrollport),
-        });
-      }
-      if (pinned) {
-        next = reduceMobileChromeMotion(next, { kind: "Pin" });
-      }
-      commit(next);
-    },
-    [cancelFrame, cancelSettleTimer, commit],
+  const hasPin = useCallback(
+    () =>
+      isMobileRef.current &&
+      (prefersReducedMotionRef.current ||
+        chromeFocusLockRef.current ||
+        visibleLocksRef.current.size > 0),
+    [],
   );
 
-  const interruptSettle = useCallback(() => {
-    const state = motionRef.current;
-    if (state.phase.kind !== "Settling") return state;
-    cancelFrame();
-    const registration = surfacesRef.current.get("AppBar");
-    if (!registration)
-      throw new Error("Mobile chrome settling requires an AppBar surface");
-    const progress = Number.parseFloat(
-      window
-        .getComputedStyle(registration.surface)
-        .getPropertyValue(COLLAPSE_PROPERTY),
-    );
-    if (!Number.isFinite(progress)) {
-      throw new Error(
-        "Mobile chrome surfaces must expose a numeric collapse progress",
+  const finishSettle = useCallback(
+    (generation: number) => {
+      if (
+        generation !== settleGenerationRef.current ||
+        motionRef.current.phase.kind !== "Settling"
+      ) {
+        return;
+      }
+      invalidateSettle();
+      commit(
+        reduceMobileChromeMotion(motionRef.current, {
+          kind: "FinishSettle",
+        }),
       );
-    }
-    const next = {
-      ...state,
-      phase: phaseAtProgress(state, progress),
-      progress: Math.min(1, Math.max(0, progress)),
-    };
-    writeProgress(next.progress);
-    motionRef.current = next;
-    publishPhase(next.phase);
-    return next;
-  }, [cancelFrame, publishPhase, writeProgress]);
+    },
+    [commit, invalidateSettle],
+  );
 
-  const finishSettle = useCallback(() => {
-    if (motionRef.current.phase.kind !== "Settling") return;
-    const next = reduceMobileChromeMotion(motionRef.current, {
-      kind: "FinishSettle",
+  const startSettleDeadline = useCallback(
+    (generation: number) => {
+      if (
+        generation !== settleGenerationRef.current ||
+        motionRef.current.phase.kind !== "Settling"
+      ) {
+        return;
+      }
+      let deadlineMs = 0;
+      for (const { surface } of surfacesRef.current.values()) {
+        if (!surface.isConnected) continue;
+        deadlineMs = Math.max(deadlineMs, transitionDeadlineMs(surface));
+      }
+      settleDeadlineRef.current = window.setTimeout(() => {
+        settleDeadlineRef.current = null;
+        finishSettle(generation);
+      }, deadlineMs);
+    },
+    [finishSettle],
+  );
+
+  const beginSettle = useCallback(() => {
+    const next = reduceMobileChromeMotion(motionRef.current, { kind: "Settle" });
+    if (next === motionRef.current) return;
+    invalidateSettle();
+    const generation = settleGenerationRef.current;
+    commit(next);
+    settleArmFrameRef.current = window.requestAnimationFrame(() => {
+      settleArmFrameRef.current = null;
+      startSettleDeadline(generation);
     });
-    motionRef.current = next;
-    publishPhase(next.phase);
-  }, [publishPhase]);
+  }, [commit, invalidateSettle, startSettleDeadline]);
 
-  const sampleReaderScroll = useCallback(
-    (registration: ReaderScrollportRegistration) => {
+  const interruptSettle = useCallback(
+    (preferredSurface?: HTMLElement) => {
+      const state = motionRef.current;
+      if (state.phase.kind !== "Settling") return state;
+      cancelFrame();
+      invalidateSettle();
+      const surfaces = preferredSurface
+        ? [
+            preferredSurface,
+            ...[...surfacesRef.current.values()]
+              .map(({ surface }) => surface)
+              .filter((surface) => surface !== preferredSurface),
+          ]
+        : [...surfacesRef.current.values()].map(({ surface }) => surface);
+      let progress: number | null = null;
+      for (const surface of surfaces) {
+        const candidate = Number.parseFloat(
+          window
+            .getComputedStyle(surface)
+            .getPropertyValue(COLLAPSE_PROPERTY),
+        );
+        if (!Number.isFinite(candidate)) continue;
+        progress = Math.min(1, Math.max(0, candidate));
+        break;
+      }
+      if (progress === null) {
+        throw new Error(
+          "Mobile chrome surfaces must expose a numeric collapse progress",
+        );
+      }
+      const next = {
+        ...state,
+        phase: phaseAtProgress(state, progress),
+        progress,
+      };
+      writeProgress(progress);
+      motionRef.current = next;
+      publishPhase(next.phase);
+      return next;
+    },
+    [cancelFrame, invalidateSettle, publishPhase, writeProgress],
+  );
+
+  const rebaselineReader = useCallback(() => {
+    cancelFrame();
+    cancelScrollIdleTimer();
+    invalidateSettle();
+    const scrollport = readerScrollportRef.current?.scrollport;
+    let next = scrollport
+      ? reduceMobileChromeMotion(initialMobileChromeMotionState(), {
+          kind: "Start",
+          snapshot: scrollSnapshot(scrollport),
+        })
+      : initialMobileChromeMotionState();
+    if (hasPin()) {
+      next = reduceMobileChromeMotion(next, { kind: "Pin" });
+    }
+    commit(next);
+  }, [
+    cancelFrame,
+    cancelScrollIdleTimer,
+    commit,
+    hasPin,
+    invalidateSettle,
+  ]);
+
+  const refreshReaderGeometry = useCallback(
+    (scrollport: HTMLElement) => {
       if (
         !isMobileRef.current ||
-        readerScrollportRef.current !== registration
-      )
-        return;
-      const snapshot = readScrollSnapshot(registration.scrollport);
-      const prior = motionRef.current;
-      const candidate = reduceMobileChromeMotion(prior, {
-        kind: "Scroll",
-        snapshot,
-      });
-      if (candidate === prior) return;
-      const interrupted = interruptSettle();
-      let next =
-        interrupted === prior
-          ? candidate
-          : reduceMobileChromeMotion(interrupted, { kind: "Scroll", snapshot });
-      const pinned =
-        prefersReducedMotionRef.current || visibleLocksRef.current.size > 0;
-
-      if (pinned) {
-        cancelFrame();
-        cancelSettleTimer();
-        next = reduceMobileChromeMotion(next, { kind: "Pin" });
-        commit(next);
+        readerScrollportRef.current?.scrollport !== scrollport
+      ) {
         return;
       }
-
-      cancelSettleTimer();
-      commit(next);
+      const prior = motionRef.current;
+      const next = reduceMobileChromeMotion(prior, {
+        kind: "RefreshGeometry",
+        snapshot: scrollSnapshot(scrollport),
+      });
       if (
-        next.phase.kind === "Pinned" ||
-        next.progress === 0 ||
-        next.progress === 1
-      )
+        samePhase(prior.phase, next.phase) &&
+        prior.progress === next.progress
+      ) {
+        motionRef.current = next;
         return;
-      settleTimerRef.current = window.setTimeout(() => {
-        settleTimerRef.current = null;
-        commit(reduceMobileChromeMotion(motionRef.current, { kind: "Settle" }));
-      }, SCROLL_IDLE_SETTLE_DELAY_MS);
+      }
+      cancelFrame();
+      cancelScrollIdleTimer();
+      invalidateSettle();
+      commit(next);
     },
-    [cancelFrame, cancelSettleTimer, commit, interruptSettle],
+    [cancelFrame, cancelScrollIdleTimer, commit, invalidateSettle],
   );
 
+  const scheduleReaderGeometryRefresh = useCallback(
+    (scrollport: HTMLElement) => {
+      if (
+        readerScrollportRef.current?.scrollport !== scrollport ||
+        geometryFrameRef.current !== null
+      ) {
+        return;
+      }
+      geometryFrameRef.current = window.requestAnimationFrame(() => {
+        geometryFrameRef.current = null;
+        refreshReaderGeometry(scrollport);
+      });
+    },
+    [refreshReaderGeometry],
+  );
+
+  const setChromeFocusLock = useCallback(
+    (locked: boolean) => {
+      if (chromeFocusLockRef.current === locked) return;
+      chromeFocusLockRef.current = locked;
+      if (locked) {
+        cancelFrame();
+        cancelScrollIdleTimer();
+        invalidateSettle();
+        commit(reduceMobileChromeMotion(motionRef.current, { kind: "Pin" }));
+        return;
+      }
+      if (!hasPin()) rebaselineReader();
+    },
+    [
+      cancelFrame,
+      cancelScrollIdleTimer,
+      commit,
+      hasPin,
+      invalidateSettle,
+      rebaselineReader,
+    ],
+  );
+
+  const reconcileChromeFocus = useCallback(() => {
+    const activeElement = document.activeElement;
+    const focused =
+      isMobileRef.current &&
+      activeElement instanceof HTMLElement &&
+      activeElement.isConnected &&
+      [...surfacesRef.current.values()].some(
+        ({ surface }) =>
+          surface.isConnected && surface.contains(activeElement),
+      );
+    setChromeFocusLock(focused);
+  }, [setChromeFocusLock]);
+
   const acquireLock = useCallback(
-    (reason: MobileChromeVisibleLockReason) => {
+    (reason: VisibleLockReason) => {
       const lockId = (nextLockIdRef.current += 1);
-      const wasUnlocked = visibleLocksRef.current.size === 0;
       visibleLocksRef.current.set(lockId, reason);
-      if (wasUnlocked && isMobileRef.current) {
-        rebaseline(true);
+      if (isMobileRef.current) {
+        cancelFrame();
+        cancelScrollIdleTimer();
+        invalidateSettle();
+        commit(reduceMobileChromeMotion(motionRef.current, { kind: "Pin" }));
       }
       let released = false;
       return () => {
         if (released) return;
         released = true;
         visibleLocksRef.current.delete(lockId);
-        if (
-          visibleLocksRef.current.size === 0 &&
-          !destroyedRef.current
-        ) {
-          rebaseline(prefersReducedMotionRef.current);
-        }
+        if (!hasPin()) rebaselineReader();
       };
     },
-    [rebaseline],
+    [
+      cancelFrame,
+      cancelScrollIdleTimer,
+      commit,
+      hasPin,
+      invalidateSettle,
+      rebaselineReader,
+    ],
   );
 
-  const releaseSurfaceFocusLock = useCallback(
-    (registration: MobileChromeSurfaceRegistration) => {
-      const release = registration.releaseFocusLock;
-      if (!release) return;
-      registration.releaseFocusLock = null;
-      release();
+  const acquirePublicLock = useCallback(
+    (reason: MobileChromeVisibleLockReason) => acquireLock(reason),
+    [acquireLock],
+  );
+
+  const handleReaderSample = useCallback(
+    (scrollport: HTMLElement) => {
+      if (!isMobileRef.current) return;
+      reconcileChromeFocus();
+      const snapshot = scrollSnapshot(scrollport);
+      const prior = motionRef.current;
+      if (prior.phase.kind === "Settling") interruptSettle();
+      let next = reduceMobileChromeMotion(motionRef.current, {
+        kind: "Scroll",
+        snapshot,
+      });
+      if (hasPin()) {
+        next = reduceMobileChromeMotion(next, { kind: "Pin" });
+      }
+      if (next === motionRef.current) return;
+      cancelScrollIdleTimer();
+      commit(next);
+      if (
+        next.phase.kind !== "Tracking" ||
+        next.progress === 0 ||
+        next.progress === 1
+      ) {
+        return;
+      }
+      scrollIdleTimerRef.current = window.setTimeout(() => {
+        scrollIdleTimerRef.current = null;
+        beginSettle();
+      }, SCROLL_IDLE_SETTLE_DELAY_MS);
+    },
+    [
+      beginSettle,
+      cancelScrollIdleTimer,
+      commit,
+      hasPin,
+      interruptSettle,
+      reconcileChromeFocus,
+    ],
+  );
+
+  const registerReaderScrollport = useCallback(
+    (scrollport: HTMLElement, sourceKey: string) => {
+      const existing = readerScrollportRef.current;
+      if (existing) {
+        throw new Error(
+          `Mobile chrome already has an enabled reader scrollport for ${existing.sourceKey}`,
+        );
+      }
+      const pendingWindowClickCleanups = new Set<() => void>();
+      const onScroll = () => handleReaderSample(scrollport);
+      const onGeometryChange = () =>
+        scheduleReaderGeometryRefresh(scrollport);
+      const observedContent = new Set<Element>();
+      const resizeObserver = new ResizeObserver(onGeometryChange);
+      const syncObservedContent = () => {
+        const nextObserved = new Set<Element>([
+          scrollport,
+          ...scrollport.children,
+        ]);
+        for (const element of observedContent) {
+          if (!nextObserved.has(element)) {
+            resizeObserver.unobserve(element);
+            observedContent.delete(element);
+          }
+        }
+        for (const element of nextObserved) {
+          if (observedContent.has(element)) continue;
+          observedContent.add(element);
+          resizeObserver.observe(element);
+        }
+      };
+      const contentObserver = new MutationObserver(() => {
+        syncObservedContent();
+        onGeometryChange();
+      });
+      const visualViewport = window.visualViewport;
+      const onClick = (event: MouseEvent) => {
+        reconcileChromeFocus();
+        if (
+          motionRef.current.phase.kind !== "Hidden" ||
+          !primaryUnmodifiedClick(event) ||
+          event.defaultPrevented ||
+          hasLiveSelection() ||
+          isInteractiveReaderTap(event.target, scrollport) ||
+          closestElement(event.target, READER_TAP_HANDLED)
+        ) {
+          return;
+        }
+        let cleanupTimer: number | null = null;
+        const cleanup = () => {
+          window.removeEventListener("click", onWindowClick);
+          if (cleanupTimer !== null) window.clearTimeout(cleanupTimer);
+          pendingWindowClickCleanups.delete(cleanup);
+        };
+        const onWindowClick = (windowEvent: MouseEvent) => {
+          if (windowEvent !== event) return;
+          cleanup();
+          reconcileChromeFocus();
+          if (
+            windowEvent.defaultPrevented ||
+            hasLiveSelection() ||
+            isInteractiveReaderTap(windowEvent.target, scrollport) ||
+            closestElement(windowEvent.target, READER_TAP_HANDLED)
+          ) {
+            return;
+          }
+          rebaselineReader();
+        };
+        pendingWindowClickCleanups.add(cleanup);
+        window.addEventListener("click", onWindowClick);
+        cleanupTimer = window.setTimeout(cleanup, 0);
+      };
+      syncObservedContent();
+      contentObserver.observe(scrollport, { childList: true });
+      scrollport.addEventListener("scroll", onScroll, { passive: true });
+      scrollport.addEventListener("click", onClick);
+      scrollport.addEventListener("load", onGeometryChange, true);
+      window.addEventListener("resize", onGeometryChange);
+      visualViewport?.addEventListener("resize", onGeometryChange);
+
+      let unregistered = false;
+      const registration: ReaderScrollportRegistration = {
+        scrollport,
+        sourceKey,
+        pendingWindowClickCleanups,
+        unregister() {
+          if (unregistered) return;
+          unregistered = true;
+          resizeObserver.disconnect();
+          contentObserver.disconnect();
+          scrollport.removeEventListener("scroll", onScroll);
+          scrollport.removeEventListener("click", onClick);
+          scrollport.removeEventListener("load", onGeometryChange, true);
+          window.removeEventListener("resize", onGeometryChange);
+          visualViewport?.removeEventListener("resize", onGeometryChange);
+          for (const cleanup of [...pendingWindowClickCleanups]) cleanup();
+          if (readerScrollportRef.current === registration) {
+            cancelGeometryFrame();
+            readerScrollportRef.current = null;
+            rebaselineReader();
+          }
+        },
+      };
+      readerScrollportRef.current = registration;
+      rebaselineReader();
+      return registration.unregister;
+    },
+    [
+      cancelGeometryFrame,
+      handleReaderSample,
+      rebaselineReader,
+      reconcileChromeFocus,
+      scheduleReaderGeometryRefresh,
+    ],
+  );
+
+  const handleTransitionRun = useCallback(
+    (registration: MobileChromeSurfaceRegistration, event: TransitionEvent) => {
+      if (
+        event.target !== registration.surface ||
+        event.propertyName !== COLLAPSE_PROPERTY ||
+        motionRef.current.phase.kind !== "Settling"
+      ) {
+        return;
+      }
+      registration.settleGeneration = settleGenerationRef.current;
     },
     [],
   );
 
-  const acquireSurfaceFocusLock = useCallback(
-    (registration: MobileChromeSurfaceRegistration) => {
-      if (!isMobileRef.current || registration.releaseFocusLock) return;
-      registration.releaseFocusLock = acquireLock("chrome-focus");
-    },
-    [acquireLock],
-  );
-
-  const reconcileSurfaceFocus = useCallback(
-    (registration: MobileChromeSurfaceRegistration) => {
+  const handleTransitionEnd = useCallback(
+    (registration: MobileChromeSurfaceRegistration, event: TransitionEvent) => {
+      const generation = registration.settleGeneration;
       if (
-        !isMobileRef.current ||
-        registration.releaseFocusLock ||
-        !isChromeControl(registration.surface, document.activeElement)
-      )
-        return;
-      acquireSurfaceFocusLock(registration);
-    },
-    [acquireSurfaceFocusLock],
-  );
-
-  const releaseSurfaceFocusLocks = useCallback(() => {
-    for (const registration of surfacesRef.current.values()) {
-      releaseSurfaceFocusLock(registration);
-    }
-  }, [releaseSurfaceFocusLock]);
-
-  const setPaneChrome = useCallback(
-    (chrome: MobilePaneChrome | null) => {
-      const active = activePaneRouteRef.current;
-      if (
-        chrome != null &&
-        (chrome.paneId !== active?.paneId ||
-          chrome.routeKey !== active.routeKey)
+        event.target !== registration.surface ||
+        event.propertyName !== COLLAPSE_PROPERTY ||
+        motionRef.current.phase.kind !== "Settling" ||
+        generation === null ||
+        generation !== settleGenerationRef.current
       ) {
-        activePaneRouteRef.current = {
-          paneId: chrome.paneId,
-          routeKey: chrome.routeKey,
-        };
-        rebaseline(
-          prefersReducedMotionRef.current ||
-            visibleLocksRef.current.size > 0,
-        );
+        return;
       }
-      setPaneChromeState(chrome);
+      registration.settleGeneration = null;
+      finishSettle(generation);
     },
-    [rebaseline],
+    [finishSettle],
+  );
+
+  const handleTransitionCancel = useCallback(
+    (registration: MobileChromeSurfaceRegistration, event: TransitionEvent) => {
+      const generation = registration.settleGeneration;
+      if (
+        event.target !== registration.surface ||
+        event.propertyName !== COLLAPSE_PROPERTY ||
+        motionRef.current.phase.kind !== "Settling" ||
+        generation === null ||
+        generation !== settleGenerationRef.current
+      ) {
+        return;
+      }
+      registration.settleGeneration = null;
+      const sampled = interruptSettle(registration.surface);
+      if (
+        sampled.phase.kind === "Tracking" &&
+        sampled.progress > 0 &&
+        sampled.progress < 1
+      ) {
+        beginSettle();
+      }
+    },
+    [beginSettle, interruptSettle],
   );
 
   const registerSurface = useCallback(
@@ -460,230 +795,255 @@ export function MobileChromeProvider({ children }: { children: ReactNode }) {
       if (surfacesRef.current.has(role)) {
         throw new Error(`Mobile chrome already has an enabled ${role} surface`);
       }
+      let unregistered = false;
+      const onFocusIn = () => reconcileChromeFocus();
+      const onFocusOut = () => queueMicrotask(reconcileChromeFocus);
+      const observer = new MutationObserver(() =>
+        queueMicrotask(reconcileChromeFocus),
+      );
+      function onTransitionEnd(event: TransitionEvent) {
+        handleTransitionEnd(registration, event);
+      }
+      function onTransitionRun(event: TransitionEvent) {
+        handleTransitionRun(registration, event);
+      }
+      function onTransitionCancel(event: TransitionEvent) {
+        handleTransitionCancel(registration, event);
+      }
       const registration: MobileChromeSurfaceRegistration = {
+        role,
         surface,
-        releaseFocusLock: null,
-        unregister: null,
-      };
-      const onFocusIn = (event: FocusEvent) => {
-        if (isChromeControl(surface, event.target)) {
-          acquireSurfaceFocusLock(registration);
-        }
-      };
-      const onFocusOut = (event: FocusEvent) => {
-        if (isChromeControl(surface, event.relatedTarget)) return;
-        releaseSurfaceFocusLock(registration);
+        observer,
+        settleGeneration: null,
+        unregister() {
+          if (unregistered) return;
+          unregistered = true;
+          surface.removeEventListener("focusin", onFocusIn);
+          surface.removeEventListener("focusout", onFocusOut);
+          surface.removeEventListener("transitionrun", onTransitionRun);
+          surface.removeEventListener("transitionend", onTransitionEnd);
+          surface.removeEventListener("transitioncancel", onTransitionCancel);
+          observer.disconnect();
+          if (surfacesRef.current.get(role) === registration) {
+            surfacesRef.current.delete(role);
+          }
+          reconcileChromeFocus();
+        },
       };
       surface.addEventListener("focusin", onFocusIn);
       surface.addEventListener("focusout", onFocusOut);
+      surface.addEventListener("transitionrun", onTransitionRun);
+      surface.addEventListener("transitionend", onTransitionEnd);
+      surface.addEventListener("transitioncancel", onTransitionCancel);
+      observer.observe(surface, { childList: true, subtree: true });
       surfacesRef.current.set(role, registration);
-      reconcileSurfaceFocus(registration);
+      reconcileChromeFocus();
       scheduleProgressWrite(
         mobileChromePresentationProgress(motionRef.current),
       );
-      let unregistered = false;
-      const unregister = () => {
-        if (unregistered) return;
-        unregistered = true;
-        surface.removeEventListener("focusin", onFocusIn);
-        surface.removeEventListener("focusout", onFocusOut);
-        releaseSurfaceFocusLock(registration);
-        if (surfacesRef.current.get(role) === registration)
-          surfacesRef.current.delete(role);
-      };
-      registration.unregister = unregister;
-      return unregister;
+      return registration.unregister;
     },
     [
-      acquireSurfaceFocusLock,
-      reconcileSurfaceFocus,
-      releaseSurfaceFocusLock,
+      handleTransitionCancel,
+      handleTransitionEnd,
+      handleTransitionRun,
+      reconcileChromeFocus,
       scheduleProgressWrite,
     ],
   );
 
-  const handoffReaderPointerFocus = useCallback((event: PointerEvent) => {
-    if (
-      !isMobileRef.current ||
-      !event.isPrimary ||
-      event.button !== 0
-    )
-      return;
-    const activeElement = document.activeElement;
-    if (!(activeElement instanceof HTMLElement)) return;
-    for (const { surface } of surfacesRef.current.values()) {
-      if (!surface.contains(activeElement)) continue;
-      activeElement.blur();
-      return;
+  const setPaneChrome = useCallback(
+    (chrome: MobilePaneChrome | null) => {
+      const active = activePaneRouteRef.current;
+      if (
+        chrome !== null &&
+        (chrome.paneId !== active?.paneId ||
+          chrome.routeKey !== active.routeKey)
+      ) {
+        if (readerInteractionRoots(chrome.paneId).length > 1) {
+          throw new Error(
+            `Active pane ${chrome.paneId} has more than one mobile reader interaction root`,
+          );
+        }
+        activePaneRouteRef.current = {
+          paneId: chrome.paneId,
+          routeKey: chrome.routeKey,
+        };
+        rebaselineReader();
+      }
+      if (chrome === null) activePaneRouteRef.current = null;
+      setPaneChromeState(chrome);
+    },
+    [rebaselineReader],
+  );
+
+  const focusPaneChrome = useCallback(
+    async (paneId: string) => {
+      const release = acquireLock("focus-return");
+      try {
+        await nextFrame();
+        if (!mountedRef.current) return;
+        const appBar = surfacesRef.current.get("AppBar")?.surface ?? null;
+        const appBarCommand =
+          appBar?.isConnected &&
+          appBar.dataset.paneChromeFor === paneId &&
+          appBar.closest("[inert]") === null
+            ? appBar.querySelector<HTMLElement>("[data-pane-options-trigger]")
+            : null;
+        const landmark = findPaneLandmarkFocusTarget(paneId);
+        const target =
+          appBarCommand?.isConnected &&
+          appBarCommand.closest("[inert]") === null &&
+          !(
+            appBarCommand instanceof HTMLButtonElement &&
+            appBarCommand.disabled
+          )
+            ? appBarCommand
+            : landmark;
+        if (!target) {
+          throw new Error(`Pane ${paneId} has no connected focus target`);
+        }
+        target.focus({ preventScroll: true });
+        if (
+          document.activeElement !== target &&
+          landmark &&
+          target !== landmark
+        ) {
+          landmark.focus({ preventScroll: true });
+        }
+        if (
+          document.activeElement !== target &&
+          document.activeElement !== landmark
+        ) {
+          throw new Error(`Pane ${paneId} rejected every connected focus target`);
+        }
+        reconcileChromeFocus();
+      } finally {
+        release();
+      }
+    },
+    [acquireLock, reconcileChromeFocus],
+  );
+
+  const activeInteractionRoot = useCallback(() => {
+    const paneId = activePaneRouteRef.current?.paneId;
+    if (!paneId) return null;
+    const roots = readerInteractionRoots(paneId);
+    if (roots.length > 1) {
+      throw new Error(
+        `Active pane ${paneId} has more than one mobile reader interaction root`,
+      );
     }
+    return roots[0] ?? null;
   }, []);
 
-  const revealFromBlankCanvasClick = useCallback(
-    (
-      registration: ReaderScrollportRegistration,
-      event: MouseEvent,
-    ) => {
+  useEffect(() => {
+    const reconcileInput = () => reconcileChromeFocus();
+    const onPointerDown = (event: PointerEvent) => {
+      reconcileChromeFocus();
       if (
+        !isMobileRef.current ||
         event.button !== 0 ||
-        event.altKey ||
-        event.ctrlKey ||
-        event.metaKey ||
-        event.shiftKey
-      )
+        !event.isPrimary ||
+        !(event.target instanceof Node)
+      ) {
         return;
-      const target = event.target;
-      queueMicrotask(() => {
-        if (
-          event.defaultPrevented ||
-          !isMobileRef.current ||
-          readerScrollportRef.current !== registration ||
-          !(target instanceof Element) ||
-          !registration.scrollport.contains(target) ||
-          target.closest(BLANK_CANVAS_EXCLUDED_TARGET_SELECTOR) ||
-          hasLiveSelection() ||
-          mobileChromePresentationProgress(motionRef.current) === 0
-        )
-          return;
-        rebaseline(
-          prefersReducedMotionRef.current ||
-            visibleLocksRef.current.size > 0,
-        );
-      });
-    },
-    [rebaseline],
-  );
-
-  const registerReaderScrollport = useCallback(
-    ({
-      scrollport,
-      sourceKey,
-    }: {
-      readonly scrollport: HTMLElement;
-      readonly sourceKey: string;
-    }) => {
-      if (readerScrollportRef.current) {
-        throw new Error(
-          "Mobile chrome already has an enabled reader scrollport",
-        );
       }
-      const registration: ReaderScrollportRegistration = {
-        scrollport,
-        sourceKey,
-        unregister: null,
-      };
-      const onScroll = () => sampleReaderScroll(registration);
-      const onPointerDown = (event: PointerEvent) =>
-        handoffReaderPointerFocus(event);
-      const onClick = (event: MouseEvent) =>
-        revealFromBlankCanvasClick(registration, event);
-      scrollport.addEventListener("scroll", onScroll, { passive: true });
-      scrollport.addEventListener("pointerdown", onPointerDown, {
-        passive: true,
-      });
-      scrollport.addEventListener("click", onClick);
-      readerScrollportRef.current = registration;
-      rebaseline(
-        prefersReducedMotionRef.current ||
-          visibleLocksRef.current.size > 0,
-      );
-      let unregistered = false;
-      const unregister = () => {
-        if (unregistered) return;
-        unregistered = true;
-        scrollport.removeEventListener("scroll", onScroll);
-        scrollport.removeEventListener("pointerdown", onPointerDown);
-        scrollport.removeEventListener("click", onClick);
-        if (readerScrollportRef.current === registration) {
-          readerScrollportRef.current = null;
-          if (!destroyedRef.current) {
-            rebaseline(
-              prefersReducedMotionRef.current ||
-                visibleLocksRef.current.size > 0,
-            );
-          }
-        }
-      };
-      registration.unregister = unregister;
-      return unregister;
-    },
-    [
-      handoffReaderPointerFocus,
-      rebaseline,
-      revealFromBlankCanvasClick,
-      sampleReaderScroll,
-    ],
-  );
+      const root = activeInteractionRoot();
+      if (!root || !root.contains(event.target)) return;
+      const activeElement = document.activeElement;
+      if (
+        !(activeElement instanceof HTMLElement) ||
+        ![...surfacesRef.current.values()].some(({ surface }) =>
+          surface.contains(activeElement),
+        )
+      ) {
+        return;
+      }
+      activeElement.blur();
+      reconcileChromeFocus();
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("click", reconcileInput, true);
+    document.addEventListener("keydown", reconcileInput, true);
+    document.addEventListener("wheel", reconcileInput, true);
+    document.addEventListener("touchstart", reconcileInput, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("click", reconcileInput, true);
+      document.removeEventListener("keydown", reconcileInput, true);
+      document.removeEventListener("wheel", reconcileInput, true);
+      document.removeEventListener("touchstart", reconcileInput, true);
+    };
+  }, [activeInteractionRoot, reconcileChromeFocus]);
 
   useEffect(() => {
     if (previousIsMobileRef.current === isMobile) return;
     previousIsMobileRef.current = isMobile;
-    if (!isMobile) {
-      releaseSurfaceFocusLocks();
-    } else {
-      for (const registration of surfacesRef.current.values()) {
-        reconcileSurfaceFocus(registration);
-      }
-    }
-    rebaseline(
-      prefersReducedMotionRef.current || visibleLocksRef.current.size > 0,
-    );
-  }, [
-    isMobile,
-    reconcileSurfaceFocus,
-    rebaseline,
-    releaseSurfaceFocusLocks,
-  ]);
+    reconcileChromeFocus();
+    rebaselineReader();
+  }, [isMobile, rebaselineReader, reconcileChromeFocus]);
 
   useEffect(() => {
     if (
       typeof window === "undefined" ||
       typeof window.matchMedia !== "function"
-    )
+    ) {
       return;
+    }
     const query = window.matchMedia("(prefers-reduced-motion: reduce)");
     const update = () => {
+      if (query.matches === prefersReducedMotionRef.current) return;
       prefersReducedMotionRef.current = query.matches;
-      rebaseline(query.matches || visibleLocksRef.current.size > 0);
+      rebaselineReader();
     };
     update();
     query.addEventListener("change", update);
     return () => query.removeEventListener("change", update);
-  }, [rebaseline]);
+  }, [rebaselineReader]);
+
+  const disposeProvider = useCallback(() => {
+    mountedRef.current = false;
+    readerScrollportRef.current?.unregister();
+    for (const registration of [...surfacesRef.current.values()]) {
+      registration.unregister();
+    }
+    visibleLocksRef.current.clear();
+    cancelFrame();
+    cancelGeometryFrame();
+    cancelScrollIdleTimer();
+    invalidateSettle();
+  }, [
+    cancelFrame,
+    cancelGeometryFrame,
+    cancelScrollIdleTimer,
+    invalidateSettle,
+  ]);
 
   useEffect(() => {
-    destroyedRef.current = false;
-    const surfaces = surfacesRef.current;
-    const visibleLocks = visibleLocksRef.current;
-    return () => {
-      destroyedRef.current = true;
-      readerScrollportRef.current?.unregister?.();
-      for (const registration of [...surfaces.values()]) {
-        registration.unregister?.();
-      }
-      visibleLocks.clear();
-      cancelFrame();
-      cancelSettleTimer();
-    };
-  }, [cancelFrame, cancelSettleTimer]);
+    mountedRef.current = true;
+    return disposeProvider;
+  }, [disposeProvider]);
 
   const stable = useMemo<StableController>(
     () => ({
       setPaneChrome,
       registerSurface,
       registerReaderScrollport,
-      acquireLock,
+      acquire: acquirePublicLock,
+      focusPaneChrome,
     }),
     [
-      acquireLock,
+      acquirePublicLock,
+      focusPaneChrome,
       registerReaderScrollport,
       registerSurface,
       setPaneChrome,
     ],
   );
-
   const volatile = useMemo<VolatileChromeState>(
-    () => ({ motionPhase, paneChrome, finishSettle }),
-    [finishSettle, motionPhase, paneChrome],
+    () => ({ motionPhase, paneChrome }),
+    [motionPhase, paneChrome],
   );
 
   return (
@@ -703,33 +1063,14 @@ function useStableController(hookName: string): StableController {
   return stable;
 }
 
-export function useMobileChrome(): Pick<StableController, "setPaneChrome"> &
-  VolatileChromeState {
+export function useMobileChrome(): VolatileChromeState &
+  Pick<StableController, "setPaneChrome"> {
   const stable = useStableController("useMobileChrome");
   const volatile = useContext(VolatileChromeContext);
   if (!volatile) {
     throw new Error("useMobileChrome must be used within MobileChromeProvider");
   }
-  return { setPaneChrome: stable.setPaneChrome, ...volatile };
-}
-
-export function useMobileChromeReaderScrollport<T extends HTMLElement>(
-  input: MobileChromeReaderScrollportInput,
-): RefCallback<T> {
-  const stable = useStableController("useMobileChromeReaderScrollport");
-  return useMemo(() => {
-    let unregister: (() => void) | null = null;
-    const register: RefCallback<T> = (node) => {
-      unregister?.();
-      unregister = null;
-      if (!node || !input.enabled) return;
-      unregister = stable.registerReaderScrollport({
-        scrollport: node,
-        sourceKey: input.sourceKey,
-      });
-    };
-    return register;
-  }, [input.enabled, input.sourceKey, stable]);
+  return { ...volatile, setPaneChrome: stable.setPaneChrome };
 }
 
 export function useMobileChromeVisibleLocks(): MobileChromeVisibleLocks {
@@ -737,26 +1078,48 @@ export function useMobileChromeVisibleLocks(): MobileChromeVisibleLocks {
   const releasesRef = useRef(new Set<() => void>());
   const acquire = useCallback(
     (reason: MobileChromeVisibleLockReason) => {
-      const releaseLock = stable.acquireLock(reason);
+      const releaseProviderLock = stable.acquire(reason);
       let released = false;
       const release = () => {
         if (released) return;
         released = true;
         releasesRef.current.delete(release);
-        releaseLock();
+        releaseProviderLock();
       };
       releasesRef.current.add(release);
       return release;
     },
     [stable],
   );
-  useLayoutEffect(
+  useEffect(
     () => () => {
       for (const release of [...releasesRef.current]) release();
     },
-    [stable],
+    [],
   );
   return useMemo(() => ({ acquire }), [acquire]);
+}
+
+export function usePaneChromeFocusReturn(): PaneChromeFocusReturn {
+  const stable = useStableController("usePaneChromeFocusReturn");
+  return useMemo(
+    () => ({ focus: stable.focusPaneChrome }),
+    [stable.focusPaneChrome],
+  );
+}
+
+export function useMobileChromeReaderScrollport<T extends HTMLElement>(
+  input: MobileChromeReaderScrollportInput,
+): RefCallback<T> {
+  const stable = useStableController("useMobileChromeReaderScrollport");
+  const { enabled, sourceKey } = input;
+  return useCallback(
+    (scrollport) => {
+      if (!enabled || scrollport === null) return;
+      return stable.registerReaderScrollport(scrollport, sourceKey);
+    },
+    [enabled, sourceKey, stable],
+  );
 }
 
 export function useMobileChromeSurface(
@@ -765,7 +1128,7 @@ export function useMobileChromeSurface(
   enabled: boolean,
 ): void {
   const stable = useStableController("useMobileChromeSurface");
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!enabled) return;
     const surface = ref.current;
     if (!surface) return;

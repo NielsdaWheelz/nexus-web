@@ -22,6 +22,7 @@ import {
   useMobileChromeVisibleLocks,
 } from "@/lib/workspace/mobileChrome";
 import { useReaderScrollPositioner } from "@/lib/reader/paneScroll";
+import { composeRefs } from "@/lib/ui/composeRefs";
 import {
   PDF_WORKER_SRC,
   getPdfSelection,
@@ -175,7 +176,6 @@ export interface PdfReaderIntrinsicWidthState {
 
 interface PdfReaderProps {
   mediaId: string;
-  mobileChromeSourceKey: string;
   mobileChromeEnabled: boolean;
   beforeContent?: ReactNode;
   /** The scrolling, focusable PDF viewport. */
@@ -545,7 +545,6 @@ function applyViewerPageNumber(
 
 export default function PdfReader({
   mediaId,
-  mobileChromeSourceKey,
   mobileChromeEnabled,
   beforeContent,
   viewportRef,
@@ -576,14 +575,13 @@ export default function PdfReader({
   onFindRuntimeReady,
 }: PdfReaderProps) {
   const isMobile = useIsMobileViewport();
-  const mobileChromeViewportRef =
+  const mobileChromeVisibleLocks = useMobileChromeVisibleLocks();
+  const readerScrollPositioner = useReaderScrollPositioner();
+  const mobileChromeScrollportRef =
     useMobileChromeReaderScrollport<HTMLDivElement>({
-      sourceKey: mobileChromeSourceKey,
+      sourceKey: mediaId,
       enabled: mobileChromeEnabled,
     });
-  const { acquire: acquireMobileChromeVisibleLock } =
-    useMobileChromeVisibleLocks();
-  const readerScrollPositioner = useReaderScrollPositioner();
   const isMobileRef = useRef(isMobile);
   const initialMobileFitDoneRef = useRef(false);
   const startPageNumberRef = useRef(startPageNumber);
@@ -750,9 +748,16 @@ export default function PdfReader({
       if (viewportRef) {
         viewportRef.current = node;
       }
-      mobileChromeViewportRef(node);
     },
-    [mobileChromeViewportRef, viewportRef],
+    [viewportRef],
+  );
+  const viewerViewportRef = useMemo(
+    () =>
+      composeRefs<HTMLDivElement>(
+        setViewportNode,
+        mobileChromeScrollportRef,
+      ),
+    [mobileChromeScrollportRef, setViewportNode],
   );
 
   const publishIntrinsicWidth = useCallback((widthPx: number | null) => {
@@ -779,26 +784,22 @@ export default function PdfReader({
     if (!mobileChromeEnabled || selection === null) {
       return;
     }
-    return acquireMobileChromeVisibleLock("pdf-selection");
+    return mobileChromeVisibleLocks.acquire("pdf-selection");
   }, [
-    acquireMobileChromeVisibleLock,
     mobileChromeEnabled,
+    mobileChromeVisibleLocks,
     selection,
   ]);
 
   useEffect(() => {
-    if (
-      !mobileChromeEnabled ||
-      error !== null ||
-      readerRestoreSettled
-    ) {
+    if (!mobileChromeEnabled || error !== null || readerRestoreSettled) {
       return;
     }
-    return acquireMobileChromeVisibleLock("reader-restore");
+    return mobileChromeVisibleLocks.acquire("reader-restore");
   }, [
-    acquireMobileChromeVisibleLock,
     error,
     mobileChromeEnabled,
+    mobileChromeVisibleLocks,
     readerRestoreSettled,
   ]);
 
@@ -987,10 +988,15 @@ export default function PdfReader({
       0,
       metrics.pageHeight - container.clientHeight,
     );
-    container.scrollTop =
-      metrics.pageTop + maxLocalScroll * clamp(targetProgression, 0, 1);
-    pendingStartPageProgressionRef.current = null;
-  }, [readPageMetrics]);
+    void readerScrollPositioner.run(({ setTop }) => {
+      setTop(
+        container,
+        metrics.pageTop +
+          maxLocalScroll * clamp(targetProgression, 0, 1),
+      );
+      pendingStartPageProgressionRef.current = null;
+    });
+  }, [readPageMetrics, readerScrollPositioner]);
 
   useEffect(() => {
     if (onResumeStateChangeRef.current && numPages > 0) {
@@ -1043,7 +1049,7 @@ export default function PdfReader({
     [getPageElement],
   );
 
-  const markPageSurfaceForTesting = useCallback(
+  const markPageSurface = useCallback(
     (targetPage: number, explicitPageView?: PdfPageViewLike) => {
       const pageElement = getPageElement(targetPage);
       if (pageElement) {
@@ -1051,9 +1057,16 @@ export default function PdfReader({
           "data-testid",
           `pdf-page-surface-${targetPage}`,
         );
-        pageElement
-          .querySelector<HTMLElement>(".textLayer")
-          ?.setAttribute("data-testid", `pdf-page-text-layer-${targetPage}`);
+        const textLayer =
+          pageElement.querySelector<HTMLElement>(".textLayer");
+        textLayer?.setAttribute(
+          "data-testid",
+          `pdf-page-text-layer-${targetPage}`,
+        );
+        textLayer?.setAttribute(
+          "data-reader-tap-reveal-surface",
+          "true",
+        );
         pageElement
           .querySelector<HTMLElement>(".canvasWrapper")
           ?.setAttribute(
@@ -1425,14 +1438,16 @@ export default function PdfReader({
       const intentGeneration = viewportIntentGenerationRef.current;
       viewportIntentRef.current = "FindPreview";
       try {
-        applyPdfViewportPage(targetPage, "FindPreview");
-        await awaitPdfFindTextLayer(
-          targetPage,
-          null,
-          textLayerRenderEpochByPageRef.current.get(targetPage) ?? 0,
-          true,
-          signal,
-        );
+        await readerScrollPositioner.run(async () => {
+          applyPdfViewportPage(targetPage, "FindPreview");
+          await awaitPdfFindTextLayer(
+            targetPage,
+            null,
+            textLayerRenderEpochByPageRef.current.get(targetPage) ?? 0,
+            true,
+            signal,
+          );
+        });
       } finally {
         window.requestAnimationFrame(() => {
           if (
@@ -1444,7 +1459,11 @@ export default function PdfReader({
         });
       }
     },
-    [applyPdfViewportPage, awaitPdfFindTextLayer],
+    [
+      applyPdfViewportPage,
+      awaitPdfFindTextLayer,
+      readerScrollPositioner,
+    ],
   );
 
   const restorePdfFindOrigin = useCallback(
@@ -1468,57 +1487,64 @@ export default function PdfReader({
       const intentGeneration = viewportIntentGenerationRef.current;
       viewportIntentRef.current = "FindReturn";
       try {
-        const textLayerRenderEpoch =
-          textLayerRenderEpochByPageRef.current.get(origin.pageNumber) ?? 0;
-        const zoomChanged =
-          Math.abs(readPageScale(origin.pageNumber) - origin.zoom) >
-          PDF_FIND_VIEWPORT_SCALE_EPSILON;
-        zoomRef.current = origin.zoom;
-        pageScaleByNumberRef.current.clear();
-        renderedPageScaleByNumberRef.current.clear();
-        pageGeometryReliabilityRef.current.clear();
-        applyViewerScale(viewer, origin.zoom, "FindReturn/currentScaleValue");
-        setZoom(origin.zoom);
-        setPageScale(origin.zoom);
-        activePageScaleRef.current = origin.zoom;
-        applyPdfViewportPage(origin.pageNumber, "FindReturn");
-        await awaitPdfFindTextLayer(
-          origin.pageNumber,
-          origin.zoom,
-          textLayerRenderEpoch + (zoomChanged ? 1 : 0),
-          false,
-          signal,
-        );
-        await awaitPdfFindFrame(signal);
-        const pageElement = getPageElement(origin.pageNumber);
-        if (!pageElement) {
-          throw new Error("PDF Find origin page is unavailable");
-        }
-        const currentPageTopDeltaPx =
-          pageElement.getBoundingClientRect().top -
-          container.getBoundingClientRect().top;
-        container.scrollTop +=
-          currentPageTopDeltaPx - origin.pageTopDeltaPx;
-        container.scrollLeft = origin.scrollLeft;
-
-        await awaitPdfFindFrame(signal);
-        const restoredPageTopDeltaPx =
-          pageElement.getBoundingClientRect().top -
-          container.getBoundingClientRect().top;
-        if (
-          pageNumberRef.current !== origin.pageNumber ||
-          Math.abs(restoredPageTopDeltaPx - origin.pageTopDeltaPx) >
-            PDF_FIND_VIEWPORT_POSITION_EPSILON_PX ||
-          Math.abs(container.scrollLeft - origin.scrollLeft) >
-            PDF_FIND_VIEWPORT_POSITION_EPSILON_PX
-        ) {
-          throw new Error("PDF Find origin could not be restored exactly");
-        }
-        const runId = runRef.current;
-        window.requestAnimationFrame(() => {
-          if (runId === runRef.current && container.isConnected) {
-            container.focus({ preventScroll: true });
+        await readerScrollPositioner.run(async ({ adjustTop }) => {
+          const textLayerRenderEpoch =
+            textLayerRenderEpochByPageRef.current.get(origin.pageNumber) ?? 0;
+          const zoomChanged =
+            Math.abs(readPageScale(origin.pageNumber) - origin.zoom) >
+            PDF_FIND_VIEWPORT_SCALE_EPSILON;
+          zoomRef.current = origin.zoom;
+          pageScaleByNumberRef.current.clear();
+          pageGeometryReliabilityRef.current.clear();
+          applyViewerScale(
+            viewer,
+            origin.zoom,
+            "FindReturn/currentScaleValue",
+          );
+          setZoom(origin.zoom);
+          setPageScale(origin.zoom);
+          activePageScaleRef.current = origin.zoom;
+          applyPdfViewportPage(origin.pageNumber, "FindReturn");
+          await awaitPdfFindTextLayer(
+            origin.pageNumber,
+            origin.zoom,
+            textLayerRenderEpoch + (zoomChanged ? 1 : 0),
+            false,
+            signal,
+          );
+          await awaitPdfFindFrame(signal);
+          const pageElement = getPageElement(origin.pageNumber);
+          if (!pageElement) {
+            throw new Error("PDF Find origin page is unavailable");
           }
+          const currentPageTopDeltaPx =
+            pageElement.getBoundingClientRect().top -
+            container.getBoundingClientRect().top;
+          adjustTop(
+            container,
+            currentPageTopDeltaPx - origin.pageTopDeltaPx,
+          );
+          container.scrollLeft = origin.scrollLeft;
+
+          await awaitPdfFindFrame(signal);
+          const restoredPageTopDeltaPx =
+            pageElement.getBoundingClientRect().top -
+            container.getBoundingClientRect().top;
+          if (
+            pageNumberRef.current !== origin.pageNumber ||
+            Math.abs(restoredPageTopDeltaPx - origin.pageTopDeltaPx) >
+              PDF_FIND_VIEWPORT_POSITION_EPSILON_PX ||
+            Math.abs(container.scrollLeft - origin.scrollLeft) >
+              PDF_FIND_VIEWPORT_POSITION_EPSILON_PX
+          ) {
+            throw new Error("PDF Find origin could not be restored exactly");
+          }
+          const runId = runRef.current;
+          window.requestAnimationFrame(() => {
+            if (runId === runRef.current && container.isConnected) {
+              container.focus({ preventScroll: true });
+            }
+          });
         });
       } finally {
         window.requestAnimationFrame(() => {
@@ -1536,6 +1562,7 @@ export default function PdfReader({
       awaitPdfFindFrame,
       awaitPdfFindTextLayer,
       getPageElement,
+      readerScrollPositioner,
       readPageScale,
     ],
   );
@@ -1700,34 +1727,38 @@ export default function PdfReader({
         const pendingScale = pendingViewerScaleRef.current;
         const pendingPage = pendingViewerPageRef.current;
         if (viewer && pendingScale != null) {
-          try {
-            applyViewerScale(
-              viewer,
-              pendingScale,
-              "pagesloaded/currentScaleValue",
-            );
-          } catch (error) {
-            setError(toUserFacingError(error));
-          } finally {
-            pendingViewerScaleRef.current = null;
-          }
+          void readerScrollPositioner.run(() => {
+            try {
+              applyViewerScale(
+                viewer,
+                pendingScale,
+                "pagesloaded/currentScaleValue",
+              );
+            } catch (error) {
+              setError(toUserFacingError(error));
+            } finally {
+              pendingViewerScaleRef.current = null;
+            }
+          });
         }
         if (viewer && typeof pendingPage === "number" && pendingPage > 1) {
-          try {
-            const boundedPage = Math.max(
-              1,
-              Math.min(pendingPage, Math.max(pagesCount, 1)),
-            );
-            applyViewerPageNumber(
-              viewer,
-              boundedPage,
-              "pagesloaded/currentPageNumber",
-            );
-          } catch (error) {
-            setError(toUserFacingError(error));
-          } finally {
-            pendingViewerPageRef.current = null;
-          }
+          void readerScrollPositioner.run(() => {
+            try {
+              const boundedPage = Math.max(
+                1,
+                Math.min(pendingPage, Math.max(pagesCount, 1)),
+              );
+              applyViewerPageNumber(
+                viewer,
+                boundedPage,
+                "pagesloaded/currentPageNumber",
+              );
+            } catch (error) {
+              setError(toUserFacingError(error));
+            } finally {
+              pendingViewerPageRef.current = null;
+            }
+          });
         }
         setTextGeometryReliable(
           evaluatePageGeometryReliability(pageNumberRef.current),
@@ -1737,7 +1768,7 @@ export default function PdfReader({
             return;
           }
           for (let index = 1; index <= pagesCount; index += 1) {
-            markPageSurfaceForTesting(
+            markPageSurface(
               index,
               viewer?.getPageView?.(Math.max(0, index - 1)),
             );
@@ -1764,7 +1795,7 @@ export default function PdfReader({
           ? Math.floor(event.pageNumber)
           : pageNumberRef.current;
 
-        markPageSurfaceForTesting(renderedPage, event.source);
+        markPageSurface(renderedPage, event.source);
         const renderedScale = rememberPageScale(renderedPage, event.source);
         if (!event.error) {
           renderedPageScaleByNumberRef.current.set(
@@ -1818,6 +1849,7 @@ export default function PdfReader({
         const renderedPage = isPositiveFinite(event.pageNumber)
           ? Math.floor(event.pageNumber)
           : pageNumberRef.current;
+        markPageSurface(renderedPage);
         textLayerRenderEpochByPageRef.current.set(
           renderedPage,
           (textLayerRenderEpochByPageRef.current.get(renderedPage) ?? 0) + 1,
@@ -1874,8 +1906,9 @@ export default function PdfReader({
       evaluatePageGeometryReliability,
       ensurePdfJsViewer,
       isTextLayerUsableForPage,
-      markPageSurfaceForTesting,
+      markPageSurface,
       mediaId,
+      readerScrollPositioner,
       rememberPageScale,
       restorePdfFindOrigin,
       revealPdfFindMatch,
@@ -1899,7 +1932,6 @@ export default function PdfReader({
       }
 
       pageScaleByNumberRef.current.clear();
-      renderedPageScaleByNumberRef.current.clear();
       textLayerRenderEpochByPageRef.current.clear();
       pageGeometryReliabilityRef.current.clear();
       pendingViewerPageRef.current = null;
@@ -1944,7 +1976,6 @@ export default function PdfReader({
         return;
       }
       recoveryTargetPageRef.current = targetPage;
-      setReaderRestoreSettled(false);
       setRecovering(true);
       setError(null);
       setSignedUrlRefreshToken((value) => value + 1);
@@ -2402,17 +2433,14 @@ export default function PdfReader({
         projectedRect.top +
         projectedRect.height / 2 -
         container.clientHeight * PDF_HIGHLIGHT_SCROLL_TARGET_FRACTION;
-      beginReaderPositioning();
-      container.scrollTop = Math.max(0, targetTop);
-      settleReaderPositioning();
-      return true;
+      let positioned = false;
+      void readerScrollPositioner.run(({ setTop }) => {
+        setTop(container, targetTop);
+        positioned = true;
+      });
+      return positioned;
     },
-    [
-      beginReaderPositioning,
-      getPageElement,
-      readPageScale,
-      settleReaderPositioning,
-    ],
+    [getPageElement, readPageScale, readerScrollPositioner],
   );
 
   usePdfScrollToTarget({
@@ -2556,30 +2584,32 @@ export default function PdfReader({
     if (!viewer) {
       return;
     }
-    pageScaleByNumberRef.current.clear();
-    renderedPageScaleByNumberRef.current.clear();
-    pageGeometryReliabilityRef.current.clear();
-    if (viewer.pagesCount > 0) {
-      try {
-        applyViewerScale(viewer, zoom, "zoomEffect/currentScaleValue");
-      } catch (error) {
-        setError(toUserFacingError(error));
-        return;
+    void readerScrollPositioner.run(() => {
+      pageScaleByNumberRef.current.clear();
+      pageGeometryReliabilityRef.current.clear();
+      if (viewer.pagesCount > 0) {
+        try {
+          applyViewerScale(viewer, zoom, "zoomEffect/currentScaleValue");
+        } catch (error) {
+          setError(toUserFacingError(error));
+          return;
+        }
+      } else {
+        pendingViewerScaleRef.current = zoom;
       }
-    } else {
-      pendingViewerScaleRef.current = zoom;
-    }
-    activePageScaleRef.current = zoom;
-    setPageScale(zoom);
-    setPageRenderEpoch((value) => value + 1);
-    window.requestAnimationFrame(() => {
-      setTextGeometryReliable(
-        evaluatePageGeometryReliability(pageNumberRef.current),
-      );
-      scheduleIntrinsicWidthPublish();
+      activePageScaleRef.current = zoom;
+      setPageScale(zoom);
+      setPageRenderEpoch((value) => value + 1);
+      window.requestAnimationFrame(() => {
+        setTextGeometryReliable(
+          evaluatePageGeometryReliability(pageNumberRef.current),
+        );
+        scheduleIntrinsicWidthPublish();
+      });
     });
   }, [
     evaluatePageGeometryReliability,
+    readerScrollPositioner,
     scheduleIntrinsicWidthPublish,
     zoom,
   ]);
@@ -2856,6 +2886,7 @@ export default function PdfReader({
       );
       rectEl.setAttribute("data-highlight-color", rect.color);
       rectEl.setAttribute("data-highlight-id", rect.highlightId);
+      rectEl.setAttribute("data-reader-tap-handled", "true");
       if (rect.index === 0) {
         rectEl.setAttribute("data-highlight-anchor", rect.highlightId);
       }
@@ -3170,7 +3201,7 @@ export default function PdfReader({
               aria-label="PDF page"
             />
             <div
-              ref={setViewportNode}
+              ref={viewerViewportRef}
               className={styles.viewerContainer}
               data-pane-content="true"
               role="region"

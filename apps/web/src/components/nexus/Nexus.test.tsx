@@ -473,8 +473,8 @@ describe("Nexus shell contracts", () => {
     const input = within(dialog).getByRole("combobox", {
       name: "Find anything",
     });
-    await userEvent.type(input, "search this pane");
-    const option = await within(dialog).findByRole("option", {
+    fireEvent.change(input, { target: { value: "search this pane" } });
+    await within(dialog).findByRole("option", {
       name: /^Search this pane\. Ctrl\+F\. Command$/,
     });
     const consume = vi.fn((event: Event) => event.preventDefault());
@@ -482,7 +482,11 @@ describe("Nexus shell contracts", () => {
       once: true,
     });
 
-    await userEvent.click(option);
+    fireEvent.click(
+      within(dialog).getByRole("option", {
+        name: /^Search this pane\. Ctrl\+F\. Command$/,
+      }),
+    );
 
     expect(consume).toHaveBeenCalledOnce();
     await waitFor(() =>

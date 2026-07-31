@@ -36,23 +36,28 @@ contract.
 
 ### mobile scroll-linked chrome
 
-Mobile document readers register their one real scrollport with the workspace
+One active mobile reader scrollport registers directly with the workspace
 `MobileChromeProvider`.
 
-- `TextDocumentReader` owns registration for web articles and EPUB sections.
-- `MediaPaneBody` owns the readable transcript's outer document viewport;
-  transcript segments do not scroll independently.
-- `PdfReader` owns registration for its viewer container.
-- `useMobileChromeReaderScrollport` attaches native scroll, primary-pointer
-  focus handoff, and reveal-only blank-canvas click handling to that element.
-- Each source establishes a live baseline on mount, source/layout change, mode
-  entry, and final visibility-lock release.
-- The provider alone owns collapse progress, direction reversal, idle settle,
-  visibility locks, and reduced-motion pinning.
+- `TextDocumentReader` registers its document viewport for Web and EPUB.
+- Readable transcripts register the same outer document viewport that contains
+  playback, description, and unbounded segments.
+- `PdfReader` registers its viewer.
+- Desktop transcript keeps its bounded segment-list scroller.
+- The provider alone owns collapse progress, direction reversal, settlement,
+  visible locks, live-focus reconciliation, blank-canvas reveal, and
+  reduced-motion pinning.
 - The app bar, optional active format toolbar, and inner Nexus control are
   presentation consumers; they never infer scroll policy.
-- Find and code-owned positioning hold semantic visibility locks through their
-  final layout sample.
+- `MediaPaneBody` owns one stable reader interaction root for focus handoff
+  across loading, error, short-content, and mounted-scrollport states.
+- `paneScroll.ts` is the sole app-owned reader-positioning boundary. Find,
+  restore, zoom, and anchor movement hold its lock through rebaseline.
+
+The provider coalesces scrollport/direct-content resize, descendant load, window
+resize, and visual-viewport resize into a geometry refresh. It updates the live
+scroll baseline without resetting synchronized chrome presentation, except that
+a reader now at top or too short to scroll reveals fully.
 
 Chrome motion is transform-only and never changes reader padding, selection,
 resume state, scroll position, or the stable outer Nexus obstruction
@@ -64,8 +69,8 @@ contract.
 
 The shared Pane Search foundation defines `FindOccurrences`, exact
 revision-scoped result keys, one immutable **Go back to reading position**
-origin, and transient Companion results. Web articles, readable video/podcast
-transcripts, EPUBs, and PDFs use this contract.
+origin, and transient Companion results. Web articles and readable
+video/podcast transcripts, EPUBs, and PDFs use that shared lifecycle.
 
 `MediaPaneBody` selects one route-local adapter under one `usePaneFind`
 controller. Web searches every loaded canonical fragment and uses one
@@ -76,10 +81,12 @@ reader input. Preview and Return use exact canonical DOM anchors and never call
 navigation or URL replacement.
 
 Transcript Find searches timeline-ordered readable fragments and changes only
-the active transcript row and outer document-viewport scroll. It never seeks,
-plays, resumes, mounts a progress seam, or creates an activity seam. Partial
-coverage is explicit in both zero and nonzero result states. Close clears marks
-without returning; Return restores and retires the one origin.
+the active transcript row and the active layout's scroll owner. Mobile preview
+and Return position the outer document viewport; desktop positions the bounded
+segment list. Both route app-owned movement through `paneScroll.ts`. Find never
+seeks, plays, resumes, mounts a progress seam, or creates an activity seam.
+Partial coverage is explicit in both zero and nonzero result states. Close
+clears marks without returning; Return restores and retires the one origin.
 
 EPUB Find searches canonical fragments through the bounded EPUB Find API.
 Cross-section preview uses a rendered-section override, while committed
@@ -88,12 +95,18 @@ fenced. The first genuine input atomically adopts the rendered section and is
 capture-suppressed; later input resumes ordinary reader behavior. Same-section
 stepping reuses the rendered section without a request.
 
+PDF Find delegates exact matching and marks to PDF.js while the shared session
+owns query, cancellation, preview, and Return. App-owned page, zoom, restore,
+and preview positioning runs under `paneScroll.ts`; PDF.js-internal scrolling
+remains library-owned.
+
 ### natural document completion
 
 Web articles and the final EPUB section render a semantic end marker inside the
-same `.documentViewport` that owns reading scroll. The shared chrome hook
-samples native scroll independently; `TextDocumentReader`'s existing capture
-pipeline continues owning resume, activity, trusted intent, and completion.
+same `.documentViewport` that owns reading scroll. `TextDocumentReader`
+registers that element independently with mobile chrome while its existing
+progress, activity, and trusted-intent listener continues owning reader
+publication. Find and reflow fences never swallow chrome sampling.
 
 Natural completion requires trusted forward scroll intent after the current
 content generation was positioned. Programmatic restore, hash navigation,

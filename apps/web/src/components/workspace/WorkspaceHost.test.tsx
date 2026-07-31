@@ -1082,7 +1082,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
       { toolbar: <button type="button">PDF reader controls</button> },
     ],
   ])(
-    "normal mobile activation %s focuses the pane landmark without pinning chrome",
+    "normal mobile activation %s focuses the stable pane landmark",
     async (_case, publication) => {
       hostMocks.isMobile = true;
       hostMocks.useActualPaneShell = true;
@@ -1097,11 +1097,14 @@ describe("WorkspaceHost pane route lifecycle", () => {
       await waitFor(() =>
         expect(screen.getByTestId("pane-shell-root")).toHaveFocus(),
       );
+      expect(screen.getByTestId("pane-shell-root")).toHaveAttribute(
+        "data-pane-focus-landmark",
+        "true",
+      );
       expect(screen.getByTestId("pane-shell-chrome")).toHaveAttribute(
         "data-mobile-chrome-phase",
         "Visible",
       );
-      expect(screen.getByRole("banner")).not.toHaveAttribute("tabindex");
     },
   );
 
@@ -1203,7 +1206,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
     );
   });
 
-  it("focuses only the active pane landmark when desktop panes become mobile", async () => {
+  it("registers only focused active pane chrome when desktop panes become mobile", async () => {
     setTwoPaneHrefs(MEDIA_HREF_1, MEDIA_HREF_2);
     hostMocks.useActualPaneShell = true;
     hostMocks.primaryChromePublicationByPaneId = new Map([
@@ -1246,11 +1249,11 @@ describe("WorkspaceHost pane route lifecycle", () => {
         "data-runtime-pane-id",
         "pane-2",
       );
+      expect(screen.getByTestId("pane-shell-root")).toHaveFocus();
       expect(screen.getByTestId("pane-shell-chrome")).toHaveAttribute(
         "data-mobile-chrome-phase",
         "Visible",
       );
-      expect(screen.getByTestId("pane-shell-root")).toHaveFocus();
     });
     expect(activeChrome).not.toHaveFocus();
     expect(

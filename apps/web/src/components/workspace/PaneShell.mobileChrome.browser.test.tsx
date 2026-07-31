@@ -5,9 +5,11 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import { Profiler } from "react";
 import { page } from "vitest/browser";
 import { describe, expect, it } from "vitest";
 import MobilePaneBar from "@/components/appnav/MobilePaneBar";
+import NexusButton from "@/components/switchboard/NexusButton";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
@@ -65,6 +67,7 @@ function Reader() {
   return (
     <div
       ref={scrollportRef}
+      data-mobile-reader-interaction-root="true"
       data-testid="reader-scrollport"
       style={{ height: 120, overflowY: "auto" }}
     >
@@ -94,8 +97,12 @@ function collapseProgress(surface: HTMLElement): number {
 }
 
 describe("PaneShell mobile Find chrome composition", () => {
-  it("pins Find over real reader retreat and rebaselines the next reader gesture after Close", async () => {
+  it("keeps real chrome render-stable while Tracking, then pins Find and rebaselines after Close", async () => {
     await page.viewport(390, 800);
+    let appBarRenders = 0;
+    let paneShellRenders = 0;
+    let nexusRenders = 0;
+    let readerRenders = 0;
     render(
       withRenderEnvironment(
         <MobileChromeProvider>
@@ -103,7 +110,26 @@ describe("PaneShell mobile Find chrome composition", () => {
             <ShareControllerProvider>
               <LibraryPlacementControllerProvider>
                 <PaneReturnMementoProvider>
-                  <MobilePaneBar />
+                  <Profiler
+                    id="MobilePaneBar"
+                    onRender={() => {
+                      appBarRenders += 1;
+                    }}
+                  >
+                    <MobilePaneBar />
+                  </Profiler>
+                  <Profiler
+                    id="NexusButton"
+                    onRender={() => {
+                      nexusRenders += 1;
+                    }}
+                  >
+                    <NexusButton
+                      paneCount={1}
+                      switchboardOpen={false}
+                      onOpen={noop}
+                    />
+                  </Profiler>
                   <PaneRuntimeProvider
                     paneId="pane-a"
                     visitId={TEST_VISIT_ID}
@@ -122,33 +148,49 @@ describe("PaneShell mobile Find chrome composition", () => {
                     onGoBackPane={noop}
                     onGoForwardPane={noop}
                   >
-                    <PaneShell
-                      paneId="pane-a"
-                      routeKey="media:/media/document-a"
-                      routeHeader={{
-                        kind: "resource",
-                        pendingLabel: "Loading document…",
-                      }}
-                      routeShareIdentity={null}
-                      label="Document"
-                      returnMementoEnabled={false}
-                      sizing={{
-                        primaryWidthPx: 390,
-                        primaryMinWidthPx: 320,
-                        primaryMaxWidthPx: 1_400,
-                        renderedPrimarySlotWidthPx: 390,
-                        renderedPrimarySlotMinWidthPx: 320,
-                        renderedPrimarySlotMaxWidthPx: 1_400,
-                        fixedChromeWidthPx: 0,
-                        storedWidthCorrectionPx: null,
-                      }}
-                      bodyMode="document"
-                      onResizePrimaryPane={noop}
-                      isActive
-                      isMobile
-                    >
-                      <Reader />
-                    </PaneShell>
+                    <div data-pane-id="pane-a" data-active="true">
+                      <Profiler
+                        id="PaneShell"
+                        onRender={() => {
+                          paneShellRenders += 1;
+                        }}
+                      >
+                        <PaneShell
+                          paneId="pane-a"
+                          routeKey="media:/media/document-a"
+                          routeHeader={{
+                            kind: "resource",
+                            pendingLabel: "Loading document…",
+                          }}
+                          routeShareIdentity={null}
+                          label="Document"
+                          returnMementoEnabled={false}
+                          sizing={{
+                            primaryWidthPx: 390,
+                            primaryMinWidthPx: 320,
+                            primaryMaxWidthPx: 1_400,
+                            renderedPrimarySlotWidthPx: 390,
+                            renderedPrimarySlotMinWidthPx: 320,
+                            renderedPrimarySlotMaxWidthPx: 1_400,
+                            fixedChromeWidthPx: 0,
+                            storedWidthCorrectionPx: null,
+                          }}
+                          bodyMode="document"
+                          onResizePrimaryPane={noop}
+                          isActive
+                          isMobile
+                        >
+                          <Profiler
+                            id="Reader"
+                            onRender={() => {
+                              readerRenders += 1;
+                            }}
+                          >
+                            <Reader />
+                          </Profiler>
+                        </PaneShell>
+                      </Profiler>
+                    </div>
                   </PaneRuntimeProvider>
                 </PaneReturnMementoProvider>
               </LibraryPlacementControllerProvider>
@@ -165,6 +207,37 @@ describe("PaneShell mobile Find chrome composition", () => {
     const paneToolbar = screen.getByTestId("pane-shell-toolbar");
     const options = screen.getByRole("button", { name: "Pane options" });
 
+    await scrollReaderTo(24);
+    await waitFor(() => {
+      expect(appBar).toHaveAttribute("data-mobile-chrome-phase", "Tracking");
+      expect(paneChrome).toHaveAttribute(
+        "data-mobile-chrome-phase",
+        "Tracking",
+      );
+      expect(collapseProgress(appBar)).toBe(0.25);
+      expect(collapseProgress(paneChrome)).toBe(0.25);
+    });
+    const rendersAtFirstTrackingSample = {
+      appBar: appBarRenders,
+      paneShell: paneShellRenders,
+      nexus: nexusRenders,
+      reader: readerRenders,
+    };
+
+    const scrollport = screen.getByTestId("reader-scrollport");
+    for (const scrollTop of [32, 40, 48]) {
+      scrollport.scrollTop = scrollTop;
+      fireEvent.scroll(scrollport);
+    }
+    await waitFor(() => {
+      expect(collapseProgress(appBar)).toBe(0.625);
+      expect(collapseProgress(paneChrome)).toBe(0.625);
+    });
+    expect(appBarRenders).toBe(rendersAtFirstTrackingSample.appBar);
+    expect(paneShellRenders).toBe(rendersAtFirstTrackingSample.paneShell);
+    expect(nexusRenders).toBe(rendersAtFirstTrackingSample.nexus);
+    expect(readerRenders).toBe(rendersAtFirstTrackingSample.reader);
+
     await scrollReaderTo(160);
     await waitFor(() => {
       expect(appBar).toHaveAttribute("data-mobile-chrome-phase", "Hidden");
@@ -172,11 +245,9 @@ describe("PaneShell mobile Find chrome composition", () => {
       expect(collapseProgress(appBar)).toBe(1);
       expect(collapseProgress(paneChrome)).toBe(1);
     });
-    expect(paneToolbar).toHaveAttribute("aria-hidden", "true");
-    expect(paneToolbar).toHaveAttribute("inert");
-    for (const controls of screen.getAllByTestId("top-bar-controls")) {
-      expect(controls).toHaveAttribute("aria-hidden", "true");
-      expect(controls).toHaveAttribute("inert");
+    for (const movingRoot of [appBar, paneChrome]) {
+      expect(movingRoot).toHaveAttribute("aria-hidden", "true");
+      expect(movingRoot).toHaveAttribute("inert");
     }
 
     act(() => {
@@ -192,8 +263,10 @@ describe("PaneShell mobile Find chrome composition", () => {
       expect(collapseProgress(appBar)).toBe(0);
       expect(collapseProgress(paneChrome)).toBe(0);
     });
-    expect(paneToolbar).not.toHaveAttribute("aria-hidden");
-    expect(paneToolbar).not.toHaveAttribute("inert");
+    expect(appBar).not.toHaveAttribute("aria-hidden");
+    expect(appBar).not.toHaveAttribute("inert");
+    expect(paneChrome).not.toHaveAttribute("aria-hidden");
+    expect(paneChrome).not.toHaveAttribute("inert");
     expect(screen.getByTestId("pane-search-toolbar")).not.toHaveAttribute(
       "inert",
     );
@@ -232,7 +305,9 @@ describe("PaneShell mobile Find chrome composition", () => {
       expect(collapseProgress(appBar)).toBe(1);
       expect(collapseProgress(paneChrome)).toBe(1);
     });
-    expect(paneToolbar).toHaveAttribute("aria-hidden", "true");
-    expect(paneToolbar).toHaveAttribute("inert");
+    expect(appBar).toHaveAttribute("aria-hidden", "true");
+    expect(appBar).toHaveAttribute("inert");
+    expect(paneChrome).toHaveAttribute("aria-hidden", "true");
+    expect(paneChrome).toHaveAttribute("inert");
   });
 });

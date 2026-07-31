@@ -1,6 +1,7 @@
 import { act, render, screen } from "@testing-library/react";
 import { useLayoutEffect } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import {
   type ReaderScrollPositioner,
   useReaderScrollPositioner,
@@ -9,10 +10,6 @@ import {
   MobileChromeProvider,
   useMobileChrome,
 } from "@/lib/workspace/mobileChrome";
-
-vi.mock("@/lib/ui/useIsMobileViewport", () => ({
-  useIsMobileViewport: () => true,
-}));
 
 function rect(top: number, bottom: number): DOMRect {
   return {
@@ -49,10 +46,27 @@ describe("useReaderScrollPositioner", () => {
 
   beforeEach(() => {
     frames = [];
+    vi.spyOn(window, "matchMedia").mockImplementation(
+      (query) =>
+        ({
+          matches: query.includes("max-width"),
+          media: query,
+          onchange: null,
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          addListener: vi.fn(),
+          removeListener: vi.fn(),
+          dispatchEvent: vi.fn(),
+        }) as unknown as MediaQueryList,
+    );
     vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
       frames.push(callback);
       return frames.length;
     });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   async function flushFrames(): Promise<void> {
@@ -72,9 +86,12 @@ describe("useReaderScrollPositioner", () => {
       ReaderScrollPositioner | null
     >;
     render(
-      <MobileChromeProvider>
-        <Harness positionerRef={positionerRef} />
-      </MobileChromeProvider>,
+      withRenderEnvironment(
+        <MobileChromeProvider>
+          <Harness positionerRef={positionerRef} />
+        </MobileChromeProvider>,
+        { initialViewport: "mobile" },
+      ),
     );
     const scrollport = document.createElement("div");
     const target = document.createElement("div");
@@ -112,9 +129,12 @@ describe("useReaderScrollPositioner", () => {
       ReaderScrollPositioner | null
     >;
     render(
-      <MobileChromeProvider>
-        <Harness positionerRef={positionerRef} />
-      </MobileChromeProvider>,
+      withRenderEnvironment(
+        <MobileChromeProvider>
+          <Harness positionerRef={positionerRef} />
+        </MobileChromeProvider>,
+        { initialViewport: "mobile" },
+      ),
     );
     const scrollport = document.createElement("div");
     const target = document.createElement("div");

@@ -77,7 +77,7 @@ import type {
 import {
   useMobileChrome,
   useMobileChromeSurface,
-  useMobileChromeVisibleLocks,
+  usePaneChromeFocusReturn,
 } from "@/lib/workspace/mobileChrome";
 import type { EffectivePaneSizing } from "@/lib/workspace/paneSizing";
 import { usePaneReturnScrollport } from "@/lib/workspace/paneReturnMemento";
@@ -89,7 +89,7 @@ import {
 } from "@/lib/panes/paneSecondaryModel";
 import type { WorkspaceAttachedSecondaryPaneState } from "@/lib/workspace/schema";
 import {
-  findPaneChromeFocusTarget,
+  findPaneLandmarkFocusTarget,
   findPaneSearchFocusTarget,
 } from "@/lib/workspace/paneDom";
 import { SwitchboardPanePerformanceContext } from "@/lib/switchboard/performance";
@@ -313,7 +313,7 @@ export default function PaneShell({
     readonly publication: PanePrimaryChromePublication;
   } | null>(null);
   const { motionPhase, setPaneChrome } = useMobileChrome();
-  const mobileChromeVisibleLocks = useMobileChromeVisibleLocks();
+  const paneChromeFocusReturn = usePaneChromeFocusReturn();
   const identityId = useId();
   const landmarkLabelId = useId();
 
@@ -585,15 +585,6 @@ export default function PaneShell({
         expandedSearchIdentity.routeKey === routeKey);
   const searchExpandedRef = useRef(searchExpanded);
   searchExpandedRef.current = searchExpanded;
-  const paneFindOpen =
-    isMobile &&
-    isActive &&
-    searchExpanded &&
-    acceptedSearch?.kind === "FindOccurrences";
-  useLayoutEffect(() => {
-    if (!paneFindOpen) return;
-    return mobileChromeVisibleLocks.acquire("pane-find");
-  }, [mobileChromeVisibleLocks, paneFindOpen]);
   const focusSearchInput = useCallback(() => {
     window.requestAnimationFrame(() => {
       searchInputRef.current?.focus({ preventScroll: true });
@@ -628,6 +619,10 @@ export default function PaneShell({
   const closeSearch = useCallback(() => {
     searchExpandedRef.current = false;
     setExpandedSearchIdentity(null);
+    if (isMobile) {
+      void paneChromeFocusReturn.focus(paneId);
+      return;
+    }
     window.requestAnimationFrame(() => {
       const retainedTrigger = searchTriggerRef.current;
       const mountedAction =
@@ -641,7 +636,7 @@ export default function PaneShell({
       const focusTarget = trigger ?? findPaneSearchFocusTarget(paneId);
       focusTarget?.focus({ preventScroll: true });
     });
-  }, [paneId]);
+  }, [isMobile, paneChromeFocusReturn, paneId]);
   // The mobile chrome provider re-renders active PaneShell consumers when a pane
   // publishes. Keep this projection referentially stable across that feedback render;
   // otherwise the publication effect below sees a new header, republishes, and can
@@ -664,16 +659,24 @@ export default function PaneShell({
   );
   const accessibleName = paneHeaderAccessibleName(header);
   const effectiveToolbar = acceptedPrimaryChrome?.toolbar;
+  const hasMobileToolbarSurface =
+    isMobile && Boolean(effectiveToolbar || searchExpanded);
   useMobileChromeSurface(
     chromeRef,
     "PaneToolbar",
-    isMobile && isActive && Boolean(effectiveToolbar || searchExpanded),
+    isActive && hasMobileToolbarSurface,
   );
   const effectiveActions =
     acceptedPrimaryChrome?.actions ?? EMPTY_HEADER_ACTIONS;
   const effectiveMenu = acceptedPrimaryChrome?.menu;
-  const toolbarInert =
-    motionPhase.kind !== "Visible" && motionPhase.kind !== "Pinned";
+  const toolbarInteractive =
+    motionPhase.kind === "Visible" || motionPhase.kind === "Pinned";
+  const toolbarUnavailable =
+    hasMobileToolbarSurface && !toolbarInteractive;
+  const resolvePaneReturnFocusFallback = useCallback(
+    () => findPaneLandmarkFocusTarget(paneId),
+    [paneId],
+  );
   const secondaryPresentation =
     secondaryPane &&
     secondaryPublication?.groupId === secondaryPane.groupId &&
@@ -840,9 +843,7 @@ export default function PaneShell({
             onSelect: ({ triggerEl }) =>
               openShare(routeShareIdentity, {
                 returnFocusTo: () => triggerEl,
-                returnFocusFallback: present(() =>
-                  findPaneChromeFocusTarget(paneId),
-                ),
+                returnFocusFallback: present(resolvePaneReturnFocusFallback),
               }),
           },
         ]
@@ -889,9 +890,7 @@ export default function PaneShell({
             openShare,
             options: {
               returnFocusTo: () => detail.triggerEl,
-              returnFocusFallback: present(() =>
-                findPaneChromeFocusTarget(paneId),
-              ),
+              returnFocusFallback: present(resolvePaneReturnFocusFallback),
             },
           });
         },
@@ -937,9 +936,7 @@ export default function PaneShell({
               openLibraryPlacement,
               options: {
                 anchor: () => detail.triggerEl,
-                returnFocusFallback: present(() =>
-                  findPaneChromeFocusTarget(paneId),
-                ),
+                returnFocusFallback: present(resolvePaneReturnFocusFallback),
               },
             });
           },
@@ -962,9 +959,9 @@ export default function PaneShell({
     feedback,
     openLibraryPlacement,
     openShare,
-    paneId,
     activateTarget,
     refreshState.kind,
+    resolvePaneReturnFocusFallback,
     routeShareIdentity,
     startPaneRefresh,
   ]);
@@ -1072,14 +1069,14 @@ export default function PaneShell({
     <section
       className={styles.paneShell}
       aria-labelledby={landmarkLabelId}
-      data-pane-focus-landmark="true"
       data-testid="pane-shell-root"
       data-pane-shell="true"
+      data-pane-focus-landmark="true"
       data-header-kind={header.kind}
       data-active={isActive ? "true" : "false"}
       data-mobile={isMobile ? "true" : "false"}
-      style={shellStyle}
       tabIndex={-1}
+      style={shellStyle}
     >
       <span id={landmarkLabelId} className="sr-only">
         {accessibleName}
@@ -1100,13 +1097,14 @@ export default function PaneShell({
           ref={chromeRef}
           className={styles.chrome}
           data-testid="pane-shell-chrome"
-          data-pane-chrome-focus={
-            !isMobile || effectiveToolbar || searchExpanded
-              ? "true"
-              : undefined
-          }
+          data-pane-chrome-focus={!isMobile ? "true" : undefined}
           data-mobile-chrome-phase={motionPhase.kind}
+          aria-hidden={toolbarUnavailable || undefined}
+          inert={toolbarUnavailable || undefined}
           tabIndex={-1}
+          style={{
+            pointerEvents: toolbarUnavailable ? "none" : undefined,
+          }}
           onMouseDown={onChromeMouseDown}
         >
           {!isMobile ? (
@@ -1123,8 +1121,6 @@ export default function PaneShell({
               id={searchRowId}
               className={styles.toolbar}
               data-testid="pane-search-toolbar"
-              aria-hidden={toolbarInert || undefined}
-              inert={toolbarInert || undefined}
             >
               <PaneSearchBar
                 ref={searchInputRef}
@@ -1137,8 +1133,6 @@ export default function PaneShell({
             <div
               className={styles.toolbar}
               data-testid="pane-shell-toolbar"
-              aria-hidden={toolbarInert || undefined}
-              inert={toolbarInert || undefined}
             >
               {effectiveToolbar}
             </div>

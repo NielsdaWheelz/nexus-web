@@ -117,9 +117,10 @@ composition so one pane failure cannot replace its siblings or the workspace.
 `TextDocumentReader`, the `MediaPaneBody` transcript viewport, and `PdfReader`
 register their actual scroll element through
 `useMobileChromeReaderScrollport`. Exactly one active reader scrollport owns
-native scroll, primary-pointer focus handoff, and blank-canvas reveal; window,
-workspace, nested transcript segments, and non-reader pane scroll never
-participate.
+native scroll sampling and blank-canvas reveal. One stable active-reader
+interaction root owns primary-pointer focus handoff even while the scrollport
+is loading, short, or being replaced. Window, workspace, nested transcript
+segments, and non-reader pane scroll never participate.
 
 The provider reduces reader scroll to one normalized collapse progress. The app
 top bar, optional active reader toolbar, and inner Nexus control consume that
@@ -130,10 +131,12 @@ clearance, content offset, and reader `scrollTop` remain fixed. Downward scroll
 collapses, upward scroll reveals after the direction dead zone, and idle partial
 progress settles to the nearest endpoint.
 
-The provider resets fully shown and rebaselines from live geometry when the
-active `(paneId, routeKey)`, reader source, EPUB unit, layout generation, or
-mobile mode changes. Programmatic positioning therefore cannot become the next
-reading delta.
+The provider resets fully shown when the active `(paneId, routeKey)`, semantic
+reader source, EPUB unit, or mobile mode changes. Reflow, lazy media, zoom,
+IME, rotation, and safe-area changes retain that source identity and only
+rebaseline live geometry. App-owned reader positioning passes through the
+single locked `paneScroll.ts` boundary, so a programmatic jump cannot become
+the next reading delta.
 
 The provider pins chrome fully visible at the document top, for reduced motion,
 and while reader restore, positioning, Find, selection, navigation,
@@ -143,8 +146,9 @@ rebaselines from the live scrollport. Enabled mobile surfaces register as
 `AppBar`, `PaneToolbar`, or `NexusControl`; only the active pane toolbar
 registers. Focus on a real control acquires `chrome-focus`; primary pointer
 intent on the reader releases only that focus. Tracking, settling, and hidden
-control clusters are inert and absent from accessibility navigation, while the
-pane landmark remains represented. Desktop chrome is unaffected.
+moving roots are inert, non-hit-testable, and absent from accessibility
+navigation, while the pane landmark remains represented. Desktop chrome is
+unaffected.
 
 ## Mobile Secondary Panes
 
@@ -298,6 +302,14 @@ publishes
 `--mobile-content-bottom-clearance`, and every authenticated mobile primary
 scroll owner consumes it. Components do not independently recalculate safe
 area, player, Nexus, focus, or keyboard geometry.
+
+The Android shell remains edge-to-edge: its WebView fills the window and web
+chrome does not own the native status-bar inset. `MainActivity` permanently
+layers an accessibility-hidden black protection view over the status-bar
+inset, forces light status-bar icons, and also sets the native status-bar color
+to black for pre-enforced-edge-to-edge Android. Android instrumentation owns
+the contract that the protection is black and inset-sized, the icons remain
+light, and the WebView itself remains edge-to-edge.
 
 ## Fixed Chrome
 

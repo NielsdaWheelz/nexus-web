@@ -17,8 +17,10 @@ import android.webkit.CookieManager
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
-import androidx.lifecycle.Lifecycle
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.espresso.intent.Intents
@@ -87,7 +89,7 @@ class MainActivityTest {
     }
 
     @Test
-    fun statusBarHasDarkNativeProtectionWithLightIcons() {
+    fun statusBarProtectionKeepsLightIconsAndAnEdgeToEdgeWebView() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             waitUntil("Expected native status-bar protection to receive its inset height.") {
                 var height = 0
@@ -99,14 +101,28 @@ class MainActivityTest {
 
             scenario.onActivity { activity ->
                 val protection = activity.findViewById<View>(R.id.status_bar_protection)
+                val contentRoot = activity.webView.parent as View
+                val rootLocation = IntArray(2)
+                contentRoot.getLocationInWindow(rootLocation)
+                val statusBarInset =
+                    checkNotNull(ViewCompat.getRootWindowInsets(contentRoot))
+                        .getInsets(WindowInsetsCompat.Type.statusBars())
+                        .top
 
                 assertEquals(Color.BLACK, (protection.background as ColorDrawable).color)
+                assertEquals(statusBarInset, protection.height)
+                @Suppress("DEPRECATION")
+                assertEquals(Color.BLACK, activity.window.statusBarColor)
                 assertFalse(
                     WindowInsetsControllerCompat(
                         activity.window,
                         activity.window.decorView
                     ).isAppearanceLightStatusBars
                 )
+                assertEquals(0, rootLocation[1])
+                assertEquals(activity.window.decorView.height, contentRoot.height)
+                assertEquals(0, activity.webView.top)
+                assertEquals(contentRoot.height, activity.webView.height)
             }
         }
     }

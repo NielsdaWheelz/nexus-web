@@ -23,10 +23,8 @@ import {
   type ReadingSlateState,
 } from "@/lib/resonance/useReadingSlate";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import {
-  findPaneChromeFocusTarget,
-  findPaneLandmarkFocusTarget,
-} from "@/lib/workspace/paneDom";
+import { usePaneChromeFocusReturn } from "@/lib/workspace/mobileChrome";
+import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
 import styles from "./ReadingSlateSection.module.css";
 
 function assertNever(value: never): never {
@@ -147,6 +145,7 @@ export default function ReadingSlateSection({
   const sectionId = `reading-slate-${reactId.replaceAll(":", "")}`;
   const controller = useReadingSlate({ destination, isActive, accept });
   const isMobile = useIsMobileViewport();
+  const { focus: returnPaneChromeFocus } = usePaneChromeFocusReturn();
   const { state } = controller;
   const returnReadyRootRef = useRef<HTMLDivElement>(null);
   usePaneReturnDescendantReady({
@@ -201,12 +200,18 @@ export default function ReadingSlateSection({
       if (pendingFocusRequest) {
         handledFocusRequestRef.current = controller.focusRequest;
       }
-      const focusTarget = isMobile
-        ? findPaneLandmarkFocusTarget(paneId)
-        : findPaneChromeFocusTarget(paneId);
-      focusTarget?.focus();
-      setTerminalHidden(true);
-      return;
+      if (!isMobile) {
+        findPaneChromeFocusTarget(paneId)?.focus();
+        setTerminalHidden(true);
+        return;
+      }
+      let live = true;
+      void returnPaneChromeFocus(paneId).then(() => {
+        if (live) setTerminalHidden(true);
+      });
+      return () => {
+        live = false;
+      };
     }
     setTerminalHidden(true);
   }, [
@@ -214,6 +219,7 @@ export default function ReadingSlateSection({
     controller.focusRequest,
     isMobile,
     paneId,
+    returnPaneChromeFocus,
     rowOwnerKey,
     rows,
     sectionId,

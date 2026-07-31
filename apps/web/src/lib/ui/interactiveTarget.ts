@@ -2,6 +2,7 @@ const INTERACTIVE_TARGET_SELECTOR = [
   "a[href]",
   "audio[controls]",
   "button",
+  "iframe",
   "input",
   "select",
   "summary",
@@ -28,9 +29,13 @@ const INTERACTIVE_TARGET_SELECTOR = [
   "[tabindex]:not([tabindex='-1'])",
 ].join(",");
 
-export function isInteractiveTarget(target: EventTarget | null): boolean {
-  return (
-    target instanceof Element &&
-    target.closest(INTERACTIVE_TARGET_SELECTOR) !== null
-  );
+export function isInteractiveTarget(
+  target: EventTarget | null,
+  boundary?: Element | null,
+): boolean {
+  if (!(target instanceof Element)) return false;
+  const interactive = target.closest(INTERACTIVE_TARGET_SELECTOR);
+  if (!interactive) return false;
+  if (!boundary) return true;
+  return interactive !== boundary && boundary.contains(interactive);
 }

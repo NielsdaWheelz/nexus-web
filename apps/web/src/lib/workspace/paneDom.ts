@@ -3,6 +3,24 @@
  * workspace pane wrapper. The wrapper's `data-pane-id` is intentionally the
  * only DOM identity for a pane; nested pane surfaces must not repeat it.
  */
+function findPane(paneId: string | null | undefined): HTMLElement | null {
+  if (!paneId) return null;
+  return (
+    Array.from(
+      document.querySelectorAll<HTMLElement>("[data-pane-id]"),
+    ).find((candidate) => candidate.dataset.paneId === paneId) ?? null
+  );
+}
+
+export function findPaneLandmarkFocusTarget(
+  paneId: string | null | undefined,
+): HTMLElement | null {
+  const landmark = findPane(paneId)?.querySelector<HTMLElement>(
+    "[data-pane-focus-landmark='true']",
+  );
+  return landmark?.isConnected && !landmark.closest("[inert]") ? landmark : null;
+}
+
 export function findPaneChromeFocusTarget(
   paneId: string | null | undefined,
 ): HTMLElement | null {
@@ -17,40 +35,24 @@ export function findPaneChromeFocusTarget(
     return mobileOptions;
   }
 
-  const pane = Array.from(
-    document.querySelectorAll<HTMLElement>("[data-pane-id]"),
-  ).find((candidate) => candidate.dataset.paneId === paneId);
+  const pane = findPane(paneId);
   const desktopOptions = pane?.querySelector<HTMLElement>(
     "[data-pane-options-trigger]",
   );
-  if (desktopOptions?.isConnected) return desktopOptions;
-  return (
-    pane?.querySelector<HTMLElement>("[data-pane-chrome-focus='true']") ??
-    null
+  if (desktopOptions?.isConnected && !desktopOptions.closest("[inert]")) {
+    return desktopOptions;
+  }
+  const chrome = pane?.querySelector<HTMLElement>(
+    "[data-pane-chrome-focus='true']",
   );
-}
-
-export function findPaneLandmarkFocusTarget(
-  paneId: string | null | undefined,
-): HTMLElement | null {
-  if (!paneId) return null;
-  const pane = Array.from(
-    document.querySelectorAll<HTMLElement>("[data-pane-id]"),
-  ).find((candidate) => candidate.dataset.paneId === paneId);
-  const landmark = pane?.querySelector<HTMLElement>(
-    "[data-pane-focus-landmark='true']",
-  );
-  if (landmark?.isConnected && !landmark.closest("[inert]")) return landmark;
-  return null;
+  return chrome?.isConnected && !chrome.closest("[inert]") ? chrome : null;
 }
 
 export function findPaneSearchFocusTarget(
   paneId: string | null | undefined,
 ): HTMLElement | null {
   if (!paneId) return null;
-  const pane = Array.from(
-    document.querySelectorAll<HTMLElement>("[data-pane-id]"),
-  ).find((candidate) => candidate.dataset.paneId === paneId);
+  const pane = findPane(paneId);
   const input = pane?.querySelector<HTMLElement>("[data-pane-search-input]");
   if (input?.isConnected && !input.closest("[inert]")) return input;
   const action = pane?.querySelector<HTMLElement>(

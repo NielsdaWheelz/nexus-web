@@ -11,6 +11,21 @@ import {
   type TranscriptFindSnapshot,
 } from "./transcriptPaneFind";
 import { createMediaFindPreviewLease } from "./mediaFindPreviewLease";
+import type { ReaderScrollPositioner } from "@/lib/reader/paneScroll";
+
+const scrollPositioner: ReaderScrollPositioner = {
+  async run(operation) {
+    await operation({
+      setTop(scrollport, top) {
+        scrollport.scrollTop = Math.max(0, top);
+      },
+      adjustTop(scrollport, delta) {
+        scrollport.scrollTop = Math.max(0, scrollport.scrollTop + delta);
+      },
+      reveal() {},
+    });
+  },
+};
 
 function fragment({
   id,
@@ -81,10 +96,12 @@ function adapter(
     getCurrentSourceKey: () => frozen.sourceKey,
     getActiveFragmentId: () => activeFragmentId,
     setActiveFragmentId: vi.fn(),
-    getScrollport: () => null,
+    getSegmentList: () => null,
+    getScrollOwner: () => null,
     getMatchElement: () => null,
     publishPresentation: vi.fn(),
     previewLease: createMediaFindPreviewLease(),
+    scrollPositioner,
   });
 }
 

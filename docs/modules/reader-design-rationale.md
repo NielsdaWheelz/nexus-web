@@ -107,7 +107,8 @@ touching app theme tokens.
 ### attention without disorientation
 
 Sustained forward mobile reading retreats AppBar, format toolbar, and Nexus
-together; a short reverse movement or unhandled blank-canvas tap restores them.
+together. A short reverse movement restores them in every reader; an unhandled
+blank-canvas tap is supplementary recovery in Web, EPUB, and PDF.
 This is continuous chrome policy, not content motion: one real reader
 scrollport feeds one reducer/provider, while the reader box, selection,
 progress, and fixed Nexus obstruction remain stable.

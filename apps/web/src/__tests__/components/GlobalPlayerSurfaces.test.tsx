@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   act,
   fireEvent,
@@ -22,7 +22,10 @@ import {
 } from "@/lib/walknotes/walknoteSession";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import { WorkspaceTestProvider } from "@/__tests__/helpers/WorkspaceTestProvider";
-import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
+import {
+  MobileChromeProvider,
+  useMobileChromeSurface,
+} from "@/lib/workspace/mobileChrome";
 import {
   buildPlayerDescriptor,
   installLecternPlayerFetchMock,
@@ -104,6 +107,8 @@ function PlayerLauncher() {
 function PaneChromeFocusProbe() {
   const workspace = useWorkspaceStore();
   const paneId = workspace.state.activePrimaryPaneId ?? undefined;
+  const ref = useRef<HTMLDivElement>(null);
+  useMobileChromeSurface(ref, "AppBar", true);
   return (
     <>
       <div data-pane-id={paneId}>
@@ -111,7 +116,7 @@ function PaneChromeFocusProbe() {
           Active pane
         </button>
       </div>
-      <div data-pane-chrome-for={paneId}>
+      <div ref={ref} data-pane-chrome-for={paneId}>
         <button type="button" data-pane-options-trigger>
           Active pane options
         </button>
@@ -294,7 +299,9 @@ describe("GlobalPlayerSurfaces", () => {
     );
     expect(screen.getByRole("status")).toHaveTextContent("Player closed");
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Active pane" })).toHaveFocus(),
+      expect(
+        screen.getByRole("button", { name: "Active pane options" }),
+      ).toHaveFocus(),
     );
   });
 
@@ -508,6 +515,9 @@ describe("GlobalPlayerSurfaces", () => {
     expect(screen.getByRole("status")).toHaveTextContent(
       "Remembering playback speed for this podcast",
     );
+    await waitFor(() =>
+      expect(rejectRemember).toBeTypeOf("function"),
+    );
 
     rejectRemember(
       Response.json(
@@ -656,7 +666,9 @@ describe("GlobalPlayerSurfaces", () => {
       expect(screen.queryByRole("region", { name: "Media player" })).toBeNull(),
     );
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Active pane" })).toHaveFocus(),
+      expect(
+        screen.getByRole("button", { name: "Active pane options" }),
+      ).toHaveFocus(),
     );
   });
 

@@ -167,6 +167,37 @@ describe("reduceMobileChromeMotion", () => {
     });
   });
 
+  it("refreshes geometry without resetting presentation and reveals a top or short reader", () => {
+    const started = reduceMobileChromeMotion(initialMobileChromeMotionState(), {
+      kind: "Start",
+      snapshot: snapshot(100),
+    });
+    const partial = reduceMobileChromeMotion(started, {
+      kind: "Scroll",
+      snapshot: snapshot(132),
+    });
+    const refreshed = reduceMobileChromeMotion(partial, {
+      kind: "RefreshGeometry",
+      snapshot: snapshot(500),
+    });
+    const short = reduceMobileChromeMotion(refreshed, {
+      kind: "RefreshGeometry",
+      snapshot: { scrollTop: 500, scrollHeight: 400, clientHeight: 500 },
+    });
+
+    expect(refreshed).toMatchObject({
+      phase: { kind: "Tracking", direction: "Down" },
+      progress: 24 / 64,
+      lastScrollTop: 500,
+      reversalDistancePx: 32,
+    });
+    expect(short).toMatchObject({
+      phase: { kind: "Visible" },
+      progress: 0,
+      lastScrollTop: 0,
+    });
+  });
+
   it("settles partial progress to the nearest endpoint and ignores stale completion", () => {
     const started = reduceMobileChromeMotion(initialMobileChromeMotionState(), {
       kind: "Start",
@@ -194,6 +225,32 @@ describe("reduceMobileChromeMotion", () => {
     expect(
       reduceMobileChromeMotion(settlingHidden, { kind: "FinishSettle" }),
     ).toMatchObject({ phase: { kind: "Hidden" }, progress: 1 });
+  });
+
+  it("interrupts settling with a live scroll and rejects the stale completion", () => {
+    const started = reduceMobileChromeMotion(initialMobileChromeMotionState(), {
+      kind: "Start",
+      snapshot: snapshot(100),
+    });
+    const partial = reduceMobileChromeMotion(started, {
+      kind: "Scroll",
+      snapshot: snapshot(131),
+    });
+    const settling = reduceMobileChromeMotion(partial, { kind: "Settle" });
+    const interrupted = reduceMobileChromeMotion(settling, {
+      kind: "Scroll",
+      snapshot: snapshot(139),
+    });
+
+    expect(settling.phase).toEqual({ kind: "Settling", target: "Visible" });
+    expect(interrupted).toMatchObject({
+      phase: { kind: "Tracking", direction: "Down" },
+      progress: 31 / 64,
+      lastScrollTop: 139,
+    });
+    expect(
+      reduceMobileChromeMotion(interrupted, { kind: "FinishSettle" }),
+    ).toBe(interrupted);
   });
 
   it("pins and unpins without losing the latest scroll baseline", () => {
