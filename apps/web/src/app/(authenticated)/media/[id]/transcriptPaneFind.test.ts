@@ -81,7 +81,7 @@ function adapter(
     getCurrentSourceKey: () => frozen.sourceKey,
     getActiveFragmentId: () => activeFragmentId,
     setActiveFragmentId: vi.fn(),
-    getSegmentList: () => null,
+    getScrollport: () => null,
     getMatchElement: () => null,
     publishPresentation: vi.fn(),
     previewLease: createMediaFindPreviewLease(),

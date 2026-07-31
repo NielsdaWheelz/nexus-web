@@ -88,6 +88,20 @@ touching app theme tokens.
 
 ## shipped architecture
 
+### attention without disorientation
+
+Sustained forward mobile reading retreats AppBar, format toolbar, and Nexus
+together; a short reverse movement or unhandled blank-canvas tap restores them.
+This is continuous chrome policy, not content motion: one real reader
+scrollport feeds one reducer/provider, while the reader box, selection,
+progress, and fixed Nexus obstruction remain stable.
+
+Focus, Find, selection, menus, and code-owned positioning explicitly pin chrome
+through their owned lifetime. Reduced motion remains visible. This keeps
+commands recoverable without reserving a permanent slab of the reading
+viewport, and avoids per-format thresholds, gesture recognizers, or a second
+animation owner.
+
 ### reversible inspection
 
 Pane Find is inspection, not navigation or reading intent. The first exact

@@ -115,8 +115,11 @@ composition so one pane failure cannot replace its siblings or the workspace.
 
 `MobileChromeProvider` is the sole mobile reader chrome policy owner.
 `TextDocumentReader`, the `MediaPaneBody` transcript viewport, and `PdfReader`
-publish snapshots from their actual scrollports; window, workspace, and
-non-reader pane scroll never participate.
+register their actual scroll element through
+`useMobileChromeReaderScrollport`. Exactly one active reader scrollport owns
+native scroll, primary-pointer focus handoff, and blank-canvas reveal; window,
+workspace, nested transcript segments, and non-reader pane scroll never
+participate.
 
 The provider reduces reader scroll to one normalized collapse progress. The app
 top bar, optional active reader toolbar, and inner Nexus control consume that
@@ -127,19 +130,21 @@ clearance, content offset, and reader `scrollTop` remain fixed. Downward scroll
 collapses, upward scroll reveals after the direction dead zone, and idle partial
 progress settles to the nearest endpoint.
 
-The provider resets fully shown when the active `(paneId, routeKey)` changes or
-a reader source mounts, preventing reader motion from leaking into another
-route.
+The provider resets fully shown and rebaselines from live geometry when the
+active `(paneId, routeKey)`, reader source, EPUB unit, layout generation, or
+mobile mode changes. Programmatic positioning therefore cannot become the next
+reading delta.
 
 The provider pins chrome fully visible at the document top, for reduced motion,
-and while reader restore, selection, navigation, secondary-surface, library
-picker, menu, or chrome-focus locks are held. Enabled mobile surfaces register
-as `AppBar`, `PaneToolbar`, or `NexusControl`; only the active pane toolbar
-registers. Registration centrally owns chrome-focus locks. Primary reader
-pointer intent releases stale registered-chrome focus before scrolling. Only
-the fully hidden endpoint removes control clusters from focus and the
-accessibility tree; pane identity remains represented. Desktop chrome is
-unaffected.
+and while reader restore, positioning, Find, selection, navigation,
+secondary-surface, library-picker, menu, or chrome-focus locks are held.
+`useMobileChromeVisibleLocks` is the only lock capability, and final release
+rebaselines from the live scrollport. Enabled mobile surfaces register as
+`AppBar`, `PaneToolbar`, or `NexusControl`; only the active pane toolbar
+registers. Focus on a real control acquires `chrome-focus`; primary pointer
+intent on the reader releases only that focus. Tracking, settling, and hidden
+control clusters are inert and absent from accessibility navigation, while the
+pane landmark remains represented. Desktop chrome is unaffected.
 
 ## Mobile Secondary Panes
 

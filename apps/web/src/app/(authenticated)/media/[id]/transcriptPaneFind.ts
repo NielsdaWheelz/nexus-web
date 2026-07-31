@@ -71,7 +71,7 @@ interface TranscriptFindOccurrence {
 interface TranscriptFindOrigin {
   readonly sessionId: number;
   readonly activeFragmentId: string | null;
-  readonly segmentListScrollTop: number;
+  readonly scrollTop: number;
 }
 
 export interface TranscriptFindAdapter extends PaneFindAdapter<TranscriptPaneFindError> {
@@ -83,7 +83,7 @@ export interface CreateTranscriptFindAdapterInput {
   readonly getCurrentSourceKey: () => PaneFindSourceKey | null;
   readonly getActiveFragmentId: () => string | null;
   readonly setActiveFragmentId: (fragmentId: string | null) => void;
-  readonly getSegmentList: () => HTMLDivElement | null;
+  readonly getScrollport: () => HTMLDivElement | null;
   readonly getMatchElement: (key: PaneFindResultKey) => HTMLSpanElement | null;
   readonly publishPresentation: (
     presentation: TranscriptFindPresentation,
@@ -195,21 +195,21 @@ function nextAnimationFrame(signal: AbortSignal): Promise<void> {
   });
 }
 
-function scrollMatchWithinList(
-  segmentList: HTMLDivElement,
+function scrollMatchIntoView(
+  scrollport: HTMLDivElement,
   matchElement: HTMLSpanElement,
 ): void {
-  if (!segmentList.contains(matchElement)) {
+  if (!scrollport.contains(matchElement)) {
     throw new Error(
-      "Transcript Find match element must belong to the segment list.",
+      "Transcript Find match element must belong to the scrollport.",
     );
   }
-  const listRect = segmentList.getBoundingClientRect();
+  const scrollportRect = scrollport.getBoundingClientRect();
   const matchRect = matchElement.getBoundingClientRect();
-  if (matchRect.top < listRect.top) {
-    segmentList.scrollTop += matchRect.top - listRect.top;
-  } else if (matchRect.bottom > listRect.bottom) {
-    segmentList.scrollTop += matchRect.bottom - listRect.bottom;
+  if (matchRect.top < scrollportRect.top) {
+    scrollport.scrollTop += matchRect.top - scrollportRect.top;
+  } else if (matchRect.bottom > scrollportRect.bottom) {
+    scrollport.scrollTop += matchRect.bottom - scrollportRect.bottom;
   }
 }
 
@@ -218,17 +218,17 @@ async function waitForMatchElement({
   signal,
   getCurrentSourceKey,
   expectedSourceKey,
-  getSegmentList,
+  getScrollport,
   getMatchElement,
 }: {
   readonly key: PaneFindResultKey;
   readonly signal: AbortSignal;
   readonly getCurrentSourceKey: () => PaneFindSourceKey | null;
   readonly expectedSourceKey: PaneFindSourceKey;
-  readonly getSegmentList: () => HTMLDivElement | null;
+  readonly getScrollport: () => HTMLDivElement | null;
   readonly getMatchElement: (key: PaneFindResultKey) => HTMLSpanElement | null;
 }): Promise<{
-  readonly segmentList: HTMLDivElement;
+  readonly scrollport: HTMLDivElement;
   readonly matchElement: HTMLSpanElement;
 }> {
   for (let attempt = 0; attempt < RENDER_ATTEMPT_LIMIT; attempt += 1) {
@@ -236,14 +236,14 @@ async function waitForMatchElement({
     if (getCurrentSourceKey() !== expectedSourceKey) {
       throwAbort("Transcript Find source was replaced.");
     }
-    const segmentList = getSegmentList();
+    const scrollport = getScrollport();
     const matchElement = getMatchElement(key);
     if (
-      segmentList &&
+      scrollport &&
       matchElement?.isConnected &&
-      segmentList.contains(matchElement)
+      scrollport.contains(matchElement)
     ) {
-      return { segmentList, matchElement };
+      return { scrollport, matchElement };
     }
     await nextAnimationFrame(signal);
   }
@@ -293,7 +293,7 @@ export function createTranscriptFindAdapter({
   getCurrentSourceKey,
   getActiveFragmentId,
   setActiveFragmentId,
-  getSegmentList,
+  getScrollport,
   getMatchElement,
   publishPresentation,
   previewLease,
@@ -503,11 +503,11 @@ export function createTranscriptFindAdapter({
           "Transcript Find preview requires a current result key.",
         );
       }
-      const segmentList = getSegmentList();
-      if (!segmentList) {
+      const scrollport = getScrollport();
+      if (!scrollport) {
         if (origin !== null) {
           throw new Error(
-            "Transcript Find segment list is unavailable during preview.",
+            "Transcript Find scrollport is unavailable during preview.",
           );
         }
         return {
@@ -523,12 +523,12 @@ export function createTranscriptFindAdapter({
       origin ??= {
         sessionId: request.sessionId,
         activeFragmentId: getActiveFragmentId(),
-        segmentListScrollTop: segmentList.scrollTop,
+        scrollTop: scrollport.scrollTop,
       };
       previewLease.acquire();
       const previous = {
         activeFragmentId: getActiveFragmentId(),
-        segmentListScrollTop: segmentList.scrollTop,
+        scrollTop: scrollport.scrollTop,
         activePresentationKey,
       };
       setActiveFragmentId(occurrence.fragmentId);
@@ -539,10 +539,10 @@ export function createTranscriptFindAdapter({
           signal: request.signal,
           getCurrentSourceKey,
           expectedSourceKey: snapshot.sourceKey,
-          getSegmentList,
+          getScrollport,
           getMatchElement,
         });
-        scrollMatchWithinList(rendered.segmentList, rendered.matchElement);
+        scrollMatchIntoView(rendered.scrollport, rendered.matchElement);
       } catch (error) {
         if (isAbort(error) && request.signal.aborted) {
           return previewReceipt(request);
@@ -560,11 +560,11 @@ export function createTranscriptFindAdapter({
             publishPresentation({ kind: "Text" });
           }
           await nextAnimationFrame(new AbortController().signal);
-          const restoredList = getSegmentList();
-          if (!restoredList) {
+          const restoredScrollport = getScrollport();
+          if (!restoredScrollport) {
             return previewReceipt(request);
           }
-          restoredList.scrollTop = previous.segmentListScrollTop;
+          restoredScrollport.scrollTop = previous.scrollTop;
         } catch {
           return previewReceipt(request);
         }
@@ -597,14 +597,14 @@ export function createTranscriptFindAdapter({
       setActiveFragmentId(captured.activeFragmentId);
       await nextAnimationFrame(request.signal);
       assertCurrentSource(request.sourceKey);
-      const segmentList = getSegmentList();
-      if (!segmentList) {
+      const scrollport = getScrollport();
+      if (!scrollport) {
         throw new Error(
-          "Transcript Find segment list is unavailable during Return.",
+          "Transcript Find scrollport is unavailable during Return.",
         );
       }
-      segmentList.scrollTop = captured.segmentListScrollTop;
-      segmentList.focus({ preventScroll: true });
+      scrollport.scrollTop = captured.scrollTop;
+      scrollport.focus({ preventScroll: true });
       origin = null;
       previewLease.completeReturn();
     },

@@ -77,6 +77,7 @@ import type {
 import {
   useMobileChrome,
   useMobileChromeSurface,
+  useMobileChromeVisibleLocks,
 } from "@/lib/workspace/mobileChrome";
 import type { EffectivePaneSizing } from "@/lib/workspace/paneSizing";
 import { usePaneReturnScrollport } from "@/lib/workspace/paneReturnMemento";
@@ -312,6 +313,7 @@ export default function PaneShell({
     readonly publication: PanePrimaryChromePublication;
   } | null>(null);
   const { motionPhase, setPaneChrome } = useMobileChrome();
+  const mobileChromeVisibleLocks = useMobileChromeVisibleLocks();
   const identityId = useId();
   const landmarkLabelId = useId();
 
@@ -583,6 +585,15 @@ export default function PaneShell({
         expandedSearchIdentity.routeKey === routeKey);
   const searchExpandedRef = useRef(searchExpanded);
   searchExpandedRef.current = searchExpanded;
+  const paneFindOpen =
+    isMobile &&
+    isActive &&
+    searchExpanded &&
+    acceptedSearch?.kind === "FindOccurrences";
+  useLayoutEffect(() => {
+    if (!paneFindOpen) return;
+    return mobileChromeVisibleLocks.acquire("pane-find");
+  }, [mobileChromeVisibleLocks, paneFindOpen]);
   const focusSearchInput = useCallback(() => {
     window.requestAnimationFrame(() => {
       searchInputRef.current?.focus({ preventScroll: true });
@@ -661,8 +672,8 @@ export default function PaneShell({
   const effectiveActions =
     acceptedPrimaryChrome?.actions ?? EMPTY_HEADER_ACTIONS;
   const effectiveMenu = acceptedPrimaryChrome?.menu;
-  const toolbarHidden =
-    Boolean(effectiveToolbar) && motionPhase.kind === "Hidden";
+  const toolbarInert =
+    motionPhase.kind !== "Visible" && motionPhase.kind !== "Pinned";
   const secondaryPresentation =
     secondaryPane &&
     secondaryPublication?.groupId === secondaryPane.groupId &&
@@ -1061,12 +1072,14 @@ export default function PaneShell({
     <section
       className={styles.paneShell}
       aria-labelledby={landmarkLabelId}
+      data-pane-activation-focus="true"
       data-testid="pane-shell-root"
       data-pane-shell="true"
       data-header-kind={header.kind}
       data-active={isActive ? "true" : "false"}
       data-mobile={isMobile ? "true" : "false"}
       style={shellStyle}
+      tabIndex={-1}
     >
       <span id={landmarkLabelId} className="sr-only">
         {accessibleName}
@@ -1110,6 +1123,8 @@ export default function PaneShell({
               id={searchRowId}
               className={styles.toolbar}
               data-testid="pane-search-toolbar"
+              aria-hidden={toolbarInert || undefined}
+              inert={toolbarInert || undefined}
             >
               <PaneSearchBar
                 ref={searchInputRef}
@@ -1122,8 +1137,8 @@ export default function PaneShell({
             <div
               className={styles.toolbar}
               data-testid="pane-shell-toolbar"
-              aria-hidden={toolbarHidden || undefined}
-              inert={toolbarHidden || undefined}
+              aria-hidden={toolbarInert || undefined}
+              inert={toolbarInert || undefined}
             >
               {effectiveToolbar}
             </div>

@@ -75,7 +75,7 @@ export default defineConfig({
       : [
           {
             name: "chromium",
-            grepInvert: /@real-media|@recovery/,
+            grepInvert: /@real-media|@recovery|@mobile-chrome/,
             use: {
               ...devices["Desktop Chrome"],
               storageState: ".auth/user.json",
@@ -92,6 +92,18 @@ export default defineConfig({
             use: {
               ...devices["Desktop Chrome"],
               storageState: ".auth/user.json",
+            },
+            dependencies: ["setup"],
+          },
+          {
+            name: "mobile-chrome",
+            grep: /@mobile-chrome/,
+            use: {
+              ...devices["Pixel 7"],
+              storageState: ".auth/user.json",
+              trace: "retain-on-failure" as const,
+              screenshot: "only-on-failure" as const,
+              video: "retain-on-failure" as const,
             },
             dependencies: ["setup"],
           },

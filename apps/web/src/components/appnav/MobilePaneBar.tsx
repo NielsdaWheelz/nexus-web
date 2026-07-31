@@ -2,7 +2,6 @@
 
 import {
   useCallback,
-  useEffect,
   useMemo,
   useRef,
   type FocusEvent as ReactFocusEvent,
@@ -18,6 +17,7 @@ import type {
 import {
   useMobileChrome,
   useMobileChromeSurface,
+  useMobileChromeVisibleLocks,
 } from "@/lib/workspace/mobileChrome";
 import { usePaneWarm } from "@/lib/panes/paneWarm";
 import styles from "./AppNav.module.css";
@@ -38,21 +38,13 @@ function activeCollapsedFilterAction(
 }
 
 export default function MobilePaneBar() {
-  const { motionPhase, paneChrome, acquireVisibleLock, finishSettle } =
-    useMobileChrome();
+  const { motionPhase, paneChrome, finishSettle } = useMobileChrome();
+  const visibleLocks = useMobileChromeVisibleLocks();
   const warmPane = usePaneWarm();
   const navigation = paneChrome?.navigation;
   const releaseLockRef = useRef<(() => void) | null>(null);
   const topBarRef = useRef<HTMLElement>(null);
   useMobileChromeSurface(topBarRef, "AppBar", true);
-
-  useEffect(
-    () => () => {
-      releaseLockRef.current?.();
-      releaseLockRef.current = null;
-    },
-    [],
-  );
 
   const menuOptions = useMemo<readonly ActionDescriptor[]>(() => {
     const forward: ActionDescriptor[] = navigation?.canGoForward
@@ -78,18 +70,19 @@ export default function MobilePaneBar() {
   const optionsLabel = activeFilterAction
     ? `Pane options, ${activeFilterAction.label}`
     : "Pane options";
-  const controlsHidden = motionPhase.kind === "Hidden";
+  const controlsInert =
+    motionPhase.kind !== "Visible" && motionPhase.kind !== "Pinned";
   const handleActionMenuOpenChange = useCallback(
     (open: boolean) => {
       if (open) {
         if (releaseLockRef.current) return;
-        releaseLockRef.current = acquireVisibleLock("action-menu");
+        releaseLockRef.current = visibleLocks.acquire("action-menu");
         return;
       }
       releaseLockRef.current?.();
       releaseLockRef.current = null;
     },
-    [acquireVisibleLock],
+    [visibleLocks],
   );
   const handleIdentityClickCapture = useCallback(
     (event: ReactMouseEvent<HTMLDivElement>) => {
@@ -118,11 +111,9 @@ export default function MobilePaneBar() {
     <header
       ref={topBarRef}
       className={styles.topBar}
-      data-mobile-chrome-focus="true"
       data-mobile-chrome-phase={motionPhase.kind}
       data-header-kind={paneChrome?.header.kind}
       data-pane-chrome-for={paneChrome?.paneId}
-      tabIndex={-1}
       onTransitionEnd={(event) => {
         if (
           event.target === event.currentTarget &&
@@ -135,8 +126,8 @@ export default function MobilePaneBar() {
       <div
         className={styles.topBarControls}
         data-testid="top-bar-controls"
-        aria-hidden={controlsHidden || undefined}
-        inert={controlsHidden || undefined}
+        aria-hidden={controlsInert || undefined}
+        inert={controlsInert || undefined}
       >
         {navigation?.canGoBack ? (
           <button
@@ -160,6 +151,7 @@ export default function MobilePaneBar() {
       >
         {paneChrome ? (
           <PaneHeaderIdentity
+            creditsInert={controlsInert}
             id={paneChrome.identityId}
             model={paneChrome.header}
             projection="Mobile"
@@ -170,8 +162,8 @@ export default function MobilePaneBar() {
       <div
         className={styles.topBarControls}
         data-testid="top-bar-controls"
-        aria-hidden={controlsHidden || undefined}
-        inert={controlsHidden || undefined}
+        aria-hidden={controlsInert || undefined}
+        inert={controlsInert || undefined}
       >
         {paneChrome ? (
           <ActionMenu

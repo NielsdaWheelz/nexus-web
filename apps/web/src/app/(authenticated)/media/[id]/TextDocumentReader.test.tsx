@@ -2,6 +2,7 @@ import { createRef, type CSSProperties, type MouseEvent } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { describe, expect, it, vi } from "vitest";
+import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
 import TextDocumentReader from "./TextDocumentReader";
 import styles from "./page.module.css";
 
@@ -18,6 +19,8 @@ function renderReader(
   const onContentBlur = vi.fn();
   const props: Parameters<typeof TextDocumentReader>[0] = {
     mediaId: "media-1",
+    mobileChromeSourceKey: "web:media-1:fragment-1",
+    mobileChromeEnabled: false,
     readerRootRef: createRef<HTMLDivElement>(),
     contentRef: createRef<HTMLDivElement>(),
     textViewportRef: createRef<HTMLDivElement>(),
@@ -47,7 +50,11 @@ function renderReader(
     ...overrides,
   };
 
-  const view = render(<TextDocumentReader {...props} />);
+  const view = render(
+    <MobileChromeProvider>
+      <TextDocumentReader {...props} />
+    </MobileChromeProvider>,
+  );
   return {
     props,
     rerender: view.rerender,
@@ -174,7 +181,15 @@ describe("TextDocumentReader", () => {
       clientHeight: 400,
     });
 
-    rerender(<TextDocumentReader {...props} mediaId="media-2" />);
+    rerender(
+      <MobileChromeProvider>
+        <TextDocumentReader
+          {...props}
+          mediaId="media-2"
+          mobileChromeSourceKey="web:media-2:fragment-1"
+        />
+      </MobileChromeProvider>,
+    );
     expect(onViewportReady).toHaveBeenCalledTimes(2);
   });
 

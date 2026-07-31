@@ -8,6 +8,7 @@ import type {
 import styles from "./ResourceHead.module.css";
 
 interface ResourceHeadProps {
+  readonly creditsInert?: boolean;
   readonly id: string;
   readonly maxVisibleCredits: 1 | 2;
   readonly resource: PaneResourceHeaderState;
@@ -103,6 +104,7 @@ function Credits({
 }
 
 export default function ResourceHead({
+  creditsInert = false,
   id,
   maxVisibleCredits,
   resource,
@@ -133,7 +135,12 @@ export default function ResourceHead({
           title
         )}
       </h1>
-      <p className={styles.credits} data-resource-credits="true">
+      <p
+        className={styles.credits}
+        data-resource-credits="true"
+        aria-hidden={creditsInert || undefined}
+        inert={creditsInert || undefined}
+      >
         <Credits groups={creditGroups} maxVisibleCredits={maxVisibleCredits} />
       </p>
     </div>

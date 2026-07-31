@@ -34,7 +34,8 @@ export default function NexusButton({
   }, [mobileViewport, switchboardOpen]);
   const label =
     paneCount === 1 ? "Open Nexus, 1 tab" : `Open Nexus, ${paneCount} tabs`;
-  const hidden = motionPhase.kind === "Hidden";
+  const motionInert =
+    motionPhase.kind !== "Visible" && motionPhase.kind !== "Pinned";
   return (
     <div
       ref={wrapperRef}
@@ -47,16 +48,20 @@ export default function NexusButton({
         className={styles.nexusButton}
         aria-label={label}
         aria-haspopup="dialog"
-        aria-hidden={hidden || switchboardOpen || undefined}
-        inert={hidden || switchboardOpen || undefined}
+        aria-hidden={motionInert || switchboardOpen || undefined}
+        inert={motionInert || switchboardOpen || undefined}
         data-mobile-chrome-phase={motionPhase.kind}
         onClick={() => {
           beginSwitchboardPerformance(NEXUS_OPEN_PERFORMANCE);
           onOpen();
         }}
       >
-        <AsterismMark size={22} />
-        <span aria-hidden="true">{paneCount}</span>
+        <span className={styles.nexusFace}>
+          <AsterismMark className={styles.nexusMark} size={20} />
+        </span>
+        <span className={styles.nexusCount} aria-hidden="true">
+          {paneCount}
+        </span>
       </button>
     </div>
   );

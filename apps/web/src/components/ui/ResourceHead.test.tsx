@@ -131,6 +131,41 @@ describe("ResourceHead", () => {
     expect(screen.getByText("Narrator:")).toBeVisible();
   });
 
+  it("keeps the title exposed while making mobile credits inert", () => {
+    render(
+      <ResourceHead
+        creditsInert
+        id="resource-heading"
+        maxVisibleCredits={1}
+        resource={{
+          status: "ready",
+          title: "The Left Hand of Darkness",
+          creditGroups: [
+            {
+              kind: "authors",
+              credits: [
+                { label: "Ursula K. Le Guin", href: "/authors/ursula" },
+              ],
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", {
+        level: 1,
+        name: "The Left Hand of Darkness",
+      }),
+    ).toBeVisible();
+    const credits = screen.getByRole("paragraph", { hidden: true });
+    expect(credits).toHaveAttribute("aria-hidden", "true");
+    expect(credits).toHaveAttribute("inert");
+    expect(
+      screen.queryByRole("link", { name: "Ursula K. Le Guin" }),
+    ).toBeNull();
+  });
+
   it("keeps a named busy heading while pending", () => {
     render(
       <ResourceHead

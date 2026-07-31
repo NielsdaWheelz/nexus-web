@@ -6,7 +6,7 @@ import LibraryEntryEditor from "@/components/libraries/LibraryEntryEditor";
 import type { LibraryPlacementSession } from "@/lib/libraries/placementController";
 import { useLibraryPlacement } from "@/lib/libraries/useLibraryPlacement";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import { usePaneMobileChromeController } from "@/lib/workspace/mobileChrome";
+import { useMobileChromeVisibleLocks } from "@/lib/workspace/mobileChrome";
 
 interface LibraryPlacementOverlayProps {
   session: LibraryPlacementSession | null;
@@ -14,8 +14,8 @@ interface LibraryPlacementOverlayProps {
 }
 
 function MobileChromeLock() {
-  const { acquireVisibleLock } = usePaneMobileChromeController();
-  useEffect(() => acquireVisibleLock("library-picker"), [acquireVisibleLock]);
+  const { acquire } = useMobileChromeVisibleLocks();
+  useEffect(() => acquire("library-picker"), [acquire]);
   return null;
 }
 

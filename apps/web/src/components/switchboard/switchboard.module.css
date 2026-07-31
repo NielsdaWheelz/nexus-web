@@ -301,41 +301,93 @@
 }
 
 .nexusWrapper {
+  --nexus-bottom-gap: 12px;
   position: fixed;
   z-index: var(--z-overlay);
-  right: max(var(--space-4), env(safe-area-inset-right));
-  bottom: calc(var(--mobile-nexus-bottom-offset, env(safe-area-inset-bottom)) + var(--space-3));
-  display: inline-flex;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: calc(var(--mobile-nexus-bottom-offset, env(safe-area-inset-bottom)) + var(--nexus-bottom-gap));
+  width: 48px;
+  height: 48px;
   pointer-events: none;
 }
 
 .nexusButton {
   --mobile-chrome-collapse: 0;
-  display: inline-flex;
-  min-width: 56px;
-  min-height: 56px;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 0 var(--space-3);
-  border: 1px solid var(--edge-strong);
+  position: relative;
+  display: block;
+  box-sizing: border-box;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: 0;
   border-radius: var(--radius-full);
-  background: var(--accent);
-  color: var(--ink-on-accent);
-  box-shadow: var(--shadow-4);
-  font-weight: var(--weight-semibold);
+  background: transparent;
+  color: var(--ink);
   pointer-events: auto;
   transform: translateY(
     calc(
       var(--mobile-chrome-collapse) *
-        (100% + var(--mobile-nexus-bottom-offset, env(safe-area-inset-bottom)) + var(--space-3))
+        (100% + var(--mobile-nexus-bottom-offset, env(safe-area-inset-bottom)) + var(--nexus-bottom-gap))
     )
   );
   will-change: transform;
 }
 
+.nexusFace {
+  position: absolute;
+  inset: 3px;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  border: 1px solid var(--edge-strong);
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-2);
+  color: var(--accent);
+}
+
+.nexusMark {
+  display: block;
+  color: var(--accent);
+}
+
+.nexusCount {
+  position: absolute;
+  z-index: 1;
+  inset-block-start: 1px;
+  inset-inline-end: 1px;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  width: 1.625em;
+  height: 1.625em;
+  border: 1px solid var(--surface-2);
+  border-radius: var(--radius-sm);
+  background: var(--edge-strong);
+  color: var(--ink);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.nexusButton:focus-visible {
+  outline: var(--focus-ring-width) solid var(--ring);
+  outline-offset: 0;
+}
+
+.nexusButton:active .nexusFace {
+  background: var(--surface-active);
+  box-shadow: var(--shadow-1);
+}
+
 .nexusButton[data-mobile-chrome-phase="Settling"] {
   transition: --mobile-chrome-collapse var(--duration-fast) var(--ease-glide);
+}
+
+.nexusButton[data-mobile-chrome-phase="Hidden"] {
+  visibility: hidden;
 }
 
 @media (hover: hover) {
@@ -351,6 +403,32 @@
   .form button:hover {
     background: var(--surface-hover);
     color: var(--ink);
+  }
+
+  .nexusButton:hover .nexusFace {
+    background: var(--surface-hover);
+  }
+}
+
+@media (forced-colors: active) {
+  .nexusFace {
+    border-color: CanvasText;
+    background: Canvas;
+    box-shadow: none;
+  }
+
+  .nexusMark {
+    color: CanvasText;
+  }
+
+  .nexusCount {
+    border-color: Canvas;
+    background: CanvasText;
+    color: Canvas;
+  }
+
+  .nexusButton:focus-visible {
+    outline-color: Highlight;
   }
 }
 

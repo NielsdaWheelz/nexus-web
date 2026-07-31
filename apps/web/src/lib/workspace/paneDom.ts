@@ -30,6 +30,20 @@ export function findPaneChromeFocusTarget(
   );
 }
 
+export function findPaneActivationFocusTarget(
+  paneId: string | null | undefined,
+): HTMLElement | null {
+  if (!paneId) return null;
+  const pane = Array.from(
+    document.querySelectorAll<HTMLElement>("[data-pane-id]"),
+  ).find((candidate) => candidate.dataset.paneId === paneId);
+  const landmark = pane?.querySelector<HTMLElement>(
+    "[data-pane-activation-focus='true']",
+  );
+  if (landmark?.isConnected && !landmark.closest("[inert]")) return landmark;
+  return null;
+}
+
 export function findPaneSearchFocusTarget(
   paneId: string | null | undefined,
 ): HTMLElement | null {

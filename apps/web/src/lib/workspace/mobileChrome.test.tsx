@@ -1,15 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import {
-  useEffect,
+  StrictMode,
+  useCallback,
   useLayoutEffect,
   useRef,
+  type ComponentProps,
   type MutableRefObject,
 } from "react";
 import {
   MobileChromeProvider,
   useMobileChrome,
+  useMobileChromeReaderScrollport,
   useMobileChromeSurface,
+  useMobileChromeVisibleLocks,
   type MobileChromeSurfaceRole,
 } from "@/lib/workspace/mobileChrome";
 
@@ -20,11 +24,24 @@ vi.mock("@/lib/ui/useIsMobileViewport", () => ({
   useIsMobileViewport: () => viewport.mobile,
 }));
 
-const snapshot = (scrollTop: number) => ({
-  scrollTop,
-  scrollHeight: 2_000,
-  clientHeight: 500,
-});
+function configureScrollport(
+  node: HTMLElement,
+  {
+    scrollTop,
+    scrollHeight,
+    clientHeight,
+  }: {
+    scrollTop: number;
+    scrollHeight: number;
+    clientHeight: number;
+  },
+) {
+  Object.defineProperties(node, {
+    scrollTop: { configurable: true, writable: true, value: scrollTop },
+    scrollHeight: { configurable: true, value: scrollHeight },
+    clientHeight: { configurable: true, value: clientHeight },
+  });
+}
 
 function RegisteredSurface({
   role,
@@ -40,158 +57,102 @@ function RegisteredSurface({
   }, [focusOnMount]);
   useMobileChromeSurface(ref, role, true);
   return (
-    <div ref={ref} data-testid={role}>
+    <div ref={ref} data-testid={role} tabIndex={-1}>
       <button ref={firstControlRef} type="button" data-testid={`${role}-first`} />
       <button type="button" data-testid={`${role}-second`} />
     </div>
   );
 }
 
-function paneChrome(paneId: string, routeKey = `${paneId}:route-a`) {
-  return {
-    paneId,
-    routeKey,
-    identityId: `${paneId}-identity`,
-    header: {
-      kind: "section" as const,
-      standingHead: paneId,
-      folio: { kind: "none" as const },
-      pending: false,
-    },
-    activateIdentityAnchor: noopActivateIdentityAnchor,
-    navigation: {
-      canGoBack: false,
-      canGoForward: false,
-      onBack: () => {},
-      onForward: () => {},
-    },
-    actions: [],
-    options: [],
-  };
+function RootControlSurface() {
+  const ref = useRef<HTMLButtonElement>(null);
+  useMobileChromeSurface(ref, "NexusControl", true);
+  return <button ref={ref} type="button" data-testid="NexusControl-root" />;
 }
 
-function SourceOnMount({ update }: { update: boolean }) {
-  const { startReaderScroll, updateReaderScroll } = useMobileChrome();
-  useEffect(() => {
-    startReaderScroll(snapshot(100));
-    if (update) updateReaderScroll(snapshot(132));
-  }, [startReaderScroll, update, updateReaderScroll]);
-  return null;
-}
-
-function Surface({
-  reversed = false,
-  renders,
-  startOnMount = false,
-  updateOnMount = false,
-  focusAppBarOnMount = false,
-  showAppBar = true,
+function ReaderScrollport({
+  sourceKey = "reader-a",
+  enabled = true,
+  initialScrollTop = 100,
+  scrollHeight = 2_000,
+  clientHeight = 500,
+  testId = "reader",
 }: {
-  reversed?: boolean;
-  renders?: MutableRefObject<number>;
-  startOnMount?: boolean;
-  updateOnMount?: boolean;
-  focusAppBarOnMount?: boolean;
-  showAppBar?: boolean;
+  sourceKey?: string;
+  enabled?: boolean;
+  initialScrollTop?: number;
+  scrollHeight?: number;
+  clientHeight?: number;
+  testId?: string;
 }) {
-  if (renders) renders.current += 1;
-  const {
-    motionPhase,
-    startReaderScroll,
-    updateReaderScroll,
-    acquireVisibleLock,
-    beginReaderPointerInteraction,
-    finishSettle,
-    setPaneChrome,
-  } = useMobileChrome();
-  const releaseFirstRef = useRef<(() => void) | null>(null);
-  const releaseSecondRef = useRef<(() => void) | null>(null);
-  const surfaces = (
-    <>
-      {showAppBar ? (
-        <RegisteredSurface
-          role="AppBar"
-          focusOnMount={focusAppBarOnMount}
-        />
-      ) : null}
-      <RegisteredSurface role="PaneToolbar" />
-      <RegisteredSurface role="NexusControl" />
-    </>
-  );
-  const reversedSurfaces = (
-    <>
-      <RegisteredSurface role="PaneToolbar" />
-      <RegisteredSurface role="NexusControl" />
-      {showAppBar ? <RegisteredSurface role="AppBar" /> : null}
-    </>
+  const localRef = useRef<HTMLDivElement | null>(null);
+  const chromeRef = useMobileChromeReaderScrollport<HTMLDivElement>({
+    sourceKey,
+    enabled,
+  });
+  const setRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      localRef.current = node;
+      if (node && node.dataset.scrollportConfigured !== "true") {
+        configureScrollport(node, {
+          scrollTop: initialScrollTop,
+          scrollHeight,
+          clientHeight,
+        });
+        node.dataset.scrollportConfigured = "true";
+      }
+      chromeRef(node);
+    },
+    [chromeRef, clientHeight, initialScrollTop, scrollHeight],
   );
   return (
-    <div>
-      {reversed ? reversedSurfaces : surfaces}
-      {startOnMount ? <SourceOnMount update={updateOnMount} /> : null}
-      <div data-testid="phase">{motionPhase.kind}</div>
-      <button
-        type="button"
-        data-testid="start"
-        onClick={() => startReaderScroll(snapshot(100))}
-      />
-      <button
-        type="button"
-        data-testid="start-top"
-        onClick={() => startReaderScroll(snapshot(0))}
-      />
-      <button
-        type="button"
-        data-testid="scroll-40"
-        onClick={() => updateReaderScroll(snapshot(40))}
-      />
-      <button
-        type="button"
-        data-testid="scroll-116"
-        onClick={() => updateReaderScroll(snapshot(116))}
-      />
-      <button
-        type="button"
-        data-testid="scroll-132"
-        onClick={() => updateReaderScroll(snapshot(132))}
-      />
-      <button
-        type="button"
-        data-testid="scroll-140"
-        onClick={() => updateReaderScroll(snapshot(140))}
-      />
-      <button
-        type="button"
-        data-testid="scroll-148"
-        onClick={() => updateReaderScroll(snapshot(148))}
-      />
-      <button
-        type="button"
-        data-testid="scroll-top"
-        onClick={() => updateReaderScroll(snapshot(8))}
-      />
-      <button
-        type="button"
-        data-testid="pane-a"
-        onClick={() => setPaneChrome(paneChrome("pane-a"))}
-      />
-      <button
-        type="button"
-        data-testid="pane-a-route-b"
-        onClick={() => setPaneChrome(paneChrome("pane-a", "pane-a:route-b"))}
-      />
+    <div ref={setRef} data-testid={testId}>
+      <span data-testid={`${testId}-blank`}>Reader canvas</span>
+      <button type="button" data-testid={`${testId}-control`}>
+        Reader control
+      </button>
+      <span
+        data-testid={`${testId}-handled`}
+        onClick={(event) => event.preventDefault()}
+      >
+        Handled canvas
+      </span>
+      <span data-highlight-id="highlight-a" data-testid={`${testId}-highlight`}>
+        Highlight
+      </span>
+    </div>
+  );
+}
+
+function MotionProbe({ renders }: { renders?: MutableRefObject<number> }) {
+  if (renders) renders.current += 1;
+  const { motionPhase, finishSettle } = useMobileChrome();
+  return (
+    <>
+      <output data-testid="phase">{motionPhase.kind}</output>
+      <button type="button" data-testid="finish" onClick={finishSettle} />
+    </>
+  );
+}
+
+function LockControls() {
+  const visibleLocks = useMobileChromeVisibleLocks();
+  const releaseFirstRef = useRef<(() => void) | null>(null);
+  const releaseSecondRef = useRef<(() => void) | null>(null);
+  return (
+    <>
       <button
         type="button"
         data-testid="lock-first"
         onClick={() => {
-          releaseFirstRef.current = acquireVisibleLock("text-selection");
+          releaseFirstRef.current = visibleLocks.acquire("text-selection");
         }}
       />
       <button
         type="button"
         data-testid="lock-second"
         onClick={() => {
-          releaseSecondRef.current = acquireVisibleLock("pdf-selection");
+          releaseSecondRef.current = visibleLocks.acquire("pdf-selection");
         }}
       />
       <button
@@ -201,44 +162,96 @@ function Surface({
       />
       <button
         type="button"
+        data-testid="release-first-again"
+        onClick={() => releaseFirstRef.current?.()}
+      />
+      <button
+        type="button"
         data-testid="release-second"
         onClick={() => releaseSecondRef.current?.()}
       />
-      <button type="button" data-testid="finish" onClick={finishSettle} />
-      <button
-        type="button"
-        data-testid="reader-pointer"
-        onClick={beginReaderPointerInteraction}
-      />
-    </div>
+    </>
   );
 }
 
-function renderSurface(
-  options: {
-    reversed?: boolean;
-    renders?: MutableRefObject<number>;
-    startOnMount?: boolean;
-    updateOnMount?: boolean;
-    focusAppBarOnMount?: boolean;
-    showAppBar?: boolean;
-  } = {},
-) {
-  return render(
-    <MobileChromeProvider>
-      <Surface {...options} />
-    </MobileChromeProvider>,
-  );
+function PanePublisher({ routeKey }: { routeKey: string }) {
+  const { setPaneChrome } = useMobileChrome();
+  useLayoutEffect(() => {
+    setPaneChrome({
+      paneId: "pane-a",
+      routeKey,
+      identityId: "pane-a-identity",
+      header: {
+        kind: "section",
+        standingHead: "Pane A",
+        folio: { kind: "none" },
+        pending: false,
+      },
+      activateIdentityAnchor: noopActivateIdentityAnchor,
+      navigation: {
+        canGoBack: false,
+        canGoForward: false,
+        onBack: () => {},
+        onForward: () => {},
+      },
+      actions: [],
+      options: [],
+    });
+    return () => setPaneChrome(null);
+  }, [routeKey, setPaneChrome]);
+  return null;
 }
 
-function click(testId: string) {
-  fireEvent.click(screen.getByTestId(testId));
+function Harness({
+  sourceKey,
+  enabled,
+  showReader = true,
+  readerKey = "reader-node-a",
+  showAppBar = true,
+  showLocks = true,
+  focusAppBarOnMount = false,
+  renders,
+}: {
+  sourceKey?: string;
+  enabled?: boolean;
+  showReader?: boolean;
+  readerKey?: string;
+  showAppBar?: boolean;
+  showLocks?: boolean;
+  focusAppBarOnMount?: boolean;
+  renders?: MutableRefObject<number>;
+}) {
+  return (
+    <>
+      {showAppBar ? (
+        <RegisteredSurface
+          role="AppBar"
+          focusOnMount={focusAppBarOnMount}
+        />
+      ) : null}
+      <RegisteredSurface role="PaneToolbar" />
+      <RegisteredSurface role="NexusControl" />
+      {showReader ? (
+        <ReaderScrollport
+          key={readerKey}
+          sourceKey={sourceKey}
+          enabled={enabled}
+        />
+      ) : null}
+      {showLocks ? <LockControls /> : null}
+      <MotionProbe renders={renders} />
+      <button type="button" data-testid="outside">
+        Outside
+      </button>
+    </>
+  );
 }
 
 describe("MobileChromeProvider", () => {
   let frames = new Map<number, FrameRequestCallback>();
   let nextFrame = 0;
   let reducedMotion = false;
+  let reducedMotionListeners = new Set<() => void>();
   let removeMediaListener = vi.fn();
 
   beforeEach(() => {
@@ -255,11 +268,18 @@ describe("MobileChromeProvider", () => {
     vi.spyOn(window, "matchMedia").mockImplementation(
       ((query: string) =>
         ({
-          matches:
-            query === "(prefers-reduced-motion: reduce)" && reducedMotion,
+          get matches() {
+            return (
+              query === "(prefers-reduced-motion: reduce)" && reducedMotion
+            );
+          },
           media: query,
           onchange: null,
-          addEventListener: vi.fn(),
+          addEventListener: vi.fn(
+            (eventName: string, listener: () => void) => {
+              if (eventName === "change") reducedMotionListeners.add(listener);
+            },
+          ),
           removeEventListener: removeMediaListener,
           addListener: vi.fn(),
           removeListener: vi.fn(),
@@ -274,6 +294,7 @@ describe("MobileChromeProvider", () => {
     frames = new Map();
     nextFrame = 0;
     reducedMotion = false;
+    reducedMotionListeners = new Set();
     removeMediaListener = vi.fn();
     document.body.innerHTML = "";
   });
@@ -284,18 +305,42 @@ describe("MobileChromeProvider", () => {
     act(() => queued.forEach((callback) => callback(0)));
   }
 
+  function renderHarness(
+    props: ComponentProps<typeof Harness> = {},
+  ) {
+    return render(
+      <MobileChromeProvider>
+        <Harness {...props} />
+      </MobileChromeProvider>,
+    );
+  }
+
+  function reader(testId = "reader") {
+    return screen.getByTestId(testId);
+  }
+
+  function scrollTo(scrollTop: number, testId = "reader") {
+    const node = reader(testId);
+    node.scrollTop = scrollTop;
+    fireEvent.scroll(node);
+  }
+
   function progress(role: MobileChromeSurfaceRole) {
     return screen
       .getByTestId(role)
       .style.getPropertyValue("--mobile-chrome-collapse");
   }
 
-  it("initializes all three surfaces together and coalesces tracking writes", () => {
-    renderSurface();
-    click("start");
+  function click(testId: string) {
+    fireEvent.click(screen.getByTestId(testId));
+  }
+
+  it("registers the real scrollport immediately and coalesces all three surface writes", () => {
+    renderHarness();
     flushFrame();
-    click("scroll-116");
-    click("scroll-132");
+
+    scrollTo(116);
+    scrollTo(132);
 
     expect(frames.size).toBe(1);
     flushFrame();
@@ -304,146 +349,451 @@ describe("MobileChromeProvider", () => {
     expect(progress("NexusControl")).toBe("0.375");
   });
 
-  it("defects when more than one enabled surface claims a role", () => {
-    function DuplicateAppBar() {
-      return (
-        <>
-          <RegisteredSurface role="AppBar" />
-          <RegisteredSurface role="AppBar" />
-        </>
-      );
-    }
-
-    expect(() =>
-      render(
-        <MobileChromeProvider>
-          <DuplicateAppBar />
-        </MobileChromeProvider>,
-      ),
-    ).toThrow("Mobile chrome already has an enabled AppBar surface");
-  });
-
-  it("pins and releases chrome from registered native focus lifecycle", () => {
-    renderSurface();
-    const first = screen.getByTestId("AppBar-first");
-    const second = screen.getByTestId("AppBar-second");
-
-    act(() => first.focus());
-    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
-    act(() => second.focus());
-    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
-    act(() => screen.getByTestId("reader-pointer").focus());
-
-    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
-  });
-
-  it("reconciles chrome focus that exists when a surface registers", () => {
-    renderSurface({ focusAppBarOnMount: true });
-
-    expect(screen.getByTestId("AppBar-first")).toHaveFocus();
-    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
-  });
-
-  it("reconciles existing chrome focus when mobile mode enters", () => {
-    viewport.mobile = false;
-    const view = renderSurface();
-    act(() => screen.getByTestId("AppBar-first").focus());
-    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
-
-    viewport.mobile = true;
-    view.rerender(
+  it("uses the first forward gesture after a top baseline", () => {
+    render(
       <MobileChromeProvider>
-        <Surface />
+        <RegisteredSurface role="AppBar" />
+        <ReaderScrollport initialScrollTop={0} />
+        <MotionProbe />
       </MobileChromeProvider>,
     );
-
-    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
-  });
-
-  it("hands primary reader pointer intent to the document from registered chrome", () => {
-    renderSurface();
-    const focusedControl = screen.getByTestId("NexusControl-first");
-    act(() => focusedControl.focus());
-    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
-
-    click("reader-pointer");
-
-    expect(focusedControl).not.toHaveFocus();
-    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
-  });
-
-  it("does not blur focus outside registered chrome", () => {
-    renderSurface();
-    const readerPointer = screen.getByTestId("reader-pointer");
-    act(() => readerPointer.focus());
-
-    click("reader-pointer");
-
-    expect(readerPointer).toHaveFocus();
-  });
-
-  it("does not hand focus off outside mobile mode", () => {
-    viewport.mobile = false;
-    renderSurface();
-    const focusedControl = screen.getByTestId("AppBar-first");
-    act(() => focusedControl.focus());
-
-    click("reader-pointer");
-
-    expect(focusedControl).toHaveFocus();
-  });
-
-  it("keeps non-focus locks while reader pointer intent releases chrome focus", () => {
-    renderSurface();
-    click("lock-first");
-    act(() => screen.getByTestId("NexusControl-first").focus());
-    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
-
-    click("reader-pointer");
-
-    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
-    click("release-first");
-    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
-  });
-
-  it("releases its owned focus lock when a surface unregisters", () => {
-    const view = renderSurface();
-    act(() => screen.getByTestId("AppBar-first").focus());
-    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
-
-    view.rerender(
-      <MobileChromeProvider>
-        <Surface showAppBar={false} />
-      </MobileChromeProvider>,
-    );
-
-    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
-  });
-
-  it("does not erase a child source baseline while registering initial motion preference", () => {
-    renderSurface({ startOnMount: true });
-    flushFrame();
-    click("scroll-132");
     flushFrame();
 
-    expect(progress("AppBar")).toBe("0.375");
-  });
-
-  it("uses the first down gesture after a top start", () => {
-    renderSurface();
-    click("start-top");
-    flushFrame();
-    click("scroll-40");
+    scrollTo(40);
     flushFrame();
 
     expect(progress("AppBar")).toBe("0.5");
   });
 
-  it("samples AppBar progress when interruption registration order is reversed", () => {
-    renderSurface({ reversed: true });
-    click("start");
+  it("keeps short content fully visible", () => {
+    render(
+      <MobileChromeProvider>
+        <RegisteredSurface role="AppBar" />
+        <ReaderScrollport
+          initialScrollTop={0}
+          scrollHeight={500}
+          clientHeight={500}
+        />
+        <MotionProbe />
+      </MobileChromeProvider>,
+    );
     flushFrame();
-    click("scroll-132");
+
+    scrollTo(200);
+    flushFrame();
+
+    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
+    expect(progress("AppBar")).toBe("0");
+  });
+
+  it("defects when more than one enabled reader scrollport registers", () => {
+    expect(() =>
+      render(
+        <MobileChromeProvider>
+          <ReaderScrollport testId="reader-a" />
+          <ReaderScrollport testId="reader-b" />
+        </MobileChromeProvider>,
+      ),
+    ).toThrow("Mobile chrome already has an enabled reader scrollport");
+  });
+
+  it("supports StrictMode callback-ref replay without duplicate registration", () => {
+    expect(() =>
+      render(
+        <StrictMode>
+          <MobileChromeProvider>
+            <Harness />
+          </MobileChromeProvider>
+        </StrictMode>,
+      ),
+    ).not.toThrow();
+    flushFrame();
+    scrollTo(132);
+    flushFrame();
+    expect(progress("AppBar")).toBe("0.375");
+  });
+
+  it("registers a late mount and cleans up when disabled or unmounted", () => {
+    const view = renderHarness({ showReader: false });
+    flushFrame();
+    view.rerender(
+      <MobileChromeProvider>
+        <Harness showReader />
+      </MobileChromeProvider>,
+    );
+    flushFrame();
+    scrollTo(132);
+    flushFrame();
+    expect(progress("AppBar")).toBe("0.375");
+
+    view.rerender(
+      <MobileChromeProvider>
+        <Harness enabled={false} />
+      </MobileChromeProvider>,
+    );
+    flushFrame();
+    expect(progress("AppBar")).toBe("0");
+    scrollTo(500);
+    flushFrame();
+    expect(progress("AppBar")).toBe("0");
+
+    view.rerender(
+      <MobileChromeProvider>
+        <Harness enabled />
+      </MobileChromeProvider>,
+    );
+    flushFrame();
+    scrollTo(532);
+    flushFrame();
+    expect(progress("AppBar")).toBe("0.375");
+
+    view.rerender(
+      <MobileChromeProvider>
+        <Harness showReader={false} />
+      </MobileChromeProvider>,
+    );
+    flushFrame();
+    expect(progress("AppBar")).toBe("0");
+  });
+
+  it("rebaselines node replacement and source changes from live geometry", () => {
+    const view = renderHarness();
+    flushFrame();
+    scrollTo(132);
+    flushFrame();
+    expect(progress("AppBar")).toBe("0.375");
+
+    view.rerender(
+      <MobileChromeProvider>
+        <Harness readerKey="reader-node-b" sourceKey="reader-a" />
+      </MobileChromeProvider>,
+    );
+    flushFrame();
+    expect(progress("AppBar")).toBe("0");
+    scrollTo(132);
+    flushFrame();
+    expect(progress("AppBar")).toBe("0.375");
+
+    reader().scrollTop = 500;
+    view.rerender(
+      <MobileChromeProvider>
+        <Harness readerKey="reader-node-b" sourceKey="reader-b" />
+      </MobileChromeProvider>,
+    );
+    flushFrame();
+    expect(progress("AppBar")).toBe("0");
+    scrollTo(532);
+    flushFrame();
+    expect(progress("AppBar")).toBe("0.375");
+  });
+
+  it("pins only real controls and releases after focus moves within and then outside chrome", () => {
+    renderHarness();
+    const surface = screen.getByTestId("AppBar");
+    const first = screen.getByTestId("AppBar-first");
+    const second = screen.getByTestId("AppBar-second");
+
+    act(() => surface.focus());
+    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
+    act(() => first.focus());
+    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
+    act(() => second.focus());
+    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
+    act(() => screen.getByTestId("outside").focus());
+    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
+  });
+
+  it("pins when the registered Nexus surface is itself the focused control", () => {
+    render(
+      <MobileChromeProvider>
+        <RegisteredSurface role="AppBar" />
+        <RootControlSurface />
+        <ReaderScrollport />
+        <MotionProbe />
+      </MobileChromeProvider>,
+    );
+    const nexus = screen.getByTestId("NexusControl-root");
+
+    act(() => nexus.focus());
+
+    expect(nexus).toHaveFocus();
+    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
+    fireEvent.pointerDown(reader(), { button: 0, isPrimary: true });
+    expect(nexus).not.toHaveFocus();
+    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
+  });
+
+  it("reconciles a focused chrome control on registration and mobile entry", () => {
+    const { unmount } = renderHarness({ focusAppBarOnMount: true });
+    expect(screen.getByTestId("AppBar-first")).toHaveFocus();
+    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
+    unmount();
+
+    viewport.mobile = false;
+    const view = renderHarness();
+    act(() => screen.getAllByTestId("AppBar-first").at(-1)?.focus());
+    expect(screen.getAllByTestId("phase").at(-1)).toHaveTextContent("Visible");
+
+    viewport.mobile = true;
+    view.rerender(
+      <MobileChromeProvider>
+        <Harness />
+      </MobileChromeProvider>,
+    );
+    expect(screen.getAllByTestId("phase").at(-1)).toHaveTextContent("Pinned");
+  });
+
+  it("reader primary pointer intent blurs only registered chrome focus", () => {
+    renderHarness();
+    const chromeControl = screen.getByTestId("NexusControl-first");
+    act(() => chromeControl.focus());
+    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
+
+    fireEvent.pointerDown(reader(), { button: 0, isPrimary: true });
+
+    expect(chromeControl).not.toHaveFocus();
+    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
+
+    const outside = screen.getByTestId("outside");
+    act(() => outside.focus());
+    fireEvent.pointerDown(reader(), { button: 0, isPrimary: true });
+    expect(outside).toHaveFocus();
+  });
+
+  it("non-primary and secondary reader pointers do not hand off focus", () => {
+    renderHarness();
+    const chromeControl = screen.getByTestId("AppBar-first");
+    act(() => chromeControl.focus());
+
+    fireEvent.pointerDown(reader(), { button: 0, isPrimary: false });
+    expect(chromeControl).toHaveFocus();
+    fireEvent.pointerDown(reader(), { button: 2, isPrimary: true });
+    expect(chromeControl).toHaveFocus();
+  });
+
+  it("preserves non-focus locks during pointer handoff", () => {
+    renderHarness();
+    click("lock-first");
+    const chromeControl = screen.getByTestId("NexusControl-first");
+    act(() => chromeControl.focus());
+
+    fireEvent.pointerDown(reader(), { button: 0, isPrimary: true });
+
+    expect(chromeControl).not.toHaveFocus();
+    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
+    click("release-first");
+    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
+  });
+
+  it("releases a surface-owned focus lock when the surface unregisters", () => {
+    const view = renderHarness();
+    act(() => screen.getByTestId("AppBar-first").focus());
+    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
+
+    view.rerender(
+      <MobileChromeProvider>
+        <Harness showAppBar={false} />
+      </MobileChromeProvider>,
+    );
+
+    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
+  });
+
+  it("holds overlapping locks until idempotent final release", () => {
+    renderHarness();
+    click("lock-first");
+    click("lock-second");
+    click("release-first");
+    click("release-first-again");
+    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
+
+    click("release-second");
+
+    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
+  });
+
+  it("releases locks acquired by a capability owner when it unmounts", () => {
+    const view = renderHarness();
+    click("lock-first");
+    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
+
+    view.rerender(
+      <MobileChromeProvider>
+        <Harness showLocks={false} />
+      </MobileChromeProvider>,
+    );
+
+    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
+  });
+
+  it("pins during tracking and rebaselines the final lock release from live geometry", () => {
+    renderHarness();
+    flushFrame();
+    scrollTo(132);
+    flushFrame();
+    expect(progress("AppBar")).toBe("0.375");
+
+    click("lock-first");
+    flushFrame();
+    scrollTo(500);
+    flushFrame();
+    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
+    expect(progress("AppBar")).toBe("0");
+
+    click("release-first");
+    scrollTo(532);
+    flushFrame();
+
+    expect(progress("AppBar")).toBe("0.375");
+  });
+
+  it("pins and safely releases during settlement", () => {
+    renderHarness();
+    flushFrame();
+    scrollTo(132);
+    flushFrame();
+    act(() => vi.advanceTimersByTime(120));
+    expect(screen.getByTestId("phase")).toHaveTextContent("Settling");
+
+    click("lock-first");
+    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
+    click("release-first");
+
+    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
+  });
+
+  it("reveals hidden chrome from an unhandled blank-canvas click after bubbling", async () => {
+    renderHarness();
+    flushFrame();
+    scrollTo(300);
+    flushFrame();
+    expect(screen.getByTestId("phase")).toHaveTextContent("Hidden");
+
+    fireEvent.click(screen.getByTestId("reader-blank"), { button: 0 });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
+    flushFrame();
+    expect(progress("AppBar")).toBe("0");
+  });
+
+  it("does not reveal from handled, interactive, annotated, modified, or selection clicks", async () => {
+    renderHarness();
+    flushFrame();
+    scrollTo(300);
+    flushFrame();
+
+    fireEvent.click(screen.getByTestId("reader-handled"), { button: 0 });
+    fireEvent.click(screen.getByTestId("reader-control"), { button: 0 });
+    fireEvent.click(screen.getByTestId("reader-highlight"), { button: 0 });
+    fireEvent.click(screen.getByTestId("reader-blank"), {
+      button: 0,
+      shiftKey: true,
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId("phase")).toHaveTextContent("Hidden");
+
+    const selection = window.getSelection();
+    if (!selection) throw new Error("Expected browser Selection");
+    const range = document.createRange();
+    range.selectNodeContents(screen.getByTestId("reader-blank"));
+    selection.removeAllRanges();
+    selection.addRange(range);
+    fireEvent.click(screen.getByTestId("reader-blank"), { button: 0 });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId("phase")).toHaveTextContent("Hidden");
+    selection.removeAllRanges();
+  });
+
+  it("resets and rebaselines when the active pane route changes", () => {
+    const view = render(
+      <MobileChromeProvider>
+        <Harness />
+        <PanePublisher routeKey="pane-a:route-a" />
+      </MobileChromeProvider>,
+    );
+    flushFrame();
+    scrollTo(132);
+    flushFrame();
+    expect(progress("AppBar")).toBe("0.375");
+
+    reader().scrollTop = 500;
+    view.rerender(
+      <MobileChromeProvider>
+        <Harness />
+        <PanePublisher routeKey="pane-a:route-b" />
+      </MobileChromeProvider>,
+    );
+    flushFrame();
+    expect(progress("AppBar")).toBe("0");
+    scrollTo(532);
+    flushFrame();
+    expect(progress("AppBar")).toBe("0.375");
+  });
+
+  it("resets on mobile exit and rebaselines on mobile entry", () => {
+    const view = renderHarness();
+    flushFrame();
+    scrollTo(132);
+    flushFrame();
+    reader().scrollTop = 500;
+
+    viewport.mobile = false;
+    view.rerender(
+      <MobileChromeProvider>
+        <Harness enabled={false} />
+      </MobileChromeProvider>,
+    );
+    flushFrame();
+    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
+    expect(progress("AppBar")).toBe("0");
+
+    viewport.mobile = true;
+    view.rerender(
+      <MobileChromeProvider>
+        <Harness />
+      </MobileChromeProvider>,
+    );
+    flushFrame();
+    scrollTo(532);
+    flushFrame();
+    expect(progress("AppBar")).toBe("0.375");
+  });
+
+  it("pins reduced motion and rebaselines when the preference is disabled", () => {
+    reducedMotion = true;
+    renderHarness();
+    flushFrame();
+    scrollTo(500);
+    flushFrame();
+    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
+    expect(progress("AppBar")).toBe("0");
+
+    reducedMotion = false;
+    if (reducedMotionListeners.size === 0) {
+      throw new Error("Expected reduced-motion change listener");
+    }
+    act(() => {
+      for (const listener of reducedMotionListeners) listener();
+    });
+    flushFrame();
+    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
+    scrollTo(532);
+    flushFrame();
+
+    expect(progress("AppBar")).toBe("0.375");
+  });
+
+  it("samples AppBar progress when a scroll interrupts settlement", () => {
+    renderHarness();
+    flushFrame();
+    scrollTo(132);
     flushFrame();
     act(() => vi.advanceTimersByTime(120));
     flushFrame();
@@ -454,7 +804,7 @@ describe("MobileChromeProvider", () => {
       .getByTestId("PaneToolbar")
       .style.setProperty("--mobile-chrome-collapse", "0.8");
 
-    click("scroll-140");
+    scrollTo(140);
 
     expect(progress("AppBar")).toBe("0.3");
     expect(progress("PaneToolbar")).toBe("0.3");
@@ -464,60 +814,29 @@ describe("MobileChromeProvider", () => {
     expect(progress("AppBar")).toBe(String(0.3 + 8 / 64));
   });
 
-  it("does not render volatile consumers for same-direction tracking samples", () => {
+  it("does not render volatile consumers for same-direction scroll frames", () => {
     const renders = { current: 0 };
-    renderSurface({ renders });
-    click("start");
+    renderHarness({ renders });
     flushFrame();
-    click("scroll-116");
+    scrollTo(116);
     flushFrame();
     const trackingRenders = renders.current;
 
-    click("scroll-132");
-    click("scroll-140");
-    click("scroll-148");
+    scrollTo(132);
+    scrollTo(140);
+    scrollTo(148);
     flushFrame();
 
     expect(renders.current).toBe(trackingRenders);
   });
 
-  it("holds both locks until the final release", () => {
-    renderSurface();
-    click("start");
-    flushFrame();
-    click("lock-first");
-    click("lock-second");
-    flushFrame();
-    click("release-first");
-    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
-    click("release-second");
-    flushFrame();
-    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
-  });
-
-  it("preserves the current baseline through a lock with no new scroll", () => {
-    renderSurface();
-    click("start");
-    flushFrame();
-    click("scroll-132");
-    flushFrame();
-    click("lock-first");
-    flushFrame();
-    click("release-first");
-    click("scroll-140");
-    click("scroll-148");
-    flushFrame();
-
-    expect(progress("AppBar")).toBe("0.125");
-  });
-
-  it("cleans queued frame, timer, and media listener on unmount", () => {
+  it("cleans its frame, timer, reader listeners, and media listener on unmount", () => {
     const cancelFrame = vi.mocked(window.cancelAnimationFrame);
     const clearTimer = vi.spyOn(window, "clearTimeout");
-    const view = renderSurface();
-    click("start");
+    const view = renderHarness();
+    const removeScrollListener = vi.spyOn(reader(), "removeEventListener");
     flushFrame();
-    click("scroll-116");
+    scrollTo(116);
     const cancelledBeforeUnmount = cancelFrame.mock.calls.length;
     const clearedBeforeUnmount = clearTimer.mock.calls.length;
 
@@ -527,94 +846,14 @@ describe("MobileChromeProvider", () => {
       cancelledBeforeUnmount,
     );
     expect(clearTimer.mock.calls.length).toBeGreaterThan(clearedBeforeUnmount);
+    expect(removeScrollListener).toHaveBeenCalledWith(
+      "scroll",
+      expect.any(Function),
+    );
     expect(frames.size).toBe(0);
     expect(removeMediaListener).toHaveBeenCalledWith(
       "change",
       expect.any(Function),
     );
-  });
-
-  it("cancels a focus-lock release write when the provider unmounts", () => {
-    const view = renderSurface();
-    act(() => screen.getByTestId("AppBar-first").focus());
-    flushFrame();
-    expect(frames.size).toBe(0);
-
-    view.unmount();
-
-    expect(frames.size).toBe(0);
-  });
-
-  it("lets source start establish the final baseline after a pane change", () => {
-    renderSurface();
-    click("pane-a");
-    click("start");
-    flushFrame();
-    click("scroll-132");
-    flushFrame();
-
-    expect(progress("AppBar")).toBe("0.375");
-  });
-
-  it("resets when the active pane navigates to another route", () => {
-    renderSurface();
-    click("pane-a");
-    click("start");
-    flushFrame();
-    click("scroll-132");
-    flushFrame();
-    expect(progress("AppBar")).toBe("0.375");
-
-    click("pane-a-route-b");
-    flushFrame();
-
-    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
-    expect(progress("AppBar")).toBe("0");
-  });
-
-  it("resets when mobile mode exits and enters", () => {
-    const view = renderSurface();
-    click("start");
-    flushFrame();
-    click("scroll-132");
-    flushFrame();
-    viewport.mobile = false;
-    view.rerender(
-      <MobileChromeProvider>
-        <Surface />
-      </MobileChromeProvider>,
-    );
-    flushFrame();
-    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
-    viewport.mobile = true;
-    view.rerender(
-      <MobileChromeProvider>
-        <Surface />
-      </MobileChromeProvider>,
-    );
-    flushFrame();
-
-    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
-    expect(progress("AppBar")).toBe("0");
-  });
-
-  it("pins reduced-motion readers before any scroll sample can collapse chrome", () => {
-    reducedMotion = true;
-    renderSurface();
-    click("start");
-    click("scroll-132");
-    flushFrame();
-
-    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
-    expect(progress("AppBar")).toBe("0");
-  });
-
-  it("pins an initial reduced-motion source before its first update", () => {
-    reducedMotion = true;
-    renderSurface({ startOnMount: true, updateOnMount: true });
-    flushFrame();
-
-    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
-    expect(progress("AppBar")).toBe("0");
   });
 });

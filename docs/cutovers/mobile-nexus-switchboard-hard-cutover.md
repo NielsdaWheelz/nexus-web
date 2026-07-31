@@ -646,7 +646,8 @@ recalculate safe area/player/Nexus/keyboard geometry.
 - One column; high contrast; 48px interactive targets; visible focus; no
   horizontal text truncation without an accessible full label.
 - Places and Quick are compact labeled controls. Results use title plus at most
-  one metadata line. Accent is reserved for Nexus/current selection.
+  one metadata line. Accent is reserved for current selection and the Nexus
+  mark; Nexus surfaces remain neutral.
 - Open rows show only synchronously owned pane/resource facts. They do not fetch
   decoration, capture screenshots, or create a preview store.
 - `MobileSheet` keeps dialog, focus trap, keyboard inset, back history, scrim,

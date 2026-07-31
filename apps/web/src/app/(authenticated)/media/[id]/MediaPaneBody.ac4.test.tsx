@@ -9,6 +9,7 @@ import {
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import type { PanePrimaryChromePublication } from "@/lib/panes/panePublications";
+import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
 import MediaPaneBody from "./MediaPaneBody";
 
 // AC-4 hydration-hit: when the server prefetched the media pane's primary
@@ -69,15 +70,6 @@ vi.mock("@/lib/ui/useIsMobileViewport", () => ({
 
 vi.mock("@/components/workspace/PanePrimaryChrome", () => ({
   usePanePrimaryChrome: primaryChromeMocks.usePanePrimaryChrome,
-}));
-
-vi.mock("@/lib/workspace/mobileChrome", () => ({
-  usePaneMobileChromeController: () => ({
-    startReaderScroll: () => {},
-    updateReaderScroll: () => {},
-    beginReaderPointerInteraction: () => {},
-    acquireVisibleLock: () => () => {},
-  }),
 }));
 
 function seededMedia() {
@@ -161,11 +153,13 @@ describe("MediaPaneBody AC-4 hydration hit", () => {
       href,
       resources: { [MEDIA_ID]: { media: seededMedia(), fragments: [] } },
       children: (
-        <LecternProvider>
-          <GlobalPlayerProvider>
-            <MediaPaneBody />
-          </GlobalPlayerProvider>
-        </LecternProvider>
+        <MobileChromeProvider>
+          <LecternProvider>
+            <GlobalPlayerProvider>
+              <MediaPaneBody />
+            </GlobalPlayerProvider>
+          </LecternProvider>
+        </MobileChromeProvider>
       ),
     });
 

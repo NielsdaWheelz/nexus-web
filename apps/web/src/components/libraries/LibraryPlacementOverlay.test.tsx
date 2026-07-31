@@ -15,6 +15,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { page, userEvent } from "vitest/browser";
 import { absent } from "@/lib/api/presence";
 import type { LibraryPlacementSession } from "@/lib/libraries/placementController";
+import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
 import LibraryPlacementOverlay from "./LibraryPlacementOverlay";
 
 const LIBRARY_1 = "00000000-0000-4000-8000-000000000001";
@@ -38,7 +39,7 @@ function Harness() {
   const anchorRef = useRef<HTMLButtonElement>(null);
   const [session, setSession] = useState<LibraryPlacementSession | null>(null);
   return (
-    <>
+    <MobileChromeProvider>
       <button
         type="button"
         ref={anchorRef}
@@ -59,7 +60,7 @@ function Harness() {
         session={session}
         onClose={() => setSession(null)}
       />
-    </>
+    </MobileChromeProvider>
   );
 }
 

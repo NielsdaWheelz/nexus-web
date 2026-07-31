@@ -6,6 +6,7 @@ import {
   type Page,
 } from "@playwright/test";
 import {
+  activeWorkspacePane,
   gotoSinglePaneWorkspace,
   gotoWithWorkspaceSession,
   makeWorkspacePane,
@@ -435,6 +436,80 @@ function nexusDialog(page: Page): Locator {
   return page.getByRole("dialog", { name: "Nexus" });
 }
 
+interface NexusGeometry {
+  readonly wrapper: { x: number; y: number; width: number; height: number };
+  readonly button: { x: number; y: number; width: number; height: number };
+  readonly counter: { x: number; y: number; width: number; height: number };
+  readonly counterBlockStart: number;
+  readonly counterInlineEnd: number;
+  readonly contentBottomPadding: number;
+  readonly viewportHeight: number;
+}
+
+async function nexusGeometry(
+  page: Page,
+  paneCount: number,
+): Promise<NexusGeometry> {
+  const button = page.getByRole("button", {
+    name:
+      paneCount === 1
+        ? "Open Nexus, 1 tab"
+        : `Open Nexus, ${paneCount} tabs`,
+  });
+  await expect(button).toBeVisible();
+  const wrapper = page.getByTestId("nexus-wrapper");
+  const counter = button.getByText(String(paneCount), { exact: true });
+  const content = activeWorkspacePane(page).getByTestId("pane-shell-body");
+  await expect(counter).toHaveCount(1);
+  const [wrapperElement, buttonElement, counterElement, contentElement] =
+    await Promise.all([
+    wrapper.elementHandle(),
+    button.elementHandle(),
+    counter.elementHandle(),
+    content.elementHandle(),
+  ]);
+  if (
+    !wrapperElement ||
+    !buttonElement ||
+    !counterElement ||
+    !contentElement
+  ) {
+    throw new Error("Nexus geometry requires connected control elements.");
+  }
+  return page.evaluate(
+    ({ wrapperElement, buttonElement, counterElement, contentElement }) => {
+      const rect = (element: Element) => {
+        const bounds = element.getBoundingClientRect();
+        return {
+          x: bounds.x,
+          y: bounds.y,
+          width: bounds.width,
+          height: bounds.height,
+        };
+      };
+      const buttonRect = buttonElement.getBoundingClientRect();
+      const counterRect = counterElement.getBoundingClientRect();
+      return {
+        wrapper: rect(wrapperElement),
+        button: rect(buttonElement),
+        counter: rect(counterElement),
+        counterBlockStart: counterRect.top - buttonRect.top,
+        counterInlineEnd: buttonRect.right - counterRect.right,
+        contentBottomPadding: Number.parseFloat(
+          getComputedStyle(contentElement).paddingBottom,
+        ),
+        viewportHeight: window.innerHeight,
+      };
+    },
+    {
+      wrapperElement,
+      buttonElement,
+      counterElement,
+      contentElement,
+    },
+  );
+}
+
 function p95(samples: readonly number[]): number {
   const ordered = [...samples].sort((left, right) => left - right);
   return (
@@ -494,11 +569,23 @@ test.describe("mobile Nexus Switchboard", () => {
     const trigger = page.getByRole("button", {
       name: "Open Nexus, 2 tabs",
     });
+    const paneBody = activeWorkspacePane(page).getByTestId("pane-shell-body");
+    const nexusClearance = await paneBody.evaluate((element) =>
+      Number.parseFloat(getComputedStyle(element).paddingBottom),
+    );
+    expect(nexusClearance).toBeGreaterThan(0);
     await expect(trigger).toBeVisible();
     await trigger.tap();
 
     const dialog = nexusDialog(page);
     await expect(dialog).toBeVisible();
+    await expect
+      .poll(() =>
+        paneBody.evaluate((element) =>
+          Number.parseFloat(getComputedStyle(element).paddingBottom),
+        ),
+      )
+      .toBe(0);
     await expect(dialog.getByRole("heading", { name: "Nexus" })).toBeFocused();
     await expect(dialog.getByRole("searchbox")).toHaveCount(0);
     await expect(dialog.getByRole("heading", { name: "Places" })).toBeVisible();
@@ -561,6 +648,57 @@ test.describe("mobile Nexus Switchboard", () => {
     await dialog.getByRole("button", { name: "Stats Place" }).tap();
     await expect(dialog).toBeHidden();
     await expect(page).toHaveURL(/\/stats$/);
+  });
+
+  test("keeps target, counter, anchor, and obstruction geometry fixed across tab counts", async ({
+    page,
+  }, testInfo) => {
+    for (const rootFontSize of [16, 32] as const) {
+      const measurements: NexusGeometry[] = [];
+      for (const paneCount of [1, 9, 12] as const) {
+        const panes = Array.from({ length: paneCount }, (_, index) =>
+          makeWorkspacePane(`pane-${index}`, "/notes"),
+        );
+        await gotoWithWorkspaceSession(
+          page,
+          workspaceE2eDeviceId(
+            testInfo,
+            `e2e-nexus-geometry-${rootFontSize}-${paneCount}`,
+          ),
+          makeWorkspaceState(panes, {
+            activePrimaryPaneId: panes[0]!.id,
+          }),
+          "/notes",
+        );
+        await page.evaluate((fontSize) => {
+          document.documentElement.style.fontSize = `${fontSize}px`;
+        }, rootFontSize);
+        await page.evaluate(
+          () =>
+            new Promise<void>((resolve) =>
+              requestAnimationFrame(() =>
+                requestAnimationFrame(() => resolve()),
+              ),
+            ),
+        );
+        measurements.push(await nexusGeometry(page, paneCount));
+      }
+
+      const [expected, ...rest] = measurements;
+      expect(expected).toBeDefined();
+      expect(expected!.wrapper.width).toBeCloseTo(48, 1);
+      expect(expected!.wrapper.height).toBeCloseTo(48, 1);
+      expect(expected!.button.width).toBeCloseTo(48, 1);
+      expect(expected!.button.height).toBeCloseTo(48, 1);
+      expect(expected!.counterBlockStart).toBeCloseTo(1, 1);
+      expect(expected!.counterInlineEnd).toBeCloseTo(1, 1);
+      expect(expected!.contentBottomPadding).toBe(
+        Math.ceil(expected!.viewportHeight - expected!.wrapper.y),
+      );
+      for (const measurement of rest) {
+        expect(measurement).toEqual(expected);
+      }
+    }
   });
 
   test("production user-timing meets the local interaction gates", async ({

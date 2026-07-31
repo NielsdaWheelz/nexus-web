@@ -1074,7 +1074,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
       { toolbar: <button type="button">PDF reader controls</button> },
     ],
   ])(
-    "normal mobile activation %s focuses the registered AppBar",
+    "normal mobile activation %s focuses the pane landmark without pinning chrome",
     async (_case, publication) => {
       hostMocks.isMobile = true;
       hostMocks.useActualPaneShell = true;
@@ -1086,11 +1086,14 @@ describe("WorkspaceHost pane route lifecycle", () => {
         </MobileChromeProvider>,
       );
 
-      await waitFor(() => expect(screen.getByRole("banner")).toHaveFocus());
+      await waitFor(() =>
+        expect(screen.getByTestId("pane-shell-root")).toHaveFocus(),
+      );
       expect(screen.getByTestId("pane-shell-chrome")).toHaveAttribute(
         "data-mobile-chrome-phase",
-        "Pinned",
+        "Visible",
       );
+      expect(screen.getByRole("banner")).not.toHaveAttribute("tabindex");
     },
   );
 
@@ -1103,7 +1106,9 @@ describe("WorkspaceHost pane route lifecycle", () => {
         <WorkspaceHost />
       </MobileChromeProvider>,
     );
-    await waitFor(() => expect(screen.getByRole("banner")).toHaveFocus());
+    await waitFor(() =>
+      expect(screen.getByTestId("pane-shell-root")).toHaveFocus(),
+    );
 
     hostMocks.isMobile = false;
     view.rerender(
@@ -1118,7 +1123,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
     );
   });
 
-  it("registers only focused active pane chrome when desktop panes become mobile", async () => {
+  it("focuses only the active pane landmark when desktop panes become mobile", async () => {
     setTwoPaneHrefs(MEDIA_HREF_1, MEDIA_HREF_2);
     hostMocks.useActualPaneShell = true;
     hostMocks.primaryChromePublicationByPaneId = new Map([
@@ -1163,10 +1168,11 @@ describe("WorkspaceHost pane route lifecycle", () => {
       );
       expect(screen.getByTestId("pane-shell-chrome")).toHaveAttribute(
         "data-mobile-chrome-phase",
-        "Pinned",
+        "Visible",
       );
+      expect(screen.getByTestId("pane-shell-root")).toHaveFocus();
     });
-    expect(activeChrome).toHaveFocus();
+    expect(activeChrome).not.toHaveFocus();
     expect(
       screen.queryByRole("button", { name: "First reader controls" }),
     ).toBeNull();

@@ -1,5 +1,4 @@
 import { Component, type ComponentProps, type ReactNode } from "react";
-import Link from "next/link";
 import {
   act,
   fireEvent,
@@ -10,6 +9,7 @@ import {
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { cdp } from "vitest/browser";
+import MobilePaneBar from "@/components/appnav/MobilePaneBar";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import PaneShell from "@/components/workspace/PaneShell";
 import type { PanePrimaryChromePublication } from "@/lib/panes/panePublications";
@@ -22,6 +22,7 @@ import type {
 } from "@/lib/ui/actionDescriptor";
 import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
 import {
+  findPaneActivationFocusTarget,
   findPaneChromeFocusTarget,
   findPaneSearchFocusTarget,
 } from "@/lib/workspace/paneDom";
@@ -30,33 +31,15 @@ import { assumePaneVisitId } from "@/lib/workspace/schema";
 import { routeShareTarget } from "@/lib/sharing/targets";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
-import type { MobilePaneChrome } from "@/lib/workspace/mobileChrome";
+import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
 
 const TEST_VISIT_ID = assumePaneVisitId("00000000-0000-4000-8000-000000000001");
 
-const mobileChromeMock = vi.hoisted(() => ({
-  setPaneChrome: vi.fn(),
-  motionPhase: { kind: "Visible" } as { kind: string; direction?: string },
-}));
 const shareControllerMock = vi.hoisted(() => ({
   openShare: vi.fn(),
 }));
 const libraryPlacementControllerMock = vi.hoisted(() => ({
   openLibraryPlacement: vi.fn(),
-}));
-
-vi.mock("@/lib/workspace/mobileChrome", () => ({
-  useMobileChrome: () => ({
-    motionPhase: mobileChromeMock.motionPhase,
-    paneChrome: null,
-    setPaneChrome: mobileChromeMock.setPaneChrome,
-  }),
-  useMobileChromeSurface: () => {},
-  usePaneMobileChromeController: () => ({
-    startReaderScroll: () => {},
-    updateReaderScroll: () => {},
-    acquireVisibleLock: () => () => {},
-  }),
 }));
 
 vi.mock("@/lib/sharing/controller", () => ({
@@ -177,13 +160,16 @@ function paneTree(
     children,
   };
   return (
-    <RuntimeRoute
-      paneId={props.paneId}
-      routeKey={props.routeKey}
-      href={runtimeHref}
-    >
-      <PaneShell {...props} />
-    </RuntimeRoute>
+    <MobileChromeProvider>
+      {props.isMobile ? <MobilePaneBar /> : null}
+      <RuntimeRoute
+        paneId={props.paneId}
+        routeKey={props.routeKey}
+        href={runtimeHref}
+      >
+        <PaneShell {...props} />
+      </RuntimeRoute>
+    </MobileChromeProvider>
   );
 }
 
@@ -194,41 +180,6 @@ function PrimaryChromeProbe({
 }) {
   usePanePrimaryChrome(publication);
   return <div>Published body</div>;
-}
-
-function latestMobilePaneSearchAction(): Extract<
-  PaneHeaderAction,
-  { kind: "command" }
-> {
-  for (
-    let index = mobileChromeMock.setPaneChrome.mock.calls.length - 1;
-    index >= 0;
-    index -= 1
-  ) {
-    const chrome = mobileChromeMock.setPaneChrome.mock.calls[index]?.[0] as
-      | MobilePaneChrome
-      | null;
-    const action = chrome?.actions.find(
-      (candidate) =>
-        candidate.kind === "command" && candidate.id === "Pane.Search",
-    );
-    if (action?.kind === "command") return action;
-  }
-  throw new Error("Mobile Pane Search action was not published");
-}
-
-function latestMobilePaneChrome(): MobilePaneChrome {
-  for (
-    let index = mobileChromeMock.setPaneChrome.mock.calls.length - 1;
-    index >= 0;
-    index -= 1
-  ) {
-    const chrome = mobileChromeMock.setPaneChrome.mock.calls[index]?.[0] as
-      | MobilePaneChrome
-      | null;
-    if (chrome) return chrome;
-  }
-  throw new Error("Mobile pane chrome was not published");
 }
 
 function dispatchTouch(
@@ -245,7 +196,6 @@ function dispatchTouch(
   fireEvent(target, event);
   return event;
 }
-
 function readyResource(title: string): PanePrimaryChromePublication {
   return {
     header: {
@@ -306,7 +256,6 @@ class TestErrorBoundary extends Component<
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mobileChromeMock.motionPhase = { kind: "Visible" };
 });
 
 describe("PaneShell", () => {
@@ -358,7 +307,9 @@ describe("PaneShell", () => {
         .map((button) => button.getAttribute("aria-label")),
     ).toEqual(["Companion", "Filter"]);
 
-    fireEvent.click(within(paneActions).getByRole("button", { name: "Filter" }));
+    fireEvent.click(
+      within(paneActions).getByRole("button", { name: "Filter" }),
+    );
     const input = await screen.findByRole("searchbox", {
       name: "Filter items",
     });
@@ -383,41 +334,34 @@ describe("PaneShell", () => {
   it("returns mobile shortcut-opened Filter focus to the Options trigger", async () => {
     const onDismiss = vi.fn();
     render(
-      <>
-        <header data-pane-chrome-for="pane-a">
-          <button type="button" data-pane-options-trigger="pane-a">
-            Pane options
-          </button>
-        </header>
-        {paneTree({
-          isActive: true,
-          isMobile: true,
-          children: (
-            <PrimaryChromeProbe
-              publication={{
-                search: {
-                  kind: "FilterRows",
-                  query: "",
-                  inputLabel: "Filter items",
-                  placeholder: "Filter",
-                  onQueryChange: vi.fn(),
-                  onDismiss,
-                  rowStatus: {
-                    kind: "Complete",
-                    visibleCount: 1,
-                    totalCount: 1,
-                    unit: { singular: "item", plural: "items" },
-                  },
-                  activeDomainControlCount: 0,
+      paneTree({
+        isActive: true,
+        isMobile: true,
+        children: (
+          <PrimaryChromeProbe
+            publication={{
+              search: {
+                kind: "FilterRows",
+                query: "",
+                inputLabel: "Filter items",
+                placeholder: "Filter",
+                onQueryChange: vi.fn(),
+                onDismiss,
+                rowStatus: {
+                  kind: "Complete",
+                  visibleCount: 1,
+                  totalCount: 1,
+                  unit: { singular: "item", plural: "items" },
                 },
-              }}
-            />
-          ),
-        })}
-      </>,
+                activeDomainControlCount: 0,
+              },
+            }}
+          />
+        ),
+      }),
     );
 
-    await waitFor(() => expect(mobileChromeMock.setPaneChrome).toHaveBeenCalled());
+    await screen.findByRole("button", { name: "Pane options" });
     expect(dispatchPaneSearchRequest()).toBe(true);
     const input = await screen.findByRole("searchbox", {
       name: "Filter items",
@@ -481,53 +425,41 @@ describe("PaneShell", () => {
 
   it("ignores a transient mobile menu row when closing Filter", async () => {
     render(
-      <>
-        <header data-pane-chrome-for="pane-a">
-          <button type="button" data-pane-options-trigger="pane-a">
-            Pane options
-          </button>
-        </header>
-        {paneTree({
-          isActive: true,
-          isMobile: true,
-          children: (
-            <PrimaryChromeProbe
-              publication={{
-                search: {
-                  kind: "FilterRows",
-                  query: "",
-                  inputLabel: "Filter items",
-                  placeholder: "Filter",
-                  onQueryChange: vi.fn(),
-                  onDismiss: vi.fn(),
-                  rowStatus: {
-                    kind: "Complete",
-                    visibleCount: 1,
-                    totalCount: 1,
-                    unit: { singular: "item", plural: "items" },
-                  },
-                  activeDomainControlCount: 0,
+      paneTree({
+        isActive: true,
+        isMobile: true,
+        children: (
+          <PrimaryChromeProbe
+            publication={{
+              search: {
+                kind: "FilterRows",
+                query: "",
+                inputLabel: "Filter items",
+                placeholder: "Filter",
+                onQueryChange: vi.fn(),
+                onDismiss: vi.fn(),
+                rowStatus: {
+                  kind: "Complete",
+                  visibleCount: 1,
+                  totalCount: 1,
+                  unit: { singular: "item", plural: "items" },
                 },
-              }}
-            />
-          ),
-        })}
-      </>,
-    );
-
-    await waitFor(() => latestMobilePaneSearchAction());
-    const transientMenuRow = document.createElement("button");
-    act(() =>
-      latestMobilePaneSearchAction().onSelect({
-        triggerEl: transientMenuRow,
+                activeDomainControlCount: 0,
+              },
+            }}
+          />
+        ),
       }),
     );
+
+    const options = await screen.findByRole("button", { name: "Pane options" });
+    fireEvent.click(options);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Filter" }));
     await screen.findByRole("searchbox", { name: "Filter items" });
 
-    act(() =>
-      latestMobilePaneSearchAction().onSelect({
-        triggerEl: transientMenuRow,
-      }),
+    fireEvent.click(options);
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Close filter" }),
     );
     await waitFor(() =>
       expect(
@@ -624,9 +556,7 @@ describe("PaneShell", () => {
       }),
     );
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Filter" }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "Filter" }));
     await waitFor(() =>
       expect(
         screen.getByRole("searchbox", { name: "Filter libraries" }),
@@ -992,11 +922,16 @@ describe("PaneShell", () => {
     expect(execute).toHaveBeenCalledTimes(1);
     expect(screen.getByText("Refreshing")).toBeInTheDocument();
 
-    const refreshOption = latestMobilePaneChrome().options[0];
-    if (refreshOption?.kind !== "command") {
-      throw new Error("Mobile Refresh option was not a command");
-    }
-    refreshOption.onSelect({ triggerEl: null });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Pane options",
+      }),
+    );
+    const refreshOption = await screen.findByRole("menuitem", {
+      name: "Refresh",
+    });
+    expect(refreshOption).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(refreshOption);
     expect(execute).toHaveBeenCalledTimes(1);
 
     const session = cdp() as unknown as {
@@ -1453,7 +1388,7 @@ describe("PaneShell", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("publishes primary actions separately from mobile Options", async () => {
+  it("projects mobile primary actions and resource options once through the pane menu", async () => {
     const companion = {
       kind: "command",
       id: "resource-inspector-companion",
@@ -1487,32 +1422,27 @@ describe("PaneShell", () => {
       }),
     );
 
-    await waitFor(() => {
-      expect(mobileChromeMock.setPaneChrome).toHaveBeenCalledWith(
-        expect.objectContaining({
-          paneId: "pane-a",
-          header: expect.objectContaining({ kind: "resource" }),
-          actions: expect.any(Array),
-          options: expect.any(Array),
-        }),
-      );
-    });
-    const publication = mobileChromeMock.setPaneChrome.mock.calls
-      .map(([value]) => value)
-      .findLast((value) => value !== null);
-    expect(
-      publication?.actions.map((action: PaneHeaderAction) => action.label),
-    ).toEqual(["Companion"]);
-    expect(
-      publication?.options.map((option: ActionDescriptor) => option.label),
-    ).toEqual(["Share…", "Chat about this resource", "Credits…", "Libraries…"]);
-    expect(
-      publication?.options.filter(
-        (option: ActionDescriptor) => option.id === "ResourceAction.Share",
-      ),
-    ).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "Companion" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Options" })).toBeNull();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Pane options" }),
+    );
+    const menu = await screen.findByRole("menu");
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((item) => item.textContent?.trim()),
+    ).toEqual([
+      "Go forward",
+      "Companion",
+      "Share…",
+      "Chat about this resource",
+      "Credits…",
+      "Libraries…",
+    ]);
+    expect(
+      within(menu).getAllByRole("menuitem", { name: "Share…" }),
+    ).toHaveLength(1);
   });
 
   it("keeps projected mobile identity links inside pane navigation", async () => {
@@ -1549,28 +1479,7 @@ describe("PaneShell", () => {
       }),
     );
 
-    await waitFor(() => {
-      expect(mobileChromeMock.setPaneChrome).toHaveBeenCalled();
-    });
-    const publication = mobileChromeMock.setPaneChrome.mock.calls
-      .map(([value]) => value as MobilePaneChrome | null)
-      .findLast((value) => value !== null);
-    if (!publication) {
-      throw new Error("PaneShell did not publish mobile pane chrome");
-    }
-
-    render(
-      <Link
-        href="/authors/ada-lovelace"
-        data-pane-label-hint="Ada Lovelace"
-        onClick={(event) =>
-          publication.activateIdentityAnchor(event, event.currentTarget)
-        }
-      >
-        Ada Lovelace
-      </Link>,
-    );
-    const link = screen.getByRole("link", { name: "Ada Lovelace" });
+    const link = await screen.findByRole("link", { name: "Ada Lovelace" });
 
     fireEvent.click(link, { detail: 0 });
     expect(runtimeNavigation.activateWorkspaceTarget).toHaveBeenCalledWith({
@@ -1596,79 +1505,34 @@ describe("PaneShell", () => {
     expect(runtimeNavigation.activateWorkspaceTarget).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps toolbar controls available through tracking and settling, then hides only them at the endpoint", async () => {
-    const mobileToolbar = {
-      routeHeader: resourceHeader,
-      routeShareIdentity: null,
-      label: "Media",
-      isMobile: true,
-      children: (
-        <PrimaryChromeProbe
-          publication={{
-            ...readyResource("Document title"),
-            toolbar: <button type="button">Reader controls</button>,
-          }}
-        />
-      ),
-    } satisfies Partial<PaneProps>;
-    const view = render(paneTree(mobileToolbar));
-
-    await screen.findByRole("button", { name: "Reader controls" });
-    const chrome = screen.getByTestId("pane-shell-chrome");
-    const body = screen.getByTestId("pane-shell-body");
-    const toolbar = screen.getByTestId("pane-shell-toolbar");
-    expect(chrome).toHaveAttribute("data-mobile-chrome-phase", "Visible");
-    expect(chrome).not.toHaveAttribute("aria-hidden");
-    expect(chrome).not.toHaveAttribute("inert");
-    expect(toolbar).not.toHaveAttribute("aria-hidden");
-    expect(toolbar).not.toHaveAttribute("inert");
-
-    mobileChromeMock.motionPhase = { kind: "Tracking", direction: "Down" };
-    view.rerender(paneTree(mobileToolbar));
-
-    expect(chrome).toHaveAttribute("data-mobile-chrome-phase", "Tracking");
-    expect(screen.getByRole("button", { name: "Reader controls" })).toBeVisible();
-    expect(chrome).not.toHaveAttribute("aria-hidden");
-    expect(chrome).not.toHaveAttribute("inert");
-    expect(toolbar).not.toHaveAttribute("aria-hidden");
-    expect(toolbar).not.toHaveAttribute("inert");
-
-    mobileChromeMock.motionPhase = { kind: "Settling" };
-    view.rerender(paneTree(mobileToolbar));
-
-    expect(chrome).toHaveAttribute("data-mobile-chrome-phase", "Settling");
-    expect(screen.getByRole("button", { name: "Reader controls" })).toBeVisible();
-    expect(toolbar).not.toHaveAttribute("aria-hidden");
-    expect(toolbar).not.toHaveAttribute("inert");
-
-    mobileChromeMock.motionPhase = { kind: "Hidden" };
-    view.rerender(paneTree(mobileToolbar));
-
-    expect(chrome).toHaveAttribute("data-mobile-chrome-phase", "Hidden");
-    expect(chrome).not.toHaveAttribute("aria-hidden");
-    expect(chrome).not.toHaveAttribute("inert");
-    expect(toolbar).toHaveAttribute("aria-hidden", "true");
-    expect(toolbar).toHaveAttribute("inert");
-    expect(screen.getByTestId("pane-shell-body")).toBe(body);
-  });
-
   it("leaves the pane toolbar surface empty when the reader publishes no toolbar", async () => {
-    mobileChromeMock.motionPhase = { kind: "Hidden" };
     render(
       paneTree({
         routeHeader: resourceHeader,
         routeShareIdentity: null,
         label: "Media",
         isMobile: true,
-        children: <PrimaryChromeProbe publication={readyResource("Document title")} />,
+        children: (
+          <PrimaryChromeProbe publication={readyResource("Document title")} />
+        ),
       }),
     );
 
     const chrome = screen.getByTestId("pane-shell-chrome");
-    expect(chrome).toHaveAttribute("data-mobile-chrome-phase", "Hidden");
+    expect(chrome).toHaveAttribute("data-mobile-chrome-phase", "Visible");
     expect(chrome).not.toHaveAttribute("aria-hidden");
     expect(chrome).not.toHaveAttribute("inert");
     expect(chrome).toBeEmptyDOMElement();
+  });
+
+  it("owns a stable programmatic-focus pane landmark distinct from chrome", () => {
+    render(<div data-pane-id="pane-a">{paneTree({ label: "Media" })}</div>);
+
+    const landmark = screen.getByTestId("pane-shell-root");
+    expect(landmark).toHaveAttribute("data-pane-activation-focus", "true");
+    expect(landmark).toHaveAttribute("tabindex", "-1");
+    expect(findPaneActivationFocusTarget("pane-a")).toBe(landmark);
+    expect(findPaneActivationFocusTarget("missing-pane")).toBeNull();
   });
 
   it("falls back to the pane chrome sentinel when the mobile Options trigger is inert", () => {
@@ -1795,29 +1659,6 @@ describe("PaneShell", () => {
     } finally {
       fetchSpy.mockRestore();
     }
-  });
-
-  it("does not republish equivalent mobile chrome after an unrelated render", async () => {
-    const mobilePane = {
-      routeHeader: resourceHeader,
-      routeShareIdentity: null,
-      label: "Media",
-      isMobile: true,
-    } satisfies Partial<PaneProps>;
-    const view = render(paneTree(mobilePane));
-
-    await waitFor(() => {
-      expect(mobileChromeMock.setPaneChrome).toHaveBeenCalledTimes(1);
-    });
-    const firstPublication = mobileChromeMock.setPaneChrome.mock.calls[0]?.[0];
-
-    view.rerender(paneTree(mobilePane));
-    await Promise.resolve();
-
-    expect(mobileChromeMock.setPaneChrome).toHaveBeenCalledTimes(1);
-    expect(mobileChromeMock.setPaneChrome.mock.calls[0]?.[0]).toBe(
-      firstPublication,
-    );
   });
 
   it("scopes ready same-resource identity, actions, Options, and secondary regions per pane", async () => {

@@ -4,7 +4,7 @@ export const COLLAPSE_TRAVEL_SCROLL_PX = 64;
 export const SCROLL_IDLE_SETTLE_DELAY_MS = 120;
 export const MIN_SCROLL_DELTA_PX = 1;
 
-export interface MobileChromeScrollSnapshot {
+interface MobileChromeMotionSnapshot {
   scrollTop: number;
   scrollHeight: number;
   clientHeight: number;
@@ -28,8 +28,8 @@ export interface MobileChromeMotionState {
 }
 
 export type MobileChromeMotionEvent =
-  | { kind: "Start"; snapshot: MobileChromeScrollSnapshot }
-  | { kind: "Scroll"; snapshot: MobileChromeScrollSnapshot }
+  | { kind: "Start"; snapshot: MobileChromeMotionSnapshot }
+  | { kind: "Scroll"; snapshot: MobileChromeMotionSnapshot }
   | { kind: "Settle" }
   | { kind: "FinishSettle" }
   | { kind: "Pin" }
@@ -45,7 +45,7 @@ export function initialMobileChromeMotionState(): MobileChromeMotionState {
   };
 }
 
-function clampedScrollTop(snapshot: MobileChromeScrollSnapshot): number {
+function clampedScrollTop(snapshot: MobileChromeMotionSnapshot): number {
   const maxScrollTop = Math.max(0, snapshot.scrollHeight - snapshot.clientHeight);
   return Math.min(Math.max(0, snapshot.scrollTop), maxScrollTop);
 }
@@ -89,7 +89,7 @@ function progressAfterDistance(
 
 function scrollState(
   state: MobileChromeMotionState,
-  snapshot: MobileChromeScrollSnapshot,
+  snapshot: MobileChromeMotionSnapshot,
 ): MobileChromeMotionState {
   const scrollTop = clampedScrollTop(snapshot);
   if (scrollTop <= TOP_PINNED_SCROLL_PX) {

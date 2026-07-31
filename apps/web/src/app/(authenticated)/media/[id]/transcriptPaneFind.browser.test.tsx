@@ -43,15 +43,15 @@ function snapshot() {
   });
 }
 
-function segmentList(): HTMLDivElement {
-  const list = document.createElement("div");
-  list.tabIndex = -1;
-  Object.defineProperty(list, "scrollTop", {
+function scrollport(): HTMLDivElement {
+  const viewport = document.createElement("div");
+  viewport.tabIndex = -1;
+  Object.defineProperty(viewport, "scrollTop", {
     configurable: true,
     writable: true,
     value: 40,
   });
-  list.getBoundingClientRect = () =>
+  viewport.getBoundingClientRect = () =>
     ({
       top: 0,
       bottom: 100,
@@ -60,8 +60,8 @@ function segmentList(): HTMLDivElement {
       width: 300,
       height: 100,
     }) as DOMRect;
-  document.body.append(list);
-  return list;
+  document.body.append(viewport);
+  return viewport;
 }
 
 afterEach(() => {
@@ -70,9 +70,9 @@ afterEach(() => {
 });
 
 describe("Transcript Find preview and Return", () => {
-  it("targets the exact same-segment occurrence and restores selection, nested scroll, and focus", async () => {
+  it("targets the exact same-segment occurrence and restores selection, reader scroll, and focus", async () => {
     const frozen = snapshot();
-    const list = segmentList();
+    const viewport = scrollport();
     let activeFragmentId: string | null = "origin";
     const elements = new Map<PaneFindResultKey, HTMLSpanElement>();
     const presentations: TranscriptFindPresentation[] = [];
@@ -98,7 +98,7 @@ describe("Transcript Find preview and Return", () => {
               width: 60,
               height: 10,
             }) as DOMRect;
-          list.append(element);
+          viewport.append(element);
           elements.set(occurrence.key, element);
         }
       },
@@ -108,7 +108,7 @@ describe("Transcript Find preview and Return", () => {
       getCurrentSourceKey: () => frozen.sourceKey,
       getActiveFragmentId: () => activeFragmentId,
       setActiveFragmentId,
-      getSegmentList: () => list,
+      getScrollport: () => viewport,
       getMatchElement: (key) => elements.get(key) ?? null,
       publishPresentation,
       previewLease,
@@ -145,7 +145,7 @@ describe("Transcript Find preview and Return", () => {
       }),
     ).resolves.toMatchObject({ kind: "Previewed", key: secondKey });
     expect(setActiveFragmentId).toHaveBeenLastCalledWith("match");
-    expect(list.scrollTop).toBe(90);
+    expect(viewport.scrollTop).toBe(90);
     expect(presentations.at(-1)).toEqual({
       kind: "Matches",
       occurrences: [
@@ -179,8 +179,8 @@ describe("Transcript Find preview and Return", () => {
       signal,
     });
     expect(setActiveFragmentId).toHaveBeenLastCalledWith("origin");
-    expect(list.scrollTop).toBe(40);
-    expect(list).toHaveFocus();
+    expect(viewport.scrollTop).toBe(40);
+    expect(viewport).toHaveFocus();
     expect(previewLease.isActive()).toBe(false);
   });
 
@@ -190,7 +190,7 @@ describe("Transcript Find preview and Return", () => {
       return 1;
     });
     const frozen = snapshot();
-    const list = segmentList();
+    const viewport = scrollport();
     let activeFragmentId: string | null = "origin";
     const presentations: TranscriptFindPresentation[] = [];
     const previewLease = createMediaFindPreviewLease();
@@ -201,7 +201,7 @@ describe("Transcript Find preview and Return", () => {
       setActiveFragmentId: (fragmentId) => {
         activeFragmentId = fragmentId;
       },
-      getSegmentList: () => list,
+      getScrollport: () => viewport,
       getMatchElement: () => null,
       publishPresentation: (presentation) => {
         presentations.push(presentation);
@@ -239,14 +239,14 @@ describe("Transcript Find preview and Return", () => {
     ).rejects.toThrow("Transcript Find match element did not render.");
 
     expect(activeFragmentId).toBe("origin");
-    expect(list.scrollTop).toBe(40);
+    expect(viewport.scrollTop).toBe(40);
     expect(presentations.at(-1)).toEqual({ kind: "Text" });
     expect(previewLease.isActive()).toBe(false);
   });
 
   it("settles a late first-preview abort so Close and reopen retain Return", async () => {
     const frozen = snapshot();
-    const list = segmentList();
+    const viewport = scrollport();
     let activeFragmentId: string | null = "origin";
     const publishPresentation = vi.fn();
     const previewLease = createMediaFindPreviewLease();
@@ -257,7 +257,7 @@ describe("Transcript Find preview and Return", () => {
       setActiveFragmentId: (fragmentId) => {
         activeFragmentId = fragmentId;
       },
-      getSegmentList: () => list,
+      getScrollport: () => viewport,
       getMatchElement: () => null,
       publishPresentation,
       previewLease,

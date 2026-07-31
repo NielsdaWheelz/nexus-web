@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import {
   act,
   fireEvent,
@@ -12,6 +12,7 @@ import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import {
   MobileChromeProvider,
   useMobileChrome,
+  useMobileChromeReaderScrollport,
 } from "@/lib/workspace/mobileChrome";
 import type { TargetLinkMouseEvent } from "@/lib/panes/targetLinkActivation";
 
@@ -186,50 +187,36 @@ function PublishNavigationChrome({
   return null;
 }
 
-function CollapseChrome() {
-  const { startReaderScroll, updateReaderScroll } = useMobileChrome();
+function ChromeScrollport() {
+  const chromeRef = useMobileChromeReaderScrollport<HTMLDivElement>({
+    sourceKey: "mobile-pane-bar-reader",
+    enabled: true,
+  });
+  const setRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (node && node.dataset.scrollportConfigured !== "true") {
+        Object.defineProperties(node, {
+          scrollTop: { configurable: true, writable: true, value: 9 },
+          scrollHeight: { configurable: true, value: 1_000 },
+          clientHeight: { configurable: true, value: 400 },
+        });
+        node.dataset.scrollportConfigured = "true";
+      }
+      chromeRef(node);
+    },
+    [chromeRef],
+  );
   return (
-    <button
-      type="button"
-      onClick={() => {
-        startReaderScroll({
-          scrollTop: 9,
-          scrollHeight: 1000,
-          clientHeight: 400,
-        });
-        updateReaderScroll({
-          scrollTop: 100,
-          scrollHeight: 1000,
-          clientHeight: 400,
-        });
-      }}
-    >
-      Collapse chrome
-    </button>
+    <div ref={setRef} data-testid="mobile-pane-bar-reader">
+      Reader
+    </div>
   );
 }
 
-function TrackChrome() {
-  const { startReaderScroll, updateReaderScroll } = useMobileChrome();
-  return (
-    <button
-      type="button"
-      onClick={() => {
-        startReaderScroll({
-          scrollTop: 9,
-          scrollHeight: 1000,
-          clientHeight: 400,
-        });
-        updateReaderScroll({
-          scrollTop: 40,
-          scrollHeight: 1000,
-          clientHeight: 400,
-        });
-      }}
-    >
-      Track chrome
-    </button>
-  );
+function scrollChrome(scrollTop: number) {
+  const scrollport = screen.getByTestId("mobile-pane-bar-reader");
+  scrollport.scrollTop = scrollTop;
+  fireEvent.scroll(scrollport);
 }
 
 function MotionPhase() {
@@ -311,6 +298,7 @@ describe("MobilePaneBar", () => {
     const bar = screen.getByRole("banner");
     expect(bar).toHaveAttribute("data-header-kind", "resource");
     expect(bar).toHaveAttribute("data-pane-chrome-for", "pane-media");
+    expect(bar).not.toHaveAttribute("tabindex");
   });
 
   it("delegates identity-link activation to the active pane", () => {
@@ -336,7 +324,7 @@ describe("MobilePaneBar", () => {
     expect(activateIdentityAnchor.mock.calls[0]?.[1]).toBe(link);
   });
 
-  it("keeps the route heading available while only fully hidden controls leave the accessibility tree", async () => {
+  it("keeps the route heading available while hidden controls leave the accessibility tree", async () => {
     vi.stubGlobal("innerWidth", 390);
     vi.spyOn(window, "matchMedia").mockImplementation(
       (query: string) =>
@@ -356,14 +344,14 @@ describe("MobilePaneBar", () => {
       withRenderEnvironment(
         <MobileChromeProvider>
           <PublishResourceChrome />
-          <CollapseChrome />
+          <ChromeScrollport />
           <MobilePaneBar />
         </MobileChromeProvider>,
         { initialViewport: "mobile" },
       ),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Collapse chrome" }));
+    scrollChrome(100);
     const navigation = screen.getByRole("banner");
     await waitFor(() =>
       expect(navigation).toHaveAttribute("data-mobile-chrome-phase", "Hidden"),
@@ -376,6 +364,12 @@ describe("MobilePaneBar", () => {
         name: "The Left Hand of Darkness",
       }),
     ).toBeVisible();
+    const credits = screen.getByRole("paragraph", { hidden: true });
+    expect(credits).toHaveAttribute("aria-hidden", "true");
+    expect(credits).toHaveAttribute("inert");
+    expect(
+      screen.queryByRole("link", { name: "Ursula K. Le Guin" }),
+    ).toBeNull();
     expect(screen.queryByRole("button", { name: "Pane options" })).toBeNull();
     for (const controls of screen.getAllByTestId("top-bar-controls")) {
       expect(controls).toHaveAttribute("aria-hidden", "true");
@@ -383,7 +377,7 @@ describe("MobilePaneBar", () => {
     }
   });
 
-  it("keeps controls available while chrome tracks and settles", () => {
+  it("removes moving controls from interaction while chrome tracks and settles", () => {
     vi.useFakeTimers();
     vi.stubGlobal("innerWidth", 390);
     vi.spyOn(window, "matchMedia").mockImplementation(
@@ -403,28 +397,51 @@ describe("MobilePaneBar", () => {
     render(
       withRenderEnvironment(
         <MobileChromeProvider>
-          <PublishChrome />
-          <TrackChrome />
+          <PublishResourceChrome />
+          <ChromeScrollport />
           <MobilePaneBar />
         </MobileChromeProvider>,
         { initialViewport: "mobile" },
       ),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Track chrome" }));
+    scrollChrome(40);
     const navigation = screen.getByRole("banner");
+    const credits = screen.getByRole("paragraph", { hidden: true });
     expect(navigation).toHaveAttribute("data-mobile-chrome-phase", "Tracking");
+    expect(
+      screen.getByRole("heading", {
+        level: 1,
+        name: "The Left Hand of Darkness",
+      }),
+    ).toBeVisible();
+    expect(credits).toHaveAttribute("aria-hidden", "true");
+    expect(credits).toHaveAttribute("inert");
+    expect(
+      screen.queryByRole("link", { name: "Ursula K. Le Guin" }),
+    ).toBeNull();
     for (const controls of screen.getAllByTestId("top-bar-controls")) {
-      expect(controls).not.toHaveAttribute("aria-hidden");
-      expect(controls).not.toHaveAttribute("inert");
+      expect(controls).toHaveAttribute("aria-hidden", "true");
+      expect(controls).toHaveAttribute("inert");
     }
 
     act(() => vi.advanceTimersByTime(120));
 
     expect(navigation).toHaveAttribute("data-mobile-chrome-phase", "Settling");
+    expect(
+      screen.getByRole("heading", {
+        level: 1,
+        name: "The Left Hand of Darkness",
+      }),
+    ).toBeVisible();
+    expect(credits).toHaveAttribute("aria-hidden", "true");
+    expect(credits).toHaveAttribute("inert");
+    expect(
+      screen.queryByRole("link", { name: "Ursula K. Le Guin" }),
+    ).toBeNull();
     for (const controls of screen.getAllByTestId("top-bar-controls")) {
-      expect(controls).not.toHaveAttribute("aria-hidden");
-      expect(controls).not.toHaveAttribute("inert");
+      expect(controls).toHaveAttribute("aria-hidden", "true");
+      expect(controls).toHaveAttribute("inert");
     }
   });
 
@@ -448,7 +465,7 @@ describe("MobilePaneBar", () => {
       withRenderEnvironment(
         <MobileChromeProvider>
           <PublishResourceChrome />
-          <CollapseChrome />
+          <ChromeScrollport />
           <MobilePaneBar />
         </MobileChromeProvider>,
         { initialViewport: "mobile" },
@@ -462,7 +479,7 @@ describe("MobilePaneBar", () => {
     await waitFor(() =>
       expect(navigation).toHaveAttribute("data-mobile-chrome-phase", "Pinned"),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Collapse chrome" }));
+    scrollChrome(100);
     expect(navigation).toHaveAttribute("data-mobile-chrome-phase", "Pinned");
     expect(options).toBeVisible();
 
@@ -478,7 +495,7 @@ describe("MobilePaneBar", () => {
       withRenderEnvironment(
         <MobileChromeProvider>
           <PublishResourceChrome />
-          <CollapseChrome />
+          <ChromeScrollport />
           <MotionPhase />
           {showTopBar ? (
             <MobilePaneBar />
@@ -498,7 +515,7 @@ describe("MobilePaneBar", () => {
       expect(screen.getByTestId("motion-phase")).toHaveTextContent("Visible"),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Collapse chrome" }));
+    scrollChrome(100);
     await waitFor(() =>
       expect(screen.getByTestId("motion-phase")).toHaveTextContent("Hidden"),
     );

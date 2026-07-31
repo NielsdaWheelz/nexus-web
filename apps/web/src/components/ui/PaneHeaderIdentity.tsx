@@ -8,6 +8,7 @@ import RunningHead from "./RunningHead";
 type PaneHeaderProjection = "Desktop" | "Mobile";
 
 interface PaneHeaderIdentityProps {
+  readonly creditsInert?: boolean;
   readonly id: string;
   readonly model: PaneHeaderModel;
   readonly projection: PaneHeaderProjection;
@@ -23,6 +24,7 @@ function maxVisibleCredits(projection: PaneHeaderProjection): 1 | 2 {
 }
 
 export default function PaneHeaderIdentity({
+  creditsInert = false,
   id,
   model,
   projection,
@@ -40,6 +42,7 @@ export default function PaneHeaderIdentity({
     case "resource":
       return (
         <ResourceHead
+          creditsInert={creditsInert}
           id={id}
           maxVisibleCredits={maxVisibleCredits(projection)}
           resource={model.resource}

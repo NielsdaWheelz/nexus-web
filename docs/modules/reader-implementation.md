@@ -36,20 +36,23 @@ contract.
 
 ### mobile scroll-linked chrome
 
-Mobile document readers publish their own scroll state to the workspace
+Mobile document readers register their one real scrollport with the workspace
 `MobileChromeProvider`.
 
-- `TextDocumentReader` owns publication for web articles and EPUB sections.
-- `MediaPaneBody` owns publication for its readable-transcript scrollport.
-- `PdfReader` owns publication for PDF pages.
-- Each source establishes a baseline when its scrollport mounts, then publishes
-  updates from that same scrollport.
+- `TextDocumentReader` owns registration for web articles and EPUB sections.
+- `MediaPaneBody` owns the readable transcript's outer document viewport;
+  transcript segments do not scroll independently.
+- `PdfReader` owns registration for its viewer container.
+- `useMobileChromeReaderScrollport` attaches native scroll, primary-pointer
+  focus handoff, and reveal-only blank-canvas click handling to that element.
+- Each source establishes a live baseline on mount, source/layout change, mode
+  entry, and final visibility-lock release.
 - The provider alone owns collapse progress, direction reversal, idle settle,
   visibility locks, and reduced-motion pinning.
 - The app bar, optional active format toolbar, and inner Nexus control are
   presentation consumers; they never infer scroll policy.
-- The shared reader-layout pointer boundary releases stale registered-chrome
-  focus before a primary pointer scroll.
+- Find and code-owned positioning hold semantic visibility locks through their
+  final layout sample.
 
 Chrome motion is transform-only and never changes reader padding, selection,
 resume state, scroll position, or the stable outer Nexus obstruction
@@ -61,8 +64,8 @@ contract.
 
 The shared Pane Search foundation defines `FindOccurrences`, exact
 revision-scoped result keys, one immutable **Go back to reading position**
-origin, and transient Companion results. Web articles and readable
-video/podcast transcripts and EPUBs are migrated; PDF is not.
+origin, and transient Companion results. Web articles, readable video/podcast
+transcripts, EPUBs, and PDFs use this contract.
 
 `MediaPaneBody` selects one route-local adapter under one `usePaneFind`
 controller. Web searches every loaded canonical fragment and uses one
@@ -73,7 +76,7 @@ reader input. Preview and Return use exact canonical DOM anchors and never call
 navigation or URL replacement.
 
 Transcript Find searches timeline-ordered readable fragments and changes only
-the active transcript row and nested segment-list scroll. It never seeks,
+the active transcript row and outer document-viewport scroll. It never seeks,
 plays, resumes, mounts a progress seam, or creates an activity seam. Partial
 coverage is explicit in both zero and nonzero result states. Close clears marks
 without returning; Return restores and retires the one origin.
@@ -88,9 +91,9 @@ stepping reuses the rendered section without a request.
 ### natural document completion
 
 Web articles and the final EPUB section render a semantic end marker inside the
-same `.documentViewport` that owns reading scroll. `TextDocumentReader`
-publishes that exact viewport through one scroll listener; mobile chrome,
-resume capture, and activity measurement consume the publication.
+same `.documentViewport` that owns reading scroll. The shared chrome hook
+samples native scroll independently; `TextDocumentReader`'s existing capture
+pipeline continues owning resume, activity, trusted intent, and completion.
 
 Natural completion requires trusted forward scroll intent after the current
 content generation was positioned. Programmatic restore, hash navigation,

@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useRef,
   useState,
   type MutableRefObject,
   type ReactNode,
@@ -50,6 +51,11 @@ import type { DocumentEmbed } from "@/lib/media/documentEmbeds";
 import type { MediaRetrievalLocator } from "@/lib/api/sse/locators";
 import { useEscapeKey } from "@/lib/ui/useEscapeKey";
 import { useModalLayer } from "@/lib/ui/useModalLayer";
+import {
+  MobileChromeProvider,
+  useMobileChrome,
+  useMobileChromeSurface,
+} from "@/lib/workspace/mobileChrome";
 
 import type {
   ReaderEvidenceConfidence,
@@ -118,12 +124,14 @@ const testState = vi.hoisted(() => ({
   fragmentHtml: "<p>Readable text.</p>",
   fragmentCanonicalText: "",
   renderHtmlInMock: false,
+  renderDelayedHighlightInMock: null as boolean | null,
   documentMapDocumentItems: null as unknown[] | null,
   documentMapPassageGroups: null as unknown[] | null,
   documentMapEmbeds: null as DocumentEmbed[] | null,
   documentMapFailure: null as { status: number; code: string } | null,
   readerFocusMode: "off" as
     "off" | "distraction_free" | "paragraph" | "sentence",
+  readerFontSizePx: 16,
   readerPersistence: { state: "Clean" } as
     | { state: "Clean" }
     | { state: "Pending" }
@@ -144,11 +152,6 @@ const testState = vi.hoisted(() => ({
 
 const paneChromeMocks = vi.hoisted(() => ({
   usePanePrimaryChrome: vi.fn(),
-  usePaneMobileChromeController: vi.fn(),
-  startReaderScroll: vi.fn(),
-  updateReaderScroll: vi.fn(),
-  beginReaderPointerInteraction: vi.fn(),
-  acquireVisibleLock: vi.fn(() => () => {}),
 }));
 
 const learnMocks = vi.hoisted(() => ({
@@ -187,16 +190,12 @@ vi.mock("@/components/workspace/PanePrimaryChrome", () => ({
   usePanePrimaryChrome: paneChromeMocks.usePanePrimaryChrome,
 }));
 
-vi.mock("@/lib/workspace/mobileChrome", () => ({
-  usePaneMobileChromeController: paneChromeMocks.usePaneMobileChromeController,
-}));
-
 vi.mock("@/lib/reader/ReaderContext", () => ({
   useReaderContext: () => ({
     profile: {
       theme: "light",
       font_family: "serif",
-      font_size_px: 16,
+      font_size_px: testState.readerFontSizePx,
       line_height: 1.5,
       column_width_ch: 65,
       focus_mode: testState.readerFocusMode,
@@ -296,6 +295,39 @@ vi.mock("@/components/HtmlRenderer", () => ({
     if (!testState.renderHtmlInMock) {
       return <div data-testid="html-renderer" className={className} />;
     }
+    if (testState.renderDelayedHighlightInMock !== null) {
+      return (
+        <div data-testid="html-renderer" className={className}>
+          <p>
+            Readable text.{" "}
+            <span
+              ref={(node) => {
+                if (!node || !testState.renderDelayedHighlightInMock) return;
+                node.getBoundingClientRect = () =>
+                  ({
+                    left: 0,
+                    top: 40,
+                    right: 160,
+                    bottom: 60,
+                    width: 160,
+                    height: 20,
+                    x: 0,
+                    y: 40,
+                    toJSON: () => ({}),
+                  }) as DOMRect;
+              }}
+              data-highlight-anchor={
+                testState.renderDelayedHighlightInMock
+                  ? "44444444-4444-4444-8444-444444444444"
+                  : undefined
+              }
+            >
+              Delayed highlight
+            </span>
+          </p>
+        </div>
+      );
+    }
     if (htmlSanitized.includes('data-reader-apparatus-item-id="marker-1"')) {
       return (
         <div data-testid="html-renderer" className={className}>
@@ -345,6 +377,7 @@ vi.mock("@/components/reader/MarginRail", () => ({
 
 const DOCUMENT_MAP_OVERVIEW_RAIL_WIDTH_PX = 28;
 const PDF_HIGHLIGHT_ID = "33333333-3333-4333-8333-333333333333";
+const DELAYED_HIGHLIGHT_ID = "44444444-4444-4444-8444-444444444444";
 
 function jsonResponse(data: unknown) {
   return { data };
@@ -413,7 +446,7 @@ function setTextViewportGeometry({
     throw new Error("Expected in-flow reader end marker");
   }
   const paragraph = screen.getByText(
-    /^(Readable text\.|Cross-section evidence\.)$/,
+    /^(Readable text\.|Readable text\. Delayed highlight|Cross-section evidence\.)$/,
   );
   Object.defineProperties(viewport, {
     clientWidth: { configurable: true, value: 400 },
@@ -616,6 +649,47 @@ function pdfHighlightPassage() {
         associations: [],
         highlight_id: PDF_HIGHLIGHT_ID,
         quote: "PDF hover target",
+        prefix: "",
+        suffix: "",
+        color: "yellow",
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+        author_user_id: "user-1",
+        is_owner: true,
+      },
+    ],
+    also_references: [],
+  };
+}
+
+function delayedWebHighlightPassage() {
+  const itemId = `highlight:${DELAYED_HIGHLIGHT_ID}`;
+  return {
+    locus_ref: itemId,
+    resolution: {
+      kind: "Resolved",
+      anchor: {
+        locator: {
+          type: "web_text_offsets",
+          media_id: "00000000-0000-4000-8000-000000000001",
+          fragment_id: "fragment-1",
+          start_offset: 0,
+          end_offset: 17,
+        },
+        passage_anchor_id: null,
+      },
+      order_key: "fragment:0000000000:0000000000",
+    },
+    target_excerpt: { kind: "Present", value: "Delayed highlight" },
+    items: [
+      {
+        id: itemId,
+        kind: "Highlight",
+        label: "Delayed highlight",
+        excerpt: { kind: "Present", value: "Delayed highlight" },
+        associations: [],
+        highlight_id: DELAYED_HIGHLIGHT_ID,
+        quote: "Delayed highlight",
         prefix: "",
         suffix: "",
         color: "yellow",
@@ -1027,6 +1101,27 @@ function ReaderInteractionStack({
   return null;
 }
 
+function MobileChromeProbe() {
+  const { motionPhase } = useMobileChrome();
+  const surfaceRef = useRef<HTMLDivElement>(null);
+  useMobileChromeSurface(
+    surfaceRef,
+    "AppBar",
+    testState.isMobileViewport,
+  );
+  return (
+    <div
+      ref={surfaceRef}
+      data-testid="mobile-chrome-probe"
+      data-mobile-chrome-phase={motionPhase.kind}
+    >
+      <button type="button" tabIndex={-1}>
+        Chrome command
+      </button>
+    </div>
+  );
+}
+
 function renderMediaPane(
   options: {
     href?: string;
@@ -1057,10 +1152,12 @@ function renderMediaPane(
     const identity = resolvePaneRouteIdentity(href);
     return (
       <FeedbackProvider>
-        <LecternProvider>
-          <ShareControllerProvider>
-            <GlobalPlayerProvider>
-              <PaneRuntimeProvider
+        <MobileChromeProvider>
+          <MobileChromeProbe />
+          <LecternProvider>
+            <ShareControllerProvider>
+              <GlobalPlayerProvider>
+                <PaneRuntimeProvider
                 paneId="pane-1"
                 visitId={TEST_VISIT_ID}
                 isActive={nextOptions.isActive ?? true}
@@ -1099,10 +1196,11 @@ function renderMediaPane(
                     <MediaPaneBody />
                   </PaneFixedChromeContext.Provider>
                 </PaneSecondaryTestHost>
-              </PaneRuntimeProvider>
-            </GlobalPlayerProvider>
-          </ShareControllerProvider>
-        </LecternProvider>
+                </PaneRuntimeProvider>
+              </GlobalPlayerProvider>
+            </ShareControllerProvider>
+          </LecternProvider>
+        </MobileChromeProvider>
       </FeedbackProvider>
     );
   };
@@ -1145,6 +1243,7 @@ describe("MediaPaneBody pane sizing", () => {
     testState.fragmentHtml = "<p>Readable text.</p>";
     testState.fragmentCanonicalText = "";
     testState.renderHtmlInMock = false;
+    testState.renderDelayedHighlightInMock = null;
     testState.documentMapDocumentItems = null;
     testState.documentMapPassageGroups = null;
     testState.documentMapEmbeds = null;
@@ -1173,23 +1272,12 @@ describe("MediaPaneBody pane sizing", () => {
     testState.mediaDetailCallCount = 0;
     testState.onMetadataRetryEnqueued = null;
     testState.readerFocusMode = "off";
+    testState.readerFontSizePx = 16;
     testState.readerPersistence = { state: "Clean" };
     testState.lecternItems = [];
     testState.readerStateConflictOnce = false;
     paneChromeMocks.usePanePrimaryChrome.mockReset();
-    paneChromeMocks.usePaneMobileChromeController.mockClear();
-    paneChromeMocks.startReaderScroll.mockReset();
-    paneChromeMocks.updateReaderScroll.mockReset();
-    paneChromeMocks.beginReaderPointerInteraction.mockReset();
-    paneChromeMocks.acquireVisibleLock.mockClear();
     learnMocks.learnDossierFromHighlight.mockReset();
-    paneChromeMocks.usePaneMobileChromeController.mockReturnValue({
-      startReaderScroll: paneChromeMocks.startReaderScroll,
-      updateReaderScroll: paneChromeMocks.updateReaderScroll,
-      beginReaderPointerInteraction:
-        paneChromeMocks.beginReaderPointerInteraction,
-      acquireVisibleLock: paneChromeMocks.acquireVisibleLock,
-    });
     for (const fn of Object.values(testState.readerContextFns)) {
       fn.mockReset();
     }
@@ -1648,7 +1736,6 @@ describe("MediaPaneBody pane sizing", () => {
       }
     });
 
-    const updatesBeforeFlush = paneChromeMocks.updateReaderScroll.mock.calls.length;
     const terminalCapture = queuedFrame as FrameRequestCallback | null;
     if (!terminalCapture) {
       throw new Error("Expected a queued terminal capture");
@@ -1659,9 +1746,6 @@ describe("MediaPaneBody pane sizing", () => {
     await new Promise((resolve) => window.setTimeout(resolve, 600));
 
     expect(readerStatePutCalls()).toHaveLength(0);
-    expect(paneChromeMocks.updateReaderScroll).toHaveBeenCalledTimes(
-      updatesBeforeFlush,
-    );
   });
 
   it("publishes current Web Find rows and requests the transient results surface", async () => {
@@ -2292,16 +2376,21 @@ describe("MediaPaneBody pane sizing", () => {
   );
 
   it.each(["web_article", "epub", "podcast_episode", "video"] as const)(
-    "publishes %s scroll from its reader viewport",
+    "drives mobile chrome from the real %s reader viewport",
     async (kind) => {
       testState.mediaKind = kind;
+      testState.isMobileViewport = true;
       renderMediaPane();
 
       const viewport = await screen.findByTestId("document-viewport");
-      await waitFor(() => {
-        expect(paneChromeMocks.startReaderScroll).toHaveBeenCalled();
+      const chrome = screen.getByTestId("mobile-chrome-probe");
+      await act(async () => {
+        await new Promise<void>((resolve) => {
+          window.requestAnimationFrame(() =>
+            window.requestAnimationFrame(() => resolve()),
+          );
+        });
       });
-      await new Promise((resolve) => window.requestAnimationFrame(resolve));
 
       Object.defineProperties(viewport, {
         scrollTop: { value: 144, configurable: true, writable: true },
@@ -2311,46 +2400,152 @@ describe("MediaPaneBody pane sizing", () => {
       fireEvent.scroll(viewport);
 
       await waitFor(() => {
-        expect(paneChromeMocks.updateReaderScroll).toHaveBeenCalledWith({
-          scrollTop: 144,
-          scrollHeight: 1_000,
-          clientHeight: 400,
-        });
+        expect(chrome.style.getPropertyValue("--mobile-chrome-collapse")).toBe(
+          "1",
+        );
       });
     },
   );
 
+  it("rebaselines transcript chrome when typography changes its rendered layout", async () => {
+    testState.mediaKind = "podcast_episode";
+    testState.isMobileViewport = true;
+    const view = renderMediaPane();
+
+    const viewport = await screen.findByTestId("document-viewport");
+    const chrome = screen.getByTestId("mobile-chrome-probe");
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        window.requestAnimationFrame(() =>
+          window.requestAnimationFrame(() => resolve()),
+        );
+      });
+    });
+    Object.defineProperties(viewport, {
+      scrollTop: { value: 144, configurable: true, writable: true },
+      scrollHeight: { value: 1_000, configurable: true },
+      clientHeight: { value: 400, configurable: true },
+    });
+    fireEvent.scroll(viewport);
+    await waitFor(() =>
+      expect(chrome).toHaveAttribute("data-mobile-chrome-phase", "Hidden"),
+    );
+
+    testState.readerFontSizePx = 20;
+    view.rerender({});
+
+    await waitFor(() => {
+      expect(chrome).toHaveAttribute("data-mobile-chrome-phase", "Visible");
+      expect(chrome.style.getPropertyValue("--mobile-chrome-collapse")).toBe(
+        "0",
+      );
+    });
+  });
+
+  it("pins chrome across delayed highlight retries through the final layout sample", async () => {
+    testState.mediaKind = "web_article";
+    testState.isMobileViewport = true;
+    testState.renderHtmlInMock = true;
+    testState.renderDelayedHighlightInMock = false;
+    testState.fragmentCanonicalText = "Readable text. Delayed highlight";
+    testState.documentMapPassageGroups = [delayedWebHighlightPassage()];
+    const pulseHandler = vi.fn();
+    window.addEventListener(READER_PULSE_HIGHLIGHT, pulseHandler);
+
+    try {
+      const options = {
+        renderSecondarySurfaceId: "resource-evidence" as const,
+      };
+      const view = renderMediaPane(options);
+      await screen.findByText(/Readable text\./);
+      setTextViewportGeometry({ atEnd: false, scrollHeight: 500 });
+      const chrome = screen.getByTestId("mobile-chrome-probe");
+      const jump = await screen.findByRole("button", {
+        name: "Jump to Delayed highlight",
+      });
+
+      fireEvent.click(jump);
+      expect(chrome).toHaveAttribute("data-mobile-chrome-phase", "Pinned");
+      expect(pulseHandler).not.toHaveBeenCalled();
+
+      await act(
+        () =>
+          new Promise<void>((resolve) =>
+            window.requestAnimationFrame(() => resolve()),
+          ),
+      );
+      expect(chrome).toHaveAttribute("data-mobile-chrome-phase", "Pinned");
+      expect(pulseHandler).not.toHaveBeenCalled();
+
+      testState.renderDelayedHighlightInMock = true;
+      view.rerender(options);
+      await act(
+        () =>
+          new Promise<void>((resolve) =>
+            window.requestAnimationFrame(() => resolve()),
+          ),
+      );
+      expect(pulseHandler).toHaveBeenCalledTimes(1);
+      expect(chrome).toHaveAttribute("data-mobile-chrome-phase", "Pinned");
+
+      await act(
+        () =>
+          new Promise<void>((resolve) =>
+            window.requestAnimationFrame(() => resolve()),
+          ),
+      );
+      expect(chrome).toHaveAttribute("data-mobile-chrome-phase", "Visible");
+    } finally {
+      window.removeEventListener(READER_PULSE_HIGHLIGHT, pulseHandler);
+    }
+  });
+
   it(
-    "hands primary reader pointer intent to mobile chrome but ignores secondary pointers",
+    "blurs a focused chrome command only for primary reader pointer intent",
     async () => {
       testState.mediaKind = "web_article";
+      testState.isMobileViewport = true;
       renderMediaPane();
 
       const viewport = await screen.findByTestId("document-viewport");
-      fireEvent.pointerDown(viewport, { isPrimary: false });
-      expect(
-        paneChromeMocks.beginReaderPointerInteraction,
-      ).not.toHaveBeenCalled();
+      const chromeCommand = screen.getByRole("button", {
+        name: "Chrome command",
+      });
+      chromeCommand.focus();
+      expect(chromeCommand).toHaveFocus();
 
-      fireEvent.pointerDown(viewport, { isPrimary: true });
-      expect(
-        paneChromeMocks.beginReaderPointerInteraction,
-      ).toHaveBeenCalledOnce();
+      fireEvent.pointerDown(viewport, { button: 0, isPrimary: false });
+      expect(chromeCommand).toHaveFocus();
+
+      fireEvent.pointerDown(viewport, { button: 0, isPrimary: true });
+      expect(chromeCommand).not.toHaveFocus();
     },
   );
 
-  it("restarts the transcript scroll source when its media id changes", async () => {
+  it("rebaselines the transcript scrollport when its media id changes", async () => {
     testState.mediaKind = "video";
+    testState.isMobileViewport = true;
     const { rerender } = renderMediaPane();
-    await screen.findByTestId("document-viewport");
-    await waitFor(() => {
-      expect(paneChromeMocks.startReaderScroll).toHaveBeenCalledOnce();
+    const viewport = await screen.findByTestId("document-viewport");
+    const chrome = screen.getByTestId("mobile-chrome-probe");
+    Object.defineProperties(viewport, {
+      scrollTop: { value: 144, configurable: true, writable: true },
+      scrollHeight: { value: 1_000, configurable: true },
+      clientHeight: { value: 400, configurable: true },
     });
+    fireEvent.scroll(viewport);
+    await waitFor(() =>
+      expect(chrome.style.getPropertyValue("--mobile-chrome-collapse")).toBe(
+        "1",
+      ),
+    );
 
     rerender({ pathMediaId: SOURCE_CHANGE_MEDIA_ID });
 
     await waitFor(() => {
-      expect(paneChromeMocks.startReaderScroll).toHaveBeenCalledTimes(2);
+      expect(chrome.style.getPropertyValue("--mobile-chrome-collapse")).toBe(
+        "0",
+      );
     });
   });
 
@@ -2728,9 +2923,20 @@ describe("MediaPaneBody pane sizing", () => {
       screen.getByTestId("html-renderer"),
     ).getByText("Standalone margin note body.");
     expect(inlineMarginNote).toBeInstanceOf(HTMLElement);
+    const chrome = screen.getByTestId("mobile-chrome-probe");
 
     const publicationCountBeforeClick = onSetPaneSecondary.mock.calls.length;
     fireEvent.click(marginNoteButton);
+    expect(chrome).toHaveAttribute("data-mobile-chrome-phase", "Pinned");
+    await act(
+      () =>
+        new Promise<void>((resolve) =>
+          window.requestAnimationFrame(() => resolve()),
+        ),
+    );
+    await waitFor(() =>
+      expect(chrome).toHaveAttribute("data-mobile-chrome-phase", "Visible"),
+    );
     await waitFor(() => {
       expect(onSetPaneSecondary.mock.calls.length).toBeGreaterThan(
         publicationCountBeforeClick,

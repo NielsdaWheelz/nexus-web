@@ -76,7 +76,10 @@ import {
   type PaneTransientSecondarySurfacePublication,
 } from "@/lib/panes/panePublications";
 import { emitWorkspaceTelemetry } from "@/lib/workspace/telemetry";
-import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
+import {
+  findPaneActivationFocusTarget,
+  findPaneChromeFocusTarget,
+} from "@/lib/workspace/paneDom";
 import {
   paneResourceLocatorKey,
   resolvePaneRouteIdentity,
@@ -790,11 +793,11 @@ function WorkspaceHost() {
   >(() => new Map());
   const keybindings = useKeybindings();
 
-  // --- Mobile viewport and pane chrome focus state ---
+  // --- Mobile viewport and pane activation focus state ---
   const isMobile = useIsMobileViewport();
   const layoutMode = isMobile ? "mobile" : "desktop";
   const paneWrapRefById = useRef<Map<string, HTMLDivElement>>(new Map());
-  const pendingPaneChromeFocusPaneIdRef = useRef<string | null>(null);
+  const pendingPaneActivationFocusPaneIdRef = useRef<string | null>(null);
   const previousIsMobileRef = useRef(isMobile);
   const secondaryReturnFocusByPaneIdRef = useRef<Map<string, HTMLElement>>(
     new Map(),
@@ -1554,8 +1557,8 @@ function WorkspaceHost() {
     null;
   const renderedPanes = isMobile ? (activePane ? [activePane] : []) : panes;
 
-  // --- Pane chrome focus management ---
-  const focusPaneChrome = useCallback(
+  // --- Pane activation focus management ---
+  const focusPaneActivationTarget = useCallback(
     (targetPaneId: string) => {
       const paneWrap = paneWrapRefById.current.get(targetPaneId);
       if (!paneWrap) {
@@ -1564,26 +1567,14 @@ function WorkspaceHost() {
       const paneChrome = paneWrap.querySelector<HTMLElement>(
         '[data-pane-chrome-focus="true"]',
       );
-      const activeElement = document.activeElement;
-      if (
-        isMobile &&
-        paneChrome &&
-        activeElement instanceof HTMLElement &&
-        paneChrome.contains(activeElement)
-      ) {
-        pendingPaneChromeFocusPaneIdRef.current = null;
-        return true;
-      }
-      const chrome = isMobile
-        ? document.querySelector<HTMLElement>(
-            '[data-mobile-chrome-focus="true"]',
-          )
+      const focusTarget = isMobile
+        ? findPaneActivationFocusTarget(targetPaneId)
         : paneChrome;
-      if (!chrome) {
+      if (!focusTarget) {
         return false;
       }
-      chrome.focus({ preventScroll: true });
-      pendingPaneChromeFocusPaneIdRef.current = null;
+      focusTarget.focus({ preventScroll: true });
+      pendingPaneActivationFocusPaneIdRef.current = null;
       return true;
     },
     [isMobile],
@@ -1593,33 +1584,33 @@ function WorkspaceHost() {
     const previousIsMobile = previousIsMobileRef.current;
     previousIsMobileRef.current = isMobile;
     const targetPaneId =
-      pendingPaneChromeFocusPaneIdRef.current ??
+      pendingPaneActivationFocusPaneIdRef.current ??
       (isMobile || previousIsMobile ? state.activePrimaryPaneId : null);
     if (!targetPaneId) {
       return;
     }
-    focusPaneChrome(targetPaneId);
-  }, [state.activePrimaryPaneId, isMobile, focusPaneChrome]);
+    focusPaneActivationTarget(targetPaneId);
+  }, [state.activePrimaryPaneId, isMobile, focusPaneActivationTarget]);
 
   useEffect(() => {
     scrollPaneIntoView(state.activePrimaryPaneId);
   }, [state.activePrimaryPaneId, scrollPaneIntoView]);
 
   const handleActivatePane = useCallback(
-    (paneId: string, options?: { focusPaneChrome?: boolean }) => {
-      const shouldFocusPaneChrome = options?.focusPaneChrome !== false;
+    (paneId: string, options?: { focusPane?: boolean }) => {
+      const shouldFocusPane = options?.focusPane !== false;
       activatePane(paneId);
-      if (!shouldFocusPaneChrome) {
+      if (!shouldFocusPane) {
         return;
       }
-      pendingPaneChromeFocusPaneIdRef.current = paneId;
+      pendingPaneActivationFocusPaneIdRef.current = paneId;
       window.requestAnimationFrame(() => {
-        if (pendingPaneChromeFocusPaneIdRef.current === paneId) {
-          focusPaneChrome(paneId);
+        if (pendingPaneActivationFocusPaneIdRef.current === paneId) {
+          focusPaneActivationTarget(paneId);
         }
       });
     },
-    [activatePane, focusPaneChrome],
+    [activatePane, focusPaneActivationTarget],
   );
 
   useEffect(() => {
@@ -1712,7 +1703,7 @@ function WorkspaceHost() {
                 }
               }}
               onMouseDown={() =>
-                handleActivatePane(pane.paneId, { focusPaneChrome: false })
+                handleActivatePane(pane.paneId, { focusPane: false })
               }
             >
               <PaneRouteErrorBoundary

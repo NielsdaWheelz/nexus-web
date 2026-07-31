@@ -37,7 +37,10 @@ import {
   useWorkspaceStore,
   WorkspaceStoreProvider,
 } from "@/lib/workspace/store";
-import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
+import {
+  MobileChromeProvider,
+  useMobileChromeReaderScrollport,
+} from "@/lib/workspace/mobileChrome";
 import Nexus from "./Nexus";
 
 const PAGE_ID = "11111111-1111-4111-8111-111111111111";
@@ -237,8 +240,27 @@ function WorkspaceProbe() {
   );
 }
 
+function ReaderScrollportProbe() {
+  const readerScrollportRef =
+    useMobileChromeReaderScrollport<HTMLDivElement>({
+      sourceKey: "nexus-test-reader",
+      enabled: true,
+    });
+  return (
+    <div
+      ref={readerScrollportRef}
+      role="region"
+      aria-label="Reader content"
+      style={{ height: 100, overflow: "auto" }}
+    >
+      <div style={{ height: 1_000 }} />
+    </div>
+  );
+}
+
 function renderNexus(input: {
   readonly mobile?: boolean;
+  readonly readerScrollportProbe?: boolean;
   readonly state?: WorkspaceState;
 } = {}) {
   const mobile = input.mobile ?? false;
@@ -246,6 +268,7 @@ function renderNexus(input: {
   return render(
     withRenderEnvironment(
       <MobileChromeProvider>
+        {input.readerScrollportProbe ? <ReaderScrollportProbe /> : null}
         <KeybindingsProvider>
           <FeedbackProvider>
             <PaneReturnMementoProvider>
@@ -275,8 +298,8 @@ function renderNexus(input: {
   );
 }
 
-function maxPaneState(): WorkspaceState {
-  const panes = Array.from({ length: MAX_PANES }, (_, index) => ({
+function paneCountState(paneCount: number): WorkspaceState {
+  const panes = Array.from({ length: paneCount }, (_, index) => ({
     id: `pane-${index}`,
     currentVisit: createPaneVisit("/libraries"),
     primaryWidthPx: workspacePrimaryMetrics.primaryDefaultWidthPx,
@@ -288,6 +311,10 @@ function maxPaneState(): WorkspaceState {
     activePrimaryPaneId: panes[0]!.id,
     primaryPanes: panes,
   });
+}
+
+function maxPaneState(): WorkspaceState {
+  return paneCountState(MAX_PANES);
 }
 
 function openWithKeyboard() {
@@ -310,6 +337,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  document.documentElement.style.removeProperty("font-size");
   localStorage.clear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -689,5 +717,136 @@ describe("Nexus shell contracts", () => {
     expect(
       within(desktopDialog).getByRole("textbox", { name: "Links" }),
     ).toHaveValue("https://example.com/article");
+  });
+
+  it.each([
+    {
+      paneCount: 1,
+      label: "Open Nexus, 1 tab",
+      rootFontSize: 16,
+    },
+    {
+      paneCount: 9,
+      label: "Open Nexus, 9 tabs",
+      rootFontSize: 16,
+    },
+    {
+      paneCount: MAX_PANES,
+      label: `Open Nexus, ${MAX_PANES} tabs`,
+      rootFontSize: 16,
+    },
+    {
+      paneCount: 1,
+      label: "Open Nexus, 1 tab",
+      rootFontSize: 32,
+    },
+    {
+      paneCount: 9,
+      label: "Open Nexus, 9 tabs",
+      rootFontSize: 32,
+    },
+    {
+      paneCount: MAX_PANES,
+      label: `Open Nexus, ${MAX_PANES} tabs`,
+      rootFontSize: 32,
+    },
+  ])(
+    "keeps count $paneCount fixed at a $rootFontSize px root text scale",
+    ({ paneCount, label, rootFontSize }) => {
+      document.documentElement.style.fontSize = `${rootFontSize}px`;
+      renderNexus({
+        mobile: true,
+        state: paneCountState(paneCount),
+      });
+
+      const wrapper = screen.getByTestId("nexus-wrapper");
+      const buttons = within(wrapper).getAllByRole("button");
+      expect(buttons).toHaveLength(1);
+      const button = within(wrapper).getByRole("button", { name: label });
+      expect(button.tagName).toBe("BUTTON");
+      expect(button).toHaveAttribute("aria-haspopup", "dialog");
+
+      const counter = within(button).getByText(String(paneCount));
+      expect(counter).toHaveAttribute("aria-hidden", "true");
+      expect(getComputedStyle(counter).pointerEvents).toBe("none");
+
+      const wrapperRect = wrapper.getBoundingClientRect();
+      const buttonRect = button.getBoundingClientRect();
+      const counterRect = counter.getBoundingClientRect();
+      const expectedCounterSize =
+        Number.parseFloat(getComputedStyle(counter).fontSize) * 1.625;
+
+      expect(wrapperRect.width).toBeCloseTo(48, 1);
+      expect(wrapperRect.height).toBeCloseTo(48, 1);
+      expect(buttonRect.width).toBeCloseTo(48, 1);
+      expect(buttonRect.height).toBeCloseTo(48, 1);
+      expect(counterRect.width).toBeCloseTo(expectedCounterSize, 1);
+      expect(counterRect.height).toBeCloseTo(expectedCounterSize, 1);
+      expect(counterRect.top - buttonRect.top).toBeCloseTo(1, 1);
+      expect(buttonRect.right - counterRect.right).toBeCloseTo(1, 1);
+      expect(counterRect.left).toBeGreaterThanOrEqual(buttonRect.left);
+      expect(counterRect.bottom).toBeLessThanOrEqual(buttonRect.bottom);
+      expect(counter.scrollWidth).toBeLessThanOrEqual(
+        counter.clientWidth + 1,
+      );
+      expect(counter.scrollHeight).toBeLessThanOrEqual(
+        counter.clientHeight + 1,
+      );
+    },
+  );
+
+  it("opens Switchboard while preserving the stable Nexus wrapper", async () => {
+    renderNexus({ mobile: true });
+    const wrapper = screen.getByTestId("nexus-wrapper");
+    const button = screen.getByRole("button", {
+      name: "Open Nexus, 1 tab",
+    });
+    const before = wrapper.getBoundingClientRect();
+
+    await userEvent.click(button);
+
+    expect(await screen.findByRole("dialog", { name: "Nexus" })).toBeVisible();
+    expect(button).toHaveAttribute("aria-hidden", "true");
+    expect(button).toHaveAttribute("inert");
+    const after = wrapper.getBoundingClientRect();
+    expect(after.left).toBeCloseTo(before.left, 1);
+    expect(after.top).toBeCloseTo(before.top, 1);
+    expect(after.width).toBeCloseTo(before.width, 1);
+    expect(after.height).toBeCloseTo(before.height, 1);
+  });
+
+  it("keeps the obstruction stable and paints nothing when reader retreat hides Nexus", async () => {
+    renderNexus({ mobile: true, readerScrollportProbe: true });
+    const wrapper = screen.getByTestId("nexus-wrapper");
+    const button = screen.getByRole("button", {
+      name: "Open Nexus, 1 tab",
+    });
+    const before = wrapper.getBoundingClientRect();
+    const reader = screen.getByRole("region", { name: "Reader content" });
+
+    reader.scrollTop = 40;
+    fireEvent.scroll(reader);
+
+    await waitFor(() => {
+      expect(button).toHaveAttribute("aria-hidden", "true");
+    });
+    expect(button).toHaveAttribute("inert");
+    expect(getComputedStyle(button).visibility).toBe("visible");
+
+    reader.scrollTop = 96;
+    fireEvent.scroll(reader);
+
+    await waitFor(() => {
+      expect(button).toHaveAttribute(
+        "data-mobile-chrome-phase",
+        "Hidden",
+      );
+    });
+    expect(getComputedStyle(button).visibility).toBe("hidden");
+    const after = wrapper.getBoundingClientRect();
+    expect(after.left).toBeCloseTo(before.left, 1);
+    expect(after.top).toBeCloseTo(before.top, 1);
+    expect(after.width).toBeCloseTo(before.width, 1);
+    expect(after.height).toBeCloseTo(before.height, 1);
   });
 });

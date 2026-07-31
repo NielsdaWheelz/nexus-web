@@ -135,6 +135,11 @@ AppNav derives the focus owner from the workspace activation result. Only an
 unchanged or rejected activation retains source focus; navigation, restoration,
 and creation hand focus ownership to the destination.
 
+On mobile, destination focus lands on the active pane landmark, never the
+AppBar or pane toolbar. The landmark is stable while reader chrome retreats, so
+route activation cannot pin or strand transient controls. Desktop retains its
+explicit pane-chrome focus target.
+
 The click policy leaves already-prevented events, non-primary buttons, and
 Meta/Ctrl/Alt activations untouched so browser-native open-in-new-tab and
 related link gestures still work. The rendered anchor always retains a real

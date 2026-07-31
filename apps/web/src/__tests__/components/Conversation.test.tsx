@@ -12,6 +12,7 @@ import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
+import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
 import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
 import type { EffectivePaneSizing } from "@/lib/workspace/paneSizing";
 import {
@@ -62,24 +63,6 @@ const tailMocks = vi.hoisted(() => ({
 
 vi.mock("@/components/chat/useChatRunTail", () => ({
   useChatRunTail: tailMocks.useChatRunTail,
-}));
-
-// PaneShell now consumes the lifted MobileChromeProvider; stub it so the pane
-// renders in isolation (matches PaneShell.test.tsx and the body-pane tests).
-vi.mock("@/lib/workspace/mobileChrome", () => ({
-  useMobileChrome: () => ({
-    motionPhase: { kind: "Visible" },
-    paneChrome: null,
-    setPaneChrome: () => {},
-    acquireVisibleLock: () => () => {},
-    finishSettle: () => {},
-  }),
-  useMobileChromeSurface: () => {},
-  usePaneMobileChromeController: () => ({
-    startReaderScroll: () => {},
-    updateReaderScroll: () => {},
-    acquireVisibleLock: () => () => {},
-  }),
 }));
 
 const timestamp = "2026-01-01T00:00:00Z";
@@ -497,7 +480,9 @@ function renderPane(
     onActivateWorkspaceTarget?: ComponentProps<
       typeof PaneRuntimeProvider
     >["onActivateWorkspaceTarget"];
-    onNavigatePane?: ComponentProps<typeof PaneRuntimeProvider>["onNavigatePane"];
+    onNavigatePane?: ComponentProps<
+      typeof PaneRuntimeProvider
+    >["onNavigatePane"];
     onPreviewTransientSecondaryResult?: ComponentProps<
       typeof PaneRuntimeProvider
     >["onPreviewTransientSecondaryResult"];
@@ -1829,68 +1814,70 @@ describe("Conversation", () => {
     const tree = (
       secondaryPane: WorkspaceAttachedSecondaryPaneState | null,
     ) => (
-      <FeedbackProvider>
-        <ShareControllerProvider>
-          <LibraryPlacementControllerProvider>
-            <PaneReturnMementoProvider>
-              <PaneRuntimeProvider
-                paneId="pane-1"
-                visitId={TEST_VISIT_ID}
-                isActive={true}
-                href="/conversations/00000000-0000-4000-8000-000000000101"
-                routeId="conversation"
-                routeKey={
-                  resolvePaneRouteIdentity(
-                    "/conversations/00000000-0000-4000-8000-000000000101",
-                  ).routeKey
-                }
-                canGoBack={false}
-                canGoForward={false}
-                onGoBackPane={vi.fn()}
-                onGoForwardPane={vi.fn()}
-                pathParams={{
-                  id: "00000000-0000-4000-8000-000000000101",
-                }}
-                onNavigatePane={vi.fn()}
-                onReplacePane={vi.fn()}
-                onActivateWorkspaceTarget={vi.fn(() => ({
-                  kind: "ActivatedExisting" as const,
-                  paneId: "pane",
-                }))}
-                onSetPaneLabel={vi.fn()}
-                secondaryPane={secondaryPane}
-                onRequestSecondarySurface={onRequestSecondarySurface}
-                onCloseSecondaryPane={vi.fn()}
-              >
-                <PaneShell
+      <MobileChromeProvider>
+        <FeedbackProvider>
+          <ShareControllerProvider>
+            <LibraryPlacementControllerProvider>
+              <PaneReturnMementoProvider>
+                <PaneRuntimeProvider
                   paneId="pane-1"
+                  visitId={TEST_VISIT_ID}
+                  isActive={true}
+                  href="/conversations/00000000-0000-4000-8000-000000000101"
+                  routeId="conversation"
                   routeKey={
                     resolvePaneRouteIdentity(
                       "/conversations/00000000-0000-4000-8000-000000000101",
                     ).routeKey
                   }
-                  routeHeader={{
-                    kind: "section",
-                    destinationId: "chats",
-                    defaultFolio: "none",
+                  canGoBack={false}
+                  canGoForward={false}
+                  onGoBackPane={vi.fn()}
+                  onGoForwardPane={vi.fn()}
+                  pathParams={{
+                    id: "00000000-0000-4000-8000-000000000101",
                   }}
-                  label="Chat"
-                  returnMementoEnabled={false}
-                  sizing={paneSizing({
-                    widthPx: 480,
-                    minWidthPx: 320,
-                    maxWidthPx: 1400,
-                  })}
-                  bodyMode="contained"
-                  onResizePrimaryPane={vi.fn()}
+                  onNavigatePane={vi.fn()}
+                  onReplacePane={vi.fn()}
+                  onActivateWorkspaceTarget={vi.fn(() => ({
+                    kind: "ActivatedExisting" as const,
+                    paneId: "pane",
+                  }))}
+                  onSetPaneLabel={vi.fn()}
+                  secondaryPane={secondaryPane}
+                  onRequestSecondarySurface={onRequestSecondarySurface}
+                  onCloseSecondaryPane={vi.fn()}
                 >
-                  <Conversation />
-                </PaneShell>
-              </PaneRuntimeProvider>
-            </PaneReturnMementoProvider>
-          </LibraryPlacementControllerProvider>
-        </ShareControllerProvider>
-      </FeedbackProvider>
+                  <PaneShell
+                    paneId="pane-1"
+                    routeKey={
+                      resolvePaneRouteIdentity(
+                        "/conversations/00000000-0000-4000-8000-000000000101",
+                      ).routeKey
+                    }
+                    routeHeader={{
+                      kind: "section",
+                      destinationId: "chats",
+                      defaultFolio: "none",
+                    }}
+                    label="Chat"
+                    returnMementoEnabled={false}
+                    sizing={paneSizing({
+                      widthPx: 480,
+                      minWidthPx: 320,
+                      maxWidthPx: 1400,
+                    })}
+                    bodyMode="contained"
+                    onResizePrimaryPane={vi.fn()}
+                  >
+                    <Conversation />
+                  </PaneShell>
+                </PaneRuntimeProvider>
+              </PaneReturnMementoProvider>
+            </LibraryPlacementControllerProvider>
+          </ShareControllerProvider>
+        </FeedbackProvider>
+      </MobileChromeProvider>
     );
 
     render(tree(null));
@@ -1930,8 +1917,7 @@ describe("Conversation", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = pathOf(input);
       if (
-        path ===
-        "/api/conversations/00000000-0000-4000-8000-000000000101/tree"
+        path === "/api/conversations/00000000-0000-4000-8000-000000000101/tree"
       ) {
         return jsonResponse({ data: emptyTree });
       }

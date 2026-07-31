@@ -9,8 +9,9 @@ import type {
   TouchEvent,
   WheelEvent,
 } from "react";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
+import { useMobileChromeReaderScrollport } from "@/lib/workspace/mobileChrome";
 import styles from "./page.module.css";
 
 export type ReaderViewportSnapshot = {
@@ -41,6 +42,8 @@ type TextDocumentContentState =
 
 export default function TextDocumentReader({
   mediaId,
+  mobileChromeSourceKey,
+  mobileChromeEnabled,
   beforeContent,
   readerRootRef,
   contentRef,
@@ -63,6 +66,8 @@ export default function TextDocumentReader({
   onInternalLinkClick,
 }: {
   mediaId: string;
+  mobileChromeSourceKey: string;
+  mobileChromeEnabled: boolean;
   beforeContent?: ReactNode;
   readerRootRef: RefObject<HTMLDivElement | null>;
   contentRef: RefObject<HTMLDivElement | null>;
@@ -84,6 +89,18 @@ export default function TextDocumentReader({
   onContentBlur: (event: FocusEvent<HTMLDivElement>) => void;
   onInternalLinkClick?: (href: string | null) => boolean;
 }) {
+  const mobileChromeViewportRef =
+    useMobileChromeReaderScrollport<HTMLDivElement>({
+      sourceKey: mobileChromeSourceKey,
+      enabled: mobileChromeEnabled,
+    });
+  const setTextViewportNode = useCallback(
+    (node: HTMLDivElement | null) => {
+      textViewportRef.current = node;
+      mobileChromeViewportRef(node);
+    },
+    [mobileChromeViewportRef, textViewportRef],
+  );
   const onViewportReadyRef = useRef(onViewportReady);
   const onViewportScrollRef = useRef(onViewportScroll);
   const onTrustedScrollIntentRef = useRef(onTrustedScrollIntent);
@@ -216,7 +233,7 @@ export default function TextDocumentReader({
   return (
     <div className={styles.readerFrame}>
       <div
-        ref={textViewportRef}
+        ref={setTextViewportNode}
         className={styles.documentViewport}
         data-testid="document-viewport"
         data-pane-content="true"
