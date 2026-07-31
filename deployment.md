@@ -165,6 +165,12 @@ images on the VPS, runs Alembic migrations, and starts the Compose stack.
 
 Deploy recreates both fixed lanes. Maintenance authorization belongs only on
 the bounded one-off invocation; never sync it into production runtime env.
+Before replacing image tags, it retains the exact API and worker images reported
+by the existing containers as `release-<CUTOVER_SHA>` rollback images; each
+service keeps one prior release. It also fails rather than crossing an
+operator-owned migration. Complete every reported stopped-world workflow until
+production reaches a normal deployable revision, then rerun the ordinary
+deploy.
 
 ## Frontend Env
 

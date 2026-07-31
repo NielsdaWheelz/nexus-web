@@ -90,3 +90,16 @@ def test_oracle_seed_drains_source_and_reindex_jobs_through_shared_contract():
     assert set(ORACLE_SEED_WORKER_JOB_KINDS) <= set(get_default_registry())
     seed_script = (_ROOT / "scripts" / "oracle" / "seed_corpus_library.py").read_text()
     assert "allowed_kinds=ORACLE_SEED_WORKER_JOB_KINDS" in seed_script
+
+
+def test_deploy_retains_rollback_images_and_checks_manual_migrations_before_upgrade():
+    deploy = (_ROOT / "deploy" / "hetzner" / "deploy.sh").read_text()
+
+    build = deploy.index("compose build --pull")
+    assert deploy.index("retain_release_image api nexus-api") < build
+    assert deploy.index("retain_release_image worker-interactive nexus-worker-interactive") < build
+    assert deploy.index("retain_release_image worker-background nexus-worker-background") < build
+
+    migration_gate = deploy.index("-m nexus.ops.deployment_migrations")
+    migration_upgrade = deploy.index("/app/.venv/bin/alembic upgrade head")
+    assert migration_gate < migration_upgrade

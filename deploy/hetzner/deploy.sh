@@ -76,6 +76,43 @@ compose() {
   NEXUS_ENV_FILE="$ENV_FILE" docker compose --env-file "$ENV_FILE" -f deploy/hetzner/docker-compose.yml "$@"
 }
 
+retain_release_image() {
+  local service="$1"
+  local repository="$2"
+  local container_id revision image_id retained_tag prior_tag
+
+  container_id="$(compose ps --all -q "$service")"
+  [ -n "$container_id" ] || return 0
+  revision="$(
+    docker inspect "$container_id" --format '{{range .Config.Env}}{{println .}}{{end}}' |
+      sed -n 's/^CUTOVER_SHA=//p'
+  )"
+  case "$revision" in
+    *[!0-9a-f]*|"")
+      echo "error: ${service} container has no valid CUTOVER_SHA" >&2
+      return 1
+      ;;
+  esac
+  if [ "${#revision}" != "40" ]; then
+    echo "error: ${service} container CUTOVER_SHA must be a full Git revision" >&2
+    return 1
+  fi
+  image_id="$(docker inspect "$container_id" --format '{{.Image}}')"
+  retained_tag="${repository}:release-${revision}"
+  docker image tag "$image_id" "$retained_tag"
+  while IFS= read -r prior_tag; do
+    [ "$prior_tag" = "$retained_tag" ] || docker image rm "$prior_tag" >/dev/null
+  done < <(
+    docker image ls \
+      --filter "reference=${repository}:release-*" \
+      --format '{{.Repository}}:{{.Tag}}'
+  )
+  echo "retained_release_image=${retained_tag}"
+}
+
+retain_release_image api nexus-api
+retain_release_image worker-interactive nexus-worker-interactive
+retain_release_image worker-background nexus-worker-background
 compose build --pull
 compose up -d postgres
 for i in $(seq 1 30); do
@@ -88,6 +125,28 @@ for i in $(seq 1 30); do
   fi
   sleep 2
 done
+MIGRATION_TABLE="$(
+  compose exec -T postgres sh -c \
+    'psql -At -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT to_regclass('\''public.alembic_version'\'')"' \
+    </dev/null
+)"
+if [ -z "$MIGRATION_TABLE" ]; then
+  MIGRATION_CURRENT="base"
+else
+  MIGRATION_CURRENT="$(
+    compose exec -T postgres sh -c \
+      'psql -At -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT version_num FROM alembic_version"' \
+      </dev/null
+  )"
+  [ -n "$MIGRATION_CURRENT" ] || {
+    echo "error: alembic_version exists without a current revision" >&2
+    exit 1
+  }
+fi
+compose run -T --rm api /app/.venv/bin/python -m nexus.ops.deployment_migrations \
+  --current "$MIGRATION_CURRENT" \
+  --script-location /app/migrations/alembic \
+  </dev/null
 compose stop worker-interactive worker-background api
 compose run -T --rm api sh -c 'cd /app/migrations && /app/.venv/bin/alembic upgrade head' </dev/null
 compose run -T --rm --no-deps worker-background /app/.venv/bin/python /app/scripts/ensure_oracle_seed_objects.py </dev/null
