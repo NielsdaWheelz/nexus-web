@@ -2,16 +2,27 @@
 
 import {
   createContext,
-  startTransition,
+  useCallback,
   useContext,
   useEffect,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import type { RenderEnvironment, ViewportKind } from "./types";
 
 const MOBILE_QUERY =
   "(max-width: 768px), (max-width: 900px) and (orientation: landscape) and (pointer: coarse)";
+
+function browserViewportKind(): ViewportKind {
+  return window.matchMedia(MOBILE_QUERY).matches ? "mobile" : "desktop";
+}
+
+function subscribeToViewport(onStoreChange: () => void): () => void {
+  const query = window.matchMedia(MOBILE_QUERY);
+  query.addEventListener("change", onStoreChange);
+  return () => query.removeEventListener("change", onStoreChange);
+}
 
 interface RenderEnvironmentContextValue extends RenderEnvironment {
   viewportKind: ViewportKind;
@@ -27,29 +38,20 @@ export function RenderEnvironmentProvider({
   value: RenderEnvironment;
   children: ReactNode;
 }) {
-  const [viewportKind, setViewportKind] = useState<ViewportKind>(value.initialViewport);
+  const serverViewportKind = useCallback(
+    () => value.initialViewport,
+    [value.initialViewport],
+  );
+  const viewportKind = useSyncExternalStore(
+    subscribeToViewport,
+    browserViewportKind,
+    serverViewportKind,
+  );
   const [viewportHydrated, setViewportHydrated] = useState(false);
 
   useEffect(() => {
-    const publishViewport = (kind: ViewportKind) => {
-      startTransition(() => {
-        setViewportKind(kind);
-        setViewportHydrated(true);
-      });
-    };
-
-    if (typeof window.matchMedia !== "function") {
-      publishViewport(value.initialViewport);
-      return;
-    }
-    const query = window.matchMedia(MOBILE_QUERY);
-    const update = () => {
-      publishViewport(query.matches ? "mobile" : "desktop");
-    };
-    update();
-    query.addEventListener("change", update);
-    return () => query.removeEventListener("change", update);
-  }, [value.initialViewport]);
+    setViewportHydrated(true);
+  }, []);
 
   return (
     <RenderEnvironmentContext.Provider value={{ ...value, viewportKind, viewportHydrated }}>

@@ -1862,7 +1862,7 @@ export default function PdfReader({
           : pageNumberRef.current;
 
         markPageSurface(renderedPage, event.source);
-        const renderedScale = rememberPageScale(renderedPage, event.source);
+        rememberPageScale(renderedPage, event.source);
         const renderedZoom =
           readViewerZoom(pdfViewer) ?? zoomRef.current;
         if (!event.error) {
