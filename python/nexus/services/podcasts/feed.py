@@ -34,6 +34,7 @@ from ._normalize import (
 )
 from .provider import (
     PODCAST_INDEX_EPISODE_PAGE_SIZE,
+    REAL_MEDIA_PODCAST_FEED_URL,
 )
 
 logger = get_logger(__name__)
@@ -241,7 +242,7 @@ def _fetch_feed_episode_page(page_url: str) -> tuple[list[dict[str, Any]], str |
         settings = get_settings()
         if not settings.real_media_provider_fixtures:
             return [], None
-        if page_url != "https://www.nasa.gov/podcasts/houston-we-have-a-podcast/feed/":
+        if page_url != REAL_MEDIA_PODCAST_FEED_URL:
             return [], None
         if settings.real_media_fixture_dir is None:
             logger.warning("podcast_feed_fixture_dir_missing", page_url=page_url)
@@ -271,7 +272,7 @@ def _fetch_live_feed_episode_page(page_url: str) -> tuple[list[dict[str, Any]], 
         settings = get_settings()
         if (
             not settings.real_media_provider_fixtures
-            or page_url != "https://www.nasa.gov/podcasts/houston-we-have-a-podcast/feed/"
+            or page_url != REAL_MEDIA_PODCAST_FEED_URL
             or settings.real_media_fixture_dir is None
         ):
             raise ApiError(

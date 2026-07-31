@@ -218,6 +218,9 @@ def test_raw_browse_methods_preserve_real_media_fixture_gate(
             None,
         )
         episode = client.browse_episode_payload("nasa-hwhap-crew4")
+        canonical_feed_lookup = client.lookup_podcast_by_feed_url(
+            "https://www.nasa.gov/podcasts/houston-we-have-a-podcast/feed"
+        )
     finally:
         clear_settings_cache()
 
@@ -225,3 +228,5 @@ def test_raw_browse_methods_preserve_real_media_fixture_gate(
     assert podcast["feed"]["id"] == "nasa-hwhap-real-media"
     assert episodes["items"][0]["id"] == "nasa-hwhap-crew4"
     assert episode["episode"]["id"] == "nasa-hwhap-crew4"
+    assert canonical_feed_lookup is not None
+    assert canonical_feed_lookup["provider_podcast_id"] == "nasa-hwhap-real-media"

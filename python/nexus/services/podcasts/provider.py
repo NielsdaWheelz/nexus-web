@@ -25,6 +25,7 @@ PODCAST_PROVIDER = "podcast_index"
 PODCAST_INDEX_EPISODE_PAGE_SIZE = 100
 PODCAST_PROVIDER_MAX_ATTEMPTS = 3
 PODCAST_PROVIDER_BACKOFF_SECONDS = (0.25, 0.5, 1.0)
+REAL_MEDIA_PODCAST_FEED_URL = "https://www.nasa.gov/podcasts/houston-we-have-a-podcast/feed"
 
 
 class PodcastIndexClient:
@@ -157,9 +158,7 @@ class PodcastIndexClient:
         if real_media_provider_fixtures_requested():
             settings = get_settings()
             if settings.real_media_provider_fixtures:
-                if str(feed_url or "").strip() != (
-                    "https://www.nasa.gov/podcasts/houston-we-have-a-podcast/feed/"
-                ):
+                if str(feed_url or "").strip() != REAL_MEDIA_PODCAST_FEED_URL:
                     return None
                 payload = _read_real_media_json_fixture(
                     settings.real_media_fixture_dir,
