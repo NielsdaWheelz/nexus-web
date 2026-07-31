@@ -1729,6 +1729,14 @@ def _classified_exact_result(result: CapabilityResult) -> CapabilityResult:
         "falsifying example:" in folded
         or ("failed " in folded and "::" in folded and " - assertionerror" in folded)
         or ("error: expect(" in folded and " › " in folded)
+        or any(
+            marker in folded
+            for marker in (
+                "\ne   assert ",
+                "\ne   assertionerror",
+                "\ne   failed:",
+            )
+        )
     ):
         kind = "behavioral_assertion_failure"
     else:
