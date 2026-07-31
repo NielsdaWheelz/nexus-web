@@ -698,6 +698,11 @@ that generic doctrine: `docs/local-rules/testing-standards.md` remains the sole
 authority when the two differ. Acceptance scans active normative and executable
 surfaces, not unscoped historical prose.
 
+If the subtree pull reports that the unchanged upstream commit is already
+present after a later local deletion, restore the missing path from that exact
+subtree commit and verify it is byte-identical to the upstream blob. This is an
+exact import repair, not a local semantic edit.
+
 ## Hard-cut files
 
 Create/adapt:
@@ -861,9 +866,9 @@ not supported compatibility modes.
   `not_run` into pass.
 - **AC13 — governance:** the local rule contains the enumerated amendments and
   both local indexes/structure docs resolve. The shared generic testing
-  contract/index was re-imported through the subtree with no local mirror edit;
-  the self-contained local rule remains authoritative and unchanged by that
-  import.
+  contract/index is byte-identical to the current imported subtree source with
+  no local semantic edit; the self-contained local rule remains authoritative
+  and unchanged by that import.
 - **AC14 — singular workflow ownership:** paid provider certification exists
   only in protected manual `release.yml`; Android signing/publication has one
   owner there; emulator proof has one nightly owner; deployed auth smoke still
