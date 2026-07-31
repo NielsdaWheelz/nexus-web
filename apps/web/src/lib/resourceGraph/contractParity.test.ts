@@ -68,7 +68,7 @@ for node in tree.body:
     if not isinstance(value, ast.Dict):
         raise AssertionError("RESOURCE_ITEM_CAPABILITIES must be a dict literal")
     manifest = {}
-    for key, row in zip(value.keys, value.values, strict=True):
+    for key, row in zip(value.keys, value.values):
         if not isinstance(row, ast.Call):
             raise AssertionError("capability rows must be ResourceItemCapability calls")
         manifest[ast.literal_eval(key)] = {

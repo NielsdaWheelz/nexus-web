@@ -10,6 +10,7 @@ export default defineConfig({
       "next/navigation",
       "pdfjs-dist",
       "pdfjs-dist/web/pdf_viewer.mjs",
+      "react-dom/client",
     ],
   },
   test: {
