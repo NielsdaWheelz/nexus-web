@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import time
@@ -1838,12 +1839,19 @@ def _run_owned_commands(
             )
         if completed.returncode != 0:
             duration_ms = (time.monotonic_ns() - started) // 1_000_000
+            interrupted_by = _command_interruption_signal(completed.returncode)
             detail = redact_text(
-                _failed_command_detail(index, completed),
+                _command_result_detail(index, completed, interrupted_by),
                 environment_secrets(child_environment),
             )
             artifacts = _failure_artifacts(capability, index, completed, child_environment)
-            return _result(capability, RunStatus.FAIL, duration_ms, detail, artifacts=artifacts)
+            return _result(
+                capability,
+                RunStatus.NOT_RUN if interrupted_by is not None else RunStatus.FAIL,
+                duration_ms,
+                detail,
+                artifacts=artifacts,
+            )
     duration_ms = (time.monotonic_ns() - started) // 1_000_000
     return _result(
         capability,
@@ -3366,11 +3374,12 @@ def _run_fixed_commands(
         if completed.returncode != 0:
             duration_ms = elapsed_ms + (time.monotonic_ns() - started) // 1_000_000
             artifacts = _failure_artifacts(capability, index, completed, environment)
+            interrupted_by = _command_interruption_signal(completed.returncode)
             return _result(
                 capability,
-                RunStatus.FAIL,
+                RunStatus.NOT_RUN if interrupted_by is not None else RunStatus.FAIL,
                 duration_ms,
-                _failed_command_detail(index, completed),
+                _command_result_detail(index, completed, interrupted_by),
                 artifacts=artifacts,
             )
     duration_ms = elapsed_ms + (time.monotonic_ns() - started) // 1_000_000
@@ -3382,7 +3391,18 @@ def _run_fixed_commands(
     )
 
 
-def _failed_command_detail(index: int, completed: subprocess.CompletedProcess[str]) -> str:
+def _command_interruption_signal(returncode: int) -> signal.Signals | None:
+    for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGKILL):
+        if returncode in {-signum, 128 + signum, 256 - signum}:
+            return signal.Signals(signum)
+    return None
+
+
+def _command_result_detail(
+    index: int,
+    completed: subprocess.CompletedProcess[str],
+    interrupted_by: signal.Signals | None = None,
+) -> str:
     stdout = (completed.stdout or "").strip()
     stderr = (completed.stderr or "").strip()
     parts = []
@@ -3391,7 +3411,16 @@ def _failed_command_detail(index: int, completed: subprocess.CompletedProcess[st
     if stderr:
         parts.append(f"stderr={stderr[-1900:]}")
     decisive = " | ".join(parts) if parts else "no diagnostic output"
+    if interrupted_by is not None:
+        return (
+            f"fixed command {index} interrupted by {interrupted_by.name} "
+            f"(exit {completed.returncode}): {decisive}"
+        )
     return f"fixed command {index} exited {completed.returncode}: {decisive}"
+
+
+def _failed_command_detail(index: int, completed: subprocess.CompletedProcess[str]) -> str:
+    return _command_result_detail(index, completed)
 
 
 def _child_environment(environment: Mapping[str, str]) -> dict[str, str]:

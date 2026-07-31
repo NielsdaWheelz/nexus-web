@@ -490,6 +490,22 @@ def test_missing_tool_is_not_run_and_command_failure_records_its_exit_status(
     assert stream.getvalue() == ("kernel-web: fixed command 1 exited 7: stderr=token=[REDACTED]\n")
 
 
+def test_external_sigterm_exit_is_not_misreported_as_a_test_failure(tmp_path: Path) -> None:
+    _write(tmp_path / "apps/web/package.json", "{}\n")
+    (tmp_path / "apps/web/node_modules").mkdir()
+    _write(tmp_path / "apps/web/src/example.unit.test.ts", "export {};\n")
+    environment = _stub_tools(tmp_path, "bun", exit_status=241, diagnostic="terminated")
+
+    result = run_capability(
+        CapabilityContext(tmp_path, Workflow.CONFIDENCE, ()),
+        Capability.KERNEL_WEB,
+        environment,
+    )
+
+    assert result.evidence.status is RunStatus.NOT_RUN
+    assert "interrupted by SIGTERM (exit 241)" in result.detail
+
+
 def test_browser_setup_failure_references_every_owned_process_log(tmp_path: Path) -> None:
     run_id = "0123456789abcdef"
     directory = tmp_path / "test-results/runs" / run_id
@@ -522,7 +538,7 @@ def test_heavy_capability_remains_truthfully_not_run() -> None:
     assert result.evidence.id is Capability.SERVICE
     assert result.evidence.status is RunStatus.NOT_RUN
     assert result.evidence.detail == result.detail
-    assert result.detail == "Python service proof owner is absent"
+    assert result.detail == "heavy proof requires the workflow-owned local test run"
 
 
 def test_workflow_interruption_closes_the_owned_run(tmp_path: Path) -> None:
