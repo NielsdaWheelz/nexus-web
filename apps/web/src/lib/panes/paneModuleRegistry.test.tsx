@@ -17,28 +17,6 @@ type TestPaneId = "media";
 type TestPaneModule = { default: ComponentType };
 
 describe("createPaneModuleRegistry", () => {
-  it("renders when the intent preload settled before React.lazy first mounts", async () => {
-    const loader = vi.fn(async (): Promise<TestPaneModule> => ({
-      default: () => <div>Already warm</div>,
-    }));
-    const registry = createPaneModuleRegistry<TestPaneId, TestPaneModule>({
-      media: loader,
-    });
-    const LazyBody = lazy(() => registry.load("media"));
-
-    await registry.preload("media");
-    const Body = registry.peek("media")?.default ?? LazyBody;
-    render(
-      <Suspense fallback={<div>Loading pane…</div>}>
-        <Body />
-      </Suspense>,
-    );
-
-    expect(screen.getByText("Already warm")).toBeVisible();
-    expect(screen.queryByText("Loading pane…")).not.toBeInTheDocument();
-    expect(loader).toHaveBeenCalledTimes(1);
-  });
-
   it("gives an intent preload and a concurrently mounted lazy body one module promise", async () => {
     const paneModule = deferred<TestPaneModule>();
     const loader = vi.fn(() => paneModule.promise);

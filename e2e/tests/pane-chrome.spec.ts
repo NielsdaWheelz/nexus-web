@@ -59,6 +59,16 @@ async function gotoPaneChromePath(
 
 async function useMobileViewport(page: Page): Promise<void> {
   await page.setViewportSize({ width: 390, height: 844 });
+  await expect
+    .poll(() =>
+      page.evaluate(() => ({
+        innerWidth: window.innerWidth,
+        mobileQueryMatches: window.matchMedia(
+          "(max-width: 768px), (max-width: 900px) and (orientation: landscape) and (pointer: coarse)",
+        ).matches,
+      })),
+    )
+    .toEqual({ innerWidth: 390, mobileQueryMatches: true });
 }
 
 async function setPaneChromeAuthors(
@@ -343,7 +353,21 @@ function paneShell(page: Page) {
 
 async function expectMobilePaneShellInvariants(page: Page): Promise<void> {
   const shell = paneShell(page);
-  await expect(shell).toHaveAttribute("data-mobile", "true");
+  await expect
+    .poll(async () => ({
+      dataMobile: await shell.getAttribute("data-mobile"),
+      ...(await page.evaluate(() => ({
+        innerWidth: window.innerWidth,
+        mobileQueryMatches: window.matchMedia(
+          "(max-width: 768px), (max-width: 900px) and (orientation: landscape) and (pointer: coarse)",
+        ).matches,
+      }))),
+    }))
+    .toEqual({
+      dataMobile: "true",
+      innerWidth: 390,
+      mobileQueryMatches: true,
+    });
   await expect(
     page.getByRole("separator", { name: /^Resize pane / }),
   ).toHaveCount(0);

@@ -1,9 +1,17 @@
 import { Suspense } from "react";
+import "@/components/PdfReader.module.css";
 import { verifySession } from "@/lib/auth/dal";
 import { loadRenderEnvironment } from "@/lib/renderEnvironment/server";
+import "./media/[id]/page.module.css";
 import { AuthenticatedShellSkeleton } from "./AuthenticatedShellSkeleton";
 import { AuthenticatedWorkspaceErrorBoundary } from "./AuthenticatedWorkspaceErrorBoundary";
 import WorkspaceBootstrapGate from "./WorkspaceBootstrapGate";
+
+// Pane JavaScript stays lazy, but reader layout CSS is shell-critical. Next's
+// runtime CSS hook resolves dynamic imports before their stylesheets commit;
+// owning these small styles in the authenticated layout prevents a cached or
+// preloaded media pane from rendering unstyled (and satisfies PDF.js's strict
+// absolutely-positioned container precondition before its constructor runs).
 
 // Only LOCAL work runs above the Suspense boundary — the auth gate (may redirect) and the
 // header-derived render environment. The chrome skeleton is the first flush (TTFB depends on
