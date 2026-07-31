@@ -84,7 +84,10 @@ function PaneBodyPerformanceMarker({ children }: { children: ReactNode }) {
 }
 
 export function renderPane(id: PaneRouteId): ReactNode {
-  const Body = PANE_BODIES[id];
+  // A view-transition preload completes before its synchronous DOM update.
+  // Render that published module directly so React.lazy does not introduce a
+  // fresh Suspense turn after the caller already proved the chunk is ready.
+  const Body = PANE_MODULES.peek(id)?.default ?? PANE_BODIES[id];
   return (
     <Suspense fallback={<PaneLoadingState />}>
       <PaneBodyPerformanceMarker>

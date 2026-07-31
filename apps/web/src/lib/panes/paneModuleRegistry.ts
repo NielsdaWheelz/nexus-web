@@ -2,6 +2,7 @@ type ModuleLoader<Module> = () => Promise<Module>;
 
 export type PaneModuleRegistry<Id extends string, Module> = {
   load: (id: Id) => Promise<Module>;
+  peek: (id: Id) => Module | null;
   preload: (id: Id) => Promise<void>;
 };
 
@@ -18,6 +19,7 @@ export function createPaneModuleRegistry<Id extends string, Module>(
   loaders: Record<Id, ModuleLoader<Module>>,
 ): PaneModuleRegistry<Id, Module> {
   const modulePromises = new Map<Id, Promise<Module>>();
+  const loadedModules = new Map<Id, Module>();
 
   const load = (id: Id): Promise<Module> => {
     const existing = modulePromises.get(id);
@@ -30,16 +32,26 @@ export function createPaneModuleRegistry<Id extends string, Module>(
       promise = Promise.reject(error);
     }
     modulePromises.set(id, promise);
-    void promise.catch(() => {
-      if (modulePromises.get(id) === promise) {
-        modulePromises.delete(id);
-      }
-    });
+    void promise.then(
+      (module) => {
+        if (modulePromises.get(id) === promise) {
+          loadedModules.set(id, module);
+        }
+      },
+      () => {
+        if (modulePromises.get(id) === promise) {
+          modulePromises.delete(id);
+          loadedModules.delete(id);
+        }
+      },
+    );
     return promise;
   };
 
   return {
     load,
+    peek: (id) =>
+      loadedModules.has(id) ? (loadedModules.get(id) as Module) : null,
     preload: (id) => load(id).then(() => undefined),
   };
 }
