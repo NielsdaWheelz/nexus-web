@@ -14,6 +14,8 @@ interface PdfScrollTarget {
 
 interface UsePdfScrollToTargetOptions {
   target: PdfScrollTarget | null;
+  /** True once the viewer has rendered its initial page and accepts navigation. */
+  ready: boolean;
   runRef: MutableRefObject<number>;
   pageNumberRef: MutableRefObject<number>;
   goToPage: (pageNumber: number) => Promise<void> | void;
@@ -33,6 +35,7 @@ interface UsePdfScrollToTargetOptions {
  */
 export function usePdfScrollToTarget({
   target,
+  ready,
   runRef,
   pageNumberRef,
   goToPage,
@@ -44,6 +47,9 @@ export function usePdfScrollToTarget({
   useEffect(() => {
     if (!target || target.quads.length === 0) {
       processedKeyRef.current = null;
+      return;
+    }
+    if (!ready) {
       return;
     }
     if (processedKeyRef.current === target.key) {
@@ -94,6 +100,7 @@ export function usePdfScrollToTarget({
     goToPage,
     onSettle,
     pageNumberRef,
+    ready,
     runRef,
     scrollToProjectedHighlight,
     target,

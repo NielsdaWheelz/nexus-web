@@ -269,7 +269,7 @@ interface ViewerEventHandlers {
 interface PdfReaderPositioningRenderTarget {
   runId: number;
   pageNumber: number;
-  scale: number;
+  zoom: number;
 }
 
 export type PdfViewportIntent =
@@ -850,22 +850,22 @@ export default function PdfReader({
   );
 
   const waitForReaderPositioningRender = useCallback(
-    (pageNumber: number, scale: number): boolean =>
+    (pageNumber: number, zoom: number): boolean =>
       beginReaderPositioning({
         runId: runRef.current,
         pageNumber,
-        scale,
+        zoom,
       }),
     [beginReaderPositioning],
   );
 
-  const pageHasRenderedAtScale = useCallback(
-    (targetPage: number, scale: number): boolean => {
-      const renderedScale =
+  const pageHasRenderedAtZoom = useCallback(
+    (targetPage: number, zoom: number): boolean => {
+      const renderedZoom =
         renderedPageZoomByNumberRef.current.get(targetPage);
       return (
-        renderedScale !== undefined &&
-        Math.abs(renderedScale - scale) <= PDF_FIND_VIEWPORT_SCALE_EPSILON
+        renderedZoom !== undefined &&
+        Math.abs(renderedZoom - zoom) <= PDF_FIND_VIEWPORT_SCALE_EPSILON
       );
     },
     [],
@@ -1862,7 +1862,7 @@ export default function PdfReader({
           : pageNumberRef.current;
 
         markPageSurface(renderedPage, event.source);
-        const renderedScale = rememberPageScale(renderedPage, event.source);
+        rememberPageScale(renderedPage, event.source);
         const renderedZoom =
           readViewerZoom(pdfViewer) ?? zoomRef.current;
         if (!event.error) {
@@ -1894,7 +1894,7 @@ export default function PdfReader({
             !signedUrlExpiryRenderError &&
             positioningTarget?.runId === runId &&
             positioningTarget.pageNumber === renderedPage &&
-            Math.abs(positioningTarget.scale - renderedZoom) <=
+            Math.abs(positioningTarget.zoom - renderedZoom) <=
               PDF_FIND_VIEWPORT_SCALE_EPSILON
           ) {
             settleReaderPositioning();
@@ -2400,7 +2400,7 @@ export default function PdfReader({
         return;
       }
 
-      const expectedScale = activePageScaleRef.current;
+      const expectedZoom = readViewerZoom(viewer) ?? zoomRef.current;
       let waitsForRender = false;
       setNavigating(true);
       clearSelection();
@@ -2419,15 +2419,15 @@ export default function PdfReader({
         ) {
           waitsForRender = waitForReaderPositioningRender(
             nextPage,
-            expectedScale,
+            expectedZoom,
           );
           requestSignedUrlRecovery(nextPage, currentRun);
           return;
         }
-        if (!pageHasRenderedAtScale(nextPage, expectedScale)) {
+        if (!pageHasRenderedAtZoom(nextPage, expectedZoom)) {
           waitsForRender = waitForReaderPositioningRender(
             nextPage,
-            expectedScale,
+            expectedZoom,
           );
         } else {
           beginReaderPositioning();
@@ -2437,7 +2437,7 @@ export default function PdfReader({
         if (isLikelySignedUrlExpiryError(err)) {
           waitsForRender = waitForReaderPositioningRender(
             nextPage,
-            expectedScale,
+            expectedZoom,
           );
           requestSignedUrlRecovery(nextPage, currentRun);
         } else {
@@ -2457,7 +2457,7 @@ export default function PdfReader({
       beginReaderPositioning,
       clearSelection,
       numPages,
-      pageHasRenderedAtScale,
+      pageHasRenderedAtZoom,
       publishCurrentResumeLocator,
       requestSignedUrlRecovery,
       settleReaderPositioning,
@@ -2523,6 +2523,7 @@ export default function PdfReader({
           : null,
       [navigateToHighlight],
     ),
+    ready: readerRestoreSettled,
     runRef,
     pageNumberRef,
     goToPage,
@@ -2542,6 +2543,7 @@ export default function PdfReader({
           : null,
       [temporaryHighlight],
     ),
+    ready: readerRestoreSettled,
     runRef,
     pageNumberRef,
     goToPage,
@@ -2594,6 +2596,7 @@ export default function PdfReader({
           : null,
       [pulseNavigationTarget],
     ),
+    ready: readerRestoreSettled,
     runRef,
     pageNumberRef,
     goToPage,
@@ -3117,19 +3120,19 @@ export default function PdfReader({
         return true;
       }
 
-      const expectedScale =
+      const expectedZoom =
         zoomChanged && nextZoom !== null
           ? nextZoom
-          : activePageScaleRef.current;
+          : (readViewerZoom(pdfViewerRef.current) ?? zoomRef.current);
       let waitsForRender = false;
       if (
         zoomChanged ||
         (pageChanged &&
-          !pageHasRenderedAtScale(boundedPage, expectedScale))
+          !pageHasRenderedAtZoom(boundedPage, expectedZoom))
       ) {
         waitsForRender = waitForReaderPositioningRender(
           boundedPage,
-          expectedScale,
+          expectedZoom,
         );
       } else {
         beginReaderPositioning();
@@ -3165,7 +3168,7 @@ export default function PdfReader({
       applyStartPageProgression,
       beginReaderPositioning,
       numPages,
-      pageHasRenderedAtScale,
+      pageHasRenderedAtZoom,
       settleReaderPositioning,
       waitForReaderPositioningRender,
     ],

@@ -1306,8 +1306,11 @@ describe("PdfReader selection chat destinations", () => {
   });
 
   it("uses retrying PDF scroll navigation for cross-page reader pulses", async () => {
+    vi.stubGlobal("innerWidth", 390);
+    fireEvent(window, new Event("resize"));
     pdfRuntimeState.numPages = 2;
     pdfRuntimeState.pageWidths = [600, 600];
+    pdfRuntimeState.viewportScaleMultiplier = 4 / 3;
     const quads = [
       {
         x1: 70,
@@ -1321,7 +1324,11 @@ describe("PdfReader selection chat destinations", () => {
       },
     ];
 
-    render(<PdfReader mediaId="media-1" />);
+    render(
+      withRenderEnvironment(<PdfReader mediaId="media-1" />, {
+        initialViewport: "mobile",
+      }),
+    );
 
     await screen.findByTestId("pdf-page-text-layer-2");
 
@@ -1342,7 +1349,52 @@ describe("PdfReader selection chat destinations", () => {
     await waitFor(() => {
       expect(screen.getByText("Page 2 of 2")).toBeInTheDocument();
     });
-    const transient = await screen.findByTestId(/^pdf-highlight-reader-pulse-/);
-    expect(transient).toBeInTheDocument();
+    expect(
+      await screen.findByTestId(/^pdf-highlight-reader-pulse-/),
+    ).toBeInTheDocument();
+    const probe = screen.getByTestId("mobile-chrome-behavior-probe");
+    await waitFor(() => expect(probe).toHaveAttribute("data-mobile", "true"));
+    await waitFor(() =>
+      expect(probe).toHaveAttribute("data-motion-phase", "Pinned"),
+    );
+    act(() => {
+      pdfRuntimeState.eventBus?.dispatch("pagerendered", { pageNumber: 2 });
+    });
+    await waitFor(() =>
+      expect(probe).toHaveAttribute("data-motion-phase", "Visible"),
+    );
+  });
+
+  it("retains an initial cross-page target until the PDF viewer is ready", async () => {
+    pdfRuntimeState.numPages = 2;
+    pdfRuntimeState.pageWidths = [600, 600];
+    const target = {
+      id: "evidence-late-viewer",
+      pageNumber: 2,
+      quads: [
+        {
+          x1: 70,
+          y1: 60,
+          x2: 230,
+          y2: 60,
+          x3: 230,
+          y3: 80,
+          x4: 70,
+          y4: 80,
+        },
+      ],
+      color: "blue" as const,
+    };
+
+    render(
+      <PdfReader mediaId="media-1" temporaryHighlight={target} />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Page 2 of 2")).toBeInTheDocument();
+    });
+    expect(
+      await screen.findByTestId("pdf-highlight-evidence-late-viewer-0"),
+    ).toBeVisible();
   });
 });
