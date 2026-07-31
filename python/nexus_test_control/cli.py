@@ -49,6 +49,7 @@ from nexus_test_control.services import clean_owned_runtime, new_run_id, test_en
 _PROOF_RUNNERS = frozenset({"gradle", "playwright", "pytest", "static", "vitest"})
 _FAULT_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _DEFERRED_OWNER = {
+    Capability.SENSITIVITY: Workflow.PR,
     Capability.MIGRATIONS: Workflow.PR,
     Capability.BUNDLE: Workflow.PR,
     Capability.JOURNEYS_ALL: Workflow.FULL,

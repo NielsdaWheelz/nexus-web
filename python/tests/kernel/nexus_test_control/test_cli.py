@@ -246,6 +246,11 @@ def test_pr_records_later_cadence_selection_without_dispatching_it() -> None:
                 SelectionReason.PRIORITY_RISK,
                 "pytest:python/tests/service/test_auth_privacy.py::test_auth",
             ),
+            Selection(
+                "testdata/faults/manifest.json",
+                Capability.SENSITIVITY,
+                SelectionReason.PROMOTED_CAPABILITY,
+            ),
         ),
     )
 
@@ -253,8 +258,21 @@ def test_pr_records_later_cadence_selection_without_dispatching_it() -> None:
         (Capability.JOURNEYS_ALL, Workflow.FULL),
         (Capability.HOSTED, Workflow.NIGHTLY),
         (Capability.SERVICE, None),
+        (Capability.SENSITIVITY, None),
     ]
     assert routed[0].sensitivity_required is True
+
+    confidence = _route_selection_for_workflow(
+        Workflow.CONFIDENCE,
+        (
+            Selection(
+                "testdata/faults/manifest.json",
+                Capability.SENSITIVITY,
+                SelectionReason.PROMOTED_CAPABILITY,
+            ),
+        ),
+    )
+    assert confidence[0].deferred_to is Workflow.PR
 
 
 def test_prove_requires_a_clean_committed_checkout(tmp_path: Path) -> None:
