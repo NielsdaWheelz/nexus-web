@@ -14,6 +14,7 @@ type AudioMetrics = {
   currentTime: number;
   bufferedEnd?: number;
   playbackRate?: number;
+  paused?: boolean;
 };
 
 /** The public accessible name of the provider-owned `<audio>` element. */
@@ -42,6 +43,12 @@ export function setAudioMetrics(audio: HTMLAudioElement, values: AudioMetrics): 
   audio.currentTime = values.currentTime;
   if (typeof values.playbackRate === "number") {
     audio.playbackRate = values.playbackRate;
+  }
+  if (typeof values.paused === "boolean") {
+    Object.defineProperty(audio, "paused", {
+      configurable: true,
+      value: values.paused,
+    });
   }
 }
 

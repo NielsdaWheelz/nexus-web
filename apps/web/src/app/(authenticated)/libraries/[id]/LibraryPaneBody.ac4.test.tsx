@@ -4479,9 +4479,11 @@ exhaustion: "Complete",
     expect(
       await screen.findByRole("link", { name: "Second Unfinished" }),
     ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("link", { name: "First Unfinished" }),
-    ).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("link", { name: "First Unfinished" }),
+      ).not.toBeInTheDocument(),
+    );
     expect(firstPageReads).toBe(1);
 
     await user.click(

@@ -175,7 +175,7 @@ export default function PeopleSearchCombobox({
               className={styles.option}
               aria-selected={index === effectiveActiveIndex}
               onMouseDown={(event) => event.preventDefault()}
-              onMouseEnter={() => setActiveIndex(index)}
+              onPointerMove={() => setActiveIndex(index)}
               onClick={() => selectIndex(index)}
             >
               <span>{labelFor(person)}</span>

@@ -139,7 +139,12 @@ describe("GlobalPlayer listening heartbeat", () => {
     await loadA();
 
     const audio = screen.getByLabelText(PLAYER_AUDIO_LABEL) as HTMLAudioElement;
-    setAudioMetrics(audio, { duration: 120, currentTime: 30, playbackRate: 1.5 });
+    setAudioMetrics(audio, {
+      duration: 120,
+      currentTime: 30,
+      playbackRate: 1.75,
+      paused: false,
+    });
     fireEvent(audio, new Event("durationchange"));
     fireEvent(audio, new Event("timeupdate"));
     fireEvent(audio, new Event("playing"));

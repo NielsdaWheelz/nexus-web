@@ -17,6 +17,8 @@ import { usePaneReturnReady } from "@/lib/panes/paneRuntime";
 import type { PaneReturnMementoCommands } from "@/lib/workspace/paneReturnMemento";
 import { assumePaneVisitId } from "@/lib/workspace/schema";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
+import { WorkspaceTestProvider } from "@/__tests__/helpers/WorkspaceTestProvider";
 
 const AWAY_VISIT_ID = assumePaneVisitId("00000000-0000-4000-8000-000000000092");
 const PANE_ID = "notes-return-journey";
@@ -32,9 +34,15 @@ function ReadyAwayBody() {
 
 function withLibraryPlacement(children: ReactNode) {
   return (
-    <LibraryPlacementControllerProvider>
-      {children}
-    </LibraryPlacementControllerProvider>
+    <AuthenticatedAccountProvider
+      account={{ accountId: "account-1", calendarTimeZone: "UTC" }}
+    >
+      <WorkspaceTestProvider>
+        <LibraryPlacementControllerProvider>
+          {children}
+        </LibraryPlacementControllerProvider>
+      </WorkspaceTestProvider>
+    </AuthenticatedAccountProvider>
   );
 }
 
