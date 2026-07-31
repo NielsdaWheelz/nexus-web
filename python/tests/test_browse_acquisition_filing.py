@@ -11,8 +11,9 @@ Covers the acquisition-filing acceptance criteria the cutover left unproven:
   Library already holds the parent Podcast (via ``POST
   /podcast-episodes/from-discovery`` and via ``ensure_media_in_library``).
 - §12 / AC14: Unsubscribe idempotent replay returns the frozen response, applies
-  the domain side effect and its queue-owner revocation round-trip exactly once,
-  and an absent subscription reports ``AlreadyUnsubscribed``.
+  the domain side effect and backfill revocation exactly once, retains the
+  stale subscription-epoch sync job for its fenced no-op, and reports
+  ``AlreadyUnsubscribed`` for an absent subscription.
 
 Each test runs against the real migrated Postgres schema.
 """
@@ -31,6 +32,10 @@ from nexus.jobs.queue import enqueue_job
 from nexus.services import bootstrap, library_entries
 from nexus.services.browse.models import episode_target, podcast_target, seal_target
 from nexus.services.podcasts.control_replay import PODCAST_CONTROL_REPLAY_SCOPE
+from nexus.services.podcasts.refresh import (
+    PODCAST_SYNC_INTERACTIVE_PRIORITY,
+    admit_subscription_generation_in_txn,
+)
 from tests.factories import (
     add_media_to_library,
     add_test_podcast_subscription,
@@ -629,9 +634,11 @@ class TestIncludedThroughPodcastFiling:
 
 
 class TestUnsubscribeReplay:
-    """Frozen-response replay and once-only queue revocation for Unsubscribe."""
+    """Frozen replay and current queue ownership for Unsubscribe."""
 
-    def test_unsubscribe_replay_is_frozen_and_revokes_jobs_once(self, auth_client, direct_db):
+    def test_unsubscribe_replay_is_frozen_revokes_backfill_and_retains_stale_sync(
+        self, auth_client, direct_db
+    ):
         user_id = create_test_user_id()
         provider_podcast_id = f"unsub-replay-{uuid4()}"
         with direct_db.session() as session:
@@ -658,11 +665,14 @@ class TestUnsubscribeReplay:
                     ).scalar_one()
                 )
             )
-            # The live sync and backfill jobs the awaited revocation must reap.
-            enqueue_job(
+            # The exact subscription-epoch sync job remains queue-owned and
+            # exits through its stale epoch fence; only backfill is revoked.
+            admit_subscription_generation_in_txn(
                 session,
-                kind="podcast_sync_subscription_job",
-                payload={"user_id": str(user_id), "podcast_id": str(podcast_id)},
+                subscription_id=subscription_id,
+                user_id=user_id,
+                podcast_id=podcast_id,
+                priority=PODCAST_SYNC_INTERACTIVE_PRIORITY,
             )
             enqueue_job(
                 session,
@@ -702,8 +712,9 @@ class TestUnsubscribeReplay:
                 ).scalar_one()
                 == 0
             )
-            # The queue-owner revocation round-trip reaped both orphaned jobs.
-            assert _job_count(session, kind="podcast_sync_subscription_job", user_id=user_id) == 0
+            # Unsubscribe does not revoke a live exact-epoch sync job. A pending
+            # worker observes the deleted subscription and completes as a no-op.
+            assert _job_count(session, kind="podcast_sync_subscription_job", user_id=user_id) == 1
             assert _backfill_job_count(session, backfill_id=backfill_id) == 0
 
         replay = auth_client.delete(f"/podcasts/subscriptions/{podcast_id}", headers=headers)
@@ -715,7 +726,7 @@ class TestUnsubscribeReplay:
             # No double side effect: the subscription stays gone and exactly one
             # replay record was written for the key.
             assert not _subscription_exists(session, user_id=user_id, podcast_id=podcast_id)
-            assert _job_count(session, kind="podcast_sync_subscription_job", user_id=user_id) == 0
+            assert _job_count(session, kind="podcast_sync_subscription_job", user_id=user_id) == 1
             assert (
                 session.execute(
                     text(
