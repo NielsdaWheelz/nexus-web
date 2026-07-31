@@ -20,12 +20,18 @@ from nexus.db.models import (
     ProcessingStatus,
     SynthesisArtifact,
 )
+from nexus.db.retries import retry_serializable
 from nexus.db.session import create_session_factory
+from nexus.jobs.worker import JobWorker
 from nexus.services import library_entries, media_intelligence, reader_apparatus
 from nexus.services.artifacts import engine as artifact_engine
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.consumption import service as consumption_service
-from nexus.services.content_indexing import IndexOwner, delete_content_index
+from nexus.services.content_indexing import (
+    IndexOwner,
+    delete_content_index,
+    request_media_content_reindex,
+)
 from nexus.services.media_deletion import delete_document_media_if_unreferenced
 from nexus.services.resource_graph.citations import record_citation
 from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
@@ -65,6 +71,29 @@ def web_fragment(
         "\n".join(lines),
         "".join(f"<p>{escape(line)}</p>" for line in lines),
     )
+
+
+def request_and_drain_web_reindex(session_factory, *, media_id: UUID) -> None:
+    with session_factory() as db:
+
+        def request() -> None:
+            request_media_content_reindex(
+                db,
+                media_id=media_id,
+                reason="source_success",
+                request_id="canonical-find-e2e-seed",
+            )
+            db.commit()
+
+        retry_serializable(db, "canonical_find_e2e_media_reindex", request)
+
+    worker = JobWorker(
+        session_factory=session_factory,
+        worker_id="canonical-find-e2e-seed",
+        allowed_kinds=("media_content_reindex_job",),
+    )
+    while worker.run_once():
+        pass
 
 
 def seed() -> dict[str, str]:
@@ -280,6 +309,8 @@ def seed() -> dict[str, str]:
         )
         artifact.current_revision_id = revision_id
         db.commit()
+
+    request_and_drain_web_reindex(session_factory, media_id=web_media_id)
 
     return {
         "web_media_id": str(web_media_id),
