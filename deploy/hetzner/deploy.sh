@@ -57,12 +57,10 @@ rsync -az --delete \
   --exclude "node_modules/" \
   --exclude "apps/web/.next/" \
   --exclude "apps/web/node_modules/" \
-  --exclude "e2e/node_modules/" \
   --exclude "python/.venv/" \
   --exclude "**/__pycache__/" \
   --exclude "**/.ruff_cache/" \
-  --exclude "e2e/test-results/" \
-  --exclude "e2e/playwright-report/" \
+  --exclude "test-results/" \
   "${ROOT_DIR}/" "${SSH_TARGET}:${DEPLOY_PATH}/"
 
 # shellcheck disable=SC2029

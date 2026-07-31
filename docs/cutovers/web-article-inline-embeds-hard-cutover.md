@@ -124,7 +124,7 @@ This cutover follows the existing repo rules:
 - `docs/rules/frontend.md`: frontend components consume same-system API
   contracts. They must not reconstruct backend lifecycle or trust third-party
   markup.
-- `docs/rules/testing.md` and `docs/local-rules/testing_standards.md`: verify
+- `docs/rules/testing.md` and `docs/local-rules/testing-standards.md`: verify
   behavior through public service/API/UI surfaces, with real external providers
   mocked only at the true external boundary.
 - `docs/modules/web-article.md`: web article apparatus and source-authored

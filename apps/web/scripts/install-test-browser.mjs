@@ -4,7 +4,7 @@
 // now also provisions the browser.
 //
 // Skipped in CI and Vercel production installs: CI installs Chromium *with*
-// system deps via `make test-front-browser`, and production builds never need
+// system deps through the typed browser capability, and production builds never need
 // the Vitest browser. Also skipped when PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD is set
 // (manual escape hatch). Never fails the install -- an offline machine just
 // gets a warning.

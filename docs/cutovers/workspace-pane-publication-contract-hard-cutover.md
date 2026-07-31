@@ -93,7 +93,7 @@ The wrong moves are:
   representation that downstream code does not repeatedly re-validate.
 - `docs/rules/effect-services.md` says to default to pure helpers when behavior
   can be externalized without exposing runtime wiring.
-- `docs/local-rules/testing_standards.md` places pure normalization functions in
+- `docs/local-rules/testing-standards.md` places pure normalization functions in
   frontend unit tests near `apps/web/src/lib`.
 - `docs/modules/workspace.md` keeps workspace composition decisions in
   `WorkspaceHost` and makes fixed primary chrome desktop-only.

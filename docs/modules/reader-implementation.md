@@ -803,19 +803,13 @@ required e2e coverage includes:
   from a typed launch intent and captures an immutable per-message snapshot that
   survives reload, branch, and rerun; a geometry-only Highlight is non-sendable
 
-supporting test infra:
-
-- e2e global setup applies migrations before seed
-- seed includes dedicated reader-resume fixtures for web/epub/pdf
-- flaky pdf reload path is hardened by deterministic post-reload page
-  normalization
+Supporting proof uses controller-owned per-run state, the canonical corpus, and
+the reader-progress/citation journeys.
 
 ## validation commands
 
 ```bash
-cd apps/web && bunx vitest run --project unit src/lib/reader/readerProgress.test.ts src/lib/reader/readerLocationHref.test.ts src/lib/reader/types.test.ts src/lib/media/readerNavigation.test.ts
-cd apps/web && bunx vitest run --project unit src/lib/conversations/chatRunBody.test.ts src/lib/api/sse/events.test.ts src/lib/conversations/citations.test.ts
-cd apps/web && bunx vitest run --project browser 'src/app/(authenticated)/media/[id]/MediaPaneBody.test.tsx' 'src/app/(authenticated)/media/[id]/TextDocumentReader.test.tsx' src/components/reader/ReaderDocumentMapOverviewRail.test.tsx src/components/reader/document-map/EvidencePaneSurface.test.tsx src/components/reader/MarginRail.test.tsx
-make test-e2e PLAYWRIGHT_ARGS='tests/reader-progress-continuity.spec.ts --project=chromium'
-make test-e2e PLAYWRIGHT_ARGS='tests/quote-attach-references.spec.ts tests/pdf-reader.spec.ts --project=chromium'
+./scripts/test changed apps/web/src/lib/reader
+./scripts/test changed apps/web/e2e/journeys/reader-progress-resume.journey.spec.ts
+./scripts/test changed apps/web/e2e/journeys/highlight-note-provenance.journey.spec.ts
 ```

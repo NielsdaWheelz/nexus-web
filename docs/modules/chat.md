@@ -485,16 +485,9 @@ the live Highlight.
 
 Keep these tests aligned with this module contract:
 
-- `apps/web/src/lib/conversations/assistantSelection.test.ts`
-- `apps/web/src/lib/conversations/chatDraftKey.test.ts`
-- `apps/web/src/lib/conversations/chatRunBody.test.ts`
-- `apps/web/src/components/chat/AssistantMessage.test.tsx`
-- `apps/web/src/components/chat/MessageRow.test.tsx`
-- `apps/web/src/components/chat/useChatRunTail.test.tsx`
-- `apps/web/src/components/ui/FloatingActionSurface.test.tsx`
-- `apps/web/src/__tests__/components/ChatComposer.test.tsx`
-- `apps/web/src/__tests__/components/Conversation.test.tsx`
-- `python/tests/test_chat_runs.py`
-- `python/tests/test_reader_selection.py`
-- `e2e/tests/conversations.spec.ts`
-- `e2e/tests/quote-attach-references.spec.ts`
+- `python/tests/service/test_citation_provenance.py`
+- `python/tests/service/test_durable_job_replay.py`
+- `python/tests/evals/test_tool_authorization.py`
+- `apps/web/e2e/journeys/grounded-chat-citation.journey.spec.ts`
+- `testdata/proofs.json` owns the source-to-proof mapping for broader chat
+  changes.

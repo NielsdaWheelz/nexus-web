@@ -349,7 +349,7 @@ Each evidence/RAG consumer is hand-rolled and media-shaped; none "composes autom
 
 ---
 
-## 14. Test plan (per `testing_standards.md`)
+## 14. Test plan (per `testing-standards.md`)
 
 - **Migration tier:** `0141` up; owner columns/CHECKs/uniques present; `object_search_*` gone; constraint test for note evidence-span/owner integrity (AC-4).
 - **Unit:** `build_page_indexable_blocks` ordering/offsets/locator; chunker over note blocks; `note_text` locator validator; scope SQL builders.

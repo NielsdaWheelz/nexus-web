@@ -45,27 +45,20 @@ When running locally:
 - `nexus/jobs/` + `nexus/tasks/` -> job policies and task handlers
 - `tests/` -> backend test suite
 
-## Backend Commands
+## Backend Proof
 
-Use `make help` for the canonical list. From repo root:
+From the repository root, use the single typed test interface:
 
 ```bash
-make check
-make type-back
-make test-unit
-make test
-make verify
-make verify-full
-make test-back-unit
-make test-back-integration
-make test-migrations
-make test-supabase
-make test-real-media
-make test-live-providers
+./scripts/test changed python/nexus/services/example.py
+./scripts/test confidence
+./scripts/test pr
 ```
 
-`make test-back-unit` uses `pytest-xdist` for parallel unit execution; integration tests stay single-process.
-`make type-back` runs the enforced Pyright baseline from `python/pyproject.toml`.
+Direct pytest is allowed only for exact debugging under the checked
+configuration. It is not a workflow verdict. The controller owns Ruff,
+Pyright, kernel, real-PostgreSQL service/migration, eval, audit, hosted, network,
+resource, memory, and evidence policy.
 
 ## Runtime Contracts
 

@@ -27,9 +27,11 @@ The worker envelope's queue side lives in [jobs.md](jobs.md).
 ## `provider_runtime` (external provider package)
 
 `provider_runtime` is an owner-controlled dependency pinned to an immutable
-git revision (`python/pyproject.toml`); `make test-live-providers` checks that
-the local `LLM_CALLING_DIR` checkout matches the pin before running the paid
-live matrix, and fails if it drifts. It is the only code that speaks provider
+git revision (`python/pyproject.toml`). The protected `./scripts/test release`
+capability certifies the seven active Nexus profiles plus the owned embedding
+and transcription targets with a fixed call/cost ceiling; upstream exhaustive
+protocol/model certification remains provider-runtime's responsibility. It is
+the only code that speaks provider
 wire protocols; Nexus stays provider-blind past `ProviderTarget(provider,
 model)`.
 

@@ -72,8 +72,8 @@ In scope:
   users, app-process lifecycle, and one cached Next production artifact;
 - deleting or replacing legacy tests and every old test-only path they own;
 - adapting the current Android emulator, protected provider-certification,
-  signed-Android, deployed-auth-smoke, and reader-profile fault-proxy owners
-  without duplicating their responsibility.
+  signed-Android, and deployed-auth-smoke owners without duplicating their
+  responsibility; the unowned reader-profile fault proxy is deleted.
 
 Non-goals:
 
@@ -330,8 +330,8 @@ and route-specific helper stacks.
 Keep only helpers used by at least two surviving proofs. Helpers expose
 product-shaped inputs/results and never contain scenario decisions or oracles.
 Consolidate `python/tests/{factories,fixtures,helpers,support,utils}` into the
-small testkit. Preserve the controlled external-auth `test_verifier` seam,
-renamed if useful, while deleting permission/owned-behavior mocks and broad
+small testkit. Preserve only the controlled external-token-verification seam as
+`StaticTokenVerifier`, while deleting permission/owned-behavior mocks and broad
 direct-SQL convenience layers. Raw SQL remains limited to migration proof and
 one narrowly owned unreachable-state testkit.
 
@@ -372,14 +372,18 @@ native-release-auth-handoff
     {
       "id": "auth-bootstrap",
       "proof": "apps/web/e2e/journeys/auth-bootstrap.journey.spec.ts",
+      "source_globs": ["owned/auth-or-shell/source/**"],
       "risks": ["auth-privacy-secrets"]
     }
   ]
 }
 ```
 
-Do not inventory ordinary tests. Policy verifies ids, paths, unique ownership,
-the 10–15 journey cap, and at least one proof for every required priority risk.
+Do not inventory ordinary tests. Policy verifies ids, paths, source-owner globs,
+unique ownership, the 10–15 journey cap, and at least one proof for every
+required priority risk. A changed journey-owned source selects that exact
+journey; this is the selection contract for lazy pane bodies that static import
+analysis cannot discover.
 Deleting or renaming a risk id requires an explicit user-approved amendment to
 the governing rule and registry; editing `proofs.json` alone cannot lower the
 floor. Critical source globs include dynamically registered/lazy-loaded pane
@@ -538,6 +542,11 @@ Sensitivity is enforced by the control plane, not by PR prose:
    when any materially changed proof lacks a valid same-run red/green
    sensitivity object.
 
+Paid hosted and physical-device proofs never enter PR sensitivity because PR
+must remain offline and device-independent. Their local parsers/executors have
+fault-sensitive kernel proof; the protected hosted/device capability supplies
+the boundary result at its own cadence.
+
 `testdata/faults/manifest.json` contains only reproducible targeted exceptions
 to base-mode sensitivity:
 
@@ -621,6 +630,8 @@ The harness accepts only resources derived from its recorded local runtime:
 - PostgreSQL, MinIO, and Supabase endpoints are exact loopback/runtime-record
   endpoints; public hosts, hosted Supabase, TLS object-storage endpoints, and
   caller-supplied arbitrary endpoints are rejected before any client opens;
+- Docker and Supabase CLI processes are pinned to a controller-verified local
+  Unix-domain Docker socket; caller-selected remote hosts/contexts are rejected;
 - databases are limited to `nexus_tpl_*`, `nexus_tpl_build_*`,
   `nexus_run_*`, and `nexus_migration_*` on the owned test PostgreSQL server;
 - buckets are limited to `nexus-run-<run_id>` on the owned MinIO server;
@@ -647,9 +658,9 @@ capabilities; production recovery remains a separate future operations project.
 
 ## Required contract amendments
 
-Do not prematurely rewrite the local rule’s truthful “available today” tables.
-In the final public-cut commit, update
-`docs/local-rules/testing-standards.md` explicitly:
+The final public-cut commit leaves
+`docs/local-rules/testing-standards.md` self-contained and updates it
+explicitly:
 
 - §3 and §16: name `prove` and the machine sensitivity object above;
 - §6 and §12: zero automatic retries; one separately recorded diagnostic rerun
@@ -658,11 +669,11 @@ In the final public-cut commit, update
   time/memory budgets measured ratchets rather than invented gates;
 - §8: replace every Make target/marker row with the live `./scripts/test`
   routing table and separately owned deploy smokes;
-- §9: replace `db_session`, shared seed/auth, `PLAYWRIGHT_ARGS`, corpus, and
-  helper names with the final fixtures and paths;
-- §11: name `./scripts/test release` only after it exists; state explicitly
-  that production backup and disaster recovery are separately owned operations,
-  not test-workflow prerequisites;
+- §9: record the final per-run clone, bucket, scenario-user, fixture, browser,
+  corpus, and helper contracts;
+- §11: own local test-runtime safety and state explicitly that production
+  backup and disaster recovery are separately owned operations, not
+  test-workflow prerequisites;
 - §12: describe the actual pytest, spawned-worker, component-browser, and
   Playwright network boundaries; retain Python-warning and broken-link checks;
 - §15: add `confidence` to the paved road;
@@ -680,11 +691,12 @@ Also update:
 - stale underscore-path links by mechanical path replacement only; do not
   semantically rewrite historical cutover decisions.
 
-`docs/rules/` is a subtree mirror and MUST NOT be hand-edited here. First
-restore or genericize the shared `testing.md` and its index in
-`engineering-docs`, then pull the subtree. The local rule remains authoritative
-for Nexus when generic doctrine differs. Acceptance scans active normative and
-executable surfaces, not unscoped historical prose.
+`docs/rules/` is a subtree mirror and MUST NOT be hand-edited here. Re-import
+the shared `testing.md` and its index from `engineering-docs` through the normal
+subtree pull. Do not rewrite or reduce the Nexus-specific local rule to match
+that generic doctrine: `docs/local-rules/testing-standards.md` remains the sole
+authority when the two differ. Acceptance scans active normative and executable
+surfaces, not unscoped historical prose.
 
 ## Hard-cut files
 
@@ -714,9 +726,10 @@ Workflow ownership is singular:
 - protected manual `release.yml` owns provider certification, signed Android
   artifact verification, and optional tag-matched Android publication;
 - replace `android-release.yml` by moving its signing/tag/publishing mechanics
-  into `release.yml`; install the signed APK on the emulator and prove App
-  Links/auth handoff before optional publication; do not leave a second release
-  owner;
+  into `release.yml`; install the signed APK on a dedicated emulator placed in
+  airplane mode, prove manifest/package-manager App Link routing and native auth
+  handoff without production contact, then optionally publish that exact
+  artifact; do not leave a second release owner;
 - deployed auth smoke remains deploy-owned but consumes the one web Playwright
   package/config through a deployment-smoke project.
 
@@ -802,8 +815,8 @@ not supported compatibility modes.
   container ids and browser install; the second creates no service stack.
 - **AC4 — isolation:** every run gets a distinct database/bucket; every journey
   gets a distinct user/context; extension proof gets a distinct persistent
-  user-data directory; fault-proxy state is scenario-scoped; randomized order
-  twice produces the same result; no shared writable auth/seed file exists.
+  user-data directory; randomized order twice produces the same result; no
+  shared writable auth/seed file exists.
 - **AC5 — interruption:** terminate a DB and a journey run; `clean` removes only
   their recorded processes, incomplete template build, databases, buckets,
   users, and locks; product/dev state remains untouched. Concurrent
@@ -831,9 +844,10 @@ not supported compatibility modes.
   not scheduled until its required environment is provisioned; release remains
   manual. A diagnostic rerun is separate and cannot change a first-run failure.
 - **AC10 — production isolation:** production-shaped environment names,
-  PostgreSQL URLs, Supabase URLs, object-store endpoints, database names,
-  bucket names, and user identities are rejected before network/process
-  activity. All created resources were pre-recorded under the exact repo/run;
+  PostgreSQL URLs, Supabase URLs, object-store endpoints, Docker hosts/contexts,
+  database names, bucket names, and user identities are rejected before
+  network/process activity. All created resources were pre-recorded under the
+  exact repo/run;
   interrupted-run cleanup deletes only those resources and leaves unrelated
   local/dev sentinels unchanged. No test workflow reads production credentials
   or exposes a production backup/restore capability.
@@ -842,12 +856,14 @@ not supported compatibility modes.
   Bun/Playwright ownership, and test-only production seams are absent.
 - **AC12 — final proof:** `changed`, `confidence`, `pr`, `full`, `doctor`,
   `prove`, policy self-tests, candidate-branch CI, and interrupted-run cleanup
-  pass. Report nightly, hosted, device, signed release, deploy, and
-  production proof separately if not run; never collapse `not_run` into pass.
+  pass. Report nightly, hosted, device, signed release, and separately owned
+  authorized deployment-smoke proof separately if not run; never collapse
+  `not_run` into pass.
 - **AC13 — governance:** the local rule contains the enumerated amendments and
   both local indexes/structure docs resolve. The shared generic testing
-  contract/index was changed upstream and pulled through the subtree with no
-  local mirror edit.
+  contract/index was re-imported through the subtree with no local mirror edit;
+  the self-contained local rule remains authoritative and unchanged by that
+  import.
 - **AC14 — singular workflow ownership:** paid provider certification exists
   only in protected manual `release.yml`; Android signing/publication has one
   owner there; emulator proof has one nightly owner; deployed auth smoke still

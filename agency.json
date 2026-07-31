@@ -7,7 +7,7 @@
     },
     "verify": {
       "path": "scripts/agency_verify.sh",
-      "timeout": "30m"
+      "timeout": "5m"
     },
     "archive": {
       "path": "scripts/agency_archive.sh",

@@ -13,12 +13,14 @@ technology-ownership, import, and module-boundary model.
 - `apps/android/` — Android shell app.
 - `apps/api/` — FastAPI ASGI entrypoint.
 - `apps/extension/` — browser extension.
-- `apps/web/` — Next.js frontend and BFF.
+- `apps/web/` — Next.js frontend/BFF and the sole Playwright package under
+  `apps/web/e2e/`.
 - `apps/worker/` — worker entrypoint.
-- `python/` — backend package and Python tests.
+- `python/` — backend package, typed test control plane, and Python proofs.
 - `migrations/` — Alembic migrations.
 - `supabase/` — Supabase local configuration.
-- `e2e/` — Playwright end-to-end tests.
+- `testdata/` — cross-language corpus, priority-proof registry, faults, and
+  policy exceptions.
 
 ## Imports
 

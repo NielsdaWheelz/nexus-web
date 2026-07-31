@@ -87,7 +87,7 @@ instead of authoring another private list.
 - `docs/rules/layers.md` keeps BFF and API routes thin; services own business
   behavior.
 - `docs/rules/correctness.md` requires illegal states to be unrepresentable.
-- `docs/local-rules/testing_standards.md` requires behavior tests at public owner
+- `docs/local-rules/testing-standards.md` requires behavior tests at public owner
   boundaries, plus negative gates for completed hard cutovers.
 
 ## SME Thesis

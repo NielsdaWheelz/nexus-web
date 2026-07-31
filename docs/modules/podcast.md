@@ -174,8 +174,8 @@ is Ready/Partial and is absent otherwise.
 `podcasts.deepgram_adapter` is a documented non-LLM provider port, not part of the shared
 generation runtime. It owns Deepgram diarization fallback, fixture normalization, and podcast
 transcript error mapping. The removal gate is a provider-runtime transcription API that can
-preserve those podcast semantics; until then, `make test-live-providers` is the live Deepgram
-proof for this adapter.
+preserve those podcast semantics. Current repository proof is deterministic at this boundary;
+no live Deepgram compatibility claim is implied by the Nexus provider-release capability.
 
 YouTube video transcripts are a separate non-LLM transcript provider path. The Google
 YouTube Data API key proves metadata access only; public transcript/caption acquisition is
