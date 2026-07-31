@@ -2470,6 +2470,8 @@ describe("MediaPaneBody pane sizing", () => {
     });
 
     const viewport = screen.getByTestId("document-viewport");
+    await userEvent.click(viewport);
+    expect(viewport).toHaveFocus();
     const baseline = viewport.scrollTop;
     for (const offset of [8, 16, 24]) {
       viewport.scrollTop = baseline + offset;
