@@ -2088,8 +2088,8 @@ export function useNexusController(): NexusController {
         ? { kind: "Content" }
         : { kind: "Root" };
     if (guardExit(intent) === "accepted") performExit(intent);
-    // A nested transition always keeps the one mounted sheet open. MobileSheet
-    // must therefore treat even a successful pop as a blocked sheet dismissal.
+    // A nested transition always keeps the one mounted task open. Its modal
+    // lifecycle must treat even a successful pop as a blocked dismissal.
     return "blocked";
   }, [addSession.state.branch, guardExit, page.kind, performExit]);
   const escape = useCallback(() => {

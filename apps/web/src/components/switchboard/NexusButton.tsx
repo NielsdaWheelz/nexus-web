@@ -50,6 +50,7 @@ export default function NexusButton({
         aria-haspopup="dialog"
         aria-hidden={motionInert || switchboardOpen || undefined}
         inert={motionInert || switchboardOpen || undefined}
+        data-switchboard-open={switchboardOpen || undefined}
         data-mobile-chrome-phase={motionPhase.kind}
         onClick={() => {
           beginSwitchboardPerformance(NEXUS_OPEN_PERFORMANCE);

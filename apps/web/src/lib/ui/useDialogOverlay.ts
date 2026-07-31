@@ -10,6 +10,7 @@ import {
 } from "@/lib/ui/useReturnFocus";
 import { useInitialFocus } from "@/lib/ui/useInitialFocus";
 import {
+  getTopmostModalLayerToken,
   useModalLayer,
   type ModalLayerToken,
 } from "@/lib/ui/useModalLayer";
@@ -79,7 +80,9 @@ export function useDialogOverlay(args: {
     returnFocusTo,
     returnFocusFallback,
     skip: () =>
-      !topmostWhileActiveRef.current || (skipReturnFocus?.() ?? false),
+      (!topmostWhileActiveRef.current &&
+        getTopmostModalLayerToken() !== null) ||
+      (skipReturnFocus?.() ?? false),
   });
   useInitialFocus(ref, active, {
     enabled: isTopmost,

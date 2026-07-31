@@ -4,7 +4,10 @@ import { useCallback, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
-import type { DismissDecision } from "@/lib/ui/useHistoryDismiss";
+import {
+  useHistoryDismiss,
+  type DismissDecision,
+} from "@/lib/ui/useHistoryDismiss";
 import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
 import {
   ModalLayerProvider,
@@ -35,13 +38,16 @@ interface DialogProps {
    * via `onClose`.
    */
   onDismissRequest?: () => DismissDecision;
+  /** Opt into browser/Android Back dismissal for a product-owned modal flow. */
+  historyDismiss?: boolean;
 }
 
 /**
  * The shared modal Dialog owner, on the repository's `useDialogOverlay` contract
  * (portal, role="dialog" aria-modal, focus trap, return focus, Escape, body
- * scroll lock). Consumers may keep the component mounted and control `open`, or
- * mount-gate it when they do not need persistent child state.
+ * scroll lock). Mount-gating is allowed only when `historyDismiss` is false.
+ * History-enabled dialogs must stay mounted across `open` transitions so
+ * `useHistoryDismiss` observes the close.
  */
 export default function Dialog({
   open,
@@ -53,12 +59,14 @@ export default function Dialog({
   returnFocusFallback,
   skipReturnFocus,
   onDismissRequest,
+  historyDismiss = false,
 }: DialogProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
-  const requestDismiss = useCallback(() => {
-    if (onDismissRequest && onDismissRequest() === "blocked") return;
+  const requestDismiss = useCallback((): DismissDecision => {
+    if (onDismissRequest?.() === "blocked") return "blocked";
     onClose();
+    return "accepted";
   }, [onDismissRequest, onClose]);
 
   const overlay = useDialogOverlay({
@@ -69,6 +77,9 @@ export default function Dialog({
     returnFocusTo,
     returnFocusFallback,
     skipReturnFocus,
+  });
+  useHistoryDismiss(open && historyDismiss, requestDismiss, {
+    isTopmost: overlay.isTopmost,
   });
 
   if (!open) return null;

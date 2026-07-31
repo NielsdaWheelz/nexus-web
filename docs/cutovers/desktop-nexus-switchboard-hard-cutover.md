@@ -23,6 +23,13 @@ gesture, ranking, and merge behavior remain unchanged. Cross-viewport
 WebSearch URL ingress is additive and reuses the Switchboard row,
 Adopt/Fork, and recovery grammar.
 
+**Approved mobile follow-up (2026-07-30):**
+[`mobile-nexus-full-screen-task-hard-cutover.md`](mobile-nexus-full-screen-task-hard-cutover.md)
+supersedes only this document's
+historical `mobile → existing SwitchboardSheet + NexusButton` composition.
+After that cut, the mobile branch is `SwitchboardTask + NexusButton`; desktop
+Nexus and every shared controller/result contract here remain unchanged.
+
 Governing standards:
 `docs/rules/{simplicity,cleanliness,boundaries,layers,frontend,control-flow,keys-and-identities,naming,timing,database,concurrency,operation-types,retries,errors,testing}.md`.
 

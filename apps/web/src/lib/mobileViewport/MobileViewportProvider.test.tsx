@@ -171,7 +171,7 @@ describe("MobileViewportProvider", () => {
     nexus.remove();
   });
 
-  it("publishes and clears the one MobileSheet keyboard channel", () => {
+  it("publishes and clears the mobile overlay keyboard channel", () => {
     render(
       <MobileViewportProvider>
         <CapabilityProbe />
@@ -180,7 +180,7 @@ describe("MobileViewportProvider", () => {
 
     let release: (() => void) | null = null;
     act(() => {
-      release = capability!.reportMobileSheetKeyboardInset(312);
+      release = capability!.reportMobileOverlayKeyboardInset(312);
     });
     expect(
       document.documentElement.style.getPropertyValue(
@@ -194,6 +194,49 @@ describe("MobileViewportProvider", () => {
     ).toContain("312px");
 
     act(() => release!());
+    expect(
+      document.documentElement.style.getPropertyValue(
+        "--mobile-overlay-keyboard-inset",
+      ),
+    ).toBe("0px");
+  });
+
+  it("restores the preceding active keyboard report when the newest report releases", () => {
+    render(
+      <MobileViewportProvider>
+        <CapabilityProbe />
+      </MobileViewportProvider>,
+    );
+
+    let releaseOuter: (() => void) | null = null;
+    let releaseMiddle: (() => void) | null = null;
+    let releaseInner: (() => void) | null = null;
+    act(() => {
+      releaseOuter = capability!.reportMobileOverlayKeyboardInset(184);
+      releaseMiddle = capability!.reportMobileOverlayKeyboardInset(248);
+      releaseInner = capability!.reportMobileOverlayKeyboardInset(312);
+    });
+    expect(
+      document.documentElement.style.getPropertyValue(
+        "--mobile-overlay-keyboard-inset",
+      ),
+    ).toBe("312px");
+
+    act(() => releaseMiddle!());
+    expect(
+      document.documentElement.style.getPropertyValue(
+        "--mobile-overlay-keyboard-inset",
+      ),
+    ).toBe("312px");
+
+    act(() => releaseInner!());
+    expect(
+      document.documentElement.style.getPropertyValue(
+        "--mobile-overlay-keyboard-inset",
+      ),
+    ).toBe("184px");
+
+    act(() => releaseOuter!());
     expect(
       document.documentElement.style.getPropertyValue(
         "--mobile-overlay-keyboard-inset",

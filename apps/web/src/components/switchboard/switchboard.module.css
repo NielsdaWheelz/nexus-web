@@ -1,14 +1,12 @@
-.sheet {
-  --mobile-sheet-max-size: min(90dvh, 760px);
-}
-
 .page {
   display: grid;
   flex: 1 1 auto;
   min-height: 0;
   align-content: start;
   gap: var(--space-4);
-  padding: 0 var(--space-4) var(--space-4);
+  padding: 0 max(var(--space-4), env(safe-area-inset-right))
+    max(var(--space-4), env(safe-area-inset-bottom))
+    max(var(--space-4), env(safe-area-inset-left));
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -23,7 +21,8 @@
 
 .rootPage > .header {
   flex: 0 0 auto;
-  padding-inline: var(--space-4);
+  padding-inline: max(var(--space-4), env(safe-area-inset-left))
+    max(var(--space-4), env(safe-area-inset-right));
 }
 
 .rootScroll {
@@ -32,7 +31,9 @@
   min-height: 0;
   align-content: start;
   gap: var(--space-4);
-  padding: 0 var(--space-4) var(--space-4);
+  padding: 0 max(var(--space-4), env(safe-area-inset-right))
+    max(var(--space-4), env(safe-area-inset-bottom))
+    max(var(--space-4), env(safe-area-inset-left));
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -46,6 +47,8 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
+  padding-block: max(var(--space-2), env(safe-area-inset-top))
+    var(--space-2);
   background: var(--surface-canvas);
 }
 
@@ -189,7 +192,9 @@
 .findButton {
   flex: 0 0 auto;
   width: auto;
-  margin: 0 var(--space-4) var(--space-4);
+  margin: 0 max(var(--space-4), env(safe-area-inset-right))
+    max(var(--space-4), env(safe-area-inset-bottom))
+    max(var(--space-4), env(safe-area-inset-left));
   padding: 0 var(--space-4);
   border: 1px solid var(--edge-strong);
   border-radius: var(--radius-full);
@@ -209,6 +214,7 @@
   background: var(--surface-2);
   color: var(--ink);
   font: inherit;
+  font-size: var(--text-md);
 }
 
 .scopes {
@@ -387,6 +393,10 @@
 }
 
 .nexusButton[data-mobile-chrome-phase="Hidden"] {
+  visibility: hidden;
+}
+
+.nexusButton[data-switchboard-open="true"] {
   visibility: hidden;
 }
 

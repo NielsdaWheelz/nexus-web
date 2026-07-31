@@ -2,14 +2,15 @@
 
 ## Scope
 
-The overlays module owns mobile bottom-sheet presentation and the overlay
-behavior primitives it composes. Owners live under
-`apps/web/src/components/ui/MobileSheet.tsx` (+ `MobileSheet.module.css`) and
+The overlays module owns the named mobile bottom-sheet and full-screen-task
+presentations plus the modal lifecycle they share. Owners live under
+`apps/web/src/components/ui/{MobileSheet,MobileFullScreenTask}.tsx`, their
+stylesheets, `apps/web/src/components/ui/useMobileModalLifecycle.ts`, and
 `apps/web/src/lib/ui/{useDialogOverlay,useModalLayer,useEscapeKey,useBodyOverflowLock,useHistoryDismiss,useKeyboardInset}.ts`.
 
 Established by `docs/cutovers/mobile-sheet-keyboard-unification-hard-cutover.md`.
-The current mobile application projection is defined by
-`docs/cutovers/mobile-nexus-switchboard-hard-cutover.md`.
+The current mobile Nexus projection is defined by
+`docs/cutovers/mobile-nexus-full-screen-task-hard-cutover.md`.
 
 ## MobileSheet Capability Contract
 
@@ -36,12 +37,45 @@ geometry. Callers pass content and state only; size budgets are tuned via
 `--mobile-sheet-max-size` / `--mobile-sheet-max-size-cap` in a `panelClassName`,
 never with new geometry.
 
+## MobileFullScreenTask Capability Contract
+
+`MobileFullScreenTask` is the semantic owner for temporary sustained mobile
+work. It owns one opaque child dialog frame fixed to the unobscured visual
+viewport, modal projection, and the shared mobile modal lifecycle. Its
+projection wrapper is unpainted; the child frame owns the canvas so suspending
+the wrapper for a nested modal never exposes the workspace.
+
+It has no scrim, backdrop action, grabber, rounded sheet edge, max-height,
+detent, or drag dismissal. It adds no title, toolbar, scroll region, route, or
+business state. The feature supplies one page-owned header and one content
+scroll owner; those owners apply the exact top/side/bottom safe-area padding.
+
+`MobileFullScreenTask` and `MobileSheet` are separate semantic primitives. Do
+not add a full-screen variant to `MobileSheet` or options for layer, scrim,
+geometry, edge, axis, detents, or gestures to the task.
+
 ## Mount Contract
 
-`MobileSheet` must stay mounted across the open/close cycle and be driven with
-`active`. Never write `open && <MobileSheet …>`. `useHistoryDismiss` (its C7
-doc comment) must observe `active` going false to pop its synthetic history
-entry; conditional rendering breaks back-button dismissal.
+`MobileSheet` and `MobileFullScreenTask` must stay mounted across the open/close
+cycle and be driven with `active`. Never conditionally mount either active
+surface. `useHistoryDismiss` (its C7 doc comment) must observe `active` going
+false to pop its synthetic history entry; conditional rendering breaks
+back-button dismissal.
+
+## Shared Mobile Modal Lifecycle
+
+`useMobileModalLifecycle` is the sole mobile-modal composition owner. It
+combines `useDialogOverlay`, `useHistoryDismiss`, and `useKeyboardInset`, and
+publishes active keyboard obstruction to `MobileViewportProvider`. It renders
+no markup and owns no CSS, scrim, gesture, z-index, geometry application, or
+semantic surface choice.
+
+Its guarded dismissal path calls the feature's dismissal handler only after an
+accepted request. History always uses that path; Escape uses `onEscape` when
+supplied and otherwise uses the guarded request. Inactive mounted surfaces
+consume no viewport context and publish no keyboard report; active surfaces
+still require the provider. Releasing the newest active report restores the
+preceding report.
 
 ## Shared Overlay-Layer Contract
 
@@ -75,12 +109,20 @@ sheet, or drawer. Dialog owners opt into history only when their product
 contract requires platform Back; player-owned subordinate dialogs do so, which
 prevents Back from reaching full-screen Now Playing first.
 
+Shared `Dialog` uses the `--z-nexus` top-modal band so activation order places a
+dialog opened by opaque Nexus above it; `ActionMenu` remains at 1200. `Dialog`
+defaults to no history ownership; product flows that require platform Back, such
+as Nexus Add's dirty-work confirmation, opt into `historyDismiss`.
+
 ## Keyboard Geometry Ownership
 
-`useKeyboardInset` is the single keyboard-occlusion source and is importable
-only by `MobileSheet` (ESLint-enforced). Values below its 60 px threshold
-report 0. `MobileSheet` publishes the active inset to `MobileViewportProvider`;
-no other component reads `visualViewport` to infer keyboard geometry.
+`useKeyboardInset` is the single modal keyboard-geometry source and is
+importable only by `useMobileModalLifecycle` (ESLint-enforced). It returns the
+thresholded bottom keyboard inset and the raw nonnegative visual-viewport top
+offset. The lifecycle publishes active bottom inset through
+`reportMobileOverlayKeyboardInset`; `MobileFullScreenTask` consumes the top
+offset locally. No other modal reads `visualViewport` to infer keyboard
+geometry.
 
 The platform layer is `interactiveWidget: "resizes-content"` in the root
 `viewport` export (`apps/web/src/app/layout.tsx`): Android/Firefox resize the
@@ -97,16 +139,27 @@ Scrim is a two-value semantic choice:
 
 - `soft` (`--overlay-scrim-soft`): in-context companion sheets — workspace
   secondary surfaces, model settings
-- `default` (`--overlay-scrim`): app-level modals — Nexus Switchboard
-  (including its embedded workflows) and full-screen Now Playing. Now Playing
-  composes the modal behavior primitives directly; it is not `MobileSheet`.
+- `default` (`--overlay-scrim`): app-level sheet modals
 
-## Nexus Switchboard
+Full-screen Nexus and full-screen Now Playing own opaque canvases rather than
+scrims. Now Playing composes the underlying modal primitives directly; it is
+not `MobileSheet` or `MobileFullScreenTask`.
 
-The Nexus Switchboard is the sole mobile global-access overlay. It uses one
-mounted `MobileSheet` while Root, Find, actions, capture, acquisition, and
-recovery pages replace one another inside the sheet. Mobile has no global
-navigation drawer and no stacked workflow sheet.
+## Mobile Nexus
+
+Mobile Nexus is the sole mobile global-access task. One mounted
+`MobileFullScreenTask` contains the unchanged Root, Find, actions, capture,
+acquisition, Add, and recovery pages; those pages replace one another inside
+the task. Their existing headers are the only headers and their content region
+is the only scroll owner. Mobile Nexus has no global navigation drawer, bottom
+sheet, outside-click target, swipe dismissal, or stacked workflow task.
+
+Nested Back, Escape, browser Back, and Android Back request the Nexus
+controller's existing guarded transition: a nested page pops one level, Root
+dismisses, and dirty or running work remains open behind its existing
+confirmation. Ordinary dismissal restores the Nexus control; accepted
+workspace activation leaves focus with the destination. Rotation and
+mobile/desktop breakpoint changes preserve controller state.
 
 ## Player Surfaces
 
@@ -122,6 +175,8 @@ named overlay primitives and own one-layer Back/Escape dismissal.
   desktop. It owns modal-stack projection, shared scroll locking, focus entry,
   trapping/return, and topmost Escape. Backdrop-click dismissal stays
   caller-side (`MobileSheet` is that caller for bottom sheets).
+- `useMobileModalLifecycle` is the one composition of dialog, history, and
+  keyboard mechanics for the two named mobile modal presentations.
 - `useHistoryDismiss` owns the one shared synthetic history marker, topmost
   Back dismissal, blocked-dismiss rearming, delayed-pop drain, and
   navigating-close guard. It carries the stay-mounted contract above.
@@ -142,6 +197,7 @@ None of these may appear in the implementation:
 Keep these tests aligned with this module contract:
 
 - `apps/web/src/components/ui/MobileSheet.test.tsx`
+- `apps/web/src/components/ui/MobileFullScreenTask.test.tsx`
 - `apps/web/src/lib/ui/useKeyboardInset.test.tsx`
 - `apps/web/src/lib/ui/useDialogOverlay.test.tsx`
 - `apps/web/src/lib/ui/useHistoryDismiss.test.tsx`

@@ -62,6 +62,7 @@ let requests: RecordedRequest[] = [];
 let openablesResponse:
   | Promise<Response>
   | ((init: RequestInit | undefined) => Promise<Response>);
+let mediaFromUrlResponse: Promise<Response> | null;
 let viewport: ReturnType<typeof mockViewport>;
 
 function jsonResponse(body: unknown): Response {
@@ -121,6 +122,7 @@ function mockApi() {
   openablesResponse = Promise.resolve(
     jsonResponse({ data: { items: [] } }),
   );
+  mediaFromUrlResponse = null;
   return vi
     .spyOn(globalThis, "fetch")
     .mockImplementation(async (input, init) => {
@@ -152,6 +154,13 @@ function mockApi() {
           results: [],
           page: { has_more: false, next_cursor: null },
         });
+      }
+      if (
+        url.pathname === "/api/media/from-url" &&
+        init?.method === "POST" &&
+        mediaFromUrlResponse
+      ) {
+        return mediaFromUrlResponse;
       }
       if (url.pathname === "/api/libraries/writable-destinations") {
         return jsonResponse({
@@ -338,6 +347,8 @@ beforeEach(() => {
 
 afterEach(() => {
   document.documentElement.style.removeProperty("font-size");
+  document.documentElement.style.removeProperty("--text-md");
+  document.body.style.removeProperty("font-size");
   localStorage.clear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -648,6 +659,16 @@ describe("Nexus shell contracts", () => {
     expect(screen.getByText(/destination is ready to open/i)).toBeVisible();
     expect(selectionRequests()).toHaveLength(0);
 
+    viewport.setMobile(true);
+    expect(
+      await screen.findByRole("heading", { name: "Tab limit reached" }),
+    ).toBeVisible();
+    expect(screen.getByText(/destination is ready to open/i)).toBeVisible();
+    viewport.setMobile(false);
+    expect(
+      await screen.findByRole("heading", { name: "Tab limit reached" }),
+    ).toBeVisible();
+
     await userEvent.click(
       screen.getByRole("button", { name: "Manage tabs" }),
     );
@@ -673,7 +694,7 @@ describe("Nexus shell contracts", () => {
     ).toBeVisible();
     expect(selectionRequests()).toHaveLength(0);
 
-    fireEvent.click(screen.getByRole("presentation"));
+    fireEvent.keyDown(document, { key: "Escape" });
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "Nexus" })).toBeNull(),
     );
@@ -717,6 +738,296 @@ describe("Nexus shell contracts", () => {
     expect(
       within(desktopDialog).getByRole("textbox", { name: "Links" }),
     ).toHaveValue("https://example.com/article");
+
+    viewport.setMobile(true);
+
+    const mobileAgain = await screen.findByRole("dialog", { name: "Nexus" });
+    expect(
+      within(mobileAgain).getByRole("heading", { name: "Add content" }),
+    ).toBeVisible();
+    expect(
+      within(mobileAgain).getByRole("textbox", { name: "Links" }),
+    ).toHaveValue("https://example.com/article");
+  });
+
+  it("keeps active Add work behind the Stop guard until Close is confirmed", async () => {
+    mediaFromUrlResponse = new Promise<Response>(() => {});
+    renderNexus({ mobile: true });
+    const trigger = screen.getByRole("button", {
+      name: "Open Nexus, 1 tab",
+    });
+    await userEvent.click(trigger);
+    const nexus = await screen.findByRole("dialog", { name: "Nexus" });
+    await userEvent.click(
+      within(nexus).getByRole("button", { name: "Import" }),
+    );
+    const links = await within(nexus).findByRole("textbox", {
+      name: "Links",
+    });
+    await userEvent.type(links, "https://example.com/running");
+    await userEvent.click(
+      within(nexus).getByRole("button", { name: "Review links" }),
+    );
+    await userEvent.click(
+      await within(nexus).findByRole("button", { name: "Add 1 item" }),
+    );
+    expect(await within(nexus).findByRole("status")).toHaveTextContent(
+      "Adding 1 item…",
+    );
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    let confirmation = await screen.findByRole("dialog", {
+      name: "Stop active work?",
+    });
+    expect(nexus).toHaveAttribute("inert");
+    await userEvent.click(
+      within(confirmation).getByRole("button", { name: "Keep working" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Stop active work?" }),
+      ).toBeNull(),
+    );
+    expect(nexus).toBeVisible();
+    expect(within(nexus).getByRole("status")).toHaveTextContent(
+      "Adding 1 item…",
+    );
+
+    await userEvent.click(
+      within(nexus).getByRole("button", { name: "Close Add content" }),
+    );
+    confirmation = await screen.findByRole("dialog", {
+      name: "Stop active work?",
+    });
+    await userEvent.click(
+      within(confirmation).getByRole("button", {
+        name: "Stop and close",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Nexus" })).toBeNull(),
+    );
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it.each([
+    {
+      paneCount: 1,
+      label: "Open Nexus, 1 tab",
+      rootFontSize: 16,
+    },
+    {
+      paneCount: 9,
+      label: "Open Nexus, 9 tabs",
+      rootFontSize: 16,
+    },
+    {
+      paneCount: MAX_PANES,
+      label: `Open Nexus, ${MAX_PANES} tabs`,
+      rootFontSize: 16,
+    },
+    {
+      paneCount: 1,
+      label: "Open Nexus, 1 tab",
+      rootFontSize: 32,
+    },
+    {
+      paneCount: 9,
+      label: "Open Nexus, 9 tabs",
+      rootFontSize: 32,
+    },
+    {
+      paneCount: MAX_PANES,
+      label: `Open Nexus, ${MAX_PANES} tabs`,
+      rootFontSize: 32,
+    },
+  ])(
+    "keeps count $paneCount fixed at a $rootFontSize px root text scale",
+    ({ paneCount, label, rootFontSize }) => {
+      document.documentElement.style.fontSize = `${rootFontSize}px`;
+      renderNexus({
+        mobile: true,
+        state: paneCountState(paneCount),
+      });
+
+      const wrapper = screen.getByTestId("nexus-wrapper");
+      const buttons = within(wrapper).getAllByRole("button");
+      expect(buttons).toHaveLength(1);
+      const button = within(wrapper).getByRole("button", { name: label });
+      expect(button.tagName).toBe("BUTTON");
+      expect(button).toHaveAttribute("aria-haspopup", "dialog");
+
+      const counter = within(button).getByText(String(paneCount));
+      expect(counter).toHaveAttribute("aria-hidden", "true");
+      expect(getComputedStyle(counter).pointerEvents).toBe("none");
+
+      const wrapperRect = wrapper.getBoundingClientRect();
+      const buttonRect = button.getBoundingClientRect();
+      const counterRect = counter.getBoundingClientRect();
+      const expectedCounterSize =
+        Number.parseFloat(getComputedStyle(counter).fontSize) * 1.625;
+
+      expect(wrapperRect.width).toBeCloseTo(48, 1);
+      expect(wrapperRect.height).toBeCloseTo(48, 1);
+      expect(buttonRect.width).toBeCloseTo(48, 1);
+      expect(buttonRect.height).toBeCloseTo(48, 1);
+      expect(counterRect.width).toBeCloseTo(expectedCounterSize, 1);
+      expect(counterRect.height).toBeCloseTo(expectedCounterSize, 1);
+      expect(counterRect.top - buttonRect.top).toBeCloseTo(1, 1);
+      expect(buttonRect.right - counterRect.right).toBeCloseTo(1, 1);
+      expect(counterRect.left).toBeGreaterThanOrEqual(buttonRect.left);
+      expect(counterRect.bottom).toBeLessThanOrEqual(buttonRect.bottom);
+      expect(counter.scrollWidth).toBeLessThanOrEqual(
+        counter.clientWidth + 1,
+      );
+      expect(counter.scrollHeight).toBeLessThanOrEqual(
+        counter.clientHeight + 1,
+      );
+    },
+  );
+
+  it("opens one full-screen Nexus task without exposing an outside-click dismissal", async () => {
+    renderNexus({ mobile: true });
+    const wrapper = screen.getByTestId("nexus-wrapper");
+    const button = screen.getByRole("button", {
+      name: "Open Nexus, 1 tab",
+    });
+    const before = wrapper.getBoundingClientRect();
+
+    await userEvent.click(button);
+
+    const dialog = await screen.findByRole("dialog", { name: "Nexus" });
+    const heading = within(dialog).getByRole("heading", { name: "Nexus" });
+    await waitFor(() => expect(heading).toHaveFocus());
+    expect(
+      within(dialog).queryByRole("combobox", { name: "Find anything" }),
+    ).toBeNull();
+    // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: the unpainted modal projection is intentionally role=presentation and has no user-facing label
+    const projection = dialog.parentElement as HTMLElement;
+    expect(projection).toHaveAttribute("data-modal-backdrop", "true");
+    expect(getComputedStyle(projection).position).toBe("fixed");
+    const frameRect = dialog.getBoundingClientRect();
+    expect(frameRect.left).toBeCloseTo(0, 1);
+    expect(frameRect.top).toBeCloseTo(0, 1);
+    expect(frameRect.right).toBeCloseTo(window.innerWidth, 1);
+    expect(frameRect.bottom).toBeCloseTo(window.innerHeight, 1);
+    // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: the removed grabber is decorative and intentionally has no accessible query
+    expect(document.querySelector("[data-grabber]")).toBeNull();
+
+    expect(button).toHaveAttribute("aria-hidden", "true");
+    expect(button).toHaveAttribute("inert");
+    expect(button).not.toBeVisible();
+    const after = wrapper.getBoundingClientRect();
+    expect(after.left).toBeCloseTo(before.left, 1);
+    expect(after.top).toBeCloseTo(before.top, 1);
+    expect(after.width).toBeCloseTo(before.width, 1);
+    expect(after.height).toBeCloseTo(before.height, 1);
+
+    fireEvent.click(projection);
+    expect(dialog).toBeVisible();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Nexus" })).toBeNull(),
+    );
+    await waitFor(() => expect(button).toHaveFocus());
+    expect(wrapper.getBoundingClientRect().width).toBeCloseTo(before.width, 1);
+    expect(wrapper.getBoundingClientRect().height).toBeCloseTo(before.height, 1);
+  });
+
+  it("focuses Find explicitly and lets Escape pop once before dismissing Root", async () => {
+    renderNexus({ mobile: true });
+    const button = screen.getByRole("button", {
+      name: "Open Nexus, 1 tab",
+    });
+    await userEvent.click(button);
+    const dialog = await screen.findByRole("dialog", { name: "Nexus" });
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Find anything…" }),
+    );
+    const input = within(dialog).getByRole("searchbox", {
+      name: "Find anything",
+    });
+    await waitFor(() => expect(input).toHaveFocus());
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    const heading = await within(dialog).findByRole("heading", {
+      name: "Nexus",
+    });
+    expect(dialog).toBeVisible();
+    await waitFor(() => expect(heading).toHaveFocus());
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Nexus" })).toBeNull(),
+    );
+    await waitFor(() => expect(button).toHaveFocus());
+  });
+
+  it("keeps mobile Find and creation fields at the iOS no-zoom size", async () => {
+    document.documentElement.style.setProperty("--text-md", "16px");
+    document.body.style.fontSize = "15px";
+    renderNexus({ mobile: true });
+    await userEvent.click(
+      screen.getByRole("button", { name: "Open Nexus, 1 tab" }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Nexus" });
+
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Find anything…" }),
+    );
+    expect(
+      getComputedStyle(
+        within(dialog).getByRole("searchbox", { name: "Find anything" }),
+      ).fontSize,
+    ).toBe("16px");
+
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Back" }),
+    );
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Library" }),
+    );
+    expect(
+      getComputedStyle(
+        await within(dialog).findByRole("textbox", { name: "Name" }),
+      ).fontSize,
+    ).toBe("16px");
+  });
+
+  it("keeps the obstruction stable and paints nothing when reader retreat hides Nexus", async () => {
+    renderNexus({ mobile: true, readerScrollportProbe: true });
+    const wrapper = screen.getByTestId("nexus-wrapper");
+    const button = screen.getByRole("button", {
+      name: "Open Nexus, 1 tab",
+    });
+    const before = wrapper.getBoundingClientRect();
+    const reader = screen.getByRole("region", { name: "Reader content" });
+
+    reader.scrollTop = 40;
+    fireEvent.scroll(reader);
+
+    await waitFor(() => {
+      expect(button).toHaveAttribute("aria-hidden", "true");
+    });
+    expect(button).toHaveAttribute("inert");
+    expect(getComputedStyle(button).visibility).toBe("visible");
+
+    reader.scrollTop = 96;
+    fireEvent.scroll(reader);
+
+    await waitFor(() => {
+      expect(button).toHaveAttribute(
+        "data-mobile-chrome-phase",
+        "Hidden",
+      );
+    });
+    expect(getComputedStyle(button).visibility).toBe("hidden");
+    const after = wrapper.getBoundingClientRect();
+    expect(after.left).toBeCloseTo(before.left, 1);
+    expect(after.top).toBeCloseTo(before.top, 1);
+    expect(after.width).toBeCloseTo(before.width, 1);
+    expect(after.height).toBeCloseTo(before.height, 1);
   });
 
   it.each([

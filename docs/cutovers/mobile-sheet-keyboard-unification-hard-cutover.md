@@ -40,6 +40,18 @@ supersedes the original single-sheet assumptions and N1 below: topmost modal
 projection, Escape arbitration, reference-counted body locking, and one shared
 history marker now compose across nested overlays.
 
+**Approved follow-up note (2026-07-30):**
+[`mobile-nexus-full-screen-task-hard-cutover.md`](mobile-nexus-full-screen-task-hard-cutover.md)
+preserves every contextual
+`MobileSheet` behavior and geometry contract below, but supersedes the
+sheet-exclusive keyboard importer and sheet-specific viewport capability
+names. `useMobileModalLifecycle` becomes the sole importer of the keyboard
+geometry owner; active sheets and the full-screen task publish through
+`reportMobileOverlayKeyboardInset`. The existing thresholded bottom inset is
+retained, and the lifecycle additionally exposes raw `visualViewport.offsetTop`
+for the task's iOS top compensation. References below describe the implemented
+2026-06-09 bottom-sheet state and must not be used to restore Nexus to a sheet.
+
 ## Summary
 
 The mobile chat drawer (`MobileSecondaryPaneHost`, hosting the

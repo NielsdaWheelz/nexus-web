@@ -2,6 +2,8 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { useKeyboardInset } from "./useKeyboardInset";
 
+const originalInnerHeight = window.innerHeight;
+
 /**
  * Sets up a fake visualViewport on window. Returns the fake viewport object so
  * callers can mutate its properties and dispatch events.
@@ -26,19 +28,25 @@ describe("useKeyboardInset", () => {
     // Chromium's own visualViewport will be restored on the next property read
     // since we used configurable: true.
     Reflect.deleteProperty(window, "visualViewport");
+    Object.defineProperty(window, "innerHeight", {
+      value: originalInnerHeight,
+      configurable: true,
+    });
   });
 
-  it("returns innerHeight − viewport.height − viewport.offsetTop when the keyboard is open", () => {
+  it("returns the thresholded bottom inset and raw top offset when the keyboard is open", () => {
     Object.defineProperty(window, "innerHeight", {
       value: 800,
       configurable: true,
     });
-    installFakeViewport(500, 0);
+    installFakeViewport(500, 40);
 
     const { result } = renderHook(() => useKeyboardInset());
 
-    // 800 - 500 - 0 = 300
-    expect(result.current).toBe(300);
+    expect(result.current).toEqual({
+      keyboardBottomInsetPx: 260,
+      visualViewportTopPx: 40,
+    });
   });
 
   it("updates when the visualViewport fires a resize event", () => {
@@ -49,15 +57,41 @@ describe("useKeyboardInset", () => {
     const vv = installFakeViewport(500, 0);
 
     const { result } = renderHook(() => useKeyboardInset());
-    expect(result.current).toBe(300);
+    expect(result.current.keyboardBottomInsetPx).toBe(300);
 
     act(() => {
       vv.height = 300;
       vv.dispatchEvent(new Event("resize"));
     });
 
-    // 800 - 300 - 0 = 500
-    expect(result.current).toBe(500);
+    expect(result.current).toEqual({
+      keyboardBottomInsetPx: 500,
+      visualViewportTopPx: 0,
+    });
+  });
+
+  it("updates both values when visualViewport pan fires a scroll event", () => {
+    Object.defineProperty(window, "innerHeight", {
+      value: 800,
+      configurable: true,
+    });
+    const vv = installFakeViewport(500, 20);
+
+    const { result } = renderHook(() => useKeyboardInset());
+    expect(result.current).toEqual({
+      keyboardBottomInsetPx: 280,
+      visualViewportTopPx: 20,
+    });
+
+    act(() => {
+      vv.offsetTop = 100;
+      vv.dispatchEvent(new Event("scroll"));
+    });
+
+    expect(result.current).toEqual({
+      keyboardBottomInsetPx: 200,
+      visualViewportTopPx: 100,
+    });
   });
 
   it("reports 0 for measured insets just below the threshold (browser-chrome noise)", () => {
@@ -70,7 +104,7 @@ describe("useKeyboardInset", () => {
 
     const { result } = renderHook(() => useKeyboardInset());
 
-    expect(result.current).toBe(0);
+    expect(result.current.keyboardBottomInsetPx).toBe(0);
   });
 
   it("reports the measured inset at exactly the threshold", () => {
@@ -83,7 +117,7 @@ describe("useKeyboardInset", () => {
 
     const { result } = renderHook(() => useKeyboardInset());
 
-    expect(result.current).toBe(60);
+    expect(result.current.keyboardBottomInsetPx).toBe(60);
   });
 
   it("reports 0 for stale visualViewport residue after keyboard close (WebKit bug 297779)", () => {
@@ -94,7 +128,7 @@ describe("useKeyboardInset", () => {
     const vv = installFakeViewport(500, 0);
 
     const { result } = renderHook(() => useKeyboardInset());
-    expect(result.current).toBe(300);
+    expect(result.current.keyboardBottomInsetPx).toBe(300);
 
     act(() => {
       // Keyboard closed but visualViewport.height stays ~24px stale (iOS 26.0).
@@ -102,7 +136,7 @@ describe("useKeyboardInset", () => {
       vv.dispatchEvent(new Event("resize"));
     });
 
-    expect(result.current).toBe(0);
+    expect(result.current.keyboardBottomInsetPx).toBe(0);
   });
 
   it("clamps to 0 when the formula would go negative (keyboard inset cannot be negative)", () => {
@@ -115,6 +149,47 @@ describe("useKeyboardInset", () => {
 
     const { result } = renderHook(() => useKeyboardInset());
 
-    expect(result.current).toBe(0);
+    expect(result.current.keyboardBottomInsetPx).toBe(0);
+  });
+
+  it("does not threshold the nonnegative visual viewport top offset", () => {
+    Object.defineProperty(window, "innerHeight", {
+      value: 800,
+      configurable: true,
+    });
+    installFakeViewport(741, 24);
+
+    const { result } = renderHook(() => useKeyboardInset());
+
+    expect(result.current).toEqual({
+      keyboardBottomInsetPx: 0,
+      visualViewportTopPx: 24,
+    });
+  });
+
+  it("derives the bottom inset from the normalized viewport top", () => {
+    Object.defineProperty(window, "innerHeight", {
+      value: 800,
+      configurable: true,
+    });
+    installFakeViewport(500, -20);
+
+    const { result } = renderHook(() => useKeyboardInset());
+
+    expect(result.current).toEqual({
+      keyboardBottomInsetPx: 300,
+      visualViewportTopPx: 0,
+    });
+  });
+
+  it("returns zero geometry when visualViewport is unavailable", () => {
+    Reflect.deleteProperty(window, "visualViewport");
+
+    const { result } = renderHook(() => useKeyboardInset());
+
+    expect(result.current).toEqual({
+      keyboardBottomInsetPx: 0,
+      visualViewportTopPx: 0,
+    });
   });
 });

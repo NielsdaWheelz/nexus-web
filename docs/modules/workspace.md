@@ -37,7 +37,7 @@ Mobile mode:
 - renders no pane resize handle
 - presents secondary content only through `MobileSecondaryPaneHost`
 - presents global pane switching and recently closed restoration through the
-  shell-mounted Nexus Switchboard
+  shell-mounted Nexus full-screen task
 
 Mobile mode is not a narrow desktop canvas. It is a different composition
 contract.
@@ -269,13 +269,14 @@ Reload clears the stack.
 ## Mobile Viewport And Fixed Obstructions
 
 `MobileViewportProvider` is the shell owner for safe-area, fixed Nexus control,
-active MiniPlayer, root text-entry focus, and active `MobileSheet` keyboard
+active MiniPlayer, root text-entry focus, and active mobile-overlay keyboard
 obstruction. One document focus observer recognizes only text-entry targets
 outside modal layers. While root text entry owns focus, the mounted MiniPlayer
 is hidden/inert and its `"Player"` obstruction is unregistered; playback
 continues through system controls. Fixed controls register measured rectangles;
-`MobileSheet` alone reports keyboard inset through scoped, ordered reports so
-nested-sheet release restores the prior inset. The provider publishes
+the shared mobile-modal lifecycle reports keyboard inset through scoped,
+ordered reports so nested-overlay release restores the prior inset. Inactive
+mounted overlays publish nothing. The provider publishes
 `--mobile-content-bottom-clearance`, and every authenticated mobile primary
 scroll owner consumes it. Components do not independently recalculate safe
 area, player, Nexus, focus, or keyboard geometry.

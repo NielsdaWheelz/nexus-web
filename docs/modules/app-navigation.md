@@ -4,8 +4,8 @@ App navigation has two projections with distinct jobs:
 
 - the desktop rail is a small, fixed projection of Nexus's highest-frequency
   destinations;
-- mobile has one Nexus Switchboard entrance whose Places projection exposes the
-  bounded destination subset defined below.
+- mobile has one Nexus entrance. It opens an opaque full-screen task whose
+  Places projection exposes the bounded destination subset defined below.
 
 Neither is a directory of every feature.
 
@@ -26,14 +26,23 @@ Neither is a directory of every feature.
 
 On desktop, Account and Nexus controls are rail actions outside the
 ordered destination list. On mobile, Account, Find, Add/Create, open panes, and
-recently closed panes live inside Switchboard. Search, Authors, settings
+recently closed panes live inside the Nexus task. Search, Authors, settings
 subpages, and other valid destinations remain retrievable without becoming
 permanent navigation items.
 
 Desktop Nexus presents New Chat, New Note, New Page, and Import as direct
 actions, not as an Add lane or mode chooser. Mobile Import opens the same
-source-first Add workbench from Switchboard Quick; an editable non-default
+source-first Add workbench from Nexus Quick; an editable non-default
 Library may still seed its full destination object.
+
+Mobile Nexus is a temporary sustained task, not a drawer or bottom sheet. Its
+existing Root, Find, Actions, Capture, Create, Add, and recovery pages replace
+one another inside one opaque viewport-fixed dialog. The task adds no second
+header or toolbar; each page retains its sole header and content scroll owner.
+There is no outside-click or drag dismissal.
+
+Compact presentation covers widths through 768 px and coarse-pointer landscape
+phones through 900 px. Fine-pointer short desktop windows remain desktop.
 
 ## Desktop Nexus content grammar
 
@@ -146,7 +155,7 @@ related link gestures still work. The rendered anchor always retains a real
 `href` for semantics, copy-link behavior, and no-JavaScript fallback. Touch and
 `Enter` use `Follow`.
 
-Switchboard closes only after the workspace accepts navigation. A real
+The mobile Nexus task closes only after the workspace accepts navigation. A real
 destination handoff suppresses return focus; nonnavigating dismissal restores
 the Nexus trigger. Pane-cap rejection keeps the target in the shell-owned
 recovery state. The desktop Account menu retains its existing focus contract.

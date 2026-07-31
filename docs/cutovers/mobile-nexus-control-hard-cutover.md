@@ -37,17 +37,28 @@ helpers.
 
 This document then supersedes the mobile Nexus control's visual anatomy in
 [mobile-nexus-switchboard-hard-cutover.md](mobile-nexus-switchboard-hard-cutover.md).
-Preserve that document's 48px-target, obstruction, sheet, accessibility, and
-performance clauses. Replace only its “Accent is reserved for Nexus/current
-selection” rule with: “Accent is reserved for current selection and the Nexus
-mark; Nexus surfaces remain neutral.” Its other Switchboard, pane, navigation,
-focus, performance, obstruction, and accessibility behavior remains normative.
+For this prerequisite control cut, preserve that document's 48px-target,
+obstruction, current sheet, accessibility, and performance clauses. Replace
+only its “Accent is reserved for Nexus/current selection” rule with: “Accent
+is reserved for current selection and the Nexus mark; Nexus surfaces remain
+neutral.” Its other Switchboard, pane, navigation, focus, performance,
+obstruction, and accessibility behavior remains normative during this cut.
 
 The stable wrapper/inner-control contract in
 [mobile-reader-unified-scroll-chrome-hard-cutover.md](mobile-reader-unified-scroll-chrome-hard-cutover.md)
 also remains normative. Its “verify `NexusButton` unchanged” instruction is
 scoped to that prerequisite cutover and ceases to constrain this subsequent
 visual cut.
+
+**Approved subsequent cut (2026-07-30):**
+[mobile-nexus-full-screen-task-hard-cutover.md](mobile-nexus-full-screen-task-hard-cutover.md)
+lands after this control cut, or rebases after it in the same delivery stack.
+That follow-up supersedes this document's `SwitchboardSheet / MobileSheet`
+composition, current-sheet preservation, Switchboard no-change, and
+`MobileViewportProvider`-unchanged clauses. It preserves the complete control
+anatomy, count, mobile-chrome motion, focus, and open-state
+obstruction-unregister contract here. Do not implement this control after the
+full-screen task against the obsolete sheet composition.
 
 Governing rules: `docs/rules/{frontend,cleanliness,simplicity,codebase,testing,
 boundaries,correctness,naming,control-flow,overrides}.md`.
@@ -277,6 +288,8 @@ Verify unchanged label consumers unless a behavior failure proves otherwise:
 Normative docs:
 
 - `docs/cutovers/mobile-nexus-switchboard-hard-cutover.md`
+- `docs/cutovers/mobile-nexus-full-screen-task-hard-cutover.md` as the ordered
+  subsequent presentation authority
 - this document
 
 Do not modify `useNexusController`, `Nexus`, the final `MobileChromeProvider`,

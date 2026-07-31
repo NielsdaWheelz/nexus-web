@@ -92,6 +92,7 @@ export default class AddPanelBoundary extends Component<
 
         <Dialog
           open={confirmation !== null}
+          historyDismiss
           title={
             confirmation?.kind === "Stop"
               ? "Stop active work?"

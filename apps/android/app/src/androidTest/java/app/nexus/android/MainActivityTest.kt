@@ -450,60 +450,60 @@ class MainActivityTest {
     }
 
     @Test
-    fun hardwareBackPopsNestedSwitchboardPagesBeforeRoot() {
+    fun hardwareBackPopsNestedWebHistoryInOrder() {
         launchWithoutInitialNavigation().use { scenario ->
-            loadNestedSwitchboardHistory(scenario)
+            loadNestedWebHistory(scenario)
 
             scenario.onActivity { activity ->
                 activity.onBackPressedDispatcher.onBackPressed()
             }
-            waitForSwitchboardPage(
+            waitForNestedWebHistoryPage(
                 scenario,
                 page = "Find",
                 fragment = "#find",
-                message = "Expected Android back to pop Workflow to Switchboard Find."
+                message = "Expected Android back to pop Workflow to Find."
             )
 
             scenario.onActivity { activity ->
                 activity.onBackPressedDispatcher.onBackPressed()
             }
-            waitForSwitchboardPage(
+            waitForNestedWebHistoryPage(
                 scenario,
                 page = "Root",
                 fragment = "#root",
-                message = "Expected Android back to pop Find to Switchboard Root."
+                message = "Expected Android back to pop Find to Root."
             )
         }
     }
 
     @Test
-    fun orientationRecreationPreservesNestedSwitchboardHistory() {
+    fun orientationRecreationPreservesNestedWebHistory() {
         launchWithoutInitialNavigation().use { scenario ->
-            loadNestedSwitchboardHistory(scenario)
+            loadNestedWebHistory(scenario)
 
             // ActivityScenario recreation exercises the saved-instance path used
             // by an orientation configuration change without relying on a
             // device/emulator rotation lock.
             scenario.recreate()
 
-            waitForSwitchboardPage(
+            waitForNestedWebHistoryPage(
                 scenario,
                 page = "Workflow",
                 fragment = "#workflow",
-                message = "Expected orientation recreation to keep the active Switchboard workflow."
+                message = "Expected orientation recreation to keep the active nested history entry."
             )
             scenario.onActivity { activity ->
                 assertTrue(
-                    "Expected restored Switchboard workflow to retain nested back history.",
+                    "Expected restored WebView to retain nested back history.",
                     activity.webView.canGoBack()
                 )
                 activity.onBackPressedDispatcher.onBackPressed()
             }
-            waitForSwitchboardPage(
+            waitForNestedWebHistoryPage(
                 scenario,
                 page = "Find",
                 fragment = "#find",
-                message = "Expected restored Switchboard history to pop Workflow to Find."
+                message = "Expected restored nested history to pop Workflow to Find."
             )
         }
     }
@@ -664,31 +664,33 @@ class MainActivityTest {
         }
     }
 
-    private fun loadNestedSwitchboardHistory(
+    // Shell-level fixture only: this proves WebView Back/recreation plumbing,
+    // while real Nexus controller/task behavior is covered in browser E2E.
+    private fun loadNestedWebHistory(
         scenario: ActivityScenario<MainActivity>
     ) {
-        val switchboardUrl = "${BuildConfig.NEXUS_BASE_URL}/android-test-switchboard"
+        val nestedHistoryUrl = "${BuildConfig.NEXUS_BASE_URL}/android-test-nested-history"
         listOf(
             "Root" to "#root",
             "Find" to "#find",
             "Workflow" to "#workflow"
         ).forEach { (page, fragment) ->
-            val pageUrl = "$switchboardUrl$fragment"
+            val pageUrl = "$nestedHistoryUrl$fragment"
             scenario.onActivity { activity ->
                 activity.webView.loadDataWithBaseURL(
-                    switchboardUrl,
+                    nestedHistoryUrl,
                     "<!doctype html><meta charset=\"utf-8\">" +
-                        "<title>Switchboard $page</title><body>$page</body>",
+                        "<title>Nested history $page</title><body>$page</body>",
                     "text/html",
                     "utf-8",
                     pageUrl
                 )
             }
-            waitForSwitchboardPage(
+            waitForNestedWebHistoryPage(
                 scenario,
                 page = page,
                 fragment = fragment,
-                message = "Expected nested Switchboard test history to reach $page."
+                message = "Expected nested WebView test history to reach $page."
             )
         }
     }
@@ -705,7 +707,7 @@ class MainActivityTest {
         return ActivityScenario.launch(intent)
     }
 
-    private fun waitForSwitchboardPage(
+    private fun waitForNestedWebHistoryPage(
         scenario: ActivityScenario<MainActivity>,
         page: String,
         fragment: String,
@@ -718,7 +720,7 @@ class MainActivityTest {
                 title = activity.webView.title
                 currentUrl = activity.webView.url
             }
-            title == "Switchboard $page" && currentUrl?.endsWith(fragment) == true
+            title == "Nested history $page" && currentUrl?.endsWith(fragment) == true
         }
     }
 

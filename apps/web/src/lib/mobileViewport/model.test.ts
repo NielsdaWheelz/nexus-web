@@ -27,7 +27,7 @@ describe("mobile viewport obstruction model", () => {
           ["Player", rect({ top: 720, bottom: 800 })],
           ["Nexus", rect({ top: 650, bottom: 698 })],
         ]),
-        mobileSheetKeyboardInsetPx: 0,
+        mobileOverlayKeyboardInsetPx: 0,
       }),
     ).toEqual({
       contentBottomClearancePx: 150,
@@ -36,7 +36,7 @@ describe("mobile viewport obstruction model", () => {
     });
   });
 
-  it("lets the active sheet keyboard channel dominate fixed clearance", () => {
+  it("lets the active overlay keyboard channel dominate fixed clearance", () => {
     expect(
       resolveMobileViewportProjection({
         viewportHeightPx: 800,
@@ -44,7 +44,7 @@ describe("mobile viewport obstruction model", () => {
           ["Player", rect({ top: 720, bottom: 800 })],
           ["Nexus", rect({ top: 650, bottom: 698 })],
         ]),
-        mobileSheetKeyboardInsetPx: 300,
+        mobileOverlayKeyboardInsetPx: 300,
       }),
     ).toEqual({
       contentBottomClearancePx: 300,
@@ -61,7 +61,7 @@ describe("mobile viewport obstruction model", () => {
           ["Player", rect({ top: 800, bottom: 800, height: 0 })],
           ["Nexus", rect({ top: 900, bottom: 948 })],
         ]),
-        mobileSheetKeyboardInsetPx: 0,
+        mobileOverlayKeyboardInsetPx: 0,
       }),
     ).toEqual({
       contentBottomClearancePx: 0,

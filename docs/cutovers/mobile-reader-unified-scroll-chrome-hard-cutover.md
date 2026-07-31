@@ -9,10 +9,12 @@ Date: 2026-07-30
 No blocking product question remains. The decisions below are locked.
 
 **Subsequent-cut ordering:** this cutover lands first, followed by
-[`mobile-nexus-control-hard-cutover.md`](mobile-nexus-control-hard-cutover.md).
+[`mobile-nexus-control-hard-cutover.md`](mobile-nexus-control-hard-cutover.md)
+and then
+[`mobile-nexus-full-screen-task-hard-cutover.md`](mobile-nexus-full-screen-task-hard-cutover.md).
 Its `NexusButton` and `MobileViewportProvider` verify-unchanged instructions
-apply while executing this prerequisite only; that follow-up may change its
-explicitly owned slice after preserving this document's mobile-chrome and
+apply while executing this prerequisite only; each named follow-up may change
+its explicitly owned slice after preserving this document's mobile-chrome and
 stable-wrapper contracts.
 
 Follow all of [`docs/rules/`](../rules/index.md), especially cleanliness,

@@ -21,7 +21,8 @@ function installMatchMedia(matches: boolean) {
         get matches() {
           return matches;
         },
-        media: "(max-width: 768px)",
+        media:
+          "(max-width: 768px), (max-width: 900px) and (orientation: landscape) and (pointer: coarse)",
         onchange: null,
         addEventListener: (_event: string, listener: EventListenerOrEventListenerObject) => {
           listeners.add(listener);

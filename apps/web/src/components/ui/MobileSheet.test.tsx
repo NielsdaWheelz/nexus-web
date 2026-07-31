@@ -118,6 +118,18 @@ describe("MobileSheet", () => {
     vi.spyOn(Element.prototype, "setPointerCapture").mockImplementation(() => {});
   });
 
+  it("keeps an inactive mounted sheet outside viewport context inert", () => {
+    render(
+      <MobileSheet active={false} onDismiss={noop} ariaLabel="Test sheet">
+        <button type="button">First</button>
+      </MobileSheet>,
+    );
+
+    expect(
+      screen.queryByRole("dialog", { name: "Test sheet" }),
+    ).not.toBeInTheDocument();
+  });
+
   afterEach(() => {
     document.body.style.overflow = "";
     Reflect.deleteProperty(window, "visualViewport");

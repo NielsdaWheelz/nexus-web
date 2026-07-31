@@ -13,6 +13,30 @@ contracts in [`overlays.md`](../modules/overlays.md) and the affected pane-state
 contracts in [`workspace.md`](../modules/workspace.md). Desktop navigation and
 the desktop Launcher remain supported.
 
+**Approved follow-ups (2026-07-30):**
+[`mobile-nexus-control-hard-cutover.md`](mobile-nexus-control-hard-cutover.md)
+supersedes the control's visual anatomy. After that prerequisite,
+[`mobile-nexus-full-screen-task-hard-cutover.md`](mobile-nexus-full-screen-task-hard-cutover.md)
+supersedes only the following presentation-era clauses in this document:
+
+1. § Sheet behavior's one-`MobileSheet` owner and backdrop/drag dismissal
+   grammar.
+2. § Mobile viewport's `reportMobileSheetKeyboardInset` capability name.
+3. The `MobileSheet`-exclusive `useKeyboardInset` and no-new-reader gates;
+   the lifecycle hook becomes the sole keyboard-geometry importer, while
+   `FloatingActionSurface` retains its unrelated raw placement reader.
+4. The visual rule assigning dialog, keyboard, history, scrim, motion, and
+   return-focus ownership directly to `MobileSheet`; shared lifecycle owns the
+   common mechanics and each semantic surface owns its presentation.
+5. The hard-cut final-state rule retaining one mobile Nexus `MobileSheet` and
+   forbidding a second semantic mobile surface primitive.
+
+The controller, pages, workflows, guards, focus, Back, accessibility,
+performance, obstruction-unregister, API, data, and persistence contracts
+remain normative. The historical clauses below are retained as the implemented
+2026-07-27 state, not as instructions to restore the sheet after the approved
+follow-up.
+
 ## One-line
 
 Replace mobile NavSheet + LauncherSheet + separate Add controls with one

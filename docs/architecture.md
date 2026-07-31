@@ -676,7 +676,7 @@ Other identity surfaces:
 ### 7.6 Search, retrieval & the embedding pipeline
 
 One core `search(db, viewer, SearchQuery)` (the `services/search/` package) serves
-the in-app search page, mobile Switchboard, desktop Nexus, and chat
+the in-app search page, mobile Nexus, desktop Nexus, and chat
 `app_search` agent tool (RAG). The request is a single typed `SearchQuery` value
 object parsed at the
 edge; the user-facing taxonomy is **six kinds** (Documents, Notes, Highlights,
@@ -1319,9 +1319,9 @@ the visible embedded-video pane; it never exposes the raw `nx_device` value.
 breakdowns, derived sessions, and a deterministic Year in Reading view. The
 full contract is [`modules/consumption-activity.md`](modules/consumption-activity.md).
 
-### 8.10 Search, Browse, desktop Nexus, and mobile Switchboard
+### 8.10 Search, Browse, desktop Nexus, and mobile Nexus
 
-The same `search()` backs the `/search` results page, mobile Switchboard deep
+The same `search()` backs the `/search` results page, mobile Nexus deep
 results, desktop Nexus results, and the chat `app_search` tool. All consume
 the canonical frontend `SearchQuery` model. Desktop **Nexus**
 (`components/nexus/`, `lib/nexus/`) is a controlled switchboard presentation
@@ -1333,14 +1333,22 @@ the canonical search projection. “Search the web…” commits to
 Shift+Enter/Shift+click forks it. There is no standalone Web Search product
 surface or Add-before-Preview path.
 
-Mobile uses the **Nexus Switchboard** (`components/switchboard/`,
-`lib/switchboard/`) instead of an app-navigation drawer.
+Mobile uses one opaque **Nexus full-screen task** (`components/switchboard/`,
+`lib/switchboard/`) instead of an app-navigation drawer or bottom sheet.
 Its Root paints synchronously from workspace state and fixed Place/Quick
 projections. Find merges local pane/destination matches, one-character
 route-only openable resources, and two-character canonical search results while
 preserving pane, destination, occurrence-resource, owner-resource, and
 activation-route identities. All owned-resource opens use workspace `Adopt`;
 external discovery remains in explicit acquisition workflows.
+
+The task changes presentation only: the existing controller and pages remain
+one replacement hierarchy with one page-owned header and content scroll owner.
+The viewport-fixed dialog owns an opaque safe-area- and keyboard-aware canvas;
+it has no scrim, grabber, outside-click target, drag dismissal, or
+primitive-owned toolbar. Guarded Back pops one Nexus level before dismissing
+Root, nonnavigation close restores control focus, and accepted workspace
+activation leaves focus with the destination.
 
 **Browse** is a fixed desktop/mobile destination and a read-only discovery
 boundary. `/browse` owns exact `q`, `kind`, `source`, and `sort` URL state; the
@@ -1409,7 +1417,7 @@ they open over Resume and never become panes.
   host's pane-activity capability, which reader progress uses for
   adoption-versus-handoff arbitration. `MobileViewportProvider` composes safe
   area, the measured outer Nexus wrapper and MiniPlayer, root text-entry focus,
-  and the `MobileSheet` keyboard inset into one shared mobile content-clearance
+  and active mobile-overlay keyboard inset into one shared mobile content-clearance
   value. Text entry keeps playback alive while hiding and unregistering the
   MiniPlayer.
   `MobileChromeProvider` projects reader collapse to AppBar, the active
@@ -1434,7 +1442,8 @@ they open over Resume and never become panes.
   `lib/navigation/destinations.ts` owns destination identity;
   `components/appnav/navModel.ts` independently owns the flat desktop rail and
   mobile Places projections. Mobile global access is the bottom Nexus control
-  plus Switchboard, not a navigation drawer or a second desktop palette. Section routes
+  plus its full-screen task, not a navigation drawer, bottom sheet, or second
+  desktop palette. Section routes
   derive semantic navigation ownership from
   `header.destinationId`; resource routes (notably `/media/{id}`) declare one
   `sectionDestinationId`, with no duplicate field or prefix map. All cross-pane
@@ -1707,7 +1716,7 @@ The things most likely to bite you, distilled:
 | Auth / billing / keys / rate limit                                | `python/nexus/services/{user_keys,billing,billing_entitlements,rate_limit}.py`, `python/nexus/auth/`                                                                                                   |
 | Frontend BFF / auth / SSE                                         | `apps/web/src/lib/{api,auth,supabase}/`                                                                                                                                                                |
 | Workspace / panes / mobile viewport                               | `apps/web/src/lib/{workspace,panes,mobileViewport}/`, `apps/web/src/components/workspace/`                                                                                                             |
-| Desktop Nexus / mobile Switchboard                                | `apps/web/src/components/{nexus,switchboard}/`, `apps/web/src/lib/{nexus,switchboard}/`                                                                                                                |
+| Desktop Nexus / mobile Nexus task                                 | `apps/web/src/components/{nexus,switchboard}/`, `apps/web/src/lib/{nexus,switchboard}/`                                                                                                                |
 | Reader / chat / player UI                                         | `apps/web/src/components/{reader,chat}/`, `apps/web/src/lib/{reader,highlights,conversations,player,lectern}/`                                                                                         |
 | Android shell                                                     | `apps/android/app/src/main/`                                                                                                                                                                           |
 | Browser extension                                                 | `apps/extension/`                                                                                                                                                                                      |

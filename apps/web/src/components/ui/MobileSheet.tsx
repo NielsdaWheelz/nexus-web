@@ -1,24 +1,16 @@
 "use client";
 
-import {
-  useCallback,
-  useLayoutEffect,
-  useRef,
-  type CSSProperties,
-  type ReactNode,
-} from "react";
+import { useRef, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { cx } from "@/lib/ui/cx";
-import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
-import { useHistoryDismiss, type DismissDecision } from "@/lib/ui/useHistoryDismiss";
-import { useKeyboardInset } from "@/lib/ui/useKeyboardInset";
-import { useMobileViewport } from "@/lib/mobileViewport/MobileViewportProvider";
+import type { DismissDecision } from "@/lib/ui/useHistoryDismiss";
 import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
 import {
   ModalLayerProvider,
   modalBackdropProjection,
 } from "@/lib/ui/useModalLayer";
 import styles from "./MobileSheet.module.css";
+import { useMobileModalLifecycle } from "./useMobileModalLifecycle";
 
 const DRAG_DISMISS_PX = 96;
 
@@ -65,20 +57,11 @@ interface MobileSheetProps {
   panelTestId?: string;
 }
 
-function MobileSheetKeyboardReporter({ insetPx }: { insetPx: number }) {
-  const mobileViewport = useMobileViewport();
-  useLayoutEffect(
-    () => mobileViewport.reportMobileSheetKeyboardInset(insetPx),
-    [insetPx, mobileViewport],
-  );
-  return null;
-}
-
 /**
  * The single mobile bottom-sheet owner (docs/cutovers/mobile-sheet-keyboard-
  * unification-hard-cutover.md): portal, scrim, grabber + drag-to-dismiss,
  * keyboard avoidance (shrink + lift via --keyboard-inset), safe-area padding,
- * back-button dismissal, and the useDialogOverlay modal contract.
+ * and shared mobile modal lifecycle.
  *
  * Mount contract: keep this component mounted across the open/close cycle and
  * drive it with `active` — never `open && <MobileSheet …>`. useHistoryDismiss
@@ -107,29 +90,19 @@ export default function MobileSheet({
 }: MobileSheetProps) {
   const panelRef = useRef<HTMLElement>(null);
   const dragStartRef = useRef<number | null>(null);
-  const inset = useKeyboardInset();
-
-  // Route every dismissal path (backdrop, drag, back button, default Escape)
-  // through the optional dirty guard. No guard ⇒ plain dismiss (unchanged).
-  const requestDismiss = useCallback((): DismissDecision => {
-    const decision = onDismissRequest ? onDismissRequest() : "accepted";
-    if (decision === "accepted") onDismiss();
-    return decision;
-  }, [onDismissRequest, onDismiss]);
-
-  const overlay = useDialogOverlay({
-    ref: panelRef,
+  const lifecycle = useMobileModalLifecycle({
+    panelRef,
     active,
-    onDismiss: onEscape ?? requestDismiss,
+    onDismiss,
+    onDismissRequest,
+    onEscape,
+    historyDismiss,
     initialFocus,
     returnFocusTo,
     returnFocusFallback,
     skipReturnFocus,
     focusKey,
     layerScope: panelId,
-  });
-  useHistoryDismiss(active && historyDismiss, requestDismiss, {
-    isTopmost: overlay.isTopmost,
   });
 
   function onPointerDown(event: React.PointerEvent) {
@@ -147,7 +120,9 @@ export default function MobileSheet({
     dragStartRef.current = null;
     if (start === null || !panelRef.current) return;
     panelRef.current.style.transform = "";
-    if (event.clientY - start > DRAG_DISMISS_PX) requestDismiss();
+    if (event.clientY - start > DRAG_DISMISS_PX) {
+      lifecycle.requestDismiss();
+    }
   }
   function onPointerCancel() {
     dragStartRef.current = null;
@@ -156,16 +131,15 @@ export default function MobileSheet({
 
   if (!active) return null;
   return createPortal(
-    <ModalLayerProvider token={overlay.layerToken}>
-      <MobileSheetKeyboardReporter insetPx={inset} />
+    <ModalLayerProvider token={lifecycle.layerToken}>
       <div
         className={styles.backdrop}
         data-layer={layer}
         data-scrim={scrim}
-        {...modalBackdropProjection(overlay.isTopmost)}
+        {...modalBackdropProjection(lifecycle.isTopmost)}
         data-testid={backdropTestId}
         role="presentation"
-        onClick={requestDismiss}
+        onClick={lifecycle.requestDismiss}
       >
         <section
           id={panelId}

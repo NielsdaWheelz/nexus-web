@@ -6,7 +6,7 @@ import {
   within,
 } from "@testing-library/react";
 import { Component, useEffect, useState, type ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import type { AddSeed, NexusTarget } from "@/lib/nexus/model";
 import AddPanel, { type AddDismissalConfirmation } from "./AddPanel";
@@ -85,8 +85,15 @@ beforeEach(() => {
   vi.stubGlobal("innerWidth", 1280);
 });
 
+afterEach(() => {
+  document.documentElement.style.removeProperty("--text-md");
+  document.body.style.removeProperty("font-size");
+});
+
 describe("AddPanel source-first workbench", () => {
   it("reviews links locally and exposes one explicit batch submit", async () => {
+    document.documentElement.style.setProperty("--text-md", "16px");
+    document.body.style.fontSize = "15px";
     renderPanel();
     const links = await screen.findByRole("textbox", { name: "Links" });
     const file = screen.getByRole("button", { name: "Choose PDF or EPUB" });
@@ -97,6 +104,7 @@ describe("AddPanel source-first workbench", () => {
       name: "Import podcast subscriptions from OPML",
     });
 
+    expect(getComputedStyle(links).fontSize).toBe("16px");
     expect(
       links.compareDocumentPosition(file) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();

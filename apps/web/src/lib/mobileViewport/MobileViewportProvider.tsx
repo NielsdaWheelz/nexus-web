@@ -24,7 +24,7 @@ export interface MobileViewportCapability {
     id: MobileFixedObstructionId,
     element: HTMLElement,
   ): () => void;
-  reportMobileSheetKeyboardInset(px: number): () => void;
+  reportMobileOverlayKeyboardInset(px: number): () => void;
 }
 
 interface FixedRegistration {
@@ -37,7 +37,7 @@ interface FixedMeasurements {
   rects: ReadonlyMap<MobileFixedObstructionId, MobileFixedObstructionRect>;
 }
 
-interface MobileSheetKeyboardReport {
+interface MobileOverlayKeyboardReport {
   id: number;
   insetPx: number;
 }
@@ -84,11 +84,13 @@ export function MobileViewportProvider({
       viewportHeightPx: 0,
       rects: new Map(),
     });
-  const [mobileSheetKeyboardInsetPx, setMobileSheetKeyboardInsetPx] =
+  const [mobileOverlayKeyboardInsetPx, setMobileOverlayKeyboardInsetPx] =
     useState(0);
   const [rootTextEntryFocused, setRootTextEntryFocused] = useState(false);
-  const mobileSheetKeyboardReportsRef = useRef<MobileSheetKeyboardReport[]>([]);
-  const nextMobileSheetKeyboardReportIdRef = useRef(0);
+  const mobileOverlayKeyboardReportsRef = useRef<
+    MobileOverlayKeyboardReport[]
+  >([]);
+  const nextMobileOverlayKeyboardReportIdRef = useRef(0);
 
   const measureFixedObstructions = useCallback(() => {
     const rects = new Map<
@@ -137,20 +139,22 @@ export function MobileViewportProvider({
     [measureFixedObstructions],
   );
 
-  const reportMobileSheetKeyboardInset = useCallback((px: number) => {
+  const reportMobileOverlayKeyboardInset = useCallback((px: number) => {
     if (!Number.isFinite(px) || px < 0) {
-      // justify-defect: MobileSheet reports the owned keyboard-inset hook's
-      // nonnegative finite result.
-      throw new Error("MobileSheet keyboard inset must be nonnegative and finite");
+      // justify-defect: mobile modal lifecycle reports the owned keyboard
+      // geometry hook's nonnegative finite result.
+      throw new Error(
+        "Mobile overlay keyboard inset must be nonnegative and finite",
+      );
     }
     const report = {
-      id: nextMobileSheetKeyboardReportIdRef.current++,
+      id: nextMobileOverlayKeyboardReportIdRef.current++,
       insetPx: Math.ceil(px),
     };
-    mobileSheetKeyboardReportsRef.current.push(report);
-    setMobileSheetKeyboardInsetPx(report.insetPx);
+    mobileOverlayKeyboardReportsRef.current.push(report);
+    setMobileOverlayKeyboardInsetPx(report.insetPx);
     return () => {
-      const reports = mobileSheetKeyboardReportsRef.current;
+      const reports = mobileOverlayKeyboardReportsRef.current;
       const index = reports.findIndex((candidate) => candidate.id === report.id);
       if (index === -1) {
         return;
@@ -158,7 +162,7 @@ export function MobileViewportProvider({
       const ownedPublishedInset = index === reports.length - 1;
       reports.splice(index, 1);
       if (ownedPublishedInset) {
-        setMobileSheetKeyboardInsetPx(
+        setMobileOverlayKeyboardInsetPx(
           reports[reports.length - 1]?.insetPx ?? 0,
         );
       }
@@ -168,9 +172,9 @@ export function MobileViewportProvider({
   const capability = useMemo<MobileViewportCapability>(
     () => ({
       registerFixedObstruction,
-      reportMobileSheetKeyboardInset,
+      reportMobileOverlayKeyboardInset,
     }),
-    [registerFixedObstruction, reportMobileSheetKeyboardInset],
+    [registerFixedObstruction, reportMobileOverlayKeyboardInset],
   );
   // `fixedMeasurements` is identity-stable across renders (the setter returns the
   // current object when measurements are equal), so memoizing keeps `projection`
@@ -181,9 +185,9 @@ export function MobileViewportProvider({
       resolveMobileViewportProjection({
         viewportHeightPx: fixedMeasurements.viewportHeightPx,
         fixedObstructions: fixedMeasurements.rects,
-        mobileSheetKeyboardInsetPx,
+        mobileOverlayKeyboardInsetPx,
       }),
-    [fixedMeasurements, mobileSheetKeyboardInsetPx],
+    [fixedMeasurements, mobileOverlayKeyboardInsetPx],
   );
 
   useLayoutEffect(() => {
@@ -249,7 +253,7 @@ export function MobileViewportProvider({
         registration.observer.disconnect();
       }
       registrationsRef.current.clear();
-      mobileSheetKeyboardReportsRef.current = [];
+      mobileOverlayKeyboardReportsRef.current = [];
       const root = document.documentElement;
       root.style.removeProperty("--mobile-content-bottom-clearance");
       root.style.removeProperty("--mobile-nexus-bottom-offset");
@@ -272,6 +276,19 @@ export function useMobileViewport(): MobileViewportCapability {
   if (!capability) {
     throw new Error(
       "useMobileViewport must be used inside MobileViewportProvider",
+    );
+  }
+  return capability;
+}
+
+/** Preserve inactive mounted overlays without weakening active ownership. */
+export function useActiveMobileViewport(
+  active: boolean,
+): MobileViewportCapability | null {
+  const capability = useContext(MobileViewportContext);
+  if (active && !capability) {
+    throw new Error(
+      "Active mobile overlay must be used inside MobileViewportProvider",
     );
   }
   return capability;

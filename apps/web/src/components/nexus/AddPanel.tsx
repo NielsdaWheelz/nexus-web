@@ -971,6 +971,7 @@ export default function AddPanel({
 
       <Dialog
         open={dismissalConfirmation !== null}
+        historyDismiss
         title={
           dismissalConfirmation?.kind === "Stop"
             ? "Stop active work?"

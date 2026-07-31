@@ -5,7 +5,7 @@ import NexusButton from "@/components/switchboard/NexusButton";
 import CreateLibraryPanel from "@/components/switchboard/CreateLibraryPanel";
 import SwitchboardRecovery from "@/components/switchboard/SwitchboardRecovery";
 import SwitchboardRoot from "@/components/switchboard/SwitchboardRoot";
-import SwitchboardSheet from "@/components/switchboard/SwitchboardSheet";
+import SwitchboardTask from "@/components/switchboard/SwitchboardTask";
 import { paneStatusLabel } from "@/lib/switchboard/paneStatusLabel";
 import { useViewportState } from "@/lib/renderEnvironment/provider";
 import AddPanel from "./AddPanel";
@@ -224,7 +224,7 @@ export default function Nexus() {
 
   return (
     <>
-      <SwitchboardSheet
+      <SwitchboardTask
         controller={controller}
         active={controller.open && isMobile}
         activeAddDefect={addDefect?.sessionId === sessionId}

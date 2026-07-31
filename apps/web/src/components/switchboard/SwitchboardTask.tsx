@@ -1,11 +1,11 @@
 "use client";
 
 import type { MouseEvent, ReactNode } from "react";
-import MobileSheet from "@/components/ui/MobileSheet";
 import AccountMenu from "@/components/appnav/AccountMenu";
 import AddPanel from "@/components/nexus/AddPanel";
 import AddPanelBoundary from "@/components/nexus/AddPanelBoundary";
 import TodayCapturePanel from "@/components/nexus/TodayCapturePanel";
+import MobileFullScreenTask from "@/components/ui/MobileFullScreenTask";
 import { getDestination } from "@/lib/navigation/destinations";
 import { getPaneRouteIcon } from "@/lib/panes/paneRouteTable";
 import type { AppNavActivationResult } from "@/lib/panes/targetLinkActivation";
@@ -48,7 +48,7 @@ function CreationStatus({
   );
 }
 
-export default function SwitchboardSheet({
+export default function SwitchboardTask({
   controller,
   active,
   activeAddDefect,
@@ -272,19 +272,16 @@ export default function SwitchboardSheet({
   };
 
   return (
-    <MobileSheet
+    <MobileFullScreenTask
       active={active}
       onDismiss={controller.dismissAccepted}
       onDismissRequest={controller.guardClose}
       ariaLabel={activeAddDefect ? "Add needs attention" : "Nexus"}
-      layer="palette"
-      panelClassName={styles.sheet}
       initialFocus={(container) => controller.initialFocus(container, true)}
       skipReturnFocus={controller.shouldSuppressReturnFocusOnClose}
       focusKey={controller.focusKey}
-      panelId="nexus-switchboard"
     >
       {renderPage()}
-    </MobileSheet>
+    </MobileFullScreenTask>
   );
 }

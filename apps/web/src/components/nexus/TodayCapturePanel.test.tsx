@@ -7,7 +7,7 @@
  *
  * The quick-note seam is `quickCaptureDailyNote` → `POST /api/notes/quick-capture`,
  * stubbed at the fetch boundary (no vi.mock of internal modules). Obsolete tray-only
- * cases (OPEN_ADD_CONTENT_EVENT open, window-paste, mobile-sheet popstate) belong to
+ * cases (OPEN_ADD_CONTENT_EVENT open, window-paste, mobile task popstate) belong to
  * the Nexus surface and are covered by `Nexus.test.tsx`.
  */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -116,6 +116,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  document.documentElement.style.removeProperty("--text-md");
+  document.body.style.removeProperty("font-size");
   window.localStorage.clear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -123,10 +125,16 @@ afterEach(() => {
 
 describe("TodayCapturePanel", () => {
   it("renders the quick-note editor and the New note back header", () => {
+    document.documentElement.style.setProperty("--text-md", "16px");
+    document.body.style.fontSize = "15px";
     stubQuickCapture();
     renderTodayCapturePanel();
 
-    expect(screen.getByRole("textbox", { name: "Quick note to today" })).toBeInTheDocument();
+    const editor = screen.getByRole("textbox", {
+      name: "Quick note to today",
+    });
+    expect(editor).toBeInTheDocument();
+    expect(getComputedStyle(editor).fontSize).toBe("16px");
     expect(screen.getByText("New note")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open today" })).toBeInTheDocument();
   });

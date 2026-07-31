@@ -17,7 +17,7 @@ const NEXT_IMAGE_BAN = {
 const KEYBOARD_INSET_BAN = {
   name: "@/lib/ui/useKeyboardInset",
   message:
-    "Keyboard geometry has one owner: <MobileSheet> (src/components/ui/MobileSheet.tsx). Compose MobileSheet instead of reading the inset directly (docs/cutovers/mobile-sheet-keyboard-unification-hard-cutover.md).",
+    "Mobile modal keyboard geometry has one owner: useMobileModalLifecycle (src/components/ui/useMobileModalLifecycle.ts). Compose that lifecycle through a semantic mobile modal primitive instead of reading visual-viewport geometry directly (docs/cutovers/mobile-nexus-full-screen-task-hard-cutover.md).",
 };
 
 const eslintConfig = [
@@ -62,8 +62,9 @@ const eslintConfig = [
     // R1 (docs/cutovers/oracle-plate-owned-asset-cutover.md): MediaImage is the
     // sole sanctioned importer of next/image. Banning the bare import everywhere
     // else keeps the proxied-vs-owned + `unoptimized` decision in one place.
-    // AC-10 (docs/cutovers/mobile-sheet-keyboard-unification-hard-cutover.md):
-    // MobileSheet is likewise the sole sanctioned importer of useKeyboardInset.
+    // AC-12 (docs/cutovers/mobile-nexus-full-screen-task-hard-cutover.md):
+    // useMobileModalLifecycle is likewise the sole sanctioned production
+    // importer of useKeyboardInset.
     // no-restricted-imports replaces (not merges) per file, so each sanctioned
     // importer gets a follow-up block restating the ban that still applies to it.
     files: ["src/**/*.{ts,tsx}"],
@@ -89,7 +90,7 @@ const eslintConfig = [
   },
   {
     files: [
-      "src/components/ui/MobileSheet.tsx",
+      "src/components/ui/useMobileModalLifecycle.ts",
       "src/lib/ui/useKeyboardInset.test.tsx",
     ],
     rules: {

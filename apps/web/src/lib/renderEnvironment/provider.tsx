@@ -10,7 +10,8 @@ import {
 } from "react";
 import type { RenderEnvironment, ViewportKind } from "./types";
 
-const MOBILE_QUERY = "(max-width: 768px)";
+const MOBILE_QUERY =
+  "(max-width: 768px), (max-width: 900px) and (orientation: landscape) and (pointer: coarse)";
 
 interface RenderEnvironmentContextValue extends RenderEnvironment {
   viewportKind: ViewportKind;

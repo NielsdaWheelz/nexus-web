@@ -54,7 +54,7 @@ export function resolveMobileViewportProjection(input: {
     MobileFixedObstructionId,
     MobileFixedObstructionRect
   >;
-  mobileSheetKeyboardInsetPx: number;
+  mobileOverlayKeyboardInsetPx: number;
 }): MobileViewportProjection {
   const viewportHeightPx = requireNonnegativeFinite(
     input.viewportHeightPx,
@@ -62,8 +62,8 @@ export function resolveMobileViewportProjection(input: {
   );
   const overlayKeyboardInsetPx = Math.ceil(
     requireNonnegativeFinite(
-      input.mobileSheetKeyboardInsetPx,
-      "MobileSheet keyboard inset",
+      input.mobileOverlayKeyboardInsetPx,
+      "Mobile overlay keyboard inset",
     ),
   );
   let fixedBottomClearancePx = 0;
