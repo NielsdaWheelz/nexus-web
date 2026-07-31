@@ -81,4 +81,24 @@ describe("RenderEnvironmentProvider", () => {
       expect(screen.getByLabelText("viewport")).toHaveTextContent("mobile:hydrated"),
     );
   });
+
+  it("publishes viewport changes after hydration", async () => {
+    const viewport = installMatchMedia(false);
+
+    render(
+      <RenderEnvironmentProvider value={ENVIRONMENT}>
+        <ViewportProbe />
+      </RenderEnvironmentProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("viewport")).toHaveTextContent("desktop:hydrated"),
+    );
+
+    viewport.setMatches(true);
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("viewport")).toHaveTextContent("mobile:hydrated"),
+    );
+  });
 });
