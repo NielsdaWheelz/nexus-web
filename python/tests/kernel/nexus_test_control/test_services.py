@@ -22,6 +22,7 @@ from nexus_test_control.services import (
     _database_url,
     _parse_supabase_status,
     _start_owned_process,
+    _supabase_credentials_from_status,
     _write_supabase_config,
     clean_owned_runtime,
     clean_run,
@@ -139,6 +140,28 @@ def test_supabase_status_parser_accepts_the_service_role_admin_key() -> None:
     )
 
     assert status["SERVICE_ROLE_KEY"] == "admin"
+
+
+def test_supabase_credentials_use_the_recorded_url_when_cli_omits_api_url() -> None:
+    credentials = _supabase_credentials_from_status(
+        {"ANON_KEY": "public", "SECRET_KEY": "admin"},
+        "http://127.0.0.1:25421",
+    )
+
+    assert credentials.url == "http://127.0.0.1:25421"
+    assert credentials.anon_key == "public"
+
+
+def test_supabase_credentials_reject_a_cli_url_outside_the_recorded_runtime() -> None:
+    with pytest.raises(RuntimeContractError, match="does not match"):
+        _supabase_credentials_from_status(
+            {
+                "API_URL": "https://production.example",
+                "ANON_KEY": "public",
+                "SECRET_KEY": "admin",
+            },
+            "http://127.0.0.1:25421",
+        )
 
 
 def test_supabase_status_parser_rejects_non_json() -> None:

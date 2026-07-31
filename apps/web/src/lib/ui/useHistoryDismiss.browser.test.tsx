@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { expect, it } from "vitest";
+import { isRecord } from "../validation";
 import { useHistoryDismiss } from "./useHistoryDismiss";
 
 function NavigatingOverlay() {

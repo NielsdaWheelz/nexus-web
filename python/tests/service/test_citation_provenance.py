@@ -8,11 +8,12 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import (
     ContentBlock,
+    Conversation,
     EvidenceSpan,
     Fragment,
     Media,
     MediaKind,
-    Page,
+    Message,
     ProcessingStatus,
     ResourceEdge,
 )
@@ -31,7 +32,9 @@ def test_published_citation_reconstructs_locator_from_canonical_evidence(
     fragment_id = uuid4()
     block_id = uuid4()
     evidence_id = uuid4()
-    page_id = uuid4()
+    conversation_id = uuid4()
+    user_message_id = uuid4()
+    assistant_message_id = uuid4()
     exact = "Evidence"
     selector = {
         "kind": "web_text",
@@ -56,7 +59,22 @@ def test_published_citation_reconstructs_locator_from_canonical_evidence(
                 canonical_text="Evidence survives.",
                 html_sanitized="<p>Evidence survives.</p>",
             ),
-            Page(id=page_id, user_id=test_user.id, title="Citing output"),
+            Conversation(id=conversation_id, owner_user_id=test_user.id),
+            Message(
+                id=user_message_id,
+                conversation_id=conversation_id,
+                seq=1,
+                role="user",
+                content="Find the evidence.",
+            ),
+            Message(
+                id=assistant_message_id,
+                conversation_id=conversation_id,
+                seq=2,
+                role="assistant",
+                content="Citing output [1]",
+                parent_message_id=user_message_id,
+            ),
         ]
     )
     db_session.flush()
@@ -97,7 +115,7 @@ def test_published_citation_reconstructs_locator_from_canonical_evidence(
     )
     db_session.flush()
 
-    source = ResourceRef("page", page_id)
+    source = ResourceRef("message", assistant_message_id)
     target = ResourceRef("evidence_span", evidence_id)
     edge = record_citation(
         db_session,

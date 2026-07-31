@@ -287,17 +287,28 @@ def read_supabase_credentials(
     )
     status = _parse_supabase_status(completed.stdout)
     expected_url = runtime_endpoint(root, environment, EndpointKind.SUPABASE)
-    url = status.get("API_URL")
+    return _supabase_credentials_from_status(status, expected_url)
+
+
+def _supabase_credentials_from_status(
+    status: Mapping[str, str], expected_url: str
+) -> SupabaseCredentials:
+    """Bind CLI credentials to the controller-owned endpoint.
+
+    Supabase CLI omits API_URL when PostgREST is excluded, even though Kong and
+    Auth are running on the configured API port.  The runtime record remains the
+    endpoint authority; a CLI-reported URL, when present, must agree exactly.
+    """
+    reported_url = status.get("API_URL")
     anon_key = status.get("ANON_KEY") or status.get("PUBLISHABLE_KEY")
     admin_key = status.get("SECRET_KEY") or status.get("SERVICE_ROLE_KEY")
     if (
-        not isinstance(url, str)
-        or url != expected_url
+        (reported_url is not None and reported_url != expected_url)
         or not isinstance(anon_key, str)
         or not isinstance(admin_key, str)
     ):
         raise RuntimeContractError("local Supabase status does not match the recorded runtime")
-    return SupabaseCredentials(url, anon_key, admin_key)
+    return SupabaseCredentials(expected_url, anon_key, admin_key)
 
 
 def prepare_run(
