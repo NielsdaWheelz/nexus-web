@@ -1258,18 +1258,21 @@ export function WorkspaceStoreProvider({
         activate: options?.activate ?? true,
         transition,
       };
+      const nextState = workspaceReducer(
+        stateRef.current,
+        action,
+        workspacePrimaryMetrics,
+      );
       preparePaneTransition(
         pane,
         normalized,
         transition,
         options?.modality ?? "Programmatic",
-        workspaceReducer(
-          stateRef.current,
-          action,
-          workspacePrimaryMetrics,
-        ),
+        nextState,
       );
       publishPaneLabelHint(paneId, normalized, options?.labelHint);
+      stateRef.current = nextState;
+      projectWorkspaceStateToUrl(nextState);
       dispatch(action);
     },
     [

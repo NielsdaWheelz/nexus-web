@@ -569,7 +569,9 @@ test.describe("reader progress continuity", () => {
     await expect(
       activeWorkspacePane(page).getByRole("heading", { name: chapterTwo }),
     ).toBeVisible({ timeout: 15_000 });
-    expect(page.url()).not.toMatch(/[?&](loc|fragment)=/);
+    await expect
+      .poll(() => page.url())
+      .not.toMatch(/[?&](loc|fragment)=/);
   });
 
   test("cold coarse ?loc loses to the canonical cursor and the URL is repaired", async ({

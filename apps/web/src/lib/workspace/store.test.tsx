@@ -2126,6 +2126,21 @@ describe("WorkspaceStoreProvider", () => {
     flushWorkspaceSession();
   });
 
+  it("projects pane-local replacement to the address bar synchronously", async () => {
+    const mediaHref = "/media/11111111-1111-4111-8111-111111111111";
+    const workspace = await mountWorkspaceStore(`${mediaHref}?loc=chapter-2`);
+    const paneId = primaryPanes(workspace().state)[0]!.id;
+
+    act(() => {
+      workspace().navigatePane(paneId, mediaHref, { replace: true });
+      expect(window.location.pathname).toBe(mediaHref);
+      expect(window.location.search).toBe("");
+    });
+
+    expect(activeHref(workspace())).toBe(mediaHref);
+    flushWorkspaceSession();
+  });
+
   it("projects the seeded active pane href onto a bare-landing address bar", async () => {
     const initialState = workspaceState({
       activePrimaryPaneId: "pane-notes",
