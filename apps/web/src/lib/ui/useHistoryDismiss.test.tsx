@@ -65,6 +65,26 @@ describe("useHistoryDismiss", () => {
     expect(onDismiss).not.toHaveBeenCalled();
   });
 
+  it("clears a retained marker instead of reverting a workspace navigation", async () => {
+    const onDismiss = vi.fn();
+    const { rerender } = renderHook(
+      ({ active }) => useHistoryDismiss(active, onDismiss, { isTopmost: true }),
+      { initialProps: { active: true } },
+    );
+    const marker = fakeState as Record<string, unknown>;
+    fakeState = {
+      ...marker,
+      __nexusOverlayHistoryHref: "/route-before-navigation",
+    };
+
+    rerender({ active: false });
+    await flushMicrotasks();
+
+    expect(history.replaceState).toHaveBeenCalledWith({}, "");
+    expect(history.back).not.toHaveBeenCalled();
+    expect(onDismiss).not.toHaveBeenCalled();
+  });
+
   it("does not push an entry while inactive", () => {
     renderHook(() =>
       useHistoryDismiss(false, vi.fn(), { isTopmost: false }),

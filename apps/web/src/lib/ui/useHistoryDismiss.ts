@@ -20,6 +20,7 @@ import { isRecord } from "@/lib/validation";
 export type DismissDecision = "accepted" | "blocked";
 
 const MARKER = "__nexusOverlayHistory";
+const MARKER_HREF = "__nexusOverlayHistoryHref";
 
 interface HistoryDismissOwner {
   readonly token: object;
@@ -36,9 +37,30 @@ function hasMarker(): boolean {
   return isRecord(history.state) && history.state[MARKER] === true;
 }
 
+function currentHref(): string {
+  return `${window.location.pathname}${window.location.search}${window.location.hash}`;
+}
+
+function markerHref(): string | null {
+  return isRecord(history.state) && typeof history.state[MARKER_HREF] === "string"
+    ? history.state[MARKER_HREF]
+    : null;
+}
+
+function clearMarker(): void {
+  const state = isRecord(history.state) ? { ...history.state } : {};
+  delete state[MARKER];
+  delete state[MARKER_HREF];
+  history.replaceState(state, "");
+}
+
 function pushMarker(): void {
   history.pushState(
-    { ...(isRecord(history.state) ? history.state : {}), [MARKER]: true },
+    {
+      ...(isRecord(history.state) ? history.state : {}),
+      [MARKER]: true,
+      [MARKER_HREF]: currentHref(),
+    },
     "",
   );
 }
@@ -52,6 +74,11 @@ function scheduleMarkerPop(): void {
     if (owners.length !== 0) return;
     if (!hasMarker()) {
       if (!markerPopInFlight) stopListening();
+      return;
+    }
+    if (markerHref() !== currentHref()) {
+      clearMarker();
+      stopListening();
       return;
     }
     markerPopInFlight = true;
