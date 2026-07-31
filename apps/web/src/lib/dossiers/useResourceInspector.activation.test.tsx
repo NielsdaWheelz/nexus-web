@@ -1,7 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type {
   ComponentProps,
-  MouseEvent as ReactMouseEvent,
   ReactElement,
 } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -401,6 +400,7 @@ describe("useResourceInspector workspace activation", () => {
         unresolvedReason: null,
       },
       null,
+      { kind: "Follow" },
     );
 
     expect(onActivateWorkspaceTarget).toHaveBeenCalledWith({
@@ -451,6 +451,7 @@ describe("useResourceInspector workspace activation", () => {
         unresolvedReason: null,
       },
       target,
+      { kind: "Follow" },
     );
 
     expect(dispatchReaderSourceActivation).toHaveBeenCalledWith(target);
@@ -474,7 +475,6 @@ describe("useResourceInspector workspace activation", () => {
     await waitFor(() => {
       expect(publishSecondary).toHaveBeenCalled();
     });
-    const preventDefault = vi.fn();
     dossierCitationActivate(publishSecondary)(
       {
         resourceRef: "page:55555555-5555-4555-8555-555555555555",
@@ -483,12 +483,7 @@ describe("useResourceInspector workspace activation", () => {
         unresolvedReason: null,
       },
       null,
-      {
-        defaultPrevented: false,
-        detail: 1,
-        preventDefault,
-        shiftKey: true,
-      } as unknown as ReactMouseEvent,
+      { kind: "Fork" },
     );
 
     expect(onActivateWorkspaceTarget).toHaveBeenCalledWith({
@@ -498,7 +493,6 @@ describe("useResourceInspector workspace activation", () => {
       modality: "Programmatic",
     });
     expect(onNavigatePane).not.toHaveBeenCalled();
-    expect(preventDefault).toHaveBeenCalledOnce();
   });
 
   it("routes Media Abstract evidence through the shared inspector surface command", async () => {

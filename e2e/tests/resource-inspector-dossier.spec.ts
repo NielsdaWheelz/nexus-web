@@ -460,7 +460,7 @@ test("one real Dossier lifecycle reconnects, cancels, activates citations, and p
 
       const paneCount = await page.locator("[data-pane-id]").count();
       await dossierDocument
-        .getByRole("link", { name: "Open citation 1" })
+        .getByRole("button", { name: "Open citation 1" })
         .click({ modifiers: ["Shift"] });
       await expect(page.locator("[data-pane-id]")).toHaveCount(paneCount + 1);
       await expect(page).toHaveURL(new RegExp(`/media/${mediaId}$`));

@@ -41,7 +41,7 @@ import styles from "./DossierSurface.module.css";
 export type DossierCitationActivate = (
   activation: ResourceActivation,
   target: ReaderSourceTarget | null,
-  event?: React.MouseEvent,
+  disposition: { readonly kind: "Follow" | "Fork" },
 ) => void;
 
 interface DossierSurfaceProps {
@@ -61,7 +61,11 @@ interface DossierSurfaceProps {
   onRevisionSelect?: (revisionRef: string | null) => void;
 }
 
-const defaultCitationActivate: DossierCitationActivate = (_activation, target) => {
+const defaultCitationActivate: DossierCitationActivate = (
+  _activation,
+  target,
+  _disposition,
+) => {
   if (target) dispatchReaderSourceActivation(target);
 };
 
@@ -382,13 +386,17 @@ function DossierBody({
               contentHtml={body.revision.contentHtml}
               onFindCapabilityChange={onFindCapabilityChange}
               onFindRequested={onFindRequested}
-              onCitation={(ordinal) => {
+              onCitation={(ordinal, disposition) => {
                 const citation = body.revision.citations.find(
                   (entry) => entry.ordinal === ordinal,
                 );
                 if (!citation) return;
                 const data = toReaderCitationData(citation);
-                onCitationActivate(data.activation, data.target);
+                onCitationActivate(
+                  data.activation,
+                  data.target,
+                  disposition,
+                );
               }}
             />
           </MachineText>

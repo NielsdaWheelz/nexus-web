@@ -26,6 +26,7 @@ import Button from "@/components/ui/Button";
 import ChatComposer from "@/components/chat/ChatComposer";
 import ChatSurface from "@/components/chat/ChatSurface";
 import PaneSearchResults from "@/components/resource-inspector/PaneSearchResults";
+import type { DossierCitationActivate } from "@/components/dossier/DossierSurface";
 import ConversationForksPanel from "@/components/chat/ConversationForksPanel";
 import ConversationContextRefsSurface from "@/components/chat/ConversationContextRefsSurface";
 import { useConversation } from "@/components/chat/useConversation";
@@ -86,6 +87,7 @@ import {
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
+import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import {
   useResourceInspector,
@@ -550,28 +552,49 @@ export default function Conversation() {
   // Reader-source activation + open cited resource
   // --------------------------------------------------------------------------
 
+  const activateReaderSource = useCallback(
+    (
+      activation: ResourceActivation,
+      target: ReaderSourceTarget | null,
+      disposition: WorkspaceTargetDisposition,
+    ) => {
+      if (target) dispatchReaderSourceActivation(target);
+      if (resourceRef === activation.resourceRef) {
+        return true;
+      }
+      return activateResource(activation, {
+        labelHint: target?.label,
+        activateTarget: paneRuntime.activateTarget,
+        disposition,
+      });
+    },
+    [paneRuntime, resourceRef],
+  );
+
   const handleReaderSourceActivate = useCallback(
     (
       activation: ResourceActivation,
       target: ReaderSourceTarget | null,
       event?: React.MouseEvent,
     ) => {
-      if (target) dispatchReaderSourceActivation(target);
       if (event?.defaultPrevented) return;
-      if (resourceRef === activation.resourceRef) {
-        event?.preventDefault();
-        return;
-      }
-      const activated = activateResource(activation, {
-        labelHint: target?.label,
-        activateTarget: paneRuntime.activateTarget,
-        disposition: event
+      const activated = activateReaderSource(
+        activation,
+        target,
+        event
           ? workspaceTargetClickIntent(event).disposition
           : { kind: "Follow" },
-      });
+      );
       if (activated) event?.preventDefault();
     },
-    [paneRuntime, resourceRef],
+    [activateReaderSource],
+  );
+
+  const handleDossierCitationActivate = useCallback<DossierCitationActivate>(
+    (activation, target, disposition) => {
+      activateReaderSource(activation, target, disposition);
+    },
+    [activateReaderSource],
   );
 
   const handleOpenResource = useCallback(
@@ -787,7 +810,7 @@ export default function Conversation() {
     handle: convo.conversationId,
     bodies: { linkedItems: contextBody, forks: forksBody },
     searchResults: searchResultsBody,
-    onCitationActivate: handleReaderSourceActivate,
+    onCitationActivate: handleDossierCitationActivate,
   });
   searchCommandsRef.current = inspector;
   const previousFindSourceRef = useRef(paneFind.sourceKey);

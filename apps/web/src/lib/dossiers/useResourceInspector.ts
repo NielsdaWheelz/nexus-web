@@ -26,7 +26,6 @@ import {
 } from "react";
 import { createElement, type ReactNode } from "react";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
-import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
 import {
   normalizePaneSecondaryPublication,
@@ -169,28 +168,23 @@ export function useResourceInspector({
     paneRuntime,
   };
   const stableCitationActivate = useCallback<DossierCitationActivate>(
-    (activation, target, event) => {
+    (activation, target, disposition) => {
       const commands = citationCommandsRef.current;
       if (commands.onCitationActivate) {
-        commands.onCitationActivate(activation, target, event);
+        commands.onCitationActivate(activation, target, disposition);
         return;
       }
       if (target) {
         dispatchReaderSourceActivation(target);
       }
-      if (event?.defaultPrevented) return;
       const runtime = commands.paneRuntime;
       if (!runtime) return;
-      const disposition = event
-        ? workspaceTargetClickIntent(event).disposition
-        : { kind: "Follow" as const };
       if (disposition.kind === "Fork") {
-        const activated = activateResource(activation, {
+        activateResource(activation, {
           labelHint: target?.label,
           activateTarget: runtime.activateTarget,
           disposition,
         });
-        if (activated) event?.preventDefault();
         return;
       }
       const isSecondaryActivation =
@@ -202,15 +196,13 @@ export function useResourceInspector({
             activation.href &&
             hasSamePaneResource(runtime.href, activation.href)))
       ) {
-        event?.preventDefault();
         return;
       }
-      const activated = activateResource(activation, {
+      activateResource(activation, {
         labelHint: target?.label,
         activateTarget: runtime.activateTarget,
         disposition,
       });
-      if (activated) event?.preventDefault();
     },
     [],
   );

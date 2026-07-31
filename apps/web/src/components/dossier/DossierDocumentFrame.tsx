@@ -220,7 +220,11 @@ type IncomingMessage =
       readonly reason: "OriginUnavailable";
     }
   | { readonly kind: "FindRequested" }
-  | { readonly kind: "Citation"; readonly ordinal: number };
+  | {
+      readonly kind: "Citation";
+      readonly ordinal: number;
+      readonly disposition: "Follow" | "Fork";
+    };
 
 function isPositiveSafeInteger(value: unknown): value is number {
   return (
@@ -419,11 +423,16 @@ function decodeIncoming(
     return { kind: "FindRequested" };
   }
   if (
-    hasExactKeys(value, ["channel", "kind", "ordinal"]) &&
+    hasExactKeys(value, ["channel", "disposition", "kind", "ordinal"]) &&
     value.kind === "Citation" &&
-    isPositiveSafeInteger(value.ordinal)
+    isPositiveSafeInteger(value.ordinal) &&
+    (value.disposition === "Follow" || value.disposition === "Fork")
   ) {
-    return { kind: "Citation", ordinal: value.ordinal };
+    return {
+      kind: "Citation",
+      ordinal: value.ordinal,
+      disposition: value.disposition,
+    };
   }
   if (
     hasExactKeys(value, [
@@ -899,7 +908,10 @@ export default function DossierDocumentFrame({
   title: string;
   revisionRef: string;
   contentHtml: string;
-  onCitation: (ordinal: number) => void;
+  onCitation: (
+    ordinal: number,
+    disposition: { readonly kind: "Follow" | "Fork" },
+  ) => void;
   onFindCapabilityChange: (
     capability: DossierDocumentFindCapability | null,
   ) => void;
@@ -950,7 +962,9 @@ export default function DossierDocumentFrame({
       const message = decodeIncoming(event.data, generation.channel);
       if (!message) return;
       if (message.kind === "Citation") {
-        callbacksRef.current.onCitation(message.ordinal);
+        callbacksRef.current.onCitation(message.ordinal, {
+          kind: message.disposition,
+        });
         return;
       }
       if (message.kind === "FindRequested") {

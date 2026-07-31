@@ -423,8 +423,25 @@ describe("DOSSIER_DOCUMENT_RUNTIME", () => {
       new MouseEvent("click", { bubbles: true, cancelable: true }),
     );
     expect(await messageOf(runtime.messages, "Citation")).toMatchObject({
+      disposition: "Follow",
       ordinal: 2,
     });
+    citation.dispatchEvent(
+      new MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+        detail: 1,
+        shiftKey: true,
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        runtime.messages.filter(({ kind }) => kind === "Citation"),
+      ).toHaveLength(2),
+    );
+    expect(
+      runtime.messages.filter(({ kind }) => kind === "Citation").at(-1),
+    ).toMatchObject({ disposition: "Fork", ordinal: 2 });
     runtime.dispose();
   });
 });

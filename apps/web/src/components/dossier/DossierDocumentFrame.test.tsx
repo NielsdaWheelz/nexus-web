@@ -104,26 +104,42 @@ describe("DossierDocumentFrame", () => {
       window,
       new MessageEvent("message", {
         source: frame.contentWindow,
-        data: { channel, kind: "Citation", ordinal: 2 },
+        data: {
+          channel,
+          disposition: "Follow",
+          kind: "Citation",
+          ordinal: 2,
+        },
       }),
     );
     fireEvent(
       window,
       new MessageEvent("message", {
         source: frame.contentWindow,
-        data: { channel, kind: "Citation", ordinal: 3, href: "https://evil.test" },
+        data: {
+          channel,
+          disposition: "Fork",
+          href: "https://evil.test",
+          kind: "Citation",
+          ordinal: 3,
+        },
       }),
     );
     fireEvent(
       window,
       new MessageEvent("message", {
         source: window,
-        data: { channel, kind: "Citation", ordinal: 4 },
+        data: {
+          channel,
+          disposition: "Fork",
+          kind: "Citation",
+          ordinal: 4,
+        },
       }),
     );
 
     expect(onCitation).toHaveBeenCalledOnce();
-    expect(onCitation).toHaveBeenCalledWith(2);
+    expect(onCitation).toHaveBeenCalledWith(2, { kind: "Follow" });
   });
 
   it("publishes one exact revision capability only after load and Ready in either order", async () => {

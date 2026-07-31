@@ -956,7 +956,9 @@ function dossierDocumentRuntime(): void {
     if (!raw || !/^[1-9][0-9]*$/u.test(raw)) return;
     const ordinal = Number(raw);
     if (!Number.isSafeInteger(ordinal)) return;
-    post({ kind: "Citation", ordinal });
+    const disposition =
+      event.shiftKey && event.detail !== 0 ? "Fork" : "Follow";
+    post({ kind: "Citation", ordinal, disposition });
   });
 
   window.addEventListener("keydown", (event) => {

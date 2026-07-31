@@ -342,12 +342,12 @@ export default function ArtifactPaneBody() {
   );
 
   const activateCitation = useCallback<DossierCitationActivate>(
-    (activation, target) => {
+    (activation, target, disposition) => {
       if (target) dispatchReaderSourceActivation(target);
       activateResource(activation, {
         labelHint: target?.label,
         activateTarget: activatePaneTarget,
-        disposition: { kind: "Follow" },
+        disposition,
       });
     },
     [activatePaneTarget],
