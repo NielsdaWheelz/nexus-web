@@ -182,6 +182,39 @@ async function waitForAnimationFrame(page: Page): Promise<void> {
   );
 }
 
+async function waitForScrollportSettle(scrollport: Locator): Promise<void> {
+  await scrollport.evaluate(
+    (element) =>
+      new Promise<void>((resolve, reject) => {
+        const stableWindowMs = 200;
+        const deadline = performance.now() + 5_000;
+        let prior = element.scrollTop;
+        let stableSince = performance.now();
+        const sample = (now: number) => {
+          const current = element.scrollTop;
+          if (Math.abs(current - prior) > 0.5) {
+            stableSince = now;
+          }
+          prior = current;
+          if (now - stableSince >= stableWindowMs) {
+            resolve();
+            return;
+          }
+          if (now >= deadline) {
+            reject(
+              new Error(
+                "Reader scrollport did not settle after trusted input.",
+              ),
+            );
+            return;
+          }
+          requestAnimationFrame(sample);
+        };
+        requestAnimationFrame(sample);
+      }),
+  );
+}
+
 async function readChromeSample(
   page: Page,
   scrollport: Locator,
@@ -504,10 +537,17 @@ function expectContinuousTrustedGesture(
       `trusted drag lost its native touch boundary; recording=${JSON.stringify(recording)}`,
     );
   }
+  const cadenceWindowStart = allowTransitionDuringTouch
+    ? (recording.transitionEvents.find(
+        ({ type, recordedAt }) =>
+          type === "transitionrun" && recordedAt >= touchStartAt,
+      )?.recordedAt ?? touchStartAt)
+    : touchStartAt;
   const activeScrollEventTimes = recording.scrollEvents
     .map(({ recordedAt }) => recordedAt)
     .filter(
-      (recordedAt) => recordedAt >= touchStartAt && recordedAt <= touchEndAt,
+      (recordedAt) =>
+        recordedAt >= cadenceWindowStart && recordedAt <= touchEndAt,
     );
   expect(
     activeScrollEventTimes.length,
@@ -552,18 +592,32 @@ async function dispatchTouchDrag(
   options: {
     afterTouchStart?: () => Promise<void>;
     allowTransitionDuringTouch?: boolean;
+    driveWithTouchEvents?: boolean;
     expectPaneToolbar?: boolean;
+    stopBeforeTouchEnd?: boolean;
   } = {},
 ): Promise<ChromeGestureRecording> {
   const box = await scrollport.boundingBox();
   if (!box) {
     throw new Error("Reader scrollport has no visible bounding box.");
   }
-  const x = box.x + Math.min(box.width - 24, Math.max(24, box.width / 2));
-  const startY =
+  const viewport = await page.evaluate(() => ({
+    height: window.innerHeight,
+    width: window.innerWidth,
+  }));
+  const rawX = box.x + Math.min(box.width - 24, Math.max(24, box.width / 2));
+  const rawStartY =
     fingerDeltaY < 0
       ? box.y + Math.min(box.height - 28, Math.max(80, box.height * 0.8))
       : box.y + Math.min(box.height - 100, Math.max(32, box.height * 0.28));
+  const roundedDeltaY = Math.round(fingerDeltaY);
+  const minStartY = 1 - Math.min(0, roundedDeltaY);
+  const maxStartY =
+    viewport.height - 2 - Math.max(0, roundedDeltaY);
+  const x = Math.round(Math.min(viewport.width - 2, Math.max(1, rawX)));
+  const startY = Math.round(
+    Math.min(maxStartY, Math.max(minStartY, rawStartY)),
+  );
   const point = (y: number) => [
     {
       id: 1,
@@ -580,26 +634,56 @@ async function dispatchTouchDrag(
   let touchActive = false;
   try {
     cdp = await page.context().newCDPSession(page);
-    await cdp.send("Input.dispatchTouchEvent", {
-      type: "touchStart",
-      touchPoints: point(startY),
-    });
-    touchActive = true;
-    await options.afterTouchStart?.();
-    for (let step = 1; step <= steps; step += 1) {
+    if (options.driveWithTouchEvents || options.afterTouchStart) {
       await cdp.send("Input.dispatchTouchEvent", {
-        type: "touchMove",
-        touchPoints: point(startY + (fingerDeltaY * step) / steps),
+        type: "touchStart",
+        touchPoints: point(startY),
       });
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 8);
+      touchActive = true;
+      await options.afterTouchStart?.();
+      for (let step = 1; step <= steps; step += 1) {
+        await cdp.send("Input.dispatchTouchEvent", {
+          type: "touchMove",
+          touchPoints: point(startY + (fingerDeltaY * step) / steps),
+        });
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 8);
+        });
+      }
+      if (options.stopBeforeTouchEnd) {
+        // A physical partial drag can decelerate to rest before lift. Keep the
+        // finger down for less than the 120 ms idle boundary and refresh the
+        // stationary touch point so Chromium does not manufacture a fling.
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 80);
+        });
+        await cdp.send("Input.dispatchTouchEvent", {
+          type: "touchMove",
+          touchPoints: point(startY + fingerDeltaY),
+        });
+      }
+      await cdp.send("Input.dispatchTouchEvent", {
+        type: "touchEnd",
+        touchPoints: [],
+      });
+      touchActive = false;
+    } else {
+      // Keep the trusted gesture on Chromium's compositor timeline. Issuing
+      // each move through a Node/CDP round trip can pause longer than the
+      // product's 120 ms idle boundary under host load, manufacturing a settle
+      // that no continuous physical drag contains.
+      await cdp.send("Input.synthesizeScrollGesture", {
+        x,
+        y: startY,
+        yDistance: roundedDeltaY,
+        speed: Math.max(
+          1,
+          Math.round(Math.abs(roundedDeltaY) / (steps * 0.008)),
+        ),
+        gestureSourceType: "touch",
+        preventFling: true,
       });
     }
-    await cdp.send("Input.dispatchTouchEvent", {
-      type: "touchEnd",
-      touchPoints: [],
-    });
-    touchActive = false;
     const touchEndHandle = await page.waitForFunction(
       () => {
         const recorderWindow = window as typeof window & {
@@ -857,6 +941,7 @@ async function expectTrustedForwardRetreat(
     expect(surface.inert).toBe(true);
     expect(surface.ariaHidden).toBe("true");
   }
+  await waitForScrollportSettle(scrollport);
 }
 
 async function expectTrustedHandledAnnotationTap(
@@ -985,6 +1070,7 @@ async function expectTrustedReverseReveal(
     expect(surface.inert).toBe(false);
     expect(surface.ariaHidden).toBeNull();
   }
+  await waitForScrollportSettle(scrollport);
 }
 
 async function expectTrustedReverseDeadZone(
@@ -992,6 +1078,7 @@ async function expectTrustedReverseDeadZone(
   scrollport: Locator,
   expectPaneToolbar = false,
 ): Promise<number> {
+  await waitForScrollportSettle(scrollport);
   const before = await readChromeSample(page, scrollport);
   const box = await scrollport.boundingBox();
   if (!box) {
@@ -1352,7 +1439,15 @@ async function expectTrustedSettleLifecycle(
       scrollport,
       -32,
       8,
-      { expectPaneToolbar },
+      {
+        // This proof must arm the next touch immediately after touchend, before
+        // the idle settle task can start. The compositor command resolves only
+        // after that task has already been queued, so preserve explicit trusted
+        // touch boundaries for this lifecycle-only handoff.
+        driveWithTouchEvents: true,
+        expectPaneToolbar,
+        stopBeforeTouchEnd: true,
+      },
     );
     expect(
       interruptedSamples.some(
@@ -1388,10 +1483,19 @@ async function expectTrustedSettleLifecycle(
         },
       },
     );
-    const firstNativeScrollAt = interruptionRecording.scrollEvents.find(
-      ({ recordedAt }) =>
+    const settleStartedAt = interruptionRecording.transitionEvents.find(
+      ({ type, recordedAt }) =>
+        type === "transitionrun" &&
         interruptionRecording.touchStartAt !== null &&
         recordedAt >= interruptionRecording.touchStartAt,
+    )?.recordedAt;
+    expect(
+      settleStartedAt,
+      `stationary trusted touch must observe the idle settle; recording=${JSON.stringify(interruptionRecording)}`,
+    ).toBeDefined();
+    const firstNativeScrollAt = interruptionRecording.scrollEvents.find(
+      ({ recordedAt }) =>
+        settleStartedAt !== undefined && recordedAt >= settleStartedAt,
     )?.recordedAt;
     expect(
       firstNativeScrollAt,
@@ -1445,6 +1549,9 @@ async function expectTrustedSettleLifecycle(
     }
     await expect
       .poll(async () => (await readAudit()).cancels)
+      .toBeGreaterThan(0);
+    await expect
+      .poll(async () => (await readAudit()).ends)
       .toBeGreaterThan(0);
     expectSynchronizedSettle(
       await readAudit(),
@@ -2039,11 +2146,31 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
           format.name === "PDF",
         );
       } else {
-        await pane
-          .getByRole("button", {
-            name: /transcript segment alpha intro line/i,
-          })
-          .tap();
+        const transcriptTapPoint = await scrollport.evaluate((element) => {
+          const scrollportRect = element.getBoundingClientRect();
+          const button = [
+            ...element.querySelectorAll<HTMLElement>("button"),
+          ].find((candidate) => {
+            const rect = candidate.getBoundingClientRect();
+            return (
+              rect.top >= scrollportRect.top &&
+              rect.bottom <= scrollportRect.bottom &&
+              rect.height > 0 &&
+              rect.width > 0
+            );
+          });
+          if (!button) {
+            throw new Error(
+              "Transcript has no fully visible interactive segment.",
+            );
+          }
+          const rect = button.getBoundingClientRect();
+          return {
+            x: rect.left + rect.width / 2,
+            y: rect.top + rect.height / 2,
+          };
+        });
+        await page.touchscreen.tap(transcriptTapPoint.x, transcriptTapPoint.y);
         await expectChromePhase(
           page,
           scrollport,

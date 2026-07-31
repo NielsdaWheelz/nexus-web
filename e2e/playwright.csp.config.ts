@@ -2,6 +2,10 @@ import { defineConfig, devices } from "@playwright/test";
 import path from "node:path";
 import supabaseEnv from "./supabase-env.cjs";
 
+// Playwright intentionally forces color for its reporters and child servers.
+// Do not pass a contradictory shell preference into every spawned Node process.
+delete process.env.NO_COLOR;
+
 const { applySupabasePublicEnv, buildE2eAppRuntimeEnv, loadRootFileEnv } =
   supabaseEnv;
 
