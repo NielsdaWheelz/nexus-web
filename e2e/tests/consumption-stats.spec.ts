@@ -148,6 +148,33 @@ async function resetPodcastSubscriptionSettings(
   expect(response.ok(), await response.text()).toBeTruthy();
 }
 
+async function clearEpisodePlaybackRate(
+  page: Parameters<typeof gotoSinglePaneWorkspace>[0],
+  mediaId: string,
+): Promise<void> {
+  const currentResponse = await page.request.get(
+    `/api/media/${mediaId}/listening-state`,
+  );
+  expect(currentResponse.ok(), await currentResponse.text()).toBeTruthy();
+  const current = (await currentResponse.json()) as { data: ListeningState };
+  const response = await page.request.put(
+    `/api/media/${mediaId}/listening-state`,
+    {
+      headers: stateChangingApiHeaders(),
+      data: {
+        positionMs: current.data.positionMs,
+        durationMs: current.data.durationMs,
+        episodePlaybackRate: { kind: "Absent" },
+        expectedWriteRevision: current.data.writeRevision,
+        expectedResetEpoch: current.data.resetEpoch,
+        heartbeatGeneration: randomUUID(),
+        heartbeatSequence: 1,
+      },
+    },
+  );
+  expect(response.ok(), await response.text()).toBeTruthy();
+}
+
 async function resetAudioProgress(
   page: Parameters<typeof gotoSinglePaneWorkspace>[0],
   mediaId: string,
@@ -321,6 +348,8 @@ test("inherits podcast playback speed and resumes an episode override", async ({
   await gotoSinglePaneWorkspace(page, rawDeviceId, "/lectern");
 
   await resetPodcastSubscriptionSettings(page, audio.podcast_id);
+  await clearEpisodePlaybackRate(page, audio.playback_media_id);
+  await clearEpisodePlaybackRate(page, audio.playback_successor_media_id);
 
   try {
     const preference = await page.request.patch(
@@ -408,6 +437,8 @@ test("inherits podcast playback speed and resumes an episode override", async ({
       audio.playback_media_id,
       audio.playback_successor_media_id,
     ]);
+    await clearEpisodePlaybackRate(page, audio.playback_media_id);
+    await clearEpisodePlaybackRate(page, audio.playback_successor_media_id);
     await resetPodcastSubscriptionSettings(page, audio.podcast_id);
   }
 });

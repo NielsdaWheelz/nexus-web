@@ -675,7 +675,7 @@ async function dispatchTouchDrag(
       await cdp.send("Input.synthesizeScrollGesture", {
         x,
         y: startY,
-        yDistance: roundedDeltaY,
+        yDistance: -roundedDeltaY,
         speed: Math.max(
           1,
           Math.round(Math.abs(roundedDeltaY) / (steps * 0.008)),
