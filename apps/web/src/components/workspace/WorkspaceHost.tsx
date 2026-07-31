@@ -962,9 +962,16 @@ function WorkspaceHost() {
           ? normalizePaneSecondaryPublication(input.publication)
           : null,
       };
-      setSecondaryPublicationByPaneId((current) =>
-        upsertOrDeletePaneSecondaryPublicationRecord(current, normalizedInput),
+      // The primary action and its secondary publication commit through
+      // different owners (PaneShell and WorkspaceHost). Accept the publication
+      // in the command guard synchronously so a newly visible Companion action
+      // cannot lose its first valid click before the host render catches up.
+      const next = upsertOrDeletePaneSecondaryPublicationRecord(
+        secondaryPublicationByPaneIdRef.current,
+        normalizedInput,
       );
+      secondaryPublicationByPaneIdRef.current = next;
+      setSecondaryPublicationByPaneId(next);
     },
     [],
   );

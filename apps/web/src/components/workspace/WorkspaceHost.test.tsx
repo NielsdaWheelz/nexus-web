@@ -1915,6 +1915,27 @@ describe("WorkspaceHost secondary publication validation", () => {
     expect(hostMocks.store.dropSecondaryPane).not.toHaveBeenCalled();
   });
 
+  it("accepts the first valid secondary request in the publication commit", async () => {
+    render(<WorkspaceHost />);
+
+    await waitFor(() => {
+      expect(hostMocks.secondaryPublisherByPaneId.get("pane-1")).toBeDefined();
+    });
+    const publish = hostMocks.secondaryPublisherByPaneId.get("pane-1");
+    if (!publish) throw new Error("Pane secondary publisher was not captured");
+    const opener = screen.getByRole("button", { name: "Open Companion" });
+
+    act(() => {
+      publish(RESOURCE_INSPECTOR_HIGHLIGHTS_ONLY);
+      opener.click();
+    });
+
+    expect(hostMocks.store.requestSecondarySurface).toHaveBeenCalledWith(
+      "pane-1",
+      "resource-evidence",
+    );
+  });
+
   it("restores desktop focus on close/Escape, with pane-chrome fallback for a detached opener", async () => {
     hostMocks.useActualPaneShell = true;
     setPaneWithSecondary({
