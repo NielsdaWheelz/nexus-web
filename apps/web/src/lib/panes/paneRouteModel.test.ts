@@ -185,6 +185,7 @@ describe("pane route model", () => {
       "author",
       "notes",
       "page",
+      "dailyDate",
       "note",
       "stats",
       "settings",

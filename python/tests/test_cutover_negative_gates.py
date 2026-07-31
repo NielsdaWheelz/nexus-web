@@ -1452,14 +1452,15 @@ def test_generation_harness_must_remain_symbols_present():
 # =============================================================================
 
 # The shared transport primitives — minting a stream token and opening an SSE
-# connection — have two typed transport owners: the general generation-run opener
-# and the one universal Dossier generation adapter. Resource panes never open
-# streams directly.
+# connection — have three typed transport owners: the general generation-run
+# opener and the universal Dossier and Podcast Refresh adapters. Resource panes
+# never open streams directly.
 _TRANSPORT_PRIMITIVE_OWNERS = (
     "lib/api/streamToken.ts",
     "lib/api/sse-client.ts",
     "lib/api/useGenerationRun.ts",
     "lib/dossiers/generationAdapter.ts",
+    "lib/podcasts/refresh.ts",
 )
 
 
@@ -1476,7 +1477,11 @@ def test_sse_transport_primitives_have_typed_owners_not_per_surface():
     )
     assert not hits, f"SSE transport primitive used outside a typed adapter:\n{_fmt(hits)}"
 
-    for relative in ("lib/api/useGenerationRun.ts", "lib/dossiers/generationAdapter.ts"):
+    for relative in (
+        "lib/api/useGenerationRun.ts",
+        "lib/dossiers/generationAdapter.ts",
+        "lib/podcasts/refresh.ts",
+    ):
         opener_src = (_WEB_ROOT / relative).read_text()
         assert "fetchStreamToken" in opener_src, f"{relative} no longer mints the token"
         assert "sseClientDirect" in opener_src, f"{relative} no longer opens the stream"
@@ -2517,7 +2522,7 @@ def test_lifecycle_composition_callsites_enumerated():
     ensure_hits = _excluding(
         _grep(r"\bensure_missing_items_in_txn\(", _PY_ROOT),
         "services/consumption/service.py",
-        "services/podcasts/poll.py",
+        "services/podcasts/sync.py",
     )
     assert not ensure_hits, (
         f"ensure_missing_items_in_txn called outside its enumerated composition "

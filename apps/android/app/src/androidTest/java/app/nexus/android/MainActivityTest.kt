@@ -112,7 +112,14 @@ class MainActivityTest {
                 assertEquals(Color.BLACK, (protection.background as ColorDrawable).color)
                 assertEquals(statusBarInset, protection.height)
                 @Suppress("DEPRECATION")
-                assertEquals(Color.BLACK, activity.window.statusBarColor)
+                assertEquals(
+                    if (android.os.Build.VERSION.SDK_INT >= 35) {
+                        Color.TRANSPARENT
+                    } else {
+                        Color.BLACK
+                    },
+                    activity.window.statusBarColor,
+                )
                 assertFalse(
                     WindowInsetsControllerCompat(
                         activity.window,

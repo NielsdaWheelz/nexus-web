@@ -7962,7 +7962,7 @@ class TestPodcastListeningStateMigration:
 
         constraint_names = {row[0] for row in constraints}
         assert "ck_podcast_listening_states_position_ms_non_negative" in constraint_names
-        assert "ck_podcast_listening_states_playback_speed_positive" in constraint_names
+        assert "ck_podcast_listening_states_playback_speed_positive" not in constraint_names
 
         index_names = {row[0] for row in indexes}
         assert "ix_podcast_listening_states_media_id" in index_names
@@ -9390,21 +9390,27 @@ class TestConversationReferencesCutoverMigration0121:
                 f"got columns {conversations_columns}"
             )
 
-    def test_references_cutover_downgrade_raises(self, migrated_engine):
+    def test_references_cutover_downgrade_raises(self):
         """Per spec, the references cutover is irreversible by policy.
         Downgrading to a target before 0121 raises ``NotImplementedError``."""
-        result = run_alembic_command("downgrade 0120")
+        reset_test_schema()
+        try:
+            upgrade = run_alembic_command("upgrade 0121")
+            assert upgrade.returncode == 0, f"upgrade 0121 failed: {upgrade.stderr}"
 
-        assert result.returncode != 0, (
-            "Expected alembic downgrade through 0121 to fail; "
-            f"got returncode={result.returncode}, stderr={result.stderr}"
-        )
-        combined = (result.stdout or "") + (result.stderr or "")
-        assert "NotImplementedError" in combined or "not reversible" in combined, (
-            "Expected downgrade to surface the explicit NotImplementedError "
-            "or 'not reversible' marker; "
-            f"stdout={result.stdout!r} stderr={result.stderr!r}"
-        )
+            result = run_alembic_command("downgrade 0120")
+            assert result.returncode != 0, (
+                "Expected alembic downgrade through 0121 to fail; "
+                f"got returncode={result.returncode}, stderr={result.stderr}"
+            )
+            combined = (result.stdout or "") + (result.stderr or "")
+            assert "NotImplementedError" in combined or "not reversible" in combined, (
+                "Expected downgrade to surface the explicit NotImplementedError "
+                "or 'not reversible' marker; "
+                f"stdout={result.stdout!r} stderr={result.stderr!r}"
+            )
+        finally:
+            reset_test_schema()
 
 
 class TestDurableSourceIngestMigrations:
@@ -19253,9 +19259,9 @@ class TestMigration0182LecternPlayerLifecycle:
             reset_test_schema()
             engine.dispose()
 
-    def test_out_of_range_playback_speed_is_clamped_into_new_wire_bound(self):
+    def test_out_of_range_playback_speed_is_clamped_into_current_wire_bound(self):
         # Pre-cutover rows could carry any playback_speed > 0 (the old CHECK's
-        # only bound); the new wire contract is [0.25, 3]. An unclamped legacy
+        # only bound); the current 0204 wire contract is [0.5, 3]. An unclamped legacy
         # row would make ListeningStateOut/FooterAudioActivation construction
         # raise on read, 500ing that viewer's whole Lectern.
         reset_test_schema()
@@ -19310,7 +19316,7 @@ class TestMigration0182LecternPlayerLifecycle:
                 }
 
             assert speed_after["too_fast"] == 3.0, "above-bound speed must clamp down to 3.0"
-            assert speed_after["too_slow"] == 0.25, "below-bound speed must clamp up to 0.25"
+            assert speed_after["too_slow"] == 0.5, "below-bound speed must clamp up to 0.5"
             assert speed_after["in_range"] == 1.5, "in-range speed must be left untouched"
             assert speed_after["at_upper_bound"] == 3.0, "exact bound must be left untouched"
         finally:

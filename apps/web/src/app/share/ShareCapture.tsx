@@ -3,11 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import LibraryDestinationField from "@/components/libraries/LibraryDestinationField";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
-import { apiFetch, isUnauthenticatedApiError } from "@/lib/api/client";
-import {
-  decodeAuthenticatedAccount,
-  isAuthenticatedAccountContractDefect,
-} from "@/lib/account/contract";
+import { decodeAuthenticatedAccount } from "@/lib/account/contract";
+import { isUnauthenticatedApiError } from "@/lib/api/client";
+import { useResource } from "@/lib/api/useResource";
 import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
 import { createRandomId } from "@/lib/createRandomId";
 import { extractUrls } from "@/lib/extractUrls";
@@ -71,9 +69,25 @@ export default function ShareCapture({
   const [selectedDestinations, setSelectedDestinations] = useState<
     readonly LibraryDestinationSelection[]
   >([]);
+  const accountResource = useResource<{ data: unknown }>({
+    cacheKey: trimmed && urls.length === 0 ? "share-capture:account" : null,
+    path: () => "/api/me",
+  });
+  // Decode during render so a successful-but-malformed same-system response
+  // reaches the route's defect boundary. Transport failures remain retryable
+  // resource state and never start the capture mutation.
+  const calendarTimeZone =
+    accountResource.status === "ready"
+      ? decodeAuthenticatedAccount(accountResource.data.data).calendarTimeZone
+      : null;
 
   useEffect(() => {
-    if (!trimmed || urls.length > 0 || capturedAttempt.current === attempt) {
+    if (
+      !trimmed ||
+      urls.length > 0 ||
+      calendarTimeZone === null ||
+      capturedAttempt.current === attempt
+    ) {
       return;
     }
     capturedAttempt.current = attempt;
@@ -83,14 +97,10 @@ export default function ShareCapture({
       try {
         let frozen = plainTextAttempt.current;
         if (frozen === null) {
-          const profile = await apiFetch<{ data: unknown }>("/api/me", {
-            cache: "no-store",
-          });
-          const account = decodeAuthenticatedAccount(profile.data);
           frozen = {
             localDate: formatLocalDateInTimeZone(
               new Date(),
-              account.calendarTimeZone,
+              calendarTimeZone,
             ),
             noteId: noteId.current,
             clientMutationId: noteMutationId.current,
@@ -113,11 +123,7 @@ export default function ShareCapture({
             path: `/daily/${frozen.localDate}`,
           },
         ]);
-      } catch (error) {
-        if (isAuthenticatedAccountContractDefect(error)) {
-          setDefect({ error });
-          return;
-        }
+      } catch {
         setResults([
           {
             label: trimmed,
@@ -128,7 +134,7 @@ export default function ShareCapture({
         ]);
       }
     })();
-  }, [trimmed, urls.length, attempt]);
+  }, [trimmed, urls.length, calendarTimeZone, attempt]);
 
   const doneHref = isShell ? "nexus-share://done" : APP_AUTHENTICATED_HOME_HREF;
   const cancelHref = isShell
@@ -292,7 +298,20 @@ export default function ShareCapture({
     );
   }
 
-  if (results === null || saving) {
+  const visibleResults: CaptureResult[] | null =
+    results ??
+    (accountResource.status === "error"
+      ? [
+          {
+            label: trimmed,
+            ok: false,
+            reason: "Capture",
+            feedback: { severity: "error", title: "Couldn’t save" },
+          },
+        ]
+      : null);
+
+  if (visibleResults === null || saving) {
     return (
       <>
         <h1 className={styles.heading}>Saving to Nexus…</h1>
@@ -301,26 +320,26 @@ export default function ShareCapture({
     );
   }
 
-  const anyFailed = results.some((result) => !result.ok);
-  const retryableFailures = results.filter(
+  const anyFailed = visibleResults.some((result) => !result.ok);
+  const retryableFailures = visibleResults.filter(
     (result) => !result.ok && result.reason === "Capture",
   );
   const failedUrls = retryableFailures.map((result) => result.label);
-  const authRequired = results.some(
+  const authRequired = visibleResults.some(
     (result) => !result.ok && result.reason === "Unauthenticated",
   );
 
   return (
     <>
       <h1 className={styles.heading}>
-        {results.some((result) => result.ok)
+        {visibleResults.some((result) => result.ok)
           ? "Saved to Nexus"
           : authRequired
             ? "Sign in to save this"
             : "Couldn’t save"}
       </h1>
       <div className={styles.results}>
-        {results.map((result, index) => (
+        {visibleResults.map((result, index) => (
           <div key={index} className={styles.resultItem}>
             <span className={styles.resultLabel} title={result.label}>
               {result.label}
@@ -370,6 +389,10 @@ export default function ShareCapture({
             onClick={() => {
               if (urls.length > 0) {
                 runSaveUrls(failedUrls);
+                return;
+              }
+              if (accountResource.status === "error") {
+                accountResource.retry();
                 return;
               }
               setAttempt((value) => value + 1);

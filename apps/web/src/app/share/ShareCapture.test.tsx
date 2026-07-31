@@ -719,7 +719,7 @@ describe("ShareCapture", () => {
         return profileAttempt === 1
           ? jsonResponse(
               { error: { code: "E_PROFILE", message: "profile failed" } },
-              500,
+              400,
             )
           : accountResponse("UTC");
       },

@@ -117,8 +117,8 @@ def _create_podcast(db: Session, viewer_id: UUID) -> tuple[UUID, str]:
     db.execute(
         text(
             """
-            INSERT INTO podcast_subscriptions (id, user_id, podcast_id)
-            VALUES (:id, :viewer_id, :podcast_id)
+            INSERT INTO podcast_subscriptions (id, user_id, podcast_id, next_sync_at)
+            VALUES (:id, :viewer_id, :podcast_id, now())
             """
         ),
         {"id": new_uuid7(), "viewer_id": viewer_id, "podcast_id": podcast_id},

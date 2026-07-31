@@ -49,8 +49,8 @@ def test_ingest_stores_rss_transcript_ref_as_not_requested_without_artifacts(
     db_session.execute(
         text(
             """
-            INSERT INTO podcast_subscriptions (id, user_id, podcast_id)
-            VALUES (:id, :viewer_id, :podcast_id)
+            INSERT INTO podcast_subscriptions (id, user_id, podcast_id, next_sync_at)
+            VALUES (:id, :viewer_id, :podcast_id, now())
             """
         ),
         {

@@ -222,6 +222,7 @@ class TestPodcastUxHardening:
             "unplayed_count",
             "latest_episode_published_at",
             "default_playback_speed",
+            "pause_shortening_mode",
             "auto_queue",
             "sync_status",
         }

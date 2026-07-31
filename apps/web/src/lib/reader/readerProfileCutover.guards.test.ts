@@ -131,7 +131,8 @@ describe("reader-profile persistence cutover gates", () => {
   it("the private no-store middleware and retryable constraints cover the profile", () => {
     const app = repoText("python/nexus/app.py");
     expect(app).toContain("PRIVATE_NO_STORE_PATH_RE");
-    expect(app).toContain("/media/[^/]+/reader-state|/me/reader-profile");
+    expect(app).toContain('r"/media/[^/]+/(reader-state|offline-download-spec)"');
+    expect(app).toContain('r"|/me/reader-profile|/consumption/(activity|stats|sessions)"');
     expect(app).not.toContain("READER_STATE_PATH_RE");
 
     const retries = repoText("python/nexus/db/retries.py");
