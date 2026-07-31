@@ -1,4 +1,5 @@
 import { useReaderTarget } from "@/lib/reader/useReaderTarget";
+import { dispatchReaderPulse } from "@/lib/reader/pulseEvent";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import {
   PaneRuntimeProvider,
@@ -129,6 +130,56 @@ describe("useReaderTarget", () => {
       await Promise.resolve();
     });
 
+    expect(screen.getByTestId("target")).toHaveAttribute("data-kind", "");
+    expect(screen.getByTestId("target")).toHaveAttribute("data-status", "idle");
+  });
+
+  it("adopts a reader pulse dispatched before the target pane mounts", async () => {
+    dispatchReaderPulse({
+      mediaId: "media-1",
+      evidenceSpanId: "span-before-mount",
+      locator: {
+        type: "web_text_offsets",
+        media_id: "media-1",
+        fragment_id: "fragment-1",
+        start_offset: 4,
+        end_offset: 12,
+      },
+      snippet: "evidence",
+      highlightBehavior: "pulse",
+      focusBehavior: "scroll_into_view",
+    });
+
+    const view = render(
+      <Runtime href="/media/media-1" onReplacePane={vi.fn()}>
+        <Probe />
+      </Runtime>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("target")).toHaveAttribute(
+        "data-kind",
+        "evidence",
+      ),
+    );
+    expect(screen.getByTestId("target")).toHaveAttribute(
+      "data-value",
+      "span-before-mount",
+    );
+    expect(screen.getByTestId("target")).toHaveAttribute(
+      "data-status",
+      "pending",
+    );
+
+    view.unmount();
+    render(
+      <Runtime href="/media/media-1" onReplacePane={vi.fn()}>
+        <Probe />
+      </Runtime>,
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
     expect(screen.getByTestId("target")).toHaveAttribute("data-kind", "");
     expect(screen.getByTestId("target")).toHaveAttribute("data-status", "idle");
   });

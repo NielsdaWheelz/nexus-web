@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePaneRouter, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import {
+  consumePendingReaderPulse,
   useReaderPulseHighlight,
   type ReaderPulseTarget,
 } from "./pulseEvent";
@@ -71,9 +72,17 @@ export function useReaderTarget(mediaId: string): ReaderTargetState {
           ? hashFromPaneHref(paneHref)
           : window.location.hash;
     const parsed = parseReaderTargetHash(hash);
+    const pendingPulse = consumePendingReaderPulse(mediaId);
     if (parsed) {
       setState({ target: { ...parsed, origin: "hash" }, status: "pending" });
       return;
+    }
+    if (pendingPulse) {
+      const pendingTarget = targetFromPulse(pendingPulse);
+      if (pendingTarget) {
+        setState({ target: pendingTarget, status: "pending" });
+        return;
+      }
     }
     if (mediaChanged) {
       setState({ target: null, status: "idle" });
@@ -83,6 +92,7 @@ export function useReaderTarget(mediaId: string): ReaderTargetState {
   const onReaderPulse = useCallback(
     (detail: ReaderPulseTarget) => {
       if (detail.mediaId !== mediaId) return;
+      consumePendingReaderPulse(mediaId, detail);
       const next = targetFromPulse(detail);
       if (!next) return;
       setState({ target: next, status: "pending" });

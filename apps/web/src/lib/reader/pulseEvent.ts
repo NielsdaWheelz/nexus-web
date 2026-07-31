@@ -39,8 +39,26 @@ const readerPulseChannel = createWindowEventChannel({
   cancelable: false,
 });
 
+// Reader-source activations can precede the destination pane mount. Keep the
+// latest target per media identity until useReaderTarget acknowledges it; the
+// window event remains the immediate path for an already-mounted reader.
+const pendingReaderPulseByMediaId = new Map<string, ReaderPulseTarget>();
+
 export function dispatchReaderPulse(target: ReaderPulseTarget): void {
+  pendingReaderPulseByMediaId.set(target.mediaId, target);
   readerPulseChannel.dispatch(target);
+}
+
+export function consumePendingReaderPulse(
+  mediaId: string,
+  expected?: ReaderPulseTarget,
+): ReaderPulseTarget | null {
+  const pending = pendingReaderPulseByMediaId.get(mediaId);
+  if (!pending || (expected !== undefined && pending !== expected)) {
+    return null;
+  }
+  pendingReaderPulseByMediaId.delete(mediaId);
+  return pending;
 }
 
 export function useReaderPulseHighlight(
