@@ -155,6 +155,25 @@ export async function selectFreshVisibleTextSnippet(
             return null;
           }
 
+          if (startNode !== endNode) {
+            // PDF.js text-layer DOM order can cross columns or jump back up the
+            // page even when two spans are adjacent in the tree. A pointer drag
+            // between those endpoints selects the intervening visual page, not
+            // the short DOM Range used to build the candidate. Multi-node drag
+            // candidates therefore must remain on one visual line and advance
+            // in the same direction as the text.
+            const startCenterY = startRect.top + startRect.height / 2;
+            const endCenterY = endRect.top + endRect.height / 2;
+            const lineTolerance =
+              Math.max(startRect.height, endRect.height) * 0.75;
+            if (
+              Math.abs(endCenterY - startCenterY) > lineTolerance ||
+              endRect.right <= startRect.left
+            ) {
+              return null;
+            }
+          }
+
           return {
             text: normalizedCandidate,
             start: {
@@ -371,10 +390,7 @@ export async function selectExactVisibleText(
       };
 
       const readCandidate = (): DragSelectionCandidate | null => {
-        const walker = document.createTreeWalker(
-          element,
-          NodeFilter.SHOW_TEXT,
-        );
+        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
         while (walker.nextNode()) {
           const textNode = walker.currentNode;
           const text = textNode.textContent ?? "";
@@ -488,7 +504,9 @@ async function dragSelection(
         const caret = document.caretPositionFromPoint?.(x, y);
         return {
           element:
-            document.elementFromPoint(x, y)?.closest("[data-message-id]")
+            document
+              .elementFromPoint(x, y)
+              ?.closest("[data-message-id]")
               ?.getAttribute("data-message-id") ?? null,
           text: caret?.offsetNode.textContent ?? null,
           offset: caret?.offset ?? null,

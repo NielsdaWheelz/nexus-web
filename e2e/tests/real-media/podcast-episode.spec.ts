@@ -3,7 +3,7 @@ import {
   cleanupRealMediaHighlight,
   createFragmentHighlightThroughVisibleSelection,
   expectActivePaneHasNoLoadError,
-  expectCurrentMediaEvidenceUrl,
+  expectCurrentMediaAfterEvidenceActivation,
   expectVisibleTextEvidenceHighlight,
   openTranscriptEvidenceSegment,
   readRealMediaSeed,
@@ -66,7 +66,7 @@ test("@real-media podcast episode transcript opens seekable evidence", async ({
     );
   }
   await resultLink.click();
-  await expectCurrentMediaEvidenceUrl(page, mediaId, evidenceSpanId);
+  await expectCurrentMediaAfterEvidenceActivation(page, mediaId);
   await expectActivePaneHasNoLoadError(page);
   await openTranscriptEvidenceSegment(page, query, visibleHref);
   await expectVisibleTextEvidenceHighlight(page, evidenceSpanId);
@@ -77,7 +77,7 @@ test("@real-media podcast episode transcript opens seekable evidence", async ({
     const savedHighlight = await createFragmentHighlightThroughVisibleSelection(
       page,
       mediaId,
-      '[data-testid="document-viewport"] [data-testid="html-renderer"]',
+      '[role="region"][aria-label="Active transcript segment"] [data-testid="html-renderer"]',
     );
     savedHighlightId = savedHighlight.id;
 

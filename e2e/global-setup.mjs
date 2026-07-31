@@ -6,7 +6,7 @@
  */
 
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import supabaseEnv from "./supabase-env.cjs";
@@ -20,6 +20,11 @@ const NON_PDF_SEED = path.join(E2E_DIR, ".seed", "non-pdf-media.json");
 const EPUB_SEED = path.join(E2E_DIR, ".seed", "epub-media.json");
 const YOUTUBE_SEED = path.join(E2E_DIR, ".seed", "youtube-media.json");
 const E2E_USER_SEED = path.join(E2E_DIR, ".seed", "e2e-user.json");
+const REAL_MEDIA_RUNTIME_FIXTURES = path.join(
+  E2E_DIR,
+  ".seed",
+  "real-media-runtime",
+);
 const READER_RESUME_SEED = path.join(
   E2E_DIR,
   ".seed",
@@ -100,6 +105,16 @@ function readJson(filePath) {
   return JSON.parse(readFileSync(filePath, "utf-8"));
 }
 
+function prepareRealMediaRuntimeFixtures() {
+  const sourceFixtureDir =
+    process.env.E2E_REAL_MEDIA_SOURCE_FIXTURE_DIR ??
+    path.join(ROOT, "python/tests/fixtures/real_media");
+  rmSync(REAL_MEDIA_RUNTIME_FIXTURES, { recursive: true, force: true });
+  cpSync(sourceFixtureDir, REAL_MEDIA_RUNTIME_FIXTURES, { recursive: true });
+  process.env.REAL_MEDIA_PROVIDER_FIXTURES = "1";
+  process.env.REAL_MEDIA_FIXTURE_DIR = REAL_MEDIA_RUNTIME_FIXTURES;
+}
+
 function normalizePostgresUrl(dbUrl) {
   return dbUrl.replace(/^postgresql\+psycopg:\/\//, "postgresql://");
 }
@@ -115,10 +130,7 @@ function readPdfUploadFixturePath() {
   }
   const resolved = path.resolve(E2E_DIR, pdf.upload_fixture_path);
   const relativeToE2eDir = path.relative(E2E_DIR, resolved);
-  if (
-    relativeToE2eDir.startsWith("..") ||
-    path.isAbsolute(relativeToE2eDir)
-  ) {
+  if (relativeToE2eDir.startsWith("..") || path.isAbsolute(relativeToE2eDir)) {
     return null;
   }
   return resolved;
@@ -217,13 +229,13 @@ function databaseHasSeededMedia(dbUrl, ownerUserId) {
         "cur=conn.cursor();" +
         "cur.execute(" +
         JSON.stringify(
-          "select count(distinct media.id) "
-            + "from media "
-            + "join library_entries entry on entry.media_id = media.id "
-            + "join libraries library on library.id = entry.library_id "
-            + "where media.id = any(%s::uuid[]) "
-            + "and library.owner_user_id = %s::uuid "
-            + "and library.is_default = true",
+          "select count(distinct media.id) " +
+            "from media " +
+            "join library_entries entry on entry.media_id = media.id " +
+            "join libraries library on library.id = entry.library_id " +
+            "where media.id = any(%s::uuid[]) " +
+            "and library.owner_user_id = %s::uuid " +
+            "and library.is_default = true",
         ) +
         ", (ids, owner_id));" +
         "row=cur.fetchone();" +
@@ -393,9 +405,7 @@ function databaseHasSeededEpubTitle(dbUrl) {
         "conn=psycopg.connect(os.environ['DATABASE_URL']);" +
         "cur=conn.cursor();" +
         "cur.execute(" +
-        JSON.stringify(
-          "select title from media where id = %s::uuid",
-        ) +
+        JSON.stringify("select title from media where id = %s::uuid") +
         ", (seed['media_id'],));" +
         "row=cur.fetchone();" +
         "print(row[0] if row else '');" +
@@ -575,6 +585,7 @@ export default function globalSetup() {
   }
   if (realMediaEnabled) {
     assertRealMediaE2eEnvironmentIsLocal(dbUrl);
+    prepareRealMediaRuntimeFixtures();
   }
 
   // Always ensure the auth bootstrap user exists before setup-project login runs.
@@ -584,7 +595,9 @@ export default function globalSetup() {
   const e2eUserSeed = readJson(E2E_USER_SEED);
   const e2eOwnerUserId = e2eUserSeed.user_id;
   if (typeof e2eOwnerUserId !== "string" || !e2eOwnerUserId) {
-    throw new Error("[global-setup] e2e/.seed/e2e-user.json is missing user_id.");
+    throw new Error(
+      "[global-setup] e2e/.seed/e2e-user.json is missing user_id.",
+    );
   }
 
   run(

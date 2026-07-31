@@ -792,6 +792,33 @@ interface WorkspaceHostStoreValue extends WorkspaceStoreValue {
 
 const WorkspaceStoreContext = createContext<WorkspaceHostStoreValue | null>(null);
 
+function replaceProjectedWorkspaceUrl(href: string): void {
+  // Authenticated routing is owned by the workspace; the address bar is only
+  // its projection. Next patches the history instance to dispatch an App
+  // Router restore for every replaceState call, which races this reducer and
+  // can restore the route that the workspace just left. Invoke the browser
+  // primitive directly while retaining Next's opaque entry state so popstate
+  // remains valid.
+  History.prototype.replaceState.call(
+    window.history,
+    window.history.state,
+    "",
+    href,
+  );
+}
+
+function projectWorkspaceStateToUrl(state: WorkspaceState): void {
+  const active = getWorkspacePrimaryPanes(state).find(
+    (pane) =>
+      pane.id === state.activePrimaryPaneId && pane.visibility === "visible",
+  );
+  const href = active?.currentVisit.href ?? WORKSPACE_DEFAULT_FALLBACK_HREF;
+  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (href !== current) {
+    replaceProjectedWorkspaceUrl(href);
+  }
+}
+
 export function WorkspaceStoreProvider({
   children,
   workspacePrimaryMetrics,
@@ -1161,19 +1188,14 @@ export function WorkspaceStoreProvider({
     });
   }, [primaryPanes]);
 
-  // --- Sync state → URL ---
-  useEffect(() => {
+  // --- Converge state → URL ---
+  // Target activations project inside commitTargetActivation below. This
+  // layout owner converges initial state and the remaining workspace commands
+  // before paint.
+  useLayoutEffect(() => {
     if (!mounted) return;
-    const active = primaryPanes.find(
-      (p) => p.id === state.activePrimaryPaneId && p.visibility === "visible",
-    );
-    const href =
-      active?.currentVisit.href ?? WORKSPACE_DEFAULT_FALLBACK_HREF;
-    const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-    if (href !== current) {
-      window.history.replaceState(null, "", href);
-    }
-  }, [mounted, primaryPanes, state.activePrimaryPaneId]);
+    projectWorkspaceStateToUrl(state);
+  }, [mounted, state]);
 
   // --- Stable callbacks ---
 
@@ -1266,6 +1288,7 @@ export function WorkspaceStoreProvider({
         workspacePrimaryMetrics,
       );
       stateRef.current = nextState;
+      projectWorkspaceStateToUrl(nextState);
       dispatch(action);
       return nextState;
     },

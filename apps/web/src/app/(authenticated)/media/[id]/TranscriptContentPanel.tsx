@@ -102,7 +102,9 @@ function transcriptTextRuns({
       activeCount += 1;
     }
     if (!fragmentById.has(occurrence.fragmentId)) {
-      throw new Error("Transcript Find occurrence must name a loaded fragment.");
+      throw new Error(
+        "Transcript Find occurrence must name a loaded fragment.",
+      );
     }
     const existing = occurrencesByFragmentId.get(occurrence.fragmentId) ?? [];
     existing.push(occurrence);
@@ -141,9 +143,7 @@ function transcriptTextRuns({
         kind:
           occurrence.key === presentation.activeKey ? "ActiveMatch" : "Match",
         key: occurrence.key,
-        text: codePoints
-          .slice(occurrence.startCp, occurrence.endCp)
-          .join(""),
+        text: codePoints.slice(occurrence.startCp, occurrence.endCp).join(""),
       });
       cursorCp = occurrence.endCp;
     }
@@ -300,13 +300,13 @@ export default function TranscriptContentPanel({
               const segmentEndMs = entry.fragment.t_end_ms;
               const evidenceTimeMatches = Boolean(
                 evidenceHighlightId &&
-                  typeof evidenceStartMs === "number" &&
-                  typeof segmentStartMs === "number" &&
-                  (typeof evidenceEndMs === "number" &&
-                  typeof segmentEndMs === "number"
-                    ? segmentStartMs < evidenceEndMs &&
-                      segmentEndMs > evidenceStartMs
-                    : segmentStartMs === evidenceStartMs),
+                typeof evidenceStartMs === "number" &&
+                typeof segmentStartMs === "number" &&
+                (typeof evidenceEndMs === "number" &&
+                typeof segmentEndMs === "number"
+                  ? segmentStartMs < evidenceEndMs &&
+                    segmentEndMs > evidenceStartMs
+                  : segmentStartMs === evidenceStartMs),
               );
               const normalizedEvidenceText =
                 evidenceExactText
@@ -319,8 +319,8 @@ export default function TranscriptContentPanel({
                 .toLocaleLowerCase();
               const evidenceTextMatches = Boolean(
                 evidenceHighlightId &&
-                  normalizedEvidenceText &&
-                  normalizedSegmentText.includes(normalizedEvidenceText),
+                normalizedEvidenceText &&
+                normalizedSegmentText.includes(normalizedEvidenceText),
               );
               const hasEvidence = evidenceTimeMatches || evidenceTextMatches;
               const textRuns = textRunsByFragmentId.get(entry.fragment.id);
@@ -419,6 +419,8 @@ export default function TranscriptContentPanel({
             <div className={styles.readerContentInner}>
               <div
                 ref={contentRef}
+                role="region"
+                aria-label="Active transcript segment"
                 onClick={(event) => {
                   if (event.target instanceof Element) {
                     event.target

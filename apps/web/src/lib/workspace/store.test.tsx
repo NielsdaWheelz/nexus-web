@@ -2103,12 +2103,17 @@ describe("WorkspaceStoreProvider", () => {
   it("projects the active pane href to the address bar via replaceState, never pushState", async () => {
     const workspace = await mountWorkspaceStore("/libraries");
     const pushStateSpy = vi.spyOn(window.history, "pushState");
+    const nextPatchedReplaceStateSpy = vi.spyOn(window.history, "replaceState");
 
     act(() => {
       activateTarget(workspace(), {
         target: { href: "/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa?run=run-1" },
         disposition: { kind: "Adopt" },
       });
+      expect(window.location.pathname).toBe(
+        "/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      );
+      expect(window.location.search).toBe("?run=run-1");
     });
 
     await waitFor(() => {
@@ -2117,6 +2122,7 @@ describe("WorkspaceStoreProvider", () => {
       expect(window.location.search).toBe("?run=run-1");
     });
     expect(pushStateSpy).not.toHaveBeenCalled();
+    expect(nextPatchedReplaceStateSpy).not.toHaveBeenCalled();
     flushWorkspaceSession();
   });
 

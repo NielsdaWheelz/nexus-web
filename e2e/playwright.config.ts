@@ -1,5 +1,4 @@
 import { defineConfig, devices } from "@playwright/test";
-import { cpSync, rmSync } from "node:fs";
 import path from "node:path";
 import supabaseEnv from "./supabase-env.cjs";
 
@@ -26,8 +25,7 @@ const sourceFixtureDir =
 
 if (REAL_MEDIA_ENABLED) {
   const runtimeFixtureDir = path.join(ROOT_DIR, "e2e/.seed/real-media-runtime");
-  rmSync(runtimeFixtureDir, { recursive: true, force: true });
-  cpSync(sourceFixtureDir, runtimeFixtureDir, { recursive: true });
+  process.env.E2E_REAL_MEDIA_SOURCE_FIXTURE_DIR = sourceFixtureDir;
   process.env.REAL_MEDIA_PROVIDER_FIXTURES = "1";
   process.env.REAL_MEDIA_FIXTURE_DIR = runtimeFixtureDir;
 } else {

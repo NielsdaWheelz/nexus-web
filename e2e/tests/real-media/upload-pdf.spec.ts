@@ -6,7 +6,7 @@ import {
   cleanupRealMediaHighlight,
   createPdfHighlightThroughVisibleSelection,
   expectActivePaneHasNoLoadError,
-  expectCurrentMediaEvidenceUrl,
+  expectCurrentMediaAfterEvidenceActivation,
   expectRealMediaEvidenceNeedle,
   expectVisiblePdfEvidenceHighlight,
   FRESH_REAL_MEDIA_FIXTURES,
@@ -91,7 +91,7 @@ test("@real-media real PDF opens from upload-backed media and projects evidence"
   ).toBeVisible();
   const visibleHref = await resultLink.getAttribute("href");
   await resultLink.click();
-  await expectCurrentMediaEvidenceUrl(page, mediaId, evidenceSpanId);
+  await expectCurrentMediaAfterEvidenceActivation(page, mediaId);
   await expectActivePaneHasNoLoadError(page);
   expect(resolver.data.resolver.status).toBe("resolved");
   await expectVisiblePdfEvidenceHighlight(page, evidenceSpanId);

@@ -156,8 +156,12 @@ describe("TranscriptContentPanel", () => {
     renderPanel();
 
     const activeProse = screen.getByText("Active fragment prose.");
+    const activeTranscriptSegment = screen.getByRole("region", {
+      name: "Active transcript segment",
+    });
     const firstSegment = screen.getByText("First segment text.");
 
+    expect(activeTranscriptSegment).toContainElement(activeProse);
     // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: confirming the prose block is wrapped by the prose-only inner column, a CSS-module class with no ARIA role/label
     expect(activeProse.closest(`.${styles.readerContentInner}`)).not.toBeNull();
     // The segment timeline is a sibling of readerContentInner, not nested

@@ -489,15 +489,14 @@ export function realMediaEvidenceResultLink(
     .first();
 }
 
-export async function expectCurrentMediaEvidenceUrl(
+export async function expectCurrentMediaAfterEvidenceActivation(
   page: Page,
   mediaId: string,
-  evidenceSpanId?: string,
 ) {
+  // Evidence hashes are one-shot activation inputs. The reader strips a
+  // consumed hash through its pane router, while the caller proves the target
+  // independently through the exact source href and visible highlight.
   await expectCurrentMediaUrl(page, mediaId);
-  if (evidenceSpanId) {
-    expect(new URL(page.url()).hash).toBe(`#evidence-${evidenceSpanId}`);
-  }
 }
 
 export async function expectCurrentMediaUrl(
@@ -742,12 +741,10 @@ export async function openTranscriptEvidenceSegment(
   await expect(segment).toHaveAttribute("aria-current", "true", {
     timeout: 10_000,
   });
-  const renderer = activePane.getByTestId("html-renderer").first();
-  await expect(renderer).toBeVisible({ timeout: 10_000 });
-  await expect(renderer).toContainText(new RegExp(escapeRegExp(query), "i"), {
+  await expect(segment).toContainText(new RegExp(escapeRegExp(query), "i"), {
     timeout: 10_000,
   });
-  await expect(renderer.locator(".hl-evidence").first()).toBeVisible({
+  await expect(segment).toHaveClass(/\bhl-evidence\b/u, {
     timeout: 10_000,
   });
 }

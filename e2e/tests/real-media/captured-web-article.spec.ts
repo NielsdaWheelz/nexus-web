@@ -3,7 +3,7 @@ import { activeWorkspacePane } from "../workspace";
 import {
   cleanupRealMediaHighlight,
   createFragmentHighlightThroughVisibleSelection,
-  expectCurrentMediaEvidenceUrl,
+  expectCurrentMediaAfterEvidenceActivation,
   expectVisibleTextEvidenceHighlight,
   readRealMediaSeed,
   realMediaEvidenceResultLink,
@@ -60,7 +60,7 @@ test("@real-media captured web article opens reader text and evidence highlight"
   ).toBeVisible();
   const visibleHref = await resultLink.getAttribute("href");
   await resultLink.click();
-  await expectCurrentMediaEvidenceUrl(page, mediaId, evidenceSpanId);
+  await expectCurrentMediaAfterEvidenceActivation(page, mediaId);
   await expect(activeWorkspacePane(page)).toContainText(/SOFIA/i, {
     timeout: 15_000,
   });

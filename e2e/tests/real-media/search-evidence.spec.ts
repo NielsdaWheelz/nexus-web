@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { activeWorkspacePane } from "../workspace";
 import {
   expectActivePaneHasNoLoadError,
-  expectCurrentMediaEvidenceUrl,
+  expectCurrentMediaAfterEvidenceActivation,
   expectVisiblePdfEvidenceHighlight,
   expectVisibleTextEvidenceHighlight,
   openTranscriptEvidenceSegment,
@@ -86,7 +86,7 @@ test("@real-media search returns resolver-backed evidence for every configured m
       );
     }
     await resultLink.click();
-    await expectCurrentMediaEvidenceUrl(page, mediaId, evidenceSpanId);
+    await expectCurrentMediaAfterEvidenceActivation(page, mediaId);
     await expectActivePaneHasNoLoadError(page);
     if (contentKind === "pdf") {
       expect(resolver.data.resolver.status).toBe("resolved");

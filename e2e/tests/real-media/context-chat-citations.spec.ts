@@ -4,7 +4,7 @@ import { deleteE2eResource, throwE2eCleanupFailures } from "../cleanup";
 import {
   drainRealMediaWorkerForChatRun,
   expectActivePaneHasNoLoadError,
-  expectCurrentMediaEvidenceUrl,
+  expectCurrentMediaAfterEvidenceActivation,
   expectVisiblePdfEvidenceHighlight,
   expectVisibleTextEvidenceHighlight,
   gotoRealMediaSinglePane,
@@ -230,8 +230,12 @@ test("@real-media search evidence chat citations open each media reader", async 
         .getByRole("link", { name: /^Open citation \d+$/ })
         .first();
       await expect(citationLink).toBeVisible({ timeout: 120_000 });
+      await expect(citationLink).toHaveAttribute(
+        "href",
+        `/media/${mediaId}#evidence-${evidenceSpanId}`,
+      );
       await citationLink.click();
-      await expectCurrentMediaEvidenceUrl(page, mediaId, evidenceSpanId);
+      await expectCurrentMediaAfterEvidenceActivation(page, mediaId);
       const citationUrl = page.url();
       await expectActivePaneHasNoLoadError(page);
       if (contentKind === "pdf") {

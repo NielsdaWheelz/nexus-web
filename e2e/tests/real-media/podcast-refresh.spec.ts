@@ -35,8 +35,12 @@ test("@real-media Podcast refresh imports a newly published episode through the 
   try {
     await gotoRealMediaSinglePane(page, `/podcasts/${podcastId}`);
     const pane = activeWorkspacePane(page);
-    await expect(pane.getByText("The Crew-4 Astronauts")).toBeVisible();
-    await expect(pane.getByText(NEW_EPISODE_TITLE)).toHaveCount(0);
+    await expect(
+      pane.getByRole("link", { name: "The Crew-4 Astronauts", exact: true }),
+    ).toBeVisible();
+    await expect(
+      pane.getByRole("link", { name: NEW_EPISODE_TITLE, exact: true }),
+    ).toHaveCount(0);
 
     const viewerResponse = await page.request.get("/api/me");
     expect(viewerResponse.ok()).toBeTruthy();
@@ -70,8 +74,9 @@ test("@real-media Podcast refresh imports a newly published episode through the 
     };
     expect(admission.data.status).toBe("Running");
     expect(admission.data.requestedCount).toBe(1);
-    const idempotencyKey =
-      admissionResponse.request().headers()["idempotency-key"];
+    const idempotencyKey = admissionResponse.request().headers()[
+      "idempotency-key"
+    ];
     if (!idempotencyKey) {
       throw new Error("Podcast refresh admission omitted Idempotency-Key");
     }
@@ -99,9 +104,9 @@ test("@real-media Podcast refresh imports a newly published episode through the 
       `Podcast refresh worker did not observe the run's Postgres notification:\n${worker.stderr}\n${worker.stdout}`,
     ).toBe(true);
 
-    await expect(pane.getByText(NEW_EPISODE_TITLE)).toBeVisible({
-      timeout: 30_000,
-    });
+    await expect(
+      pane.getByRole("link", { name: NEW_EPISODE_TITLE, exact: true }),
+    ).toBeVisible({ timeout: 30_000 });
     await expect(
       pane.locator('[aria-live="polite"]').filter({ hasText: "1 new episode" }),
     ).toBeVisible();
