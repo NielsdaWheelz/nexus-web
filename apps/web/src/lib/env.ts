@@ -1,7 +1,7 @@
 /**
  * Single source of truth for the deployment environment (NEXUS_ENV) and every value that
- * depends on it: the CSP connect origins, the internal-API (BFF) config, and the E2E CSP
- * bypass. Resolved + validated once per process, then frozen — the frontend mirror of the
+ * depends on it: the CSP connect origins and the internal-API (BFF) config. Resolved and
+ * validated once per process, then frozen — the frontend mirror of the
  * backend's python/nexus/config.py (Environment enum + validate-once `get_settings()`).
  *
  * SERVER / DEPLOY ONLY. This module owns NEXUS_INTERNAL_SECRET; import it from middleware,
@@ -48,8 +48,6 @@ interface ResolvedEnv {
     readonly fastApiBaseUrl: string;
     readonly internalSecret: string;
   };
-  /** !isDeployed() && E2E_DISABLE_CSP === "1". staging & prod can never disable CSP. */
-  readonly disableCspForE2E: boolean;
 }
 
 let resolved: ResolvedEnv | null = null;
@@ -83,7 +81,6 @@ export function getEnv(): ResolvedEnv {
     connectOrigins,
     serverActionAllowedOrigins,
     internalApi: Object.freeze({ fastApiBaseUrl, internalSecret }),
-    disableCspForE2E: !deployed && process.env.E2E_DISABLE_CSP === "1",
   });
   return resolved;
 }
@@ -105,11 +102,6 @@ function resolveAppPublicOrigin(deployed: boolean): string {
     throw new Error(`APP_PUBLIC_URL must use HTTPS in staging/prod: ${rawValue}`);
   }
   return origin.origin;
-}
-
-/** Clears the memo so `vi.stubEnv()` takes effect (mirrors clear_settings_cache). Test-only. */
-export function __resetEnvForTests(): void {
-  resolved = null;
 }
 
 /**

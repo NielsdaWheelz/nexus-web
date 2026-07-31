@@ -4,10 +4,16 @@
     {
       "id": "test-environment-isolation",
       "source_globs": [
-        "python/nexus_test_control/runtime.py"
+        "python/nexus_test_control/runtime.py",
+        "python/nexus_test_control/services.py",
+        "python/tests/testkit/**/*.py"
       ],
-      "proofs": [],
-      "capabilities": []
+      "proofs": [
+        "pytest:python/tests/service/test_control_plane_isolation.py::test_environment_isolation_rejects_production_and_cleans_only_the_exact_run"
+      ],
+      "capabilities": [
+        "service"
+      ]
     },
     {
       "id": "auth-privacy-secrets",
@@ -16,8 +22,12 @@
         "apps/web/src/lib/auth/**/*.ts",
         "apps/web/src/lib/auth/**/*.tsx"
       ],
-      "proofs": [],
-      "capabilities": []
+      "proofs": [
+        "pytest:python/tests/service/test_auth_privacy.py::test_invalid_token_is_redacted_and_private_conversation_existence_is_masked"
+      ],
+      "capabilities": [
+        "service"
+      ]
     },
     {
       "id": "destructive-side-effects",
@@ -25,16 +35,24 @@
         "python/nexus/services/media_deletion.py",
         "python/nexus/services/resource_graph/cleanup.py"
       ],
-      "proofs": [],
-      "capabilities": []
+      "proofs": [
+        "pytest:python/tests/service/test_destructive_side_effects.py::test_viewer_removal_preserves_shared_media_database_and_object"
+      ],
+      "capabilities": [
+        "service"
+      ]
     },
     {
       "id": "migration-compatibility",
       "source_globs": [
         "migrations/alembic/**/*.py"
       ],
-      "proofs": [],
-      "capabilities": []
+      "proofs": [
+        "pytest:python/tests/migrations/test_supported_upgrade.py::test_empty_owned_database_upgrades_to_the_single_head"
+      ],
+      "capabilities": [
+        "migrations"
+      ]
     },
     {
       "id": "costly-effects",
@@ -43,8 +61,12 @@
         "python/nexus/services/chat_run_usage.py",
         "python/nexus/services/llm_ledger.py"
       ],
-      "proofs": [],
-      "capabilities": []
+      "proofs": [
+        "pytest:python/tests/service/test_costly_effects.py::test_token_budget_reservation_and_settlement_are_exactly_once"
+      ],
+      "capabilities": [
+        "service"
+      ]
     },
     {
       "id": "reading-progress",
@@ -52,8 +74,12 @@
         "python/nexus/services/consumption/**/*.py",
         "apps/web/src/lib/reader/readerProgress.ts"
       ],
-      "proofs": [],
-      "capabilities": []
+      "proofs": [
+        "pytest:python/tests/service/test_reading_progress.py::test_reader_cursor_cas_rejects_stale_progress_without_partial_side_effects"
+      ],
+      "capabilities": [
+        "service"
+      ]
     },
     {
       "id": "citation-provenance-identity",
@@ -62,8 +88,12 @@
         "python/nexus/services/resource_graph/citations.py",
         "apps/web/src/lib/conversations/citations.ts"
       ],
-      "proofs": [],
-      "capabilities": []
+      "proofs": [
+        "pytest:python/tests/service/test_citation_provenance.py::test_published_citation_reconstructs_locator_from_canonical_evidence"
+      ],
+      "capabilities": [
+        "service"
+      ]
     },
     {
       "id": "durable-job-replay",
@@ -71,8 +101,12 @@
         "python/nexus/jobs/**/*.py",
         "python/nexus/services/chat_run_idempotency.py"
       ],
-      "proofs": [],
-      "capabilities": []
+      "proofs": [
+        "pytest:python/tests/service/test_durable_job_replay.py::test_expired_claim_replays_once_and_fences_the_crashed_worker"
+      ],
+      "capabilities": [
+        "service"
+      ]
     },
     {
       "id": "database-object-convergence",
@@ -80,8 +114,12 @@
         "python/nexus/storage/**/*.py",
         "python/nexus/services/media_deletion.py"
       ],
-      "proofs": [],
-      "capabilities": []
+      "proofs": [
+        "pytest:python/tests/service/test_database_object_convergence.py::test_owned_object_write_and_document_delete_converge_across_postgres_and_minio"
+      ],
+      "capabilities": [
+        "service"
+      ]
     },
     {
       "id": "llm-tool-safety",
@@ -89,8 +127,12 @@
         "python/nexus/services/agent_tools/**/*.py",
         "python/nexus/services/chat_run_tools.py"
       ],
-      "proofs": [],
-      "capabilities": []
+      "proofs": [
+        "pytest:python/tests/evals/test_tool_authorization.py::test_prompt_injected_resource_reads_are_refused_without_side_effects"
+      ],
+      "capabilities": [
+        "llm-eval"
+      ]
     },
     {
       "id": "native-release-auth-handoff",
@@ -98,9 +140,86 @@
         "apps/android/app/src/main/java/app/nexus/android/GoogleSignInController.kt",
         "apps/android/app/src/main/java/app/nexus/android/MainActivity.kt"
       ],
-      "proofs": [],
-      "capabilities": []
+      "proofs": [
+        "gradle:apps/android/app/src/androidTest/java/app/nexus/android/NativeAuthHandoffTest.kt::nativeAuthStartCarriesTheExactHandoffContractToTheOwnedOrigin"
+      ],
+      "capabilities": [
+        "android-device",
+        "android-release"
+      ]
     }
   ],
-  "journeys": []
+  "journeys": [
+    {
+      "id": "auth-session",
+      "proof": "apps/web/e2e/journeys/auth-session.journey.spec.ts",
+      "risks": [
+        "auth-privacy-secrets"
+      ]
+    },
+    {
+      "id": "durable-ingest-reader-open",
+      "proof": "apps/web/e2e/journeys/durable-ingest-reader-open.journey.spec.ts",
+      "risks": [
+        "database-object-convergence"
+      ]
+    },
+    {
+      "id": "highlight-note-provenance",
+      "proof": "apps/web/e2e/journeys/highlight-note-provenance.journey.spec.ts",
+      "risks": [
+        "citation-provenance-identity"
+      ]
+    },
+    {
+      "id": "reader-progress-resume",
+      "proof": "apps/web/e2e/journeys/reader-progress-resume.journey.spec.ts",
+      "risks": [
+        "reading-progress"
+      ]
+    },
+    {
+      "id": "grounded-chat-citation",
+      "proof": "apps/web/e2e/journeys/grounded-chat-citation.journey.spec.ts",
+      "risks": [
+        "citation-provenance-identity",
+        "llm-tool-safety"
+      ]
+    },
+    {
+      "id": "resource-share-boundary",
+      "proof": "apps/web/e2e/journeys/resource-share-boundary.journey.spec.ts",
+      "risks": [
+        "auth-privacy-secrets"
+      ]
+    },
+    {
+      "id": "nexus-search-open-restore",
+      "proof": "apps/web/e2e/journeys/nexus-search-open-restore.journey.spec.ts",
+      "risks": [
+        "database-object-convergence"
+      ]
+    },
+    {
+      "id": "podcast-refresh-playback",
+      "proof": "apps/web/e2e/journeys/podcast-refresh-playback.journey.spec.ts",
+      "risks": [
+        "durable-job-replay"
+      ]
+    },
+    {
+      "id": "destructive-delete",
+      "proof": "apps/web/e2e/journeys/destructive-delete.journey.spec.ts",
+      "risks": [
+        "destructive-side-effects"
+      ]
+    },
+    {
+      "id": "daily-page-capture",
+      "proof": "apps/web/e2e/journeys/daily-page-capture.journey.spec.ts",
+      "risks": [
+        "destructive-side-effects"
+      ]
+    }
+  ]
 }

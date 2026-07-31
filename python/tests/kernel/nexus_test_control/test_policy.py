@@ -63,7 +63,10 @@ def _rules(violations: tuple[Any, ...]) -> set[str]:
             "from pytest_socket import enable_socket\nenable_socket()\n",
             "python-network-enablement",
         ),
-        ("from sqlalchemy import text\ntext('SELECT 1')\n", "python-raw-sql"),
+        (
+            "from sqlalchemy import text\ntext('INSERT INTO users DEFAULT VALUES')\n",
+            "python-raw-sql",
+        ),
     ],
 )
 def test_python_ast_guard_rejects_each_mechanical_violation(source: str, rule: str) -> None:
@@ -79,8 +82,10 @@ def test_python_ast_guard_rejects_invalid_source() -> None:
 def test_python_ast_guard_allows_external_boundary_patch_and_owned_exceptions() -> None:
     external_patch = "import httpx\nmonkeypatch.setattr(httpx, 'get', lambda: None)\n"
     hosted_socket = "from pytest_socket import enable_socket\nenable_socket()\n"
-    migration_sql = "from sqlalchemy import text\ntext('SELECT 1')\n"
+    query_oracle = "from sqlalchemy import text\ntext('SELECT 1')\n"
+    migration_sql = "from sqlalchemy import text\ntext('INSERT INTO users DEFAULT VALUES')\n"
     assert not python_ast_violations("python/tests/kernel/test_ok.py", external_patch)
+    assert not python_ast_violations("python/tests/service/test_query_oracle.py", query_oracle)
     assert not python_ast_violations("python/tests/hosted/test_provider.py", hosted_socket)
     assert not python_ast_violations("python/tests/migrations/test_head.py", migration_sql)
 
@@ -189,10 +194,9 @@ def _complete_proof_repository(root: Path) -> dict[str, Any]:
     return manifest
 
 
-def test_inert_priority_floor_is_schema_valid_but_truthfully_incomplete() -> None:
+def test_priority_floor_and_journey_inventory_are_complete() -> None:
     assert not proof_manifest_schema_violations(REPO_ROOT)
-    rules = _rules(proof_contract_violations(REPO_ROOT))
-    assert {"proof-incomplete", "proof-journey-cap"} <= rules
+    assert not proof_contract_violations(REPO_ROOT)
 
 
 def test_populated_proof_inventory_has_valid_paths_and_owners(tmp_path: Path) -> None:
@@ -308,6 +312,42 @@ def test_corpus_guard_rejects_each_manifest_violation(
         manifest["artifacts"].append(copy)
     _dump(tmp_path, "testdata/manifest.json", manifest)
     assert rule in _rules(corpus_violations(tmp_path))
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "python/tests/fixtures/book.epub",
+        "python/tests/fixtures/real_media/captured.json",
+        "python/tests/fixtures/reader_apparatus/gold_graphs/article.json",
+        "python/tests/fixtures/reader_apparatus/html/article-full.html",
+        "python/tests/fixtures/reader_apparatus/tei/article.xml",
+    ],
+)
+def test_corpus_guard_requires_captured_and_binary_fixtures(tmp_path: Path, relative: str) -> None:
+    _corpus_repository(tmp_path)
+    _write(tmp_path, relative, f"fixture at {relative}\n")
+    assert "corpus-unmanifested" in _rules(corpus_violations(tmp_path))
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "python/tests/fixtures/large_authored_cases.json",
+        "python/tests/fixtures/reader_apparatus/corpus_manifest.json",
+        "python/tests/fixtures/reader_apparatus/html/minimal-pattern.html",
+    ],
+)
+def test_corpus_guard_ignores_language_local_authored_text(tmp_path: Path, relative: str) -> None:
+    _corpus_repository(tmp_path)
+    _write(tmp_path, relative, "authored fixture\n" * 400)
+    assert not corpus_violations(tmp_path)
+
+
+def test_corpus_guard_leaves_fault_patches_to_the_fault_manifest(tmp_path: Path) -> None:
+    _corpus_repository(tmp_path)
+    _write(tmp_path, "testdata/faults/defect.patch", "targeted fault\n")
+    assert not corpus_violations(tmp_path)
 
 
 def _exception(rule: str = "quarantine") -> dict[str, str]:

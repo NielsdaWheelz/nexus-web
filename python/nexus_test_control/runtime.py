@@ -103,6 +103,8 @@ class LedgerEntry:
     scenario_id: str | None = None
     process_group_id: int | None = None
     external_id: str | None = None
+    command: tuple[str, ...] | None = None
+    process_start_token: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +121,8 @@ class CleanupCandidate:
     endpoint: str | None
     process_group_id: int | None
     external_id: str | None
+    command: tuple[str, ...] | None
+    process_start_token: str | None
 
 
 def require_test_environment(environment: Mapping[str, str]) -> None:
@@ -231,6 +235,8 @@ def record_planned(
     resource: Resource,
     *,
     scenario_id: str | None = None,
+    external_id: str | None = None,
+    command: Sequence[str] | None = None,
 ) -> LedgerEntry:
     require_test_environment(environment)
     require_run_id(run_id)
@@ -239,7 +245,25 @@ def record_planned(
         _validate_resource(resource, run_id, scenario_id)
         if any(entry.resource == resource for entry in ledger.entries):
             raise RuntimeContractError("resource is already recorded")
-        entry = LedgerEntry(resource, ResourcePhase.PLANNED, scenario_id)
+        normalized_command = tuple(command) if command is not None else None
+        if resource.kind is ResourceKind.PROCESS:
+            if not normalized_command or any(not part for part in normalized_command):
+                raise RuntimeContractError("planned process requires its exact command")
+        elif normalized_command is not None:
+            raise RuntimeContractError("only a process can record a command")
+        if resource.kind is ResourceKind.SUPABASE_USER:
+            _require_match(external_id, _UUID, "planned Supabase admin user id")
+        elif resource.kind is ResourceKind.TEMPLATE_BUILD:
+            _require_match(external_id, _FINGERPRINT, "template build fingerprint")
+        elif external_id is not None:
+            raise RuntimeContractError("resource kind cannot record an external id while planned")
+        entry = LedgerEntry(
+            resource,
+            ResourcePhase.PLANNED,
+            scenario_id,
+            external_id=external_id,
+            command=normalized_command,
+        )
         updated = replace(ledger, entries=(*ledger.entries, entry))
         _write_json(resource_ledger_path(repo_root, run_id), _ledger_to_json(updated))
         return entry
@@ -253,6 +277,7 @@ def record_created(
     *,
     process_group_id: int | None = None,
     external_id: str | None = None,
+    process_start_token: str | None = None,
 ) -> LedgerEntry:
     require_test_environment(environment)
     require_run_id(run_id)
@@ -268,17 +293,27 @@ def record_created(
                 or process_group_id <= 1
             ):
                 raise RuntimeContractError("a created process requires its process-group id")
+            if not isinstance(process_start_token, str) or not process_start_token.isdecimal():
+                raise RuntimeContractError("a created process requires its birth token")
         elif process_group_id is not None:
             raise RuntimeContractError("only a process can record a process-group id")
+        elif process_start_token is not None:
+            raise RuntimeContractError("only a process can record a birth token")
+        resolved_external_id = external_id if external_id is not None else entry.external_id
         if resource.kind is ResourceKind.SUPABASE_USER:
-            _require_match(external_id, _UUID, "Supabase admin user id")
-        elif external_id is not None:
-            raise RuntimeContractError("only a Supabase user can record an external id")
+            _require_match(resolved_external_id, _UUID, "Supabase admin user id")
+            if resolved_external_id != entry.external_id:
+                raise RuntimeContractError("created Supabase user id changed after planning")
+        elif resource.kind is ResourceKind.TEMPLATE_BUILD:
+            _require_match(resolved_external_id, _FINGERPRINT, "template build fingerprint")
+        elif resolved_external_id is not None:
+            raise RuntimeContractError("resource kind cannot record an external id")
         created = replace(
             entry,
             phase=ResourcePhase.CREATED,
             process_group_id=process_group_id,
-            external_id=external_id,
+            external_id=resolved_external_id,
+            process_start_token=process_start_token,
         )
         entries = list(ledger.entries)
         entries[index] = created
@@ -303,6 +338,8 @@ def cleanup_candidates(
                 _resource_endpoint(runtime.ports, entry.resource.kind),
                 entry.process_group_id,
                 entry.external_id,
+                entry.command,
+                entry.process_start_token,
             )
             for entry in reversed(ledger.entries)
         )
@@ -335,6 +372,16 @@ def release_run(repo_root: Path, environment: Mapping[str, str], run_id: str) ->
             raise RuntimeContractError("run cannot be released while resources remain")
         record = read_runtime(repo_root)
         ledger_path = resource_ledger_path(repo_root, run_id)
+        extension_directory = ledger_path.parent / "extension"
+        if extension_directory.exists():
+            try:
+                extension_directory.rmdir()
+            except OSError as exc:
+                raise RuntimeContractError(
+                    "run contains extension state absent from its ledger"
+                ) from exc
+        if tuple(ledger_path.parent.iterdir()) != (ledger_path,):
+            raise RuntimeContractError("run contains state absent from its exact ledger")
         ledger_path.unlink()
         ledger_path.parent.rmdir()
         _write_json(
@@ -452,6 +499,17 @@ def template_lifecycle_lock(
 
 
 @contextmanager
+def run_lifecycle_lock(
+    repo_root: Path, environment: Mapping[str, str], run_id: str
+) -> Iterator[Path]:
+    require_test_environment(environment)
+    require_run_id(run_id)
+    path = runtime_state_dir(repo_root) / "locks" / f"lifecycle-{run_id}.lock"
+    with _locked_path(path):
+        yield path
+
+
+@contextmanager
 def _state_lock(repo_root: Path, name: str) -> Iterator[None]:
     with _locked_path(runtime_state_dir(repo_root) / "locks" / f"{name}.lock"):
         yield
@@ -482,23 +540,33 @@ def _validate_ledger(ledger: RunLedger) -> None:
             raise RuntimeContractError("ledger contains a duplicate resource")
         identities.add(identity)
         if entry.resource.kind is ResourceKind.PROCESS:
+            if not entry.command or any(not part for part in entry.command):
+                raise RuntimeContractError("process lacks its exact command")
             if entry.phase is ResourcePhase.CREATED and (
                 isinstance(entry.process_group_id, bool)
                 or not isinstance(entry.process_group_id, int)
                 or entry.process_group_id <= 1
             ):
                 raise RuntimeContractError("created process lacks its process-group id")
-            if entry.phase is ResourcePhase.PLANNED and entry.process_group_id is not None:
-                raise RuntimeContractError("planned process already has a process-group id")
+            if entry.phase is ResourcePhase.CREATED and (
+                not isinstance(entry.process_start_token, str)
+                or not entry.process_start_token.isdecimal()
+            ):
+                raise RuntimeContractError("created process lacks its birth token")
+            if entry.phase is ResourcePhase.PLANNED and (
+                entry.process_group_id is not None or entry.process_start_token is not None
+            ):
+                raise RuntimeContractError("planned process already has a runtime identity")
         elif entry.process_group_id is not None:
             raise RuntimeContractError("non-process resource has a process-group id")
+        elif entry.command is not None or entry.process_start_token is not None:
+            raise RuntimeContractError("non-process resource has process state")
         if entry.resource.kind is ResourceKind.SUPABASE_USER:
-            if entry.phase is ResourcePhase.CREATED:
-                _require_match(entry.external_id, _UUID, "Supabase admin user id")
-            elif entry.external_id is not None:
-                raise RuntimeContractError("planned Supabase user already has an external id")
+            _require_match(entry.external_id, _UUID, "Supabase admin user id")
+        elif entry.resource.kind is ResourceKind.TEMPLATE_BUILD:
+            _require_match(entry.external_id, _FINGERPRINT, "template build fingerprint")
         elif entry.external_id is not None:
-            raise RuntimeContractError("non-Supabase resource has an external id")
+            raise RuntimeContractError("resource kind cannot have an external id")
 
 
 def _validate_resource(resource: Resource, run_id: str, scenario_id: str | None) -> None:
@@ -636,6 +704,8 @@ def _ledger_to_json(ledger: RunLedger) -> dict[str, object]:
                 "scenario_id": entry.scenario_id,
                 "process_group_id": entry.process_group_id,
                 "external_id": entry.external_id,
+                "command": list(entry.command) if entry.command is not None else None,
+                "process_start_token": entry.process_start_token,
             }
             for entry in ledger.entries
         ],
@@ -653,11 +723,26 @@ def _ledger_from_json(value: object) -> RunLedger:
         item = _object(raw, "ledger entry")
         _keys(
             item,
-            {"kind", "identity", "phase", "scenario_id", "process_group_id", "external_id"},
+            {
+                "kind",
+                "identity",
+                "phase",
+                "scenario_id",
+                "process_group_id",
+                "external_id",
+                "command",
+                "process_start_token",
+            },
             "ledger entry",
         )
         if not isinstance(item["identity"], str):
             raise RuntimeContractError("ledger resource identity must be a string")
+        raw_command = item["command"]
+        if raw_command is not None and (
+            not isinstance(raw_command, list)
+            or any(not isinstance(part, str) for part in raw_command)
+        ):
+            raise RuntimeContractError("ledger process command must be an array of strings")
         try:
             entries.append(
                 LedgerEntry(
@@ -666,6 +751,8 @@ def _ledger_from_json(value: object) -> RunLedger:
                     cast(str | None, item["scenario_id"]),
                     cast(int | None, item["process_group_id"]),
                     cast(str | None, item["external_id"]),
+                    tuple(cast(list[str], raw_command)) if raw_command is not None else None,
+                    cast(str | None, item["process_start_token"]),
                 )
             )
         except (TypeError, ValueError) as exc:

@@ -8,6 +8,7 @@ import { getEnv } from "./src/lib/env";
 const env = getEnv();
 
 const nextConfig: NextConfig = {
+  output: "standalone",
   // Client-safe build constant derived from the already validated canonical
   // public origin. Share links must never inherit a preview or Host origin.
   env: {

@@ -170,7 +170,15 @@ def test_supabase_user_persists_exact_run_and_scenario_identity(tmp_path: Path) 
     scenario = "auth-session"
     user = Resource(ResourceKind.SUPABASE_USER, supabase_user_email(RUN_ID, scenario))
 
-    entry = record_planned(tmp_path, TEST_ENV, RUN_ID, user, scenario_id=scenario)
+    user_id = "12345678-1234-4123-8123-123456789abc"
+    entry = record_planned(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        user,
+        scenario_id=scenario,
+        external_id=user_id,
+    )
 
     assert entry.scenario_id == scenario
     assert supabase_user_metadata(RUN_ID, scenario) == {
@@ -179,21 +187,50 @@ def test_supabase_user_persists_exact_run_and_scenario_identity(tmp_path: Path) 
     }
     with pytest.raises(RuntimeContractError, match="scenario"):
         record_planned(tmp_path, TEST_ENV, RUN_ID, user)
-    with pytest.raises(RuntimeContractError, match="admin user id"):
-        record_created(tmp_path, TEST_ENV, RUN_ID, user)
-    user_id = "12345678-1234-4123-8123-123456789abc"
+    with pytest.raises(RuntimeContractError, match="changed after planning"):
+        record_created(
+            tmp_path,
+            TEST_ENV,
+            RUN_ID,
+            user,
+            external_id="abcdefab-1234-4123-8123-123456789abc",
+        )
     record_created(tmp_path, TEST_ENV, RUN_ID, user, external_id=user_id)
     assert cleanup_candidates(tmp_path, TEST_ENV, RUN_ID)[0].external_id == user_id
+
+
+def test_supabase_user_requires_exact_id_before_creation(tmp_path: Path) -> None:
+    _runtime(tmp_path)
+    user = Resource(ResourceKind.SUPABASE_USER, supabase_user_email(RUN_ID, "auth-session"))
+
+    with pytest.raises(RuntimeContractError, match="planned Supabase admin user id"):
+        record_planned(
+            tmp_path,
+            TEST_ENV,
+            RUN_ID,
+            user,
+            scenario_id="auth-session",
+        )
+    with pytest.raises(RuntimeContractError, match="not recorded"):
+        record_created(tmp_path, TEST_ENV, RUN_ID, user)
 
 
 def test_processes_use_fixed_roles_and_record_the_group_before_cleanup(tmp_path: Path) -> None:
     _runtime(tmp_path)
     for role in ("worker-interactive", "worker-background"):
         process = Resource(ResourceKind.PROCESS, process_resource_identity(RUN_ID, role))
-        record_planned(tmp_path, TEST_ENV, RUN_ID, process)
+        command = ("python", "-m", "apps.worker.main", role)
+        record_planned(tmp_path, TEST_ENV, RUN_ID, process, command=command)
         with pytest.raises(RuntimeContractError, match="process-group"):
             record_created(tmp_path, TEST_ENV, RUN_ID, process)
-        record_created(tmp_path, TEST_ENV, RUN_ID, process, process_group_id=12000 + len(role))
+        record_created(
+            tmp_path,
+            TEST_ENV,
+            RUN_ID,
+            process,
+            process_group_id=12000 + len(role),
+            process_start_token=str(8000 + len(role)),
+        )
 
     assert [
         candidate.process_group_id for candidate in cleanup_candidates(tmp_path, TEST_ENV, RUN_ID)
@@ -208,7 +245,7 @@ def test_processes_use_fixed_roles_and_record_the_group_before_cleanup(tmp_path:
 def test_interrupted_planned_resources_remain_cleanup_candidates(tmp_path: Path) -> None:
     _runtime(tmp_path)
     building = Resource(ResourceKind.TEMPLATE_BUILD, template_build_database_name(RUN_ID))
-    record_planned(tmp_path, TEST_ENV, RUN_ID, building)
+    record_planned(tmp_path, TEST_ENV, RUN_ID, building, external_id="a" * 40)
 
     assert cleanup_candidates(tmp_path, TEST_ENV, RUN_ID)[0].resource == building
 
@@ -222,8 +259,11 @@ def test_extension_profile_is_scenario_scoped_and_run_releases_only_when_empty(
         extension_profile_identity(RUN_ID, "reader-extension"),
     )
     record_planned(tmp_path, TEST_ENV, RUN_ID, profile, scenario_id="reader-extension")
+    profile_path = tmp_path / extension_profile_identity(RUN_ID, "reader-extension")
+    profile_path.mkdir(parents=True)
     with pytest.raises(RuntimeContractError, match="resources remain"):
         release_run(tmp_path, TEST_ENV, RUN_ID)
+    profile_path.rmdir()
     forget_cleaned(tmp_path, TEST_ENV, RUN_ID, profile)
     release_run(tmp_path, TEST_ENV, RUN_ID)
     assert not (tmp_path / ".nexus-test" / "runs" / RUN_ID).exists()

@@ -1,7 +1,7 @@
 # Docker Compose for isolated test services.
 services:
   postgres:
-    image: pgvector/pgvector:pg15
+    image: pgvector/pgvector@sha256:bd12d6788a617f4147d5a2ae0b56d07921398adabfe5a033bd3f50c245df55a1
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres

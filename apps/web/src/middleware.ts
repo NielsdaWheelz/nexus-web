@@ -18,30 +18,25 @@ export function middleware(request: NextRequest) {
   // A fresh per-request nonce, stamped into the CSP. The policy is set on BOTH the
   // forwarded request headers — Next.js reads the nonce from the request-side CSP
   // (`parseRequestHeaders` in app-render) to stamp its framework/RSC scripts; `x-nonce`
-  // alone is not read for that — and the response, for browser enforcement. The E2E runner
-  // may disable CSP entirely (null policy); never honored in a deployed env.
+  // alone is not read for that — and the response, for browser enforcement.
   const nonce = generateNonce();
   const env = getEnv();
   const isPublicResourceShareApi =
     request.nextUrl.pathname === "/api/public/resource-share" ||
     request.nextUrl.pathname.startsWith("/api/public/resource-share/");
-  const csp = env.disableCspForE2E
-    ? null
-    : isPublicResourceShareApi
-      ? buildPublicApiContentSecurityPolicy()
-      : request.nextUrl.pathname === "/s"
+  const csp = isPublicResourceShareApi
+    ? buildPublicApiContentSecurityPolicy()
+    : request.nextUrl.pathname === "/s"
       ? buildPublicReaderCsp(request, nonce)
       : buildCsp(request, nonce, env.connectOrigins);
 
   const response = updateSession(request, nonce, csp);
 
-  if (csp) {
-    response.headers.set("Content-Security-Policy", csp);
-    response.headers.set(
-      "Reporting-Endpoints",
-      buildReportingEndpoints(request.nextUrl.origin),
-    );
-  }
+  response.headers.set("Content-Security-Policy", csp);
+  response.headers.set(
+    "Reporting-Endpoints",
+    buildReportingEndpoints(request.nextUrl.origin),
+  );
   if (request.nextUrl.pathname === "/s" || isPublicResourceShareApi) {
     response.headers.set("Cache-Control", "private, no-store");
     response.headers.set("Referrer-Policy", "no-referrer");

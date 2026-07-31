@@ -21,7 +21,7 @@ class PolicyViolation:
 
 _BUILTIN_PYTEST_MARKS = frozenset({"filterwarnings", "parametrize", "usefixtures"})
 _OWNED_MODULE_PREFIXES = ("nexus", "nexus_test_control")
-_SQL = re.compile(r"^\s*(?:SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE)\b", re.I)
+_RAW_SQL_SETUP = re.compile(r"^\s*(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE)\b", re.I)
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _REQUIRED_JOURNEY_IDS = frozenset({"nexus-search-open-restore"})
@@ -286,7 +286,7 @@ def python_ast_violations(path: str, source: str) -> tuple[PolicyViolation, ...]
 
         if not raw_sql_owner and leaf in {"text", "execute", "exec_driver_sql"} and node.args:
             sql = node.args[0].value if isinstance(node.args[0], ast.Constant) else None
-            if isinstance(sql, str) and _SQL.match(sql):
+            if isinstance(sql, str) and _RAW_SQL_SETUP.match(sql):
                 violations.append(
                     PolicyViolation(
                         "python-raw-sql",
@@ -638,13 +638,25 @@ def corpus_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
             if path.is_file()
             and (
                 path.suffix.lower() in binary_suffixes
-                or path.stat().st_size >= 4096
-                or any(part in {"real_media", "reader_apparatus"} for part in path.parts)
+                or path.parent.name == "real_media"
+                or (
+                    path.parent.parent.name == "reader_apparatus"
+                    and path.parent.name in {"gold_graphs", "tei"}
+                )
+                or (
+                    path.parent.parent.name == "reader_apparatus"
+                    and path.parent.name == "html"
+                    and path.stem.endswith("-full")
+                )
             )
         )
     for path in fixture_files:
         relative = path.relative_to(repo_root).as_posix()
-        if relative in _CONTROL_DATA or path.suffix.lower() == ".md":
+        if (
+            relative in _CONTROL_DATA
+            or relative.startswith("testdata/faults/")
+            or path.suffix.lower() == ".md"
+        ):
             continue
         if relative not in paths:
             violations.append(
@@ -825,6 +837,14 @@ def _fault_changed_paths(patch: str) -> tuple[str, ...]:
 
 
 def _is_product_path(path: str) -> bool:
-    return path.startswith(
+    product = path.startswith(
         ("python/nexus/", "apps/web/src/", "apps/android/app/src/", "migrations/alembic/")
-    ) and not any(part in Path(path).name for part in (".test.", ".spec."))
+    )
+    test_runtime_product = path in {
+        "python/nexus_test_control/build.py",
+        "python/nexus_test_control/runtime.py",
+        "python/nexus_test_control/services.py",
+    }
+    return (product or test_runtime_product) and not any(
+        part in Path(path).name for part in (".test.", ".spec.")
+    )

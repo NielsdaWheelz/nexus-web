@@ -247,7 +247,7 @@ def _fetch_feed_episode_page(page_url: str) -> tuple[list[dict[str, Any]], str |
         if settings.real_media_fixture_dir is None:
             logger.warning("podcast_feed_fixture_dir_missing", page_url=page_url)
             return [], None
-        path = f"{settings.real_media_fixture_dir}/nasa-hwhap-feed.xml"
+        path = f"{settings.real_media_fixture_dir}/nasa-hwhap-feed-v1.xml"
         try:
             content = Path(path).read_bytes()
         except OSError as exc:
@@ -279,7 +279,7 @@ def _fetch_live_feed_episode_page(page_url: str) -> tuple[list[dict[str, Any]], 
                 ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE,
                 "Podcast feed fixture is unavailable",
             )
-        path = Path(settings.real_media_fixture_dir) / "nasa-hwhap-feed.xml"
+        path = Path(settings.real_media_fixture_dir) / "nasa-hwhap-feed-v1.xml"
         try:
             content = path.read_bytes()
         except OSError as exc:

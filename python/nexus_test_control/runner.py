@@ -1,0 +1,1828 @@
+from __future__ import annotations
+
+import json
+import os
+import re
+import shutil
+import socket
+import subprocess
+import time
+import tomllib
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
+from datetime import date
+from pathlib import Path
+from typing import TextIO, assert_never
+
+import httpx
+import psycopg
+from botocore.exceptions import BotoCoreError
+from sqlalchemy.exc import SQLAlchemyError
+
+from nexus_test_control.build import StandaloneBuild, ensure_standalone_build
+from nexus_test_control.evidence import CapabilityEvidence, redact_text
+from nexus_test_control.model import (
+    WORKFLOW_REGISTRY,
+    Capability,
+    RunStatus,
+    Selection,
+    SelectionReason,
+    SelectionScope,
+    Workflow,
+)
+from nexus_test_control.policy import (
+    PolicyViolation,
+    corpus_violations,
+    exception_violations,
+    fault_manifest_violations,
+    proof_contract_violations,
+    python_ast_violations,
+    repository_violations,
+)
+from nexus_test_control.runtime import (
+    EndpointKind,
+    RuntimeContractError,
+    read_runtime,
+    template_database_name,
+)
+from nexus_test_control.services import (
+    TestRun,
+    _repository_template_fingerprint,
+    clean_run,
+    create_supabase_user,
+    grant_scenario_ai_entitlement,
+    prepare_run,
+    run_environment,
+    start_python_process,
+    start_web_process,
+    wait_process_ready,
+)
+
+_SENSITIVE_ENV_PARTS = ("credential", "key", "password", "secret", "token")
+_SAFE_HEAVY_ENV = (
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "NO_COLOR",
+    "PATH",
+    "PLAYWRIGHT_BROWSERS_PATH",
+    "TERM",
+    "TMPDIR",
+    "TZ",
+    "UV_CACHE_DIR",
+    "XDG_CACHE_HOME",
+)
+_BROWSER_RUN_ENV = frozenset(
+    {
+        "APP_PUBLIC_URL",
+        "FASTAPI_BASE_URL",
+        "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+        "NEXT_PUBLIC_SUPABASE_URL",
+        "NEXUS_ENV",
+        "NEXUS_TEST_RUN_ID",
+        "R2_S3_API_ORIGIN",
+        "STREAM_BASE_URL",
+        "STREAM_CORS_ORIGINS",
+    }
+)
+_SAFE_CHILD_ENV = (
+    "ANDROID_HOME",
+    "ANDROID_SDK_ROOT",
+    "GRADLE_USER_HOME",
+    "HOME",
+    "JAVA_HOME",
+    "LANG",
+    "LC_ALL",
+    "NEXUS_GOOGLE_WEB_CLIENT_ID",
+    "NO_COLOR",
+    "PATH",
+    "PLAYWRIGHT_BROWSERS_PATH",
+    "TERM",
+    "TMPDIR",
+    "TZ",
+    "UV_CACHE_DIR",
+    "XDG_CACHE_HOME",
+)
+_PYTHON_POLICY_DIRS = (
+    "python/tests/kernel",
+    "python/tests/service",
+    "python/tests/contract",
+    "python/tests/migrations",
+    "python/tests/evals",
+    "python/tests/audit",
+    "python/tests/hosted",
+    "python/tests/testkit",
+)
+_POLICY_INFRASTRUCTURE = frozenset(
+    {
+        "python/nexus_test_control/policy.py",
+        "python/tests/kernel/nexus_test_control/test_policy.py",
+        "testdata/manifest.json",
+        "testdata/proofs.json",
+        "testdata/policy-exceptions.json",
+        "testdata/faults/manifest.json",
+    }
+)
+_PYTHON_STATIC_PROMOTERS = frozenset({"python/pyproject.toml", "python/uv.lock"})
+_WEB_STATIC_PROMOTERS = frozenset(
+    {
+        "apps/web/package.json",
+        "apps/web/bun.lock",
+        "apps/web/eslint.config.mjs",
+        "apps/web/vitest.config.ts",
+    }
+)
+_WEB_STATIC_SUFFIXES = (".cjs", ".css", ".js", ".jsx", ".mjs", ".ts", ".tsx")
+_ANDROID_HOST_PREFIX = "apps/android/app/src/test/"
+_TEST_GOOGLE_CLIENT_ID = "nexus-test.apps.googleusercontent.com"
+_CRITICAL_JOURNEY_IDS = frozenset(
+    {
+        "auth-session",
+        "grounded-chat-citation",
+        "nexus-search-open-restore",
+        "resource-share-boundary",
+    }
+)
+
+type FixedCommand = tuple[tuple[str, ...], Path]
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityContext:
+    repo_root: Path
+    workflow: Workflow
+    selection: tuple[Selection, ...]
+    ui: bool = False
+    proven_proofs: frozenset[str] = frozenset()
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityResult:
+    evidence: CapabilityEvidence
+    detail: str
+
+    def __post_init__(self) -> None:
+        if not self.detail.strip():
+            raise ValueError("capability result detail must not be blank")
+
+
+@dataclass(slots=True)
+class _WorkflowExecution:
+    context: CapabilityContext
+    caller_environment: Mapping[str, str]
+    include_migration_database: bool
+    run: TestRun | None = None
+    build: StandaloneBuild | None = None
+    journey_runtime_started: bool = False
+    preparation_attempted: bool = False
+    preparation_failure: CapabilityResult | None = None
+
+    def prepare(self, capability: Capability) -> TestRun | CapabilityResult:
+        if self.run is not None:
+            return self.run
+        if self.preparation_failure is not None:
+            return _result(
+                capability,
+                self.preparation_failure.evidence.status,
+                self.preparation_failure.evidence.duration_ms,
+                self.preparation_failure.detail,
+            )
+        if self.preparation_attempted:
+            raise AssertionError("workflow preparation has no recorded outcome")
+        self.preparation_attempted = True
+        if not (self.context.repo_root / "python/.venv").is_dir():
+            self.preparation_failure = _not_run(
+                capability,
+                "locked Python test environment is absent",
+            )
+            return self.preparation_failure
+        child_environment = _child_environment(self.caller_environment)
+        missing = tuple(
+            tool
+            for tool in ("docker", "supabase", "uv")
+            if shutil.which(tool, path=child_environment.get("PATH")) is None
+        )
+        if missing:
+            self.preparation_failure = _not_run(
+                capability,
+                f"local test runtime tools are absent: {', '.join(missing)}",
+            )
+            return self.preparation_failure
+        started = time.monotonic_ns()
+        try:
+            self.run = prepare_run(
+                self.context.repo_root,
+                {"NEXUS_ENV": "test", **child_environment},
+                include_migration_database=self.include_migration_database,
+            )
+        except OSError as error:
+            duration_ms = (time.monotonic_ns() - started) // 1_000_000
+            self.preparation_failure = _result(
+                capability,
+                RunStatus.NOT_RUN,
+                duration_ms,
+                f"local test runtime could not start: {error.strerror or error}",
+            )
+            return self.preparation_failure
+        except (
+            BotoCoreError,
+            RuntimeContractError,
+            httpx.HTTPError,
+            psycopg.Error,
+            subprocess.CalledProcessError,
+        ) as error:
+            duration_ms = (time.monotonic_ns() - started) // 1_000_000
+            self.preparation_failure = _result(
+                capability,
+                RunStatus.FAIL,
+                duration_ms,
+                f"local test runtime preparation failed: {error}",
+            )
+            return self.preparation_failure
+        return self.run
+
+    def close(self) -> None:
+        if self.run is None:
+            return
+        run = self.run
+        self.run = None
+        clean_run(
+            self.context.repo_root,
+            {"NEXUS_ENV": "test", **_child_environment(self.caller_environment)},
+            run.run_id,
+            supabase=run.supabase,
+        )
+
+
+def run_workflow(
+    context: CapabilityContext,
+    stream: TextIO,
+    environment: Mapping[str, str],
+) -> tuple[CapabilityEvidence, ...]:
+    requirements = WORKFLOW_REGISTRY[context.workflow].requirements
+    execution = _WorkflowExecution(
+        context,
+        environment,
+        include_migration_database=any(
+            requirement.capability is Capability.MIGRATIONS
+            and _capability_is_selected(context, Capability.MIGRATIONS)
+            for requirement in requirements
+        ),
+    )
+
+    def results() -> Iterable[CapabilityResult]:
+        try:
+            for requirement in requirements:
+                yield _run_capability(
+                    context,
+                    requirement.capability,
+                    environment,
+                    execution,
+                )
+        finally:
+            execution.close()
+
+    return tuple(
+        result.evidence
+        for result in stream_first_failure(results(), stream, environment_secrets(environment))
+    )
+
+
+def stream_first_failure(
+    results: Iterable[CapabilityResult],
+    stream: TextIO,
+    secrets: Iterable[str] = (),
+) -> Iterable[CapabilityResult]:
+    failure_streamed = False
+    for result in results:
+        if result.evidence.status is RunStatus.FAIL and not failure_streamed:
+            stream.write(
+                redact_text(
+                    f"{result.evidence.id.value}: {result.detail}\n",
+                    secrets,
+                )
+            )
+            stream.flush()
+            failure_streamed = True
+        yield result
+
+
+def run_capability(
+    context: CapabilityContext,
+    capability: Capability,
+    environment: Mapping[str, str] | None = None,
+) -> CapabilityResult:
+    return _run_capability(context, capability, environment or {}, None)
+
+
+def run_proof(
+    context: CapabilityContext,
+    proof_id: str,
+    environment: Mapping[str, str],
+) -> CapabilityResult:
+    """Run one exact runner-qualified proof under its final ownership boundary."""
+    try:
+        runner_name, separator, node = proof_id.partition(":")
+        if not separator or not node:
+            raise ValueError("proof id must be runner-qualified")
+        capability, workflow = _proof_owner(runner_name, node)
+        path = node.split("::", 1)[0]
+        proof_context = CapabilityContext(
+            context.repo_root,
+            workflow,
+            (
+                Selection(
+                    path,
+                    capability,
+                    SelectionReason.EXPLICIT_FOCUS,
+                    proof_id,
+                ),
+            ),
+            ui=context.ui,
+        )
+    except ValueError as error:
+        return _not_run(Capability.POLICY, f"exact proof is not executable: {error}")
+    if not (context.repo_root / path).is_file():
+        return _not_run(capability, f"exact proof owner is absent: {path}")
+
+    execution = _WorkflowExecution(
+        proof_context,
+        environment,
+        include_migration_database=capability is Capability.MIGRATIONS,
+    )
+    try:
+        match capability:
+            case Capability.KERNEL_PYTHON | Capability.KERNEL_WEB:
+                result = _run_capability(
+                    proof_context,
+                    capability,
+                    environment,
+                    None,
+                )
+            case Capability.SERVICE:
+                result = _run_python_heavy(
+                    proof_context,
+                    capability,
+                    environment,
+                    execution,
+                    owner="tests/service",
+                    exact=True,
+                )
+            case Capability.MIGRATIONS:
+                result = _run_python_heavy(
+                    proof_context,
+                    capability,
+                    environment,
+                    execution,
+                    owner="tests/migrations",
+                    exact=True,
+                )
+            case Capability.LLM_EVAL:
+                result = _run_python_heavy(
+                    proof_context,
+                    capability,
+                    environment,
+                    execution,
+                    owner="tests/evals",
+                    exact=True,
+                )
+            case Capability.COMPONENT:
+                result = _run_component(proof_context, environment, execution, exact=True)
+            case Capability.JOURNEYS_ALL:
+                result = _run_journeys(
+                    proof_context,
+                    capability,
+                    environment,
+                    execution,
+                    exact=True,
+                )
+            case Capability.ANDROID_DEVICE:
+                result = _run_android_device_exact(proof_context, node, environment)
+            case _:
+                result = _not_run(capability, "exact proof owner has no executor")
+        return _classified_exact_result(result)
+    finally:
+        execution.close()
+
+
+def _run_capability(
+    context: CapabilityContext,
+    capability: Capability,
+    environment: Mapping[str, str],
+    execution: _WorkflowExecution | None,
+) -> CapabilityResult:
+    required = {
+        requirement.capability for requirement in WORKFLOW_REGISTRY[context.workflow].requirements
+    }
+    if capability not in required:
+        raise ValueError(f"{capability.value} is not required by workflow {context.workflow.value}")
+    caller_environment = environment
+    match capability:
+        case Capability.POLICY:
+            return _run_policy(context)
+        case Capability.POLICY_SELF_TESTS:
+            return _run_policy_self_tests(context, caller_environment)
+        case Capability.STATIC_PYTHON:
+            return _run_static_python(context, caller_environment)
+        case Capability.STATIC_WEB:
+            return _run_static_web(context, caller_environment)
+        case Capability.STATIC_WORKFLOWS:
+            return _run_static_workflows(context, caller_environment)
+        case Capability.KERNEL_PYTHON:
+            return _run_kernel_python(context, caller_environment)
+        case Capability.KERNEL_WEB:
+            return _run_kernel_web(context, caller_environment)
+        case Capability.SENSITIVITY:
+            return _run_sensitivity_gate(context)
+        case Capability.SERVICE:
+            return _run_python_heavy(
+                context,
+                capability,
+                caller_environment,
+                execution,
+                owner="tests/service",
+            )
+        case Capability.COMPONENT:
+            return _run_component(context, caller_environment, execution)
+        case Capability.MIGRATIONS:
+            return _run_python_heavy(
+                context,
+                capability,
+                caller_environment,
+                execution,
+                owner="tests/migrations",
+            )
+        case Capability.BUNDLE:
+            return _run_bundle(context, execution)
+        case Capability.JOURNEYS_CRITICAL:
+            return _run_journeys(context, capability, caller_environment, execution)
+        case Capability.JOURNEYS_ALL:
+            return _run_journeys(context, capability, caller_environment, execution)
+        case Capability.CORPUS:
+            return _run_corpus(context)
+        case Capability.PROVIDER_RUNTIME:
+            return _run_provider_runtime(context, caller_environment)
+        case Capability.LLM_EVAL:
+            return _run_python_heavy(
+                context,
+                capability,
+                caller_environment,
+                execution,
+                owner="tests/evals",
+            )
+        case Capability.EXTENSION:
+            return _not_implemented(capability)
+        case Capability.ANDROID_HOST:
+            return _run_android_host(context, caller_environment)
+        case Capability.AUDIT:
+            return _not_implemented(capability)
+        case Capability.HOSTED:
+            return _not_implemented(capability)
+        case Capability.ANDROID_DEVICE:
+            return _not_implemented(capability)
+        case Capability.PROVIDER_CERTIFICATION:
+            return _not_implemented(capability)
+        case Capability.ANDROID_RELEASE:
+            return _not_implemented(capability)
+        case Capability.RELEASE_ARTIFACT:
+            return _not_implemented(capability)
+        case Capability.DOCTOR:
+            return _run_doctor(context, caller_environment)
+        case _ as unreachable:
+            assert_never(unreachable)
+
+
+def _not_implemented(capability: Capability) -> CapabilityResult:
+    return CapabilityResult(
+        CapabilityEvidence(capability, RunStatus.NOT_RUN, 0, 0),
+        "capability executor is not implemented",
+    )
+
+
+def _run_sensitivity_gate(context: CapabilityContext) -> CapabilityResult:
+    required = {
+        selection.proof
+        for selection in context.selection
+        if selection.sensitivity_required and selection.proof is not None
+    }
+    missing = sorted(required.difference(context.proven_proofs))
+    if missing:
+        return _fail(
+            Capability.SENSITIVITY,
+            f"materially changed proofs lack same-run red/green evidence: {missing}",
+        )
+    return _pass(
+        Capability.SENSITIVITY,
+        f"{len(required)} materially changed proof{'s' if len(required) != 1 else ''} are sensitive",
+    )
+
+
+def _run_policy(context: CapabilityContext) -> CapabilityResult:
+    started = time.monotonic_ns()
+    complete = _scope(context, Capability.POLICY) is SelectionScope.COMPLETE or any(
+        selection.path in _POLICY_INFRASTRUCTURE
+        or selection.path.startswith("python/nexus_test_control/")
+        for selection in context.selection
+    )
+    selected_paths = {selection.path for selection in context.selection}
+    violations: list[PolicyViolation] = []
+
+    if complete:
+        violations.extend(repository_violations(context.repo_root))
+        violations.extend(proof_contract_violations(context.repo_root))
+        violations.extend(exception_violations(context.repo_root, date.today()))
+        violations.extend(fault_manifest_violations(context.repo_root))
+        violations.extend(corpus_violations(context.repo_root))
+        python_paths = _complete_python_policy_paths(context.repo_root)
+    else:
+        if selected_paths.intersection(
+            {
+                "Makefile",
+                "python/pyproject.toml",
+                "apps/web/vitest.config.ts",
+                "apps/web/e2e/playwright.config.ts",
+            }
+        ) or any(
+            path.startswith((".github/", "docs/local-rules/", "docs/rules/"))
+            for path in selected_paths
+        ):
+            violations.extend(repository_violations(context.repo_root))
+        if "testdata/proofs.json" in selected_paths:
+            violations.extend(proof_contract_violations(context.repo_root))
+        if "testdata/policy-exceptions.json" in selected_paths:
+            violations.extend(exception_violations(context.repo_root, date.today()))
+        if any(path.startswith("testdata/faults/") for path in selected_paths):
+            violations.extend(fault_manifest_violations(context.repo_root))
+        if "testdata/manifest.json" in selected_paths:
+            violations.extend(corpus_violations(context.repo_root))
+        python_paths = tuple(
+            context.repo_root / path
+            for path in sorted(selected_paths)
+            if path.endswith(".py")
+            and path.startswith(("python/tests/", "python/nexus_test_control/"))
+            and (context.repo_root / path).is_file()
+        )
+
+    for path in python_paths:
+        relative = path.relative_to(context.repo_root).as_posix()
+        try:
+            source = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as error:
+            violations.append(PolicyViolation("python-source", relative, str(error)))
+        else:
+            violations.extend(python_ast_violations(relative, source))
+    duration_ms = (time.monotonic_ns() - started) // 1_000_000
+    if violations:
+        violation = sorted(violations, key=lambda item: (item.path, item.line or 0, item.rule))[0]
+        location = f"{violation.path}:{violation.line}" if violation.line else violation.path
+        remainder = f" (+{len(violations) - 1} more)" if len(violations) > 1 else ""
+        return _result(
+            Capability.POLICY,
+            RunStatus.FAIL,
+            duration_ms,
+            f"{location}: {violation.rule}: {violation.message}{remainder}",
+        )
+    return _result(Capability.POLICY, RunStatus.PASS, duration_ms, "policy checks passed")
+
+
+def _complete_python_policy_paths(repo_root: Path) -> tuple[Path, ...]:
+    paths: set[Path] = set()
+    for relative in _PYTHON_POLICY_DIRS:
+        owner = repo_root / relative
+        if owner.is_dir():
+            paths.update(path for path in owner.rglob("*.py") if path.is_file())
+    for relative in ("python/tests/conftest.py",):
+        path = repo_root / relative
+        if path.is_file():
+            paths.add(path)
+    return tuple(sorted(paths))
+
+
+def _run_policy_self_tests(
+    context: CapabilityContext, environment: Mapping[str, str]
+) -> CapabilityResult:
+    owner = context.repo_root / "python/tests/kernel/nexus_test_control/test_policy.py"
+    if not owner.is_file() or not (context.repo_root / "python/.venv").is_dir():
+        return _not_run(Capability.POLICY_SELF_TESTS, "policy self-test owner is absent")
+    return _run_fixed_commands(
+        Capability.POLICY_SELF_TESTS,
+        (
+            (
+                (
+                    "uv",
+                    "run",
+                    "--frozen",
+                    "--no-sync",
+                    "pytest",
+                    "tests/kernel/nexus_test_control/test_policy.py",
+                ),
+                context.repo_root / "python",
+            ),
+        ),
+        environment,
+        ("uv",),
+    )
+
+
+def _run_static_python(
+    context: CapabilityContext, environment: Mapping[str, str]
+) -> CapabilityResult:
+    python_root = context.repo_root / "python"
+    if not (python_root / "pyproject.toml").is_file() or not (python_root / ".venv").is_dir():
+        return _not_run(Capability.STATIC_PYTHON, "Python static owner is absent")
+    complete = _scope(context, Capability.STATIC_PYTHON) is SelectionScope.COMPLETE or any(
+        selection.path in _PYTHON_STATIC_PROMOTERS for selection in context.selection
+    )
+    if complete:
+        commands: tuple[FixedCommand, ...] = (
+            (("uv", "run", "--frozen", "--no-sync", "ruff", "check", "."), python_root),
+            (
+                ("uv", "run", "--frozen", "--no-sync", "ruff", "format", "--check", "."),
+                python_root,
+            ),
+            (("uv", "run", "--frozen", "--no-sync", "pyright"), python_root),
+        )
+    else:
+        paths = _selected_files(context, "python/", (".py",))
+        if not paths:
+            return _pass(Capability.STATIC_PYTHON, "no selected Python static input")
+        relative = tuple(f"./{path.removeprefix('python/')}" for path in paths)
+        commands = (
+            (
+                ("uv", "run", "--frozen", "--no-sync", "ruff", "check", *relative),
+                python_root,
+            ),
+            (
+                (
+                    "uv",
+                    "run",
+                    "--frozen",
+                    "--no-sync",
+                    "ruff",
+                    "format",
+                    "--check",
+                    *relative,
+                ),
+                python_root,
+            ),
+            (("uv", "run", "--frozen", "--no-sync", "pyright", *relative), python_root),
+        )
+    return _run_fixed_commands(Capability.STATIC_PYTHON, commands, environment, ("uv",))
+
+
+def _run_static_web(context: CapabilityContext, environment: Mapping[str, str]) -> CapabilityResult:
+    web_root = context.repo_root / "apps/web"
+    if not (web_root / "package.json").is_file() or not (web_root / "node_modules").is_dir():
+        return _not_run(Capability.STATIC_WEB, "web static owner is absent")
+    complete = _scope(context, Capability.STATIC_WEB) is SelectionScope.COMPLETE or any(
+        selection.path in _WEB_STATIC_PROMOTERS for selection in context.selection
+    )
+    if complete:
+        commands: tuple[FixedCommand, ...] = (
+            (("bun", "run", "lint:css-tokens"), web_root),
+            (("bun", "run", "lint"), web_root),
+            (("bun", "run", "typecheck"), web_root),
+        )
+    else:
+        paths = _selected_files(context, "apps/web/", _WEB_STATIC_SUFFIXES)
+        if not paths:
+            return _pass(Capability.STATIC_WEB, "no selected web static input")
+        relative = tuple(f"./{path.removeprefix('apps/web/')}" for path in paths)
+        commands = ((("bun", "run", "eslint", "--max-warnings", "0", *relative), web_root),)
+        if any(path.endswith(".css") for path in paths):
+            commands = ((("bun", "run", "lint:css-tokens"), web_root), *commands)
+    return _run_fixed_commands(Capability.STATIC_WEB, commands, environment, ("bun",))
+
+
+def _run_static_workflows(
+    context: CapabilityContext, environment: Mapping[str, str]
+) -> CapabilityResult:
+    workflow_root = context.repo_root / ".github/workflows"
+    complete = _scope(context, Capability.STATIC_WORKFLOWS) is SelectionScope.COMPLETE
+    if complete:
+        paths = tuple(
+            path.relative_to(context.repo_root).as_posix()
+            for path in sorted((*workflow_root.glob("*.yml"), *workflow_root.glob("*.yaml")))
+            if path.is_file()
+        )
+    else:
+        paths = tuple(
+            path for path in _selected_files(context, ".github/workflows/", (".yml", ".yaml"))
+        )
+    if not paths:
+        if complete:
+            return _not_run(Capability.STATIC_WORKFLOWS, "workflow static owner is absent")
+        return _pass(Capability.STATIC_WORKFLOWS, "no selected workflow static input")
+    if not (context.repo_root / "python/.venv").is_dir():
+        return _not_run(Capability.STATIC_WORKFLOWS, "workflow static tools are absent")
+    root_paths = tuple(f"./{path}" for path in paths)
+    python_paths = tuple(f"../{path}" for path in paths)
+    return _run_fixed_commands(
+        Capability.STATIC_WORKFLOWS,
+        (
+            (("actionlint", *root_paths), context.repo_root),
+            (
+                ("uv", "run", "--frozen", "--no-sync", "zizmor", *python_paths),
+                context.repo_root / "python",
+            ),
+        ),
+        environment,
+        ("actionlint", "uv"),
+    )
+
+
+def _run_kernel_python(
+    context: CapabilityContext, environment: Mapping[str, str]
+) -> CapabilityResult:
+    python_root = context.repo_root / "python"
+    owner = python_root / "tests/kernel"
+    owners = tuple(sorted(owner.rglob("test_*.py"))) if owner.is_dir() else ()
+    if not owners or not (python_root / ".venv").is_dir():
+        return _not_run(Capability.KERNEL_PYTHON, "Python kernel owner is absent")
+    nodes, promoted = _selected_proof_nodes(context, Capability.KERNEL_PYTHON, "pytest")
+    proven = _proven_nodes(context, Capability.KERNEL_PYTHON, "pytest")
+    if _scope(context, Capability.KERNEL_PYTHON) is SelectionScope.COMPLETE or promoted:
+        proven_paths = {node.split("::", 1)[0] for node in proven}
+        remaining = tuple(
+            f"./{path.relative_to(python_root).as_posix()}"
+            for path in owners
+            if path.relative_to(context.repo_root).as_posix() not in proven_paths
+        )
+        if not remaining:
+            return _pass(
+                Capability.KERNEL_PYTHON,
+                "complete Python kernel proof was covered by sensitivity",
+            )
+        argv = ("uv", "run", "--frozen", "--no-sync", "pytest", *remaining)
+    elif nodes:
+        argv = (
+            "uv",
+            "run",
+            "--frozen",
+            "--no-sync",
+            "pytest",
+            "--",
+            *tuple(_python_proof_node(node) for node in nodes),
+        )
+    else:
+        return _pass(Capability.KERNEL_PYTHON, "no selected Python kernel proof")
+    return _run_fixed_commands(
+        Capability.KERNEL_PYTHON,
+        ((argv, python_root),),
+        environment,
+        ("uv",),
+    )
+
+
+def _run_kernel_web(context: CapabilityContext, environment: Mapping[str, str]) -> CapabilityResult:
+    web_root = context.repo_root / "apps/web"
+    owners = tuple(
+        sorted(
+            path
+            for path in (web_root / "src").rglob("*")
+            if path.is_file() and path.name.endswith((".unit.test.ts", ".unit.test.tsx"))
+        )
+    )
+    if not owners or not (web_root / "node_modules").is_dir():
+        return _not_run(Capability.KERNEL_WEB, "web kernel owner is absent")
+    nodes, promoted = _selected_proof_nodes(context, Capability.KERNEL_WEB, "vitest")
+    proven_paths = {
+        node.split("::", 1)[0] for node in _proven_nodes(context, Capability.KERNEL_WEB, "vitest")
+    }
+    if _scope(context, Capability.KERNEL_WEB) is SelectionScope.COMPLETE or promoted:
+        remaining = tuple(
+            f"./{path.relative_to(web_root).as_posix()}"
+            for path in owners
+            if path.relative_to(context.repo_root).as_posix() not in proven_paths
+        )
+        if not remaining:
+            return _pass(
+                Capability.KERNEL_WEB, "complete web kernel proof was covered by sensitivity"
+            )
+        argv = ("bun", "run", "test:unit", "--", *remaining)
+    elif nodes:
+        argv = (
+            "bun",
+            "run",
+            "test:unit",
+            "--",
+            *tuple(_web_proof_path(node) for node in nodes),
+        )
+    else:
+        return _pass(Capability.KERNEL_WEB, "no selected web kernel proof")
+    return _run_fixed_commands(Capability.KERNEL_WEB, ((argv, web_root),), environment, ("bun",))
+
+
+def _run_python_heavy(
+    context: CapabilityContext,
+    capability: Capability,
+    environment: Mapping[str, str],
+    execution: _WorkflowExecution | None,
+    *,
+    owner: str,
+    exact: bool = False,
+) -> CapabilityResult:
+    python_root = context.repo_root / "python"
+    owner_path = python_root / owner
+    owner_files = tuple(sorted(owner_path.rglob("test_*.py"))) if owner_path.is_dir() else ()
+    if not owner_files or not (python_root / ".venv").is_dir():
+        return _not_run(capability, f"Python {capability.value} proof owner is absent")
+    nodes, promoted = _selected_proof_nodes(context, capability, "pytest")
+    proven = _proven_nodes(context, capability, "pytest")
+    if exact:
+        if not nodes or promoted:
+            raise ValueError("exact Python proof must name one pytest node")
+        targets = tuple(_python_heavy_node(node, owner) for node in nodes)
+    elif _scope(context, capability) is SelectionScope.COMPLETE or promoted:
+        proven_paths = {node.split("::", 1)[0] for node in proven}
+        targets = tuple(
+            f"./{path.relative_to(python_root).as_posix()}"
+            for path in owner_files
+            if path.relative_to(context.repo_root).as_posix() not in proven_paths
+        )
+        if not targets:
+            return _pass(
+                capability, f"complete Python {capability.value} proof was covered by sensitivity"
+            )
+    elif nodes:
+        targets = tuple(_python_heavy_node(node, owner) for node in nodes)
+    else:
+        return _pass(capability, f"no selected Python {capability.value} proof")
+    prepared = _prepared_run(execution, capability)
+    if isinstance(prepared, CapabilityResult):
+        return prepared
+    child_environment = _heavy_environment(context, environment, prepared)
+    return _run_owned_commands(
+        capability,
+        (
+            (
+                (
+                    "uv",
+                    "run",
+                    "--frozen",
+                    "--no-sync",
+                    "pytest",
+                    *targets,
+                ),
+                python_root,
+            ),
+        ),
+        child_environment,
+        ("uv",),
+    )
+
+
+def _run_component(
+    context: CapabilityContext,
+    environment: Mapping[str, str],
+    execution: _WorkflowExecution | None,
+    *,
+    exact: bool = False,
+) -> CapabilityResult:
+    capability = Capability.COMPONENT
+    web_root = context.repo_root / "apps/web"
+    owners = tuple(
+        path
+        for path in (web_root / "src").rglob("*")
+        if path.is_file() and path.name.endswith((".browser.test.ts", ".browser.test.tsx"))
+    )
+    if not owners or not (web_root / "node_modules").is_dir():
+        return _not_run(capability, "web component proof owner is absent")
+    nodes, promoted = _selected_proof_nodes(context, capability, "vitest")
+    proven_paths = {node.split("::", 1)[0] for node in _proven_nodes(context, capability, "vitest")}
+    if exact:
+        if not nodes or promoted:
+            raise ValueError("exact web component proof must name one Vitest path")
+        targets = tuple(_web_component_path(node) for node in nodes)
+    elif _scope(context, capability) is SelectionScope.COMPLETE or promoted:
+        targets = tuple(
+            f"./{path.relative_to(web_root).as_posix()}"
+            for path in owners
+            if path.relative_to(context.repo_root).as_posix() not in proven_paths
+        )
+        if not targets:
+            return _pass(capability, "complete web component proof was covered by sensitivity")
+    elif nodes:
+        targets = tuple(_web_component_path(node) for node in nodes)
+    else:
+        return _pass(capability, "no selected web component proof")
+    if not _browser_installed(context.repo_root, environment):
+        return _not_run(capability, "the locked Chromium browser is absent")
+    prepared = _prepared_run(execution, capability)
+    if isinstance(prepared, CapabilityResult):
+        return prepared
+    argv = ("bun", "run", "test:browser")
+    if targets:
+        argv = (*argv, "--", *targets)
+    return _run_owned_commands(
+        capability,
+        ((argv, web_root),),
+        _heavy_environment(context, environment, prepared, browser=True),
+        ("bun",),
+    )
+
+
+def _run_bundle(
+    context: CapabilityContext,
+    execution: _WorkflowExecution | None,
+) -> CapabilityResult:
+    capability = Capability.BUNDLE
+    if (
+        not (context.repo_root / "apps/web/package.json").is_file()
+        or not (context.repo_root / "apps/web/node_modules").is_dir()
+    ):
+        return _not_run(capability, "web bundle owner is absent")
+    if not _capability_is_selected(context, capability):
+        return _pass(capability, "no selected web bundle proof")
+    prepared = _prepared_run(execution, capability)
+    if isinstance(prepared, CapabilityResult):
+        return prepared
+    if execution is None:
+        raise AssertionError("prepared run exists without workflow execution")
+    return _ensure_bundle(context, capability, execution, prepared)
+
+
+def _ensure_bundle(
+    context: CapabilityContext,
+    capability: Capability,
+    execution: _WorkflowExecution,
+    prepared: TestRun,
+) -> CapabilityResult:
+    if execution.build is not None:
+        return _pass(capability, "strict-CSP standalone bundle is ready")
+    child_environment = _child_environment(execution.caller_environment)
+    if shutil.which("bun", path=child_environment.get("PATH")) is None:
+        return _not_run(capability, "required tool is absent: bun")
+    started = time.monotonic_ns()
+    try:
+        execution.build = ensure_standalone_build(
+            context.repo_root,
+            {"NEXUS_ENV": "test", **child_environment},
+            prepared.supabase.anon_key,
+        )
+    except OSError as error:
+        duration_ms = (time.monotonic_ns() - started) // 1_000_000
+        return _result(
+            capability,
+            RunStatus.NOT_RUN,
+            duration_ms,
+            f"web bundle could not start: {error.strerror or error}",
+        )
+    except (RuntimeContractError, subprocess.CalledProcessError) as error:
+        duration_ms = (time.monotonic_ns() - started) // 1_000_000
+        return _result(
+            capability,
+            RunStatus.FAIL,
+            duration_ms,
+            f"web bundle failed: {error}",
+        )
+    duration_ms = (time.monotonic_ns() - started) // 1_000_000
+    return _result(capability, RunStatus.PASS, duration_ms, "strict-CSP standalone bundle is ready")
+
+
+def _run_journeys(
+    context: CapabilityContext,
+    capability: Capability,
+    environment: Mapping[str, str],
+    execution: _WorkflowExecution | None,
+    *,
+    exact: bool = False,
+) -> CapabilityResult:
+    web_root = context.repo_root / "apps/web"
+    journey_root = web_root / "e2e/journeys"
+    available = tuple(sorted(journey_root.glob("*.journey.spec.ts")))
+    if not available or not (web_root / "node_modules").is_dir():
+        return _not_run(capability, "Playwright journey owner is absent")
+    nodes, promoted = _selected_proof_nodes(context, capability, "playwright")
+    proven_paths = {
+        node.split("::", 1)[0]
+        for node in _proven_nodes(context, Capability.JOURNEYS_ALL, "playwright")
+    }
+    scope = _scope(context, capability)
+    if exact:
+        if not nodes or promoted:
+            raise ValueError("exact journey proof must name one Playwright path")
+        paths = tuple(context.repo_root / _playwright_journey_path(node) for node in nodes)
+    elif scope is SelectionScope.COMPLETE or promoted:
+        paths = tuple(
+            path
+            for path in available
+            if capability is Capability.JOURNEYS_ALL or _journey_id(path) in _CRITICAL_JOURNEY_IDS
+            if path.relative_to(context.repo_root).as_posix() not in proven_paths
+        )
+    elif nodes:
+        paths = tuple(context.repo_root / _playwright_journey_path(node) for node in nodes)
+    else:
+        return _pass(capability, "no selected Playwright journey proof")
+    if not paths:
+        if proven_paths:
+            return _pass(capability, "selected Playwright journey proof was covered by sensitivity")
+        return _not_run(capability, "selected Playwright journey owner is absent")
+    if not _browser_installed(context.repo_root, environment):
+        return _not_run(capability, "the locked Chromium browser is absent")
+    prepared = _prepared_run(execution, capability)
+    if isinstance(prepared, CapabilityResult):
+        return prepared
+    if execution is None:
+        raise AssertionError("prepared run exists without workflow execution")
+    if execution.build is None:
+        bundle = _ensure_bundle(context, capability, execution, prepared)
+        if bundle.evidence.status is not RunStatus.PASS:
+            return _result(
+                capability,
+                bundle.evidence.status,
+                bundle.evidence.duration_ms,
+                f"journeys require the production bundle: {bundle.detail}",
+            )
+    if execution.build is None:
+        raise AssertionError("passing bundle capability did not retain its artifact")
+    try:
+        if not execution.journey_runtime_started:
+            api = start_python_process(
+                context.repo_root,
+                {"NEXUS_ENV": "test"},
+                prepared,
+                "api",
+            )
+            wait_process_ready(
+                context.repo_root,
+                {"NEXUS_ENV": "test"},
+                api,
+                EndpointKind.API,
+                "/health",
+            )
+            start_python_process(
+                context.repo_root,
+                {"NEXUS_ENV": "test"},
+                prepared,
+                "worker-interactive",
+            )
+            start_python_process(
+                context.repo_root,
+                {"NEXUS_ENV": "test"},
+                prepared,
+                "worker-background",
+            )
+            web = start_web_process(
+                context.repo_root,
+                {"NEXUS_ENV": "test"},
+                prepared,
+                execution.build,
+            )
+            wait_process_ready(
+                context.repo_root,
+                {"NEXUS_ENV": "test"},
+                web,
+                EndpointKind.WEB,
+                "/login",
+            )
+            execution.journey_runtime_started = True
+        scenario_users: dict[str, dict[str, str]] = {}
+        for journey_id in tuple(_journey_id(path) for path in paths):
+            user = create_supabase_user(
+                context.repo_root,
+                {"NEXUS_ENV": "test"},
+                prepared.run_id,
+                journey_id,
+                prepared.supabase,
+            )
+            if journey_id in {"grounded-chat-citation", "resource-share-boundary"}:
+                grant_scenario_ai_entitlement(
+                    context.repo_root,
+                    {"NEXUS_ENV": "test"},
+                    prepared,
+                    user,
+                )
+            scenario_users[journey_id] = {
+                "id": user.id,
+                "email": user.email,
+                "password": user.password,
+            }
+    except OSError as error:
+        return _not_run(
+            capability, f"owned journey runtime could not start: {error.strerror or error}"
+        )
+    except (RuntimeContractError, SQLAlchemyError, httpx.HTTPError, psycopg.Error) as error:
+        return _fail(capability, f"owned journey runtime failed: {error}")
+    child_environment = _heavy_environment(context, environment, prepared, browser=True)
+    child_environment["NEXUS_TEST_SCENARIO_USERS"] = json.dumps(
+        scenario_users,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    targets = tuple(f"./{path.relative_to(web_root).as_posix()}" for path in paths)
+    return _run_owned_commands(
+        capability,
+        (
+            (
+                (
+                    "bun",
+                    "run",
+                    "playwright",
+                    "test",
+                    "--config",
+                    "e2e/playwright.config.ts",
+                    "--workers=1",
+                    "--retries=0",
+                    *targets,
+                ),
+                web_root,
+            ),
+        ),
+        child_environment,
+        ("bun",),
+    )
+
+
+def _prepared_run(
+    execution: _WorkflowExecution | None,
+    capability: Capability,
+) -> TestRun | CapabilityResult:
+    if execution is None:
+        return _not_run(capability, "heavy proof requires the workflow-owned local test run")
+    return execution.prepare(capability)
+
+
+def _proof_owner(runner_name: str, node: str) -> tuple[Capability, Workflow]:
+    path = node.split("::", 1)[0]
+    if runner_name == "pytest":
+        for prefix, capability, workflow in (
+            ("python/tests/kernel/", Capability.KERNEL_PYTHON, Workflow.CHANGED),
+            ("python/tests/service/", Capability.SERVICE, Workflow.CHANGED),
+            ("python/tests/migrations/", Capability.MIGRATIONS, Workflow.CHANGED),
+            ("python/tests/evals/", Capability.LLM_EVAL, Workflow.FULL),
+        ):
+            if path.startswith(prefix) and path.endswith(".py"):
+                return capability, workflow
+    elif runner_name == "vitest" and "::" not in node:
+        if path.startswith("apps/web/src/") and path.endswith((".unit.test.ts", ".unit.test.tsx")):
+            return Capability.KERNEL_WEB, Workflow.CHANGED
+        if path.startswith("apps/web/src/") and path.endswith(
+            (".browser.test.ts", ".browser.test.tsx")
+        ):
+            return Capability.COMPONENT, Workflow.CHANGED
+    elif (
+        runner_name == "playwright"
+        and "::" not in node
+        and path.startswith("apps/web/e2e/journeys/")
+        and path.endswith(".journey.spec.ts")
+    ):
+        return Capability.JOURNEYS_ALL, Workflow.CHANGED
+    elif (
+        runner_name == "gradle"
+        and path.startswith("apps/android/app/src/androidTest/")
+        and path.endswith(".kt")
+    ):
+        return Capability.ANDROID_DEVICE, Workflow.NIGHTLY
+    raise ValueError(f"unsupported exact proof owner: {runner_name}:{node}")
+
+
+def _classified_exact_result(result: CapabilityResult) -> CapabilityResult:
+    if result.evidence.status is not RunStatus.FAIL:
+        return result
+    folded = result.detail.casefold()
+    if any(
+        marker in folded
+        for marker in (
+            "error collecting",
+            "no test files found",
+            "no tests found",
+            "not found in rootdir",
+        )
+    ):
+        kind = "collection_failure"
+    elif any(
+        marker in folded
+        for marker in (
+            "error at setup",
+            "beforeall hook",
+            "beforeeach hook",
+            "fixture setup",
+        )
+    ):
+        kind = "setup_or_execution_failure"
+    elif (
+        "falsifying example:" in folded
+        or ("failed " in folded and "::" in folded and " - assertionerror" in folded)
+        or ("error: expect(" in folded and " › " in folded)
+    ):
+        kind = "behavioral_assertion_failure"
+    else:
+        kind = "setup_or_execution_failure"
+    return CapabilityResult(result.evidence, f"proof_result={kind}|{result.detail}")
+
+
+def _heavy_environment(
+    context: CapabilityContext,
+    caller_environment: Mapping[str, str],
+    run: TestRun,
+    *,
+    browser: bool = False,
+) -> dict[str, str]:
+    child = {
+        key: value
+        for key in _SAFE_HEAVY_ENV
+        if (value := caller_environment.get(key)) is not None and value != ""
+    }
+    owned = run_environment(context.repo_root, {"NEXUS_ENV": "test"}, run)
+    child.update(
+        {key: value for key, value in owned.items() if not browser or key in _BROWSER_RUN_ENV}
+    )
+    return child
+
+
+def _python_heavy_node(node: str, owner: str) -> str:
+    path, separator, selected_test = node.partition("::")
+    prefix = f"python/{owner}/"
+    if not path.startswith(prefix) or not path.endswith(".py"):
+        raise ValueError(f"Python proof is outside {prefix}: {node}")
+    relative = path.removeprefix("python/")
+    return f"{relative}::{selected_test}" if separator else relative
+
+
+def _web_component_path(node: str) -> str:
+    path = node.split("::", 1)[0]
+    if not path.startswith("apps/web/src/") or not path.endswith(
+        (".browser.test.ts", ".browser.test.tsx")
+    ):
+        raise ValueError(f"web component proof is outside its owner: {node}")
+    return f"./{path.removeprefix('apps/web/')}"
+
+
+def _playwright_journey_path(node: str) -> str:
+    path = node.split("::", 1)[0]
+    if not path.startswith("apps/web/e2e/journeys/") or not path.endswith(".journey.spec.ts"):
+        raise ValueError(f"Playwright journey proof is outside its owner: {node}")
+    return path
+
+
+def _journey_id(path: Path) -> str:
+    journey_id = path.name.removesuffix(".journey.spec.ts")
+    if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?", journey_id):
+        raise ValueError(f"journey filename has no valid scenario id: {path.name}")
+    return journey_id
+
+
+def _run_owned_commands(
+    capability: Capability,
+    commands: tuple[FixedCommand, ...],
+    child_environment: Mapping[str, str],
+    required_tools: tuple[str, ...],
+) -> CapabilityResult:
+    if child_environment.get("NEXUS_ENV") != "test":
+        raise ValueError("owned test command requires NEXUS_ENV=test")
+    missing = tuple(
+        tool
+        for tool in required_tools
+        if shutil.which(tool, path=child_environment.get("PATH")) is None
+    )
+    if missing:
+        return _not_run(capability, f"required tools are absent: {', '.join(missing)}")
+    started = time.monotonic_ns()
+    for index, (argv, cwd) in enumerate(commands, start=1):
+        try:
+            completed = subprocess.run(
+                argv,
+                cwd=cwd,
+                env=dict(child_environment),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError as error:
+            duration_ms = (time.monotonic_ns() - started) // 1_000_000
+            return _result(
+                capability,
+                RunStatus.NOT_RUN,
+                duration_ms,
+                f"fixed command {index} could not start: {error.strerror or error}",
+            )
+        if completed.returncode != 0:
+            duration_ms = (time.monotonic_ns() - started) // 1_000_000
+            detail = redact_text(
+                _failed_command_detail(index, completed),
+                environment_secrets(child_environment),
+            )
+            return _result(capability, RunStatus.FAIL, duration_ms, detail)
+    duration_ms = (time.monotonic_ns() - started) // 1_000_000
+    return _result(
+        capability,
+        RunStatus.PASS,
+        duration_ms,
+        f"{len(commands)} fixed command{'s' if len(commands) != 1 else ''} passed",
+    )
+
+
+def _run_corpus(context: CapabilityContext) -> CapabilityResult:
+    started = time.monotonic_ns()
+    violations = corpus_violations(context.repo_root)
+    duration_ms = (time.monotonic_ns() - started) // 1_000_000
+    if violations:
+        first = violations[0]
+        return _result(
+            Capability.CORPUS,
+            RunStatus.FAIL,
+            duration_ms,
+            f"{first.path}: {first.rule}: {first.message}"
+            + (f" (+{len(violations) - 1} more)" if len(violations) > 1 else ""),
+        )
+    return _result(Capability.CORPUS, RunStatus.PASS, duration_ms, "corpus contract passed")
+
+
+def _run_provider_runtime(
+    context: CapabilityContext, environment: Mapping[str, str]
+) -> CapabilityResult:
+    checkout = context.repo_root.parent / "llm-calling"
+    if not checkout.is_dir() or not (checkout / ".venv").is_dir():
+        return _not_run(Capability.PROVIDER_RUNTIME, "pinned provider-runtime checkout is absent")
+    try:
+        data = tomllib.loads(
+            (context.repo_root / "python/pyproject.toml").read_text(encoding="utf-8")
+        )
+        source = data["tool"]["uv"]["sources"]["provider-runtime"]
+        expected = source["rev"]
+    except (KeyError, OSError, TypeError, tomllib.TOMLDecodeError):
+        return _fail(Capability.PROVIDER_RUNTIME, "provider-runtime pin is invalid or absent")
+    if not isinstance(expected, str) or re.fullmatch(r"[0-9a-f]{40}", expected) is None:
+        return _fail(Capability.PROVIDER_RUNTIME, "provider-runtime pin is not a full Git SHA")
+    child_environment = _child_environment(environment)
+    if shutil.which("git", path=child_environment.get("PATH")) is None:
+        return _not_run(Capability.PROVIDER_RUNTIME, "required tool is absent: git")
+    started = time.monotonic_ns()
+    try:
+        revision = subprocess.run(
+            ("git", "-C", str(checkout), "rev-parse", "HEAD"),
+            cwd=context.repo_root,
+            env=child_environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as error:
+        return _not_run(
+            Capability.PROVIDER_RUNTIME,
+            f"pinned revision check could not start: {error.strerror or error}",
+        )
+    duration_ms = (time.monotonic_ns() - started) // 1_000_000
+    if revision.returncode != 0:
+        return _result(
+            Capability.PROVIDER_RUNTIME,
+            RunStatus.FAIL,
+            duration_ms,
+            _failed_command_detail(1, revision),
+        )
+    if revision.stdout.strip() != expected:
+        return _result(
+            Capability.PROVIDER_RUNTIME,
+            RunStatus.FAIL,
+            duration_ms,
+            "provider-runtime checkout does not match its pinned revision",
+        )
+    commands: tuple[FixedCommand, ...] = (
+        (
+            ("uv", "run", "--frozen", "--no-sync", "ruff", "check", "src", "tests"),
+            checkout,
+        ),
+        (
+            (
+                "uv",
+                "run",
+                "--frozen",
+                "--no-sync",
+                "ruff",
+                "format",
+                "--check",
+                "src",
+                "tests",
+            ),
+            checkout,
+        ),
+        (("uv", "run", "--frozen", "--no-sync", "pyright", "src", "tests"), checkout),
+        (("uv", "run", "--frozen", "--no-sync", "pytest", "-q"), checkout),
+    )
+    return _run_fixed_commands(
+        Capability.PROVIDER_RUNTIME,
+        commands,
+        environment,
+        ("uv",),
+        elapsed_ms=duration_ms,
+    )
+
+
+def _run_android_host(
+    context: CapabilityContext, environment: Mapping[str, str]
+) -> CapabilityResult:
+    android_root = context.repo_root / "apps/android"
+    wrapper = android_root / "gradlew"
+    owners = tuple(
+        sorted(
+            path
+            for path in (context.repo_root / _ANDROID_HOST_PREFIX).rglob("*.kt")
+            if path.is_file()
+        )
+    )
+    if not wrapper.is_file() or not owners:
+        return _not_run(Capability.ANDROID_HOST, "Android host proof owner is absent")
+    if not _android_sdk_available(android_root, environment):
+        return _not_run(Capability.ANDROID_HOST, "Android SDK is absent")
+    nodes, promoted = _selected_proof_nodes(context, Capability.ANDROID_HOST, "gradle")
+    argv: tuple[str, ...] = ("./gradlew", "--no-daemon", ":app:testDebugUnitTest")
+    if _scope(context, Capability.ANDROID_HOST) is not SelectionScope.COMPLETE and not promoted:
+        if not nodes:
+            return _pass(Capability.ANDROID_HOST, "no selected Android host proof")
+        for node in nodes:
+            argv = (*argv, "--tests", _android_test_class(context.repo_root, node))
+    child_environment = dict(environment)
+    child_environment["NEXUS_GOOGLE_WEB_CLIENT_ID"] = _TEST_GOOGLE_CLIENT_ID
+    return _run_fixed_commands(
+        Capability.ANDROID_HOST,
+        ((argv, android_root),),
+        child_environment,
+        ("java",),
+    )
+
+
+def _run_android_device_exact(
+    context: CapabilityContext,
+    node: str,
+    environment: Mapping[str, str],
+) -> CapabilityResult:
+    android_root = context.repo_root / "apps/android"
+    wrapper = android_root / "gradlew"
+    if not wrapper.is_file():
+        return _not_run(Capability.ANDROID_DEVICE, "Android device proof owner is absent")
+    if not _android_sdk_available(android_root, environment):
+        return _not_run(Capability.ANDROID_DEVICE, "Android SDK is absent")
+    target = _android_device_test_target(context.repo_root, node)
+    child_environment = dict(environment)
+    child_environment["NEXUS_GOOGLE_WEB_CLIENT_ID"] = _TEST_GOOGLE_CLIENT_ID
+    return _run_fixed_commands(
+        Capability.ANDROID_DEVICE,
+        (
+            (
+                (
+                    "./gradlew",
+                    "--no-daemon",
+                    ":app:connectedDebugAndroidTest",
+                    f"-Pandroid.testInstrumentationRunnerArguments.class={target}",
+                ),
+                android_root,
+            ),
+        ),
+        child_environment,
+        ("java",),
+    )
+
+
+def _run_doctor(context: CapabilityContext, environment: Mapping[str, str]) -> CapabilityResult:
+    started = time.monotonic_ns()
+    child_environment = _child_environment(environment)
+    required_tools = ("actionlint", "bun", "docker", "git", "java", "supabase", "uv")
+    missing_tools = tuple(
+        tool
+        for tool in required_tools
+        if shutil.which(tool, path=child_environment.get("PATH")) is None
+    )
+    if missing_tools:
+        return _not_run(Capability.DOCTOR, f"required tools are absent: {', '.join(missing_tools)}")
+
+    required_paths = (
+        "python/pyproject.toml",
+        "python/uv.lock",
+        "python/.venv",
+        "apps/web/package.json",
+        "apps/web/bun.lock",
+        "apps/web/node_modules",
+        "apps/web/e2e/playwright.config.ts",
+        "apps/android/gradlew",
+    )
+    missing_paths = tuple(
+        relative for relative in required_paths if not (context.repo_root / relative).exists()
+    )
+    if missing_paths:
+        return _not_run(
+            Capability.DOCTOR, f"locked tool owners are absent: {', '.join(missing_paths)}"
+        )
+    if not _android_sdk_available(context.repo_root / "apps/android", environment):
+        return _not_run(Capability.DOCTOR, "the Android SDK is absent")
+    if not _browser_installed(context.repo_root, environment):
+        return _not_run(Capability.DOCTOR, "the locked Chromium browser is absent")
+
+    try:
+        runtime = read_runtime(context.repo_root)
+    except (OSError, ValueError):
+        return _not_run(Capability.DOCTOR, "the local test runtime is not initialized")
+    for owner, port in (
+        ("postgres", runtime.ports.postgres),
+        ("minio", runtime.ports.minio),
+        ("supabase", runtime.ports.supabase_api),
+    ):
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                pass
+        except OSError:
+            duration_ms = (time.monotonic_ns() - started) // 1_000_000
+            return _result(
+                Capability.DOCTOR,
+                RunStatus.FAIL,
+                duration_ms,
+                f"recorded {owner} endpoint is not healthy",
+            )
+
+    expected_template = template_database_name(_repository_template_fingerprint(context.repo_root))
+    try:
+        with psycopg.connect(
+            host="127.0.0.1",
+            port=runtime.ports.postgres,
+            dbname="postgres",
+            user="postgres",
+            password="postgres",
+            connect_timeout=1,
+        ) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT datallowconn FROM pg_database WHERE datname = %s",
+                    (expected_template,),
+                )
+                template = cursor.fetchone()
+    except (OSError, psycopg.Error):
+        duration_ms = (time.monotonic_ns() - started) // 1_000_000
+        return _result(
+            Capability.DOCTOR,
+            RunStatus.FAIL,
+            duration_ms,
+            "recorded PostgreSQL template could not be inspected",
+        )
+    duration_ms = (time.monotonic_ns() - started) // 1_000_000
+    if template != (False,):
+        return _result(
+            Capability.DOCTOR,
+            RunStatus.FAIL,
+            duration_ms,
+            "fingerprinted PostgreSQL template is absent or connectable",
+        )
+    return _result(
+        Capability.DOCTOR,
+        RunStatus.PASS,
+        duration_ms,
+        "tools, locks, browser, services, ports, and template are ready",
+    )
+
+
+def _scope(context: CapabilityContext, capability: Capability) -> SelectionScope:
+    for requirement in WORKFLOW_REGISTRY[context.workflow].requirements:
+        if requirement.capability is capability:
+            return requirement.scope
+    raise ValueError(f"{capability.value} is not required by workflow {context.workflow.value}")
+
+
+def _capability_is_selected(context: CapabilityContext, capability: Capability) -> bool:
+    return _scope(context, capability) is SelectionScope.COMPLETE or any(
+        selection.capability is capability for selection in context.selection
+    )
+
+
+def _selected_files(
+    context: CapabilityContext, prefix: str, suffixes: tuple[str, ...]
+) -> tuple[str, ...]:
+    paths: set[str] = set()
+    root = context.repo_root.resolve(strict=True)
+    for selection in context.selection:
+        path = selection.path
+        if not path.startswith(prefix) or not path.endswith(suffixes):
+            continue
+        candidate = (root / path).resolve(strict=False)
+        try:
+            relative = candidate.relative_to(root).as_posix()
+        except ValueError as error:
+            raise ValueError(f"selected path leaves the repository: {path}") from error
+        if relative != path:
+            raise ValueError(f"selected file is not exact: {path}")
+        if not candidate.is_file():
+            continue
+        paths.add(path)
+    return tuple(sorted(paths))
+
+
+def _selected_proof_nodes(
+    context: CapabilityContext, capability: Capability, runner: str
+) -> tuple[tuple[str, ...], bool]:
+    nodes: set[str] = set()
+    promoted = False
+    for selection in context.selection:
+        if selection.capability is not capability:
+            continue
+        if selection.proof is None:
+            promoted = True
+            continue
+        proof_runner, separator, node = selection.proof.partition(":")
+        if not separator or proof_runner != runner or not node:
+            raise ValueError(f"invalid {runner} proof selection: {selection.proof}")
+        nodes.add(node)
+    return tuple(sorted(nodes)), promoted
+
+
+def _proven_nodes(
+    context: CapabilityContext, capability: Capability, runner: str
+) -> tuple[str, ...]:
+    nodes: set[str] = set()
+    for proof in context.proven_proofs:
+        proof_runner, separator, node = proof.partition(":")
+        if not separator or proof_runner != runner:
+            continue
+        try:
+            owner, _workflow = _proof_owner(proof_runner, node)
+        except ValueError:
+            continue
+        if owner is capability:
+            nodes.add(node)
+    return tuple(sorted(nodes))
+
+
+def _python_proof_node(node: str) -> str:
+    path, separator, selected_test = node.partition("::")
+    if not path.startswith("python/tests/kernel/") or not path.endswith(".py"):
+        raise ValueError(f"Python kernel proof is outside its owner: {node}")
+    relative = f"./{path.removeprefix('python/')}"
+    return f"{relative}::{selected_test}" if separator else relative
+
+
+def _web_proof_path(node: str) -> str:
+    path = node.split("::", 1)[0]
+    if not path.startswith("apps/web/src/") or not path.endswith(
+        (".unit.test.ts", ".unit.test.tsx")
+    ):
+        raise ValueError(f"web kernel proof is outside its owner: {node}")
+    return f"./{path.removeprefix('apps/web/')}"
+
+
+def _android_test_class(repo_root: Path, node: str) -> str:
+    path = node.split("::", 1)[0]
+    if not path.startswith(_ANDROID_HOST_PREFIX) or not path.endswith(".kt"):
+        raise ValueError(f"Android host proof is outside its owner: {node}")
+    source = (repo_root / path).read_text(encoding="utf-8")
+    package = re.search(r"(?m)^package\s+([A-Za-z_][A-Za-z0-9_.]*)\s*$", source)
+    class_name = Path(path).stem
+    if package is None or re.search(rf"\bclass\s+{re.escape(class_name)}\b", source) is None:
+        raise ValueError(f"Android host proof has no filename-owned test class: {path}")
+    return f"{package.group(1)}.{class_name}"
+
+
+def _android_device_test_target(repo_root: Path, node: str) -> str:
+    path, separator, method = node.partition("::")
+    prefix = "apps/android/app/src/androidTest/"
+    if not path.startswith(prefix) or not path.endswith(".kt"):
+        raise ValueError(f"Android device proof is outside its owner: {node}")
+    source = (repo_root / path).read_text(encoding="utf-8")
+    package = re.search(r"(?m)^package\s+([A-Za-z_][A-Za-z0-9_.]*)\s*$", source)
+    class_name = Path(path).stem
+    if package is None or re.search(rf"\bclass\s+{re.escape(class_name)}\b", source) is None:
+        raise ValueError(f"Android device proof has no filename-owned test class: {path}")
+    if separator and (
+        not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", method)
+        or re.search(rf"\bfun\s+{re.escape(method)}\s*\(", source) is None
+    ):
+        raise ValueError(f"Android device proof has no exact method: {node}")
+    target = f"{package.group(1)}.{class_name}"
+    return f"{target}#{method}" if separator else target
+
+
+def _android_sdk_available(android_root: Path, environment: Mapping[str, str]) -> bool:
+    if (android_root / "local.properties").is_file():
+        return True
+    return any(
+        environment.get(key) and Path(environment[key]).is_dir()
+        for key in ("ANDROID_HOME", "ANDROID_SDK_ROOT")
+    )
+
+
+def _browser_installed(repo_root: Path, environment: Mapping[str, str]) -> bool:
+    browsers_json = repo_root / "apps/web/node_modules/playwright-core/browsers.json"
+    try:
+        data = json.loads(browsers_json.read_text(encoding="utf-8"))
+        revisions = {
+            browser["name"]: browser["revision"]
+            for browser in data["browsers"]
+            if browser["name"] in {"chromium", "chromium-headless-shell"}
+        }
+    except (KeyError, OSError, TypeError, json.JSONDecodeError):
+        return False
+    if set(revisions) != {"chromium", "chromium-headless-shell"}:
+        return False
+    browser_root = environment.get("PLAYWRIGHT_BROWSERS_PATH")
+    if browser_root:
+        cache = Path(browser_root)
+    else:
+        cache_home = environment.get("XDG_CACHE_HOME")
+        home = environment.get("HOME")
+        if cache_home:
+            cache = Path(cache_home) / "ms-playwright"
+        elif home:
+            cache = Path(home) / ".cache/ms-playwright"
+        else:
+            return False
+    chromium = cache / f"chromium-{revisions['chromium']}"
+    headless = cache / f"chromium_headless_shell-{revisions['chromium-headless-shell']}"
+    return all(
+        owner.is_dir()
+        and (owner / "INSTALLATION_COMPLETE").is_file()
+        and any(path.is_file() and os.access(path, os.X_OK) for path in owner.rglob(executable))
+        for owner, executable in ((chromium, "chrome"), (headless, "chrome-headless-shell"))
+    )
+
+
+def _run_fixed_commands(
+    capability: Capability,
+    commands: tuple[FixedCommand, ...],
+    environment: Mapping[str, str],
+    required_tools: tuple[str, ...],
+    *,
+    elapsed_ms: int = 0,
+) -> CapabilityResult:
+    child_environment = _child_environment(environment)
+    missing = tuple(
+        tool
+        for tool in required_tools
+        if shutil.which(tool, path=child_environment.get("PATH")) is None
+    )
+    if missing:
+        return _not_run(capability, f"required tools are absent: {', '.join(missing)}")
+    started = time.monotonic_ns()
+    for index, (argv, cwd) in enumerate(commands, start=1):
+        try:
+            completed = subprocess.run(
+                argv,
+                cwd=cwd,
+                env=child_environment,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError as error:
+            duration_ms = elapsed_ms + (time.monotonic_ns() - started) // 1_000_000
+            return _result(
+                capability,
+                RunStatus.NOT_RUN,
+                duration_ms,
+                f"fixed command {index} could not start: {error.strerror or error}",
+            )
+        if completed.returncode != 0:
+            duration_ms = elapsed_ms + (time.monotonic_ns() - started) // 1_000_000
+            return _result(
+                capability,
+                RunStatus.FAIL,
+                duration_ms,
+                _failed_command_detail(index, completed),
+            )
+    duration_ms = elapsed_ms + (time.monotonic_ns() - started) // 1_000_000
+    return _result(
+        capability,
+        RunStatus.PASS,
+        duration_ms,
+        f"{len(commands)} fixed command{'s' if len(commands) != 1 else ''} passed",
+    )
+
+
+def _failed_command_detail(index: int, completed: subprocess.CompletedProcess[str]) -> str:
+    output = (completed.stderr or completed.stdout).strip()
+    decisive = output[-4000:] if output else "no diagnostic output"
+    return f"fixed command {index} exited {completed.returncode}: {decisive}"
+
+
+def _child_environment(environment: Mapping[str, str]) -> dict[str, str]:
+    child = {
+        key: value
+        for key in _SAFE_CHILD_ENV
+        if (value := environment.get(key)) is not None and value != ""
+    }
+    child["NEXUS_ENV"] = "test"
+    return child
+
+
+def _pass(capability: Capability, detail: str) -> CapabilityResult:
+    return _result(capability, RunStatus.PASS, 0, detail)
+
+
+def _fail(capability: Capability, detail: str) -> CapabilityResult:
+    return _result(capability, RunStatus.FAIL, 0, detail)
+
+
+def _not_run(capability: Capability, detail: str) -> CapabilityResult:
+    return _result(capability, RunStatus.NOT_RUN, 0, detail)
+
+
+def _result(
+    capability: Capability, status: RunStatus, duration_ms: int, detail: str
+) -> CapabilityResult:
+    return CapabilityResult(
+        CapabilityEvidence(capability, status, duration_ms, 0),
+        detail,
+    )
+
+
+def environment_secrets(environment: Mapping[str, str]) -> tuple[str, ...]:
+    return tuple(
+        value
+        for key, value in environment.items()
+        if value and any(part in key.casefold() for part in _SENSITIVE_ENV_PARTS)
+    )

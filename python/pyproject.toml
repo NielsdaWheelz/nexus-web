@@ -30,9 +30,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "hypothesis>=6.151.9",
     "ruff>=0.8.0",
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
+    "pytest-socket>=0.7.0",
     "pytest-xdist>=3.8.0",
     "httpx>=0.28.0",
     "httpx2>=2.0.0",
@@ -183,24 +185,29 @@ exclude = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = [
+    "tests/kernel",
+    "tests/service",
+    "tests/contract",
+    "tests/migrations",
+    "tests/evals",
+    "tests/audit",
+    "tests/hosted",
+]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
-addopts = "-v --tb=short --strict-markers -m \"not supabase and not network\""
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-config",
+    "--strict-markers",
+    "--disable-socket",
+    "--allow-unix-socket",
+    "--allow-hosts=127.0.0.1,::1,127.0.1.1",
+]
 pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = [
     "error::UserWarning",
-]
-markers = [
-    "unit: pure logic tests, no DB/network",
-    "integration: DB/API-backed tests",
-    "migration_ci_late: late migration-file shard used only to parallelize CI",
-    "artifact: checked-in artifact and fixture contract tests with local file I/O",
-    "slow: tests that are materially slower than normal local feedback loops",
-    "supabase: requires Supabase local Auth services",
-    "network: requires internet access (hits real external services)",
-    "real_media: strict acceptance tests over real media artifacts and evidence traces",
-    "live_provider: strict acceptance tests over live external providers",
 ]

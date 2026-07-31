@@ -17,14 +17,16 @@ export default defineConfig({
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
+    retry: 0,
+    maxWorkers: 1,
+    fileParallelism: false,
     projects: [
       {
         extends: true,
         test: {
           name: "unit",
           environment: "node",
-          include: ["src/**/*.test.ts"],
-          exclude: ["src/lib/highlights/**/*.test.ts"],
+          include: ["src/**/*.unit.test.ts"],
           setupFiles: ["./vitest.setup.ts"],
         },
       },
@@ -35,7 +37,7 @@ export default defineConfig({
         },
         test: {
           name: "browser",
-          include: ["src/**/*.test.tsx", "src/lib/highlights/**/*.test.ts"],
+          include: ["src/**/*.browser.test.{ts,tsx}"],
           setupFiles: ["./vitest.browser-setup.ts"],
           browser: {
             enabled: true,

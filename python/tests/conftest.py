@@ -1,16 +1,6 @@
-"""Pytest configuration and fixtures for Nexus tests.
+"""Shared fixtures for real Nexus Python proof."""
 
-Test isolation strategy:
-- Tests that use db_session get a nested transaction (savepoint) that rolls back
-- Migration tests run in a separate database (nexus_test_migrations)
-- Tests needing multiple connections use direct_db fixture
-- Auth tests use authenticated_client with test JWT tokens
-
-Environment Setup:
-- Test environment variables are configured BEFORE any application imports
-- This ensures Settings validation passes without requiring external configuration
-- Tests use mock verifiers for JWT validation, not real Supabase endpoints
-"""
+from __future__ import annotations
 
 import os
 import sys
@@ -18,324 +8,124 @@ from collections.abc import Generator
 from pathlib import Path
 from uuid import UUID, uuid4
 
-# Configure test environment BEFORE any imports that load Settings.
-# These values are placeholders - tests use MockJwtVerifier, not real JWKS.
-if not os.environ.get("NEXUS_ENV"):
-    os.environ["NEXUS_ENV"] = "test"
-if not os.environ.get("DATABASE_URL"):
-    os.environ["DATABASE_URL"] = "postgresql+psycopg://postgres:postgres@localhost:5432/nexus_test"
-if not os.environ.get("SUPABASE_JWKS_URL"):
-    os.environ["SUPABASE_JWKS_URL"] = "http://localhost:54321/auth/v1/.well-known/jwks.json"
-if not os.environ.get("SUPABASE_ISSUER"):
-    os.environ["SUPABASE_ISSUER"] = "http://localhost:54321/auth/v1"
-if not os.environ.get("SUPABASE_AUDIENCES"):
-    os.environ["SUPABASE_AUDIENCES"] = "authenticated"
-# Podcast env must be unconditionally set for tests — .env may contain
-# PODCASTS_ENABLED=false which Make loads before pytest starts.
-os.environ["PODCASTS_ENABLED"] = "true"
-os.environ.setdefault("PODCAST_INDEX_API_KEY", "test-podcast-index-key")
-os.environ.setdefault("PODCAST_INDEX_API_SECRET", "test-podcast-index-secret")
-os.environ.setdefault("YOUTUBE_DATA_API_KEY", "test-youtube-data-key")
-os.environ.setdefault("X_API_BEARER_TOKEN", "test-x-api-bearer-token")
+_REPO_ROOT = Path(__file__).parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
-# Add repo root to sys.path for importing top-level packages (e.g., apps)
-_repo_root = Path(__file__).parent.parent.parent
-if str(_repo_root) not in sys.path:
-    sys.path.insert(0, str(_repo_root))
+# Spawned Python proof inherits the same network boundary through sitecustomize.
+_TESTKIT_PATH = Path(__file__).parent / "testkit"
+os.environ["NEXUS_TEST_DENY_EXTERNAL_NETWORK"] = "1"
+os.environ["PYTHONPATH"] = os.pathsep.join(
+    (
+        str(_TESTKIT_PATH),
+        *(part for part in os.environ.get("PYTHONPATH", "").split(os.pathsep) if part),
+    )
+)
+
+from tests.testkit.network import install_network_guard
+
+_restore_collection_network = install_network_guard()
 
 import pytest
-import structlog
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, create_engine, text
+from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session
 
-from nexus.config import clear_settings_cache
-from nexus.db.session import create_session_factory
-from nexus.logging import configure_logging
-from nexus.services.bootstrap import ensure_user_and_default_library
-from tests.helpers import create_test_user_id
-from tests.support.mock_verifier import MockJwtVerifier
-from tests.utils.db import DirectSessionManager, TestDatabaseManager
-
-configure_logging()
+from tests.testkit.auth import StaticTokenVerifier, UserRecord
+from tests.testkit.database import require_test_database_url
 
 
-def _create_app(**kwargs):
-    try:
-        from nexus.app import create_app
-    except ImportError as exc:
-        pytest.fail(f"FastAPI app failed to import: {exc}")
-    return create_app(**kwargs)
+@pytest.fixture(autouse=True)
+def deny_external_network(
+    request: pytest.FixtureRequest, pytestconfig: pytest.Config
+) -> Generator[None, None, None]:
+    """Allow external sockets only for an explicitly enabled hosted proof."""
+    global _restore_collection_network
+    hosted = Path(request.node.path).is_relative_to(Path(pytestconfig.rootpath) / "tests/hosted")
+    force_enabled = bool(pytestconfig.getoption("force_enable_socket"))
+    if force_enabled:
+        if not hosted:
+            pytest.fail("--force-enable-socket is restricted to tests/hosted")
+        inherited = os.environ.pop("NEXUS_TEST_DENY_EXTERNAL_NETWORK", None)
+        _restore_collection_network()
+        yield
+        _restore_collection_network = install_network_guard()
+        if inherited is not None:
+            os.environ["NEXUS_TEST_DENY_EXTERNAL_NETWORK"] = inherited
+        return
+    if hosted:
+        pytest.fail("tests/hosted requires the explicit --force-enable-socket capability")
 
-
-def get_test_database_url() -> str:
-    """Get the test database URL from environment.
-
-    Raises:
-        ValueError: If DATABASE_URL is not set.
-    """
-    url = os.environ.get("DATABASE_URL")
-    if not url:
-        pytest.fail(
-            "DATABASE_URL environment variable must be set for tests. "
-            "Example: DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/nexus_test"
-        )
-    return url
+    restore = install_network_guard()
+    yield
+    restore()
 
 
 @pytest.fixture(scope="session")
 def engine() -> Generator[Engine, None, None]:
-    """Create a database engine for the test session.
-
-    This engine is shared across all tests in the session.
-    """
-    database_url = get_test_database_url()
-    engine = create_engine(database_url)
-    yield engine
-    engine.dispose()
-
-
-@pytest.fixture(scope="session")
-def verify_schema_exists(engine: Engine) -> Generator[None, None, None]:
-    """Verify database schema exists before running tests.
-
-    Fails fast with helpful message if migrations haven't been run.
-    This is a safety check, not a substitute for running migrations.
-    """
-    with engine.connect() as conn:
-        result = conn.execute(
-            text(
-                "SELECT EXISTS ("
-                "SELECT 1 FROM information_schema.tables "
-                "WHERE table_schema = 'public' AND table_name = 'users'"
-                ")"
-            )
-        )
-        schema_exists = result.scalar()
-
-    if not schema_exists:
-        pytest.fail(
-            "Database schema not found. Run migrations first:\n"
-            "  make migrate-test\n"
-            "Or run full setup:\n"
-            "  make setup"
-        )
-
-    yield
+    database = create_engine(require_test_database_url(os.environ), pool_pre_ping=True)
+    yield database
+    database.dispose()
 
 
 @pytest.fixture
-def log_sink() -> Generator[list[dict], None, None]:
-    """Capture structlog events into a list; structlog is restored afterwards.
-
-    Some modules bind module-level loggers at import (before this fixture
-    reconfigures), so cached proxies would bypass the capture config. Rebind them
-    to fresh, un-cached proxies for the test and restore originals on teardown.
-    """
-    import nexus.api.routes.stream as stream_routes
-    import nexus.services.chat_runs as chat_runs
-    import nexus.services.llm_ledger as llm_ledger
-
-    events: list[dict] = []
-    original_config = structlog.get_config()
-    original_chat_runs_logger = chat_runs.logger
-    original_ledger_logger = llm_ledger.logger
-    original_stream_logger = stream_routes.logger
-
-    def capture_processor(logger, method_name, event_dict):
-        events.append(event_dict.copy())
-        raise structlog.DropEvent
-
-    structlog.configure(
-        processors=[capture_processor],
-        wrapper_class=structlog.stdlib.BoundLogger,
-        cache_logger_on_first_use=False,
-    )
-    chat_runs.logger = structlog.get_logger("nexus.services.chat_runs")
-    llm_ledger.logger = structlog.get_logger("nexus.services.llm_ledger")
-    stream_routes.logger = structlog.get_logger("nexus.api.routes.stream")
-
-    yield events
-
-    chat_runs.logger = original_chat_runs_logger
-    llm_ledger.logger = original_ledger_logger
-    stream_routes.logger = original_stream_logger
-    structlog.configure(**original_config)
-
-
-@pytest.fixture
-def db_session(engine: Engine, verify_schema_exists: None) -> Generator[Session, None, None]:
-    """Provide a database session with savepoint isolation.
-
-    Each test gets a fresh session that is rolled back after the test,
-    ensuring no data persists between tests.
-
-    Note: Do not use this fixture for tests that need multiple independent
-    connections. Use direct_db instead.
-    """
-    with TestDatabaseManager(engine) as session:
+def db_session(engine: Engine) -> Generator[Session, None, None]:
+    """Contain service commits inside one outer transaction."""
+    connection = engine.connect()
+    outer_transaction = connection.begin()
+    session = Session(bind=connection, join_transaction_mode="create_savepoint")
+    try:
         yield session
+    finally:
+        session.close()
+        outer_transaction.rollback()
+        connection.close()
 
 
 @pytest.fixture
-def direct_db(
-    engine: Engine, verify_schema_exists: None
-) -> Generator[DirectSessionManager, None, None]:
-    """Provide direct database access without savepoint isolation.
+def test_user(db_session: Session) -> UserRecord:
+    from nexus.services.bootstrap import ensure_user_and_default_library
 
-    Use for tests that require multiple independent connections that must
-    see each other's committed data (e.g., testing race conditions,
-    partial state recovery, or connection pooling).
-
-    Data registered via register_cleanup() is automatically deleted after
-    the test in reverse order.
-
-    Example:
-        def test_something(self, direct_db):
-            user_id = uuid4()
-            direct_db.register_cleanup("users", "id", user_id)
-
-            with direct_db.session() as s:
-                s.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-                s.commit()
-    """
-    manager = DirectSessionManager(engine)
-    yield manager
-    manager.cleanup()
-
-
-@pytest.fixture
-def client() -> Generator[TestClient, None, None]:
-    """Provide a FastAPI test client without authentication.
-
-    This client does not have auth middleware, suitable for testing
-    public endpoints and basic functionality.
-    """
-    # Create app without auth middleware for basic tests
-    app = _create_app(skip_auth_middleware=True)
-    with TestClient(app) as client:
-        yield client
-
-
-@pytest.fixture
-def test_verifier() -> MockJwtVerifier:
-    """Provide a test token verifier."""
-    return MockJwtVerifier()
-
-
-def _create_authenticated_test_app(engine: Engine):
-    session_factory = create_session_factory(engine)
-
-    def bootstrap_callback(user_id: UUID, email: str | None = None) -> UUID:
-        db = session_factory()
-        try:
-            return ensure_user_and_default_library(db, user_id, email=email)
-        finally:
-            db.close()
-
-    from nexus.auth.middleware import AuthMiddleware
-
-    verifier = MockJwtVerifier()
-    # Installed through create_app's hook so the middleware ORDER matches
-    # production exactly: auth added after create_app would sit outermost,
-    # and (for one) private_reader_no_store would no longer stamp 401s.
-    app = _create_app(
-        install_auth_middleware=lambda asgi_app: asgi_app.add_middleware(
-            AuthMiddleware,
-            verifier=verifier,
-            requires_internal_header=False,
-            internal_secret=None,
-            bootstrap_callback=bootstrap_callback,
-        )
+    user_id = uuid4()
+    email = f"nexus-test-{user_id}@example.invalid"
+    return UserRecord(
+        id=user_id,
+        email=email,
+        default_library_id=ensure_user_and_default_library(db_session, user_id, email),
     )
-
-    from nexus.db.session import get_db
-
-    def _test_get_db():
-        db = session_factory()
-        try:
-            yield db
-        finally:
-            db.close()
-
-    app.dependency_overrides[get_db] = _test_get_db
-
-    from nexus.app import add_request_id_middleware
-
-    add_request_id_middleware(app, log_requests=False)
-
-    return app
-
-
-@pytest.fixture
-def authenticated_app(engine: Engine, verify_schema_exists: None):
-    """Provide a FastAPI app with auth + request-id middleware using test verifier.
-
-    Uses the test database engine for bootstrap operations.
-    Includes request-id middleware for consistent middleware stack.
-    """
-    return _create_authenticated_test_app(engine)
 
 
 @pytest.fixture
 def authenticated_client(
-    authenticated_app, db_session: Session
+    db_session: Session, test_user: UserRecord
 ) -> Generator[TestClient, None, None]:
-    """Provide a FastAPI test client with auth middleware and savepoint isolation.
+    """Run the real FastAPI stack with only external token verification controlled."""
+    from nexus.app import create_app
+    from nexus.auth.middleware import AuthMiddleware
+    from nexus.db.session import get_db
+    from nexus.services.bootstrap import ensure_user_and_default_library
 
-    Uses db_session for savepoint-based transaction rollback after each test.
-    Prefer this for tests that don't need multiple independent connections.
+    verifier = StaticTokenVerifier(test_user.id, test_user.email)
 
-    For tests using direct_db (multi-connection, manual cleanup), use auth_client instead.
-    """
-    with TestClient(authenticated_app) as client:
+    def bootstrap(user_id: UUID, email: str | None = None) -> UUID:
+        return ensure_user_and_default_library(db_session, user_id, email)
+
+    app = create_app(
+        install_auth_middleware=lambda application: application.add_middleware(
+            AuthMiddleware,
+            verifier=verifier,
+            requires_internal_header=False,
+            internal_secret=None,
+            bootstrap_callback=bootstrap,
+        )
+    )
+
+    def session() -> Generator[Session, None, None]:
+        yield db_session
+
+    app.dependency_overrides[get_db] = session
+    with TestClient(
+        app,
+        headers={"Authorization": f"Bearer {verifier.token}"},
+    ) as client:
         yield client
-
-
-@pytest.fixture
-def test_user_id() -> UUID:
-    """Generate a random UUID for a test user."""
-    return create_test_user_id()
-
-
-@pytest.fixture
-def bootstrapped_user(db_session: Session) -> UUID:
-    """Create a test user with default library, ready for service-layer tests.
-
-    Use this fixture when tests call service functions directly (not via API).
-    The user and their default library are created in the database.
-
-    For API-based tests, use e2e_client or authenticated_client instead,
-    which bootstrap users automatically via AuthMiddleware.
-    """
-    user_id = uuid4()
-    ensure_user_and_default_library(db_session, user_id)
-    return user_id
-
-
-@pytest.fixture
-def random_uuid() -> str:
-    """Generate a random UUID string for test data."""
-    return str(uuid4())
-
-
-@pytest.fixture
-def auth_client(engine: Engine, verify_schema_exists: None) -> Generator[TestClient, None, None]:
-    """Provide a FastAPI test client with auth + request-id middleware.
-
-    No savepoint isolation — tests using this fixture must register manual cleanup
-    via direct_db.register_cleanup(). Use for integration tests that need multiple
-    independent connections (direct_db).
-
-    For tests using db_session (auto-rollback), use authenticated_client instead.
-    """
-    with TestClient(_create_authenticated_test_app(engine)) as client:
-        yield client
-
-
-@pytest.fixture(autouse=True)
-def reset_settings_cache():
-    """Reset the settings cache before each test."""
-    clear_settings_cache()
-    yield
-    clear_settings_cache()

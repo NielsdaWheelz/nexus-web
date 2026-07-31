@@ -1,8 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { createElement } from "react";
 import type { ComponentType, ReactNode } from "react";
-import { afterEach } from "vitest";
-import { vi } from "vitest";
+import { afterEach, beforeEach, vi } from "vitest";
 
 vi.mock("next/image", () => ({
   __esModule: true,
@@ -53,6 +52,9 @@ vi.mock("@testing-library/react", async (importOriginal) => {
       children: ReactNode;
     }) {
       const wrapped = wrapper ? createElement(wrapper, null, children) : children;
+      // RenderEnvironmentProvider's required-children props make the
+      // createElement children argument type-incompatible.
+      // eslint-disable-next-line react/no-children-prop
       return createElement(
         RenderEnvironmentProvider,
         { value: defaultRenderEnvironment, children: wrapped },
@@ -84,6 +86,74 @@ vi.mock("@testing-library/react", async (importOriginal) => {
     renderHook,
   };
 });
+
+const HTTP_PROTOCOLS = new Set(["http:", "https:"]);
+const WEBSOCKET_PROTOCOLS = new Set(["ws:", "wss:"]);
+const NATIVE_FETCH = globalThis.fetch.bind(globalThis);
+const NATIVE_EVENT_SOURCE = globalThis.EventSource;
+const NATIVE_WEB_SOCKET = globalThis.WebSocket;
+
+function assertApplicationOrigin(
+  input: string | URL | Request,
+  protocols: ReadonlySet<string>,
+  boundary: string,
+) {
+  const url = new URL(
+    input instanceof Request ? input.url : String(input),
+    window.location.href,
+  );
+  const expected = new URL(window.location.origin);
+  if (WEBSOCKET_PROTOCOLS.has(url.protocol)) {
+    expected.protocol = expected.protocol === "https:" ? "wss:" : "ws:";
+  }
+  if (!protocols.has(url.protocol) || url.origin !== expected.origin) {
+    throw new Error(`Blocked external ${boundary} origin: ${url.origin}`);
+  }
+}
+
+function installApplicationNetworkGuards() {
+  vi.stubGlobal(
+    "fetch",
+    (input: RequestInfo | URL, init?: RequestInit) => {
+      assertApplicationOrigin(input, HTTP_PROTOCOLS, "fetch");
+      return NATIVE_FETCH(input, init);
+    },
+  );
+
+  vi.stubGlobal(
+    "EventSource",
+    new Proxy(NATIVE_EVENT_SOURCE, {
+      construct(target, args, newTarget) {
+        assertApplicationOrigin(
+          args[0] as string | URL,
+          HTTP_PROTOCOLS,
+          "EventSource",
+        );
+        return Reflect.construct(target, args, newTarget);
+      },
+    }),
+  );
+
+  vi.stubGlobal(
+    "WebSocket",
+    new Proxy(NATIVE_WEB_SOCKET, {
+      construct(target, args, newTarget) {
+        assertApplicationOrigin(
+          args[0] as string | URL,
+          WEBSOCKET_PROTOCOLS,
+          "WebSocket",
+        );
+        return Reflect.construct(target, args, newTarget);
+      },
+    }),
+  );
+}
+
+// These guards cover application calls made through this JavaScript global.
+// They are not transport isolation: Chromium subresources, workers, extensions,
+// and a saved native reference need the Playwright/runtime network boundary.
+installApplicationNetworkGuards();
+beforeEach(installApplicationNetworkGuards);
 
 function queryMatchesViewport(query: string): boolean {
   const maxWidth = query.match(/\(\s*max-width\s*:\s*(\d+)px\s*\)/);

@@ -149,33 +149,19 @@ a second apparatus truth table.
   `https://www.nasa.gov/wp-content/uploads/2023/07/ep239_crew-4.mp3`,
   `The Crew-4 Astronauts`, `International Space Station`
 
-## nasa-hwhap-feed.xml
-
-- Source URL: https://www.nasa.gov/podcasts/houston-we-have-a-podcast/feed/
-- Source title: Houston We Have a Podcast
-- Publisher: NASA
-- License: NASA public web content; no copyright asserted unless noted by NASA.
-- Fixture kind: active captured podcast RSS feed used by the seed
-- Byte length: 1397
-- SHA-256: `c59f38a211d707d8c2c218c3ce425f5d7c843ad0949309b14760263991e91043`
-- Expected needles: `nasa-hwhap-crew4`,
-  `https://www.nasa.gov/wp-content/uploads/2023/07/ep239_crew-4.mp3`,
-  `The Crew-4 Astronauts`, `Crew-4 mission`
-
 ## nasa-hwhap-feed-v1.xml and nasa-hwhap-feed-v2.xml
 
-- Source/provenance: deterministic variants of the NASA feed fixture above.
+- Source URL: https://www.nasa.gov/podcasts/houston-we-have-a-podcast/feed/
+- Source/provenance: pinned NASA feed plus one deterministic refreshed variant.
 - Fixture kind: pinned before/after RSS snapshots for the Podcast refresh
-  real-stack acceptance journey.
+  real-stack acceptance journey; v1 is the deterministic fixture-provider feed.
 - v1 byte length: 1397
 - v1 SHA-256: `c59f38a211d707d8c2c218c3ce425f5d7c843ad0949309b14760263991e91043`
 - v2 byte length: 2222
 - v2 SHA-256: `cccfc5c9b58b52c88e995a93453b5e7171aea10a9fdcfad79d0746c0e946cdf7`
 - Expected transition: v2 adds exactly one synthetic fixture episode,
   `Artemis II: Ready to Fly`, with GUID `nexus-e2e-artemis-ii-ready`.
-- Runtime rule: Playwright copies the fixture directory to
-  `e2e/.seed/real-media-runtime`; the journey swaps only that working copy and
-  restores v1. Source fixtures are immutable during the test.
+- Source fixtures are immutable during tests.
 
 ## frz-1784-01-03-scanned.pdf
 
