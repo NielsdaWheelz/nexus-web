@@ -34,4 +34,26 @@ describe("isInteractiveTarget", () => {
     expect(isInteractiveTarget(document.createTextNode("text"))).toBe(false);
     expect(isInteractiveTarget(null)).toBe(false);
   });
+
+  it("stops at an exclusive focusable boundary", () => {
+    render(
+      <div data-testid="scrollport" tabIndex={0}>
+        <span>Blank descendant</span>
+        <button type="button">
+          <span>Interactive descendant</span>
+        </button>
+      </div>,
+    );
+    const boundary = screen.getByTestId("scrollport");
+
+    expect(
+      isInteractiveTarget(screen.getByText("Blank descendant"), boundary),
+    ).toBe(false);
+    expect(
+      isInteractiveTarget(
+        screen.getByText("Interactive descendant"),
+        boundary,
+      ),
+    ).toBe(true);
+  });
 });

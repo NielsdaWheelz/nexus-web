@@ -650,7 +650,7 @@ export function MobileChromeProvider({ children }: { children: ReactNode }) {
           !primaryUnmodifiedClick(event) ||
           event.defaultPrevented ||
           hasLiveSelection() ||
-          isInteractiveTarget(event.target) ||
+          isInteractiveTarget(event.target, scrollport) ||
           closestElement(event.target, READER_TAP_HANDLED)
         ) {
           return;
@@ -668,7 +668,7 @@ export function MobileChromeProvider({ children }: { children: ReactNode }) {
           if (
             windowEvent.defaultPrevented ||
             hasLiveSelection() ||
-            isInteractiveTarget(windowEvent.target) ||
+            isInteractiveTarget(windowEvent.target, scrollport) ||
             closestElement(windowEvent.target, READER_TAP_HANDLED)
           ) {
             return;

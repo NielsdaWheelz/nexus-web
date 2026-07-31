@@ -11,7 +11,7 @@
  */
 import { useRef, useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { page, userEvent } from "vitest/browser";
 import { absent } from "@/lib/api/presence";
 import type { LibraryPlacementSession } from "@/lib/libraries/placementController";
@@ -19,6 +19,7 @@ import { MobileViewportProvider } from "@/lib/mobileViewport/MobileViewportProvi
 import {
   MobileChromeProvider,
   useMobileChrome,
+  useMobileChromeReaderScrollport,
 } from "@/lib/workspace/mobileChrome";
 import LibraryPlacementOverlay from "./LibraryPlacementOverlay";
 
@@ -71,6 +72,22 @@ function Harness() {
 function MotionPhase() {
   const { motionPhase } = useMobileChrome();
   return <output data-testid="mobile-chrome-phase">{motionPhase.kind}</output>;
+}
+
+function ReaderScrollport() {
+  const registerScrollport = useMobileChromeReaderScrollport<HTMLDivElement>({
+    sourceKey: "library-placement-test",
+    enabled: true,
+  });
+  return (
+    <div
+      ref={registerScrollport}
+      data-testid="reader-scrollport"
+      style={{ height: 100, overflowY: "auto" }}
+    >
+      <div style={{ height: 1_000 }} />
+    </div>
+  );
 }
 
 describe("LibraryPlacementOverlay", () => {
@@ -168,23 +185,36 @@ describe("LibraryPlacementOverlay", () => {
       <MobileChromeProvider>
         <MobileViewportProvider>
           <MotionPhase />
+          <ReaderScrollport />
           <Harness />
         </MobileViewportProvider>
       </MobileChromeProvider>,
     );
 
-    await user.click(screen.getByRole("button", { name: "Open libraries" }));
+    const phase = screen.getByTestId("mobile-chrome-phase");
+    const scrollport = screen.getByTestId("reader-scrollport");
+    scrollport.scrollTop = 9;
+    fireEvent.scroll(scrollport);
+    scrollport.scrollTop = 100;
+    fireEvent.scroll(scrollport);
+    await waitFor(() => expect(phase).toHaveTextContent("Hidden"));
+
+    const trigger = screen.getByRole("button", { name: "Open libraries" });
+    await user.click(trigger);
     await waitFor(() =>
-      expect(screen.getByTestId("mobile-chrome-phase")).toHaveTextContent(
-        "Pinned",
-      ),
+      expect(phase).toHaveTextContent("Pinned"),
     );
 
     await user.keyboard("{Escape}");
     await waitFor(() =>
-      expect(screen.getByTestId("mobile-chrome-phase")).toHaveTextContent(
-        "Visible",
-      ),
+      expect(phase).toHaveTextContent("Visible"),
     );
+    await waitFor(() => expect(trigger).toHaveFocus());
+
+    scrollport.scrollTop = 108;
+    fireEvent.scroll(scrollport);
+    scrollport.scrollTop = 116;
+    fireEvent.scroll(scrollport);
+    await waitFor(() => expect(phase).toHaveTextContent("Tracking"));
   });
 });

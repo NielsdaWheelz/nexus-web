@@ -305,6 +305,16 @@ async function expectTrustedForwardRetreat(
       sample.appBar.progress,
       `collapse progress must be monotonic; samples=${JSON.stringify(samples)}`,
     ).toBeGreaterThanOrEqual(prior.appBar.progress - 0.01);
+    expect(
+      Math.abs(sample.scrollport.top - before.scrollport.top),
+      "chrome motion must not move the reader viewport top",
+    ).toBeLessThan(1);
+    expect(
+      Math.abs(sample.scrollport.bottom - before.scrollport.bottom),
+      "chrome motion must not move the reader viewport bottom",
+    ).toBeLessThan(1);
+    expect(sample.scrollport.clientHeight).toBe(before.scrollport.clientHeight);
+    expect(sample.href).toBe(before.href);
   }
   for (const sample of tracking) {
     const forwardDistance = sample.scrollTop - before.scrollTop;
@@ -374,6 +384,7 @@ async function expectTrustedForwardRetreat(
 async function expectTrustedReverseReveal(
   page: Page,
   scrollport: Locator,
+  priorReverseDistance: number,
 ): Promise<void> {
   const hidden = await readChromeSample(page, scrollport);
   const samples = await dispatchTouchDrag(page, scrollport, 128, 64);
@@ -396,24 +407,12 @@ async function expectTrustedReverseReveal(
       `reveal progress must be monotonic; samples=${JSON.stringify(samples)}`,
     ).toBeLessThanOrEqual(prior.appBar.progress + 0.01);
   }
-  const deadZoneSamples = reverseSamples.filter((sample) => {
-    const reverseDistance = hidden.scrollTop - sample.scrollTop;
-    return reverseDistance > 0 && reverseDistance <= 8;
-  });
-  expect(
-    deadZoneSamples.length,
-    `trusted reverse input must sample the 8px dead zone; samples=${JSON.stringify(samples)}`,
-  ).toBeGreaterThan(0);
-  for (const sample of deadZoneSamples) {
-    expect(sample.appBar.progress).toBeCloseTo(1, 2);
-    expect(sample.paneToolbar.progress).toBeCloseTo(1, 2);
-    expect(sample.nexus.progress).toBeCloseTo(1, 2);
-  }
   for (const sample of reverseSamples.filter(
     (candidate) =>
       candidate.appBar.progress > 0.02 && candidate.appBar.progress < 0.98,
   )) {
-    const reverseDistance = hidden.scrollTop - sample.scrollTop;
+    const reverseDistance =
+      priorReverseDistance + hidden.scrollTop - sample.scrollTop;
     const expectedProgress =
       1 - Math.min(1, Math.max(0, (reverseDistance - 8) / 64));
     expect(
@@ -429,7 +428,9 @@ async function expectTrustedReverseReveal(
     `expected chrome to reveal after the reversal dead zone; samples=${JSON.stringify(samples)}`,
   ).toBeDefined();
   expect(
-    hidden.scrollTop - (firstRevealedSample?.scrollTop ?? hidden.scrollTop),
+    priorReverseDistance +
+      hidden.scrollTop -
+      (firstRevealedSample?.scrollTop ?? hidden.scrollTop),
   ).toBeGreaterThan(8);
   const visible = await expectChromePhase(page, scrollport, "Visible");
   expect(visible.appBar.progress).toBe(0);
@@ -441,38 +442,84 @@ async function expectTrustedReverseReveal(
   }
 }
 
-async function expectTrustedSettleInterruption(
+async function expectTrustedReverseDeadZone(
+  page: Page,
+  scrollport: Locator,
+): Promise<number> {
+  const before = await readChromeSample(page, scrollport);
+  const box = await scrollport.boundingBox();
+  if (!box) {
+    throw new Error("Reader scrollport has no visible bounding box.");
+  }
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.wheel(0, -4);
+  await expect
+    .poll(() => scrollport.evaluate((element) => element.scrollTop))
+    .toBeLessThan(before.scrollTop);
+  const sample = await readChromeSample(page, scrollport);
+  const reverseDistance = before.scrollTop - sample.scrollTop;
+  expect(
+    reverseDistance,
+    `trusted wheel must produce a measurable delta inside the 8px dead zone; before=${JSON.stringify(before)} sample=${JSON.stringify(sample)}`,
+  ).toBeGreaterThan(0);
+  expect(reverseDistance).toBeLessThanOrEqual(8);
+  expect(sample.appBar.phase).toBe("Hidden");
+  expect(sample.paneToolbar.phase).toBe("Hidden");
+  expect(sample.nexus.phase).toBe("Hidden");
+  expect(sample.appBar.progress).toBe(1);
+  expect(sample.paneToolbar.progress).toBe(1);
+  expect(sample.nexus.progress).toBe(1);
+  return reverseDistance;
+}
+
+async function expectTrustedWheelRecovery(
   page: Page,
   scrollport: Locator,
 ): Promise<void> {
-  const samples = await dispatchTouchDrag(page, scrollport, -32, 8);
-  expect(
-    samples.some(
-      (sample) =>
-        sample.appBar.progress > 0.05 && sample.appBar.progress < 0.95,
-    ),
-    `partial trusted drag must stop between endpoints; samples=${JSON.stringify(samples)}`,
-  ).toBe(true);
-
-  const settling = await expectChromePhase(page, scrollport, "Settling");
-  for (const surface of [
-    settling.appBar,
-    settling.paneToolbar,
-    settling.nexus,
-  ]) {
-    expect(surface.inert).toBe(true);
-    expect(surface.ariaHidden).toBe("true");
+  const hidden = await expectChromePhase(page, scrollport, "Hidden");
+  const box = await scrollport.boundingBox();
+  if (!box) {
+    throw new Error("Reader scrollport has no visible bounding box.");
   }
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.wheel(0, -96);
+  await expect
+    .poll(() => scrollport.evaluate((element) => element.scrollTop))
+    .toBeLessThan(hidden.scrollTop);
+  await expectChromePhase(page, scrollport, "Visible");
+}
 
+async function expectTrustedKeyboardTopRecovery(
+  page: Page,
+  scrollport: Locator,
+): Promise<void> {
+  const hidden = await expectChromePhase(page, scrollport, "Hidden");
+  expect(hidden.scrollTop).toBeGreaterThan(0);
+  await scrollport.press("Home");
+  await expect
+    .poll(() => scrollport.evaluate((element) => element.scrollTop))
+    .toBeLessThanOrEqual(1);
+  await expectChromePhase(page, scrollport, "Visible");
+}
+
+async function expectTrustedSettleLifecycle(
+  page: Page,
+  scrollport: Locator,
+): Promise<void> {
   await page.evaluate(() => {
     const auditWindow = window as typeof window & {
       __nexusMobileChromeTransitionAudit?: {
-        count: number;
+        runs: number;
+        ends: number;
+        cancels: number;
+        settlingAccessible: boolean;
         listener: EventListener;
       };
     };
     const priorAudit = auditWindow.__nexusMobileChromeTransitionAudit;
     if (priorAudit) {
+      document.removeEventListener("transitionrun", priorAudit.listener, true);
+      document.removeEventListener("transitionend", priorAudit.listener, true);
       document.removeEventListener(
         "transitioncancel",
         priorAudit.listener,
@@ -480,22 +527,124 @@ async function expectTrustedSettleInterruption(
       );
     }
     const audit = {
-      count: 0,
+      runs: 0,
+      ends: 0,
+      cancels: 0,
+      settlingAccessible: false,
       listener: ((event: TransitionEvent) => {
         if (
           event.propertyName === "--mobile-chrome-collapse" &&
           event.target instanceof HTMLElement &&
           event.target.matches("[data-mobile-chrome-phase]")
         ) {
-          audit.count += 1;
+          if (event.type === "transitionrun") {
+            audit.runs += 1;
+            const surfaces = [
+              document.querySelector("header[data-mobile-chrome-phase]"),
+              document.querySelector(
+                '[data-pane-id][data-active="true"] [data-testid="pane-shell-chrome"][data-mobile-chrome-phase]',
+              ),
+              document.querySelector(
+                'button[aria-label^="Open Nexus,"][data-mobile-chrome-phase]',
+              ),
+            ];
+            audit.settlingAccessible =
+              surfaces.every(
+                (surface) =>
+                  surface instanceof HTMLElement &&
+                  surface.dataset.mobileChromePhase === "Settling" &&
+                  surface.inert &&
+                  surface.getAttribute("aria-hidden") === "true",
+              );
+          } else if (event.type === "transitionend") {
+            audit.ends += 1;
+          } else if (event.type === "transitioncancel") {
+            audit.cancels += 1;
+          }
         }
       }) as EventListener,
     };
     auditWindow.__nexusMobileChromeTransitionAudit = audit;
+    document.addEventListener("transitionrun", audit.listener, true);
+    document.addEventListener("transitionend", audit.listener, true);
     document.addEventListener("transitioncancel", audit.listener, true);
   });
 
   try {
+    const resetAudit = () =>
+      page.evaluate(() => {
+        const auditWindow = window as typeof window & {
+          __nexusMobileChromeTransitionAudit?: {
+            runs: number;
+            ends: number;
+            cancels: number;
+            settlingAccessible: boolean;
+          };
+        };
+        const audit = auditWindow.__nexusMobileChromeTransitionAudit;
+        if (!audit) {
+          throw new Error("Mobile chrome transition audit is not installed.");
+        }
+        audit.runs = 0;
+        audit.ends = 0;
+        audit.cancels = 0;
+        audit.settlingAccessible = false;
+      });
+    const readAudit = () =>
+      page.evaluate(() => {
+        const auditWindow = window as typeof window & {
+          __nexusMobileChromeTransitionAudit?: {
+            runs: number;
+            ends: number;
+            cancels: number;
+            settlingAccessible: boolean;
+          };
+        };
+        const audit = auditWindow.__nexusMobileChromeTransitionAudit;
+        if (!audit) {
+          throw new Error("Mobile chrome transition audit is not installed.");
+        }
+        return {
+          runs: audit.runs,
+          ends: audit.ends,
+          cancels: audit.cancels,
+          settlingAccessible: audit.settlingAccessible,
+        };
+      });
+    const waitForTransitionRun = async () => {
+      const handle = await page.waitForFunction(
+        () => {
+          const auditWindow = window as typeof window & {
+            __nexusMobileChromeTransitionAudit?: { runs: number };
+          };
+          return (
+            (auditWindow.__nexusMobileChromeTransitionAudit?.runs ?? 0) > 0
+          );
+        },
+        undefined,
+        { polling: "raf", timeout: 1_000 },
+      );
+      await handle.dispose();
+    };
+
+    await resetAudit();
+    const interruptedSamples = await dispatchTouchDrag(
+      page,
+      scrollport,
+      -32,
+      8,
+    );
+    expect(
+      interruptedSamples.some(
+        (sample) =>
+          sample.appBar.progress > 0.05 && sample.appBar.progress < 0.95,
+      ),
+      `partial trusted drag must stop between endpoints; samples=${JSON.stringify(interruptedSamples)}`,
+    ).toBe(true);
+    await waitForTransitionRun();
+    const interruptedAudit = await readAudit();
+    expect(interruptedAudit.runs).toBeGreaterThan(0);
+    expect(interruptedAudit.settlingAccessible).toBe(true);
     await dispatchTouchDrag(page, scrollport, 64, 8);
     const visible = await expectChromePhase(page, scrollport, "Visible");
     for (const surface of [
@@ -507,15 +656,29 @@ async function expectTrustedSettleInterruption(
       expect(surface.ariaHidden).toBeNull();
     }
     await expect
-      .poll(() =>
-        page.evaluate(() => {
-          const auditWindow = window as typeof window & {
-            __nexusMobileChromeTransitionAudit?: { count: number };
-          };
-          return auditWindow.__nexusMobileChromeTransitionAudit?.count ?? 0;
-        }),
-      )
+      .poll(async () => (await readAudit()).cancels)
       .toBeGreaterThan(0);
+
+    await resetAudit();
+    const completedSamples = await dispatchTouchDrag(
+      page,
+      scrollport,
+      -32,
+      8,
+    );
+    expect(
+      completedSamples.some(
+        (sample) =>
+          sample.appBar.progress > 0.05 && sample.appBar.progress < 0.95,
+      ),
+      `second partial trusted drag must stop between endpoints; samples=${JSON.stringify(completedSamples)}`,
+    ).toBe(true);
+    await waitForTransitionRun();
+    await expectChromePhase(page, scrollport, "Visible");
+    await expect
+      .poll(async () => (await readAudit()).ends)
+      .toBeGreaterThan(0);
+    expect(await readAudit()).toMatchObject({ settlingAccessible: true });
   } finally {
     await page.evaluate(() => {
       const auditWindow = window as typeof window & {
@@ -525,6 +688,8 @@ async function expectTrustedSettleInterruption(
       };
       const audit = auditWindow.__nexusMobileChromeTransitionAudit;
       if (audit) {
+        document.removeEventListener("transitionrun", audit.listener, true);
+        document.removeEventListener("transitionend", audit.listener, true);
         document.removeEventListener("transitioncancel", audit.listener, true);
       }
       delete auditWindow.__nexusMobileChromeTransitionAudit;
@@ -598,10 +763,15 @@ async function expectBlankTapReveal(
             continue;
           }
           const target = document.elementFromPoint(rect.left + x, rect.top + y);
+          const interactive = target
+            ? target.closest(interactiveTargetSelector)
+            : null;
           if (
             !target ||
             !element.contains(target) ||
-            target.closest(interactiveTargetSelector) ||
+            (interactive !== null &&
+              interactive !== element &&
+              element.contains(interactive)) ||
             target.closest("[data-reader-tap-handled='true']") ||
             target.closest("[data-mobile-chrome-phase]")
           ) {
@@ -780,10 +950,22 @@ async function expectFocusOnVisibleChromeOrLandmark(page: Page): Promise<void> {
         const visibleChrome = active.closest(
           '[data-mobile-chrome-phase="Visible"],[data-mobile-chrome-phase="Pinned"]',
         );
+        const isFocusableCommand = active.matches(
+          "button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),summary,textarea:not(:disabled),[contenteditable],[role='button'],[role='link'],[tabindex]:not([tabindex='-1'])",
+        );
+        const isGlobalChrome =
+          visibleChrome?.matches("header[data-mobile-chrome-phase]") === true ||
+          visibleChrome?.matches(
+            'button[aria-label^="Open Nexus,"][data-mobile-chrome-phase]',
+          ) === true;
+        const isActivePaneChrome =
+          visibleChrome !== null && activePane.contains(visibleChrome);
         return {
           valid:
-            (landmark !== null && activePane.contains(landmark)) ||
-            visibleChrome !== null,
+            (active === landmark && activePane.contains(landmark)) ||
+            (isFocusableCommand &&
+              visibleChrome !== null &&
+              (isGlobalChrome || isActivePaneChrome)),
           active: active.outerHTML.slice(0, 500),
         };
       }),
@@ -871,9 +1053,6 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
       }
 
       await expectTrustedForwardRetreat(page, scrollport);
-      if (format.name === "Web") {
-        await expectTabSkipsMovingChrome(page, scrollport);
-      }
       await expect(page.getByRole("banner")).toHaveCount(0);
       await expect(
         page.getByRole("button", { name: /^Open Nexus,/ }),
@@ -883,14 +1062,27 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
           pane.getByRole("button", { name: format.toolbarControlName }),
         ).toHaveCount(0);
       }
-      await expectTrustedReverseReveal(page, scrollport);
+      const trustedDeadZone = await expectTrustedReverseDeadZone(
+        page,
+        scrollport,
+      );
+      await expectTrustedReverseReveal(page, scrollport, trustedDeadZone);
 
+      if (format.name === "Web") {
+        await expectTrustedForwardRetreat(page, scrollport);
+        await expectTrustedWheelRecovery(page, scrollport);
+        await expectTrustedForwardRetreat(page, scrollport);
+        await expectTrustedKeyboardTopRecovery(page, scrollport);
+      }
       await expectTrustedForwardRetreat(page, scrollport);
+      if (format.name === "Web") {
+        await expectTabSkipsMovingChrome(page, scrollport);
+      }
       await expectBlankTapReveal(page, scrollport);
 
       if (format.name === "Web") {
         const article = readSeed<ArticleSeed>(format.seedFile);
-        await expectTrustedSettleInterruption(page, scrollport);
+        await expectTrustedSettleLifecycle(page, scrollport);
         await expectTrustedForwardRetreat(page, scrollport);
         const readingOrigin = await scrollport.evaluate(
           (element) => element.scrollTop,

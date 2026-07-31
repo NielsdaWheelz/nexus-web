@@ -163,7 +163,12 @@ function ReaderScrollport({
     [chromeRef, prepareRef],
   );
   return (
-    <div key={nodeIdentity} ref={ref} data-testid="reader-scrollport">
+    <div
+      key={nodeIdentity}
+      ref={ref}
+      data-testid="reader-scrollport"
+      tabIndex={0}
+    >
       <span
         data-testid="reader-geometry-content"
         style={
@@ -954,7 +959,7 @@ describe("MobileChromeProvider", () => {
     expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
   });
 
-  it("reveals only a window-bubbled blank-canvas candidate", () => {
+  it("reveals a blank descendant inside a focusable scrollport only after window bubbling", () => {
     renderInEnvironment(
       <MobileChromeProvider>
         <Harness />
@@ -1096,5 +1101,40 @@ describe("MobileChromeProvider", () => {
 
     expect(surfaceRenders.current).toBe(trackingSurfaceRenders);
     expect(readerRenders.current).toBe(trackingReaderRenders);
+  });
+
+  it("coalesces same-frame tracking samples into one progress write per registered surface", () => {
+    renderInEnvironment(
+      <MobileChromeProvider>
+        <Harness />
+      </MobileChromeProvider>,
+    );
+    flushFrame();
+    const writeSpies = (
+      ["AppBar", "PaneToolbar", "NexusControl"] as const
+    ).map((role) => {
+      const surface = screen.getByTestId(role);
+      const spy = vi.spyOn(surface.style, "setProperty");
+      spy.mockClear();
+      return { role, spy };
+    });
+
+    fireEvent.scroll(setReaderTop(116));
+    fireEvent.scroll(setReaderTop(132));
+    fireEvent.scroll(setReaderTop(140));
+    fireEvent.scroll(setReaderTop(148));
+
+    expect(screen.getByTestId("phase")).toHaveTextContent("Tracking");
+    for (const { spy } of writeSpies) {
+      expect(spy).not.toHaveBeenCalled();
+    }
+
+    flushFrame();
+
+    for (const { role, spy } of writeSpies) {
+      expect(spy).toHaveBeenCalledOnce();
+      expect(spy).toHaveBeenCalledWith(COLLAPSE_PROPERTY, "0.625");
+      expect(progress(role)).toBe("0.625");
+    }
   });
 });
