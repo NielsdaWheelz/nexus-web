@@ -312,6 +312,22 @@ describe("WorkspaceStoreProvider", () => {
     window.history.replaceState({}, "", "/libraries");
   });
 
+  it("preserves state identity when activating the already-active pane", () => {
+    const initialState = workspaceState({
+      primaryPanes: [pane("pane-1", "/libraries")],
+    });
+    const { snapshots, workspace } = renderSeeded(initialState, "/libraries");
+    const committedState = workspace().state;
+    const renderCount = snapshots.length;
+
+    act(() => {
+      workspace().activatePane("pane-1");
+    });
+
+    expect(workspace().state).toBe(committedState);
+    expect(snapshots).toHaveLength(renderCount);
+  });
+
   it("serializes synchronous creations at the pane limit without eviction", async () => {
     const { workspace } = renderSeeded(
       workspaceState({

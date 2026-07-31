@@ -154,6 +154,7 @@ function workspaceReducer(
     case "activate_pane": {
       const panes = getWorkspacePrimaryPanes(state);
       if (
+        state.activePrimaryPaneId === action.paneId ||
         !panes.some((p) => p.id === action.paneId && p.visibility === "visible")
       ) {
         return state;
