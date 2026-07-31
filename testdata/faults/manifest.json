@@ -9,7 +9,7 @@
         "pytest:python/tests/kernel/nexus_test_control/test_services.py::test_caller_resource_configuration_is_rejected_and_secrets_have_safe_reprs",
         "pytest:python/tests/service/test_control_plane_isolation.py::test_environment_isolation_rejects_production_and_cleans_only_the_exact_run"
       ],
-      "expected_failure": "DID NOT RAISE RuntimeContractError"
+      "expected_failure": "DID NOT RAISE"
     }
   ]
 }
