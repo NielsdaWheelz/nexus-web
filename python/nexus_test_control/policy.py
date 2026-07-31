@@ -24,6 +24,8 @@ _OWNED_MODULE_PREFIXES = ("nexus", "nexus_test_control")
 _RAW_SQL_SETUP = re.compile(r"^\s*(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE)\b", re.I)
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+_MARKDOWN_LINK = re.compile(r"(?<!!)\[[^\]\n]+\]\(([^)\n]+)\)")
+_URI_SCHEME = re.compile(r"[a-z][a-z0-9+.-]*:", re.I)
 _REQUIRED_JOURNEY_IDS = frozenset({"nexus-search-open-restore"})
 _SECRET = re.compile(
     rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"
@@ -449,10 +451,39 @@ def repository_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
             )
 
     for relative in _NORMATIVE_PATHS:
-        if not (repo_root / relative).is_file():
+        normative_path = repo_root / relative
+        if not normative_path.is_file():
             violations.append(
                 PolicyViolation("repository-normative-link", relative, "normative owner is missing")
             )
+            continue
+        normative_text = normative_path.read_text(encoding="utf-8")
+        for match in _MARKDOWN_LINK.finditer(normative_text):
+            raw_target = match.group(1).strip()
+            if raw_target.startswith("<") and ">" in raw_target:
+                target = raw_target[1 : raw_target.index(">")]
+            else:
+                target = raw_target.split(maxsplit=1)[0]
+            if not target or target.startswith("#") or _URI_SCHEME.match(target):
+                continue
+            local_target = target.split("#", 1)[0]
+            resolved = (normative_path.parent / local_target).resolve(strict=False)
+            try:
+                resolved.relative_to(repo_root.resolve(strict=True))
+            except ValueError:
+                exists = False
+            else:
+                exists = resolved.exists()
+            if not exists:
+                line = normative_text[: match.start()].count("\n") + 1
+                violations.append(
+                    PolicyViolation(
+                        "repository-normative-link",
+                        relative,
+                        f"normative link target does not exist: {target}",
+                        line,
+                    )
+                )
     for relative in _RETIRED_TEST_PATHS:
         if (repo_root / relative).exists():
             violations.append(

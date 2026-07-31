@@ -228,6 +228,20 @@ def test_repository_guard_rejects_missing_normative_owner(tmp_path: Path) -> Non
     assert "repository-normative-link" in _rules(repository_violations(tmp_path))
 
 
+def test_repository_guard_rejects_broken_normative_link(tmp_path: Path) -> None:
+    _minimal_repository(tmp_path)
+    _write(tmp_path, "docs/rules/timing.md", "[Missing](does-not-exist.md)\n")
+
+    violations = repository_violations(tmp_path)
+
+    assert any(
+        violation.rule == "repository-normative-link"
+        and violation.path == "docs/rules/timing.md"
+        and violation.line == 1
+        for violation in violations
+    )
+
+
 def _complete_proof_repository(root: Path) -> dict[str, Any]:
     risks: list[dict[str, Any]] = []
     risk_ids = sorted(risk.value for risk in PRIORITY_RISK_FLOOR)
