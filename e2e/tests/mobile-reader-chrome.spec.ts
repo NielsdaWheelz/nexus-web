@@ -24,6 +24,7 @@ interface MediaSeed {
 }
 
 interface ArticleSeed extends MediaSeed {
+  quote_highlight_id: string;
   focus_exact: string;
 }
 
@@ -599,6 +600,22 @@ async function dispatchTouchDrag(
       touchPoints: [],
     });
     touchActive = false;
+    const touchEndHandle = await page.waitForFunction(
+      () => {
+        const recorderWindow = window as typeof window & {
+          __nexusMobileChromeGestureRecorder?: {
+            touchEndAt: number | null;
+          };
+        };
+        return (
+          typeof recorderWindow.__nexusMobileChromeGestureRecorder
+            ?.touchEndAt === "number"
+        );
+      },
+      undefined,
+      { polling: "raf", timeout: 1_000 },
+    );
+    await touchEndHandle.dispose();
   } finally {
     try {
       if (touchActive && cdp) {
@@ -628,12 +645,23 @@ async function expectTrustedForwardRetreat(
   page: Page,
   scrollport: Locator,
   expectPaneToolbar = false,
+  requireFreshTopPin = false,
 ): Promise<void> {
   const before = await readChromeSample(page, scrollport);
   chromeSurfaces(before, expectPaneToolbar);
-  const recording = await dispatchTouchDrag(page, scrollport, -128, 24, {
-    expectPaneToolbar,
-  });
+  if (requireFreshTopPin) {
+    expect(
+      before.scrollTop,
+      `fresh top-pin proof must start at the real reader top; before=${JSON.stringify(before)}`,
+    ).toBeLessThanOrEqual(0.5);
+  }
+  const recording = await dispatchTouchDrag(
+    page,
+    scrollport,
+    -128,
+    requireFreshTopPin ? 64 : 24,
+    { expectPaneToolbar },
+  );
   const { samples, scrollEvents } = recording;
   const tracking = samples
     .map((sample, index) => ({ index, sample }))
@@ -653,6 +681,38 @@ async function expectTrustedForwardRetreat(
       expect(surface.phase).toBe("Visible");
       expect(surface.progress).toBe(0);
     }
+  }
+  if (requireFreshTopPin) {
+    const positiveTopPinEvents = topPinnedEvents.filter(
+      (sample) => sample.scrollTop > 0,
+    );
+    expect(
+      positiveTopPinEvents.length,
+      `fresh trusted input must produce a native sample inside the 8px top pin; recording=${JSON.stringify(recording)}`,
+    ).toBeGreaterThan(0);
+    const firstBeyondTopPinIndex = scrollEvents.findIndex(
+      (sample) => sample.scrollTop > 8,
+    );
+    expect(
+      firstBeyondTopPinIndex,
+      `fresh trusted input must cross the 8px top pin; recording=${JSON.stringify(recording)}`,
+    ).toBeGreaterThan(0);
+    const firstBeyondTopPin = scrollEvents[firstBeyondTopPinIndex];
+    const priorNativeSample = scrollEvents[firstBeyondTopPinIndex - 1];
+    if (!firstBeyondTopPin || !priorNativeSample) {
+      throw new Error("Fresh top-pin samples lost their ordering.");
+    }
+    expect(priorNativeSample.scrollTop).toBeLessThanOrEqual(8);
+    expect(
+      firstBeyondTopPin.appBar.progress,
+      `the first native sample beyond 8px must not lead exact 64px collapse travel; sample=${JSON.stringify(firstBeyondTopPin)}`,
+    ).toBeLessThanOrEqual((firstBeyondTopPin.scrollTop - 8) / 64 + 0.01);
+    expect(
+      firstBeyondTopPin.appBar.progress,
+      `the first native sample beyond 8px must not lag its prior native top-pin sample; prior=${JSON.stringify(priorNativeSample)} sample=${JSON.stringify(firstBeyondTopPin)}`,
+    ).toBeGreaterThanOrEqual(
+      Math.max(0, (priorNativeSample.scrollTop - 8) / 64) - 0.01,
+    );
   }
   const hasFreshTopPinBaseline = topPinnedEvents.length > 0;
   const forwardBaseline = topPinnedEvents.at(-1)?.scrollTop ?? before.scrollTop;
@@ -797,6 +857,52 @@ async function expectTrustedForwardRetreat(
     expect(surface.inert).toBe(true);
     expect(surface.ariaHidden).toBe("true");
   }
+}
+
+async function expectTrustedHandledAnnotationTap(
+  page: Page,
+  scrollport: Locator,
+  highlightId: string,
+): Promise<void> {
+  await expectChromePhase(page, scrollport, "Hidden");
+  const annotation = activeWorkspacePane(page)
+    .locator(`[data-active-highlight-ids~="${highlightId}"]`)
+    .first();
+  await expect(annotation).toBeVisible();
+  const box = await annotation.boundingBox();
+  if (!box) {
+    throw new Error(
+      "The seeded reader annotation has no visible bounding box.",
+    );
+  }
+  const href = page.url();
+  const beforeTop = await scrollport.evaluate((element) => element.scrollTop);
+
+  await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+
+  await expect(annotation).toHaveAttribute("data-reader-tap-handled", "true");
+  await expect(
+    page.getByRole("group", { name: "Highlight actions" }),
+  ).toBeVisible();
+  const visible = await expectChromePhase(page, scrollport, "Visible");
+  for (const surface of chromeSurfaces(visible)) {
+    expect(surface.progress).toBe(0);
+    expect(surface.inert).toBe(false);
+    expect(surface.ariaHidden).toBeNull();
+  }
+  expect(page.url()).toBe(href);
+  expect(
+    Math.abs(
+      (await scrollport.evaluate((element) => element.scrollTop)) - beforeTop,
+    ),
+  ).toBeLessThanOrEqual(1);
+
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("group", { name: "Highlight actions" }),
+  ).toHaveCount(0);
+  await expectChromePhase(page, scrollport, "Visible");
+  await expectTrustedForwardRetreat(page, scrollport);
 }
 
 async function expectTrustedReverseReveal(
@@ -948,8 +1054,11 @@ async function expectTrustedKeyboardTopRecovery(
 async function expectTrustedSettleLifecycle(
   page: Page,
   scrollport: Locator,
+  expectPaneToolbar: boolean,
+  proveInterruption = true,
 ): Promise<void> {
-  await page.evaluate(() => {
+  chromeSurfaces(await readChromeSample(page, scrollport), expectPaneToolbar);
+  await page.evaluate((requiresPaneToolbar) => {
     const auditWindow = window as typeof window & {
       __nexusMobileChromeTransitionAudit?: {
         runs: number;
@@ -1016,32 +1125,40 @@ async function expectTrustedSettleLifecycle(
         paneToolbar.getBoundingClientRect().height > 1
           ? paneToolbar
           : null;
+      const registrations = [
+        {
+          role: "AppBar" as const,
+          surface: appBar instanceof HTMLElement ? appBar : null,
+        },
+        ...(requiresPaneToolbar || presentPaneToolbar
+          ? [
+              {
+                role: "PaneToolbar" as const,
+                surface: presentPaneToolbar,
+              },
+            ]
+          : []),
+        {
+          role: "NexusControl" as const,
+          surface: nexus instanceof HTMLElement ? nexus : null,
+        },
+      ];
       if (
-        appBar instanceof HTMLElement &&
-        nexus instanceof HTMLElement &&
-        [
-          appBar,
-          ...(presentPaneToolbar ? [presentPaneToolbar] : []),
-          nexus,
-        ].every((surface) => surface.dataset.mobileChromePhase === "Settling")
+        registrations.some(
+          ({ surface }) => surface?.dataset.mobileChromePhase === "Settling",
+        )
       ) {
-        const surfaces = [
-          appBar,
-          ...(presentPaneToolbar ? [presentPaneToolbar] : []),
-          nexus,
-        ];
-        const accessibility = surfaces.map((surface, index) => ({
-          role: (presentPaneToolbar
-            ? ["AppBar", "PaneToolbar", "NexusControl"]
-            : ["AppBar", "NexusControl"])[index]! as
-            "AppBar" | "PaneToolbar" | "NexusControl",
-          phase: surface.dataset.mobileChromePhase ?? null,
-          inert: surface.inert,
-          ariaHidden: surface.getAttribute("aria-hidden"),
+        const accessibility = registrations.map(({ role, surface }) => ({
+          role,
+          phase: surface?.dataset.mobileChromePhase ?? null,
+          inert: surface?.inert ?? null,
+          ariaHidden: surface?.getAttribute("aria-hidden") ?? null,
         }));
         const accessible = accessibility.every(
-          ({ inert, ariaHidden }) => inert && ariaHidden === "true",
+          ({ phase, inert, ariaHidden }) =>
+            phase === "Settling" && inert === true && ariaHidden === "true",
         );
+        audit.settleFrames += 1;
         audit.allSettleFramesAccessible =
           audit.allSettleFramesAccessible && accessible;
         if (!accessible) {
@@ -1050,6 +1167,13 @@ async function expectTrustedSettleLifecycle(
             recordedAt: performance.now(),
             surfaces: accessibility,
           });
+        }
+        const surfaces = registrations.flatMap(({ surface }) =>
+          surface ? [surface] : [],
+        );
+        if (surfaces.length !== registrations.length) {
+          audit.frame = requestAnimationFrame(sampleSettleFrame);
+          return;
         }
         const computed = surfaces.map((surface) =>
           Number.parseFloat(
@@ -1067,8 +1191,10 @@ async function expectTrustedSettleLifecycle(
           computed.every(Number.isFinite) &&
           specified.every(Number.isFinite)
         ) {
-          const appBarRect = appBar.getBoundingClientRect();
-          const nexusWrapper = nexus.parentElement;
+          const appBarSurface = surfaces[0]!;
+          const nexusSurface = surfaces.at(-1)!;
+          const appBarRect = appBarSurface.getBoundingClientRect();
+          const nexusWrapper = nexusSurface.parentElement;
           if (!(nexusWrapper instanceof HTMLElement)) {
             throw new Error("Nexus has no stable geometry wrapper.");
           }
@@ -1088,7 +1214,6 @@ async function expectTrustedSettleLifecycle(
               )
             : 0;
           const nexusProgress = computed.at(-1)!;
-          audit.settleFrames += 1;
           audit.maxComputedSpread = Math.max(
             audit.maxComputedSpread,
             Math.max(...computed) - Math.min(...computed),
@@ -1099,10 +1224,12 @@ async function expectTrustedSettleLifecycle(
           );
           audit.maxTransformError = Math.max(
             audit.maxTransformError,
-            Math.abs(transformY(appBar) + computed[0]! * appBarRect.height),
+            Math.abs(
+              transformY(appBarSurface) + computed[0]! * appBarRect.height,
+            ),
             paneTransformError,
             Math.abs(
-              transformY(nexus) -
+              transformY(nexusSurface) -
                 nexusProgress * (window.innerHeight - nexusWrapperRect.top),
             ),
           );
@@ -1115,7 +1242,7 @@ async function expectTrustedSettleLifecycle(
     document.addEventListener("transitionend", audit.listener, true);
     document.addEventListener("transitioncancel", audit.listener, true);
     audit.frame = requestAnimationFrame(sampleSettleFrame);
-  });
+  }, expectPaneToolbar);
 
   try {
     const resetAudit = () =>
@@ -1225,6 +1352,7 @@ async function expectTrustedSettleLifecycle(
       scrollport,
       -32,
       8,
+      { expectPaneToolbar },
     );
     expect(
       interruptedSamples.some(
@@ -1233,6 +1361,19 @@ async function expectTrustedSettleLifecycle(
       ),
       `partial trusted drag must stop between endpoints; samples=${JSON.stringify(interruptedSamples)}`,
     ).toBe(true);
+    if (!proveInterruption) {
+      await waitForTransitionRun();
+      await waitForAnimationFrame(page);
+      await expectChromePhase(page, scrollport, "Visible", expectPaneToolbar);
+      await expect
+        .poll(async () => (await readAudit()).ends)
+        .toBeGreaterThan(0);
+      expectSynchronizedSettle(
+        await readAudit(),
+        "completed PaneToolbar settle",
+      );
+      return;
+    }
     const interruptionRecording = await dispatchTouchDrag(
       page,
       scrollport,
@@ -1240,6 +1381,7 @@ async function expectTrustedSettleLifecycle(
       4,
       {
         allowTransitionDuringTouch: true,
+        expectPaneToolbar,
         afterTouchStart: async () => {
           await waitForTransitionRun();
           await waitForAnimationFrame(page);
@@ -1277,7 +1419,7 @@ async function expectTrustedSettleLifecycle(
       `native scrolling must cancel the live CSS settle before touchend; recording=${JSON.stringify(interruptionRecording)}`,
     ).toBe(true);
     for (const sample of interruptionRecording.samples) {
-      for (const surface of chromeSurfaces(sample)) {
+      for (const surface of chromeSurfaces(sample, expectPaneToolbar)) {
         if (surface.phase !== "Tracking" && surface.phase !== "Settling") {
           continue;
         }
@@ -1291,8 +1433,13 @@ async function expectTrustedSettleLifecycle(
         ).toBe("true");
       }
     }
-    const visible = await expectChromePhase(page, scrollport, "Visible");
-    for (const surface of chromeSurfaces(visible)) {
+    const visible = await expectChromePhase(
+      page,
+      scrollport,
+      "Visible",
+      expectPaneToolbar,
+    );
+    for (const surface of chromeSurfaces(visible, expectPaneToolbar)) {
       expect(surface.inert).toBe(false);
       expect(surface.ariaHidden).toBeNull();
     }
@@ -1310,6 +1457,7 @@ async function expectTrustedSettleLifecycle(
       scrollport,
       -32,
       8,
+      { expectPaneToolbar },
     );
     expect(
       completedSamples.some(
@@ -1320,7 +1468,7 @@ async function expectTrustedSettleLifecycle(
     ).toBe(true);
     await waitForTransitionRun();
     await waitForAnimationFrame(page);
-    await expectChromePhase(page, scrollport, "Visible");
+    await expectChromePhase(page, scrollport, "Visible", expectPaneToolbar);
     await expect.poll(async () => (await readAudit()).ends).toBeGreaterThan(0);
     const completedAudit = await readAudit();
     expectSynchronizedSettle(completedAudit, "completed settle");
@@ -1374,8 +1522,7 @@ const INTERACTIVE_READER_TARGET = [
   "[role='treeitem']",
   "[tabindex]:not([tabindex='-1'])",
 ].join(",");
-const READER_TAP_REVEAL_SURFACE =
-  "[data-reader-tap-reveal-surface='true']";
+const READER_TAP_REVEAL_SURFACE = "[data-reader-tap-reveal-surface='true']";
 
 async function expectBlankTapReveal(
   page: Page,
@@ -1393,10 +1540,7 @@ async function expectBlankTapReveal(
   const dialogCount = await page.getByRole("dialog").count();
   await expect(scrollport).toBeVisible();
   const point = await scrollport.evaluate(
-    (
-      element,
-      { interactiveTargetSelector, revealSurfaceSelector },
-    ) => {
+    (element, { interactiveTargetSelector, revealSurfaceSelector }) => {
       if (!window.getSelection()?.isCollapsed) {
         throw new Error("Blank-canvas tap candidate has a live selection.");
       }
@@ -1487,10 +1631,8 @@ async function expectBlankTapReveal(
       }
       const snapshot = (event: Event): ClickSnapshot => {
         const target = event.target instanceof Element ? event.target : null;
-        const revealSurface =
-          target?.closest(revealSurfaceSelector) ?? null;
-        const interactive =
-          target?.closest(interactiveTargetSelector) ?? null;
+        const revealSurface = target?.closest(revealSurfaceSelector) ?? null;
+        const interactive = target?.closest(interactiveTargetSelector) ?? null;
         return {
           target: target?.outerHTML.slice(0, 300) ?? String(event.target),
           defaultPrevented: event.defaultPrevented,
@@ -1500,8 +1642,7 @@ async function expectBlankTapReveal(
             (revealSurface === null ||
               (interactive !== revealSurface &&
                 revealSurface.contains(interactive))),
-          revealSurface:
-            revealSurface?.outerHTML.slice(0, 300) ?? null,
+          revealSurface: revealSurface?.outerHTML.slice(0, 300) ?? null,
           handled:
             target
               ?.closest("[data-reader-tap-handled='true']")
@@ -1692,6 +1833,8 @@ async function expectRouteFocusOnLandmark(page: Page): Promise<void> {
     '[data-pane-focus-landmark="true"]',
   );
   await expect(landmark).toBeFocused();
+  await expect(landmark).toHaveAttribute("tabindex", "-1");
+  await expect(landmark).toHaveAccessibleName(/\S/);
   expect(
     await page.evaluate(() => {
       const active = document.activeElement;
@@ -1843,6 +1986,7 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
         page,
         scrollport,
         format.expectsPaneToolbar,
+        format.name === "Web",
       );
       await expect(page.getByRole("banner")).toHaveCount(0);
       await expect(
@@ -1852,6 +1996,14 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
         await expect(
           pane.getByRole("button", { name: format.toolbarControlName }),
         ).toHaveCount(0);
+      }
+      if (format.name === "Web") {
+        const article = readSeed<ArticleSeed>(format.seedFile);
+        await expectTrustedHandledAnnotationTap(
+          page,
+          scrollport,
+          article.quote_highlight_id,
+        );
       }
       const trustedDeadZone = await expectTrustedReverseDeadZone(
         page,
@@ -1902,7 +2054,7 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
 
       if (format.name === "Web") {
         const article = readSeed<ArticleSeed>(format.seedFile);
-        await expectTrustedSettleLifecycle(page, scrollport);
+        await expectTrustedSettleLifecycle(page, scrollport, false);
         await expectTrustedForwardRetreat(page, scrollport);
         const readingOrigin = await scrollport.evaluate(
           (element) => element.scrollTop,
@@ -1939,6 +2091,9 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
           .click();
         await expectFocusOnVisibleChromeOrLandmark(page);
         await expectTrustedForwardRetreat(page, scrollport);
+      }
+      if (format.name === "EPUB") {
+        await expectTrustedSettleLifecycle(page, scrollport, true, false);
       }
 
       if (format.name === "transcript") {
@@ -2041,7 +2196,7 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
       route.fulfill({
         status: 200,
         contentType: "audio/wav",
-        body: toneWav(audio.duration_seconds),
+        body: toneWav(120),
       }),
     );
     await placeAudioInLectern(page, audio.media_id);
@@ -2071,14 +2226,27 @@ test.describe("@mobile-chrome trusted mobile reader chrome", () => {
       await page.getByRole("button", { name: "Open Nexus, 2 tabs" }).tap();
       await page
         .getByRole("dialog", { name: "Nexus" })
-        .locator(
-          '[data-switchboard-row-id="OpenPane:pane-player-reader"]',
-        )
+        .locator('[data-switchboard-row-id="OpenPane:pane-player-reader"]')
         .tap();
+      await expect(page.getByRole("dialog", { name: "Nexus" })).toHaveCount(0);
+      await expect(player).toBeVisible();
 
       const scrollport =
         activeWorkspacePane(page).getByTestId("document-viewport");
       await expect(scrollport).toBeVisible({ timeout: 20_000 });
+      await waitForAnimationFrame(page);
+      await waitForAnimationFrame(page);
+      await expect
+        .poll(async () => {
+          const [readerBottom, playerTop] = await Promise.all([
+            scrollport.evaluate(
+              (element) => element.getBoundingClientRect().bottom,
+            ),
+            player.evaluate((element) => element.getBoundingClientRect().top),
+          ]);
+          return Math.abs(readerBottom - playerTop);
+        })
+        .toBeLessThanOrEqual(1);
       const geometryBefore = await scrollport.evaluate((element) => ({
         clientHeight: element.clientHeight,
         clientWidth: element.clientWidth,

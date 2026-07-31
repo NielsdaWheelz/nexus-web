@@ -8,14 +8,14 @@ Date: 2026-07-30
 
 No blocking product question remains. The decisions below are locked.
 
-**Subsequent-cut ordering:** this cutover lands first, followed by
-[`mobile-nexus-control-hard-cutover.md`](mobile-nexus-control-hard-cutover.md),
-and then
-[`mobile-nexus-full-screen-task-hard-cutover.md`](mobile-nexus-full-screen-task-hard-cutover.md).
-Its `NexusButton` and `MobileViewportProvider` verify-unchanged instructions
-apply while executing this prerequisite only; each named follow-up may change
-its explicitly owned slice after preserving this document's mobile-chrome and
-stable-wrapper contracts.
+**Integrated ancestry:** the mobile Nexus control and full-screen-task cuts are
+already ancestors of this repair. This cut therefore integrates against their
+final state; it does not recreate their historical delivery order. This
+document owns mobile-chrome policy and inner-control motion, the control cut
+owns Nexus anatomy and count, and the full-screen-task cut owns task
+presentation and viewport capability names. `NexusButton` and
+`MobileViewportProvider` remain unchanged from that integrated base, and
+focused preservation proof is required for all three ownership boundaries.
 
 Follow all of [`docs/rules/`](../rules/index.md), especially cleanliness,
 simplicity, frontend, correctness, and timing, plus the Nexus-owned
@@ -192,9 +192,11 @@ accessibility contract. No interactive sliver remains.
   while the scrollport is loading, replaced, short, or absent.
 - Pointer handoff never deletes menu, Find, selection, restore, navigation,
   sheet, picker, or reduced-motion state.
-- Mobile return-to-command first pins/reveals chrome, then resolves and focuses
-  a non-inert command; it falls back to the pane landmark. Synchronous
-  return-focus APIs use the landmark, never a clipped or inert target.
+- Mobile close returns focus to its connected, non-inert logical opener. If
+  that opener disappeared or became inert, return-to-command pins/reveals
+  chrome, resolves a visible non-inert command, and falls back to the pane
+  landmark. Synchronous fallback APIs use the landmark, never a clipped or
+  inert target.
 
 ### Recovery and assistive technology
 
@@ -236,6 +238,7 @@ interface MobileChromeVisibleLocks {
 function useMobileChromeVisibleLocks(): MobileChromeVisibleLocks;
 
 interface PaneChromeFocusReturn {
+  /** Fallback after the logical opener disappeared or became inert. */
   focus(paneId: string): Promise<void>;
 }
 
@@ -297,7 +300,9 @@ Rules:
   is extracted from the player shortcut precedent and shared; reader
   annotation/highlight owners add `data-reader-tap-handled="true"`. Embedded
   browsing contexts such as `iframe` are interactive even though their clicks
-  cannot bubble into the parent document.
+  cannot bubble into the parent document. The marker suppresses
+  blank-canvas recovery; the target owner may still reveal or pin chrome as a
+  semantic consequence, such as opening highlight actions.
 - A passive focusable reading surface may opt into
   `data-reader-tap-reveal-surface="true"`. Blank-tap adjudication uses that
   surface as the exclusive interactive boundary: its own focusability and
@@ -322,10 +327,11 @@ Rules:
 - `chrome-focus` and the transient `focus-return` lock are provider-private.
   `Pinned` is valid only for reduced motion or at least one live public/private
   lock.
-- `PaneChromeFocusReturn.focus` acquires the transient lock, waits for
-  interactive chrome, focuses the resolved command or pane landmark, reconciles
-  `chrome-focus`, then releases. It never focuses an inert node or leaves focus
-  on `<body>`.
+- Normal overlay/dialog close owns return to its connected, non-inert logical
+  opener. `PaneChromeFocusReturn.focus` is the disappearing/inert-opener
+  fallback: it acquires the transient lock, waits for interactive chrome,
+  focuses the resolved command or pane landmark, reconciles `chrome-focus`,
+  then releases. It never focuses an inert node or leaves focus on `<body>`.
 
 Delete these APIs with no aliases:
 
@@ -514,7 +520,8 @@ Docs:
   after its Android shell contract moves to `docs/modules/workspace.md`)
 - this document
 
-Verify unchanged unless an acceptance failure proves otherwise:
+Verify unchanged from the integrated Nexus control/full-screen-task base unless
+an acceptance failure proves otherwise:
 
 - `apps/web/src/lib/mobileViewport/MobileViewportProvider.tsx`
 - global player playback, motion, and viewport geometry
@@ -617,8 +624,10 @@ fi
    PaneToolbar when present, and Nexus in Web, EPUB, transcript, and PDF.
 2. Short reverse scroll or top/Home navigation from touch, wheel, keyboard, or
    AT input reveals all three. On Web, EPUB, and PDF, an unhandled
-   blank-canvas pointer tap also reveals; handled controls/annotations and
-   drags do not. Transcript segment/player targets remain handled. PDF proof
+   blank-canvas pointer tap also reveals; handled controls/annotations do not
+   trigger blank-canvas recovery, though their owner may independently reveal
+   or pin while opening semantic UI, and drags do not reveal. Transcript
+   segment/player targets remain handled. PDF proof
    observes the actual trusted click target after Chrome touch-target
    adjustment and requires the marked passive text-layer boundary.
 3. Real input proves proportional intermediate motion across the `64px`
@@ -653,8 +662,10 @@ fi
     `Tracking` do not rerender reader bodies or presentation surfaces; only
     semantic phase transitions may render. Progress writes are transform-only
     and RAF-coalesced.
-14. Closing a player, sheet, menu, picker, or Find returns focus to visible
-    non-inert chrome or the pane landmark, never `<body>`.
+14. Closing a player, sheet, menu, picker, or Find returns focus to its
+    connected, non-inert logical opener. If that opener disappeared or became
+    inert, chrome is revealed and focus falls back to a visible non-inert
+    command or the pane landmark, never `<body>`.
 15. No deleted API, duplicate publisher, mobile nested transcript scrollport,
     direct reader positioning write, compatibility path, or stale test/doc
     claim remains.
@@ -670,7 +681,8 @@ fi
   focused-control/surface replacement, focus movement within a surface,
   overlapping locks, lock during Tracking/Settling, final-release rebaseline,
   disable/unmount cleanup, reduced motion, settle end/cancel/missing-event
-  completion, and reveal-before-focus fallback.
+  completion, connected-opener return, and disappearing-opener
+  reveal-before-focus fallback.
 - Ref proof covers object refs, callback refs with and without cleanup, reverse
   cleanup order, replacement, StrictMode replay, and unmount under React 19.
 - Reader proof covers Web/EPUB sampling during Find/reflow fences, all

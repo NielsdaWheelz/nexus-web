@@ -227,6 +227,32 @@ describe("reduceMobileChromeMotion", () => {
     ).toMatchObject({ phase: { kind: "Hidden" }, progress: 1 });
   });
 
+  it("interrupts settling with a live scroll and rejects the stale completion", () => {
+    const started = reduceMobileChromeMotion(initialMobileChromeMotionState(), {
+      kind: "Start",
+      snapshot: snapshot(100),
+    });
+    const partial = reduceMobileChromeMotion(started, {
+      kind: "Scroll",
+      snapshot: snapshot(131),
+    });
+    const settling = reduceMobileChromeMotion(partial, { kind: "Settle" });
+    const interrupted = reduceMobileChromeMotion(settling, {
+      kind: "Scroll",
+      snapshot: snapshot(139),
+    });
+
+    expect(settling.phase).toEqual({ kind: "Settling", target: "Visible" });
+    expect(interrupted).toMatchObject({
+      phase: { kind: "Tracking", direction: "Down" },
+      progress: 31 / 64,
+      lastScrollTop: 139,
+    });
+    expect(
+      reduceMobileChromeMotion(interrupted, { kind: "FinishSettle" }),
+    ).toBe(interrupted);
+  });
+
   it("pins and unpins without losing the latest scroll baseline", () => {
     const started = reduceMobileChromeMotion(initialMobileChromeMotionState(), {
       kind: "Start",

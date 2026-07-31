@@ -146,8 +146,9 @@ rebaselines from the live scrollport. Enabled mobile surfaces register as
 `AppBar`, `PaneToolbar`, or `NexusControl`; only the active pane toolbar
 registers. Focus on a real control acquires `chrome-focus`; primary pointer
 intent on the reader releases only that focus. Tracking, settling, and hidden
-control clusters are inert and absent from accessibility navigation, while the
-pane landmark remains represented. Desktop chrome is unaffected.
+moving roots are inert, non-hit-testable, and absent from accessibility
+navigation, while the pane landmark remains represented. Desktop chrome is
+unaffected.
 
 ## Mobile Secondary Panes
 

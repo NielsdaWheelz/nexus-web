@@ -284,9 +284,21 @@ jobs:
         run: make check-bundle
 
   test-android:
+    name: Android instrumentation (API ${{ matrix.api-level }})
     runs-on: ubuntu-latest
     timeout-minutes: 25
     needs: static-checks
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - api-level: 35
+            test-command: make test-android
+          - api-level: 34
+            test-command: >-
+              cd apps/android &&
+              ./gradlew :app:connectedDebugAndroidTest
+              -Pandroid.testInstrumentationRunnerArguments.class=app.nexus.android.MainActivityTest#statusBarProtectionKeepsLightIconsAndAnEdgeToEdgeWebView
     env:
       NEXUS_GOOGLE_WEB_CLIENT_ID: ${{ vars.NEXUS_GOOGLE_WEB_CLIENT_ID || 'ci-placeholder.apps.googleusercontent.com' }}
 
@@ -310,6 +322,7 @@ jobs:
           restore-keys: ${{ runner.os }}-gradle-android-
 
       - name: Verify Android shell
+        if: matrix.api-level == 35
         run: make verify-android
 
       - name: Enable KVM
@@ -322,11 +335,11 @@ jobs:
       - name: Run Android instrumentation tests
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
-          api-level: 35
+          api-level: ${{ matrix.api-level }}
           target: google_apis
           arch: x86_64
           profile: pixel_6
-          script: make test-android
+          script: ${{ matrix.test-command }}
 
   test-e2e-env:
     runs-on: ubuntu-latest

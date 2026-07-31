@@ -9,6 +9,7 @@ import { Profiler } from "react";
 import { page } from "vitest/browser";
 import { describe, expect, it } from "vitest";
 import MobilePaneBar from "@/components/appnav/MobilePaneBar";
+import NexusButton from "@/components/switchboard/NexusButton";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
@@ -100,6 +101,8 @@ describe("PaneShell mobile Find chrome composition", () => {
     await page.viewport(390, 800);
     let appBarRenders = 0;
     let paneShellRenders = 0;
+    let nexusRenders = 0;
+    let readerRenders = 0;
     render(
       withRenderEnvironment(
         <MobileChromeProvider>
@@ -114,6 +117,18 @@ describe("PaneShell mobile Find chrome composition", () => {
                     }}
                   >
                     <MobilePaneBar />
+                  </Profiler>
+                  <Profiler
+                    id="NexusButton"
+                    onRender={() => {
+                      nexusRenders += 1;
+                    }}
+                  >
+                    <NexusButton
+                      paneCount={1}
+                      switchboardOpen={false}
+                      onOpen={noop}
+                    />
                   </Profiler>
                   <PaneRuntimeProvider
                     paneId="pane-a"
@@ -165,7 +180,14 @@ describe("PaneShell mobile Find chrome composition", () => {
                           isActive
                           isMobile
                         >
-                          <Reader />
+                          <Profiler
+                            id="Reader"
+                            onRender={() => {
+                              readerRenders += 1;
+                            }}
+                          >
+                            <Reader />
+                          </Profiler>
                         </PaneShell>
                       </Profiler>
                     </div>
@@ -198,6 +220,8 @@ describe("PaneShell mobile Find chrome composition", () => {
     const rendersAtFirstTrackingSample = {
       appBar: appBarRenders,
       paneShell: paneShellRenders,
+      nexus: nexusRenders,
+      reader: readerRenders,
     };
 
     const scrollport = screen.getByTestId("reader-scrollport");
@@ -211,6 +235,8 @@ describe("PaneShell mobile Find chrome composition", () => {
     });
     expect(appBarRenders).toBe(rendersAtFirstTrackingSample.appBar);
     expect(paneShellRenders).toBe(rendersAtFirstTrackingSample.paneShell);
+    expect(nexusRenders).toBe(rendersAtFirstTrackingSample.nexus);
+    expect(readerRenders).toBe(rendersAtFirstTrackingSample.reader);
 
     await scrollReaderTo(160);
     await waitFor(() => {

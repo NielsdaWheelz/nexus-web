@@ -1,6 +1,6 @@
 # Mobile Nexus Full-Screen Task — Hard Cutover
 
-**Status:** Approved for implementation · Rev 2 · 2026-07-30
+**Status:** Implemented in ancestry · integration preservation required
 **Type:** Presentation-only hard cutover
 **Boundary:** Mobile Nexus only; 80/20 prototype slice
 
@@ -19,19 +19,17 @@ own geometry and affordances.
 
 No product question blocks implementation.
 
-## Authority and delivery order
+## Integrated authority
 
-Land or rebase the related cutovers in this order:
+The control and full-screen-task cuts are already ancestors of the current
+reader-chrome repair. Their historical delivery order is no longer an
+instruction to land or rebase commits. The repair targets the integrated final
+state and must preserve the ownership precedence below:
 
-```text
-mobile-reader-unified-scroll-chrome
-  → mobile-nexus-control
-  → mobile-nexus-full-screen-task
-```
-
-They may share one delivery stack, but each step targets the preceding final
-state. Do not implement the control spec after this task against its obsolete
-`SwitchboardSheet` / `MobileSheet` composition.
+- the reader cut owns mobile-chrome policy, stable-wrapper measurement, and
+  inner-control motion;
+- the control cut owns Nexus anatomy and count;
+- this document owns task presentation and viewport capability names.
 
 This document is the final authority for mobile Nexus presentation. It
 supersedes only these predecessor clauses:
@@ -42,9 +40,9 @@ supersedes only these predecessor clauses:
   48 px control anatomy, count, motion, focus, and obstruction-unregister
   contract.
 - `mobile-reader-unified-scroll-chrome-hard-cutover.md`: its
-  `MobileViewportProvider` “verify unchanged” instruction, after that
-  prerequisite cutover lands. Preserve the stable wrapper, inner-control
-  motion, and mobile-chrome ownership contracts.
+  `MobileViewportProvider` “verify unchanged” instruction applies relative to
+  the integrated base. Preserve the stable wrapper, inner-control motion, and
+  mobile-chrome ownership contracts.
 - `mobile-nexus-switchboard-hard-cutover.md`: the `MobileSheet` capability
   snippet and sole-importer gate; backdrop/drag dismissal grammar; sheet
   presentation ownership; and retained-one-`MobileSheet` final-state rule.
@@ -56,10 +54,8 @@ supersedes only these predecessor clauses:
 - `desktop-nexus-switchboard-hard-cutover.md`: only its historical mobile
   `SwitchboardSheet` composition. Desktop Nexus remains unchanged.
 
-The predecessor documents receive narrow follow-up notes as part of this
-documentation revision. Current module docs continue to describe shipped code
-until implementation; the implementation must then update them to the final
-state before this cutover can be Done.
+The predecessor documents record this integrated precedence. Current module
+docs describe the final state; the reader repair must preserve it.
 
 ## Goals
 
@@ -428,27 +424,22 @@ Forbidden:
 | `apps/android/app/src/androidTest/java/app/nexus/android/MainActivityTest.kt` | Preserve/run nested Back and recreation gates; change only stale wording if present. |
 | `apps/web/src/app/globals.css` | Verify the existing suspended-backdrop rule unchanged; the opaque canvas must not live on its marker. |
 | `docs/{architecture.md,modules/overlays.md,modules/app-navigation.md,modules/workspace.md}` | Record final ownership and terminology. |
-| `docs/cutovers/mobile-nexus-control-hard-cutover.md` | Record prerequisite order and the later presentation supersession. |
-| `docs/cutovers/mobile-reader-unified-scroll-chrome-hard-cutover.md` | Scope its verify-unchanged clauses to that prerequisite. |
+| `docs/cutovers/mobile-nexus-control-hard-cutover.md` | Record integrated ownership and presentation supersession. |
+| `docs/cutovers/mobile-reader-unified-scroll-chrome-hard-cutover.md` | Record integrated ownership and preservation proof. |
 | `docs/cutovers/mobile-nexus-switchboard-hard-cutover.md` | Enumerate the five superseded sheet/keyboard clauses; retain all behavior/data contracts. |
 | `docs/cutovers/mobile-sheet-keyboard-unification-hard-cutover.md` | Supersede only sheet-exclusive keyboard naming/import ownership. |
 | `docs/cutovers/desktop-nexus-switchboard-hard-cutover.md` | Supersede its historical mobile composition only. |
 
 No Python, migration, API, database, route, or persistence file is in scope.
 
-## Implementation order
+## Integration preservation proof
 
-1. Land or target the final unified-scroll-chrome and mobile-control cutovers
-   in the authority order above.
-2. Run the existing focused baseline. Add failing user-behavior tests.
-3. Extract `useMobileModalLifecycle`; hard-rename the viewport capability;
-   prove `MobileSheet` is behaviorally unchanged.
-4. Add `MobileFullScreenTask` and prove its visible-viewport, modal-projection,
-   opaque-canvas, focus, and safe-area contracts through the rendered surface.
-5. Rename `SwitchboardSheet` to `SwitchboardTask` and swap only the outer
-   presentation.
-6. Delete stale sheet code/tests/terms; update current docs.
-7. Run focused, static, E2E, Android, viewport, keyboard, and visual gates.
+1. Treat the integrated reader/control/full-screen state as the baseline.
+2. Run focused task presentation, focus, Back, viewport, keyboard, safe-area,
+   and obstruction proof.
+3. Prove the reader repair preserves the stable wrapper, inner-control motion,
+   Nexus anatomy/count, and full-screen-task ownership.
+4. Audit for ownership drift, duplicate paths, and stale sheet terminology.
 
 Do not leave an intermediate dual path in the final diff.
 

@@ -9,6 +9,7 @@ import {
 import { createRef, useRef, type ComponentProps } from "react";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import PdfReaderImplementation from "@/components/PdfReader";
+import type { PdfReaderControlActions } from "@/components/PdfReader";
 import type {
   PdfFindRuntime,
   PdfRuntimeFindResult,
@@ -615,6 +616,72 @@ describe("PdfReader selection chat destinations", () => {
     );
 
     view.unmount();
+  });
+
+  it("pins and rebaselines the real PDF viewport across a zoom reflow", async () => {
+    vi.stubGlobal("innerWidth", 390);
+    fireEvent(window, new Event("resize"));
+    let controls: PdfReaderControlActions | null = null;
+    render(
+      withRenderEnvironment(
+        <PdfReader
+          mediaId="media-1"
+          onControlsReady={(nextControls) => {
+            controls = nextControls;
+          }}
+        />,
+        { initialViewport: "mobile" },
+      ),
+    );
+
+    const viewport = await screen.findByLabelText("PDF document");
+    const probe = screen.getByTestId("mobile-chrome-behavior-probe");
+    prepareScrollableReader(viewport);
+    fireEvent(window, new Event("resize"));
+    await act(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }),
+    );
+    await waitFor(() =>
+      expect(probe).toHaveAttribute("data-motion-phase", "Visible"),
+    );
+
+    viewport.scrollTop = 80;
+    fireEvent.scroll(viewport);
+    await waitFor(() =>
+      expect(probe).toHaveAttribute("data-motion-phase", "Hidden"),
+    );
+    if (!controls) {
+      throw new Error("Expected PDF controls");
+    }
+
+    act(() => controls.zoomIn());
+    await waitFor(() =>
+      expect(probe).toHaveAttribute("data-motion-phase", "Pinned"),
+    );
+    await act(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => resolve());
+        }),
+    );
+    await waitFor(() => {
+      expect(probe).toHaveAttribute("data-motion-phase", "Visible");
+      expect(
+        probe.style.getPropertyValue(MOBILE_CHROME_COLLAPSE_PROPERTY),
+      ).toBe("0");
+    });
+
+    const baseline = viewport.scrollTop;
+    for (const offset of [8, 16, 24]) {
+      viewport.scrollTop = baseline + offset;
+      fireEvent.scroll(viewport);
+    }
+    await waitFor(() =>
+      expect(probe).toHaveAttribute("data-motion-phase", "Tracking"),
+    );
   });
 
   it("publishes PDF Find, previews without resume writes, and returns to an empty-text origin page", async () => {

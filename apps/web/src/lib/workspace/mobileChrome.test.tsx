@@ -63,11 +63,13 @@ function paneChrome(routeKey = "pane-a:route-a") {
 function RegisteredSurface({
   role,
   showCommand = true,
+  showSecondCommand = false,
   paneChromeFor = "pane-a",
   renders,
 }: {
   role: MobileChromeSurfaceRole;
   showCommand?: boolean;
+  showSecondCommand?: boolean;
   paneChromeFor?: string;
   renders?: MutableRefObject<number>;
 }) {
@@ -94,6 +96,11 @@ function RegisteredSurface({
           data-pane-options-trigger={role === "AppBar" ? "true" : undefined}
         >
           {role} command
+        </button>
+      ) : null}
+      {showSecondCommand ? (
+        <button type="button" data-testid={`${role}-second-command`}>
+          {role} second command
         </button>
       ) : null}
     </div>
@@ -229,6 +236,7 @@ interface HarnessProps {
   showReader?: boolean;
   duplicateReader?: boolean;
   showAppBarCommand?: boolean;
+  showSecondAppBarCommand?: boolean;
   appBarPaneId?: string;
   showToolbarCommand?: boolean;
   showToolbarSurface?: boolean;
@@ -252,6 +260,7 @@ function Harness({
   showReader = true,
   duplicateReader = false,
   showAppBarCommand = true,
+  showSecondAppBarCommand = false,
   appBarPaneId = "pane-a",
   showToolbarCommand = true,
   showToolbarSurface = true,
@@ -290,6 +299,7 @@ function Harness({
       <RegisteredSurface
         role="AppBar"
         showCommand={showAppBarCommand}
+        showSecondCommand={showSecondAppBarCommand}
         paneChromeFor={appBarPaneId}
         renders={surfaceRenders}
       />
@@ -723,7 +733,7 @@ describe("MobileChromeProvider", () => {
     expect(progress("AppBar")).toBe("0");
   });
 
-  it("rebaselines live reader geometry on a real render-environment mobile entry", async () => {
+  it("rebaselines live reader geometry across desktop and mobile transitions", async () => {
     viewportMobile = false;
     renderInEnvironment(
       <MobileChromeProvider>
@@ -743,6 +753,26 @@ describe("MobileChromeProvider", () => {
     flushFrame();
     expect(progress("AppBar")).toBe("0");
     fireEvent.scroll(setReaderTop(316));
+    flushFrame();
+    expect(progress("AppBar")).toBe("0.125");
+
+    viewportMobile = false;
+    publishViewportChange();
+    await act(async () => Promise.resolve());
+    flushFrame();
+    setReaderTop(700);
+
+    viewportMobile = true;
+    publishViewportChange();
+    await act(async () => Promise.resolve());
+    flushFrame();
+
+    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
+    expect(progress("AppBar")).toBe("0");
+    fireEvent.scroll(setReaderTop(708));
+    flushFrame();
+    expect(progress("AppBar")).toBe("0");
+    fireEvent.scroll(setReaderTop(716));
     flushFrame();
     expect(progress("AppBar")).toBe("0.125");
   });
@@ -952,6 +982,26 @@ describe("MobileChromeProvider", () => {
     await act(async () => {
       await Promise.resolve();
     });
+    expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
+  });
+
+  it("keeps one focus lock while focus moves between controls in one registered surface", async () => {
+    renderInEnvironment(
+      <MobileChromeProvider>
+        <Harness showSecondAppBarCommand />
+      </MobileChromeProvider>,
+    );
+
+    act(() => screen.getByTestId("AppBar-command").focus());
+    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
+
+    act(() => screen.getByTestId("AppBar-second-command").focus());
+    await act(async () => Promise.resolve());
+    expect(screen.getByTestId("AppBar-second-command")).toHaveFocus();
+    expect(screen.getByTestId("phase")).toHaveTextContent("Pinned");
+
+    act(() => screen.getByTestId("pane-landmark").focus());
+    await act(async () => Promise.resolve());
     expect(screen.getByTestId("phase")).toHaveTextContent("Visible");
   });
 

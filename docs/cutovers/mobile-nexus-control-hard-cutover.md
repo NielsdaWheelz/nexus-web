@@ -1,6 +1,6 @@
 # Mobile Nexus Control — Hard Cutover
 
-Status: APPROVED FOR IMPLEMENTATION — 2026-07-30
+Status: IMPLEMENTED IN ANCESTRY — integration preservation required
 Type: hard cutover
 
 ## Decision
@@ -26,18 +26,18 @@ chrome. Existing reduced-motion pinning remains authoritative.
 
 Product questions: none.
 
-## Execution Dependency
+## Integrated authority
 
-Implement
-[mobile-reader-unified-scroll-chrome-hard-cutover.md](mobile-reader-unified-scroll-chrome-hard-cutover.md)
-first. It repairs the production retreat owner and replaces synthetic-scroll
-proof. This cutover may follow in the same delivery stack, but it must target
-that final motion/test contract; do not implement against the predecessor
-helpers.
+This control cut and the full-screen-task cut are already ancestors of the
+current reader-chrome repair. There is no remaining landing or rebase
+instruction. The repair targets their integrated final state and must prove it
+preserves this document's Nexus anatomy and count, the reader document's
+mobile-chrome policy and stable-wrapper/inner-control motion, and the
+full-screen-task document's task presentation and viewport ownership.
 
 This document then supersedes the mobile Nexus control's visual anatomy in
 [mobile-nexus-switchboard-hard-cutover.md](mobile-nexus-switchboard-hard-cutover.md).
-For this prerequisite control cut, preserve that document's 48px-target,
+Preserve that document's 48px-target,
 obstruction, current sheet, accessibility, and performance clauses. Replace
 only its “Accent is reserved for Nexus/current selection” rule with: “Accent
 is reserved for current selection and the Nexus mark; Nexus surfaces remain
@@ -46,19 +46,14 @@ obstruction, and accessibility behavior remains normative during this cut.
 
 The stable wrapper/inner-control contract in
 [mobile-reader-unified-scroll-chrome-hard-cutover.md](mobile-reader-unified-scroll-chrome-hard-cutover.md)
-also remains normative. Its “verify `NexusButton` unchanged” instruction is
-scoped to that prerequisite cutover and ceases to constrain this subsequent
-visual cut.
+also remains normative.
 
-**Approved subsequent cut (2026-07-30):**
 [mobile-nexus-full-screen-task-hard-cutover.md](mobile-nexus-full-screen-task-hard-cutover.md)
-lands after this control cut, or rebases after it in the same delivery stack.
-That follow-up supersedes this document's `SwitchboardSheet / MobileSheet`
+supersedes this document's `SwitchboardSheet / MobileSheet`
 composition, current-sheet preservation, Switchboard no-change, and
 `MobileViewportProvider`-unchanged clauses. It preserves the complete control
 anatomy, count, mobile-chrome motion, focus, and open-state
-obstruction-unregister contract here. Do not implement this control after the
-full-screen task against the obsolete sheet composition.
+obstruction-unregister contract here.
 
 Governing rules: `docs/rules/{frontend,cleanliness,simplicity,codebase,testing,
 boundaries,correctness,naming,control-flow,overrides}.md`.
@@ -288,8 +283,8 @@ Verify unchanged label consumers unless a behavior failure proves otherwise:
 Normative docs:
 
 - `docs/cutovers/mobile-nexus-switchboard-hard-cutover.md`
-- `docs/cutovers/mobile-nexus-full-screen-task-hard-cutover.md` as the ordered
-  subsequent presentation authority
+- `docs/cutovers/mobile-nexus-full-screen-task-hard-cutover.md` as the
+  integrated presentation authority
 - this document
 
 Do not modify `useNexusController`, `Nexus`, the final `MobileChromeProvider`,
@@ -297,19 +292,13 @@ Do not modify `useNexusController`, `Nexus`, the final `MobileChromeProvider`,
 tokens, or Android native code unless implementation evidence disproves a
 locked contract above. Do not add a production seam for tests.
 
-## Implementation Order
+## Integration preservation proof
 
-1. Land or target the final unified-scroll-chrome implementation and trusted
-   input proof.
-2. Run focused existing Nexus functional/performance and final mobile-chrome
-   tests; record pre-existing failures separately.
-3. Add failing behavior coverage for exact count, fixed count-independent
-   geometry, text scaling, and complete retreat.
-4. Hard-cut the markup and local styles.
-5. Update the exact superseded accent clause in the Switchboard cutover.
-6. Run focused static, component, real-stack E2E, and Android visual proof.
-7. Audit touched files for dead selectors, duplicate state, stale prose, and
-   old FAB/inline-count terminology.
+1. Treat the integrated reader/control/full-screen state as the baseline.
+2. Run focused Nexus anatomy, count, motion, focus, obstruction, and
+   trusted-input reader-chrome proof.
+3. Audit the repair for ownership drift, dead selectors, duplicate state, and
+   stale FAB/inline-count terminology.
 
 ## Acceptance Criteria
 

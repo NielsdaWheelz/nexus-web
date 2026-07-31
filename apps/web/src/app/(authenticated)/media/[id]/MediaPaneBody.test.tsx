@@ -2445,6 +2445,41 @@ describe("MediaPaneBody pane sizing", () => {
     ).toContainElement(replacementViewport);
   });
 
+  it("rebaselines EPUB chrome when the rendered reading section changes", async () => {
+    testState.mediaKind = "epub";
+    testState.isMobileViewport = true;
+    testState.includeSecondEpubSection = true;
+    testState.fragmentCanonicalText = "Readable text.";
+    testState.secondEpubCanonicalText = "Cross-section evidence.";
+    testState.renderHtmlInMock = true;
+    renderMediaPane();
+
+    const initialViewport = await screen.findByTestId("document-viewport");
+    await expectReaderScrollTracksChrome(initialViewport);
+    const probe = screen.getByTestId("mobile-chrome-behavior-probe");
+    expect(probe).toHaveAttribute("data-motion-phase", "Hidden");
+
+    await renderLatestToolbar();
+    await userEvent.click(screen.getByRole("button", { name: "Next section" }));
+    await screen.findByText("Cross-section evidence.");
+    await waitFor(() => {
+      expect(probe).toHaveAttribute("data-motion-phase", "Visible");
+      expect(
+        probe.style.getPropertyValue(MOBILE_CHROME_COLLAPSE_PROPERTY),
+      ).toBe("0");
+    });
+
+    const viewport = screen.getByTestId("document-viewport");
+    const baseline = viewport.scrollTop;
+    for (const offset of [8, 16, 24]) {
+      viewport.scrollTop = baseline + offset;
+      fireEvent.scroll(viewport);
+    }
+    await waitFor(() => {
+      expect(probe).toHaveAttribute("data-motion-phase", "Tracking");
+    });
+  });
+
   it("activates a SourceReference target across EPUB sections using the target locator", async () => {
     testState.mediaKind = "epub";
     testState.includeSecondEpubSection = true;
