@@ -37,7 +37,12 @@ from nexus.services.library_entries import (
 )
 from nexus.services.transcripts.current import ensure_media_transcript_state_row
 
-from ._normalize import normalize_language_tag, normalize_optional_text, parse_iso_datetime
+from ._normalize import (
+    normalize_language_tag,
+    normalize_optional_text,
+    normalize_provider_published_at,
+    parse_iso_datetime,
+)
 from .episode_identity import (
     EpisodeAlias,
     EpisodeIdentityConflict,
@@ -146,8 +151,8 @@ def sync_subscription_ingest(
         description_html = normalize_optional_text(episode.get("description_html"))
         description_text = normalize_optional_text(episode.get("description_text"))
         description = description_text[:2000] if description_text else None
-        published_at = parse_iso_datetime(episode.get("published_at"))
-        published_date = str(episode.get("published_at") or "").strip()[:64] or None
+        published_date = normalize_provider_published_at(episode.get("published_at"))
+        published_at = parse_iso_datetime(published_date)
         language = normalize_language_tag(episode.get("language")) or normalize_language_tag(
             episode.get("feed_language")
         )

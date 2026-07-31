@@ -26993,3 +26993,108 @@ class TestMigration0206AndroidNativePlayerPauseShortening:
         finally:
             reset_test_schema()
             engine.dispose()
+
+
+@MIGRATION_CI_LATE
+class TestMigration0207CanonicalPodcastPublicationInstants:
+    def test_repairs_only_legacy_podcast_instants_and_is_not_reversible(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0206")
+            assert result.returncode == 0, result.stderr
+
+            utc_media_id = uuid4()
+            offset_media_id = uuid4()
+            naive_media_id = uuid4()
+            canonical_media_id = uuid4()
+            article_media_id = uuid4()
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO media (
+                            id, kind, title, processing_status, published_date
+                        )
+                        VALUES (
+                            :id, :kind, :title, 'ready_for_reading', :published_date
+                        )
+                        """
+                    ),
+                    [
+                        {
+                            "id": utc_media_id,
+                            "kind": "podcast_episode",
+                            "title": "UTC legacy instant",
+                            "published_date": "2026-03-02 06:07:08+00:00",
+                        },
+                        {
+                            "id": offset_media_id,
+                            "kind": "podcast_episode",
+                            "title": "Offset legacy instant",
+                            "published_date": "2026-03-02 06:07:08.123456-07:00",
+                        },
+                        {
+                            "id": naive_media_id,
+                            "kind": "podcast_episode",
+                            "title": "Naive legacy instant",
+                            "published_date": "2026-03-02 06:07:08",
+                        },
+                        {
+                            "id": canonical_media_id,
+                            "kind": "podcast_episode",
+                            "title": "Canonical instant",
+                            "published_date": "2026-03-02T06:07:08Z",
+                        },
+                        {
+                            "id": article_media_id,
+                            "kind": "web_article",
+                            "title": "Unrelated media",
+                            "published_date": "2026-03-02 06:07:08+00:00",
+                        },
+                    ],
+                )
+
+            result = run_alembic_command("upgrade 0207")
+            assert result.returncode == 0, result.stderr
+
+            with engine.connect() as connection:
+                assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0207"
+                repaired = dict(
+                    connection.execute(
+                        text(
+                            """
+                            SELECT id, published_date
+                            FROM media
+                            WHERE id IN (
+                                :utc_media_id,
+                                :offset_media_id,
+                                :naive_media_id,
+                                :canonical_media_id,
+                                :article_media_id
+                            )
+                            """
+                        ),
+                        {
+                            "utc_media_id": utc_media_id,
+                            "offset_media_id": offset_media_id,
+                            "naive_media_id": naive_media_id,
+                            "canonical_media_id": canonical_media_id,
+                            "article_media_id": article_media_id,
+                        },
+                    ).all()
+                )
+                assert repaired == {
+                    utc_media_id: "2026-03-02T06:07:08Z",
+                    offset_media_id: "2026-03-02T13:07:08.123456Z",
+                    naive_media_id: "2026-03-02T06:07:08Z",
+                    canonical_media_id: "2026-03-02T06:07:08Z",
+                    article_media_id: "2026-03-02 06:07:08+00:00",
+                }
+
+            downgrade = run_alembic_command("downgrade 0206")
+            assert downgrade.returncode != 0
+            assert "0207 is a hard cutover migration" in downgrade.stderr
+        finally:
+            reset_test_schema()
+            engine.dispose()

@@ -4573,7 +4573,8 @@ class TestPodcastEpisodeMetadataPersistence:
                 "title": "Metadata-rich Episode",
                 "authors": ["Episode Host", "Guest Analyst"],
                 "audio_url": "https://cdn.example.com/episode-authors.mp3",
-                "published_at": "2026-03-02T06:00:00Z",
+                # Feedparser-style datetime values must persist as canonical API instants.
+                "published_at": datetime(2026, 3, 2, 6, 0, tzinfo=UTC),
                 "duration_seconds": 120,
                 "description_text": "Show notes for the metadata-rich episode.",
                 "language": "en",
