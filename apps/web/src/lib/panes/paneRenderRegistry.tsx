@@ -9,6 +9,7 @@ import { usePaneResolvedBodyReady } from "@/lib/workspace/paneReturnMemento";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { useReportSwitchboardPaneReady } from "@/lib/switchboard/performance";
 import { useReportNexusDesktopPaneReady } from "@/lib/nexus/performance";
+import { createPaneModuleRegistry } from "@/lib/panes/paneModuleRegistry";
 
 type PaneLoader = () => Promise<{ default: ComponentType }>;
 
@@ -56,10 +57,11 @@ const PANE_LOADERS: Record<PaneRouteId, PaneLoader> = {
   oracleReading: () =>
     import("@/app/(authenticated)/oracle/[readingId]/OracleReadingPaneBody"),
 };
+const PANE_MODULES = createPaneModuleRegistry(PANE_LOADERS);
 
 const PANE_BODIES = (Object.keys(PANE_LOADERS) as PaneRouteId[]).reduce(
   (bodies, id) => {
-    bodies[id] = lazy(PANE_LOADERS[id]);
+    bodies[id] = lazy(() => PANE_MODULES.load(id));
     return bodies;
   },
   {} as Record<PaneRouteId, ComponentType>,
@@ -103,7 +105,8 @@ export function renderPane(id: PaneRouteId): ReactNode {
 // waiting for the Suspense boundary to commit (D-7). We deliberately do NOT
 // server-emit a <link rel="modulepreload">: under strict-dynamic nonce-CSP that
 // preload is script-src-governed and the chunk URL isn't known server-side — the
-// same constraint that bans next/dynamic (D-3). lazy() reuses this warmed module.
+// same constraint that bans next/dynamic (D-3). The owned module registry gives
+// lazy() the exact promise started here and evicts rejected attempts for retry.
 export function preloadPane(id: PaneRouteId): Promise<void> {
-  return PANE_LOADERS[id]().then(() => undefined);
+  return PANE_MODULES.preload(id);
 }
