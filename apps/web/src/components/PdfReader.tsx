@@ -39,6 +39,7 @@ import {
 } from "@/components/pdfReaderRuntime";
 import {
   createPdfFindRuntime,
+  pdfFindSourceAccessRefreshAbort,
   type PdfFindOrigin,
   type PdfFindOriginCapture,
   type PdfFindRuntime,
@@ -531,6 +532,18 @@ function applyViewerScale(
   }
 }
 
+function readViewerZoom(viewer: PdfViewerLike): number | null {
+  if (isPositiveFinite(viewer.currentScale)) {
+    return viewer.currentScale;
+  }
+  const scaleValue = viewer.currentScaleValue;
+  const numericScale =
+    typeof scaleValue === "number"
+      ? scaleValue
+      : Number.parseFloat(scaleValue);
+  return isPositiveFinite(numericScale) ? numericScale : null;
+}
+
 function applyViewerPageNumber(
   viewer: PdfViewerLike,
   pageNumber: number,
@@ -630,6 +643,9 @@ export default function PdfReader({
   const pendingPdfFindRuntimeRef = useRef<PdfFindRuntime | null>(null);
   const eventHandlersRef = useRef<ViewerEventHandlers | null>(null);
   const signedUrlExpiryRef = useRef<number | null>(null);
+  const recoverAndRenderRef = useRef<
+    ((targetPage: number, runId: number) => void) | null
+  >(null);
   const selectionSnapshotRef = useRef<SelectionState | null>(null);
   const activePageScaleRef = useRef(1);
   const zoomRef = useRef(startZoomRef.current ?? 1);
@@ -665,7 +681,7 @@ export default function PdfReader({
   const readerPositioningResolveRef = useRef<(() => void) | null>(null);
   const readerPositioningRenderTargetRef =
     useRef<PdfReaderPositioningRenderTarget | null>(null);
-  const renderedPageScaleByNumberRef = useRef<Map<number, number>>(new Map());
+  const renderedPageZoomByNumberRef = useRef<Map<number, number>>(new Map());
 
   const signedUrlResource = useResource<SignedUrlAccess>({
     cacheKey: `${mediaId}:${signedUrlRefreshToken}`,
@@ -846,7 +862,7 @@ export default function PdfReader({
   const pageHasRenderedAtScale = useCallback(
     (targetPage: number, scale: number): boolean => {
       const renderedScale =
-        renderedPageScaleByNumberRef.current.get(targetPage);
+        renderedPageZoomByNumberRef.current.get(targetPage);
       return (
         renderedScale !== undefined &&
         Math.abs(renderedScale - scale) <= PDF_FIND_VIEWPORT_SCALE_EPSILON
@@ -943,11 +959,16 @@ export default function PdfReader({
     if (!container) {
       return null;
     }
+    const pageElement = getPageElement(pageNumberRef.current);
     const metrics = readPageMetrics(pageNumberRef.current);
-    if (!metrics) {
+    if (!pageElement || !metrics) {
       return null;
     }
-    const localScrollTop = Math.max(0, container.scrollTop - metrics.pageTop);
+    const localScrollTop = Math.max(
+      0,
+      container.getBoundingClientRect().top -
+        (pageElement.getBoundingClientRect().top + pageElement.clientTop),
+    );
     const maxLocalScroll = Math.max(
       0,
       metrics.pageHeight - container.clientHeight,
@@ -959,7 +980,7 @@ export default function PdfReader({
     // Top-of-page is the locator's null progression; publishing 0 here would
     // false-dirty against a stored null and echo a write on initial apply.
     return progression === 0 ? null : progression;
-  }, [readPageMetrics]);
+  }, [getPageElement, readPageMetrics]);
   const publishCurrentResumeLocator = useCallback(
     (nextPageNumber = pageNumberRef.current, nextZoom = zoomRef.current) => {
       publishResumeLocator(
@@ -1346,7 +1367,19 @@ export default function PdfReader({
             reject(new DOMException("PDF Find was aborted", "AbortError"));
             return;
           }
-          reject(new Error(`PDF page ${targetPage} did not become renderable`));
+          const textLayer = getTextLayerRootForPage(targetPage);
+          const currentEpoch =
+            textLayerRenderEpochByPageRef.current.get(targetPage) ?? 0;
+          const currentScale = readPageScale(targetPage);
+          reject(
+            new Error(
+              `PDF page ${targetPage} did not become renderable ` +
+                `(textLayer=${textLayer?.isConnected === true ? "connected" : "missing"}, ` +
+                `text=${(textLayer?.textContent ?? "").trim().length > 0 ? "present" : "empty"}, ` +
+                `epoch=${currentEpoch}/${minimumTextLayerRenderEpoch}, ` +
+                `scale=${currentScale}/${expectedScale ?? "any"})`,
+            ),
+          );
         };
         const handleAbort = () => finish("Aborted");
         const inspect = () => {
@@ -1386,13 +1419,13 @@ export default function PdfReader({
   const capturePdfFindOrigin = useCallback((): PdfFindOriginCapture => {
     const container = viewerContainerRef.current;
     const pageElement = getPageElement(pageNumberRef.current);
-    const zoom = activePageScaleRef.current;
+    const viewer = pdfViewerRef.current;
+    const zoom = viewer ? (readViewerZoom(viewer) ?? zoomRef.current) : null;
     if (
       !container ||
       !pageElement ||
       !documentRef.current ||
-      !Number.isFinite(zoom) ||
-      zoom <= 0
+      zoom === null
     ) {
       return { kind: "Unavailable" };
     }
@@ -1482,6 +1515,27 @@ export default function PdfReader({
         throw new Error("PDF Find origin is not renderable");
       }
 
+      zoomRef.current = origin.zoom;
+      setZoom(origin.zoom);
+      const refreshExpiredSourceAccess = (): boolean => {
+        const expiryMs = signedUrlExpiryRef.current;
+        if (
+          typeof expiryMs !== "number" ||
+          Date.now() < expiryMs - SIGNED_URL_REFRESH_SKEW_MS
+        ) {
+          return false;
+        }
+        const recover = recoverAndRenderRef.current;
+        if (!recover) {
+          throw new Error("PDF signed URL recovery is unavailable");
+        }
+        recover(origin.pageNumber, runRef.current);
+        return true;
+      };
+      if (refreshExpiredSourceAccess()) {
+        throw pdfFindSourceAccessRefreshAbort();
+      }
+
       const previousIntent = viewportIntentRef.current;
       viewportIntentGenerationRef.current += 1;
       const intentGeneration = viewportIntentGenerationRef.current;
@@ -1491,9 +1545,10 @@ export default function PdfReader({
           const textLayerRenderEpoch =
             textLayerRenderEpochByPageRef.current.get(origin.pageNumber) ?? 0;
           const zoomChanged =
-            Math.abs(readPageScale(origin.pageNumber) - origin.zoom) >
+            Math.abs(
+              (readViewerZoom(viewer) ?? zoomRef.current) - origin.zoom,
+            ) >
             PDF_FIND_VIEWPORT_SCALE_EPSILON;
-          zoomRef.current = origin.zoom;
           pageScaleByNumberRef.current.clear();
           pageGeometryReliabilityRef.current.clear();
           applyViewerScale(
@@ -1501,17 +1556,22 @@ export default function PdfReader({
             origin.zoom,
             "FindReturn/currentScaleValue",
           );
-          setZoom(origin.zoom);
-          setPageScale(origin.zoom);
-          activePageScaleRef.current = origin.zoom;
           applyPdfViewportPage(origin.pageNumber, "FindReturn");
           await awaitPdfFindTextLayer(
             origin.pageNumber,
-            origin.zoom,
+            null,
             textLayerRenderEpoch + (zoomChanged ? 1 : 0),
             false,
             signal,
           );
+          const restoredZoom = readViewerZoom(viewer);
+          if (
+            restoredZoom === null ||
+            Math.abs(restoredZoom - origin.zoom) >
+              PDF_FIND_VIEWPORT_SCALE_EPSILON
+          ) {
+            throw new Error("PDF Find origin zoom could not be restored");
+          }
           await awaitPdfFindFrame(signal);
           const pageElement = getPageElement(origin.pageNumber);
           if (!pageElement) {
@@ -1539,22 +1599,28 @@ export default function PdfReader({
           ) {
             throw new Error("PDF Find origin could not be restored exactly");
           }
-          const runId = runRef.current;
-          window.requestAnimationFrame(() => {
-            if (runId === runRef.current && container.isConnected) {
-              container.focus({ preventScroll: true });
-            }
-          });
-        });
-      } finally {
-        window.requestAnimationFrame(() => {
-          if (
-            viewportIntentGenerationRef.current === intentGeneration &&
-            viewportIntentRef.current === "FindReturn"
-          ) {
-            viewportIntentRef.current = previousIntent;
+          // React effects and browser scroll delivery caused by the page/zoom
+          // restoration must settle while FindReturn still fences resume
+          // publication. Releasing the preview lease before this tail drains
+          // can persist the programmatic viewport as genuine reader movement.
+          await awaitPdfFindFrame(signal);
+          await awaitPdfFindFrame(signal);
+          if (container.isConnected) {
+            container.focus({ preventScroll: true });
           }
         });
+      } catch (error) {
+        if (!signal.aborted && refreshExpiredSourceAccess()) {
+          throw pdfFindSourceAccessRefreshAbort();
+        }
+        throw error;
+      } finally {
+        if (
+          viewportIntentGenerationRef.current === intentGeneration &&
+          viewportIntentRef.current === "FindReturn"
+        ) {
+          viewportIntentRef.current = previousIntent;
+        }
       }
     },
     [
@@ -1563,7 +1629,6 @@ export default function PdfReader({
       awaitPdfFindTextLayer,
       getPageElement,
       readerScrollPositioner,
-      readPageScale,
     ],
   );
 
@@ -1598,10 +1663,13 @@ export default function PdfReader({
     }
   }, []);
 
-  const teardownViewer = useCallback(() => {
+  const teardownViewer = useCallback(
+    ({ publishFindUnavailable = true } = {}) => {
     viewportIntentGenerationRef.current += 1;
     viewportIntentRef.current = null;
-    onFindRuntimeReadyRef.current?.(null);
+    if (publishFindUnavailable) {
+      onFindRuntimeReadyRef.current?.(null);
+    }
     pendingPdfFindRuntimeRef.current = null;
     pdfFindRuntimeRef.current?.setDocument(null);
     pdfFindRuntimeRef.current?.dispose();
@@ -1629,11 +1697,9 @@ export default function PdfReader({
     if (internalContentRef.current) {
       internalContentRef.current.innerHTML = "";
     }
-  }, [publishIntrinsicWidth, removeOverlayLayers]);
-
-  const recoverAndRenderRef = useRef<
-    ((targetPage: number, runId: number) => void) | null
-  >(null);
+    },
+    [publishIntrinsicWidth, removeOverlayLayers],
+  );
 
   const initializeViewerIfNeeded = useCallback(
     async (runId: number) => {
@@ -1797,10 +1863,12 @@ export default function PdfReader({
 
         markPageSurface(renderedPage, event.source);
         const renderedScale = rememberPageScale(renderedPage, event.source);
+        const renderedZoom =
+          readViewerZoom(pdfViewer) ?? zoomRef.current;
         if (!event.error) {
-          renderedPageScaleByNumberRef.current.set(
+          renderedPageZoomByNumberRef.current.set(
             renderedPage,
-            renderedScale,
+            renderedZoom,
           );
         }
         scheduleIntrinsicWidthPublish();
@@ -1826,7 +1894,7 @@ export default function PdfReader({
             !signedUrlExpiryRenderError &&
             positioningTarget?.runId === runId &&
             positioningTarget.pageNumber === renderedPage &&
-            Math.abs(positioningTarget.scale - renderedScale) <=
+            Math.abs(positioningTarget.scale - renderedZoom) <=
               PDF_FIND_VIEWPORT_SCALE_EPSILON
           ) {
             settleReaderPositioning();
@@ -2618,7 +2686,7 @@ export default function PdfReader({
     settleReaderPositioning();
     runRef.current += 1;
     const pageScaleCache = pageScaleByNumberRef.current;
-    const renderedPageScales = renderedPageScaleByNumberRef.current;
+    const renderedPageZooms = renderedPageZoomByNumberRef.current;
     const textLayerRenderEpochs = textLayerRenderEpochByPageRef.current;
     const pageGeometryReliability = pageGeometryReliabilityRef.current;
 
@@ -2644,7 +2712,7 @@ export default function PdfReader({
     zoomRef.current = startZoomLevel;
     pendingStartPageProgressionRef.current = startPageProgress;
     pageScaleCache.clear();
-    renderedPageScales.clear();
+    renderedPageZooms.clear();
     textLayerRenderEpochs.clear();
     pageGeometryReliability.clear();
     pendingViewerPageRef.current = null;
@@ -2659,7 +2727,7 @@ export default function PdfReader({
       runRef.current += 1;
       signedUrlExpiryRef.current = null;
       pageScaleCache.clear();
-      renderedPageScales.clear();
+      renderedPageZooms.clear();
       textLayerRenderEpochs.clear();
       pageGeometryReliability.clear();
       pendingViewerPageRef.current = null;
@@ -2714,7 +2782,12 @@ export default function PdfReader({
           return;
         }
         signedUrlExpiryRef.current = signedUrlResource.data.expiresAtMs;
-        teardownViewer();
+        const refreshesExistingSource =
+          recoveryTargetPageRef.current !== null &&
+          pdfFindRuntimeRef.current !== null;
+        teardownViewer({
+          publishFindUnavailable: !refreshesExistingSource,
+        });
         await replaceDocument(opened);
         await attachDocumentToViewer(opened.doc, targetPage, runId);
         if (active && runId === runRef.current) {
@@ -2722,6 +2795,7 @@ export default function PdfReader({
         }
       } catch (err) {
         if (active && runId === runRef.current) {
+          onFindRuntimeReadyRef.current?.(null);
           setError(toUserFacingError(err));
         }
       } finally {

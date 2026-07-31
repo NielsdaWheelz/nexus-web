@@ -3893,6 +3893,7 @@ export default function MediaPaneBody() {
         ? pdfFindRuntimePublication.runtime
         : null,
     previewLease: mediaFindPreviewLease,
+    focusReaderViewport,
   });
 
   const webPaneFindSource = useMemo(
@@ -5067,6 +5068,7 @@ export default function MediaPaneBody() {
     [paneRuntime.paneId],
   );
   const handleGenuineReaderInput = useCallback((): boolean => {
+    mediaFindPreviewLease.consumeNextCaptureSuppression(true);
     epubAdoptionCaptureSuppressionRef.current = false;
     const adoptsEpubFind = awaitingEpubFindAdoptionRef.current;
     if (adoptsEpubFind) {
@@ -7924,6 +7926,13 @@ export default function MediaPaneBody() {
                   }
                   onResumeStateChange={(resume) => {
                     if (resume) {
+                      if (
+                        mediaFindPreviewLease.consumeNextCaptureSuppression(
+                          false,
+                        )
+                      ) {
+                        return;
+                      }
                       reportReaderMovement(resume);
                     }
                   }}

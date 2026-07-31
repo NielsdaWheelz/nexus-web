@@ -16,6 +16,25 @@ import type {
 
 export const PDF_FIND_MATCH_THRESHOLD = 2_000;
 export const PDF_FIND_STALL_TIMEOUT_MS = 30_000;
+export const PDF_FIND_SOURCE_ACCESS_REFRESH_ABORT_MESSAGE =
+  "PDF Find source access is refreshing.";
+
+export function pdfFindSourceAccessRefreshAbort(): DOMException {
+  return new DOMException(
+    PDF_FIND_SOURCE_ACCESS_REFRESH_ABORT_MESSAGE,
+    "AbortError",
+  );
+}
+
+export function isPdfFindSourceAccessRefreshAbort(
+  error: unknown,
+): error is DOMException {
+  return (
+    error instanceof DOMException &&
+    error.name === "AbortError" &&
+    error.message === PDF_FIND_SOURCE_ACCESS_REFRESH_ABORT_MESSAGE
+  );
+}
 
 export type PdfFindError =
   | { readonly kind: "OriginUnavailable" }

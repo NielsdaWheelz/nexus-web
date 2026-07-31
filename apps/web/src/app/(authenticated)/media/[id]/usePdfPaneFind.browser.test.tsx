@@ -5,6 +5,7 @@ import type {
   PdfRuntimeFindRequest,
   PdfRuntimeFindResult,
 } from "@/components/pdfPaneFind";
+import { pdfFindSourceAccessRefreshAbort } from "@/components/pdfPaneFind";
 import { createMediaFindPreviewLease } from "./mediaFindPreviewLease";
 import { createPdfFindAdapter } from "./usePdfPaneFind";
 
@@ -69,6 +70,8 @@ function runtimeFixture({
   return runtime;
 }
 
+const focusReaderViewport = vi.fn();
+
 async function prepare(
   adapter: ReturnType<typeof createPdfFindAdapter>,
 ) {
@@ -85,11 +88,15 @@ describe("PDF Pane Find adapter", () => {
   it("uses full source identity, compact result keys, exact scopes, and one-shot Return", async () => {
     const runtime = runtimeFixture();
     const previewLease = createMediaFindPreviewLease();
+    const focusBeforeLeaseRelease = vi.fn(() => {
+      expect(previewLease.isActive()).toBe(true);
+    });
     const adapter = createPdfFindAdapter({
       mediaId: "media-1",
       runtime,
       getCurrentRuntime: () => runtime,
       previewLease,
+      focusReaderViewport: focusBeforeLeaseRelease,
     });
     const { session, signal } = await prepare(adapter);
 
@@ -182,7 +189,70 @@ describe("PDF Pane Find adapter", () => {
       pdfOrigin(3, 24),
       signal,
     );
+    expect(focusBeforeLeaseRelease).toHaveBeenCalledTimes(1);
     expect(previewLease.isActive()).toBe(false);
+    expect(previewLease.consumeNextCaptureSuppression(false)).toBe(true);
+  });
+
+  it("finishes Return against a republished runtime after source access refresh", async () => {
+    const initialRuntime = runtimeFixture();
+    const refreshedRuntime = runtimeFixture();
+    let currentRuntime: PdfFindRuntime = initialRuntime;
+    initialRuntime.restoreOrigin.mockImplementation(async () => {
+      currentRuntime = refreshedRuntime;
+      throw pdfFindSourceAccessRefreshAbort();
+    });
+    const previewLease = createMediaFindPreviewLease();
+    const adapter = createPdfFindAdapter({
+      mediaId: "media-1",
+      runtime: initialRuntime,
+      getCurrentRuntime: () => currentRuntime,
+      previewLease,
+      focusReaderViewport,
+    });
+    const { signal } = await prepare(adapter);
+    const response = await adapter.find({
+      sessionId: 1,
+      queryId: 1,
+      sourceKey: adapter.sourceKey,
+      signal,
+      query: "needle",
+      scopeId: "EntirePdf",
+      matchCase: false,
+      wholeWord: false,
+    });
+    if (response.kind !== "Ready") {
+      throw new Error("Expected PDF Find results.");
+    }
+    await adapter.preview({
+      sessionId: 1,
+      queryId: 1,
+      sourceKey: adapter.sourceKey,
+      signal,
+      key: response.rows[0]!.key,
+    });
+    const initialClearCount = initialRuntime.clearPresentation.mock.calls.length;
+
+    await adapter.returnToReadingPosition({
+      sessionId: 1,
+      sourceKey: adapter.sourceKey,
+      signal,
+    });
+
+    expect(initialRuntime.restoreOrigin).toHaveBeenCalledWith(
+      pdfOrigin(3, 24),
+      signal,
+    );
+    expect(refreshedRuntime.restoreOrigin).toHaveBeenCalledWith(
+      pdfOrigin(3, 24),
+      signal,
+    );
+    expect(initialRuntime.clearPresentation).toHaveBeenCalledTimes(
+      initialClearCount,
+    );
+    expect(refreshedRuntime.clearPresentation).toHaveBeenCalledTimes(1);
+    expect(previewLease.isActive()).toBe(false);
+    expect(previewLease.consumeNextCaptureSuppression(false)).toBe(true);
   });
 
   it("maps empty page text to NoMatches and whole-document text failure to retryable copy", async () => {
@@ -197,6 +267,7 @@ describe("PDF Pane Find adapter", () => {
       runtime,
       getCurrentRuntime: () => runtime,
       previewLease: createMediaFindPreviewLease(),
+      focusReaderViewport,
     });
     const { signal } = await prepare(adapter);
 
@@ -252,6 +323,7 @@ describe("PDF Pane Find adapter", () => {
       runtime,
       getCurrentRuntime: () => runtime,
       previewLease,
+      focusReaderViewport,
     });
     const { signal } = await prepare(adapter);
     const response = await adapter.find({
@@ -328,6 +400,7 @@ describe("PDF Pane Find adapter", () => {
       runtime,
       getCurrentRuntime: () => runtime,
       previewLease,
+      focusReaderViewport,
     });
     const { signal } = await prepare(adapter);
     const response = await adapter.find({
@@ -411,6 +484,7 @@ describe("PDF Pane Find adapter", () => {
       runtime,
       getCurrentRuntime: () => runtime,
       previewLease,
+      focusReaderViewport,
     });
     const { signal } = await prepare(adapter);
     const first = await adapter.find({
@@ -497,6 +571,7 @@ describe("PDF Pane Find adapter", () => {
       runtime,
       getCurrentRuntime: () => runtime,
       previewLease,
+      focusReaderViewport,
     });
     const { signal } = await prepare(adapter);
     const first = await adapter.find({

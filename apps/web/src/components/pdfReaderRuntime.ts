@@ -123,6 +123,7 @@ export interface PdfFindControllerLike {
 export interface PdfViewerLike {
   setDocument(doc: PdfDocumentLike | null): void;
   currentPageNumber: number;
+  currentScale?: number;
   currentScaleValue: string | number;
   pagesCount: number;
   update?: () => void;

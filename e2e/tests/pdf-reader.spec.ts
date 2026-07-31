@@ -493,12 +493,20 @@ test.describe("pdf reader", () => {
       await expect(
         pageIndicator(page, expectedPageCount, expectedPageCount),
       ).toBeVisible();
+      expect(readerStateWrites).toHaveLength(0);
+      expect(await fetchReaderState(page, mediaId)).toEqual(
+        readerStateBeforeFind,
+      );
 
-      await pane
-        .getByRole("button", { name: "Go back to reading position" })
-        .click();
+      const returnButton = pane.getByRole("button", {
+        name: "Go back to reading position",
+      });
+      await returnButton.click();
+      await expect(returnButton).toBeHidden({ timeout: 20_000 });
       await expect(pageIndicator(page, 2, expectedPageCount)).toBeVisible();
-      await expect(pane.getByRole("region", { name: "PDF document" })).toBeFocused();
+      await expect(
+        pane.getByRole("region", { name: "PDF document" }),
+      ).toBeFocused();
 
       expect(page.url()).toBe(urlBeforeFind);
       expect(await fetchReaderState(page, mediaId)).toEqual(

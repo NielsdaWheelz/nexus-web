@@ -16,6 +16,10 @@ import type {
   PdfFindScope,
   PdfRuntimeFindResult,
 } from "@/components/pdfPaneFind";
+import {
+  isPdfFindSourceAccessRefreshAbort,
+  PDF_FIND_STALL_TIMEOUT_MS,
+} from "@/components/pdfPaneFind";
 import type { MediaFindPreviewLease } from "./mediaFindPreviewLease";
 
 const ENTIRE_PDF_SCOPE_ID = "EntirePdf";
@@ -85,6 +89,78 @@ function pdfFindSourceKey({
   });
 }
 
+function waitForRefreshedPdfFindRuntime({
+  mediaId,
+  sourceKey,
+  replacedRuntime,
+  getCurrentRuntime,
+  signal,
+}: {
+  readonly mediaId: string;
+  readonly sourceKey: PaneFindSourceKey;
+  readonly replacedRuntime: PdfFindRuntime;
+  readonly getCurrentRuntime: () => PdfFindRuntime | null;
+  readonly signal: AbortSignal;
+}): Promise<PdfFindRuntime> {
+  return new Promise((resolve, reject) => {
+    const deadline = performance.now() + PDF_FIND_STALL_TIMEOUT_MS;
+    let frameId: number | null = null;
+    const finish = (
+      outcome:
+        | { readonly kind: "Ready"; readonly runtime: PdfFindRuntime }
+        | { readonly kind: "Failed"; readonly error: unknown },
+    ) => {
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId);
+      }
+      signal.removeEventListener("abort", handleAbort);
+      if (outcome.kind === "Ready") {
+        resolve(outcome.runtime);
+      } else {
+        reject(outcome.error);
+      }
+    };
+    const handleAbort = () => {
+      finish({
+        kind: "Failed",
+        error: new DOMException("PDF Find Return was cancelled.", "AbortError"),
+      });
+    };
+    const inspect = () => {
+      frameId = null;
+      if (signal.aborted) {
+        handleAbort();
+        return;
+      }
+      const currentRuntime = getCurrentRuntime();
+      if (currentRuntime !== null && currentRuntime !== replacedRuntime) {
+        if (pdfFindSourceKey({ mediaId, runtime: currentRuntime }) !== sourceKey) {
+          finish({
+            kind: "Failed",
+            error: new DOMException("PDF Find source was replaced.", "AbortError"),
+          });
+          return;
+        }
+        finish({ kind: "Ready", runtime: currentRuntime });
+        return;
+      }
+      if (performance.now() >= deadline) {
+        finish({
+          kind: "Failed",
+          error: new Error(
+            "PDF Find source access refresh did not republish the runtime.",
+          ),
+        });
+        return;
+      }
+      frameId = window.requestAnimationFrame(inspect);
+    };
+
+    signal.addEventListener("abort", handleAbort, { once: true });
+    inspect();
+  });
+}
+
 function assertPdfFindOrigin(
   origin: PdfFindOrigin,
   numPages: number,
@@ -147,11 +223,13 @@ export function createPdfFindAdapter({
   runtime,
   getCurrentRuntime,
   previewLease,
+  focusReaderViewport,
 }: {
   readonly mediaId: string;
   readonly runtime: PdfFindRuntime;
   readonly getCurrentRuntime: () => PdfFindRuntime | null;
   readonly previewLease: MediaFindPreviewLease;
+  readonly focusReaderViewport: () => void;
 }): PdfPaneFindAdapter {
   const sourceKey = pdfFindSourceKey({ mediaId, runtime });
   let disposed = false;
@@ -543,13 +621,38 @@ export function createPdfFindAdapter({
       invalidatePreview();
       const captured = origin.value;
       previewLease.acquire();
-      await runtime.restoreOrigin(captured, request.signal);
-      assertCurrent(request.sourceKey);
+      let returnRuntime = runtime;
+      try {
+        await returnRuntime.restoreOrigin(captured, request.signal);
+      } catch (error) {
+        if (!isPdfFindSourceAccessRefreshAbort(error)) {
+          throw error;
+        }
+        returnRuntime = await waitForRefreshedPdfFindRuntime({
+          mediaId,
+          sourceKey,
+          replacedRuntime: returnRuntime,
+          getCurrentRuntime,
+          signal: request.signal,
+        });
+        await returnRuntime.restoreOrigin(captured, request.signal);
+      }
+      if (
+        request.sourceKey !== sourceKey ||
+        getCurrentRuntime() !== returnRuntime
+      ) {
+        throwAbort("PDF Find source was replaced.");
+      }
       if (request.signal.aborted) {
         throwAbort("PDF Find Return was cancelled.");
       }
-      runtime.clearPresentation();
+      returnRuntime.clearPresentation();
       origin = { kind: "Absent" };
+      // Restoring a page can republish the PDF runtime. Transfer focus while
+      // this adapter still owns the confirmed live viewport; releasing the
+      // preview lease may synchronously notify React consumers and replace it.
+      focusReaderViewport();
+      previewLease.armNextCaptureSuppression();
       previewLease.completeReturn();
     },
     errorMessage: pdfFindErrorMessage,
@@ -574,10 +677,12 @@ export function usePdfPaneFind({
   mediaId,
   runtime,
   previewLease,
+  focusReaderViewport,
 }: {
   readonly mediaId: string;
   readonly runtime: PdfFindRuntime | null;
   readonly previewLease: MediaFindPreviewLease;
+  readonly focusReaderViewport: () => void;
 }): PdfPaneFindAdapter | null {
   const runtimeRef = useRef(runtime);
   runtimeRef.current = runtime;
@@ -590,7 +695,8 @@ export function usePdfPaneFind({
             runtime,
             getCurrentRuntime: () => runtimeRef.current,
             previewLease,
+            focusReaderViewport,
           }),
-    [mediaId, previewLease, runtime],
+    [focusReaderViewport, mediaId, previewLease, runtime],
   );
 }

@@ -14,6 +14,7 @@ import type {
   PdfFindRuntime,
   PdfRuntimeFindResult,
 } from "@/components/pdfPaneFind";
+import { isPdfFindSourceAccessRefreshAbort } from "@/components/pdfPaneFind";
 import { apiFetch } from "@/lib/api/client";
 import { dispatchReaderPulse } from "@/lib/reader/pulseEvent";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -31,6 +32,8 @@ const pdfRuntimeState = vi.hoisted(() => ({
   textNode: null as Text | null,
   numPages: 1,
   pageWidths: [600] as number[],
+  viewportScaleMultiplier: 1,
+  pageBorderTop: 0,
   pageTexts: ["Alpha selected quote Omega"] as string[],
   pageHighlights: [] as unknown[],
   createdHighlightId: "created-highlight-1",
@@ -351,6 +354,10 @@ vi.mock("@/components/pdfReaderRuntime", () => {
       return this.scale;
     }
 
+    get currentScale() {
+      return this.scale;
+    }
+
     set currentScaleValue(value: string | number) {
       this.scale = typeof value === "number" ? value : 1;
       window.requestAnimationFrame(() => {
@@ -388,8 +395,20 @@ vi.mock("@/components/pdfReaderRuntime", () => {
         page.style.width = `${width}px`;
         page.style.height = "800px";
         page.getBoundingClientRect = vi.fn(
-          () => new DOMRect(40, pageTop - this.container.scrollTop, width, 800),
+          () =>
+            new DOMRect(
+              40,
+              pageTop -
+                pdfRuntimeState.pageBorderTop -
+                this.container.scrollTop,
+              width,
+              800,
+            ),
         );
+        Object.defineProperty(page, "clientTop", {
+          configurable: true,
+          value: pdfRuntimeState.pageBorderTop,
+        });
         Object.defineProperty(page, "offsetTop", {
           configurable: true,
           value: pageTop,
@@ -446,7 +465,7 @@ vi.mock("@/components/pdfReaderRuntime", () => {
         viewport: {
           width,
           height: 800,
-          scale: this.scale,
+          scale: this.scale * pdfRuntimeState.viewportScaleMultiplier,
           rotation: 0,
         },
         pdfPage: {
@@ -513,6 +532,8 @@ describe("PdfReader selection chat destinations", () => {
     pdfRuntimeState.textNode = null;
     pdfRuntimeState.numPages = 1;
     pdfRuntimeState.pageWidths = [600];
+    pdfRuntimeState.viewportScaleMultiplier = 1;
+    pdfRuntimeState.pageBorderTop = 0;
     pdfRuntimeState.pageTexts = ["Alpha selected quote Omega"];
     pdfRuntimeState.pageHighlights = [];
     pdfRuntimeState.createdHighlightId = "created-highlight-1";
@@ -687,6 +708,8 @@ describe("PdfReader selection chat destinations", () => {
   it("publishes PDF Find, previews without resume writes, and returns to an empty-text origin page", async () => {
     pdfRuntimeState.numPages = 2;
     pdfRuntimeState.pageWidths = [600, 600];
+    pdfRuntimeState.viewportScaleMultiplier = 4 / 3;
+    pdfRuntimeState.pageBorderTop = 9;
     pdfRuntimeState.pageTexts = ["", "Alpha selected quote Omega"];
     const onResumeStateChange = vi.fn();
     const onFindRuntimeReady = vi.fn();
@@ -774,6 +797,68 @@ describe("PdfReader selection chat destinations", () => {
 
     view.unmount();
     expect(onFindRuntimeReady).toHaveBeenLastCalledWith(null);
+  });
+
+  it("refreshes expired source access without publishing a false source exit", async () => {
+    const publishedRuntimes: Array<PdfFindRuntime | null> = [];
+    let resolveRuntime!: (runtime: PdfFindRuntime) => void;
+    const runtimeReady = new Promise<PdfFindRuntime>((resolve) => {
+      resolveRuntime = resolve;
+    });
+    const view = render(
+      <PdfReader
+        mediaId="media-1"
+        onFindRuntimeReady={(runtime) => {
+          publishedRuntimes.push(runtime);
+          if (runtime) {
+            resolveRuntime(runtime);
+          }
+        }}
+      />,
+    );
+    const initialRuntime = await runtimeReady;
+    const publicationCountBeforeRefresh = publishedRuntimes.length;
+    const origin = initialRuntime.captureOrigin();
+    if (origin.kind !== "Captured") {
+      throw new Error("Expected a captured PDF Find origin");
+    }
+    const now = vi
+      .spyOn(Date, "now")
+      .mockReturnValue(Date.parse("2100-01-01T00:00:00.000Z"));
+
+    let refreshAbort: unknown;
+    await act(async () => {
+      try {
+        await initialRuntime.restoreOrigin(
+          origin.value,
+          new AbortController().signal,
+        );
+      } catch (error) {
+        refreshAbort = error;
+      }
+    });
+    expect(isPdfFindSourceAccessRefreshAbort(refreshAbort)).toBe(true);
+    await waitFor(() => {
+      expect(
+        vi
+          .mocked(apiFetch)
+          .mock.calls.filter(([path]) => path === "/api/media/media-1/file"),
+      ).toHaveLength(2);
+      expect(publishedRuntimes.length).toBeGreaterThan(
+        publicationCountBeforeRefresh,
+      );
+    });
+    const refreshPublications = publishedRuntimes.slice(
+      publicationCountBeforeRefresh,
+    );
+    expect(refreshPublications).not.toContain(null);
+    expect(refreshPublications.at(-1)).not.toBe(initialRuntime);
+
+    now.mockRestore();
+    const publicationCountBeforeUnmount = publishedRuntimes.length;
+    view.unmount();
+    expect(publishedRuntimes).toHaveLength(publicationCountBeforeUnmount + 1);
+    expect(publishedRuntimes.at(-1)).toBeNull();
   });
 
   it("creates a PDF highlight and quotes it to a new chat", async () => {
