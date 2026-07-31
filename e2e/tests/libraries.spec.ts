@@ -1,4 +1,10 @@
-import { test, expect, type Page, type Request } from "@playwright/test";
+import {
+  test,
+  expect,
+  type Locator,
+  type Page,
+  type Request,
+} from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { stateChangingApiHeaders } from "./api";
 import { deleteE2eResource, throwE2eCleanupFailures } from "./cleanup";
@@ -7,6 +13,14 @@ import {
   gotoSinglePaneWorkspace,
   workspaceE2eDeviceId,
 } from "./workspace";
+
+async function openLibraryFilters(pane: Locator): Promise<void> {
+  const view = pane.getByRole("combobox", { name: "View" });
+  if (!(await view.isVisible())) {
+    await pane.getByRole("button", { name: /^Filter(?:,|$)/ }).click();
+  }
+  await expect(view).toBeVisible({ timeout: 15_000 });
+}
 
 async function createLibraryViaUi(
   page: Page,
@@ -226,9 +240,11 @@ test.describe("libraries", () => {
     const librariesResponse = await page.request.get("/api/libraries");
     expect(librariesResponse.ok()).toBeTruthy();
     const libraries = (await librariesResponse.json()) as {
-      data: Array<{ id: string; isDefault: boolean }>;
+      data: { items: Array<{ id: string; isDefault: boolean }> };
     };
-    const defaultLibrary = libraries.data.find((library) => library.isDefault);
+    const defaultLibrary = libraries.data.items.find(
+      (library) => library.isDefault,
+    );
     if (!defaultLibrary) {
       throw new Error("Default library missing from E2E seed");
     }
@@ -240,12 +256,13 @@ test.describe("libraries", () => {
       libraryHref,
     );
     await expect(page.locator("[data-pane-id]:visible")).toHaveCount(1);
-    const sortSelect = activeWorkspacePane(page).getByRole("combobox", {
+    const libraryPane = activeWorkspacePane(page);
+    await openLibraryFilters(libraryPane);
+    const sortSelect = libraryPane.getByRole("combobox", {
       name: "Sort by",
     });
     await expect(sortSelect).toBeVisible({ timeout: 15_000 });
     await page.waitForLoadState("networkidle");
-    const libraryPane = activeWorkspacePane(page);
     // The entries region/list are named by libraryPresentation — "All" for the
     // Default library.
     const entriesRegion = libraryPane.getByRole("region", {
@@ -266,14 +283,17 @@ test.describe("libraries", () => {
       throw new Error("Default library first row had no title");
     }
     type EntriesPayload = {
-      data: Array<{
-        media?: { title?: string };
-        podcast?: { title?: string };
-      }>;
+      data: {
+        items: Array<{
+          media?: { title?: string };
+          podcast?: { title?: string };
+        }>;
+      };
     };
     const firstTitle = (payload: EntriesPayload) =>
       (
-        payload.data[0]?.media?.title ?? payload.data[0]?.podcast?.title
+        payload.data.items[0]?.media?.title ??
+        payload.data.items[0]?.podcast?.title
       )?.trim();
     const titleSorts = [
       {
@@ -438,9 +458,9 @@ test.describe("libraries", () => {
       );
       expect(renameResponse.ok()).toBeTruthy();
       const renamedPayload = (await renameResponse.json()) as {
-        data: { name: string };
+        data: { library: { name: string } };
       };
-      expect(renamedPayload.data.name).toBe(renamed);
+      expect(renamedPayload.data.library.name).toBe(renamed);
     } finally {
       if (createdId) {
         await page.request.delete(`/api/libraries/${createdId}`, {
@@ -456,9 +476,11 @@ test.describe("libraries", () => {
     const librariesResponse = await page.request.get("/api/libraries");
     expect(librariesResponse.ok()).toBeTruthy();
     const libraries = (await librariesResponse.json()) as {
-      data: Array<{ id: string; isDefault: boolean }>;
+      data: { items: Array<{ id: string; isDefault: boolean }> };
     };
-    const defaultLibrary = libraries.data.find((library) => library.isDefault);
+    const defaultLibrary = libraries.data.items.find(
+      (library) => library.isDefault,
+    );
     if (!defaultLibrary) {
       throw new Error("Default library missing from E2E seed");
     }
@@ -502,6 +524,7 @@ test.describe("libraries", () => {
         defaultHref,
       );
       const pane = activeWorkspacePane(page);
+      await openLibraryFilters(pane);
       const viewSelect = pane.getByRole("combobox", { name: "View" });
       await expect(viewSelect).toBeVisible({ timeout: 15_000 });
       // The Default library presents as "All".
@@ -523,7 +546,11 @@ test.describe("libraries", () => {
       expect((await unfiledEntries).ok()).toBeTruthy();
       await expect(viewSelect).toHaveValue("unfiled");
       await expect
-        .poll(() => new URL(page.url()).searchParams.get("projection"))
+        .poll(() =>
+          page.evaluate(
+            () => new URL(window.location.href).searchParams.get("projection"),
+          ),
+        )
         .toBe("unfiled");
 
       // The default (virtual) library keys rows by media id.
@@ -572,7 +599,11 @@ test.describe("libraries", () => {
       expect((await inProgressEntries).ok()).toBeTruthy();
       await expect(viewSelect).toHaveValue("in-progress");
       await expect
-        .poll(() => new URL(page.url()).searchParams.get("projection"))
+        .poll(() =>
+          page.evaluate(
+            () => new URL(window.location.href).searchParams.get("projection"),
+          ),
+        )
         .toBe("in-progress");
 
       const inProgressRow = pane.locator(
@@ -624,20 +655,23 @@ test.describe("libraries", () => {
       const sortSelect = pane.getByRole("combobox", { name: "Sort by" });
       await sortSelect.selectOption("title-asc");
       await expect
-        .poll(() => {
-          const url = new URL(page.url());
-          return [
-            url.searchParams.get("projection"),
-            url.searchParams.get("sort"),
-            url.searchParams.get("direction"),
-          ].join("|");
-        })
+        .poll(() =>
+          page.evaluate(() => {
+            const url = new URL(window.location.href);
+            return [
+              url.searchParams.get("projection"),
+              url.searchParams.get("sort"),
+              url.searchParams.get("direction"),
+            ].join("|");
+          }),
+        )
         .toBe("in-progress|title|asc");
 
       // Reload the exact URL: projection and sort are restored from the pane URL.
       await page.reload({ waitUntil: "domcontentloaded" });
       const reloadedPane = activeWorkspacePane(page);
       await expect(reloadedPane).toBeVisible({ timeout: 15_000 });
+      await openLibraryFilters(reloadedPane);
       await expect(
         reloadedPane.getByRole("combobox", { name: "View" }),
       ).toHaveValue("in-progress", { timeout: 15_000 });

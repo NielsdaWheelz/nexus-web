@@ -974,6 +974,30 @@ describe("WorkspaceStoreProvider", () => {
     flushWorkspaceSession();
   });
 
+  it("projects an active pane query-only replace into the browser URL", async () => {
+    const href = "/libraries/11111111-1111-4111-8111-111111111111";
+    const workspace = await mountWorkspaceStore(href);
+    const paneId = workspace().state.activePrimaryPaneId;
+
+    act(() => {
+      workspace().navigatePane(
+        paneId,
+        `${href}?sort=title&direction=asc`,
+        { replace: true },
+      );
+    });
+
+    await waitFor(() => {
+      expect(primaryPanes(workspace().state)[0]?.currentVisit.href).toBe(
+        `${href}?sort=title&direction=asc`,
+      );
+      expect(`${window.location.pathname}${window.location.search}`).toBe(
+        `${href}?sort=title&direction=asc`,
+      );
+    });
+    flushWorkspaceSession();
+  });
+
   it("reader-style replace at the 48-entry boundary leaves every pane's history untouched", async () => {
     const fullStack = (label: string) => ({
       back: Array.from(

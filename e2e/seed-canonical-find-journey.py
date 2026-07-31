@@ -110,7 +110,8 @@ def seed() -> dict[str, str]:
         raise RuntimeError("Canonical Find transcript fixture did not normalize")
 
     artifact_filler = "".join(
-        f"<p>Artifact reading filler paragraph {ordinal:03d}.</p>" for ordinal in range(1, 46)
+        f"<p>Artifact reading filler paragraph {ordinal:03d}.</p>"
+        for ordinal in range(1, 46)
     )
     artifact_html = (
         '<article><section id="orientation">'
@@ -128,7 +129,10 @@ def seed() -> dict[str, str]:
     artifact_text = "\n".join(
         [
             "Artifact orientation",
-            *[f"Artifact reading filler paragraph {ordinal:03d}." for ordinal in range(1, 46)],
+            *[
+                f"Artifact reading filler paragraph {ordinal:03d}."
+                for ordinal in range(1, 46)
+            ],
             "Artifact target section",
             f"The first {ARTIFACT_QUERY} is a deterministic match.",
             f"The second {ARTIFACT_QUERY} verifies stepping and Return .",
@@ -154,9 +158,13 @@ def seed() -> dict[str, str]:
                     id=transcript_media_id,
                     kind="video",
                     title="E2E Canonical Find partial transcript",
-                    canonical_source_url=("https://www.youtube.com/watch?v=findE2E0001"),
+                    canonical_source_url=(
+                        "https://www.youtube.com/watch?v=findE2E0001"
+                    ),
                     canonical_url="https://www.youtube.com/watch?v=findE2E0001",
-                    external_playback_url=("https://www.youtube.com/watch?v=findE2E0001"),
+                    external_playback_url=(
+                        "https://www.youtube.com/watch?v=findE2E0001"
+                    ),
                     provider="youtube",
                     provider_id="findE2E0001",
                     created_by_user_id=owner_id,
@@ -207,6 +215,7 @@ def seed() -> dict[str, str]:
             db,
             media_id=transcript_media_id,
             request_reason="episode_open",
+            transcript_origin="Imported",
             transcript_coverage="partial",
             transcript_segments=transcript_segments,
             now=now,
@@ -292,7 +301,9 @@ def cleanup(fixture: dict[str, str]) -> None:
 
     with session_factory() as db:
         default_library_id = db.execute(
-            text("SELECT id FROM libraries WHERE owner_user_id = :owner_id AND is_default = true"),
+            text(
+                "SELECT id FROM libraries WHERE owner_user_id = :owner_id AND is_default = true"
+            ),
             {"owner_id": owner_id},
         ).scalar_one()
         for media_id in (web_media_id, transcript_media_id):

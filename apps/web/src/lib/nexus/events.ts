@@ -2,9 +2,49 @@ import type { NexusOpenIntent, NexusQuickActionId } from "./model";
 import { QUICK_ACTION_REGISTRY } from "./quickActions";
 
 export const NEXUS_OPEN_REQUESTED_EVENT = "Nexus.OpenRequested";
+const NEXUS_OPEN_RECEIVER_READY_KEY = "__nexusOpenReceiverReady";
+const PENDING_NEXUS_OPEN_INTENTS_KEY = "__nexusPendingOpenIntents";
+
+declare global {
+  interface Window {
+    [NEXUS_OPEN_RECEIVER_READY_KEY]?: boolean;
+    [PENDING_NEXUS_OPEN_INTENTS_KEY]?: NexusOpenIntent[];
+  }
+}
+
+function nexusWindow(): Window | null {
+  return typeof window === "undefined" ? null : window;
+}
+
+export function setNexusOpenReceiverReady(ready: boolean): void {
+  const currentWindow = nexusWindow();
+  if (currentWindow) {
+    currentWindow[NEXUS_OPEN_RECEIVER_READY_KEY] = ready;
+  }
+}
+
+export function consumePendingNexusOpenIntents(): NexusOpenIntent[] {
+  const currentWindow = nexusWindow();
+  if (!currentWindow) {
+    return [];
+  }
+  const intents = currentWindow[PENDING_NEXUS_OPEN_INTENTS_KEY] ?? [];
+  currentWindow[PENDING_NEXUS_OPEN_INTENTS_KEY] = [];
+  return intents;
+}
 
 export function requestNexusOpen(intent: NexusOpenIntent): void {
-  window.dispatchEvent(
+  const currentWindow = nexusWindow();
+  if (!currentWindow) {
+    return;
+  }
+  if (!currentWindow[NEXUS_OPEN_RECEIVER_READY_KEY]) {
+    const pending = currentWindow[PENDING_NEXUS_OPEN_INTENTS_KEY] ?? [];
+    pending.push(intent);
+    currentWindow[PENDING_NEXUS_OPEN_INTENTS_KEY] = pending;
+    return;
+  }
+  currentWindow.dispatchEvent(
     new CustomEvent<NexusOpenIntent>(NEXUS_OPEN_REQUESTED_EVENT, {
       detail: intent,
     }),

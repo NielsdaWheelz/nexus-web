@@ -41,11 +41,13 @@ interface EpubNavigationResponse {
 }
 
 interface LibraryListResponse {
-  data: Array<{
-    id: string;
-    name: string;
-    isDefault: boolean;
-  }>;
+  data: {
+    items: Array<{
+      id: string;
+      name: string;
+      isDefault: boolean;
+    }>;
+  };
 }
 
 function readSeed<T>(seedFile: string): T {
@@ -147,7 +149,9 @@ test.describe("workspace tabs", () => {
     const librariesResponse = await page.request.get("/api/libraries");
     expect(librariesResponse.ok()).toBeTruthy();
     const libraries = (await librariesResponse.json()) as LibraryListResponse;
-    const defaultLibrary = libraries.data.find((library) => library.isDefault);
+    const defaultLibrary = libraries.data.items.find(
+      (library) => library.isDefault,
+    );
     if (!defaultLibrary) {
       throw new Error("Default library missing from E2E seed.");
     }
@@ -452,7 +456,9 @@ test.describe("workspace tabs", () => {
     const librariesResponse = await page.request.get("/api/libraries");
     expect(librariesResponse.ok()).toBeTruthy();
     const libraries = (await librariesResponse.json()) as LibraryListResponse;
-    const defaultLibrary = libraries.data.find((library) => library.isDefault);
+    const defaultLibrary = libraries.data.items.find(
+      (library) => library.isDefault,
+    );
     if (!defaultLibrary) {
       throw new Error("Default library missing from E2E seed.");
     }

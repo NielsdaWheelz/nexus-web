@@ -11,7 +11,9 @@ import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import AppNav from "./AppNav";
 import {
+  consumePendingNexusOpenIntents,
   NEXUS_OPEN_REQUESTED_EVENT,
+  setNexusOpenReceiverReady,
 } from "@/lib/nexus/events";
 import type { NexusOpenIntent } from "@/lib/nexus/model";
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
@@ -131,6 +133,8 @@ describe("AppNav (desktop rail)", () => {
   });
 
   afterEach(() => {
+    setNexusOpenReceiverReady(false);
+    consumePendingNexusOpenIntents();
     localStorage.clear();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -250,6 +254,7 @@ describe("AppNav (desktop rail)", () => {
 
   it("opens Nexus from the command bar", () => {
     const onOpen = vi.fn();
+    setNexusOpenReceiverReady(true);
     window.addEventListener(NEXUS_OPEN_REQUESTED_EVENT, onOpen);
     renderNav();
 
@@ -262,6 +267,7 @@ describe("AppNav (desktop rail)", () => {
       .detail;
     expect(detail).toEqual({ kind: "Root" });
     window.removeEventListener(NEXUS_OPEN_REQUESTED_EVENT, onOpen);
+    setNexusOpenReceiverReady(false);
   });
 
   it("renders Quick Note then Today between the command bar and Places", async () => {
@@ -340,6 +346,7 @@ describe("AppNav (desktop rail)", () => {
 
   it("opens source-first Add from the + button", () => {
     const onOpen = vi.fn();
+    setNexusOpenReceiverReady(true);
     window.addEventListener(NEXUS_OPEN_REQUESTED_EVENT, onOpen);
     renderNav();
 
@@ -357,6 +364,7 @@ describe("AppNav (desktop rail)", () => {
       },
     });
     window.removeEventListener(NEXUS_OPEN_REQUESTED_EVENT, onOpen);
+    setNexusOpenReceiverReady(false);
   });
 
   it("opens an account menu with Settings and Sign Out", async () => {

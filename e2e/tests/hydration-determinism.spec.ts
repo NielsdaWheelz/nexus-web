@@ -129,9 +129,11 @@ test.describe("hydration determinism Mac", () => {
         workspaceE2eDeviceId(testInfo, "e2e-hydration"),
         "/libraries?nexus=1&intent=Root",
       );
-      await expect(page.getByRole("button", { name: /Open Nexus/i })).toBeVisible({
-        timeout: 15_000,
+      const nexusTrigger = page.getByRole("button", {
+        name: "Search or ask anything",
       });
+      await expect(nexusTrigger).toBeVisible({ timeout: 15_000 });
+      await expect(nexusTrigger).toContainText("⌘K");
       await sentry.expectClean("Mac shortcut labels");
     } finally {
       sentry.dispose();

@@ -19,6 +19,7 @@ from nexus.db.models import (
     NoteBlock,
     Podcast,
     PodcastSubscription,
+    PodcastSubscriptionBackfill,
     SynthesisArtifact,
 )
 from nexus.db.session import create_session_factory
@@ -107,6 +108,21 @@ def seed() -> dict[str, object]:
                 last_checked_at=podcast_checked_at,
             )
         )
+        # The models intentionally do not expose an ORM relationship between
+        # the subscription and its fenced backfill. Establish the FK target
+        # before adding the dependent row instead of relying on mapper order.
+        db.flush()
+        db.add(
+            PodcastSubscriptionBackfill(
+                id=new_uuid7(),
+                subscription_id=subscription_id,
+                cutoff_at=podcast_checked_at,
+                step_no=0,
+                processed_count=0,
+                added_count=0,
+                completed_at=podcast_checked_at,
+            )
+        )
 
         contributor_id = uuid4()
         contributor_handle = f"e2e-inspector-{contributor_id.hex[:16]}"
@@ -167,8 +183,12 @@ def seed() -> dict[str, object]:
             if prior_summary is not None
             else {"kind": "absent"}
         )
-        current_fingerprint = media_intelligence.current_content_fingerprint(db, media_id=media_id)
-        abstract_text = "A compact, reusable media-intelligence abstract exposed above the dossier."
+        current_fingerprint = media_intelligence.current_content_fingerprint(
+            db, media_id=media_id
+        )
+        abstract_text = (
+            "A compact, reusable media-intelligence abstract exposed above the dossier."
+        )
         if prior_summary is None:
             summary_id = uuid4()
             db.execute(
@@ -348,8 +368,12 @@ def cleanup(fixture: dict[str, object]) -> None:
     session_factory = create_session_factory()
     with session_factory() as db:
         artifact_engine.on_subject_deleted(db, ResourceRef(scheme="page", id=page_id))
-        delete_edges_for_deleted_resource(db, ref=ResourceRef(scheme="note_block", id=note_id))
-        delete_edges_for_deleted_resource(db, ref=ResourceRef(scheme="page", id=page_id))
+        delete_edges_for_deleted_resource(
+            db, ref=ResourceRef(scheme="note_block", id=note_id)
+        )
+        delete_edges_for_deleted_resource(
+            db, ref=ResourceRef(scheme="page", id=page_id)
+        )
         db.execute(text("DELETE FROM note_blocks WHERE id = :id"), {"id": note_id})
         db.execute(
             text("DELETE FROM contributor_credits WHERE id = :id"),
@@ -362,6 +386,16 @@ def cleanup(fixture: dict[str, object]) -> None:
         db.execute(
             text("DELETE FROM library_entries WHERE podcast_id = :podcast_id"),
             {"podcast_id": podcast_id},
+        )
+        db.execute(
+            text(
+                "DELETE FROM podcast_subscription_backfills "
+                "WHERE subscription_id IN ("
+                "SELECT id FROM podcast_subscriptions "
+                "WHERE user_id = :owner_id AND podcast_id = :podcast_id"
+                ")"
+            ),
+            {"owner_id": owner_id, "podcast_id": podcast_id},
         )
         db.execute(
             text(
@@ -401,7 +435,9 @@ def cleanup(fixture: dict[str, object]) -> None:
                 {"summary_id": summary_id},
             )
             db.execute(
-                text("DELETE FROM media_summaries WHERE id = :summary_id AND media_id = :media_id"),
+                text(
+                    "DELETE FROM media_summaries WHERE id = :summary_id AND media_id = :media_id"
+                ),
                 {"summary_id": summary_id, "media_id": media_id},
             )
         db.commit()

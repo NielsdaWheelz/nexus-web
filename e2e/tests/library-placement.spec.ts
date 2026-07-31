@@ -165,7 +165,7 @@ test("media Libraries… placement adds, removes, and returns focus without shar
         new URL(response.url()).pathname === `/api/media/${mediaId}/libraries`,
     );
     await libraryOption.click();
-    expect((await removeResponse).status()).toBe(204);
+    expect((await removeResponse).status()).toBe(200);
     await expectLibraryState(await removedList, destinationLibraryId, false);
     await expect(
       page.getByRole("option", { name: destinationLibraryName, exact: true }),

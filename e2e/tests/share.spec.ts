@@ -141,10 +141,10 @@ test.describe("share to Nexus", () => {
       );
       expect(entriesResponse.ok()).toBeTruthy();
       const entriesPayload = (await entriesResponse.json()) as {
-        data: Array<{ media: { id: string } | null }>;
+        data: { items: Array<{ media: { id: string } | null }> };
       };
       expect(
-        entriesPayload.data.some(
+        entriesPayload.data.items.some(
           (entry) => entry.media?.id === fromUrlPayload.data.media_id,
         ),
       ).toBe(true);

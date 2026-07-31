@@ -144,6 +144,33 @@ async function resetPodcastSubscriptionSettings(
   expect(response.ok(), await response.text()).toBeTruthy();
 }
 
+async function clearEpisodePlaybackRate(
+  page: Parameters<typeof gotoSinglePaneWorkspace>[0],
+  mediaId: string,
+): Promise<void> {
+  const currentResponse = await page.request.get(
+    `/api/media/${mediaId}/listening-state`,
+  );
+  expect(currentResponse.ok(), await currentResponse.text()).toBeTruthy();
+  const current = (await currentResponse.json()) as { data: ListeningState };
+  const response = await page.request.put(
+    `/api/media/${mediaId}/listening-state`,
+    {
+      headers: stateChangingApiHeaders(),
+      data: {
+        positionMs: current.data.positionMs,
+        durationMs: current.data.durationMs,
+        episodePlaybackRate: { kind: "Absent" },
+        expectedWriteRevision: current.data.writeRevision,
+        expectedResetEpoch: current.data.resetEpoch,
+        heartbeatGeneration: randomUUID(),
+        heartbeatSequence: 1,
+      },
+    },
+  );
+  expect(response.ok(), await response.text()).toBeTruthy();
+}
+
 async function resetAudioProgress(
   page: Parameters<typeof gotoSinglePaneWorkspace>[0],
   mediaId: string,
@@ -317,6 +344,8 @@ test("inherits podcast playback speed and resumes an episode override", async ({
   await gotoSinglePaneWorkspace(page, rawDeviceId, "/lectern");
 
   await resetPodcastSubscriptionSettings(page, audio.podcast_id);
+  await clearEpisodePlaybackRate(page, audio.media_id);
+  await clearEpisodePlaybackRate(page, audio.successor_media_id);
 
   try {
     const preference = await page.request.patch(
@@ -402,6 +431,8 @@ test("inherits podcast playback speed and resumes an episode override", async ({
       audio.media_id,
       audio.successor_media_id,
     ]);
+    await clearEpisodePlaybackRate(page, audio.media_id);
+    await clearEpisodePlaybackRate(page, audio.successor_media_id);
     await resetPodcastSubscriptionSettings(page, audio.podcast_id);
   }
 });
@@ -451,7 +482,7 @@ test("persists pause shortening through subscription settings while browser play
     expect(saveSettingsBox!.height).toBeGreaterThanOrEqual(44);
 
     await pauseSelect.focus();
-    await page.keyboard.press("End");
+    await pauseSelect.selectOption("Natural");
     await expect(pauseSelect).toHaveValue("Natural");
 
     await page.setViewportSize({ width: 320, height: 800 });

@@ -1,10 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  consumePendingNexusOpenIntents,
   consumeNexusUrlIntent,
   parseNexusUrlIntent,
+  requestNexusOpen,
+  setNexusOpenReceiverReady,
 } from "./events";
 
 afterEach(() => {
+  setNexusOpenReceiverReady(false);
+  consumePendingNexusOpenIntents();
   vi.unstubAllGlobals();
 });
 
@@ -70,5 +75,28 @@ describe("Nexus URL intent", () => {
       "",
       "/libraries?keep=1#reader",
     );
+  });
+});
+
+describe("Nexus open ingress", () => {
+  it("queues an intent until the controller receiver is ready", () => {
+    const dispatchEvent = vi.fn();
+    vi.stubGlobal("window", { dispatchEvent });
+    const intent = {
+      kind: "Add",
+      seed: {
+        kind: "Content",
+        initialFocus: "Url",
+        initialDestinations: [],
+      },
+    } as const;
+
+    requestNexusOpen(intent);
+    expect(dispatchEvent).not.toHaveBeenCalled();
+    expect(consumePendingNexusOpenIntents()).toEqual([intent]);
+
+    setNexusOpenReceiverReady(true);
+    requestNexusOpen({ kind: "Root" });
+    expect(dispatchEvent).toHaveBeenCalledTimes(1);
   });
 });

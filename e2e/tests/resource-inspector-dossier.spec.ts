@@ -83,9 +83,11 @@ async function defaultLibraryId(page: Page): Promise<string> {
   const response = await page.request.get("/api/libraries");
   await expectOk(response, "Read E2E libraries");
   const payload = (await response.json()) as {
-    data: Array<{ id: string; isDefault: boolean }>;
+    data: { items: Array<{ id: string; isDefault: boolean }> };
   };
-  const library = payload.data.find((candidate) => candidate.isDefault);
+  const library = payload.data.items.find(
+    (candidate) => candidate.isDefault,
+  );
   if (!library) throw new Error("Default library missing from E2E seed");
   return library.id;
 }
@@ -382,22 +384,23 @@ test("one real Dossier lifecycle reconnects, cancels, activates citations, and p
       );
       await visibleCompanion(page).click();
       let dossier = await openDossier(page);
+      let dossierDocument = dossier.locator("iframe").contentFrame();
 
       await expect(
-        dossier.getByRole("heading", { name: "Current fixture dossier" }),
+        dossierDocument.getByRole("heading", { name: "Current fixture dossier" }),
       ).toBeVisible();
       const older = dossier.getByRole("button", { name: "Older revision" });
       await expect(older).toBeEnabled({ timeout: 15_000 });
       await older.click();
       await expect(
-        dossier.getByRole("heading", { name: "Earlier fixture dossier" }),
+        dossierDocument.getByRole("heading", { name: "Earlier fixture dossier" }),
       ).toBeVisible({ timeout: 15_000 });
       await expect(dossier).toContainText("Viewing a past revision.");
       await dossier
         .getByRole("button", { name: "Current", exact: true })
         .click();
       await expect(
-        dossier.getByRole("heading", { name: "Current fixture dossier" }),
+        dossierDocument.getByRole("heading", { name: "Current fixture dossier" }),
       ).toBeVisible({ timeout: 15_000 });
 
       const streamRequests: string[] = [];
@@ -427,6 +430,7 @@ test("one real Dossier lifecycle reconnects, cancels, activates citations, and p
       const streamsBeforeReopen = streamRequests.length;
       await visibleCompanion(page).click();
       dossier = await openDossier(page);
+      dossierDocument = dossier.locator("iframe").contentFrame();
       await expect(dossier.getByRole("button", { name: "Cancel" })).toBeVisible(
         {
           timeout: 15_000,
@@ -448,14 +452,14 @@ test("one real Dossier lifecycle reconnects, cancels, activates citations, and p
         { timeout: 15_000 },
       );
       await expect(
-        dossier.getByRole("heading", { name: "Current fixture dossier" }),
+        dossierDocument.getByRole("heading", { name: "Current fixture dossier" }),
       ).toBeVisible();
       await expect(
         dossier.getByRole("button", { name: "Older revision" }),
       ).toBeEnabled();
 
       const paneCount = await page.locator("[data-pane-id]").count();
-      await dossier
+      await dossierDocument
         .getByRole("link", { name: "Open citation 1" })
         .click({ modifiers: ["Shift"] });
       await expect(page.locator("[data-pane-id]")).toHaveCount(paneCount + 1);

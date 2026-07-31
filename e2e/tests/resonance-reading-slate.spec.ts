@@ -31,10 +31,12 @@ interface SlateEnvelopeWire {
 }
 
 interface LibraryEntriesWire {
-  data: Array<{
-    kind: "media" | "podcast";
-    media?: { id: string };
-  }>;
+  data: {
+    items: Array<{
+      kind: "media" | "podcast";
+      media?: { id: string };
+    }>;
+  };
 }
 
 function readSeedJson(file: string): Record<string, unknown> {
@@ -293,7 +295,7 @@ test("Reading Slate acceptance preserves survivors, excludes the accepted target
         );
         await expectOk(response, "Read committed destination entries");
         const entries = (await response.json()) as LibraryEntriesWire;
-        return entries.data.some(
+        return entries.data.items.some(
           (entry) =>
             entry.kind === "media" && entry.media?.id === acceptedMediaId,
         );

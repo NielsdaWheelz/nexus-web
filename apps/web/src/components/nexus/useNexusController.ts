@@ -39,8 +39,10 @@ import {
   type NexusDispatchCtx,
 } from "@/lib/nexus/dispatch";
 import {
+  consumePendingNexusOpenIntents,
   consumeNexusUrlIntent,
   NEXUS_OPEN_REQUESTED_EVENT,
+  setNexusOpenReceiverReady,
 } from "@/lib/nexus/events";
 import {
   type CommittedWorkflow,
@@ -2219,15 +2221,24 @@ export function useNexusController(): NexusController {
 
   // --- Triggers: open event, deep link, global hotkeys ---
   useEffect(() => {
+    const openIntent = (detail: NexusOpenIntent) => {
+      requestExit({ kind: "Replace", detail });
+    };
     const handler = (event: Event) => {
       const detail =
         (event as CustomEvent<NexusOpenIntent>).detail ??
         ({ kind: "Root" } as const);
-      requestExit({ kind: "Replace", detail });
+      openIntent(detail);
     };
     window.addEventListener(NEXUS_OPEN_REQUESTED_EVENT, handler);
-    return () =>
+    setNexusOpenReceiverReady(true);
+    for (const intent of consumePendingNexusOpenIntents()) {
+      openIntent(intent);
+    }
+    return () => {
       window.removeEventListener(NEXUS_OPEN_REQUESTED_EVENT, handler);
+      setNexusOpenReceiverReady(false);
+    };
   }, [requestExit]);
 
   // The URL intent is a one-shot bootstrap ingress, not a reactive route state.

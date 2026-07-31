@@ -842,7 +842,6 @@ export function WorkspaceStoreProvider({
   const cancelledPaneEntryActivationIds =
     paneEntryDeliveryLifecycle.cancelledActivationIds;
   const consumedPaneEntryActivationIdSetRef = useRef<Set<string>>(new Set());
-  const readyRef = useRef(false);
   const hashFoldedRef = useRef(false);
   const lastFoldedLocationHashHrefRef = useRef<string | null>(null);
   const pendingLabelHintByPaneIdRef = useRef<
@@ -1164,7 +1163,7 @@ export function WorkspaceStoreProvider({
 
   // --- Sync state → URL ---
   useEffect(() => {
-    if (!readyRef.current || !mounted) return;
+    if (!mounted) return;
     const active = primaryPanes.find(
       (p) => p.id === state.activePrimaryPaneId && p.visibility === "visible",
     );
@@ -1415,10 +1414,9 @@ export function WorkspaceStoreProvider({
   );
 
   useEffect(() => {
-    if (typeof window === "undefined" || readyRef.current) {
+    if (typeof window === "undefined") {
       return;
     }
-    readyRef.current = true;
 
     const activateIngressRequest = (request: Omit<WorkspaceTargetActivationRequest, "originPaneId">) => {
       activateWorkspaceTarget({
@@ -1449,7 +1447,6 @@ export function WorkspaceStoreProvider({
       activateIngressRequest(request);
     }
     return () => {
-      readyRef.current = false;
       window.removeEventListener(WORKSPACE_TARGET_ACTIVATION_EVENT, handleEvent);
       window.removeEventListener("message", handleMessage);
       setWorkspaceTargetActivationReceiverReady(false);

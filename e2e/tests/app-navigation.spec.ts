@@ -140,7 +140,7 @@ test.describe("app navigation", () => {
       page.context().waitForEvent("page"),
       navigation
         .getByRole("link", { name: "Notes" })
-        .click({ modifiers: ["Control"] }),
+        .click({ modifiers: ["ControlOrMeta"] }),
     ]);
     await nativePage.waitForURL(/\/notes$/, {
       waitUntil: "domcontentloaded",
@@ -216,6 +216,7 @@ test.describe("mobile app navigation", () => {
           buttons.map((button) => button.textContent?.trim()),
         ),
     ).toEqual([
+      "Today",
       "Lectern",
       "Libraries",
       "Browse",
@@ -269,7 +270,16 @@ test.describe("mobile app navigation", () => {
 
     const client = await page.context().newCDPSession(page);
     const x = Math.round(box.x + box.width / 2);
-    const startY = Math.round(box.y + Math.min(40, box.height / 4));
+    const contentTopInset = await scrollport.evaluate((node) =>
+      Number.parseFloat(getComputedStyle(node).paddingTop),
+    );
+    const startY = Math.round(
+      box.y +
+        Math.min(
+          box.height - 200,
+          Math.max(contentTopInset + 24, box.height / 4),
+        ),
+    );
 
     let refreshRequestCount = 0;
     let observeFirstRefresh!: () => void;

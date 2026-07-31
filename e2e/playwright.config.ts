@@ -20,16 +20,22 @@ const API_PORT = process.env.API_PORT ?? "8000";
 const READER_PROXY_PORT = process.env.READER_PROXY_PORT ?? "8010";
 const REAL_MEDIA_ENABLED = process.env.E2E_REAL_MEDIA === "1";
 const RUNTIME_ENV = REAL_MEDIA_ENABLED ? "local" : "test";
+const sourceFixtureDir =
+  process.env.REAL_MEDIA_FIXTURE_DIR ??
+  path.join(ROOT_DIR, "python/tests/fixtures/real_media");
 
 if (REAL_MEDIA_ENABLED) {
-  const sourceFixtureDir =
-    process.env.REAL_MEDIA_FIXTURE_DIR ??
-    path.join(ROOT_DIR, "python/tests/fixtures/real_media");
   const runtimeFixtureDir = path.join(ROOT_DIR, "e2e/.seed/real-media-runtime");
   rmSync(runtimeFixtureDir, { recursive: true, force: true });
   cpSync(sourceFixtureDir, runtimeFixtureDir, { recursive: true });
   process.env.REAL_MEDIA_PROVIDER_FIXTURES = "1";
   process.env.REAL_MEDIA_FIXTURE_DIR = runtimeFixtureDir;
+} else {
+  // The standard suite still exercises podcast product routes. Keep those
+  // routes enabled without local provider credentials by using the same
+  // repository-owned, deterministic provider boundary as real-media E2E.
+  process.env.REAL_MEDIA_PROVIDER_FIXTURES = "1";
+  process.env.REAL_MEDIA_FIXTURE_DIR = sourceFixtureDir;
 }
 
 process.env.RATE_LIMIT_RPM ??= "240";

@@ -598,11 +598,13 @@ test.describe("author journeys", () => {
         exact: true,
       });
       await expect(lastCredit).toHaveCount(1);
-      expect(
-        await credits.evaluate((dialog) =>
-          dialog.contains(document.activeElement),
-        ),
-      ).toBe(true);
+      await expect
+        .poll(() =>
+          credits.evaluate((dialog) =>
+            dialog.contains(document.activeElement),
+          ),
+        )
+        .toBe(true);
 
       const creditsScrollOwner = credits.locator(
         '[data-resource-credits-complete="true"]',
