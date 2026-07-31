@@ -414,6 +414,7 @@ describe("AppNav (desktop rail)", () => {
     fireEvent.click(account);
 
     const settings = await screen.findByRole("menuitem", { name: "Settings" });
+    settings.focus();
     fireEvent.click(settings, { detail: 1, shiftKey: true });
 
     await waitFor(() => {
