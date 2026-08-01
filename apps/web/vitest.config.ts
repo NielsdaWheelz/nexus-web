@@ -14,6 +14,11 @@ export default defineConfig({
     ],
   },
   test: {
+    define: {
+      "process.env.NEXT_PUBLIC_APP_PUBLIC_ORIGIN": JSON.stringify(
+        "http://localhost:3000",
+      ),
+    },
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
@@ -34,6 +39,9 @@ export default defineConfig({
         extends: true,
         define: {
           "process.env.NODE_ENV": JSON.stringify("test"),
+          "process.env.NEXT_PUBLIC_APP_PUBLIC_ORIGIN": JSON.stringify(
+            "http://localhost:3000",
+          ),
         },
         test: {
           name: "browser",

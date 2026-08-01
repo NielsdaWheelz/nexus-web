@@ -78,6 +78,18 @@ const DISABLED_TEST_BAN = {
     "Tests must run exactly as collected; conditional collection, skip, only, and todo are forbidden.",
 };
 
+const VACUOUS_TEST_BANS = [
+  {
+    selector:
+      "CallExpression[callee.name=/^(test|it)$/] > ArrowFunctionExpression[body.type='BlockStatement'][body.body.length=0]",
+    message: "A test callback must execute an observable proof.",
+  },
+  {
+    selector: "CallExpression[callee.name='expect'] > Literal:first-child",
+    message: "Do not assert a literal. Assert behavior observed from the system under test.",
+  },
+];
+
 const PLAYWRIGHT_ROUTE_BANS = [
   {
     selector:
@@ -305,6 +317,7 @@ const eslintConfig = [
         PRODUCT_POLLING_BAN,
         CANVAS_CSS_VARIABLE_BAN,
         ...OWNED_MODULE_MOCK_BANS,
+        ...VACUOUS_TEST_BANS,
         FAKE_TIMER_BAN,
         ...SLEEP_BANS,
         DISABLED_TEST_BAN,
@@ -338,6 +351,7 @@ const eslintConfig = [
         "error",
         ...PLAYWRIGHT_RETRY_AND_WORKER_BANS,
         ...OWNED_MODULE_MOCK_BANS,
+        ...VACUOUS_TEST_BANS,
         FAKE_TIMER_BAN,
         ...SLEEP_BANS,
         DISABLED_TEST_BAN,
@@ -352,6 +366,7 @@ const eslintConfig = [
         "error",
         ...PLAYWRIGHT_RETRY_AND_WORKER_BANS,
         ...OWNED_MODULE_MOCK_BANS,
+        ...VACUOUS_TEST_BANS,
         FAKE_TIMER_BAN,
         ...SLEEP_BANS,
         DISABLED_TEST_BAN,

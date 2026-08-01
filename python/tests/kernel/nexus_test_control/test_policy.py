@@ -55,6 +55,9 @@ def _rules(violations: tuple[Any, ...]) -> set[str]:
         ("def test_case(): pass\n", "python-vacuous-proof"),
         ("def test_case():\n    return\n", "python-vacuous-proof"),
         ('def test_case():\n    """Only words."""\n', "python-vacuous-proof"),
+        ("def test_case():\n    assert True\n", "python-vacuous-proof"),
+        ("def test_case():\n    assert object() is not None\n", "python-vacuous-proof"),
+        ("def test_case(value):\n    assert value == value\n", "python-vacuous-proof"),
         (
             "import pytest\n@pytest.mark.network\ndef test_case(): pass\n",
             "python-unregistered-marker",
@@ -216,6 +219,14 @@ def test_repository_guard_rejects_legacy_route_resurrection(tmp_path: Path) -> N
             "apps/web/src/lib/provider.ts",
             'const enabled = process.env.REAL_MEDIA_PROVIDER_FIXTURES === "1";\n',
         ),
+        (
+            "python/nexus/services/search.py",
+            'if os.environ.get("NEXUS_TEST_FAKE_SEARCH"):\n    return canned_results\n',
+        ),
+        (
+            "apps/web/src/lib/search.ts",
+            'if (process.env.NODE_ENV === "test") return cannedResults;\n',
+        ),
     ],
 )
 def test_repository_guard_rejects_retired_product_test_seams(
@@ -237,6 +248,21 @@ def test_repository_guard_rejects_route_drift(tmp_path: Path) -> None:
     _write(tmp_path, "scripts/agency_verify.sh", "exec make test\n")
 
     assert "repository-route-contract" in _rules(repository_violations(tmp_path))
+
+
+def test_repository_guard_rejects_legacy_test_routes_in_unlisted_active_docs(
+    tmp_path: Path,
+) -> None:
+    _minimal_repository(tmp_path)
+    _write(tmp_path, "docs/modules/search.md", "Run `make test-search` before merging.\n")
+
+    violations = repository_violations(tmp_path)
+
+    assert any(
+        violation.rule == "repository-legacy-test-doc"
+        and violation.path == "docs/modules/search.md"
+        for violation in violations
+    )
 
 
 @pytest.mark.parametrize(
@@ -667,18 +693,29 @@ def test_empty_exception_manifest_is_valid() -> None:
     [
         ("schema", "exception-schema"),
         ("target", "exception-exact-target"),
+        ("rule", "exception-exact-target"),
+        ("replacement", "exception-replacement"),
         ("expired", "exception-expired"),
         ("duplicate", "exception-duplicate"),
     ],
 )
 def test_exception_guard_rejects_each_violation(tmp_path: Path, mutation: str, rule: str) -> None:
     _write(tmp_path, "python/tests/kernel/test_example.py", "def test_example(): pass\n")
+    _write(
+        tmp_path,
+        "python/tests/kernel/test_replacement.py",
+        "def test_replacement():\n    assert replacement_behavior()\n",
+    )
     item = _exception()
     exceptions: list[dict[str, str]] = [item]
     if mutation == "schema":
         item.pop("replacement")
     elif mutation == "target":
         item["path"] = "python/tests/**/*.py"
+    elif mutation == "rule":
+        item["rule"] = "python-skip"
+    elif mutation == "replacement":
+        item["replacement"] = "pytest:python/tests/kernel/test_missing.py::test_missing"
     elif mutation == "expired":
         item["expires_on"] = "2020-01-01"
     else:

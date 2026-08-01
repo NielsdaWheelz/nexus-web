@@ -75,6 +75,44 @@ def test_changed_policy_scans_only_the_selected_python_proof(tmp_path: Path) -> 
     assert run_capability(context, Capability.POLICY).evidence.status is RunStatus.PASS
 
 
+def test_active_quarantine_is_visible_as_not_run_in_every_gate(tmp_path: Path) -> None:
+    proof = tmp_path / "python/tests/kernel/test_rule.py"
+    _write(proof, "def test_rule():\n    assert observed_behavior()\n")
+    exception_path = tmp_path / "testdata/policy-exceptions.json"
+    _write(
+        exception_path,
+        json.dumps(
+            {
+                "version": 1,
+                "exceptions": [
+                    {
+                        "rule": "quarantine",
+                        "path": "python/tests/kernel/test_rule.py",
+                        "node": "pytest:python/tests/kernel/test_rule.py::test_rule",
+                        "reason": "Known defect",
+                        "expires_on": "2099-01-01",
+                        "replacement": "not-applicable: retire after the defect is fixed",
+                    }
+                ],
+            }
+        ),
+    )
+    context = _changed_context(
+        tmp_path,
+        Selection(
+            "python/tests/kernel/test_rule.py",
+            Capability.KERNEL_PYTHON,
+            SelectionReason.CHANGED_TEST,
+            "pytest:python/tests/kernel/test_rule.py::test_rule",
+        ),
+    )
+
+    result = run_capability(context, Capability.POLICY)
+
+    assert result.evidence.status is RunStatus.NOT_RUN
+    assert "active quarantines prevent a green gate" in result.detail
+
+
 def test_sensitivity_gate_requires_same_run_proof_evidence() -> None:
     proof = "pytest:python/tests/service/test_risk.py::test_risk"
     selection = Selection(

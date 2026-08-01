@@ -185,6 +185,47 @@ def test_podcast_index_rss_and_transcript_are_one_authentic_local_protocol() -> 
         assert transcript == (_FIXTURES / "nasa-hwhap-crew4-transcript.txt").read_bytes()
 
 
+def test_openai_embedding_protocol_returns_index_complete_normalized_vectors() -> None:
+    request = json.dumps(
+        {
+            "model": "text-embedding-3-small",
+            "input": ["water on the moon", "water on the moon", "podcast transcript"],
+            "dimensions": 16,
+        },
+        separators=(",", ":"),
+    ).encode()
+    with _running_server() as address:
+        status, _, body = _request(
+            address,
+            "POST",
+            "/v1/embeddings",
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            body=request,
+        )
+
+    response = json.loads(body)
+    assert status == 200, f"embedding fixture rejected its canonical request: {response!r}"
+    assert [row["index"] for row in response["data"]] == [0, 1, 2], (
+        f"embedding fixture returned incomplete or reordered indexes: {response!r}"
+    )
+    vectors = [row["embedding"] for row in response["data"]]
+    assert all(len(vector) == 16 for vector in vectors), (
+        f"embedding fixture violated the requested dimensions: {vectors!r}"
+    )
+    assert vectors[0] == vectors[1] and vectors[0] != vectors[2], (
+        f"embedding fixture was not stable and input-sensitive: {vectors!r}"
+    )
+    assert all(
+        sum(value * value for value in vector) == pytest.approx(1.0) for vector in vectors
+    ), f"embedding fixture returned non-normalized semantic vectors: {vectors!r}"
+    assert response["usage"] == {"prompt_tokens": 10, "total_tokens": 10}, (
+        f"embedding fixture returned an unexpected usage oracle: {response!r}"
+    )
+
+
 def _app_search_tool() -> CanonicalTool:
     nullable_strings = {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "null"}]}
     return CanonicalTool(

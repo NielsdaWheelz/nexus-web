@@ -81,6 +81,27 @@ _RETIRED_PRODUCT_TEST_SEAMS = (
     "real_media_provider_fixtures",
     "real_media_fixture_llm",
 )
+_ACTIVE_TEST_DOC_FILES = (
+    "README.md",
+    "python/README.md",
+    "apps/web/README.md",
+    "docs/architecture.md",
+)
+_ACTIVE_TEST_DOC_ROOTS = ("docs/local-rules", "docs/modules")
+_LEGACY_TEST_ROUTE = re.compile(
+    r"\bmake\s+(?:test(?:-[a-z0-9_-]+)?|verify)\b"
+    r"|\b(?:PLAYWRIGHT_ARGS|DATABASE_URL_TEST)\b"
+    r"|docs/(?:rules/testing\.md|local-rules/testing_standards\.md)"
+    r"|scripts/(?:with_test_services|with_supabase_services|test_env)\.sh"
+)
+_PRODUCT_TEST_SEAM = re.compile(
+    r"\bNEXUS_TEST_[A-Z0-9_]+\b"
+    r"|\b(?:test|fixture|mock|stub|fake)[A-Z0-9_]*(?:provider|runtime|response|data|mode|path|dir|enabled)\b"
+    r"|\b(?:provider|runtime|response|data|mode|path|dir)[A-Z0-9_]*(?:test|fixture|mock|stub|fake)\b"
+    r"|\b_is_test_environment\b"
+    r"|process\.env\.NODE_ENV\s*={2,3}\s*['\"]test['\"]",
+    re.I,
+)
 _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "scripts/test": (
         ("exec uv run --frozen --no-sync python -m nexus_test_control",),
@@ -255,6 +276,30 @@ def _attribute_parts(node: ast.AST) -> tuple[str, ...]:
     return tuple(reversed(parts))
 
 
+def _vacuous_assertion(node: ast.AST) -> bool:
+    if isinstance(node, ast.Constant):
+        return True
+    if not isinstance(node, ast.Compare) or len(node.ops) != 1 or len(node.comparators) != 1:
+        return False
+    right = node.comparators[0]
+    operator = node.ops[0]
+    if ast.dump(node.left, include_attributes=False) == ast.dump(right, include_attributes=False):
+        return isinstance(operator, (ast.Eq, ast.Is, ast.LtE, ast.GtE))
+    fresh_value = isinstance(node.left, (ast.Dict, ast.List, ast.Set, ast.Tuple)) or (
+        isinstance(node.left, ast.Call)
+        and isinstance(node.left.func, ast.Name)
+        and node.left.func.id == "object"
+        and not node.left.args
+        and not node.left.keywords
+    )
+    return (
+        fresh_value
+        and isinstance(right, ast.Constant)
+        and right.value is None
+        and isinstance(operator, (ast.IsNot, ast.NotEq))
+    )
+
+
 def python_ast_violations(path: str, source: str) -> tuple[PolicyViolation, ...]:
     """Check mechanical Python proof rules without importing the proof."""
     try:
@@ -273,6 +318,15 @@ def python_ast_violations(path: str, source: str) -> tuple[PolicyViolation, ...]
     unittest_aliases = {"unittest"}
 
     for node in ast.walk(tree):
+        if isinstance(node, ast.Assert) and _vacuous_assertion(node.test):
+            violations.append(
+                PolicyViolation(
+                    "python-vacuous-proof",
+                    path,
+                    "proof cannot assert a literal or tautology",
+                    node.lineno,
+                )
+            )
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name == "unittest.mock" or alias.name.startswith("unittest.mock."):
@@ -803,6 +857,26 @@ def repository_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                     "hard-cut legacy test path must remain absent",
                 )
             )
+    active_docs = [repo_root / relative for relative in _ACTIVE_TEST_DOC_FILES]
+    for root in _ACTIVE_TEST_DOC_ROOTS:
+        directory = repo_root / root
+        if directory.is_dir():
+            active_docs.extend(path for path in directory.rglob("*.md") if path.is_file())
+    for path in active_docs:
+        if not path.is_file():
+            continue
+        relative = path.relative_to(repo_root).as_posix()
+        content = path.read_text(encoding="utf-8")
+        match = _LEGACY_TEST_ROUTE.search(content)
+        if match is not None:
+            violations.append(
+                PolicyViolation(
+                    "repository-legacy-test-doc",
+                    relative,
+                    f"active documentation names a retired test route: {match.group(0)}",
+                    content[: match.start()].count("\n") + 1,
+                )
+            )
     for source_root, suffixes in _PRODUCT_SOURCE_ROOTS:
         root = repo_root / source_root
         if not root.is_dir():
@@ -811,16 +885,24 @@ def repository_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
             if not candidate.is_file() or candidate.suffix not in suffixes:
                 continue
             relative = candidate.relative_to(repo_root).as_posix()
+            if _WEB_TEST_LOOKING.search(candidate.name) or "__tests__" in candidate.parts:
+                continue
             text = candidate.read_text(encoding="utf-8")
             retired = tuple(seam for seam in _RETIRED_PRODUCT_TEST_SEAMS if seam in text)
+            generic = _PRODUCT_TEST_SEAM.search(text)
             if retired:
-                violations.append(
-                    PolicyViolation(
-                        "repository-product-test-seam",
-                        relative,
-                        f"retired test-only product seam is forbidden: {retired}",
-                    )
+                seam: str | tuple[str, ...] = retired
+            elif generic is not None:
+                seam = generic.group(0)
+            else:
+                continue
+            violations.append(
+                PolicyViolation(
+                    "repository-product-test-seam",
+                    relative,
+                    f"test-only product seam is forbidden: {seam}",
                 )
+            )
     for relative, (required, forbidden) in _ROUTE_CONTRACT.items():
         path = repo_root / relative
         if not path.is_file():
@@ -1202,6 +1284,8 @@ def corpus_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
 
 
 def exception_violations(repo_root: Path, today: date) -> tuple[PolicyViolation, ...]:
+    from nexus_test_control.selection import proof_target
+
     relative = "testdata/policy-exceptions.json"
     data, violations = _load_json(repo_root, relative, "exception-schema")
     if data is None:
@@ -1237,7 +1321,8 @@ def exception_violations(repo_root: Path, today: date) -> tuple[PolicyViolation,
             )
             continue
         if (
-            not _safe_relative(exception["path"])
+            exception["rule"] != "quarantine"
+            or not _safe_relative(exception["path"])
             or not (repo_root / exception["path"]).is_file()
             or any(character in exception["node"] for character in "*?[]")
         ):
@@ -1246,6 +1331,38 @@ def exception_violations(repo_root: Path, today: date) -> tuple[PolicyViolation,
                     "exception-exact-target",
                     location,
                     "exception target must be exact and existing",
+                )
+            )
+        else:
+            try:
+                target = proof_target(repo_root, exception["node"])
+            except (OSError, UnicodeDecodeError, ValueError):
+                target = None
+            node_path = exception["node"].partition(":")[2].split("::", 1)[0]
+            if target is None or node_path != exception["path"]:
+                violations.append(
+                    PolicyViolation(
+                        "exception-exact-target",
+                        location,
+                        "exception node must be an executable proof owned by its exact path",
+                    )
+                )
+        replacement = exception["replacement"]
+        if replacement.startswith("not-applicable:"):
+            replacement_valid = bool(replacement.removeprefix("not-applicable:").strip())
+        else:
+            try:
+                proof_target(repo_root, replacement)
+            except (OSError, UnicodeDecodeError, ValueError):
+                replacement_valid = False
+            else:
+                replacement_valid = True
+        if not replacement_valid:
+            violations.append(
+                PolicyViolation(
+                    "exception-replacement",
+                    location,
+                    "replacement must be an executable proof or a not-applicable reason",
                 )
             )
         try:

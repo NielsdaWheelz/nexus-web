@@ -856,7 +856,6 @@ def _run_policy(context: CapabilityContext) -> CapabilityResult:
     if complete:
         violations.extend(repository_violations(context.repo_root))
         violations.extend(proof_contract_violations(context.repo_root))
-        violations.extend(exception_violations(context.repo_root, date.today()))
         violations.extend(fault_manifest_violations(context.repo_root))
         violations.extend(corpus_violations(context.repo_root))
         python_paths = _complete_python_policy_paths(context.repo_root)
@@ -875,8 +874,6 @@ def _run_policy(context: CapabilityContext) -> CapabilityResult:
             violations.extend(repository_violations(context.repo_root))
         if "testdata/proofs.json" in selected_paths:
             violations.extend(proof_contract_violations(context.repo_root))
-        if "testdata/policy-exceptions.json" in selected_paths:
-            violations.extend(exception_violations(context.repo_root, date.today()))
         if any(path.startswith("testdata/faults/") for path in selected_paths):
             violations.extend(fault_manifest_violations(context.repo_root))
         if "testdata/manifest.json" in selected_paths:
@@ -888,6 +885,10 @@ def _run_policy(context: CapabilityContext) -> CapabilityResult:
             and path.startswith(("python/tests/", "python/nexus_test_control/"))
             and (context.repo_root / path).is_file()
         )
+
+    exception_path = context.repo_root / "testdata/policy-exceptions.json"
+    if exception_path.is_file():
+        violations.extend(exception_violations(context.repo_root, date.today()))
 
     for path in python_paths:
         relative = path.relative_to(context.repo_root).as_posix()
@@ -908,6 +909,16 @@ def _run_policy(context: CapabilityContext) -> CapabilityResult:
             duration_ms,
             f"{location}: {violation.rule}: {violation.message}{remainder}",
         )
+    if exception_path.is_file():
+        exceptions = json.loads(exception_path.read_text(encoding="utf-8"))["exceptions"]
+        if exceptions:
+            nodes = tuple(exception["node"] for exception in exceptions)
+            return _result(
+                Capability.POLICY,
+                RunStatus.NOT_RUN,
+                duration_ms,
+                f"active quarantines prevent a green gate: {nodes}",
+            )
     return _result(Capability.POLICY, RunStatus.PASS, duration_ms, "policy checks passed")
 
 

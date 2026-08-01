@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import re
 from copy import deepcopy
 from dataclasses import dataclass
@@ -97,9 +98,15 @@ class ExternalProtocolHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 - stdlib handler API
         try:
             target = self._target()
-            if target.host != "127.0.0.1" or target.path != "/v1/responses" or target.query:
+            if target.host != "127.0.0.1" or target.query:
                 raise RequestRejected(404, "unknown_path")
-            self._serve_openai_responses()
+            if target.path == "/v1/responses":
+                self._serve_openai_responses()
+                return
+            if target.path == "/v1/embeddings":
+                self._serve_openai_embeddings()
+                return
+            raise RequestRejected(404, "unknown_path")
         except RequestRejected as error:
             self._send_error(error)
 
@@ -193,12 +200,7 @@ class ExternalProtocolHandler(BaseHTTPRequestHandler):
         raise RequestRejected(404, "unknown_nasa_fixture")
 
     def _serve_openai_responses(self) -> None:
-        if self.headers.get("authorization") != f"Bearer {OPENAI_API_KEY}":
-            raise RequestRejected(401, "invalid_openai_auth")
-        content_type = self.headers.get("content-type", "").partition(";")[0].strip().lower()
-        if content_type != "application/json":
-            raise RequestRejected(415, "invalid_content_type")
-        payload = self._read_json_body()
+        payload = self._read_openai_json()
         _validate_openai_request(payload)
         output_format = payload.get("text")
         if output_format is not None:
@@ -215,6 +217,52 @@ class ExternalProtocolHandler(BaseHTTPRequestHandler):
             return
         _require_app_search_tool(payload)
         self._send_sse(_app_search_frames(payload["model"]))
+
+    def _serve_openai_embeddings(self) -> None:
+        payload = self._read_openai_json()
+        if set(payload) != {"model", "input", "dimensions"}:
+            raise RequestRejected(422, "invalid_embedding_shape")
+        model = payload["model"]
+        inputs = payload["input"]
+        dimensions = payload["dimensions"]
+        if (
+            model != "text-embedding-3-small"
+            or not isinstance(inputs, list)
+            or not 1 <= len(inputs) <= 64
+            or any(not isinstance(value, str) for value in inputs)
+            or not isinstance(dimensions, int)
+            or isinstance(dimensions, bool)
+            or not 8 <= dimensions <= 3072
+        ):
+            raise RequestRejected(422, "invalid_embedding_request")
+        token_count = sum(len(_embedding_tokens(value)) for value in inputs)
+        self._send_json(
+            200,
+            {
+                "object": "list",
+                "data": [
+                    {
+                        "object": "embedding",
+                        "index": index,
+                        "embedding": _deterministic_embedding(value, dimensions),
+                    }
+                    for index, value in enumerate(inputs)
+                ],
+                "model": model,
+                "usage": {
+                    "prompt_tokens": token_count,
+                    "total_tokens": token_count,
+                },
+            },
+        )
+
+    def _read_openai_json(self) -> dict[str, Any]:
+        if self.headers.get("authorization") != f"Bearer {OPENAI_API_KEY}":
+            raise RequestRejected(401, "invalid_openai_auth")
+        content_type = self.headers.get("content-type", "").partition(";")[0].strip().lower()
+        if content_type != "application/json":
+            raise RequestRejected(415, "invalid_content_type")
+        return self._read_json_body()
 
     def _read_json_body(self) -> dict[str, Any]:
         raw_length = self.headers.get("content-length")
@@ -282,6 +330,21 @@ class RequestRejected(Exception):
         self.status = status
         self.code = code
         super().__init__(code)
+
+
+def _embedding_tokens(value: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", value.lower())
+
+
+def _deterministic_embedding(value: str, dimensions: int) -> list[float]:
+    vector = [0.0] * dimensions
+    for token in _embedding_tokens(value):
+        digest = hashlib.sha256(token.encode()).digest()
+        bucket = int.from_bytes(digest[:4], "big") % dimensions
+        sign = -1.0 if digest[4] % 2 else 1.0
+        vector[bucket] += sign * (((int.from_bytes(digest[5:7], "big") % 1000) + 1) / 1000)
+    norm = math.sqrt(sum(component * component for component in vector))
+    return [component / norm for component in vector] if norm else vector
 
 
 def create_server(*, port: int, fixture_root: Path) -> ExternalProtocolServer:

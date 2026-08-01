@@ -13,9 +13,7 @@ const UUID_PATH_PART =
 const MEDIA_PATH_RE = new RegExp(`^/media/${UUID_PATH_PART}$`);
 
 function configuredOrigin(): string {
-  const raw =
-    process.env.NEXT_PUBLIC_APP_PUBLIC_ORIGIN ??
-    (process.env.NODE_ENV === "test" ? "http://localhost:3000" : "");
+  const raw = process.env.NEXT_PUBLIC_APP_PUBLIC_ORIGIN ?? "";
   if (!raw) throw new TypeError("canonical app origin is unavailable");
   const url = new URL(raw);
   if (url.origin !== raw || url.pathname !== "/" || url.search || url.hash) {

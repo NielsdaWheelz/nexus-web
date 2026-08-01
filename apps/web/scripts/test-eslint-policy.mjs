@@ -68,6 +68,24 @@ const cases = [
     `,
     expected: "Do not use Playwright's raw request fixture",
   },
+  {
+    filename: "src/vacuous.unit.test.ts",
+    source: `
+      import { test } from "vitest";
+      test("empty", () => {});
+    `,
+    expected: "A test callback must execute an observable proof",
+  },
+  {
+    filename: "e2e/journeys/vacuous.journey.spec.ts",
+    source: `
+      import { expect, test } from "@playwright/test";
+      test("literal", async () => {
+        expect(true).toBe(true);
+      });
+    `,
+    expected: "Do not assert a literal",
+  },
 ];
 
 for (const fixture of cases) {
