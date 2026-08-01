@@ -98,7 +98,7 @@
       "patch": "testdata/faults/web-search-provider-identity-bypass.patch",
       "sha256": "2b1c6686bf086afdba22ec8e3f2f583b1186ef7c1aac5220e203f1d9da18e322",
       "proofs": [
-        "pytest:python/tests/service/test_citation_provenance.py::test_web_search_provider_ref_remains_telemetry_behind_one_snapshot_identity"
+        "pytest:python/tests/service/test_web_search_identity.py::test_web_search_provider_ref_remains_telemetry_behind_one_snapshot_identity"
       ],
       "expected_failure": "provider result ref replaced the Nexus snapshot identity"
     },

@@ -119,7 +119,7 @@
       ],
       "proofs": [
         "pytest:python/tests/service/test_citation_provenance.py::test_published_citation_reconstructs_locator_from_canonical_evidence",
-        "pytest:python/tests/service/test_citation_provenance.py::test_web_search_provider_ref_remains_telemetry_behind_one_snapshot_identity"
+        "pytest:python/tests/service/test_web_search_identity.py::test_web_search_provider_ref_remains_telemetry_behind_one_snapshot_identity"
       ],
       "capabilities": [
         "service"
