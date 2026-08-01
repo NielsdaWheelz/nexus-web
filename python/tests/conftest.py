@@ -99,7 +99,7 @@ def test_user(db_session: Session) -> UserRecord:
 @pytest.fixture
 def nexus_app(db_session: Session, test_user: UserRecord) -> FastAPI:
     """Build the real FastAPI stack with only external token verification controlled."""
-    from nexus.app import create_app
+    from nexus.app import add_request_id_middleware, create_app
     from nexus.auth.middleware import AuthMiddleware
     from nexus.db.session import get_db
     from nexus.services.bootstrap import ensure_user_and_default_library
@@ -118,6 +118,7 @@ def nexus_app(db_session: Session, test_user: UserRecord) -> FastAPI:
             bootstrap_callback=bootstrap,
         )
     )
+    add_request_id_middleware(app, log_requests=False)
 
     def session() -> Generator[Session, None, None]:
         yield db_session

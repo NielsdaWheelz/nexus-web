@@ -27,9 +27,11 @@ Target-only candidate types never enter ``SEARCH_RESULT_TYPES``/``SearchKind``
 from __future__ import annotations
 
 from collections.abc import Callable, Collection
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.engine import Row
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import (
@@ -91,6 +93,7 @@ from nexus.services.search.retrievers.resource_metadata import (
     _lexical_match_sql,
     _lexical_params,
     _tier_score_sql,
+    reference_metadata_candidate_sql_parts,
     retrieve_library_artifact_candidates,
     retrieve_library_candidates,
     retrieve_oracle_reading_candidates,
@@ -334,25 +337,12 @@ def reference_candidates(
     def include(scheme: str) -> bool:
         return schemes is None or scheme in schemes
 
-    out: list[TargetCandidate] = []
-    if include("page"):
-        out.extend(_reference_pages(db, viewer_id, query, limit_per_source))
-    if include("note_block"):
-        out.extend(_reference_note_blocks(db, viewer_id, query, limit_per_source))
-    if include("media"):
-        out.extend(_reference_media(db, viewer_id, query, limit_per_source))
-    if include("podcast"):
-        out.extend(_reference_podcasts(db, viewer_id, query, limit_per_source))
-    if include("contributor"):
-        out.extend(_reference_contributors(db, viewer_id, query, limit_per_source))
-    if include("highlight"):
-        out.extend(_reference_highlights(db, viewer_id, query, limit_per_source))
-    if include("conversation"):
-        out.extend(_reference_conversations(db, viewer_id, query, limit_per_source))
-    if include("message"):
-        out.extend(_reference_messages(db, viewer_id, query, limit_per_source))
-    out.extend(
-        _metadata_candidates(db, viewer_id, q=query, include=include, limit=limit_per_source)
+    out = _reference_candidates(
+        db,
+        viewer_id,
+        query,
+        include=include,
+        limit=limit_per_source,
     )
     return rank_candidates(out)
 
@@ -378,286 +368,354 @@ def _metadata_candidates(
 # =============================================================================
 
 
-def _reference_pages(
-    db: Session, viewer_id: UUID, q: str, limit: int
-) -> list[InternalSearchResult]:
-    rows = db.execute(
-        text(
+def _reference_candidates(
+    db: Session,
+    viewer_id: UUID,
+    q: str,
+    *,
+    include: Callable[[str], bool],
+    limit: int,
+) -> list[TargetCandidate]:
+    """Retrieve every reference-profile lexical source in one round trip."""
+    parts: list[str] = []
+    if include("page"):
+        parts.append(
             f"""
-            SELECT p.id, p.title, {_tier_score_sql("p.title", "p.title")} AS score
-            FROM pages p
-            WHERE p.user_id = :viewer_id
-              AND {_lexical_match_sql("p.title")}
-            ORDER BY score DESC, p.title ASC, p.id ASC
-            LIMIT :limit
+            (
+                SELECT 'page'::text AS result_type, p.id,
+                       {_tier_score_sql("p.title", "p.title")} AS score,
+                       jsonb_build_object('title', p.title) AS payload
+                FROM pages p
+                WHERE p.user_id = :viewer_id
+                  AND {_lexical_match_sql("p.title")}
+                ORDER BY score DESC, p.title ASC, p.id ASC
+                LIMIT :limit
+            )
             """
-        ),
-        _lexical_params(viewer_id, q, limit),
-    ).fetchall()
-    return [
-        _RankedPageResult(
-            id=row[0],
-            title=str(row[1]),
-            snippet=_truncate_snippet(str(row[1])),
-            score=_build_search_score(row[2]),
         )
-        for row in rows
-    ]
-
-
-def _reference_note_blocks(
-    db: Session, viewer_id: UUID, q: str, limit: int
-) -> list[InternalSearchResult]:
-    """Note-body substring matching (the preserved ``@``-picker behavior)."""
-    rows = db.execute(
-        text(
+    if include("note_block"):
+        parts.append(
             f"""
-            SELECT nb.id, nb.body_text, {_tier_score_sql("nb.body_text", "nb.body_text")} AS score
-            FROM note_blocks nb
-            WHERE nb.user_id = :viewer_id
-              AND {_lexical_match_sql("nb.body_text")}
-            ORDER BY score DESC, nb.updated_at DESC, nb.id ASC
-            LIMIT :limit
+            (
+                SELECT 'note_block'::text AS result_type, nb.id,
+                       {_tier_score_sql("nb.body_text", "nb.body_text")} AS score,
+                       jsonb_build_object('body_text', nb.body_text) AS payload
+                FROM note_blocks nb
+                WHERE nb.user_id = :viewer_id
+                  AND {_lexical_match_sql("nb.body_text")}
+                ORDER BY score DESC, nb.updated_at DESC, nb.id ASC
+                LIMIT :limit
+            )
             """
-        ),
-        _lexical_params(viewer_id, q, limit),
-    ).fetchall()
-    return [
-        _RankedNoteBlockResult(
-            id=row[0],
-            snippet=_snippet_around_query(str(row[1] or ""), q)
-            or _truncate_snippet(str(row[1] or "")),
-            body_text=str(row[1] or ""),
-            score=_build_search_score(row[2]),
         )
-        for row in rows
-    ]
-
-
-def _reference_media(
-    db: Session, viewer_id: UUID, q: str, limit: int
-) -> list[InternalSearchResult]:
-    blob = "concat_ws(' ', m.title, COALESCE(m.description, ''))"
-    rows = db.execute(
-        text(
+    if include("media"):
+        blob = "concat_ws(' ', m.title, COALESCE(m.description, ''))"
+        parts.append(
             f"""
-            WITH visible_media AS ({visible_media_ids_cte_sql()})
-            SELECT m.id, m.kind, m.title, m.published_date,
-                   {_tier_score_sql("m.title", blob)} AS score
-            FROM media m
-            JOIN visible_media vm ON vm.media_id = m.id
-            WHERE {_lexical_match_sql(blob)}
-            ORDER BY score DESC, m.title ASC, m.id ASC
-            LIMIT :limit
+            (
+                WITH visible_media AS ({visible_media_ids_cte_sql()})
+                SELECT 'media'::text AS result_type, m.id,
+                       {_tier_score_sql("m.title", blob)} AS score,
+                       jsonb_build_object(
+                           'media_kind', m.kind,
+                           'title', m.title,
+                           'published_date', m.published_date
+                       ) AS payload
+                FROM media m
+                JOIN visible_media vm ON vm.media_id = m.id
+                WHERE {_lexical_match_sql(blob)}
+                ORDER BY score DESC, m.title ASC, m.id ASC
+                LIMIT :limit
+            )
             """
-        ),
-        _lexical_params(viewer_id, q, limit),
-    ).fetchall()
-    return [
-        _RankedMediaResult(
-            id=row[0],
-            snippet=_truncate_snippet(str(row[2] or "")),
-            source=_build_search_source(row[0], row[1], row[2], None, row[3]),
-            score=_build_search_score(row[4]),
         )
-        for row in rows
-    ]
-
-
-def _reference_podcasts(
-    db: Session, viewer_id: UUID, q: str, limit: int
-) -> list[InternalSearchResult]:
-    blob = "concat_ws(' ', p.title, COALESCE(p.description, ''))"
-    rows = db.execute(
-        text(
+    if include("podcast"):
+        blob = "concat_ws(' ', p.title, COALESCE(p.description, ''))"
+        parts.append(
             f"""
-            SELECT p.id, p.title, {_tier_score_sql("p.title", blob)} AS score
-            FROM podcasts p
-            WHERE p.id IN ({visible_podcast_ids_cte_sql()})
-              AND {_lexical_match_sql(blob)}
-            ORDER BY score DESC, p.title ASC, p.id ASC
-            LIMIT :limit
+            (
+                SELECT 'podcast'::text AS result_type, p.id,
+                       {_tier_score_sql("p.title", blob)} AS score,
+                       jsonb_build_object('title', p.title) AS payload
+                FROM podcasts p
+                WHERE p.id IN ({visible_podcast_ids_cte_sql()})
+                  AND {_lexical_match_sql(blob)}
+                ORDER BY score DESC, p.title ASC, p.id ASC
+                LIMIT :limit
+            )
             """
-        ),
-        _lexical_params(viewer_id, q, limit),
-    ).fetchall()
-    return [
-        _RankedPodcastResult(
-            id=row[0],
-            title=str(row[1]),
-            contributors=[],
-            snippet=_truncate_snippet(str(row[1])),
-            score=_build_search_score(row[2]),
         )
-        for row in rows
-    ]
-
-
-def _reference_contributors(
-    db: Session, viewer_id: UUID, q: str, limit: int
-) -> list[InternalSearchResult]:
-    """Credited-visible contributors (canonical D-8 predicate) matched by substring."""
-    rows = db.execute(
-        text(
+    if include("contributor"):
+        parts.append(
             f"""
-            WITH
-                visible_credits AS MATERIALIZED (
-                    SELECT contributor_id, credited_name
-                    FROM ({visible_credit_rows_sql()}) visible_credit
-                ),
-                visible_credit_text AS MATERIALIZED (
-                    SELECT
-                        contributor_id,
-                        string_agg(
-                            DISTINCT credited_name,
-                            ' ' ORDER BY credited_name
-                        ) AS credited_names
-                    FROM visible_credits
-                    GROUP BY contributor_id
-                ),
-                alias_text AS MATERIALIZED (
-                    SELECT
-                        alias.contributor_id,
-                        string_agg(alias.alias, ' ' ORDER BY alias.alias) AS aliases
-                    FROM contributor_aliases alias
-                    JOIN visible_credit_text credit
-                      ON credit.contributor_id = alias.contributor_id
-                    GROUP BY alias.contributor_id
-                ),
-                candidate_text AS MATERIALIZED (
-                    SELECT
-                        contributor.id,
-                        contributor.handle,
-                        contributor.display_name,
-                        concat_ws(
-                            ' ',
+            (
+                WITH
+                    visible_credits AS MATERIALIZED (
+                        SELECT contributor_id, credited_name
+                        FROM ({visible_credit_rows_sql()}) visible_credit
+                    ),
+                    visible_credit_text AS MATERIALIZED (
+                        SELECT
+                            contributor_id,
+                            string_agg(
+                                DISTINCT credited_name,
+                                ' ' ORDER BY credited_name
+                            ) AS credited_names
+                        FROM visible_credits
+                        GROUP BY contributor_id
+                    ),
+                    alias_text AS MATERIALIZED (
+                        SELECT
+                            alias.contributor_id,
+                            string_agg(alias.alias, ' ' ORDER BY alias.alias) AS aliases
+                        FROM contributor_aliases alias
+                        JOIN visible_credit_text credit
+                          ON credit.contributor_id = alias.contributor_id
+                        GROUP BY alias.contributor_id
+                    ),
+                    candidate_text AS MATERIALIZED (
+                        SELECT
+                            contributor.id,
+                            contributor.handle,
                             contributor.display_name,
-                            aliases.aliases,
-                            credit.credited_names
-                        ) AS search_text
-                    FROM visible_credit_text credit
-                    JOIN contributors contributor ON contributor.id = credit.contributor_id
-                    LEFT JOIN alias_text aliases
-                      ON aliases.contributor_id = contributor.id
-                )
-            SELECT candidate.id, candidate.handle, candidate.display_name,
-                   {_tier_score_sql("candidate.display_name", "candidate.search_text")} AS score
-            FROM candidate_text candidate
-            WHERE {_lexical_match_sql("candidate.search_text")}
-            ORDER BY score DESC, candidate.display_name ASC, candidate.id ASC
-            LIMIT :limit
+                            concat_ws(
+                                ' ',
+                                contributor.display_name,
+                                aliases.aliases,
+                                credit.credited_names
+                            ) AS search_text
+                        FROM visible_credit_text credit
+                        JOIN contributors contributor
+                          ON contributor.id = credit.contributor_id
+                        LEFT JOIN alias_text aliases
+                          ON aliases.contributor_id = contributor.id
+                    )
+                SELECT 'contributor'::text AS result_type, candidate.id,
+                       {_tier_score_sql("candidate.display_name", "candidate.search_text")} AS score,
+                       jsonb_build_object(
+                           'handle', candidate.handle,
+                           'display_name', candidate.display_name
+                       ) AS payload
+                FROM candidate_text candidate
+                WHERE {_lexical_match_sql("candidate.search_text")}
+                ORDER BY score DESC, candidate.display_name ASC, candidate.id ASC
+                LIMIT :limit
+            )
             """
-        ),
-        _lexical_params(viewer_id, q, limit),
-    ).fetchall()
-    return [
-        _RankedContributorResult(
-            id=row[0],
-            handle=str(row[1]),
-            display_name=str(row[2]),
-            snippet=_truncate_snippet(str(row[2])),
-            score=_build_search_score(row[3]),
         )
-        for row in rows
-    ]
+    if include("highlight"):
+        parts.append(
+            f"""
+            (
+                WITH visible_media AS ({visible_media_ids_cte_sql()})
+                SELECT 'highlight'::text AS result_type, h.id,
+                       {_tier_score_sql("h.exact", "h.exact")} AS score,
+                       jsonb_build_object(
+                           'exact', h.exact,
+                           'color', h.color,
+                           'media_id', m.id,
+                           'media_kind', m.kind,
+                           'media_title', m.title,
+                           'published_date', m.published_date
+                       ) AS payload
+                FROM highlights h
+                JOIN media m ON m.id = h.anchor_media_id
+                JOIN visible_media vm ON vm.media_id = h.anchor_media_id
+                WHERE {_lexical_match_sql("h.exact")}
+                  AND {highlight_visibility_sql("h")}
+                ORDER BY score DESC, h.updated_at DESC, h.id ASC
+                LIMIT :limit
+            )
+            """
+        )
+    if include("conversation"):
+        title = "COALESCE(c.title, '')"
+        parts.append(
+            f"""
+            (
+                WITH visible_conversations AS ({visible_conversation_ids_cte_sql()})
+                SELECT 'conversation'::text AS result_type, c.id,
+                       {_tier_score_sql(title, title)} AS score,
+                       jsonb_build_object('title', c.title) AS payload
+                FROM conversations c
+                JOIN visible_conversations vc ON vc.conversation_id = c.id
+                WHERE {_lexical_match_sql(title)}
+                ORDER BY score DESC, c.updated_at DESC, c.id ASC
+                LIMIT :limit
+            )
+            """
+        )
+    if include("message"):
+        parts.append(
+            f"""
+            (
+                WITH visible_conversations AS ({visible_conversation_ids_cte_sql()})
+                SELECT 'message'::text AS result_type, m.id,
+                       {_tier_score_sql("m.content", "m.content")} AS score,
+                       jsonb_build_object(
+                           'conversation_id', m.conversation_id,
+                           'seq', m.seq,
+                           'content', m.content
+                       ) AS payload
+                FROM messages m
+                JOIN visible_conversations vc ON vc.conversation_id = m.conversation_id
+                WHERE m.status = 'complete'
+                  AND (
+                        m.content ILIKE :contains_pattern
+                        OR m.content_tsv @@ websearch_to_tsquery('english', :query)
+                  )
+                ORDER BY score DESC, m.created_at DESC, m.id ASC
+                LIMIT :limit
+            )
+            """
+        )
+    parts.extend(reference_metadata_candidate_sql_parts(include))
+    if not parts:
+        return []
 
-
-def _reference_highlights(
-    db: Session, viewer_id: UUID, q: str, limit: int
-) -> list[InternalSearchResult]:
     rows = db.execute(
         text(
-            f"""
-            WITH visible_media AS ({visible_media_ids_cte_sql()})
-            SELECT h.id, h.exact, h.color, m.id AS media_id, m.kind, m.title,
-                   m.published_date, {_tier_score_sql("h.exact", "h.exact")} AS score
-            FROM highlights h
-            JOIN media m ON m.id = h.anchor_media_id
-            JOIN visible_media vm ON vm.media_id = h.anchor_media_id
-            WHERE {_lexical_match_sql("h.exact")}
-              AND {highlight_visibility_sql("h")}
-            ORDER BY score DESC, h.updated_at DESC, h.id ASC
-            LIMIT :limit
-            """
+            "SELECT result_type, id, score, payload FROM ("
+            + " UNION ALL ".join(parts)
+            + ") direct_candidates"
         ),
         _lexical_params(viewer_id, q, limit),
     ).fetchall()
-    return [
-        _RankedHighlightResult(
-            id=row[0],
-            snippet=_snippet_around_query(str(row[1] or ""), q)
-            or _truncate_snippet(str(row[1] or "")),
-            exact=str(row[1] or ""),
-            color=str(row[2] or "yellow"),
-            source=_build_search_source(row[3], row[4], row[5], None, row[6]),
-            score=_build_search_score(row[7]),
+    return [_reference_candidate(row, q) for row in rows]
+
+
+def _reference_candidate(
+    row: Row[tuple[object, object, object, object]], q: str
+) -> TargetCandidate:
+    result_type = str(row[0])
+    candidate_id = row[1]
+    score = _build_search_score(row[2])
+    raw_payload = row[3]
+    if not isinstance(candidate_id, UUID) or not isinstance(raw_payload, dict):
+        raise AssertionError("direct reference candidate row violated its typed SQL contract")
+    payload = cast(dict[str, object], raw_payload)
+
+    if result_type == "page":
+        title = str(payload["title"])
+        return _RankedPageResult(
+            id=candidate_id,
+            title=title,
+            snippet=_truncate_snippet(title),
+            score=score,
         )
-        for row in rows
-    ]
-
-
-def _reference_conversations(
-    db: Session, viewer_id: UUID, q: str, limit: int
-) -> list[InternalSearchResult]:
-    title = "COALESCE(c.title, '')"
-    rows = db.execute(
-        text(
-            f"""
-            WITH visible_conversations AS ({visible_conversation_ids_cte_sql()})
-            SELECT c.id, c.title, {_tier_score_sql(title, title)} AS score
-            FROM conversations c
-            JOIN visible_conversations vc ON vc.conversation_id = c.id
-            WHERE {_lexical_match_sql(title)}
-            ORDER BY score DESC, c.updated_at DESC, c.id ASC
-            LIMIT :limit
-            """
-        ),
-        _lexical_params(viewer_id, q, limit),
-    ).fetchall()
-    return [
-        _RankedConversationResult(
-            id=row[0],
-            title=str(row[1] or "Conversation"),
-            snippet=_truncate_snippet(str(row[1] or "Conversation")),
-            score=_build_search_score(row[2]),
+    if result_type == "note_block":
+        body_text = str(payload.get("body_text") or "")
+        return _RankedNoteBlockResult(
+            id=candidate_id,
+            snippet=_snippet_around_query(body_text, q) or _truncate_snippet(body_text),
+            body_text=body_text,
+            score=score,
         )
-        for row in rows
-    ]
-
-
-def _reference_messages(
-    db: Session, viewer_id: UUID, q: str, limit: int
-) -> list[InternalSearchResult]:
-    rows = db.execute(
-        text(
-            f"""
-            WITH visible_conversations AS ({visible_conversation_ids_cte_sql()})
-            SELECT m.id, m.conversation_id, m.seq, m.content,
-                   {_tier_score_sql("m.content", "m.content")} AS score
-            FROM messages m
-            JOIN visible_conversations vc ON vc.conversation_id = m.conversation_id
-            WHERE m.status = 'complete'
-              AND (
-                    m.content ILIKE :contains_pattern
-                    OR m.content_tsv @@ websearch_to_tsquery('english', :query)
-              )
-            ORDER BY score DESC, m.created_at DESC, m.id ASC
-            LIMIT :limit
-            """
-        ),
-        _lexical_params(viewer_id, q, limit),
-    ).fetchall()
-    return [
-        _RankedMessageResult(
-            id=row[0],
-            snippet=_snippet_around_query(str(row[3] or ""), q)
-            or _truncate_snippet(str(row[3] or "")),
-            conversation_id=row[1],
-            seq=int(row[2]),
-            score=_build_search_score(row[4]),
+    if result_type == "media":
+        title = str(payload.get("title") or "")
+        return _RankedMediaResult(
+            id=candidate_id,
+            snippet=_truncate_snippet(title),
+            source=_build_search_source(
+                candidate_id,
+                str(payload["media_kind"]),
+                title,
+                None,
+                payload.get("published_date"),
+            ),
+            score=score,
         )
-        for row in rows
-    ]
+    if result_type == "podcast":
+        title = str(payload["title"])
+        return _RankedPodcastResult(
+            id=candidate_id,
+            title=title,
+            contributors=[],
+            snippet=_truncate_snippet(title),
+            score=score,
+        )
+    if result_type == "contributor":
+        display_name = str(payload["display_name"])
+        return _RankedContributorResult(
+            id=candidate_id,
+            handle=str(payload["handle"]),
+            display_name=display_name,
+            snippet=_truncate_snippet(display_name),
+            score=score,
+        )
+    if result_type == "highlight":
+        exact = str(payload.get("exact") or "")
+        media_id = UUID(str(payload["media_id"]))
+        return _RankedHighlightResult(
+            id=candidate_id,
+            snippet=_snippet_around_query(exact, q) or _truncate_snippet(exact),
+            exact=exact,
+            color=str(payload.get("color") or "yellow"),
+            source=_build_search_source(
+                media_id,
+                str(payload["media_kind"]),
+                str(payload.get("media_title") or ""),
+                None,
+                payload.get("published_date"),
+            ),
+            score=score,
+        )
+    if result_type == "conversation":
+        title = str(payload.get("title") or "Conversation")
+        return _RankedConversationResult(
+            id=candidate_id,
+            title=title,
+            snippet=_truncate_snippet(title),
+            score=score,
+        )
+    if result_type == "message":
+        content = str(payload.get("content") or "")
+        return _RankedMessageResult(
+            id=candidate_id,
+            snippet=_snippet_around_query(content, q) or _truncate_snippet(content),
+            conversation_id=UUID(str(payload["conversation_id"])),
+            seq=int(str(payload["seq"])),
+            score=score,
+        )
+    if result_type == "library":
+        name = str(payload["name"])
+        return LibraryCandidate(
+            id=candidate_id,
+            name=name,
+            snippet=_truncate_snippet(name),
+            score=score,
+        )
+    if result_type == "oracle_reading":
+        question_text = str(payload["question_text"])
+        blob = str(payload.get("blob") or "")
+        return OracleReadingCandidate(
+            id=candidate_id,
+            question_text=question_text,
+            snippet=_snippet_around_query(blob, q) or _truncate_snippet(question_text),
+            score=score,
+        )
+    if result_type == "artifact":
+        library_name = str(payload["library_name"])
+        content_text = str(payload.get("content_text") or "")
+        return LibraryDossierCandidate(
+            id=candidate_id,
+            library_id=UUID(str(payload["library_id"])),
+            library_name=library_name,
+            snippet=_snippet_around_query(content_text, q)
+            or _truncate_snippet(content_text or library_name),
+            score=score,
+        )
+    if result_type == "passage_anchor":
+        exact = str(payload.get("exact") or "")
+        return PassageAnchorCandidate(
+            id=candidate_id,
+            owner_scheme=str(payload["owner_scheme"]),
+            owner_id=UUID(str(payload["owner_id"])),
+            exact=exact,
+            snippet=_snippet_around_query(exact, q) or _truncate_snippet(exact),
+            score=score,
+        )
+    raise AssertionError(f"unsupported reference candidate type: {result_type}")
 
 
 # =============================================================================

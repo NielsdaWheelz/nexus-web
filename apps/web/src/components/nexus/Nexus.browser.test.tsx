@@ -7,6 +7,7 @@ import {
 } from "@testing-library/react";
 import { page, userEvent } from "vitest/browser";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useLayoutEffect } from "react";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
@@ -36,9 +37,12 @@ interface RecordedRequest {
   readonly pathname: string;
   readonly method: string;
   readonly body: Record<string, unknown> | null;
+  readonly keepalive: boolean;
+  readonly activeWorkspaceLocation: string | null;
 }
 
 let requests: RecordedRequest[] = [];
+let activeWorkspaceLocation: string | null = null;
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -57,7 +61,13 @@ function installBff() {
         typeof init?.body === "string"
           ? (JSON.parse(init.body) as Record<string, unknown>)
           : null;
-      requests.push({ pathname: url.pathname, method, body });
+      requests.push({
+        pathname: url.pathname,
+        method,
+        body,
+        keepalive: init?.keepalive ?? request?.keepalive ?? false,
+        activeWorkspaceLocation,
+      });
 
       if (url.pathname === "/api/lectern") {
         return jsonResponse({ data: { items: [] } });
@@ -71,6 +81,9 @@ function installBff() {
         url.pathname === "/api/me/nexus-selections" &&
         method === "POST"
       ) {
+        return jsonResponse({ data: null });
+      }
+      if (url.pathname === "/api/me/workspace-session" && method === "PUT") {
         return jsonResponse({ data: null });
       }
       if (url.pathname === "/api/resource-items/openables/search") {
@@ -97,6 +110,10 @@ function WorkspaceProbe() {
   const { state } = useWorkspaceStore();
   const panes = getWorkspacePrimaryPanes(state);
   const active = panes.find((pane) => pane.id === state.activePrimaryPaneId);
+  const activeHref = active?.currentVisit.href ?? null;
+  useLayoutEffect(() => {
+    activeWorkspaceLocation = activeHref;
+  }, [activeHref]);
   return (
     <>
       <output aria-label="Workspace pane count">{panes.length}</output>
@@ -154,9 +171,34 @@ function selectionRequests() {
   );
 }
 
+function openablesRequests(query?: string) {
+  return requests.filter(
+    (request) =>
+      request.pathname === "/api/resource-items/openables/search" &&
+      request.method === "POST" &&
+      (query === undefined || request.body?.q === query),
+  );
+}
+
+async function passAnimationFrames(count: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    let remaining = count;
+    const advance = () => {
+      remaining -= 1;
+      if (remaining === 0) {
+        resolve();
+        return;
+      }
+      window.requestAnimationFrame(advance);
+    };
+    window.requestAnimationFrame(advance);
+  });
+}
+
 describe("Nexus product composition", () => {
   beforeEach(() => {
     requests = [];
+    activeWorkspaceLocation = null;
     localStorage.clear();
     window.history.replaceState({}, "", "/libraries");
     installBff();
@@ -223,9 +265,15 @@ describe("Nexus product composition", () => {
       within(places).queryByRole("button", { name: /^Oracle Place$/ }),
     ).toBeNull();
 
-    await userEvent.click(
+    fireEvent.click(
       within(places).getByRole("button", { name: /^Notes Place$/ }),
     );
+    expect(
+      selectionRequests(),
+      "Nexus history was written before the accepted destination could paint",
+    ).toHaveLength(0);
+
+    fireEvent(window, new Event("pagehide"));
 
     await waitFor(() =>
       expect(
@@ -236,10 +284,74 @@ describe("Nexus product composition", () => {
       expect(screen.queryByRole("dialog", { name: "Nexus" })).toBeNull(),
     );
     await waitFor(() => expect(selectionRequests()).toHaveLength(1));
-    expect(selectionRequests()[0]?.body).toMatchObject({
+    const selection = selectionRequests()[0];
+    expect(selection?.activeWorkspaceLocation).toBe("/notes");
+    expect(selection?.keepalive).toBe(true);
+    expect(selection?.body).toMatchObject({
       target_href: "/notes",
       label_snapshot: "Notes",
       source: "Static",
     });
+
+    await passAnimationFrames(3);
+    expect(
+      selectionRequests(),
+      "Frames scheduled before pagehide duplicated the flushed Nexus history write",
+    ).toHaveLength(1);
+  });
+
+  it("bounds Openables to the 32 most-recent session queries and releases them on dismissal", async () => {
+    await page.viewport(1_280, 900);
+    renderNexus("desktop");
+
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    const dialog = await screen.findByRole("dialog", { name: "Nexus" });
+    const input = within(dialog).getByRole("combobox", {
+      name: "Find anything…",
+    });
+    const distinctQueries = [
+      ..."abcdefghijklmnopqrstuvwxyz",
+      ..."0123456",
+    ];
+
+    for (const query of distinctQueries) {
+      fireEvent.change(input, { target: { value: query } });
+      await waitFor(() =>
+        expect(
+          openablesRequests(query),
+          `Openables did not settle query ${query}`,
+        ).toHaveLength(1),
+      );
+    }
+
+    const leastRecentlyUsed = distinctQueries[0]!;
+    fireEvent.change(input, { target: { value: leastRecentlyUsed } });
+    await waitFor(() =>
+      expect(
+        openablesRequests(leastRecentlyUsed),
+        "The 33rd distinct Openables query did not evict the least-recently-used query",
+      ).toHaveLength(2),
+    );
+
+    const backdrop = screen.getByRole("presentation", { hidden: true });
+    fireEvent.click(backdrop);
+    await waitFor(() => expect(input).toHaveValue(""));
+    fireEvent.click(backdrop);
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Nexus" })).toBeNull(),
+    );
+
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    const reopened = await screen.findByRole("dialog", { name: "Nexus" });
+    fireEvent.change(
+      within(reopened).getByRole("combobox", { name: "Find anything…" }),
+      { target: { value: leastRecentlyUsed } },
+    );
+    await waitFor(() =>
+      expect(
+        openablesRequests(leastRecentlyUsed),
+        "Dismissing Nexus retained an Openables result from the prior session",
+      ).toHaveLength(3),
+    );
   });
 });

@@ -8,6 +8,7 @@ Provides:
 import hmac
 import logging
 import re
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, NoReturn
@@ -17,6 +18,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
 from starlette.types import ASGIApp
 
 from nexus.auth.bearer import parse_bearer_token
@@ -30,6 +32,7 @@ logger = logging.getLogger(__name__)
 # Header names
 AUTHORIZATION_HEADER = "authorization"
 INTERNAL_HEADER = "x-nexus-internal"
+BOOTSTRAP_CACHE_MAX_USERS = 1024
 
 # Paths that don't require authentication
 PUBLIC_PATHS = {
@@ -192,8 +195,17 @@ class AuthMiddleware(BaseHTTPMiddleware):
         self.requires_internal_header = requires_internal_header
         self.internal_secret = internal_secret
         self.bootstrap_callback = bootstrap_callback
+        # Bootstrap repairs durable first-login invariants. Once it succeeds,
+        # the Viewer projection is process-stable for this user; keep that
+        # result here so ordinary authenticated requests do not pay a threadpool
+        # handoff (or a database checkout) merely to hit a downstream cache.
+        # Concurrent cold misses remain safe because the bootstrap operation is
+        # idempotent and each successful result is the same canonical library.
+        # The LRU cap bounds process memory; eviction only repeats that safe
+        # bootstrap on a later request.
+        self._default_library_id_by_user: dict[UUID, UUID] = {}
 
-    async def dispatch(self, request: Request, call_next) -> JSONResponse:
+    async def dispatch(self, request: Request, call_next) -> Response:
         """Process the request through auth checks."""
         # Skip auth for public paths
         if request.url.path in PUBLIC_PATHS:
@@ -231,6 +243,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         ):
             return await call_next(request)
 
+        auth_started_at = time.monotonic()
+
         # Step 2: Extract bearer token
         token, error_response_obj = self._extract_bearer_token(request)
         if error_response_obj:
@@ -257,19 +271,27 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # post-response db.close() of in-flight requests — turning transient pool
         # pressure into a self-sustaining deadlock.
         if self.bootstrap_callback:
-            try:
-                default_library_id = await run_in_threadpool(
-                    self.bootstrap_callback, user_id, email=email
-                )
-            # justify-ignore-error: auth bootstrap boundary returns a generic 500
-            # while logging the server-side failure.
-            except Exception as e:
-                logger.exception("Bootstrap failed for user %s: %s", user_id, e)
-                return self._error_json_response(
-                    ApiErrorCode.E_INTERNAL,
-                    "Internal server error",
-                    500,
-                )
+            default_library_id = self._default_library_id_by_user.pop(user_id, None)
+            if default_library_id is not None:
+                self._default_library_id_by_user[user_id] = default_library_id
+            if default_library_id is None:
+                try:
+                    default_library_id = await run_in_threadpool(
+                        self.bootstrap_callback, user_id, email=email
+                    )
+                # justify-ignore-error: auth bootstrap boundary returns a generic 500
+                # while logging the server-side failure.
+                except Exception as e:
+                    logger.exception("Bootstrap failed for user %s: %s", user_id, e)
+                    return self._error_json_response(
+                        ApiErrorCode.E_INTERNAL,
+                        "Internal server error",
+                        500,
+                    )
+                while len(self._default_library_id_by_user) >= BOOTSTRAP_CACHE_MAX_USERS:
+                    oldest_user_id = next(iter(self._default_library_id_by_user))
+                    del self._default_library_id_by_user[oldest_user_id]
+                self._default_library_id_by_user[user_id] = default_library_id
         else:
             # No bootstrap callback - use a placeholder (tests may not need it)
             default_library_id = user_id  # Placeholder
@@ -281,8 +303,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
             email=email,
             roles=roles,
         )
-
-        return await call_next(request)
+        auth_duration_ms = (time.monotonic() - auth_started_at) * 1000
+        response = await call_next(request)
+        response.headers.append("Server-Timing", f"nexus_auth;dur={auth_duration_ms:.2f}")
+        return response
 
     def _verify_internal_header(self, request: Request) -> JSONResponse | None:
         """Verify the internal header using constant-time comparison.

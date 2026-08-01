@@ -1,0 +1,14 @@
+diff --git a/apps/web/src/lib/nexus/dispatch.ts b/apps/web/src/lib/nexus/dispatch.ts
+--- a/apps/web/src/lib/nexus/dispatch.ts
++++ b/apps/web/src/lib/nexus/dispatch.ts
+@@ -255,8 +255,8 @@ export function settleNexusDispatch(
+-export function dispatchNexusTarget(
++export async function dispatchNexusTarget(
+   target: MaterializedNexusTarget,
+   context: NexusDispatchCtx,
+   activation: NexusTargetActivation,
+-): NexusDispatchResult {
++): Promise<NexusDispatchOutcome> {
+   const blockedByAndroid = (href: string): boolean => {
+     if (!isAndroidShellRestrictedHref(href, context.androidShell)) {
+       return false;

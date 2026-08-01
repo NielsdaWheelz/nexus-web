@@ -1,0 +1,9 @@
+diff --git a/apps/web/src/components/ui/MobileFullScreenTask.tsx b/apps/web/src/components/ui/MobileFullScreenTask.tsx
+--- a/apps/web/src/components/ui/MobileFullScreenTask.tsx
++++ b/apps/web/src/components/ui/MobileFullScreenTask.tsx
+@@ -62,4 +62,4 @@ export default function MobileFullScreenTask({
+-  if (!hasOpenedRef.current) return null;
++  if (!active) return null;
+   return createPortal(
+     <ModalLayerProvider token={lifecycle.layerToken}>
+       <div

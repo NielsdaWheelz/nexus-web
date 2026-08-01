@@ -67,6 +67,7 @@ const BLOCKED_REQUEST_HEADERS = new Set([
 const ALLOWED_RESPONSE_HEADERS = new Set([
   "x-request-id",
   "content-type",
+  "content-length",
   "cache-control",
   "etag",
   "vary",
@@ -76,6 +77,7 @@ const ALLOWED_RESPONSE_HEADERS = new Set([
   "accept-ranges",
   "content-range",
   "location",
+  "server-timing",
 ]);
 
 /**
@@ -189,20 +191,6 @@ function shouldForwardRequestHeader(headerName: string): boolean {
   return ALLOWED_REQUEST_HEADERS.has(lowerName);
 }
 
-function isTextContentType(contentType: string | null): boolean {
-  if (!contentType) return false;
-  const lower = contentType.toLowerCase();
-  return lower.includes("application/json") || lower.includes("text/");
-}
-
-function setBodyContentLength(headers: Headers, body: string | ArrayBuffer) {
-  const byteLength =
-    typeof body === "string"
-      ? new TextEncoder().encode(body).byteLength
-      : body.byteLength;
-  headers.set("content-length", String(byteLength));
-}
-
 type TimedFetchController = {
   signal: AbortSignal;
   timedOut: () => boolean;
@@ -261,30 +249,6 @@ function upstreamUnavailableResponse(requestId: string): NextResponse {
   );
 }
 
-/**
- * Read the backend response body in the right shape for the request:
- * - null for HEAD/204/205/304 (body forbidden)
- * - text for JSON/text content types (preserves encoding)
- * - ArrayBuffer for everything else (preserves bytes)
- */
-async function readProxiedBody(
-  response: Response,
-  request: Request
-): Promise<string | ArrayBuffer | null> {
-  if (
-    request.method === "HEAD" ||
-    response.status === 204 ||
-    response.status === 205 ||
-    response.status === 304
-  ) {
-    return null;
-  }
-  if (isTextContentType(response.headers.get("content-type"))) {
-    return await response.text();
-  }
-  return await response.arrayBuffer();
-}
-
 async function createDefaultDeps(): Promise<ProxyDeps> {
   const env = getEnv();
   return {
@@ -304,6 +268,7 @@ export async function proxyToFastAPIWithDeps(
   path: string,
   deps: ProxyDeps
 ): Promise<Response> {
+  const proxyStartedAt = performance.now();
   // Validate path does not contain query string (caller error)
   if (path.includes("?")) {
     throw new Error(
@@ -473,7 +438,8 @@ export async function proxyToFastAPIWithDeps(
       signal: ctl.signal,
     });
 
-    // Build filtered response headers (non-streaming path)
+    // The body is forwarded unchanged, so its framing metadata remains exact.
+    // Filtering still prevents private upstream headers from reaching clients.
     const responseHeaders = new Headers();
     response.headers.forEach((value, key) => {
       if (shouldForwardResponseHeader(key)) {
@@ -486,6 +452,10 @@ export async function proxyToFastAPIWithDeps(
       REQUEST_ID_HEADER,
       isValidRequestId(backendRequestId) ? backendRequestId : requestId
     );
+    responseHeaders.append(
+      "server-timing",
+      `nexus_bff;dur=${(performance.now() - proxyStartedAt).toFixed(2)}`
+    );
 
     // A response carrying rotated auth cookies must never be cached: a cached
     // Set-Cookie would hand one user another user's session.
@@ -493,10 +463,13 @@ export async function proxyToFastAPIWithDeps(
       responseHeaders.set("cache-control", "no-store");
     }
 
-    const responseBody = await readProxiedBody(response, request);
-    if (responseBody !== null) {
-      setBodyContentLength(responseHeaders, responseBody);
-    }
+    const responseBody =
+      request.method === "HEAD" ||
+      response.status === 204 ||
+      response.status === 205 ||
+      response.status === 304
+        ? null
+        : response.body;
     const proxied = new NextResponse(responseBody, {
       status: response.status,
       statusText: response.statusText,
@@ -846,7 +819,14 @@ export async function proxyExtensionToFastAPI(
       responseHeaders.set("Content-Type", responseContentType);
     }
 
-    return new Response(await readProxiedBody(response, request), {
+    const responseBody =
+      request.method === "HEAD" ||
+      response.status === 204 ||
+      response.status === 205 ||
+      response.status === 304
+        ? null
+        : response.body;
+    return new Response(responseBody, {
       status: response.status,
       statusText: response.statusText,
       headers: responseHeaders,

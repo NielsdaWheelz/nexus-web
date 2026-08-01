@@ -39,6 +39,15 @@
       "expected_failure": "DID NOT RAISE"
     },
     {
+      "id": "auth-bootstrap-cache-cross-user",
+      "patch": "testdata/faults/auth-bootstrap-cache-cross-user.patch",
+      "sha256": "a6346a0cb00fed516fb7fee89c6c769311bf45e318ec540b080b5d15598fe0fd",
+      "proofs": [
+        "pytest:python/tests/service/test_auth_bootstrap_cache.py::test_auth_bootstrap_cache_reuses_only_the_matching_users_durable_library"
+      ],
+      "expected_failure": "second authenticated identity reused the first user's bootstrap cache entry"
+    },
+    {
       "id": "auth-chat-run-ownership-bypass",
       "patch": "testdata/faults/auth-chat-run-ownership-bypass.patch",
       "sha256": "eba2ac65bd74ee7a9e901892be62ead4e03bf7c524830f5755b007b2a7bf3c5e",
@@ -73,6 +82,15 @@
         "pytest:python/tests/migrations/test_podcast_publication_migration.py::test_0207_canonicalizes_only_legacy_podcast_publication_instants_and_reaches_head"
       ],
       "expected_failure": "0207 must canonicalize legacy Podcast instants"
+    },
+    {
+      "id": "migration-note-body-index-restart-bypass",
+      "patch": "testdata/faults/migration-note-body-index-restart-bypass.patch",
+      "sha256": "b6c917502cd2092faf3d5bf87d6572de1b88a29ac819e29e200deacdb2e62aeb",
+      "proofs": [
+        "pytest:python/tests/migrations/test_note_body_substring_search_index_migration.py::test_0210_restarts_an_invalid_exact_index_and_plans_substring_search_at_head"
+      ],
+      "expected_failure": "0210 installed the wrong note-body index contract"
     },
     {
       "id": "costly-effects-stream-interruption-misclassification",
@@ -273,13 +291,49 @@
       "expected_failure": "Reactivating the active pane changed its durable identity"
     },
     {
-      "id": "nexus-desktop-fork-disposition-bypass",
-      "patch": "testdata/faults/nexus-desktop-fork-disposition-bypass.patch",
-      "sha256": "5bc1c34ad22692eb983bd76dda573eb7e8e7fa881a89b0e6fdb5d4ac35c6433b",
+      "id": "nexus-openables-cache-bound-bypass",
+      "patch": "testdata/faults/nexus-openables-cache-bound-bypass.patch",
+      "sha256": "8e16f54a61a572a5d42690dc0d383810f6d1658b580b9f198f45601ed4bc19c5",
       "proofs": [
         "vitest:apps/web/src/components/nexus/Nexus.browser.test.tsx"
       ],
-      "expected_failure": "Desktop Nexus Shift+Enter lost its Fork disposition at the workspace boundary"
+      "expected_failure": "The 33rd distinct Openables query did not evict the least-recently-used query"
+    },
+    {
+      "id": "mobile-task-retention-bypass",
+      "patch": "testdata/faults/mobile-task-retention-bypass.patch",
+      "sha256": "d992b27679c3bfdea405d11d35a354eb13c0820c17693fccb209debd86ebd9fe",
+      "proofs": [
+        "vitest:apps/web/src/components/ui/MobileFullScreenTask.browser.test.tsx"
+      ],
+      "expected_failure": "dismissal unmounted the retained mobile task subtree"
+    },
+    {
+      "id": "nexus-dispatch-async-wrapper-bypass",
+      "patch": "testdata/faults/nexus-dispatch-async-wrapper-bypass.patch",
+      "sha256": "7a384235311065377abc78b96e4c0483a1cda82e913ffd4b9a437e50c561ca19",
+      "proofs": [
+        "vitest:apps/web/src/lib/nexus/dispatch.unit.test.ts"
+      ],
+      "expected_failure": "followed exact-pane dispatch returned an asynchronous wrapper"
+    },
+    {
+      "id": "proxy-response-buffering-bypass",
+      "patch": "testdata/faults/proxy-response-buffering-bypass.patch",
+      "sha256": "fe2e66023b89ee5e0f9d4f9a904472009cd29946ad29523fbc2dd6f33355bca9",
+      "proofs": [
+        "vitest:apps/web/src/lib/api/proxy.unit.test.ts"
+      ],
+      "expected_failure": "authenticated proxy consumed the upstream body before returning"
+    },
+    {
+      "id": "openables-union-dedup-bypass",
+      "patch": "testdata/faults/openables-union-dedup-bypass.patch",
+      "sha256": "61eb8ef990f22f8d2bb6feaecb9c4170c1e271734166c26efa0220814b1d1686",
+      "proofs": [
+        "pytest:python/tests/service/test_openable_resources.py"
+      ],
+      "expected_failure": "Openables candidate statement lost its two-source UNION ALL shape"
     },
     {
       "id": "document-map-pulse-early-release",

@@ -45,14 +45,17 @@ def test_empty_owned_database_upgrades_to_the_single_head(
             actual_head = connection.scalar(text("SELECT version_num FROM alembic_version"))
             extensions = set(
                 connection.scalars(
-                    text("SELECT extname FROM pg_extension WHERE extname IN ('pgcrypto', 'vector')")
+                    text(
+                        "SELECT extname FROM pg_extension "
+                        "WHERE extname IN ('pgcrypto', 'vector', 'pg_trgm')"
+                    )
                 )
             )
         assert actual_head == expected_head, (
             f"database revision {actual_head!r} differs from catalog head {expected_head!r}"
         )
-        assert extensions == {"pgcrypto", "vector"}, (
-            f"head schema requires pgcrypto and vector, found {sorted(extensions)}"
+        assert extensions == {"pgcrypto", "vector", "pg_trgm"}, (
+            f"head schema requires pgcrypto, vector, and pg_trgm, found {sorted(extensions)}"
         )
     finally:
         engine.dispose()

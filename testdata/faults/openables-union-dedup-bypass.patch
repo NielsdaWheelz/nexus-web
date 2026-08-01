@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/search/candidates.py b/python/nexus/services/search/candidates.py
+--- a/python/nexus/services/search/candidates.py
++++ b/python/nexus/services/search/candidates.py
+@@ -576,7 +576,7 @@ def _reference_candidates(
+     rows = db.execute(
+         text(
+             "SELECT result_type, id, score, payload FROM ("
+-            + " UNION ALL ".join(parts)
++            + " UNION ".join(parts)
+             + ") direct_candidates"
+         ),
+         _lexical_params(viewer_id, q, limit),

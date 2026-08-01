@@ -43,6 +43,7 @@ import {
   materializeNexusTarget,
   PROGRAMMATIC_ADOPT_NEXUS_TARGET_ACTIVATION,
   PROGRAMMATIC_NEXUS_TARGET_ACTIVATION,
+  settleNexusDispatch,
   type MaterializedNexusTarget,
   type NexusDispatchCtx,
   type NexusDispatchOutcome,
@@ -63,6 +64,7 @@ import type {
   NexusPage,
   NexusProjection,
   NexusReturnPoint,
+  NexusSurface,
   NexusTarget,
   NexusTargetActivation,
   RetainedActivation,
@@ -135,6 +137,29 @@ import {
   useAddContentSession,
   type AddContentSessionController,
 } from "./useAddContentSession";
+
+function scheduleAfterDestinationPaint(task: () => void): void {
+  let firstFrame: number | null = null;
+  let secondFrame: number | null = null;
+  let settled = false;
+  const run = () => {
+    if (settled) return;
+    settled = true;
+    if (firstFrame !== null) window.cancelAnimationFrame(firstFrame);
+    if (secondFrame !== null) window.cancelAnimationFrame(secondFrame);
+    window.removeEventListener("pagehide", run);
+    task();
+  };
+
+  // Internal pane navigation owns the initiating event and its first paint.
+  // History is an observational side effect, so keep it off that critical path;
+  // pagehide remains an exact-once escape hatch when the browser suppresses rAF.
+  window.addEventListener("pagehide", run, { once: true });
+  firstFrame = window.requestAnimationFrame(() => {
+    firstFrame = null;
+    secondFrame = window.requestAnimationFrame(run);
+  });
+}
 
 interface NexusHistoryResponse {
   readonly data: {
@@ -225,6 +250,14 @@ const EMPTY_SEARCH: readonly SearchResultRowViewModel[] = [];
 const OPENABLE_DEBOUNCE_MS = 80;
 const SEARCH_DEBOUNCE_MS = 160;
 const BUSY_DELAY_MS = 150;
+const OPENABLE_CACHE_LIMIT = 32;
+const EMPTY_NEXUS_GROUPS: NexusProjection["groups"] = [];
+const EMPTY_NEXUS_PROJECTION_BY_SURFACE: Readonly<
+  Record<NexusSurface, NexusProjection>
+> = {
+  Desktop: { surface: "Desktop", groups: EMPTY_NEXUS_GROUPS, activeKey: null },
+  Mobile: { surface: "Mobile", groups: EMPTY_NEXUS_GROUPS, activeKey: null },
+};
 const TODAY_APPEND_UNAVAILABLE =
   "Open Today to finish the current embedded draft";
 
@@ -333,9 +366,15 @@ export function useNexusController(): NexusController {
   }, [accountId, todayLocalDate]);
 
   useEffect(() => {
-    if (!open) return;
-    suppressReturnFocusRef.current = false;
-    openablesCacheRef.current.clear();
+    if (open) {
+      suppressReturnFocusRef.current = false;
+      return;
+    }
+    // Results are useful only within one visible Nexus session. Release them
+    // at dismissal instead of carrying an unbounded query corpus into the next
+    // workspace interaction (where its later collection can become input
+    // latency). The per-session cache below is separately LRU-bounded.
+    openablesCacheRef.current = new Map();
   }, [open]);
 
   const historyPath = useMemo<ApiPath | null>(() => {
@@ -401,13 +440,24 @@ export function useNexusController(): NexusController {
     async (signal) => {
       const cacheKey = parsed.normalizedText;
       const cached = openablesCacheRef.current.get(cacheKey);
-      if (cached) return cached;
+      if (cached) {
+        openablesCacheRef.current.delete(cacheKey);
+        openablesCacheRef.current.set(cacheKey, cached);
+        return cached;
+      }
       const response = await searchOpenableResources({
         q: parsed.text,
         schemes: absent(),
         signal,
       });
-      if (!signal.aborted) openablesCacheRef.current.set(cacheKey, response);
+      if (!signal.aborted) {
+        while (openablesCacheRef.current.size >= OPENABLE_CACHE_LIMIT) {
+          const oldest = openablesCacheRef.current.keys().next().value;
+          if (oldest === undefined) break;
+          openablesCacheRef.current.delete(oldest);
+        }
+        openablesCacheRef.current.set(cacheKey, response);
+      }
       return response;
     },
     {
@@ -560,29 +610,49 @@ export function useNexusController(): NexusController {
         : ({ kind: "Unavailable", reason: TODAY_APPEND_UNAVAILABLE } as const),
     [todayDraft],
   );
-  const projectionInput = {
-    query,
-    panes,
-    currentPlayback,
-    recent: history.recent,
-    destinations: DESTINATIONS,
-    frecencyByHref: history.frecencyByHref,
+  const requestedActiveKey = parsed.text
+    ? (typedActionActiveKey ?? commit.activeKey)
+    : blankActiveKey;
+  const committedVisibleProjectionRef = useRef<NexusProjection | null>(null);
+  const projectionSurface: NexusSurface = viewport.isMobile
+    ? "Mobile"
+    : "Desktop";
+  const projection = useMemo(() => {
+    if (!open) {
+      const committed = committedVisibleProjectionRef.current;
+      return committed?.surface === projectionSurface
+        ? committed
+        : EMPTY_NEXUS_PROJECTION_BY_SURFACE[projectionSurface];
+    }
+    return composeNexusProjection({
+      surface: projectionSurface,
+      query,
+      panes,
+      currentPlayback,
+      recent: history.recent,
+      destinations: DESTINATIONS,
+      frecencyByHref: history.frecencyByHref,
+      commandShortcutHints,
+      results: commit.entries,
+      activeKey: requestedActiveKey,
+      todayAppend,
+    });
+  }, [
     commandShortcutHints,
-    results: commit.entries,
-    activeKey: parsed.text
-      ? (typedActionActiveKey ?? commit.activeKey)
-      : blankActiveKey,
+    commit.entries,
+    currentPlayback,
+    history.frecencyByHref,
+    history.recent,
+    open,
+    panes,
+    projectionSurface,
+    query,
+    requestedActiveKey,
     todayAppend,
-  } as const;
-  const desktopProjection = composeNexusProjection({
-    surface: "Desktop",
-    ...projectionInput,
-  });
-  const mobileProjection = composeNexusProjection({
-    surface: "Mobile",
-    ...projectionInput,
-  });
-  const projection = viewport.isMobile ? mobileProjection : desktopProjection;
+  ]);
+  useLayoutEffect(() => {
+    if (open) committedVisibleProjectionRef.current = projection;
+  }, [open, projection]);
   const rootReturnPoint = useMemo<NexusReturnPoint>(
     () => ({ kind: "Root", query, activeKey: projection.activeKey }),
     [projection.activeKey, query],
@@ -702,7 +772,9 @@ export function useNexusController(): NexusController {
         href: input.target.href,
         labelHint: input.target.labelHint,
       });
-      void dispatchNexusTarget(target, dispatchCtx, input.activation)
+      void settleNexusDispatch(() =>
+        dispatchNexusTarget(target, dispatchCtx, input.activation),
+      )
         .then((outcome) => {
           applyNavigationOutcome(outcome, input.activation, {
             source: input.source,
@@ -817,52 +889,69 @@ export function useNexusController(): NexusController {
               ? panes.find((pane) => pane.id === target.paneId)?.href
               : null;
       if (!href || isAndroidShellRestrictedHref(href, androidShell)) return;
-      void apiFetch("/api/me/nexus-selections", {
-        method: "POST",
-        body: JSON.stringify({
-          client_mutation_id: crypto.randomUUID(),
-          query: parsed.text || null,
-          target_href: href,
-          label_snapshot: entry.label,
-          source: entry.historySource,
-        }),
-      }).catch((error: unknown) => {
-        if (handleUnauthenticatedApiError(error)) return;
-        if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-        feedback.show(toFeedback(error, { fallback: "Nexus history was not saved" }));
+      const selection = {
+        query: parsed.text || null,
+        target_href: href,
+        label_snapshot: entry.label,
+        source: entry.historySource,
+      };
+      scheduleAfterDestinationPaint(() => {
+        void apiFetch("/api/me/nexus-selections", {
+          method: "POST",
+          keepalive: true,
+          body: JSON.stringify({
+            client_mutation_id: crypto.randomUUID(),
+            ...selection,
+          }),
+        }).catch((error: unknown) => {
+          if (handleUnauthenticatedApiError(error)) return;
+          if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+          feedback.show(
+            toFeedback(error, { fallback: "Nexus history was not saved" }),
+          );
+        });
       });
     },
     [androidShell, feedback, panes, parsed.text],
   );
   const dispatch = useCallback(
-    async (
+    (
       target: MaterializedNexusTarget,
       activation: NexusTargetActivation,
       entry?: NexusEntry,
     ): Promise<NexusDispatchOutcome> => {
       setAnnouncement("");
-      const outcome = await dispatchNexusTarget(target, dispatchCtx, activation);
-      const retained = {
-        source: "Result" as const,
-        completion: absent<CommittedWorkflow>(),
-        returnTo: rootReturnPoint,
-      };
-      if (outcome.kind === "WorkflowRequested") {
-        handleWorkflowRequest(outcome, rootReturnPoint);
-      } else {
-        applyNavigationOutcome(outcome, activation, retained);
-        if (outcome.kind === "Stayed" && target.kind === "ResumeCurrentPlayback") {
-          setOpen(false);
+      const applyOutcome = (outcome: NexusDispatchOutcome) => {
+        const retained = {
+          source: "Result" as const,
+          completion: absent<CommittedWorkflow>(),
+          returnTo: rootReturnPoint,
+        };
+        if (outcome.kind === "WorkflowRequested") {
+          handleWorkflowRequest(outcome, rootReturnPoint);
+        } else {
+          applyNavigationOutcome(outcome, activation, retained);
+          if (outcome.kind === "Stayed" && target.kind === "ResumeCurrentPlayback") {
+            setOpen(false);
+          }
         }
+        if (
+          entry &&
+          (outcome.kind === "NavigationAccepted" ||
+            outcome.kind === "DailyPageAccepted")
+        ) {
+          logSelection(entry, target);
+        }
+        return outcome;
+      };
+      try {
+        const result = dispatchNexusTarget(target, dispatchCtx, activation);
+        return result instanceof Promise
+          ? result.then(applyOutcome)
+          : Promise.resolve(applyOutcome(result));
+      } catch (error: unknown) {
+        return Promise.reject(error);
       }
-      if (
-        entry &&
-        (outcome.kind === "NavigationAccepted" ||
-          outcome.kind === "DailyPageAccepted")
-      ) {
-        logSelection(entry, target);
-      }
-      return outcome;
     },
     [
       applyNavigationOutcome,
@@ -891,20 +980,30 @@ export function useNexusController(): NexusController {
   const setActiveEntry = useCallback(
     (key: NexusEntryKey) => {
       userMovedRef.current = true;
+      const keyValue = nexusEntryKeyValue(key);
+      const retainMatchingKey = (current: NexusEntryKey | null) =>
+        current !== null && nexusEntryKeyValue(current) === keyValue
+          ? current
+          : key;
       if (parsed.text) {
         if (key.kind === "Continuation") {
-          setTypedActionActiveKey(key);
+          setTypedActionActiveKey(retainMatchingKey);
         } else {
           setTypedActionActiveKey(null);
-          setCommit((value) => ({ ...value, activeKey: key }));
+          setCommit((value) => {
+            const activeKey = retainMatchingKey(value.activeKey);
+            return activeKey === value.activeKey
+              ? value
+              : { ...value, activeKey };
+          });
         }
       } else {
-        setBlankActiveKey(key);
+        setBlankActiveKey(retainMatchingKey);
       }
       const entry = projection.groups
         .flatMap((group) => group.entries)
         .find((candidate) =>
-          nexusEntryKeyValue(candidate.key) === nexusEntryKeyValue(key),
+          nexusEntryKeyValue(candidate.key) === keyValue,
         );
       const target = entry ? actionTarget(entry.primaryAction) : null;
       if (target?.kind === "InternalHref") warmPane(target.href);
@@ -1037,7 +1136,9 @@ export function useNexusController(): NexusController {
           ? page.origin.retained
           : null;
     if (!retained) return;
-    void dispatchNexusTarget(retained.target, dispatchCtx, retained.activation)
+    void settleNexusDispatch(() =>
+      dispatchNexusTarget(retained.target, dispatchCtx, retained.activation),
+    )
       .then((outcome) => {
         applyNavigationOutcome(outcome, retained.activation, {
           source: retained.source,
@@ -1113,7 +1214,9 @@ export function useNexusController(): NexusController {
         case "Navigate": {
           const activation = intent.activation ?? PROGRAMMATIC_NEXUS_TARGET_ACTIVATION;
           const target = materialize(intent.target);
-          void dispatchNexusTarget(target, dispatchCtx, activation)
+          void settleNexusDispatch(() =>
+            dispatchNexusTarget(target, dispatchCtx, activation),
+          )
             .then((outcome) => {
               if (outcome.kind === "WorkflowRequested") {
                 handleWorkflowRequest(outcome, rootReturnPoint);
@@ -1451,7 +1554,7 @@ export function useNexusController(): NexusController {
   );
   const desktop: DesktopNexusController = {
     open,
-    projection: desktopProjection,
+    projection,
     query,
     failures,
     busy: showBusy && remoteBusy,
@@ -1485,7 +1588,7 @@ export function useNexusController(): NexusController {
     paneCount: panes.length,
     query,
     page,
-    projection: mobileProjection,
+    projection,
     actionsRequest,
     failures,
     busy: showBusy && remoteBusy,

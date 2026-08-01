@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/components/nexus/useNexusController.ts b/apps/web/src/components/nexus/useNexusController.ts
+--- a/apps/web/src/components/nexus/useNexusController.ts
++++ b/apps/web/src/components/nexus/useNexusController.ts
+@@ -250,7 +250,7 @@ const EMPTY_SEARCH: readonly SearchResultRowViewModel[] = [];
+ const OPENABLE_DEBOUNCE_MS = 80;
+ const SEARCH_DEBOUNCE_MS = 160;
+ const BUSY_DELAY_MS = 150;
+-const OPENABLE_CACHE_LIMIT = 32;
++const OPENABLE_CACHE_LIMIT = 33;
+ const EMPTY_NEXUS_GROUPS: NexusProjection["groups"] = [];
+ const EMPTY_NEXUS_PROJECTION_BY_SURFACE: Readonly<
+   Record<NexusSurface, NexusProjection>

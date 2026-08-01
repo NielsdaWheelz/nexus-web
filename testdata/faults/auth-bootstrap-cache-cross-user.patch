@@ -1,0 +1,13 @@
+diff --git a/python/nexus/auth/middleware.py b/python/nexus/auth/middleware.py
+--- a/python/nexus/auth/middleware.py
++++ b/python/nexus/auth/middleware.py
+@@ -270,6 +270,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
+         # pressure into a self-sustaining deadlock.
+         if self.bootstrap_callback:
+-            default_library_id = self._default_library_id_by_user.pop(user_id, None)
++            default_library_id = next(
++                iter(self._default_library_id_by_user.values()), None
++            )
+             if default_library_id is not None:
+                 self._default_library_id_by_user[user_id] = default_library_id
+             if default_library_id is None:
