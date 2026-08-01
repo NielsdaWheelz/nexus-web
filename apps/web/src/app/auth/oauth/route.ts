@@ -37,7 +37,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       ? IDENTITY_LINK_RETURN_TARGET
       : parseAuthReturnTarget(requestUrl.searchParams.get("next"));
 
-  const redirectOrigin = resolveCallbackRedirectOrigin(request, requestUrl);
+  const redirectOrigin = resolveCallbackRedirectOrigin(request);
 
   if (!isSupportedProvider(provider)) {
     return NextResponse.redirect(

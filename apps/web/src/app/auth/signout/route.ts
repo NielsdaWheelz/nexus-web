@@ -1,4 +1,5 @@
 import { boundedAuthFetch } from "@/lib/auth/internal-fetch";
+import { resolveCallbackRedirectOrigin } from "@/lib/auth/callback-origin";
 import {
   clearSupabaseAuthCookies,
   getSupabaseAuthCookieNames,
@@ -8,7 +9,7 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 export async function POST(request: Request) {
-  const requestUrl = new URL(request.url);
+  const redirectOrigin = resolveCallbackRedirectOrigin(request);
   const requestCookies = (await cookies()).getAll();
   const cookieNames = getSupabaseAuthCookieNames(requestCookies);
   const session = readSupabaseSessionCookie(requestCookies);
@@ -44,7 +45,7 @@ export async function POST(request: Request) {
     }
   }
 
-  const response = NextResponse.redirect(`${requestUrl.origin}/login`, {
+  const response = NextResponse.redirect(`${redirectOrigin}/login`, {
     status: 302,
   });
   clearSupabaseAuthCookies(response, cookieNames);

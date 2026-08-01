@@ -32,7 +32,7 @@ export async function handleAuthCallback(
 ): Promise<NextResponse> {
   const requestUrl = new URL(request.url);
   const target = parseAuthReturnTarget(requestUrl.searchParams.get("next"));
-  const redirectOrigin = resolveCallbackRedirectOrigin(request, requestUrl);
+  const redirectOrigin = resolveCallbackRedirectOrigin(request);
   const isHandoff = requestUrl.searchParams.get("flow") === "handoff";
   const providerError =
     requestUrl.searchParams.get("error_description") ??
