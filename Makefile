@@ -4,7 +4,7 @@
 .PHONY: help setup dev down logs clean api api-e2e web web-e2e reader-profile-upstream-proxy-e2e worker-interactive worker-background migrate migrate-test migrate-down seed seed-real-media-e2e \
 	check check-back type-back check-front check-android check-workflows format format-back fix-front build build-android build-android-release build-icons check-bundle audit \
 	test-unit test test-back-unit test-back-integration test-front-unit test-front-browser \
-	test-android test-migrations test-supabase test-e2e-env test-real-media test-provider-runtime test-live-providers test-e2e test-e2e-ui test-csp \
+	test-android test-android-system-insets test-migrations test-supabase test-e2e-env test-real-media test-provider-runtime test-live-providers test-e2e test-e2e-ui test-csp \
 	smoke smoke-auth-redirects verify verify-android verify-android-release verify-full \
 	_ensure-node-ingest _ensure-e2e-deps _test-back-db-ready \
 	_test-back-integration-raw _test-migrations-raw \
@@ -100,6 +100,7 @@ help:
 	@echo "  make test-front-unit       - Frontend unit tests"
 	@echo "  make test-front-browser    - Frontend browser component tests"
 	@echo "  make test-android          - Android instrumentation tests on a connected device"
+	@echo "  make test-android-system-insets - M144+ WebView system-inset proof on a connected device"
 	@echo "  make test-migrations       - Alembic migration tests"
 	@echo "  make test-supabase         - Supabase Auth integration tests"
 	@echo "  make test-e2e-env          - Supabase E2E env resolver contract tests"
@@ -402,6 +403,10 @@ test-front-browser:
 
 test-android:
 	cd apps/android && ./gradlew :app:connectedDebugAndroidTest
+
+test-android-system-insets:
+	cd apps/android && ./gradlew :app:connectedDebugAndroidTest \
+		-Pandroid.testInstrumentationRunnerArguments.annotation=app.nexus.android.RequiresWebViewM144
 
 test-migrations:
 	./scripts/with_test_services.sh make _test-migrations-raw

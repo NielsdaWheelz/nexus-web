@@ -296,41 +296,14 @@ jobs:
         run: make check-bundle
 
   test-android:
-    name: Android instrumentation (${{ matrix.contract }}, device API ${{ matrix.system-image-api-level }})
+    name: Android instrumentation (hosted shell regression, API ${{ matrix.api-level }})
     runs-on: ubuntu-latest
     timeout-minutes: 25
     needs: static-checks
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - platform-api-level: 35
-            system-image-api-level: 35
-            contract: shell regression
-            sdk-channel: stable
-            ram-size: 2048M
-            test-command: >-
-              cd apps/android &&
-              ./gradlew :app:connectedDebugAndroidTest
-              -Pandroid.testInstrumentationRunnerArguments.notAnnotation=app.nexus.android.RequiresWebViewM144
-          - platform-api-level: 34
-            system-image-api-level: 34
-            contract: shell regression
-            sdk-channel: stable
-            ram-size: 2048M
-            test-command: >-
-              cd apps/android &&
-              ./gradlew :app:connectedDebugAndroidTest
-              -Pandroid.testInstrumentationRunnerArguments.notAnnotation=app.nexus.android.RequiresWebViewM144
-          - platform-api-level: 36
-            system-image-api-level: 36-ext19
-            contract: WebView M144 system insets
-            sdk-channel: canary
-            ram-size: 2048M
-            test-command: >-
-              cd apps/android &&
-              ./gradlew :app:connectedDebugAndroidTest
-              -Pandroid.testInstrumentationRunnerArguments.annotation=app.nexus.android.RequiresWebViewM144
+        api-level: [35, 34]
     env:
       NEXUS_GOOGLE_WEB_CLIENT_ID: ${{ vars.NEXUS_GOOGLE_WEB_CLIENT_ID || 'ci-placeholder.apps.googleusercontent.com' }}
 
@@ -354,7 +327,7 @@ jobs:
           restore-keys: ${{ runner.os }}-gradle-android-
 
       - name: Verify Android shell
-        if: matrix.system-image-api-level == 35
+        if: matrix.api-level == 35
         run: make verify-android
 
       - name: Enable KVM
@@ -367,14 +340,15 @@ jobs:
       - name: Run Android instrumentation tests
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
-          api-level: ${{ matrix.platform-api-level }}
-          system-image-api-level: ${{ matrix.system-image-api-level }}
+          api-level: ${{ matrix.api-level }}
           target: google_apis
           arch: x86_64
           profile: pixel_6
-          ram-size: ${{ matrix.ram-size }}
-          channel: ${{ matrix.sdk-channel }}
-          script: ${{ matrix.test-command }}
+          ram-size: 2048M
+          script: >-
+            cd apps/android &&
+            ./gradlew :app:connectedDebugAndroidTest
+            -Pandroid.testInstrumentationRunnerArguments.notAnnotation=app.nexus.android.RequiresWebViewM144
 
   test-e2e-env:
     runs-on: ubuntu-latest
