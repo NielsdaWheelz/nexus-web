@@ -1578,6 +1578,7 @@ def test_long_ansi_playwright_diagnostic_preserves_the_behavioral_assertion() ->
         "playwright:apps/web/e2e/journeys/owned.journey.spec.ts",
     )
 
+    assert "exact mobile lock failed" in detail
     assert "expect(locator).toHaveAttribute() failed" in detail
     assert classified.detail.startswith("proof_result=behavioral_assertion_failure|")
 

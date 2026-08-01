@@ -3856,17 +3856,20 @@ def _decisive_output(value: str, limit: int = 1900) -> str:
     stripped = _ANSI_ESCAPE_RE.sub("", value).strip()
     if len(stripped) <= limit:
         return stripped
-    decisive = "\n".join(
-        line
-        for line in stripped.splitlines()
+    lines = stripped.splitlines()
+    decisive_lines: set[int] = set()
+    for index, line in enumerate(lines):
         if re.search(
             r"(?:^|\s)(?:E\s+(?:assert|AssertionError|Failed:)|FAILED\s|"
             r"AssertionError:|Error:\s*expect\(|expect\(locator\)\.to[A-Za-z]+\(|"
             r"Tests\s+\d+\s+failed|falsifying example:)",
             line,
             re.IGNORECASE,
-        )
-    )
+        ):
+            decisive_lines.add(index)
+            if "expect(locator)." in line.casefold() and index > 0:
+                decisive_lines.add(index - 1)
+    decisive = "\n".join(lines[index] for index in sorted(decisive_lines))
     return (decisive or stripped)[-limit:]
 
 
