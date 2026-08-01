@@ -38,7 +38,7 @@ async function deleteConversation(
 async function sendChat(page: Page, text: string): Promise<string> {
   const activePane = activeWorkspacePane(page);
   const profilePicker = activePane.getByRole("combobox", {
-    name: "AI profile",
+    name: "Model",
   });
   const input = activePane.getByRole("textbox", { name: /ask anything/i });
   await expect(input).toBeVisible({ timeout: 30_000 });
@@ -55,7 +55,9 @@ async function sendChat(page: Page, text: string): Promise<string> {
     { timeout: 30_000 },
   );
   await input.fill(text);
-  await activePane.getByRole("button", { name: "SEND", exact: true }).click();
+  await activePane
+    .getByRole("button", { name: "Send message", exact: true })
+    .click();
   const response = await responsePromise;
   const body = await response.text();
   expect(response.ok(), body).toBeTruthy();

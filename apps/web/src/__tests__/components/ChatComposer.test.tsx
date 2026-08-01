@@ -1,7 +1,8 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ComponentProps } from "react";
-import { userEvent } from "vitest/browser";
+import { cdp, page, userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import "@/app/globals.css";
 import { horizontallyScrollableElements } from "@/__tests__/helpers/horizontalOverflow";
 import ChatComposerComponent from "@/components/chat/ChatComposer";
 import { __resetChatProfilesCacheForTests } from "@/components/chat/useChatProfiles";
@@ -92,7 +93,6 @@ const READER_INTENT = {
   selection: READER_PREVIEW.key,
 };
 
-const originalInnerWidth = window.innerWidth;
 const originalBodyMargin = document.body.style.margin;
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -215,28 +215,19 @@ function idempotencyKeyOf(
   return (call[1]?.headers as Record<string, string>)["Idempotency-Key"];
 }
 
-function setViewportWidth(width: number) {
-  Object.defineProperty(window, "innerWidth", {
-    configurable: true,
-    value: width,
-    writable: true,
-  });
-  window.dispatchEvent(new Event("resize"));
-}
-
 describe("ChatComposer", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     // The draft + send attempt now persist in sessionStorage; isolate tests.
     sessionStorage.clear();
     __resetChatProfilesCacheForTests();
     document.body.style.margin = "";
-    setViewportWidth(1024);
+    await page.viewport(1024, 768);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     sessionStorage.clear();
     document.body.style.margin = originalBodyMargin;
-    setViewportWidth(originalInnerWidth);
+    await page.viewport(1024, 768);
   });
 
   it("shares the cached profile catalog across multiple composer mounts", async () => {
@@ -250,13 +241,100 @@ describe("ChatComposer", () => {
     );
 
     expect(
-      await screen.findAllByRole("combobox", { name: "AI profile" }),
+      await screen.findAllByRole("combobox", { name: "Model" }),
     ).toHaveLength(2);
     expect(
       fetchMock.mock.calls.filter(
         ([input]) => pathOf(input) === "/api/llm-profiles",
       ).length,
     ).toBeLessThanOrEqual(1);
+  });
+
+  it("keeps the draft operable while the profile catalog loads and after it becomes ready", async () => {
+    const user = userEvent.setup();
+    let releaseProfiles: () => void = () => {};
+    const profilesGate = new Promise<void>((resolve) => {
+      releaseProfiles = resolve;
+    });
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        if (path === "/api/llm-profiles") {
+          await profilesGate;
+          return jsonResponse({ data: LLM_PROFILES });
+        }
+        if (path === "/api/chat-runs" && init?.method === "POST") {
+          return jsonResponse(
+            chatRunResponse(
+              JSON.parse(String(init.body)) as ChatRunCreateRequest,
+            ),
+          );
+        }
+        throw new Error(`Unexpected fetch call: ${path}`);
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<ChatComposer conversationId="conversation-1" />);
+
+    expect(screen.getByRole("status")).toHaveTextContent("Loading profiles…");
+    expect(
+      screen.queryByRole("combobox", { name: "Model" }),
+    ).not.toBeInTheDocument();
+    const message = screen.getByRole("textbox", { name: "Ask anything" });
+    expect(message).toBeEnabled();
+    await user.click(message);
+    await user.keyboard("Draft while the catalog loads");
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+
+    releaseProfiles();
+    expect(
+      await screen.findByRole("combobox", { name: "Model" }),
+    ).toBeVisible();
+    const sendButton = screen.getByRole("button", { name: "Send message" });
+    expect(sendButton).toBeEnabled();
+    await user.click(sendButton);
+
+    await waitFor(() => {
+      expect(chatRunCalls(fetchMock)).toHaveLength(1);
+    });
+  });
+
+  it("keeps a failed profile catalog quiet, editable, and unsendable", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = pathOf(input);
+      if (path === "/api/llm-profiles") {
+        return jsonResponse(
+          { error: { code: "E_UPSTREAM", message: "Catalog unavailable" } },
+          503,
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    render(<ChatComposer conversationId="conversation-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Models unavailable",
+      );
+    });
+    expect(
+      screen.queryByRole("combobox", { name: "Model" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("combobox", { name: "Effort" }),
+    ).not.toBeInTheDocument();
+    const message = screen.getByRole("textbox", { name: "Ask anything" });
+    expect(message).toBeEnabled();
+    await user.click(message);
+    await user.keyboard("Keep this draft editable");
+    expect(message).toHaveValue("Keep this draft editable");
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    expect(chatRunCalls(fetchMock)).toHaveLength(0);
   });
 
   it("shows the causal inherited profile and reasoning selection", async () => {
@@ -274,9 +352,9 @@ describe("ChatComposer", () => {
       />,
     );
 
-    expect(
-      await screen.findByRole("combobox", { name: "AI profile" }),
-    ).toHaveValue("fast");
+    expect(await screen.findByRole("combobox", { name: "Model" })).toHaveValue(
+      "fast",
+    );
   });
 
   it("replaces an unavailable inherited selection with the current default and explains it quietly", async () => {
@@ -298,10 +376,10 @@ describe("ChatComposer", () => {
       />,
     );
 
-    expect(
-      await screen.findByRole("combobox", { name: "AI profile" }),
-    ).toHaveValue("balanced");
-    expect(screen.getByRole("combobox", { name: "Reasoning" })).toHaveValue(
+    expect(await screen.findByRole("combobox", { name: "Model" })).toHaveValue(
+      "balanced",
+    );
+    expect(screen.getByRole("combobox", { name: "Effort" })).toHaveValue(
       "default",
     );
     const status = screen.getByRole("status");
@@ -314,7 +392,7 @@ describe("ChatComposer", () => {
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);
     await user.keyboard("Continue with the current profile");
-    await user.click(screen.getByRole("button", { name: "SEND" }));
+    await user.click(screen.getByRole("button", { name: "Send message" }));
 
     await waitFor(() => {
       expect(chatRunCalls(fetchMock)).toHaveLength(1);
@@ -341,27 +419,27 @@ describe("ChatComposer", () => {
 
     const { unmount: unmountFirst } = render(<ChatComposer {...props} />);
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "AI profile" }),
+      await screen.findByRole("combobox", { name: "Model" }),
       "balanced",
     );
     await user.selectOptions(
-      screen.getByRole("combobox", { name: "Reasoning" }),
+      screen.getByRole("combobox", { name: "Effort" }),
       "high",
     );
     unmountFirst();
 
     const { unmount: unmountSecond } = render(<ChatComposer {...props} />);
-    expect(
-      await screen.findByRole("combobox", { name: "AI profile" }),
-    ).toHaveValue("balanced");
-    expect(screen.getByRole("combobox", { name: "Reasoning" })).toHaveValue(
+    expect(await screen.findByRole("combobox", { name: "Model" })).toHaveValue(
+      "balanced",
+    );
+    expect(screen.getByRole("combobox", { name: "Effort" })).toHaveValue(
       "high",
     );
 
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);
     await user.keyboard("Send the explicit choice");
-    await user.click(screen.getByRole("button", { name: "SEND" }));
+    await user.click(screen.getByRole("button", { name: "Send message" }));
 
     await waitFor(() => {
       expect(chatRunCalls(fetchMock)).toHaveLength(1);
@@ -373,9 +451,9 @@ describe("ChatComposer", () => {
 
     unmountSecond();
     render(<ChatComposer {...props} />);
-    expect(
-      await screen.findByRole("combobox", { name: "AI profile" }),
-    ).toHaveValue("fast");
+    expect(await screen.findByRole("combobox", { name: "Model" })).toHaveValue(
+      "fast",
+    );
   });
 
   it("selects a non-default profile and sends a Reply destination", async () => {
@@ -392,14 +470,17 @@ describe("ChatComposer", () => {
     );
 
     const profilePicker = await screen.findByRole("combobox", {
-      name: "AI profile",
+      name: "Model",
     });
     await user.selectOptions(profilePicker, "fast");
+    expect(
+      screen.queryByRole("combobox", { name: "Effort" }),
+    ).not.toBeInTheDocument();
 
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);
     await user.keyboard("Explain this quote");
-    await user.click(screen.getByRole("button", { name: "SEND" }));
+    await user.click(screen.getByRole("button", { name: "Send message" }));
 
     await waitFor(() => {
       expect(chatRunCalls(fetchMock)).toHaveLength(1);
@@ -450,16 +531,16 @@ describe("ChatComposer", () => {
       />,
     );
 
-    await screen.findByRole("combobox", { name: "AI profile" });
+    await screen.findByRole("combobox", { name: "Model" });
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Reasoning" }),
+      await screen.findByRole("combobox", { name: "Effort" }),
       "high",
     );
 
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);
     await user.keyboard("Think hard about this");
-    await user.click(screen.getByRole("button", { name: "SEND" }));
+    await user.click(screen.getByRole("button", { name: "Send message" }));
 
     await waitFor(() => {
       expect(chatRunCalls(fetchMock)).toHaveLength(1);
@@ -471,7 +552,7 @@ describe("ChatComposer", () => {
     expect(body.reasoning_option_id).toBe("high");
   });
 
-  it("keeps Shift+Enter as a newline and sends on Enter", async () => {
+  it("keeps desktop Shift+Enter as a newline and sends exactly once on Enter", async () => {
     const user = userEvent.setup();
     const fetchMock = installChatComposerFetchMock();
 
@@ -483,7 +564,7 @@ describe("ChatComposer", () => {
     );
 
     expect(
-      await screen.findByRole("combobox", { name: "AI profile" }),
+      await screen.findByRole("combobox", { name: "Model" }),
     ).toBeInTheDocument();
 
     const message = screen.getByRole("textbox", { name: "Ask anything" });
@@ -502,6 +583,98 @@ describe("ChatComposer", () => {
     const [, init] = chatRunCalls(fetchMock)[0];
     const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest;
     expect(body.content).toBe("First line\nSecond line");
+  });
+
+  it.each([
+    ["Ctrl+Enter", "{Control>}{Enter}{/Control}"],
+    ["Cmd+Enter", "{Meta>}{Enter}{/Meta}"],
+  ])("sends exactly once on desktop %s", async (_name, shortcut) => {
+    const user = userEvent.setup();
+    const fetchMock = installChatComposerFetchMock();
+
+    render(
+      <ChatComposer
+        conversationId="conversation-1"
+        parentMessageId="assistant-1"
+      />,
+    );
+
+    await screen.findByRole("combobox", { name: "Model" });
+    const message = screen.getByRole("textbox", { name: "Ask anything" });
+    await user.click(message);
+    await user.keyboard(`Send with ${_name}`);
+    await user.keyboard(shortcut);
+
+    await waitFor(() => {
+      expect(chatRunCalls(fetchMock)).toHaveLength(1);
+    });
+    const [, init] = chatRunCalls(fetchMock)[0];
+    expect(
+      (JSON.parse(String(init?.body)) as ChatRunCreateRequest).content,
+    ).toBe(`Send with ${_name}`);
+  });
+
+  it("leaves composing and key-code 229 Enter events to the IME", async () => {
+    const user = userEvent.setup();
+    const fetchMock = installChatComposerFetchMock();
+
+    render(
+      <ChatComposer
+        conversationId="conversation-1"
+        parentMessageId="assistant-1"
+      />,
+    );
+
+    await screen.findByRole("combobox", { name: "Model" });
+    const message = screen.getByRole("textbox", { name: "Ask anything" });
+    await user.click(message);
+    await user.keyboard("Composed message");
+
+    fireEvent.compositionStart(message);
+    expect(fireEvent.keyDown(message, { key: "Enter" })).toBe(true);
+    fireEvent.compositionEnd(message);
+    expect(
+      fireEvent.keyDown(message, { key: "Enter", isComposing: true }),
+    ).toBe(true);
+    expect(fireEvent.keyDown(message, { key: "Enter", keyCode: 229 })).toBe(
+      true,
+    );
+
+    expect(chatRunCalls(fetchMock)).toHaveLength(0);
+    expect(message).toHaveValue("Composed message");
+    expect(message).toHaveFocus();
+  });
+
+  it("keeps every Enter variant as a newline in the product mobile viewport", async () => {
+    const user = userEvent.setup();
+    const fetchMock = installChatComposerFetchMock();
+    await page.viewport(320, 720);
+
+    render(
+      <ChatComposer
+        conversationId="conversation-1"
+        parentMessageId="assistant-1"
+      />,
+    );
+
+    await screen.findByRole("combobox", { name: "Model" });
+    const message = screen.getByRole("textbox", { name: "Ask anything" });
+    await user.click(message);
+    await user.keyboard("Plain{Enter}Shift{Shift>}{Enter}{/Shift}Ctrl");
+    await user.keyboard("{Control>}{Enter}{/Control}Cmd");
+    await user.keyboard("{Meta>}{Enter}{/Meta}Alt");
+    await user.keyboard("{Alt>}{Enter}{/Alt}Done");
+
+    expect(message).toHaveValue("Plain\nShift\nCtrl\nCmd\nAlt\nDone");
+
+    await user.clear(message);
+    await user.keyboard("Left selection Right");
+    message.setSelectionRange(5, 14);
+    await user.keyboard("{Control>}{Enter}{/Control}");
+
+    expect(message).toHaveValue("Left \n Right");
+    expect(message).toHaveFocus();
+    expect(chatRunCalls(fetchMock)).toHaveLength(0);
   });
 
   it("shows branch reply mode and sends the branch anchor payload", async () => {
@@ -552,7 +725,7 @@ describe("ChatComposer", () => {
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);
     await user.keyboard("Take this branch");
-    await user.click(screen.getByRole("button", { name: "SEND" }));
+    await user.click(screen.getByRole("button", { name: "Send message" }));
 
     await waitFor(() => {
       expect(chatRunCalls(fetchMock)).toHaveLength(1);
@@ -659,7 +832,7 @@ describe("ChatComposer", () => {
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);
     await user.keyboard("Fork from the whole answer");
-    await user.click(screen.getByRole("button", { name: "SEND" }));
+    await user.click(screen.getByRole("button", { name: "Send message" }));
 
     await waitFor(() => {
       expect(chatRunCalls(fetchMock)).toHaveLength(1);
@@ -689,13 +862,13 @@ describe("ChatComposer", () => {
     render(<ChatComposer conversationId="conversation-1" />);
 
     expect(
-      await screen.findByRole("combobox", { name: "AI profile" }),
+      await screen.findByRole("combobox", { name: "Model" }),
     ).toBeInTheDocument();
 
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);
     await user.keyboard("Start a new root chat");
-    await user.click(screen.getByRole("button", { name: "SEND" }));
+    await user.click(screen.getByRole("button", { name: "Send message" }));
 
     await waitFor(() => {
       expect(chatRunCalls(fetchMock)).toHaveLength(1);
@@ -725,7 +898,7 @@ describe("ChatComposer", () => {
     );
 
     expect(
-      await screen.findByRole("combobox", { name: "AI profile" }),
+      await screen.findByRole("combobox", { name: "Model" }),
     ).toBeInTheDocument();
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);
@@ -759,11 +932,11 @@ describe("ChatComposer", () => {
       />,
     );
 
-    await screen.findByRole("combobox", { name: "AI profile" });
+    await screen.findByRole("combobox", { name: "Model" });
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);
     await user.keyboard("What does this passage mean?");
-    await user.click(screen.getByRole("button", { name: "SEND" }));
+    await user.click(screen.getByRole("button", { name: "Send message" }));
 
     await waitFor(() => {
       expect(chatRunCalls(fetchMock)).toHaveLength(1);
@@ -798,15 +971,17 @@ describe("ChatComposer", () => {
       />,
     );
 
-    await screen.findByRole("combobox", { name: "AI profile" });
+    await screen.findByRole("combobox", { name: "Model" });
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);
     await user.keyboard("Ask about the passage");
 
-    expect(screen.getByRole("button", { name: "SEND" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
     // The Enter keypath is intercepted but the send guard blocks a Loading quote.
     await user.keyboard("{Enter}");
     expect(chatRunCalls(fetchMock)).toHaveLength(0);
+    expect(message).toHaveValue("Ask about the passage");
+    expect(message).toHaveFocus();
   });
 
   it("blocks send for a non-sendable (forbidden) quote", async () => {
@@ -824,12 +999,12 @@ describe("ChatComposer", () => {
       />,
     );
 
-    await screen.findByRole("combobox", { name: "AI profile" });
+    await screen.findByRole("combobox", { name: "Model" });
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);
     await user.keyboard("Try to send this anyway");
 
-    expect(screen.getByRole("button", { name: "SEND" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
     expect(chatRunCalls(fetchMock)).toHaveLength(0);
   });
 
@@ -849,7 +1024,7 @@ describe("ChatComposer", () => {
       />,
     );
 
-    await screen.findByRole("combobox", { name: "AI profile" });
+    await screen.findByRole("combobox", { name: "Model" });
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);
     await user.keyboard("Keep this text after removal");
@@ -901,23 +1076,30 @@ describe("ChatComposer", () => {
       />,
     );
 
-    expect(
-      await screen.findByRole("combobox", { name: "AI profile" }),
-    ).toHaveValue("balanced");
+    expect(await screen.findByRole("combobox", { name: "Model" })).toHaveValue(
+      "balanced",
+    );
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);
     await user.keyboard("An ambiguous send");
-    await user.click(screen.getByRole("button", { name: "SEND" }));
+    const sendBounds = screen
+      .getByRole("button", { name: "Send message" })
+      .getBoundingClientRect();
+    await user.click(screen.getByRole("button", { name: "Send message" }));
 
     // Locked reconciliation panel: text disabled, only "Retry send" offered.
-    expect(
-      await screen.findByRole("button", { name: "Retry send" }),
-    ).toBeVisible();
+    const retryButton = await screen.findByRole("button", {
+      name: "Retry send",
+    });
+    expect(retryButton).toBeVisible();
+    expect(retryButton).toHaveTextContent("");
+    expect(retryButton.getBoundingClientRect().width).toBe(sendBounds.width);
+    expect(retryButton.getBoundingClientRect().height).toBe(sendBounds.height);
     expect(screen.getByText("Send status unknown. Retry send.")).toBeVisible();
     expect(
       screen.getByRole("textbox", { name: "Ask anything" }),
     ).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "SEND" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Send message" })).toBeNull();
 
     unmount();
     changedCatalog = true;
@@ -937,7 +1119,7 @@ describe("ChatComposer", () => {
       await screen.findByText("Original chat profile locked for retry."),
     ).toBeVisible();
     expect(
-      screen.queryByRole("combobox", { name: "AI profile" }),
+      screen.queryByRole("combobox", { name: "Model" }),
     ).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Retry send" }));
@@ -948,14 +1130,18 @@ describe("ChatComposer", () => {
     const calls = chatRunCalls(fetchMock);
     // The replay reuses the SAME idempotency key (identity unchanged).
     expect(idempotencyKeyOf(calls[1])).toBe(idempotencyKeyOf(calls[0]));
-    for (const call of calls) {
-      const body = JSON.parse(String(call[1]?.body)) as ChatRunCreateRequest;
-      expect(body.profile_id).toBe("balanced");
-      expect(body.reasoning_option_id).toBe("default");
-    }
+    const firstBody = JSON.parse(
+      String(calls[0][1]?.body),
+    ) as ChatRunCreateRequest;
+    const replayBody = JSON.parse(
+      String(calls[1][1]?.body),
+    ) as ChatRunCreateRequest;
+    expect(replayBody).toEqual(firstBody);
+    expect(firstBody.profile_id).toBe("balanced");
+    expect(firstBody.reasoning_option_id).toBe("default");
   });
 
-  it("flips the send button to SENDING while the chat run is in flight (D-3, R-6)", async () => {
+  it("keeps one Send message socket while projecting Sending message in flight", async () => {
     const user = userEvent.setup();
     let releaseRun: () => void = () => {};
     const runGate = new Promise<void>((resolve) => {
@@ -979,6 +1165,91 @@ describe("ChatComposer", () => {
       },
     );
     vi.stubGlobal("fetch", fetchMock);
+    const session = cdp();
+    await session.send("Emulation.setEmulatedMedia", {
+      features: [{ name: "prefers-reduced-motion", value: "reduce" }],
+    });
+    try {
+      render(
+        <ChatComposer
+          conversationId="conversation-1"
+          parentMessageId="assistant-1"
+        />,
+      );
+
+      const sendButton = await screen.findByRole("button", {
+        name: "Send message",
+      });
+      expect(sendButton).toHaveTextContent("");
+
+      const message = screen.getByRole("textbox", { name: "Ask anything" });
+      const focusSpy = vi.spyOn(message, "focus");
+      await user.click(message);
+      await user.keyboard("Hold the line while it sends");
+      const idleBounds = sendButton.getBoundingClientRect();
+      await user.click(sendButton);
+
+      const sendingButton = await screen.findByRole("button", {
+        name: "Sending message",
+      });
+      expect(sendingButton).toHaveAttribute("aria-busy", "true");
+      expect(sendingButton).toBeDisabled();
+      expect(sendingButton).toHaveTextContent("");
+      expect(sendingButton.getBoundingClientRect().width).toBe(idleBounds.width);
+      expect(sendingButton.getBoundingClientRect().height).toBe(
+        idleBounds.height,
+      );
+      expect(
+        getComputedStyle(sendingButton).transitionDuration.split(", "),
+      ).toEqual(["0s", "0s", "0s"]);
+      // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: the loading spinner is decorative and intentionally has no accessible query; its computed animation duration is the reduced-motion contract.
+      const spinner = sendingButton.querySelector('span[aria-hidden="true"]');
+      expect(spinner).not.toBeNull();
+      expect(getComputedStyle(spinner!).animationDuration).toBe("0s");
+      expect(screen.queryByRole("button", { name: "Send message" })).toBeNull();
+      expect(chatRunCalls(fetchMock)).toHaveLength(1);
+
+      releaseRun();
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: "Send message" }),
+        ).toBeInTheDocument();
+        expect(message).toHaveFocus();
+        expect(focusSpy).toHaveBeenLastCalledWith({ preventScroll: true });
+      });
+    } finally {
+      releaseRun();
+      await session.send("Emulation.setEmulatedMedia", {
+        features: [
+          { name: "prefers-reduced-motion", value: "no-preference" },
+        ],
+      });
+    }
+  });
+
+  it("preserves the draft and restores textarea focus after a known failed send", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        if (path === "/api/llm-profiles") {
+          return jsonResponse({ data: LLM_PROFILES });
+        }
+        if (path === "/api/chat-runs" && init?.method === "POST") {
+          return jsonResponse(
+            {
+              error: {
+                code: "E_CONVERSATION_NO_LONGER_EMPTY",
+                message: "The conversation already has messages.",
+              },
+            },
+            409,
+          );
+        }
+        throw new Error(`Unexpected fetch call: ${path}`);
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
 
     render(
       <ChatComposer
@@ -987,25 +1258,42 @@ describe("ChatComposer", () => {
       />,
     );
 
-    // Idle: the send action is a text "SEND" button (no ArrowUp icon).
-    const sendButton = await screen.findByRole("button", { name: "SEND" });
-
+    await screen.findByRole("combobox", { name: "Model" });
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);
-    await user.keyboard("Hold the line while it sends");
-    await user.click(sendButton);
+    await user.keyboard("Keep this known-failed draft");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
 
-    // In-flight: the same button reads "SENDING" (the visible text is the
-    // accessible name — no separate aria-label, per D-3/R-6).
-    expect(
-      await screen.findByRole("button", { name: "SENDING" }),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "SEND" })).toBeNull();
-
-    // Resolve the run; the button returns to "SEND".
-    releaseRun();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "This chat already has messages — send again to continue it.",
+    );
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "SEND" })).toBeInTheDocument();
+      expect(message).toHaveFocus();
+    });
+    expect(message).toHaveValue("Keep this known-failed draft");
+    expect(chatRunCalls(fetchMock)).toHaveLength(1);
+  });
+
+  it("projects the shell focus-within ring when the textarea is focused", async () => {
+    const user = userEvent.setup();
+    installChatComposerFetchMock();
+
+    render(<ChatComposer conversationId="conversation-1" />);
+
+    await screen.findByRole("combobox", { name: "Model" });
+    const message = screen.getByRole("textbox", { name: "Ask anything" });
+    // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: the visual shell has no semantic role; its computed focus-within shadow is the contract under test.
+    const shell = message.parentElement;
+    if (!shell) throw new Error("Chat textarea requires its composer shell.");
+    const restingShadow = getComputedStyle(shell).boxShadow;
+
+    await user.click(message);
+
+    expect(message).toHaveFocus();
+    await waitFor(() => {
+      const focusedShadow = getComputedStyle(shell).boxShadow;
+      expect(focusedShadow).not.toBe("none");
+      expect(focusedShadow).not.toBe(restingShadow);
     });
   });
 
@@ -1015,7 +1303,7 @@ describe("ChatComposer", () => {
     render(<ChatComposer conversationId="conversation-1" />);
 
     expect(
-      await screen.findByRole("combobox", { name: "AI profile" }),
+      await screen.findByRole("combobox", { name: "Model" }),
     ).toBeVisible();
     expect(
       screen.queryByRole("combobox", { name: /web search/i }),
@@ -1031,25 +1319,29 @@ describe("ChatComposer", () => {
     render(<ChatComposer conversationId="conversation-1" />);
 
     expect(
-      await screen.findByRole("combobox", { name: "AI profile" }),
+      await screen.findByRole("combobox", { name: "Model" }),
     ).toBeVisible();
     expect(screen.queryByText("Privacy")).not.toBeInTheDocument();
-    expect(screen.queryByText("Processed by Nexus AI.")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Processed by Nexus AI."),
+    ).not.toBeInTheDocument();
 
     await user.selectOptions(
-      screen.getByRole("combobox", { name: "AI profile" }),
+      screen.getByRole("combobox", { name: "Model" }),
       "fast",
     );
-    expect(
-      screen.queryByText("Retained for 30 days."),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Retained for 30 days.")).not.toBeInTheDocument();
     expect(screen.queryByText("Privacy")).not.toBeInTheDocument();
   });
 
-  it("keeps a draft editable during an assistant run without a visible wait banner", async () => {
+  it("projects stable Stop response and Stopping response actions while keeping the draft editable", async () => {
     const user = userEvent.setup();
     installChatComposerFetchMock();
-    const onCancelRun = vi.fn();
+    let releaseCancel: () => void = () => {};
+    const cancelGate = new Promise<void>((resolve) => {
+      releaseCancel = resolve;
+    });
+    const onCancelRun = vi.fn(async () => cancelGate);
 
     render(
       <ChatComposerComponent
@@ -1061,22 +1353,62 @@ describe("ChatComposer", () => {
       />,
     );
 
-    await screen.findByRole("combobox", { name: "AI profile" });
+    await screen.findByRole("combobox", { name: "Model" });
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);
     await user.keyboard("Keep writing");
 
     expect(message).toHaveValue("Keep writing");
     expect(message).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Stop response" })).toBeVisible();
+    const stopButton = screen.getByRole("button", { name: "Stop response" });
+    expect(stopButton).toBeVisible();
+    expect(stopButton).toHaveTextContent("");
+    const stopBounds = stopButton.getBoundingClientRect();
+
+    await user.click(stopButton);
+    const stoppingButton = await screen.findByRole("button", {
+      name: "Stopping response",
+    });
+    expect(stoppingButton).toHaveAttribute("aria-busy", "true");
+    expect(stoppingButton).toBeDisabled();
+    expect(stoppingButton).toHaveTextContent("");
+    expect(stoppingButton.getBoundingClientRect().width).toBe(stopBounds.width);
+    expect(stoppingButton.getBoundingClientRect().height).toBe(
+      stopBounds.height,
+    );
+    expect(onCancelRun).toHaveBeenCalledOnce();
+
+    releaseCancel();
+    await screen.findByRole("button", { name: "Stop response" });
     expect(
       screen.queryByText(/wait for the assistant/i),
     ).not.toBeInTheDocument();
   });
 
-  it("keeps the composer controls inside a 320px mobile width without horizontal scrolling", async () => {
-    installChatComposerFetchMock();
-    setViewportWidth(320);
+  it("keeps the two-line input and compact controls contained at 320px", async () => {
+    await page.viewport(320, 720);
+    const verboseModelLabel =
+      "Exceptionally deliberate cross-provider research synthesis model";
+    const verboseCatalog = {
+      ...LLM_PROFILES,
+      profiles: [
+        {
+          ...LLM_PROFILES.profiles[0],
+          label: verboseModelLabel,
+        },
+        LLM_PROFILES.profiles[1],
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = pathOf(input);
+        if (path === "/api/llm-profiles") {
+          return jsonResponse({ data: verboseCatalog });
+        }
+        throw new Error(`Unexpected fetch call: ${path}`);
+      }),
+    );
     document.body.style.margin = "0";
 
     render(
@@ -1088,14 +1420,20 @@ describe("ChatComposer", () => {
       </div>,
     );
 
-    expect(
-      await screen.findByRole("combobox", { name: "AI profile" }),
-    ).toBeVisible();
-    expect(screen.getByRole("textbox", { name: "Ask anything" })).toBeVisible();
+    const model = await screen.findByRole("combobox", { name: "Model" });
+    const effort = screen.getByRole("combobox", { name: "Effort" });
+    const message = screen.getByRole("textbox", { name: "Ask anything" });
+    const send = screen.getByRole("button", { name: "Send message" });
+    expect(model).toHaveDisplayValue(verboseModelLabel);
+    expect(window.matchMedia("(max-width: 768px)").matches).toBe(true);
+    expect(message.getBoundingClientRect().height).toBeGreaterThanOrEqual(45);
+    for (const control of [model, effort, send]) {
+      expect(control.getBoundingClientRect().width).toBeGreaterThanOrEqual(36);
+      expect(control.getBoundingClientRect().height).toBeGreaterThanOrEqual(36);
+    }
     expect(
       screen.queryByRole("combobox", { name: "Web search mode" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "SEND" })).toBeVisible();
 
     const host = screen.getByTestId("mobile-composer-host");
     expect(host.clientWidth).toBe(320);

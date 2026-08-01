@@ -121,7 +121,7 @@ test.describe("chat composer (post-cutover)", () => {
 
       const input = activePane.getByRole("textbox", { name: /ask anything/i });
       const profilePicker = activePane.getByRole("combobox", {
-        name: "AI profile",
+        name: "Model",
       });
 
       await expect(input).toBeVisible({ timeout: 30_000 });

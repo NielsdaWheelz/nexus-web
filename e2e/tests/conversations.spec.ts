@@ -205,7 +205,7 @@ test.describe("conversations", () => {
 
       const activePane = activeWorkspacePane(page);
       const profilePicker = activePane.getByRole("combobox", {
-        name: "AI profile",
+        name: "Model",
       });
       const input = activePane.getByRole("textbox", {
         name: /ask anything|type a message/i,
@@ -214,7 +214,7 @@ test.describe("conversations", () => {
       await expect(input).toBeVisible({ timeout: 30_000 });
       await profilePicker.selectOption("deep");
       const reasoningPicker = activePane.getByRole("combobox", {
-        name: "Reasoning",
+        name: "Effort",
       });
       await reasoningPicker.selectOption("high");
       await input.fill(
@@ -227,7 +227,7 @@ test.describe("conversations", () => {
         { timeout: 30_000 },
       );
       await activePane
-        .getByRole("button", { name: "SEND", exact: true })
+        .getByRole("button", { name: "Send message", exact: true })
         .click();
       const runResponse = await runResponsePromise;
       const runBody = await runResponse.text();
@@ -446,10 +446,10 @@ test.describe("conversations", () => {
     }
   });
 
-  test("mobile chat scrollport uses platform gutter without page overflow", async ({
+  test("@mobile-chrome mobile composer and scrollport remain operable at 320px", async ({
     page,
   }, testInfo) => {
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 320, height: 568 });
     const seed = await seedScrollConversation(page, 50);
     const conversationId = seed.conversation_id;
     try {
@@ -463,8 +463,33 @@ test.describe("conversations", () => {
       const scrollport = activePane.getByRole("region", {
         name: "Chat conversation",
       });
+      const input = activePane.getByRole("textbox", { name: "Ask anything" });
+      const model = activePane.getByRole("combobox", { name: "Model" });
+      const effort = activePane.getByRole("combobox", { name: "Effort" });
+      const action = activePane.getByRole("button", { name: "Send message" });
 
       await expect(scrollport).toBeVisible();
+      await expect(input).toBeVisible();
+      await expect(model).toBeVisible();
+      await expect(effort).toBeVisible();
+      await expect(action).toBeVisible();
+      for (const control of [model, effort, action]) {
+        const bounds = await control.boundingBox();
+        if (!bounds) {
+          throw new Error("Mobile composer control has no layout bounds.");
+        }
+        expect(bounds.height).toBeGreaterThanOrEqual(44);
+        expect(bounds.width).toBeGreaterThanOrEqual(44);
+        expect(bounds.x).toBeGreaterThanOrEqual(0);
+        expect(bounds.x + bounds.width).toBeLessThanOrEqual(320);
+      }
+      for (const field of [input, model, effort]) {
+        expect(
+          await field.evaluate((node) =>
+            Number.parseFloat(getComputedStyle(node).fontSize),
+          ),
+        ).toBeGreaterThanOrEqual(16);
+      }
       await expect(
         activePane.getByRole("log", { name: "Chat messages" }),
       ).toContainText("Scroll fixture message 50", { timeout: 10_000 });
@@ -505,10 +530,10 @@ test.describe("conversations", () => {
         timeout: 30_000,
       });
       const profilePicker = conversationPane.getByRole("combobox", {
-        name: "AI profile",
+        name: "Model",
       });
       const reasoningPicker = conversationPane.getByRole("combobox", {
-        name: "Reasoning",
+        name: "Effort",
       });
       await expect(profilePicker).toHaveValue("deep");
       await expect(reasoningPicker).toHaveValue("high");
@@ -549,7 +574,7 @@ test.describe("conversations", () => {
       });
       await input.fill("E2E selected quote follow-up");
       const sendButton = conversationPane.getByRole("button", {
-        name: "SEND",
+        name: "Send message",
         exact: true,
       });
       await expect(sendButton).toBeEnabled({ timeout: 15_000 });

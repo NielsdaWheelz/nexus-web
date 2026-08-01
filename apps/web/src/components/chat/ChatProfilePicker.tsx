@@ -34,11 +34,11 @@ export default function ChatProfilePicker({
 
   return (
     <div className={styles.picker}>
-      <label className={styles.field}>
-        <span className={styles.srOnly}>AI profile</span>
+      <div className={`${styles.field} ${styles.modelField}`}>
         <Select
-          size="sm"
-          aria-label="AI profile"
+          size="md"
+          className={styles.control}
+          aria-label="Model"
           value={value.profileId}
           disabled={disabled}
           onChange={(event) => {
@@ -63,14 +63,14 @@ export default function ChatProfilePicker({
             </option>
           ))}
         </Select>
-      </label>
+      </div>
 
       {reasoningOptions.length > 1 ? (
-        <label className={styles.field}>
-          <span className={styles.srOnly}>Reasoning</span>
+        <div className={`${styles.field} ${styles.effortField}`}>
           <Select
-            size="sm"
-            aria-label="Reasoning"
+            size="md"
+            className={styles.control}
+            aria-label="Effort"
             value={value.reasoningOptionId}
             disabled={disabled}
             onChange={(event) => {
@@ -86,7 +86,7 @@ export default function ChatProfilePicker({
               </option>
             ))}
           </Select>
-        </label>
+        </div>
       ) : null}
     </div>
   );

@@ -127,11 +127,11 @@ test.describe("quote-attach references (post-cutover)", () => {
       name: /ask anything/i,
     });
     const sendButton = conversationPane.getByRole("button", {
-      name: "SEND",
+      name: "Send message",
       exact: true,
     });
     const profilePicker = conversationPane.getByRole("combobox", {
-      name: "AI profile",
+      name: "Model",
     });
 
     await expect(composerInput).toBeVisible({ timeout: 15_000 });

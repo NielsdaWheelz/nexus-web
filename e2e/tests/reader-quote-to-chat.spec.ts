@@ -131,10 +131,10 @@ test.describe("reader quote-to-chat", () => {
         name: /ask anything/i,
       });
       const profilePicker = activePane.getByRole("combobox", {
-        name: "AI profile",
+        name: "Model",
       });
       const sendButton = activePane.getByRole("button", {
-        name: "SEND",
+        name: "Send message",
         exact: true,
       });
       await expect(composerInput).toBeVisible({ timeout: 15_000 });
@@ -245,7 +245,7 @@ test.describe("reader quote-to-chat", () => {
 
       // A plain send then works and rides no quoted passage.
       const profilePicker = activePane.getByRole("combobox", {
-        name: "AI profile",
+        name: "Model",
       });
       await requireRunnableChatComposer({
         page,
@@ -254,7 +254,7 @@ test.describe("reader quote-to-chat", () => {
           "No runnable chat model in the e2e environment; cannot verify a plain send after Remove.",
       });
       await activePane
-        .getByRole("button", { name: "SEND", exact: true })
+        .getByRole("button", { name: "Send message", exact: true })
         .click();
 
       const sentPrompt = activePane
@@ -362,7 +362,7 @@ test.describe("reader quote-to-chat", () => {
       .data.id;
     try {
       // Launching its intent resolves to an authoritative NonSendable card: the
-      // composer names why it can't be sent and keeps SEND disabled — the quote
+      // composer names why it cannot be sent and keeps Send disabled — the quote
       // never reaches the send contract (AC15).
       await gotoSinglePaneWorkspace(
         page,
@@ -383,7 +383,10 @@ test.describe("reader quote-to-chat", () => {
       // No text means no blockquote, and send stays gated.
       await expect(quotedPassage.locator("blockquote")).toHaveCount(0);
       await expect(
-        activePane.getByRole("button", { name: "SEND", exact: true }),
+        activePane.getByRole("button", {
+          name: "Send message",
+          exact: true,
+        }),
       ).toBeDisabled();
     } finally {
       const cleanup = await page.request.delete(

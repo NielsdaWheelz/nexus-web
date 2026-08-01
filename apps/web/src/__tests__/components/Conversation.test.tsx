@@ -1339,13 +1339,13 @@ describe("Conversation", () => {
     });
 
     expect(
-      await screen.findByRole("combobox", { name: "AI profile" }),
+      await screen.findByRole("combobox", { name: "Model" }),
     ).toBeInTheDocument();
 
     const input = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(input);
     await user.keyboard("Plain question");
-    await user.click(screen.getByRole("button", { name: "SEND" }));
+    await user.click(screen.getByRole("button", { name: "Send message" }));
 
     await waitFor(() => {
       expect(
@@ -1539,16 +1539,16 @@ describe("Conversation", () => {
 
     expect(await screen.findByText("Answer A")).toBeVisible();
     const profilePicker = await screen.findByRole("combobox", {
-      name: "AI profile",
+      name: "Model",
     });
     expect(profilePicker).toHaveValue("balanced");
     expect(
-      screen.queryByRole("combobox", { name: "Reasoning" }),
+      screen.queryByRole("combobox", { name: "Effort" }),
     ).not.toBeInTheDocument();
 
     await user.selectOptions(profilePicker, "deep");
     const reasoningPicker = screen.getByRole("combobox", {
-      name: "Reasoning",
+      name: "Effort",
     });
     expect(profilePicker).toHaveValue("deep");
     expect(reasoningPicker).toHaveValue("high");
@@ -1556,7 +1556,7 @@ describe("Conversation", () => {
     const input = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(input);
     await user.keyboard("Continue from the leaf");
-    await user.click(screen.getByRole("button", { name: "SEND" }));
+    await user.click(screen.getByRole("button", { name: "Send message" }));
 
     await waitFor(() => {
       expect(
@@ -1633,7 +1633,9 @@ describe("Conversation", () => {
         "Assistant response in progress. Your draft is still editable.",
       ),
     ).toHaveAttribute("aria-live", "polite");
-    expect(screen.getByRole("button", { name: "SEND" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Send message" }),
+    ).toBeDisabled();
     expect(
       fetchMock.mock.calls.filter(
         ([input, init]) =>
@@ -1674,7 +1676,9 @@ describe("Conversation", () => {
     expect(
       await screen.findByText("Conversation history is loading."),
     ).toHaveAttribute("aria-live", "polite");
-    expect(screen.getByRole("button", { name: "SEND" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Send message" }),
+    ).toBeDisabled();
     expect(screen.getByRole("textbox", { name: "Ask anything" })).toBeVisible();
     expect(
       publishPrimaryChrome.mock.calls.some(
@@ -1715,7 +1719,9 @@ describe("Conversation", () => {
     expect(
       await screen.findByText("Failed to load conversation"),
     ).toBeVisible();
-    expect(screen.queryByRole("button", { name: "SEND" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Send message" }),
+    ).toBeNull();
     expect(screen.queryByRole("textbox", { name: "Ask anything" })).toBeNull();
     expect(
       publishPrimaryChrome.mock.calls.some(

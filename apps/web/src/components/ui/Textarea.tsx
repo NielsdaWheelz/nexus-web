@@ -59,13 +59,22 @@ const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function Textare
     if (!autoGrow) return;
     const el = innerRef.current;
     if (!el) return;
+    el.style.overflowY = "hidden";
     el.style.height = "auto";
-    const lineHeight = parseFloat(getComputedStyle(el).lineHeight) || 0;
+    const style = getComputedStyle(el);
+    const lineHeight = parseFloat(style.lineHeight) || 0;
     const verticalPadding =
-      parseFloat(getComputedStyle(el).paddingTop) +
-      parseFloat(getComputedStyle(el).paddingBottom);
-    const max = lineHeight > 0 ? lineHeight * maxRows + verticalPadding : Infinity;
-    el.style.height = `${Math.min(el.scrollHeight, max)}px`;
+      parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+    const verticalBorder =
+      parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
+    const maxVisibleScrollArea =
+      lineHeight > 0 ? lineHeight * maxRows + verticalPadding : Infinity;
+    const contentHeight = el.scrollHeight;
+    el.style.height = `${
+      Math.min(contentHeight, maxVisibleScrollArea) + verticalBorder
+    }px`;
+    el.style.overflowY =
+      contentHeight > maxVisibleScrollArea ? "auto" : "hidden";
   }, [autoGrow, maxRows, value]);
 
   const cls = [

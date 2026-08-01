@@ -61,7 +61,7 @@ function loadChatProfiles(): Promise<LlmProfilesOut> {
         // re-auth boundary rather than surfacing "profiles unavailable".
         handleUnauthenticatedApiError(error);
         // Drop the rejected promise so the next load retries instead of
-        // permanently returning this failure (which would disable SEND for the
+        // permanently returning this failure (which would disable sending for the
         // whole session on one transient blip).
         if (requestEpoch === profilesCacheEpoch) {
           profilesLoadPromise = null;

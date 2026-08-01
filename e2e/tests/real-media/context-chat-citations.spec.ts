@@ -200,7 +200,7 @@ test("@real-media search evidence chat citations open each media reader", async 
         { timeout: 30_000 },
       );
       const sendButton = conversationPane.getByRole("button", {
-        name: "SEND",
+        name: "Send message",
         exact: true,
       });
       await expect(sendButton).toBeEnabled({ timeout: 30_000 });

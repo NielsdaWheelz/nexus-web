@@ -197,8 +197,8 @@ to reading position** restores the saved eye-line and pin mode once.
 ## Send Path
 
 `ChatComposer` owns user input, the profile catalog, next-turn selection
-resolution, the `ChatProfilePicker` (profile + reasoning option controls), and
-send action wiring. It does not construct API branch semantics directly.
+resolution, the `ChatProfilePicker` (product-facing Model + Effort controls),
+and send action wiring. It does not construct API branch semantics directly.
 
 `useChatProfiles` fetches `GET /api/llm-profiles` (module-scope cached across
 mounted composers) and exposes `{ profiles, defaultProfileId, isLoading,
@@ -218,8 +218,10 @@ Inherited and default selections are derived and never persisted as draft
 preferences.
 
 `ChatProfilePicker` is a pure controlled renderer of the ready catalog and
-effective selection. User changes write the explicit draft choice. Each profile
-carries a required `privacy` union:
+effective selection. It renders native `Model` and conditional `Effort` selects;
+their values remain the server-owned profile and reasoning-option ids, and
+visible model copy remains `LlmProfile.label`. User changes write the explicit
+draft choice. Each profile carries a required `privacy` union:
 `{ kind: "Standard"; notice } | { kind: "ExceptionalRetention"; notice }`.
 `ChatProfilePicker` renders no privacy or retention copy for any profile. The
 browser owns no provider/model/reasoning enum, ordering, default, capability,
@@ -233,6 +235,19 @@ maps that value to send gating and one screen-reader status. Routine blocked
 state never renders in the visible error slot. Draft editing and Stop remain
 available while an assistant run is active; real errors and ambiguous-send
 reconciliation remain visible.
+
+The composer projects its existing send, cancel, and reconciliation conditions
+through one fixed action socket: `Send message`, `Sending message`,
+`Stop response`, `Stopping response`, or `Retry send`. Stop is neutral rather
+than destructive. Desktop Enter sends, Shift+Enter inserts a newline, and
+Cmd/Ctrl+Enter sends; every Enter variant inserts a newline in the product
+mobile viewport. IME composition always owns Enter. The shared `Textarea` grows
+and shrinks to its configured cap, then exposes native internal scrolling. The
+composer configures it for two through six rows and restores input focus after
+completed and known-failed sends without taking viewport ownership.
+
+Presentation and proof are governed by
+[`chat-composer-instrument-hard-cutover.md`](../cutovers/chat-composer-instrument-hard-cutover.md).
 
 `buildChatRunBody` is the single frontend `/api/chat-runs` body assembler. It
 produces the hard-cut request shape:
