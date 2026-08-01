@@ -17,7 +17,7 @@
  *   - Build/run mode (NODE_ENV):   isDevBuild / isProdBuild — `next start` forces production
  */
 export { isDevBuild, isProdBuild } from "./build-mode";
-import { parseWebOrigin } from "./security/origin";
+import { parseWebOrigin, parseWebOriginList } from "./security/origin";
 
 type NexusEnv = "local" | "test" | "staging" | "prod";
 
@@ -43,6 +43,8 @@ interface ResolvedEnv {
   readonly appPublicOrigin: string;
   /** FastAPI/SSE origin + presigned R2 origin. Origin-only, deduped, validated. */
   readonly connectOrigins: readonly string[];
+  /** Explicit browser media origins beyond the default same-origin/HTTPS policy. */
+  readonly mediaOrigins: readonly string[];
   readonly serverActionAllowedOrigins: readonly string[];
   readonly internalApi: {
     readonly fastApiBaseUrl: string;
@@ -64,6 +66,7 @@ export function getEnv(): ResolvedEnv {
   const deployed = env === "staging" || env === "prod";
 
   const connectOrigins = resolveConnectOrigins(deployed);
+  const mediaOrigins = resolveMediaOrigins(deployed);
   validateAuthRedirectOrigins(deployed);
   const serverActionAllowedOrigins = resolveServerActionAllowedOrigins(deployed);
 
@@ -79,10 +82,27 @@ export function getEnv(): ResolvedEnv {
     nexusEnv: env,
     appPublicOrigin,
     connectOrigins,
+    mediaOrigins,
     serverActionAllowedOrigins,
     internalApi: Object.freeze({ fastApiBaseUrl, internalSecret }),
   });
   return resolved;
+}
+
+function resolveMediaOrigins(deployed: boolean): readonly string[] {
+  const { origins, invalidValues } = parseWebOriginList(
+    process.env.CSP_MEDIA_ORIGINS,
+  );
+  if (invalidValues.length > 0) {
+    throw new Error(`Invalid CSP_MEDIA_ORIGINS: ${invalidValues.join(", ")}`);
+  }
+  const insecure = origins.find((origin) => origin.protocol !== "https:");
+  if (deployed && insecure) {
+    throw new Error(
+      `CSP_MEDIA_ORIGINS must use HTTPS in staging/prod: ${insecure.origin}`,
+    );
+  }
+  return origins.map((origin) => origin.origin);
 }
 
 function resolveAppPublicOrigin(deployed: boolean): string {

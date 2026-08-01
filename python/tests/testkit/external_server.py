@@ -10,11 +10,13 @@ import os
 import re
 import socket
 import threading
+import wave
 from collections.abc import Iterator
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
@@ -30,6 +32,8 @@ NASA_FEED_PATH = "/podcasts/houston-we-have-a-podcast/feed"
 NASA_FEED_URL = f"http://{NASA_HOST}{NASA_FEED_PATH}"
 NASA_TRANSCRIPT_PATH = "/nexus-fixtures/nasa-hwhap-crew4-transcript.txt"
 NASA_TRANSCRIPT_URL = f"http://{NASA_HOST}{NASA_TRANSCRIPT_PATH}"
+NASA_AUDIO_PATH = "/nexus-fixtures/nasa-hwhap-crew4.wav"
+_NASA_AUDIO_URL = "https://www.nasa.gov/wp-content/uploads/2023/07/ep239_crew-4.mp3"
 
 _MAX_REQUEST_BYTES = 1_048_576
 _HEX_SHA1 = re.compile(r"[0-9a-f]{40}")
@@ -57,6 +61,7 @@ class FixtureCorpus:
     episodes: dict[str, Any]
     feed: bytes
     transcript: bytes
+    audio: bytes
 
     @classmethod
     def load(cls, fixture_root: Path) -> FixtureCorpus:
@@ -75,6 +80,7 @@ class FixtureCorpus:
             episodes=episodes,
             feed=_with_transcript_reference(feed),
             transcript=transcript,
+            audio=_silent_wav(duration_seconds=24),
         )
 
 
@@ -151,10 +157,22 @@ class ExternalProtocolHandler(BaseHTTPRequestHandler):
                 return
             if target.host != "127.0.0.1":
                 raise RequestRejected(400, "host_not_owned")
+            if target.path == NASA_AUDIO_PATH:
+                self._serve_audio(target, head_only=False)
+                return
             self._require_podcast_auth()
             self._serve_podcast_index(target)
         except RequestRejected as error:
             self._send_error(error)
+
+    def do_HEAD(self) -> None:  # noqa: N802 - stdlib handler API
+        try:
+            target = self._target()
+            if target.host != "127.0.0.1" or target.path != NASA_AUDIO_PATH:
+                raise RequestRejected(404, "unknown_path")
+            self._serve_audio(target, head_only=True)
+        except RequestRejected as error:
+            self._send_error(error, head_only=True)
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib handler API
         try:
@@ -232,7 +250,7 @@ class ExternalProtocolHandler(BaseHTTPRequestHandler):
                 else None
             )
             items = [
-                deepcopy(item)
+                self._with_local_audio(item)
                 for item in corpus.episodes["items"]
                 if before is None or int(item["datePublished"]) < before
             ][:limit]
@@ -242,7 +260,7 @@ class ExternalProtocolHandler(BaseHTTPRequestHandler):
             _require_keys(queries, {"id"})
             if _one(queries, "id") != EPISODE_REF:
                 raise RequestRejected(404, "episode_not_found")
-            self._send_json(200, {"episode": deepcopy(corpus.episodes["items"][0])})
+            self._send_json(200, {"episode": self._with_local_audio(corpus.episodes["items"][0])})
             return
         raise RequestRejected(404, "unknown_path")
 
@@ -253,12 +271,54 @@ class ExternalProtocolHandler(BaseHTTPRequestHandler):
             raise RequestRejected(400, "invalid_nasa_fixture_user_agent")
         path = target.path.rstrip("/") or "/"
         if path == NASA_FEED_PATH:
-            self._send_bytes(200, self.server.corpus.feed, "application/rss+xml")
+            self._send_bytes(
+                200,
+                _with_local_audio_reference(
+                    self.server.corpus.feed,
+                    audio_url=self._audio_url(),
+                    size_bytes=len(self.server.corpus.audio),
+                ),
+                "application/rss+xml",
+            )
             return
         if path == NASA_TRANSCRIPT_PATH:
             self._send_bytes(200, self.server.corpus.transcript, "text/plain; charset=utf-8")
             return
         raise RequestRejected(404, "unknown_nasa_fixture")
+
+    def _with_local_audio(self, item: dict[str, Any]) -> dict[str, Any]:
+        result = deepcopy(item)
+        result["enclosureUrl"] = self._audio_url()
+        return result
+
+    def _audio_url(self) -> str:
+        host = str(self.server.server_address[0])
+        port = int(self.server.server_address[1])
+        if host != "127.0.0.1":
+            raise RequestRejected(500, "fixture_server_not_loopback")
+        return f"http://{host}:{port}{NASA_AUDIO_PATH}"
+
+    def _serve_audio(self, target: RequestTarget, *, head_only: bool) -> None:
+        if target.query:
+            raise RequestRejected(400, "audio_fixture_query_forbidden")
+        audio = self.server.corpus.audio
+        headers = {
+            "accept-ranges": "bytes",
+            "cache-control": "private, no-store",
+        }
+        raw_range = self.headers.get("range")
+        if raw_range is None:
+            self._send_bytes(200, audio, "audio/wav", headers=headers, head_only=head_only)
+            return
+        start, end = _single_byte_range(raw_range, size_bytes=len(audio))
+        headers["content-range"] = f"bytes {start}-{end}/{len(audio)}"
+        self._send_bytes(
+            206,
+            audio[start : end + 1],
+            "audio/wav",
+            headers=headers,
+            head_only=head_only,
+        )
 
     def _serve_openai_responses(self) -> None:
         payload = self._read_openai_json()
@@ -286,7 +346,7 @@ class ExternalProtocolHandler(BaseHTTPRequestHandler):
                 )
             )
             return
-        if _has_tool(payload, "queue_add"):
+        if _is_tool_safety_request(payload):
             media_uri = _require_tool_safety_contract(payload)
             self._send_sse(
                 _tool_call_frames(
@@ -376,16 +436,17 @@ class ExternalProtocolHandler(BaseHTTPRequestHandler):
         )
         self._send_bytes(200, body, "text/event-stream; charset=utf-8")
 
-    def _send_json(self, status: int, payload: object) -> None:
+    def _send_json(self, status: int, payload: object, *, head_only: bool = False) -> None:
         self._send_bytes(
             status,
             json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode(),
             "application/json",
             headers={"x-request-id": _REQUEST_ID},
+            head_only=head_only,
         )
 
-    def _send_error(self, error: RequestRejected) -> None:
-        self._send_json(error.status, {"error": {"code": error.code}})
+    def _send_error(self, error: RequestRejected, *, head_only: bool = False) -> None:
+        self._send_json(error.status, {"error": {"code": error.code}}, head_only=head_only)
 
     def _send_bytes(
         self,
@@ -394,6 +455,7 @@ class ExternalProtocolHandler(BaseHTTPRequestHandler):
         content_type: str,
         *,
         headers: dict[str, str] | None = None,
+        head_only: bool = False,
     ) -> None:
         self.send_response(status)
         self.send_header("content-type", content_type)
@@ -402,7 +464,8 @@ class ExternalProtocolHandler(BaseHTTPRequestHandler):
         for name, value in (headers or {}).items():
             self.send_header(name, value)
         self.end_headers()
-        self.wfile.write(body)
+        if not head_only:
+            self.wfile.write(body)
 
 
 @dataclass(frozen=True, slots=True)
@@ -503,10 +566,7 @@ def _with_proxy_feed_url(payload: dict[str, Any]) -> dict[str, Any]:
 def _with_transcript_reference(feed: bytes) -> bytes:
     text = feed.decode("utf-8")
     namespace = 'xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"'
-    enclosure = (
-        '      <enclosure url="https://www.nasa.gov/wp-content/uploads/2023/07/'
-        'ep239_crew-4.mp3" type="audio/mpeg" length="0" />'
-    )
+    enclosure = f'      <enclosure url="{_NASA_AUDIO_URL}" type="audio/mpeg" length="0" />'
     if text.count(namespace) != 1 or text.count(enclosure) != 1 or "podcast:transcript" in text:
         raise ValueError("canonical RSS fixture cannot receive its transcript reference exactly")
     text = text.replace(
@@ -518,6 +578,45 @@ def _with_transcript_reference(feed: bytes) -> bytes:
         f'{enclosure}\n      <podcast:transcript url="{NASA_TRANSCRIPT_URL}" '
         'type="text/plain" language="en" />',
     ).encode()
+
+
+def _with_local_audio_reference(feed: bytes, *, audio_url: str, size_bytes: int) -> bytes:
+    text = feed.decode("utf-8")
+    enclosure = f'      <enclosure url="{_NASA_AUDIO_URL}" type="audio/mpeg" length="0" />'
+    replacement = f'      <enclosure url="{audio_url}" type="audio/wav" length="{size_bytes}" />'
+    if text.count(enclosure) != 1 or text.count(audio_url) != 0:
+        raise RequestRejected(500, "canonical_audio_reference_not_unique")
+    return text.replace(enclosure, replacement).encode()
+
+
+def _silent_wav(*, duration_seconds: int) -> bytes:
+    if duration_seconds <= 0:
+        raise ValueError("audio fixture duration must be positive")
+    output = BytesIO()
+    sample_rate = 8_000
+    with wave.open(output, "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(1)
+        audio.setframerate(sample_rate)
+        audio.writeframes(bytes([128]) * sample_rate * duration_seconds)
+    return output.getvalue()
+
+
+def _single_byte_range(raw: str, *, size_bytes: int) -> tuple[int, int]:
+    match = re.fullmatch(r"bytes=(\d*)-(\d*)", raw.strip())
+    if match is None or (not match.group(1) and not match.group(2)):
+        raise RequestRejected(416, "invalid_audio_range")
+    start_raw, end_raw = match.groups()
+    if not start_raw:
+        suffix_length = int(end_raw)
+        if suffix_length <= 0:
+            raise RequestRejected(416, "invalid_audio_range")
+        return max(0, size_bytes - suffix_length), size_bytes - 1
+    start = int(start_raw)
+    end = int(end_raw) if end_raw else size_bytes - 1
+    if start >= size_bytes or end < start:
+        raise RequestRejected(416, "invalid_audio_range")
+    return start, min(end, size_bytes - 1)
 
 
 def _query(raw: str) -> dict[str, list[str]]:
@@ -618,6 +717,20 @@ def _has_tool(payload: dict[str, Any], name: str) -> bool:
     tools = payload.get("tools")
     return isinstance(tools, list) and any(
         isinstance(tool, dict) and tool.get("name") == name for tool in tools
+    )
+
+
+def _is_tool_safety_request(payload: dict[str, Any]) -> bool:
+    if not _has_tool(payload, "queue_add"):
+        return False
+    prompt = _input_text(payload).casefold()
+    return (
+        "queue it now" in prompt
+        or re.search(
+            r"\bqueue\s+media:[0-9a-f]{8}-[0-9a-f-]{27}\b",
+            prompt,
+        )
+        is not None
     )
 
 

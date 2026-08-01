@@ -20,13 +20,22 @@
       ]
     },
     {
+      "path": "testdata/epub/canonical-reader-positions.epub.b64",
+      "sha256": "cf99d7971a82bd32576c224a095421e85a1cffccde18607e281eb392cd454dfb",
+      "source": "repo-authored: deterministic three-section EPUB encoded as base64",
+      "license": "Repository-owned test data; retained as the shared minimal EPUB behavior corpus",
+      "purpose": [
+        "Durable EPUB ingest, library publication, reader-open, progress, resume, and reset journeys",
+        "Canonical EPUB navigation-anchor and document-position service proof"
+      ]
+    },
+    {
       "path": "python/tests/fixtures/epub/moby-dick-epub3.epub",
       "sha256": "1215d453321c51b130e41354355ad159e48154c1e1431bc1c41d6f138f8b1556",
       "source": "https://www.gutenberg.org/ebooks/2701",
       "license": "Project Gutenberg public-domain ebook; retained as the canonical real EPUB input",
       "purpose": [
-        "Durable EPUB ingest, library publication, and reader-open proof",
-        "Canonical EPUB navigation-anchor, document-position, and resume proof"
+        "Real EPUB extraction and navigation format-variance service proof"
       ]
     },
     {

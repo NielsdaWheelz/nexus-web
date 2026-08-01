@@ -43,7 +43,13 @@ test("Quick Note persists exactly once through Today and a fresh document", asyn
   const noteText = `Daily Quick Note ${randomUUID()}`;
   const navigation = page.getByRole("navigation", { name: "Primary" });
 
-  await navigation.getByRole("button", { name: "Quick Note", exact: true }).click();
+  await navigation
+    .getByRole("button", { name: "Search or ask anything", exact: true })
+    .click();
+  const nexus = page.getByRole("dialog", { name: "Nexus" });
+  await nexus
+    .getByRole("gridcell", { name: /^Quick Note(?:\.|$)/ })
+    .click();
   await expect(page).toHaveURL(/\/daily\/\d{4}-\d{2}-\d{2}(?:[?#]|$)/);
   const localDate = /^\/daily\/(\d{4}-\d{2}-\d{2})$/.exec(
     new URL(page.url()).pathname,
@@ -72,7 +78,13 @@ test("Quick Note persists exactly once through Today and a fresh document", asyn
     )
     .toBe(1);
 
-  await navigation.getByRole("button", { name: "Today", exact: true }).click();
+  await navigation
+    .getByRole("button", { name: "Search or ask anything", exact: true })
+    .click();
+  await page
+    .getByRole("dialog", { name: "Nexus" })
+    .getByRole("gridcell", { name: /^Today(?:\.|$)/ })
+    .click();
   await expect(page).toHaveURL(`/daily/${localDate}`);
   await expect(
     page.getByRole("textbox", { name: "Edit note 1" }),

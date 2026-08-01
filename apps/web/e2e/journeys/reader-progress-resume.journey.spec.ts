@@ -1,5 +1,4 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
+import { uniqueCanonicalReaderEpub } from "../corpus";
 import {
   expect,
   gotoWithStrictCsp,
@@ -18,12 +17,7 @@ async function uploadCanonicalEpub(
 ): Promise<string> {
   const api = pageRequest(page, webOrigin);
   const objects = pageRequest(page, minioOrigin);
-  const epub = readFileSync(
-    path.resolve(
-      __dirname,
-      "../../../../python/tests/fixtures/epub/moby-dick-epub3.epub",
-    ),
-  );
+  const epub = uniqueCanonicalReaderEpub(userId);
   const initResponse = await api.post("/api/media/upload/init", {
     headers: {
       origin: webOrigin,
@@ -31,7 +25,7 @@ async function uploadCanonicalEpub(
     },
     data: {
       kind: "epub",
-      filename: "moby-dick-reader-progress.epub",
+      filename: "canonical-reader-progress.epub",
       content_type: "application/epub+zip",
       size_bytes: epub.byteLength,
       library_ids: [],
@@ -108,11 +102,11 @@ test("reader progress resumes, completes, and resets through its product actions
     }
   ).data.sections.filter((section) => section.href_path !== null);
   const target = sections.find(
-    (section) => section.label === "CHAPTER 1. Loomings.",
+    (section) => section.label === "Second",
   );
   expect(
     target,
-    `EPUB ${mediaId} did not expose the fixture-owned Loomings section.`,
+    `EPUB ${mediaId} did not expose the fixture-owned Second section.`,
   ).toBeDefined();
 
   await gotoWithStrictCsp(page, `/media/${mediaId}`);
@@ -124,8 +118,8 @@ test("reader progress resumes, completes, and resets through its product actions
     `Reader did not render selected section ${target!.section_id} (${target!.label}).`,
   ).toBeVisible();
   await expect(
-    page.getByText(/Call me Ishmael\. Some years ago/).first(),
-    `Reader section ${target!.section_id} omitted the fixture-owned opening sentence.`,
+    page.getByText(/Omega proves the selected section/).first(),
+    `Reader section ${target!.section_id} omitted the fixture-owned Second passage.`,
   ).toBeVisible();
 
   await expect
@@ -166,8 +160,8 @@ test("reader progress resumes, completes, and resets through its product actions
   const resumedSectionPicker = page.getByLabel("Select section");
   await expect(resumedSectionPicker).toHaveValue(target!.section_id);
   await expect(
-    page.getByText(/Call me Ishmael\. Some years ago/).first(),
-    `Fresh reader document for ${mediaId} resumed the label but not the Loomings content.`,
+    page.getByText(/Omega proves the selected section/).first(),
+    `Fresh reader document for ${mediaId} resumed the label but not the Second passage.`,
   ).toBeVisible();
 
   await page.getByRole("button", { name: "Options", exact: true }).click();

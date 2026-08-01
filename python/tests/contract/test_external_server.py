@@ -4,7 +4,9 @@ import asyncio
 import hashlib
 import http.client
 import json
+import wave
 from collections.abc import AsyncIterator
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -37,6 +39,7 @@ from provider_runtime import openai as openai_codec
 from provider_runtime.transport import SseEvent
 
 from tests.testkit.external_server import (
+    NASA_AUDIO_PATH,
     NASA_FEED_URL,
     NASA_TRANSCRIPT_URL,
     OPENAI_API_KEY,
@@ -136,6 +139,8 @@ def test_podcast_index_rss_and_transcript_are_one_authentic_local_protocol() -> 
         assert status == 200
         assert episode["id"] == "nasa-hwhap-crew4"
         assert "transcript_segments" not in episode
+        audio_url = f"http://{address[0]}:{address[1]}{NASA_AUDIO_PATH}"
+        assert episode["enclosureUrl"] == audio_url
 
         status, _, body = _request(
             address,
@@ -156,6 +161,7 @@ def test_podcast_index_rss_and_transcript_are_one_authentic_local_protocol() -> 
         assert headers["content-type"] == "application/rss+xml"
         assert b"<guid>nasa-hwhap-crew4</guid>" in feed
         assert f'<podcast:transcript url="{NASA_TRANSCRIPT_URL}"'.encode() in feed
+        assert f'<enclosure url="{audio_url}" type="audio/wav"'.encode() in feed
 
         status, headers, transcript = _request(
             address,
@@ -166,6 +172,30 @@ def test_podcast_index_rss_and_transcript_are_one_authentic_local_protocol() -> 
         assert status == 200
         assert headers["content-type"] == "text/plain; charset=utf-8"
         assert transcript == (_FIXTURES / "nasa-hwhap-crew4-transcript.txt").read_bytes()
+
+        status, headers, body = _request(address, "HEAD", NASA_AUDIO_PATH)
+        assert status == 200
+        assert headers["content-type"] == "audio/wav"
+        assert headers["accept-ranges"] == "bytes"
+        assert body == b""
+        audio_size = int(headers["content-length"])
+
+        status, headers, body = _request(
+            address,
+            "GET",
+            NASA_AUDIO_PATH,
+            headers={"Range": "bytes=0-4095"},
+        )
+        assert status == 206
+        assert headers["content-range"] == f"bytes 0-4095/{audio_size}"
+        assert len(body) == 4096
+
+        status, _, audio = _request(address, "GET", NASA_AUDIO_PATH)
+        assert status == 200
+        with wave.open(BytesIO(audio), "rb") as wav:
+            assert wav.getnchannels() == 1
+            assert wav.getframerate() == 8_000
+            assert wav.getnframes() / wav.getframerate() == 24
 
 
 def test_openai_embedding_protocol_returns_index_complete_normalized_vectors() -> None:

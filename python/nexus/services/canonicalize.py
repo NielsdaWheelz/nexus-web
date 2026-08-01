@@ -23,6 +23,7 @@ After ready_for_reading, canonical_text is immutable.
 
 import re
 import unicodedata
+from bisect import bisect_left
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from xml.dom import Node
@@ -71,7 +72,7 @@ WHITESPACE_RE = re.compile(r"[\s\u00a0]+")
 @dataclass(frozen=True, slots=True)
 class _Token:
     char: str
-    sources: tuple[int, ...]
+    earliest_source: int
 
 
 def generate_canonical_text(html_sanitized: str) -> str:
@@ -120,10 +121,12 @@ def generate_canonical_text_with_element_offsets(
     _walk_element(root, tokens, element_ids, raw_offsets)
     final_tokens = _canonical_tokens(tokens)
     text = "".join(token.char for token in final_tokens)
+    # A final token contributes to an element start exactly when its earliest
+    # raw source precedes that element. Index those sources once instead
+    # of rescanning the complete document for every EPUB anchor.
+    earliest_sources = sorted(token.earliest_source for token in final_tokens)
     offsets = {
-        element_id: sum(
-            any(source < raw_offset for source in token.sources) for token in final_tokens
-        )
+        element_id: bisect_left(earliest_sources, raw_offset)
         for element_id, raw_offset in raw_offsets.items()
     }
     return text, offsets
@@ -176,7 +179,7 @@ def _walk_element(
 
 def _append_tokens(tokens: list[_Token], text: str) -> None:
     for char in text:
-        tokens.append(_Token(char=char, sources=(len(tokens),)))
+        tokens.append(_Token(char=char, earliest_source=len(tokens)))
 
 
 def _canonical_tokens(tokens: list[_Token]) -> list[_Token]:
@@ -199,10 +202,8 @@ def _canonical_tokens(tokens: list[_Token]) -> list[_Token]:
             collapsed.append(token)
             index += 1
             continue
-        sources = tuple(
-            sorted({source for item in normalized[index:end] for source in item.sources})
-        )
-        collapsed.extend([_Token("\n", sources), _Token("\n", sources)])
+        earliest_source = min(item.earliest_source for item in normalized[index:end])
+        collapsed.extend([_Token("\n", earliest_source), _Token("\n", earliest_source)])
         index = end
 
     line_trimmed: list[_Token] = []
@@ -234,26 +235,23 @@ def _normalize_nfc(tokens: list[_Token]) -> list[_Token]:
     text = "".join(token.char for token in tokens)
     if not text:
         return []
+    if unicodedata.is_normalized("NFC", text):
+        return tokens
     decomposed_by_char: dict[str, deque[_Token]] = defaultdict(deque)
     for token in tokens:
         for char in unicodedata.normalize("NFD", token.char):
-            decomposed_by_char[char].append(_Token(char, token.sources))
+            decomposed_by_char[char].append(_Token(char, token.earliest_source))
     reordered = [decomposed_by_char[char].popleft() for char in unicodedata.normalize("NFD", text)]
 
     normalized: list[_Token] = []
     nfd_offset = 0
     for char in unicodedata.normalize("NFC", text):
         decomposition = unicodedata.normalize("NFD", char)
-        sources = tuple(
-            sorted(
-                {
-                    source
-                    for token in reordered[nfd_offset : nfd_offset + len(decomposition)]
-                    for source in token.sources
-                }
-            )
+        earliest_source = min(
+            token.earliest_source
+            for token in reordered[nfd_offset : nfd_offset + len(decomposition)]
         )
-        normalized.append(_Token(char, sources))
+        normalized.append(_Token(char, earliest_source))
         nfd_offset += len(decomposition)
     return normalized
 

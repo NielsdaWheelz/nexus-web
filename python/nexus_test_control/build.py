@@ -172,6 +172,7 @@ def _public_build_environment(
     public_key = _validated_supabase_public_key(supabase_public_key)
     return {
         "APP_PUBLIC_URL": runtime_endpoint(repo_root, environment, EndpointKind.WEB),
+        "CSP_MEDIA_ORIGINS": runtime_endpoint(repo_root, environment, EndpointKind.EXTERNAL),
         "FASTAPI_BASE_URL": runtime_endpoint(repo_root, environment, EndpointKind.API),
         "NEXT_PUBLIC_SUPABASE_ANON_KEY": public_key,
         "NEXT_PUBLIC_SUPABASE_URL": runtime_endpoint(repo_root, environment, EndpointKind.SUPABASE),

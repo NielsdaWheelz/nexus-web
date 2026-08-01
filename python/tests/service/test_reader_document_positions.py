@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import io
-import zipfile
+import base64
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -26,49 +26,13 @@ from nexus.storage.paths import build_storage_path
 
 
 def _authored_epub() -> bytes:
-    """Build one tiny EPUB whose section starts are independently obvious."""
-    container = """<?xml version="1.0"?>
-    <container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">
-      <rootfiles>
-        <rootfile full-path="OEBPS/content.opf"
-                  media-type="application/oebps-package+xml"/>
-      </rootfiles>
-    </container>
-    """
-    package = """<?xml version="1.0" encoding="UTF-8"?>
-    <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="book-id">
-      <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
-        <dc:identifier id="book-id">canonical-reader-position-proof</dc:identifier>
-        <dc:title>Canonical Reader Positions</dc:title>
-        <dc:language>en</dc:language>
-      </metadata>
-      <manifest>
-        <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
-        <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>
-      </manifest>
-      <spine><itemref idref="chapter"/></spine>
-    </package>
-    """
-    navigation = """<?xml version="1.0" encoding="UTF-8"?>
-    <html xmlns="http://www.w3.org/1999/xhtml"
-          xmlns:epub="http://www.idpf.org/2007/ops">
-      <body><nav epub:type="toc"><ol>
-        <li><a href="chapter.xhtml#opening">Opening</a></li>
-        <li><a href="chapter.xhtml#second">Second</a></li>
-      </ol></nav></body>
-    </html>
-    """
-    chapter = """<?xml version="1.0" encoding="UTF-8"?>
-    <html xmlns="http://www.w3.org/1999/xhtml"><body><h1 id="opening">Opening</h1><p>Café alpha.</p><h2 id="second">Second</h2><p>Omega.</p></body></html>
-    """
-    archive = io.BytesIO()
-    with zipfile.ZipFile(archive, "w") as epub:
-        epub.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
-        epub.writestr("META-INF/container.xml", container)
-        epub.writestr("OEBPS/content.opf", package)
-        epub.writestr("OEBPS/nav.xhtml", navigation)
-        epub.writestr("OEBPS/chapter.xhtml", chapter)
-    return archive.getvalue()
+    """Load the tiny authored EPUB shared with the Chromium journeys."""
+    encoded = (
+        (Path(__file__).parents[3] / "testdata/epub/canonical-reader-positions.epub.b64")
+        .read_text(encoding="utf-8")
+        .strip()
+    )
+    return base64.b64decode(encoded, validate=True)
 
 
 def test_epub_navigation_and_document_map_share_exact_canonical_positions(
@@ -129,7 +93,11 @@ def test_epub_navigation_and_document_map_share_exact_canonical_positions(
             media.processing_status = ProcessingStatus.ready_for_reading
             db.commit()
 
-        expected_text = "Opening\nCafé alpha.\nSecond\nOmega."
+        expected_text = (
+            "Opening\nCafé alpha begins the authored reader corpus.\n"
+            "Second\nOmega proves the selected section and durable resume.\n"
+            "Closing\nThe final passage proves reset returns to the beginning."
+        )
         second_start = expected_text.index("Second")
         with Session(engine) as db:
             canonical_text = db.scalar(
@@ -144,10 +112,15 @@ def test_epub_navigation_and_document_map_share_exact_canonical_positions(
 
         assert canonical_text == expected_text
         assert [fragment.char_count for fragment in navigation.fragments] == [len(expected_text)]
-        assert [section.label for section in navigation.sections] == ["Opening", "Second"]
+        assert [section.label for section in navigation.sections] == [
+            "Opening",
+            "Second",
+            "Closing",
+        ]
         assert [(section.start_offset, section.end_offset) for section in navigation.sections] == [
             (0, second_start),
-            (second_start, len(expected_text)),
+            (second_start, expected_text.index("Closing")),
+            (expected_text.index("Closing"), len(expected_text)),
         ], "EPUB sections did not retain their canonical anchor intervals"
 
         contents_positions = {
@@ -158,6 +131,73 @@ def test_epub_navigation_and_document_map_share_exact_canonical_positions(
         assert contents_positions == {
             "Opening": pytest.approx(0.0),
             "Second": pytest.approx(second_start / len(expected_text)),
+            "Closing": pytest.approx(expected_text.index("Closing") / len(expected_text)),
         }, f"Document Map used non-canonical section positions: {contents_positions!r}"
     finally:
         storage.delete_object(storage_path)
+
+
+def test_real_epub_fixture_retains_known_book_structure(engine: Engine) -> None:
+    """One real public-domain EPUB keeps format variance out of browser journeys."""
+    fixture_path = Path(__file__).parents[1] / "fixtures/epub/moby-dick-epub3.epub"
+    payload = fixture_path.read_bytes()
+    viewer_id = uuid4()
+    media_id = uuid4()
+    storage_path = build_storage_path(media_id, "epub")
+    storage = get_storage_client()
+
+    with Session(engine) as db:
+        ensure_user_and_default_library(
+            db,
+            viewer_id,
+            f"real-epub-{viewer_id}@example.invalid",
+        )
+        db.add(
+            Media(
+                id=media_id,
+                kind=MediaKind.epub.value,
+                title="Moby Dick; Or, The Whale",
+                processing_status=ProcessingStatus.extracting,
+                created_by_user_id=viewer_id,
+            )
+        )
+        db.flush()
+        ensure_media_in_default_library(db, viewer_id, media_id)
+        db.add(
+            MediaFile(
+                media_id=media_id,
+                storage_path=storage_path,
+                content_type="application/epub+zip",
+                size_bytes=len(payload),
+            )
+        )
+        db.commit()
+
+    storage.put_object(storage_path, payload, "application/epub+zip")
+    plan: EpubExtractionPlan | None = None
+    try:
+        result = build_epub_extraction_plan(
+            session_factory=create_session_factory(engine),
+            media_id=media_id,
+            attempt_id=uuid4(),
+            storage_path=storage_path,
+            source_size_bytes=len(payload),
+            storage_client=storage,
+        )
+        assert isinstance(result, EpubExtractionPlan), (
+            f"canonical real EPUB did not produce an extraction plan: {result!r}"
+        )
+        plan = result
+        assert plan.result.title == "Moby Dick; Or, The Whale"
+        assert "Herman Melville" in plan.result.creators
+        assert plan.result.chapter_count >= 10
+        assert any(location.label == "CHAPTER 1. Loomings." for location in plan.nav_locations)
+        assert any(
+            "Call me Ishmael. Some years ago" in fragment.canonical_text
+            for fragment, _chapter, _items, _edges in plan.fragment_specs
+        ), "real EPUB extraction lost its independently known opening sentence"
+    finally:
+        storage.delete_object(storage_path)
+        if plan is not None:
+            for asset_path in plan.asset_storage_paths.values():
+                storage.delete_object(asset_path)

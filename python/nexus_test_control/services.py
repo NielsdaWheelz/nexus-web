@@ -98,12 +98,13 @@ _CALLER_RESOURCE_ENV = frozenset(
         "AWS_PROFILE",
         "AWS_SECRET_ACCESS_KEY",
         "AWS_SESSION_TOKEN",
+        "CSP_MEDIA_ORIGINS",
         "DATABASE_URL",
         "DATABASE_URL_TEST",
         "DATABASE_URL_TEST_MIGRATIONS",
         "NEXT_PUBLIC_SUPABASE_URL",
-        "NEXUS_TEST_STATIC_DNS",
         "NEXUS_TEST_PROCESS_OWNER",
+        "NEXUS_TEST_STATIC_DNS",
         "NODE_OPTIONS",
         "OPENAI_API_BASE_URL",
         "OUTBOUND_HTTP_PROXY_URL",
@@ -208,6 +209,7 @@ def run_environment(
         )
     values = {
         "APP_PUBLIC_URL": runtime_endpoint(root, environment, EndpointKind.WEB),
+        "CSP_MEDIA_ORIGINS": runtime_endpoint(root, environment, EndpointKind.EXTERNAL),
         "DATABASE_URL": expected_database_url,
         "FASTAPI_BASE_URL": runtime_endpoint(root, environment, EndpointKind.API),
         "NEXT_PUBLIC_SUPABASE_ANON_KEY": run.supabase.anon_key,

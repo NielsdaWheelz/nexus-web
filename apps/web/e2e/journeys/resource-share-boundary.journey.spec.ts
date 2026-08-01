@@ -61,13 +61,27 @@ test("a link grant exposes only its read-only resource and does not mint an acco
     `Link grant ${share.handle} did not target the local web runtime.`,
   ).toMatch(new RegExp(`^${webOrigin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/s#share=`));
 
+  const ownerMediaResponse = await api.get(`/api/media/${mediaId}`);
+  const ownerMediaText = await ownerMediaResponse.text();
+  expect(
+    ownerMediaResponse.ok(),
+    `Owner could not read media ${mediaId} before checking its public projection: ${ownerMediaResponse.status()} ${ownerMediaText.slice(0, 500)}`,
+  ).toBeTruthy();
+  const ownerMedia = JSON.parse(ownerMediaText) as {
+    data: { title: string };
+  };
+  expect(
+    ownerMedia.data.title.length,
+    `Media ${mediaId} had no owner-visible title to preserve in its public projection.`,
+  ).toBeGreaterThan(0);
+
   await page.context().clearCookies();
   const anonymousPage = await page.context().newPage();
   await gotoWithStrictCsp(anonymousPage, share.publicHref);
   await expect(
     anonymousPage.getByRole("heading", {
       level: 1,
-      name: "There's Water on the Moon?",
+      name: ownerMedia.data.title,
     }),
     `Anonymous link grant ${share.handle} did not project media ${mediaId}.`,
   ).toBeVisible();

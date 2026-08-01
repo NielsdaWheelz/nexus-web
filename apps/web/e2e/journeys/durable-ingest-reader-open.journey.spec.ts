@@ -1,6 +1,5 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import type { APIResponse } from "playwright/test";
+import { uniqueCanonicalReaderEpub } from "../corpus";
 import {
   expect,
   gotoWithStrictCsp,
@@ -19,25 +18,6 @@ interface UploadInit {
     source_attempt_id: string;
     upload_url: string;
   };
-}
-
-function uniqueEpub(runIdentity: string): Buffer {
-  const source = readFileSync(
-    path.resolve(
-      __dirname,
-      "../../../../python/tests/fixtures/epub/moby-dick-epub3.epub",
-    ),
-  );
-  const endOfCentralDirectory = source.lastIndexOf(
-    Buffer.from([0x50, 0x4b, 0x05, 0x06]),
-  );
-  if (endOfCentralDirectory < 0) {
-    throw new Error("The canonical Moby Dick EPUB has no ZIP end record.");
-  }
-  const comment = Buffer.from(`nexus-test:${runIdentity}`, "utf8");
-  const archive = Buffer.from(source.subarray(0, endOfCentralDirectory + 22));
-  archive.writeUInt16LE(comment.byteLength, endOfCentralDirectory + 20);
-  return Buffer.concat([archive, comment]);
 }
 
 async function readBody(response: APIResponse) {
@@ -65,7 +45,7 @@ test("an accepted EPUB publishes in the default Library and opens through its re
   const defaultLibraryId = (
     JSON.parse(profileText) as { data: { default_library_id: string } }
   ).data.default_library_id;
-  const epub = uniqueEpub(journeyUser.id);
+  const epub = uniqueCanonicalReaderEpub(journeyUser.id);
   const initResponse = await api.post("/api/media/upload/init", {
     headers: {
       origin: webOrigin,
@@ -73,7 +53,7 @@ test("an accepted EPUB publishes in the default Library and opens through its re
     },
     data: {
       kind: "epub",
-      filename: "moby-dick-durable-ingest.epub",
+      filename: "canonical-reader-durable-ingest.epub",
       content_type: "application/epub+zip",
       size_bytes: epub.byteLength,
       library_ids: [],
@@ -137,7 +117,7 @@ test("an accepted EPUB publishes in the default Library and opens through its re
 
   await gotoWithStrictCsp(page, `/libraries/${defaultLibraryId}`);
   const published = page.getByRole("link", {
-    name: "Moby Dick; Or, The Whale",
+    name: "Canonical Reader Positions",
     exact: true,
   });
   await expect(
@@ -149,11 +129,15 @@ test("an accepted EPUB publishes in the default Library and opens through its re
     new RegExp(`/media/${init.data.media_id}(?:[?#]|$)`),
   );
   await expect(
-    page.getByRole("heading", { name: "Moby Dick; Or, The Whale" }),
+    page.getByRole("heading", { name: "Canonical Reader Positions" }),
     `Reader did not project the independently known EPUB title for media ${init.data.media_id}.`,
   ).toBeVisible();
   await expect(
-    page.getByRole("toolbar", { name: "EPUB controls" }),
+    page.getByRole("group", { name: "EPUB controls" }),
     `Reader for media ${init.data.media_id} did not publish EPUB navigation.`,
+  ).toBeVisible();
+  await expect(
+    page.getByLabel("Select section"),
+    `Reader for media ${init.data.media_id} did not load its persisted EPUB sections.`,
   ).toBeVisible();
 });

@@ -28,7 +28,7 @@ export function middleware(request: NextRequest) {
     ? buildPublicApiContentSecurityPolicy()
     : request.nextUrl.pathname === "/s"
       ? buildPublicReaderCsp(request, nonce)
-      : buildCsp(request, nonce, env.connectOrigins);
+      : buildCsp(request, nonce, env.connectOrigins, env.mediaOrigins);
 
   const response = updateSession(request, nonce, csp);
 
@@ -67,6 +67,7 @@ function buildCsp(
   request: NextRequest,
   nonce: string,
   connectOrigins: readonly string[],
+  mediaOrigins: readonly string[],
 ): string {
   const isDev = isDevBuild();
   const isHttpsRequest =
@@ -78,6 +79,7 @@ function buildCsp(
     isDev,
     isHttpsRequest,
     connectOrigins,
+    mediaOrigins,
     devWebSocketOrigins: isDev ? devWebSocketOrigins(request) : undefined,
   });
 }

@@ -46,6 +46,7 @@ Primary variables for this app:
 
 - `FASTAPI_BASE_URL` (required outside local/test)
 - `R2_S3_API_ORIGIN` (required outside local/test for CSP connect-src)
+- `CSP_MEDIA_ORIGINS` (optional comma-separated media origins; HTTPS-only when deployed)
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `AUTH_ALLOWED_REDIRECT_ORIGINS`

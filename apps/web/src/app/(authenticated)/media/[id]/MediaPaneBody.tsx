@@ -1817,9 +1817,15 @@ export default function MediaPaneBody() {
       };
     },
   });
+  const documentMapNavigationReady =
+    media?.kind === "epub"
+      ? epubNavigationResource.status === "ready"
+      : media?.kind === "web_article"
+        ? webNavigationResource.status === "ready"
+        : true;
   const readerDocumentMapResource = useResource<ReaderDocumentMap>({
     cacheKey:
-      media && documentMapAvailable
+      media && documentMapAvailable && documentMapNavigationReady
         ? `${id}:reader-document-map:${documentMapVersion}`
         : null,
     load: (signal) => getReaderDocumentMap(id, { signal }),

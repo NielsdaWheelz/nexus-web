@@ -48,19 +48,33 @@ test("a source-grounded answer publishes a citation that opens its exact reader 
   ).toBeTruthy();
   const results = (JSON.parse(searchText) as {
     results: Array<{
+      type: string;
       source: { media_id: string };
-      context_ref: { id: string; evidence_span_ids: string[] };
+      evidence_span_ids?: string[];
+      activation: { href: string };
+      context_ref: { id: string; type: string };
     }>;
   }).results;
-  const evidence = results.find((result) => result.source.media_id === mediaId);
+  const evidence = results.find(
+    (result) =>
+      result.type === "content_chunk" &&
+      result.context_ref.type === "content_chunk" &&
+      result.source.media_id === mediaId,
+  );
   expect(
     evidence,
     `Search for ${JSON.stringify(query)} did not return evidence owned by media ${mediaId}.`,
   ).toBeDefined();
   expect(
-    evidence!.context_ref.evidence_span_ids.length,
+    evidence!.evidence_span_ids?.length,
     `Search result ${evidence!.context_ref.id} for media ${mediaId} had no resolvable span.`,
   ).toBeGreaterThan(0);
+  const evidenceSpanId = evidence!.evidence_span_ids![0];
+  const evidenceHref = `/media/${mediaId}#evidence-${evidenceSpanId}`;
+  expect(
+    evidence!.activation.href,
+    `Search result ${evidence!.context_ref.id} did not own the exact reader evidence activation.`,
+  ).toBe(evidenceHref);
 
   const conversationResponse = await api.post("/api/conversations", {
     headers: { origin: webOrigin },
@@ -131,14 +145,10 @@ test("a source-grounded answer publishes a citation that opens its exact reader 
     citation,
     `Conversation ${conversationId} completed without a user-visible citation to evidence ${evidence!.context_ref.id}.`,
   ).toBeVisible({ timeout: 25_000 });
-  const evidenceSpanId = evidence!.context_ref.evidence_span_ids[0];
   await expect(
     citation,
     `Citation from conversation ${conversationId} did not retain its exact evidence activation target for media ${mediaId}.`,
-  ).toHaveAttribute(
-    "href",
-    `/media/${mediaId}#evidence-${evidenceSpanId}`,
-  );
+  ).toHaveAttribute("href", evidenceHref);
   await page.reload();
   const durableCitation = page
     .getByRole("log", { name: "Chat messages" })
@@ -147,7 +157,7 @@ test("a source-grounded answer publishes a citation that opens its exact reader 
   await expect(
     durableCitation,
     `Conversation ${conversationId} lost its published citation after reload.`,
-  ).toHaveAttribute("href", `/media/${mediaId}#evidence-${evidenceSpanId}`);
+  ).toHaveAttribute("href", evidenceHref);
   await expect(
     page.getByText(/SOFIA helped confirm water on the Moon/i).first(),
     `Conversation ${conversationId} lost its published answer after reload.`,

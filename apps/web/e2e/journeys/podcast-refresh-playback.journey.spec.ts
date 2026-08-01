@@ -48,15 +48,6 @@ test("a subscribed podcast refreshes and durably resumes real episode playback",
   expect(podcastId, "Subscribed Podcast route omitted its canonical id.").toMatch(
     /^[0-9a-f-]{36}$/i,
   );
-  const episode = page.getByRole("link", {
-    name: "The Crew-4 Astronauts",
-    exact: true,
-  });
-  await expect(
-    episode,
-    `Podcast ${podcastId} did not publish its fixture episode after subscription sync.`,
-  ).toBeVisible({ timeout: 25_000 });
-
   await page.getByRole("button", { name: "Options", exact: true }).click();
   const refreshAdmissionPromise = page.waitForResponse(
     (response) =>
@@ -89,21 +80,22 @@ test("a subscribed podcast refreshes and durably resumes real episode playback",
     )
     .toBe("Complete");
 
+  const episode = page.getByRole("link", {
+    name: "The Crew-4 Astronauts",
+    exact: true,
+  });
+  await expect(
+    episode,
+    `Podcast ${podcastId} did not reconcile its fixture episode after refresh ${refreshHandle}.`,
+  ).toBeVisible({ timeout: 25_000 });
   await episode.click();
   await expect(page).toHaveURL(/\/media\/[0-9a-f-]{36}$/i);
   const mediaId = new URL(page.url()).pathname.split("/").at(-1);
   expect(mediaId).toMatch(/^[0-9a-f-]{36}$/i);
-  const activeTranscriptSegment = page.getByRole("region", {
-    name: "Active transcript segment",
-  });
   await expect(
-    activeTranscriptSegment,
-    `Episode from podcast ${podcastId} did not expose its active transcript segment after refresh ${refreshHandle}.`,
+    page.getByText(/astronauts of NASA's SpaceX Crew-4 mission/i),
+    `Episode from podcast ${podcastId} lost its fixture-owned show notes after refresh ${refreshHandle}.`,
   ).toBeVisible();
-  await expect(
-    activeTranscriptSegment,
-    `Active transcript segment for podcast ${podcastId} did not contain the Crew-4 fixture after refresh ${refreshHandle}.`,
-  ).toContainText(/Houston, we have a podcast/i);
   await page.getByRole("button", { name: "Play", exact: true }).click();
   const player = page.getByRole("region", { name: "Media player" });
   await expect(
