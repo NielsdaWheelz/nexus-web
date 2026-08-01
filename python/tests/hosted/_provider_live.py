@@ -16,6 +16,7 @@ from provider_runtime import (
     CATALOG,
     CATALOG_REVISION,
     Absent,
+    CallOutcome,
     Dynamic,
     EmbeddingCall,
     FinalizedProviderCall,
@@ -106,6 +107,12 @@ def single_attempt_plan(
     plan = plan_generate(intent)
     if isinstance(plan, PlanRejected):
         raise AssertionError(f"tiny certification request was rejected: {plan.failure}")
+    return single_attempt_call(plan)
+
+
+def single_attempt_call(plan: FinalizedProviderCall) -> FinalizedProviderCall:
+    """Make retry-to-green impossible for one paid provider operation."""
+
     return replace(
         plan,
         retry_policy=RetryPolicy(
@@ -118,17 +125,16 @@ def single_attempt_plan(
     )
 
 
-async def certify_chat(
+async def run_bounded_chat(
     runtime: ProviderRuntime,
     guard: OneAttemptPerOperation,
     budget: PaidCallBudget,
-    target: ProviderTarget,
-    reasoning: str,
+    plan: FinalizedProviderCall,
     key: str,
-    *,
-    max_output_tokens: int,
-) -> ChatResult:
-    plan = single_attempt_plan(target, reasoning, max_output_tokens=max_output_tokens)
+) -> tuple[CallOutcome, ChatResult]:
+    """Dispatch one finalized chat plan under the shared attempt and cost oracle."""
+
+    target = plan.request.target
     operation_id = f"generate:{target.provider}/{target.model}"
     budget.reserve(operation_id, plan.accounting.maximum_cost_estimate_usd_micros)
     with guard.operation(operation_id):
@@ -156,7 +162,7 @@ async def certify_chat(
         status = "incomplete_max_output_tokens"
     cost = cost_from_accounting(plan.accounting, usage)
     budget.settle(operation_id, cost.total_cost_usd_micros)
-    return ChatResult(
+    return outcome, ChatResult(
         target=f"{target.provider}/{target.model}",
         status=status,
         attempts=1,
@@ -168,6 +174,21 @@ async def certify_chat(
         estimated_cost_usd_micros=cost.total_cost_usd_micros,
         conservative_exposure_usd_micros=plan.accounting.maximum_cost_estimate_usd_micros,
     )
+
+
+async def certify_chat(
+    runtime: ProviderRuntime,
+    guard: OneAttemptPerOperation,
+    budget: PaidCallBudget,
+    target: ProviderTarget,
+    reasoning: str,
+    key: str,
+    *,
+    max_output_tokens: int,
+) -> ChatResult:
+    plan = single_attempt_plan(target, reasoning, max_output_tokens=max_output_tokens)
+    _, result = await run_bounded_chat(runtime, guard, budget, plan, key)
+    return result
 
 
 def non_generation_cost_usd_micros(

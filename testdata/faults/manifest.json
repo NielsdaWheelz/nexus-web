@@ -120,6 +120,15 @@
       "expected_failure": "provider gateway retained the upstream Host header"
     },
     {
+      "id": "hosted-semantic-evidence-bypass",
+      "patch": "testdata/faults/hosted-semantic-evidence-bypass.patch",
+      "sha256": "1f2c986d88d1805b4a4439d98723f8521dcbd872f45a42d475fde03c2ac5e8b2",
+      "proofs": [
+        "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_hosted_canary_parser_rejects_green_cost_evidence_without_safe_semantics"
+      ],
+      "expected_failure": "paid canary cost evidence cannot turn an unsafe semantic result green"
+    },
+    {
       "id": "dossier-citation-disposition-bypass",
       "patch": "testdata/faults/dossier-citation-disposition-bypass.patch",
       "sha256": "7576e4aa3338bf72c508cf5ddd010c411c3cc34b1ca539685d2ce954671d95e0",
