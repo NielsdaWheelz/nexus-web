@@ -46,7 +46,7 @@ def test_web_search_provider_ref_remains_telemetry_behind_one_snapshot_identity(
         )
         setup.commit()
 
-    provider_ref = "brave-result:not-a-nexus-uuid"
+    provider_ref = str(uuid4())
     citation = web_search.WebSearchCitation(
         result_ref=ProviderResultRef(provider_ref),
         title="Independent identity oracle",
