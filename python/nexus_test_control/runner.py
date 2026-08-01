@@ -248,6 +248,34 @@ class WorkflowRun:
     peak_owned_mib: PeakOwnedMemory
 
 
+class FirstFailureReporter:
+    """Publish one bounded, redacted, machine-classified failure line."""
+
+    def __init__(self, secrets: Iterable[str] = ()) -> None:
+        self._secrets = tuple(secrets)
+        self._reported = False
+
+    def report(
+        self,
+        stream: TextIO,
+        *,
+        owner: str,
+        status: RunStatus,
+        kind: str,
+        detail: object,
+    ) -> bool:
+        if self._reported:
+            return False
+        bounded = _decisive_output(redact_text(str(detail), self._secrets))
+        scalar = " ".join(bounded.split()) or "no diagnostic output"
+        stream.write(
+            f"failure: owner={owner}; status={status.value}; kind={kind}; detail={scalar}\n"
+        )
+        stream.flush()
+        self._reported = True
+        return True
+
+
 class _RunnerPorts:
     """Owned adapters for external process, service, and filesystem boundaries."""
 
@@ -481,6 +509,7 @@ def run_workflow(
     _available_memory: Callable[[], int | None] = available_memory_mib,
     _monotonic: Callable[[], float] = time.monotonic,
     _wait: Callable[[float], None] = time.sleep,
+    _reporter: FirstFailureReporter | None = None,
 ) -> WorkflowRun:
     requirements = WORKFLOW_REGISTRY[context.workflow].requirements
     required_capabilities = {requirement.capability for requirement in requirements}
@@ -504,6 +533,7 @@ def run_workflow(
         run_id=run_id,
         ports=_ports or _RunnerPorts(),
     )
+    reporter = _reporter or FirstFailureReporter(environment_secrets(environment))
 
     def results() -> Iterable[CapabilityResult]:
         nonlocal heavy_lock_held
@@ -584,7 +614,10 @@ def run_workflow(
             capabilities = tuple(
                 result.evidence
                 for result in stream_first_failure(
-                    results(), stream, environment_secrets(environment)
+                    results(),
+                    stream,
+                    environment_secrets(environment),
+                    reporter=reporter,
                 )
             )
     workflow_memory = measured(workflow_sampler)
@@ -592,8 +625,13 @@ def run_workflow(
         item.status is RunStatus.PASS for item in capabilities
     ):
         detail = "owned container memory could not be measured truthfully"
-        stream.write(f"memory: {detail}\n")
-        stream.flush()
+        reporter.report(
+            stream,
+            owner="memory",
+            status=RunStatus.FAIL,
+            kind="measurement_failure",
+            detail=detail,
+        )
         last = capabilities[-1]
         capabilities = (
             *capabilities[:-1],
@@ -610,19 +648,29 @@ def stream_first_failure(
     results: Iterable[CapabilityResult],
     stream: TextIO,
     secrets: Iterable[str] = (),
+    *,
+    reporter: FirstFailureReporter | None = None,
 ) -> Iterable[CapabilityResult]:
-    failure_streamed = False
+    active_reporter = reporter or FirstFailureReporter(secrets)
     for result in results:
-        if result.evidence.status is not RunStatus.PASS and not failure_streamed:
-            stream.write(
-                redact_text(
-                    f"{result.evidence.id.value}: {result.detail}\n",
-                    secrets,
-                )
+        if result.evidence.status is not RunStatus.PASS:
+            active_reporter.report(
+                stream,
+                owner=result.evidence.id.value,
+                status=result.evidence.status,
+                kind=_capability_failure_kind(result),
+                detail=result.detail,
             )
-            stream.flush()
-            failure_streamed = True
         yield result
+
+
+def _capability_failure_kind(result: CapabilityResult) -> str:
+    match = re.match(r"proof_result=([^|]+)\|", result.detail)
+    if match is not None:
+        return match.group(1)
+    if result.evidence.status is RunStatus.NOT_RUN:
+        return "capability_not_run"
+    return "capability_failure"
 
 
 def run_capability(
@@ -2073,6 +2121,7 @@ def _run_owned_commands(
         return _not_run(capability, f"required tools are absent: {', '.join(missing)}")
     started = time.monotonic_ns()
     for index, (argv, cwd) in enumerate(commands, start=1):
+        argv = _fail_fast_command(argv)
         try:
             completed = run_command(
                 argv,
@@ -3862,6 +3911,7 @@ def _run_fixed_commands(
         return _not_run(capability, f"required tools are absent: {', '.join(missing)}")
     started = time.monotonic_ns()
     for index, (argv, cwd) in enumerate(commands, start=1):
+        argv = _fail_fast_command(argv)
         try:
             completed = run_command(
                 argv,
@@ -3896,6 +3946,36 @@ def _run_fixed_commands(
         duration_ms,
         f"{len(commands)} fixed command{'s' if len(commands) != 1 else ''} passed",
     )
+
+
+def _fail_fast_command(argv: tuple[str, ...]) -> tuple[str, ...]:
+    """Apply controller gate policy without changing direct-runner configs."""
+    if "pytest" in argv:
+        if "--maxfail=1" in argv:
+            return argv
+        index = argv.index("pytest") + 1
+        return (*argv[:index], "--maxfail=1", *argv[index:])
+    if "vitest" in argv:
+        if "--bail=1" in argv:
+            return argv
+        index = argv.index("vitest") + 1
+        return (*argv[:index], "--bail=1", *argv[index:])
+    if len(argv) >= 3 and argv[:3] in {
+        ("bun", "run", "test:unit"),
+        ("bun", "run", "test:browser"),
+    }:
+        if "--bail=1" in argv:
+            return argv
+        if "--" not in argv[3:]:
+            return (*argv, "--", "--bail=1")
+        separator = argv.index("--") + 1
+        return (*argv[:separator], "--bail=1", *argv[separator:])
+    if "playwright" in argv and "test" in argv[argv.index("playwright") + 1 :]:
+        if "--max-failures=1" in argv:
+            return argv
+        index = argv.index("test", argv.index("playwright") + 1) + 1
+        return (*argv[:index], "--max-failures=1", *argv[index:])
+    return argv
 
 
 def _command_interruption_signal(returncode: int) -> signal.Signals | None:

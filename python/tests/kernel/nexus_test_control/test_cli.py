@@ -648,6 +648,14 @@ def test_prove_requires_a_clean_committed_checkout(tmp_path: Path) -> None:
 
     assert exit_code == 1
     assert errors.getvalue() == ""
+    assert (
+        output.getvalue()
+        .splitlines()[0]
+        .startswith(
+            "failure: owner=prove; status=fail; kind=sensitivity_execution_failure; "
+            "detail=sensitivity execution did not complete:"
+        )
+    )
     summary_path = tmp_path / output.getvalue().strip().split("summary=", 1)[1]
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     evidence = prove_evidence_from_json(tmp_path, summary)
@@ -681,7 +689,11 @@ def test_clean_rejects_caller_resource_configuration_before_contact(tmp_path: Pa
         )
         == 1
     )
+    assert errors.getvalue().startswith(
+        "failure: owner=control-plane; status=fail; kind=controller_failure; detail="
+    )
     assert "non-test NEXUS_ENV" in errors.getvalue()
+    assert errors.getvalue().count("\n") == 1
 
 
 def _git_repository(path: Path) -> None:

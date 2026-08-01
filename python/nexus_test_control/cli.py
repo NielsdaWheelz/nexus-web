@@ -23,7 +23,6 @@ from nexus_test_control.evidence import (
     evidence_json,
     execution_input_fingerprint,
     prove_evidence_json,
-    redact_text,
     run_evidence_from_json,
     write_evidence_json,
 )
@@ -38,7 +37,12 @@ from nexus_test_control.model import (
     Workflow,
 )
 from nexus_test_control.process import CommandInterrupted, controller_signal_handlers
-from nexus_test_control.runner import CapabilityContext, environment_secrets, run_workflow
+from nexus_test_control.runner import (
+    CapabilityContext,
+    FirstFailureReporter,
+    environment_secrets,
+    run_workflow,
+)
 from nexus_test_control.runtime import RuntimeContractError, workspace_heavy_lock
 from nexus_test_control.selection import (
     ChangedPath,
@@ -233,14 +237,15 @@ def main(
         output.write("\n")
         return 0
     env = environment if environment is not None else os.environ
+    reporter = FirstFailureReporter(environment_secrets(env))
     try:
         root = _git_repo_root(repo_root or Path.cwd())
         local_test_environment = test_environment(env)
         with controller_signal_handlers():
             if isinstance(command, ProveCommand):
-                return _execute_prove(root, command, env, output)
+                return _execute_prove(root, command, env, output, reporter)
             if isinstance(command, DiagnoseCommand):
-                return _execute_diagnose(root, command, env, output)
+                return _execute_diagnose(root, command, env, output, reporter)
             if isinstance(command, CleanCommand):
                 with workspace_heavy_lock(root):
                     runtime_existed = (root / ".nexus-test/runtime.json").is_file()
@@ -250,9 +255,15 @@ def main(
                     f"runtime={'removed' if runtime_existed else 'absent'}\n"
                 )
                 return 0
-            return _execute_workflow(root, command, env, output)
+            return _execute_workflow(root, command, env, output, reporter)
     except (CommandInterrupted, ControlPlaneError, RuntimeContractError, SensitivityError) as error:
-        errors.write(redact_text(f"test control failed: {error}\n", environment_secrets(env)))
+        reporter.report(
+            errors,
+            owner="control-plane",
+            status=RunStatus.FAIL,
+            kind="controller_failure",
+            detail=error,
+        )
         return 1
 
 
@@ -261,6 +272,7 @@ def _execute_workflow(
     command: WorkflowCommand,
     environment: Mapping[str, str],
     output: TextIO,
+    reporter: FirstFailureReporter,
 ) -> int:
     started = time.monotonic_ns()
     run_id, results_directory = _claim_results_directory(repo_root)
@@ -297,10 +309,27 @@ def _execute_workflow(
             "NEXUS_TEST_RUN_ID": run_id,
         }
         failure_owner = WORKFLOW_REGISTRY[command.workflow].requirements[0].capability
-        workflow_run = run_workflow(context, output, owned_environment, run_id=run_id)
+        workflow_run = run_workflow(
+            context,
+            output,
+            owned_environment,
+            run_id=run_id,
+            _reporter=reporter,
+        )
         capabilities = workflow_run.capabilities
         peak_owned_mib = workflow_run.peak_owned_mib
     except BaseException as error:
+        reporter.report(
+            output,
+            owner=failure_owner.value,
+            status=RunStatus.FAIL,
+            kind=(
+                "sensitivity_execution_failure"
+                if failure_owner is Capability.SENSITIVITY
+                else "controller_execution_failure"
+            ),
+            detail=error,
+        )
         capabilities = _failed_capabilities(
             command.workflow,
             failure_owner,
@@ -331,6 +360,7 @@ def _execute_diagnose(
     command: DiagnoseCommand,
     environment: Mapping[str, str],
     output: TextIO,
+    reporter: FirstFailureReporter,
 ) -> int:
     original = _load_failed_run(repo_root, command.original_run_id)
     git_sha = _git_sha(repo_root, "HEAD")
@@ -383,10 +413,23 @@ def _execute_diagnose(
         "NEXUS_TEST_RUN_ID": run_id,
     }
     try:
-        workflow_run = run_workflow(context, output, owned_environment, run_id=run_id)
+        workflow_run = run_workflow(
+            context,
+            output,
+            owned_environment,
+            run_id=run_id,
+            _reporter=reporter,
+        )
         peak_owned_mib = workflow_run.peak_owned_mib
         capabilities = workflow_run.capabilities
     except BaseException as error:
+        reporter.report(
+            output,
+            owner="diagnose",
+            status=RunStatus.FAIL,
+            kind="controller_execution_failure",
+            detail=error,
+        )
         peak_owned_mib = PeakOwnedMemory(0, 0, 0, measurement_complete=False)
         capabilities = _aborted_capabilities(
             original.workflow,
@@ -538,6 +581,7 @@ def _execute_prove(
     command: ProveCommand,
     environment: Mapping[str, str],
     output: TextIO,
+    reporter: FirstFailureReporter,
 ) -> int:
     started = time.monotonic_ns()
     run_id, _results_directory = _claim_results_directory(repo_root)
@@ -564,6 +608,13 @@ def _execute_prove(
         status = RunStatus.PASS
     except BaseException as error:
         detail = f"sensitivity execution did not complete: {error}"
+        reporter.report(
+            output,
+            owner="prove",
+            status=RunStatus.FAIL,
+            kind="sensitivity_execution_failure",
+            detail=detail,
+        )
     evidence = ProveEvidence(
         repo_root=repo_root,
         run_id=run_id,

@@ -22,6 +22,7 @@ from nexus_test_control.process import CommandInterrupted
 from nexus_test_control.runner import (
     CapabilityContext,
     CapabilityResult,
+    FirstFailureReporter,
     _ensure_provider_runtime_checkout,
     _parse_hosted_canary_evidence,
     run_capability,
@@ -320,6 +321,7 @@ def test_complete_python_kernel_deselects_the_same_run_sensitive_green_node(
         "--frozen",
         "--no-sync",
         "pytest",
+        "--maxfail=1",
         "-p",
         "no:randomly",
         "./tests/kernel/test_first.py",
@@ -407,6 +409,7 @@ def test_changed_python_static_and_kernel_use_only_the_selected_file_and_node(
             "--frozen",
             "--no-sync",
             "pytest",
+            "--maxfail=1",
             "-p",
             "no:randomly",
             "--",
@@ -449,7 +452,7 @@ def test_changed_web_static_and_kernel_use_final_suffix_owner(tmp_path: Path) ->
 
     assert [command["argv"] for command in _commands(tmp_path)] == [
         ["run", "eslint", "--max-warnings", "0", "./src/example.unit.test.ts"],
-        ["run", "test:unit", "--", "./src/example.unit.test.ts"],
+        ["run", "test:unit", "--", "--bail=1", "./src/example.unit.test.ts"],
     ]
 
 
@@ -523,6 +526,7 @@ def test_complete_fast_commands_are_fixed_to_their_final_owners(tmp_path: Path) 
         "run",
         "test:unit",
         "--",
+        "--bail=1",
         "./src/example.unit.test.ts",
     ]
 
@@ -570,6 +574,7 @@ def test_provider_runtime_requires_the_exact_pin_then_runs_its_deterministic_sui
         "--frozen",
         "--no-sync",
         "pytest",
+        "--maxfail=1",
         "-p",
         "no:randomly",
         "./tests/contract/test_protocol.py",
@@ -579,6 +584,7 @@ def test_provider_runtime_requires_the_exact_pin_then_runs_its_deterministic_sui
         "--frozen",
         "--no-sync",
         "pytest",
+        "--maxfail=1",
         "-q",
         "-p",
         "no:randomly",
@@ -619,6 +625,7 @@ def test_exact_provider_protocol_proof_runs_only_its_local_contract_node(
         "--frozen",
         "--no-sync",
         "pytest",
+        "--maxfail=1",
         "-p",
         "no:randomly",
         "tests/contract/test_protocol.py::test_protocol",
@@ -729,7 +736,10 @@ def test_missing_tool_is_not_run_and_command_failure_records_its_exit_status(
 
     stream = StringIO()
     tuple(stream_first_failure((failed,), stream, ("hidden-value",)))
-    assert stream.getvalue() == ("kernel-web: fixed command 1 exited 7: stderr=token=[REDACTED]\n")
+    assert stream.getvalue() == (
+        "failure: owner=kernel-web; status=fail; kind=capability_failure; "
+        "detail=fixed command 1 exited 7: stderr=token=[REDACTED]\n"
+    )
 
 
 def test_external_sigterm_exit_is_not_misreported_as_a_test_failure(tmp_path: Path) -> None:
@@ -1109,6 +1119,7 @@ def test_affected_heavy_proofs_share_one_workflow_run_and_request_migrations_onl
             "--frozen",
             "--no-sync",
             "pytest",
+            "--maxfail=1",
             "-p",
             "no:randomly",
             "--",
@@ -1119,16 +1130,18 @@ def test_affected_heavy_proofs_share_one_workflow_run_and_request_migrations_onl
             "--frozen",
             "--no-sync",
             "pytest",
+            "--maxfail=1",
             "-p",
             "no:randomly",
             "tests/service/test_owned.py",
         ],
-        ["run", "test:browser", "--", "./src/owned.browser.test.ts"],
+        ["run", "test:browser", "--", "--bail=1", "./src/owned.browser.test.ts"],
         [
             "run",
             "--frozen",
             "--no-sync",
             "pytest",
+            "--maxfail=1",
             "-p",
             "no:randomly",
             "tests/migrations/test_owned.py",
@@ -1209,6 +1222,7 @@ def test_affected_frontend_source_uses_vitest_related_in_the_browser_project(
     assert _commands(tmp_path)[-1]["argv"] == [
         "--no-install",
         "vitest",
+        "--bail=1",
         "related",
         "--run",
         "--project",
@@ -1373,6 +1387,7 @@ def test_bundle_is_built_once_and_critical_journeys_consume_ledger_owned_process
         "run",
         "playwright",
         "test",
+        "--max-failures=1",
         "--config",
         "e2e/playwright.config.ts",
         "--project",
@@ -1465,6 +1480,7 @@ def test_run_proof_executes_only_the_exact_service_node_and_classifies_assertion
         "--frozen",
         "--no-sync",
         "pytest",
+        "--maxfail=1",
         "-p",
         "no:randomly",
         "tests/service/test_owned.py::test_exact",
@@ -1555,6 +1571,7 @@ def test_exact_proof_waits_under_heavy_lock_for_memory_recovery_and_launches_onc
         "run",
         "test:browser",
         "--",
+        "--bail=1",
         "./src/recovered.browser.test.ts",
     ]
 
@@ -1595,7 +1612,13 @@ def test_exact_browser_component_proof_never_prepares_a_local_stack(tmp_path: Pa
 
     assert result.evidence.status is RunStatus.PASS
     command = _commands(tmp_path)[0]
-    assert command["argv"] == ["run", "test:browser", "--", "./src/owned.browser.test.ts"]
+    assert command["argv"] == [
+        "run",
+        "test:browser",
+        "--",
+        "--bail=1",
+        "./src/owned.browser.test.ts",
+    ]
     assert {"NEXUS_ENV", "NEXUS_TEST_RUN_ID"}.issubset(command["environment"])
     assert "DATABASE_URL" not in command["environment"]
 
@@ -1756,7 +1779,9 @@ def test_first_failure_streams_before_later_results_and_redacts_secrets() -> Non
             CapabilityEvidence(Capability.POLICY, RunStatus.FAIL, 1, 0),
             "token=hidden-value",
         )
-        assert stream.getvalue() == "policy: token=[REDACTED]\n"
+        assert stream.getvalue() == (
+            "failure: owner=policy; status=fail; kind=capability_failure; detail=token=[REDACTED]\n"
+        )
         yield CapabilityResult(
             CapabilityEvidence(Capability.STATIC_PYTHON, RunStatus.FAIL, 1, 0),
             "later failure",
@@ -1765,7 +1790,101 @@ def test_first_failure_streams_before_later_results_and_redacts_secrets() -> Non
     observed = tuple(stream_first_failure(results(), stream, ("hidden-value",)))
 
     assert len(observed) == 2
-    assert stream.getvalue() == "policy: token=[REDACTED]\n"
+    assert stream.getvalue() == (
+        "failure: owner=policy; status=fail; kind=capability_failure; detail=token=[REDACTED]\n"
+    )
+
+
+def test_first_failure_reporter_is_one_shot_flushed_redacted_bounded_and_scalar() -> None:
+    class FlushTrackingStream(StringIO):
+        flush_count = 0
+
+        def flush(self) -> None:
+            self.flush_count += 1
+            super().flush()
+
+    stream = FlushTrackingStream()
+    reporter = FirstFailureReporter(("hidden-value",))
+    detail = (
+        "raw-noise hidden-value\n" * 400
+        + "AssertionError: stable first oracle hidden-value\n"
+        + "raw-tail hidden-value\n" * 400
+    )
+
+    assert reporter.report(
+        stream,
+        owner="sensitivity",
+        status=RunStatus.FAIL,
+        kind="behavioral_assertion_failure",
+        detail=detail,
+    )
+    assert not reporter.report(
+        stream,
+        owner="later",
+        status=RunStatus.FAIL,
+        kind="controller_failure",
+        detail="must not stream",
+    )
+
+    line = stream.getvalue()
+    assert line.startswith(
+        "failure: owner=sensitivity; status=fail; kind=behavioral_assertion_failure; detail="
+    )
+    assert line.endswith("\n") and line.count("\n") == 1
+    assert "AssertionError: stable first oracle [REDACTED]" in line
+    assert "hidden-value" not in line
+    assert "raw-noise" not in line and "raw-tail" not in line
+    assert len(line) < 2100
+    assert stream.flush_count == 1
+
+
+def test_workflow_reuses_the_injected_one_shot_reporter() -> None:
+    stream = StringIO()
+    reporter = FirstFailureReporter()
+
+    evidence = run_workflow(
+        CapabilityContext(Path("/absent/controller-fixture"), Workflow.DOCTOR, ()),
+        stream,
+        {},
+        run_id="0123456789abcdef",
+        _reporter=reporter,
+    )
+    reporter.report(
+        stream,
+        owner="controller",
+        status=RunStatus.FAIL,
+        kind="controller_failure",
+        detail="later controller failure",
+    )
+
+    assert evidence.capabilities[0].status is RunStatus.NOT_RUN
+    assert stream.getvalue().startswith(
+        "failure: owner=doctor; status=not_run; kind=capability_not_run; detail="
+    )
+    assert stream.getvalue().count("\n") == 1
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (("uv", "run", "pytest", "tests"), ("pytest", "--maxfail=1")),
+        (("bunx", "vitest", "related"), ("vitest", "--bail=1")),
+        (("bun", "run", "test:unit", "--", "./x.ts"), ("--", "--bail=1")),
+        (("bun", "run", "test:browser"), ("--", "--bail=1")),
+        (
+            ("bun", "run", "playwright", "test", "./x.spec.ts"),
+            ("test", "--max-failures=1"),
+        ),
+    ],
+)
+def test_controller_test_commands_receive_one_authoritative_fail_fast_flag(
+    argv: tuple[str, ...], expected: tuple[str, str]
+) -> None:
+    enforced = runner._fail_fast_command(argv)
+    offset = enforced.index(expected[0])
+
+    assert enforced[offset : offset + 2] == expected
+    assert runner._fail_fast_command(enforced) == enforced
 
 
 def test_workflow_stops_launching_capabilities_after_the_first_decisive_result(
