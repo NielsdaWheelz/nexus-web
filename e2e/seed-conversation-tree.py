@@ -9,7 +9,7 @@ import sys
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, text
+from sqlalchemy import select
 
 from nexus.db.models import (
     ChatRun,
@@ -19,7 +19,7 @@ from nexus.db.models import (
     Message,
 )
 from nexus.db.session import create_session_factory
-from nexus.jobs.queue import enqueue_job
+from nexus.jobs.queue import claim_job, enqueue_job
 from nexus.services.conversations import delete_conversation_rows_without_commit
 
 
@@ -395,25 +395,15 @@ def seed_branching(owner_user_id: UUID) -> dict[str, object]:
             max_attempts=3,
             dedupe_key=f"chat_run:{running_run.id}",
         )
-        # The fixture deliberately models a live branch without starting a real
-        # provider dispatch. Keep the queue row structurally equivalent to a
-        # production claim so trust-trail projection observes one valid owner.
-        db.execute(
-            text(
-                """
-                UPDATE background_jobs
-                SET
-                    status = 'running',
-                    attempts = 1,
-                    claimed_by = 'e2e-conversation-tree',
-                    started_at = now(),
-                    lease_expires_at = now() + interval '1 hour',
-                    updated_at = now()
-                WHERE id = :job_id
-                """
-            ),
-            {"job_id": running_job.id},
+        claimed_job = claim_job(
+            db,
+            job_id=running_job.id,
+            worker_id="e2e-conversation-tree",
+            lease_seconds=60 * 60,
+            allowed_kinds=["chat_run"],
         )
+        if claimed_job is None:
+            raise AssertionError("E2E running chat-run fixture was not claimable")
 
         disposable_user = add_message(
             db,
