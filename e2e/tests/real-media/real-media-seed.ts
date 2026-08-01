@@ -239,10 +239,12 @@ export function writeRealMediaTrace(
   writeFileSync(outputPath, JSON.stringify(payload, null, 2) + "\n", "utf-8");
 }
 
-function runRealMediaWorkerOnce(mediaId?: string): RealMediaWorkerResult {
+async function runRealMediaWorkerOnce(
+  mediaId?: string,
+): Promise<RealMediaWorkerResult> {
   assertRealMediaStorageIsLocal();
 
-  const result = runE2eWorkerOnce({
+  const result = await runE2eWorkerOnce({
     mediaId,
     allowedNexusEnvs: ["local"],
     extraEnv: REAL_MEDIA_FIXTURE_WORKER_ENV,
@@ -273,7 +275,7 @@ export async function drainRealMediaWorkerForChatRun(
   // 200ms pass drives one real worker iteration, then observes terminal state
   // through the public API until the 120s fixture budget expires.
   while (Date.now() < deadline) {
-    const workerResult = runRealMediaWorkerOnce();
+    const workerResult = await runRealMediaWorkerOnce();
     workerIterations += workerResult.worker_iterations ?? 0;
     stdout = workerResult.stdout;
     stderr = workerResult.stderr;

@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import path from "node:path";
 import supabaseEnv from "../supabase-env.cjs";
 
@@ -21,6 +21,11 @@ const LOCAL_STORAGE_HOSTS = new Set([
 ]);
 const WORKER_ITERATION_TIMEOUT_MS = 30_000;
 const STARTED_WORKER_TIMEOUT_MS = 120_000;
+const WORKER_OUTPUT_TAIL_CHARS = 64 * 1024;
+
+function appendOutputTail(current: string, chunk: unknown): string {
+  return (current + String(chunk)).slice(-WORKER_OUTPUT_TAIL_CHARS);
+}
 
 export const CHAT_FIXTURE_WORKER_ENV = {
   // The fixture runtime makes no provider network call, but closed platform-
@@ -172,7 +177,7 @@ export function runE2eWorkerOnce({
   mediaId,
   allowedNexusEnvs = ["local", "test"],
   extraEnv = {},
-}: RunE2eWorkerOnceOptions = {}): E2eWorkerIterationResult {
+}: RunE2eWorkerOnceOptions = {}): Promise<E2eWorkerIterationResult> {
   const databaseUrl = assertLocalDatabaseUrl();
   const nexusEnv = assertAllowedNexusEnv(allowedNexusEnvs);
   const workerEnv = {
@@ -184,7 +189,7 @@ export function runE2eWorkerOnce({
   };
   assertLocalStorageEndpoint(workerEnv);
 
-  const child = spawnSync(
+  const child = spawn(
     "uv",
     [
       "run",
@@ -242,48 +247,76 @@ print(json.dumps(payload, sort_keys=True))
     {
       cwd: ROOT_DIR,
       env: workerEnv,
-      encoding: "utf-8",
-      timeout: WORKER_ITERATION_TIMEOUT_MS,
     },
   );
+  let stdout = "";
+  let stderr = "";
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    child.kill("SIGKILL");
+  }, WORKER_ITERATION_TIMEOUT_MS);
 
-  if (child.error) {
-    throw child.error;
-  }
-  if (child.status !== 0) {
-    throw new Error(child.stderr || child.stdout);
-  }
-
-  const lines = child.stdout.trim().split(/\r?\n/).filter(Boolean);
-  const result = JSON.parse(lines[lines.length - 1] ?? "{}") as Record<
-    string,
-    unknown
-  >;
-  const index = result.index as
-    | {
-        processing_status?: string | null;
-        index_status?: string | null;
-        chunk_count?: number;
-        evidence_count?: number;
-        embedding_count?: number;
+  return new Promise((resolve, reject) => {
+    child.stdout.on("data", (chunk: unknown) => {
+      stdout = appendOutputTail(stdout, chunk);
+    });
+    child.stderr.on("data", (chunk: unknown) => {
+      stderr = appendOutputTail(stderr, chunk);
+    });
+    child.on("error", (error: Error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("close", (code: number | null, signal: string | null) => {
+      clearTimeout(timer);
+      if (timedOut) {
+        reject(
+          new Error(
+            `E2E worker iteration exceeded ${WORKER_ITERATION_TIMEOUT_MS}ms; stderr tail=${stderr}; stdout tail=${stdout}`,
+          ),
+        );
+        return;
       }
-    | null
-    | undefined;
+      if (code !== 0) {
+        reject(
+          new Error(stderr || stdout || `worker exited with ${signal ?? code}`),
+        );
+        return;
+      }
 
-  return {
-    processed: result.processed === true,
-    index: index
-      ? {
-          processing_status: index.processing_status ?? null,
-          index_status: index.index_status ?? null,
-          chunk_count: Number(index.chunk_count ?? 0),
-          evidence_count: Number(index.evidence_count ?? 0),
-          embedding_count: Number(index.embedding_count ?? 0),
-        }
-      : null,
-    stdout: child.stdout.slice(-4000),
-    stderr: child.stderr.slice(-4000),
-  };
+      const lines = stdout.trim().split(/\r?\n/).filter(Boolean);
+      const result = JSON.parse(lines[lines.length - 1] ?? "{}") as Record<
+        string,
+        unknown
+      >;
+      const index = result.index as
+        | {
+            processing_status?: string | null;
+            index_status?: string | null;
+            chunk_count?: number;
+            evidence_count?: number;
+            embedding_count?: number;
+          }
+        | null
+        | undefined;
+
+      resolve({
+        processed: result.processed === true,
+        index: index
+          ? {
+              processing_status: index.processing_status ?? null,
+              index_status: index.index_status ?? null,
+              chunk_count: Number(index.chunk_count ?? 0),
+              evidence_count: Number(index.evidence_count ?? 0),
+              embedding_count: Number(index.embedding_count ?? 0),
+            }
+          : null,
+        stdout: stdout.slice(-4000),
+        stderr: stderr.slice(-4000),
+      });
+    });
+  });
 }
 
 export function startE2eWorkerUntilChatRunTerminal({
@@ -355,10 +388,10 @@ else:
 
   return new Promise((resolve, reject) => {
     child.stdout.on("data", (chunk: unknown) => {
-      stdout += String(chunk);
+      stdout = appendOutputTail(stdout, chunk);
     });
     child.stderr.on("data", (chunk: unknown) => {
-      stderr += String(chunk);
+      stderr = appendOutputTail(stderr, chunk);
     });
     child.on("error", (error: Error) => {
       clearTimeout(timer);
@@ -554,10 +587,10 @@ print(json.dumps(result, sort_keys=True))
 
   return new Promise((resolve, reject) => {
     child.stdout.on("data", (chunk: unknown) => {
-      stdout += String(chunk);
+      stdout = appendOutputTail(stdout, chunk);
     });
     child.stderr.on("data", (chunk: unknown) => {
-      stderr += String(chunk);
+      stderr = appendOutputTail(stderr, chunk);
     });
     child.on("error", (error: Error) => {
       clearTimeout(timer);
@@ -713,10 +746,10 @@ print(
 
   return new Promise((resolve, reject) => {
     child.stdout.on("data", (chunk: unknown) => {
-      stdout += String(chunk);
+      stdout = appendOutputTail(stdout, chunk);
     });
     child.stderr.on("data", (chunk: unknown) => {
-      stderr += String(chunk);
+      stderr = appendOutputTail(stderr, chunk);
     });
     child.on("error", (error: Error) => {
       clearTimeout(timer);

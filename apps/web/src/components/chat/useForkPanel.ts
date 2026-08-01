@@ -170,6 +170,7 @@ export function useForkPanel(input: {
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
         console.error("Failed to delete fork:", err);
+        setPendingDeleteId(null);
         setError("Fork delete failed.");
       }
     },

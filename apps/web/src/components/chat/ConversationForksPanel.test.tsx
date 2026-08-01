@@ -514,7 +514,7 @@ describe("ConversationForksPanel", () => {
     expect(onForksChanged).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps a fork row when DELETE fails", async () => {
+  it("keeps the fork row and dismisses its confirmation when DELETE fails", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -543,6 +543,9 @@ describe("ConversationForksPanel", () => {
 
     expect(await screen.findByText("Fork delete failed.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Switch to fork Child path" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("group", { name: /confirm delete fork.*child path/i }),
+    ).not.toBeInTheDocument();
     expect(onForksChanged).not.toHaveBeenCalled();
   });
 
