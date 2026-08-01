@@ -129,6 +129,15 @@
       "expected_failure": "paid canary cost evidence cannot turn an unsafe semantic result green"
     },
     {
+      "id": "provider-runtime-developer-head-bypass",
+      "patch": "testdata/faults/provider-runtime-developer-head-bypass.patch",
+      "sha256": "b3f04c55b83f17f34f7a5561be446093f358a337d0bb598b3aed40bc2662e123",
+      "proofs": [
+        "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_provider_runtime_is_materialized_from_the_pin_without_retargeting_source"
+      ],
+      "expected_failure": "provider-runtime materialization followed developer HEAD instead of the lock pin"
+    },
+    {
       "id": "dossier-citation-disposition-bypass",
       "patch": "testdata/faults/dossier-citation-disposition-bypass.patch",
       "sha256": "7576e4aa3338bf72c508cf5ddd010c411c3cc34b1ca539685d2ce954671d95e0",

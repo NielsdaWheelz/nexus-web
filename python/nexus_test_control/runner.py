@@ -10,6 +10,7 @@ import shutil
 import signal
 import socket
 import subprocess
+import tarfile
 import time
 import tomllib
 import xml.etree.ElementTree as ET
@@ -2388,6 +2389,77 @@ def _provider_runtime_pin(repo_root: Path) -> str:
     return revision
 
 
+def _ensure_provider_runtime_checkout(
+    repo_root: Path,
+    environment: Mapping[str, str],
+) -> Path:
+    """Materialize the pin without retargeting the developer checkout or venv."""
+
+    revision = _provider_runtime_pin(repo_root)
+    owner = repo_root / ".nexus-test/provider-runtime"
+    checkout = owner / revision
+    marker = checkout / ".nexus-provider-runtime-revision"
+    if checkout.is_dir():
+        try:
+            recorded = marker.read_text(encoding="utf-8").strip()
+        except OSError as error:
+            raise RuntimeContractError("owned provider-runtime checkout is incomplete") from error
+        if recorded != revision or not (checkout / ".venv").is_dir():
+            raise RuntimeContractError("owned provider-runtime checkout is incomplete")
+        return checkout
+
+    source = repo_root.parent / "llm-calling"
+    if not source.is_dir():
+        raise RuntimeContractError("local provider-runtime Git object source is absent")
+    child_environment = _child_environment(environment)
+    path = child_environment.get("PATH")
+    if shutil.which("git", path=path) is None or shutil.which("uv", path=path) is None:
+        raise RuntimeContractError("provider-runtime materialization requires git and uv")
+
+    owner.mkdir(parents=True, exist_ok=True)
+    build = owner / f".building-{new_run_id()}"
+    archive = owner / f".{revision}-{new_run_id()}.tar"
+    build.mkdir()
+    try:
+        archived = run_command(
+            (
+                "git",
+                "-C",
+                str(source),
+                "archive",
+                "--format=tar",
+                f"--output={archive}",
+                revision,
+            ),
+            cwd=repo_root,
+            env=child_environment,
+            capture_output=True,
+            check=False,
+        )
+        if archived.returncode != 0:
+            raise RuntimeContractError("pinned provider-runtime commit is unavailable offline")
+        with tarfile.open(archive, mode="r:") as bundle:
+            bundle.extractall(build, filter="data")
+        synced = run_command(
+            ("uv", "sync", "--all-extras", "--locked", "--offline"),
+            cwd=build,
+            env=child_environment,
+            capture_output=True,
+            check=False,
+        )
+        if synced.returncode != 0 or not (build / ".venv").is_dir():
+            raise RuntimeContractError("pinned provider-runtime environment is unavailable offline")
+        (build / ".nexus-provider-runtime-revision").write_text(revision + "\n", encoding="utf-8")
+        build.rename(checkout)
+    except (OSError, tarfile.TarError) as error:
+        raise RuntimeContractError("provider-runtime materialization failed") from error
+    finally:
+        archive.unlink(missing_ok=True)
+        if build.exists():
+            shutil.rmtree(build)
+    return checkout
+
+
 def _run_provider_runtime(
     context: CapabilityContext,
     environment: Mapping[str, str],
@@ -2433,45 +2505,10 @@ def _run_provider_runtime(
     if local.evidence.status is not RunStatus.PASS or exact:
         return local
 
-    checkout = context.repo_root.parent / "llm-calling"
-    if not checkout.is_dir() or not (checkout / ".venv").is_dir():
-        return _not_run(capability, "pinned provider-runtime checkout is absent")
     try:
-        expected = _provider_runtime_pin(context.repo_root)
+        checkout = _ensure_provider_runtime_checkout(context.repo_root, environment)
     except RuntimeContractError as error:
-        return _fail(capability, str(error))
-    child_environment = _child_environment(environment)
-    if shutil.which("git", path=child_environment.get("PATH")) is None:
-        return _not_run(capability, "required tool is absent: git")
-    started = time.monotonic_ns()
-    try:
-        revision = run_command(
-            ("git", "-C", str(checkout), "rev-parse", "HEAD"),
-            cwd=context.repo_root,
-            env=child_environment,
-            capture_output=True,
-            check=False,
-        )
-    except OSError as error:
-        return _not_run(
-            capability,
-            f"pinned revision check could not start: {error.strerror or error}",
-        )
-    duration_ms = (time.monotonic_ns() - started) // 1_000_000
-    if revision.returncode != 0:
-        return _result(
-            capability,
-            RunStatus.FAIL,
-            duration_ms,
-            _failed_command_detail(1, revision),
-        )
-    if revision.stdout.strip() != expected:
-        return _result(
-            capability,
-            RunStatus.FAIL,
-            duration_ms,
-            "provider-runtime checkout does not match its pinned revision",
-        )
+        return _not_run(capability, str(error))
     commands: tuple[FixedCommand, ...] = (
         (
             ("uv", "run", "--frozen", "--no-sync", "ruff", "check", "src", "tests"),
@@ -2510,7 +2547,7 @@ def _run_provider_runtime(
         commands,
         environment,
         ("uv",),
-        elapsed_ms=local.evidence.duration_ms + duration_ms,
+        elapsed_ms=local.evidence.duration_ms,
     )
     if pinned.evidence.status is not RunStatus.PASS:
         return pinned
@@ -3337,19 +3374,16 @@ def _run_doctor(context: CapabilityContext, environment: Mapping[str, str]) -> C
 
     try:
         expected_provider_revision = _provider_runtime_pin(context.repo_root)
-        provider_checkout = context.repo_root.parent / "llm-calling"
-        provider_revision = run_command(
-            ("git", "-C", str(provider_checkout), "rev-parse", "HEAD"),
-            cwd=context.repo_root,
-            env=child_environment,
-            capture_output=True,
-            check=False,
+        provider_checkout = (
+            context.repo_root / ".nexus-test/provider-runtime" / expected_provider_revision
+        )
+        provider_revision = (provider_checkout / ".nexus-provider-runtime-revision").read_text(
+            encoding="utf-8"
         )
     except (OSError, RuntimeContractError):
         return _not_run(Capability.DOCTOR, "pinned provider-runtime checkout is unavailable")
     if (
-        provider_revision.returncode != 0
-        or (provider_revision.stdout or "").strip() != expected_provider_revision
+        provider_revision.strip() != expected_provider_revision
         or not (provider_checkout / ".venv").is_dir()
     ):
         return _not_run(Capability.DOCTOR, "pinned provider-runtime checkout is not ready")

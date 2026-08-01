@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -21,6 +22,7 @@ from nexus_test_control.process import CommandInterrupted
 from nexus_test_control.runner import (
     CapabilityContext,
     CapabilityResult,
+    _ensure_provider_runtime_checkout,
     _parse_hosted_canary_evidence,
     run_capability,
     run_proof,
@@ -39,6 +41,90 @@ from nexus_test_control.services import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
+
+
+def test_provider_runtime_is_materialized_from_the_pin_without_retargeting_source(
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "nexus"
+    source = tmp_path / "llm-calling"
+    source.mkdir()
+    _run_git(source, "init", "-q")
+    _write(source / "pyproject.toml", "[project]\nname='provider-runtime'\nversion='1'\n")
+    _write(source / "uv.lock", "version = 1\nrevision = 1\nrequires-python = '>=3.12'\n")
+    _write(source / "contract.txt", "pinned\n")
+    _run_git(source, "add", ".")
+    _run_git(
+        source,
+        "-c",
+        "user.name=Nexus Test",
+        "-c",
+        "user.email=nexus-test@example.invalid",
+        "commit",
+        "-q",
+        "-m",
+        "pin",
+    )
+    revision = _run_git(source, "rev-parse", "HEAD").stdout.strip()
+    _write(
+        repo_root / "python/pyproject.toml",
+        "[tool.uv.sources]\n"
+        f"provider-runtime = {{ git = 'https://example.invalid/runtime', rev = '{revision}' }}\n",
+    )
+    tool_dir = tmp_path / "bin"
+    _write(
+        tool_dir / "uv",
+        "#!/bin/sh\n"
+        "set -eu\n"
+        "test \"$*\" = 'sync --all-extras --locked --offline'\n"
+        "mkdir -p .venv\n",
+    )
+    (tool_dir / "uv").chmod(0o755)
+    environment = {"PATH": f"{tool_dir}{os.pathsep}{os.environ['PATH']}"}
+
+    checkout = _ensure_provider_runtime_checkout(repo_root, environment)
+    assert checkout == repo_root / ".nexus-test/provider-runtime" / revision
+    assert (checkout / "contract.txt").read_text(encoding="utf-8") == "pinned\n"
+    assert (checkout / ".nexus-provider-runtime-revision").read_text().strip() == revision
+    assert _run_git(source, "rev-parse", "HEAD").stdout.strip() == revision
+
+    _write(source / "contract.txt", "uncommitted developer change\n")
+    assert _ensure_provider_runtime_checkout(repo_root, environment) == checkout
+    assert (checkout / "contract.txt").read_text(encoding="utf-8") == "pinned\n"
+
+    _run_git(source, "add", "contract.txt")
+    _run_git(
+        source,
+        "-c",
+        "user.name=Nexus Test",
+        "-c",
+        "user.email=nexus-test@example.invalid",
+        "commit",
+        "-q",
+        "-m",
+        "developer head",
+    )
+    assert _run_git(source, "rev-parse", "HEAD").stdout.strip() != revision
+    second_repo = tmp_path / "second-nexus"
+    _write(
+        second_repo / "python/pyproject.toml",
+        "[tool.uv.sources]\n"
+        f"provider-runtime = {{ git = 'https://example.invalid/runtime', rev = '{revision}' }}\n",
+    )
+    second_checkout = _ensure_provider_runtime_checkout(second_repo, environment)
+    assert (second_checkout / "contract.txt").read_text(encoding="utf-8") == "pinned\n", (
+        "provider-runtime materialization followed developer HEAD instead of the lock pin"
+    )
+
+
+def _run_git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ("git", *args),
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 def test_hosted_canary_parser_rejects_green_cost_evidence_without_safe_semantics(

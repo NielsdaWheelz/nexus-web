@@ -1,0 +1,12 @@
+diff --git a/python/nexus_test_control/runner.py b/python/nexus_test_control/runner.py
+--- a/python/nexus_test_control/runner.py
++++ b/python/nexus_test_control/runner.py
+@@ -2429,7 +2429,7 @@ def _ensure_provider_runtime_checkout(
+                 "archive",
+                 "--format=tar",
+                 f"--output={archive}",
+-                revision,
++                "HEAD",
+             ),
+             cwd=repo_root,
+             env=child_environment,
