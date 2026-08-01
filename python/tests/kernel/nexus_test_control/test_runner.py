@@ -36,6 +36,8 @@ from nexus_test_control.services import (
     TestUser as OwnedTestUser,
 )
 
+REPO_ROOT = Path(__file__).resolve().parents[4]
+
 
 def test_doctor_is_not_run_when_its_locked_tool_owners_are_absent(tmp_path: Path) -> None:
     evidence = run_workflow(
@@ -535,7 +537,7 @@ def test_browser_setup_failure_references_every_owned_process_log(tmp_path: Path
 
 
 def test_heavy_capability_remains_truthfully_not_run() -> None:
-    context = CapabilityContext(Path.cwd(), Workflow.FULL, ())
+    context = CapabilityContext(REPO_ROOT, Workflow.FULL, ())
 
     result = run_capability(context, Capability.SERVICE)
 
