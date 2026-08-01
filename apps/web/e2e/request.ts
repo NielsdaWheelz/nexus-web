@@ -14,6 +14,7 @@ type PutOptions = Parameters<APIRequestContext["put"]>[1];
 type NewContextOptions = NonNullable<
   Parameters<typeof playwrightRequest.newContext>[0]
 >;
+type BrowserCookie = Awaited<ReturnType<BrowserContext["cookies"]>>[number];
 
 function canonicalOrigin(value: string): string {
   const url = new URL(value);
@@ -56,6 +57,24 @@ function noRedirects<T extends { maxRedirects?: number }>(options: T | undefined
     throw new Error("Harness-owned API requests cannot follow redirects.");
   }
   return { ...options, maxRedirects: 0 } as T;
+}
+
+function cookieAppliesTo(cookie: BrowserCookie, target: URL): boolean {
+  const domain = cookie.domain.startsWith(".") ? cookie.domain.slice(1) : cookie.domain;
+  const domainMatches =
+    target.hostname === domain ||
+    (cookie.domain.startsWith(".") && target.hostname.endsWith(`.${domain}`));
+  const pathMatches =
+    target.pathname === cookie.path ||
+    target.pathname.startsWith(
+      cookie.path.endsWith("/") ? cookie.path : `${cookie.path}/`,
+    );
+  const loopback = ["localhost", "127.0.0.1", "::1"].includes(target.hostname);
+  return (
+    domainMatches &&
+    pathMatches &&
+    (!cookie.secure || target.protocol === "https:" || loopback)
+  );
 }
 
 export class ExactOriginRequest {
@@ -127,7 +146,10 @@ export class ExactOriginRequest {
     if (Object.keys(headers).some((name) => name.toLowerCase() === "cookie")) {
       throw new Error("Browser-owned requests cannot override the context cookie jar.");
     }
-    const cookies = await this.browserContext.cookies(url);
+    const target = new URL(url);
+    const cookies = (await this.browserContext.cookies()).filter((cookie) =>
+      cookieAppliesTo(cookie, target),
+    );
     if (cookies.length > 0) {
       headers.Cookie = cookies.map(({ name, value }) => `${name}=${value}`).join("; ");
     }
