@@ -1518,7 +1518,8 @@ def test_exact_proof_failure_kinds_are_stable_and_setup_assertions_are_not_behav
     playwright_assertion = runner._classified_exact_result(
         CapabilityResult(
             evidence,
-            "Error: \x1b[2mexpect(\x1b[22mlocator\x1b[2m).\x1b[22m"
+            "Error: exact mobile lock failed\n"
+            "\x1b[2mexpect(\x1b[22mlocator\x1b[2m).\x1b[22m"
             "toHaveAttribute\x1b[2m(\x1b[22m\x1b[2m)\x1b[22m failed",
         ),
         proof,
@@ -1561,7 +1562,8 @@ def test_long_ansi_playwright_diagnostic_preserves_the_behavioral_assertion() ->
         ("playwright",),
         1,
         "build log\n" * 400
-        + "Error: \x1b[2mexpect(\x1b[22mlocator\x1b[2m).\x1b[22m"
+        + "Error: exact mobile lock failed\n"
+        + "\x1b[2mexpect(\x1b[22mlocator\x1b[2m).\x1b[22m"
         + "toHaveAttribute\x1b[2m(\x1b[22m\x1b[2m)\x1b[22m failed\n"
         + "source footer\n" * 400,
         "",
@@ -1576,7 +1578,7 @@ def test_long_ansi_playwright_diagnostic_preserves_the_behavioral_assertion() ->
         "playwright:apps/web/e2e/journeys/owned.journey.spec.ts",
     )
 
-    assert "Error: expect(locator).toHaveAttribute() failed" in detail
+    assert "expect(locator).toHaveAttribute() failed" in detail
     assert classified.detail.startswith("proof_result=behavioral_assertion_failure|")
 
 
