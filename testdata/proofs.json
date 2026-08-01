@@ -19,12 +19,23 @@
       "id": "auth-privacy-secrets",
       "source_globs": [
         "python/nexus/auth/**/*.py",
+        "python/nexus/api/routes/public_resource_shares.py",
         "python/nexus/services/conversations.py",
+        "python/nexus/services/public_resource_sharing.py",
+        "python/nexus/services/resource_grants.py",
+        "apps/web/src/app/auth/**/*",
+        "apps/web/src/app/login/**/*",
+        "apps/web/src/app/api/public/resource-share/**/*",
+        "apps/web/src/app/api/resource-items/**/shares/route.ts",
+        "apps/web/src/app/api/resource-shares/**/*",
         "apps/web/src/lib/auth/**/*.ts",
-        "apps/web/src/lib/auth/**/*.tsx"
+        "apps/web/src/lib/auth/**/*.tsx",
+        "apps/web/src/lib/supabase/**/*",
+        "apps/web/src/middleware.ts"
       ],
       "proofs": [
-        "pytest:python/tests/service/test_auth_privacy.py::test_invalid_token_is_redacted_and_private_conversation_existence_is_masked"
+        "pytest:python/tests/service/test_auth_privacy.py::test_invalid_token_is_redacted_and_private_conversation_existence_is_masked",
+        "pytest:python/tests/service/test_public_resource_sharing.py::test_anonymous_link_matrix_binds_each_token_to_one_postgres_and_minio_subject"
       ],
       "capabilities": [
         "service"
@@ -149,8 +160,7 @@
         "gradle:apps/android/app/src/androidTest/java/app/nexus/android/NativeAuthHandoffTest.kt::nativeAuthStartCarriesTheExactHandoffContractToTheOwnedOrigin"
       ],
       "capabilities": [
-        "android-device",
-        "android-release"
+        "android-device"
       ]
     },
     {
@@ -178,8 +188,11 @@
       "proof": "apps/web/e2e/journeys/auth-session.journey.spec.ts",
       "source_globs": [
         "python/nexus/auth/**/*",
+        "apps/web/src/app/auth/**/*",
+        "apps/web/src/app/login/**/*",
         "apps/web/src/lib/auth/**/*",
-        "apps/web/src/app/login/**/*"
+        "apps/web/src/lib/supabase/**/*",
+        "apps/web/src/middleware.ts"
       ],
       "risks": [
         "auth-privacy-secrets"
@@ -243,7 +256,13 @@
       "id": "resource-share-boundary",
       "proof": "apps/web/e2e/journeys/resource-share-boundary.journey.spec.ts",
       "source_globs": [
+        "python/nexus/api/routes/public_resource_shares.py",
+        "python/nexus/services/public_resource_sharing.py",
+        "python/nexus/services/resource_grants.py",
         "python/nexus/services/resource_sharing.py",
+        "apps/web/src/app/api/public/resource-share/**/*",
+        "apps/web/src/app/api/resource-items/**/shares/route.ts",
+        "apps/web/src/app/api/resource-shares/**/*",
         "apps/web/src/app/s/**/*"
       ],
       "risks": [

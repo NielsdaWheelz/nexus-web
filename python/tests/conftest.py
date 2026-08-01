@@ -27,6 +27,7 @@ from tests.testkit.network import install_network_guard
 _restore_collection_network = install_network_guard()
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session
@@ -96,10 +97,8 @@ def test_user(db_session: Session) -> UserRecord:
 
 
 @pytest.fixture
-def authenticated_client(
-    db_session: Session, test_user: UserRecord
-) -> Generator[TestClient, None, None]:
-    """Run the real FastAPI stack with only external token verification controlled."""
+def nexus_app(db_session: Session, test_user: UserRecord) -> FastAPI:
+    """Build the real FastAPI stack with only external token verification controlled."""
     from nexus.app import create_app
     from nexus.auth.middleware import AuthMiddleware
     from nexus.db.session import get_db
@@ -124,8 +123,24 @@ def authenticated_client(
         yield db_session
 
     app.dependency_overrides[get_db] = session
+    return app
+
+
+@pytest.fixture
+def authenticated_client(
+    nexus_app: FastAPI, test_user: UserRecord
+) -> Generator[TestClient, None, None]:
+    """Run an authenticated request through the real FastAPI stack."""
+    verifier = StaticTokenVerifier(test_user.id, test_user.email)
     with TestClient(
-        app,
+        nexus_app,
         headers={"Authorization": f"Bearer {verifier.token}"},
     ) as client:
+        yield client
+
+
+@pytest.fixture
+def anonymous_client(nexus_app: FastAPI) -> Generator[TestClient, None, None]:
+    """Run an anonymous request through the real FastAPI stack."""
+    with TestClient(nexus_app) as client:
         yield client
