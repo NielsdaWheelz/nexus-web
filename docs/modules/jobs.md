@@ -183,8 +183,9 @@ Seven LLM generation kinds — `chat_run`, `oracle_reading_generate`,
 the shared `run_llm_task` envelope ([llms.md](llms.md)), not a hand-rolled
 per-task event loop. `run_llm_task` owns only the worker mechanics: one DB
 session, one fresh event loop, one shared `httpx.AsyncClient`, and one
-`ExecutionRuntime` construction (production or the real-media fixture, keyed
-solely on `settings.real_media_provider_fixtures`). The queue contract is
+production `ExecutionRuntime` construction. Deterministic provider behavior
+belongs to the test harness's loopback HTTP protocol server, not a worker
+branch. The queue contract is
 unchanged: the harness runs inside the existing claim/lease/heartbeat/
 dead-letter machinery.
 

@@ -133,7 +133,7 @@
         "python/nexus/services/chat_run_tools.py"
       ],
       "proofs": [
-        "pytest:python/tests/evals/test_tool_authorization.py::test_prompt_injected_resource_reads_are_refused_without_side_effects"
+        "pytest:python/tests/evals/test_tool_safety_eval.py::test_prompt_injection_eval_refuses_scripted_adversarial_tool_calls"
       ],
       "capabilities": [
         "llm-eval"

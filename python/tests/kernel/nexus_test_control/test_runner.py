@@ -516,7 +516,7 @@ def test_external_sigterm_exit_is_not_misreported_as_a_test_failure(tmp_path: Pa
 def test_browser_setup_failure_references_every_owned_process_log(tmp_path: Path) -> None:
     run_id = "0123456789abcdef"
     directory = tmp_path / "test-results/runs" / run_id
-    for role in ("api", "worker-interactive", "worker-background", "web"):
+    for role in ("external", "api", "worker-interactive", "worker-background", "web"):
         _write(directory / f"{role}.log", f"{role} diagnostic\n")
     execution = runner._WorkflowExecution(
         CapabilityContext(tmp_path, Workflow.PR, ()),
@@ -533,7 +533,7 @@ def test_browser_setup_failure_references_every_owned_process_log(tmp_path: Path
 
     assert result.evidence.artifacts == tuple(
         f"test-results/runs/{run_id}/{role}.log"
-        for role in ("api", "worker-interactive", "worker-background", "web")
+        for role in ("external", "api", "worker-interactive", "worker-background", "web")
     )
 
 
@@ -982,7 +982,14 @@ def test_bundle_is_built_once_and_critical_journeys_consume_ledger_owned_process
             role: str,
         ) -> StartedProcess:
             process_roles.append(role)
-            return StartedProcess(role, len(process_roles) + 100, f"{role}.log")
+            return StartedProcess(
+                role=role,
+                process_group_id=len(process_roles) + 100,
+                process_start_token="1",
+                run_id=_run.run_id,
+                owner_token="a" * 32,
+                log_path=f"{role}.log",
+            )
 
         def start_web_process(
             self,
@@ -992,7 +999,14 @@ def test_bundle_is_built_once_and_critical_journeys_consume_ledger_owned_process
             _build: StandaloneBuild,
         ) -> StartedProcess:
             process_roles.append("web")
-            return StartedProcess("web", 200, "web.log")
+            return StartedProcess(
+                role="web",
+                process_group_id=200,
+                process_start_token="1",
+                run_id=_run.run_id,
+                owner_token="b" * 32,
+                log_path="web.log",
+            )
 
         def wait_process_ready(
             self,
@@ -1048,7 +1062,13 @@ def test_bundle_is_built_once_and_critical_journeys_consume_ledger_owned_process
     assert bundle.evidence.status is RunStatus.PASS
     assert journeys.evidence.status is RunStatus.PASS
     assert build_calls == ["build"]
-    assert process_roles == ["api", "worker-interactive", "worker-background", "web"]
+    assert process_roles == [
+        "external",
+        "api",
+        "worker-interactive",
+        "worker-background",
+        "web",
+    ]
     assert users == [
         "auth-session",
         "grounded-chat-citation",

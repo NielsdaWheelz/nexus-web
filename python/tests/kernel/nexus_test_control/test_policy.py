@@ -202,6 +202,33 @@ def test_repository_guard_rejects_legacy_route_resurrection(tmp_path: Path) -> N
     assert "repository-retired-test-path" in _rules(repository_violations(tmp_path))
 
 
+@pytest.mark.parametrize(
+    ("relative", "source"),
+    [
+        (
+            "python/nexus/services/provider.py",
+            "if settings.real_media_provider_fixtures:\n    return fixture_response()\n",
+        ),
+        (
+            "apps/web/src/lib/provider.ts",
+            'const enabled = process.env.REAL_MEDIA_PROVIDER_FIXTURES === "1";\n',
+        ),
+    ],
+)
+def test_repository_guard_rejects_retired_product_test_seams(
+    tmp_path: Path, relative: str, source: str
+) -> None:
+    _minimal_repository(tmp_path)
+    _write(tmp_path, relative, source)
+
+    violations = repository_violations(tmp_path)
+
+    assert any(
+        violation.rule == "repository-product-test-seam" and violation.path == relative
+        for violation in violations
+    )
+
+
 def test_repository_guard_rejects_route_drift(tmp_path: Path) -> None:
     _minimal_repository(tmp_path)
     _write(tmp_path, "scripts/agency_verify.sh", "exec make test\n")

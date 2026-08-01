@@ -16,6 +16,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
+from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 import boto3
@@ -84,7 +85,7 @@ SUPABASE_EXCLUDED_SERVICES = (
     "realtime,storage-api,imgproxy,studio,edge-runtime,logflare,vector,postgres-meta,postgrest"
 )
 
-_PORT_DEFAULTS = (15432, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000)
+_PORT_DEFAULTS = (15432, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000, 19091)
 _SAFE_CHILD_ENV = ("HOME", "LANG", "LC_ALL", "PATH", "TMPDIR", "TZ", "UV_CACHE_DIR")
 _STATUS_KEYS = frozenset(
     {"API_URL", "ANON_KEY", "PUBLISHABLE_KEY", "SECRET_KEY", "SERVICE_ROLE_KEY"}
@@ -101,7 +102,14 @@ _CALLER_RESOURCE_ENV = frozenset(
         "DATABASE_URL_TEST",
         "DATABASE_URL_TEST_MIGRATIONS",
         "NEXT_PUBLIC_SUPABASE_URL",
+        "NEXUS_TEST_STATIC_DNS",
         "NEXUS_TEST_PROCESS_OWNER",
+        "NODE_OPTIONS",
+        "OPENAI_API_BASE_URL",
+        "OUTBOUND_HTTP_PROXY_URL",
+        "PODCAST_INDEX_API_KEY",
+        "PODCAST_INDEX_API_SECRET",
+        "PODCAST_INDEX_BASE_URL",
         "PGDATABASE",
         "PGHOST",
         "PGPASSFILE",
@@ -156,6 +164,9 @@ class TestUser:
 class StartedProcess:
     role: str
     process_group_id: int
+    process_start_token: str
+    run_id: str
+    owner_token: str = field(repr=False)
     log_path: str
 
 
@@ -521,7 +532,18 @@ def start_python_process(
     require_test_environment(environment)
     root = canonical_repo_root(repo_root)
     runtime = read_runtime(root)
-    if role == "api":
+    if role == "external":
+        _require_loopback_port_available(runtime.ports.external, role)
+        command = (
+            str(root / "python/.venv/bin/python"),
+            str(root / "python/tests/testkit/external_server.py"),
+            "--port",
+            str(runtime.ports.external),
+            "--fixture-root",
+            str(root / "python/tests/fixtures/real_media"),
+        )
+    elif role == "api":
+        _require_loopback_port_available(runtime.ports.api, role)
         command = (
             str(root / "python/.venv/bin/python"),
             "-m",
@@ -543,10 +565,15 @@ def start_python_process(
     process_environment = {
         **run_environment(root, environment, run),
         "NEXUS_TEST_DENY_EXTERNAL_NETWORK": "1",
+        "NEXUS_TEST_STATIC_DNS": '{"www.nasa.gov":"93.184.216.34"}',
+        "NODE_OPTIONS": f"--import={root / 'python/tests/testkit/node-network-guard.mjs'}",
         "OPENAI_API_KEY": "nexus-test-fixture-openai-key",
+        "OPENAI_API_BASE_URL": f"http://127.0.0.1:{runtime.ports.external}/v1",
+        "OUTBOUND_HTTP_PROXY_URL": f"http://127.0.0.1:{runtime.ports.external}",
+        "PODCAST_INDEX_API_KEY": "nexus-test-fixture-podcast-key",
+        "PODCAST_INDEX_API_SECRET": "nexus-test-fixture-podcast-secret",
+        "PODCAST_INDEX_BASE_URL": f"http://127.0.0.1:{runtime.ports.external}",
         "PYTHONPATH": f"{root / 'python' / 'tests' / 'testkit'}:{root / 'python'}:{root}",
-        "REAL_MEDIA_FIXTURE_DIR": str(root / "python" / "tests" / "fixtures" / "real_media"),
-        "REAL_MEDIA_PROVIDER_FIXTURES": "1",
         **({"WORKER_LANE": role.removeprefix("worker-")} if role.startswith("worker-") else {}),
     }
     return _start_owned_process(
@@ -575,6 +602,7 @@ def start_web_process(
     if expected_builds not in artifact_root.parents or artifact_root not in server.parents:
         raise RuntimeContractError("web process requires a runtime-owned standalone artifact")
     runtime = read_runtime(root)
+    _require_loopback_port_available(runtime.ports.web, "web")
     return _start_owned_process(
         root,
         environment,
@@ -585,6 +613,7 @@ def start_web_process(
         process_environment={
             **run_environment(root, environment, run),
             "HOSTNAME": "127.0.0.1",
+            "NODE_OPTIONS": f"--import={root / 'python/tests/testkit/node-network-guard.mjs'}",
             "NODE_ENV": "production",
             "PORT": str(runtime.ports.web),
         },
@@ -606,15 +635,35 @@ def wait_process_ready(
         raise RuntimeContractError("process readiness path must be absolute and normalized")
     root = canonical_repo_root(repo_root)
     url = runtime_endpoint(root, environment, endpoint) + path
+    port = urlsplit(url).port
+    if port is None:
+        raise RuntimeContractError("process readiness endpoint has no port")
     deadline = time.monotonic() + timeout_seconds
     with httpx.Client(trust_env=False, timeout=1, follow_redirects=False) as client:
         while time.monotonic() < deadline:
+            if not _owned_process_identity_matches(
+                process.process_group_id,
+                process.process_start_token,
+                process.run_id,
+                process.owner_token,
+            ):
+                raise RuntimeContractError(
+                    f"owned {process.role} process exited or changed identity before readiness"
+                )
             try:
-                os.killpg(process.process_group_id, 0)
                 response = client.get(url)
-                if 200 <= response.status_code < 500:
+                if (
+                    200 <= response.status_code < 500
+                    and _process_group_owns_listener(process.process_group_id, port)
+                    and _owned_process_identity_matches(
+                        process.process_group_id,
+                        process.process_start_token,
+                        process.run_id,
+                        process.owner_token,
+                    )
+                ):
                     return
-            except (ProcessLookupError, httpx.HTTPError):
+            except httpx.HTTPError:
                 pass
             time.sleep(0.05)
     raise RuntimeContractError(f"owned {process.role} process did not become ready")
@@ -678,7 +727,14 @@ def _start_owned_process(
         raise
     finally:
         signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
-    return StartedProcess(role, process.pid, log_path.relative_to(root).as_posix())
+    return StartedProcess(
+        role=role,
+        process_group_id=process.pid,
+        process_start_token=start_token,
+        run_id=run_id,
+        owner_token=owner_token,
+        log_path=log_path.relative_to(root).as_posix(),
+    )
 
 
 def clean_run(
@@ -707,7 +763,6 @@ def clean_run(
                     if process_group_id is None:
                         recovered = _recover_planned_process_group(
                             candidate.external_id,
-                            candidate.command,
                             run_id,
                         )
                         if recovered is not None:
@@ -716,7 +771,6 @@ def clean_run(
                         _stop_process_group(
                             process_group_id,
                             process_start_token,
-                            candidate.command,
                             run_id,
                             candidate.external_id,
                         )
@@ -1188,29 +1242,19 @@ def _delete_extension_profile(repo_root: Path, identity: str) -> None:
 def _stop_process_group(
     process_group_id: int,
     process_start_token: str | None,
-    command: tuple[str, ...] | None,
     run_id: str,
     owner_token: str,
 ) -> None:
     process_root = Path("/proc") / str(process_group_id)
     if not process_root.exists():
         return
-    if process_start_token is None or command is None:
-        raise RuntimeContractError("owned process lacks its exact runtime identity")
-    try:
-        stat = (process_root / "stat").read_text(encoding="utf-8")
-        actual_start_token = stat[stat.rindex(")") + 2 :].split()[19]
-        actual_command = tuple(
-            part.decode() for part in (process_root / "cmdline").read_bytes().split(b"\0") if part
-        )
-        process_environment = (process_root / "environ").read_bytes().split(b"\0")
-    except (OSError, UnicodeDecodeError, ValueError, IndexError) as exc:
-        raise RuntimeContractError("owned process identity could not be read") from exc
-    if (
-        actual_start_token != process_start_token
-        or actual_command != command
-        or f"NEXUS_TEST_RUN_ID={run_id}".encode() not in process_environment
-        or f"NEXUS_TEST_PROCESS_OWNER={owner_token}".encode() not in process_environment
+    if process_start_token is None:
+        raise RuntimeContractError("owned process lacks its immutable runtime identity")
+    if not _owned_process_identity_matches(
+        process_group_id,
+        process_start_token,
+        run_id,
+        owner_token,
     ):
         raise RuntimeContractError("process group no longer belongs to the exact test run")
     try:
@@ -1237,10 +1281,9 @@ def _stop_process_group(
 
 def _recover_planned_process_group(
     owner_token: str,
-    command: tuple[str, ...] | None,
     run_id: str,
 ) -> tuple[int, str] | None:
-    if not re.fullmatch(r"[0-9a-f]{32}", owner_token) or not command:
+    if not re.fullmatch(r"[0-9a-f]{32}", owner_token):
         raise RuntimeContractError("planned process lacks its exact ownership contract")
     expected_owner = f"NEXUS_TEST_PROCESS_OWNER={owner_token}".encode()
     expected_run = f"NEXUS_TEST_RUN_ID={run_id}".encode()
@@ -1254,15 +1297,10 @@ def _recover_planned_process_group(
             environment = (process_root / "environ").read_bytes().split(b"\0")
             if expected_owner not in environment or expected_run not in environment:
                 continue
-            actual_command = tuple(
-                part.decode()
-                for part in (process_root / "cmdline").read_bytes().split(b"\0")
-                if part
-            )
             process_id = int(process_root.name)
-            if actual_command != command or os.getpgid(process_id) != process_id:
+            if os.getpgid(process_id) != process_id:
                 raise RuntimeContractError(
-                    "planned process token no longer identifies its exact command group"
+                    "planned process token no longer identifies its exact process group"
                 )
             start_token = _process_start_token(process_id)
         except (FileNotFoundError, PermissionError, ProcessLookupError):
@@ -1273,6 +1311,73 @@ def _recover_planned_process_group(
     if len(matches) > 1:
         raise RuntimeContractError("planned process token identifies multiple process groups")
     return matches[0] if matches else None
+
+
+def _owned_process_identity_matches(
+    process_group_id: int,
+    process_start_token: str,
+    run_id: str,
+    owner_token: str,
+) -> bool:
+    process_root = Path("/proc") / str(process_group_id)
+    try:
+        if (
+            process_root.stat().st_uid != os.getuid()
+            or os.getpgid(process_group_id) != process_group_id
+        ):
+            return False
+        stat = (process_root / "stat").read_text(encoding="utf-8")
+        actual_start_token = stat[stat.rindex(")") + 2 :].split()[19]
+        process_environment = (process_root / "environ").read_bytes().split(b"\0")
+    except (OSError, ProcessLookupError, ValueError, IndexError):
+        return False
+    return (
+        actual_start_token == process_start_token
+        and f"NEXUS_TEST_RUN_ID={run_id}".encode() in process_environment
+        and f"NEXUS_TEST_PROCESS_OWNER={owner_token}".encode() in process_environment
+    )
+
+
+def _process_group_owns_listener(process_group_id: int, port: int) -> bool:
+    listener_inodes: set[str] = set()
+    try:
+        rows = Path("/proc/net/tcp").read_text(encoding="ascii").splitlines()[1:]
+    except OSError:
+        return False
+    for row in rows:
+        columns = row.split()
+        if len(columns) > 9:
+            _, raw_port = columns[1].rsplit(":", 1)
+            if columns[3] == "0A" and int(raw_port, 16) == port:
+                listener_inodes.add(columns[9])
+    if not listener_inodes:
+        return False
+    for process_root in Path("/proc").iterdir():
+        if not process_root.name.isdecimal():
+            continue
+        process_id = int(process_root.name)
+        try:
+            if (
+                process_root.stat().st_uid != os.getuid()
+                or os.getpgid(process_id) != process_group_id
+            ):
+                continue
+            for descriptor in (process_root / "fd").iterdir():
+                target = descriptor.readlink().as_posix()
+                if target.startswith("socket:[") and target[8:-1] in listener_inodes:
+                    return True
+        except (OSError, ProcessLookupError):
+            continue
+    return False
+
+
+def _require_loopback_port_available(port: int, role: str) -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.settimeout(0.2)
+        if probe.connect_ex(("127.0.0.1", port)) == 0:
+            raise RuntimeContractError(
+                f"owned {role} process cannot start: loopback port {port} is already in use"
+            )
 
 
 def _process_start_token(process_id: int) -> str:

@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -14,6 +15,7 @@ import pytest
 from nexus_test_control.build import StandaloneBuild
 from nexus_test_control.model import Resource, ResourceKind
 from nexus_test_control.runtime import (
+    EndpointKind,
     RuntimeContractError,
     RuntimePorts,
     claim_run,
@@ -42,6 +44,7 @@ from nexus_test_control.services import (
     run_environment,
     start_python_process,
     start_web_process,
+    wait_process_ready,
 )
 from nexus_test_control.services import TestRun as OwnedRun
 from nexus_test_control.services import (
@@ -56,7 +59,7 @@ RUN_ID = "0123456789abcdef"
 
 
 def _ports() -> RuntimePorts:
-    return RuntimePorts(15432, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000)
+    return RuntimePorts(15432, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000, 19091)
 
 
 def _owned_run(tmp_path: Path, *, migration: bool = True) -> OwnedRun:
@@ -173,6 +176,98 @@ def test_clean_recovers_a_process_killed_between_spawn_and_created_record(
             process.wait()
 
 
+def test_clean_uses_immutable_identity_when_owned_process_rewrites_argv(
+    tmp_path: Path,
+) -> None:
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    command = (
+        "/bin/bash",
+        "-c",
+        'exec -a nexus-mutated-title "$1" -c "import signal; signal.pause()"',
+        "owned-process",
+        sys.executable,
+    )
+    started = _start_owned_process(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        "web",
+        command,
+        cwd=tmp_path,
+        process_environment={"NEXUS_TEST_RUN_ID": RUN_ID},
+    )
+    command_line = b""
+    try:
+        for _attempt in range(500):
+            command_line = (Path("/proc") / str(started.process_group_id) / "cmdline").read_bytes()
+            if command_line.startswith(b"nexus-mutated-title"):
+                break
+            threading.Event().wait(0.01)
+        assert command_line.startswith(b"nexus-mutated-title")
+
+        clean_run(tmp_path, TEST_ENV, RUN_ID)
+
+        with pytest.raises(ProcessLookupError):
+            os.kill(started.process_group_id, 0)
+    finally:
+        try:
+            os.killpg(started.process_group_id, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
+def test_readiness_rejects_listener_outside_owned_process_group(tmp_path: Path) -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as allocator:
+        allocator.bind(("127.0.0.1", 0))
+        port = int(allocator.getsockname()[1])
+    initialize_runtime(tmp_path, TEST_ENV, replace(_ports(), web=port))
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    stale = subprocess.Popen(
+        (sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1"),
+        cwd=tmp_path,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    owned = _start_owned_process(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        "web",
+        (sys.executable, "-c", "import signal; signal.pause()"),
+        cwd=tmp_path,
+        process_environment={"NEXUS_TEST_RUN_ID": RUN_ID},
+    )
+    try:
+        for _attempt in range(500):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                if probe.connect_ex(("127.0.0.1", port)) == 0:
+                    break
+            threading.Event().wait(0.01)
+        else:
+            pytest.fail("foreign listener did not start")
+
+        with pytest.raises(RuntimeContractError, match="did not become ready"):
+            wait_process_ready(
+                tmp_path,
+                TEST_ENV,
+                owned,
+                endpoint=EndpointKind.WEB,
+                path="/",
+                timeout_seconds=0.2,
+            )
+    finally:
+        try:
+            clean_run(tmp_path, TEST_ENV, RUN_ID)
+        finally:
+            try:
+                os.killpg(stale.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            stale.wait()
+
+
 def test_caller_resource_configuration_is_rejected_and_secrets_have_safe_reprs() -> None:
     assert local_test_environment({}) == TEST_ENV
     for environment in (
@@ -183,6 +278,11 @@ def test_caller_resource_configuration_is_rejected_and_secrets_have_safe_reprs()
         {"AWS_ENDPOINT_URL_S3": "https://production.example"},
         {"PGHOST": "production.example"},
         {"SUPABASE_ACCESS_TOKEN": "production-token"},
+        {"OPENAI_API_BASE_URL": "https://production.example/v1"},
+        {"OUTBOUND_HTTP_PROXY_URL": "https://production.example"},
+        {"PODCAST_INDEX_BASE_URL": "https://production.example"},
+        {"NEXUS_TEST_STATIC_DNS": '{"production.example":"93.184.216.34"}'},
+        {"NODE_OPTIONS": "--import=/tmp/foreign.mjs"},
         {"DOCKER_HOST": "tcp://production.example:2376"},
         {"DOCKER_CONTEXT": "production"},
     ):

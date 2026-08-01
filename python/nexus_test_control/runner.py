@@ -1628,7 +1628,7 @@ def _with_browser_process_logs(
     directory = context.repo_root / "test-results/runs" / execution.run_id
     process_logs = tuple(
         path.relative_to(context.repo_root).as_posix()
-        for role in ("api", "worker-interactive", "worker-background", "web")
+        for role in ("external", "api", "worker-interactive", "worker-background", "web")
         if (path := directory / f"{role}.log").is_file()
     )
     if not process_logs:
@@ -1648,6 +1648,19 @@ def _ensure_browser_processes(
     if execution.build is None:
         raise AssertionError("browser runtime requires the retained standalone artifact")
     try:
+        external = execution.ports.start_python_process(
+            context.repo_root,
+            {"NEXUS_ENV": "test"},
+            prepared,
+            "external",
+        )
+        execution.ports.wait_process_ready(
+            context.repo_root,
+            {"NEXUS_ENV": "test"},
+            external,
+            EndpointKind.EXTERNAL,
+            "/health",
+        )
         api = execution.ports.start_python_process(
             context.repo_root,
             {"NEXUS_ENV": "test"},

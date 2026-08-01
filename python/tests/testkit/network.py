@@ -1,10 +1,29 @@
 """Exact local-socket boundary shared by pytest and spawned Python proof."""
 
+import json
+import os
 import socket
 from collections.abc import Callable
 from typing import Any
 
 _ALLOWED_HOSTS = frozenset({"127.0.0.1", "::1", "127.0.1.1"})
+
+
+def _static_dns() -> dict[str, str]:
+    raw = os.environ.get("NEXUS_TEST_STATIC_DNS", "{}")
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise PermissionError("test process received invalid static DNS JSON") from error
+    if not isinstance(value, dict) or any(
+        not isinstance(host, str)
+        or not host
+        or not isinstance(address, str)
+        or address != "93.184.216.34"
+        for host, address in value.items()
+    ):
+        raise PermissionError("test process received an invalid static DNS mapping")
+    return value
 
 
 def _require_local(address: Any) -> None:
@@ -27,6 +46,7 @@ def install_network_guard() -> Callable[[], None]:
     original_sendmsg = socket.socket.sendmsg
     original_getaddrinfo = socket.getaddrinfo
     original_gethostbyname = socket.gethostbyname
+    static_dns = _static_dns()
 
     def connect(self: socket.socket, address: Any) -> None:
         _require_local(address)
@@ -48,11 +68,16 @@ def install_network_guard() -> Callable[[], None]:
         return original_sendmsg(self, buffers, *args)
 
     def getaddrinfo(host: str | bytes | None, *args: Any, **kwargs: Any) -> list[Any]:
-        if host is not None:
-            _require_local((host, 0))
+        normalized = host.decode("ascii") if isinstance(host, bytes) else host
+        if normalized in static_dns:
+            return original_getaddrinfo(static_dns[normalized], *args, **kwargs)
+        if normalized is not None:
+            _require_local((normalized, 0))
         return original_getaddrinfo(host, *args, **kwargs)
 
     def gethostbyname(host: str) -> str:
+        if host in static_dns:
+            return static_dns[host]
         _require_local((host, 0))
         return original_gethostbyname(host)
 

@@ -220,11 +220,6 @@ class Settings(BaseSettings):
         default="https://api.podcastindex.org/api/1.0",
         alias="PODCAST_INDEX_BASE_URL",
     )
-    real_media_provider_fixtures: bool = Field(
-        default=False,
-        alias="REAL_MEDIA_PROVIDER_FIXTURES",
-    )
-    real_media_fixture_dir: str | None = Field(default=None, alias="REAL_MEDIA_FIXTURE_DIR")
     youtube_data_api_key: str | None = Field(default=None, alias="YOUTUBE_DATA_API_KEY")
     youtube_data_base_url: str = Field(
         default="https://www.googleapis.com/youtube/v3",
@@ -385,6 +380,10 @@ class Settings(BaseSettings):
     # Platform API keys for LLM providers.
     # If set, models from that provider are available to all users
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
+    openai_api_base_url: str = Field(
+        default="https://api.openai.com/v1",
+        alias="OPENAI_API_BASE_URL",
+    )
     anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
     gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
     moonshot_api_key: str | None = Field(default=None, alias="MOONSHOT_API_KEY")
@@ -413,6 +412,10 @@ class Settings(BaseSettings):
     brave_search_safe_search: Literal["off", "moderate", "strict"] = Field(
         default="moderate",
         alias="BRAVE_SEARCH_SAFE_SEARCH",
+    )
+    outbound_http_proxy_url: str | None = Field(
+        default=None,
+        alias="OUTBOUND_HTTP_PROXY_URL",
     )
 
     # LLM provider feature flags.
@@ -689,11 +692,6 @@ class Settings(BaseSettings):
             raise ValueError("X_API_TIMEOUT_SECONDS must be > 0.")
         if self.x_api_author_thread_max_posts < 1:
             raise ValueError("X_API_AUTHOR_THREAD_MAX_POSTS must be >= 1.")
-        if self.real_media_provider_fixtures:
-            if self.nexus_env in (Environment.STAGING, Environment.PROD):
-                raise ValueError("REAL_MEDIA_PROVIDER_FIXTURES is not allowed in staging or prod.")
-            if not self.real_media_fixture_dir:
-                raise ValueError("REAL_MEDIA_FIXTURE_DIR is required when fixtures are enabled.")
         if self.nexus_env in (Environment.STAGING, Environment.PROD) and self.billing_enabled:
             missing_billing: list[str] = []
             if not self.stripe_secret_key:
@@ -732,7 +730,7 @@ class Settings(BaseSettings):
                 missing_podcast_provider_settings.append("PODCAST_INDEX_API_KEY")
             if not self.podcast_index_api_secret:
                 missing_podcast_provider_settings.append("PODCAST_INDEX_API_SECRET")
-            if missing_podcast_provider_settings and not self.real_media_provider_fixtures:
+            if missing_podcast_provider_settings:
                 if self.nexus_env in (Environment.STAGING, Environment.PROD):
                     raise ValueError(
                         "Podcast features are enabled but provider credentials are missing: "
@@ -913,10 +911,6 @@ def get_settings() -> Settings:
         ValidationError: If required settings are missing or invalid.
     """
     return Settings()  # pyright: ignore[reportCallIssue] - BaseSettings reads env.
-
-
-def real_media_provider_fixtures_requested() -> bool:
-    return os.environ.get("REAL_MEDIA_PROVIDER_FIXTURES") in {"1", "true", "True"}
 
 
 def clear_settings_cache() -> None:

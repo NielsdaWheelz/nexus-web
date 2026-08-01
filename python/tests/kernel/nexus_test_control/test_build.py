@@ -17,7 +17,7 @@ PUBLIC_KEY = "sb_publishable_local-public-test-key"
 
 
 def _ports() -> RuntimePorts:
-    return RuntimePorts(15432, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000)
+    return RuntimePorts(15432, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000, 19091)
 
 
 def _repository(tmp_path: Path) -> Path:

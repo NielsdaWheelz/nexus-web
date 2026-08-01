@@ -615,9 +615,10 @@ rather than proposed and reconciled after the fact.
 `dossier_build`, `media_unit_build`, `enrich_metadata`) run their bodies inside
 one shared worker envelope,
 `tasks/llm_task.py:run_llm_task` — the sole owner of the event loop, `httpx`
-client, and `ExecutionRuntime` construction (production or the real-media
-fixture, keyed only on `settings.real_media_provider_fixtures`, plus the
-worker-exception boundary). Every provider call inside a job goes through
+client, production `ExecutionRuntime` construction, and worker-exception
+boundary. Deterministic tests exercise a loopback provider protocol server
+through the same configured HTTP boundary; product code has no fixture mode.
+Every provider call inside a job goes through
 `services/llm_execution.py:execute_generation`/`execute_generation_stream` —
 the sole caller of the ledger — leaving one `llm_calls` row on every terminal
 path (success, defect, or entitlement/budget denial), with the failure

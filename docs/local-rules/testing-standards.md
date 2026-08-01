@@ -276,6 +276,16 @@ Do not mock:
 Controlled clocks, randomness, UUIDs, network faults, provider responses, and
 process failures are allowed when they make consequential behavior reproducible.
 
+Deterministic provider/content behavior that must cross a process boundary MUST
+run in a test-owned process behind the same configured HTTP client, gateway, or
+proxy boundary used by production. Bind that process to an exact controller-owned
+loopback port and serve protocol-valid success, stream, malformed, and failure
+responses. Product code MUST NOT contain test-selected branches, fixture
+environment flags, canned provider responses, or alternate fixture runtimes.
+Static fixtures and test-only DNS may choose what the local server returns; they
+never authorize a non-loopback connection. Hosted proof is the only exception
+and uses its separately authorized capability.
+
 ### Browser components, the BFF, and SSE
 
 A Vitest browser-component proof MAY stub the Nexus BFF at the `fetch`/HTTP
@@ -678,6 +688,13 @@ test-only volumes. It MUST preserve every foreign, unrecorded, public, or
 ambiguously named resource. Synthetic interruption proof must cover crashes
 between plan/create/record and idempotent repeated cleanup.
 
+Process identity uses the persisted run and random owner tokens, process-group
+leader PID, and kernel start token. The planned command remains audit evidence,
+not a live identity oracle: runtimes such as Next may legitimately rewrite
+`argv`. Readiness MUST verify that a socket in the exact owned process group
+owns the expected loopback listener; a healthy stale or foreign listener is a
+failure, never readiness evidence.
+
 Independent teardown owners are all attempted even when one fails. Any failed
 teardown keeps the runtime ledger and exact recovery path intact and returns a
 failure; ownership evidence is deleted only after every exact teardown
@@ -725,6 +742,7 @@ The paved road enforces the mechanically decidable part of this contract:
 | Ordinary Python network denial | in-process socket guard plus inherited `sitecustomize` worker guard |
 | Browser network denial | component global guards and controller-recorded loopback Playwright allowlist |
 | Local-resource isolation | pre-contact environment/endpoint/name validators and exact ownership ledger |
+| No test-only product seams | product-source policy scan plus test-owned loopback protocol processes |
 | Deterministic execution | zero automatic retries, one Playwright worker, fixed audit seeds, one heavy-process lock |
 | Fixture provenance | `testdata/manifest.json` path, provenance, and SHA-256 validation |
 | Priority-risk and journey routing | `testdata/proofs.json` schema, source owners, minimum risk IDs, exact journey selection, and sensitivity records |

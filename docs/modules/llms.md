@@ -200,11 +200,11 @@ a provider dispatch):
 `ExecutionRuntime` is a `Protocol` (`generate`/`stream` over
 `intent, plan, credential`). `ProductionExecutionRuntime` delegates to
 `provider_runtime.ProviderRuntime`, ignoring `intent` (the finalized `plan` is
-authoritative for dispatch); a real-media fixture
-(`services/real_media_fixture_llm.RealMediaFixtureExecutionRuntime`) scripts
-outcomes from `intent` instead. `tasks/llm_task.py` is the sole place that
-chooses between them, keyed solely on `settings.real_media_provider_fixtures`
-— there are no per-provider enable flags. The return type
+authoritative for dispatch). API and worker composition always construct that
+runtime. Operator-owned gateways may replace the OpenAI HTTP base URL; the
+test harness uses this product-shaped boundary to reach a deterministic local
+protocol server. There are no fixture runtimes or test-only behavior flags.
+The return type
 (`CallOutcome{generation_id, outcome, support_id}`) exposes the generation id
 only at the terminal; there is no pre-dispatch handle.
 
@@ -260,8 +260,7 @@ the only constructor of event loops, `httpx.AsyncClient`s, and
 
 - **`run_llm_task(spec, handler, *, on_worker_exception=None)`** owns: one DB
   session, one fresh event loop, one `httpx.AsyncClient` (per-kind timeout and
-  pool limits), one `ExecutionRuntime` construction (production or real-media
-  fixture, keyed solely on `settings.real_media_provider_fixtures`), the
+  pool limits), one production `ExecutionRuntime` construction, the
   worker exception boundary (logs `{label}_failed_unexpected` and delegates to
   `on_worker_exception`, which stores a safe terminal failure; without one the
   exception propagates to the queue's retry policy), and teardown

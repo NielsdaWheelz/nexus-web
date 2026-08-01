@@ -257,6 +257,11 @@ cloning; runtime locking and engine disposal must enforce that.
   state exists. Stop exact process groups on success, failure, signal, or
   `clean`; no unowned reader-profile fault proxy or global fail-next state
   remains.
+- Identify a live process by its persisted run/owner tokens, group-leader PID,
+  and kernel start token. Keep the planned command for audit, not cleanup
+  identity, because a runtime may rewrite `argv`. Readiness succeeds only when
+  the listener socket belongs to that exact process group; a stale listener on
+  the expected port fails closed.
 - Persist run ownership before creating each resource so interrupted cleanup is
   deterministic.
 
@@ -493,6 +498,13 @@ secrets, absolute paths, duplicate content, and missing provenance.
   testkit `sitecustomize` socket guard and exact runtime loopback allowlist.
   This closes the subprocess gap that in-process `pytest-socket` cannot cover.
   Hosted workers use a separate explicit egress-enabled capability.
+- Deterministic external provider/content behavior runs in one test-owned
+  process on a controller-recorded loopback port. Product processes reach it
+  only through their production HTTP client plus configured gateway/proxy
+  boundary; test-only static DNS may select a protocol fixture but cannot
+  authorize a non-loopback connect. Product source contains no fixture flags,
+  canned provider branches, or alternate test runtimes, and policy rejects the
+  retired seam identifiers.
 - Web test ESLint rejects `vi/jest` mock/spy functions, owned-module mocks,
   sleep promises, and skipped/only tests. Whether a product seam exists only
   for tests is semantic review, not a pretend mechanical rule.
@@ -901,7 +913,8 @@ not supported compatibility modes.
   their recorded processes, incomplete template build, databases, buckets,
   users, and locks; product/dev state remains untouched. Concurrent
   template-build/clone/drop attempts serialize and never expose a connectable
-  partial template.
+  partial template. Cleanup still owns a process after it rewrites `argv`, and
+  readiness rejects a healthy listener outside the recorded process group.
 - **AC6 — resources:** no `-n auto`, shard, or automatic retry remains. The
   warm static/kernel `changed` fast path targets under 10 seconds and warm
   `confidence` targets 60–90 seconds; slower selected boundaries report their
@@ -911,10 +924,12 @@ not supported compatibility modes.
   downward-only ratchet only after at least 20 comparable successful runs; it
   is not an initial acceptance fiction.
 - **AC7 — build/browser:** one Next build and one Chromium installation at most
-  per verification workflow; Playwright journey, extension, and deployment-smoke
-  capabilities consume the same fingerprinted standalone artifact, while
-  Vitest browser components retain their Vite component boundary; all journeys
-  use strict CSP and no disable escape.
+  per verification workflow. Local Playwright journey and extension
+  capabilities consume the same fingerprinted standalone artifact; deployment
+  smoke targets the deployed artifact while reusing the same Playwright
+  package, configuration, and browser installation. Vitest browser components
+  retain their Vite component boundary; all local journeys use strict CSP and
+  no disable escape.
 - **AC8 — portfolio:** every risk id in the in-scope typed floor has an
   independent, sensitive proof;
   the typed minimum risk floor cannot be lowered through `proofs.json`;

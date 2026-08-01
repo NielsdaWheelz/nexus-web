@@ -287,7 +287,6 @@ def materialize_web_article_source(
         "status": "success",
         "canonical_url": canonical_url,
         "title": ingest_result.title,
-        "provider_fixture": ingest_result.provider_fixture,
         "fragment_id": str(fragment_id),
         "metadata_enrichment": True,
     }

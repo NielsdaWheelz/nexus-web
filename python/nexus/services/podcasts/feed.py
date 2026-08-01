@@ -2,21 +2,18 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import re
 from dataclasses import dataclass
 from datetime import UTC
 from email.utils import parsedate_to_datetime
-from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
 
 import lxml.etree as etree
 
 from nexus.coerce import coerce_positive_int
-from nexus.config import get_settings, real_media_provider_fixtures_requested
 from nexus.errors import (
     ApiError,
     ApiErrorCode,
@@ -32,10 +29,7 @@ from ._normalize import (
     normalize_optional_text,
     parse_iso_datetime,
 )
-from .provider import (
-    PODCAST_INDEX_EPISODE_PAGE_SIZE,
-    REAL_MEDIA_PODCAST_FEED_URL,
-)
+from .provider import PODCAST_INDEX_EPISODE_PAGE_SIZE
 
 logger = get_logger(__name__)
 
@@ -48,12 +42,6 @@ PODCAST_EPISODE_SHOW_NOTES_HTML_MAX_BYTES = 100_000
 PODCAST_EPISODE_SHOW_NOTES_TEXT_MAX_BYTES = 50_000
 _MAX_FEED_PAGE_BYTES = 10 * 1024 * 1024
 _MAX_CHAPTER_JSON_BYTES = 2 * 1024 * 1024
-_REAL_MEDIA_LIVE_FEED_FIXTURE_SHA256S = frozenset(
-    {
-        "c59f38a211d707d8c2c218c3ce425f5d7c843ad0949309b14760263991e91043",
-        "cccfc5c9b58b52c88e995a93453b5e7171aea10a9fdcfad79d0746c0e946cdf7",
-    }
-)
 PODCAST_CHAPTER_SOURCE_PODCASTING20 = "rss_podcasting20"
 PODCAST_CHAPTER_SOURCE_PODLOVE = "rss_podlove"
 _PODCAST_CHAPTERS_20_CONTENT_TYPES = {
@@ -174,10 +162,6 @@ def _is_safe_feed_page_url(page_url: str) -> bool:
         return False
 
 
-def _real_media_live_feed_fixture_is_pinned(content: bytes) -> bool:
-    return hashlib.sha256(content).hexdigest() in _REAL_MEDIA_LIVE_FEED_FIXTURE_SHA256S
-
-
 def fetch_feed_backfill_page(
     *,
     feed_url: str,
@@ -238,26 +222,6 @@ def fetch_feed_backfill_page(
 
 
 def _fetch_feed_episode_page(page_url: str) -> tuple[list[dict[str, Any]], str | None]:
-    if real_media_provider_fixtures_requested():
-        settings = get_settings()
-        if not settings.real_media_provider_fixtures:
-            return [], None
-        if page_url != REAL_MEDIA_PODCAST_FEED_URL:
-            return [], None
-        if settings.real_media_fixture_dir is None:
-            logger.warning("podcast_feed_fixture_dir_missing", page_url=page_url)
-            return [], None
-        path = f"{settings.real_media_fixture_dir}/nasa-hwhap-feed-v1.xml"
-        try:
-            content = Path(path).read_bytes()
-        except OSError as exc:
-            logger.warning("podcast_feed_fixture_unavailable", page_url=page_url, error=str(exc))
-            return [], None
-        if not _real_media_live_feed_fixture_is_pinned(content):
-            logger.warning("podcast_feed_fixture_digest_mismatch", page_url=page_url)
-            return [], None
-        return _parse_feed_episode_page(content, page_url)
-
     try:
         result = safe_get(page_url, max_bytes=_MAX_FEED_PAGE_BYTES, timeout_s=15.0)
     except ApiError as exc:
@@ -268,41 +232,15 @@ def _fetch_feed_episode_page(page_url: str) -> tuple[list[dict[str, Any]], str |
 
 
 def _fetch_live_feed_episode_page(page_url: str) -> tuple[list[dict[str, Any]], str | None]:
-    if real_media_provider_fixtures_requested():
-        settings = get_settings()
-        if (
-            not settings.real_media_provider_fixtures
-            or page_url != REAL_MEDIA_PODCAST_FEED_URL
-            or settings.real_media_fixture_dir is None
-        ):
-            raise ApiError(
-                ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE,
-                "Podcast feed fixture is unavailable",
-            )
-        path = Path(settings.real_media_fixture_dir) / "nasa-hwhap-feed-v1.xml"
-        try:
-            content = path.read_bytes()
-        except OSError as exc:
-            raise ApiError(
-                ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE,
-                "Podcast feed fixture is unavailable",
-            ) from exc
-        if not _real_media_live_feed_fixture_is_pinned(content):
-            raise ApiError(
-                ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE,
-                "Podcast feed fixture digest mismatch",
-            )
-        final_url = page_url
-    else:
-        try:
-            result = safe_get(page_url, max_bytes=_MAX_FEED_PAGE_BYTES, timeout_s=15.0)
-        except ApiError as exc:
-            raise ApiError(
-                ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE,
-                "Podcast feed is unavailable",
-            ) from exc
-        content = result.content
-        final_url = result.final_url
+    try:
+        result = safe_get(page_url, max_bytes=_MAX_FEED_PAGE_BYTES, timeout_s=15.0)
+    except ApiError as exc:
+        raise ApiError(
+            ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE,
+            "Podcast feed is unavailable",
+        ) from exc
+    content = result.content
+    final_url = result.final_url
 
     try:
         parser = etree.XMLParser(resolve_entities=False, no_network=True, recover=False)

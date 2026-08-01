@@ -69,7 +69,7 @@ def test_environment_isolation_rejects_production_and_cleans_only_the_exact_run(
         )
 
     environment = controlled_environment({})
-    initialize_runtime(tmp_path, environment, RuntimePorts(*range(21001, 21010)))
+    initialize_runtime(tmp_path, environment, RuntimePorts(*range(21001, 21011)))
     cleaned_run = "0123456789abcdef"
     preserved_run = "fedcba9876543210"
     claim_run(tmp_path, environment, cleaned_run)

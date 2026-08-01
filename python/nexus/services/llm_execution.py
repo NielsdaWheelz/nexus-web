@@ -3,8 +3,7 @@
 ``execute_generation`` / ``execute_generation_stream`` are the only nexus
 callers of the ``ExecutionRuntime`` seam (production
 :class:`ProductionExecutionRuntime` delegating to
-``provider_runtime.ProviderRuntime``, or a real-media fixture — see
-``nexus.tasks.llm_task``) and of ``nexus.services.llm_ledger``. Every owner
+``provider_runtime.ProviderRuntime``) and of ``nexus.services.llm_ledger``. Every owner
 (chat, oracle, synapse, media summary/enrichment, artifact revisions, dawn
 write) builds one ``GenerationRequest`` per provider call and calls one of
 these two functions; neither ever appears twice in one call.
@@ -166,14 +165,10 @@ class CallOutcome:
 
 
 # =============================================================================
-# Fixture seam (Option B — ``docs/cutovers/llm-provider-runtime-hard-cutover.md``
-# "Fixture seam"): a small structural runtime llm_execution dispatches
-# through. Production delegates to ``provider_runtime.ProviderRuntime``
-# (ignoring ``intent`` — the finalized plan is authoritative); a real-media
-# fixture impl (``nexus.services.real_media_fixture_llm``) scripts outcomes
-# from the typed ``intent`` instead. ``nexus.tasks.llm_task`` constructs one
-# or the other, keyed on ``settings.real_media_provider_fixtures`` — no
-# enable flags. llm_execution is the sole caller of either.
+# The structural runtime seam keeps generation orchestration independent of
+# the provider implementation. Production composition always delegates to
+# ``provider_runtime.ProviderRuntime``; deterministic provider behavior belongs
+# at the external protocol boundary in the test harness.
 # =============================================================================
 
 

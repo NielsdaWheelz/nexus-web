@@ -25,6 +25,7 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
+from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.services.image_validation import validate_dns_resolution
 from nexus.services.url_normalize import validate_requested_url
@@ -68,7 +69,12 @@ def safe_get(
 ) -> SafeFetchResult:
     """Fetch a feed-controlled URL or raise a typed E_SSRF_BLOCKED / E_SOURCE_* error."""
     current_url = url
-    with httpx.Client(timeout=timeout_s, trust_env=False, follow_redirects=False) as client:
+    with httpx.Client(
+        timeout=timeout_s,
+        trust_env=False,
+        follow_redirects=False,
+        proxy=get_settings().outbound_http_proxy_url,
+    ) as client:
         for _ in range(_MAX_REDIRECTS + 1):
             _reject_unless_public(current_url)
             try:

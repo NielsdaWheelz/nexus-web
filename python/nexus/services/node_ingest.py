@@ -48,7 +48,6 @@ class IngestResult:
     excerpt: str = ""
     site_name: str = ""
     published_time: str = ""
-    provider_fixture: dict[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,13 +69,6 @@ def run_node_ingest(
     subprocess_timeout_s: int = SUBPROCESS_TIMEOUT_S,
 ) -> IngestResult | IngestError:
     """Return a modeled source result; raise when the owned protocol is broken."""
-    from nexus.config import get_settings, real_media_provider_fixtures_requested
-
-    if real_media_provider_fixtures_requested():
-        settings = get_settings()
-        if settings.real_media_provider_fixtures:
-            return _run_real_media_fixture_ingest(url, settings.real_media_fixture_dir)
-
     if not NODE_INGEST_SCRIPT.exists():
         # justify-defect: the deployed owned script is required infrastructure.
         raise NodeIngestProtocolDefect(f"Node ingest script not found at {NODE_INGEST_SCRIPT}")
@@ -194,42 +186,3 @@ def _decode_failure(value: dict[str, object]) -> IngestError:
 def _decode_output_excerpt(output: bytes) -> str:
     decoded = output.decode("utf-8", errors="replace")
     return decoded[:500] if len(decoded) > 500 else decoded
-
-
-def _run_real_media_fixture_ingest(url: str, fixture_dir: str | None) -> IngestResult:
-    requested_url = url.strip()
-    if requested_url != "https://science.nasa.gov/solar-system/moon/theres-water-on-the-moon/":
-        # justify-defect: a requested owned fixture must exist in the fixture catalog.
-        raise NodeIngestProtocolDefect(f"No real-media web article fixture for {requested_url}")
-    if fixture_dir is None:
-        # justify-defect: fixture mode requires its declared fixture directory.
-        raise NodeIngestProtocolDefect(
-            "REAL_MEDIA_FIXTURE_DIR is required for web article fixtures"
-        )
-
-    path = Path(fixture_dir) / "nasa-water-on-moon-capture.html"
-    try:
-        content_html = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise NodeIngestProtocolDefect(f"Web article fixture unavailable: {exc}") from exc
-
-    payload = content_html.encode("utf-8")
-    if len(payload) != 1_019:
-        raise NodeIngestProtocolDefect("Web article fixture size mismatch")
-
-    return IngestResult(
-        final_url=requested_url,
-        base_url="https://science.nasa.gov/",
-        title="There's Water on the Moon?",
-        content_html=content_html,
-        source_html=content_html,
-        byline="Molly Wasser",
-        excerpt="NASA Science captured article fixture.",
-        site_name="NASA Science",
-        published_time="2020-11-05T00:00:00Z",
-        provider_fixture={
-            "path": str(path),
-            "byte_length": len(payload),
-            "source_url": requested_url,
-        },
-    )

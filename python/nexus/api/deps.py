@@ -6,12 +6,10 @@ from fastapi import Request
 from provider_runtime import ProviderRuntime
 
 from nexus.auth.bearer import parse_bearer_token
-from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import set_stream_jti
 from nexus.services import stream_tokens
 from nexus.services.llm_execution import ExecutionRuntime, ProductionExecutionRuntime
-from nexus.services.real_media_fixture_llm import RealMediaFixtureExecutionRuntime
 
 
 def get_stream_viewer(request: Request) -> UUID:
@@ -32,6 +30,4 @@ def get_stream_viewer(request: Request) -> UUID:
 
 def get_execution_runtime(request: Request) -> ExecutionRuntime:
     """Build the request-scoped LLM runtime over the app's shared HTTP client."""
-    if get_settings().real_media_provider_fixtures:
-        return RealMediaFixtureExecutionRuntime()
     return ProductionExecutionRuntime(ProviderRuntime(request.app.state.httpx_client))

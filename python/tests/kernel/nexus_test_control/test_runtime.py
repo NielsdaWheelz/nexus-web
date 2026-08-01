@@ -113,7 +113,7 @@ def test_docker_host_accepts_only_a_real_local_unix_socket(tmp_path: Path) -> No
 
 
 def _ports() -> RuntimePorts:
-    return RuntimePorts(15432, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000)
+    return RuntimePorts(15432, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000, 19091)
 
 
 def _runtime(tmp_path: Path) -> None:
@@ -149,7 +149,7 @@ def test_runtime_and_ledger_are_bound_to_the_exact_repository(tmp_path: Path) ->
 
 def test_runtime_ports_cannot_be_replaced_after_resource_ownership_exists(tmp_path: Path) -> None:
     _runtime(tmp_path)
-    changed = RuntimePorts(15433, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000)
+    changed = RuntimePorts(15433, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000, 19091)
 
     with pytest.raises(RuntimeContractError, match="cannot be replaced"):
         initialize_runtime(tmp_path, TEST_ENV, changed)

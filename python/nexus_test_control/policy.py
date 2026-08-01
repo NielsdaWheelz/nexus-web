@@ -67,6 +67,20 @@ _RETIRED_TEST_PATHS = (
     "python/scripts/seed_e2e_data.py",
     "python/scripts/seed_oracle_plate_e2e.py",
 )
+_PRODUCT_SOURCE_ROOTS: tuple[tuple[str, frozenset[str]], ...] = (
+    ("python/nexus", frozenset({".py"})),
+    ("apps/api", frozenset({".py"})),
+    ("apps/web/src", frozenset({".js", ".jsx", ".ts", ".tsx"})),
+    ("apps/extension", frozenset({".js", ".jsx", ".ts", ".tsx"})),
+    ("apps/android/app/src/main", frozenset({".java", ".kt", ".kts"})),
+)
+_RETIRED_PRODUCT_TEST_SEAMS = (
+    "REAL_MEDIA_PROVIDER_FIXTURES",
+    "REAL_MEDIA_FIXTURE_DIR",
+    "RealMediaFixtureExecutionRuntime",
+    "real_media_provider_fixtures",
+    "real_media_fixture_llm",
+)
 _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "scripts/test": (
         ("exec uv run --frozen --no-sync python -m nexus_test_control",),
@@ -783,6 +797,24 @@ def repository_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                     "hard-cut legacy test path must remain absent",
                 )
             )
+    for source_root, suffixes in _PRODUCT_SOURCE_ROOTS:
+        root = repo_root / source_root
+        if not root.is_dir():
+            continue
+        for candidate in root.rglob("*"):
+            if not candidate.is_file() or candidate.suffix not in suffixes:
+                continue
+            relative = candidate.relative_to(repo_root).as_posix()
+            text = candidate.read_text(encoding="utf-8")
+            retired = tuple(seam for seam in _RETIRED_PRODUCT_TEST_SEAMS if seam in text)
+            if retired:
+                violations.append(
+                    PolicyViolation(
+                        "repository-product-test-seam",
+                        relative,
+                        f"retired test-only product seam is forbidden: {retired}",
+                    )
+                )
     for relative, (required, forbidden) in _ROUTE_CONTRACT.items():
         path = repo_root / relative
         if not path.is_file():

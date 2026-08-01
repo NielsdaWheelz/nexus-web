@@ -16,7 +16,7 @@ from typing import cast
 
 from nexus_test_control.model import Resource, ResourceKind
 
-RUNTIME_VERSION = 1
+RUNTIME_VERSION = 2
 LEDGER_VERSION = 1
 LOOPBACK_HOST = "127.0.0.1"
 TEMPLATE_FINGERPRINT_HEX_LENGTH = 40
@@ -27,7 +27,7 @@ _FINGERPRINT = re.compile(r"[0-9a-f]{40}\Z")
 _SCENARIO_ID = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?\Z")
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\Z")
 _PROCESS_OWNER = re.compile(r"[0-9a-f]{32}\Z")
-_PROCESS_ROLES = frozenset({"api", "web", "worker-interactive", "worker-background"})
+_PROCESS_ROLES = frozenset({"api", "external", "web", "worker-interactive", "worker-background"})
 
 
 class RuntimeContractError(ValueError):
@@ -39,6 +39,7 @@ class EndpointKind(StrEnum):
     MINIO = "minio"
     SUPABASE = "supabase"
     API = "api"
+    EXTERNAL = "external"
     WEB = "web"
 
 
@@ -58,6 +59,7 @@ class RuntimePorts:
     supabase_shadow: int
     api: int
     web: int
+    external: int
 
     def __post_init__(self) -> None:
         ports = tuple(self.as_dict().values())
@@ -80,6 +82,7 @@ class RuntimePorts:
             "supabase_shadow": self.supabase_shadow,
             "api": self.api,
             "web": self.web,
+            "external": self.external,
         }
 
 
@@ -704,6 +707,7 @@ def _endpoint(ports: RuntimePorts, kind: EndpointKind) -> str:
         EndpointKind.MINIO: ports.minio,
         EndpointKind.SUPABASE: ports.supabase_api,
         EndpointKind.API: ports.api,
+        EndpointKind.EXTERNAL: ports.external,
         EndpointKind.WEB: ports.web,
     }[kind]
     scheme = "postgresql" if kind is EndpointKind.POSTGRES else "http"

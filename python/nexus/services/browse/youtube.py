@@ -41,7 +41,6 @@ from nexus.web_paths import media_image_url
 
 _PROVIDER_CONTRACT = "YouTubeDataV3VideoSearch"
 _BACKOFF_SECONDS = (0.25, 0.75)
-_FIXTURE_VIDEO_REF = "drrP_Iss0gA"
 _DURATION = re.compile(
     r"P(?:(?P<days>[0-9]+)D)?T"
     r"(?:(?P<hours>[0-9]+)H)?"
@@ -185,11 +184,6 @@ def search(
             )
         )
     settings = get_settings()
-    if settings.real_media_provider_fixtures:
-        if query.cursor is not None or "picturing earth" not in query.query.casefold():
-            return [], None
-        video = _fixture_video()
-        return [_fixture_candidate(video)], None
     if not settings.youtube_data_api_key:
         raise RuntimeError("YouTube Browse provider is not configured")
     params: dict[str, str | int] = {
@@ -226,10 +220,6 @@ def search(
 
 def preview(video_ref: str) -> YouTubeVideo:
     settings = get_settings()
-    if settings.real_media_provider_fixtures:
-        if video_ref != _FIXTURE_VIDEO_REF:
-            raise BrowseTargetNotFound
-        return _fixture_video()
     if not settings.youtube_data_api_key:
         raise RuntimeError("YouTube Browse provider is not configured")
     identity = classify_youtube_provider_video_id(video_ref)
@@ -272,53 +262,6 @@ def preview(video_ref: str) -> YouTubeVideo:
         embed_href=identity.embed_url,
         duration_seconds=_duration_seconds(item.content_details.duration),
         contributors=contributors,
-    )
-
-
-def _fixture_video() -> YouTubeVideo:
-    identity = classify_youtube_provider_video_id(_FIXTURE_VIDEO_REF)
-    if identity is None:
-        raise RuntimeError("YouTube Browse fixture has an invalid identity")
-    return YouTubeVideo(
-        video_ref=identity.provider_video_id,
-        title="Picturing Earth: Behind the Scenes",
-        description="NASA Earth Observatory video transcript fixture.",
-        channel_title="NASA Earth Observatory",
-        published_at=datetime(2020, 4, 22, tzinfo=UTC),
-        image_href=media_image_url(
-            quote(
-                f"https://i.ytimg.com/vi/{identity.provider_video_id}/hqdefault.jpg",
-                safe="",
-            )
-        ),
-        watch_href=identity.watch_url,
-        embed_href=identity.embed_url,
-        duration_seconds=180,
-        contributors=[
-            ContributorCreditOut(
-                credited_name="NASA Earth Observatory",
-                contributor_display_name="NASA Earth Observatory",
-                role="channel",
-            )
-        ],
-    )
-
-
-def _fixture_candidate(video: YouTubeVideo) -> VideoCandidate:
-    return VideoCandidate(
-        source=BrowseSource.YouTube,
-        resolution=PreviewResolution(target=seal_target(youtube_target(video.video_ref))),
-        title=video.title,
-        contributors=video.contributors,
-        description=(absent() if video.description is None else present(video.description)),
-        published_at=present(video.published_at),
-        image=absent() if video.image_href is None else present(video.image_href),
-        kind_facts=VideoFacts(
-            video_ref=present(video.video_ref),
-            channel_title=(
-                absent() if video.channel_title is None else present(video.channel_title)
-            ),
-        ),
     )
 
 

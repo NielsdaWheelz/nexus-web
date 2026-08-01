@@ -236,8 +236,6 @@ def media_best_peer_rows_sql(eligible_media_relation: str) -> str:
 def current_transcript_embedding_model() -> str:
     settings = get_settings()
     dimensions = transcript_embedding_dimensions()
-    if settings.real_media_provider_fixtures:
-        return f"fixture_hash_v1_{dimensions}"
     if settings.nexus_env == Environment.TEST:
         return f"test_hash_v2_{dimensions}"
     normalized_model = re.sub(
@@ -249,8 +247,6 @@ def current_transcript_embedding_model() -> str:
 
 
 def transcript_embedding_provider_for_model(model_name: str) -> str:
-    if model_name.startswith("fixture_hash_v1_"):
-        return "fixture"
     if model_name.startswith("test_hash_v2_"):
         return "test"
     return "openai"
@@ -330,7 +326,9 @@ async def _embed_with_openai_async(texts: list[str], *, dimensions: int) -> list
     credential = embedding_credential(settings, "openai")
 
     vectors: list[list[float]] = []
-    async with httpx.AsyncClient() as client:
+    from nexus.services.provider_http import provider_request_event_hooks
+
+    async with httpx.AsyncClient(event_hooks=provider_request_event_hooks(settings)) as client:
         runtime = ProviderRuntime(client)
         for start in range(0, len(texts), 64):
             batch = texts[start : start + 64]
