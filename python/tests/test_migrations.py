@@ -13,6 +13,7 @@ import os
 import re
 import resource
 import subprocess
+import sys
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -64,7 +65,11 @@ def run_alembic_command(
         text=True,
         env={**os.environ},
         cwd=migrations_dir,
-        preexec_fn=apply_address_space_limit if address_space_limit_bytes else None,
+        preexec_fn=(
+            apply_address_space_limit
+            if address_space_limit_bytes is not None and sys.platform == "linux"
+            else None
+        ),
     )
     return result
 
@@ -27364,17 +27369,20 @@ class TestMigration0208PersistEpubNavigationOffsets:
 
             with engine.connect() as connection:
                 assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0208"
-                assert connection.scalar(
-                    text(
-                        """
+                assert (
+                    connection.scalar(
+                        text(
+                            """
                         SELECT count(*)
                         FROM epub_nav_locations
                         WHERE start_offset = 0
                           AND end_offset = :fragment_length
                         """
-                    ),
-                    {"fragment_length": len(fragment_text)},
-                ) == fragment_count * anchors_per_fragment
+                        ),
+                        {"fragment_length": len(fragment_text)},
+                    )
+                    == fragment_count * anchors_per_fragment
+                )
         finally:
             reset_test_schema()
             engine.dispose()
